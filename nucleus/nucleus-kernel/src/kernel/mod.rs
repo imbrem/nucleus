@@ -171,6 +171,11 @@ impl Kernel {
     pub fn free_ctx(&mut self, ctx: CtxId) -> bool {
         self.ctx.remove(ctx.0).is_some()
     }
+
+    /// Get the context associated with a given integer index
+    pub fn ctx_id(&self, ix: u32) -> Option<CtxId> {
+        self.ctx.get_idx(ix).map(CtxId)
+    }
 }
 
 /// # Term Management
@@ -1576,6 +1581,18 @@ impl Kernel {
 /// A handle for a context
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct CtxId(SmallIndex<Ctx>);
+
+impl CtxId {
+    /// Get the integer index associated with this context
+    pub fn ix(&self) -> u32 {
+        self.0.to_idx() as u32
+    }
+
+    /// Get the generation associated with this context
+    pub fn generation(&self) -> u32 {
+        self.0.r#gen().to_idx()
+    }
+}
 
 /// A handle for a term
 ///

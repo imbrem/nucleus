@@ -359,6 +359,7 @@ dependencies = [
 name = "nucleus-wasm"
 version = "0.1.0"
 dependencies = [
+ "nucleus-kernel",
  "wasm-bindgen",
 ]
 
@@ -780,9 +781,9 @@ checksum = "6af6ae20167a9ece4bcb41af5b80f8a1f1df981f6391189ce00fd257af04126a"
 
 [[package]]
 name = "typed-generational-arena"
-version = "0.2.7"
+version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c27e0b89f359e864283feca64a75f1cb249370ea97bf42a451521b696ca17cc"
+checksum = "23107afb81ff70f7588dca56c1eeab4dad8b3a141b0e85d2a61fb575d1f12d62"
 dependencies = [
  "cfg-if 0.1.10",
  "nonzero_ext",

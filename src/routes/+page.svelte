@@ -15,10 +15,10 @@
 	let dlcf = $state(null);
 
 	// @ts-ignore
-	let result = $derived(dlcf ? dlcf.handle_input(value) : null);
+	let result = $derived(dlcf ? "loaded" : null);
 
 	onMount(async () => {
-		dlcf = new (await getBindings()).WebNucleus();
+		dlcf = new (await getBindings()).Nucleus();
 	});
 </script>
 
