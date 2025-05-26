@@ -1,0 +1,14 @@
+[package]
+name = "nucleus-frontend"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+color-eyre = "0.6.4"
+nucleus-kernel = { path = "../nucleus-kernel" }
+pretty = "0.12.4"
+unicode-ident = "1.0.18"
+winnow = "0.7.10"
+
+[dev-dependencies]
+proptest = "1.6.0"

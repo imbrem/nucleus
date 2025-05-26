@@ -1,0 +1,15 @@
+[package]
+name = "nucleus-kernel"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+arrayvec = "0.7.6"
+bitflags = "2.9.0"
+egg = "0.10.0"
+fxhash = "0.2.1"
+hashbrown = "0.15.3"
+indexmap = "2.9.0"
+ref-cast = "1.0.24"
+thiserror = "2.0.12"
+typed-generational-arena = "0.2.7"
