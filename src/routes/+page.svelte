@@ -15,7 +15,7 @@
 	let dlcf = $state(null);
 
 	// @ts-ignore
-	let result = $derived(dlcf ? "loaded" : null);
+	let result = $derived(dlcf ? dlcf.handle_input(value) : null);
 
 	onMount(async () => {
 		dlcf = new (await getBindings()).Nucleus();
@@ -29,7 +29,8 @@
 	<div class="pane">
 		{#if dlcf}
 			<ul class="ctx">
-				<li><code>Result: {result}</code></li>
+				<li><code>Result:</code></li>
+				<li><code>{result}</code></li>
 			</ul>
 		{:else}
 			<p>Loading WebDLCF...</p>

@@ -1,28 +1,30 @@
-use nucleus_kernel::Kernel;
+use nucleus_frontend::sexpr::{Sexpr, ws};
+use pretty::RcDoc;
 use wasm_bindgen::prelude::*;
+use winnow::{
+    LocatingSlice, Parser,
+    combinator::{delimited, opt},
+};
 
 #[derive(Clone)]
 #[wasm_bindgen]
-pub struct Nucleus {
-    kernel: Kernel,
-}
+pub struct Nucleus {}
 
 #[wasm_bindgen]
 impl Nucleus {
     /// Construct a new kernel instance
     #[wasm_bindgen(constructor)]
     pub fn new() -> Nucleus {
-        Nucleus {
-            kernel: Kernel::default(),
-        }
+        Nucleus {}
     }
 
-    /// Construct a new context
-    pub fn new_ctx(&mut self, parent: Option<u32>) -> u32 {
-        let parent = parent.map(|p| self.kernel.ctx_id(p).expect("invalid parent id"));
-        self.kernel
-            .new_ctx(parent)
-            .expect("failed to create new context")
-            .ix()
+    pub fn handle_input(&mut self, input: String) -> String {
+        let sexprs =
+            match delimited(opt(ws), Sexpr::lsexprs, opt(ws)).parse(LocatingSlice::new(&input)) {
+                Ok(sexprs) => sexprs,
+                Err(err) => return format!("parse error: {err}"),
+            };
+        let doc = RcDoc::intersperse(sexprs.iter().map(|e| e.to_doc()), RcDoc::line());
+        format!("{}", doc.pretty(80))
     }
 }

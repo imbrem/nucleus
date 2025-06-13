@@ -8,4 +8,6 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 wasm-bindgen = "0.2.100"
-nucleus-kernel = { path = "../nucleus-kernel" }
+nucleus-frontend = { path = "../nucleus-frontend" }
+winnow = "0.7.10"
+pretty = "0.12.4"
