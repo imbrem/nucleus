@@ -1,0 +1,11 @@
+[package]
+name = "covalence-neutron"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Relational state instances for Nucleus"
+publish = false
+
+[lints]
+workspace = true

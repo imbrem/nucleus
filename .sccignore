@@ -1,0 +1,12 @@
+# Generated dependency rules and lock data are not reviewable source.
+buck/cargo/
+crates/**/BUCK
+tools/glu/BUCK
+.devcontainer/devcontainer-lock.json
+Cargo.lock
+flake.lock
+pnpm-lock.yaml
+tools/glu/Cargo.lock
+
+# Repository policy and handoff material are not code.
+LICENSE

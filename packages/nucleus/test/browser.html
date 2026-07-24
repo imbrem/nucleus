@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Nucleus browser smoke test</title>
+  </head>
+  <body>
+    <script type="module">
+      import init, { smoke } from "../generated/nucleus.js";
+
+      try {
+        await init();
+        document.body.dataset.result = String(smoke());
+      } catch (error) {
+        document.body.dataset.error = String(error);
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,18 @@
+[package]
+name = "covalence-bin-nucleus"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Command-line interface for Nucleus"
+publish = false
+
+[[bin]]
+name = "nucleus"
+path = "src/main.rs"
+
+[dependencies]
+covalence-nucleus = { path = "../../nucleus" }
+
+[lints]
+workspace = true

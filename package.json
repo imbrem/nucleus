@@ -1,0 +1,17 @@
+{
+  "name": "nucleus-workspace",
+  "private": true,
+  "license": "CC0-1.0",
+  "packageManager": "pnpm@11.13.1",
+  "scripts": {
+    "build": "pnpm --filter @nucleus/nucleus build && pnpm --filter @nucleus/docs build",
+    "check": "pnpm --filter @nucleus/nucleus check && pnpm --filter @nucleus/docs check",
+    "format": "prettier --check .",
+    "lint": "pnpm run check",
+    "test": "pnpm --filter @nucleus/nucleus test && pnpm --filter @nucleus/docs test"
+  },
+  "devDependencies": {
+    "prettier": "3.6.2",
+    "prettier-plugin-svelte": "3.4.0"
+  }
+}

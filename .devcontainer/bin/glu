@@ -1,0 +1,3 @@
+#!/bin/sh
+root=$(git rev-parse --show-toplevel) || exit
+exec nix develop "path:$root" --command glu "$@"

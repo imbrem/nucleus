@@ -1,0 +1,28 @@
+[package]
+name = "covalence-nucleus"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Portable trusted core for Nucleus"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+covalence-lib-sqlite = { path = "../lib/sqlite" }
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+wasm-bindgen = "=0.2.121"
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+wit-bindgen-rt = { version = "=0.44.0", features = ["bitflags"] }
+
+[package.metadata.component]
+package = "nucleus:smoke"
+
+[package.metadata.component.dependencies]
+
+[lints]
+workspace = true

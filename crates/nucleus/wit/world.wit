@@ -1,0 +1,5 @@
+package nucleus:smoke;
+
+world nucleus {
+    export smoke: func() -> u32;
+}

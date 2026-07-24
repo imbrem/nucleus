@@ -1,0 +1,17 @@
+[package]
+name = "covalence-lib-sqlite"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "SQLite binding used by Nucleus"
+publish = false
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+rusqlite = "=0.40.1"
+
+[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
+rusqlite = { version = "=0.40.1", default-features = false, features = ["bundled"] }
+
+[lints]
+workspace = true

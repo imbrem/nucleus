@@ -1,0 +1,11 @@
+[package]
+name = "covalence-lib-rand"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Randomness primitives for Nucleus"
+publish = false
+
+[lints]
+workspace = true

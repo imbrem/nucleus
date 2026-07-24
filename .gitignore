@@ -1,0 +1,14 @@
+/target/
+/tools/glu/target/
+node_modules/
+.pnpm-store/
+/apps/docs/build/
+/apps/docs/static/api/
+/apps/docs/static/generated/
+/apps/docs/.svelte-kit/
+/packages/nucleus/dist/
+/packages/nucleus/generated/
+.direnv/
+.glu.json
+.buckconfig.local
+/buck-out/

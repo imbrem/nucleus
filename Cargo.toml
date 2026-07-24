@@ -1,0 +1,25 @@
+[workspace]
+members = [
+  "crates/lib/hash",
+  "crates/lib/rand",
+  "crates/lib/sqlite",
+  "crates/data/basic",
+  "crates/proton",
+  "crates/neutron",
+  "crates/nucleus",
+  "crates/bin/nucleus",
+]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+license = "CC0-1.0"
+rust-version = "1.97"
+version = "0.0.0"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }

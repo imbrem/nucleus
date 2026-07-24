@@ -1,0 +1,11 @@
+[package]
+name = "covalence-data-basic"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Basic data representation for Nucleus"
+publish = false
+
+[lints]
+workspace = true
