@@ -13,12 +13,19 @@
 //! ownership, mutation, construction, stable identity, random access,
 //! serialization, interning, or any particular storage strategy.
 //!
-//! This crate intentionally contains no parser, renderer, wire format, arena,
-//! matcher, unifier, or implicit conversion between tagged and untagged trees.
+//! [`sax`] provides a streaming event boundary for constructing and emitting
+//! values without requiring an intermediate tree. [`text`] provides one small,
+//! documented textual dialect on top of that boundary.
+//!
+//! This crate intentionally contains no arena, matcher, unifier, or implicit
+//! conversion between tagged and untagged trees.
 
 #![deny(unsafe_code)]
 
 pub use covalence_data_symbol::Symbol;
+
+pub mod sax;
+pub mod text;
 
 /// A canonical owned S-expression.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
