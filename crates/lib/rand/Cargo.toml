@@ -7,5 +7,8 @@ license.workspace = true
 description = "Randomness primitives for Nucleus"
 publish = false
 
+[dependencies]
+rand = "0.9"
+
 [lints]
 workspace = true
