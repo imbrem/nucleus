@@ -9,7 +9,8 @@
     }
   },
   "containerEnv": {
-    "NUCLEUS_DEVCONTAINER": "1"
+    "NUCLEUS_DEVCONTAINER": "1",
+    "NUCLEUS_GITHUB_ACTIONS": "${localEnv:GITHUB_ACTIONS}"
   },
   "remoteEnv": {
     "PATH": "${containerWorkspaceFolder}/.devcontainer/bin:${containerEnv:PATH}"
@@ -25,7 +26,7 @@
     "source=nucleus-target,target=${containerWorkspaceFolder}/target,type=volume",
     "source=nucleus-glu-target,target=${containerWorkspaceFolder}/tools/glu/target,type=volume"
   ],
-  "postCreateCommand": "sudo chown -R vscode:vscode node_modules apps/docs/node_modules packages/nucleus/node_modules .pnpm-store buck-out .direnv target tools/glu/target && chmod +x .devcontainer/bin/glu && CI=true nix develop path:$PWD --command pnpm install --frozen-lockfile && glu doctor",
+  "postCreateCommand": ".devcontainer/bin/post-create",
   "customizations": {
     "vscode": {
       "extensions": ["rust-lang.rust-analyzer", "svelte.svelte-vscode"]
