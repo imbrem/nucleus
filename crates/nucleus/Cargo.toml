@@ -11,7 +11,12 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+covalence-data-sexpr = { path = "../data/sexpr" }
+covalence-data-symbol = { path = "../data/symbol" }
+covalence-lib-error = { path = "../lib/error" }
+covalence-lib-hash = { path = "../lib/hash", default-features = false }
 covalence-lib-sqlite = { path = "../lib/sqlite" }
+covalence-neutron = { path = "../neutron" }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 wasm-bindgen = "=0.2.121"
