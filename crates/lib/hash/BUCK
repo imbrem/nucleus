@@ -24,6 +24,12 @@ rust_library(
     edition = "2024",
     srcs = _RUST_SOURCES,
     tests = [":covalence_lib_hash-unit-test"],
+    named_deps = {
+        "blake3": "nucleus//buck/cargo/production:blake3-1.8.5",
+        "covalence_lib_rand": "nucleus//crates/lib/rand:covalence_lib_rand",
+        "sha1": "nucleus//buck/cargo/production:sha1-0.10.7",
+        "sha2": "nucleus//buck/cargo/production:sha2-0.10.9",
+    },
     env = {
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Hashing primitives for Nucleus",
@@ -49,6 +55,12 @@ rust_test(
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
+    named_deps = {
+        "blake3": "nucleus//buck/cargo/production:blake3-1.8.5",
+        "covalence_lib_rand": "nucleus//crates/lib/rand:covalence_lib_rand",
+        "sha1": "nucleus//buck/cargo/production:sha1-0.10.7",
+        "sha2": "nucleus//buck/cargo/production:sha2-0.10.9",
+    },
     env = {
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Hashing primitives for Nucleus",

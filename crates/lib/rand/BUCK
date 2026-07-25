@@ -24,6 +24,9 @@ rust_library(
     edition = "2024",
     srcs = _RUST_SOURCES,
     tests = [":covalence_lib_rand-unit-test"],
+    named_deps = {
+        "rand": "nucleus//buck/cargo/production:rand-0.9.5",
+    },
     env = {
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Randomness primitives for Nucleus",
@@ -49,6 +52,9 @@ rust_test(
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
+    named_deps = {
+        "rand": "nucleus//buck/cargo/production:rand-0.9.5",
+    },
     env = {
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Randomness primitives for Nucleus",
