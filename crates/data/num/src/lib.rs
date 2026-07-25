@@ -1,14 +1,20 @@
 //! Exact, portable numeric value types.
 //!
 //! [`Num`] is a non-negative arbitrary-precision integer and [`Int`] is a
-//! signed arbitrary-precision integer. Their backing representation is private;
-//! use canonical bytes at storage and runtime boundaries.
+//! signed arbitrary-precision integer. [`Float32`] and [`Float64`] preserve the
+//! complete identity of IEEE 754 binary bit patterns. Their backing
+//! representations are private; use canonical bytes at storage and runtime
+//! boundaries.
 
 use std::error::Error;
 use std::fmt;
 use std::ops::{Add, Mul, Neg, Sub};
 
 use covalence_lib_bigint::{BigInt, BigUint, Sign};
+
+mod float;
+
+pub use float::{Float32, Float64, FloatClass, InexactFloatConversion};
 
 /// Default maximum accepted canonical encoding size (one MiB).
 ///
