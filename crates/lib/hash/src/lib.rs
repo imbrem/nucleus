@@ -152,7 +152,7 @@ impl O256 {
     /// # Errors
     ///
     /// Returns an error if reading from `reader` fails.
-    pub fn blake3_reader(mut reader: impl std::io::Read) -> std::io::Result<Self> {
+    pub fn blake3_from_reader(mut reader: impl std::io::Read) -> std::io::Result<Self> {
         let mut hasher = ::blake3::Hasher::new();
         std::io::copy(&mut reader, &mut hasher)?;
         Ok(Self::from_bytes(*hasher.finalize().as_bytes()))
@@ -173,7 +173,7 @@ impl O256 {
     /// # Errors
     ///
     /// Returns an error if reading from `reader` fails.
-    pub fn sha256_reader(mut reader: impl std::io::Read) -> std::io::Result<Self> {
+    pub fn sha256_from_reader(mut reader: impl std::io::Read) -> std::io::Result<Self> {
         use sha2::Digest;
 
         let mut hasher = sha2::Sha256::new();
@@ -321,7 +321,7 @@ mod tests {
         let expected = "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85";
         assert_eq!(O256::blake3(b"abc").to_string(), expected);
         assert_eq!(
-            O256::blake3_reader(std::io::Cursor::new(b"abc"))
+            O256::blake3_from_reader(std::io::Cursor::new(b"abc"))
                 .unwrap()
                 .to_string(),
             expected
@@ -339,7 +339,7 @@ mod tests {
         let expected = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
         assert_eq!(O256::sha256(b"abc").to_string(), expected);
         assert_eq!(
-            O256::sha256_reader(std::io::Cursor::new(b"abc"))
+            O256::sha256_from_reader(std::io::Cursor::new(b"abc"))
                 .unwrap()
                 .to_string(),
             expected
