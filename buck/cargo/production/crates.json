@@ -32,6 +32,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-data-sexpr@0.0.0",
+      "name": "covalence-data-sexpr",
+      "version": "0.0.0",
+      "path": "crates/data/sexpr",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_data_sexpr",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-data-symbol@0.0.0",
       "name": "covalence-data-symbol",
       "version": "0.0.0",
@@ -163,6 +178,13 @@
     {
       "source": "workspace#covalence-bin-nucleus@0.0.0",
       "target": "workspace#covalence-nucleus@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-sexpr@0.0.0",
+      "target": "workspace#covalence-data-symbol@0.0.0",
       "kinds": [
         "normal"
       ]

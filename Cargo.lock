@@ -83,6 +83,13 @@ name = "covalence-data-basic"
 version = "0.0.0"
 
 [[package]]
+name = "covalence-data-sexpr"
+version = "0.0.0"
+dependencies = [
+ "covalence-data-symbol",
+]
+
+[[package]]
 name = "covalence-data-symbol"
 version = "0.0.0"
 
