@@ -126,16 +126,16 @@ struct RustTarget {
 
 #[derive(Serialize)]
 struct ExternalPackage {
-    id: String,
     name: String,
     version: String,
-    archive: String,
-    archive_prefix: String,
-    archive_label: String,
     checksum: String,
-    url: String,
-    env: Vec<(String, String)>,
+    edition: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    features: Vec<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    env: BTreeMap<String, String>,
     targets: Vec<ExternalTarget>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     buildscript: Option<Buildscript>,
 }
 
@@ -158,24 +158,22 @@ struct DependencyRoot {
 
 #[derive(Serialize)]
 struct ExternalTarget {
-    name: String,
-    crate_name: String,
-    crate_root: String,
-    edition: String,
-    features: Vec<String>,
-    named_deps: Vec<(String, String)>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    crate_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    crate_root: Option<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    named_deps: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "is_false")]
     proc_macro: bool,
-    buildscript: Option<String>,
 }
 
 #[derive(Serialize)]
 struct Buildscript {
-    name: String,
-    run_name: String,
-    crate_root: String,
-    edition: String,
-    features: Vec<String>,
-    named_deps: Vec<(String, String)>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    crate_root: Option<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    named_deps: BTreeMap<String, String>,
 }
 
 #[derive(Serialize)]
@@ -207,6 +205,10 @@ struct DependencyEdge {
     source: String,
     target: String,
     kinds: Vec<String>,
+}
+
+const fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 struct Graph<'a> {
@@ -563,9 +565,6 @@ impl<'a> Graph<'a> {
         }
         let name = package.name.to_string();
         let version = package.version.to_string();
-        let label = label(package);
-        let archive = format!("{label}.crate");
-        let archive_prefix = format!("{name}-{version}");
         let checksum = checksums
             .get(&(name.clone(), version.clone()))
             .cloned()
@@ -590,42 +589,40 @@ impl<'a> Graph<'a> {
             .iter()
             .find(|target| target.kind.contains(&TargetKind::CustomBuild));
         let buildscript = build_target.map(|target| Buildscript {
-            name: format!("{label}-build-script-build"),
-            run_name: format!("{label}-build-script-run"),
-            crate_root: format!("{archive}/{}", relative_target_path(package, target)),
-            edition: package.edition.to_string(),
-            features: features.clone(),
-            named_deps: self.dependencies(&package.id, DependencyKind::Build, false),
+            crate_root: (relative_target_path(package, target) != "build.rs")
+                .then(|| relative_target_path(package, target)),
+            named_deps: self
+                .dependencies(&package.id, DependencyKind::Build, false)
+                .into_iter()
+                .collect(),
         });
         let targets = package
             .targets
             .iter()
             .filter_map(|target| {
                 target_rule(target, true)?;
-                let target_buildscript = buildscript.as_ref().map(|script| script.run_name.clone());
+                let crate_name = target.name.replace('-', "_");
+                let default_crate_name = package.name.replace('-', "_");
+                let crate_root = relative_target_path(package, target);
                 Some(ExternalTarget {
-                    name: label.clone(),
-                    crate_name: target.name.replace('-', "_"),
-                    crate_root: format!("{archive}/{}", relative_target_path(package, target)),
-                    edition: package.edition.to_string(),
-                    features: features.clone(),
-                    named_deps: self.dependencies(&package.id, DependencyKind::Normal, false),
+                    crate_name: (crate_name != default_crate_name).then_some(crate_name),
+                    crate_root: (crate_root != "src/lib.rs").then_some(crate_root),
+                    named_deps: self
+                        .dependencies(&package.id, DependencyKind::Normal, false)
+                        .into_iter()
+                        .collect(),
                     proc_macro: target.kind.contains(&TargetKind::ProcMacro),
-                    buildscript: target_buildscript,
                 })
             })
             .collect();
 
         Ok(ExternalPackage {
-            id: package.id.repr.clone(),
-            name: name.clone(),
-            version: version.clone(),
-            archive: archive.clone(),
-            archive_prefix,
-            archive_label: format!(":{archive}"),
+            name,
+            version,
             checksum,
-            url: format!("https://crates.io/api/v1/crates/{name}/{version}/download"),
-            env: cargo_package_env(package),
+            edition: package.edition.to_string(),
+            features,
+            env: external_package_env(package),
             targets,
             buildscript,
         })
@@ -915,4 +912,21 @@ fn cargo_package_env(package: &Package) -> Vec<(String, String)> {
     .into_iter()
     .map(|(name, value)| (name.to_owned(), value))
     .collect()
+}
+
+fn external_package_env(package: &Package) -> BTreeMap<String, String> {
+    cargo_package_env(package)
+        .into_iter()
+        .filter(|(name, value)| {
+            !value.is_empty()
+                && !matches!(
+                    name.as_str(),
+                    "CARGO_PKG_NAME"
+                        | "CARGO_PKG_VERSION"
+                        | "CARGO_PKG_VERSION_MAJOR"
+                        | "CARGO_PKG_VERSION_MINOR"
+                        | "CARGO_PKG_VERSION_PATCH"
+                )
+        })
+        .collect()
 }

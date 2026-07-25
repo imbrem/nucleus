@@ -2,1233 +2,270 @@
   "generatedBy": "glu 0.0.0",
   "packages": [
     {
-      "id": "registry+https://github.com/rust-lang/crates.io-index#bitflags@2.13.1",
       "name": "bitflags",
       "version": "2.13.1",
-      "archive": "bitflags-2.13.1.crate",
-      "archive_prefix": "bitflags-2.13.1",
-      "archive_label": ":bitflags-2.13.1.crate",
       "checksum": "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da",
-      "url": "https://crates.io/api/v1/crates/bitflags/2.13.1/download",
-      "env": [
-        [
-          "CARGO_PKG_AUTHORS",
-          "The Rust Project Developers"
-        ],
-        [
-          "CARGO_PKG_DESCRIPTION",
-          "A macro to generate structures which behave like bitflags.\n"
-        ],
-        [
-          "CARGO_PKG_HOMEPAGE",
-          "https://github.com/bitflags/bitflags"
-        ],
-        [
-          "CARGO_PKG_LICENSE",
-          "MIT OR Apache-2.0"
-        ],
-        [
-          "CARGO_PKG_LICENSE_FILE",
-          ""
-        ],
-        [
-          "CARGO_PKG_NAME",
-          "bitflags"
-        ],
-        [
-          "CARGO_PKG_README",
-          ""
-        ],
-        [
-          "CARGO_PKG_REPOSITORY",
-          "https://github.com/bitflags/bitflags"
-        ],
-        [
-          "CARGO_PKG_RUST_VERSION",
-          ""
-        ],
-        [
-          "CARGO_PKG_VERSION",
-          "2.13.1"
-        ],
-        [
-          "CARGO_PKG_VERSION_MAJOR",
-          "2"
-        ],
-        [
-          "CARGO_PKG_VERSION_MINOR",
-          "13"
-        ],
-        [
-          "CARGO_PKG_VERSION_PATCH",
-          "1"
-        ],
-        [
-          "CARGO_PKG_VERSION_PRE",
-          ""
-        ]
-      ],
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Rust Project Developers",
+        "CARGO_PKG_DESCRIPTION": "A macro to generate structures which behave like bitflags.\n",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/bitflags/bitflags",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bitflags/bitflags"
+      },
       "targets": [
-        {
-          "name": "bitflags-2.13.1",
-          "crate_name": "bitflags",
-          "crate_root": "bitflags-2.13.1.crate/src/lib.rs",
-          "edition": "2021",
-          "features": [],
-          "named_deps": [],
-          "proc_macro": false,
-          "buildscript": null
-        }
-      ],
-      "buildscript": null
+        {}
+      ]
     },
     {
-      "id": "registry+https://github.com/rust-lang/crates.io-index#cc@1.3.0",
       "name": "cc",
       "version": "1.3.0",
-      "archive": "cc-1.3.0.crate",
-      "archive_prefix": "cc-1.3.0",
-      "archive_label": ":cc-1.3.0.crate",
       "checksum": "c89588d05638b5b4594a3348a2d6c20277e43a7f5c5202b05cc56888475a47b8",
-      "url": "https://crates.io/api/v1/crates/cc/1.3.0/download",
-      "env": [
-        [
-          "CARGO_PKG_AUTHORS",
-          "Alex Crichton <alex@alexcrichton.com>"
-        ],
-        [
-          "CARGO_PKG_DESCRIPTION",
-          "A build-time dependency for Cargo build scripts to assist in invoking the native\nC compiler to compile native C code into a static archive to be linked into Rust\ncode.\n"
-        ],
-        [
-          "CARGO_PKG_HOMEPAGE",
-          "https://github.com/rust-lang/cc-rs"
-        ],
-        [
-          "CARGO_PKG_LICENSE",
-          "MIT OR Apache-2.0"
-        ],
-        [
-          "CARGO_PKG_LICENSE_FILE",
-          ""
-        ],
-        [
-          "CARGO_PKG_NAME",
-          "cc"
-        ],
-        [
-          "CARGO_PKG_README",
-          ""
-        ],
-        [
-          "CARGO_PKG_REPOSITORY",
-          "https://github.com/rust-lang/cc-rs"
-        ],
-        [
-          "CARGO_PKG_RUST_VERSION",
-          ""
-        ],
-        [
-          "CARGO_PKG_VERSION",
-          "1.3.0"
-        ],
-        [
-          "CARGO_PKG_VERSION_MAJOR",
-          "1"
-        ],
-        [
-          "CARGO_PKG_VERSION_MINOR",
-          "3"
-        ],
-        [
-          "CARGO_PKG_VERSION_PATCH",
-          "0"
-        ],
-        [
-          "CARGO_PKG_VERSION_PRE",
-          ""
-        ]
-      ],
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Alex Crichton <alex@alexcrichton.com>",
+        "CARGO_PKG_DESCRIPTION": "A build-time dependency for Cargo build scripts to assist in invoking the native\nC compiler to compile native C code into a static archive to be linked into Rust\ncode.\n",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/rust-lang/cc-rs",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/cc-rs"
+      },
       "targets": [
         {
-          "name": "cc-1.3.0",
-          "crate_name": "cc",
-          "crate_root": "cc-1.3.0.crate/src/lib.rs",
-          "edition": "2018",
-          "features": [],
-          "named_deps": [
-            [
-              "find_msvc_tools",
-              ":find-msvc-tools-0.1.9"
-            ],
-            [
-              "shlex",
-              ":shlex-2.0.1"
-            ]
-          ],
-          "proc_macro": false,
-          "buildscript": null
+          "named_deps": {
+            "find_msvc_tools": ":find-msvc-tools-0.1.9",
+            "shlex": ":shlex-2.0.1"
+          }
         }
-      ],
-      "buildscript": null
+      ]
     },
     {
-      "id": "registry+https://github.com/rust-lang/crates.io-index#fallible-iterator@0.3.0",
       "name": "fallible-iterator",
       "version": "0.3.0",
-      "archive": "fallible-iterator-0.3.0.crate",
-      "archive_prefix": "fallible-iterator-0.3.0",
-      "archive_label": ":fallible-iterator-0.3.0.crate",
       "checksum": "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649",
-      "url": "https://crates.io/api/v1/crates/fallible-iterator/0.3.0/download",
-      "env": [
-        [
-          "CARGO_PKG_AUTHORS",
-          "Steven Fackler <sfackler@gmail.com>"
-        ],
-        [
-          "CARGO_PKG_DESCRIPTION",
-          "Fallible iterator traits"
-        ],
-        [
-          "CARGO_PKG_HOMEPAGE",
-          ""
-        ],
-        [
-          "CARGO_PKG_LICENSE",
-          "MIT/Apache-2.0"
-        ],
-        [
-          "CARGO_PKG_LICENSE_FILE",
-          ""
-        ],
-        [
-          "CARGO_PKG_NAME",
-          "fallible-iterator"
-        ],
-        [
-          "CARGO_PKG_README",
-          ""
-        ],
-        [
-          "CARGO_PKG_REPOSITORY",
-          "https://github.com/sfackler/rust-fallible-iterator"
-        ],
-        [
-          "CARGO_PKG_RUST_VERSION",
-          ""
-        ],
-        [
-          "CARGO_PKG_VERSION",
-          "0.3.0"
-        ],
-        [
-          "CARGO_PKG_VERSION_MAJOR",
-          "0"
-        ],
-        [
-          "CARGO_PKG_VERSION_MINOR",
-          "3"
-        ],
-        [
-          "CARGO_PKG_VERSION_PATCH",
-          "0"
-        ],
-        [
-          "CARGO_PKG_VERSION_PRE",
-          ""
-        ]
+      "edition": "2018",
+      "features": [
+        "alloc",
+        "default"
       ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Steven Fackler <sfackler@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Fallible iterator traits",
+        "CARGO_PKG_LICENSE": "MIT/Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/sfackler/rust-fallible-iterator"
+      },
       "targets": [
-        {
-          "name": "fallible-iterator-0.3.0",
-          "crate_name": "fallible_iterator",
-          "crate_root": "fallible-iterator-0.3.0.crate/src/lib.rs",
-          "edition": "2018",
-          "features": [
-            "alloc",
-            "default"
-          ],
-          "named_deps": [],
-          "proc_macro": false,
-          "buildscript": null
-        }
-      ],
-      "buildscript": null
+        {}
+      ]
     },
     {
-      "id": "registry+https://github.com/rust-lang/crates.io-index#fallible-streaming-iterator@0.1.9",
       "name": "fallible-streaming-iterator",
       "version": "0.1.9",
-      "archive": "fallible-streaming-iterator-0.1.9.crate",
-      "archive_prefix": "fallible-streaming-iterator-0.1.9",
-      "archive_label": ":fallible-streaming-iterator-0.1.9.crate",
       "checksum": "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a",
-      "url": "https://crates.io/api/v1/crates/fallible-streaming-iterator/0.1.9/download",
-      "env": [
-        [
-          "CARGO_PKG_AUTHORS",
-          "Steven Fackler <sfackler@gmail.com>"
-        ],
-        [
-          "CARGO_PKG_DESCRIPTION",
-          "Fallible streaming iteration"
-        ],
-        [
-          "CARGO_PKG_HOMEPAGE",
-          ""
-        ],
-        [
-          "CARGO_PKG_LICENSE",
-          "MIT/Apache-2.0"
-        ],
-        [
-          "CARGO_PKG_LICENSE_FILE",
-          ""
-        ],
-        [
-          "CARGO_PKG_NAME",
-          "fallible-streaming-iterator"
-        ],
-        [
-          "CARGO_PKG_README",
-          ""
-        ],
-        [
-          "CARGO_PKG_REPOSITORY",
-          "https://github.com/sfackler/fallible-streaming-iterator"
-        ],
-        [
-          "CARGO_PKG_RUST_VERSION",
-          ""
-        ],
-        [
-          "CARGO_PKG_VERSION",
-          "0.1.9"
-        ],
-        [
-          "CARGO_PKG_VERSION_MAJOR",
-          "0"
-        ],
-        [
-          "CARGO_PKG_VERSION_MINOR",
-          "1"
-        ],
-        [
-          "CARGO_PKG_VERSION_PATCH",
-          "9"
-        ],
-        [
-          "CARGO_PKG_VERSION_PRE",
-          ""
-        ]
-      ],
+      "edition": "2015",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Steven Fackler <sfackler@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Fallible streaming iteration",
+        "CARGO_PKG_LICENSE": "MIT/Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/sfackler/fallible-streaming-iterator"
+      },
       "targets": [
-        {
-          "name": "fallible-streaming-iterator-0.1.9",
-          "crate_name": "fallible_streaming_iterator",
-          "crate_root": "fallible-streaming-iterator-0.1.9.crate/src/lib.rs",
-          "edition": "2015",
-          "features": [],
-          "named_deps": [],
-          "proc_macro": false,
-          "buildscript": null
-        }
-      ],
-      "buildscript": null
+        {}
+      ]
     },
     {
-      "id": "registry+https://github.com/rust-lang/crates.io-index#find-msvc-tools@0.1.9",
       "name": "find-msvc-tools",
       "version": "0.1.9",
-      "archive": "find-msvc-tools-0.1.9.crate",
-      "archive_prefix": "find-msvc-tools-0.1.9",
-      "archive_label": ":find-msvc-tools-0.1.9.crate",
       "checksum": "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582",
-      "url": "https://crates.io/api/v1/crates/find-msvc-tools/0.1.9/download",
-      "env": [
-        [
-          "CARGO_PKG_AUTHORS",
-          ""
-        ],
-        [
-          "CARGO_PKG_DESCRIPTION",
-          "Find windows-specific tools, read MSVC versions from the registry and from COM interfaces"
-        ],
-        [
-          "CARGO_PKG_HOMEPAGE",
-          ""
-        ],
-        [
-          "CARGO_PKG_LICENSE",
-          "MIT OR Apache-2.0"
-        ],
-        [
-          "CARGO_PKG_LICENSE_FILE",
-          ""
-        ],
-        [
-          "CARGO_PKG_NAME",
-          "find-msvc-tools"
-        ],
-        [
-          "CARGO_PKG_README",
-          ""
-        ],
-        [
-          "CARGO_PKG_REPOSITORY",
-          "https://github.com/rust-lang/cc-rs"
-        ],
-        [
-          "CARGO_PKG_RUST_VERSION",
-          ""
-        ],
-        [
-          "CARGO_PKG_VERSION",
-          "0.1.9"
-        ],
-        [
-          "CARGO_PKG_VERSION_MAJOR",
-          "0"
-        ],
-        [
-          "CARGO_PKG_VERSION_MINOR",
-          "1"
-        ],
-        [
-          "CARGO_PKG_VERSION_PATCH",
-          "9"
-        ],
-        [
-          "CARGO_PKG_VERSION_PRE",
-          ""
-        ]
-      ],
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Find windows-specific tools, read MSVC versions from the registry and from COM interfaces",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/cc-rs"
+      },
       "targets": [
-        {
-          "name": "find-msvc-tools-0.1.9",
-          "crate_name": "find_msvc_tools",
-          "crate_root": "find-msvc-tools-0.1.9.crate/src/lib.rs",
-          "edition": "2018",
-          "features": [],
-          "named_deps": [],
-          "proc_macro": false,
-          "buildscript": null
-        }
-      ],
-      "buildscript": null
+        {}
+      ]
     },
     {
-      "id": "registry+https://github.com/rust-lang/crates.io-index#foldhash@0.2.0",
       "name": "foldhash",
       "version": "0.2.0",
-      "archive": "foldhash-0.2.0.crate",
-      "archive_prefix": "foldhash-0.2.0",
-      "archive_label": ":foldhash-0.2.0.crate",
       "checksum": "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb",
-      "url": "https://crates.io/api/v1/crates/foldhash/0.2.0/download",
-      "env": [
-        [
-          "CARGO_PKG_AUTHORS",
-          "Orson Peters <orsonpeters@gmail.com>"
-        ],
-        [
-          "CARGO_PKG_DESCRIPTION",
-          "A fast, non-cryptographic, minimally DoS-resistant hashing algorithm."
-        ],
-        [
-          "CARGO_PKG_HOMEPAGE",
-          ""
-        ],
-        [
-          "CARGO_PKG_LICENSE",
-          "Zlib"
-        ],
-        [
-          "CARGO_PKG_LICENSE_FILE",
-          ""
-        ],
-        [
-          "CARGO_PKG_NAME",
-          "foldhash"
-        ],
-        [
-          "CARGO_PKG_README",
-          ""
-        ],
-        [
-          "CARGO_PKG_REPOSITORY",
-          "https://github.com/orlp/foldhash"
-        ],
-        [
-          "CARGO_PKG_RUST_VERSION",
-          ""
-        ],
-        [
-          "CARGO_PKG_VERSION",
-          "0.2.0"
-        ],
-        [
-          "CARGO_PKG_VERSION_MAJOR",
-          "0"
-        ],
-        [
-          "CARGO_PKG_VERSION_MINOR",
-          "2"
-        ],
-        [
-          "CARGO_PKG_VERSION_PATCH",
-          "0"
-        ],
-        [
-          "CARGO_PKG_VERSION_PRE",
-          ""
-        ]
-      ],
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Orson Peters <orsonpeters@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "A fast, non-cryptographic, minimally DoS-resistant hashing algorithm.",
+        "CARGO_PKG_LICENSE": "Zlib",
+        "CARGO_PKG_REPOSITORY": "https://github.com/orlp/foldhash"
+      },
       "targets": [
-        {
-          "name": "foldhash-0.2.0",
-          "crate_name": "foldhash",
-          "crate_root": "foldhash-0.2.0.crate/src/lib.rs",
-          "edition": "2021",
-          "features": [],
-          "named_deps": [],
-          "proc_macro": false,
-          "buildscript": null
-        }
-      ],
-      "buildscript": null
+        {}
+      ]
     },
     {
-      "id": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
       "name": "hashbrown",
       "version": "0.17.1",
-      "archive": "hashbrown-0.17.1.crate",
-      "archive_prefix": "hashbrown-0.17.1",
-      "archive_label": ":hashbrown-0.17.1.crate",
       "checksum": "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a",
-      "url": "https://crates.io/api/v1/crates/hashbrown/0.17.1/download",
-      "env": [
-        [
-          "CARGO_PKG_AUTHORS",
-          ""
-        ],
-        [
-          "CARGO_PKG_DESCRIPTION",
-          "A Rust port of Google's SwissTable hash map"
-        ],
-        [
-          "CARGO_PKG_HOMEPAGE",
-          ""
-        ],
-        [
-          "CARGO_PKG_LICENSE",
-          "MIT OR Apache-2.0"
-        ],
-        [
-          "CARGO_PKG_LICENSE_FILE",
-          ""
-        ],
-        [
-          "CARGO_PKG_NAME",
-          "hashbrown"
-        ],
-        [
-          "CARGO_PKG_README",
-          ""
-        ],
-        [
-          "CARGO_PKG_REPOSITORY",
-          "https://github.com/rust-lang/hashbrown"
-        ],
-        [
-          "CARGO_PKG_RUST_VERSION",
-          ""
-        ],
-        [
-          "CARGO_PKG_VERSION",
-          "0.17.1"
-        ],
-        [
-          "CARGO_PKG_VERSION_MAJOR",
-          "0"
-        ],
-        [
-          "CARGO_PKG_VERSION_MINOR",
-          "17"
-        ],
-        [
-          "CARGO_PKG_VERSION_PATCH",
-          "1"
-        ],
-        [
-          "CARGO_PKG_VERSION_PRE",
-          ""
-        ]
+      "edition": "2024",
+      "features": [
+        "default-hasher"
       ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "A Rust port of Google's SwissTable hash map",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/hashbrown"
+      },
       "targets": [
         {
-          "name": "hashbrown-0.17.1",
-          "crate_name": "hashbrown",
-          "crate_root": "hashbrown-0.17.1.crate/src/lib.rs",
-          "edition": "2024",
-          "features": [
-            "default-hasher"
-          ],
-          "named_deps": [
-            [
-              "foldhash",
-              ":foldhash-0.2.0"
-            ]
-          ],
-          "proc_macro": false,
-          "buildscript": null
+          "named_deps": {
+            "foldhash": ":foldhash-0.2.0"
+          }
         }
-      ],
-      "buildscript": null
+      ]
     },
     {
-      "id": "registry+https://github.com/rust-lang/crates.io-index#hashlink@0.12.1",
       "name": "hashlink",
       "version": "0.12.1",
-      "archive": "hashlink-0.12.1.crate",
-      "archive_prefix": "hashlink-0.12.1",
-      "archive_label": ":hashlink-0.12.1.crate",
       "checksum": "32069d97bb81e38fa67eab65e3393bf804bb85969f2bc06bf13f64aef5aba248",
-      "url": "https://crates.io/api/v1/crates/hashlink/0.12.1/download",
-      "env": [
-        [
-          "CARGO_PKG_AUTHORS",
-          ""
-        ],
-        [
-          "CARGO_PKG_DESCRIPTION",
-          "HashMap-like containers that hold their key-value pairs in a user controllable order"
-        ],
-        [
-          "CARGO_PKG_HOMEPAGE",
-          ""
-        ],
-        [
-          "CARGO_PKG_LICENSE",
-          "MIT OR Apache-2.0"
-        ],
-        [
-          "CARGO_PKG_LICENSE_FILE",
-          ""
-        ],
-        [
-          "CARGO_PKG_NAME",
-          "hashlink"
-        ],
-        [
-          "CARGO_PKG_README",
-          ""
-        ],
-        [
-          "CARGO_PKG_REPOSITORY",
-          "https://github.com/djc/hashlink"
-        ],
-        [
-          "CARGO_PKG_RUST_VERSION",
-          ""
-        ],
-        [
-          "CARGO_PKG_VERSION",
-          "0.12.1"
-        ],
-        [
-          "CARGO_PKG_VERSION_MAJOR",
-          "0"
-        ],
-        [
-          "CARGO_PKG_VERSION_MINOR",
-          "12"
-        ],
-        [
-          "CARGO_PKG_VERSION_PATCH",
-          "1"
-        ],
-        [
-          "CARGO_PKG_VERSION_PRE",
-          ""
-        ]
-      ],
+      "edition": "2024",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "HashMap-like containers that hold their key-value pairs in a user controllable order",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/djc/hashlink"
+      },
       "targets": [
         {
-          "name": "hashlink-0.12.1",
-          "crate_name": "hashlink",
-          "crate_root": "hashlink-0.12.1.crate/src/lib.rs",
-          "edition": "2024",
-          "features": [],
-          "named_deps": [
-            [
-              "hashbrown",
-              ":hashbrown-0.17.1"
-            ]
-          ],
-          "proc_macro": false,
-          "buildscript": null
+          "named_deps": {
+            "hashbrown": ":hashbrown-0.17.1"
+          }
         }
-      ],
-      "buildscript": null
+      ]
     },
     {
-      "id": "registry+https://github.com/rust-lang/crates.io-index#libsqlite3-sys@0.38.1",
       "name": "libsqlite3-sys",
       "version": "0.38.1",
-      "archive": "libsqlite3-sys-0.38.1.crate",
-      "archive_prefix": "libsqlite3-sys-0.38.1",
-      "archive_label": ":libsqlite3-sys-0.38.1.crate",
       "checksum": "f6c19a05435c21ac299d71b6a9c13db3e3f47c520517d58990a462a1397a61db",
-      "url": "https://crates.io/api/v1/crates/libsqlite3-sys/0.38.1/download",
-      "env": [
-        [
-          "CARGO_PKG_AUTHORS",
-          "The rusqlite developers"
-        ],
-        [
-          "CARGO_PKG_DESCRIPTION",
-          "Native bindings to the libsqlite3 library"
-        ],
-        [
-          "CARGO_PKG_HOMEPAGE",
-          ""
-        ],
-        [
-          "CARGO_PKG_LICENSE",
-          "MIT"
-        ],
-        [
-          "CARGO_PKG_LICENSE_FILE",
-          ""
-        ],
-        [
-          "CARGO_PKG_NAME",
-          "libsqlite3-sys"
-        ],
-        [
-          "CARGO_PKG_README",
-          ""
-        ],
-        [
-          "CARGO_PKG_REPOSITORY",
-          "https://github.com/rusqlite/rusqlite"
-        ],
-        [
-          "CARGO_PKG_RUST_VERSION",
-          ""
-        ],
-        [
-          "CARGO_PKG_VERSION",
-          "0.38.1"
-        ],
-        [
-          "CARGO_PKG_VERSION_MAJOR",
-          "0"
-        ],
-        [
-          "CARGO_PKG_VERSION_MINOR",
-          "38"
-        ],
-        [
-          "CARGO_PKG_VERSION_PATCH",
-          "1"
-        ],
-        [
-          "CARGO_PKG_VERSION_PRE",
-          ""
-        ]
+      "edition": "2021",
+      "features": [
+        "bundled",
+        "bundled_bindings",
+        "cc",
+        "default",
+        "min_sqlite_version_3_34_1",
+        "pkg-config",
+        "vcpkg"
       ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The rusqlite developers",
+        "CARGO_PKG_DESCRIPTION": "Native bindings to the libsqlite3 library",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rusqlite/rusqlite"
+      },
       "targets": [
-        {
-          "name": "libsqlite3-sys-0.38.1",
-          "crate_name": "libsqlite3_sys",
-          "crate_root": "libsqlite3-sys-0.38.1.crate/src/lib.rs",
-          "edition": "2021",
-          "features": [
-            "bundled",
-            "bundled_bindings",
-            "cc",
-            "default",
-            "min_sqlite_version_3_34_1",
-            "pkg-config",
-            "vcpkg"
-          ],
-          "named_deps": [],
-          "proc_macro": false,
-          "buildscript": "libsqlite3-sys-0.38.1-build-script-run"
-        }
+        {}
       ],
       "buildscript": {
-        "name": "libsqlite3-sys-0.38.1-build-script-build",
-        "run_name": "libsqlite3-sys-0.38.1-build-script-run",
-        "crate_root": "libsqlite3-sys-0.38.1.crate/build.rs",
-        "edition": "2021",
-        "features": [
-          "bundled",
-          "bundled_bindings",
-          "cc",
-          "default",
-          "min_sqlite_version_3_34_1",
-          "pkg-config",
-          "vcpkg"
-        ],
-        "named_deps": [
-          [
-            "cc",
-            ":cc-1.3.0"
-          ],
-          [
-            "pkg_config",
-            ":pkg-config-0.3.33"
-          ],
-          [
-            "vcpkg",
-            ":vcpkg-0.2.15"
-          ]
-        ]
+        "named_deps": {
+          "cc": ":cc-1.3.0",
+          "pkg_config": ":pkg-config-0.3.33",
+          "vcpkg": ":vcpkg-0.2.15"
+        }
       }
     },
     {
-      "id": "registry+https://github.com/rust-lang/crates.io-index#pkg-config@0.3.33",
       "name": "pkg-config",
       "version": "0.3.33",
-      "archive": "pkg-config-0.3.33.crate",
-      "archive_prefix": "pkg-config-0.3.33",
-      "archive_label": ":pkg-config-0.3.33.crate",
       "checksum": "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e",
-      "url": "https://crates.io/api/v1/crates/pkg-config/0.3.33/download",
-      "env": [
-        [
-          "CARGO_PKG_AUTHORS",
-          "Alex Crichton <alex@alexcrichton.com>"
-        ],
-        [
-          "CARGO_PKG_DESCRIPTION",
-          "A library to run the pkg-config system tool at build time in order to be used in\nCargo build scripts.\n"
-        ],
-        [
-          "CARGO_PKG_HOMEPAGE",
-          ""
-        ],
-        [
-          "CARGO_PKG_LICENSE",
-          "MIT OR Apache-2.0"
-        ],
-        [
-          "CARGO_PKG_LICENSE_FILE",
-          ""
-        ],
-        [
-          "CARGO_PKG_NAME",
-          "pkg-config"
-        ],
-        [
-          "CARGO_PKG_README",
-          ""
-        ],
-        [
-          "CARGO_PKG_REPOSITORY",
-          "https://github.com/rust-lang/pkg-config-rs"
-        ],
-        [
-          "CARGO_PKG_RUST_VERSION",
-          ""
-        ],
-        [
-          "CARGO_PKG_VERSION",
-          "0.3.33"
-        ],
-        [
-          "CARGO_PKG_VERSION_MAJOR",
-          "0"
-        ],
-        [
-          "CARGO_PKG_VERSION_MINOR",
-          "3"
-        ],
-        [
-          "CARGO_PKG_VERSION_PATCH",
-          "33"
-        ],
-        [
-          "CARGO_PKG_VERSION_PRE",
-          ""
-        ]
-      ],
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Alex Crichton <alex@alexcrichton.com>",
+        "CARGO_PKG_DESCRIPTION": "A library to run the pkg-config system tool at build time in order to be used in\nCargo build scripts.\n",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/pkg-config-rs"
+      },
       "targets": [
-        {
-          "name": "pkg-config-0.3.33",
-          "crate_name": "pkg_config",
-          "crate_root": "pkg-config-0.3.33.crate/src/lib.rs",
-          "edition": "2018",
-          "features": [],
-          "named_deps": [],
-          "proc_macro": false,
-          "buildscript": null
-        }
-      ],
-      "buildscript": null
+        {}
+      ]
     },
     {
-      "id": "registry+https://github.com/rust-lang/crates.io-index#rusqlite@0.40.1",
       "name": "rusqlite",
       "version": "0.40.1",
-      "archive": "rusqlite-0.40.1.crate",
-      "archive_prefix": "rusqlite-0.40.1",
-      "archive_label": ":rusqlite-0.40.1.crate",
       "checksum": "11438310b19e3109b6446c33d1ed5e889428cf2e278407bc7896bc4aaea43323",
-      "url": "https://crates.io/api/v1/crates/rusqlite/0.40.1/download",
-      "env": [
-        [
-          "CARGO_PKG_AUTHORS",
-          "The rusqlite developers"
-        ],
-        [
-          "CARGO_PKG_DESCRIPTION",
-          "Ergonomic wrapper for SQLite"
-        ],
-        [
-          "CARGO_PKG_HOMEPAGE",
-          ""
-        ],
-        [
-          "CARGO_PKG_LICENSE",
-          "MIT"
-        ],
-        [
-          "CARGO_PKG_LICENSE_FILE",
-          ""
-        ],
-        [
-          "CARGO_PKG_NAME",
-          "rusqlite"
-        ],
-        [
-          "CARGO_PKG_README",
-          ""
-        ],
-        [
-          "CARGO_PKG_REPOSITORY",
-          "https://github.com/rusqlite/rusqlite"
-        ],
-        [
-          "CARGO_PKG_RUST_VERSION",
-          ""
-        ],
-        [
-          "CARGO_PKG_VERSION",
-          "0.40.1"
-        ],
-        [
-          "CARGO_PKG_VERSION_MAJOR",
-          "0"
-        ],
-        [
-          "CARGO_PKG_VERSION_MINOR",
-          "40"
-        ],
-        [
-          "CARGO_PKG_VERSION_PATCH",
-          "1"
-        ],
-        [
-          "CARGO_PKG_VERSION_PRE",
-          ""
-        ]
+      "edition": "2021",
+      "features": [
+        "bundled",
+        "cache",
+        "default",
+        "ffi-sqlite-wasm-rs",
+        "hashlink",
+        "modern_sqlite"
       ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The rusqlite developers",
+        "CARGO_PKG_DESCRIPTION": "Ergonomic wrapper for SQLite",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rusqlite/rusqlite"
+      },
       "targets": [
         {
-          "name": "rusqlite-0.40.1",
-          "crate_name": "rusqlite",
-          "crate_root": "rusqlite-0.40.1.crate/src/lib.rs",
-          "edition": "2021",
-          "features": [
-            "bundled",
-            "cache",
-            "default",
-            "ffi-sqlite-wasm-rs",
-            "hashlink",
-            "modern_sqlite"
-          ],
-          "named_deps": [
-            [
-              "bitflags",
-              ":bitflags-2.13.1"
-            ],
-            [
-              "fallible_iterator",
-              ":fallible-iterator-0.3.0"
-            ],
-            [
-              "fallible_streaming_iterator",
-              ":fallible-streaming-iterator-0.1.9"
-            ],
-            [
-              "hashlink",
-              ":hashlink-0.12.1"
-            ],
-            [
-              "libsqlite3_sys",
-              ":libsqlite3-sys-0.38.1"
-            ],
-            [
-              "smallvec",
-              ":smallvec-1.15.2"
-            ]
-          ],
-          "proc_macro": false,
-          "buildscript": null
+          "named_deps": {
+            "bitflags": ":bitflags-2.13.1",
+            "fallible_iterator": ":fallible-iterator-0.3.0",
+            "fallible_streaming_iterator": ":fallible-streaming-iterator-0.1.9",
+            "hashlink": ":hashlink-0.12.1",
+            "libsqlite3_sys": ":libsqlite3-sys-0.38.1",
+            "smallvec": ":smallvec-1.15.2"
+          }
         }
-      ],
-      "buildscript": null
+      ]
     },
     {
-      "id": "registry+https://github.com/rust-lang/crates.io-index#shlex@2.0.1",
       "name": "shlex",
       "version": "2.0.1",
-      "archive": "shlex-2.0.1.crate",
-      "archive_prefix": "shlex-2.0.1",
-      "archive_label": ":shlex-2.0.1.crate",
       "checksum": "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba",
-      "url": "https://crates.io/api/v1/crates/shlex/2.0.1/download",
-      "env": [
-        [
-          "CARGO_PKG_AUTHORS",
-          "comex <comexk@gmail.com>:Fenhl <fenhl@fenhl.net>:Adrian Taylor <adetaylor@chromium.org>:Alex Touchet <alextouchet@outlook.com>:Daniel Parks <dp+git@oxidized.org>:Garrett Berg <googberg@gmail.com>"
-        ],
-        [
-          "CARGO_PKG_DESCRIPTION",
-          "Split a string into shell words, like Python's shlex."
-        ],
-        [
-          "CARGO_PKG_HOMEPAGE",
-          ""
-        ],
-        [
-          "CARGO_PKG_LICENSE",
-          "MIT OR Apache-2.0"
-        ],
-        [
-          "CARGO_PKG_LICENSE_FILE",
-          ""
-        ],
-        [
-          "CARGO_PKG_NAME",
-          "shlex"
-        ],
-        [
-          "CARGO_PKG_README",
-          ""
-        ],
-        [
-          "CARGO_PKG_REPOSITORY",
-          "https://github.com/comex/rust-shlex"
-        ],
-        [
-          "CARGO_PKG_RUST_VERSION",
-          ""
-        ],
-        [
-          "CARGO_PKG_VERSION",
-          "2.0.1"
-        ],
-        [
-          "CARGO_PKG_VERSION_MAJOR",
-          "2"
-        ],
-        [
-          "CARGO_PKG_VERSION_MINOR",
-          "0"
-        ],
-        [
-          "CARGO_PKG_VERSION_PATCH",
-          "1"
-        ],
-        [
-          "CARGO_PKG_VERSION_PRE",
-          ""
-        ]
+      "edition": "2018",
+      "features": [
+        "default",
+        "std"
       ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "comex <comexk@gmail.com>:Fenhl <fenhl@fenhl.net>:Adrian Taylor <adetaylor@chromium.org>:Alex Touchet <alextouchet@outlook.com>:Daniel Parks <dp+git@oxidized.org>:Garrett Berg <googberg@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Split a string into shell words, like Python's shlex.",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/comex/rust-shlex"
+      },
       "targets": [
-        {
-          "name": "shlex-2.0.1",
-          "crate_name": "shlex",
-          "crate_root": "shlex-2.0.1.crate/src/lib.rs",
-          "edition": "2018",
-          "features": [
-            "default",
-            "std"
-          ],
-          "named_deps": [],
-          "proc_macro": false,
-          "buildscript": null
-        }
-      ],
-      "buildscript": null
+        {}
+      ]
     },
     {
-      "id": "registry+https://github.com/rust-lang/crates.io-index#smallvec@1.15.2",
       "name": "smallvec",
       "version": "1.15.2",
-      "archive": "smallvec-1.15.2.crate",
-      "archive_prefix": "smallvec-1.15.2",
-      "archive_label": ":smallvec-1.15.2.crate",
       "checksum": "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90",
-      "url": "https://crates.io/api/v1/crates/smallvec/1.15.2/download",
-      "env": [
-        [
-          "CARGO_PKG_AUTHORS",
-          "The Servo Project Developers"
-        ],
-        [
-          "CARGO_PKG_DESCRIPTION",
-          "'Small vector' optimization: store up to a small number of items on the stack"
-        ],
-        [
-          "CARGO_PKG_HOMEPAGE",
-          ""
-        ],
-        [
-          "CARGO_PKG_LICENSE",
-          "MIT OR Apache-2.0"
-        ],
-        [
-          "CARGO_PKG_LICENSE_FILE",
-          ""
-        ],
-        [
-          "CARGO_PKG_NAME",
-          "smallvec"
-        ],
-        [
-          "CARGO_PKG_README",
-          ""
-        ],
-        [
-          "CARGO_PKG_REPOSITORY",
-          "https://github.com/servo/rust-smallvec"
-        ],
-        [
-          "CARGO_PKG_RUST_VERSION",
-          ""
-        ],
-        [
-          "CARGO_PKG_VERSION",
-          "1.15.2"
-        ],
-        [
-          "CARGO_PKG_VERSION_MAJOR",
-          "1"
-        ],
-        [
-          "CARGO_PKG_VERSION_MINOR",
-          "15"
-        ],
-        [
-          "CARGO_PKG_VERSION_PATCH",
-          "2"
-        ],
-        [
-          "CARGO_PKG_VERSION_PRE",
-          ""
-        ]
-      ],
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Servo Project Developers",
+        "CARGO_PKG_DESCRIPTION": "'Small vector' optimization: store up to a small number of items on the stack",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/servo/rust-smallvec"
+      },
       "targets": [
-        {
-          "name": "smallvec-1.15.2",
-          "crate_name": "smallvec",
-          "crate_root": "smallvec-1.15.2.crate/src/lib.rs",
-          "edition": "2018",
-          "features": [],
-          "named_deps": [],
-          "proc_macro": false,
-          "buildscript": null
-        }
-      ],
-      "buildscript": null
+        {}
+      ]
     },
     {
-      "id": "registry+https://github.com/rust-lang/crates.io-index#vcpkg@0.2.15",
       "name": "vcpkg",
       "version": "0.2.15",
-      "archive": "vcpkg-0.2.15.crate",
-      "archive_prefix": "vcpkg-0.2.15",
-      "archive_label": ":vcpkg-0.2.15.crate",
       "checksum": "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426",
-      "url": "https://crates.io/api/v1/crates/vcpkg/0.2.15/download",
-      "env": [
-        [
-          "CARGO_PKG_AUTHORS",
-          "Jim McGrath <jimmc2@gmail.com>"
-        ],
-        [
-          "CARGO_PKG_DESCRIPTION",
-          "A library to find native dependencies in a vcpkg tree at build\ntime in order to be used in Cargo build scripts.\n"
-        ],
-        [
-          "CARGO_PKG_HOMEPAGE",
-          ""
-        ],
-        [
-          "CARGO_PKG_LICENSE",
-          "MIT/Apache-2.0"
-        ],
-        [
-          "CARGO_PKG_LICENSE_FILE",
-          ""
-        ],
-        [
-          "CARGO_PKG_NAME",
-          "vcpkg"
-        ],
-        [
-          "CARGO_PKG_README",
-          ""
-        ],
-        [
-          "CARGO_PKG_REPOSITORY",
-          "https://github.com/mcgoo/vcpkg-rs"
-        ],
-        [
-          "CARGO_PKG_RUST_VERSION",
-          ""
-        ],
-        [
-          "CARGO_PKG_VERSION",
-          "0.2.15"
-        ],
-        [
-          "CARGO_PKG_VERSION_MAJOR",
-          "0"
-        ],
-        [
-          "CARGO_PKG_VERSION_MINOR",
-          "2"
-        ],
-        [
-          "CARGO_PKG_VERSION_PATCH",
-          "15"
-        ],
-        [
-          "CARGO_PKG_VERSION_PRE",
-          ""
-        ]
-      ],
+      "edition": "2015",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Jim McGrath <jimmc2@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "A library to find native dependencies in a vcpkg tree at build\ntime in order to be used in Cargo build scripts.\n",
+        "CARGO_PKG_LICENSE": "MIT/Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/mcgoo/vcpkg-rs"
+      },
       "targets": [
-        {
-          "name": "vcpkg-0.2.15",
-          "crate_name": "vcpkg",
-          "crate_root": "vcpkg-0.2.15.crate/src/lib.rs",
-          "edition": "2015",
-          "features": [],
-          "named_deps": [],
-          "proc_macro": false,
-          "buildscript": null
-        }
-      ],
-      "buildscript": null
+        {}
+      ]
     }
   ],
   "roots": [
