@@ -13,6 +13,8 @@
 
 mod projection;
 mod trusted;
+mod weakening;
 
 pub use projection::{Arity, Proj};
 pub use trusted::{TrustedDeref, TrustedListIndex};
+pub use weakening::{Weakening, is_permutation, valid_weakening, weaken};
