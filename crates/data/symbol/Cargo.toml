@@ -1,0 +1,11 @@
+[package]
+name = "covalence-data-symbol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Semantic symbols for Nucleus data APIs"
+publish = false
+
+[lints]
+workspace = true

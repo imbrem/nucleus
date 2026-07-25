@@ -83,6 +83,10 @@ name = "covalence-data-basic"
 version = "0.0.0"
 
 [[package]]
+name = "covalence-data-symbol"
+version = "0.0.0"
+
+[[package]]
 name = "covalence-lib-error"
 version = "0.0.0"
 dependencies = [

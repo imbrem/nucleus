@@ -32,6 +32,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-data-symbol@0.0.0",
+      "name": "covalence-data-symbol",
+      "version": "0.0.0",
+      "path": "crates/data/symbol",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_data_symbol",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-lib-error@0.0.0",
       "name": "covalence-lib-error",
       "version": "0.0.0",
