@@ -1,0 +1,148 @@
+{
+  "generatedBy": "glu 0.0.0",
+  "crates": [
+    {
+      "id": "workspace#covalence-bin-nucleus@0.0.0",
+      "name": "covalence-bin-nucleus",
+      "version": "0.0.0",
+      "path": "crates/bin/nucleus",
+      "category": "product",
+      "targets": [
+        {
+          "name": "nucleus",
+          "kinds": [
+            "bin"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-data-basic@0.0.0",
+      "name": "covalence-data-basic",
+      "version": "0.0.0",
+      "path": "crates/data/basic",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_data_basic",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-lib-hash@0.0.0",
+      "name": "covalence-lib-hash",
+      "version": "0.0.0",
+      "path": "crates/lib/hash",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_lib_hash",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-lib-rand@0.0.0",
+      "name": "covalence-lib-rand",
+      "version": "0.0.0",
+      "path": "crates/lib/rand",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_lib_rand",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-lib-sqlite@0.0.0",
+      "name": "covalence-lib-sqlite",
+      "version": "0.0.0",
+      "path": "crates/lib/sqlite",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_lib_sqlite",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-neutron@0.0.0",
+      "name": "covalence-neutron",
+      "version": "0.0.0",
+      "path": "crates/neutron",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_neutron",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-nucleus@0.0.0",
+      "name": "covalence-nucleus",
+      "version": "0.0.0",
+      "path": "crates/nucleus",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_nucleus",
+          "kinds": [
+            "cdylib",
+            "rlib"
+          ]
+        },
+        {
+          "name": "sqlite",
+          "kinds": [
+            "test"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-proton@0.0.0",
+      "name": "covalence-proton",
+      "version": "0.0.0",
+      "path": "crates/proton",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_proton",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "source": "workspace#covalence-bin-nucleus@0.0.0",
+      "target": "workspace#covalence-nucleus@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus@0.0.0",
+      "target": "workspace#covalence-lib-sqlite@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    }
+  ]
+}

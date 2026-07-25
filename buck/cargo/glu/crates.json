@@ -1,0 +1,21 @@
+{
+  "generatedBy": "glu 0.0.0",
+  "crates": [
+    {
+      "id": "workspace#glu@0.0.0",
+      "name": "glu",
+      "version": "0.0.0",
+      "path": "tools/glu",
+      "category": "tool",
+      "targets": [
+        {
+          "name": "glu",
+          "kinds": [
+            "bin"
+          ]
+        }
+      ]
+    }
+  ],
+  "edges": []
+}

@@ -34,33 +34,12 @@ _REPOSITORY_SOURCES = glob([
 ])
 
 genrule(
-    name = "cargo-graph",
-    srcs = with_environment({
-        "Cargo.lock": "Cargo.lock",
-        "Cargo.toml": "Cargo.toml",
-        "bin-nucleus": "//crates/bin/nucleus:package_files",
-        "data-basic": "//crates/data/basic:package_files",
-        "glu": "//tools/glu:package_files",
-        "lib-hash": "//crates/lib/hash:package_files",
-        "lib-rand": "//crates/lib/rand:package_files",
-        "lib-sqlite": "//crates/lib/sqlite:package_files",
-        "neutron": "//crates/neutron:package_files",
-        "nucleus": "//crates/nucleus:package_files",
-        "proton": "//crates/proton:package_files",
-    }),
-    out = "cargo-graph.json",
-    cmd = "$(exe //tools/glu:glu) artifact cargo-graph --out $OUT",
-    labels = ["uses_undeclared_inputs"],
-)
-
-genrule(
     name = "loc",
     srcs = with_environment(
         _DOCS_SOURCES +
         _NUCLEUS_PACKAGE_SOURCES +
         _REPOSITORY_SOURCES +
         [
-            ":cargo-graph",
             ":rustdoc",
             ":wasm",
             "//tools/glu:glu",
@@ -140,10 +119,13 @@ genrule(
 
 genrule(
     name = "docs",
-    srcs = with_environment(
+    srcs = named_sources(
+        {
+            "production-crates": "//buck/cargo/production:crates-json",
+            "production-dependencies": "//buck/cargo/production:dependencies-json",
+        },
         _DOCS_SOURCES +
         [
-            ":cargo-graph",
             ":loc",
             ":rustdoc",
             "package.json",
@@ -152,7 +134,7 @@ genrule(
         ],
     ),
     out = "docs",
-    cmd = "mkdir -p $OUT && BASE_PATH='{}' BUILD_COMMIT='{}' BUILD_DIRTY='{}' $(exe //tools/glu:glu) artifact docs --graph $(location :cargo-graph) --loc $(location :loc) --rustdoc $(location :rustdoc) --out $OUT".format(
+    cmd = "mkdir -p $OUT && BASE_PATH='{}' BUILD_COMMIT='{}' BUILD_DIRTY='{}' $(exe //tools/glu:glu) artifact docs --production-crates $(location //buck/cargo/production:crates-json) --production-dependencies $(location //buck/cargo/production:dependencies-json) --loc $(location :loc) --rustdoc $(location :rustdoc) --out $OUT".format(
         _DOCS_BASE_PATH,
         _DOCS_COMMIT,
         _DOCS_DIRTY,

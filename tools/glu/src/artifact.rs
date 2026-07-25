@@ -14,15 +14,11 @@ use std::{
 use color_eyre::eyre::{Result, WrapErr, bail};
 
 use crate::{
-    cargo, loc,
+    loc,
     runner::{Runner, copy_dir},
 };
 
 impl Runner {
-    pub(crate) fn artifact_cargo_graph(&self, out: &Path) -> Result<()> {
-        cargo::write_graph_to(self.root(), &absolute(out)?)
-    }
-
     pub(crate) fn artifact_loc(&self, out: &Path) -> Result<()> {
         loc::write_to(self.root(), &absolute(out)?, self.verbose() > 0)
     }
@@ -116,12 +112,15 @@ impl Runner {
 
     pub(crate) fn artifact_docs(
         &self,
-        graph: &Path,
+        metadata: [(&Path, &str); 2],
         loc: &Path,
         rustdoc: &Path,
         out: &Path,
     ) -> Result<()> {
-        let graph = absolute(graph)?;
+        let metadata = metadata
+            .map(|(path, name)| absolute(path).map(|path| (path, name)))
+            .into_iter()
+            .collect::<Result<Vec<_>>>()?;
         let loc = absolute(loc)?;
         let rustdoc = absolute(rustdoc)?;
         let out = absolute(out)?;
@@ -141,8 +140,10 @@ impl Runner {
         }
         fs::create_dir_all(out.join("generated"))
             .wrap_err("could not create generated documentation directory")?;
-        fs::copy(graph, out.join("generated/cargo-graph.json"))
-            .wrap_err("could not publish Cargo dependency graph")?;
+        for (source, name) in metadata {
+            fs::copy(source, out.join("generated").join(name))
+                .wrap_err_with(|| format!("could not publish {name}"))?;
+        }
         fs::copy(loc, out.join("generated/loc.json")).wrap_err("could not publish line counts")?;
         copy_dir(&rustdoc, &out.join("api"))
     }
