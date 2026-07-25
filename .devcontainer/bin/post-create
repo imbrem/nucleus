@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+sudo chown -R vscode:vscode \
+  node_modules \
+  apps/docs/node_modules \
+  packages/nucleus/node_modules \
+  .pnpm-store \
+  buck-out \
+  .direnv \
+  target \
+  tools/glu/target
+
+chmod +x .devcontainer/bin/glu
+
+if [[ "${NUCLEUS_GITHUB_ACTIONS:-}" == "true" ]]; then
+  # GitHub-hosted runners have limited memory and disk. Keep the nested Nix
+  # daemon's peak resource usage low while allowing individual builds to use
+  # both runner cores.
+  export NIX_CONFIG="${NIX_CONFIG:-}
+max-jobs = 1
+cores = 2"
+fi
+
+CI=true nix develop "path:$PWD" --command pnpm install --frozen-lockfile
+glu doctor
