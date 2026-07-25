@@ -1,10 +1,12 @@
 [workspace]
 members = [
+  "crates/lib/bigint",
   "crates/lib/error",
   "crates/lib/hash",
   "crates/lib/rand",
   "crates/lib/sqlite",
   "crates/data/basic",
+  "crates/data/num",
   "crates/proton",
   "crates/neutron",
   "crates/nucleus",

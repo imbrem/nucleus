@@ -32,6 +32,36 @@
       ]
     },
     {
+      "id": "workspace#covalence-data-num@0.0.0",
+      "name": "covalence-data-num",
+      "version": "0.0.0",
+      "path": "crates/data/num",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_data_num",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-lib-bigint@0.0.0",
+      "name": "covalence-lib-bigint",
+      "version": "0.0.0",
+      "path": "crates/lib/bigint",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_lib_bigint",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-lib-error@0.0.0",
       "name": "covalence-lib-error",
       "version": "0.0.0",
@@ -148,6 +178,13 @@
     {
       "source": "workspace#covalence-bin-nucleus@0.0.0",
       "target": "workspace#covalence-nucleus@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-num@0.0.0",
+      "target": "workspace#covalence-lib-bigint@0.0.0",
       "kinds": [
         "normal"
       ]
