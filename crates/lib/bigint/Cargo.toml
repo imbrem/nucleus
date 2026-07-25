@@ -1,0 +1,14 @@
+[package]
+name = "covalence-lib-bigint"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Arbitrary-precision integer implementation boundary for Nucleus"
+publish = false
+
+[dependencies]
+num-bigint = "0.4"
+
+[lints]
+workspace = true
