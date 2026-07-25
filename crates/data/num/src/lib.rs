@@ -10,6 +10,10 @@ use std::ops::{Add, Mul, Neg, Sub};
 
 use covalence_lib_bigint::{BigInt, BigUint, Sign};
 
+mod decimal;
+
+pub use decimal::{Decimal, DecimalDivisionError, DecimalLimit, DecimalParseError, DecimalParts};
+
 /// Default maximum accepted canonical encoding size (one MiB).
 ///
 /// Callers handling untrusted input can select a smaller bound with
