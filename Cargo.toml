@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/lib/bigint",
   "crates/lib/error",
   "crates/lib/crypto",
   "crates/lib/hash",
@@ -11,6 +12,7 @@ members = [
   "crates/logic/lrat",
   "crates/logic/sat",
   "crates/data/basic",
+  "crates/data/num",
   "crates/data/cas",
   "crates/data/cas-http",
   "crates/data/container",

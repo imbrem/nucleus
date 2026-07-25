@@ -136,6 +136,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-data-num@0.0.0",
+      "name": "covalence-data-num",
+      "version": "0.0.0",
+      "path": "crates/data/num",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_data_num",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-ffi-python@0.0.0",
       "name": "covalence-ffi-python",
       "version": "0.0.0",
@@ -147,6 +162,21 @@
           "kinds": [
             "cdylib",
             "rlib"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-lib-bigint@0.0.0",
+      "name": "covalence-lib-bigint",
+      "version": "0.0.0",
+      "path": "crates/lib/bigint",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_lib_bigint",
+          "kinds": [
+            "lib"
           ]
         }
       ]
@@ -483,6 +513,13 @@
     {
       "source": "workspace#covalence-data-cas@0.0.0",
       "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-num@0.0.0",
+      "target": "workspace#covalence-lib-bigint@0.0.0",
       "kinds": [
         "normal"
       ]

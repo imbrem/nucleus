@@ -50,6 +50,22 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#autocfg@1.5.1",
+      "name": "autocfg",
+      "version": "1.5.1",
+      "checksum": "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53",
+      "edition": "2015",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Josh Stone <cuviper@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Automatic cfg for Rust compiler features",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/cuviper/autocfg"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#axum@0.8.9",
       "name": "axum",
       "version": "0.8.9",
@@ -1336,6 +1352,27 @@
       "buildscript": {}
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#libm@0.2.16",
+      "name": "libm",
+      "version": "0.2.16",
+      "checksum": "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981",
+      "edition": "2021",
+      "features": [
+        "arch",
+        "default"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Alex Crichton <alex@alexcrichton.com>:Amanieu d'Antras <amanieu@gmail.com>:Jorge Aparicio <japaricious@gmail.com>:Trevor Gross <tg@trevorgross.com>",
+        "CARGO_PKG_DESCRIPTION": "libm in pure Rust",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/compiler-builtins"
+      },
+      "targets": [
+        {}
+      ],
+      "buildscript": {}
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#libsqlite3-sys@0.38.1",
       "name": "libsqlite3-sys",
       "version": "0.38.1",
@@ -1586,6 +1623,88 @@
           }
         }
       ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#num-bigint@0.4.8",
+      "name": "num-bigint",
+      "version": "0.4.8",
+      "checksum": "c89e69e7e0f03bea5ef08013795c25018e101932225a656383bd384495ecc367",
+      "edition": "2021",
+      "features": [
+        "default",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Rust Project Developers",
+        "CARGO_PKG_DESCRIPTION": "Big integer implementation for Rust",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/rust-num/num-bigint",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-num/num-bigint"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "num_integer": ":num-integer-0.1.47",
+            "num_traits": ":num-traits-0.2.19"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#num-integer@0.1.47",
+      "name": "num-integer",
+      "version": "0.1.47",
+      "checksum": "7ce2d95d4b3734dc35aa2f45e1aa22cd416814592a4f9d9205e11affd5b8e10b",
+      "edition": "2018",
+      "features": [
+        "i128",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Rust Project Developers",
+        "CARGO_PKG_DESCRIPTION": "Integer traits and functions",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/rust-num/num-integer",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-num/num-integer"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "num_traits": ":num-traits-0.2.19"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19",
+      "name": "num-traits",
+      "version": "0.2.19",
+      "checksum": "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841",
+      "edition": "2021",
+      "features": [
+        "i128",
+        "libm",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Rust Project Developers",
+        "CARGO_PKG_DESCRIPTION": "Numeric traits for generic mathematics",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/rust-num/num-traits",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-num/num-traits"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "libm": ":libm-0.2.16"
+          }
+        }
+      ],
+      "buildscript": {
+        "named_deps": {
+          "autocfg": ":autocfg-1.5.1"
+        }
+      }
     },
     {
       "id": "registry+https://github.com/rust-lang/crates.io-index#once_cell@1.21.4",
@@ -3131,6 +3250,14 @@
       ]
     },
     {
+      "id": "workspace#covalence-lib-bigint@0.0.0",
+      "name": "covalence-lib-bigint",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#num-bigint@0.4.8"
+      ]
+    },
+    {
       "id": "workspace#covalence-lib-crypto@0.0.0",
       "name": "covalence-lib-crypto",
       "category": "tcb",
@@ -4365,6 +4492,41 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#multihash@0.19.5",
       "target": "registry+https://github.com/rust-lang/crates.io-index#unsigned-varint@0.8.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#num-bigint@0.4.8",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#num-integer@0.1.47",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#num-bigint@0.4.8",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#num-integer@0.1.47",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#autocfg@1.5.1",
+      "kinds": [
+        "build"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#libm@0.2.16",
       "kinds": [
         "normal"
       ]
