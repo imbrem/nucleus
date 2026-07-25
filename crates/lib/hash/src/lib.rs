@@ -6,10 +6,21 @@
 //! without changing the value representation.
 
 use std::fmt;
+use std::hash::{Hash, Hasher};
+use std::marker::PhantomData;
 use std::str::FromStr;
 
 use covalence_lib_error::snafu;
 use snafu::Snafu;
+
+mod blake3;
+mod git;
+
+pub use blake3::Blake3;
+pub use git::{GitHash, GitObject, Sha1};
+
+#[cfg(feature = "git-sha1")]
+pub use git::{git_blob_sha1, git_object_sha1, git_raw_sha1};
 
 /// An error returned when decoding a fixed-width hexadecimal value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Snafu)]
@@ -75,106 +86,169 @@ impl fmt::Display for Hex<'_> {
     }
 }
 
-macro_rules! fixed_value {
-    ($name:ident, $width:literal, $description:literal) => {
-        #[doc = $description]
-        #[repr(transparent)]
-        #[derive(Clone, Copy, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
-        pub struct $name([u8; $width]);
+/// A compile-time namespace for fixed-width names.
+///
+/// Implementing this trait for one width fixes the valid representation width
+/// for that namespace. A later hashing trait can build on this marker without
+/// coupling byte names to hashing state or runtime configuration.
+pub trait Namespace<const BYTES: usize> {}
 
-        impl $name {
-            /// Constructs a value from its exact byte representation.
-            #[must_use]
-            pub const fn from_bytes(bytes: [u8; $width]) -> Self {
-                Self(bytes)
-            }
+/// No namespace claim is attached to the bytes.
+pub enum Opaque {}
 
-            /// Borrows the exact byte representation.
-            #[must_use]
-            pub const fn as_bytes(&self) -> &[u8; $width] {
-                &self.0
-            }
+impl<const BYTES: usize> Namespace<BYTES> for Opaque {}
 
-            /// Returns the exact byte representation.
-            #[must_use]
-            pub const fn into_bytes(self) -> [u8; $width] {
-                self.0
-            }
+/// Bytes produced by SHA-256 hashing.
+pub enum Sha256 {}
 
-            /// Decodes an exact-width hexadecimal representation.
-            ///
-            /// Both lowercase and uppercase digits are accepted. Prefixes,
-            /// whitespace, separators, and variable-width input are rejected.
-            ///
-            /// # Errors
-            ///
-            /// Returns an error when the input has the wrong width or contains
-            /// a non-hexadecimal digit.
-            pub fn from_hex(input: &str) -> Result<Self, ParseHexError> {
-                parse_hex(input).map(Self)
-            }
+impl Namespace<32> for Sha256 {}
 
-            /// Returns a zero-allocation lowercase hexadecimal view.
-            #[must_use]
-            pub const fn hex(&self) -> Hex<'_> {
-                Hex(&self.0)
-            }
-        }
+/// Bytes filled by a caller-provided cryptographic random number generator.
+pub enum Random {}
 
-        impl fmt::Display for $name {
-            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                self.hex().fmt(formatter)
-            }
-        }
+impl Namespace<32> for Random {}
 
-        impl fmt::Debug for $name {
-            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                write!(formatter, "{}({self})", stringify!($name))
-            }
-        }
-
-        impl FromStr for $name {
-            type Err = ParseHexError;
-
-            fn from_str(input: &str) -> Result<Self, Self::Err> {
-                Self::from_hex(input)
-            }
-        }
-
-        impl From<[u8; $width]> for $name {
-            fn from(bytes: [u8; $width]) -> Self {
-                Self::from_bytes(bytes)
-            }
-        }
-
-        impl From<$name> for [u8; $width] {
-            fn from(value: $name) -> Self {
-                value.into_bytes()
-            }
-        }
-    };
+/// An owned fixed-width byte name in a compile-time namespace.
+///
+/// `BYTES` counts bytes, not bits. `Space` occupies no storage and is only a
+/// type-safety aid: [`Obj::from_bytes`], [`Obj::from_hex`], and [`Obj::coerce`]
+/// can attach any compatible namespace without validating how the bytes were
+/// produced.
+///
+/// The function-pointer form of [`PhantomData`] makes the namespace non-owning.
+#[repr(transparent)]
+pub struct Obj<const BYTES: usize, Space: Namespace<BYTES> = Opaque> {
+    bytes: [u8; BYTES],
+    space: PhantomData<fn() -> Space>,
 }
 
-fixed_value!(O256, 32, "An opaque owned 256-bit value.");
-fixed_value!(GitHash, 20, "A traditional 160-bit Git SHA-1 object name.");
+/// An opaque owned 256-bit value.
+pub type O256 = Obj<32, Opaque>;
 
-#[cfg(feature = "blake3")]
-impl O256 {
-    /// Computes the BLAKE3 digest of `bytes`.
+impl<const BYTES: usize, Space: Namespace<BYTES>> Obj<BYTES, Space> {
+    /// Constructs a namespaced value from its exact bytes without validation.
     #[must_use]
-    pub fn blake3(bytes: impl AsRef<[u8]>) -> Self {
-        Self::from_bytes(*::blake3::hash(bytes.as_ref()).as_bytes())
+    pub const fn from_bytes(bytes: [u8; BYTES]) -> Self {
+        Self {
+            bytes,
+            space: PhantomData,
+        }
     }
 
-    /// Computes the BLAKE3 digest of bytes read from `reader`.
+    /// Borrows the exact byte representation.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; BYTES] {
+        &self.bytes
+    }
+
+    /// Returns the exact byte representation.
+    #[must_use]
+    pub const fn into_bytes(self) -> [u8; BYTES] {
+        self.bytes
+    }
+
+    /// Changes the compile-time provenance claim without changing the bytes.
+    #[must_use]
+    pub const fn coerce<NewSpace: Namespace<BYTES>>(self) -> Obj<BYTES, NewSpace> {
+        Obj::from_bytes(self.bytes)
+    }
+
+    /// Erases the compile-time namespace claim without changing the bytes.
+    #[must_use]
+    pub const fn opaque(self) -> Obj<BYTES, Opaque> {
+        Obj::from_bytes(self.bytes)
+    }
+
+    /// Decodes an exact-width hexadecimal representation without validating
+    /// the namespace claim.
+    ///
+    /// Both lowercase and uppercase digits are accepted. Prefixes, whitespace,
+    /// separators, and variable-width input are rejected.
     ///
     /// # Errors
     ///
-    /// Returns an error if reading from `reader` fails.
-    pub fn blake3_from_reader(mut reader: impl std::io::Read) -> std::io::Result<Self> {
-        let mut hasher = ::blake3::Hasher::new();
-        std::io::copy(&mut reader, &mut hasher)?;
-        Ok(Self::from_bytes(*hasher.finalize().as_bytes()))
+    /// Returns an error when the input has the wrong width or contains a
+    /// non-hexadecimal digit.
+    pub fn from_hex(input: &str) -> Result<Self, ParseHexError> {
+        parse_hex(input).map(Self::from_bytes)
+    }
+
+    /// Returns a zero-allocation lowercase hexadecimal view.
+    #[must_use]
+    pub const fn hex(&self) -> Hex<'_> {
+        Hex(&self.bytes)
+    }
+}
+
+impl<const BYTES: usize, Space: Namespace<BYTES>> Copy for Obj<BYTES, Space> {}
+
+impl<const BYTES: usize, Space: Namespace<BYTES>> Clone for Obj<BYTES, Space> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<const BYTES: usize, Space: Namespace<BYTES>> Default for Obj<BYTES, Space> {
+    fn default() -> Self {
+        Self::from_bytes([0; BYTES])
+    }
+}
+
+impl<const BYTES: usize, Space: Namespace<BYTES>> PartialEq for Obj<BYTES, Space> {
+    fn eq(&self, other: &Self) -> bool {
+        self.bytes == other.bytes
+    }
+}
+
+impl<const BYTES: usize, Space: Namespace<BYTES>> Eq for Obj<BYTES, Space> {}
+
+impl<const BYTES: usize, Space: Namespace<BYTES>> PartialOrd for Obj<BYTES, Space> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<const BYTES: usize, Space: Namespace<BYTES>> Ord for Obj<BYTES, Space> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.bytes.cmp(&other.bytes)
+    }
+}
+
+impl<const BYTES: usize, Space: Namespace<BYTES>> Hash for Obj<BYTES, Space> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.bytes.hash(state);
+    }
+}
+
+impl<const BYTES: usize, Space: Namespace<BYTES>> fmt::Display for Obj<BYTES, Space> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.hex().fmt(formatter)
+    }
+}
+
+impl<const BYTES: usize, Space: Namespace<BYTES>> fmt::Debug for Obj<BYTES, Space> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "Obj<{BYTES}>({self})")
+    }
+}
+
+impl<const BYTES: usize, Space: Namespace<BYTES>> FromStr for Obj<BYTES, Space> {
+    type Err = ParseHexError;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        Self::from_hex(input)
+    }
+}
+
+impl<const BYTES: usize, Space: Namespace<BYTES>> From<[u8; BYTES]> for Obj<BYTES, Space> {
+    fn from(bytes: [u8; BYTES]) -> Self {
+        Self::from_bytes(bytes)
+    }
+}
+
+impl<const BYTES: usize, Space: Namespace<BYTES>> From<Obj<BYTES, Space>> for [u8; BYTES] {
+    fn from(value: Obj<BYTES, Space>) -> Self {
+        value.into_bytes()
     }
 }
 
@@ -182,9 +256,9 @@ impl O256 {
 impl O256 {
     /// Computes the SHA-256 digest of `bytes`.
     #[must_use]
-    pub fn sha256(bytes: impl AsRef<[u8]>) -> Self {
+    pub fn sha256(bytes: impl AsRef<[u8]>) -> Obj<32, Sha256> {
         use sha2::Digest;
-        Self::from_bytes(sha2::Sha256::digest(bytes.as_ref()).into())
+        O256::from_bytes(sha2::Sha256::digest(bytes.as_ref()).into()).coerce()
     }
 
     /// Computes the SHA-256 digest of bytes read from `reader`.
@@ -192,7 +266,7 @@ impl O256 {
     /// # Errors
     ///
     /// Returns an error if reading from `reader` fails.
-    pub fn sha256_from_reader(mut reader: impl std::io::Read) -> std::io::Result<Self> {
+    pub fn sha256_from_reader(mut reader: impl std::io::Read) -> std::io::Result<Obj<32, Sha256>> {
         use sha2::Digest;
 
         let mut hasher = sha2::Sha256::new();
@@ -204,39 +278,8 @@ impl O256 {
             }
             hasher.update(&buffer[..count]);
         }
-        Ok(Self::from_bytes(hasher.finalize().into()))
+        Ok(O256::from_bytes(hasher.finalize().into()).coerce())
     }
-}
-
-/// Computes the raw SHA-1 digest of `bytes`.
-#[cfg(feature = "git-sha1")]
-#[must_use]
-pub fn git_raw_sha1(bytes: impl AsRef<[u8]>) -> GitHash {
-    use sha1::Digest;
-    GitHash::from_bytes(sha1::Sha1::digest(bytes.as_ref()).into())
-}
-
-/// Computes a Git SHA-1 object name using `object_type` framing.
-#[cfg(feature = "git-sha1")]
-#[must_use]
-pub fn git_object_sha1(object_type: &str, bytes: impl AsRef<[u8]>) -> GitHash {
-    use sha1::Digest;
-
-    let bytes = bytes.as_ref();
-    let mut hasher = sha1::Sha1::new();
-    hasher.update(object_type.as_bytes());
-    hasher.update(b" ");
-    hasher.update(bytes.len().to_string().as_bytes());
-    hasher.update(b"\0");
-    hasher.update(bytes);
-    GitHash::from_bytes(hasher.finalize().into())
-}
-
-/// Computes a Git blob SHA-1 object name.
-#[cfg(feature = "git-sha1")]
-#[must_use]
-pub fn git_blob_sha1(bytes: impl AsRef<[u8]>) -> GitHash {
-    git_object_sha1("blob", bytes)
 }
 
 #[cfg(feature = "random")]
@@ -244,8 +287,8 @@ impl O256 {
     /// Constructs a random value using a caller-provided cryptographic RNG.
     pub fn random(
         rng: &mut (impl covalence_lib_rand::Rng + covalence_lib_rand::CryptoRng),
-    ) -> Self {
-        Self::from_bytes(rng.random())
+    ) -> Obj<32, Random> {
+        O256::from_bytes(rng.random()).coerce()
     }
 }
 
@@ -277,9 +320,9 @@ mod tests {
         let o256 = O256::from_bytes([0xab; 32]);
         let git = GitHash::from_bytes([0xcd; 20]);
         assert_eq!(o256.to_string(), "ab".repeat(32));
-        assert_eq!(format!("{o256:?}"), format!("O256({o256})"));
+        assert_eq!(format!("{o256:?}"), format!("Obj<32>({o256})"));
         assert_eq!(git.to_string(), "cd".repeat(20));
-        assert_eq!(format!("{git:?}"), format!("GitHash({git})"));
+        assert_eq!(format!("{git:?}"), format!("Obj<20>({git})"));
         assert_eq!(o256.hex().to_string(), "ab".repeat(32));
         assert_eq!(O256::from_hex(&"ab".repeat(32)), Ok(o256));
         assert_eq!("ab".repeat(32).parse(), Ok(o256));
@@ -342,6 +385,22 @@ mod tests {
         assert_eq!(GitHash::default().into_bytes(), [0; 20]);
     }
 
+    #[test]
+    fn namespaces_are_zero_sized_claims_and_can_be_changed_explicitly() {
+        enum ApplicationTag {}
+        impl Namespace<7> for ApplicationTag {}
+
+        let opaque = Obj::<7>::from_bytes([0xa5; 7]);
+        let tagged: Obj<7, ApplicationTag> = opaque.coerce();
+        let erased = tagged.opaque();
+        assert_eq!(tagged.into_bytes(), [0xa5; 7]);
+        assert_eq!(erased, opaque);
+        assert_eq!(std::mem::size_of::<Obj<7, ApplicationTag>>(), 7);
+        assert_eq!(std::mem::align_of::<Obj<7, ApplicationTag>>(), 1);
+        assert_eq!(std::mem::size_of::<Obj<32, Blake3>>(), 32);
+        assert_eq!(std::mem::size_of::<Obj<20, GitObject>>(), 20);
+    }
+
     #[cfg(feature = "blake3")]
     #[test]
     fn blake3_vectors_and_reader() {
@@ -352,6 +411,7 @@ mod tests {
         );
         let expected = "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85";
         assert_eq!(O256::blake3(b"abc").to_string(), expected);
+        assert_eq!(Blake3::hash(b"abc").to_string(), expected);
         assert_eq!(
             O256::blake3_from_reader(std::io::Cursor::new(b"abc"))
                 .unwrap()
@@ -390,7 +450,14 @@ mod tests {
             git_blob_sha1(b"hello").to_string(),
             "b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0"
         );
-        assert_ne!(git_blob_sha1(b"hello"), git_raw_sha1(b"hello"));
+        assert_ne!(
+            git_blob_sha1(b"hello").as_bytes(),
+            git_raw_sha1(b"hello").as_bytes()
+        );
+        assert_eq!(
+            git_blob_sha1(b"hello").into_sha1().into_git_object(),
+            git_blob_sha1(b"hello")
+        );
         assert_ne!(
             git_object_sha1("blob", b"hello"),
             git_object_sha1("tree", b"hello")
@@ -405,6 +472,6 @@ mod tests {
         let mut first = covalence_lib_rand::rngs::StdRng::seed_from_u64(42);
         let mut second = covalence_lib_rand::rngs::StdRng::seed_from_u64(42);
         assert_eq!(O256::random(&mut first), O256::random(&mut second));
-        assert_ne!(O256::random(&mut first), O256::default());
+        assert_ne!(O256::random(&mut first), Obj::<32, Random>::default());
     }
 }
