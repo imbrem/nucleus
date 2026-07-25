@@ -32,6 +32,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-lib-error@0.0.0",
+      "name": "covalence-lib-error",
+      "version": "0.0.0",
+      "path": "crates/lib/error",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_lib_error",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-lib-hash@0.0.0",
       "name": "covalence-lib-hash",
       "version": "0.0.0",
