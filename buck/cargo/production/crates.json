@@ -153,6 +153,13 @@
       ]
     },
     {
+      "source": "workspace#covalence-lib-hash@0.0.0",
+      "target": "workspace#covalence-lib-rand@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "workspace#covalence-nucleus@0.0.0",
       "target": "workspace#covalence-lib-sqlite@0.0.0",
       "kinds": [

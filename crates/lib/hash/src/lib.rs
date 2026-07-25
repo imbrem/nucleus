@@ -139,52 +139,54 @@ macro_rules! fixed_value {
 fixed_value!(O256, 32, "An opaque owned 256-bit value.");
 fixed_value!(GitHash, 20, "A traditional 160-bit Git SHA-1 object name.");
 
-/// Computes the BLAKE3 digest of `bytes`.
 #[cfg(feature = "blake3")]
-#[must_use]
-pub fn blake3(bytes: impl AsRef<[u8]>) -> O256 {
-    O256::from_bytes(*::blake3::hash(bytes.as_ref()).as_bytes())
-}
-
-/// Computes the BLAKE3 digest of bytes read from `reader`.
-///
-/// # Errors
-///
-/// Returns an error if reading from `reader` fails.
-#[cfg(feature = "blake3")]
-pub fn blake3_reader(mut reader: impl std::io::Read) -> std::io::Result<O256> {
-    let mut hasher = ::blake3::Hasher::new();
-    std::io::copy(&mut reader, &mut hasher)?;
-    Ok(O256::from_bytes(*hasher.finalize().as_bytes()))
-}
-
-/// Computes the SHA-256 digest of `bytes`.
-#[cfg(feature = "sha256")]
-#[must_use]
-pub fn sha256(bytes: impl AsRef<[u8]>) -> O256 {
-    use sha2::Digest;
-    O256::from_bytes(sha2::Sha256::digest(bytes.as_ref()).into())
-}
-
-/// Computes the SHA-256 digest of bytes read from `reader`.
-///
-/// # Errors
-///
-/// Returns an error if reading from `reader` fails.
-#[cfg(feature = "sha256")]
-pub fn sha256_reader(mut reader: impl std::io::Read) -> std::io::Result<O256> {
-    use sha2::Digest;
-
-    let mut hasher = sha2::Sha256::new();
-    let mut buffer = [0; 8 * 1024];
-    loop {
-        let count = reader.read(&mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        hasher.update(&buffer[..count]);
+impl O256 {
+    /// Computes the BLAKE3 digest of `bytes`.
+    #[must_use]
+    pub fn blake3(bytes: impl AsRef<[u8]>) -> Self {
+        Self::from_bytes(*::blake3::hash(bytes.as_ref()).as_bytes())
     }
-    Ok(O256::from_bytes(hasher.finalize().into()))
+
+    /// Computes the BLAKE3 digest of bytes read from `reader`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading from `reader` fails.
+    pub fn blake3_reader(mut reader: impl std::io::Read) -> std::io::Result<Self> {
+        let mut hasher = ::blake3::Hasher::new();
+        std::io::copy(&mut reader, &mut hasher)?;
+        Ok(Self::from_bytes(*hasher.finalize().as_bytes()))
+    }
+}
+
+#[cfg(feature = "sha256")]
+impl O256 {
+    /// Computes the SHA-256 digest of `bytes`.
+    #[must_use]
+    pub fn sha256(bytes: impl AsRef<[u8]>) -> Self {
+        use sha2::Digest;
+        Self::from_bytes(sha2::Sha256::digest(bytes.as_ref()).into())
+    }
+
+    /// Computes the SHA-256 digest of bytes read from `reader`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading from `reader` fails.
+    pub fn sha256_reader(mut reader: impl std::io::Read) -> std::io::Result<Self> {
+        use sha2::Digest;
+
+        let mut hasher = sha2::Sha256::new();
+        let mut buffer = [0; 8 * 1024];
+        loop {
+            let count = reader.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            hasher.update(&buffer[..count]);
+        }
+        Ok(Self::from_bytes(hasher.finalize().into()))
+    }
 }
 
 /// Computes the raw SHA-1 digest of `bytes`.
@@ -313,13 +315,13 @@ mod tests {
     fn blake3_vectors_and_reader() {
         // Official BLAKE3 test vectors and: printf abc | b3sum
         assert_eq!(
-            blake3([]).to_string(),
+            O256::blake3([]).to_string(),
             "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
         );
         let expected = "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85";
-        assert_eq!(blake3(b"abc").to_string(), expected);
+        assert_eq!(O256::blake3(b"abc").to_string(), expected);
         assert_eq!(
-            blake3_reader(std::io::Cursor::new(b"abc"))
+            O256::blake3_reader(std::io::Cursor::new(b"abc"))
                 .unwrap()
                 .to_string(),
             expected
@@ -331,13 +333,13 @@ mod tests {
     fn sha256_vectors_and_reader() {
         // FIPS 180-4 examples; reproducible with: printf abc | sha256sum
         assert_eq!(
-            sha256([]).to_string(),
+            O256::sha256([]).to_string(),
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         );
         let expected = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
-        assert_eq!(sha256(b"abc").to_string(), expected);
+        assert_eq!(O256::sha256(b"abc").to_string(), expected);
         assert_eq!(
-            sha256_reader(std::io::Cursor::new(b"abc"))
+            O256::sha256_reader(std::io::Cursor::new(b"abc"))
                 .unwrap()
                 .to_string(),
             expected
