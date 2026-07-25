@@ -2,9 +2,9 @@ use covalence_lib_error::snafu;
 use covalence_lib_hash::O256;
 use covalence_lib_sqlite::{Connection, params};
 use covalence_neutron::{
-    BOOL_SORT_V0, BOOL_VALUES_RELATION_V0, CatalogCandidate, FieldDeclaration,
-    INTEGER_BOOL_01_REPR_V0, KnownMetatable, MetatableKind, ScanError, TABLE_SIGNATURE_CATALOG_V0,
-    metatable_name, scan_metatables,
+    BOOL_SORT_V0, BOOL_VALUES_RELATION_V0, BOOTSTRAP_CATALOG, CatalogCandidate, FieldDeclaration,
+    INTEGER_BOOL_01_REPR_V0, KnownMetatable, MetatableKind, ScanError, metatable_name,
+    scan_metatables,
 };
 use snafu::Snafu;
 
@@ -74,6 +74,9 @@ impl TableInterpretation {
 }
 
 /// Accepted connection-local relation interpretations.
+///
+/// Acceptance requires exactly one bootstrap catalog with the permanent
+/// [`covalence_neutron::BOOTSTRAP_CATALOG`] identity and physical ABI.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NeutronCatalog {
     interpretations: Vec<TableInterpretation>,
@@ -88,7 +91,7 @@ impl NeutronCatalog {
 
     fn accept(candidate: &CatalogCandidate) -> Result<Self, CatalogError> {
         let declarations = match candidate.known() {
-            [KnownMetatable::TableSignatureCatalogV0(declarations)] => declarations,
+            [KnownMetatable::BootstrapCatalog(declarations)] => declarations,
             [] => return Err(CatalogError::MissingBootstrapCatalog),
             _ => return Err(CatalogError::ConflictingBootstrapCatalogs),
         };
@@ -139,7 +142,7 @@ fn validate_bool_declaration(declaration: &FieldDeclaration) -> Result<(), Catal
 #[snafu(crate_root(snafu))]
 pub enum CatalogError {
     /// The required bootstrap catalog was absent.
-    #[snafu(display("missing v0 table-signature catalog"))]
+    #[snafu(display("missing bootstrap catalog"))]
     MissingBootstrapCatalog,
     /// More than one recognized bootstrap catalog was supplied.
     #[snafu(display("conflicting bootstrap catalogs"))]
@@ -155,6 +158,8 @@ pub enum CatalogError {
 /// The only writable trusted `SQLite` owner in this initial slice.
 ///
 /// The raw connection is intentionally private and has no public escape hatch.
+/// Construction accepts exactly one bootstrap catalog in `main`; the MVP does
+/// not yet support attached database namespaces.
 pub struct TrustedDb {
     connection: Connection,
     catalog: NeutronCatalog,
@@ -174,7 +179,7 @@ impl TrustedDb {
             .execute_batch("PRAGMA foreign_keys = ON;")
             .map_err(TrustedDbError::sqlite)?;
         let transaction = connection.transaction().map_err(TrustedDbError::sqlite)?;
-        let metatable = metatable_name(MetatableKind::new(TABLE_SIGNATURE_CATALOG_V0));
+        let metatable = metatable_name(MetatableKind::new(BOOTSTRAP_CATALOG));
         transaction
             .execute_batch(&format!(
                 "CREATE TABLE \"{metatable}\" (
@@ -382,7 +387,7 @@ fn quote_identifier(identifier: &str) -> String {
 #[cfg(test)]
 mod tests {
     use covalence_lib_hash::O256;
-    use covalence_neutron::{BOOL_VALUES_RELATION_V0, TABLE_SIGNATURE_CATALOG_V0};
+    use covalence_neutron::{BOOL_VALUES_RELATION_V0, BOOTSTRAP_CATALOG};
 
     use super::{InsertOutcome, TrustedDb, TrustedDbError};
 
@@ -397,7 +402,7 @@ mod tests {
         );
         assert_ne!(
             database.catalog().interpretations()[0].signature().id(),
-            TABLE_SIGNATURE_CATALOG_V0
+            BOOTSTRAP_CATALOG
         );
     }
 

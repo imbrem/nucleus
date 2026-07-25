@@ -6,11 +6,15 @@ use covalence_lib_sqlite::{Connection, OptionalExtension};
 use snafu::Snafu;
 
 use crate::names::{
-    INTEGER_BOOL_01_REPR_V0, META_PREFIX, MetatableKind, TABLE_SIGNATURE_CATALOG_V0,
-    metatable_name, parse_metatable_name,
+    BOOTSTRAP_CATALOG, INTEGER_BOOL_01_REPR_V0, META_PREFIX, MetatableKind, metatable_name,
+    parse_metatable_name,
 };
 
 /// A structurally decoded, non-authoritative description of metatables.
+///
+/// An arbitrary `SQLite` database may have no bootstrap catalog. The trusted
+/// layer is responsible for requiring exactly one before accepting a database
+/// as Nucleus state.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CatalogCandidate {
     known: Vec<KnownMetatable>,
@@ -34,8 +38,8 @@ impl CatalogCandidate {
 /// A recognized metatable and its decoded rows.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum KnownMetatable {
-    /// The initial catalog assigning typed signatures to physical tables.
-    TableSignatureCatalogV0(Vec<FieldDeclaration>),
+    /// The permanent bootstrap catalog assigning typed signatures to tables.
+    BootstrapCatalog(Vec<FieldDeclaration>),
 }
 
 /// A well-formed metatable name with semantics unknown to this build.
@@ -152,10 +156,11 @@ impl ScanError {
     }
 }
 
-/// Scans metatables over an arbitrary borrowed `SQLite` connection.
+/// Scans metatables in `main` over an arbitrary borrowed `SQLite` connection.
 ///
-/// The result is a candidate only. This function performs no writes and makes
-/// no claim about trust, grounding, completeness, or theorem authority.
+/// The result is a candidate only. Zero bootstrap catalogs is valid at this
+/// layer. This function performs no writes and makes no claim about trust,
+/// grounding, completeness, or theorem authority.
 ///
 /// # Errors
 ///
@@ -179,17 +184,17 @@ pub fn scan_metatables(connection: &Connection) -> Result<CatalogCandidate, Scan
         }
         let kind = parse_metatable_name(&name)
             .ok_or_else(|| ScanError::MalformedReservedName { name: name.clone() })?;
-        if kind.id() == TABLE_SIGNATURE_CATALOG_V0 {
+        if kind.id() == BOOTSTRAP_CATALOG {
             if known
                 .iter()
-                .any(|item| matches!(item, KnownMetatable::TableSignatureCatalogV0(_)))
+                .any(|item| matches!(item, KnownMetatable::BootstrapCatalog(_)))
             {
                 return Err(ScanError::InvalidCatalogSchema {
-                    reason: String::from("multiple v0 catalogs"),
+                    reason: String::from("multiple bootstrap catalogs"),
                 });
             }
             let declarations = scan_table_signature_catalog(connection)?;
-            known.push(KnownMetatable::TableSignatureCatalogV0(declarations));
+            known.push(KnownMetatable::BootstrapCatalog(declarations));
         } else {
             unknown.push(UnknownMetatable {
                 kind,
@@ -205,7 +210,7 @@ fn scan_table_signature_catalog(
     connection: &Connection,
 ) -> Result<Vec<FieldDeclaration>, ScanError> {
     validate_catalog_schema(connection)?;
-    let name = metatable_name(MetatableKind::new(TABLE_SIGNATURE_CATALOG_V0));
+    let name = metatable_name(MetatableKind::new(BOOTSTRAP_CATALOG));
     let sql = format!(
         "SELECT table_name, relation_id, field_ordinal, column_name, sort_id, \
          representation_id FROM {} ORDER BY table_name, field_ordinal",
@@ -246,7 +251,7 @@ fn scan_table_signature_catalog(
 }
 
 fn validate_catalog_schema(connection: &Connection) -> Result<(), ScanError> {
-    let name = metatable_name(MetatableKind::new(TABLE_SIGNATURE_CATALOG_V0));
+    let name = metatable_name(MetatableKind::new(BOOTSTRAP_CATALOG));
     let strict = connection
         .query_row(
             "SELECT strict FROM pragma_table_list WHERE schema = 'main' AND name = ?1",
@@ -281,7 +286,7 @@ fn validate_catalog_schema(connection: &Connection) -> Result<(), ScanError> {
         )
     {
         return Err(ScanError::InvalidCatalogSchema {
-            reason: String::from("columns do not match the v0 catalog contract"),
+            reason: String::from("columns do not match the bootstrap catalog ABI"),
         });
     }
     Ok(())
@@ -411,12 +416,12 @@ mod tests {
 
     use super::{KnownMetatable, ScanError, scan_metatables};
     use crate::{
-        BOOL_SORT_V0, BOOL_VALUES_RELATION_V0, INTEGER_BOOL_01_REPR_V0, MetatableKind,
-        TABLE_SIGNATURE_CATALOG_V0, metatable_name,
+        BOOL_SORT_V0, BOOL_VALUES_RELATION_V0, BOOTSTRAP_CATALOG, INTEGER_BOOL_01_REPR_V0,
+        MetatableKind, metatable_name,
     };
 
     fn create_catalog(connection: &Connection) {
-        let name = metatable_name(MetatableKind::new(TABLE_SIGNATURE_CATALOG_V0));
+        let name = metatable_name(MetatableKind::new(BOOTSTRAP_CATALOG));
         connection
             .execute_batch(&format!(
                 "CREATE TABLE \"{name}\" (
@@ -467,7 +472,7 @@ mod tests {
         let connection = Connection::open_in_memory().unwrap();
         create_catalog(&connection);
         let candidate = scan_metatables(&connection).unwrap();
-        let [KnownMetatable::TableSignatureCatalogV0(fields)] = candidate.known() else {
+        let [KnownMetatable::BootstrapCatalog(fields)] = candidate.known() else {
             panic!("one known catalog");
         };
         assert_eq!(fields.len(), 1);
@@ -492,7 +497,7 @@ mod tests {
     fn malformed_reserved_name_fails_closed() {
         let connection = Connection::open_in_memory().unwrap();
         connection
-            .execute_batch("CREATE TABLE \"covalence.meta.nope\" (x INTEGER) STRICT;")
+            .execute_batch("CREATE TABLE covalence_meta_nope (x INTEGER) STRICT;")
             .unwrap();
         assert!(matches!(
             scan_metatables(&connection),
@@ -504,7 +509,7 @@ mod tests {
     fn dangling_column_fails_closed() {
         let connection = Connection::open_in_memory().unwrap();
         create_catalog(&connection);
-        let name = metatable_name(MetatableKind::new(TABLE_SIGNATURE_CATALOG_V0));
+        let name = metatable_name(MetatableKind::new(BOOTSTRAP_CATALOG));
         connection
             .execute(
                 &format!("UPDATE \"{name}\" SET column_name = 'missing'"),

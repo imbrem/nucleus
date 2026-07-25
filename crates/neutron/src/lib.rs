@@ -9,8 +9,8 @@ mod names;
 mod scan;
 
 pub use names::{
-    BOOL_SORT_V0, BOOL_VALUES_RELATION_V0, INTEGER_BOOL_01_REPR_V0, MetatableKind,
-    TABLE_SIGNATURE_CATALOG_V0, metatable_name, parse_metatable_name,
+    BOOL_SORT_V0, BOOL_VALUES_RELATION_V0, BOOTSTRAP_CATALOG, INTEGER_BOOL_01_REPR_V0,
+    MetatableKind, metatable_name, parse_metatable_name,
 };
 pub use scan::{
     CatalogCandidate, FieldDeclaration, KnownMetatable, ScanError, UnknownMetatable,

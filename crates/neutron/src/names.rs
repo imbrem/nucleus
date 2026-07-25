@@ -1,14 +1,18 @@
 use covalence_lib_hash::O256;
 
 /// Exact prefix reserved for Covalence metatables.
-pub const META_PREFIX: &str = "covalence.meta.";
+pub const META_PREFIX: &str = "covalence_meta_";
 
-/// The v0 table-signature catalog metatable kind.
+/// The permanent bootstrap-catalog metatable kind.
 ///
-/// BLAKE3 of `covalence.meta/table-signature-catalog/v0`.
-pub const TABLE_SIGNATURE_CATALOG_V0: O256 = O256::from_bytes([
-    0x65, 0x87, 0x81, 0x09, 0xc0, 0x66, 0x86, 0x9a, 0x20, 0x44, 0x84, 0xd1, 0x0e, 0x2d, 0xe0, 0x00,
-    0x3f, 0x6d, 0xcc, 0x4e, 0x4d, 0xbd, 0xa1, 0xde, 0x97, 0x18, 0xca, 0x09, 0x87, 0x83, 0x96, 0xcb,
+/// BLAKE3 of `covalence.meta/bootstrap-catalog`.
+///
+/// This O256 and its physical table format are the bootstrap ABI. They are
+/// intentionally unversioned: future metadata is introduced through tables
+/// typed by this catalog, not by replacing the bootstrap.
+pub const BOOTSTRAP_CATALOG: O256 = O256::from_bytes([
+    0x56, 0x20, 0x3f, 0x30, 0x1f, 0x01, 0xd2, 0xc5, 0x25, 0xcc, 0xfa, 0x9b, 0x47, 0xd3, 0x64, 0x95,
+    0x96, 0x5d, 0xda, 0x82, 0xf2, 0x86, 0x92, 0xa0, 0xea, 0x5b, 0x3e, 0xb1, 0x39, 0x37, 0xf3, 0x01,
 ]);
 
 /// The v0 `Bool` substrate sort.
@@ -80,20 +84,21 @@ pub fn parse_metatable_name(name: &str) -> Option<MetatableKind> {
 #[cfg(test)]
 mod tests {
     use super::{
-        META_PREFIX, MetatableKind, TABLE_SIGNATURE_CATALOG_V0, metatable_name,
-        parse_metatable_name,
+        BOOTSTRAP_CATALOG, META_PREFIX, MetatableKind, metatable_name, parse_metatable_name,
     };
 
     #[test]
     fn physical_name_round_trips() {
-        let kind = MetatableKind::new(TABLE_SIGNATURE_CATALOG_V0);
+        let kind = MetatableKind::new(BOOTSTRAP_CATALOG);
         let name = metatable_name(kind);
+        assert!(name.starts_with("covalence_meta_"));
+        assert!(!name.contains('.'));
         assert_eq!(parse_metatable_name(&name), Some(kind));
     }
 
     #[test]
     fn parser_is_exact_and_lowercase() {
-        let name = metatable_name(MetatableKind::new(TABLE_SIGNATURE_CATALOG_V0));
+        let name = metatable_name(MetatableKind::new(BOOTSTRAP_CATALOG));
         assert_eq!(parse_metatable_name(&name.to_uppercase()), None);
         assert_eq!(parse_metatable_name(&format!("{name}0")), None);
         assert_eq!(parse_metatable_name(&name[..name.len() - 1]), None);
