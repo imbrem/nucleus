@@ -32,6 +32,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-data-container@0.0.0",
+      "name": "covalence-data-container",
+      "version": "0.0.0",
+      "path": "crates/data/container",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_data_container",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-lib-error@0.0.0",
       "name": "covalence-lib-error",
       "version": "0.0.0",

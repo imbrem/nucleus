@@ -1,0 +1,11 @@
+[package]
+name = "covalence-data-container"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Trusted container traits and const-indexed projections"
+publish = false
+
+[lints]
+workspace = true
