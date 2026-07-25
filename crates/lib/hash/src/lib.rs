@@ -1,8 +1,8 @@
 //! Fixed-width hash values and optional hashing primitives.
 //!
 //! Values own their raw bytes independently of their textual encoding.
-//! [`O256::hex`] and [`O256::from_hex`] provide explicit text boundaries
-//! without changing the value representation.
+//! [`O256::hex`], [`O256::from_hex`], and [`O256::from_base64`] provide
+//! explicit text boundaries without changing the value representation.
 
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -73,6 +73,161 @@ const fn parse_hex<const N: usize>(input: &str) -> Result<[u8; N], ParseHexError
         };
         output[index] = high << 4 | low;
         index += 1;
+    }
+    Ok(output)
+}
+
+mod base64_error {
+    use super::{Snafu, snafu};
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq, Snafu)]
+    #[snafu(crate_root(snafu))]
+    pub enum Error {
+        /// The encoded input has the wrong width.
+        #[snafu(display("expected {expected} Base64 bytes, found {actual}"))]
+        InvalidLength {
+            /// Required input length.
+            expected: usize,
+            /// Actual input length.
+            actual: usize,
+        },
+        /// A byte is outside the standard Base64 alphabet.
+        #[snafu(display("invalid Base64 byte at offset {index}"))]
+        InvalidByte {
+            /// Byte offset of the invalid byte.
+            index: usize,
+        },
+        /// Padding is absent or outside its canonical final position.
+        #[snafu(display("invalid Base64 padding at offset {index}"))]
+        InvalidPadding {
+            /// Byte offset of the invalid padding.
+            index: usize,
+        },
+        /// Unused bits in the final quantum are non-zero.
+        #[snafu(display("non-canonical Base64 trailing bits at offset {index}"))]
+        NonCanonical {
+            /// Byte offset containing non-zero unused bits.
+            index: usize,
+        },
+    }
+}
+
+/// An error returned when decoding canonical standard Base64.
+pub use base64_error::Error as ParseBase64Error;
+
+const fn base64_length(bytes: usize) -> usize {
+    bytes / 3 * 4
+        + match bytes % 3 {
+            0 => 0,
+            _ => 4,
+        }
+}
+
+const fn decode_base64_byte(byte: u8, index: usize) -> Result<u8, ParseBase64Error> {
+    match byte {
+        b'A'..=b'Z' => Ok(byte - b'A'),
+        b'a'..=b'z' => Ok(byte - b'a' + 26),
+        b'0'..=b'9' => Ok(byte - b'0' + 52),
+        b'+' => Ok(62),
+        b'/' => Ok(63),
+        b'=' => Err(ParseBase64Error::InvalidPadding { index }),
+        _ => Err(ParseBase64Error::InvalidByte { index }),
+    }
+}
+
+const fn parse_base64<const N: usize>(input: &str) -> Result<[u8; N], ParseBase64Error> {
+    let expected = base64_length(N);
+    if input.len() != expected {
+        return Err(ParseBase64Error::InvalidLength {
+            expected,
+            actual: input.len(),
+        });
+    }
+
+    let input = input.as_bytes();
+    let mut output = [0; N];
+    let mut input_index = 0;
+    let mut output_index = 0;
+
+    while N - output_index >= 3 {
+        let a = match decode_base64_byte(input[input_index], input_index) {
+            Ok(value) => value,
+            Err(error) => return Err(error),
+        };
+        let b = match decode_base64_byte(input[input_index + 1], input_index + 1) {
+            Ok(value) => value,
+            Err(error) => return Err(error),
+        };
+        let c = match decode_base64_byte(input[input_index + 2], input_index + 2) {
+            Ok(value) => value,
+            Err(error) => return Err(error),
+        };
+        let d = match decode_base64_byte(input[input_index + 3], input_index + 3) {
+            Ok(value) => value,
+            Err(error) => return Err(error),
+        };
+        output[output_index] = a << 2 | b >> 4;
+        output[output_index + 1] = b << 4 | c >> 2;
+        output[output_index + 2] = c << 6 | d;
+        input_index += 4;
+        output_index += 3;
+    }
+
+    match N - output_index {
+        0 => {}
+        1 => {
+            let a = match decode_base64_byte(input[input_index], input_index) {
+                Ok(value) => value,
+                Err(error) => return Err(error),
+            };
+            let b = match decode_base64_byte(input[input_index + 1], input_index + 1) {
+                Ok(value) => value,
+                Err(error) => return Err(error),
+            };
+            if input[input_index + 2] != b'=' {
+                return Err(ParseBase64Error::InvalidPadding {
+                    index: input_index + 2,
+                });
+            }
+            if input[input_index + 3] != b'=' {
+                return Err(ParseBase64Error::InvalidPadding {
+                    index: input_index + 3,
+                });
+            }
+            if b & 0x0f != 0 {
+                return Err(ParseBase64Error::NonCanonical {
+                    index: input_index + 1,
+                });
+            }
+            output[output_index] = a << 2 | b >> 4;
+        }
+        2 => {
+            let a = match decode_base64_byte(input[input_index], input_index) {
+                Ok(value) => value,
+                Err(error) => return Err(error),
+            };
+            let b = match decode_base64_byte(input[input_index + 1], input_index + 1) {
+                Ok(value) => value,
+                Err(error) => return Err(error),
+            };
+            let c = match decode_base64_byte(input[input_index + 2], input_index + 2) {
+                Ok(value) => value,
+                Err(error) => return Err(error),
+            };
+            if input[input_index + 3] != b'=' {
+                return Err(ParseBase64Error::InvalidPadding {
+                    index: input_index + 3,
+                });
+            }
+            if c & 0x03 != 0 {
+                return Err(ParseBase64Error::NonCanonical {
+                    index: input_index + 2,
+                });
+            }
+            output[output_index] = a << 2 | b >> 4;
+            output[output_index + 1] = b << 4 | c >> 2;
+        }
+        _ => unreachable!(),
     }
     Ok(output)
 }
@@ -205,6 +360,25 @@ impl<const BYTES: usize, Space: Namespace<BYTES>> Obj<BYTES, Space> {
     /// non-hexadecimal digit.
     pub const fn from_hex(input: &str) -> Result<Self, ParseHexError> {
         match parse_hex(input) {
+            Ok(bytes) => Ok(Self::from_bytes(bytes)),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Decodes canonical padded standard Base64 without validating the
+    /// namespace claim.
+    ///
+    /// The RFC 4648 standard alphabet (`A-Z`, `a-z`, `0-9`, `+`, `/`) is
+    /// accepted. Padding is required exactly when the byte width is not
+    /// divisible by three. Whitespace, URL-safe characters, and non-zero
+    /// unused trailing bits are rejected.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a wrong encoded width, invalid alphabet byte,
+    /// misplaced padding, or non-canonical trailing bits.
+    pub const fn from_base64(input: &str) -> Result<Self, ParseBase64Error> {
+        match parse_base64(input) {
             Ok(bytes) => Ok(Self::from_bytes(bytes)),
             Err(error) => Err(error),
         }
@@ -369,7 +543,7 @@ mod tests {
     }
 
     #[test]
-    fn hexadecimal_parsing_and_o256_macro_are_const_capable() {
+    fn fixed_value_text_parsing_is_const_capable() {
         const HEX: O256 = match O256::from_hex(
             "abababababababababababababababababababababababababababababababab",
         ) {
@@ -378,9 +552,55 @@ mod tests {
         };
         const MACRO: O256 =
             o256!("abababababababababababababababababababababababababababababababab");
+        const BASE64: O256 = match O256::from_base64("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+        {
+            Ok(value) => value,
+            Err(_) => panic!("valid const Base64"),
+        };
+        const FOO: [u8; 3] = match parse_base64("Zm9v") {
+            Ok(value) => value,
+            Err(_) => panic!("valid const Base64"),
+        };
 
         assert_eq!(HEX, O256::from_bytes([0xab; 32]));
         assert_eq!(MACRO, HEX);
+        assert_eq!(BASE64, O256::from_bytes([0; 32]));
+        assert_eq!(FOO, *b"foo");
+        assert_eq!(
+            GitHash::from_base64("AAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+            Ok(GitHash::from_bytes([0; 20]))
+        );
+    }
+
+    #[test]
+    fn base64_parsing_requires_a_canonical_fixed_width_encoding() {
+        assert_eq!(
+            O256::from_base64(""),
+            Err(ParseBase64Error::InvalidLength {
+                expected: 44,
+                actual: 0,
+            })
+        );
+        assert_eq!(
+            parse_base64::<3>("AAA="),
+            Err(ParseBase64Error::InvalidPadding { index: 3 })
+        );
+        assert_eq!(
+            parse_base64::<1>("Zh=="),
+            Err(ParseBase64Error::NonCanonical { index: 1 })
+        );
+        assert_eq!(
+            parse_base64::<2>("Zm9="),
+            Err(ParseBase64Error::NonCanonical { index: 2 })
+        );
+        assert_eq!(
+            parse_base64::<3>("Zm-v"),
+            Err(ParseBase64Error::InvalidByte { index: 2 })
+        );
+        assert_eq!(
+            parse_base64::<1>("Zg=A"),
+            Err(ParseBase64Error::InvalidPadding { index: 3 })
+        );
     }
 
     #[test]
