@@ -1,12 +1,22 @@
 //! Fixed-width hash values and optional hashing primitives.
+//!
+//! Values own their raw bytes independently of their textual encoding.
+//! [`O256::hex`] and [`O256::from_hex`] provide an explicit hexadecimal
+//! boundary; other encodings and structured hash envelopes can be added
+//! without changing the value representation.
 
 use std::fmt;
 use std::str::FromStr;
 
-/// An error returned when parsing a fixed-width hexadecimal value.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ParseHashError {
+use covalence_lib_error::snafu;
+use snafu::Snafu;
+
+/// An error returned when decoding a fixed-width hexadecimal value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Snafu)]
+#[snafu(crate_root(snafu))]
+pub enum ParseHexError {
     /// The input did not have the required number of hexadecimal digits.
+    #[snafu(display("expected {expected} hexadecimal digits, found {actual}"))]
     InvalidLength {
         /// Required input length.
         expected: usize,
@@ -14,29 +24,12 @@ pub enum ParseHashError {
         actual: usize,
     },
     /// The input contained a byte which is not an ASCII hexadecimal digit.
-    InvalidHex {
+    #[snafu(display("invalid hexadecimal digit at byte {index}"))]
+    InvalidDigit {
         /// Byte offset of the invalid digit.
         index: usize,
     },
 }
-
-impl fmt::Display for ParseHashError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidLength { expected, actual } => {
-                write!(
-                    formatter,
-                    "expected {expected} hexadecimal digits, found {actual}"
-                )
-            }
-            Self::InvalidHex { index } => {
-                write!(formatter, "invalid hexadecimal digit at byte {index}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for ParseHashError {}
 
 const fn decode_nibble(byte: u8) -> Option<u8> {
     match byte {
@@ -47,10 +40,10 @@ const fn decode_nibble(byte: u8) -> Option<u8> {
     }
 }
 
-fn parse_hex<const N: usize>(input: &str) -> Result<[u8; N], ParseHashError> {
+fn parse_hex<const N: usize>(input: &str) -> Result<[u8; N], ParseHexError> {
     let expected = N * 2;
     if input.len() != expected {
-        return Err(ParseHashError::InvalidLength {
+        return Err(ParseHexError::InvalidLength {
             expected,
             actual: input.len(),
         });
@@ -59,8 +52,9 @@ fn parse_hex<const N: usize>(input: &str) -> Result<[u8; N], ParseHashError> {
     let input = input.as_bytes();
     let mut output = [0; N];
     for (index, pair) in input.chunks_exact(2).enumerate() {
-        let high = decode_nibble(pair[0]).ok_or(ParseHashError::InvalidHex { index: index * 2 })?;
-        let low = decode_nibble(pair[1]).ok_or(ParseHashError::InvalidHex {
+        let high =
+            decode_nibble(pair[0]).ok_or(ParseHexError::InvalidDigit { index: index * 2 })?;
+        let low = decode_nibble(pair[1]).ok_or(ParseHexError::InvalidDigit {
             index: index * 2 + 1,
         })?;
         output[index] = high << 4 | low;
@@ -68,11 +62,17 @@ fn parse_hex<const N: usize>(input: &str) -> Result<[u8; N], ParseHashError> {
     Ok(output)
 }
 
-fn display_hex(bytes: &[u8], formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-    for byte in bytes {
-        write!(formatter, "{byte:02x}")?;
+/// A lowercase hexadecimal view of a fixed-width value.
+#[derive(Clone, Copy, Debug)]
+pub struct Hex<'a>(&'a [u8]);
+
+impl fmt::Display for Hex<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in self.0 {
+            write!(formatter, "{byte:02x}")?;
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 macro_rules! fixed_value {
@@ -100,11 +100,30 @@ macro_rules! fixed_value {
             pub const fn into_bytes(self) -> [u8; $width] {
                 self.0
             }
+
+            /// Decodes an exact-width hexadecimal representation.
+            ///
+            /// Both lowercase and uppercase digits are accepted. Prefixes,
+            /// whitespace, separators, and variable-width input are rejected.
+            ///
+            /// # Errors
+            ///
+            /// Returns an error when the input has the wrong width or contains
+            /// a non-hexadecimal digit.
+            pub fn from_hex(input: &str) -> Result<Self, ParseHexError> {
+                parse_hex(input).map(Self)
+            }
+
+            /// Returns a zero-allocation lowercase hexadecimal view.
+            #[must_use]
+            pub const fn hex(&self) -> Hex<'_> {
+                Hex(&self.0)
+            }
         }
 
         impl fmt::Display for $name {
             fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                display_hex(&self.0, formatter)
+                self.hex().fmt(formatter)
             }
         }
 
@@ -115,10 +134,10 @@ macro_rules! fixed_value {
         }
 
         impl FromStr for $name {
-            type Err = ParseHashError;
+            type Err = ParseHexError;
 
             fn from_str(input: &str) -> Result<Self, Self::Err> {
-                parse_hex(input).map(Self)
+                Self::from_hex(input)
             }
         }
 
@@ -261,6 +280,8 @@ mod tests {
         assert_eq!(format!("{o256:?}"), format!("O256({o256})"));
         assert_eq!(git.to_string(), "cd".repeat(20));
         assert_eq!(format!("{git:?}"), format!("GitHash({git})"));
+        assert_eq!(o256.hex().to_string(), "ab".repeat(32));
+        assert_eq!(O256::from_hex(&"ab".repeat(32)), Ok(o256));
         assert_eq!("ab".repeat(32).parse(), Ok(o256));
         assert_eq!("AB".repeat(32).parse(), Ok(o256));
         assert_eq!("cd".repeat(20).parse(), Ok(git));
@@ -283,6 +304,17 @@ mod tests {
 
         assert!("00".repeat(19).parse::<GitHash>().is_err());
         assert!("00".repeat(21).parse::<GitHash>().is_err());
+        assert_eq!(
+            O256::from_hex("00"),
+            Err(ParseHexError::InvalidLength {
+                expected: 64,
+                actual: 2,
+            })
+        );
+        assert_eq!(
+            O256::from_hex(&format!("{}g0", "00".repeat(31))),
+            Err(ParseHexError::InvalidDigit { index: 62 })
+        );
     }
 
     #[test]

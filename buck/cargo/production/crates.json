@@ -154,6 +154,13 @@
     },
     {
       "source": "workspace#covalence-lib-hash@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-lib-hash@0.0.0",
       "target": "workspace#covalence-lib-rand@0.0.0",
       "kinds": [
         "normal"
