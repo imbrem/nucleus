@@ -1,8 +1,7 @@
 //! Fixed-width hash values and optional hashing primitives.
 //!
 //! Values own their raw bytes independently of their textual encoding.
-//! [`O256::hex`] and [`O256::from_hex`] provide an explicit hexadecimal
-//! boundary; other encodings and structured hash envelopes can be added
+//! [`O256::hex`] and [`O256::from_hex`] provide explicit text boundaries
 //! without changing the value representation.
 
 use std::fmt;
@@ -51,7 +50,7 @@ const fn decode_nibble(byte: u8) -> Option<u8> {
     }
 }
 
-fn parse_hex<const N: usize>(input: &str) -> Result<[u8; N], ParseHexError> {
+const fn parse_hex<const N: usize>(input: &str) -> Result<[u8; N], ParseHexError> {
     let expected = N * 2;
     if input.len() != expected {
         return Err(ParseHexError::InvalidLength {
@@ -62,13 +61,18 @@ fn parse_hex<const N: usize>(input: &str) -> Result<[u8; N], ParseHexError> {
 
     let input = input.as_bytes();
     let mut output = [0; N];
-    for (index, pair) in input.chunks_exact(2).enumerate() {
-        let high =
-            decode_nibble(pair[0]).ok_or(ParseHexError::InvalidDigit { index: index * 2 })?;
-        let low = decode_nibble(pair[1]).ok_or(ParseHexError::InvalidDigit {
-            index: index * 2 + 1,
-        })?;
+    let mut index = 0;
+    while index < N {
+        let Some(high) = decode_nibble(input[index * 2]) else {
+            return Err(ParseHexError::InvalidDigit { index: index * 2 });
+        };
+        let Some(low) = decode_nibble(input[index * 2 + 1]) else {
+            return Err(ParseHexError::InvalidDigit {
+                index: index * 2 + 1,
+            });
+        };
         output[index] = high << 4 | low;
+        index += 1;
     }
     Ok(output)
 }
@@ -125,6 +129,36 @@ pub struct Obj<const BYTES: usize, Space: Namespace<BYTES> = Opaque> {
 /// An opaque owned 256-bit value.
 pub type O256 = Obj<32, Opaque>;
 
+/// Constructs an [`O256`] from a hexadecimal string literal.
+///
+/// The literal is decoded during const evaluation, including when the macro is
+/// used in runtime code. Invalid width or digits are compile errors.
+///
+/// ```
+/// use covalence_lib_hash::{O256, o256};
+///
+/// const VALUE: O256 = o256!(
+///     "abababababababababababababababababababababababababababababababab"
+/// );
+/// assert_eq!(VALUE.as_bytes(), &[0xab; 32]);
+/// ```
+///
+/// ```compile_fail
+/// use covalence_lib_hash::o256;
+///
+/// let _ = o256!("not a 256-bit hexadecimal value");
+/// ```
+#[macro_export]
+macro_rules! o256 {
+    ($hex:literal) => {{
+        const VALUE: $crate::O256 = match $crate::O256::from_hex($hex) {
+            Ok(value) => value,
+            Err(_) => panic!("invalid O256 hexadecimal literal"),
+        };
+        VALUE
+    }};
+}
+
 impl<const BYTES: usize, Space: Namespace<BYTES>> Obj<BYTES, Space> {
     /// Constructs a namespaced value from its exact bytes without validation.
     #[must_use]
@@ -169,8 +203,11 @@ impl<const BYTES: usize, Space: Namespace<BYTES>> Obj<BYTES, Space> {
     ///
     /// Returns an error when the input has the wrong width or contains a
     /// non-hexadecimal digit.
-    pub fn from_hex(input: &str) -> Result<Self, ParseHexError> {
-        parse_hex(input).map(Self::from_bytes)
+    pub const fn from_hex(input: &str) -> Result<Self, ParseHexError> {
+        match parse_hex(input) {
+            Ok(bytes) => Ok(Self::from_bytes(bytes)),
+            Err(error) => Err(error),
+        }
     }
 
     /// Returns a zero-allocation lowercase hexadecimal view.
@@ -329,6 +366,21 @@ mod tests {
         assert_eq!("AB".repeat(32).parse(), Ok(o256));
         assert_eq!("cd".repeat(20).parse(), Ok(git));
         assert_eq!("CD".repeat(20).parse(), Ok(git));
+    }
+
+    #[test]
+    fn hexadecimal_parsing_and_o256_macro_are_const_capable() {
+        const HEX: O256 = match O256::from_hex(
+            "abababababababababababababababababababababababababababababababab",
+        ) {
+            Ok(value) => value,
+            Err(_) => panic!("valid const hexadecimal"),
+        };
+        const MACRO: O256 =
+            o256!("abababababababababababababababababababababababababababababababab");
+
+        assert_eq!(HEX, O256::from_bytes([0xab; 32]));
+        assert_eq!(MACRO, HEX);
     }
 
     #[test]
