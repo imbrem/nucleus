@@ -1,0 +1,4 @@
+buck/cargo/*/BUCK linguist-generated=true
+buck/cargo/*/*.json linguist-generated=true
+crates/**/BUCK linguist-generated=true
+tools/glu/BUCK linguist-generated=true

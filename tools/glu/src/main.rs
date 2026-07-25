@@ -112,11 +112,6 @@ enum DocsTask {
 /// use `glu build`, `glu test`, or `glu docs` instead.
 #[derive(Debug, Subcommand)]
 enum ArtifactTask {
-    /// Internal: generate the Cargo dependency graph.
-    CargoGraph {
-        #[arg(long)]
-        out: PathBuf,
-    },
     /// Internal: generate repository line-count metadata.
     Loc {
         #[arg(long)]
@@ -145,7 +140,9 @@ enum ArtifactTask {
     /// Internal: assemble the generated documentation site.
     Docs {
         #[arg(long)]
-        graph: PathBuf,
+        production_crates: PathBuf,
+        #[arg(long)]
+        production_dependencies: PathBuf,
         #[arg(long)]
         loc: PathBuf,
         #[arg(long)]
@@ -199,18 +196,26 @@ fn run() -> Result<()> {
             runner.serve_docs(port, open)
         }
         Task::Artifact { command } => match command {
-            ArtifactTask::CargoGraph { out } => runner.artifact_cargo_graph(&out),
             ArtifactTask::Loc { out } => runner.artifact_loc(&out),
             ArtifactTask::Rustdoc { out } => runner.artifact_rustdoc(&out),
             ArtifactTask::Wasm { out } => runner.artifact_wasm(&out),
             ArtifactTask::Component { out } => runner.artifact_component(&out),
             ArtifactTask::CliComponent { out } => runner.artifact_cli_component(&out),
             ArtifactTask::Docs {
-                graph,
+                production_crates,
+                production_dependencies,
                 loc,
                 rustdoc,
                 out,
-            } => runner.artifact_docs(&graph, &loc, &rustdoc, &out),
+            } => runner.artifact_docs(
+                [
+                    (&production_crates, "crates.json"),
+                    (&production_dependencies, "dependencies.json"),
+                ],
+                &loc,
+                &rustdoc,
+                &out,
+            ),
         },
         Task::Loc => runner.loc(),
         Task::Status => runner.status(),

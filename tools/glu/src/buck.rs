@@ -91,110 +91,22 @@ rust_test(
 "#;
 
 const EXTERNAL_TEMPLATE: &str = r#"{{ header }}
-load("@prelude//rust:cargo_buildscript.bzl", "buildscript_run")
-load("@prelude//rust:cargo_package.bzl", "cargo")
+load(":dependencies.json", dependencies = "value")
+load("//buck/cargo:dependencies.bzl", "declare_cargo_dependencies")
 
-{% for package in packages -%}
-http_archive(
-    name = {{ package.archive|tojson }},
-    sha256 = {{ package.checksum|tojson }},
-    strip_prefix = {{ package.archive_prefix|tojson }},
-    urls = [{{ package.url|tojson }}],
-    visibility = [],
-)
-
-{% for target in package.targets -%}
-{{ target.rule }}(
-    name = {{ target.name|tojson }},
-    srcs = [{{ package.archive_label|tojson }}],
-    crate = {{ target.crate_name|tojson }},
-    crate_root = {{ target.crate_root|tojson }},
-    edition = {{ target.edition|tojson }},
-{%- if target.features %}
-    features = [
-{%- for feature in target.features %}
-        {{ feature|tojson }},
-{%- endfor %}
-    ],
-{%- endif %}
-{%- if target.proc_macro %}
-    proc_macro = True,
-{%- endif %}
-{%- if target.env %}
-    env = {
-{%- for name, value in target.env %}
-        {{ name|tojson }}: {{ value|tojson }},
-{%- endfor %}
-    },
-{%- endif %}
-{%- if target.buildscript %}
-    rustc_flags = ["@$(location :{{ target.buildscript }}[rustc_flags])"],
-{%- endif %}
-{%- if target.named_deps %}
-    named_deps = {
-{%- for name, dependency in target.named_deps %}
-        {{ name|tojson }}: {{ dependency|tojson }},
-{%- endfor %}
-    },
-{%- endif %}
+export_file(
+    name = "crates-json",
+    src = "crates.json",
     visibility = ["PUBLIC"],
 )
 
-{% endfor -%}
-{% if package.buildscript -%}
-cargo.rust_binary(
-    name = {{ package.buildscript.name|tojson }},
-    srcs = [{{ package.archive_label|tojson }}],
-    crate = "build_script_build",
-    crate_root = {{ package.buildscript.crate_root|tojson }},
-    edition = {{ package.buildscript.edition|tojson }},
-{%- if package.buildscript.features %}
-    features = [
-{%- for feature in package.buildscript.features %}
-        {{ feature|tojson }},
-{%- endfor %}
-    ],
-{%- endif %}
-{%- if package.buildscript.named_deps %}
-    named_deps = {
-{%- for name, dependency in package.buildscript.named_deps %}
-        {{ name|tojson }}: {{ dependency|tojson }},
-{%- endfor %}
-    },
-{%- endif %}
-    env = {
-{%- for name, value in package.buildscript.env %}
-        {{ name|tojson }}: {{ value|tojson }},
-{%- endfor %}
-    },
-    visibility = [],
+export_file(
+    name = "dependencies-json",
+    src = "dependencies.json",
+    visibility = ["PUBLIC"],
 )
 
-buildscript_run(
-    name = {{ package.buildscript.run_name|tojson }},
-    package_name = {{ package.name|tojson }},
-    buildscript_rule = ":{{ package.buildscript.name }}",
-    rustc_link_lib = True,
-    rustc_link_search = True,
-    version = {{ package.version|tojson }},
-{%- if package.buildscript.env %}
-    env = {
-{%- for name, value in package.buildscript.env %}
-        {{ name|tojson }}: {{ value|tojson }},
-{%- endfor %}
-    },
-{%- endif %}
-{%- if package.buildscript.features %}
-    features = [
-{%- for feature in package.buildscript.features %}
-        {{ feature|tojson }},
-{%- endfor %}
-    ],
-{%- endif %}
-)
-
-{% endif -%}
-{% endfor -%}
+declare_cargo_dependencies(dependencies)
 "#;
 
 #[derive(Serialize)]
@@ -214,26 +126,86 @@ struct RustTarget {
 
 #[derive(Serialize)]
 struct ExternalPackage {
+    id: String,
     name: String,
     version: String,
-    archive: String,
-    archive_prefix: String,
-    archive_label: String,
     checksum: String,
-    url: String,
-    targets: Vec<RustTarget>,
+    edition: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    features: Vec<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    env: BTreeMap<String, String>,
+    targets: Vec<ExternalTarget>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     buildscript: Option<Buildscript>,
 }
 
 #[derive(Serialize)]
-struct Buildscript {
+#[serde(rename_all = "camelCase")]
+struct ExternalDependencies {
+    generated_by: &'static str,
+    packages: Vec<ExternalPackage>,
+    roots: Vec<DependencyRoot>,
+    edges: Vec<DependencyEdge>,
+}
+
+#[derive(Serialize)]
+struct DependencyRoot {
+    id: String,
     name: String,
-    run_name: String,
-    crate_root: String,
-    edition: String,
-    features: Vec<String>,
-    named_deps: Vec<(String, String)>,
-    env: Vec<(String, String)>,
+    category: &'static str,
+    dependencies: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct ExternalTarget {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    crate_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    crate_root: Option<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    named_deps: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    proc_macro: bool,
+}
+
+#[derive(Serialize)]
+struct Buildscript {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    crate_root: Option<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    named_deps: BTreeMap<String, String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceData {
+    generated_by: &'static str,
+    crates: Vec<WorkspaceCrate>,
+    edges: Vec<DependencyEdge>,
+}
+
+#[derive(Serialize)]
+struct WorkspaceCrate {
+    id: String,
+    name: String,
+    version: String,
+    path: String,
+    category: &'static str,
+    targets: Vec<WorkspaceCrateTarget>,
+}
+
+#[derive(Serialize)]
+struct WorkspaceCrateTarget {
+    name: String,
+    kinds: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct DependencyEdge {
+    source: String,
+    target: String,
+    kinds: Vec<String>,
 }
 
 struct Graph<'a> {
@@ -397,16 +369,26 @@ fn generate_workspace(
         ));
     }
 
-    let packages = graph
-        .external_packages(&checksums)?
-        .into_iter()
-        .collect::<Vec<_>>();
+    let dependencies = graph.external_dependencies(&checksums)?;
     files.push((
         PathBuf::from(dependency_cell).join("BUCK"),
-        render(
-            EXTERNAL_TEMPLATE,
-            context!(header => HEADER, packages => packages),
-        )?,
+        render(EXTERNAL_TEMPLATE, context!(header => HEADER))?,
+    ));
+    files.push((
+        PathBuf::from(dependency_cell).join("dependencies.json"),
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&dependencies)
+                .wrap_err("could not serialize Buck dependency data")?
+        ),
+    ));
+    files.push((
+        PathBuf::from(dependency_cell).join("crates.json"),
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&graph.workspace_data(root)?)
+                .wrap_err("could not serialize workspace crate data")?
+        ),
     ));
     Ok(files)
 }
@@ -500,6 +482,68 @@ impl<'a> Graph<'a> {
         Ok(packages)
     }
 
+    fn external_dependencies(
+        &self,
+        checksums: &BTreeMap<(String, String), String>,
+    ) -> Result<ExternalDependencies> {
+        let packages = self.external_packages(checksums)?;
+        let external = self
+            .packages
+            .keys()
+            .filter(|package| !self.workspace.contains(*package))
+            .copied()
+            .collect::<BTreeSet<_>>();
+        let tools = self.dependency_cell.ends_with("/glu");
+        let root = self.metadata.workspace_root.as_std_path();
+        let mut roots = self
+            .workspace_packages()
+            .into_iter()
+            .filter_map(|package| {
+                let mut dependencies = self
+                    .nodes
+                    .get(&package.id)?
+                    .deps
+                    .iter()
+                    .filter(|dependency| external.contains(&dependency.pkg))
+                    .map(|dependency| dependency.pkg.repr.clone())
+                    .collect::<Vec<_>>();
+                if dependencies.is_empty() {
+                    return None;
+                }
+                dependencies.sort();
+                dependencies.dedup();
+                let category = if tools {
+                    "tool"
+                } else if package
+                    .manifest_path
+                    .as_std_path()
+                    .strip_prefix(root)
+                    .is_ok_and(|path| path.starts_with("crates/bin"))
+                {
+                    "product"
+                } else {
+                    "tcb"
+                };
+                Some(DependencyRoot {
+                    id: stable_workspace_id(package),
+                    name: package.name.to_string(),
+                    category,
+                    dependencies,
+                })
+            })
+            .collect::<Vec<_>>();
+        roots.sort_by(|left, right| left.name.cmp(&right.name));
+        let edges = self.dependency_edges(|source, target| {
+            external.contains(source) && external.contains(target)
+        });
+        Ok(ExternalDependencies {
+            generated_by: concat!("glu ", env!("CARGO_PKG_VERSION")),
+            packages,
+            roots,
+            edges,
+        })
+    }
+
     fn external_package(
         &self,
         package: &Package,
@@ -518,9 +562,6 @@ impl<'a> Graph<'a> {
         }
         let name = package.name.to_string();
         let version = package.version.to_string();
-        let label = label(package);
-        let archive = format!("{label}.crate");
-        let archive_prefix = format!("{name}-{version}");
         let checksum = checksums
             .get(&(name.clone(), version.clone()))
             .cloned()
@@ -544,67 +585,156 @@ impl<'a> Graph<'a> {
             .targets
             .iter()
             .find(|target| target.kind.contains(&TargetKind::CustomBuild));
-        let buildscript = build_target.map(|target| {
-            let mut env = cargo_package_env(package);
-            env.push((
-                "CARGO_MANIFEST_DIR".to_owned(),
-                format!("$(location :{archive})"),
-            ));
-            env.extend([
-                ("DEBUG".to_owned(), "true".to_owned()),
-                ("OPT_LEVEL".to_owned(), "0".to_owned()),
-                ("PROFILE".to_owned(), "debug".to_owned()),
-            ]);
-            Buildscript {
-                name: format!("{label}-build-script-build"),
-                run_name: format!("{label}-build-script-run"),
-                crate_root: format!("{archive}/{}", relative_target_path(package, target)),
-                edition: package.edition.to_string(),
-                features: features.clone(),
-                named_deps: self.dependencies(&package.id, DependencyKind::Build, false),
-                env,
-            }
+        let buildscript = build_target.map(|target| Buildscript {
+            crate_root: (relative_target_path(package, target) != "build.rs")
+                .then(|| relative_target_path(package, target)),
+            named_deps: self
+                .dependencies(&package.id, DependencyKind::Build, false)
+                .into_iter()
+                .collect(),
         });
         let targets = package
             .targets
             .iter()
             .filter_map(|target| {
-                let rule = target_rule(target, true)?;
-                let target_buildscript = buildscript.as_ref().map(|script| script.run_name.clone());
-                let mut env = cargo_package_env(package);
-                if let Some(run_name) = &target_buildscript {
-                    env.push((
-                        "OUT_DIR".to_owned(),
-                        format!("$(location :{run_name}[out_dir])"),
-                    ));
-                }
-                Some(RustTarget {
-                    rule,
-                    name: label.clone(),
-                    crate_name: target.name.replace('-', "_"),
-                    crate_root: format!("{archive}/{}", relative_target_path(package, target)),
-                    edition: package.edition.to_string(),
-                    features: features.clone(),
-                    named_deps: self.dependencies(&package.id, DependencyKind::Normal, false),
+                target_rule(target, true)?;
+                let crate_name = target.name.replace('-', "_");
+                let default_crate_name = package.name.replace('-', "_");
+                let crate_root = relative_target_path(package, target);
+                Some(ExternalTarget {
+                    crate_name: (crate_name != default_crate_name).then_some(crate_name),
+                    crate_root: (crate_root != "src/lib.rs").then_some(crate_root),
+                    named_deps: self
+                        .dependencies(&package.id, DependencyKind::Normal, false)
+                        .into_iter()
+                        .collect(),
                     proc_macro: target.kind.contains(&TargetKind::ProcMacro),
-                    buildscript: target_buildscript,
-                    env,
-                    unit_test: false,
                 })
             })
             .collect();
 
         Ok(ExternalPackage {
-            name: name.clone(),
-            version: version.clone(),
-            archive: archive.clone(),
-            archive_prefix,
-            archive_label: format!(":{archive}"),
+            id: package.id.repr.clone(),
+            name,
+            version,
             checksum,
-            url: format!("https://crates.io/api/v1/crates/{name}/{version}/download"),
+            edition: package.edition.to_string(),
+            features,
+            env: external_package_env(package),
             targets,
             buildscript,
         })
+    }
+
+    fn workspace_data(&self, root: &Path) -> Result<WorkspaceData> {
+        let tools = self.dependency_cell.ends_with("/glu");
+        let mut crates = self
+            .workspace_packages()
+            .into_iter()
+            .map(|package| {
+                let path = package_directory(root, package)?;
+                let category = if tools {
+                    "tool"
+                } else if path.starts_with("crates/bin") {
+                    "product"
+                } else {
+                    "tcb"
+                };
+                let mut targets = package
+                    .targets
+                    .iter()
+                    .filter(|target| target_rule(target, false).is_some())
+                    .map(|target| {
+                        let mut kinds = target
+                            .kind
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>();
+                        kinds.sort();
+                        WorkspaceCrateTarget {
+                            name: target.name.clone(),
+                            kinds,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                targets.sort_by(|left, right| left.name.cmp(&right.name));
+                Ok(WorkspaceCrate {
+                    id: stable_workspace_id(package),
+                    name: package.name.to_string(),
+                    version: package.version.to_string(),
+                    path: path.to_string_lossy().into_owned(),
+                    category,
+                    targets,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        crates.sort_by(|left, right| left.name.cmp(&right.name));
+
+        let edges = self.dependency_edges(|source, target| {
+            self.workspace.contains(source) && self.workspace.contains(target)
+        });
+
+        Ok(WorkspaceData {
+            generated_by: concat!("glu ", env!("CARGO_PKG_VERSION")),
+            crates,
+            edges,
+        })
+    }
+
+    fn dependency_edges(
+        &self,
+        include: impl Fn(&PackageId, &PackageId) -> bool,
+    ) -> Vec<DependencyEdge> {
+        let mut edges = self
+            .nodes
+            .values()
+            .flat_map(|node| {
+                node.deps
+                    .iter()
+                    .filter(|dependency| include(&node.id, &dependency.pkg))
+                    .map(|dependency| {
+                        let mut kinds = dependency
+                            .dep_kinds
+                            .iter()
+                            .map(|kind| {
+                                let target = kind
+                                    .target
+                                    .as_ref()
+                                    .map(|target| format!(" ({target})"))
+                                    .unwrap_or_default();
+                                format!("{}{target}", kind.kind)
+                            })
+                            .collect::<Vec<_>>();
+                        kinds.sort();
+                        kinds.dedup();
+                        DependencyEdge {
+                            source: self.stable_id(&node.id),
+                            target: self.stable_id(&dependency.pkg),
+                            kinds,
+                        }
+                    })
+            })
+            .collect::<Vec<_>>();
+        edges.sort_by(|left, right| {
+            left.source
+                .cmp(&right.source)
+                .then_with(|| left.target.cmp(&right.target))
+                .then_with(|| left.kinds.cmp(&right.kinds))
+        });
+        edges
+    }
+
+    fn stable_id(&self, id: &PackageId) -> String {
+        self.packages.get(id).map_or_else(
+            || id.repr.clone(),
+            |package| {
+                if self.workspace.contains(id) {
+                    stable_workspace_id(package)
+                } else {
+                    id.repr.clone()
+                }
+            },
+        )
     }
 
     fn dependencies(
@@ -708,6 +838,10 @@ fn label(package: &Package) -> String {
     format!("{}-{}", package.name, package.version)
 }
 
+fn stable_workspace_id(package: &Package) -> String {
+    format!("workspace#{}@{}", package.name, package.version)
+}
+
 fn relative_target_path(package: &Package, target: &Target) -> String {
     target
         .src_path
@@ -776,4 +910,21 @@ fn cargo_package_env(package: &Package) -> Vec<(String, String)> {
     .into_iter()
     .map(|(name, value)| (name.to_owned(), value))
     .collect()
+}
+
+fn external_package_env(package: &Package) -> BTreeMap<String, String> {
+    cargo_package_env(package)
+        .into_iter()
+        .filter(|(name, value)| {
+            !value.is_empty()
+                && !matches!(
+                    name.as_str(),
+                    "CARGO_PKG_NAME"
+                        | "CARGO_PKG_VERSION"
+                        | "CARGO_PKG_VERSION_MAJOR"
+                        | "CARGO_PKG_VERSION_MINOR"
+                        | "CARGO_PKG_VERSION_PATCH"
+                )
+        })
+        .collect()
 }

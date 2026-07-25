@@ -1,0 +1,3351 @@
+{
+  "generatedBy": "glu 0.0.0",
+  "packages": [
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#addr2line@0.25.1",
+      "name": "addr2line",
+      "version": "0.25.1",
+      "checksum": "1b5d307320b3181d6d7954e663bd7c774a838b8220fe0593c86d9fb09f498b4b",
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "A cross-platform symbolication library written in Rust, using `gimli`",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/gimli-rs/addr2line"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "gimli": ":gimli-0.32.3"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#adler2@2.0.1",
+      "name": "adler2",
+      "version": "2.0.1",
+      "checksum": "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Jonas Schievink <jonasschievink@gmail.com>:oyvindln <oyvindln@users.noreply.github.com>",
+        "CARGO_PKG_DESCRIPTION": "A simple clean-room implementation of the Adler-32 checksum",
+        "CARGO_PKG_LICENSE": "0BSD OR MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/oyvindln/adler2"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#anstream@1.0.0",
+      "name": "anstream",
+      "version": "1.0.0",
+      "checksum": "824a212faf96e9acacdbd09febd34438f8f711fb84e09a8916013cd7815ca28d",
+      "edition": "2021",
+      "features": [
+        "auto",
+        "default",
+        "wincon"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "IO stream adapters for writing colored text that will gracefully degrade according to your terminal's capabilities.",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-cli/anstyle.git"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "anstyle": ":anstyle-1.0.14",
+            "anstyle_parse": ":anstyle-parse-1.0.0",
+            "anstyle_query": ":anstyle-query-1.1.5",
+            "colorchoice": ":colorchoice-1.0.5",
+            "is_terminal_polyfill": ":is_terminal_polyfill-1.70.2",
+            "utf8parse": ":utf8parse-0.2.2"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#anstyle@1.0.14",
+      "name": "anstyle",
+      "version": "1.0.14",
+      "checksum": "940b3a0ca603d1eade50a4846a2afffd5ef57a9feac2c0e2ec2e14f9ead76000",
+      "edition": "2021",
+      "features": [
+        "default",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "ANSI text styling",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-cli/anstyle.git"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#anstyle-parse@1.0.0",
+      "name": "anstyle-parse",
+      "version": "1.0.0",
+      "checksum": "52ce7f38b242319f7cabaa6813055467063ecdc9d355bbb4ce0c68908cd8130e",
+      "edition": "2021",
+      "features": [
+        "default",
+        "utf8"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Parse ANSI Style Escapes",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-cli/anstyle.git"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "utf8parse": ":utf8parse-0.2.2"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#anstyle-query@1.1.5",
+      "name": "anstyle-query",
+      "version": "1.1.5",
+      "checksum": "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Look up colored console capabilities",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-cli/anstyle.git"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#backtrace@0.3.76",
+      "name": "backtrace",
+      "version": "0.3.76",
+      "checksum": "bb531853791a215d7c62a30daf0dde835f381ab5de4589cfe7c649d2cbe92bd6",
+      "edition": "2021",
+      "features": [
+        "default",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Rust Project Developers",
+        "CARGO_PKG_DESCRIPTION": "A library to acquire a stack trace (backtrace) at runtime in a Rust program.\n",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/rust-lang/backtrace-rs",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/backtrace-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "addr2line": ":addr2line-0.25.1",
+            "cfg_if": ":cfg-if-1.0.4",
+            "libc": ":libc-0.2.189",
+            "miniz_oxide": ":miniz_oxide-0.8.9",
+            "object": ":object-0.37.3",
+            "rustc_demangle": ":rustc-demangle-0.1.28"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#camino@1.2.4",
+      "name": "camino",
+      "version": "1.2.4",
+      "checksum": "5f2d30e4173c4026932d51d31d6b0613b1fd3014bf3f9f8943d4ba139c437ba0",
+      "edition": "2021",
+      "features": [
+        "serde1"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Without Boats <saoirse@without.boats>:Ashley Williams <ashley666ashley@gmail.com>:Steve Klabnik <steve@steveklabnik.com>:Rain <rain@sunshowers.io>",
+        "CARGO_PKG_DESCRIPTION": "UTF-8 paths",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/camino-rs/camino"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "serde_core": ":serde_core-1.0.229"
+          }
+        }
+      ],
+      "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#cargo-lock@11.0.1",
+      "name": "cargo-lock",
+      "version": "11.0.1",
+      "checksum": "63585cdf8572aa7adf0e30a253f988f2b77233bfac1973d52efb6dd53a75920e",
+      "edition": "2024",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Tony Arcieri <bascule@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Self-contained Cargo.lock parser with optional dependency graph analysis",
+        "CARGO_PKG_HOMEPAGE": "https://rustsec.org",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rustsec/rustsec"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "semver": ":semver-1.0.28",
+            "serde": ":serde-1.0.229",
+            "toml": ":toml-0.9.12+spec-1.1.0",
+            "url": ":url-2.5.8"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#cargo-platform@0.3.3",
+      "name": "cargo-platform",
+      "version": "0.3.3",
+      "checksum": "dd0061da739915fae12ea00e16397555ed4371a6bb285431aab930f61b0aa4ba",
+      "edition": "2024",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Cargo's representation of a target platform.",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/cargo"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "serde_core": ":serde_core-1.0.229"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#cargo_metadata@0.23.1",
+      "name": "cargo_metadata",
+      "version": "0.23.1",
+      "checksum": "ef987d17b0a113becdd19d3d0022d04d7ef41f9efe4f3fb63ac44ba61df3ade9",
+      "edition": "2021",
+      "features": [
+        "default"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Oliver Schneider <git-spam-no-reply9815368754983@oli-obk.de>",
+        "CARGO_PKG_DESCRIPTION": "structured access to the output of `cargo metadata`",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/oli-obk/cargo_metadata"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "camino": ":camino-1.2.4",
+            "cargo_platform": ":cargo-platform-0.3.3",
+            "semver": ":semver-1.0.28",
+            "serde": ":serde-1.0.229",
+            "serde_json": ":serde_json-1.0.151",
+            "thiserror": ":thiserror-2.0.19"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4",
+      "name": "cfg-if",
+      "version": "1.0.4",
+      "checksum": "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801",
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Alex Crichton <alex@alexcrichton.com>",
+        "CARGO_PKG_DESCRIPTION": "A macro to ergonomically define an item depending on a large number of #[cfg]\nparameters. Structured like an if-else chain, the first matching branch is the\nitem that gets emitted.\n",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/cfg-if"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#clap@4.6.4",
+      "name": "clap",
+      "version": "4.6.4",
+      "checksum": "d91e0c145792ef73a6ad36d27c75ac09f1832222a3c209689d90f534685ee5b7",
+      "edition": "2024",
+      "features": [
+        "color",
+        "default",
+        "derive",
+        "error-context",
+        "help",
+        "std",
+        "suggestions",
+        "usage"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "A simple to use, efficient, and full-featured Command Line Argument Parser",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/clap-rs/clap"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "clap_builder": ":clap_builder-4.6.2",
+            "clap_derive": ":clap_derive-4.6.4"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#clap_builder@4.6.2",
+      "name": "clap_builder",
+      "version": "4.6.2",
+      "checksum": "f09628afdcc538b57f3c6341e9c8e9970f18e4a481690a64974d7023bd33548b",
+      "edition": "2024",
+      "features": [
+        "color",
+        "error-context",
+        "help",
+        "std",
+        "suggestions",
+        "usage"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "A simple to use, efficient, and full-featured Command Line Argument Parser",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/clap-rs/clap"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "anstream": ":anstream-1.0.0",
+            "anstyle": ":anstyle-1.0.14",
+            "clap_lex": ":clap_lex-1.1.0",
+            "strsim": ":strsim-0.11.1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#clap_derive@4.6.4",
+      "name": "clap_derive",
+      "version": "4.6.4",
+      "checksum": "d012d2b9d65aca7f18f4d9878a045bc17899bba951561ba5ec3c2ba1eed9a061",
+      "edition": "2024",
+      "features": [
+        "default"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Parse command line argument by defining a struct, derive crate.",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/clap-rs/clap"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "heck": ":heck-0.5.0",
+            "proc_macro2": ":proc-macro2-1.0.107",
+            "quote": ":quote-1.0.47",
+            "syn": ":syn-3.0.3"
+          },
+          "proc_macro": true
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#clap_lex@1.1.0",
+      "name": "clap_lex",
+      "version": "1.1.0",
+      "checksum": "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9",
+      "edition": "2024",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Minimal, flexible command line parser",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/clap-rs/clap"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#color-eyre@0.6.5",
+      "name": "color-eyre",
+      "version": "0.6.5",
+      "checksum": "e5920befb47832a6d61ee3a3a846565cfa39b331331e68a3b1d1116630f2f26d",
+      "edition": "2018",
+      "features": [
+        "capture-spantrace",
+        "color-spantrace",
+        "default",
+        "tracing-error",
+        "track-caller"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Jane Lusby <jlusby@yaah.dev>",
+        "CARGO_PKG_DESCRIPTION": "An error report handler for panics and eyre::Reports for colorful, consistent, and well formatted error reports for all kinds of errors.",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/eyre-rs/eyre"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "backtrace": ":backtrace-0.3.76",
+            "color_spantrace": ":color-spantrace-0.3.0",
+            "eyre": ":eyre-0.6.12",
+            "indenter": ":indenter-0.3.4",
+            "once_cell": ":once_cell-1.21.4",
+            "owo_colors": ":owo-colors-4.3.0",
+            "tracing_error": ":tracing-error-0.2.1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#color-spantrace@0.3.0",
+      "name": "color-spantrace",
+      "version": "0.3.0",
+      "checksum": "b8b88ea9df13354b55bc7234ebcce36e6ef896aca2e42a15de9e10edce01b427",
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Jane Lusby <jlusby@yaah.dev>",
+        "CARGO_PKG_DESCRIPTION": "A pretty printer for tracing_error::SpanTrace based on color-backtrace",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/eyre-rs/eyre"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "once_cell": ":once_cell-1.21.4",
+            "owo_colors": ":owo-colors-4.3.0",
+            "tracing_core": ":tracing-core-0.1.36",
+            "tracing_error": ":tracing-error-0.2.1"
+          }
+        }
+      ],
+      "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#colorchoice@1.0.5",
+      "name": "colorchoice",
+      "version": "1.0.5",
+      "checksum": "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Global override of color control",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-cli/anstyle.git"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#displaydoc@0.2.6",
+      "name": "displaydoc",
+      "version": "0.2.6",
+      "checksum": "1ac70aa55017e108007fbaf5aa0f54b021c98f92ff8af59d42eda9da96e3dd4f",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Jane Lusby <jlusby@yaah.dev>",
+        "CARGO_PKG_DESCRIPTION": "A derive macro for implementing the display Trait via a doc comment and string interpolation\n",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/yaahc/displaydoc",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/yaahc/displaydoc"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "proc_macro2": ":proc-macro2-1.0.107",
+            "quote": ":quote-1.0.47",
+            "syn": ":syn-2.0.119"
+          },
+          "proc_macro": true
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#equivalent@1.0.2",
+      "name": "equivalent",
+      "version": "1.0.2",
+      "checksum": "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f",
+      "edition": "2015",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Traits for key comparison in maps.",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/indexmap-rs/equivalent"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#eyre@0.6.12",
+      "name": "eyre",
+      "version": "0.6.12",
+      "checksum": "7cd915d99f24784cdc19fd37ef22b97e3ff0ae756c7e492e9fbfe897d61e2aec",
+      "edition": "2018",
+      "features": [
+        "auto-install",
+        "default",
+        "track-caller"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "David Tolnay <dtolnay@gmail.com>:Jane Lusby <jlusby42@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Flexible concrete Error Reporting type built on std::error::Error with customizable Reports",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/eyre-rs/eyre"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "indenter": ":indenter-0.3.4",
+            "once_cell": ":once_cell-1.21.4"
+          }
+        }
+      ],
+      "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#form_urlencoded@1.2.2",
+      "name": "form_urlencoded",
+      "version": "1.2.2",
+      "checksum": "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf",
+      "edition": "2018",
+      "features": [
+        "alloc",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The rust-url developers",
+        "CARGO_PKG_DESCRIPTION": "Parser and serializer for the application/x-www-form-urlencoded syntax, as used by HTML forms.",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/servo/rust-url"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "percent_encoding": ":percent-encoding-2.3.2"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#gimli@0.32.3",
+      "name": "gimli",
+      "version": "0.32.3",
+      "checksum": "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7",
+      "edition": "2018",
+      "features": [
+        "read",
+        "read-core"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "A library for reading and writing the DWARF debugging format.",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/gimli-rs/gimli"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
+      "name": "hashbrown",
+      "version": "0.17.1",
+      "checksum": "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a",
+      "edition": "2024",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "A Rust port of Google's SwissTable hash map",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/hashbrown"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#heck@0.5.0",
+      "name": "heck",
+      "version": "0.5.0",
+      "checksum": "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "heck is a case conversion library.",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/withoutboats/heck"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#icu_collections@2.2.0",
+      "name": "icu_collections",
+      "version": "2.2.0",
+      "checksum": "2984d1cd16c883d7935b9e07e44071dca8d917fd52ecc02c04d5fa0b5a3f191c",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "The ICU4X Project Developers",
+        "CARGO_PKG_DESCRIPTION": "Collection of API for use in ICU libraries.",
+        "CARGO_PKG_HOMEPAGE": "https://icu4x.unicode.org",
+        "CARGO_PKG_LICENSE": "Unicode-3.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/unicode-org/icu4x"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "displaydoc": ":displaydoc-0.2.6",
+            "potential_utf": ":potential_utf-0.1.5",
+            "utf8_iter": ":utf8_iter-1.0.4",
+            "yoke": ":yoke-0.8.3",
+            "zerofrom": ":zerofrom-0.1.8",
+            "zerovec": ":zerovec-0.11.6"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#icu_locale_core@2.2.0",
+      "name": "icu_locale_core",
+      "version": "2.2.0",
+      "checksum": "92219b62b3e2b4d88ac5119f8904c10f8f61bf7e95b640d25ba3075e6cac2c29",
+      "edition": "2021",
+      "features": [
+        "zerovec"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The ICU4X Project Developers",
+        "CARGO_PKG_DESCRIPTION": "API for managing Unicode Language and Locale Identifiers",
+        "CARGO_PKG_HOMEPAGE": "https://icu4x.unicode.org",
+        "CARGO_PKG_LICENSE": "Unicode-3.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/unicode-org/icu4x"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "displaydoc": ":displaydoc-0.2.6",
+            "litemap": ":litemap-0.8.2",
+            "tinystr": ":tinystr-0.8.3",
+            "writeable": ":writeable-0.6.3",
+            "zerovec": ":zerovec-0.11.6"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#icu_normalizer@2.2.0",
+      "name": "icu_normalizer",
+      "version": "2.2.0",
+      "checksum": "c56e5ee99d6e3d33bd91c5d85458b6005a22140021cc324cea84dd0e72cff3b4",
+      "edition": "2021",
+      "features": [
+        "compiled_data"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The ICU4X Project Developers",
+        "CARGO_PKG_DESCRIPTION": "API for normalizing text into Unicode Normalization Forms",
+        "CARGO_PKG_HOMEPAGE": "https://icu4x.unicode.org",
+        "CARGO_PKG_LICENSE": "Unicode-3.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/unicode-org/icu4x"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "icu_collections": ":icu_collections-2.2.0",
+            "icu_normalizer_data": ":icu_normalizer_data-2.2.0",
+            "icu_properties": ":icu_properties-2.2.0",
+            "icu_provider": ":icu_provider-2.2.0",
+            "smallvec": ":smallvec-1.15.2",
+            "zerovec": ":zerovec-0.11.6"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#icu_normalizer_data@2.2.0",
+      "name": "icu_normalizer_data",
+      "version": "2.2.0",
+      "checksum": "da3be0ae77ea334f4da67c12f149704f19f81d1adf7c51cf482943e84a2bad38",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "The ICU4X Project Developers",
+        "CARGO_PKG_DESCRIPTION": "Data for the icu_normalizer crate",
+        "CARGO_PKG_HOMEPAGE": "https://icu4x.unicode.org",
+        "CARGO_PKG_LICENSE": "Unicode-3.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/unicode-org/icu4x"
+      },
+      "targets": [
+        {}
+      ],
+      "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#icu_properties@2.2.0",
+      "name": "icu_properties",
+      "version": "2.2.0",
+      "checksum": "bee3b67d0ea5c2cca5003417989af8996f8604e34fb9ddf96208a033901e70de",
+      "edition": "2021",
+      "features": [
+        "compiled_data"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The ICU4X Project Developers",
+        "CARGO_PKG_DESCRIPTION": "Definitions for Unicode properties",
+        "CARGO_PKG_HOMEPAGE": "https://icu4x.unicode.org",
+        "CARGO_PKG_LICENSE": "Unicode-3.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/unicode-org/icu4x"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "icu_collections": ":icu_collections-2.2.0",
+            "icu_locale_core": ":icu_locale_core-2.2.0",
+            "icu_properties_data": ":icu_properties_data-2.2.0",
+            "icu_provider": ":icu_provider-2.2.0",
+            "zerotrie": ":zerotrie-0.2.4",
+            "zerovec": ":zerovec-0.11.6"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#icu_properties_data@2.2.0",
+      "name": "icu_properties_data",
+      "version": "2.2.0",
+      "checksum": "8e2bbb201e0c04f7b4b3e14382af113e17ba4f63e2c9d2ee626b720cbce54a14",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "The ICU4X Project Developers",
+        "CARGO_PKG_DESCRIPTION": "Data for the icu_properties crate",
+        "CARGO_PKG_HOMEPAGE": "https://icu4x.unicode.org",
+        "CARGO_PKG_LICENSE": "Unicode-3.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/unicode-org/icu4x"
+      },
+      "targets": [
+        {}
+      ],
+      "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#icu_provider@2.2.0",
+      "name": "icu_provider",
+      "version": "2.2.0",
+      "checksum": "139c4cf31c8b5f33d7e199446eff9c1e02decfc2f0eec2c8d71f65befa45b421",
+      "edition": "2021",
+      "features": [
+        "baked"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The ICU4X Project Developers",
+        "CARGO_PKG_DESCRIPTION": "Trait and struct definitions for the ICU data provider",
+        "CARGO_PKG_HOMEPAGE": "https://icu4x.unicode.org",
+        "CARGO_PKG_LICENSE": "Unicode-3.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/unicode-org/icu4x"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "displaydoc": ":displaydoc-0.2.6",
+            "icu_locale_core": ":icu_locale_core-2.2.0",
+            "writeable": ":writeable-0.6.3",
+            "yoke": ":yoke-0.8.3",
+            "zerofrom": ":zerofrom-0.1.8",
+            "zerotrie": ":zerotrie-0.2.4",
+            "zerovec": ":zerovec-0.11.6"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#idna@1.1.0",
+      "name": "idna",
+      "version": "1.1.0",
+      "checksum": "3b0875f23caa03898994f6ddc501886a45c7d3d62d04d2d90788d47be1b1e4de",
+      "edition": "2018",
+      "features": [
+        "alloc",
+        "compiled_data",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The rust-url developers",
+        "CARGO_PKG_DESCRIPTION": "IDNA (Internationalizing Domain Names in Applications) and Punycode.",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/servo/rust-url/"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "idna_adapter": ":idna_adapter-1.2.2",
+            "smallvec": ":smallvec-1.15.2",
+            "utf8_iter": ":utf8_iter-1.0.4"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#idna_adapter@1.2.2",
+      "name": "idna_adapter",
+      "version": "1.2.2",
+      "checksum": "cb68373c0d6620ef8105e855e7745e18b0d00d3bdb07fb532e434244cdb9a714",
+      "edition": "2024",
+      "features": [
+        "compiled_data"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The rust-url developers",
+        "CARGO_PKG_DESCRIPTION": "Back end adapter for idna",
+        "CARGO_PKG_HOMEPAGE": "https://docs.rs/crate/idna_adapter/latest",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/hsivonen/idna_adapter"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "icu_normalizer": ":icu_normalizer-2.2.0",
+            "icu_properties": ":icu_properties-2.2.0"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#indenter@0.3.4",
+      "name": "indenter",
+      "version": "0.3.4",
+      "checksum": "964de6e86d545b246d84badc0fef527924ace5134f30641c203ef52ba83f58d5",
+      "edition": "2018",
+      "features": [
+        "default"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Jane Lusby <jlusby@yaah.dev>",
+        "CARGO_PKG_DESCRIPTION": "A formatter wrapper that indents the text, designed for error display impls\n",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/yaahc/indenter",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/yaahc/indenter"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
+      "name": "indexmap",
+      "version": "2.14.0",
+      "checksum": "d466e9454f08e4a911e14806c24e16fba1b4c121d1ea474396f396069cf949d9",
+      "edition": "2024",
+      "features": [
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "A hash table with consistent order and fast iteration.",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/indexmap-rs/indexmap"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "equivalent": ":equivalent-1.0.2",
+            "hashbrown": ":hashbrown-0.17.1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#is_terminal_polyfill@1.70.2",
+      "name": "is_terminal_polyfill",
+      "version": "1.70.2",
+      "checksum": "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695",
+      "edition": "2021",
+      "features": [
+        "default"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Polyfill for `is_terminal` stdlib feature for use with older MSRVs",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/polyfill-rs/is_terminal_polyfill"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#itoa@1.0.18",
+      "name": "itoa",
+      "version": "1.0.18",
+      "checksum": "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "David Tolnay <dtolnay@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Fast integer primitive to string conversion",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/dtolnay/itoa"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#lazy_static@1.5.0",
+      "name": "lazy_static",
+      "version": "1.5.0",
+      "checksum": "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe",
+      "edition": "2015",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Marvin Löbel <loebel.marvin@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "A macro for declaring lazily evaluated statics in Rust.",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang-nursery/lazy-static.rs"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
+      "name": "libc",
+      "version": "0.2.189",
+      "checksum": "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Raw FFI bindings to platform libraries like libc.",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/libc"
+      },
+      "targets": [
+        {}
+      ],
+      "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#litemap@0.8.2",
+      "name": "litemap",
+      "version": "0.8.2",
+      "checksum": "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "The ICU4X Project Developers",
+        "CARGO_PKG_DESCRIPTION": "A key-value Map implementation based on a flat, sorted Vec.",
+        "CARGO_PKG_LICENSE": "Unicode-3.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/unicode-org/icu4x"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3",
+      "name": "memchr",
+      "version": "2.8.3",
+      "checksum": "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98",
+      "edition": "2021",
+      "features": [
+        "alloc",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Andrew Gallant <jamslam@gmail.com>:bluss",
+        "CARGO_PKG_DESCRIPTION": "Provides extremely fast (uses SIMD on x86_64, aarch64 and wasm32) routines for\n1, 2 or 3 byte search and single substring search.\n",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/BurntSushi/memchr",
+        "CARGO_PKG_LICENSE": "Unlicense OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/BurntSushi/memchr"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#memo-map@0.3.3",
+      "name": "memo-map",
+      "version": "0.3.3",
+      "checksum": "38d1115007560874e373613744c6fba374c17688327a71c1476d1a5954cc857b",
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Armin Ronacher <armin.ronacher@active-4.com>",
+        "CARGO_PKG_DESCRIPTION": "A crate implementing a synchronized map for memoization",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/mitsuhiko/memo-map"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#minijinja@2.21.0",
+      "name": "minijinja",
+      "version": "2.21.0",
+      "checksum": "cb3d648e68cea56d9858d535ee28f9538404e2dd8cb08ed0bd05dca379477f39",
+      "edition": "2021",
+      "features": [
+        "adjacent_loop_items",
+        "builtins",
+        "debug",
+        "default",
+        "deserialization",
+        "json",
+        "macros",
+        "multi_template",
+        "serde",
+        "serde_json",
+        "std_collections"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Armin Ronacher <armin.ronacher@active-4.com>",
+        "CARGO_PKG_DESCRIPTION": "a powerful template engine for Rust with minimal dependencies",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/mitsuhiko/minijinja",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/mitsuhiko/minijinja"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "memo_map": ":memo-map-0.3.3",
+            "serde": ":serde-1.0.229",
+            "serde_json": ":serde_json-1.0.151"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#miniz_oxide@0.8.9",
+      "name": "miniz_oxide",
+      "version": "0.8.9",
+      "checksum": "1fa76a2c86f704bdb222d66965fb3d63269ce38518b83cb0575fca855ebb6316",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Frommi <daniil.liferenko@gmail.com>:oyvindln <oyvindln@users.noreply.github.com>:Rich Geldreich richgel99@gmail.com",
+        "CARGO_PKG_DESCRIPTION": "DEFLATE compression and decompression library rewritten in Rust based on miniz",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide",
+        "CARGO_PKG_LICENSE": "MIT OR Zlib OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "adler2": ":adler2-2.0.1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#object@0.37.3",
+      "name": "object",
+      "version": "0.37.3",
+      "checksum": "ff76201f031d8863c38aa7f905eca4f53abbfa15f609db4277d44cd8938f33fe",
+      "edition": "2018",
+      "features": [
+        "archive",
+        "coff",
+        "elf",
+        "macho",
+        "pe",
+        "read_core",
+        "unaligned",
+        "xcoff"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "A unified interface for reading and writing object file formats.",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/gimli-rs/object"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "memchr": ":memchr-2.8.3"
+          }
+        }
+      ],
+      "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#once_cell@1.21.4",
+      "name": "once_cell",
+      "version": "1.21.4",
+      "checksum": "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50",
+      "edition": "2021",
+      "features": [
+        "alloc",
+        "default",
+        "race",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Aleksey Kladov <aleksey.kladov@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Single assignment cells and lazy values.",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/matklad/once_cell"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#owo-colors@4.3.0",
+      "name": "owo-colors",
+      "version": "4.3.0",
+      "checksum": "d211803b9b6b570f68772237e415a029d5a50c65d382910b879fb19d3271f94d",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "jam1garner <8260240+jam1garner@users.noreply.github.com>",
+        "CARGO_PKG_DESCRIPTION": "Zero-allocation terminal colors that'll make people go owo",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/owo-colors/owo-colors"
+      },
+      "targets": [
+        {}
+      ],
+      "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#percent-encoding@2.3.2",
+      "name": "percent-encoding",
+      "version": "2.3.2",
+      "checksum": "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220",
+      "edition": "2018",
+      "features": [
+        "alloc",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The rust-url developers",
+        "CARGO_PKG_DESCRIPTION": "Percent encoding and decoding",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/servo/rust-url/"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#pin-project-lite@0.2.17",
+      "name": "pin-project-lite",
+      "version": "0.2.17",
+      "checksum": "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd",
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "A lightweight version of pin-project written with declarative macros.\n",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/taiki-e/pin-project-lite"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#potential_utf@0.1.5",
+      "name": "potential_utf",
+      "version": "0.1.5",
+      "checksum": "0103b1cef7ec0cf76490e969665504990193874ea05c85ff9bab8b911d0a0564",
+      "edition": "2021",
+      "features": [
+        "zerovec"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The ICU4X Project Developers",
+        "CARGO_PKG_DESCRIPTION": "Unvalidated string and character types",
+        "CARGO_PKG_HOMEPAGE": "https://icu4x.unicode.org",
+        "CARGO_PKG_LICENSE": "Unicode-3.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/unicode-org/icu4x"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "zerovec": ":zerovec-0.11.6"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
+      "name": "proc-macro2",
+      "version": "1.0.107",
+      "checksum": "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9",
+      "edition": "2021",
+      "features": [
+        "default",
+        "proc-macro"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "David Tolnay <dtolnay@gmail.com>:Alex Crichton <alex@alexcrichton.com>",
+        "CARGO_PKG_DESCRIPTION": "A substitute implementation of the compiler's `proc_macro` API to decouple token-based libraries from the procedural macro use case.",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/dtolnay/proc-macro2"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "unicode_ident": ":unicode-ident-1.0.24"
+          }
+        }
+      ],
+      "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
+      "name": "quote",
+      "version": "1.0.47",
+      "checksum": "1fbf4db142a473a8d80c26bbf18454ed458bf8d26c8219c331daecfdbd079001",
+      "edition": "2021",
+      "features": [
+        "default",
+        "proc-macro"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "David Tolnay <dtolnay@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Quasi-quoting macro quote!(...)",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/dtolnay/quote"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "proc_macro2": ":proc-macro2-1.0.107"
+          }
+        }
+      ],
+      "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#rustc-demangle@0.1.28",
+      "name": "rustc-demangle",
+      "version": "0.1.28",
+      "checksum": "b74b56ffa8bb2830709a538c2cbcae9aa062db0d2a42563bfb09bdaae44020eb",
+      "edition": "2015",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Alex Crichton <alex@alexcrichton.com>",
+        "CARGO_PKG_DESCRIPTION": "Rust compiler symbol demangling.\n",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/rust-lang/rustc-demangle",
+        "CARGO_PKG_LICENSE": "MIT/Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/rustc-demangle"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#semver@1.0.28",
+      "name": "semver",
+      "version": "1.0.28",
+      "checksum": "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd",
+      "edition": "2021",
+      "features": [
+        "default",
+        "serde",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "David Tolnay <dtolnay@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Parser and evaluator for Cargo's flavor of Semantic Versioning",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/dtolnay/semver"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "serde": ":serde_core-1.0.229"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+      "name": "serde",
+      "version": "1.0.229",
+      "checksum": "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba",
+      "edition": "2021",
+      "features": [
+        "default",
+        "derive",
+        "serde_derive",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Erick Tryzelaar <erick.tryzelaar@gmail.com>:David Tolnay <dtolnay@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "A generic serialization/deserialization framework",
+        "CARGO_PKG_HOMEPAGE": "https://serde.rs",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/serde-rs/serde"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "serde_core": ":serde_core-1.0.229",
+            "serde_derive": ":serde_derive-1.0.229"
+          }
+        }
+      ],
+      "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#serde_core@1.0.229",
+      "name": "serde_core",
+      "version": "1.0.229",
+      "checksum": "67dca2c9c51e58a4791a4b1ed58308b39c64224d349a935ab5039aa360942a48",
+      "edition": "2021",
+      "features": [
+        "alloc",
+        "default",
+        "result",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Erick Tryzelaar <erick.tryzelaar@gmail.com>:David Tolnay <dtolnay@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Serde traits only, with no support for derive -- use the `serde` crate instead",
+        "CARGO_PKG_HOMEPAGE": "https://serde.rs",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/serde-rs/serde"
+      },
+      "targets": [
+        {}
+      ],
+      "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#serde_derive@1.0.229",
+      "name": "serde_derive",
+      "version": "1.0.229",
+      "checksum": "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348",
+      "edition": "2021",
+      "features": [
+        "default"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Erick Tryzelaar <erick.tryzelaar@gmail.com>:David Tolnay <dtolnay@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Macros 1.1 implementation of #[derive(Serialize, Deserialize)]",
+        "CARGO_PKG_HOMEPAGE": "https://serde.rs",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/serde-rs/serde"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "proc_macro2": ":proc-macro2-1.0.107",
+            "quote": ":quote-1.0.47",
+            "syn": ":syn-3.0.3"
+          },
+          "proc_macro": true
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151",
+      "name": "serde_json",
+      "version": "1.0.151",
+      "checksum": "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14",
+      "edition": "2021",
+      "features": [
+        "default",
+        "std",
+        "unbounded_depth"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Erick Tryzelaar <erick.tryzelaar@gmail.com>:David Tolnay <dtolnay@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "A JSON serialization file format",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/serde-rs/json"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "itoa": ":itoa-1.0.18",
+            "memchr": ":memchr-2.8.3",
+            "serde_core": ":serde_core-1.0.229",
+            "zmij": ":zmij-1.0.23"
+          }
+        }
+      ],
+      "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#serde_spanned@1.1.1",
+      "name": "serde_spanned",
+      "version": "1.1.1",
+      "checksum": "6662b5879511e06e8999a8a235d848113e942c9124f211511b16466ee2995f26",
+      "edition": "2024",
+      "features": [
+        "alloc",
+        "serde",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Serde-compatible spanned Value",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/toml-rs/toml"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "serde_core": ":serde_core-1.0.229"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#sharded-slab@0.1.7",
+      "name": "sharded-slab",
+      "version": "0.1.7",
+      "checksum": "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6",
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Eliza Weisman <eliza@buoyant.io>",
+        "CARGO_PKG_DESCRIPTION": "A lock-free concurrent slab.\n",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/hawkw/sharded-slab",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/hawkw/sharded-slab"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "lazy_static": ":lazy_static-1.5.0"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#smallvec@1.15.2",
+      "name": "smallvec",
+      "version": "1.15.2",
+      "checksum": "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90",
+      "edition": "2018",
+      "features": [
+        "const_generics"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Servo Project Developers",
+        "CARGO_PKG_DESCRIPTION": "'Small vector' optimization: store up to a small number of items on the stack",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/servo/rust-smallvec"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#stable_deref_trait@1.2.1",
+      "name": "stable_deref_trait",
+      "version": "1.2.1",
+      "checksum": "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596",
+      "edition": "2015",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Robert Grosse <n210241048576@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "An unsafe marker trait for types like Box and Rc that dereference to a stable address even when moved, and hence can be used with libraries such as owning_ref and rental.\n",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/storyyeller/stable_deref_trait"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#strsim@0.11.1",
+      "name": "strsim",
+      "version": "0.11.1",
+      "checksum": "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f",
+      "edition": "2015",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Danny Guo <danny@dannyguo.com>:maxbachmann <oss@maxbachmann.de>",
+        "CARGO_PKG_DESCRIPTION": "Implementations of string similarity metrics. Includes Hamming, Levenshtein,\nOSA, Damerau-Levenshtein, Jaro, Jaro-Winkler, and Sørensen-Dice.\n",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/rapidfuzz/strsim-rs",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rapidfuzz/strsim-rs"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119",
+      "name": "syn",
+      "version": "2.0.119",
+      "checksum": "872831b642d1a07999a962a351ed35b955ea2cfc8f3862091e2a240a84f17297",
+      "edition": "2021",
+      "features": [
+        "clone-impls",
+        "default",
+        "derive",
+        "extra-traits",
+        "fold",
+        "parsing",
+        "printing",
+        "proc-macro",
+        "visit"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "David Tolnay <dtolnay@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Parser for Rust source code",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/dtolnay/syn"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "proc_macro2": ":proc-macro2-1.0.107",
+            "quote": ":quote-1.0.47",
+            "unicode_ident": ":unicode-ident-1.0.24"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#syn@3.0.3",
+      "name": "syn",
+      "version": "3.0.3",
+      "checksum": "53e9bae58849f64dfa4f5d5ae372c8341f7305f82a3868709269343628b659a3",
+      "edition": "2021",
+      "features": [
+        "clone-impls",
+        "default",
+        "derive",
+        "full",
+        "parsing",
+        "printing",
+        "proc-macro"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "David Tolnay <dtolnay@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Parser for Rust source code",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/dtolnay/syn"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "proc_macro2": ":proc-macro2-1.0.107",
+            "quote": ":quote-1.0.47",
+            "unicode_ident": ":unicode-ident-1.0.24"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#synstructure@0.13.2",
+      "name": "synstructure",
+      "version": "0.13.2",
+      "checksum": "728a70f3dbaf5bab7f0c4b1ac8d7ae5ea60a4b5549c8a5914361c99147a709d2",
+      "edition": "2018",
+      "features": [
+        "default",
+        "proc-macro"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Nika Layzell <nika@thelayzells.com>",
+        "CARGO_PKG_DESCRIPTION": "Helper methods and macros for custom derives",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/mystor/synstructure"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "proc_macro2": ":proc-macro2-1.0.107",
+            "quote": ":quote-1.0.47",
+            "syn": ":syn-2.0.119"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.19",
+      "name": "thiserror",
+      "version": "2.0.19",
+      "checksum": "09a43598840e33d5b0331f38c5e30d13bb11c11210a4b58f0d9b18a5a5eefcd9",
+      "edition": "2021",
+      "features": [
+        "default",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "David Tolnay <dtolnay@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "derive(Error)",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/dtolnay/thiserror"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "thiserror_impl": ":thiserror-impl-2.0.19"
+          }
+        }
+      ],
+      "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@2.0.19",
+      "name": "thiserror-impl",
+      "version": "2.0.19",
+      "checksum": "43cbfe0cf76104d42a574802844187e84a305e531ed54455f11fbde0f10541cd",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "David Tolnay <dtolnay@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Implementation detail of the `thiserror` crate",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/dtolnay/thiserror"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "proc_macro2": ":proc-macro2-1.0.107",
+            "quote": ":quote-1.0.47",
+            "syn": ":syn-3.0.3"
+          },
+          "proc_macro": true
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#thread_local@1.1.10",
+      "name": "thread_local",
+      "version": "1.1.10",
+      "checksum": "1ad99c4c6d32803332c548b1af0540b357b3f5fc0be8f6c6bfe8b2e6ae784070",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Amanieu d'Antras <amanieu@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Per-object thread-local storage",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/Amanieu/thread_local-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "cfg_if": ":cfg-if-1.0.4"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#tinystr@0.8.3",
+      "name": "tinystr",
+      "version": "0.8.3",
+      "checksum": "c8323304221c2a851516f22236c5722a72eaa19749016521d6dff0824447d96d",
+      "edition": "2021",
+      "features": [
+        "zerovec"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The ICU4X Project Developers",
+        "CARGO_PKG_DESCRIPTION": "A small ASCII-only bounded length string representation.",
+        "CARGO_PKG_LICENSE": "Unicode-3.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/unicode-org/icu4x"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "displaydoc": ":displaydoc-0.2.6",
+            "zerovec": ":zerovec-0.11.6"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#toml@0.9.12+spec-1.1.0",
+      "name": "toml",
+      "version": "0.9.12+spec-1.1.0",
+      "checksum": "cf92845e79fc2e2def6a5d828f0801e29a2f8acc037becc5ab08595c7d5e9863",
+      "edition": "2021",
+      "features": [
+        "default",
+        "display",
+        "parse",
+        "serde",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "A native Rust encoder and decoder of TOML-formatted files and streams. Provides\nimplementations of the standard Serialize/Deserialize traits for TOML data to\nfacilitate deserializing and serializing Rust structures.\n",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/toml-rs/toml"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "indexmap": ":indexmap-2.14.0",
+            "serde_core": ":serde_core-1.0.229",
+            "serde_spanned": ":serde_spanned-1.1.1",
+            "toml_datetime": ":toml_datetime-0.7.5+spec-1.1.0",
+            "toml_parser": ":toml_parser-1.1.2+spec-1.1.0",
+            "toml_writer": ":toml_writer-1.1.2+spec-1.1.0",
+            "winnow": ":winnow-0.7.15"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#toml_datetime@0.7.5+spec-1.1.0",
+      "name": "toml_datetime",
+      "version": "0.7.5+spec-1.1.0",
+      "checksum": "92e1cfed4a3038bc5a127e35a2d360f145e1f4b971b551a2ba5fd7aedf7e1347",
+      "edition": "2021",
+      "features": [
+        "alloc",
+        "serde",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "A TOML-compatible datetime type",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/toml-rs/toml"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "serde_core": ":serde_core-1.0.229"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#toml_parser@1.1.2+spec-1.1.0",
+      "name": "toml_parser",
+      "version": "1.1.2+spec-1.1.0",
+      "checksum": "a2abe9b86193656635d2411dc43050282ca48aa31c2451210f4202550afb7526",
+      "edition": "2024",
+      "features": [
+        "alloc",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Yet another format-preserving TOML parser.",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/toml-rs/toml"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "winnow": ":winnow-1.0.4"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#toml_writer@1.1.2+spec-1.1.0",
+      "name": "toml_writer",
+      "version": "1.1.2+spec-1.1.0",
+      "checksum": "7d56353a2a665ad0f41a421187180aab746c8c325620617ad883a99a1cbe66d2",
+      "edition": "2024",
+      "features": [
+        "alloc",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "A low-level interface for writing out TOML\n",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/toml-rs/toml"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#tracing@0.1.44",
+      "name": "tracing",
+      "version": "0.1.44",
+      "checksum": "63e71662fa4b2a2c3a26f570f037eb95bb1f85397f3cd8076caed2f026a6d100",
+      "edition": "2018",
+      "features": [
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Eliza Weisman <eliza@buoyant.io>:Tokio Contributors <team@tokio.rs>",
+        "CARGO_PKG_DESCRIPTION": "Application-level tracing for Rust.\n",
+        "CARGO_PKG_HOMEPAGE": "https://tokio.rs",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/tokio-rs/tracing"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "pin_project_lite": ":pin-project-lite-0.2.17",
+            "tracing_core": ":tracing-core-0.1.36"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#tracing-core@0.1.36",
+      "name": "tracing-core",
+      "version": "0.1.36",
+      "checksum": "db97caf9d906fbde555dd62fa95ddba9eecfd14cb388e4f491a66d74cd5fb79a",
+      "edition": "2018",
+      "features": [
+        "default",
+        "once_cell",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Tokio Contributors <team@tokio.rs>",
+        "CARGO_PKG_DESCRIPTION": "Core primitives for application-level tracing.\n",
+        "CARGO_PKG_HOMEPAGE": "https://tokio.rs",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/tokio-rs/tracing"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "once_cell": ":once_cell-1.21.4"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#tracing-error@0.2.1",
+      "name": "tracing-error",
+      "version": "0.2.1",
+      "checksum": "8b1581020d7a273442f5b45074a6a57d5757ad0a47dac0e9f0bd57b81936f3db",
+      "edition": "2018",
+      "features": [
+        "default",
+        "traced-error"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Eliza Weisman <eliza@buoyant.io>:Jane Lusby <jlusby@yaah.dev>:Tokio Contributors <team@tokio.rs>",
+        "CARGO_PKG_DESCRIPTION": "Utilities for enriching errors with `tracing`.\n",
+        "CARGO_PKG_HOMEPAGE": "https://tokio.rs",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/tokio-rs/tracing"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "tracing": ":tracing-0.1.44",
+            "tracing_subscriber": ":tracing-subscriber-0.3.23"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#tracing-subscriber@0.3.23",
+      "name": "tracing-subscriber",
+      "version": "0.3.23",
+      "checksum": "cb7f578e5945fb242538965c2d0b04418d38ec25c79d160cd279bf0731c8d319",
+      "edition": "2018",
+      "features": [
+        "alloc",
+        "fmt",
+        "registry",
+        "sharded-slab",
+        "std",
+        "thread_local"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Eliza Weisman <eliza@buoyant.io>:David Barsky <me@davidbarsky.com>:Tokio Contributors <team@tokio.rs>",
+        "CARGO_PKG_DESCRIPTION": "Utilities for implementing and composing `tracing` subscribers.\n",
+        "CARGO_PKG_HOMEPAGE": "https://tokio.rs",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/tokio-rs/tracing"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "sharded_slab": ":sharded-slab-0.1.7",
+            "thread_local": ":thread_local-1.1.10",
+            "tracing_core": ":tracing-core-0.1.36"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24",
+      "name": "unicode-ident",
+      "version": "1.0.24",
+      "checksum": "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "David Tolnay <dtolnay@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Determine whether characters have the XID_Start or XID_Continue properties according to Unicode Standard Annex #31",
+        "CARGO_PKG_LICENSE": "(MIT OR Apache-2.0) AND Unicode-3.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/dtolnay/unicode-ident"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#url@2.5.8",
+      "name": "url",
+      "version": "2.5.8",
+      "checksum": "ff67a8a4397373c3ef660812acab3268222035010ab8680ec4215f38ba3d0eed",
+      "edition": "2018",
+      "features": [
+        "default",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The rust-url developers",
+        "CARGO_PKG_DESCRIPTION": "URL library for Rust, based on the WHATWG URL Standard",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/servo/rust-url"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "form_urlencoded": ":form_urlencoded-1.2.2",
+            "idna": ":idna-1.1.0",
+            "percent_encoding": ":percent-encoding-2.3.2",
+            "serde": ":serde-1.0.229"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#utf8_iter@1.0.4",
+      "name": "utf8_iter",
+      "version": "1.0.4",
+      "checksum": "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Henri Sivonen <hsivonen@hsivonen.fi>",
+        "CARGO_PKG_DESCRIPTION": "Iterator by char over potentially-invalid UTF-8 in &[u8]",
+        "CARGO_PKG_HOMEPAGE": "https://docs.rs/utf8_iter/",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/hsivonen/utf8_iter"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#utf8parse@0.2.2",
+      "name": "utf8parse",
+      "version": "0.2.2",
+      "checksum": "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821",
+      "edition": "2018",
+      "features": [
+        "default"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Joe Wilm <joe@jwilm.com>:Christian Duerr <contact@christianduerr.com>",
+        "CARGO_PKG_DESCRIPTION": "Table-driven UTF-8 parser",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/alacritty/vte"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#winnow@0.7.15",
+      "name": "winnow",
+      "version": "0.7.15",
+      "checksum": "df79d97927682d2fd8adb29682d1140b343be4ac0f08fd68b7765d9c059d3945",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "A byte-oriented, zero-copy, parser combinators library",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/winnow-rs/winnow"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#winnow@1.0.4",
+      "name": "winnow",
+      "version": "1.0.4",
+      "checksum": "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "A byte-oriented, zero-copy, parser combinators library",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/winnow-rs/winnow"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#writeable@0.6.3",
+      "name": "writeable",
+      "version": "0.6.3",
+      "checksum": "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "The ICU4X Project Developers",
+        "CARGO_PKG_DESCRIPTION": "A more efficient alternative to fmt::Display",
+        "CARGO_PKG_LICENSE": "Unicode-3.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/unicode-org/icu4x"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#yoke@0.8.3",
+      "name": "yoke",
+      "version": "0.8.3",
+      "checksum": "709fe23a0424b6a435d82152b1bd3fdfb0833487d5fa90d05d42762a9891fef5",
+      "edition": "2021",
+      "features": [
+        "derive",
+        "zerofrom"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Manish Goregaokar <manishsmail@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Abstraction allowing borrowed data to be carried along with the backing data it borrows from",
+        "CARGO_PKG_LICENSE": "Unicode-3.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/unicode-org/icu4x"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "stable_deref_trait": ":stable_deref_trait-1.2.1",
+            "yoke_derive": ":yoke-derive-0.8.2",
+            "zerofrom": ":zerofrom-0.1.8"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#yoke-derive@0.8.2",
+      "name": "yoke-derive",
+      "version": "0.8.2",
+      "checksum": "de844c262c8848816172cef550288e7dc6c7b7814b4ee56b3e1553f275f1858e",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Manish Goregaokar <manishsmail@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Custom derive for the yoke crate",
+        "CARGO_PKG_LICENSE": "Unicode-3.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/unicode-org/icu4x"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "proc_macro2": ":proc-macro2-1.0.107",
+            "quote": ":quote-1.0.47",
+            "syn": ":syn-2.0.119",
+            "synstructure": ":synstructure-0.13.2"
+          },
+          "proc_macro": true
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#zerofrom@0.1.8",
+      "name": "zerofrom",
+      "version": "0.1.8",
+      "checksum": "0ec05a11813ea801ff6d75110ad09cd0824ddba17dfe17128ea0d5f68e6c5272",
+      "edition": "2021",
+      "features": [
+        "derive"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The ICU4X Project Developers",
+        "CARGO_PKG_DESCRIPTION": "ZeroFrom trait for constructing",
+        "CARGO_PKG_LICENSE": "Unicode-3.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/unicode-org/icu4x"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "zerofrom_derive": ":zerofrom-derive-0.1.7"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#zerofrom-derive@0.1.7",
+      "name": "zerofrom-derive",
+      "version": "0.1.7",
+      "checksum": "11532158c46691caf0f2593ea8358fed6bbf68a0315e80aae9bd41fbade684a1",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Manish Goregaokar <manishsmail@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Custom derive for the zerofrom crate",
+        "CARGO_PKG_LICENSE": "Unicode-3.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/unicode-org/icu4x"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "proc_macro2": ":proc-macro2-1.0.107",
+            "quote": ":quote-1.0.47",
+            "syn": ":syn-2.0.119",
+            "synstructure": ":synstructure-0.13.2"
+          },
+          "proc_macro": true
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#zerotrie@0.2.4",
+      "name": "zerotrie",
+      "version": "0.2.4",
+      "checksum": "0f9152d31db0792fa83f70fb2f83148effb5c1f5b8c7686c3459e361d9bc20bf",
+      "edition": "2021",
+      "features": [
+        "yoke",
+        "zerofrom"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The ICU4X Project Developers",
+        "CARGO_PKG_DESCRIPTION": "A data structure that efficiently maps strings to integers",
+        "CARGO_PKG_HOMEPAGE": "https://icu4x.unicode.org",
+        "CARGO_PKG_LICENSE": "Unicode-3.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/unicode-org/icu4x"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "displaydoc": ":displaydoc-0.2.6",
+            "yoke": ":yoke-0.8.3",
+            "zerofrom": ":zerofrom-0.1.8"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#zerovec@0.11.6",
+      "name": "zerovec",
+      "version": "0.11.6",
+      "checksum": "90f911cbc359ab6af17377d242225f4d75119aec87ea711a880987b18cd7b239",
+      "edition": "2021",
+      "features": [
+        "derive",
+        "yoke"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The ICU4X Project Developers",
+        "CARGO_PKG_DESCRIPTION": "Zero-copy vector backed by a byte array",
+        "CARGO_PKG_LICENSE": "Unicode-3.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/unicode-org/icu4x"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "yoke": ":yoke-0.8.3",
+            "zerofrom": ":zerofrom-0.1.8",
+            "zerovec_derive": ":zerovec-derive-0.11.3"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#zerovec-derive@0.11.3",
+      "name": "zerovec-derive",
+      "version": "0.11.3",
+      "checksum": "625dc425cab0dca6dc3c3319506e6593dcb08a9f387ea3b284dbd52a92c40555",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Manish Goregaokar <manishsmail@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Custom derive for the zerovec crate",
+        "CARGO_PKG_LICENSE": "Unicode-3.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/unicode-org/icu4x"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "proc_macro2": ":proc-macro2-1.0.107",
+            "quote": ":quote-1.0.47",
+            "syn": ":syn-2.0.119"
+          },
+          "proc_macro": true
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#zmij@1.0.23",
+      "name": "zmij",
+      "version": "1.0.23",
+      "checksum": "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "David Tolnay <dtolnay@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "A double-to-string conversion algorithm based on Schubfach and xjb",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/dtolnay/zmij"
+      },
+      "targets": [
+        {}
+      ],
+      "buildscript": {}
+    }
+  ],
+  "roots": [
+    {
+      "id": "workspace#glu@0.0.0",
+      "name": "glu",
+      "category": "tool",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#cargo-lock@11.0.1",
+        "registry+https://github.com/rust-lang/crates.io-index#cargo_metadata@0.23.1",
+        "registry+https://github.com/rust-lang/crates.io-index#clap@4.6.4",
+        "registry+https://github.com/rust-lang/crates.io-index#color-eyre@0.6.5",
+        "registry+https://github.com/rust-lang/crates.io-index#minijinja@2.21.0",
+        "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+        "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151"
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#addr2line@0.25.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#gimli@0.32.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#anstream@1.0.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#anstyle-parse@1.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#anstream@1.0.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#anstyle-query@1.1.5",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#anstream@1.0.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#anstyle@1.0.14",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#anstream@1.0.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#colorchoice@1.0.5",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#anstream@1.0.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#is_terminal_polyfill@1.70.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#anstream@1.0.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#utf8parse@0.2.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#anstyle-parse@1.0.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#utf8parse@0.2.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#backtrace@0.3.76",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#addr2line@0.25.1",
+      "kinds": [
+        "normal (cfg(not(all(windows, target_env = \"msvc\", not(target_vendor = \"uwp\")))))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#backtrace@0.3.76",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#backtrace@0.3.76",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
+      "kinds": [
+        "normal (cfg(not(all(windows, target_env = \"msvc\", not(target_vendor = \"uwp\")))))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#backtrace@0.3.76",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#miniz_oxide@0.8.9",
+      "kinds": [
+        "normal (cfg(not(all(windows, target_env = \"msvc\", not(target_vendor = \"uwp\")))))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#backtrace@0.3.76",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#object@0.37.3",
+      "kinds": [
+        "normal (cfg(not(all(windows, target_env = \"msvc\", not(target_vendor = \"uwp\")))))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#backtrace@0.3.76",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustc-demangle@0.1.28",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#camino@1.2.4",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_core@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cargo-lock@11.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#semver@1.0.28",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cargo-lock@11.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cargo-lock@11.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#toml@0.9.12+spec-1.1.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cargo-lock@11.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#url@2.5.8",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cargo-platform@0.3.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_core@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cargo_metadata@0.23.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#camino@1.2.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cargo_metadata@0.23.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cargo-platform@0.3.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cargo_metadata@0.23.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#semver@1.0.28",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cargo_metadata@0.23.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cargo_metadata@0.23.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cargo_metadata@0.23.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.19",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#clap@4.6.4",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#clap_builder@4.6.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#clap@4.6.4",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#clap_derive@4.6.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#clap_builder@4.6.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#anstream@1.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#clap_builder@4.6.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#anstyle@1.0.14",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#clap_builder@4.6.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#clap_lex@1.1.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#clap_builder@4.6.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#strsim@0.11.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#clap_derive@4.6.4",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#heck@0.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#clap_derive@4.6.4",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#clap_derive@4.6.4",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#clap_derive@4.6.4",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#syn@3.0.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#color-eyre@0.6.5",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#backtrace@0.3.76",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#color-eyre@0.6.5",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#color-spantrace@0.3.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#color-eyre@0.6.5",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#eyre@0.6.12",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#color-eyre@0.6.5",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#indenter@0.3.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#color-eyre@0.6.5",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#once_cell@1.21.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#color-eyre@0.6.5",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#owo-colors@4.3.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#color-eyre@0.6.5",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tracing-error@0.2.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#color-spantrace@0.3.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#once_cell@1.21.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#color-spantrace@0.3.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#owo-colors@4.3.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#color-spantrace@0.3.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tracing-core@0.1.36",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#color-spantrace@0.3.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tracing-error@0.2.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#displaydoc@0.2.6",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#displaydoc@0.2.6",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#displaydoc@0.2.6",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#eyre@0.6.12",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#indenter@0.3.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#eyre@0.6.12",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#once_cell@1.21.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#form_urlencoded@1.2.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#percent-encoding@2.3.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_collections@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#displaydoc@0.2.6",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_collections@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#potential_utf@0.1.5",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_collections@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#utf8_iter@1.0.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_collections@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#yoke@0.8.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_collections@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#zerofrom@0.1.8",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_collections@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#zerovec@0.11.6",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_locale_core@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#displaydoc@0.2.6",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_locale_core@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#litemap@0.8.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_locale_core@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tinystr@0.8.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_locale_core@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#writeable@0.6.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_locale_core@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#zerovec@0.11.6",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_normalizer@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#icu_collections@2.2.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_normalizer@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#icu_normalizer_data@2.2.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_normalizer@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#icu_properties@2.2.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_normalizer@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#icu_provider@2.2.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_normalizer@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#smallvec@1.15.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_normalizer@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#zerovec@0.11.6",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_properties@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#icu_collections@2.2.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_properties@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#icu_locale_core@2.2.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_properties@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#icu_properties_data@2.2.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_properties@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#icu_provider@2.2.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_properties@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#zerotrie@0.2.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_properties@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#zerovec@0.11.6",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_provider@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#displaydoc@0.2.6",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_provider@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#icu_locale_core@2.2.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_provider@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#writeable@0.6.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_provider@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#yoke@0.8.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_provider@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#zerofrom@0.1.8",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_provider@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#zerotrie@0.2.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#icu_provider@2.2.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#zerovec@0.11.6",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#idna@1.1.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#idna_adapter@1.2.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#idna@1.1.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#smallvec@1.15.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#idna@1.1.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#utf8_iter@1.0.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#idna_adapter@1.2.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#icu_normalizer@2.2.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#idna_adapter@1.2.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#icu_properties@2.2.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#equivalent@1.0.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#minijinja@2.21.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#memo-map@0.3.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#minijinja@2.21.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#minijinja@2.21.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#miniz_oxide@0.8.9",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#adler2@2.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#object@0.37.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#potential_utf@0.1.5",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#zerovec@0.11.6",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#semver@1.0.28",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_core@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_core@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_derive@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#serde_derive@1.0.229",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#serde_derive@1.0.229",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#serde_derive@1.0.229",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#syn@3.0.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#itoa@1.0.18",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_core@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#zmij@1.0.23",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#serde_spanned@1.1.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_core@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#sharded-slab@0.1.7",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#lazy_static@1.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#syn@3.0.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#syn@3.0.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#syn@3.0.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#synstructure@0.13.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#synstructure@0.13.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#synstructure@0.13.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@2.0.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@2.0.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@2.0.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#syn@3.0.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@2.0.19",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#thread_local@1.1.10",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#tinystr@0.8.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#displaydoc@0.2.6",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#tinystr@0.8.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#zerovec@0.11.6",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#toml@0.9.12+spec-1.1.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#toml@0.9.12+spec-1.1.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_core@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#toml@0.9.12+spec-1.1.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_spanned@1.1.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#toml@0.9.12+spec-1.1.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#toml_datetime@0.7.5+spec-1.1.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#toml@0.9.12+spec-1.1.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#toml_parser@1.1.2+spec-1.1.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#toml@0.9.12+spec-1.1.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#toml_writer@1.1.2+spec-1.1.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#toml@0.9.12+spec-1.1.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#winnow@0.7.15",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#toml_datetime@0.7.5+spec-1.1.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_core@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#toml_parser@1.1.2+spec-1.1.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#winnow@1.0.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#tracing-core@0.1.36",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#once_cell@1.21.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#tracing-error@0.2.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tracing-subscriber@0.3.23",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#tracing-error@0.2.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tracing@0.1.44",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#tracing-subscriber@0.3.23",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#sharded-slab@0.1.7",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#tracing-subscriber@0.3.23",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#thread_local@1.1.10",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#tracing-subscriber@0.3.23",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tracing-core@0.1.36",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#tracing@0.1.44",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#pin-project-lite@0.2.17",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#tracing@0.1.44",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#tracing-core@0.1.36",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#url@2.5.8",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#form_urlencoded@1.2.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#url@2.5.8",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#idna@1.1.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#url@2.5.8",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#percent-encoding@2.3.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#url@2.5.8",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#yoke-derive@0.8.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#yoke-derive@0.8.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#yoke-derive@0.8.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#yoke-derive@0.8.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#synstructure@0.13.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#yoke@0.8.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#stable_deref_trait@1.2.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#yoke@0.8.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#yoke-derive@0.8.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#yoke@0.8.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#zerofrom@0.1.8",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#zerofrom-derive@0.1.7",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#zerofrom-derive@0.1.7",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#zerofrom-derive@0.1.7",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#zerofrom-derive@0.1.7",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#synstructure@0.13.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#zerofrom@0.1.8",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#zerofrom-derive@0.1.7",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#zerotrie@0.2.4",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#displaydoc@0.2.6",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#zerotrie@0.2.4",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#yoke@0.8.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#zerotrie@0.2.4",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#zerofrom@0.1.8",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#zerovec-derive@0.11.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#zerovec-derive@0.11.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#zerovec-derive@0.11.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#zerovec@0.11.6",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#yoke@0.8.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#zerovec@0.11.6",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#zerofrom@0.1.8",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#zerovec@0.11.6",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#zerovec-derive@0.11.3",
+      "kinds": [
+        "normal"
+      ]
+    }
+  ]
+}

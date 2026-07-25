@@ -1,5 +1,7 @@
 target/
 tools/glu/target/
+buck/cargo/*/crates.json
+buck/cargo/*/dependencies.json
 node_modules/
 .pnpm-store/
 apps/docs/build/
