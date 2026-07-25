@@ -126,6 +126,7 @@ struct RustTarget {
 
 #[derive(Serialize)]
 struct ExternalPackage {
+    id: String,
     name: String,
     version: String,
     checksum: String,
@@ -164,7 +165,7 @@ struct ExternalTarget {
     crate_root: Option<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     named_deps: BTreeMap<String, String>,
-    #[serde(skip_serializing_if = "is_false")]
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     proc_macro: bool,
 }
 
@@ -205,10 +206,6 @@ struct DependencyEdge {
     source: String,
     target: String,
     kinds: Vec<String>,
-}
-
-const fn is_false(value: &bool) -> bool {
-    !*value
 }
 
 struct Graph<'a> {
@@ -617,6 +614,7 @@ impl<'a> Graph<'a> {
             .collect();
 
         Ok(ExternalPackage {
+            id: package.id.repr.clone(),
             name,
             version,
             checksum,
