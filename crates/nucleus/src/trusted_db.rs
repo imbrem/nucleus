@@ -1,157 +1,121 @@
+use std::{any::type_name, collections::BTreeSet};
+
 use covalence_lib_error::snafu;
-use covalence_lib_hash::O256;
-use covalence_lib_sqlite::{Connection, params};
+use covalence_lib_sqlite::{Connection, OptionalExtension, params};
 use covalence_neutron::{
-    BOOL_SORT_V0, BOOL_VALUES_RELATION_V0, BOOTSTRAP_CATALOG, CatalogCandidate, FieldDeclaration,
-    INTEGER_BOOL_01_REPR_V0, KnownMetatable, MetatableKind, ScanError, metatable_name,
-    scan_metatables,
+    BOOTSTRAP_CATALOG, CatalogCandidate, MetatableKind, RUST_TYPES_INTERPRETATION_V0,
+    RUST_TYPES_METATABLE_V0, ScanError, metatable_name, scan_metatables,
 };
 use snafu::Snafu;
 
-/// One accepted field in a relation signature.
+/// One metatable accepted from the permanent bootstrap catalog.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FieldSignature {
-    name: String,
-    sort: O256,
-}
-
-impl FieldSignature {
-    /// Returns the physical field name used by this interpretation.
-    #[must_use]
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    /// Returns the logical sort identifier.
-    #[must_use]
-    pub const fn sort(&self) -> O256 {
-        self.sort
-    }
-}
-
-/// One accepted logical relation signature.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RelationSignature {
-    id: O256,
-    fields: Vec<FieldSignature>,
-}
-
-impl RelationSignature {
-    /// Returns the stable logical relation identifier.
-    #[must_use]
-    pub const fn id(&self) -> O256 {
-        self.id
-    }
-
-    /// Returns the ordered fields.
-    #[must_use]
-    pub fn fields(&self) -> &[FieldSignature] {
-        &self.fields
-    }
-}
-
-/// A validated mapping from one physical table to a logical relation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TableInterpretation {
+pub struct Metatable {
     table_name: String,
-    column_name: String,
-    representation: O256,
-    signature: RelationSignature,
+    interpretation: String,
 }
 
-impl TableInterpretation {
-    /// Returns the physical table name.
+impl Metatable {
+    /// Returns the physical metatable name.
     #[must_use]
     pub fn table_name(&self) -> &str {
         &self.table_name
     }
 
-    /// Returns the accepted logical signature.
+    /// Returns the interpretation selected by the bootstrap.
     #[must_use]
-    pub const fn signature(&self) -> &RelationSignature {
-        &self.signature
+    pub fn interpretation(&self) -> &str {
+        &self.interpretation
     }
 }
 
-/// Accepted connection-local relation interpretations.
+/// Accepted connection-local metatable interpretations.
 ///
 /// Acceptance requires exactly one bootstrap catalog with the permanent
 /// [`covalence_neutron::BOOTSTRAP_CATALOG`] identity and physical ABI.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NeutronCatalog {
-    interpretations: Vec<TableInterpretation>,
+    metatables: Vec<Metatable>,
 }
 
 impl NeutronCatalog {
-    /// Returns accepted interpretations.
+    /// Returns extension metatables registered by the bootstrap.
     #[must_use]
-    pub fn interpretations(&self) -> &[TableInterpretation] {
-        &self.interpretations
+    pub fn metatables(&self) -> &[Metatable] {
+        &self.metatables
     }
 
-    fn accept(candidate: &CatalogCandidate) -> Result<Self, CatalogError> {
-        let declarations = match candidate.known() {
-            [KnownMetatable::BootstrapCatalog(declarations)] => declarations,
-            [] => return Err(CatalogError::MissingBootstrapCatalog),
-            _ => return Err(CatalogError::ConflictingBootstrapCatalogs),
-        };
-        let [declaration] = declarations.as_slice() else {
-            return Err(CatalogError::UnsupportedCatalog {
-                reason: String::from("v0 requires exactly one interpreted Bool field"),
-            });
-        };
-        validate_bool_declaration(declaration)?;
-        Ok(Self {
-            interpretations: vec![TableInterpretation {
-                table_name: declaration.table_name().to_owned(),
-                column_name: declaration.column_name().to_owned(),
-                representation: declaration.representation_id(),
-                signature: RelationSignature {
-                    id: declaration.relation_id(),
-                    fields: vec![FieldSignature {
-                        name: declaration.column_name().to_owned(),
-                        sort: declaration.sort_id(),
-                    }],
-                },
-            }],
-        })
-    }
-
-    fn relation(&self, id: O256) -> Option<&TableInterpretation> {
-        self.interpretations
+    fn accept(candidate: &CatalogCandidate, connection: &Connection) -> Result<Self, CatalogError> {
+        let bootstrap = candidate
+            .bootstrap()
+            .ok_or(CatalogError::MissingBootstrapCatalog)?;
+        let metatables = bootstrap
+            .declarations()
             .iter()
-            .find(|interpretation| interpretation.signature.id == id)
+            .map(|declaration| Metatable {
+                table_name: declaration.table_name().to_owned(),
+                interpretation: declaration.interpretation().to_owned(),
+            })
+            .collect::<Vec<_>>();
+        let mut interpretations = BTreeSet::new();
+        for metatable in &metatables {
+            if !interpretations.insert(metatable.interpretation.as_str()) {
+                return Err(CatalogError::DuplicateInterpretation {
+                    interpretation: metatable.interpretation.clone(),
+                });
+            }
+            if metatable.interpretation == RUST_TYPES_INTERPRETATION_V0 {
+                validate_rust_types_metatable(connection, metatable)?;
+            }
+        }
+        Ok(Self { metatables })
     }
-}
 
-fn validate_bool_declaration(declaration: &FieldDeclaration) -> Result<(), CatalogError> {
-    if declaration.relation_id() != BOOL_VALUES_RELATION_V0
-        || declaration.field_ordinal() != 0
-        || declaration.sort_id() != BOOL_SORT_V0
-        || declaration.representation_id() != INTEGER_BOOL_01_REPR_V0
-    {
-        return Err(CatalogError::UnsupportedCatalog {
-            reason: String::from("declaration is not the built-in Bool relation signature"),
-        });
+    fn by_interpretation(&self, interpretation: &str) -> Option<&Metatable> {
+        self.metatables
+            .iter()
+            .find(|metatable| metatable.interpretation == interpretation)
     }
-    Ok(())
 }
 
 /// Rejection while accepting structurally decoded metadata as a known API.
-#[derive(Clone, Debug, Eq, PartialEq, Snafu)]
+#[derive(Debug, Snafu)]
 #[snafu(crate_root(snafu))]
 pub enum CatalogError {
     /// The required bootstrap catalog was absent.
     #[snafu(display("missing bootstrap catalog"))]
     MissingBootstrapCatalog,
-    /// More than one recognized bootstrap catalog was supplied.
-    #[snafu(display("conflicting bootstrap catalogs"))]
-    ConflictingBootstrapCatalogs,
-    /// The catalog claims semantics this build does not recognize.
-    #[snafu(display("unsupported catalog: {reason}"))]
-    UnsupportedCatalog {
-        /// Stable reason.
+    /// A known interpretation appeared at an unexpected physical table.
+    #[snafu(display(
+        "interpretation `{interpretation}` must use table `{expected}`, found `{actual}`"
+    ))]
+    WrongInterpretationTable {
+        /// Interpretation selected by the bootstrap.
+        interpretation: String,
+        /// Required physical name.
+        expected: String,
+        /// Actual registered name.
+        actual: String,
+    },
+    /// A recognized extension had the wrong permanent shape.
+    #[snafu(display("invalid `{interpretation}` metatable schema: {reason}"))]
+    InvalidExtensionSchema {
+        /// Interpretation being validated.
+        interpretation: String,
+        /// Stable rejection detail.
         reason: String,
+    },
+    /// Two physical tables selected the same singleton interpretation.
+    #[snafu(display("duplicate metatable interpretation `{interpretation}`"))]
+    DuplicateInterpretation {
+        /// Duplicated interpretation.
+        interpretation: String,
+    },
+    /// `SQLite` failed during interpretation validation.
+    #[snafu(display("could not validate metatable interpretation: {source}"))]
+    ValidationSqlite {
+        /// Underlying `SQLite` failure.
+        source: covalence_lib_sqlite::Error,
     },
 }
 
@@ -167,7 +131,10 @@ pub struct TrustedDb {
 }
 
 impl TrustedDb {
-    /// Creates a fresh, uniquely owned in-memory trusted database.
+    /// Creates a fresh trusted database containing an empty bootstrap catalog.
+    ///
+    /// At this point the database supports no extension metatable
+    /// interpretations and exposes no typed relation capabilities.
     ///
     /// # Errors
     ///
@@ -179,44 +146,18 @@ impl TrustedDb {
             .execute_batch("PRAGMA foreign_keys = ON;")
             .map_err(TrustedDbError::sqlite)?;
         let transaction = connection.transaction().map_err(TrustedDbError::sqlite)?;
-        let metatable = metatable_name(MetatableKind::new(BOOTSTRAP_CATALOG));
+        let bootstrap = metatable_name(MetatableKind::new(BOOTSTRAP_CATALOG));
         transaction
             .execute_batch(&format!(
-                "CREATE TABLE \"{metatable}\" (
-                    table_name TEXT NOT NULL,
-                    relation_id BLOB NOT NULL CHECK (length(relation_id) = 32),
-                    field_ordinal INTEGER NOT NULL CHECK (field_ordinal >= 0),
-                    column_name TEXT NOT NULL,
-                    sort_id BLOB NOT NULL CHECK (length(sort_id) = 32),
-                    representation_id BLOB NOT NULL CHECK (length(representation_id) = 32),
-                    PRIMARY KEY (table_name, field_ordinal),
-                    UNIQUE (table_name, column_name)
-                ) STRICT;
-                CREATE TABLE bool_values (
-                    value INTEGER NOT NULL CHECK (value IN (0, 1)),
-                    UNIQUE (value)
+                "CREATE TABLE \"{bootstrap}\" (
+                    table_name TEXT PRIMARY KEY,
+                    interpretation TEXT NOT NULL
                 ) STRICT;"
             ))
             .map_err(TrustedDbError::sqlite)?;
-        transaction
-            .execute(
-                &format!(
-                    "INSERT INTO \"{metatable}\" (
-                        table_name, relation_id, field_ordinal, column_name,
-                        sort_id, representation_id
-                    ) VALUES (?1, ?2, 0, ?3, ?4, ?5)"
-                ),
-                params![
-                    "bool_values",
-                    BOOL_VALUES_RELATION_V0.as_bytes().as_slice(),
-                    "value",
-                    BOOL_SORT_V0.as_bytes().as_slice(),
-                    INTEGER_BOOL_01_REPR_V0.as_bytes().as_slice(),
-                ],
-            )
-            .map_err(TrustedDbError::sqlite)?;
         let candidate = scan_metatables(&transaction).map_err(TrustedDbError::scan)?;
-        let catalog = NeutronCatalog::accept(&candidate).map_err(TrustedDbError::catalog)?;
+        let catalog =
+            NeutronCatalog::accept(&candidate, &transaction).map_err(TrustedDbError::catalog)?;
         transaction.commit().map_err(TrustedDbError::sqlite)?;
         Ok(Self {
             connection,
@@ -237,96 +178,150 @@ impl TrustedDb {
         self.generation
     }
 
-    /// Resolves the recognized Bool relation as a checked mutable capability.
+    /// Installs the first extension metatable: Rust type names to integer IDs.
+    ///
+    /// The extension table and its bootstrap registration are created in one
+    /// transaction, rescanned, and accepted before becoming visible.
     ///
     /// # Errors
     ///
-    /// Rejects unknown relations and catalog entries whose signature or
-    /// representation is not the built-in Bool relation.
-    pub fn bool_relation(&mut self, relation: O256) -> Result<BoolRelation<'_>, TrustedDbError> {
-        let interpretation = self
+    /// Returns a checked database, scan, or catalog error.
+    pub fn install_rust_types(&mut self) -> Result<InstallOutcome, TrustedDbError> {
+        if self
             .catalog
-            .relation(relation)
-            .filter(|interpretation| {
-                interpretation.representation == INTEGER_BOOL_01_REPR_V0
-                    && interpretation.signature.fields.as_slice()
-                        == [FieldSignature {
-                            name: interpretation.column_name.clone(),
-                            sort: BOOL_SORT_V0,
-                        }]
-            })
+            .by_interpretation(RUST_TYPES_INTERPRETATION_V0)
+            .is_some()
+        {
+            return Ok(InstallOutcome::AlreadyPresent);
+        }
+
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(TrustedDbError::sqlite)?;
+        let bootstrap = metatable_name(MetatableKind::new(BOOTSTRAP_CATALOG));
+        let rust_types = metatable_name(MetatableKind::new(RUST_TYPES_METATABLE_V0));
+        transaction
+            .execute_batch(&format!(
+                "CREATE TABLE \"{rust_types}\" (
+                    id INTEGER PRIMARY KEY,
+                    rust_type TEXT NOT NULL UNIQUE
+                ) STRICT;"
+            ))
+            .map_err(TrustedDbError::sqlite)?;
+        transaction
+            .execute(
+                &format!(
+                    "INSERT INTO \"{bootstrap}\" (table_name, interpretation) VALUES (?1, ?2)"
+                ),
+                params![rust_types, RUST_TYPES_INTERPRETATION_V0],
+            )
+            .map_err(TrustedDbError::sqlite)?;
+        let candidate = scan_metatables(&transaction).map_err(TrustedDbError::scan)?;
+        let catalog =
+            NeutronCatalog::accept(&candidate, &transaction).map_err(TrustedDbError::catalog)?;
+        transaction.commit().map_err(TrustedDbError::sqlite)?;
+        self.catalog = catalog;
+        self.generation += 1;
+        Ok(InstallOutcome::Installed)
+    }
+
+    /// Resolves the installed Rust-type registry as a checked capability.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrustedDbError::MissingRustTypes`] before the extension has
+    /// been installed.
+    pub fn rust_types(&mut self) -> Result<RustTypes<'_>, TrustedDbError> {
+        let metatable = self
+            .catalog
+            .by_interpretation(RUST_TYPES_INTERPRETATION_V0)
             .cloned()
-            .ok_or(TrustedDbError::UnknownBoolRelation { relation })?;
-        Ok(BoolRelation {
+            .ok_or(TrustedDbError::MissingRustTypes)?;
+        Ok(RustTypes {
             connection: &mut self.connection,
-            interpretation,
+            metatable,
         })
     }
 }
 
-/// Result of inserting into a logical set relation.
+/// Result of installing a singleton extension metatable.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum InsertOutcome {
-    /// A new logical element was inserted.
-    Inserted,
-    /// The logical set already contained the element.
+pub enum InstallOutcome {
+    /// The extension and its bootstrap row were created.
+    Installed,
+    /// The accepted catalog already contained the extension.
     AlreadyPresent,
 }
 
-/// Checked mutable access to one recognized `Bool` set relation.
-pub struct BoolRelation<'db> {
-    connection: &'db mut Connection,
-    interpretation: TableInterpretation,
+/// A connection-local integer identifying one Rust type name.
+///
+/// The ID and [`std::any::type_name`] text are execution metadata, not stable
+/// substrate semantics or a portable Rust ABI.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct RustTypeId(i64);
+
+impl RustTypeId {
+    /// Returns the stored `SQLite` integer.
+    #[must_use]
+    pub const fn get(self) -> i64 {
+        self.0
+    }
 }
 
-impl BoolRelation<'_> {
-    /// Inserts one Bool using the accepted representation.
+/// Checked access to the Rust-type registry extension.
+pub struct RustTypes<'db> {
+    connection: &'db mut Connection,
+    metatable: Metatable,
+}
+
+impl RustTypes<'_> {
+    /// Registers `T`'s diagnostic Rust type name and returns its local ID.
+    ///
+    /// Repeated registration of the same name returns the same ID.
     ///
     /// # Errors
     ///
-    /// Returns a typed database error if the checked SQL operation fails.
-    pub fn insert(&mut self, value: bool) -> Result<InsertOutcome, TrustedDbError> {
-        let table = quote_identifier(&self.interpretation.table_name);
-        let column = quote_identifier(&self.interpretation.column_name);
-        let changed = self
-            .connection
-            .execute(
-                &format!("INSERT OR IGNORE INTO {table} ({column}) VALUES (?1)"),
-                [i64::from(value)],
-            )
-            .map_err(TrustedDbError::sqlite)?;
-        Ok(if changed == 0 {
-            InsertOutcome::AlreadyPresent
-        } else {
-            InsertOutcome::Inserted
-        })
+    /// Returns a typed database error if insertion or lookup fails.
+    pub fn register<T: ?Sized>(&mut self) -> Result<RustTypeId, TrustedDbError> {
+        self.register_name(type_name::<T>())
     }
 
-    /// Reads and decodes the logical set in deterministic order.
+    /// Returns all registered IDs and diagnostic names in ID order.
     ///
     /// # Errors
     ///
-    /// Rejects `SQLite` values outside the accepted `INTEGER` 0/1 representation.
-    pub fn values(&self) -> Result<Vec<bool>, TrustedDbError> {
-        let table = quote_identifier(&self.interpretation.table_name);
-        let column = quote_identifier(&self.interpretation.column_name);
+    /// Returns a typed database error if the registry cannot be read.
+    pub fn entries(&self) -> Result<Vec<(RustTypeId, String)>, TrustedDbError> {
+        let table = quote_identifier(&self.metatable.table_name);
         let mut statement = self
             .connection
-            .prepare(&format!("SELECT {column} FROM {table} ORDER BY {column}"))
+            .prepare(&format!("SELECT id, rust_type FROM {table} ORDER BY id"))
             .map_err(TrustedDbError::sqlite)?;
-        let values = statement
-            .query_map((), |row| row.get::<_, i64>(0))
+        statement
+            .query_map((), |row| {
+                Ok((RustTypeId(row.get(0)?), row.get::<_, String>(1)?))
+            })
             .map_err(TrustedDbError::sqlite)?
             .collect::<Result<Vec<_>, _>>()
+            .map_err(TrustedDbError::sqlite)
+    }
+
+    fn register_name(&mut self, name: &str) -> Result<RustTypeId, TrustedDbError> {
+        let table = quote_identifier(&self.metatable.table_name);
+        self.connection
+            .execute(
+                &format!("INSERT OR IGNORE INTO {table} (rust_type) VALUES (?1)"),
+                [name],
+            )
             .map_err(TrustedDbError::sqlite)?;
-        values
-            .into_iter()
-            .map(|value| match value {
-                0 => Ok(false),
-                1 => Ok(true),
-                _ => Err(TrustedDbError::InvalidBoolValue { value }),
-            })
-            .collect()
+        self.connection
+            .query_row(
+                &format!("SELECT id FROM {table} WHERE rust_type = ?1"),
+                [name],
+                |row| row.get::<_, i64>(0).map(RustTypeId),
+            )
+            .map_err(TrustedDbError::sqlite)
     }
 }
 
@@ -352,18 +347,9 @@ pub enum TrustedDbError {
         /// Acceptance failure.
         source: CatalogError,
     },
-    /// No accepted Bool relation had the requested identity.
-    #[snafu(display("unknown or incompatible Bool relation {relation}"))]
-    UnknownBoolRelation {
-        /// Requested stable relation ID.
-        relation: O256,
-    },
-    /// Stored data violated the accepted representation.
-    #[snafu(display("invalid SQLite INTEGER Bool value {value}"))]
-    InvalidBoolValue {
-        /// Invalid integer.
-        value: i64,
-    },
+    /// The Rust-type extension has not been installed.
+    #[snafu(display("the Rust-type metatable is not installed"))]
+    MissingRustTypes,
 }
 
 impl TrustedDbError {
@@ -380,51 +366,134 @@ impl TrustedDbError {
     }
 }
 
+fn validate_rust_types_metatable(
+    connection: &Connection,
+    metatable: &Metatable,
+) -> Result<(), CatalogError> {
+    let expected = metatable_name(MetatableKind::new(RUST_TYPES_METATABLE_V0));
+    if metatable.table_name != expected {
+        return Err(CatalogError::WrongInterpretationTable {
+            interpretation: metatable.interpretation.clone(),
+            expected,
+            actual: metatable.table_name.clone(),
+        });
+    }
+    if !table_is_strict(connection, &metatable.table_name)? {
+        return Err(CatalogError::InvalidExtensionSchema {
+            interpretation: metatable.interpretation.clone(),
+            reason: String::from("table must be STRICT"),
+        });
+    }
+    let columns = table_columns(connection, &metatable.table_name)?;
+    let expected_columns = [
+        ("id", "INTEGER", false, 1_u32),
+        ("rust_type", "TEXT", true, 0),
+    ];
+    if columns.len() != expected_columns.len()
+        || !columns.iter().zip(expected_columns).all(
+            |((actual_name, actual_type, not_null, pk), expected)| {
+                actual_name == expected.0
+                    && actual_type == expected.1
+                    && *not_null == expected.2
+                    && *pk == expected.3
+            },
+        )
+    {
+        return Err(CatalogError::InvalidExtensionSchema {
+            interpretation: metatable.interpretation.clone(),
+            reason: String::from("columns do not match the Rust-type registry contract"),
+        });
+    }
+    Ok(())
+}
+
+type PhysicalColumn = (String, String, bool, u32);
+
+fn table_columns(
+    connection: &Connection,
+    table: &str,
+) -> Result<Vec<PhysicalColumn>, CatalogError> {
+    let mut statement = connection
+        .prepare(&format!(
+            "PRAGMA main.table_info({})",
+            quote_identifier(table)
+        ))
+        .map_err(|source| CatalogError::ValidationSqlite { source })?;
+    statement
+        .query_map((), |row| {
+            Ok((
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)? != 0,
+                row.get::<_, u32>(5)?,
+            ))
+        })
+        .map_err(|source| CatalogError::ValidationSqlite { source })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|source| CatalogError::ValidationSqlite { source })
+}
+
+fn table_is_strict(connection: &Connection, table: &str) -> Result<bool, CatalogError> {
+    connection
+        .query_row(
+            "SELECT strict FROM pragma_table_list WHERE schema = 'main' AND name = ?1",
+            [table],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map(|strict| strict == Some(1))
+        .map_err(|source| CatalogError::ValidationSqlite { source })
+}
+
 fn quote_identifier(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
 }
 
 #[cfg(test)]
 mod tests {
-    use covalence_lib_hash::O256;
-    use covalence_neutron::{BOOL_VALUES_RELATION_V0, BOOTSTRAP_CATALOG};
-
-    use super::{InsertOutcome, TrustedDb, TrustedDbError};
+    use super::{InstallOutcome, TrustedDb, TrustedDbError};
 
     #[test]
-    fn creation_rescans_and_accepts_the_bootstrap_catalog() {
+    fn creation_accepts_an_empty_bootstrap() {
         let database = TrustedDb::create_in_memory().unwrap();
         assert_eq!(database.generation(), 0);
-        assert_eq!(database.catalog().interpretations().len(), 1);
-        assert_eq!(
-            database.catalog().interpretations()[0].signature().id(),
-            BOOL_VALUES_RELATION_V0
-        );
-        assert_ne!(
-            database.catalog().interpretations()[0].signature().id(),
-            BOOTSTRAP_CATALOG
-        );
+        assert!(database.catalog().metatables().is_empty());
     }
 
     #[test]
-    fn bool_writes_are_typed_and_set_valued() {
-        let mut database = TrustedDb::create_in_memory().unwrap();
-        let mut relation = database.bool_relation(BOOL_VALUES_RELATION_V0).unwrap();
-        assert_eq!(relation.insert(true).unwrap(), InsertOutcome::Inserted);
-        assert_eq!(
-            relation.insert(true).unwrap(),
-            InsertOutcome::AlreadyPresent
-        );
-        assert_eq!(relation.insert(false).unwrap(), InsertOutcome::Inserted);
-        assert_eq!(relation.values().unwrap(), vec![false, true]);
-    }
-
-    #[test]
-    fn unknown_relation_cannot_construct_bool_capability() {
+    fn no_typed_extension_exists_before_installation() {
         let mut database = TrustedDb::create_in_memory().unwrap();
         assert!(matches!(
-            database.bool_relation(O256::from_bytes([0; 32])),
-            Err(TrustedDbError::UnknownBoolRelation { .. })
+            database.rust_types(),
+            Err(TrustedDbError::MissingRustTypes)
         ));
+    }
+
+    #[test]
+    fn rust_type_registry_is_installed_through_the_bootstrap() {
+        let mut database = TrustedDb::create_in_memory().unwrap();
+        assert_eq!(
+            database.install_rust_types().unwrap(),
+            InstallOutcome::Installed
+        );
+        assert_eq!(
+            database.install_rust_types().unwrap(),
+            InstallOutcome::AlreadyPresent
+        );
+        assert_eq!(database.generation(), 1);
+        assert_eq!(database.catalog().metatables().len(), 1);
+
+        let mut types = database.rust_types().unwrap();
+        let bool_id = types.register::<bool>().unwrap();
+        assert_eq!(types.register::<bool>().unwrap(), bool_id);
+        let u64_id = types.register::<u64>().unwrap();
+        assert_ne!(bool_id, u64_id);
+        assert_eq!(
+            types.entries().unwrap(),
+            vec![
+                (bool_id, String::from("bool")),
+                (u64_id, String::from("u64"))
+            ]
+        );
     }
 }

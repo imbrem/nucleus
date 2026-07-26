@@ -9,12 +9,11 @@ mod names;
 mod scan;
 
 pub use names::{
-    BOOL_SORT_V0, BOOL_VALUES_RELATION_V0, BOOTSTRAP_CATALOG, INTEGER_BOOL_01_REPR_V0,
-    MetatableKind, metatable_name, parse_metatable_name,
+    BOOL_SORT_V0, BOOTSTRAP_CATALOG, MetatableKind, RUST_TYPES_INTERPRETATION_V0,
+    RUST_TYPES_METATABLE_V0, metatable_name, parse_metatable_name,
 };
 pub use scan::{
-    CatalogCandidate, FieldDeclaration, KnownMetatable, ScanError, UnknownMetatable,
-    scan_metatables,
+    BootstrapCatalog, CatalogCandidate, MetatableDeclaration, ScanError, scan_metatables,
 };
 
 /// Exercises the linked `SQLite` runtime without making a trust claim.

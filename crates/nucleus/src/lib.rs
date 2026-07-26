@@ -12,8 +12,8 @@ mod trusted_db;
 
 pub use expr::{Bool, EvalError, Expr, Prop, PropContext, Sort};
 pub use trusted_db::{
-    BoolRelation, CatalogError, FieldSignature, InsertOutcome, NeutronCatalog, RelationSignature,
-    TableInterpretation, TrustedDb, TrustedDbError,
+    CatalogError, InstallOutcome, Metatable, NeutronCatalog, RustTypeId, RustTypes, TrustedDb,
+    TrustedDbError,
 };
 
 /// Returns a stable value used by cross-target smoke tests.

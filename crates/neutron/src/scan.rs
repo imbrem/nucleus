@@ -1,13 +1,11 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use covalence_lib_error::snafu;
-use covalence_lib_hash::O256;
 use covalence_lib_sqlite::{Connection, OptionalExtension};
 use snafu::Snafu;
 
 use crate::names::{
-    BOOTSTRAP_CATALOG, INTEGER_BOOL_01_REPR_V0, META_PREFIX, MetatableKind, metatable_name,
-    parse_metatable_name,
+    BOOTSTRAP_CATALOG, META_PREFIX, MetatableKind, metatable_name, parse_metatable_name,
 };
 
 /// A structurally decoded, non-authoritative description of metatables.
@@ -17,98 +15,49 @@ use crate::names::{
 /// as Nucleus state.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CatalogCandidate {
-    known: Vec<KnownMetatable>,
-    unknown: Vec<UnknownMetatable>,
+    bootstrap: Option<BootstrapCatalog>,
 }
 
 impl CatalogCandidate {
-    /// Returns recognized, structurally validated metatables.
+    /// Returns the bootstrap catalog when the database contains one.
     #[must_use]
-    pub fn known(&self) -> &[KnownMetatable] {
-        &self.known
-    }
-
-    /// Returns well-formed metatable names whose kind is unknown.
-    #[must_use]
-    pub fn unknown(&self) -> &[UnknownMetatable] {
-        &self.unknown
+    pub const fn bootstrap(&self) -> Option<&BootstrapCatalog> {
+        self.bootstrap.as_ref()
     }
 }
 
-/// A recognized metatable and its decoded rows.
+/// The permanent bootstrap catalog decoded from its fixed physical ABI.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum KnownMetatable {
-    /// The permanent bootstrap catalog assigning typed signatures to tables.
-    BootstrapCatalog(Vec<FieldDeclaration>),
+pub struct BootstrapCatalog {
+    declarations: Vec<MetatableDeclaration>,
 }
 
-/// A well-formed metatable name with semantics unknown to this build.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct UnknownMetatable {
-    kind: MetatableKind,
-    physical_name: String,
-}
-
-impl UnknownMetatable {
-    /// Returns the unknown stable kind.
+impl BootstrapCatalog {
+    /// Returns every extension metatable registered by the bootstrap.
     #[must_use]
-    pub const fn kind(&self) -> MetatableKind {
-        self.kind
-    }
-
-    /// Returns the physical `SQLite` table name.
-    #[must_use]
-    pub fn physical_name(&self) -> &str {
-        &self.physical_name
+    pub fn declarations(&self) -> &[MetatableDeclaration] {
+        &self.declarations
     }
 }
 
-/// One field in a claimed physical-table interpretation.
+/// One extension metatable registered in the bootstrap catalog.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FieldDeclaration {
+pub struct MetatableDeclaration {
     table_name: String,
-    relation_id: O256,
-    field_ordinal: u32,
-    column_name: String,
-    sort_id: O256,
-    representation_id: O256,
+    interpretation: String,
 }
 
-impl FieldDeclaration {
-    /// Returns the physical table name.
+impl MetatableDeclaration {
+    /// Returns the physical extension-metatable name.
     #[must_use]
     pub fn table_name(&self) -> &str {
         &self.table_name
     }
 
-    /// Returns the logical relation identifier.
+    /// Returns the interpretation selected for that table.
     #[must_use]
-    pub const fn relation_id(&self) -> O256 {
-        self.relation_id
-    }
-
-    /// Returns the zero-based field position.
-    #[must_use]
-    pub const fn field_ordinal(&self) -> u32 {
-        self.field_ordinal
-    }
-
-    /// Returns the physical column name.
-    #[must_use]
-    pub fn column_name(&self) -> &str {
-        &self.column_name
-    }
-
-    /// Returns the logical field sort.
-    #[must_use]
-    pub const fn sort_id(&self) -> O256 {
-        self.sort_id
-    }
-
-    /// Returns the physical representation identifier.
-    #[must_use]
-    pub const fn representation_id(&self) -> O256 {
-        self.representation_id
+    pub fn interpretation(&self) -> &str {
+        &self.interpretation
     }
 }
 
@@ -128,24 +77,28 @@ pub enum ScanError {
         /// Physical name.
         name: String,
     },
-    /// The recognized bootstrap table had an unsupported physical shape.
-    #[snafu(display("invalid table-signature catalog schema: {reason}"))]
-    InvalidCatalogSchema {
+    /// The permanent bootstrap table had the wrong physical shape.
+    #[snafu(display("invalid bootstrap catalog schema: {reason}"))]
+    InvalidBootstrapSchema {
         /// Stable rejection detail.
         reason: String,
     },
-    /// A declaration row was malformed.
-    #[snafu(display("invalid table-signature declaration: {reason}"))]
+    /// An extension registration was malformed.
+    #[snafu(display("invalid metatable declaration: {reason}"))]
     InvalidDeclaration {
         /// Stable rejection detail.
         reason: String,
     },
-    /// A declaration referenced a missing physical object.
-    #[snafu(display("missing physical {object} `{name}`"))]
-    MissingPhysicalObject {
-        /// Object class.
-        object: &'static str,
-        /// Physical name.
+    /// A reserved extension metatable was not registered by the bootstrap.
+    #[snafu(display("unregistered metatable `{name}`"))]
+    UnregisteredMetatable {
+        /// Physical table name.
+        name: String,
+    },
+    /// A declaration referenced a missing physical table.
+    #[snafu(display("missing registered metatable `{name}`"))]
+    MissingMetatable {
+        /// Physical table name.
         name: String,
     },
 }
@@ -158,122 +111,65 @@ impl ScanError {
 
 /// Scans metatables in `main` over an arbitrary borrowed `SQLite` connection.
 ///
-/// The result is a candidate only. Zero bootstrap catalogs is valid at this
-/// layer. This function performs no writes and makes no claim about trust,
-/// grounding, completeness, or theorem authority.
+/// Zero bootstrap catalogs is valid only when there are no other reserved
+/// metatables. Every extension metatable must be indexed by the bootstrap.
+/// This function performs no writes and makes no claim about trust, grounding,
+/// completeness, or theorem authority.
 ///
 /// # Errors
 ///
-/// Rejects malformed reserved names, malformed recognized schemas or rows,
-/// dangling physical references, and `SQLite` access failures.
+/// Rejects malformed reserved names, malformed bootstrap structure, missing or
+/// unregistered extension metatables, and `SQLite` access failures.
 pub fn scan_metatables(connection: &Connection) -> Result<CatalogCandidate, ScanError> {
+    let names = physical_table_names(connection)?;
+    let reserved = names
+        .iter()
+        .filter(|name| name.starts_with(META_PREFIX))
+        .map(|name| {
+            parse_metatable_name(name)
+                .map(|kind| (name.clone(), kind))
+                .ok_or_else(|| ScanError::MalformedReservedName { name: name.clone() })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let bootstrap_name = metatable_name(MetatableKind::new(BOOTSTRAP_CATALOG));
+    if !names.contains(&bootstrap_name) {
+        if let Some((name, _)) = reserved.first() {
+            return Err(ScanError::UnregisteredMetatable { name: name.clone() });
+        }
+        return Ok(CatalogCandidate { bootstrap: None });
+    }
+
+    validate_bootstrap_schema(connection)?;
+    let declarations = read_declarations(connection)?;
+    validate_extension_closure(connection, &reserved, &declarations)?;
+    Ok(CatalogCandidate {
+        bootstrap: Some(BootstrapCatalog { declarations }),
+    })
+}
+
+fn physical_table_names(connection: &Connection) -> Result<BTreeSet<String>, ScanError> {
     let mut statement = connection
         .prepare("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name")
         .map_err(ScanError::sqlite)?;
-    let names = statement
+    statement
         .query_map((), |row| row.get::<_, String>(0))
         .map_err(ScanError::sqlite)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(ScanError::sqlite)?;
-
-    let mut known = Vec::new();
-    let mut unknown = Vec::new();
-    for name in names {
-        if !name.starts_with(META_PREFIX) {
-            continue;
-        }
-        let kind = parse_metatable_name(&name)
-            .ok_or_else(|| ScanError::MalformedReservedName { name: name.clone() })?;
-        if kind.id() == BOOTSTRAP_CATALOG {
-            if known
-                .iter()
-                .any(|item| matches!(item, KnownMetatable::BootstrapCatalog(_)))
-            {
-                return Err(ScanError::InvalidCatalogSchema {
-                    reason: String::from("multiple bootstrap catalogs"),
-                });
-            }
-            let declarations = scan_table_signature_catalog(connection)?;
-            known.push(KnownMetatable::BootstrapCatalog(declarations));
-        } else {
-            unknown.push(UnknownMetatable {
-                kind,
-                physical_name: name,
-            });
-        }
-    }
-
-    Ok(CatalogCandidate { known, unknown })
+        .collect::<Result<BTreeSet<_>, _>>()
+        .map_err(ScanError::sqlite)
 }
 
-fn scan_table_signature_catalog(
-    connection: &Connection,
-) -> Result<Vec<FieldDeclaration>, ScanError> {
-    validate_catalog_schema(connection)?;
+fn validate_bootstrap_schema(connection: &Connection) -> Result<(), ScanError> {
     let name = metatable_name(MetatableKind::new(BOOTSTRAP_CATALOG));
-    let sql = format!(
-        "SELECT table_name, relation_id, field_ordinal, column_name, sort_id, \
-         representation_id FROM {} ORDER BY table_name, field_ordinal",
-        quote_identifier(&name)
-    );
-    let mut statement = connection.prepare(&sql).map_err(ScanError::sqlite)?;
-    let raw = statement
-        .query_map((), |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, Vec<u8>>(1)?,
-                row.get::<_, i64>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, Vec<u8>>(4)?,
-                row.get::<_, Vec<u8>>(5)?,
-            ))
-        })
-        .map_err(ScanError::sqlite)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(ScanError::sqlite)?;
-
-    let mut declarations = Vec::with_capacity(raw.len());
-    for (table, relation, ordinal, column, sort, representation) in raw {
-        let field_ordinal = u32::try_from(ordinal).map_err(|_| ScanError::InvalidDeclaration {
-            reason: format!("field ordinal {ordinal} is outside u32"),
-        })?;
-        declarations.push(FieldDeclaration {
-            table_name: table,
-            relation_id: decode_o256("relation_id", &relation)?,
-            field_ordinal,
-            column_name: column,
-            sort_id: decode_o256("sort_id", &sort)?,
-            representation_id: decode_o256("representation_id", &representation)?,
+    if !table_is_strict(connection, &name)? {
+        return Err(ScanError::InvalidBootstrapSchema {
+            reason: String::from("bootstrap must be a STRICT table in main"),
         });
     }
-    validate_declarations(connection, &declarations)?;
-    Ok(declarations)
-}
-
-fn validate_catalog_schema(connection: &Connection) -> Result<(), ScanError> {
-    let name = metatable_name(MetatableKind::new(BOOTSTRAP_CATALOG));
-    let strict = connection
-        .query_row(
-            "SELECT strict FROM pragma_table_list WHERE schema = 'main' AND name = ?1",
-            [&name],
-            |row| row.get::<_, i64>(0),
-        )
-        .optional()
-        .map_err(ScanError::sqlite)?;
-    if strict != Some(1) {
-        return Err(ScanError::InvalidCatalogSchema {
-            reason: String::from("catalog must be a STRICT table in main"),
-        });
-    }
-
     let columns = table_columns(connection, &name)?;
     let expected = [
         ("table_name", "TEXT", true, 1_u32),
-        ("relation_id", "BLOB", true, 0),
-        ("field_ordinal", "INTEGER", true, 2),
-        ("column_name", "TEXT", true, 0),
-        ("sort_id", "BLOB", true, 0),
-        ("representation_id", "BLOB", true, 0),
+        ("interpretation", "TEXT", true, 0),
     ];
     if columns.len() != expected.len()
         || !columns.iter().zip(expected).all(
@@ -285,84 +181,99 @@ fn validate_catalog_schema(connection: &Connection) -> Result<(), ScanError> {
             },
         )
     {
-        return Err(ScanError::InvalidCatalogSchema {
-            reason: String::from("columns do not match the bootstrap catalog ABI"),
+        return Err(ScanError::InvalidBootstrapSchema {
+            reason: String::from("columns do not match the permanent bootstrap ABI"),
         });
     }
     Ok(())
 }
 
-fn validate_declarations(
+fn read_declarations(connection: &Connection) -> Result<Vec<MetatableDeclaration>, ScanError> {
+    let name = metatable_name(MetatableKind::new(BOOTSTRAP_CATALOG));
+    let mut statement = connection
+        .prepare(&format!(
+            "SELECT table_name, interpretation FROM {} ORDER BY table_name",
+            quote_identifier(&name)
+        ))
+        .map_err(ScanError::sqlite)?;
+    statement
+        .query_map((), |row| {
+            Ok(MetatableDeclaration {
+                table_name: row.get(0)?,
+                interpretation: row.get(1)?,
+            })
+        })
+        .map_err(ScanError::sqlite)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(ScanError::sqlite)
+}
+
+fn validate_extension_closure(
     connection: &Connection,
-    declarations: &[FieldDeclaration],
+    reserved: &[(String, MetatableKind)],
+    declarations: &[MetatableDeclaration],
 ) -> Result<(), ScanError> {
-    let mut tables: BTreeMap<&str, (O256, Vec<&FieldDeclaration>)> = BTreeMap::new();
+    let bootstrap_name = metatable_name(MetatableKind::new(BOOTSTRAP_CATALOG));
+    let registered = declarations
+        .iter()
+        .map(|declaration| declaration.table_name.as_str())
+        .collect::<BTreeSet<_>>();
+
     for declaration in declarations {
-        let entry = tables
-            .entry(&declaration.table_name)
-            .or_insert_with(|| (declaration.relation_id, Vec::new()));
-        if entry.0 != declaration.relation_id {
+        if declaration.table_name == bootstrap_name {
+            return Err(ScanError::InvalidDeclaration {
+                reason: String::from("the bootstrap is implicit and must not register itself"),
+            });
+        }
+        if parse_metatable_name(&declaration.table_name).is_none() {
             return Err(ScanError::InvalidDeclaration {
                 reason: format!(
-                    "table `{}` has more than one relation ID",
+                    "registered table `{}` is outside the canonical metatable namespace",
                     declaration.table_name
                 ),
             });
         }
-        entry.1.push(declaration);
+        if declaration.interpretation.is_empty() {
+            return Err(ScanError::InvalidDeclaration {
+                reason: format!(
+                    "registered table `{}` has an empty interpretation",
+                    declaration.table_name
+                ),
+            });
+        }
+        if !table_exists(connection, &declaration.table_name)? {
+            return Err(ScanError::MissingMetatable {
+                name: declaration.table_name.clone(),
+            });
+        }
+        if !table_is_strict(connection, &declaration.table_name)? {
+            return Err(ScanError::InvalidDeclaration {
+                reason: format!(
+                    "registered metatable `{}` is not STRICT",
+                    declaration.table_name
+                ),
+            });
+        }
     }
 
-    let mut relations = BTreeSet::new();
-    for (table, (relation, fields)) in tables {
-        if !relations.insert(relation) {
-            return Err(ScanError::InvalidDeclaration {
-                reason: format!("relation {relation} is assigned to more than one table"),
-            });
-        }
-        let columns = table_columns(connection, table)?;
-        if columns.is_empty() {
-            return Err(ScanError::MissingPhysicalObject {
-                object: "table",
-                name: table.to_owned(),
-            });
-        }
-        if !table_is_strict(connection, table)? {
-            return Err(ScanError::InvalidDeclaration {
-                reason: format!("interpreted table `{table}` is not STRICT"),
-            });
-        }
-        for (expected, field) in fields.iter().enumerate() {
-            if usize::try_from(field.field_ordinal) != Ok(expected) {
-                return Err(ScanError::InvalidDeclaration {
-                    reason: format!("table `{table}` has non-contiguous field ordinals"),
-                });
-            }
-            let physical = columns
-                .iter()
-                .find(|(name, _, _, _)| name == &field.column_name)
-                .ok_or_else(|| ScanError::MissingPhysicalObject {
-                    object: "column",
-                    name: format!("{table}.{}", field.column_name),
-                })?;
-            if !physical.2 {
-                return Err(ScanError::InvalidDeclaration {
-                    reason: format!(
-                        "interpreted column `{table}.{}` is nullable",
-                        field.column_name
-                    ),
-                });
-            }
-            if field.representation_id == INTEGER_BOOL_01_REPR_V0 && physical.1 != "INTEGER" {
-                return Err(ScanError::InvalidDeclaration {
-                    reason: format!(
-                        "Bool column `{table}.{}` is declared as {} rather than INTEGER",
-                        field.column_name, physical.1
-                    ),
-                });
-            }
+    for (name, kind) in reserved {
+        if kind.id() != BOOTSTRAP_CATALOG && !registered.contains(name.as_str()) {
+            return Err(ScanError::UnregisteredMetatable { name: name.clone() });
         }
     }
     Ok(())
+}
+
+fn table_exists(connection: &Connection, table: &str) -> Result<bool, ScanError> {
+    connection
+        .query_row(
+            "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?1",
+            [table],
+            |_| Ok(()),
+        )
+        .optional()
+        .map(|row| row.is_some())
+        .map_err(ScanError::sqlite)
 }
 
 fn table_is_strict(connection: &Connection, table: &str) -> Result<bool, ScanError> {
@@ -396,15 +307,6 @@ fn table_columns(connection: &Connection, table: &str) -> Result<Vec<PhysicalCol
         .map_err(ScanError::sqlite)
 }
 
-fn decode_o256(field: &str, bytes: &[u8]) -> Result<O256, ScanError> {
-    let exact: [u8; 32] = bytes
-        .try_into()
-        .map_err(|_| ScanError::InvalidDeclaration {
-            reason: format!("{field} must contain exactly 32 bytes"),
-        })?;
-    Ok(O256::from_bytes(exact))
-}
-
 pub(crate) fn quote_identifier(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
 }
@@ -414,83 +316,96 @@ mod tests {
     use covalence_lib_hash::O256;
     use covalence_lib_sqlite::{Connection, params};
 
-    use super::{KnownMetatable, ScanError, scan_metatables};
+    use super::{ScanError, scan_metatables};
     use crate::{
-        BOOL_SORT_V0, BOOL_VALUES_RELATION_V0, BOOTSTRAP_CATALOG, INTEGER_BOOL_01_REPR_V0,
-        MetatableKind, metatable_name,
+        BOOTSTRAP_CATALOG, MetatableKind, RUST_TYPES_INTERPRETATION_V0, RUST_TYPES_METATABLE_V0,
+        metatable_name,
     };
 
-    fn create_catalog(connection: &Connection) {
+    fn create_bootstrap(connection: &Connection) {
         let name = metatable_name(MetatableKind::new(BOOTSTRAP_CATALOG));
         connection
             .execute_batch(&format!(
                 "CREATE TABLE \"{name}\" (
-                    table_name TEXT NOT NULL,
-                    relation_id BLOB NOT NULL CHECK (length(relation_id) = 32),
-                    field_ordinal INTEGER NOT NULL CHECK (field_ordinal >= 0),
-                    column_name TEXT NOT NULL,
-                    sort_id BLOB NOT NULL CHECK (length(sort_id) = 32),
-                    representation_id BLOB NOT NULL CHECK (length(representation_id) = 32),
-                    PRIMARY KEY (table_name, field_ordinal),
-                    UNIQUE (table_name, column_name)
-                ) STRICT;
-                CREATE TABLE bool_values (
-                    value INTEGER NOT NULL CHECK (value IN (0, 1)),
-                    UNIQUE (value)
+                    table_name TEXT PRIMARY KEY,
+                    interpretation TEXT NOT NULL
+                ) STRICT;"
+            ))
+            .unwrap();
+    }
+
+    fn create_rust_types(connection: &Connection) {
+        let bootstrap = metatable_name(MetatableKind::new(BOOTSTRAP_CATALOG));
+        let rust_types = metatable_name(MetatableKind::new(RUST_TYPES_METATABLE_V0));
+        connection
+            .execute_batch(&format!(
+                "CREATE TABLE \"{rust_types}\" (
+                    id INTEGER PRIMARY KEY,
+                    rust_type TEXT NOT NULL UNIQUE
                 ) STRICT;"
             ))
             .unwrap();
         connection
             .execute(
                 &format!(
-                    "INSERT INTO \"{name}\" (
-                        table_name, relation_id, field_ordinal, column_name,
-                        sort_id, representation_id
-                    ) VALUES (?1, ?2, 0, ?3, ?4, ?5)"
+                    "INSERT INTO \"{bootstrap}\" (table_name, interpretation) VALUES (?1, ?2)"
                 ),
-                params![
-                    "bool_values",
-                    BOOL_VALUES_RELATION_V0.as_bytes().as_slice(),
-                    "value",
-                    BOOL_SORT_V0.as_bytes().as_slice(),
-                    INTEGER_BOOL_01_REPR_V0.as_bytes().as_slice(),
-                ],
+                params![rust_types, RUST_TYPES_INTERPRETATION_V0],
             )
             .unwrap();
     }
 
     #[test]
-    fn empty_database_has_empty_candidate() {
+    fn ordinary_empty_database_has_no_bootstrap() {
         let connection = Connection::open_in_memory().unwrap();
-        let candidate = scan_metatables(&connection).unwrap();
-        assert!(candidate.known().is_empty());
-        assert!(candidate.unknown().is_empty());
+        assert!(scan_metatables(&connection).unwrap().bootstrap().is_none());
     }
 
     #[test]
-    fn known_catalog_is_decoded_without_trust() {
+    fn empty_bootstrap_is_valid_candidate() {
         let connection = Connection::open_in_memory().unwrap();
-        create_catalog(&connection);
+        create_bootstrap(&connection);
         let candidate = scan_metatables(&connection).unwrap();
-        let [KnownMetatable::BootstrapCatalog(fields)] = candidate.known() else {
-            panic!("one known catalog");
+        assert!(candidate.bootstrap().unwrap().declarations().is_empty());
+    }
+
+    #[test]
+    fn registered_extension_is_in_bootstrap_closure() {
+        let connection = Connection::open_in_memory().unwrap();
+        create_bootstrap(&connection);
+        create_rust_types(&connection);
+        let candidate = scan_metatables(&connection).unwrap();
+        let [declaration] = candidate.bootstrap().unwrap().declarations() else {
+            panic!("one declaration");
         };
-        assert_eq!(fields.len(), 1);
-        assert_eq!(fields[0].table_name(), "bool_values");
-        assert_eq!(fields[0].sort_id(), BOOL_SORT_V0);
+        assert_eq!(declaration.interpretation(), RUST_TYPES_INTERPRETATION_V0);
     }
 
     #[test]
-    fn unknown_kind_is_retained_opaquely() {
+    fn extension_without_bootstrap_fails_closed() {
         let connection = Connection::open_in_memory().unwrap();
-        let unknown = O256::from_bytes([7; 32]);
-        let name = metatable_name(MetatableKind::new(unknown));
+        let name = metatable_name(MetatableKind::new(O256::from_bytes([7; 32])));
         connection
             .execute_batch(&format!("CREATE TABLE \"{name}\" (x INTEGER) STRICT;"))
             .unwrap();
-        let candidate = scan_metatables(&connection).unwrap();
-        assert!(candidate.known().is_empty());
-        assert_eq!(candidate.unknown()[0].kind().id(), unknown);
+        assert!(matches!(
+            scan_metatables(&connection),
+            Err(ScanError::UnregisteredMetatable { .. })
+        ));
+    }
+
+    #[test]
+    fn unregistered_extension_fails_closed() {
+        let connection = Connection::open_in_memory().unwrap();
+        create_bootstrap(&connection);
+        let name = metatable_name(MetatableKind::new(O256::from_bytes([7; 32])));
+        connection
+            .execute_batch(&format!("CREATE TABLE \"{name}\" (x INTEGER) STRICT;"))
+            .unwrap();
+        assert!(matches!(
+            scan_metatables(&connection),
+            Err(ScanError::UnregisteredMetatable { .. })
+        ));
     }
 
     #[test]
@@ -506,36 +421,36 @@ mod tests {
     }
 
     #[test]
-    fn dangling_column_fails_closed() {
+    fn missing_registered_extension_fails_closed() {
         let connection = Connection::open_in_memory().unwrap();
-        create_catalog(&connection);
-        let name = metatable_name(MetatableKind::new(BOOTSTRAP_CATALOG));
+        create_bootstrap(&connection);
+        let bootstrap = metatable_name(MetatableKind::new(BOOTSTRAP_CATALOG));
+        let missing = metatable_name(MetatableKind::new(RUST_TYPES_METATABLE_V0));
         connection
             .execute(
-                &format!("UPDATE \"{name}\" SET column_name = 'missing'"),
-                (),
+                &format!(
+                    "INSERT INTO \"{bootstrap}\" (table_name, interpretation) VALUES (?1, ?2)"
+                ),
+                params![missing, RUST_TYPES_INTERPRETATION_V0],
             )
             .unwrap();
         assert!(matches!(
             scan_metatables(&connection),
-            Err(ScanError::MissingPhysicalObject {
-                object: "column",
-                ..
-            })
+            Err(ScanError::MissingMetatable { .. })
         ));
     }
 
     #[test]
-    fn interpreted_tables_must_be_strict() {
+    fn bootstrap_does_not_register_itself() {
         let connection = Connection::open_in_memory().unwrap();
-        create_catalog(&connection);
+        create_bootstrap(&connection);
+        let bootstrap = metatable_name(MetatableKind::new(BOOTSTRAP_CATALOG));
         connection
-            .execute_batch(
-                "ALTER TABLE bool_values RENAME TO old_bool_values;
-                 CREATE TABLE bool_values (
-                    value INTEGER NOT NULL CHECK (value IN (0, 1)),
-                    UNIQUE (value)
-                 );",
+            .execute(
+                &format!(
+                    "INSERT INTO \"{bootstrap}\" (table_name, interpretation) VALUES (?1, 'self')"
+                ),
+                [&bootstrap],
             )
             .unwrap();
         assert!(matches!(
