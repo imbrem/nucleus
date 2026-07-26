@@ -7,9 +7,14 @@
 #[rustfmt::skip]
 mod bindings;
 
+mod descriptors;
 mod expr;
 mod trusted_db;
 
+pub use descriptors::{
+    DescriptorExecutionModel, DescriptorModelError, ExecutorId, ExpressionId,
+    InstallDescriptorModelOutcome, TraceId, TraceOutcome,
+};
 pub use expr::{Bool, EvalError, Expr, Prop, PropContext, Sort};
 pub use trusted_db::{
     CatalogError, InstallOutcome, Metatable, NeutronCatalog, RustTypeId, RustTypes, TrustedDb,
