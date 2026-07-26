@@ -7,6 +7,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut session = session::Session::new()?;
     let stdin = io::stdin();
     let mut stdout = io::stdout().lock();
+    let mut processed_command = false;
 
     if interactive {
         write!(stdout, "nucleus> ")?;
@@ -17,6 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if line.trim().is_empty() {
             continue;
         }
+        processed_command = true;
         match session.eval(&line) {
             Ok(output) => writeln!(stdout, "{output}")?,
             Err(error) => writeln!(stdout, "(error \"{error}\")")?,
@@ -25,6 +27,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             write!(stdout, "nucleus> ")?;
             stdout.flush()?;
         }
+    }
+    if !interactive && !processed_command {
+        writeln!(
+            stdout,
+            "hello from nucleus: SQLite returned {}",
+            covalence_nucleus::smoke()
+        )?;
     }
     Ok(())
 }
