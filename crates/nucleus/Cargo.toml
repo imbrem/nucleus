@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 covalence-lib-sqlite = { path = "../lib/sqlite" }
+covalence-neutron = { path = "../neutron" }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 wasm-bindgen = "=0.2.121"

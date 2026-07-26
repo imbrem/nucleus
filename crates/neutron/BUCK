@@ -24,6 +24,10 @@ rust_library(
     edition = "2024",
     srcs = _RUST_SOURCES,
     tests = [":covalence_neutron-unit-test"],
+    named_deps = {
+        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
+        "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
+    },
     env = {
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Relational state instances for Nucleus",
@@ -49,6 +53,10 @@ rust_test(
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
+    named_deps = {
+        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
+        "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
+    },
     env = {
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Relational state instances for Nucleus",
