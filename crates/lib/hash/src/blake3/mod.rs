@@ -1,4 +1,10 @@
-//! Covalence, BLAKE3, SHA-256, and context-key namespaces.
+//! Covalence and BLAKE3-family namespaces and operations.
+
+#[cfg(feature = "blake3")]
+mod cv;
+
+#[cfg(feature = "blake3")]
+pub use cv::{Blake3Cv, Blake3Merkle};
 
 use crate::{Namespace, O256, Obj, Opaque, RootedNamespace};
 
