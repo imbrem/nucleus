@@ -183,6 +183,71 @@ impl<N: Namespace> Obj<N> {
     }
 }
 
+/// Progress made by a streaming range verifier.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RangeValidationProgress {
+    /// Bytes accepted from the most recent update.
+    pub consumed: usize,
+    /// Absolute, contiguous range authenticated so far.
+    pub validated: std::ops::Range<u64>,
+}
+
+/// Stateful verification of streamed range data.
+pub trait StreamingRangeVerifier {
+    /// Verification failure.
+    type Error;
+
+    /// Accepts the next sequential data bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a completed evidence segment fails verification or
+    /// the stream contains more data than described by the evidence.
+    fn update(&mut self, data: &[u8]) -> Result<RangeValidationProgress, Self::Error>;
+
+    /// Finishes verification and returns the authenticated range.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if evidence segments remain incomplete.
+    fn finish(self) -> Result<std::ops::Range<u64>, Self::Error>;
+}
+
+/// A namespace supporting streamed range proofs with evidence `E`.
+pub trait StreamingRangeProofNamespace<E>: Namespace + Sized {
+    /// Verification failure.
+    type Error;
+    /// Stateful verifier.
+    type Verifier: StreamingRangeVerifier<Error = Self::Error>;
+
+    /// Starts verification against `root`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the evidence is empty, unordered, or discontinuous.
+    fn range_verifier(root: Obj<Self>, evidence: E) -> Result<Self::Verifier, Self::Error>;
+}
+
+impl<N: Namespace> Obj<N> {
+    /// Starts streaming range verification against this expected root.
+    ///
+    /// # Errors
+    ///
+    /// Returns the namespace implementation's error if evidence setup fails.
+    pub fn range_verifier<E>(
+        self,
+        evidence: E,
+    ) -> Result<
+        <N as StreamingRangeProofNamespace<E>>::Verifier,
+        <N as StreamingRangeProofNamespace<E>>::Error,
+    >
+    where
+        N: StreamingRangeProofNamespace<E>,
+    {
+        N::range_verifier(self, evidence)
+    }
+}
+
 impl<N: TagNamespace> Obj<N> {
     /// Derives a child object by tagging `bytes` with this object.
     #[must_use]
