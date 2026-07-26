@@ -3,6 +3,11 @@ use std::path::Path;
 use covalence_lib_error::snafu::{ResultExt, Snafu};
 use covalence_lib_sqlite as sqlite;
 
+const CREATE_CONNECTION_CATALOG_SQL: &str = include_str!("../sql/create_connection_catalog.sql");
+const CREATE_ATTACHED_DATABASES_SQL: &str = include_str!("../sql/create_attached_databases.sql");
+const REGISTER_TABLE_SQL: &str = include_str!("../sql/register_table.sql");
+const REGISTER_ATTACHED_DATABASE_SQL: &str = include_str!("../sql/register_attached_database.sql");
+
 /// Physical name of Neutron's connection catalog in `temp`.
 pub const CONNECTION_CATALOG: &str = "cov_conn_catalog";
 
@@ -104,13 +109,7 @@ fn initialize(connection: &mut sqlite::Connection) -> Result<(), ConnectionError
     let transaction = connection.transaction().context(InitializeSnafu)?;
 
     transaction
-        .execute_batch(
-            "CREATE TEMP TABLE cov_conn_catalog (
-                table_id       INTEGER PRIMARY KEY,
-                table_name     TEXT NOT NULL UNIQUE,
-                interpretation TEXT NOT NULL
-            ) STRICT;",
-        )
+        .execute_batch(CREATE_CONNECTION_CATALOG_SQL)
         .context(InitializeSnafu)?;
     register_table(
         &transaction,
@@ -124,19 +123,10 @@ fn initialize(connection: &mut sqlite::Connection) -> Result<(), ConnectionError
         2,
         ATTACHED_DATABASES,
         ATTACHED_DATABASES_INTERPRETATION,
-        "CREATE TEMP TABLE cov_conn_attached (
-                database_id INTEGER PRIMARY KEY,
-                schema_name TEXT NOT NULL UNIQUE
-            ) STRICT;",
+        CREATE_ATTACHED_DATABASES_SQL,
     )?;
 
-    transaction
-        .execute(
-            "INSERT INTO cov_conn_attached (database_id, schema_name)
-             VALUES (1, 'main')",
-            (),
-        )
-        .context(InitializeSnafu)?;
+    register_attached_database(&transaction, 1, "main")?;
 
     transaction.commit().context(InitializeSnafu)
 }
@@ -161,11 +151,18 @@ fn register_table(
     interpretation: &str,
 ) -> Result<(), ConnectionError> {
     transaction
-        .execute(
-            "INSERT INTO cov_conn_catalog (table_id, table_name, interpretation)
-             VALUES (?1, ?2, ?3)",
-            (table_id, table_name, interpretation),
-        )
+        .execute(REGISTER_TABLE_SQL, (table_id, table_name, interpretation))
+        .context(InitializeSnafu)?;
+    Ok(())
+}
+
+fn register_attached_database(
+    transaction: &sqlite::Transaction<'_>,
+    database_id: i64,
+    schema_name: &str,
+) -> Result<(), ConnectionError> {
+    transaction
+        .execute(REGISTER_ATTACHED_DATABASE_SQL, (database_id, schema_name))
         .context(InitializeSnafu)?;
     Ok(())
 }
@@ -273,6 +270,31 @@ mod tests {
             )
             .expect("inspect pre-existing schema");
         assert_eq!(sentinel_exists, 1);
+    }
+
+    #[test]
+    fn existing_connection_catalog_is_rejected() {
+        let mut sqlite = sqlite::Connection::open_in_memory().expect("open SQLite");
+        sqlite
+            .execute(
+                "CREATE TEMP TABLE cov_conn_catalog (sentinel INTEGER) STRICT",
+                (),
+            )
+            .expect("reserve catalog name");
+
+        assert!(matches!(
+            initialize(&mut sqlite),
+            Err(ConnectionError::Initialize { .. })
+        ));
+
+        let columns = sqlite
+            .query_row(
+                "SELECT count(*) FROM temp.pragma_table_info('cov_conn_catalog')",
+                (),
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("inspect pre-existing catalog");
+        assert_eq!(columns, 1);
     }
 
     #[test]
