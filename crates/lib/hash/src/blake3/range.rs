@@ -745,4 +745,19 @@ mod tests {
             Err(Blake3RangeProofError::IncompleteData)
         );
     }
+
+    #[test]
+    fn streaming_setup_rejects_discontinuous_segments() {
+        let input = vec![31; 4_096];
+        let first = proof_for(&input, 0..1_024, Blake3ProofMode::Unkeyed);
+        let third = proof_for(&input, 2_048..3_072, Blake3ProofMode::Unkeyed);
+        let root = Obj::<Blake3>::from_array(Blake3ProofMode::Unkeyed.hash(&input));
+        let result = root.range_verifier(Blake3StreamingEvidence {
+            segments: vec![Blake3UnkeyedEvidence(first), Blake3UnkeyedEvidence(third)],
+        });
+        assert!(matches!(
+            result,
+            Err(Blake3RangeProofError::DiscontinuousSegments { offset: 1_024 })
+        ));
+    }
 }
