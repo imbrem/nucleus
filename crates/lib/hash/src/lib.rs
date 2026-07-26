@@ -1,4 +1,11 @@
 //! Fixed-width, namespaced object identifiers.
+//!
+//! [`Obj`] carries a compact identity together with its intended namespace;
+//! the type records that construction but does not prove it. Versioned random
+//! roots and collision-resistant child derivation let independently issued
+//! hierarchies remain practically disjoint and be mounted without coordination.
+//! Their common fixed-width representation lets systems exchange and compose
+//! names while preserving the hierarchy that gives them meaning.
 
 use std::{
     fmt,
