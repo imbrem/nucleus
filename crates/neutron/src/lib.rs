@@ -10,8 +10,9 @@ mod scan;
 
 pub use names::{
     BLAKE3_CAS_INTERPRETATION_V0, BLAKE3_CAS_METATABLE_V0, BOOL_SORT_V0, BOOTSTRAP_CATALOG,
-    MetatableKind, RUST_TYPES_INTERPRETATION_V0, RUST_TYPES_METATABLE_V0, metatable_name,
-    parse_metatable_name,
+    DIRECT_KV_INTERPRETATION_V0, DIRECT_KV_METATABLE_V0, INDEXED_KV_INTERPRETATION_V0,
+    INDEXED_KV_METATABLE_V0, MetatableKind, RUST_TYPES_INTERPRETATION_V0, RUST_TYPES_METATABLE_V0,
+    metatable_name, parse_metatable_name,
 };
 pub use scan::{
     BootstrapCatalog, CatalogCandidate, MetatableDeclaration, ScanError, scan_metatables,

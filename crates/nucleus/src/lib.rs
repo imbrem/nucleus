@@ -12,8 +12,9 @@ mod trusted_db;
 
 pub use expr::{Bool, EvalError, Expr, Prop, PropContext, Sort};
 pub use trusted_db::{
-    Blake3Cas, BlobRequest, BlobResolver, CasEntry, CasId, CasLoad, CatalogError, InstallOutcome,
-    Metatable, NeutronCatalog, ResolveError, RustTypeId, RustTypes, TrustedDb, TrustedDbError,
+    Blake3Cas, BlobRequest, BlobResolver, CasEntry, CasId, CasLoad, CatalogError, DirectKv,
+    DirectKvEntry, IndexedKv, IndexedKvEntry, IndexedKvId, InstallOutcome, Metatable,
+    NeutronCatalog, ResolveError, RustTypeId, RustTypes, TrustedDb, TrustedDbError,
 };
 
 /// Returns a stable value used by cross-target smoke tests.

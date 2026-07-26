@@ -5,8 +5,9 @@ use covalence_lib_hash::O256;
 use covalence_lib_sqlite::{Connection, OptionalExtension, params};
 use covalence_neutron::{
     BLAKE3_CAS_INTERPRETATION_V0, BLAKE3_CAS_METATABLE_V0, BOOTSTRAP_CATALOG, CatalogCandidate,
-    MetatableKind, RUST_TYPES_INTERPRETATION_V0, RUST_TYPES_METATABLE_V0, ScanError,
-    metatable_name, scan_metatables,
+    DIRECT_KV_INTERPRETATION_V0, DIRECT_KV_METATABLE_V0, INDEXED_KV_INTERPRETATION_V0,
+    INDEXED_KV_METATABLE_V0, MetatableKind, RUST_TYPES_INTERPRETATION_V0, RUST_TYPES_METATABLE_V0,
+    ScanError, metatable_name, scan_metatables,
 };
 use snafu::Snafu;
 
@@ -70,6 +71,10 @@ impl NeutronCatalog {
                 validate_rust_types_metatable(connection, metatable)?;
             } else if metatable.interpretation == BLAKE3_CAS_INTERPRETATION_V0 {
                 validate_blake3_cas_metatable(connection, metatable)?;
+            } else if metatable.interpretation == INDEXED_KV_INTERPRETATION_V0 {
+                validate_indexed_kv_metatable(connection, metatable)?;
+            } else if metatable.interpretation == DIRECT_KV_INTERPRETATION_V0 {
+                validate_direct_kv_metatable(connection, metatable)?;
             }
         }
         Ok(Self { metatables })
@@ -374,6 +379,109 @@ impl TrustedDb {
         })
     }
 
+    /// Installs the indexed and direct KV reference relations atomically.
+    ///
+    /// The indexed table has a local integer DEF identity in addition to its
+    /// unique byte key. The direct table uses its byte key as the physical
+    /// primary key and is stored `WITHOUT ROWID`. In both relations a present
+    /// row with `value IS NULL` is distinct from an absent row.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked database, scan, or catalog error. A pre-existing
+    /// partial family is rejected rather than silently repaired.
+    pub fn install_kv_relations(&mut self) -> Result<InstallOutcome, TrustedDbError> {
+        let indexed_present = self
+            .catalog
+            .by_interpretation(INDEXED_KV_INTERPRETATION_V0)
+            .is_some();
+        let direct_present = self
+            .catalog
+            .by_interpretation(DIRECT_KV_INTERPRETATION_V0)
+            .is_some();
+        match (indexed_present, direct_present) {
+            (true, true) => return Ok(InstallOutcome::AlreadyPresent),
+            (true, false) | (false, true) => return Err(TrustedDbError::PartialKvFamily),
+            (false, false) => {}
+        }
+
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(TrustedDbError::sqlite)?;
+        let bootstrap = metatable_name(MetatableKind::new(BOOTSTRAP_CATALOG));
+        let indexed = metatable_name(MetatableKind::new(INDEXED_KV_METATABLE_V0));
+        let direct = metatable_name(MetatableKind::new(DIRECT_KV_METATABLE_V0));
+        transaction
+            .execute_batch(&format!(
+                "CREATE TABLE \"{indexed}\" (
+                    id INTEGER PRIMARY KEY,
+                    key BLOB NOT NULL UNIQUE,
+                    value BLOB
+                ) STRICT;
+                CREATE TABLE \"{direct}\" (
+                    key BLOB PRIMARY KEY,
+                    value BLOB
+                ) STRICT, WITHOUT ROWID;"
+            ))
+            .map_err(TrustedDbError::sqlite)?;
+        transaction
+            .execute(
+                &format!(
+                    "INSERT INTO \"{bootstrap}\" (table_name, interpretation)
+                     VALUES (?1, ?2), (?3, ?4)"
+                ),
+                params![
+                    indexed,
+                    INDEXED_KV_INTERPRETATION_V0,
+                    direct,
+                    DIRECT_KV_INTERPRETATION_V0
+                ],
+            )
+            .map_err(TrustedDbError::sqlite)?;
+        let candidate = scan_metatables(&transaction).map_err(TrustedDbError::scan)?;
+        let catalog =
+            NeutronCatalog::accept(&candidate, &transaction).map_err(TrustedDbError::catalog)?;
+        transaction.commit().map_err(TrustedDbError::sqlite)?;
+        self.catalog = catalog;
+        self.generation += 1;
+        Ok(InstallOutcome::Installed)
+    }
+
+    /// Resolves the installed indexed KV relation as a checked capability.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrustedDbError::MissingKvRelations`] before installation.
+    pub fn indexed_kv(&mut self) -> Result<IndexedKv<'_>, TrustedDbError> {
+        let metatable = self
+            .catalog
+            .by_interpretation(INDEXED_KV_INTERPRETATION_V0)
+            .cloned()
+            .ok_or(TrustedDbError::MissingKvRelations)?;
+        Ok(IndexedKv {
+            connection: &mut self.connection,
+            metatable,
+        })
+    }
+
+    /// Resolves the installed direct KV relation as a checked capability.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrustedDbError::MissingKvRelations`] before installation.
+    pub fn direct_kv(&mut self) -> Result<DirectKv<'_>, TrustedDbError> {
+        let metatable = self
+            .catalog
+            .by_interpretation(DIRECT_KV_INTERPRETATION_V0)
+            .cloned()
+            .ok_or(TrustedDbError::MissingKvRelations)?;
+        Ok(DirectKv {
+            connection: &mut self.connection,
+            metatable,
+        })
+    }
+
     /// Registers one explicitly supplied resolver capability.
     ///
     /// Resolvers are consulted in registration order after the local trusted
@@ -511,6 +619,153 @@ pub enum CasLoad {
     Resident(CasEntry),
     /// The address is known, but no registered capability produced bytes.
     Pending(CasId),
+}
+
+/// Connection-local DEF identity assigned by the indexed KV relation.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct IndexedKvId(i64);
+
+impl IndexedKvId {
+    /// Returns the stored `SQLite` integer.
+    #[must_use]
+    pub const fn get(self) -> i64 {
+        self.0
+    }
+}
+
+/// One row from the indexed KV relation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IndexedKvEntry {
+    /// Connection-local row identity.
+    pub id: IndexedKvId,
+    /// Unique quoted byte key.
+    pub key: Vec<u8>,
+    /// Explicit optional value; `None` means a present pending entry.
+    pub value: Option<Vec<u8>>,
+}
+
+/// One row from the direct `WITHOUT ROWID` KV relation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DirectKvEntry {
+    /// Primary quoted byte key.
+    pub key: Vec<u8>,
+    /// Explicit optional value; `None` means a present pending entry.
+    pub value: Option<Vec<u8>>,
+}
+
+/// Checked access to a mutable indexed byte KV relation.
+pub struct IndexedKv<'db> {
+    connection: &'db mut Connection,
+    metatable: Metatable,
+}
+
+impl IndexedKv<'_> {
+    /// Inserts or replaces the value for `key`, preserving its local identity.
+    ///
+    /// Passing `None` creates or restores an explicit pending entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error if the relation cannot be updated.
+    pub fn set(&mut self, key: &[u8], value: Option<&[u8]>) -> Result<IndexedKvId, TrustedDbError> {
+        let table = quote_identifier(&self.metatable.table_name);
+        self.connection
+            .execute(
+                &format!(
+                    "INSERT INTO {table} (key, value) VALUES (?1, ?2)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+                ),
+                params![key, value],
+            )
+            .map_err(TrustedDbError::sqlite)?;
+        self.connection
+            .query_row(
+                &format!("SELECT id FROM {table} WHERE key = ?1"),
+                [key],
+                |row| row.get::<_, i64>(0).map(IndexedKvId),
+            )
+            .map_err(TrustedDbError::sqlite)
+    }
+
+    /// Reads a row by quoted byte key.
+    ///
+    /// `Ok(None)` means no row. A returned entry whose value is `None` is a
+    /// distinct present/pending row.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error if the relation cannot be read.
+    pub fn entry(&self, key: &[u8]) -> Result<Option<IndexedKvEntry>, TrustedDbError> {
+        let table = quote_identifier(&self.metatable.table_name);
+        self.connection
+            .query_row(
+                &format!("SELECT id, key, value FROM {table} WHERE key = ?1"),
+                [key],
+                |row| {
+                    Ok(IndexedKvEntry {
+                        id: IndexedKvId(row.get(0)?),
+                        key: row.get(1)?,
+                        value: row.get(2)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(TrustedDbError::sqlite)
+    }
+}
+
+/// Checked access to a mutable direct byte KV relation.
+pub struct DirectKv<'db> {
+    connection: &'db mut Connection,
+    metatable: Metatable,
+}
+
+impl DirectKv<'_> {
+    /// Inserts or replaces the value for `key`.
+    ///
+    /// Passing `None` creates or restores an explicit pending entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error if the relation cannot be updated.
+    pub fn set(&mut self, key: &[u8], value: Option<&[u8]>) -> Result<(), TrustedDbError> {
+        let table = quote_identifier(&self.metatable.table_name);
+        self.connection
+            .execute(
+                &format!(
+                    "INSERT INTO {table} (key, value) VALUES (?1, ?2)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+                ),
+                params![key, value],
+            )
+            .map_err(TrustedDbError::sqlite)?;
+        Ok(())
+    }
+
+    /// Reads a row by primary byte key.
+    ///
+    /// `Ok(None)` means no row. A returned entry whose value is `None` is a
+    /// distinct present/pending row.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error if the relation cannot be read.
+    pub fn entry(&self, key: &[u8]) -> Result<Option<DirectKvEntry>, TrustedDbError> {
+        let table = quote_identifier(&self.metatable.table_name);
+        self.connection
+            .query_row(
+                &format!("SELECT key, value FROM {table} WHERE key = ?1"),
+                [key],
+                |row| {
+                    Ok(DirectKvEntry {
+                        key: row.get(0)?,
+                        value: row.get(1)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(TrustedDbError::sqlite)
+    }
 }
 
 /// Checked access to the hardcoded indexed BLAKE3 CAS.
@@ -730,6 +985,12 @@ pub enum TrustedDbError {
         /// Resolver-provided diagnostic.
         source: ResolveError,
     },
+    /// Exactly one member of the atomic KV reference family was present.
+    #[snafu(display("indexed and direct KV relations must be installed as one family"))]
+    PartialKvFamily,
+    /// The KV reference family has not been installed.
+    #[snafu(display("the indexed/direct KV relation family is not installed"))]
+    MissingKvRelations,
 }
 
 impl TrustedDbError {
@@ -829,6 +1090,82 @@ fn validate_blake3_cas_metatable(
     Ok(())
 }
 
+fn validate_indexed_kv_metatable(
+    connection: &Connection,
+    metatable: &Metatable,
+) -> Result<(), CatalogError> {
+    validate_kv_metatable(
+        connection,
+        metatable,
+        INDEXED_KV_METATABLE_V0,
+        &[
+            ("id", "INTEGER", false, 1_u32),
+            ("key", "BLOB", true, 0),
+            ("value", "BLOB", false, 0),
+        ],
+        false,
+    )
+}
+
+fn validate_direct_kv_metatable(
+    connection: &Connection,
+    metatable: &Metatable,
+) -> Result<(), CatalogError> {
+    validate_kv_metatable(
+        connection,
+        metatable,
+        DIRECT_KV_METATABLE_V0,
+        &[("key", "BLOB", true, 1_u32), ("value", "BLOB", false, 0)],
+        true,
+    )
+}
+
+fn validate_kv_metatable(
+    connection: &Connection,
+    metatable: &Metatable,
+    kind: O256,
+    expected_columns: &[(&str, &str, bool, u32)],
+    expected_without_rowid: bool,
+) -> Result<(), CatalogError> {
+    let expected = metatable_name(MetatableKind::new(kind));
+    if metatable.table_name != expected {
+        return Err(CatalogError::WrongInterpretationTable {
+            interpretation: metatable.interpretation.clone(),
+            expected,
+            actual: metatable.table_name.clone(),
+        });
+    }
+    if !table_is_strict(connection, &metatable.table_name)? {
+        return Err(CatalogError::InvalidExtensionSchema {
+            interpretation: metatable.interpretation.clone(),
+            reason: String::from("table must be STRICT"),
+        });
+    }
+    if table_is_without_rowid(connection, &metatable.table_name)? != expected_without_rowid {
+        return Err(CatalogError::InvalidExtensionSchema {
+            interpretation: metatable.interpretation.clone(),
+            reason: String::from("WITHOUT ROWID policy does not match the KV contract"),
+        });
+    }
+    let columns = table_columns(connection, &metatable.table_name)?;
+    if columns.len() != expected_columns.len()
+        || !columns.iter().zip(expected_columns).all(
+            |((actual_name, actual_type, not_null, pk), expected)| {
+                actual_name == expected.0
+                    && actual_type == expected.1
+                    && *not_null == expected.2
+                    && *pk == expected.3
+            },
+        )
+    {
+        return Err(CatalogError::InvalidExtensionSchema {
+            interpretation: metatable.interpretation.clone(),
+            reason: String::from("columns do not match the KV relation contract"),
+        });
+    }
+    Ok(())
+}
+
 type PhysicalColumn = (String, String, bool, u32);
 
 fn table_columns(
@@ -864,6 +1201,18 @@ fn table_is_strict(connection: &Connection, table: &str) -> Result<bool, Catalog
         )
         .optional()
         .map(|strict| strict == Some(1))
+        .map_err(|source| CatalogError::ValidationSqlite { source })
+}
+
+fn table_is_without_rowid(connection: &Connection, table: &str) -> Result<bool, CatalogError> {
+    connection
+        .query_row(
+            "SELECT wr FROM pragma_table_list WHERE schema = 'main' AND name = ?1",
+            [table],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map(|without_rowid| without_rowid == Some(1))
         .map_err(|source| CatalogError::ValidationSqlite { source })
 }
 
@@ -985,6 +1334,70 @@ mod tests {
             Err(TrustedDbError::ContentHashMismatch { .. })
         ));
         assert_eq!(cas.entry(expected).unwrap(), None);
+    }
+
+    #[test]
+    fn kv_relations_install_as_one_catalog_family() {
+        let mut database = TrustedDb::create_in_memory().unwrap();
+        assert!(matches!(
+            database.indexed_kv(),
+            Err(TrustedDbError::MissingKvRelations)
+        ));
+        assert!(matches!(
+            database.direct_kv(),
+            Err(TrustedDbError::MissingKvRelations)
+        ));
+        assert_eq!(
+            database.install_kv_relations().unwrap(),
+            InstallOutcome::Installed
+        );
+        assert_eq!(
+            database.install_kv_relations().unwrap(),
+            InstallOutcome::AlreadyPresent
+        );
+        assert_eq!(database.generation(), 1);
+        assert_eq!(database.catalog().metatables().len(), 2);
+    }
+
+    #[test]
+    fn indexed_kv_preserves_identity_across_mutable_values() {
+        let mut database = TrustedDb::create_in_memory().unwrap();
+        database.install_kv_relations().unwrap();
+        let mut kv = database.indexed_kv().unwrap();
+        assert_eq!(kv.entry(b"k").unwrap(), None);
+
+        let id = kv.set(b"k", None).unwrap();
+        assert_eq!(
+            kv.entry(b"k").unwrap(),
+            Some(super::IndexedKvEntry {
+                id,
+                key: b"k".to_vec(),
+                value: None,
+            })
+        );
+        assert_eq!(kv.set(b"k", Some(b"v")).unwrap(), id);
+        assert_eq!(kv.entry(b"k").unwrap().unwrap().value, Some(b"v".to_vec()));
+        assert_eq!(kv.set(b"k", None).unwrap(), id);
+        assert_eq!(kv.entry(b"k").unwrap().unwrap().value, None);
+    }
+
+    #[test]
+    fn direct_kv_distinguishes_absence_pending_and_value() {
+        let mut database = TrustedDb::create_in_memory().unwrap();
+        database.install_kv_relations().unwrap();
+        let mut kv = database.direct_kv().unwrap();
+        assert_eq!(kv.entry(b"k").unwrap(), None);
+
+        kv.set(b"k", None).unwrap();
+        assert_eq!(
+            kv.entry(b"k").unwrap(),
+            Some(super::DirectKvEntry {
+                key: b"k".to_vec(),
+                value: None,
+            })
+        );
+        kv.set(b"k", Some(b"v")).unwrap();
+        assert_eq!(kv.entry(b"k").unwrap().unwrap().value, Some(b"v".to_vec()));
     }
 
     #[test]

@@ -45,6 +45,28 @@ pub const BLAKE3_CAS_METATABLE_V0: O256 = O256::from_bytes([
 /// Text stored in the bootstrap catalog for the hardcoded BLAKE3 CAS.
 pub const BLAKE3_CAS_INTERPRETATION_V0: &str = "covalence.meta.blake3-cas/v0";
 
+/// An indexed mutable key/value relation with a connection-local DEF identity.
+///
+/// BLAKE3 of `covalence.meta/indexed-kv/v0`.
+pub const INDEXED_KV_METATABLE_V0: O256 = O256::from_bytes([
+    0x2d, 0xb8, 0xd1, 0xf4, 0xdd, 0x61, 0x71, 0xee, 0x67, 0x37, 0x09, 0x39, 0x3c, 0x1d, 0x67, 0x92,
+    0x04, 0x6b, 0xdf, 0xfe, 0xab, 0x5d, 0xd7, 0x42, 0x12, 0xb9, 0xaa, 0x0a, 0x84, 0x0e, 0x9e, 0x58,
+]);
+
+/// Text stored in the bootstrap catalog for indexed KV v0.
+pub const INDEXED_KV_INTERPRETATION_V0: &str = "covalence.meta.indexed-kv/v0";
+
+/// A direct mutable key/value relation stored without a separate row ID.
+///
+/// BLAKE3 of `covalence.meta/direct-kv/v0`.
+pub const DIRECT_KV_METATABLE_V0: O256 = O256::from_bytes([
+    0x71, 0xfc, 0x47, 0xae, 0x9b, 0x5b, 0x6e, 0x44, 0x23, 0x49, 0x37, 0x32, 0x8c, 0x30, 0x4b, 0x30,
+    0x47, 0xc1, 0xcd, 0xac, 0x5b, 0x93, 0x24, 0x99, 0x5d, 0x37, 0xc3, 0xfa, 0x79, 0xb5, 0x6c, 0xae,
+]);
+
+/// Text stored in the bootstrap catalog for direct KV v0.
+pub const DIRECT_KV_INTERPRETATION_V0: &str = "covalence.meta.direct-kv/v0";
+
 /// A stable identifier for one metatable format and version.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct MetatableKind(O256);
