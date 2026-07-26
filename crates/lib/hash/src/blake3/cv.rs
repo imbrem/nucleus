@@ -61,3 +61,37 @@ impl Blake3Cv {
         Obj::<Blake3>::from_array(*hash.as_bytes())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn subtree_operations_reproduce_blake3_roots() {
+        let chunk0 = [b'a'; blake3::CHUNK_LEN];
+        let chunk1 = [b'b'; blake3::CHUNK_LEN];
+        let chunk2 = [b'c'; 42];
+
+        let cv0 = Blake3Cv::from_subtree(0, chunk0);
+        let cv1 = Blake3Cv::from_subtree(blake3::CHUNK_LEN as u64, chunk1);
+        let cv2 = Blake3Cv::from_subtree(2 * blake3::CHUNK_LEN as u64, chunk2);
+
+        let mut input = Vec::new();
+        input.extend_from_slice(&chunk0);
+        input.extend_from_slice(&chunk1);
+        assert_eq!(cv0.root(cv1), Blake3Hash::from_bytes(&input));
+
+        input.extend_from_slice(&chunk2);
+        assert_eq!(cv0.merge(cv1).root(cv2), Blake3Hash::from_bytes(input));
+    }
+
+    #[test]
+    fn chaining_value_namespace_does_not_claim_structural_validity() {
+        let representative = Blake3Merkle;
+        assert_eq!(std::mem::size_of_val(&representative), 0);
+
+        let arbitrary = Blake3Cv::from_array([0xa5; 32]);
+        let root = arbitrary.root(arbitrary);
+        assert_ne!(root, Blake3Hash::default());
+    }
+}
