@@ -82,6 +82,63 @@ impl NeutronCatalog {
     }
 }
 
+/// A request presented to an explicitly registered computational capability.
+///
+/// The request has no logical authority. Any returned bytes remain candidates
+/// until Nucleus validates them against [`Self::hash`].
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct BlobRequest {
+    hash: O256,
+}
+
+impl BlobRequest {
+    /// Returns the requested BLAKE3 content address.
+    #[must_use]
+    pub const fn hash(self) -> O256 {
+        self.hash
+    }
+}
+
+/// An object-safe, connection-scoped source of candidate bytes.
+///
+/// Resolver implementations may perform arbitrary effects authorized by their
+/// embedding code. Persisted database state cannot construct a resolver or
+/// grant it capabilities. Resolver output is never trusted directly.
+pub trait BlobResolver {
+    /// Attempts to produce bytes for `request`.
+    ///
+    /// `Ok(None)` means this resolver has no candidate. Returned bytes need
+    /// not be correct: the trusted connection validates their content address.
+    ///
+    /// # Errors
+    ///
+    /// Returns an operational failure reported by the resolver.
+    fn resolve(&mut self, request: BlobRequest) -> Result<Option<Vec<u8>>, ResolveError>;
+}
+
+/// An operational failure reported across the object-safe resolver boundary.
+#[derive(Clone, Debug, Eq, PartialEq, Snafu)]
+#[snafu(crate_root(snafu))]
+#[snafu(display("{message}"))]
+pub struct ResolveError {
+    message: String,
+}
+
+impl ResolveError {
+    /// Constructs an opaque resolver failure with a diagnostic message.
+    #[must_use]
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+struct ResolverCapability {
+    id: String,
+    resolver: Box<dyn BlobResolver>,
+}
+
 /// Rejection while accepting structurally decoded metadata as a known API.
 #[derive(Debug, Snafu)]
 #[snafu(crate_root(snafu))]
@@ -132,6 +189,7 @@ pub struct TrustedDb {
     connection: Connection,
     catalog: NeutronCatalog,
     generation: u64,
+    resolvers: Vec<ResolverCapability>,
 }
 
 impl TrustedDb {
@@ -167,6 +225,7 @@ impl TrustedDb {
             connection,
             catalog,
             generation: 0,
+            resolvers: Vec::new(),
         })
     }
 
@@ -314,6 +373,82 @@ impl TrustedDb {
             metatable,
         })
     }
+
+    /// Registers one explicitly supplied resolver capability.
+    ///
+    /// Resolvers are consulted in registration order after the local trusted
+    /// CAS. A database row cannot register, replace, or reorder capabilities.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an empty or duplicate connection-local resolver ID.
+    pub fn register_blob_resolver(
+        &mut self,
+        id: impl Into<String>,
+        resolver: impl BlobResolver + 'static,
+    ) -> Result<(), TrustedDbError> {
+        let id = id.into();
+        if id.is_empty() {
+            return Err(TrustedDbError::InvalidResolverId);
+        }
+        if self.resolvers.iter().any(|capability| capability.id == id) {
+            return Err(TrustedDbError::DuplicateResolver { id });
+        }
+        self.resolvers.push(ResolverCapability {
+            id,
+            resolver: Box::new(resolver),
+        });
+        Ok(())
+    }
+
+    /// Loads one BLAKE3 object through the local CAS and registered resolvers.
+    ///
+    /// The local CAS is checked first. On a cache miss, resolvers are consulted
+    /// in registration order. The first candidate whose digest matches is
+    /// inserted through the trusted CAS transition and returned. If every
+    /// resolver misses, the lazy reference remains pending.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed failure for a missing CAS, a resolver failure, a lying
+    /// resolver, or a trusted database operation.
+    pub fn load_blake3(&mut self, hash: O256) -> Result<CasLoad, TrustedDbError> {
+        let (id, local) = {
+            let mut cas = self.blake3_cas()?;
+            let id = cas.declare(hash)?;
+            (id, cas.entry(hash)?)
+        };
+        if let Some(entry) = local
+            && entry.data.is_some()
+        {
+            return Ok(CasLoad::Resident(entry));
+        }
+
+        for index in 0..self.resolvers.len() {
+            let candidate = {
+                let capability = &mut self.resolvers[index];
+                capability
+                    .resolver
+                    .resolve(BlobRequest { hash })
+                    .map_err(|source| TrustedDbError::Resolver {
+                        id: capability.id.clone(),
+                        source,
+                    })?
+            };
+            if let Some(data) = candidate {
+                let id = {
+                    let mut cas = self.blake3_cas()?;
+                    cas.provide(hash, &data)?
+                };
+                return Ok(CasLoad::Resident(CasEntry {
+                    id,
+                    hash,
+                    data: Some(data),
+                }));
+            }
+        }
+        Ok(CasLoad::Pending(id))
+    }
 }
 
 /// Result of installing a singleton extension metatable.
@@ -367,6 +502,15 @@ pub struct CasEntry {
     pub hash: O256,
     /// Locally available bytes, or `None` for a lazy reference.
     pub data: Option<Vec<u8>>,
+}
+
+/// Result of cache-first lookup over the local CAS and resolver capabilities.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CasLoad {
+    /// Validated bytes are resident in the trusted local CAS.
+    Resident(CasEntry),
+    /// The address is known, but no registered capability produced bytes.
+    Pending(CasId),
 }
 
 /// Checked access to the hardcoded indexed BLAKE3 CAS.
@@ -569,6 +713,23 @@ pub enum TrustedDbError {
         /// Connection-local row identity.
         id: CasId,
     },
+    /// A resolver capability ID was empty.
+    #[snafu(display("resolver capability ID must not be empty"))]
+    InvalidResolverId,
+    /// A resolver capability ID was already registered on this connection.
+    #[snafu(display("resolver capability `{id}` is already registered"))]
+    DuplicateResolver {
+        /// Duplicate connection-local resolver ID.
+        id: String,
+    },
+    /// An explicitly registered resolver failed operationally.
+    #[snafu(display("resolver capability `{id}` failed: {source}"))]
+    Resolver {
+        /// Connection-local resolver ID.
+        id: String,
+        /// Resolver-provided diagnostic.
+        source: ResolveError,
+    },
 }
 
 impl TrustedDbError {
@@ -712,9 +873,35 @@ fn quote_identifier(identifier: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
     use covalence_lib_hash::O256;
 
-    use super::{InstallOutcome, TrustedDb, TrustedDbError};
+    use super::{
+        BlobRequest, BlobResolver, CasEntry, CasLoad, InstallOutcome, ResolveError, TrustedDb,
+        TrustedDbError,
+    };
+
+    struct FakeResolver {
+        calls: Rc<Cell<usize>>,
+        answer: Option<Vec<u8>>,
+    }
+
+    impl BlobResolver for FakeResolver {
+        fn resolve(&mut self, _request: BlobRequest) -> Result<Option<Vec<u8>>, ResolveError> {
+            self.calls.set(self.calls.get() + 1);
+            Ok(self.answer.clone())
+        }
+    }
+
+    struct FailingResolver;
+
+    impl BlobResolver for FailingResolver {
+        fn resolve(&mut self, _request: BlobRequest) -> Result<Option<Vec<u8>>, ResolveError> {
+            Err(ResolveError::new("offline"))
+        }
+    }
 
     #[test]
     fn creation_accepts_an_empty_bootstrap() {
@@ -798,5 +985,135 @@ mod tests {
             Err(TrustedDbError::ContentHashMismatch { .. })
         ));
         assert_eq!(cas.entry(expected).unwrap(), None);
+    }
+
+    #[test]
+    fn resolver_fills_the_cache_and_is_skipped_on_the_next_load() {
+        let mut database = TrustedDb::create_in_memory().unwrap();
+        database.install_blake3_cas().unwrap();
+        let data = b"resolved theorem".to_vec();
+        let hash = O256::blake3(&data);
+        let calls = Rc::new(Cell::new(0));
+        database
+            .register_blob_resolver(
+                "fixture",
+                FakeResolver {
+                    calls: Rc::clone(&calls),
+                    answer: Some(data.clone()),
+                },
+            )
+            .unwrap();
+
+        let CasLoad::Resident(first) = database.load_blake3(hash).unwrap() else {
+            panic!("resolver should make the object resident");
+        };
+        assert_eq!(first.data, Some(data.clone()));
+        assert_eq!(calls.get(), 1);
+
+        let CasLoad::Resident(second) = database.load_blake3(hash).unwrap() else {
+            panic!("cache should remain resident");
+        };
+        assert_eq!(second, first);
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn resolver_miss_leaves_a_pending_reference() {
+        let mut database = TrustedDb::create_in_memory().unwrap();
+        database.install_blake3_cas().unwrap();
+        database
+            .register_blob_resolver(
+                "miss",
+                FakeResolver {
+                    calls: Rc::new(Cell::new(0)),
+                    answer: None,
+                },
+            )
+            .unwrap();
+        let hash = O256::blake3(b"absent");
+
+        let CasLoad::Pending(id) = database.load_blake3(hash).unwrap() else {
+            panic!("all resolvers missed");
+        };
+        assert_eq!(
+            database.blake3_cas().unwrap().entry(hash).unwrap(),
+            Some(CasEntry {
+                id,
+                hash,
+                data: None,
+            })
+        );
+    }
+
+    #[test]
+    fn lying_resolver_cannot_mutate_pending_trusted_data() {
+        let mut database = TrustedDb::create_in_memory().unwrap();
+        database.install_blake3_cas().unwrap();
+        database
+            .register_blob_resolver(
+                "liar",
+                FakeResolver {
+                    calls: Rc::new(Cell::new(0)),
+                    answer: Some(b"wrong".to_vec()),
+                },
+            )
+            .unwrap();
+        let hash = O256::blake3(b"right");
+
+        assert!(matches!(
+            database.load_blake3(hash),
+            Err(TrustedDbError::ContentHashMismatch { .. })
+        ));
+        assert_eq!(
+            database
+                .blake3_cas()
+                .unwrap()
+                .entry(hash)
+                .unwrap()
+                .unwrap()
+                .data,
+            None
+        );
+    }
+
+    #[test]
+    fn resolver_failures_remain_distinct_from_misses() {
+        let mut database = TrustedDb::create_in_memory().unwrap();
+        database.install_blake3_cas().unwrap();
+        database
+            .register_blob_resolver("offline", FailingResolver)
+            .unwrap();
+        let hash = O256::blake3(b"right");
+
+        assert!(matches!(
+            database.load_blake3(hash),
+            Err(TrustedDbError::Resolver { id, .. }) if id == "offline"
+        ));
+        assert_eq!(
+            database
+                .blake3_cas()
+                .unwrap()
+                .entry(hash)
+                .unwrap()
+                .unwrap()
+                .data,
+            None
+        );
+    }
+
+    #[test]
+    fn resolver_capability_ids_are_explicit_and_cannot_be_replaced() {
+        let mut database = TrustedDb::create_in_memory().unwrap();
+        assert!(matches!(
+            database.register_blob_resolver("", FailingResolver),
+            Err(TrustedDbError::InvalidResolverId)
+        ));
+        database
+            .register_blob_resolver("source", FailingResolver)
+            .unwrap();
+        assert!(matches!(
+            database.register_blob_resolver("source", FailingResolver),
+            Err(TrustedDbError::DuplicateResolver { id }) if id == "source"
+        ));
     }
 }
