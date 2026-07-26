@@ -15,7 +15,7 @@ mod trusted_db;
 pub use expr::{Bool, EvalError, Expr, Prop, PropContext, Sort};
 pub use knowledge::{
     Def, InstallKnowledgeOutcome, KnowledgeError, KnowledgeModel, SuccessfulOutput,
-    SuccessfulTraceQuery, TermIdentity, TermTraceIdentity, TypeIdentity, Use,
+    SuccessfulTraceQuery, TermIdentity, TermTraceIdentity, TraceStep, TypeIdentity, Use,
 };
 pub use normalized::{
     ExecutionModel, ExecutionModelError, ExecutorId, ExpressionId, InstallExecutionModelOutcome,

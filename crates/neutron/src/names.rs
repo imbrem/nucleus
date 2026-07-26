@@ -97,6 +97,15 @@ pub const TERM_EXECUTION_TRACES_METATABLE_V0: O256 = O256::from_bytes([
 /// Compiled interpretation selected for term-level execution traces.
 pub const TERM_EXECUTION_TRACES_INTERPRETATION_V0: &str = "covalence.meta.term-execution-traces/v0";
 
+/// Opaque identifier allocated to ordered term-trace steps.
+pub const TERM_TRACE_STEPS_METATABLE_V0: O256 = O256::from_bytes([
+    0xdf, 0xd4, 0x30, 0x00, 0xfe, 0xc7, 0xdb, 0x55, 0x27, 0xc4, 0x62, 0x74, 0x1e, 0x3f, 0x88, 0x59,
+    0xc5, 0x0f, 0xdc, 0xed, 0x28, 0xf8, 0x9e, 0x4b, 0x61, 0xf4, 0x68, 0x3f, 0x07, 0xb5, 0x3d, 0x0a,
+]);
+
+/// Compiled interpretation selected for ordered term-trace steps.
+pub const TERM_TRACE_STEPS_INTERPRETATION_V0: &str = "covalence.meta.term-trace-steps/v0";
+
 /// A stable identifier for one metatable format and version.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct MetatableKind(O256);

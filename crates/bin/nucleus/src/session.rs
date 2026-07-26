@@ -3,7 +3,7 @@ use std::fmt;
 use covalence_data_sexpr::{SExpr, Symbol, sax::FromEvents, text};
 use covalence_nucleus::{
     Def, KnowledgeError, KnowledgeModel, SuccessfulTraceQuery, TermIdentity, TraceOutcome,
-    TrustedDb,
+    TraceStep, TrustedDb,
 };
 
 pub struct Session {
@@ -84,6 +84,15 @@ impl Session {
                         Some(output.use_id()),
                         TraceOutcome::Returned,
                     )
+                    .map_err(Error::Knowledge)?;
+                model
+                    .record_step(TraceStep {
+                        trace: trace.use_id(),
+                        ordinal: 0,
+                        operation: program.use_id(),
+                        before: input.use_id(),
+                        after: output.use_id(),
+                    })
                     .map_err(Error::Knowledge)?;
                 Ok(format!("(recorded trace {})", trace.get()))
             }

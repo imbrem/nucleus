@@ -12,8 +12,9 @@ use covalence_lib_sqlite::{OptionalExtension, params};
 use covalence_neutron::{
     BOOTSTRAP_CATALOG, EXECUTORS_METATABLE_V0, EXPRESSIONS_METATABLE_V0, MetatableKind, ScanError,
     TERM_EXECUTION_TRACES_INTERPRETATION_V0, TERM_EXECUTION_TRACES_METATABLE_V0,
-    TERMS_INTERPRETATION_V0, TERMS_METATABLE_V0, TYPES_INTERPRETATION_V0, TYPES_METATABLE_V0,
-    metatable_name, scan_metatables,
+    TERM_TRACE_STEPS_INTERPRETATION_V0, TERM_TRACE_STEPS_METATABLE_V0, TERMS_INTERPRETATION_V0,
+    TERMS_METATABLE_V0, TYPES_INTERPRETATION_V0, TYPES_METATABLE_V0, metatable_name,
+    scan_metatables,
 };
 use snafu::Snafu;
 
@@ -21,12 +22,16 @@ use crate::{
     CatalogError, ExecutionModelError, ExecutorId, NeutronCatalog, TraceOutcome, TrustedDb,
 };
 
-const INTERPRETATIONS: [(&str, covalence_lib_hash::O256); 3] = [
+const INTERPRETATIONS: [(&str, covalence_lib_hash::O256); 4] = [
     (TYPES_INTERPRETATION_V0, TYPES_METATABLE_V0),
     (TERMS_INTERPRETATION_V0, TERMS_METATABLE_V0),
     (
         TERM_EXECUTION_TRACES_INTERPRETATION_V0,
         TERM_EXECUTION_TRACES_METATABLE_V0,
+    ),
+    (
+        TERM_TRACE_STEPS_INTERPRETATION_V0,
+        TERM_TRACE_STEPS_METATABLE_V0,
     ),
 ];
 
@@ -117,11 +122,28 @@ pub struct SuccessfulOutput {
     pub output: Use<TermIdentity>,
 }
 
+/// One ordered operation belonging to an execution trace.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TraceStep {
+    /// Trace containing the step.
+    pub trace: Use<TermTraceIdentity>,
+    /// Zero-based order within the trace.
+    pub ordinal: u32,
+    /// Operation applied at this step.
+    pub operation: Use<TermIdentity>,
+    /// State before the operation.
+    pub before: Use<TermIdentity>,
+    /// State after the operation.
+    pub after: Use<TermIdentity>,
+}
+
 /// Positive first-order trace query used by the initial REPL.
 ///
 /// Its logical reading is:
 ///
-/// `∃ trace executor input. returned(trace, executor, program, input, output)`.
+/// `∃ trace executor input step operation before after.`
+/// `returned(trace, executor, program, input, output) ∧`
+/// `step(trace, step, operation, before, after)`.
 ///
 /// `program = None` leaves the program free in the projected result. Supplying
 /// a program adds an equality atom. Trace, executor, and input are always
@@ -194,6 +216,7 @@ impl TrustedDb {
         let types = table_name(TYPES_METATABLE_V0);
         let terms = table_name(TERMS_METATABLE_V0);
         let traces = table_name(TERM_EXECUTION_TRACES_METATABLE_V0);
+        let steps = table_name(TERM_TRACE_STEPS_METATABLE_V0);
         let bootstrap = table_name(BOOTSTRAP_CATALOG);
         let transaction = self
             .connection
@@ -221,6 +244,14 @@ impl TrustedDb {
                     input_term INTEGER NOT NULL REFERENCES {terms}(id),
                     output_term INTEGER REFERENCES {terms}(id),
                     outcome TEXT NOT NULL CHECK (outcome IN ('returned', 'failed'))
+                ) STRICT;
+                CREATE TABLE {steps} (
+                    trace_id INTEGER NOT NULL REFERENCES {traces}(id),
+                    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+                    operation_term INTEGER NOT NULL REFERENCES {terms}(id),
+                    before_term INTEGER NOT NULL REFERENCES {terms}(id),
+                    after_term INTEGER NOT NULL REFERENCES {terms}(id),
+                    PRIMARY KEY (trace_id, ordinal)
                 ) STRICT;"
             ))
             .map_err(KnowledgeError::sqlite)?;
@@ -407,8 +438,37 @@ impl KnowledgeModel<'_> {
         Ok(Def::new(self.database.connection.last_insert_rowid()))
     }
 
+    /// Appends one ordered operation to an existing trace.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked database error for invalid uses or duplicate ordinals.
+    pub fn record_step(&mut self, step: TraceStep) -> Result<(), KnowledgeError> {
+        let steps = table_name(TERM_TRACE_STEPS_METATABLE_V0);
+        self.database
+            .connection
+            .execute(
+                &format!(
+                    "INSERT INTO {steps}
+                     (trace_id, ordinal, operation_term, before_term, after_term)
+                     VALUES (?1, ?2, ?3, ?4, ?5)"
+                ),
+                params![
+                    step.trace.get(),
+                    i64::from(step.ordinal),
+                    step.operation.get(),
+                    step.before.get(),
+                    step.after.get()
+                ],
+            )
+            .map(|_| ())
+            .map_err(KnowledgeError::sqlite)
+    }
+
     /// Evaluates the positive first-order query
-    /// `∃ trace executor input. returned(trace, executor, program, input, output)`.
+    /// `∃ trace executor input step operation before after.`
+    /// `returned(trace, executor, program, input, output) ∧`
+    /// `step(trace, step, operation, before, after)`.
     ///
     /// Projection existentially hides the trace, executor, and input columns;
     /// `DISTINCT` gives the result logical set semantics.
@@ -421,6 +481,7 @@ impl KnowledgeModel<'_> {
         query: SuccessfulTraceQuery,
     ) -> Result<Vec<SuccessfulOutput>, KnowledgeError> {
         let traces = table_name(TERM_EXECUTION_TRACES_METATABLE_V0);
+        let steps = table_name(TERM_TRACE_STEPS_METATABLE_V0);
         let mut statement = self
             .database
             .connection
@@ -430,6 +491,10 @@ impl KnowledgeModel<'_> {
                  WHERE outcome = 'returned'
                    AND output_term IS NOT NULL
                    AND (?1 IS NULL OR program_term = ?1)
+                   AND EXISTS (
+                     SELECT 1 FROM {steps}
+                     WHERE {steps}.trace_id = {traces}.id
+                   )
                  ORDER BY program_term, output_term"
             ))
             .map_err(KnowledgeError::sqlite)?;
@@ -593,7 +658,7 @@ fn table_name(kind: covalence_lib_hash::O256) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{InstallKnowledgeOutcome, SuccessfulTraceQuery};
+    use super::{InstallKnowledgeOutcome, SuccessfulTraceQuery, TraceStep};
     use crate::{TraceOutcome, TrustedDb};
 
     #[test]
@@ -607,7 +672,7 @@ mod tests {
             database.install_knowledge_model().unwrap(),
             InstallKnowledgeOutcome::AlreadyPresent
         );
-        assert_eq!(database.catalog().metatables().len(), 7);
+        assert_eq!(database.catalog().metatables().len(), 8);
     }
 
     #[test]
@@ -624,7 +689,7 @@ mod tests {
             .define_term("forty-two", value.use_id(), "42")
             .unwrap();
         let executor = model.register_executor("evaluator").unwrap();
-        model
+        let trace = model
             .record_trace(
                 executor,
                 add.use_id(),
@@ -632,6 +697,15 @@ mod tests {
                 Some(answer.use_id()),
                 TraceOutcome::Returned,
             )
+            .unwrap();
+        model
+            .record_step(TraceStep {
+                trace: trace.use_id(),
+                ordinal: 0,
+                operation: add.use_id(),
+                before: nil.use_id(),
+                after: answer.use_id(),
+            })
             .unwrap();
 
         let rows = model
