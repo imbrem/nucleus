@@ -9,8 +9,9 @@ mod names;
 mod scan;
 
 pub use names::{
-    BOOL_SORT_V0, BOOTSTRAP_CATALOG, MetatableKind, RUST_TYPES_INTERPRETATION_V0,
-    RUST_TYPES_METATABLE_V0, metatable_name, parse_metatable_name,
+    BOOL_SORT_V0, BOOTSTRAP_CATALOG, EXECUTION_TRACES_METATABLE_V0, EXECUTORS_METATABLE_V0,
+    EXPRESSIONS_METATABLE_V0, MetatableKind, RUST_TYPES_INTERPRETATION_V0, RUST_TYPES_METATABLE_V0,
+    TABLE_INTERPRETATIONS_METATABLE_V0, metatable_name, parse_metatable_name,
 };
 pub use scan::{
     BootstrapCatalog, CatalogCandidate, MetatableDeclaration, ScanError, scan_metatables,
