@@ -7,5 +7,10 @@ license.workspace = true
 description = "Relational state instances for Nucleus"
 publish = false
 
+[dependencies]
+covalence-lib-error = { path = "../lib/error" }
+covalence-lib-hash = { path = "../lib/hash", default-features = false }
+covalence-lib-sqlite = { path = "../lib/sqlite" }
+
 [lints]
 workspace = true

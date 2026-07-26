@@ -129,12 +129,22 @@ dependencies = [
 [[package]]
 name = "covalence-neutron"
 version = "0.0.0"
+dependencies = [
+ "covalence-lib-error",
+ "covalence-lib-hash",
+ "covalence-lib-sqlite",
+]
 
 [[package]]
 name = "covalence-nucleus"
 version = "0.0.0"
 dependencies = [
+ "covalence-data-sexpr",
+ "covalence-data-symbol",
+ "covalence-lib-error",
+ "covalence-lib-hash",
  "covalence-lib-sqlite",
+ "covalence-neutron",
  "wasm-bindgen",
  "wit-bindgen-rt",
 ]

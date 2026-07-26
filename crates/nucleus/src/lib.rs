@@ -1,9 +1,20 @@
 //! Portable trusted core for Nucleus.
 
+#![deny(unsafe_code)]
+
 #[cfg(target_os = "wasi")]
 #[allow(unsafe_code)]
 #[rustfmt::skip]
 mod bindings;
+
+mod expr;
+mod trusted_db;
+
+pub use expr::{Bool, EvalError, Expr, Prop, PropContext, Sort};
+pub use trusted_db::{
+    CatalogError, InstallOutcome, Metatable, NeutronCatalog, RustTypeId, RustTypes, TrustedDb,
+    TrustedDbError,
+};
 
 /// Returns a stable value used by cross-target smoke tests.
 ///
@@ -16,14 +27,7 @@ mod bindings;
     wasm_bindgen::prelude::wasm_bindgen
 )]
 pub fn smoke() -> u32 {
-    sqlite_smoke().expect("SQLite smoke query should succeed")
-}
-
-fn sqlite_smoke() -> covalence_lib_sqlite::Result<u32> {
-    let connection = covalence_lib_sqlite::Connection::open_in_memory()?;
-    connection.execute("CREATE TABLE smoke (value INTEGER NOT NULL)", ())?;
-    connection.execute("INSERT INTO smoke VALUES (42)", ())?;
-    connection.query_row("SELECT value FROM smoke", (), |row| row.get(0))
+    covalence_neutron::sqlite_smoke().expect("SQLite smoke query should succeed")
 }
 
 #[cfg(target_os = "wasi")]
