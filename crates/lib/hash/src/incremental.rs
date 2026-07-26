@@ -818,4 +818,48 @@ mod tests {
             Blake3Hash::from_bytes(input)
         );
     }
+
+    #[test]
+    fn geometry_and_dirty_ranges_reject_invalid_inputs() {
+        assert_eq!(
+            DynamicGeometry::new(1, 0, Retention::FULL),
+            Err(GeometryError::ZeroLeafBytes)
+        );
+        assert_eq!(
+            DynamicGeometry::new(
+                1,
+                1,
+                Retention {
+                    start: u8::MAX,
+                    skip: 0,
+                },
+            ),
+            Err(GeometryError::RetentionTooDeep { start: u8::MAX })
+        );
+
+        let input = bytes(2 * blake3::CHUNK_LEN);
+        let mut tree = tree(&input, Retention::FULL);
+        assert!(matches!(
+            tree.dirty(LeafIndex(2)),
+            Err(UpdateError::LeafOutOfBounds { .. })
+        ));
+        assert!(matches!(
+            tree.dirty_range(LeafIndex(1)..LeafIndex(1)),
+            Err(UpdateError::InvalidRange { .. })
+        ));
+        assert!(matches!(
+            tree.dirty_range(LeafIndex(1)..LeafIndex(3)),
+            Err(UpdateError::InvalidRange { .. })
+        ));
+    }
+
+    #[test]
+    fn static_geometry_uses_the_same_tree_implementation() {
+        let input = bytes(2048);
+        let mut tree = CvTree::new(StaticGeometry::<2048, 1024, 0, 0>, Blake3Merkle);
+        assert_eq!(
+            tree.root_with(|index| leaf(&input, index)).unwrap(),
+            Blake3Hash::from_bytes(input)
+        );
+    }
 }
