@@ -311,6 +311,12 @@ mod tests {
     #[cfg(feature = "blake3")]
     #[test]
     fn blake3_vectors_and_reader() {
+        const CONST_BLAKE3: Blake3Hash = Blake3Hash::from_array([0xa5; 32]);
+        const CONST_O256: O256 = CONST_BLAKE3.into_o256();
+
+        fn assert_blake3(_: Blake3Hash) {}
+        fn assert_covalence(_: O256) {}
+
         assert_eq!(
             O256::from_bytes([]).to_string(),
             "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
@@ -318,8 +324,15 @@ mod tests {
         let expected = "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85";
         let covalence = O256::from_bytes(b"abc");
         let blake3 = Blake3Hash::from_bytes(b"abc");
+        assert_covalence(covalence);
+        assert_blake3(blake3);
         assert_eq!(covalence.to_string(), expected);
         assert_eq!(blake3.to_string(), expected);
+        assert_eq!(covalence.opaque(), blake3.opaque());
+
+        assert_eq!(CONST_O256.as_bytes(), CONST_BLAKE3.as_bytes());
+        assert_eq!(O256::from(blake3), covalence);
+
         assert_eq!(
             O256::from_reader(std::io::Cursor::new(b"abc"))
                 .unwrap()
@@ -357,10 +370,7 @@ mod tests {
 
         let mut first = covalence_lib_rand::rngs::StdRng::seed_from_u64(42);
         let mut second = covalence_lib_rand::rngs::StdRng::seed_from_u64(42);
-        assert_eq!(
-            O256::random(&mut first),
-            Obj::random(&mut second)
-        );
+        assert_eq!(O256::random(&mut first), Obj::random(&mut second));
         assert_ne!(O256::random(&mut first), Obj::default());
     }
 

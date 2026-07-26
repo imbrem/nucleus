@@ -771,6 +771,52 @@ mod tests {
     }
 
     #[test]
+    fn fixed_values_parse_from_hex_and_base64_in_constants() {
+        const HEX: O256 = match O256::from_hex(
+            "abababababababababababababababababababababababababababababababab",
+        ) {
+            Ok(value) => value,
+            Err(_) => panic!("valid hexadecimal"),
+        };
+        const BASE64: O256 = match O256::from_base64("q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s=")
+        {
+            Ok(value) => value,
+            Err(_) => panic!("valid Base64"),
+        };
+        const GIT_BASE64: GitHash = match GitHash::from_base64("zMzMzMzMzMzMzMzMzMzMzMzMzMw=") {
+            Ok(value) => value,
+            Err(_) => panic!("valid Base64"),
+        };
+
+        assert_eq!(HEX, O256::from_array([0xab; 32]));
+        assert_eq!(BASE64, O256::from_array([0xab; 32]));
+        assert_eq!(GIT_BASE64, GitHash::from_array([0xcc; 20]));
+    }
+
+    #[test]
+    fn base64_parsing_requires_canonical_padding() {
+        assert_eq!(
+            OpaqueObj::<1>::from_base64("AA"),
+            Err(ParseBase64Error::InvalidLength {
+                expected: 4,
+                actual: 2,
+            })
+        );
+        assert_eq!(
+            OpaqueObj::<1>::from_base64("AB=="),
+            Err(ParseBase64Error::NonCanonical { index: 1 })
+        );
+        assert_eq!(
+            OpaqueObj::<2>::from_base64("AAB="),
+            Err(ParseBase64Error::NonCanonical { index: 2 })
+        );
+        assert_eq!(
+            OpaqueObj::<3>::from_base64("AAA!"),
+            Err(ParseBase64Error::InvalidByte { index: 3 })
+        );
+    }
+
+    #[test]
     fn fixed_value_parsing_is_strict() {
         for invalid in [
             "00".repeat(31),
@@ -840,6 +886,23 @@ mod tests {
         assert_eq!(Cov::BITS, 256);
         assert_eq!(Git::BYTES, 20);
         assert_eq!(Git::BITS, 160);
+    }
+
+    #[test]
+    fn namespace_representatives_are_constructible_zsts() {
+        let representatives = (
+            Cov,
+            Blake3,
+            Sha256,
+            CtxKeyNamespace,
+            Git,
+            Sha1,
+            Opaque::<32>,
+        );
+        assert_eq!(std::mem::size_of_val(&representatives), 0);
+        assert_eq!(std::mem::size_of::<Cov>(), 0);
+        assert_eq!(std::mem::size_of::<Blake3>(), 0);
+        assert_eq!(std::mem::size_of::<Opaque<32>>(), 0);
     }
 
     #[test]
