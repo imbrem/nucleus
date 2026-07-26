@@ -972,4 +972,33 @@ mod tests {
             Err(Blake3SourceProofError::RootMismatch)
         ));
     }
+
+    #[test]
+    fn source_verifier_supports_context_mode_and_single_chunks() {
+        let input = b"a small authenticated object";
+        let key = CtxKey::derive("source verifier test");
+        let mode = Blake3ProofMode::Context(&key);
+        let root = O256::from_array(mode.hash(input));
+        let mut source = TestSource {
+            input,
+            mode,
+            requests: Vec::new(),
+            corrupt_cv: false,
+        };
+
+        let verified = root
+            .verify_blake3_context_ranges_from(
+                &key,
+                input.len() as u64,
+                std::iter::once(2..9),
+                &mut source,
+            )
+            .unwrap();
+        assert_eq!(verified.len(), 1);
+        assert_eq!(verified[0], 2..9);
+        assert_eq!(
+            source.requests,
+            vec![Blake3SourceRequest::Fragment(0..input.len() as u64)]
+        );
+    }
 }
