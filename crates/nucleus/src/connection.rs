@@ -5,6 +5,12 @@ use covalence_neutron as neutron;
 /// Failure to open a Nucleus connection.
 pub type ConnectionError = neutron::ConnectionError;
 
+/// Connection-local identity of a database registered with Nucleus.
+pub type DatabaseId = neutron::DatabaseId;
+
+/// A database's role within its `SQLite` connection.
+pub type DatabaseRole = neutron::DatabaseRole;
+
 /// A policy-enforcing connection to Nucleus state.
 ///
 /// This initial wrapper intentionally exposes no access to its underlying
@@ -12,7 +18,6 @@ pub type ConnectionError = neutron::ConnectionError;
 /// Nucleus can preserve their semantic invariants by construction.
 #[derive(Debug)]
 pub struct Connection {
-    #[allow(dead_code)]
     neutron: neutron::Connection,
 }
 
@@ -36,6 +41,56 @@ impl Connection {
     pub fn open_in_memory() -> Result<Self, ConnectionError> {
         neutron::Connection::open_in_memory().map(|neutron| Self { neutron })
     }
+
+    /// Attaches an in-memory database while preserving Nucleus connection
+    /// metadata.
+    ///
+    /// `schema_name` is `SQLite`'s connection-local name for addressing the
+    /// attachment, not a persistent database identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `SQLite` cannot attach the database or Neutron cannot
+    /// register it.
+    pub fn attach_in_memory(&mut self, schema_name: &str) -> Result<DatabaseId, ConnectionError> {
+        self.neutron.attach_in_memory(schema_name)
+    }
+
+    /// Attaches a file-backed database while preserving Nucleus connection
+    /// metadata.
+    ///
+    /// `schema_name` is `SQLite`'s connection-local name for addressing the
+    /// attachment, not a persistent database identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `SQLite` cannot attach the database or Neutron cannot
+    /// register it.
+    pub fn attach_file(
+        &mut self,
+        path: impl AsRef<Path>,
+        schema_name: &str,
+    ) -> Result<DatabaseId, ConnectionError> {
+        self.neutron.attach_file(path, schema_name)
+    }
+
+    /// Returns whether a database is exclusive to this connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection metadata cannot be queried.
+    pub fn database_is_exclusive(&self, database_id: DatabaseId) -> Result<bool, ConnectionError> {
+        self.neutron.database_is_exclusive(database_id)
+    }
+
+    /// Returns the database's connection-local role.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection metadata cannot be queried.
+    pub fn database_role(&self, database_id: DatabaseId) -> Result<DatabaseRole, ConnectionError> {
+        self.neutron.database_role(database_id)
+    }
 }
 
 #[cfg(test)]
@@ -45,5 +100,23 @@ mod tests {
     #[test]
     fn opens_through_neutron() {
         let _connection = Connection::open_in_memory().expect("open Nucleus connection");
+    }
+
+    #[test]
+    fn attaches_without_exposing_neutron() {
+        let mut connection = Connection::open_in_memory().expect("open Nucleus connection");
+        let id = connection
+            .attach_in_memory("workspace")
+            .expect("attach through Nucleus");
+        assert!(id.get() > 0);
+        assert!(
+            connection
+                .database_is_exclusive(id)
+                .expect("query exclusivity")
+        );
+        assert_eq!(
+            connection.database_role(id).expect("query role"),
+            super::DatabaseRole::Auxiliary
+        );
     }
 }

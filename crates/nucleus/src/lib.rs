@@ -2,7 +2,7 @@
 
 mod connection;
 
-pub use connection::{Connection, ConnectionError};
+pub use connection::{Connection, ConnectionError, DatabaseId, DatabaseRole};
 
 #[cfg(target_os = "wasi")]
 #[allow(unsafe_code)]

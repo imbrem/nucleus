@@ -12,5 +12,5 @@ mod connection;
 
 pub use connection::{
     ATTACHED_DATABASES, ATTACHED_DATABASES_INTERPRETATION, CONNECTION_CATALOG,
-    CONNECTION_CATALOG_INTERPRETATION, Connection, ConnectionError,
+    CONNECTION_CATALOG_INTERPRETATION, Connection, ConnectionError, DatabaseId, DatabaseRole,
 };
