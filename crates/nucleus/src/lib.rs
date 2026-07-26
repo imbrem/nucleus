@@ -15,7 +15,8 @@ pub use trusted_db::{
     Blake3Cas, BlobRequest, BlobResolver, CasEntry, CasId, CasLoad, CatalogError, DirectKv,
     DirectKvEntry, HashAddress, HashAlgorithm, HashAlgorithmEntry, HashAlgorithmId, HashAlgorithms,
     IndexedKv, IndexedKvEntry, IndexedKvId, InstallOutcome, Metatable, MixedCasEntry, MixedCasId,
-    MixedHashCas, NeutronCatalog, ResolveError, RustTypeId, RustTypes, TrustedDb, TrustedDbError,
+    MixedHashCas, NeutronCatalog, ResolveError, RustTypeId, RustTypes, TempBlake3Cas, TempCasEntry,
+    TempCasId, TempCasLoad, TrustedDb, TrustedDbError,
 };
 
 /// Returns a stable value used by cross-target smoke tests.

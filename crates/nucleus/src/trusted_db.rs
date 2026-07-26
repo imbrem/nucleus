@@ -13,6 +13,8 @@ use covalence_neutron::{
 };
 use snafu::Snafu;
 
+const TEMP_BLAKE3_CACHE: &str = "covalence_cache_blake3_v0";
+
 /// One metatable accepted from the permanent bootstrap catalog.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Metatable {
@@ -201,6 +203,7 @@ pub struct TrustedDb {
     catalog: NeutronCatalog,
     generation: u64,
     resolvers: Vec<ResolverCapability>,
+    blake3_temp_cache: bool,
 }
 
 impl TrustedDb {
@@ -237,6 +240,7 @@ impl TrustedDb {
             catalog,
             generation: 0,
             resolvers: Vec::new(),
+            blake3_temp_cache: false,
         })
     }
 
@@ -606,6 +610,108 @@ impl TrustedDb {
         })
     }
 
+    /// Installs a checked connection-local BLAKE3 CAS in `SQLite`'s `temp` schema.
+    ///
+    /// This table is computational cache state, not a persisted relation
+    /// interpretation. It therefore uses a non-metatable name and is not
+    /// registered in the permanent bootstrap catalog.
+    ///
+    /// # Errors
+    ///
+    /// Fails atomically if the exact STRICT cache shape cannot be created and
+    /// validated.
+    pub fn install_blake3_temp_cache(&mut self) -> Result<InstallOutcome, TrustedDbError> {
+        if self.blake3_temp_cache {
+            return Ok(InstallOutcome::AlreadyPresent);
+        }
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(TrustedDbError::sqlite)?;
+        transaction
+            .execute_batch(&format!(
+                "CREATE TEMP TABLE \"{TEMP_BLAKE3_CACHE}\" (
+                    id INTEGER PRIMARY KEY,
+                    hash BLOB NOT NULL UNIQUE CHECK (length(hash) = 32),
+                    data BLOB
+                ) STRICT;"
+            ))
+            .map_err(TrustedDbError::sqlite)?;
+        validate_temp_blake3_cache(&transaction)?;
+        transaction.commit().map_err(TrustedDbError::sqlite)?;
+        self.blake3_temp_cache = true;
+        Ok(InstallOutcome::Installed)
+    }
+
+    /// Resolves the installed connection-local temp CAS.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrustedDbError::MissingBlake3TempCache`] before installation.
+    pub fn blake3_temp_cache(&mut self) -> Result<TempBlake3Cas<'_>, TrustedDbError> {
+        if !self.blake3_temp_cache {
+            return Err(TrustedDbError::MissingBlake3TempCache);
+        }
+        Ok(TempBlake3Cas {
+            connection: &mut self.connection,
+        })
+    }
+
+    /// Loads BLAKE3 bytes through temp cache, main CAS, then resolvers.
+    ///
+    /// A validated main or resolver hit is copied only into the temp cache.
+    /// Resolver output does not promote itself into the persisted main
+    /// relation. All-source miss leaves an explicit pending temp-cache row.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed failure for missing cache/main capabilities, resolver
+    /// failure, content mismatch, or a checked database operation.
+    pub fn load_blake3_cached(&mut self, hash: O256) -> Result<TempCasLoad, TrustedDbError> {
+        let (id, cached) = {
+            let mut cache = self.blake3_temp_cache()?;
+            let id = cache.declare(hash)?;
+            (id, cache.entry(hash)?)
+        };
+        if let Some(entry) = cached
+            && entry.data.is_some()
+        {
+            return Ok(TempCasLoad::Resident(entry));
+        }
+
+        let main = self.blake3_cas()?.entry(hash)?;
+        if let Some(data) = main.and_then(|entry| entry.data) {
+            let id = self.blake3_temp_cache()?.provide(hash, &data)?;
+            return Ok(TempCasLoad::Resident(TempCasEntry {
+                id,
+                hash,
+                data: Some(data),
+            }));
+        }
+
+        for index in 0..self.resolvers.len() {
+            let candidate = {
+                let capability = &mut self.resolvers[index];
+                capability
+                    .resolver
+                    .resolve(BlobRequest { hash })
+                    .map_err(|source| TrustedDbError::Resolver {
+                        id: capability.id.clone(),
+                        source,
+                    })?
+            };
+            if let Some(data) = candidate {
+                let id = self.blake3_temp_cache()?.provide(hash, &data)?;
+                return Ok(TempCasLoad::Resident(TempCasEntry {
+                    id,
+                    hash,
+                    data: Some(data),
+                }));
+            }
+        }
+        Ok(TempCasLoad::Pending(id))
+    }
+
     /// Registers one explicitly supplied resolver capability.
     ///
     /// Resolvers are consulted in registration order after the local trusted
@@ -743,6 +849,135 @@ pub enum CasLoad {
     Resident(CasEntry),
     /// The address is known, but no registered capability produced bytes.
     Pending(CasId),
+}
+
+/// Connection-local DEF identity assigned by the temp BLAKE3 cache.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct TempCasId(i64);
+
+impl TempCasId {
+    /// Returns the stored `SQLite` integer.
+    #[must_use]
+    pub const fn get(self) -> i64 {
+        self.0
+    }
+}
+
+/// One checked row from the connection-local temp BLAKE3 cache.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TempCasEntry {
+    /// Temp-schema-local identity.
+    pub id: TempCasId,
+    /// Stable BLAKE3 address.
+    pub hash: O256,
+    /// Resident bytes, or `None` for a pending cache entry.
+    pub data: Option<Vec<u8>>,
+}
+
+/// Result of fused lookup through temp cache, main CAS, and resolvers.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TempCasLoad {
+    /// Validated bytes are resident in the temp cache.
+    Resident(TempCasEntry),
+    /// No source produced bytes; the temp address remains pending.
+    Pending(TempCasId),
+}
+
+/// Checked access to the connection-local temp BLAKE3 CAS.
+pub struct TempBlake3Cas<'db> {
+    connection: &'db mut Connection,
+}
+
+impl TempBlake3Cas<'_> {
+    /// Declares a pending temp-cache address.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error if the cache cannot be updated.
+    pub fn declare(&mut self, hash: O256) -> Result<TempCasId, TrustedDbError> {
+        let table = temp_blake3_cache_identifier();
+        self.connection
+            .execute(
+                &format!("INSERT OR IGNORE INTO {table} (hash) VALUES (?1)"),
+                [hash.as_bytes().as_slice()],
+            )
+            .map_err(TrustedDbError::sqlite)?;
+        self.id_for_hash(hash)
+    }
+
+    /// Supplies validated bytes to the temp cache.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrustedDbError::ContentHashMismatch`] before mutation when
+    /// the bytes do not match their BLAKE3 address.
+    pub fn provide(&mut self, expected: O256, data: &[u8]) -> Result<TempCasId, TrustedDbError> {
+        let actual = O256::blake3(data);
+        if actual != expected {
+            return Err(TrustedDbError::ContentHashMismatch { expected, actual });
+        }
+        let table = temp_blake3_cache_identifier();
+        self.connection
+            .execute(
+                &format!(
+                    "INSERT INTO {table} (hash, data) VALUES (?1, ?2)
+                     ON CONFLICT(hash) DO UPDATE SET data = excluded.data
+                     WHERE data IS NULL"
+                ),
+                params![expected.as_bytes().as_slice(), data],
+            )
+            .map_err(TrustedDbError::sqlite)?;
+        self.id_for_hash(expected)
+    }
+
+    /// Reads a temp-cache entry by BLAKE3 address.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error if the cache cannot be read.
+    pub fn entry(&self, hash: O256) -> Result<Option<TempCasEntry>, TrustedDbError> {
+        let table = temp_blake3_cache_identifier();
+        self.connection
+            .query_row(
+                &format!("SELECT id, hash, data FROM {table} WHERE hash = ?1"),
+                [hash.as_bytes().as_slice()],
+                |row| {
+                    Ok((
+                        TempCasId(row.get(0)?),
+                        row.get::<_, Vec<u8>>(1)?,
+                        row.get(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(TrustedDbError::sqlite)?
+            .map(|(id, stored_hash, data)| {
+                let bytes: [u8; 32] = stored_hash
+                    .try_into()
+                    .map_err(|_| TrustedDbError::InvalidTempStoredHash { id })?;
+                Ok(TempCasEntry {
+                    id,
+                    hash: O256::from_bytes(bytes),
+                    data,
+                })
+            })
+            .transpose()
+    }
+
+    fn id_for_hash(&self, hash: O256) -> Result<TempCasId, TrustedDbError> {
+        let table = temp_blake3_cache_identifier();
+        self.connection
+            .query_row(
+                &format!("SELECT id FROM {table} WHERE hash = ?1"),
+                [hash.as_bytes().as_slice()],
+                |row| row.get::<_, i64>(0).map(TempCasId),
+            )
+            .map_err(TrustedDbError::sqlite)
+    }
+}
+
+fn temp_blake3_cache_identifier() -> String {
+    format!("\"temp\".{}", quote_identifier(TEMP_BLAKE3_CACHE))
 }
 
 /// Connection-local DEF identity assigned by the indexed KV relation.
@@ -1217,7 +1452,7 @@ impl Blake3Cas<'_> {
                 &format!(
                     "INSERT INTO {table} (hash, data) VALUES (?1, ?2)
                      ON CONFLICT(hash) DO UPDATE SET data = excluded.data
-                     WHERE {table}.data IS NULL"
+                     WHERE data IS NULL"
                 ),
                 params![expected.as_bytes().as_slice(), data],
             )
@@ -1395,6 +1630,21 @@ pub enum TrustedDbError {
         /// Unrecognized stable name.
         name: String,
     },
+    /// The connection-local temp BLAKE3 cache has not been installed.
+    #[snafu(display("the connection-local temp BLAKE3 cache is not installed"))]
+    MissingBlake3TempCache,
+    /// A trusted temp-cache row contained a malformed digest.
+    #[snafu(display("temp CAS row {} contains a malformed hash", id.get()))]
+    InvalidTempStoredHash {
+        /// Temp-schema-local row identity.
+        id: TempCasId,
+    },
+    /// The connection-local cache did not match its compiled physical ABI.
+    #[snafu(display("invalid temp BLAKE3 cache schema: {reason}"))]
+    InvalidTempCacheSchema {
+        /// Stable rejection detail.
+        reason: String,
+    },
 }
 
 impl TrustedDbError {
@@ -1447,6 +1697,60 @@ fn validate_rust_types_metatable(
         return Err(CatalogError::InvalidExtensionSchema {
             interpretation: metatable.interpretation.clone(),
             reason: String::from("columns do not match the Rust-type registry contract"),
+        });
+    }
+    Ok(())
+}
+
+fn validate_temp_blake3_cache(connection: &Connection) -> Result<(), TrustedDbError> {
+    let strict = connection
+        .query_row(
+            "SELECT strict FROM pragma_table_list WHERE schema = 'temp' AND name = ?1",
+            [TEMP_BLAKE3_CACHE],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(TrustedDbError::sqlite)?;
+    if strict != Some(1) {
+        return Err(TrustedDbError::InvalidTempCacheSchema {
+            reason: String::from("cache must be a STRICT table in temp"),
+        });
+    }
+    let mut statement = connection
+        .prepare(&format!(
+            "PRAGMA temp.table_info({})",
+            quote_identifier(TEMP_BLAKE3_CACHE)
+        ))
+        .map_err(TrustedDbError::sqlite)?;
+    let columns = statement
+        .query_map((), |row| {
+            Ok((
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)? != 0,
+                row.get::<_, u32>(5)?,
+            ))
+        })
+        .map_err(TrustedDbError::sqlite)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(TrustedDbError::sqlite)?;
+    let expected = [
+        ("id", "INTEGER", false, 1_u32),
+        ("hash", "BLOB", true, 0),
+        ("data", "BLOB", false, 0),
+    ];
+    if columns.len() != expected.len()
+        || !columns.iter().zip(expected).all(
+            |((actual_name, actual_type, not_null, pk), expected)| {
+                actual_name == expected.0
+                    && actual_type == expected.1
+                    && *not_null == expected.2
+                    && *pk == expected.3
+            },
+        )
+    {
+        return Err(TrustedDbError::InvalidTempCacheSchema {
+            reason: String::from("columns do not match the indexed BLAKE3 cache contract"),
         });
     }
     Ok(())
@@ -1741,7 +2045,7 @@ mod tests {
 
     use super::{
         BlobRequest, BlobResolver, CasEntry, CasLoad, HashAddress, HashAlgorithm, InstallOutcome,
-        ResolveError, TrustedDb, TrustedDbError,
+        ResolveError, TempCasLoad, TrustedDb, TrustedDbError,
     };
 
     struct FakeResolver {
@@ -1973,6 +2277,126 @@ mod tests {
         ));
         assert_eq!(cas.entry(address).unwrap().unwrap().data, None);
         assert_eq!(cas.provide(address, data).unwrap(), id);
+    }
+
+    #[test]
+    fn temp_cache_is_computational_state_outside_the_bootstrap_catalog() {
+        let mut database = TrustedDb::create_in_memory().unwrap();
+        assert!(matches!(
+            database.blake3_temp_cache(),
+            Err(TrustedDbError::MissingBlake3TempCache)
+        ));
+        assert_eq!(
+            database.install_blake3_temp_cache().unwrap(),
+            InstallOutcome::Installed
+        );
+        assert_eq!(
+            database.install_blake3_temp_cache().unwrap(),
+            InstallOutcome::AlreadyPresent
+        );
+        assert_eq!(database.generation(), 0);
+        assert!(database.catalog().metatables().is_empty());
+    }
+
+    #[test]
+    fn fused_lookup_copies_main_into_temp_before_calling_effects() {
+        let mut database = TrustedDb::create_in_memory().unwrap();
+        database.install_blake3_cas().unwrap();
+        database.install_blake3_temp_cache().unwrap();
+        let data = b"persistent source".to_vec();
+        let hash = O256::blake3(&data);
+        database.blake3_cas().unwrap().put(&data).unwrap();
+        let calls = Rc::new(Cell::new(0));
+        database
+            .register_blob_resolver(
+                "unused",
+                FakeResolver {
+                    calls: Rc::clone(&calls),
+                    answer: Some(b"wrong".to_vec()),
+                },
+            )
+            .unwrap();
+
+        let TempCasLoad::Resident(entry) = database.load_blake3_cached(hash).unwrap() else {
+            panic!("main CAS should populate temp");
+        };
+        assert_eq!(entry.data, Some(data));
+        assert_eq!(calls.get(), 0);
+        assert!(
+            database
+                .blake3_temp_cache()
+                .unwrap()
+                .entry(hash)
+                .unwrap()
+                .unwrap()
+                .data
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn resolver_hit_populates_temp_without_promoting_main() {
+        let mut database = TrustedDb::create_in_memory().unwrap();
+        database.install_blake3_cas().unwrap();
+        database.install_blake3_temp_cache().unwrap();
+        let data = b"effect candidate".to_vec();
+        let hash = O256::blake3(&data);
+        let calls = Rc::new(Cell::new(0));
+        database
+            .register_blob_resolver(
+                "fixture",
+                FakeResolver {
+                    calls: Rc::clone(&calls),
+                    answer: Some(data.clone()),
+                },
+            )
+            .unwrap();
+
+        let TempCasLoad::Resident(entry) = database.load_blake3_cached(hash).unwrap() else {
+            panic!("resolver should populate temp");
+        };
+        assert_eq!(entry.data, Some(data));
+        assert_eq!(calls.get(), 1);
+        assert_eq!(database.blake3_cas().unwrap().entry(hash).unwrap(), None);
+
+        assert!(matches!(
+            database.load_blake3_cached(hash).unwrap(),
+            TempCasLoad::Resident(_)
+        ));
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn lying_resolver_leaves_only_a_pending_temp_entry() {
+        let mut database = TrustedDb::create_in_memory().unwrap();
+        database.install_blake3_cas().unwrap();
+        database.install_blake3_temp_cache().unwrap();
+        database
+            .register_blob_resolver(
+                "liar",
+                FakeResolver {
+                    calls: Rc::new(Cell::new(0)),
+                    answer: Some(b"wrong".to_vec()),
+                },
+            )
+            .unwrap();
+        let hash = O256::blake3(b"right");
+
+        assert!(matches!(
+            database.load_blake3_cached(hash),
+            Err(TrustedDbError::ContentHashMismatch { .. })
+        ));
+        assert_eq!(
+            database
+                .blake3_temp_cache()
+                .unwrap()
+                .entry(hash)
+                .unwrap()
+                .unwrap()
+                .data,
+            None
+        );
+        assert_eq!(database.blake3_cas().unwrap().entry(hash).unwrap(), None);
     }
 
     #[test]
