@@ -4,7 +4,8 @@ use covalence_lib_error::snafu;
 use covalence_lib_hash::O256;
 use covalence_lib_sqlite::{Connection, OptionalExtension, params};
 use covalence_neutron::{
-    BLAKE3_CAS_INTERPRETATION_V0, BLAKE3_CAS_METATABLE_V0, BOOTSTRAP_CATALOG, CatalogCandidate,
+    BLAKE3_CAS_INTERPRETATION_V0, BLAKE3_CAS_METATABLE_V0, BOOTSTRAP_CATALOG,
+    CAS_INSTANCES_INTERPRETATION_V0, CAS_INSTANCES_METATABLE_V0, CatalogCandidate,
     DIRECT_KV_INTERPRETATION_V0, DIRECT_KV_METATABLE_V0, HASH_ALGORITHMS_INTERPRETATION_V0,
     HASH_ALGORITHMS_METATABLE_V0, INDEXED_KV_INTERPRETATION_V0, INDEXED_KV_METATABLE_V0,
     MIXED_HASH_CAS_INTERPRETATION_V0, MIXED_HASH_CAS_METATABLE_V0, MetatableKind,
@@ -83,6 +84,8 @@ impl NeutronCatalog {
                 validate_hash_algorithms_metatable(connection, metatable)?;
             } else if metatable.interpretation == MIXED_HASH_CAS_INTERPRETATION_V0 {
                 validate_mixed_hash_cas_metatable(connection, metatable)?;
+            } else if metatable.interpretation == CAS_INSTANCES_INTERPRETATION_V0 {
+                validate_cas_instances_metatable(connection, metatable)?;
             }
         }
         Ok(Self { metatables })
@@ -607,6 +610,205 @@ impl TrustedDb {
             connection: &mut self.connection,
             algorithms,
             cas,
+        })
+    }
+
+    /// Installs the singleton owner registry for ordinary CAS table instances.
+    ///
+    /// The finite hash-algorithm relation must already be installed. The root
+    /// bootstrap owns this registry; each registry row uniquely owns and
+    /// interprets one non-reserved ordinary table.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error when the hash family is absent or when atomic
+    /// installation, scanning, or catalog acceptance fails.
+    pub fn install_cas_instance_registry(&mut self) -> Result<InstallOutcome, TrustedDbError> {
+        if self
+            .catalog
+            .by_interpretation(CAS_INSTANCES_INTERPRETATION_V0)
+            .is_some()
+        {
+            return Ok(InstallOutcome::AlreadyPresent);
+        }
+        let algorithms = self
+            .catalog
+            .by_interpretation(HASH_ALGORITHMS_INTERPRETATION_V0)
+            .cloned()
+            .ok_or(TrustedDbError::MissingHashCasRelations)?;
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(TrustedDbError::sqlite)?;
+        let bootstrap = metatable_name(MetatableKind::new(BOOTSTRAP_CATALOG));
+        let instances = metatable_name(MetatableKind::new(CAS_INSTANCES_METATABLE_V0));
+        transaction
+            .execute_batch(&format!(
+                "CREATE TABLE \"{instances}\" (
+                    id INTEGER PRIMARY KEY,
+                    table_name TEXT NOT NULL UNIQUE,
+                    algorithm_id INTEGER NOT NULL
+                        REFERENCES \"{}\"(id)
+                ) STRICT;",
+                algorithms.table_name
+            ))
+            .map_err(TrustedDbError::sqlite)?;
+        transaction
+            .execute(
+                &format!(
+                    "INSERT INTO \"{bootstrap}\" (table_name, interpretation) VALUES (?1, ?2)"
+                ),
+                params![instances, CAS_INSTANCES_INTERPRETATION_V0],
+            )
+            .map_err(TrustedDbError::sqlite)?;
+        let candidate = scan_metatables(&transaction).map_err(TrustedDbError::scan)?;
+        let catalog =
+            NeutronCatalog::accept(&candidate, &transaction).map_err(TrustedDbError::catalog)?;
+        transaction.commit().map_err(TrustedDbError::sqlite)?;
+        self.catalog = catalog;
+        self.generation += 1;
+        Ok(InstallOutcome::Installed)
+    }
+
+    /// Creates one ordinary CAS table owned by the instance registry.
+    ///
+    /// `table_name` uses a deliberately narrow ASCII identifier policy for
+    /// this probe. The physical table, owner row, rescan, and acceptance are
+    /// one transaction.
+    ///
+    /// # Errors
+    ///
+    /// Rejects invalid names, absent registry/algorithm relations, an
+    /// unowned pre-existing table, conflicting ownership parameters, or any
+    /// checked database/catalog failure.
+    pub fn create_cas_instance(
+        &mut self,
+        table_name: &str,
+        algorithm: HashAlgorithm,
+    ) -> Result<CreateCasInstanceOutcome, TrustedDbError> {
+        validate_instance_table_name(table_name)?;
+        let instances = self
+            .catalog
+            .by_interpretation(CAS_INSTANCES_INTERPRETATION_V0)
+            .cloned()
+            .ok_or(TrustedDbError::MissingCasInstanceRegistry)?;
+        let algorithms = self
+            .catalog
+            .by_interpretation(HASH_ALGORITHMS_INTERPRETATION_V0)
+            .cloned()
+            .ok_or(TrustedDbError::MissingHashCasRelations)?;
+        let instances_table = quote_identifier(&instances.table_name);
+        let existing = read_cas_instance(
+            &self.connection,
+            &instances_table,
+            &quote_identifier(&algorithms.table_name),
+            table_name,
+        )?;
+        if let Some(existing) = existing {
+            if existing.algorithm == algorithm {
+                return Ok(CreateCasInstanceOutcome::AlreadyPresent(existing.id));
+            }
+            return Err(TrustedDbError::CasInstanceAlgorithmConflict {
+                table_name: table_name.to_owned(),
+                existing: existing.algorithm,
+                requested: algorithm,
+            });
+        }
+        if main_table_exists(&self.connection, table_name)? {
+            return Err(TrustedDbError::UnownedTableExists {
+                table_name: table_name.to_owned(),
+            });
+        }
+
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(TrustedDbError::sqlite)?;
+        let algorithm_id = hash_algorithm_id(
+            &transaction,
+            &quote_identifier(&algorithms.table_name),
+            algorithm,
+        )?;
+        let table = quote_identifier(table_name);
+        transaction
+            .execute_batch(&format!(
+                "CREATE TABLE {table} (
+                    id INTEGER PRIMARY KEY,
+                    digest BLOB NOT NULL UNIQUE CHECK (length(digest) = 32),
+                    data BLOB
+                ) STRICT;"
+            ))
+            .map_err(TrustedDbError::sqlite)?;
+        transaction
+            .execute(
+                &format!(
+                    "INSERT INTO {instances_table} (table_name, algorithm_id) VALUES (?1, ?2)"
+                ),
+                params![table_name, algorithm_id.get()],
+            )
+            .map_err(TrustedDbError::sqlite)?;
+        let id = CasInstanceId(transaction.last_insert_rowid());
+        let candidate = scan_metatables(&transaction).map_err(TrustedDbError::scan)?;
+        let catalog =
+            NeutronCatalog::accept(&candidate, &transaction).map_err(TrustedDbError::catalog)?;
+        transaction.commit().map_err(TrustedDbError::sqlite)?;
+        self.catalog = catalog;
+        self.generation += 1;
+        Ok(CreateCasInstanceOutcome::Created(id))
+    }
+
+    /// Returns the accepted definitions owned by the CAS-instance registry.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error before installation or when the checked registry
+    /// cannot be read.
+    pub fn cas_instances(&self) -> Result<Vec<CasInstanceDefinition>, TrustedDbError> {
+        let instances = self
+            .catalog
+            .by_interpretation(CAS_INSTANCES_INTERPRETATION_V0)
+            .ok_or(TrustedDbError::MissingCasInstanceRegistry)?;
+        let algorithms = self
+            .catalog
+            .by_interpretation(HASH_ALGORITHMS_INTERPRETATION_V0)
+            .ok_or(TrustedDbError::MissingHashCasRelations)?;
+        read_cas_instances(
+            &self.connection,
+            &quote_identifier(&instances.table_name),
+            &quote_identifier(&algorithms.table_name),
+        )
+    }
+
+    /// Resolves one owned ordinary CAS table as a checked capability.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error when the registry is absent or does not own
+    /// `table_name`.
+    pub fn cas_instance(&mut self, table_name: &str) -> Result<CasInstance<'_>, TrustedDbError> {
+        validate_instance_table_name(table_name)?;
+        let instances = self
+            .catalog
+            .by_interpretation(CAS_INSTANCES_INTERPRETATION_V0)
+            .cloned()
+            .ok_or(TrustedDbError::MissingCasInstanceRegistry)?;
+        let algorithms = self
+            .catalog
+            .by_interpretation(HASH_ALGORITHMS_INTERPRETATION_V0)
+            .cloned()
+            .ok_or(TrustedDbError::MissingHashCasRelations)?;
+        let definition = read_cas_instance(
+            &self.connection,
+            &quote_identifier(&instances.table_name),
+            &quote_identifier(&algorithms.table_name),
+            table_name,
+        )?
+        .ok_or_else(|| TrustedDbError::UnknownCasInstance {
+            table_name: table_name.to_owned(),
+        })?;
+        Ok(CasInstance {
+            connection: &mut self.connection,
+            definition,
         })
     }
 
@@ -1363,6 +1565,290 @@ impl MixedHashCas<'_> {
     }
 }
 
+/// Connection-local DEF identity for one owned CAS relation instance.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct CasInstanceId(i64);
+
+impl CasInstanceId {
+    /// Returns the stored `SQLite` integer.
+    #[must_use]
+    pub const fn get(self) -> i64 {
+        self.0
+    }
+}
+
+/// One accepted ownership/parameter row for an ordinary CAS table.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CasInstanceDefinition {
+    /// Connection-local instance identity.
+    pub id: CasInstanceId,
+    /// Unquoted physical table locator in `main`.
+    pub table_name: String,
+    /// Compiled algorithm parameter applied to every row in the child table.
+    pub algorithm: HashAlgorithm,
+}
+
+/// Result of requesting a uniquely named CAS instance.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum CreateCasInstanceOutcome {
+    /// A physical table and ownership row were created atomically.
+    Created(CasInstanceId),
+    /// The registry already owned an instance with the same algorithm.
+    AlreadyPresent(CasInstanceId),
+}
+
+/// Connection-local object identity defined inside one CAS instance.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct CasInstanceObjectId(i64);
+
+impl CasInstanceObjectId {
+    /// Returns the stored `SQLite` integer.
+    #[must_use]
+    pub const fn get(self) -> i64 {
+        self.0
+    }
+}
+
+/// One row read from an owned algorithm-parameterized CAS instance.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CasInstanceEntry {
+    /// Identity local to the child table.
+    pub id: CasInstanceObjectId,
+    /// Algorithm-qualified portable address.
+    pub address: HashAddress,
+    /// Resident bytes, or `None` for a pending reference.
+    pub data: Option<Vec<u8>>,
+}
+
+/// Checked access to one ordinary CAS table through its unique owner row.
+pub struct CasInstance<'db> {
+    connection: &'db mut Connection,
+    definition: CasInstanceDefinition,
+}
+
+impl CasInstance<'_> {
+    /// Returns this physical relation's accepted ownership/parameter row.
+    #[must_use]
+    pub const fn definition(&self) -> &CasInstanceDefinition {
+        &self.definition
+    }
+
+    /// Declares an address under this instance's algorithm parameter.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an address from another algorithm and returns a typed database
+    /// error if the owned relation cannot be updated.
+    pub fn declare(&mut self, address: HashAddress) -> Result<CasInstanceObjectId, TrustedDbError> {
+        self.require_algorithm(address)?;
+        let table = quote_identifier(&self.definition.table_name);
+        self.connection
+            .execute(
+                &format!("INSERT OR IGNORE INTO {table} (digest) VALUES (?1)"),
+                [address.digest.as_bytes().as_slice()],
+            )
+            .map_err(TrustedDbError::sqlite)?;
+        self.id_for_digest(address.digest)
+    }
+
+    /// Stores bytes under this instance's fixed algorithm parameter.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error if the owned relation cannot be updated.
+    pub fn put(
+        &mut self,
+        data: &[u8],
+    ) -> Result<(CasInstanceObjectId, HashAddress), TrustedDbError> {
+        let address = HashAddress {
+            algorithm: self.definition.algorithm,
+            digest: self.definition.algorithm.digest(data),
+        };
+        let id = self.provide(address, data)?;
+        Ok((id, address))
+    }
+
+    /// Supplies bytes for an address under the fixed algorithm parameter.
+    ///
+    /// # Errors
+    ///
+    /// Rejects the wrong algorithm or digest before trusted mutation.
+    pub fn provide(
+        &mut self,
+        address: HashAddress,
+        data: &[u8],
+    ) -> Result<CasInstanceObjectId, TrustedDbError> {
+        self.require_algorithm(address)?;
+        let actual = self.definition.algorithm.digest(data);
+        if actual != address.digest {
+            return Err(TrustedDbError::ContentHashMismatch {
+                expected: address.digest,
+                actual,
+            });
+        }
+        let table = quote_identifier(&self.definition.table_name);
+        self.connection
+            .execute(
+                &format!(
+                    "INSERT INTO {table} (digest, data) VALUES (?1, ?2)
+                     ON CONFLICT(digest) DO UPDATE SET data = excluded.data
+                     WHERE data IS NULL"
+                ),
+                params![address.digest.as_bytes().as_slice(), data],
+            )
+            .map_err(TrustedDbError::sqlite)?;
+        self.id_for_digest(address.digest)
+    }
+
+    /// Reads an address under the fixed algorithm parameter.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an address from another algorithm or a database read failure.
+    pub fn entry(&self, address: HashAddress) -> Result<Option<CasInstanceEntry>, TrustedDbError> {
+        self.require_algorithm(address)?;
+        let table = quote_identifier(&self.definition.table_name);
+        self.connection
+            .query_row(
+                &format!("SELECT id, data FROM {table} WHERE digest = ?1"),
+                [address.digest.as_bytes().as_slice()],
+                |row| Ok((CasInstanceObjectId(row.get(0)?), row.get(1)?)),
+            )
+            .optional()
+            .map(|entry| entry.map(|(id, data)| CasInstanceEntry { id, address, data }))
+            .map_err(TrustedDbError::sqlite)
+    }
+
+    fn require_algorithm(&self, address: HashAddress) -> Result<(), TrustedDbError> {
+        if address.algorithm == self.definition.algorithm {
+            Ok(())
+        } else {
+            Err(TrustedDbError::CasInstanceAddressAlgorithm {
+                table_name: self.definition.table_name.clone(),
+                expected: self.definition.algorithm,
+                actual: address.algorithm,
+            })
+        }
+    }
+
+    fn id_for_digest(&self, digest: O256) -> Result<CasInstanceObjectId, TrustedDbError> {
+        let table = quote_identifier(&self.definition.table_name);
+        self.connection
+            .query_row(
+                &format!("SELECT id FROM {table} WHERE digest = ?1"),
+                [digest.as_bytes().as_slice()],
+                |row| row.get::<_, i64>(0).map(CasInstanceObjectId),
+            )
+            .map_err(TrustedDbError::sqlite)
+    }
+}
+
+fn read_cas_instance(
+    connection: &Connection,
+    instances: &str,
+    algorithms: &str,
+    table_name: &str,
+) -> Result<Option<CasInstanceDefinition>, TrustedDbError> {
+    connection
+        .query_row(
+            &format!(
+                "SELECT i.id, i.table_name, a.stable_name
+                 FROM {instances} AS i
+                 JOIN {algorithms} AS a ON a.id = i.algorithm_id
+                 WHERE i.table_name = ?1"
+            ),
+            [table_name],
+            |row| {
+                Ok((
+                    CasInstanceId(row.get(0)?),
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(TrustedDbError::sqlite)?
+        .map(|(id, table_name, name)| {
+            let algorithm = HashAlgorithm::from_stable_name(&name)
+                .ok_or(TrustedDbError::UnknownHashAlgorithm { name })?;
+            Ok(CasInstanceDefinition {
+                id,
+                table_name,
+                algorithm,
+            })
+        })
+        .transpose()
+}
+
+fn read_cas_instances(
+    connection: &Connection,
+    instances: &str,
+    algorithms: &str,
+) -> Result<Vec<CasInstanceDefinition>, TrustedDbError> {
+    let mut statement = connection
+        .prepare(&format!(
+            "SELECT i.id, i.table_name, a.stable_name
+             FROM {instances} AS i
+             JOIN {algorithms} AS a ON a.id = i.algorithm_id
+             ORDER BY i.id"
+        ))
+        .map_err(TrustedDbError::sqlite)?;
+    statement
+        .query_map((), |row| {
+            Ok((
+                CasInstanceId(row.get(0)?),
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(TrustedDbError::sqlite)?
+        .map(|row| {
+            let (id, table_name, name) = row.map_err(TrustedDbError::sqlite)?;
+            let algorithm = HashAlgorithm::from_stable_name(&name)
+                .ok_or(TrustedDbError::UnknownHashAlgorithm { name })?;
+            Ok(CasInstanceDefinition {
+                id,
+                table_name,
+                algorithm,
+            })
+        })
+        .collect()
+}
+
+fn validate_instance_table_name(table_name: &str) -> Result<(), TrustedDbError> {
+    if instance_table_name_is_valid(table_name) {
+        Ok(())
+    } else {
+        Err(TrustedDbError::InvalidCasInstanceName {
+            table_name: table_name.to_owned(),
+        })
+    }
+}
+
+fn instance_table_name_is_valid(table_name: &str) -> bool {
+    let mut bytes = table_name.bytes();
+    let Some(first) = bytes.next() else {
+        return false;
+    };
+    first.is_ascii_lowercase()
+        && bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        && !table_name.starts_with("sqlite_")
+        && !table_name.starts_with(covalence_neutron::META_PREFIX)
+        && table_name != TEMP_BLAKE3_CACHE
+}
+
+fn main_table_exists(connection: &Connection, table_name: &str) -> Result<bool, TrustedDbError> {
+    connection
+        .query_row(
+            "SELECT 1 FROM main.sqlite_schema WHERE type = 'table' AND name = ?1",
+            [table_name],
+            |_| Ok(()),
+        )
+        .optional()
+        .map(|row| row.is_some())
+        .map_err(TrustedDbError::sqlite)
+}
+
 fn hash_algorithm_id(
     connection: &Connection,
     algorithms: &str,
@@ -1645,6 +2131,49 @@ pub enum TrustedDbError {
         /// Stable rejection detail.
         reason: String,
     },
+    /// The owner registry has not been installed.
+    #[snafu(display("the CAS-instance owner registry is not installed"))]
+    MissingCasInstanceRegistry,
+    /// A requested child name was outside the narrow v0 identifier policy.
+    #[snafu(display("invalid CAS-instance table name `{table_name}`"))]
+    InvalidCasInstanceName {
+        /// Rejected physical name.
+        table_name: String,
+    },
+    /// An ordinary physical table existed without an accepted owner row.
+    #[snafu(display("ordinary table `{table_name}` already exists without CAS ownership"))]
+    UnownedTableExists {
+        /// Conflicting physical name.
+        table_name: String,
+    },
+    /// One owner row was requested with a conflicting algorithm parameter.
+    #[snafu(display(
+        "CAS instance `{table_name}` already uses {existing:?}, requested {requested:?}"
+    ))]
+    CasInstanceAlgorithmConflict {
+        /// Owned physical table.
+        table_name: String,
+        /// Accepted parameter.
+        existing: HashAlgorithm,
+        /// Conflicting requested parameter.
+        requested: HashAlgorithm,
+    },
+    /// No accepted owner row named the requested ordinary table.
+    #[snafu(display("unknown owned CAS instance `{table_name}`"))]
+    UnknownCasInstance {
+        /// Requested physical name.
+        table_name: String,
+    },
+    /// An address used a different algorithm from its table parameter.
+    #[snafu(display("CAS instance `{table_name}` requires {expected:?}, address used {actual:?}"))]
+    CasInstanceAddressAlgorithm {
+        /// Owned physical table.
+        table_name: String,
+        /// Instance algorithm parameter.
+        expected: HashAlgorithm,
+        /// Address algorithm.
+        actual: HashAlgorithm,
+    },
 }
 
 impl TrustedDbError {
@@ -1873,6 +2402,89 @@ fn validate_mixed_hash_cas_metatable(
     Ok(())
 }
 
+fn validate_cas_instances_metatable(
+    connection: &Connection,
+    metatable: &Metatable,
+) -> Result<(), CatalogError> {
+    let expected = metatable_name(MetatableKind::new(CAS_INSTANCES_METATABLE_V0));
+    validate_fixed_table(
+        connection,
+        metatable,
+        &expected,
+        &[
+            ("id", "INTEGER", false, 1_u32),
+            ("table_name", "TEXT", true, 0),
+            ("algorithm_id", "INTEGER", true, 0),
+        ],
+        "CAS-instance owner registry",
+    )?;
+    let algorithms = metatable_name(MetatableKind::new(HASH_ALGORITHMS_METATABLE_V0));
+    let foreign_keys = table_foreign_keys(connection, &metatable.table_name)?;
+    if foreign_keys != [(String::from("algorithm_id"), algorithms, String::from("id"))] {
+        return Err(CatalogError::InvalidExtensionSchema {
+            interpretation: metatable.interpretation.clone(),
+            reason: String::from("algorithm_id must reference the finite hash-algorithm relation"),
+        });
+    }
+
+    let mut statement = connection
+        .prepare(&format!(
+            "SELECT table_name FROM {} ORDER BY id",
+            quote_identifier(&metatable.table_name)
+        ))
+        .map_err(|source| CatalogError::ValidationSqlite { source })?;
+    let table_names = statement
+        .query_map((), |row| row.get::<_, String>(0))
+        .map_err(|source| CatalogError::ValidationSqlite { source })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|source| CatalogError::ValidationSqlite { source })?;
+    for table_name in table_names {
+        if !instance_table_name_is_valid(&table_name) {
+            return Err(CatalogError::InvalidExtensionSchema {
+                interpretation: metatable.interpretation.clone(),
+                reason: format!("owned child has invalid physical name `{table_name}`"),
+            });
+        }
+        validate_owned_cas_table(connection, metatable, &table_name)?;
+    }
+    Ok(())
+}
+
+fn validate_owned_cas_table(
+    connection: &Connection,
+    owner: &Metatable,
+    table_name: &str,
+) -> Result<(), CatalogError> {
+    if !table_is_strict(connection, table_name)? {
+        return Err(CatalogError::InvalidExtensionSchema {
+            interpretation: owner.interpretation.clone(),
+            reason: format!("owned child `{table_name}` must be STRICT in main"),
+        });
+    }
+    let columns = table_columns(connection, table_name)?;
+    let expected = [
+        ("id", "INTEGER", false, 1_u32),
+        ("digest", "BLOB", true, 0),
+        ("data", "BLOB", false, 0),
+    ];
+    if columns.len() != expected.len()
+        || !columns.iter().zip(expected).all(
+            |((actual_name, actual_type, not_null, pk), expected)| {
+                actual_name == expected.0
+                    && actual_type == expected.1
+                    && *not_null == expected.2
+                    && *pk == expected.3
+            },
+        )
+    {
+        return Err(CatalogError::InvalidExtensionSchema {
+            interpretation: owner.interpretation.clone(),
+            reason: format!("owned child `{table_name}` has the wrong CAS shape"),
+        });
+    }
+    Ok(())
+}
+
 fn validate_fixed_table(
     connection: &Connection,
     metatable: &Metatable,
@@ -2044,8 +2656,8 @@ mod tests {
     use covalence_lib_hash::O256;
 
     use super::{
-        BlobRequest, BlobResolver, CasEntry, CasLoad, HashAddress, HashAlgorithm, InstallOutcome,
-        ResolveError, TempCasLoad, TrustedDb, TrustedDbError,
+        BlobRequest, BlobResolver, CasEntry, CasLoad, CreateCasInstanceOutcome, HashAddress,
+        HashAlgorithm, InstallOutcome, ResolveError, TempCasLoad, TrustedDb, TrustedDbError,
     };
 
     struct FakeResolver {
@@ -2397,6 +3009,108 @@ mod tests {
             None
         );
         assert_eq!(database.blake3_cas().unwrap().entry(hash).unwrap(), None);
+    }
+
+    #[test]
+    fn owner_registry_creates_multiple_parameterized_cas_tables() {
+        let mut database = TrustedDb::create_in_memory().unwrap();
+        database.install_hash_cas_relations().unwrap();
+        assert_eq!(
+            database.install_cas_instance_registry().unwrap(),
+            InstallOutcome::Installed
+        );
+        assert_eq!(
+            database.install_cas_instance_registry().unwrap(),
+            InstallOutcome::AlreadyPresent
+        );
+        let CreateCasInstanceOutcome::Created(blake3_instance) = database
+            .create_cas_instance("objects_blake3", HashAlgorithm::Blake3)
+            .unwrap()
+        else {
+            panic!("fresh instance");
+        };
+        let CreateCasInstanceOutcome::Created(sha256_instance) = database
+            .create_cas_instance("objects_sha256", HashAlgorithm::Sha256)
+            .unwrap()
+        else {
+            panic!("fresh instance");
+        };
+        assert_ne!(blake3_instance, sha256_instance);
+        assert_eq!(
+            database
+                .create_cas_instance("objects_blake3", HashAlgorithm::Blake3)
+                .unwrap(),
+            CreateCasInstanceOutcome::AlreadyPresent(blake3_instance)
+        );
+
+        let definitions = database.cas_instances().unwrap();
+        assert_eq!(definitions.len(), 2);
+        assert_eq!(definitions[0].table_name, "objects_blake3");
+        assert_eq!(definitions[0].algorithm, HashAlgorithm::Blake3);
+        assert_eq!(definitions[1].table_name, "objects_sha256");
+        assert_eq!(definitions[1].algorithm, HashAlgorithm::Sha256);
+    }
+
+    #[test]
+    fn owned_instances_apply_one_algorithm_per_physical_table() {
+        let mut database = TrustedDb::create_in_memory().unwrap();
+        database.install_hash_cas_relations().unwrap();
+        database.install_cas_instance_registry().unwrap();
+        database
+            .create_cas_instance("objects_blake3", HashAlgorithm::Blake3)
+            .unwrap();
+        database
+            .create_cas_instance("objects_sha256", HashAlgorithm::Sha256)
+            .unwrap();
+        let data = b"same bytes";
+
+        let (blake3_id, blake3_address) = database
+            .cas_instance("objects_blake3")
+            .unwrap()
+            .put(data)
+            .unwrap();
+        let (sha256_id, sha256_address) = database
+            .cas_instance("objects_sha256")
+            .unwrap()
+            .put(data)
+            .unwrap();
+        assert_eq!(blake3_id.get(), 1);
+        assert_eq!(sha256_id.get(), 1);
+        assert_ne!(blake3_address, sha256_address);
+        assert!(matches!(
+            database
+                .cas_instance("objects_blake3")
+                .unwrap()
+                .entry(sha256_address),
+            Err(TrustedDbError::CasInstanceAddressAlgorithm { .. })
+        ));
+    }
+
+    #[test]
+    fn unique_owner_rejects_conflicts_and_unowned_tables() {
+        let mut database = TrustedDb::create_in_memory().unwrap();
+        database.install_hash_cas_relations().unwrap();
+        database.install_cas_instance_registry().unwrap();
+        database
+            .create_cas_instance("owned", HashAlgorithm::Blake3)
+            .unwrap();
+        assert!(matches!(
+            database.create_cas_instance("owned", HashAlgorithm::Sha256),
+            Err(TrustedDbError::CasInstanceAlgorithmConflict { .. })
+        ));
+        assert!(matches!(
+            database.create_cas_instance("covalence_meta_forbidden", HashAlgorithm::Blake3),
+            Err(TrustedDbError::InvalidCasInstanceName { .. })
+        ));
+
+        database
+            .connection
+            .execute_batch("CREATE TABLE unowned (x INTEGER) STRICT;")
+            .unwrap();
+        assert!(matches!(
+            database.create_cas_instance("unowned", HashAlgorithm::Blake3),
+            Err(TrustedDbError::UnownedTableExists { .. })
+        ));
     }
 
     #[test]

@@ -89,6 +89,17 @@ pub const MIXED_HASH_CAS_METATABLE_V0: O256 = O256::from_bytes([
 /// Text stored in the bootstrap catalog for mixed hash CAS v0.
 pub const MIXED_HASH_CAS_INTERPRETATION_V0: &str = "covalence.meta.mixed-hash-cas/v0";
 
+/// Registry owning ordinary algorithm-parameterized CAS table instances.
+///
+/// BLAKE3 of `covalence.meta/cas-instances/v0`.
+pub const CAS_INSTANCES_METATABLE_V0: O256 = O256::from_bytes([
+    0x73, 0x67, 0xcc, 0x6a, 0x06, 0x1e, 0x1c, 0xa8, 0x84, 0x80, 0x91, 0xb4, 0x9b, 0x75, 0xf1, 0x8c,
+    0x02, 0x1e, 0x3c, 0x37, 0x1f, 0xdb, 0x5f, 0x88, 0x16, 0x49, 0x3c, 0xb1, 0xc7, 0x0c, 0x2b, 0x1f,
+]);
+
+/// Text stored in the bootstrap catalog for owned CAS instances v0.
+pub const CAS_INSTANCES_INTERPRETATION_V0: &str = "covalence.meta.cas-instances/v0";
+
 /// A stable identifier for one metatable format and version.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct MetatableKind(O256);
