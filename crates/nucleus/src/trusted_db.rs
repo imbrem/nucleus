@@ -45,7 +45,10 @@ impl NeutronCatalog {
         &self.metatables
     }
 
-    fn accept(candidate: &CatalogCandidate, connection: &Connection) -> Result<Self, CatalogError> {
+    pub(crate) fn accept(
+        candidate: &CatalogCandidate,
+        connection: &Connection,
+    ) -> Result<Self, CatalogError> {
         let bootstrap = candidate
             .bootstrap()
             .ok_or(CatalogError::MissingBootstrapCatalog)?;
@@ -71,7 +74,7 @@ impl NeutronCatalog {
         Ok(Self { metatables })
     }
 
-    fn by_interpretation(&self, interpretation: &str) -> Option<&Metatable> {
+    pub(crate) fn by_interpretation(&self, interpretation: &str) -> Option<&Metatable> {
         self.metatables
             .iter()
             .find(|metatable| metatable.interpretation == interpretation)
@@ -125,9 +128,9 @@ pub enum CatalogError {
 /// Construction accepts exactly one bootstrap catalog in `main`; the MVP does
 /// not yet support attached database namespaces.
 pub struct TrustedDb {
-    connection: Connection,
-    catalog: NeutronCatalog,
-    generation: u64,
+    pub(crate) connection: Connection,
+    pub(crate) catalog: NeutronCatalog,
+    pub(crate) generation: u64,
 }
 
 impl TrustedDb {

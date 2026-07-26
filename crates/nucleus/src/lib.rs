@@ -8,9 +8,14 @@
 mod bindings;
 
 mod expr;
+mod normalized;
 mod trusted_db;
 
 pub use expr::{Bool, EvalError, Expr, Prop, PropContext, Sort};
+pub use normalized::{
+    ExecutionModel, ExecutionModelError, ExecutorId, ExpressionId, InstallExecutionModelOutcome,
+    TraceId, TraceOutcome,
+};
 pub use trusted_db::{
     CatalogError, InstallOutcome, Metatable, NeutronCatalog, RustTypeId, RustTypes, TrustedDb,
     TrustedDbError,
