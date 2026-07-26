@@ -12,6 +12,7 @@ name = "nucleus"
 path = "src/main.rs"
 
 [dependencies]
+covalence-data-sexpr = { path = "../../data/sexpr" }
 covalence-nucleus = { path = "../../nucleus" }
 
 [lints]
