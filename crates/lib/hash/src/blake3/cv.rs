@@ -9,6 +9,7 @@ use crate::{Blake3, Blake3Hash, Namespace, Obj, Opaque};
 /// A value in this namespace is an untrusted intermediate hash. The type keeps
 /// chaining values distinct from root digests, but does not prove that a value
 /// occupies a valid position in a particular BLAKE3 tree.
+#[derive(Clone, Copy)]
 pub struct Blake3Merkle;
 
 impl Namespace for Blake3Merkle {
