@@ -5,9 +5,11 @@ use covalence_lib_hash::O256;
 use covalence_lib_sqlite::{Connection, OptionalExtension, params};
 use covalence_neutron::{
     BLAKE3_CAS_INTERPRETATION_V0, BLAKE3_CAS_METATABLE_V0, BOOTSTRAP_CATALOG, CatalogCandidate,
-    DIRECT_KV_INTERPRETATION_V0, DIRECT_KV_METATABLE_V0, INDEXED_KV_INTERPRETATION_V0,
-    INDEXED_KV_METATABLE_V0, MetatableKind, RUST_TYPES_INTERPRETATION_V0, RUST_TYPES_METATABLE_V0,
-    ScanError, metatable_name, scan_metatables,
+    DIRECT_KV_INTERPRETATION_V0, DIRECT_KV_METATABLE_V0, HASH_ALGORITHMS_INTERPRETATION_V0,
+    HASH_ALGORITHMS_METATABLE_V0, INDEXED_KV_INTERPRETATION_V0, INDEXED_KV_METATABLE_V0,
+    MIXED_HASH_CAS_INTERPRETATION_V0, MIXED_HASH_CAS_METATABLE_V0, MetatableKind,
+    RUST_TYPES_INTERPRETATION_V0, RUST_TYPES_METATABLE_V0, ScanError, metatable_name,
+    scan_metatables,
 };
 use snafu::Snafu;
 
@@ -75,6 +77,10 @@ impl NeutronCatalog {
                 validate_indexed_kv_metatable(connection, metatable)?;
             } else if metatable.interpretation == DIRECT_KV_INTERPRETATION_V0 {
                 validate_direct_kv_metatable(connection, metatable)?;
+            } else if metatable.interpretation == HASH_ALGORITHMS_INTERPRETATION_V0 {
+                validate_hash_algorithms_metatable(connection, metatable)?;
+            } else if metatable.interpretation == MIXED_HASH_CAS_INTERPRETATION_V0 {
+                validate_mixed_hash_cas_metatable(connection, metatable)?;
             }
         }
         Ok(Self { metatables })
@@ -482,6 +488,124 @@ impl TrustedDb {
         })
     }
 
+    /// Installs a finite compiled hash-algorithm registry and mixed CAS.
+    ///
+    /// The two tables form one atomic family. The CAS stores an explicit USE
+    /// of the algorithm DEF, so equal-width digests from different algorithms
+    /// occupy disjoint address spaces.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked database, scan, or catalog error. A pre-existing
+    /// partial family is rejected rather than silently repaired.
+    pub fn install_hash_cas_relations(&mut self) -> Result<InstallOutcome, TrustedDbError> {
+        let algorithms_present = self
+            .catalog
+            .by_interpretation(HASH_ALGORITHMS_INTERPRETATION_V0)
+            .is_some();
+        let cas_present = self
+            .catalog
+            .by_interpretation(MIXED_HASH_CAS_INTERPRETATION_V0)
+            .is_some();
+        match (algorithms_present, cas_present) {
+            (true, true) => return Ok(InstallOutcome::AlreadyPresent),
+            (true, false) | (false, true) => return Err(TrustedDbError::PartialHashCasFamily),
+            (false, false) => {}
+        }
+
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(TrustedDbError::sqlite)?;
+        let bootstrap = metatable_name(MetatableKind::new(BOOTSTRAP_CATALOG));
+        let algorithms = metatable_name(MetatableKind::new(HASH_ALGORITHMS_METATABLE_V0));
+        let cas = metatable_name(MetatableKind::new(MIXED_HASH_CAS_METATABLE_V0));
+        transaction
+            .execute_batch(&format!(
+                "CREATE TABLE \"{algorithms}\" (
+                    id INTEGER PRIMARY KEY,
+                    stable_name TEXT NOT NULL UNIQUE
+                ) STRICT;
+                CREATE TABLE \"{cas}\" (
+                    id INTEGER PRIMARY KEY,
+                    algorithm_id INTEGER NOT NULL REFERENCES \"{algorithms}\"(id),
+                    digest BLOB NOT NULL CHECK (length(digest) = 32),
+                    data BLOB,
+                    UNIQUE (algorithm_id, digest)
+                ) STRICT;"
+            ))
+            .map_err(TrustedDbError::sqlite)?;
+        for algorithm in HashAlgorithm::ALL {
+            transaction
+                .execute(
+                    &format!("INSERT INTO \"{algorithms}\" (stable_name) VALUES (?1)"),
+                    [algorithm.stable_name()],
+                )
+                .map_err(TrustedDbError::sqlite)?;
+        }
+        transaction
+            .execute(
+                &format!(
+                    "INSERT INTO \"{bootstrap}\" (table_name, interpretation)
+                     VALUES (?1, ?2), (?3, ?4)"
+                ),
+                params![
+                    algorithms,
+                    HASH_ALGORITHMS_INTERPRETATION_V0,
+                    cas,
+                    MIXED_HASH_CAS_INTERPRETATION_V0
+                ],
+            )
+            .map_err(TrustedDbError::sqlite)?;
+        let candidate = scan_metatables(&transaction).map_err(TrustedDbError::scan)?;
+        let catalog =
+            NeutronCatalog::accept(&candidate, &transaction).map_err(TrustedDbError::catalog)?;
+        transaction.commit().map_err(TrustedDbError::sqlite)?;
+        self.catalog = catalog;
+        self.generation += 1;
+        Ok(InstallOutcome::Installed)
+    }
+
+    /// Resolves the finite hash-algorithm relation as a checked capability.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrustedDbError::MissingHashCasRelations`] before installation.
+    pub fn hash_algorithms(&mut self) -> Result<HashAlgorithms<'_>, TrustedDbError> {
+        let metatable = self
+            .catalog
+            .by_interpretation(HASH_ALGORITHMS_INTERPRETATION_V0)
+            .cloned()
+            .ok_or(TrustedDbError::MissingHashCasRelations)?;
+        Ok(HashAlgorithms {
+            connection: &mut self.connection,
+            metatable,
+        })
+    }
+
+    /// Resolves the mixed-algorithm CAS as a checked capability.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrustedDbError::MissingHashCasRelations`] before installation.
+    pub fn mixed_hash_cas(&mut self) -> Result<MixedHashCas<'_>, TrustedDbError> {
+        let algorithms = self
+            .catalog
+            .by_interpretation(HASH_ALGORITHMS_INTERPRETATION_V0)
+            .cloned()
+            .ok_or(TrustedDbError::MissingHashCasRelations)?;
+        let cas = self
+            .catalog
+            .by_interpretation(MIXED_HASH_CAS_INTERPRETATION_V0)
+            .cloned()
+            .ok_or(TrustedDbError::MissingHashCasRelations)?;
+        Ok(MixedHashCas {
+            connection: &mut self.connection,
+            algorithms,
+            cas,
+        })
+    }
+
     /// Registers one explicitly supplied resolver capability.
     ///
     /// Resolvers are consulted in registration order after the local trusted
@@ -768,6 +892,274 @@ impl DirectKv<'_> {
     }
 }
 
+/// One compiled 256-bit hash algorithm named by the finite registry.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum HashAlgorithm {
+    /// BLAKE3 with its default 256-bit output.
+    Blake3,
+    /// SHA-256.
+    Sha256,
+}
+
+impl HashAlgorithm {
+    /// Every algorithm admitted by the v0 compiled interpretation.
+    pub const ALL: [Self; 2] = [Self::Blake3, Self::Sha256];
+
+    /// Returns the stable name stored in the algorithm relation.
+    #[must_use]
+    pub const fn stable_name(self) -> &'static str {
+        match self {
+            Self::Blake3 => "blake3",
+            Self::Sha256 => "sha256",
+        }
+    }
+
+    /// Computes this algorithm's 256-bit digest.
+    #[must_use]
+    pub fn digest(self, data: &[u8]) -> O256 {
+        match self {
+            Self::Blake3 => O256::blake3(data),
+            Self::Sha256 => O256::sha256(data),
+        }
+    }
+
+    fn from_stable_name(name: &str) -> Option<Self> {
+        match name {
+            "blake3" => Some(Self::Blake3),
+            "sha256" => Some(Self::Sha256),
+            _ => None,
+        }
+    }
+}
+
+/// Connection-local DEF identity for one compiled hash algorithm.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct HashAlgorithmId(i64);
+
+impl HashAlgorithmId {
+    /// Returns the stored `SQLite` integer.
+    #[must_use]
+    pub const fn get(self) -> i64 {
+        self.0
+    }
+}
+
+/// One row from the finite hash-algorithm relation.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct HashAlgorithmEntry {
+    /// Connection-local DEF identity.
+    pub id: HashAlgorithmId,
+    /// Compiled algorithm selected by the stable name.
+    pub algorithm: HashAlgorithm,
+}
+
+/// A portable mixed-CAS address whose algorithm is explicit.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct HashAddress {
+    /// Hash algorithm.
+    pub algorithm: HashAlgorithm,
+    /// Raw 256-bit digest under that algorithm.
+    pub digest: O256,
+}
+
+/// Connection-local DEF identity assigned by the mixed CAS relation.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct MixedCasId(i64);
+
+impl MixedCasId {
+    /// Returns the stored `SQLite` integer.
+    #[must_use]
+    pub const fn get(self) -> i64 {
+        self.0
+    }
+}
+
+/// One checked row from the mixed-algorithm CAS.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MixedCasEntry {
+    /// Connection-local object identity.
+    pub id: MixedCasId,
+    /// Algorithm-qualified content address.
+    pub address: HashAddress,
+    /// Resident bytes, or `None` for a pending reference.
+    pub data: Option<Vec<u8>>,
+}
+
+/// Checked access to the finite compiled hash-algorithm relation.
+pub struct HashAlgorithms<'db> {
+    connection: &'db mut Connection,
+    metatable: Metatable,
+}
+
+impl HashAlgorithms<'_> {
+    /// Returns compiled algorithms in connection-local ID order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error if the relation cannot be read or contains an
+    /// algorithm outside the accepted finite interpretation.
+    pub fn entries(&self) -> Result<Vec<HashAlgorithmEntry>, TrustedDbError> {
+        let table = quote_identifier(&self.metatable.table_name);
+        let mut statement = self
+            .connection
+            .prepare(&format!("SELECT id, stable_name FROM {table} ORDER BY id"))
+            .map_err(TrustedDbError::sqlite)?;
+        statement
+            .query_map((), |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(TrustedDbError::sqlite)?
+            .map(|row| {
+                let (id, name) = row.map_err(TrustedDbError::sqlite)?;
+                let algorithm = HashAlgorithm::from_stable_name(&name)
+                    .ok_or(TrustedDbError::UnknownHashAlgorithm { name })?;
+                Ok(HashAlgorithmEntry {
+                    id: HashAlgorithmId(id),
+                    algorithm,
+                })
+            })
+            .collect()
+    }
+}
+
+/// Checked access to the hardcoded mixed-algorithm CAS.
+pub struct MixedHashCas<'db> {
+    connection: &'db mut Connection,
+    algorithms: Metatable,
+    cas: Metatable,
+}
+
+impl MixedHashCas<'_> {
+    /// Declares an algorithm-qualified address whose bytes may arrive later.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error if the relation cannot be updated.
+    pub fn declare(&mut self, address: HashAddress) -> Result<MixedCasId, TrustedDbError> {
+        let algorithms = quote_identifier(&self.algorithms.table_name);
+        let cas = quote_identifier(&self.cas.table_name);
+        let algorithm_id = hash_algorithm_id(self.connection, &algorithms, address.algorithm)?;
+        self.connection
+            .execute(
+                &format!("INSERT OR IGNORE INTO {cas} (algorithm_id, digest) VALUES (?1, ?2)"),
+                params![algorithm_id.get(), address.digest.as_bytes().as_slice()],
+            )
+            .map_err(TrustedDbError::sqlite)?;
+        mixed_cas_id(self.connection, &cas, algorithm_id, address.digest)
+    }
+
+    /// Stores bytes under an address computed with `algorithm`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error if the relation cannot be updated.
+    pub fn put(
+        &mut self,
+        algorithm: HashAlgorithm,
+        data: &[u8],
+    ) -> Result<(MixedCasId, HashAddress), TrustedDbError> {
+        let address = HashAddress {
+            algorithm,
+            digest: algorithm.digest(data),
+        };
+        let id = self.provide(address, data)?;
+        Ok((id, address))
+    }
+
+    /// Supplies bytes for an expected algorithm-qualified address.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrustedDbError::ContentHashMismatch`] before mutation when
+    /// the selected algorithm computes a different digest.
+    pub fn provide(
+        &mut self,
+        address: HashAddress,
+        data: &[u8],
+    ) -> Result<MixedCasId, TrustedDbError> {
+        let actual = address.algorithm.digest(data);
+        if actual != address.digest {
+            return Err(TrustedDbError::ContentHashMismatch {
+                expected: address.digest,
+                actual,
+            });
+        }
+        let algorithms = quote_identifier(&self.algorithms.table_name);
+        let cas = quote_identifier(&self.cas.table_name);
+        let algorithm_id = hash_algorithm_id(self.connection, &algorithms, address.algorithm)?;
+        self.connection
+            .execute(
+                &format!(
+                    "INSERT INTO {cas} (algorithm_id, digest, data) VALUES (?1, ?2, ?3)
+                     ON CONFLICT(algorithm_id, digest) DO UPDATE SET data = excluded.data
+                     WHERE {cas}.data IS NULL"
+                ),
+                params![
+                    algorithm_id.get(),
+                    address.digest.as_bytes().as_slice(),
+                    data
+                ],
+            )
+            .map_err(TrustedDbError::sqlite)?;
+        mixed_cas_id(self.connection, &cas, algorithm_id, address.digest)
+    }
+
+    /// Reads one row by algorithm-qualified address.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error if the relation cannot be read.
+    pub fn entry(&self, address: HashAddress) -> Result<Option<MixedCasEntry>, TrustedDbError> {
+        let algorithms = quote_identifier(&self.algorithms.table_name);
+        let cas = quote_identifier(&self.cas.table_name);
+        let algorithm_id = hash_algorithm_id(self.connection, &algorithms, address.algorithm)?;
+        self.connection
+            .query_row(
+                &format!(
+                    "SELECT id, data FROM {cas}
+                     WHERE algorithm_id = ?1 AND digest = ?2"
+                ),
+                params![algorithm_id.get(), address.digest.as_bytes().as_slice()],
+                |row| Ok((MixedCasId(row.get(0)?), row.get(1)?)),
+            )
+            .optional()
+            .map(|entry| entry.map(|(id, data)| MixedCasEntry { id, address, data }))
+            .map_err(TrustedDbError::sqlite)
+    }
+}
+
+fn hash_algorithm_id(
+    connection: &Connection,
+    algorithms: &str,
+    algorithm: HashAlgorithm,
+) -> Result<HashAlgorithmId, TrustedDbError> {
+    connection
+        .query_row(
+            &format!("SELECT id FROM {algorithms} WHERE stable_name = ?1"),
+            [algorithm.stable_name()],
+            |row| row.get::<_, i64>(0).map(HashAlgorithmId),
+        )
+        .map_err(TrustedDbError::sqlite)
+}
+
+fn mixed_cas_id(
+    connection: &Connection,
+    cas: &str,
+    algorithm: HashAlgorithmId,
+    digest: O256,
+) -> Result<MixedCasId, TrustedDbError> {
+    connection
+        .query_row(
+            &format!(
+                "SELECT id FROM {cas}
+                 WHERE algorithm_id = ?1 AND digest = ?2"
+            ),
+            params![algorithm.get(), digest.as_bytes().as_slice()],
+            |row| row.get::<_, i64>(0).map(MixedCasId),
+        )
+        .map_err(TrustedDbError::sqlite)
+}
+
 /// Checked access to the hardcoded indexed BLAKE3 CAS.
 pub struct Blake3Cas<'db> {
     connection: &'db mut Connection,
@@ -991,6 +1383,18 @@ pub enum TrustedDbError {
     /// The KV reference family has not been installed.
     #[snafu(display("the indexed/direct KV relation family is not installed"))]
     MissingKvRelations,
+    /// Exactly one member of the hash-algorithm/CAS family was present.
+    #[snafu(display("hash algorithms and mixed CAS must be installed as one family"))]
+    PartialHashCasFamily,
+    /// The hash-algorithm/CAS family has not been installed.
+    #[snafu(display("the hash-algorithm/mixed-CAS relation family is not installed"))]
+    MissingHashCasRelations,
+    /// The accepted finite registry contained an unknown algorithm name.
+    #[snafu(display("unknown compiled hash algorithm `{name}`"))]
+    UnknownHashAlgorithm {
+        /// Unrecognized stable name.
+        name: String,
+    },
 }
 
 impl TrustedDbError {
@@ -1120,6 +1524,90 @@ fn validate_direct_kv_metatable(
     )
 }
 
+fn validate_hash_algorithms_metatable(
+    connection: &Connection,
+    metatable: &Metatable,
+) -> Result<(), CatalogError> {
+    let expected = metatable_name(MetatableKind::new(HASH_ALGORITHMS_METATABLE_V0));
+    validate_fixed_table(
+        connection,
+        metatable,
+        &expected,
+        &[
+            ("id", "INTEGER", false, 1_u32),
+            ("stable_name", "TEXT", true, 0),
+        ],
+        "finite hash-algorithm relation",
+    )
+}
+
+fn validate_mixed_hash_cas_metatable(
+    connection: &Connection,
+    metatable: &Metatable,
+) -> Result<(), CatalogError> {
+    let expected = metatable_name(MetatableKind::new(MIXED_HASH_CAS_METATABLE_V0));
+    validate_fixed_table(
+        connection,
+        metatable,
+        &expected,
+        &[
+            ("id", "INTEGER", false, 1_u32),
+            ("algorithm_id", "INTEGER", true, 0),
+            ("digest", "BLOB", true, 0),
+            ("data", "BLOB", false, 0),
+        ],
+        "mixed hash CAS",
+    )?;
+    let algorithms = metatable_name(MetatableKind::new(HASH_ALGORITHMS_METATABLE_V0));
+    let foreign_keys = table_foreign_keys(connection, &metatable.table_name)?;
+    if foreign_keys != [(String::from("algorithm_id"), algorithms, String::from("id"))] {
+        return Err(CatalogError::InvalidExtensionSchema {
+            interpretation: metatable.interpretation.clone(),
+            reason: String::from("algorithm_id must reference the finite hash-algorithm relation"),
+        });
+    }
+    Ok(())
+}
+
+fn validate_fixed_table(
+    connection: &Connection,
+    metatable: &Metatable,
+    expected_table: &str,
+    expected_columns: &[(&str, &str, bool, u32)],
+    contract: &str,
+) -> Result<(), CatalogError> {
+    if metatable.table_name != expected_table {
+        return Err(CatalogError::WrongInterpretationTable {
+            interpretation: metatable.interpretation.clone(),
+            expected: expected_table.to_owned(),
+            actual: metatable.table_name.clone(),
+        });
+    }
+    if !table_is_strict(connection, &metatable.table_name)? {
+        return Err(CatalogError::InvalidExtensionSchema {
+            interpretation: metatable.interpretation.clone(),
+            reason: String::from("table must be STRICT"),
+        });
+    }
+    let columns = table_columns(connection, &metatable.table_name)?;
+    if columns.len() != expected_columns.len()
+        || !columns.iter().zip(expected_columns).all(
+            |((actual_name, actual_type, not_null, pk), expected)| {
+                actual_name == expected.0
+                    && actual_type == expected.1
+                    && *not_null == expected.2
+                    && *pk == expected.3
+            },
+        )
+    {
+        return Err(CatalogError::InvalidExtensionSchema {
+            interpretation: metatable.interpretation.clone(),
+            reason: format!("columns do not match the {contract} contract"),
+        });
+    }
+    Ok(())
+}
+
 fn validate_kv_metatable(
     connection: &Connection,
     metatable: &Metatable,
@@ -1167,6 +1655,7 @@ fn validate_kv_metatable(
 }
 
 type PhysicalColumn = (String, String, bool, u32);
+type PhysicalForeignKey = (String, String, String);
 
 fn table_columns(
     connection: &Connection,
@@ -1185,6 +1674,29 @@ fn table_columns(
                 row.get::<_, String>(2)?,
                 row.get::<_, i64>(3)? != 0,
                 row.get::<_, u32>(5)?,
+            ))
+        })
+        .map_err(|source| CatalogError::ValidationSqlite { source })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|source| CatalogError::ValidationSqlite { source })
+}
+
+fn table_foreign_keys(
+    connection: &Connection,
+    table: &str,
+) -> Result<Vec<PhysicalForeignKey>, CatalogError> {
+    let mut statement = connection
+        .prepare(&format!(
+            "PRAGMA main.foreign_key_list({})",
+            quote_identifier(table)
+        ))
+        .map_err(|source| CatalogError::ValidationSqlite { source })?;
+    statement
+        .query_map((), |row| {
+            Ok((
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(4)?,
             ))
         })
         .map_err(|source| CatalogError::ValidationSqlite { source })?
@@ -1228,8 +1740,8 @@ mod tests {
     use covalence_lib_hash::O256;
 
     use super::{
-        BlobRequest, BlobResolver, CasEntry, CasLoad, InstallOutcome, ResolveError, TrustedDb,
-        TrustedDbError,
+        BlobRequest, BlobResolver, CasEntry, CasLoad, HashAddress, HashAlgorithm, InstallOutcome,
+        ResolveError, TrustedDb, TrustedDbError,
     };
 
     struct FakeResolver {
@@ -1398,6 +1910,69 @@ mod tests {
         );
         kv.set(b"k", Some(b"v")).unwrap();
         assert_eq!(kv.entry(b"k").unwrap().unwrap().value, Some(b"v".to_vec()));
+    }
+
+    #[test]
+    fn finite_hash_algorithms_define_distinct_local_ids() {
+        let mut database = TrustedDb::create_in_memory().unwrap();
+        assert!(matches!(
+            database.hash_algorithms(),
+            Err(TrustedDbError::MissingHashCasRelations)
+        ));
+        assert_eq!(
+            database.install_hash_cas_relations().unwrap(),
+            InstallOutcome::Installed
+        );
+        assert_eq!(
+            database.install_hash_cas_relations().unwrap(),
+            InstallOutcome::AlreadyPresent
+        );
+        let entries = database.hash_algorithms().unwrap().entries().unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].algorithm, HashAlgorithm::Blake3);
+        assert_eq!(entries[1].algorithm, HashAlgorithm::Sha256);
+        assert_ne!(entries[0].id, entries[1].id);
+    }
+
+    #[test]
+    fn mixed_cas_qualifies_equal_data_by_hash_algorithm() {
+        let mut database = TrustedDb::create_in_memory().unwrap();
+        database.install_hash_cas_relations().unwrap();
+        let data = b"same bytes";
+        let mut cas = database.mixed_hash_cas().unwrap();
+        let (blake3_id, blake3) = cas.put(HashAlgorithm::Blake3, data).unwrap();
+        let (sha256_id, sha256) = cas.put(HashAlgorithm::Sha256, data).unwrap();
+
+        assert_ne!(blake3, sha256);
+        assert_ne!(blake3_id, sha256_id);
+        assert_eq!(
+            cas.entry(blake3).unwrap().unwrap().data,
+            Some(data.to_vec())
+        );
+        assert_eq!(
+            cas.entry(sha256).unwrap().unwrap().data,
+            Some(data.to_vec())
+        );
+    }
+
+    #[test]
+    fn mixed_cas_validates_with_the_selected_algorithm() {
+        let mut database = TrustedDb::create_in_memory().unwrap();
+        database.install_hash_cas_relations().unwrap();
+        let data = b"expected";
+        let address = HashAddress {
+            algorithm: HashAlgorithm::Sha256,
+            digest: HashAlgorithm::Sha256.digest(data),
+        };
+        let mut cas = database.mixed_hash_cas().unwrap();
+        let id = cas.declare(address).unwrap();
+        assert_eq!(cas.entry(address).unwrap().unwrap().data, None);
+        assert!(matches!(
+            cas.provide(address, b"different"),
+            Err(TrustedDbError::ContentHashMismatch { .. })
+        ));
+        assert_eq!(cas.entry(address).unwrap().unwrap().data, None);
+        assert_eq!(cas.provide(address, data).unwrap(), id);
     }
 
     #[test]

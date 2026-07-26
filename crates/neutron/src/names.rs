@@ -67,6 +67,28 @@ pub const DIRECT_KV_METATABLE_V0: O256 = O256::from_bytes([
 /// Text stored in the bootstrap catalog for direct KV v0.
 pub const DIRECT_KV_INTERPRETATION_V0: &str = "covalence.meta.direct-kv/v0";
 
+/// A finite registry of compiled 256-bit hash algorithms.
+///
+/// BLAKE3 of `covalence.meta/hash-algorithms/v0`.
+pub const HASH_ALGORITHMS_METATABLE_V0: O256 = O256::from_bytes([
+    0x85, 0xa5, 0x02, 0xb5, 0xb2, 0x96, 0x7a, 0xfa, 0x76, 0x9d, 0x1c, 0xe5, 0xcc, 0x09, 0xf3, 0x7b,
+    0x92, 0x84, 0xdd, 0xee, 0xa5, 0x46, 0x93, 0x79, 0xea, 0x78, 0x91, 0xb4, 0x7a, 0x39, 0xc0, 0x19,
+]);
+
+/// Text stored in the bootstrap catalog for hash algorithms v0.
+pub const HASH_ALGORITHMS_INTERPRETATION_V0: &str = "covalence.meta.hash-algorithms/v0";
+
+/// A CAS whose address explicitly includes a hash-algorithm USE.
+///
+/// BLAKE3 of `covalence.meta/mixed-hash-cas/v0`.
+pub const MIXED_HASH_CAS_METATABLE_V0: O256 = O256::from_bytes([
+    0xf2, 0x68, 0xf6, 0x63, 0x63, 0xb8, 0x43, 0x4e, 0xaa, 0x4a, 0xc9, 0x7b, 0x2c, 0x49, 0x55, 0x93,
+    0x8a, 0x8f, 0xd5, 0x3e, 0xfb, 0x3d, 0x8d, 0x1e, 0x51, 0xe7, 0x50, 0xf7, 0xef, 0x8b, 0x3f, 0x1d,
+]);
+
+/// Text stored in the bootstrap catalog for mixed hash CAS v0.
+pub const MIXED_HASH_CAS_INTERPRETATION_V0: &str = "covalence.meta.mixed-hash-cas/v0";
+
 /// A stable identifier for one metatable format and version.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct MetatableKind(O256);

@@ -177,7 +177,6 @@ impl O256 {
     }
 }
 
-#[cfg(feature = "sha256")]
 impl O256 {
     /// Computes the SHA-256 digest of `bytes`.
     #[must_use]
