@@ -177,6 +177,13 @@
   "edges": [
     {
       "source": "workspace#covalence-bin-nucleus@0.0.0",
+      "target": "workspace#covalence-data-sexpr@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-bin-nucleus@0.0.0",
       "target": "workspace#covalence-nucleus@0.0.0",
       "kinds": [
         "normal"

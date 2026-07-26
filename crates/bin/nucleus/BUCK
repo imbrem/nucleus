@@ -25,6 +25,7 @@ rust_binary(
     srcs = _RUST_SOURCES,
     tests = [":nucleus-unit-test"],
     named_deps = {
+        "covalence_data_sexpr": "nucleus//crates/data/sexpr:covalence_data_sexpr",
         "covalence_nucleus": "nucleus//crates/nucleus:covalence_nucleus",
     },
     env = {
@@ -53,6 +54,7 @@ rust_test(
     edition = "2024",
     srcs = _RUST_SOURCES,
     named_deps = {
+        "covalence_data_sexpr": "nucleus//crates/data/sexpr:covalence_data_sexpr",
         "covalence_nucleus": "nucleus//crates/nucleus:covalence_nucleus",
     },
     env = {
