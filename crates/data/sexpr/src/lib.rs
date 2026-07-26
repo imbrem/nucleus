@@ -15,7 +15,8 @@
 //!
 //! [`sax`] provides a streaming event boundary for constructing and emitting
 //! values without requiring an intermediate tree. [`text`] provides one small,
-//! documented textual dialect on top of that boundary.
+//! documented textual dialect on top of that boundary. [`utils`] composes the
+//! two with resource-bounded owned parsing and canonical text emission.
 //!
 //! This crate intentionally contains no arena, matcher, unifier, or implicit
 //! conversion between tagged and untagged trees.
@@ -26,6 +27,7 @@ pub use covalence_data_symbol::Symbol;
 
 pub mod sax;
 pub mod text;
+pub mod utils;
 
 /// A canonical owned S-expression.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
