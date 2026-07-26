@@ -237,6 +237,24 @@ impl ExecutionModel<'_> {
             .map_err(ExecutionModelError::sqlite)
     }
 
+    /// Resolves an executor by its connection-local name.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked `SQLite` error.
+    pub fn executor_named(&self, name: &str) -> Result<Option<ExecutorId>, ExecutionModelError> {
+        let table = table_name(EXECUTORS_METATABLE_V0);
+        self.database
+            .connection
+            .query_row(
+                &format!("SELECT id FROM {table} WHERE name = ?1"),
+                [name],
+                |row| row.get::<_, i64>(0).map(ExecutorId),
+            )
+            .optional()
+            .map_err(ExecutionModelError::sqlite)
+    }
+
     /// Associates an expression with the interpretation of an existing table.
     ///
     /// # Errors

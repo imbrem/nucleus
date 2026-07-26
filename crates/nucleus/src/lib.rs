@@ -8,10 +8,15 @@
 mod bindings;
 
 mod expr;
+mod knowledge;
 mod normalized;
 mod trusted_db;
 
 pub use expr::{Bool, EvalError, Expr, Prop, PropContext, Sort};
+pub use knowledge::{
+    Def, InstallKnowledgeOutcome, KnowledgeError, KnowledgeModel, ReplSession, SuccessfulOutput,
+    SuccessfulTraceQuery, TermIdentity, TermTraceIdentity, TypeIdentity, Use,
+};
 pub use normalized::{
     ExecutionModel, ExecutionModelError, ExecutorId, ExpressionId, InstallExecutionModelOutcome,
     TraceId, TraceOutcome,
