@@ -502,4 +502,35 @@ mod tests {
             Ok(2..7)
         );
     }
+
+    #[test]
+    fn wrong_keys_and_invalid_ranges_are_rejected() {
+        let input = vec![17; 3_000];
+        let key = O256::from_array([3; 32]);
+        let mode = Blake3ProofMode::Keyed(&key);
+        let proof = proof_for(&input, 1_100..1_200, mode);
+        let root = Obj::<Blake3>::from_array(mode.hash(&input));
+        assert_eq!(
+            root.verify_range(
+                Blake3KeyedEvidence {
+                    proof: proof.clone(),
+                    key: O256::from_array([4; 32]),
+                },
+                disclosed(&input, &proof),
+            ),
+            Err(Blake3RangeProofError::RootMismatch)
+        );
+
+        let invalid_start = 2_000;
+        let invalid_end = 1_000;
+        let invalid = Blake3RangeProof {
+            total_length: input.len() as u64,
+            range: invalid_start..invalid_end,
+            nodes: Vec::new(),
+        };
+        assert!(matches!(
+            root.verify_range(Blake3UnkeyedEvidence(invalid), &[]),
+            Err(Blake3RangeProofError::InvalidRange { .. })
+        ));
+    }
 }
