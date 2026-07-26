@@ -34,6 +34,17 @@ pub const RUST_TYPES_METATABLE_V0: O256 = O256::from_bytes([
 /// Text stored in the bootstrap catalog for the Rust-type registry.
 pub const RUST_TYPES_INTERPRETATION_V0: &str = "covalence.meta.rust-types/v0";
 
+/// The first hardcoded BLAKE3 content-addressed relation.
+///
+/// BLAKE3 of `covalence.meta/blake3-cas/v0`.
+pub const BLAKE3_CAS_METATABLE_V0: O256 = O256::from_bytes([
+    0x2a, 0x77, 0x45, 0xad, 0xb4, 0x82, 0xbf, 0x83, 0x93, 0xb6, 0x62, 0xfa, 0xcd, 0x5b, 0xd5, 0xd7,
+    0x8c, 0xce, 0x28, 0x56, 0x1f, 0xcb, 0xc3, 0x49, 0xdc, 0x68, 0xf6, 0x67, 0xe5, 0xbe, 0x12, 0x43,
+]);
+
+/// Text stored in the bootstrap catalog for the hardcoded BLAKE3 CAS.
+pub const BLAKE3_CAS_INTERPRETATION_V0: &str = "covalence.meta.blake3-cas/v0";
+
 /// A stable identifier for one metatable format and version.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct MetatableKind(O256);

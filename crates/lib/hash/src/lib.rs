@@ -158,7 +158,6 @@ macro_rules! fixed_value {
 fixed_value!(O256, 32, "An opaque owned 256-bit value.");
 fixed_value!(GitHash, 20, "A traditional 160-bit Git SHA-1 object name.");
 
-#[cfg(feature = "blake3")]
 impl O256 {
     /// Computes the BLAKE3 digest of `bytes`.
     #[must_use]

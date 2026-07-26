@@ -1,10 +1,12 @@
 use std::{any::type_name, collections::BTreeSet};
 
 use covalence_lib_error::snafu;
+use covalence_lib_hash::O256;
 use covalence_lib_sqlite::{Connection, OptionalExtension, params};
 use covalence_neutron::{
-    BOOTSTRAP_CATALOG, CatalogCandidate, MetatableKind, RUST_TYPES_INTERPRETATION_V0,
-    RUST_TYPES_METATABLE_V0, ScanError, metatable_name, scan_metatables,
+    BLAKE3_CAS_INTERPRETATION_V0, BLAKE3_CAS_METATABLE_V0, BOOTSTRAP_CATALOG, CatalogCandidate,
+    MetatableKind, RUST_TYPES_INTERPRETATION_V0, RUST_TYPES_METATABLE_V0, ScanError,
+    metatable_name, scan_metatables,
 };
 use snafu::Snafu;
 
@@ -66,6 +68,8 @@ impl NeutronCatalog {
             }
             if metatable.interpretation == RUST_TYPES_INTERPRETATION_V0 {
                 validate_rust_types_metatable(connection, metatable)?;
+            } else if metatable.interpretation == BLAKE3_CAS_INTERPRETATION_V0 {
+                validate_blake3_cas_metatable(connection, metatable)?;
             }
         }
         Ok(Self { metatables })
@@ -243,6 +247,73 @@ impl TrustedDb {
             metatable,
         })
     }
+
+    /// Installs a hardcoded indexed BLAKE3 content-addressed relation.
+    ///
+    /// `id` defines a connection-local identity, `hash` quotes the stable
+    /// BLAKE3 digest, and nullable `data` distinguishes a known lazy reference
+    /// from locally available bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked database, scan, or catalog error.
+    pub fn install_blake3_cas(&mut self) -> Result<InstallOutcome, TrustedDbError> {
+        if self
+            .catalog
+            .by_interpretation(BLAKE3_CAS_INTERPRETATION_V0)
+            .is_some()
+        {
+            return Ok(InstallOutcome::AlreadyPresent);
+        }
+
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(TrustedDbError::sqlite)?;
+        let bootstrap = metatable_name(MetatableKind::new(BOOTSTRAP_CATALOG));
+        let cas = metatable_name(MetatableKind::new(BLAKE3_CAS_METATABLE_V0));
+        transaction
+            .execute_batch(&format!(
+                "CREATE TABLE \"{cas}\" (
+                    id INTEGER PRIMARY KEY,
+                    hash BLOB NOT NULL UNIQUE CHECK (length(hash) = 32),
+                    data BLOB
+                ) STRICT;"
+            ))
+            .map_err(TrustedDbError::sqlite)?;
+        transaction
+            .execute(
+                &format!(
+                    "INSERT INTO \"{bootstrap}\" (table_name, interpretation) VALUES (?1, ?2)"
+                ),
+                params![cas, BLAKE3_CAS_INTERPRETATION_V0],
+            )
+            .map_err(TrustedDbError::sqlite)?;
+        let candidate = scan_metatables(&transaction).map_err(TrustedDbError::scan)?;
+        let catalog =
+            NeutronCatalog::accept(&candidate, &transaction).map_err(TrustedDbError::catalog)?;
+        transaction.commit().map_err(TrustedDbError::sqlite)?;
+        self.catalog = catalog;
+        self.generation += 1;
+        Ok(InstallOutcome::Installed)
+    }
+
+    /// Resolves the installed BLAKE3 CAS as a checked capability.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrustedDbError::MissingBlake3Cas`] before installation.
+    pub fn blake3_cas(&mut self) -> Result<Blake3Cas<'_>, TrustedDbError> {
+        let metatable = self
+            .catalog
+            .by_interpretation(BLAKE3_CAS_INTERPRETATION_V0)
+            .cloned()
+            .ok_or(TrustedDbError::MissingBlake3Cas)?;
+        Ok(Blake3Cas {
+            connection: &mut self.connection,
+            metatable,
+        })
+    }
 }
 
 /// Result of installing a singleton extension metatable.
@@ -273,6 +344,137 @@ impl RustTypeId {
 pub struct RustTypes<'db> {
     connection: &'db mut Connection,
     metatable: Metatable,
+}
+
+/// A connection-local identity defined by the indexed CAS relation.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct CasId(i64);
+
+impl CasId {
+    /// Returns the stored `SQLite` integer.
+    #[must_use]
+    pub const fn get(self) -> i64 {
+        self.0
+    }
+}
+
+/// One checked row read from the BLAKE3 CAS.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CasEntry {
+    /// Connection-local identity.
+    pub id: CasId,
+    /// Stable content address.
+    pub hash: O256,
+    /// Locally available bytes, or `None` for a lazy reference.
+    pub data: Option<Vec<u8>>,
+}
+
+/// Checked access to the hardcoded indexed BLAKE3 CAS.
+pub struct Blake3Cas<'db> {
+    connection: &'db mut Connection,
+    metatable: Metatable,
+}
+
+impl Blake3Cas<'_> {
+    /// Declares a content address whose bytes may be fetched later.
+    ///
+    /// Repeated declarations return the same local identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error if the relation cannot be updated.
+    pub fn declare(&mut self, hash: O256) -> Result<CasId, TrustedDbError> {
+        let table = quote_identifier(&self.metatable.table_name);
+        self.connection
+            .execute(
+                &format!("INSERT OR IGNORE INTO {table} (hash) VALUES (?1)"),
+                [hash.as_bytes().as_slice()],
+            )
+            .map_err(TrustedDbError::sqlite)?;
+        self.id_for_hash(hash)
+    }
+
+    /// Stores bytes under their computed BLAKE3 digest.
+    ///
+    /// This also fills a previously declared lazy reference.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error if the relation cannot be updated.
+    pub fn put(&mut self, data: &[u8]) -> Result<(CasId, O256), TrustedDbError> {
+        let hash = O256::blake3(data);
+        let id = self.provide(hash, data)?;
+        Ok((id, hash))
+    }
+
+    /// Supplies bytes for an expected BLAKE3 digest.
+    ///
+    /// The digest is checked before trusted state is changed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrustedDbError::ContentHashMismatch`] when the bytes do not
+    /// match, or a typed database error if the relation cannot be updated.
+    pub fn provide(&mut self, expected: O256, data: &[u8]) -> Result<CasId, TrustedDbError> {
+        let actual = O256::blake3(data);
+        if actual != expected {
+            return Err(TrustedDbError::ContentHashMismatch { expected, actual });
+        }
+        let table = quote_identifier(&self.metatable.table_name);
+        self.connection
+            .execute(
+                &format!(
+                    "INSERT INTO {table} (hash, data) VALUES (?1, ?2)
+                     ON CONFLICT(hash) DO UPDATE SET data = excluded.data
+                     WHERE {table}.data IS NULL"
+                ),
+                params![expected.as_bytes().as_slice(), data],
+            )
+            .map_err(TrustedDbError::sqlite)?;
+        self.id_for_hash(expected)
+    }
+
+    /// Reads an entry by stable content address.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error if the relation cannot be read.
+    pub fn entry(&self, hash: O256) -> Result<Option<CasEntry>, TrustedDbError> {
+        let table = quote_identifier(&self.metatable.table_name);
+        self.connection
+            .query_row(
+                &format!("SELECT id, hash, data FROM {table} WHERE hash = ?1"),
+                [hash.as_bytes().as_slice()],
+                |row| {
+                    let stored_hash = row.get::<_, Vec<u8>>(1)?;
+                    Ok((CasId(row.get(0)?), stored_hash, row.get(2)?))
+                },
+            )
+            .optional()
+            .map_err(TrustedDbError::sqlite)?
+            .map(|(id, stored_hash, data)| {
+                let bytes: [u8; 32] = stored_hash
+                    .try_into()
+                    .map_err(|_| TrustedDbError::InvalidStoredHash { id })?;
+                Ok(CasEntry {
+                    id,
+                    hash: O256::from_bytes(bytes),
+                    data,
+                })
+            })
+            .transpose()
+    }
+
+    fn id_for_hash(&self, hash: O256) -> Result<CasId, TrustedDbError> {
+        let table = quote_identifier(&self.metatable.table_name);
+        self.connection
+            .query_row(
+                &format!("SELECT id FROM {table} WHERE hash = ?1"),
+                [hash.as_bytes().as_slice()],
+                |row| row.get::<_, i64>(0).map(CasId),
+            )
+            .map_err(TrustedDbError::sqlite)
+    }
 }
 
 impl RustTypes<'_> {
@@ -350,6 +552,23 @@ pub enum TrustedDbError {
     /// The Rust-type extension has not been installed.
     #[snafu(display("the Rust-type metatable is not installed"))]
     MissingRustTypes,
+    /// The BLAKE3 CAS extension has not been installed.
+    #[snafu(display("the BLAKE3 CAS metatable is not installed"))]
+    MissingBlake3Cas,
+    /// Bytes supplied by an effect or caller did not match their address.
+    #[snafu(display("content hash mismatch: expected {expected}, computed {actual}"))]
+    ContentHashMismatch {
+        /// Requested content address.
+        expected: O256,
+        /// Digest computed over the supplied bytes.
+        actual: O256,
+    },
+    /// A trusted CAS row contained a malformed digest.
+    #[snafu(display("CAS row {} contains a malformed hash", id.get()))]
+    InvalidStoredHash {
+        /// Connection-local row identity.
+        id: CasId,
+    },
 }
 
 impl TrustedDbError {
@@ -407,6 +626,48 @@ fn validate_rust_types_metatable(
     Ok(())
 }
 
+fn validate_blake3_cas_metatable(
+    connection: &Connection,
+    metatable: &Metatable,
+) -> Result<(), CatalogError> {
+    let expected = metatable_name(MetatableKind::new(BLAKE3_CAS_METATABLE_V0));
+    if metatable.table_name != expected {
+        return Err(CatalogError::WrongInterpretationTable {
+            interpretation: metatable.interpretation.clone(),
+            expected,
+            actual: metatable.table_name.clone(),
+        });
+    }
+    if !table_is_strict(connection, &metatable.table_name)? {
+        return Err(CatalogError::InvalidExtensionSchema {
+            interpretation: metatable.interpretation.clone(),
+            reason: String::from("table must be STRICT"),
+        });
+    }
+    let columns = table_columns(connection, &metatable.table_name)?;
+    let expected_columns = [
+        ("id", "INTEGER", false, 1_u32),
+        ("hash", "BLOB", true, 0),
+        ("data", "BLOB", false, 0),
+    ];
+    if columns.len() != expected_columns.len()
+        || !columns.iter().zip(expected_columns).all(
+            |((actual_name, actual_type, not_null, pk), expected)| {
+                actual_name == expected.0
+                    && actual_type == expected.1
+                    && *not_null == expected.2
+                    && *pk == expected.3
+            },
+        )
+    {
+        return Err(CatalogError::InvalidExtensionSchema {
+            interpretation: metatable.interpretation.clone(),
+            reason: String::from("columns do not match the indexed BLAKE3 CAS contract"),
+        });
+    }
+    Ok(())
+}
+
 type PhysicalColumn = (String, String, bool, u32);
 
 fn table_columns(
@@ -451,6 +712,8 @@ fn quote_identifier(identifier: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use covalence_lib_hash::O256;
+
     use super::{InstallOutcome, TrustedDb, TrustedDbError};
 
     #[test]
@@ -495,5 +758,45 @@ mod tests {
                 (u64_id, String::from("u64"))
             ]
         );
+    }
+
+    #[test]
+    fn blake3_cas_distinguishes_lazy_and_available_content() {
+        let mut database = TrustedDb::create_in_memory().unwrap();
+        assert!(matches!(
+            database.blake3_cas(),
+            Err(TrustedDbError::MissingBlake3Cas)
+        ));
+        assert_eq!(
+            database.install_blake3_cas().unwrap(),
+            InstallOutcome::Installed
+        );
+        assert_eq!(
+            database.install_blake3_cas().unwrap(),
+            InstallOutcome::AlreadyPresent
+        );
+
+        let data = b"theorem";
+        let hash = O256::blake3(data);
+        let mut cas = database.blake3_cas().unwrap();
+        let declared = cas.declare(hash).unwrap();
+        assert_eq!(cas.entry(hash).unwrap().unwrap().data, None,);
+        let stored = cas.provide(hash, data).unwrap();
+        assert_eq!(stored, declared);
+        assert_eq!(cas.entry(hash).unwrap().unwrap().data, Some(data.to_vec()),);
+        assert_eq!(cas.put(data).unwrap(), (declared, hash));
+    }
+
+    #[test]
+    fn blake3_cas_rejects_mismatched_content() {
+        let mut database = TrustedDb::create_in_memory().unwrap();
+        database.install_blake3_cas().unwrap();
+        let expected = O256::blake3(b"expected");
+        let mut cas = database.blake3_cas().unwrap();
+        assert!(matches!(
+            cas.provide(expected, b"different"),
+            Err(TrustedDbError::ContentHashMismatch { .. })
+        ));
+        assert_eq!(cas.entry(expected).unwrap(), None);
     }
 }
