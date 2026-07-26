@@ -7,7 +7,6 @@
 
 use std::marker::PhantomData;
 
-use covalence_data_sexpr::{SExpr, Symbol, sax::FromEvents, text};
 use covalence_lib_error::snafu;
 use covalence_lib_sqlite::{OptionalExtension, params};
 use covalence_neutron::{
@@ -474,7 +473,12 @@ impl KnowledgeModel<'_> {
         )
     }
 
-    fn term_name(&self, term: Use<TermIdentity>) -> Result<String, KnowledgeError> {
+    /// Resolves the human-facing name of a term identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns a checked database error.
+    pub fn term_name(&self, term: Use<TermIdentity>) -> Result<String, KnowledgeError> {
         let terms = table_name(TERMS_METATABLE_V0);
         self.database
             .connection
@@ -485,127 +489,18 @@ impl KnowledgeModel<'_> {
             )
             .map_err(KnowledgeError::sqlite)
     }
-}
 
-/// A scriptable, line-oriented session suitable for a first REPL.
-pub struct ReplSession {
-    database: TrustedDb,
-}
-
-impl ReplSession {
-    /// Creates an empty in-memory session with all vertical-slice tables.
+    /// Resolves an existing executor definition by name.
     ///
     /// # Errors
     ///
-    /// Returns a checked setup error.
-    pub fn new() -> Result<Self, KnowledgeError> {
-        let mut database = TrustedDb::create_in_memory()
-            .map_err(|source| KnowledgeError::TrustedDatabase { source })?;
-        database.install_knowledge_model()?;
-        Ok(Self { database })
-    }
-
-    /// Evaluates one complete command S-expression.
-    ///
-    /// Supported commands are `type`, `term`, `executor`, `trace`, and
-    /// `outputs`.
-    ///
-    /// # Errors
-    ///
-    /// Returns a syntax, command-shape, name-resolution, or database error.
-    pub fn eval(&mut self, input: &str) -> Result<String, KnowledgeError> {
-        let command = parse_expression(input)?;
-        let list = command
-            .as_list()
-            .ok_or_else(|| KnowledgeError::InvalidCommand {
-                reason: String::from("command must be a list"),
-            })?;
-        let Some(name) = list.first().and_then(SExpr::as_atom).map(Symbol::as_str) else {
-            return Err(KnowledgeError::InvalidCommand {
-                reason: String::from("command must start with an atom"),
-            });
-        };
-        match (name, &list[1..]) {
-            ("type", [name, definition]) => {
-                let name = atom(name, "type name")?;
-                let definition = print_expression(definition);
-                let id = self
-                    .database
-                    .knowledge_model()?
-                    .define_type(name, &definition)?;
-                Ok(format!("(defined type {name} {})", id.get()))
-            }
-            ("term", [name, r#type, definition]) => {
-                let name = atom(name, "term name")?;
-                let type_name = atom(r#type, "type name")?;
-                let definition = print_expression(definition);
-                let mut model = self.database.knowledge_model()?;
-                let type_id =
-                    model
-                        .type_named(type_name)?
-                        .ok_or_else(|| KnowledgeError::UnknownName {
-                            namespace: "type",
-                            name: type_name.to_owned(),
-                        })?;
-                let id = model.define_term(name, type_id.use_id(), &definition)?;
-                Ok(format!("(defined term {name} {})", id.get()))
-            }
-            ("executor", [name]) => {
-                let name = atom(name, "executor name")?;
-                let id = self.database.knowledge_model()?.register_executor(name)?;
-                Ok(format!("(defined executor {name} {})", id.get()))
-            }
-            ("trace", [executor, program, input, output]) => {
-                let executor_name = atom(executor, "executor name")?;
-                let program_name = atom(program, "program term")?;
-                let input_name = atom(input, "input term")?;
-                let output_name = atom(output, "output term")?;
-                let mut model = self.database.knowledge_model()?;
-                let executor = model
-                    .database
-                    .execution_model()
-                    .map_err(|source| KnowledgeError::Execution { source })?
-                    .executor_named(executor_name)
-                    .map_err(|source| KnowledgeError::Execution { source })?
-                    .ok_or_else(|| KnowledgeError::UnknownName {
-                        namespace: "executor",
-                        name: executor_name.to_owned(),
-                    })?;
-                let program = required_term(&model, program_name)?;
-                let input = required_term(&model, input_name)?;
-                let output = required_term(&model, output_name)?;
-                let trace = model.record_trace(
-                    executor,
-                    program.use_id(),
-                    input.use_id(),
-                    Some(output.use_id()),
-                    TraceOutcome::Returned,
-                )?;
-                Ok(format!("(recorded trace {})", trace.get()))
-            }
-            ("outputs", [program]) => {
-                let program_name = atom(program, "program term")?;
-                let model = self.database.knowledge_model()?;
-                let program = required_term(&model, program_name)?;
-                let outputs = model
-                    .query_successful_traces(SuccessfulTraceQuery::for_program(program.use_id()))?;
-                let names = outputs
-                    .into_iter()
-                    .map(|row| model.term_name(row.output))
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(format!("({})", names.join(" ")))
-            }
-            (unknown, _)
-                if !matches!(unknown, "type" | "term" | "executor" | "trace" | "outputs") =>
-            {
-                Err(KnowledgeError::UnknownCommand {
-                    command: unknown.to_owned(),
-                })
-            }
-            _ => Err(KnowledgeError::InvalidCommand {
-                reason: format!("wrong arguments for `{name}`"),
-            }),
-        }
+    /// Returns a checked execution-model error.
+    pub fn executor_named(&mut self, name: &str) -> Result<Option<ExecutorId>, KnowledgeError> {
+        self.database
+            .execution_model()
+            .map_err(|source| KnowledgeError::Execution { source })?
+            .executor_named(name)
+            .map_err(|source| KnowledgeError::Execution { source })
     }
 }
 
@@ -618,12 +513,6 @@ pub enum KnowledgeError {
     Execution {
         /// Underlying execution-model error.
         source: ExecutionModelError,
-    },
-    /// Initial trusted database construction failed.
-    #[snafu(display("trusted database setup failed: {source}"))]
-    TrustedDatabase {
-        /// Underlying trusted database error.
-        source: crate::TrustedDbError,
     },
     /// `SQLite` rejected an operation.
     #[snafu(display("knowledge-model operation failed: {source}"))]
@@ -649,38 +538,6 @@ pub enum KnowledgeError {
     /// The extension family has not been installed.
     #[snafu(display("knowledge metatables are not installed"))]
     NotInstalled,
-    /// A command S-expression had invalid syntax.
-    #[snafu(display("invalid command syntax: {source}"))]
-    ExpressionSyntax {
-        /// Parser error.
-        source: text::Error,
-    },
-    /// A command event stream did not contain one expression.
-    #[snafu(display("invalid command structure: {source}"))]
-    ExpressionStructure {
-        /// Structural error.
-        source: covalence_data_sexpr::sax::BuildError,
-    },
-    /// The command name was unknown.
-    #[snafu(display("unknown command `{command}`"))]
-    UnknownCommand {
-        /// Unknown command atom.
-        command: String,
-    },
-    /// The command shape was invalid.
-    #[snafu(display("invalid command: {reason}"))]
-    InvalidCommand {
-        /// Stable command-shape detail.
-        reason: String,
-    },
-    /// A name did not resolve in the requested namespace.
-    #[snafu(display("unknown {namespace} `{name}`"))]
-    UnknownName {
-        /// Namespace searched.
-        namespace: &'static str,
-        /// Missing name.
-        name: String,
-    },
     /// A session name was reused for a different definition.
     #[snafu(display("conflicting definition for {namespace} `{name}`"))]
     ConflictingDefinition {
@@ -703,59 +560,6 @@ impl KnowledgeError {
     const fn catalog(source: CatalogError) -> Self {
         Self::Catalog { source }
     }
-}
-
-fn parse_expression(input: &str) -> Result<SExpr, KnowledgeError> {
-    let events = text::parse_symbols(input)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|source| KnowledgeError::ExpressionSyntax { source })?;
-    SExpr::from_events(events).map_err(|source| KnowledgeError::ExpressionStructure { source })
-}
-
-fn print_expression(expression: &SExpr) -> String {
-    match expression {
-        SExpr::Atom(atom) => {
-            let text = atom.as_str();
-            if text.is_empty()
-                || text
-                    .chars()
-                    .any(|character| character.is_whitespace() || "()\";".contains(character))
-            {
-                format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
-            } else {
-                text.to_owned()
-            }
-        }
-        SExpr::List(children) => format!(
-            "({})",
-            children
-                .iter()
-                .map(print_expression)
-                .collect::<Vec<_>>()
-                .join(" ")
-        ),
-    }
-}
-
-fn atom<'a>(expression: &'a SExpr, role: &str) -> Result<&'a str, KnowledgeError> {
-    expression
-        .as_atom()
-        .map(Symbol::as_str)
-        .ok_or_else(|| KnowledgeError::InvalidCommand {
-            reason: format!("{role} must be an atom"),
-        })
-}
-
-fn required_term(
-    model: &KnowledgeModel<'_>,
-    name: &str,
-) -> Result<Def<TermIdentity>, KnowledgeError> {
-    model
-        .term_named(name)?
-        .ok_or_else(|| KnowledgeError::UnknownName {
-            namespace: "term",
-            name: name.to_owned(),
-        })
 }
 
 fn lookup_id<T>(
@@ -789,8 +593,8 @@ fn table_name(kind: covalence_lib_hash::O256) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{InstallKnowledgeOutcome, ReplSession};
-    use crate::TrustedDb;
+    use super::{InstallKnowledgeOutcome, SuccessfulTraceQuery};
+    use crate::{TraceOutcome, TrustedDb};
 
     #[test]
     fn installation_is_incremental_and_idempotent() {
@@ -807,34 +611,34 @@ mod tests {
     }
 
     #[test]
-    fn repl_reaches_the_existential_trace_query() {
-        let mut session = ReplSession::new().unwrap();
-        session.eval("(type Value (value-type))").unwrap();
-        session.eval("(term add Value (add 20 22))").unwrap();
-        session.eval("(term nil Value ())").unwrap();
-        session.eval("(term forty-two Value 42)").unwrap();
-        session.eval("(executor evaluator)").unwrap();
-        session.eval("(trace evaluator add nil forty-two)").unwrap();
+    fn definitions_traces_and_existential_query_form_a_checked_flow() {
+        let mut database = TrustedDb::create_in_memory().unwrap();
+        database.install_knowledge_model().unwrap();
+        let mut model = database.knowledge_model().unwrap();
+        let value = model.define_type("Value", "(value-type)").unwrap();
+        let add = model
+            .define_term("add", value.use_id(), "(add 20 22)")
+            .unwrap();
+        let nil = model.define_term("nil", value.use_id(), "()").unwrap();
+        let answer = model
+            .define_term("forty-two", value.use_id(), "42")
+            .unwrap();
+        let executor = model.register_executor("evaluator").unwrap();
+        model
+            .record_trace(
+                executor,
+                add.use_id(),
+                nil.use_id(),
+                Some(answer.use_id()),
+                TraceOutcome::Returned,
+            )
+            .unwrap();
 
-        assert_eq!(session.eval("(outputs add)").unwrap(), "(forty-two)");
-    }
-
-    #[test]
-    fn absence_remains_an_empty_positive_result() {
-        let mut session = ReplSession::new().unwrap();
-        session.eval("(type Value (value-type))").unwrap();
-        session.eval("(term add Value (add 20 22))").unwrap();
-        assert_eq!(session.eval("(outputs add)").unwrap(), "()");
-    }
-
-    #[test]
-    fn trace_uses_existing_definitions_and_names_do_not_silently_rebind() {
-        let mut session = ReplSession::new().unwrap();
-        session.eval("(type Value (value-type))").unwrap();
-        assert!(session.eval("(type Value (different-type))").is_err());
-        session.eval("(term add Value (add 20 22))").unwrap();
-        session.eval("(term nil Value ())").unwrap();
-        session.eval("(term forty-two Value 42)").unwrap();
-        assert!(session.eval("(trace missing add nil forty-two)").is_err());
+        let rows = model
+            .query_successful_traces(SuccessfulTraceQuery::for_program(add.use_id()))
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].output, answer.use_id());
+        assert!(model.define_type("Value", "(different-type)").is_err());
     }
 }

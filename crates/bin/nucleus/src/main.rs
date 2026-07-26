@@ -1,8 +1,10 @@
 use std::io::{self, BufRead, IsTerminal, Write};
 
+mod session;
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let interactive = io::stdin().is_terminal();
-    let mut session = covalence_nucleus::ReplSession::new()?;
+    let mut session = session::Session::new()?;
     let stdin = io::stdin();
     let mut stdout = io::stdout().lock();
 
