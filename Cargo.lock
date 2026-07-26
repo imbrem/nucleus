@@ -112,6 +112,7 @@ dependencies = [
 name = "covalence-lib-sqlite"
 version = "0.0.0"
 dependencies = [
+ "bitflags",
  "rusqlite",
 ]
 
