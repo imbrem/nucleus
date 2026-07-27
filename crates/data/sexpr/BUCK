@@ -29,7 +29,7 @@ rust_library(
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "Representation-neutral S-expression data types and views",
+        "CARGO_PKG_DESCRIPTION": "S-expression trees, streaming events, and dialect-driven text parsing",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",
@@ -57,7 +57,7 @@ rust_test(
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "Representation-neutral S-expression data types and views",
+        "CARGO_PKG_DESCRIPTION": "S-expression trees, streaming events, and dialect-driven text parsing",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",

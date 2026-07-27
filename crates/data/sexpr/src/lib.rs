@@ -4,8 +4,9 @@
 //! [`TExpr`] is either an atom or an ordered node with a tag and children.
 //! Empty collections are valid, and child order and multiplicity are semantic.
 //! Tags occupy a namespace distinct from atoms.
-//! [`Symbol`] is the default owned representation for both atoms and tags;
-//! callers can select domain-specific types through the generic parameters.
+//! [`Symbol`] is a tree's default owned representation for both atoms and
+//! tags; callers can select domain-specific types through the generic
+//! parameters.
 //!
 //! [`SView`] and [`TView`] expose one valid node at a time without allocating.
 //! Implementors validate external data, handles, acyclicity, and resource
@@ -13,12 +14,46 @@
 //! ownership, mutation, construction, stable identity, random access,
 //! serialization, interning, or any particular storage strategy.
 //!
-//! This crate intentionally contains no parser, renderer, wire format, arena,
-//! matcher, unifier, or implicit conversion between tagged and untagged trees.
+//! # Reading text
+//!
+//! [`sax`] is the streaming boundary: a dialect reports one [`Event`] at a
+//! time, and an atom arrives as an unparsed [`Token`] that names the lexical
+//! production it came from. [`text`] turns a [`Dialect`](text::Dialect) into a
+//! [`Parser`](text::Parser); [`dialect`] holds the concrete ones.
+//!
+//! ```
+//! use covalence_data_sexpr::{Atom, Pose, SExpr, Symbol, text::read};
+//!
+//! let tree: SExpr<Atom> = read(r#"(add 1 "two")"#, Pose)?;
+//! assert_eq!(
+//!     tree.as_list().and_then(|children| children.first()),
+//!     Some(&SExpr::atom(Atom::Symbol(Symbol::new("add")))),
+//! );
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! Which atom type a caller asks for is the extension point. [`Atom`] keeps
+//! every production's contents; [`Symbol`] flattens the text-bearing ones; a
+//! domain type implements [`FromToken`] to evaluate numbers or reject
+//! productions it does not model.
+//!
+//! Two defaults differ on purpose. A tree's atom defaults to [`Symbol`],
+//! because a tree need not have come from text. The streaming vocabulary
+//! defaults to [`Atom`], because a token always did.
+//!
+//! This crate intentionally contains no renderer, wire format, arena, matcher,
+//! unifier, or implicit conversion between tagged and untagged trees.
 
 #![deny(unsafe_code)]
 
 pub use covalence_data_symbol::Symbol;
+
+pub mod dialect;
+pub mod sax;
+pub mod text;
+
+pub use dialect::{Pose, Wat, parse_pose, parse_wat};
+pub use sax::{Atom, Event, FromToken, Token};
 
 /// A canonical owned S-expression.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
