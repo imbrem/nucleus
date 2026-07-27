@@ -12,7 +12,6 @@ pub type ConnectionError = neutron::ConnectionError;
 /// Nucleus can preserve their semantic invariants by construction.
 #[derive(Debug)]
 pub struct Connection {
-    #[allow(dead_code)]
     neutron: neutron::Connection,
 }
 
@@ -36,6 +35,12 @@ impl Connection {
     pub fn open_in_memory() -> Result<Self, ConnectionError> {
         neutron::Connection::open_in_memory().map(|neutron| Self { neutron })
     }
+
+    /// Returns the connection's default content-addressed store.
+    #[must_use]
+    pub const fn cas(&self) -> crate::Cas<'_> {
+        self.neutron.cas()
+    }
 }
 
 #[cfg(test)]
@@ -44,6 +49,7 @@ mod tests {
 
     #[test]
     fn opens_through_neutron() {
-        let _connection = Connection::open_in_memory().expect("open Nucleus connection");
+        let connection = Connection::open_in_memory().expect("open Nucleus connection");
+        let _cas: crate::Cas<'_> = connection.cas();
     }
 }
