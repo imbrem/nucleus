@@ -11,6 +11,7 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+covalence-lib-hash = { path = "../lib/hash", default-features = false, features = ["blake3"] }
 covalence-lib-sqlite = { path = "../lib/sqlite" }
 covalence-neutron = { path = "../neutron" }
 

@@ -1,9 +1,13 @@
 //! Portable trusted core for Nucleus.
 
 mod connection;
+mod snapshot;
 
 pub use connection::{Connection, ConnectionError};
 pub use covalence_neutron::Cas;
+pub use snapshot::{
+    COV_VALID_DB_V0, ED25519_PUBLIC_KEY_V0, ed25519_key_id, valid_snapshot_statement,
+};
 
 #[cfg(target_os = "wasi")]
 #[allow(unsafe_code)]
