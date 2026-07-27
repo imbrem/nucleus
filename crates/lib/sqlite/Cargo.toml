@@ -9,9 +9,14 @@ publish = false
 
 [features]
 vfs = ["dep:bitflags"]
+vfs-register-native = ["vfs", "dep:sqlite-vfs", "dep:rand"]
+vfs-register-wasm = ["vfs", "dep:rsqlite-vfs"]
 
 [dependencies]
 bitflags = { version = "2", optional = true }
+sqlite-vfs = { version = "0.2", optional = true }
+rsqlite-vfs = { version = "0.1.1", optional = true }
+rand = { version = "0.9", optional = true }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 rusqlite = "=0.40.1"

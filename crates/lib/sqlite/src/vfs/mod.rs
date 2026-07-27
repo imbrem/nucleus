@@ -13,6 +13,12 @@
 
 use std::io;
 
+#[cfg(feature = "vfs-register-native")]
+pub mod register_native;
+
+#[cfg(feature = "vfs-register-wasm")]
+pub mod register_wasm;
+
 /// The kind of file `SQLite` is opening.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OpenKind {
