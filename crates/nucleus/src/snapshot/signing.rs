@@ -161,3 +161,57 @@ impl Verifier for Ed25519Verifier {
             .map_err(|_| VerificationError::InvalidSignature { key })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::valid_snapshot_statement;
+
+    fn signing_key() -> SigningKey {
+        SigningKey::from_bytes(&[7; 32])
+    }
+
+    #[test]
+    fn trait_objects_sign_and_verify_statements() {
+        let key = signing_key();
+        let key_id = ed25519_key_id(key.verifying_key().as_bytes());
+        let signer: Box<dyn Signer> = Box::new(Ed25519Signer::new(key.clone()));
+        let verifier: Box<dyn Verifier> = Box::new(Ed25519Verifier::new(key.verifying_key()));
+        let statement = valid_snapshot_statement(O256::from_bytes(b"database image"));
+
+        let signature = signer.sign(key_id, statement).expect("sign");
+        verifier
+            .verify(key_id, statement, &signature)
+            .expect("verify");
+        assert!(matches!(
+            verifier.verify(
+                key_id,
+                valid_snapshot_statement(O256::default()),
+                &signature
+            ),
+            Err(VerificationError::InvalidSignature { .. })
+        ));
+    }
+
+    #[test]
+    fn capabilities_reject_wrong_keys_and_malformed_signatures() {
+        let key = signing_key();
+        let signer = Ed25519Signer::new(key.clone());
+        let verifier = Ed25519Verifier::new(key.verifying_key());
+        let statement = O256::from_bytes(b"statement");
+        let wrong_key = O256::from_bytes(b"wrong key");
+
+        assert!(matches!(
+            signer.sign(wrong_key, statement),
+            Err(SignError::UnknownKey { .. })
+        ));
+        assert!(matches!(
+            verifier.verify(wrong_key, statement, &[0; 64]),
+            Err(VerificationError::UnknownKey { .. })
+        ));
+        assert!(matches!(
+            verifier.verify(verifier.key_id(), statement, &[0; 63]),
+            Err(VerificationError::MalformedSignature { .. })
+        ));
+    }
+}
