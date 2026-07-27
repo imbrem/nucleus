@@ -23,3 +23,30 @@ pub fn ed25519_key_id(public_key: &[u8; 32]) -> O256 {
 pub fn valid_snapshot_statement(snapshot_hash: O256) -> O256 {
     COV_VALID_DB_V0.tag(snapshot_hash)
 }
+
+#[cfg(test)]
+mod tests {
+    use covalence_lib_hash::{O256, assert_o256_path};
+
+    use super::*;
+
+    #[test]
+    fn protocol_roots_match_their_documented_paths() {
+        assert_o256_path!(COV_VALID_DB_V0, ::nucleus.snapshot.valid.v0);
+        assert_o256_path!(ED25519_PUBLIC_KEY_V0, ::crypto.public_key.ed25519.v0);
+    }
+
+    #[test]
+    fn key_and_statement_vectors_are_stable() {
+        assert_eq!(
+            ed25519_key_id(&[7; 32]),
+            O256::from_hex("6ec15cbe98f0347f4bef435ec2fb3f7b2779a3f54a038b4c523413ccac5436af")
+                .expect("valid key ID vector")
+        );
+        assert_eq!(
+            valid_snapshot_statement(O256::from_bytes(b"sample image")),
+            O256::from_hex("c4325090ba3cf6ec5389b421d4cf324b8a7476583b1d10a84d365bdcd33b6a54")
+                .expect("valid statement vector")
+        );
+    }
+}
