@@ -180,7 +180,11 @@ pub trait Vfs {
 /// This trait covers the I/O methods that `SQLite` calls on an open database
 /// file, journal, or WAL. Implementations must handle reads, writes, and
 /// advisory locking.
-pub trait File {
+///
+/// All methods take `&self` because `SQLite` may call file methods from
+/// multiple threads. Implementations should use interior mutability (e.g.
+/// `Mutex`) for any mutable state.
+pub trait File: Send + Sync {
     /// Reads exactly `buf.len()` bytes starting at `offset`.
     ///
     /// If the file is shorter than `offset + buf.len()`, the trailing bytes
@@ -191,28 +195,28 @@ pub trait File {
     ///
     /// Returns an error if the read fails for a reason other than a short
     /// file.
-    fn read(&mut self, buf: &mut [u8], offset: u64) -> io::Result<()>;
+    fn read(&self, buf: &mut [u8], offset: u64) -> io::Result<()>;
 
     /// Writes `buf` starting at `offset`.
     ///
     /// # Errors
     ///
     /// Returns an error if the write cannot be completed.
-    fn write(&mut self, buf: &[u8], offset: u64) -> io::Result<()>;
+    fn write(&self, buf: &[u8], offset: u64) -> io::Result<()>;
 
     /// Truncates the file to `size` bytes.
     ///
     /// # Errors
     ///
     /// Returns an error if the file cannot be truncated.
-    fn truncate(&mut self, size: u64) -> io::Result<()>;
+    fn truncate(&self, size: u64) -> io::Result<()>;
 
     /// Syncs the file contents (and optionally metadata) to stable storage.
     ///
     /// # Errors
     ///
     /// Returns an error if the sync fails.
-    fn sync(&mut self, flags: SyncFlags) -> io::Result<()>;
+    fn sync(&self, flags: SyncFlags) -> io::Result<()>;
 
     /// Returns the current size of the file in bytes.
     ///
@@ -226,14 +230,14 @@ pub trait File {
     /// # Errors
     ///
     /// Returns an error if the lock cannot be acquired.
-    fn lock(&mut self, level: LockLevel) -> io::Result<()>;
+    fn lock(&self, level: LockLevel) -> io::Result<()>;
 
     /// Releases the lock to the given level.
     ///
     /// # Errors
     ///
     /// Returns an error if the lock cannot be released.
-    fn unlock(&mut self, level: LockLevel) -> io::Result<()>;
+    fn unlock(&self, level: LockLevel) -> io::Result<()>;
 
     /// Returns the current lock level.
     fn current_lock(&self) -> LockLevel;
@@ -262,13 +266,15 @@ pub trait File {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
 
     struct MemVfs;
 
     struct MemFile {
-        data: Vec<u8>,
-        lock: LockLevel,
+        data: Mutex<Vec<u8>>,
+        lock: Mutex<LockLevel>,
     }
 
     impl Vfs for MemVfs {
@@ -281,8 +287,8 @@ mod tests {
             _flags: OpenFlags,
         ) -> io::Result<Self::File> {
             Ok(MemFile {
-                data: Vec::new(),
-                lock: LockLevel::None,
+                data: Mutex::new(Vec::new()),
+                lock: Mutex::new(LockLevel::None),
             })
         }
 
@@ -300,59 +306,61 @@ mod tests {
     }
 
     impl File for MemFile {
-        fn read(&mut self, buf: &mut [u8], offset: u64) -> io::Result<()> {
+        fn read(&self, buf: &mut [u8], offset: u64) -> io::Result<()> {
+            let data = self.data.lock().unwrap();
             let offset = offset as usize;
-            let available = self.data.len().saturating_sub(offset);
+            let available = data.len().saturating_sub(offset);
             let to_copy = buf.len().min(available);
             if to_copy > 0 {
-                buf[..to_copy].copy_from_slice(&self.data[offset..offset + to_copy]);
+                buf[..to_copy].copy_from_slice(&data[offset..offset + to_copy]);
             }
             buf[to_copy..].fill(0);
             Ok(())
         }
 
-        fn write(&mut self, buf: &[u8], offset: u64) -> io::Result<()> {
+        fn write(&self, buf: &[u8], offset: u64) -> io::Result<()> {
+            let mut data = self.data.lock().unwrap();
             let offset = offset as usize;
             let end = offset + buf.len();
-            if end > self.data.len() {
-                self.data.resize(end, 0);
+            if end > data.len() {
+                data.resize(end, 0);
             }
-            self.data[offset..end].copy_from_slice(buf);
+            data[offset..end].copy_from_slice(buf);
             Ok(())
         }
 
-        fn truncate(&mut self, size: u64) -> io::Result<()> {
-            self.data.truncate(size as usize);
+        fn truncate(&self, size: u64) -> io::Result<()> {
+            self.data.lock().unwrap().truncate(size as usize);
             Ok(())
         }
 
-        fn sync(&mut self, _flags: SyncFlags) -> io::Result<()> {
+        fn sync(&self, _flags: SyncFlags) -> io::Result<()> {
             Ok(())
         }
 
         fn file_size(&self) -> io::Result<u64> {
-            Ok(self.data.len() as u64)
+            Ok(self.data.lock().unwrap().len() as u64)
         }
 
-        fn lock(&mut self, level: LockLevel) -> io::Result<()> {
-            self.lock = level;
+        fn lock(&self, level: LockLevel) -> io::Result<()> {
+            *self.lock.lock().unwrap() = level;
             Ok(())
         }
 
-        fn unlock(&mut self, level: LockLevel) -> io::Result<()> {
-            self.lock = level;
+        fn unlock(&self, level: LockLevel) -> io::Result<()> {
+            *self.lock.lock().unwrap() = level;
             Ok(())
         }
 
         fn current_lock(&self) -> LockLevel {
-            self.lock
+            *self.lock.lock().unwrap()
         }
     }
 
     #[test]
     fn mem_vfs_round_trip() {
         let vfs = MemVfs;
-        let mut file = vfs
+        let file = vfs
             .open(None, OpenKind::MainDb, OpenFlags::default())
             .unwrap();
 
@@ -367,7 +375,7 @@ mod tests {
     #[test]
     fn short_read_zero_fills() {
         let vfs = MemVfs;
-        let mut file = vfs
+        let file = vfs
             .open(None, OpenKind::MainDb, OpenFlags::default())
             .unwrap();
 
@@ -380,7 +388,7 @@ mod tests {
     #[test]
     fn read_beyond_eof_fills_zeros() {
         let vfs = MemVfs;
-        let mut file = vfs
+        let file = vfs
             .open(None, OpenKind::MainDb, OpenFlags::default())
             .unwrap();
 
@@ -392,7 +400,7 @@ mod tests {
     #[test]
     fn write_at_offset_extends_file() {
         let vfs = MemVfs;
-        let mut file = vfs
+        let file = vfs
             .open(None, OpenKind::MainDb, OpenFlags::default())
             .unwrap();
 
@@ -408,7 +416,7 @@ mod tests {
     #[test]
     fn truncate_shrinks_file() {
         let vfs = MemVfs;
-        let mut file = vfs
+        let file = vfs
             .open(None, OpenKind::MainDb, OpenFlags::default())
             .unwrap();
 
@@ -424,7 +432,7 @@ mod tests {
     #[test]
     fn lock_transitions() {
         let vfs = MemVfs;
-        let mut file = vfs
+        let file = vfs
             .open(None, OpenKind::MainDb, OpenFlags::default())
             .unwrap();
 
@@ -467,7 +475,7 @@ mod tests {
     #[test]
     fn reserved_lock_check() {
         let vfs = MemVfs;
-        let mut file = vfs
+        let file = vfs
             .open(None, OpenKind::MainDb, OpenFlags::default())
             .unwrap();
 

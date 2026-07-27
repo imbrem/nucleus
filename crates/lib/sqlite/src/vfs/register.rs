@@ -44,44 +44,31 @@ struct AppData<V: Vfs> {
 // File wrapper — bridges our File to rsqlite_vfs::VfsFile
 // ---------------------------------------------------------------------------
 
-/// Wraps a [`File`] in a `RefCell` so that `VfsFile::read` (which takes
-/// `&self`) can call our `File::read` (which takes `&mut self`).
-struct WrappedFile<F>(RefCell<F>);
+struct WrappedFile<F>(F);
 
 impl<F: File> VfsFile for WrappedFile<F> {
     fn read(&self, buf: &mut [u8], offset: usize) -> VfsResult<bool> {
-        let mut file = self.0.borrow_mut();
         #[allow(clippy::cast_possible_truncation)]
-        let size = file.file_size().map_err(io_to_vfs)? as usize;
-        file.read(buf, offset as u64).map_err(io_to_vfs)?;
+        let size = self.0.file_size().map_err(io_to_vfs)? as usize;
+        self.0.read(buf, offset as u64).map_err(io_to_vfs)?;
         Ok(offset + buf.len() <= size)
     }
 
     fn write(&mut self, buf: &[u8], offset: usize) -> VfsResult<()> {
-        self.0
-            .borrow_mut()
-            .write(buf, offset as u64)
-            .map_err(io_to_vfs)
+        self.0.write(buf, offset as u64).map_err(io_to_vfs)
     }
 
     fn truncate(&mut self, size: usize) -> VfsResult<()> {
-        self.0.borrow_mut().truncate(size as u64).map_err(io_to_vfs)
+        self.0.truncate(size as u64).map_err(io_to_vfs)
     }
 
     fn flush(&mut self) -> VfsResult<()> {
-        self.0
-            .borrow_mut()
-            .sync(super::SyncFlags::Normal)
-            .map_err(io_to_vfs)
+        self.0.sync(super::SyncFlags::Normal).map_err(io_to_vfs)
     }
 
     #[allow(clippy::cast_possible_truncation)]
     fn size(&self) -> VfsResult<usize> {
-        self.0
-            .borrow()
-            .file_size()
-            .map(|s| s as usize)
-            .map_err(io_to_vfs)
+        self.0.file_size().map(|s| s as usize).map_err(io_to_vfs)
     }
 }
 
@@ -105,7 +92,7 @@ impl<V: Vfs + 'static> VfsStore<WrappedFile<V::File>, AppData<V>> for Store<V> {
         app_data
             .files
             .borrow_mut()
-            .insert(file.into(), WrappedFile(RefCell::new(f)));
+            .insert(file.into(), WrappedFile(f));
         Ok(())
     }
 
