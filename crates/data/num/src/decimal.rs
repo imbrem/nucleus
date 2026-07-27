@@ -10,48 +10,6 @@ use covalence_lib_bigint::{BigInt, Sign};
 
 use crate::{Int, Num};
 
-/// Default maximum number of coefficient digits accepted by [`Decimal::parse_with_limit`].
-pub const DEFAULT_MAX_DECIMAL_DIGITS: usize = 1024 * 1024;
-
-/// Default maximum scale accepted by [`Decimal::parse_with_limit`].
-pub const DEFAULT_MAX_DECIMAL_SCALE: u32 = 1024 * 1024;
-
-/// Resource bounds for parsing untrusted decimal text.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct DecimalLimit {
-    max_digits: usize,
-    max_scale: u32,
-}
-
-impl DecimalLimit {
-    /// Creates parsing bounds.
-    #[must_use]
-    pub const fn new(max_digits: usize, max_scale: u32) -> Self {
-        Self {
-            max_digits,
-            max_scale,
-        }
-    }
-
-    /// Returns the maximum coefficient digit count.
-    #[must_use]
-    pub const fn max_digits(self) -> usize {
-        self.max_digits
-    }
-
-    /// Returns the maximum scale.
-    #[must_use]
-    pub const fn max_scale(self) -> u32 {
-        self.max_scale
-    }
-}
-
-impl Default for DecimalLimit {
-    fn default() -> Self {
-        Self::new(DEFAULT_MAX_DECIMAL_DIGITS, DEFAULT_MAX_DECIMAL_SCALE)
-    }
-}
-
 /// Why decimal text could not be parsed exactly.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DecimalParseError {
@@ -59,20 +17,8 @@ pub enum DecimalParseError {
     Empty,
     /// The input did not match the accepted decimal grammar.
     InvalidSyntax,
-    /// The coefficient has too many digits.
-    DigitLimitExceeded {
-        /// Number of coefficient digits in the input.
-        actual: usize,
-        /// Configured maximum.
-        limit: usize,
-    },
-    /// The represented scale exceeds the configured limit.
-    ScaleLimitExceeded {
-        /// Required scale.
-        actual: u64,
-        /// Configured maximum.
-        limit: u32,
-    },
+    /// The scale overflows `u32`.
+    ScaleOverflow,
 }
 
 impl fmt::Display for DecimalParseError {
@@ -80,12 +26,7 @@ impl fmt::Display for DecimalParseError {
         match self {
             Self::Empty => formatter.write_str("decimal is empty"),
             Self::InvalidSyntax => formatter.write_str("invalid decimal syntax"),
-            Self::DigitLimitExceeded { actual, limit } => {
-                write!(formatter, "decimal has {actual} digits; limit is {limit}")
-            }
-            Self::ScaleLimitExceeded { actual, limit } => {
-                write!(formatter, "decimal scale is {actual}; limit is {limit}")
-            }
+            Self::ScaleOverflow => formatter.write_str("decimal scale exceeds u32::MAX"),
         }
     }
 }
@@ -182,20 +123,6 @@ impl Decimal {
         self.coefficient.is_zero()
     }
 
-    /// Parses the exact grammar `[+-]?digits[.digits]?[e[+-]?digits]?`.
-    ///
-    /// The integer or fractional digit sequence may be empty only when the
-    /// other one is non-empty. Exponent notation changes the value exactly; it
-    /// never rounds.
-    ///
-    /// # Errors
-    ///
-    /// Returns a syntax or resource-limit error before constructing an
-    /// over-limit coefficient or scale.
-    pub fn parse_with_limit(input: &str, limit: DecimalLimit) -> Result<Self, DecimalParseError> {
-        parse_decimal(input, limit)
-    }
-
     /// Divides only when the quotient has a finite base-10 expansion.
     ///
     /// # Errors
@@ -279,7 +206,7 @@ impl FromStr for Decimal {
     type Err = DecimalParseError;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
-        Self::parse_with_limit(input, DecimalLimit::default())
+        parse_decimal(input)
     }
 }
 
@@ -369,7 +296,7 @@ fn normalize(mut coefficient: BigInt, mut scale: u32) -> (BigInt, u32) {
     (coefficient, scale)
 }
 
-fn parse_decimal(input: &str, limit: DecimalLimit) -> Result<Decimal, DecimalParseError> {
+fn parse_decimal(input: &str) -> Result<Decimal, DecimalParseError> {
     if input.is_empty() {
         return Err(DecimalParseError::Empty);
     }
@@ -402,20 +329,6 @@ fn parse_decimal(input: &str, limit: DecimalLimit) -> Result<Decimal, DecimalPar
     {
         return Err(DecimalParseError::InvalidSyntax);
     }
-    let digit_count =
-        integer
-            .len()
-            .checked_add(fraction.len())
-            .ok_or(DecimalParseError::DigitLimitExceeded {
-                actual: usize::MAX,
-                limit: limit.max_digits,
-            })?;
-    if digit_count > limit.max_digits {
-        return Err(DecimalParseError::DigitLimitExceeded {
-            actual: digit_count,
-            limit: limit.max_digits,
-        });
-    }
 
     let exponent = parse_exponent(exponent_text)?;
     let required_scale = i128::try_from(fraction.len()).unwrap_or(i128::MAX) - exponent;
@@ -427,31 +340,13 @@ fn parse_decimal(input: &str, limit: DecimalLimit) -> Result<Decimal, DecimalPar
     }
 
     if required_scale <= 0 {
-        let shift = required_scale.unsigned_abs();
-        if shift > u128::from(limit.max_scale) {
-            return Err(DecimalParseError::ScaleLimitExceeded {
-                actual: u64::try_from(shift).unwrap_or(u64::MAX),
-                limit: limit.max_scale,
-            });
-        }
-        let shift = u32::try_from(shift).map_err(|_| DecimalParseError::ScaleLimitExceeded {
-            actual: u64::MAX,
-            limit: limit.max_scale,
-        })?;
+        let shift = u32::try_from(required_scale.unsigned_abs())
+            .map_err(|_| DecimalParseError::ScaleOverflow)?;
         coefficient *= BigInt::from(10_u8).pow(shift);
         Ok(Decimal::new(Int(coefficient), 0))
     } else {
-        let actual = u64::try_from(required_scale).unwrap_or(u64::MAX);
-        if actual > u64::from(limit.max_scale) {
-            return Err(DecimalParseError::ScaleLimitExceeded {
-                actual,
-                limit: limit.max_scale,
-            });
-        }
-        let scale = u32::try_from(actual).map_err(|_| DecimalParseError::ScaleLimitExceeded {
-            actual,
-            limit: limit.max_scale,
-        })?;
+        let scale =
+            u32::try_from(required_scale).map_err(|_| DecimalParseError::ScaleOverflow)?;
         Ok(Decimal::new(Int(coefficient), scale))
     }
 }
@@ -480,15 +375,8 @@ fn parse_exponent(input: Option<&str>) -> Result<i128, DecimalParseError> {
     }
     let magnitude = digits
         .parse::<u128>()
-        .map_err(|_| DecimalParseError::ScaleLimitExceeded {
-            actual: u64::MAX,
-            limit: DEFAULT_MAX_DECIMAL_SCALE,
-        })?;
-    let magnitude =
-        i128::try_from(magnitude).map_err(|_| DecimalParseError::ScaleLimitExceeded {
-            actual: u64::MAX,
-            limit: DEFAULT_MAX_DECIMAL_SCALE,
-        })?;
+        .map_err(|_| DecimalParseError::ScaleOverflow)?;
+    let magnitude = i128::try_from(magnitude).map_err(|_| DecimalParseError::ScaleOverflow)?;
     Ok(if negative { -magnitude } else { magnitude })
 }
 
@@ -601,22 +489,11 @@ mod tests {
     }
 
     #[test]
-    fn parsing_enforces_hostile_input_limits() {
-        let limit = DecimalLimit::new(4, 8);
-        assert_eq!(
-            Decimal::parse_with_limit("12345", limit),
-            Err(DecimalParseError::DigitLimitExceeded {
-                actual: 5,
-                limit: 4
-            })
-        );
-        assert_eq!(
-            Decimal::parse_with_limit("1e-9", limit),
-            Err(DecimalParseError::ScaleLimitExceeded {
-                actual: 9,
-                limit: 8
-            })
-        );
+    fn very_large_coefficients_and_scales_are_exact() {
+        let coefficient = "9".repeat(10_000);
+        let value: Decimal = format!("{coefficient}e-10000").parse().unwrap();
+        assert_eq!(value.scale(), 10_000);
+        assert_eq!(value.to_string().parse::<Decimal>().unwrap(), value);
     }
 
     #[test]
@@ -641,18 +518,6 @@ mod tests {
             decimal("-10").checked_div(&decimal("4")).unwrap(),
             decimal("-2.5")
         );
-    }
-
-    #[test]
-    fn very_large_coefficients_and_scales_are_exact() {
-        let coefficient = "9".repeat(10_000);
-        let value = Decimal::parse_with_limit(
-            &format!("{coefficient}e-10000"),
-            DecimalLimit::new(10_000, 10_000),
-        )
-        .unwrap();
-        assert_eq!(value.scale(), 10_000);
-        assert_eq!(value.to_string().parse::<Decimal>().unwrap(), value);
     }
 
     #[test]

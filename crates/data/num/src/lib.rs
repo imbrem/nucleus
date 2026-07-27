@@ -1,8 +1,10 @@
 //! Exact, portable numeric value types.
 //!
 //! [`Num`] is a non-negative arbitrary-precision integer and [`Int`] is a
-//! signed arbitrary-precision integer. Their backing representation is private;
-//! use canonical bytes at storage and runtime boundaries.
+//! signed arbitrary-precision integer. [`Float32`] and [`Float64`] preserve the
+//! complete identity of IEEE 754 binary bit patterns. Their backing
+//! representations are private; use canonical bytes at storage and runtime
+//! boundaries.
 
 use std::error::Error;
 use std::fmt;
@@ -11,51 +13,14 @@ use std::ops::{Add, Mul, Neg, Sub};
 use covalence_lib_bigint::{BigInt, BigUint, Sign};
 
 mod decimal;
+mod float;
 
-pub use decimal::{Decimal, DecimalDivisionError, DecimalLimit, DecimalParseError, DecimalParts};
-
-/// Default maximum accepted canonical encoding size (one MiB).
-///
-/// Callers handling untrusted input can select a smaller bound with
-/// [`DecodeLimit`].
-pub const DEFAULT_MAX_BYTES: usize = 1024 * 1024;
-
-/// A resource bound for decoding an arbitrary-precision value.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct DecodeLimit {
-    max_bytes: usize,
-}
-
-impl DecodeLimit {
-    /// Creates a byte-length bound.
-    #[must_use]
-    pub const fn new(max_bytes: usize) -> Self {
-        Self { max_bytes }
-    }
-
-    /// Returns the maximum accepted encoding length.
-    #[must_use]
-    pub const fn max_bytes(self) -> usize {
-        self.max_bytes
-    }
-}
-
-impl Default for DecodeLimit {
-    fn default() -> Self {
-        Self::new(DEFAULT_MAX_BYTES)
-    }
-}
+pub use decimal::{Decimal, DecimalDivisionError, DecimalParseError, DecimalParts};
+pub use float::{Float32, Float64, FloatClass, InexactFloatConversion};
 
 /// A canonical integer decoding error.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DecodeError {
-    /// The input exceeded the caller's resource limit.
-    LimitExceeded {
-        /// Actual input length.
-        actual: usize,
-        /// Maximum accepted input length.
-        limit: usize,
-    },
     /// The input was empty.
     Empty,
     /// The representation was not the unique encoding of its value.
@@ -65,9 +30,6 @@ pub enum DecodeError {
 impl fmt::Display for DecodeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::LimitExceeded { actual, limit } => {
-                write!(formatter, "encoding is {actual} bytes; limit is {limit}")
-            }
             Self::Empty => formatter.write_str("integer encoding is empty"),
             Self::NonCanonical => formatter.write_str("integer encoding is not canonical"),
         }
@@ -125,21 +87,11 @@ impl Num {
     ///
     /// # Errors
     ///
-    /// Rejects empty, over-limit, and leading-zero representations.
+    /// Rejects empty and leading-zero representations.
     pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
-        Self::from_canonical_bytes_with_limit(bytes, DecodeLimit::default())
-    }
-
-    /// Decodes with a caller-selected resource limit.
-    ///
-    /// # Errors
-    ///
-    /// Rejects empty, over-limit, and leading-zero representations.
-    pub fn from_canonical_bytes_with_limit(
-        bytes: &[u8],
-        limit: DecodeLimit,
-    ) -> Result<Self, DecodeError> {
-        check_input(bytes, limit)?;
+        if bytes.is_empty() {
+            return Err(DecodeError::Empty);
+        }
         if bytes.len() > 1 && bytes[0] == 0 {
             return Err(DecodeError::NonCanonical);
         }
@@ -211,21 +163,11 @@ impl Int {
     ///
     /// # Errors
     ///
-    /// Rejects empty, over-limit, and redundant sign-extension bytes.
+    /// Rejects empty and redundant sign-extension bytes.
     pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
-        Self::from_canonical_bytes_with_limit(bytes, DecodeLimit::default())
-    }
-
-    /// Decodes with a caller-selected resource limit.
-    ///
-    /// # Errors
-    ///
-    /// Rejects empty, over-limit, and redundant sign-extension bytes.
-    pub fn from_canonical_bytes_with_limit(
-        bytes: &[u8],
-        limit: DecodeLimit,
-    ) -> Result<Self, DecodeError> {
-        check_input(bytes, limit)?;
+        if bytes.is_empty() {
+            return Err(DecodeError::Empty);
+        }
         let value = BigInt::from_signed_bytes_be(bytes);
         if value.to_signed_bytes_be() != bytes {
             return Err(DecodeError::NonCanonical);
@@ -256,19 +198,6 @@ impl fmt::Display for Int {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(&self.0, formatter)
     }
-}
-
-fn check_input(bytes: &[u8], limit: DecodeLimit) -> Result<(), DecodeError> {
-    if bytes.len() > limit.max_bytes {
-        return Err(DecodeError::LimitExceeded {
-            actual: bytes.len(),
-            limit: limit.max_bytes,
-        });
-    }
-    if bytes.is_empty() {
-        return Err(DecodeError::Empty);
-    }
-    Ok(())
 }
 
 macro_rules! impl_unsigned {
@@ -487,17 +416,6 @@ mod tests {
         assert_eq!(
             Int::from_canonical_bytes(&[0, 1]),
             Err(DecodeError::NonCanonical)
-        );
-    }
-
-    #[test]
-    fn decoding_enforces_resource_limit_before_allocation() {
-        assert_eq!(
-            Num::from_canonical_bytes_with_limit(&[1, 2], DecodeLimit::new(1)),
-            Err(DecodeError::LimitExceeded {
-                actual: 2,
-                limit: 1
-            })
         );
     }
 
