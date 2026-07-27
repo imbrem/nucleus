@@ -6,6 +6,9 @@ use covalence_lib_sqlite as sqlite;
 const CREATE_CONNECTION_CATALOG_SQL: &str = include_str!("../sql/create_connection_catalog.sql");
 const CREATE_ATTACHED_DATABASES_SQL: &str = include_str!("../sql/create_attached_databases.sql");
 const CREATE_DEFAULT_CAS_SQL: &str = include_str!("../sql/create_default_cas.sql");
+const CREATE_SIGNING_KEYS_SQL: &str = include_str!("../sql/create_signing_keys.sql");
+const CREATE_TRUSTED_KEYS_SQL: &str = include_str!("../sql/create_trusted_keys.sql");
+const CREATE_TRUSTED_SNAPSHOTS_SQL: &str = include_str!("../sql/create_trusted_snapshots.sql");
 const REGISTER_TABLE_SQL: &str = include_str!("../sql/register_table.sql");
 const REGISTER_ATTACHED_DATABASE_SQL: &str = include_str!("../sql/register_attached_database.sql");
 
@@ -18,6 +21,15 @@ pub const ATTACHED_DATABASES: &str = "cov_conn_attached";
 /// Physical name of Neutron's connection-local default CAS.
 pub const DEFAULT_CAS: &str = "cov_conn_default_cas";
 
+/// Physical name of the default connection signing-key metadata table.
+pub const SIGNING_KEYS: &str = "cov_conn_signing_keys";
+
+/// Physical name of the default connection trusted-key metadata table.
+pub const TRUSTED_KEYS: &str = "cov_conn_trusted_keys";
+
+/// Physical name of the default connection trusted-snapshot table.
+pub const TRUSTED_SNAPSHOTS: &str = "cov_conn_trusted_snapshots";
+
 /// Uninterpreted symbol assigned to the connection catalog.
 pub const CONNECTION_CATALOG_INTERPRETATION: &str = "cov.conn.catalog/v0";
 
@@ -26,6 +38,15 @@ pub const ATTACHED_DATABASES_INTERPRETATION: &str = "cov.conn.attached/v0";
 
 /// Uninterpreted symbol assigned to the connection-local default CAS.
 pub const DEFAULT_CAS_INTERPRETATION: &str = "cov.cas.default/v0";
+
+/// Interpretation of connection signing-key metadata.
+pub const SIGNING_KEYS_INTERPRETATION: &str = "cov.conn.signing-keys/v0";
+
+/// Interpretation of connection trusted-key metadata.
+pub const TRUSTED_KEYS_INTERPRETATION: &str = "cov.conn.trusted-keys/v0";
+
+/// Interpretation of direct-hash trusted-snapshot tables.
+pub const TRUSTED_SNAPSHOTS_INTERPRETATION: &str = "cov.conn.trusted-snapshots/v0";
 
 /// A permeable `SQLite` connection with Neutron's connection-local metadata.
 ///
@@ -135,6 +156,30 @@ fn initialize(connection: &mut sqlite::Connection) -> Result<(), ConnectionError
 
     create_and_register_table(
         &transaction,
+        4,
+        SIGNING_KEYS,
+        SIGNING_KEYS_INTERPRETATION,
+        CREATE_SIGNING_KEYS_SQL,
+    )?;
+
+    create_and_register_table(
+        &transaction,
+        5,
+        TRUSTED_KEYS,
+        TRUSTED_KEYS_INTERPRETATION,
+        CREATE_TRUSTED_KEYS_SQL,
+    )?;
+
+    create_and_register_table(
+        &transaction,
+        6,
+        TRUSTED_SNAPSHOTS,
+        TRUSTED_SNAPSHOTS_INTERPRETATION,
+        CREATE_TRUSTED_SNAPSHOTS_SQL,
+    )?;
+
+    create_and_register_table(
+        &transaction,
         3,
         DEFAULT_CAS,
         DEFAULT_CAS_INTERPRETATION,
@@ -159,7 +204,7 @@ fn create_and_register_table(
     register_table(transaction, table_id, table_name, interpretation)
 }
 
-fn register_table(
+pub(crate) fn register_table(
     transaction: &sqlite::Transaction<'_>,
     table_id: i64,
     table_name: &str,
@@ -186,7 +231,7 @@ fn register_attached_database(
 mod tests {
     use super::{
         ATTACHED_DATABASES, CONNECTION_CATALOG, Connection, ConnectionError, DEFAULT_CAS,
-        initialize,
+        SIGNING_KEYS, TRUSTED_KEYS, TRUSTED_SNAPSHOTS, initialize,
     };
     use covalence_lib_sqlite as sqlite;
 
@@ -230,6 +275,21 @@ mod tests {
                     3,
                     String::from(DEFAULT_CAS),
                     String::from("cov.cas.default/v0")
+                ),
+                (
+                    4,
+                    String::from(SIGNING_KEYS),
+                    String::from("cov.conn.signing-keys/v0")
+                ),
+                (
+                    5,
+                    String::from(TRUSTED_KEYS),
+                    String::from("cov.conn.trusted-keys/v0")
+                ),
+                (
+                    6,
+                    String::from(TRUSTED_SNAPSHOTS),
+                    String::from("cov.conn.trusted-snapshots/v0")
                 ),
             ]
         );
