@@ -32,6 +32,27 @@
       ]
     },
     {
+      "id": "workspace#covalence-lib-crypto@0.0.0",
+      "name": "covalence-lib-crypto",
+      "version": "0.0.0",
+      "path": "crates/lib/crypto",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_lib_crypto",
+          "kinds": [
+            "lib"
+          ]
+        },
+        {
+          "name": "ed25519",
+          "kinds": [
+            "test"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-lib-error@0.0.0",
       "name": "covalence-lib-error",
       "version": "0.0.0",
