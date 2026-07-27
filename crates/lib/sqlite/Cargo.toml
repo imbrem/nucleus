@@ -9,6 +9,7 @@ publish = false
 
 [features]
 vfs = ["dep:bitflags"]
+vfs-register = ["vfs"]
 
 [dependencies]
 bitflags = { version = "2", optional = true }

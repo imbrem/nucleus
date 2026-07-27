@@ -11,6 +11,11 @@
 //! files. Advisory locking is included because `SQLite` calls these methods
 //! even for single-connection in-process databases.
 
+#[cfg(feature = "vfs-register")]
+mod register;
+#[cfg(feature = "vfs-register")]
+pub use register::register;
+
 use std::io;
 
 /// The kind of file `SQLite` is opening.
