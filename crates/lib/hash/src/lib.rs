@@ -22,7 +22,7 @@ pub use git::{Git, GitHash, Sha1};
 #[cfg(feature = "blake3")]
 pub use incremental::{
     Blake3Leaf, CleanTree, CvTree, DynamicGeometry, GeometryError, IncompleteUpdate, LeafIndex,
-    MerkleScheme, NewCvs, RebuildError, Retention, StaticGeometry, TreeGeometry, UpdateError,
+    MerkleScheme, NewCvs, RebuildError, UpdateError,
 };
 
 #[cfg(feature = "git-sha1")]

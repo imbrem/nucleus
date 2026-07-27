@@ -1,184 +1,65 @@
-# Incremental Merkle cache sketch
+# Dynamic incremental Merkle cache
 
-This sketch separates the trusted CV cache from every source of file bytes.
-Readers, owned buffers, remote stores, and SQLite VFS adapters are higher-level
-drivers. The core only records tree geometry, chaining values, and dirty state.
+The first implementation deliberately supports one geometry: a runtime byte
+length divided into fixed-width leaves. It stores the complete canonical tree
+in contiguous memory. Retention depths, skipped levels, packed dirty lists,
+static geometry, and external storage are follow-up work.
 
-## Proposed surface
+## Flat layout
 
-```rust
-pub struct LeafIndex(pub u64);
-pub struct Retention {
-    pub start: u8,
-    pub skip: u8,
-}
+For `n` leaves, allocate exactly `2n - 1` opaque 256-bit nodes. The layout is
+the recursive in-order traversal of the canonical tree:
 
-pub struct DynamicGeometry {
-    pub bytes: u64,
-    pub retention: Retention,
-}
+- leaf `i` is always slot `2i`;
+- split a non-leaf span using the scheme's canonical left-subtree size;
+- place the parent in the slot between its flattened children.
 
-pub struct StaticGeometry<
-    const BYTES: u64,
-    const START: u8,
-    const SKIP: u8,
->;
-
-pub struct NewCvs<I>(pub I);
-
-pub struct LeafError<E> {
-    pub index: LeafIndex,
-    pub source: E,
-}
-
-pub struct CvTree<G, S> {
-    // Geometry and CV/dirty-state storage only.
-}
-
-pub struct CleanTree<G, S>(CvTree<G, S>);
-
-impl<G, S> CvTree<G, S> {
-    pub fn dirty(&mut self, leaf: LeafIndex) -> Result<(), DirtyError>;
-    pub fn dirty_range(
-        &mut self,
-        leaves: Range<LeafIndex>,
-    ) -> Result<(), DirtyError>;
-
-    pub fn update<I>(
-        &mut self,
-        cvs: NewCvs<I>,
-    ) -> Result<UpdateReport, UpdateError>
-    where
-        I: IntoIterator<Item = (LeafIndex, Blake3Cv)>;
-
-    pub fn normalize(&mut self) -> Result<(), StoreError>;
-    pub fn refill_frontier(
-        &self,
-    ) -> impl Iterator<Item = LeafIndex> + '_;
-    pub fn supply<I>(
-        &mut self,
-        cvs: NewCvs<I>,
-    ) -> Result<SupplyReport, UpdateError>
-    where
-        I: IntoIterator<Item = (LeafIndex, Blake3Cv)>;
-
-    pub fn try_root_with<E>(
-        &mut self,
-        leaf: impl FnMut(
-            LeafIndex,
-        ) -> Result<Blake3Cv, E>,
-    ) -> Result<Blake3Hash, RebuildError<E>>;
-
-    pub fn root_with(
-        &mut self,
-        leaf: impl FnMut(LeafIndex) -> Blake3Cv,
-    ) -> Result<
-        Blake3Hash,
-        RebuildError<Infallible>,
-    >;
-}
-```
-
-`LeafError<E>` attaches the requested index to callback failures. A failed
-callback leaves that leaf and its ancestors conservatively dirty, so retrying is
-safe. The infallible API removes only the impossible callback-error case; store
-and geometry errors remain possible.
-
-`CleanTree` exposes `update` but no dirtying methods. Conversion from
-`CleanTree` to `CvTree` is infallible. Conversion back checks the canonical
-clean invariant. An incomplete update returns the dirty tree plus its missing
-frontier instead of silently producing a clean wrapper.
-
-## Geometry
-
-Both static and dynamic configurations implement one sealed geometry trait.
-The geometry includes logical byte length, because the final partial BLAKE3
-chunk affects its CV.
-
-Chunk CVs are level zero. Retained levels are:
+For three BLAKE3 chunks the vector is:
 
 ```text
-start + k * (skip + 1)
+[leaf 0, parent 0..2, leaf 1, parent 0..3, leaf 2]
 ```
 
-The lowest retained slot covers `2^start` chunks. Omitted levels are rebuilt
-temporarily. The dirty/refill API still addresses actual chunk leaves rather
-than retained slots.
+This uses every slot for non-power-of-two inputs. A conventional complete heap
+would need padding and special absent-child behavior, while post-order storage
+would make leaf lookup less direct.
 
-Only dynamic geometry supports resizing:
+The node vector is `Vec<Opaque<32>>`. A parallel validity vector distinguishes
+cached values from missing values without reserving a hash value as a sentinel.
+The meaningful root output is cached separately because BLAKE3 root
+finalization is not an ordinary parent CV.
 
-```rust
-resize(new_bytes)
-append(new_bytes, NewCvs)
-truncate(new_bytes)
-truncate_clone(new_bytes)
-```
+## Updates and rebuilding
 
-These operations preserve the completed left forest and invalidate the right
-frontier. Changing a partial final chunk requires a replacement CV.
+`dirty(leaf)` invalidates the leaf and its ancestors. A range initially repeats
+that operation for each leaf; range summaries can be added after profiling.
 
-## Dirty normal form
+`update` writes precomputed leaf evidence directly into its stable even-numbered
+slot. `root_with` walks the canonical tree recursively:
 
-Dirty lowest-retained entries initially form a singly-linked list rooted in the
-tree header. Each dirty internal entry is a reserved 32-byte marker containing
-a two-bit `maybe_clean` mask:
+1. return a valid cached node;
+2. request an invalid leaf from the caller;
+3. combine invalid internal nodes bottom-up;
+4. finalize the top child pair as the root.
 
-- bit zero: the logical left half may remain clean;
-- bit one: the logical right half may remain clean;
-- `00`: the complete subtree may be dirty.
+The source callback may fail. Errors retain the exact leaf index, and values
+computed before the failure remain cached for a retry.
 
-Normalization drains the linked list. For each leaf it walks toward the root,
-clearing the corresponding child bit. It stops once that bit was already
-clear. When both bits are clear, the entry becomes the fully-zero marker.
-After normalization the linked list is empty and all dirty state is represented
-by internal masks.
+## Resizing
 
-Rebuilding starts at the root:
+Leaf slots remain stable when the logical length changes. Resizing copies valid
+leaves into a new exact-size vector and invalidates all internal nodes.
+It also invalidates the old/new right-edge leaf because the final partial leaf
+may represent a different byte range even when the leaf count does not change.
 
-- a clean CV returns immediately;
-- a mask recursively rebuilds only cleared halves;
-- a fully-zero node rebuilds both halves;
-- repaired children are combined bottom-up and replace the marker.
+This conservative `O(n)` resize is intentionally simple. A later implementation
+may preserve canonical complete subtrees after the semantics and workloads are
+established.
 
-The mask remains binary when levels are skipped: it describes two logical
-halves. A missing intermediate CV is synthesized from lower retained nodes.
+## Future work
 
-Exact reserved marker encodings make accidental clean-CV collisions roughly
-`2^-254` or smaller. Recognizing only a 128-bit zero prefix would instead make
-stale-root correctness probabilistic at approximately `2^-128` per relevant
-test. Corrupt cache storage can forge either encoding, so independently trusted
-roots remain necessary when cache integrity matters.
-
-## Updates and async refill
-
-`update(NewCvs)` normalizes, installs supplied actual chunk CVs, masks affected
-ancestors, and repairs every node for which the batch is sufficient. With
-`start > 0`, one replacement chunk is generally insufficient to reconstruct
-its lowest retained group; the report exposes remaining leaves.
-
-Async is an adapter over:
-
-```text
-normalize -> refill_frontier -> concurrent fetch -> supply
-```
-
-This avoids async traits and avoids holding `&mut CvTree` across awaits. The
-same frontier can fetch local blocks, HTTP ranges, object-store fragments, or
-SQLite pages.
-
-## BLAKE3 root caveat
-
-A single BLAKE3 chunk CV cannot be converted into its standard root digest:
-the ROOT flag is applied to the chunk output state, not retrospectively to the
-CV. The implementation must either retain richer final-leaf output metadata,
-ask the callback for that evidence, or explicitly restrict the CV-only root API
-to inputs spanning at least two chunks.
-
-## Validation plan
-
-Property tests should compare every small `start`/`skip` geometry with one-shot
-BLAKE3 through random point/range invalidation, partial refill failure and
-retry, batch update, append, truncate, and truncate-clone. Additional invariants
-include idempotent normalization, monotonically clearing masks, exactly-once
-linked-list reachability, no markers in `CleanTree`, and no clean stale root
-after an interrupted operation.
+- use a packed validity bitset;
+- add efficient range invalidation summaries;
+- derive compact and streaming proofs from the same span/index arithmetic;
+- add configurable retained levels only when memory measurements justify them;
+- generalize storage after a second Merkle scheme validates the trait boundary.
