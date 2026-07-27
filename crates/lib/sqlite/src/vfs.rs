@@ -3,7 +3,8 @@
 //! This module defines a safe Rust API that mirrors the `SQLite` VFS layer
 //! without exposing any C-level details. Implementors provide a [`Vfs`] and
 //! its associated [`File`] type; the registration mechanism that wires these
-//! traits into the `SQLite` C library is a separate concern.
+//! traits into the `SQLite` C library is a separate concern (see e.g. the
+//! `sqlite-plugin` crate).
 //!
 //! The trait surface is intentionally minimal: it covers the operations that
 //! `SQLite` requires in order to open, read, write, and synchronise database
@@ -12,29 +13,31 @@
 
 use std::io;
 
+/// The kind of file `SQLite` is opening.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OpenKind {
+    /// The main database file.
+    MainDb,
+    /// The rollback journal.
+    Journal,
+    /// The write-ahead log.
+    Wal,
+    /// A temporary or transient file.
+    Temp,
+}
+
 bitflags::bitflags! {
-    /// Flags that describe why `SQLite` is opening a file.
-    ///
-    /// A file can serve as the main database, a journal, a WAL, or a temporary
-    /// file. The flags are not mutually exclusive — `SQLite` may combine them.
+    /// Modifier flags passed alongside [`OpenKind`] when opening a file.
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
     pub struct OpenFlags: u32 {
-        /// The file is the main database.
-        const MAIN_DB          = 1 << 0;
-        /// The file is the rollback journal.
-        const JOURNAL          = 1 << 1;
-        /// The file is the write-ahead log.
-        const WAL              = 1 << 2;
-        /// The file is a temporary or transient file.
-        const TEMP             = 1 << 3;
         /// The file should be created if it does not exist.
-        const CREATE           = 1 << 4;
+        const CREATE           = 1 << 0;
         /// The file should be opened for exclusive access.
-        const EXCLUSIVE        = 1 << 5;
+        const EXCLUSIVE        = 1 << 1;
         /// The file should be opened read-only.
-        const READ_ONLY        = 1 << 6;
+        const READ_ONLY        = 1 << 2;
         /// The file should be deleted when closed.
-        const DELETE_ON_CLOSE  = 1 << 7;
+        const DELETE_ON_CLOSE  = 1 << 3;
     }
 }
 
@@ -129,15 +132,21 @@ pub trait Vfs {
     /// The file handle type returned by [`open`](Vfs::open).
     type File: File;
 
-    /// Opens or creates a file at `path`.
+    /// Opens or creates a file.
     ///
-    /// When `path` is `None`, `SQLite` is requesting a temporary file whose
-    /// name the VFS may choose freely.
+    /// `path` is `None` when `SQLite` requests a temporary file whose name
+    /// the VFS may choose freely. `kind` describes the role of the file
+    /// (main database, journal, WAL, or temporary).
     ///
     /// # Errors
     ///
     /// Returns an error if the file cannot be opened under the given flags.
-    fn open(&self, path: Option<&str>, flags: OpenFlags) -> io::Result<Self::File>;
+    fn open(
+        &self,
+        path: Option<&str>,
+        kind: OpenKind,
+        flags: OpenFlags,
+    ) -> io::Result<Self::File>;
 
     /// Deletes the file at `path`.
     ///
@@ -229,11 +238,19 @@ pub trait File {
     /// Returns the current lock level.
     fn current_lock(&self) -> LockLevel;
 
+    /// Returns whether any connection holds a reserved lock.
+    ///
+    /// The default returns `true` when this file's own lock is at least
+    /// [`LockLevel::Reserved`].
+    fn reserved(&self) -> bool {
+        self.current_lock() >= LockLevel::Reserved
+    }
+
     /// Returns the sector size of the underlying storage in bytes.
     ///
     /// `SQLite` uses this to align I/O. A return value of 0 lets `SQLite`
     /// choose a default (typically 4096).
-    fn sector_size(&self) -> u64 {
+    fn sector_size(&self) -> usize {
         0
     }
 
@@ -257,7 +274,12 @@ mod tests {
     impl Vfs for MemVfs {
         type File = MemFile;
 
-        fn open(&self, _path: Option<&str>, _flags: OpenFlags) -> io::Result<Self::File> {
+        fn open(
+            &self,
+            _path: Option<&str>,
+            _kind: OpenKind,
+            _flags: OpenFlags,
+        ) -> io::Result<Self::File> {
             Ok(MemFile {
                 data: Vec::new(),
                 lock: LockLevel::None,
@@ -330,7 +352,7 @@ mod tests {
     #[test]
     fn mem_vfs_round_trip() {
         let vfs = MemVfs;
-        let mut file = vfs.open(None, OpenFlags::default()).unwrap();
+        let mut file = vfs.open(None, OpenKind::MainDb, OpenFlags::default()).unwrap();
 
         file.write(b"hello", 0).unwrap();
         assert_eq!(file.file_size().unwrap(), 5);
@@ -343,7 +365,7 @@ mod tests {
     #[test]
     fn short_read_zero_fills() {
         let vfs = MemVfs;
-        let mut file = vfs.open(None, OpenFlags::default()).unwrap();
+        let mut file = vfs.open(None, OpenKind::MainDb, OpenFlags::default()).unwrap();
 
         file.write(b"ab", 0).unwrap();
         let mut buf = [0xffu8; 4];
@@ -354,7 +376,7 @@ mod tests {
     #[test]
     fn read_beyond_eof_fills_zeros() {
         let vfs = MemVfs;
-        let mut file = vfs.open(None, OpenFlags::default()).unwrap();
+        let mut file = vfs.open(None, OpenKind::MainDb, OpenFlags::default()).unwrap();
 
         let mut buf = [0xffu8; 4];
         file.read(&mut buf, 100).unwrap();
@@ -364,7 +386,7 @@ mod tests {
     #[test]
     fn write_at_offset_extends_file() {
         let vfs = MemVfs;
-        let mut file = vfs.open(None, OpenFlags::default()).unwrap();
+        let mut file = vfs.open(None, OpenKind::MainDb, OpenFlags::default()).unwrap();
 
         file.write(b"world", 10).unwrap();
         assert_eq!(file.file_size().unwrap(), 15);
@@ -378,7 +400,7 @@ mod tests {
     #[test]
     fn truncate_shrinks_file() {
         let vfs = MemVfs;
-        let mut file = vfs.open(None, OpenFlags::default()).unwrap();
+        let mut file = vfs.open(None, OpenKind::MainDb, OpenFlags::default()).unwrap();
 
         file.write(b"hello world", 0).unwrap();
         file.truncate(5).unwrap();
@@ -392,7 +414,7 @@ mod tests {
     #[test]
     fn lock_transitions() {
         let vfs = MemVfs;
-        let mut file = vfs.open(None, OpenFlags::default()).unwrap();
+        let mut file = vfs.open(None, OpenKind::MainDb, OpenFlags::default()).unwrap();
 
         assert_eq!(file.current_lock(), LockLevel::None);
         file.lock(LockLevel::Shared).unwrap();
@@ -414,16 +436,30 @@ mod tests {
     #[test]
     fn default_sector_size_is_zero() {
         let vfs = MemVfs;
-        let file = vfs.open(None, OpenFlags::default()).unwrap();
+        let file = vfs.open(None, OpenKind::MainDb, OpenFlags::default()).unwrap();
         assert_eq!(file.sector_size(), 0);
     }
 
     #[test]
     fn default_device_characteristics_are_empty() {
         let vfs = MemVfs;
-        let file = vfs.open(None, OpenFlags::default()).unwrap();
+        let file = vfs.open(None, OpenKind::MainDb, OpenFlags::default()).unwrap();
         let chars = file.device_characteristics();
         assert_eq!(chars, DeviceCharacteristics::empty());
+    }
+
+    #[test]
+    fn reserved_lock_check() {
+        let vfs = MemVfs;
+        let mut file = vfs.open(None, OpenKind::MainDb, OpenFlags::default()).unwrap();
+
+        assert!(!file.reserved());
+        file.lock(LockLevel::Shared).unwrap();
+        assert!(!file.reserved());
+        file.lock(LockLevel::Reserved).unwrap();
+        assert!(file.reserved());
+        file.lock(LockLevel::Exclusive).unwrap();
+        assert!(file.reserved());
     }
 
     #[test]
@@ -442,9 +478,9 @@ mod tests {
 
     #[test]
     fn open_flags_composition() {
-        let flags = OpenFlags::MAIN_DB | OpenFlags::CREATE;
-        assert!(flags.contains(OpenFlags::MAIN_DB));
+        let flags = OpenFlags::CREATE | OpenFlags::EXCLUSIVE;
         assert!(flags.contains(OpenFlags::CREATE));
+        assert!(flags.contains(OpenFlags::EXCLUSIVE));
         assert!(!flags.contains(OpenFlags::READ_ONLY));
     }
 
@@ -454,5 +490,16 @@ mod tests {
         assert!(chars.contains(DeviceCharacteristics::ATOMIC));
         assert!(chars.contains(DeviceCharacteristics::IMMUTABLE));
         assert!(!chars.contains(DeviceCharacteristics::SEQUENTIAL));
+    }
+
+    #[test]
+    fn open_kind_distinguishes_file_roles() {
+        let vfs = MemVfs;
+        let _main = vfs.open(Some("test.db"), OpenKind::MainDb, OpenFlags::CREATE).unwrap();
+        let _journal = vfs
+            .open(Some("test.db-journal"), OpenKind::Journal, OpenFlags::CREATE)
+            .unwrap();
+        let _wal = vfs.open(Some("test.db-wal"), OpenKind::Wal, OpenFlags::CREATE).unwrap();
+        let _temp = vfs.open(None, OpenKind::Temp, OpenFlags::DELETE_ON_CLOSE).unwrap();
     }
 }
