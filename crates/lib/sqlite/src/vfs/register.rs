@@ -24,6 +24,7 @@
 //! file handle — implementations provide their own interior mutability
 //! where required.
 
+use std::any::TypeId;
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::fmt;
 use std::mem::{self, MaybeUninit};
@@ -38,9 +39,12 @@ use super::{AccessCheck, File, LockLevel, OpenFlags, OpenKind, SyncFlags, Vfs};
 /// Maximum pathname length exposed to `SQLite`.
 const MAX_PATH: usize = 512;
 
+/// Tracks registered VFS implementations by name and type.
+///
 /// Serialises [`register`] calls so the find-then-register sequence is
-/// atomic with respect to other callers.
-static REGISTER_LOCK: Mutex<()> = Mutex::new(());
+/// atomic, and enables idempotent registration: re-registering the same
+/// [`Vfs`] type under the same name is a no-op.
+static REGISTRY: Mutex<Vec<(String, TypeId)>> = Mutex::new(Vec::new());
 
 // ---------------------------------------------------------------------------
 // State structs
@@ -125,10 +129,10 @@ impl std::error::Error for RegisterError {}
 /// When `as_default` is `true` the VFS becomes the default for all new
 /// connections.
 ///
-/// Returns [`RegisterError::AlreadyRegistered`] if a VFS with the same name
-/// is already registered.  Registering two different VFS implementations
-/// under the same name is undefined behaviour in `SQLite`, so this check
-/// (serialised by an internal mutex) prevents that.
+/// Registration is idempotent: calling this with the same `name` and the
+/// same concrete `V` type returns `Ok(())` without re-registering.
+/// Returns [`RegisterError::AlreadyRegistered`] if a *different* `Vfs`
+/// type is already registered under the same name.
 ///
 /// # Leaks
 ///
@@ -146,12 +150,22 @@ pub fn register<V: Vfs + Send + Sync + 'static>(
     vfs: V,
     as_default: bool,
 ) -> Result<(), RegisterError> {
-    let name = CString::new(name).map_err(|_| RegisterError::InvalidName)?;
-    let name_ptr = name.as_ptr();
+    let c_name = CString::new(name).map_err(|_| RegisterError::InvalidName)?;
+    let name_ptr = c_name.as_ptr();
 
-    let _guard = REGISTER_LOCK
+    let mut registry = REGISTRY
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+    let type_id = TypeId::of::<V>();
+
+    if let Some((_, existing_id)) = registry.iter().find(|(n, _)| n == name) {
+        return if *existing_id == type_id {
+            Ok(())
+        } else {
+            Err(RegisterError::AlreadyRegistered)
+        };
+    }
 
     // SAFETY: `sqlite3_vfs_find` reads the global VFS list; we serialise
     // with the mutex above so no concurrent `register` call can insert
@@ -183,11 +197,11 @@ pub fn register<V: Vfs + Send + Sync + 'static>(
         xUnfetch: None,
     };
 
-    // `name` is moved into the leaked `VfsState`; `name_ptr` remains valid
-    // because `CString` stores its data on the heap and moving the owner
-    // does not move the underlying buffer.
+    // `c_name` is moved into the leaked `VfsState`; `name_ptr` remains
+    // valid because `CString` stores its data on the heap and moving the
+    // owner does not move the underlying buffer.
     let state = Box::into_raw(Box::new(VfsState {
-        name,
+        name: c_name,
         vfs,
         io_methods,
     }));
@@ -228,6 +242,7 @@ pub fn register<V: Vfs + Send + Sync + 'static>(
         return Err(RegisterError::RegistrationFailed(rc));
     }
 
+    registry.push((name.to_owned(), type_id));
     Ok(())
 }
 
