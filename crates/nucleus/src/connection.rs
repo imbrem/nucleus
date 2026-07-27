@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use covalence_lib_error::snafu::{ResultExt, Snafu};
 use covalence_neutron as neutron;
 
 /// Failure to open a Nucleus connection.
@@ -12,10 +13,14 @@ pub type ConnectionError = neutron::ConnectionError;
 /// Nucleus can preserve their semantic invariants by construction.
 #[derive(Debug)]
 pub struct Connection {
-    neutron: neutron::Connection,
+    pub(crate) neutron: neutron::Connection,
 }
 
 impl Connection {
+    fn from_neutron(neutron: neutron::Connection) -> Self {
+        Self { neutron }
+    }
+
     /// Opens a database through Neutron and encloses it in the Nucleus boundary.
     ///
     /// # Errors
@@ -23,7 +28,7 @@ impl Connection {
     /// Returns an error when the underlying `SQLite` connection cannot be
     /// opened or Neutron's connection metadata cannot be initialized.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ConnectionError> {
-        neutron::Connection::open(path).map(|neutron| Self { neutron })
+        neutron::Connection::open(path).map(Self::from_neutron)
     }
 
     /// Opens an in-memory database through Neutron.
@@ -33,7 +38,46 @@ impl Connection {
     /// Returns an error when Neutron's connection metadata cannot be
     /// initialized.
     pub fn open_in_memory() -> Result<Self, ConnectionError> {
-        neutron::Connection::open_in_memory().map(|neutron| Self { neutron })
+        neutron::Connection::open_in_memory().map(Self::from_neutron)
+    }
+
+    /// Creates fresh in-memory persistent Nucleus state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the connection or persistent catalog cannot be
+    /// created.
+    pub fn create_in_memory() -> Result<Self, DatabaseError> {
+        let connection = Self::open_in_memory().context(OpenSnafu)?;
+        connection
+            .create_persistent_catalog()
+            .context(AdditionSnafu)?;
+        Ok(connection)
+    }
+
+    /// Loads and validates persistent Nucleus state from a database image.
+    ///
+    /// This establishes structural validity, not trust in the image or signer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when deserialization or logical validation fails.
+    pub fn from_image(bytes: &neutron::Bytes) -> Result<Self, DatabaseError> {
+        let connection =
+            Self::from_neutron(neutron::Connection::deserialize(bytes).context(ImageSnafu)?);
+        connection.additions().context(AdditionSnafu)?;
+        Ok(connection)
+    }
+
+    /// Serializes the persistent `main` database.
+    ///
+    /// Connection-local metadata is excluded by `SQLite` serialization.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `SQLite` cannot serialize the image.
+    pub fn serialize(&self) -> Result<neutron::Bytes, neutron::ImageError> {
+        self.neutron.serialize()
     }
 
     /// Returns the connection's default content-addressed store.
@@ -41,6 +85,32 @@ impl Connection {
     pub const fn cas(&self) -> crate::Cas<'_> {
         self.neutron.cas()
     }
+}
+
+/// Failure to create or load persistent Nucleus state.
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+pub enum DatabaseError {
+    /// The Neutron connection could not be opened.
+    #[snafu(display("could not open Nucleus database: {source}"))]
+    Open {
+        /// Underlying failure.
+        source: ConnectionError,
+    },
+
+    /// A serialized `SQLite` image could not be loaded.
+    #[snafu(display("could not deserialize Nucleus database: {source}"))]
+    Image {
+        /// Underlying failure.
+        source: neutron::ImageError,
+    },
+
+    /// Persistent logical relations are invalid.
+    #[snafu(display("invalid Nucleus relations: {source}"))]
+    Addition {
+        /// Underlying failure.
+        source: crate::AdditionError,
+    },
 }
 
 #[cfg(test)]
