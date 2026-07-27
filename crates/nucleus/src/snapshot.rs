@@ -1,5 +1,9 @@
 use covalence_lib_hash::{O256, o256};
 
+mod signing;
+
+pub use signing::{Ed25519Signer, Ed25519Verifier, SignError, Signer, VerificationError, Verifier};
+
 /// Assertion that a persistent `SQLite` image is valid Nucleus state under v0.
 ///
 /// Signing [`valid_snapshot_statement`] attests that the exact image named by
