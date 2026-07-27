@@ -11,6 +11,11 @@
 //! files. Advisory locking is included because `SQLite` calls these methods
 //! even for single-connection in-process databases.
 
+#[cfg(feature = "vfs-register")]
+mod register;
+#[cfg(feature = "vfs-register")]
+pub use register::{register, RegisterError};
+
 use std::io;
 
 /// The kind of file `SQLite` is opening.
@@ -141,12 +146,7 @@ pub trait Vfs {
     /// # Errors
     ///
     /// Returns an error if the file cannot be opened under the given flags.
-    fn open(
-        &self,
-        path: Option<&str>,
-        kind: OpenKind,
-        flags: OpenFlags,
-    ) -> io::Result<Self::File>;
+    fn open(&self, path: Option<&str>, kind: OpenKind, flags: OpenFlags) -> io::Result<Self::File>;
 
     /// Deletes the file at `path`.
     ///
@@ -352,7 +352,9 @@ mod tests {
     #[test]
     fn mem_vfs_round_trip() {
         let vfs = MemVfs;
-        let mut file = vfs.open(None, OpenKind::MainDb, OpenFlags::default()).unwrap();
+        let mut file = vfs
+            .open(None, OpenKind::MainDb, OpenFlags::default())
+            .unwrap();
 
         file.write(b"hello", 0).unwrap();
         assert_eq!(file.file_size().unwrap(), 5);
@@ -365,7 +367,9 @@ mod tests {
     #[test]
     fn short_read_zero_fills() {
         let vfs = MemVfs;
-        let mut file = vfs.open(None, OpenKind::MainDb, OpenFlags::default()).unwrap();
+        let mut file = vfs
+            .open(None, OpenKind::MainDb, OpenFlags::default())
+            .unwrap();
 
         file.write(b"ab", 0).unwrap();
         let mut buf = [0xffu8; 4];
@@ -376,7 +380,9 @@ mod tests {
     #[test]
     fn read_beyond_eof_fills_zeros() {
         let vfs = MemVfs;
-        let mut file = vfs.open(None, OpenKind::MainDb, OpenFlags::default()).unwrap();
+        let mut file = vfs
+            .open(None, OpenKind::MainDb, OpenFlags::default())
+            .unwrap();
 
         let mut buf = [0xffu8; 4];
         file.read(&mut buf, 100).unwrap();
@@ -386,7 +392,9 @@ mod tests {
     #[test]
     fn write_at_offset_extends_file() {
         let vfs = MemVfs;
-        let mut file = vfs.open(None, OpenKind::MainDb, OpenFlags::default()).unwrap();
+        let mut file = vfs
+            .open(None, OpenKind::MainDb, OpenFlags::default())
+            .unwrap();
 
         file.write(b"world", 10).unwrap();
         assert_eq!(file.file_size().unwrap(), 15);
@@ -400,7 +408,9 @@ mod tests {
     #[test]
     fn truncate_shrinks_file() {
         let vfs = MemVfs;
-        let mut file = vfs.open(None, OpenKind::MainDb, OpenFlags::default()).unwrap();
+        let mut file = vfs
+            .open(None, OpenKind::MainDb, OpenFlags::default())
+            .unwrap();
 
         file.write(b"hello world", 0).unwrap();
         file.truncate(5).unwrap();
@@ -414,7 +424,9 @@ mod tests {
     #[test]
     fn lock_transitions() {
         let vfs = MemVfs;
-        let mut file = vfs.open(None, OpenKind::MainDb, OpenFlags::default()).unwrap();
+        let mut file = vfs
+            .open(None, OpenKind::MainDb, OpenFlags::default())
+            .unwrap();
 
         assert_eq!(file.current_lock(), LockLevel::None);
         file.lock(LockLevel::Shared).unwrap();
@@ -436,14 +448,18 @@ mod tests {
     #[test]
     fn default_sector_size_is_zero() {
         let vfs = MemVfs;
-        let file = vfs.open(None, OpenKind::MainDb, OpenFlags::default()).unwrap();
+        let file = vfs
+            .open(None, OpenKind::MainDb, OpenFlags::default())
+            .unwrap();
         assert_eq!(file.sector_size(), 0);
     }
 
     #[test]
     fn default_device_characteristics_are_empty() {
         let vfs = MemVfs;
-        let file = vfs.open(None, OpenKind::MainDb, OpenFlags::default()).unwrap();
+        let file = vfs
+            .open(None, OpenKind::MainDb, OpenFlags::default())
+            .unwrap();
         let chars = file.device_characteristics();
         assert_eq!(chars, DeviceCharacteristics::empty());
     }
@@ -451,7 +467,9 @@ mod tests {
     #[test]
     fn reserved_lock_check() {
         let vfs = MemVfs;
-        let mut file = vfs.open(None, OpenKind::MainDb, OpenFlags::default()).unwrap();
+        let mut file = vfs
+            .open(None, OpenKind::MainDb, OpenFlags::default())
+            .unwrap();
 
         assert!(!file.reserved());
         file.lock(LockLevel::Shared).unwrap();
@@ -495,11 +513,21 @@ mod tests {
     #[test]
     fn open_kind_distinguishes_file_roles() {
         let vfs = MemVfs;
-        let _main = vfs.open(Some("test.db"), OpenKind::MainDb, OpenFlags::CREATE).unwrap();
-        let _journal = vfs
-            .open(Some("test.db-journal"), OpenKind::Journal, OpenFlags::CREATE)
+        let _main = vfs
+            .open(Some("test.db"), OpenKind::MainDb, OpenFlags::CREATE)
             .unwrap();
-        let _wal = vfs.open(Some("test.db-wal"), OpenKind::Wal, OpenFlags::CREATE).unwrap();
-        let _temp = vfs.open(None, OpenKind::Temp, OpenFlags::DELETE_ON_CLOSE).unwrap();
+        let _journal = vfs
+            .open(
+                Some("test.db-journal"),
+                OpenKind::Journal,
+                OpenFlags::CREATE,
+            )
+            .unwrap();
+        let _wal = vfs
+            .open(Some("test.db-wal"), OpenKind::Wal, OpenFlags::CREATE)
+            .unwrap();
+        let _temp = vfs
+            .open(None, OpenKind::Temp, OpenFlags::DELETE_ON_CLOSE)
+            .unwrap();
     }
 }
