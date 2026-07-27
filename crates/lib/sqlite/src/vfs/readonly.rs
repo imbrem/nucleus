@@ -29,6 +29,7 @@ use super::{
 /// Writes and truncations return [`io::ErrorKind::PermissionDenied`].
 /// The file reports [`DeviceCharacteristics::IMMUTABLE`] so that `SQLite`
 /// can skip change detection.
+#[derive(Clone)]
 pub struct ReadOnlyFile<T> {
     data: T,
 }

@@ -14,10 +14,12 @@
 mod readonly;
 #[cfg(feature = "vfs-register")]
 mod register;
+mod store;
 
 pub use readonly::{ReadOnlyFile, ReadOnlyVfs};
 #[cfg(feature = "vfs-register")]
 pub use register::{RegisterError, register};
+pub use store::{FileStore, StoreVfs};
 
 use std::io;
 
