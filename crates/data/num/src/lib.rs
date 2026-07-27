@@ -15,7 +15,7 @@ use covalence_lib_bigint::{BigInt, BigUint, Sign};
 mod decimal;
 mod float;
 
-pub use decimal::{Decimal, DecimalDivisionError, DecimalParseError, DecimalParts};
+pub use decimal::{Decimal, DecimalParseError, DecimalParts};
 pub use float::{Float32, Float64, FloatClass, InexactFloatConversion};
 
 /// A canonical integer decoding error.

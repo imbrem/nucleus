@@ -1,4 +1,9 @@
 //! Exact finite base-10 decimals.
+//!
+//! [`Decimal`] is a lossless landing zone for decimal literals: text parses to
+//! an exact `coefficient × 10^-scale` pair without rounding, and downstream
+//! consumers decide how to interpret it. Arithmetic deliberately lives with
+//! those consumers, not here.
 
 use std::cmp::Ordering;
 use std::error::Error;
@@ -32,31 +37,6 @@ impl fmt::Display for DecimalParseError {
 }
 
 impl Error for DecimalParseError {}
-
-/// Why exact decimal division could not produce a value.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DecimalDivisionError {
-    /// The divisor was zero.
-    DivisionByZero,
-    /// The quotient has a non-terminating base-10 expansion.
-    NonTerminating,
-    /// The exact quotient requires a scale larger than [`u32::MAX`].
-    ScaleOverflow,
-}
-
-impl fmt::Display for DecimalDivisionError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::DivisionByZero => formatter.write_str("division by zero"),
-            Self::NonTerminating => {
-                formatter.write_str("quotient has a non-terminating decimal expansion")
-            }
-            Self::ScaleOverflow => formatter.write_str("exact quotient scale exceeds u32::MAX"),
-        }
-    }
-}
-
-impl Error for DecimalDivisionError {}
 
 /// Canonical components of an exact decimal.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -121,72 +101,6 @@ impl Decimal {
     #[must_use]
     pub fn is_zero(&self) -> bool {
         self.coefficient.is_zero()
-    }
-
-    /// Divides only when the quotient has a finite base-10 expansion.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DecimalDivisionError::NonTerminating`] rather than selecting
-    /// an implicit precision or rounding mode.
-    pub fn checked_div(&self, rhs: &Self) -> Result<Self, DecimalDivisionError> {
-        if rhs.is_zero() {
-            return Err(DecimalDivisionError::DivisionByZero);
-        }
-        if self.is_zero() {
-            return Ok(Self::ZERO);
-        }
-
-        let mut numerator = self.coefficient.0.clone();
-        let mut denominator = rhs.coefficient.0.clone();
-        if denominator.sign() == Sign::Minus {
-            numerator = -numerator;
-            denominator = -denominator;
-        }
-
-        let divisor = gcd(abs(numerator.clone()), denominator.clone());
-        numerator /= &divisor;
-        denominator /= divisor;
-
-        let two = BigInt::from(2_u8);
-        let five = BigInt::from(5_u8);
-        let mut twos = 0_u32;
-        let mut fives = 0_u32;
-        while (&denominator % &two) == BigInt::ZERO {
-            denominator /= &two;
-            twos = twos
-                .checked_add(1)
-                .ok_or(DecimalDivisionError::ScaleOverflow)?;
-        }
-        while (&denominator % &five) == BigInt::ZERO {
-            denominator /= &five;
-            fives = fives
-                .checked_add(1)
-                .ok_or(DecimalDivisionError::ScaleOverflow)?;
-        }
-        if denominator != BigInt::from(1_u8) {
-            return Err(DecimalDivisionError::NonTerminating);
-        }
-
-        let quotient_scale = twos.max(fives);
-        if twos < quotient_scale {
-            numerator *= two.pow(quotient_scale - twos);
-        }
-        if fives < quotient_scale {
-            numerator *= five.pow(quotient_scale - fives);
-        }
-
-        let signed_scale = i64::from(self.scale) - i64::from(rhs.scale) + i64::from(quotient_scale);
-        if signed_scale < 0 {
-            let shift =
-                u32::try_from(-signed_scale).map_err(|_| DecimalDivisionError::ScaleOverflow)?;
-            numerator *= BigInt::from(10_u8).pow(shift);
-            Ok(Self::new(Int(numerator), 0))
-        } else {
-            let scale =
-                u32::try_from(signed_scale).map_err(|_| DecimalDivisionError::ScaleOverflow)?;
-            Ok(Self::new(Int(numerator), scale))
-        }
     }
 }
 
@@ -414,23 +328,6 @@ const fn sign_rank(sign: Sign) -> u8 {
     }
 }
 
-fn abs(value: BigInt) -> BigInt {
-    if value.sign() == Sign::Minus {
-        -value
-    } else {
-        value
-    }
-}
-
-fn gcd(mut left: BigInt, mut right: BigInt) -> BigInt {
-    while right != BigInt::ZERO {
-        let remainder = left % &right;
-        left = right;
-        right = remainder;
-    }
-    left
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::hash_map::DefaultHasher;
@@ -497,27 +394,12 @@ mod tests {
     }
 
     #[test]
-    fn exact_division_rejects_non_terminating_results() {
-        assert_eq!(
-            decimal("1").checked_div(&decimal("3")),
-            Err(DecimalDivisionError::NonTerminating)
-        );
-        assert_eq!(
-            decimal("1").checked_div(&Decimal::ZERO),
-            Err(DecimalDivisionError::DivisionByZero)
-        );
-        assert_eq!(
-            decimal("1").checked_div(&decimal("8")).unwrap(),
-            decimal("0.125")
-        );
-        assert_eq!(
-            decimal("1.2").checked_div(&decimal("0.5")).unwrap(),
-            decimal("2.4")
-        );
-        assert_eq!(
-            decimal("-10").checked_div(&decimal("4")).unwrap(),
-            decimal("-2.5")
-        );
+    fn parts_round_trip_without_loss() {
+        for input in ["-12.34", "0.125", "1250", "0.00000001", "0"] {
+            let value = decimal(input);
+            let DecimalParts { coefficient, scale } = value.clone().into_parts();
+            assert_eq!(Decimal::new(coefficient, scale), value);
+        }
     }
 
     #[test]
