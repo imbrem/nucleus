@@ -5,6 +5,7 @@ use covalence_lib_sqlite as sqlite;
 
 const CREATE_CONNECTION_CATALOG_SQL: &str = include_str!("../sql/create_connection_catalog.sql");
 const CREATE_ATTACHED_DATABASES_SQL: &str = include_str!("../sql/create_attached_databases.sql");
+const CREATE_DEFAULT_CAS_SQL: &str = include_str!("../sql/create_default_cas.sql");
 const REGISTER_TABLE_SQL: &str = include_str!("../sql/register_table.sql");
 const REGISTER_ATTACHED_DATABASE_SQL: &str = include_str!("../sql/register_attached_database.sql");
 
@@ -14,11 +15,17 @@ pub const CONNECTION_CATALOG: &str = "cov_conn_catalog";
 /// Physical name of Neutron's registered-database table in `temp`.
 pub const ATTACHED_DATABASES: &str = "cov_conn_attached";
 
+/// Physical name of Neutron's connection-local default CAS.
+pub const DEFAULT_CAS: &str = "cov_conn_default_cas";
+
 /// Uninterpreted symbol assigned to the connection catalog.
 pub const CONNECTION_CATALOG_INTERPRETATION: &str = "cov.conn.catalog/v0";
 
 /// Uninterpreted symbol assigned to the attached-database registry.
 pub const ATTACHED_DATABASES_INTERPRETATION: &str = "cov.conn.attached/v0";
+
+/// Uninterpreted symbol assigned to the connection-local default CAS.
+pub const DEFAULT_CAS_INTERPRETATION: &str = "cov.cas.default/v0";
 
 /// A permeable `SQLite` connection with Neutron's connection-local metadata.
 ///
@@ -126,6 +133,14 @@ fn initialize(connection: &mut sqlite::Connection) -> Result<(), ConnectionError
         CREATE_ATTACHED_DATABASES_SQL,
     )?;
 
+    create_and_register_table(
+        &transaction,
+        3,
+        DEFAULT_CAS,
+        DEFAULT_CAS_INTERPRETATION,
+        CREATE_DEFAULT_CAS_SQL,
+    )?;
+
     register_attached_database(&transaction, 1, "main")?;
 
     transaction.commit().context(InitializeSnafu)
@@ -169,7 +184,10 @@ fn register_attached_database(
 
 #[cfg(test)]
 mod tests {
-    use super::{ATTACHED_DATABASES, CONNECTION_CATALOG, Connection, ConnectionError, initialize};
+    use super::{
+        ATTACHED_DATABASES, CONNECTION_CATALOG, Connection, ConnectionError, DEFAULT_CAS,
+        initialize,
+    };
     use covalence_lib_sqlite as sqlite;
 
     #[test]
@@ -207,6 +225,11 @@ mod tests {
                     2,
                     String::from(ATTACHED_DATABASES),
                     String::from("cov.conn.attached/v0")
+                ),
+                (
+                    3,
+                    String::from(DEFAULT_CAS),
+                    String::from("cov.cas.default/v0")
                 ),
             ]
         );

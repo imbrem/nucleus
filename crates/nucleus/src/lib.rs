@@ -3,6 +3,7 @@
 mod connection;
 
 pub use connection::{Connection, ConnectionError};
+pub use covalence_neutron::Cas;
 
 #[cfg(target_os = "wasi")]
 #[allow(unsafe_code)]

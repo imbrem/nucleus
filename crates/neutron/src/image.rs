@@ -173,7 +173,7 @@ pub enum ImageError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ATTACHED_DATABASES, CONNECTION_CATALOG};
+    use crate::{ATTACHED_DATABASES, CONNECTION_CATALOG, DEFAULT_CAS};
 
     #[test]
     fn round_trips_main_database() {
@@ -246,7 +246,10 @@ mod tests {
             .expect("query metadata")
             .collect::<sqlite::Result<Vec<_>>>()
             .expect("read metadata");
-        assert_eq!(temp_tables, [ATTACHED_DATABASES, CONNECTION_CATALOG]);
+        assert_eq!(
+            temp_tables,
+            [ATTACHED_DATABASES, CONNECTION_CATALOG, DEFAULT_CAS]
+        );
     }
 
     #[test]
