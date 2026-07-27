@@ -9,11 +9,13 @@
 #![deny(unsafe_code)]
 
 mod cas;
+mod catalog;
 mod connection;
 mod image;
 
 pub use bytes::Bytes;
 pub use cas::{Cas, CasError, CasId};
+pub use catalog::{Catalog, CatalogEntry, CatalogError, DB_CATALOG};
 pub use connection::{
     ATTACHED_DATABASES, ATTACHED_DATABASES_INTERPRETATION, CONNECTION_CATALOG,
     CONNECTION_CATALOG_INTERPRETATION, Connection, ConnectionError, DEFAULT_CAS,

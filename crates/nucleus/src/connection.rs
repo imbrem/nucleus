@@ -12,7 +12,7 @@ pub type ConnectionError = neutron::ConnectionError;
 /// Nucleus can preserve their semantic invariants by construction.
 #[derive(Debug)]
 pub struct Connection {
-    neutron: neutron::Connection,
+    pub(crate) neutron: neutron::Connection,
 }
 
 impl Connection {
