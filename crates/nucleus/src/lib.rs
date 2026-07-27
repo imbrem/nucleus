@@ -1,8 +1,10 @@
 //! Portable trusted core for Nucleus.
 
+mod addition;
 mod connection;
 
-pub use connection::{Connection, ConnectionError};
+pub use addition::{Addition, AdditionError, AdditionFact};
+pub use connection::{Connection, ConnectionError, DatabaseError};
 pub use covalence_neutron::Cas;
 
 mod snapshot;
