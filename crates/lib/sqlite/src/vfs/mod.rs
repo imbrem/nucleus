@@ -14,7 +14,7 @@
 #[cfg(feature = "vfs-register")]
 mod register;
 #[cfg(feature = "vfs-register")]
-pub use register::{register, RegisterError};
+pub use register::{RegisterError, register};
 
 use std::io;
 
