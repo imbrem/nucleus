@@ -104,6 +104,26 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+      "name": "bytes",
+      "version": "1.12.1",
+      "checksum": "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04",
+      "edition": "2021",
+      "features": [
+        "default",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Carl Lerche <me@carllerche.com>:Sean McArthur <sean@seanmonstar.com>",
+        "CARGO_PKG_DESCRIPTION": "Types and traits for working with bytes",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/tokio-rs/bytes"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#cc@1.4.0",
       "name": "cc",
       "version": "1.4.0",
@@ -700,7 +720,8 @@
         "default",
         "ffi-sqlite-wasm-rs",
         "hashlink",
-        "modern_sqlite"
+        "modern_sqlite",
+        "serialize"
       ],
       "env": {
         "CARGO_PKG_AUTHORS": "The rusqlite developers",
@@ -1032,6 +1053,14 @@
       "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#rusqlite@0.40.1"
+      ]
+    },
+    {
+      "id": "workspace#covalence-neutron@0.0.0",
+      "name": "covalence-neutron",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1"
       ]
     }
   ],

@@ -8,6 +8,8 @@ description = "SQLite binding used by Nucleus"
 publish = false
 
 [features]
+default = ["serialize"]
+serialize = ["rusqlite/serialize"]
 vfs = ["dep:bitflags"]
 vfs-register = ["vfs", "dep:indexmap"]
 
