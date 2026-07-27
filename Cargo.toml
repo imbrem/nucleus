@@ -4,6 +4,7 @@ members = [
   "crates/lib/hash",
   "crates/lib/rand",
   "crates/lib/sqlite",
+  "crates/lib/wasm",
   "crates/data/basic",
   "crates/proton",
   "crates/neutron",

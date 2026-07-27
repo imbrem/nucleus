@@ -265,6 +265,21 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#equivalent@1.0.2",
+      "name": "equivalent",
+      "version": "1.0.2",
+      "checksum": "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f",
+      "edition": "2015",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Traits for key comparison in maps.",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/indexmap-rs/equivalent"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#fallible-iterator@0.3.0",
       "name": "fallible-iterator",
       "version": "0.3.0",
@@ -310,6 +325,22 @@
         "CARGO_PKG_DESCRIPTION": "Find windows-specific tools, read MSVC versions from the registry and from COM interfaces",
         "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
         "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/cc-rs"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#foldhash@0.1.5",
+      "name": "foldhash",
+      "version": "0.1.5",
+      "checksum": "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Orson Peters <orsonpeters@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "A fast, non-cryptographic, minimally DoS-resistant hashing algorithm.",
+        "CARGO_PKG_LICENSE": "Zlib",
+        "CARGO_PKG_REPOSITORY": "https://github.com/orlp/foldhash"
       },
       "targets": [
         {}
@@ -386,6 +417,31 @@
       "buildscript": {}
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.15.5",
+      "name": "hashbrown",
+      "version": "0.15.5",
+      "checksum": "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1",
+      "edition": "2021",
+      "features": [
+        "default-hasher",
+        "inline-more",
+        "raw-entry"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Amanieu d'Antras <amanieu@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "A Rust port of Google's SwissTable hash map",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/hashbrown"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "foldhash": ":foldhash-0.1.5"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
       "name": "hashbrown",
       "version": "0.17.1",
@@ -442,6 +498,29 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
+      "name": "indexmap",
+      "version": "2.14.0",
+      "checksum": "d466e9454f08e4a911e14806c24e16fba1b4c121d1ea474396f396069cf949d9",
+      "edition": "2024",
+      "features": [
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "A hash table with consistent order and fast iteration.",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/indexmap-rs/indexmap"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "equivalent": ":equivalent-1.0.2",
+            "hashbrown": ":hashbrown-0.17.1"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
       "name": "libc",
       "version": "0.2.189",
@@ -451,6 +530,27 @@
         "CARGO_PKG_DESCRIPTION": "Raw FFI bindings to platform libraries like libc.",
         "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
         "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/libc"
+      },
+      "targets": [
+        {}
+      ],
+      "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#libm@0.2.16",
+      "name": "libm",
+      "version": "0.2.16",
+      "checksum": "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981",
+      "edition": "2021",
+      "features": [
+        "arch",
+        "default"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Alex Crichton <alex@alexcrichton.com>:Amanieu d'Antras <amanieu@gmail.com>:Jorge Aparicio <japaricious@gmail.com>:Trevor Gross <tg@trevorgross.com>",
+        "CARGO_PKG_DESCRIPTION": "libm in pure Rust",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/compiler-builtins"
       },
       "targets": [
         {}
@@ -744,6 +844,85 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+      "name": "serde",
+      "version": "1.0.229",
+      "checksum": "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba",
+      "edition": "2021",
+      "features": [
+        "alloc",
+        "derive",
+        "serde_derive",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Erick Tryzelaar <erick.tryzelaar@gmail.com>:David Tolnay <dtolnay@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "A generic serialization/deserialization framework",
+        "CARGO_PKG_HOMEPAGE": "https://serde.rs",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/serde-rs/serde"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "serde_core": ":serde_core-1.0.229",
+            "serde_derive": ":serde_derive-1.0.229"
+          }
+        }
+      ],
+      "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#serde_core@1.0.229",
+      "name": "serde_core",
+      "version": "1.0.229",
+      "checksum": "67dca2c9c51e58a4791a4b1ed58308b39c64224d349a935ab5039aa360942a48",
+      "edition": "2021",
+      "features": [
+        "alloc",
+        "result",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Erick Tryzelaar <erick.tryzelaar@gmail.com>:David Tolnay <dtolnay@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Serde traits only, with no support for derive -- use the `serde` crate instead",
+        "CARGO_PKG_HOMEPAGE": "https://serde.rs",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/serde-rs/serde"
+      },
+      "targets": [
+        {}
+      ],
+      "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#serde_derive@1.0.229",
+      "name": "serde_derive",
+      "version": "1.0.229",
+      "checksum": "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348",
+      "edition": "2021",
+      "features": [
+        "default"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Erick Tryzelaar <erick.tryzelaar@gmail.com>:David Tolnay <dtolnay@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Macros 1.1 implementation of #[derive(Serialize, Deserialize)]",
+        "CARGO_PKG_HOMEPAGE": "https://serde.rs",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/serde-rs/serde"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "proc_macro2": ":proc-macro2-1.0.107",
+            "quote": ":quote-1.0.47",
+            "syn": ":syn-3.0.3"
+          },
+          "proc_macro": true
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#sha1@0.10.7",
       "name": "sha1",
       "version": "0.10.7",
@@ -882,6 +1061,54 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#spin@0.9.9",
+      "name": "spin",
+      "version": "0.9.9",
+      "checksum": "3763264f6b73151db08c50ff20d7d8a0b8796e021cdea7ceedad07b80155fa0e",
+      "edition": "2015",
+      "features": [
+        "mutex",
+        "rwlock",
+        "spin_mutex",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Mathijs van de Nes <git@mathijs.vd-nes.nl>:John Ericson <git@JohnEricson.me>:Joshua Barretto <joshua.s.barretto@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Spin-based synchronization primitives",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/mvdnes/spin-rs.git"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#string-interner@0.19.0",
+      "name": "string-interner",
+      "version": "0.19.0",
+      "checksum": "23de088478b31c349c9ba67816fa55d9355232d63c3afea8bf513e31f0f1d2c0",
+      "edition": "2021",
+      "features": [
+        "backends",
+        "inline-more",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Robbepop",
+        "CARGO_PKG_DESCRIPTION": "Efficient string interner with minimal memory footprint\nand fast access to the underlying strings.\n",
+        "CARGO_PKG_LICENSE": "MIT/Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/robbepop/string-interner"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "hashbrown": ":hashbrown-0.15.5",
+            "serde": ":serde-1.0.229"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119",
       "name": "syn",
       "version": "2.0.119",
@@ -897,6 +1124,38 @@
         "printing",
         "proc-macro",
         "visit",
+        "visit-mut"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "David Tolnay <dtolnay@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Parser for Rust source code",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/dtolnay/syn"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "proc_macro2": ":proc-macro2-1.0.107",
+            "quote": ":quote-1.0.47",
+            "unicode_ident": ":unicode-ident-1.0.24"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#syn@3.0.3",
+      "name": "syn",
+      "version": "3.0.3",
+      "checksum": "53e9bae58849f64dfa4f5d5ae372c8341f7305f82a3868709269343628b659a3",
+      "edition": "2021",
+      "features": [
+        "clone-impls",
+        "default",
+        "derive",
+        "full",
+        "parsing",
+        "printing",
+        "proc-macro",
         "visit-mut"
       ],
       "env": {
@@ -1000,6 +1259,127 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#wasmi@1.1.0",
+      "name": "wasmi",
+      "version": "1.1.0",
+      "checksum": "2300d0f78cba12f14e29e8dd157ea64050c0a688179aefdb2050105805594a0c",
+      "edition": "2021",
+      "features": [
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Robin Freyler <robin.freyler@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "WebAssembly interpreter",
+        "CARGO_PKG_LICENSE": "MIT/Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/wasmi-labs/wasmi"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "spin": ":spin-0.9.9",
+            "wasmi_collections": ":wasmi_collections-1.1.0",
+            "wasmi_core": ":wasmi_core-1.1.0",
+            "wasmi_ir": ":wasmi_ir-1.1.0",
+            "wasmparser": ":wasmparser-0.239.0"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#wasmi_collections@1.1.0",
+      "name": "wasmi_collections",
+      "version": "1.1.0",
+      "checksum": "f8a8c42a2a76148d43097b1d7cc2a5bf33d5c23bd4dd69015fc887e311767884",
+      "edition": "2021",
+      "features": [
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Robin Freyler <robin.freyler@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Specialized data structures for the Wasmi interpreter",
+        "CARGO_PKG_LICENSE": "MIT/Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/wasmi-labs/wasmi"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "string_interner": ":string-interner-0.19.0"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#wasmi_core@1.1.0",
+      "name": "wasmi_core",
+      "version": "1.1.0",
+      "checksum": "9013136083d988725953390bf668b64b7a218fabf26f8b913bbc59546b97ee27",
+      "edition": "2021",
+      "features": [
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Robin Freyler <robin.freyler@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Core primitives for the wasmi WebAssembly interpreter",
+        "CARGO_PKG_LICENSE": "MIT/Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/wasmi-labs/wasmi"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "libm": ":libm-0.2.16"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#wasmi_ir@1.1.0",
+      "name": "wasmi_ir",
+      "version": "1.1.0",
+      "checksum": "ba1fa003f79156f406d62ef0e1464dc03e11ace37170e9fa7524299a75ad8f68",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Robin Freyler <robin.freyler@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "WebAssembly interpreter internal bytecode representation",
+        "CARGO_PKG_LICENSE": "MIT/Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/wasmi-labs/wasmi"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "wasmi_core": ":wasmi_core-1.1.0"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#wasmparser@0.239.0",
+      "name": "wasmparser",
+      "version": "0.239.0",
+      "checksum": "8c9d90bb93e764f6beabf1d02028c70a2156a6583e63ac4218dd07ef733368b0",
+      "edition": "2021",
+      "features": [
+        "features",
+        "std",
+        "validate"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Yury Delendik <ydelendik@mozilla.com>",
+        "CARGO_PKG_DESCRIPTION": "A simple event-driven library for parsing WebAssembly binary files.\n",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasmparser",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasmparser"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "bitflags": ":bitflags-2.13.1",
+            "indexmap": ":indexmap-2.14.0"
+          }
+        }
+      ],
+      "buildscript": {}
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#zerocopy@0.8.55",
       "name": "zerocopy",
       "version": "0.8.55",
@@ -1054,6 +1434,14 @@
       "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#rusqlite@0.40.1"
+      ]
+    },
+    {
+      "id": "workspace#covalence-lib-wasm@0.0.0",
+      "name": "covalence-lib-wasm",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#wasmi@1.1.0"
       ]
     },
     {
@@ -1193,6 +1581,13 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.15.5",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#foldhash@0.1.5",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
       "target": "registry+https://github.com/rust-lang/crates.io-index#foldhash@0.2.0",
       "kinds": [
@@ -1201,6 +1596,20 @@
     },
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#hashlink@0.12.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#equivalent@1.0.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
       "target": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
       "kinds": [
         "normal"
@@ -1369,6 +1778,41 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_core@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_derive@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#serde_derive@1.0.229",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#serde_derive@1.0.229",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#serde_derive@1.0.229",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#syn@3.0.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#sha1@0.10.7",
       "target": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4",
       "kinds": [
@@ -1446,6 +1890,20 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#string-interner@0.19.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.15.5",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#string-interner@0.19.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119",
       "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
       "kinds": [
@@ -1462,6 +1920,97 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119",
       "target": "registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#syn@3.0.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#syn@3.0.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#syn@3.0.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmi@1.1.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#spin@0.9.9",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmi@1.1.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmi_collections@1.1.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmi@1.1.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmi_core@1.1.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmi@1.1.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmi_ir@1.1.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmi@1.1.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmparser@0.239.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmi_collections@1.1.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#string-interner@0.19.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmi_core@1.1.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#libm@0.2.16",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmi_ir@1.1.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmi_core@1.1.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmparser@0.239.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bitflags@2.13.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmparser@0.239.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
       "kinds": [
         "normal"
       ]
