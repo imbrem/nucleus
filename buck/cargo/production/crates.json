@@ -92,6 +92,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-lib-wasm@0.0.0",
+      "name": "covalence-lib-wasm",
+      "version": "0.0.0",
+      "path": "crates/lib/wasm",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_lib_wasm",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-neutron@0.0.0",
       "name": "covalence-neutron",
       "version": "0.0.0",

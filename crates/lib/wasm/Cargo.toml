@@ -1,0 +1,18 @@
+[package]
+name = "covalence-lib-wasm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Portable WebAssembly runtime boundary for Nucleus"
+publish = false
+
+[features]
+default = ["wasmi"]
+wasmi = ["dep:wasmi"]
+
+[dependencies]
+wasmi = { version = "1.1", default-features = false, features = ["std"], optional = true }
+
+[lints]
+workspace = true
