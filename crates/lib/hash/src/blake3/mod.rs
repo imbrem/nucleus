@@ -4,6 +4,8 @@
 mod cv;
 #[cfg(feature = "blake3")]
 mod range;
+#[cfg(feature = "blake3")]
+mod source;
 
 #[cfg(feature = "blake3")]
 pub use cv::{Blake3Cv, Blake3Merkle};
@@ -12,6 +14,8 @@ pub use range::{
     Blake3ContextEvidence, Blake3KeyedEvidence, Blake3ProofNode, Blake3RangeProof,
     Blake3RangeProofError, Blake3UnkeyedEvidence,
 };
+#[cfg(feature = "blake3")]
+pub use source::{Blake3ProofSource, Blake3SourceProofError, Blake3SourceRequest};
 
 use crate::{Namespace, O256, Obj, Opaque, RootedNamespace};
 
