@@ -82,7 +82,7 @@ pub enum Blake3RangeProofError {
 }
 
 #[derive(Clone, Copy)]
-enum Blake3ProofMode<'a> {
+pub(super) enum Blake3ProofMode<'a> {
     Unkeyed,
     Keyed(&'a O256),
     Context(&'a CtxKey),
@@ -105,14 +105,14 @@ impl<'a> Blake3ProofMode<'a> {
         }
     }
 
-    fn subtree(self, offset: u64, bytes: &[u8]) -> Blake3Cv {
+    pub(super) fn subtree(self, offset: u64, bytes: &[u8]) -> Blake3Cv {
         let mut hasher = self.hasher();
         hasher.set_input_offset(offset);
         hasher.update(bytes);
         Blake3Cv::from_array(hasher.finalize_non_root())
     }
 
-    fn merge(self, left: Blake3Cv, right: Blake3Cv) -> Blake3Cv {
+    pub(super) fn merge(self, left: Blake3Cv, right: Blake3Cv) -> Blake3Cv {
         Blake3Cv::from_array(hazmat::merge_subtrees_non_root(
             left.as_bytes(),
             right.as_bytes(),
@@ -120,11 +120,11 @@ impl<'a> Blake3ProofMode<'a> {
         ))
     }
 
-    fn root(self, left: Blake3Cv, right: Blake3Cv) -> [u8; 32] {
+    pub(super) fn root(self, left: Blake3Cv, right: Blake3Cv) -> [u8; 32] {
         *hazmat::merge_subtrees_root(left.as_bytes(), right.as_bytes(), self.hazmat()).as_bytes()
     }
 
-    fn hash(self, bytes: &[u8]) -> [u8; 32] {
+    pub(super) fn hash(self, bytes: &[u8]) -> [u8; 32] {
         let mut hasher = self.hasher();
         hasher.update(bytes);
         *hasher.finalize().as_bytes()
