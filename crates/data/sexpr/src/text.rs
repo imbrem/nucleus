@@ -37,6 +37,8 @@ pub enum ErrorKind {
     UnterminatedComment,
     /// A quoted literal contains an escape the dialect does not define.
     InvalidEscape,
+    /// A quoted literal contains a character the dialect requires be escaped.
+    InvalidCharacter,
     /// An atom begins like a number but is not one in this dialect.
     InvalidNumber,
     /// An atom is not a symbol in this dialect.
@@ -53,6 +55,7 @@ impl ErrorKind {
             Self::UnterminatedLiteral => "input ends inside a quoted literal",
             Self::UnterminatedComment => "input ends inside a block comment",
             Self::InvalidEscape => "undefined escape sequence",
+            Self::InvalidCharacter => "character must be written as an escape",
             Self::InvalidNumber => "malformed number",
             Self::InvalidSymbol => "malformed symbol",
         }

@@ -156,6 +156,12 @@ fn scan_string(input: &str, from: usize) -> Result<(Token<'_>, usize), Error> {
                 let output = decoded.get_or_insert_with(|| input.as_bytes()[start..index].to_vec());
                 index = scan_escape(input, index, output)?;
             }
+            // `stringchar` excludes the control characters and DEL, which must
+            // be written as escapes. A continuation byte is always >= 0x80, so
+            // testing bytes cannot misjudge a multibyte character.
+            byte if byte < 0x20 || byte == 0x7f => {
+                return Err(Error::new(index, ErrorKind::InvalidCharacter));
+            }
             byte => {
                 if let Some(output) = &mut decoded {
                     output.push(byte);
@@ -199,8 +205,12 @@ fn scan_escape(input: &str, index: usize, output: &mut Vec<u8>) -> Result<usize,
     }
 
     // `\hh`: two hex digits denoting one raw byte.
-    let (high, low) = (byte, *bytes.get(index + 2).ok_or_else(invalid)?);
-    let (Some(high), Some(low)) = ((high as char).to_digit(16), (low as char).to_digit(16)) else {
+    let Some(low) = bytes.get(index + 2) else {
+        // Truncated by end of input rather than misspelled; let the caller's
+        // loop end and report the unterminated literal.
+        return Ok(input.len());
+    };
+    let (Some(high), Some(low)) = ((byte as char).to_digit(16), (*low as char).to_digit(16)) else {
         return Err(invalid());
     };
     let value = u8::try_from(high * 16 + low).expect("two hex digits fit in a byte");
@@ -209,23 +219,49 @@ fn scan_escape(input: &str, index: usize, output: &mut Vec<u8>) -> Result<usize,
 }
 
 /// Decodes `\u{…}` into the UTF-8 encoding of one scalar value.
+///
+/// The braced body is a `hexnum`, so it admits `_` between digits. Digits are
+/// consumed one at a time rather than by searching for the closing brace, so
+/// the scan cannot run past the end of the literal.
 fn scan_unicode_escape(input: &str, index: usize, output: &mut Vec<u8>) -> Result<usize, Error> {
     let invalid = || Error::new(index, ErrorKind::InvalidEscape);
-    let rest = input.get(index + 2..).ok_or_else(invalid)?;
+    let Some(rest) = input.get(index + 2..).filter(|rest| !rest.is_empty()) else {
+        // Truncated by end of input; the caller reports the open literal.
+        return Ok(input.len());
+    };
     let body = rest.strip_prefix('{').ok_or_else(invalid)?;
-    let end = body.find('}').ok_or_else(invalid)?;
-    let digits = &body[..end];
 
-    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(invalid());
+    let mut value: u32 = 0;
+    let mut digits = 0usize;
+    let mut consumed = 0usize;
+    let mut after_separator = false;
+
+    for byte in body.bytes() {
+        consumed += 1;
+        match byte {
+            b'}' if digits > 0 && !after_separator => {
+                let character = char::from_u32(value).ok_or_else(invalid)?;
+                let mut buffer = [0u8; 4];
+                output.extend_from_slice(character.encode_utf8(&mut buffer).as_bytes());
+                // `\u{` precedes the body, whose last byte is the `}`.
+                return Ok(index + 3 + consumed);
+            }
+            b'_' if digits > 0 && !after_separator => after_separator = true,
+            _ => {
+                let digit = (byte as char).to_digit(16).ok_or_else(invalid)?;
+                value = value
+                    .checked_mul(16)
+                    .and_then(|value| value.checked_add(digit))
+                    .ok_or_else(invalid)?;
+                digits += 1;
+                after_separator = false;
+            }
+        }
     }
-    let value = u32::from_str_radix(digits, 16).map_err(|_| invalid())?;
-    let character = char::from_u32(value).ok_or_else(invalid)?;
 
-    let mut buffer = [0u8; 4];
-    output.extend_from_slice(character.encode_utf8(&mut buffer).as_bytes());
-    // `\u{` + digits + `}`
-    Ok(index + 3 + digits.len() + 1)
+    // `body` runs to the end of the input, so exhausting it without a closing
+    // brace means truncation rather than a misspelling.
+    Ok(input.len())
 }
 
 /// Recognises the WAT numeric literals `uN`, `sN`, and `fN`.
@@ -436,5 +472,40 @@ mod tests {
         assert_eq!(error(r#""\u{dfff}""#), ErrorKind::InvalidEscape);
         // A brace that never closes cannot silently span the literal.
         assert_eq!(error(r#""\u{1""#), ErrorKind::InvalidEscape);
+    }
+
+    #[test]
+    fn control_characters_must_be_written_as_escapes() {
+        // `stringchar` excludes everything below U+20, plus DEL.
+        assert_eq!(error("\"a\nb\""), ErrorKind::InvalidCharacter);
+        assert_eq!(error("\"a\tb\""), ErrorKind::InvalidCharacter);
+        assert_eq!(error("\"a\u{7f}b\""), ErrorKind::InvalidCharacter);
+        // The escaped spellings of the same bytes stay legal.
+        assert_eq!(bytes(r#""a\nb""#), b"a\nb");
+        // Multibyte text is unaffected: continuation bytes are all >= 0x80.
+        assert_eq!(bytes("\"caf\u{e9}\""), "caf\u{e9}".as_bytes());
+    }
+
+    #[test]
+    fn unicode_escapes_accept_hexnum_separators() {
+        // The braced body is a `hexnum`, which allows `_` between digits.
+        assert_eq!(bytes(r#""\u{1_f600}""#), "\u{1f600}".as_bytes());
+        // ...but only between them.
+        assert_eq!(error(r#""\u{_1}""#), ErrorKind::InvalidEscape);
+        assert_eq!(error(r#""\u{1_}""#), ErrorKind::InvalidEscape);
+        assert_eq!(error(r#""\u{1__2}""#), ErrorKind::InvalidEscape);
+        // An overlong body overflows rather than wrapping.
+        assert_eq!(error(r#""\u{ffffffffff}""#), ErrorKind::InvalidEscape);
+    }
+
+    #[test]
+    fn an_escape_truncated_by_end_of_input_is_an_unterminated_literal() {
+        for truncated in ["\"a\\", "\"a\\1", "\"a\\u", "\"a\\u{4"] {
+            assert_eq!(
+                error(truncated),
+                ErrorKind::UnterminatedLiteral,
+                "{truncated:?}"
+            );
+        }
     }
 }

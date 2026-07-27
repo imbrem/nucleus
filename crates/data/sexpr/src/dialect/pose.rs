@@ -38,8 +38,11 @@ impl Dialect for Pose {
                 offset += 1;
             }
             if bytes.get(offset) == Some(&b';') {
-                // The newline itself stays; the next pass skips it as whitespace.
-                offset += input[offset..].find('\n').unwrap_or(input.len() - offset);
+                // `newline = CR | LF`, so either ends a comment. The newline
+                // itself stays; the next pass skips it as whitespace.
+                offset += input[offset..]
+                    .find(['\r', '\n'])
+                    .unwrap_or(input.len() - offset);
             } else {
                 return Ok(offset);
             }
@@ -401,5 +404,19 @@ mod tests {
     fn a_string_may_span_lines() {
         let tree: SExpr<Atom> = read("\"one\ntwo\"", Pose).expect("valid input");
         assert_eq!(tree, SExpr::atom(Atom::String(Symbol::new("one\ntwo"))));
+    }
+
+    #[test]
+    fn a_comment_ends_at_either_newline_character() {
+        // `newline = CR | LF`, so a lone CR must terminate a comment. Missing
+        // that silently swallows the rest of the input.
+        assert_eq!(productions("; c\ra"), [Production::Symbol]);
+        assert_eq!(productions("; c\r\na"), [Production::Symbol]);
+        assert_eq!(productions("; c\na"), [Production::Symbol]);
+        // A CR-terminated comment must not eat the closing parenthesis.
+        assert_eq!(
+            read_all::<Atom, _>("(a ; c\r)", Pose).expect("valid").len(),
+            1
+        );
     }
 }
