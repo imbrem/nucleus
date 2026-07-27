@@ -13,6 +13,12 @@
           "kinds": [
             "bin"
           ]
+        },
+        {
+          "name": "snapshot",
+          "kinds": [
+            "test"
+          ]
         }
       ]
     },
