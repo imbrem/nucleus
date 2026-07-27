@@ -1,227 +1,90 @@
 #![allow(unsafe_code)]
-//! Registration of [`Vfs`] implementations with `SQLite` via `rsqlite-vfs`.
+//! Registration of [`Vfs`] implementations with `SQLite`'s C API.
 //!
-//! Bridges our safe [`Vfs`]/[`File`] traits to `rsqlite-vfs`'s store-based
-//! VFS model and delegates the actual `sqlite3_vfs_register` call to
-//! [`rsqlite_vfs::register_vfs`].
+//! This module builds the FFI trampolines that bridge our safe [`Vfs`] and
+//! [`File`] traits to the `sqlite3_vfs` / `sqlite3_io_methods` C interface.
+//! Call [`register`] once at startup; the VFS is then available to any
+//! `Connection::open_with_flags_and_vfs` call.
 //!
-//! The `rsqlite-vfs` crate is `#![no_std]` and links against whatever
-//! `SQLite` is present (`libsqlite3-sys` on native, `sqlite-wasm-rs` on
-//! WASM), so this single implementation works on all targets.
+//! # Architecture
+//!
+//! Two heap-allocated structs carry state across the FFI boundary:
+//!
+//! - [`VfsState`] holds the `Vfs` implementation and the `sqlite3_io_methods`
+//!   table.  A raw pointer to it is stored in `sqlite3_vfs.pAppData`.  It is
+//!   intentionally leaked and lives for the process lifetime.
+//!
+//! - [`FileState`] is a `#[repr(C)]` struct whose first field is
+//!   `sqlite3_file`.  `SQLite` allocates `szOsFile` bytes for each open
+//!   file; we set that to `size_of::<FileState>()` so the memory is ours to
+//!   use.  The `file` field is [`MaybeUninit`] because `SQLite` allocates
+//!   the struct first and only later calls `xOpen` to initialise it.
+//!
+//! Because [`File`] methods take `&self`, no `Mutex` is needed around the
+//! file handle — implementations provide their own interior mutability
+//! where required.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::ffi::CString;
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::fmt;
-use std::marker::PhantomData;
+use std::mem::{self, MaybeUninit};
+use std::ptr;
+use std::slice;
 use std::sync::Mutex;
-use std::time::Duration;
 
-use rsqlite_vfs::ffi::{
-    SQLITE_IOERR, SQLITE_OPEN_CREATE, SQLITE_OPEN_DELETEONCLOSE, SQLITE_OPEN_EXCLUSIVE,
-    SQLITE_OPEN_MAIN_DB, SQLITE_OPEN_MAIN_JOURNAL, SQLITE_OPEN_READONLY, SQLITE_OPEN_WAL,
-};
-use rsqlite_vfs::{
-    SQLiteIoMethods, SQLiteVfs, SQLiteVfsFile, VfsError, VfsFile, VfsResult, VfsStore,
-};
+use crate::ffi;
 
-use super::{AccessCheck, File, OpenFlags, OpenKind, Vfs};
+use super::{AccessCheck, File, LockLevel, OpenFlags, OpenKind, SyncFlags, Vfs};
 
-// Serialises `register` calls so the find-then-register sequence is atomic
-// with respect to other callers of this function.
+/// Maximum pathname length exposed to `SQLite`.
+const MAX_PATH: usize = 512;
+
+/// Serialises [`register`] calls so the find-then-register sequence is
+/// atomic with respect to other callers.
 static REGISTER_LOCK: Mutex<()> = Mutex::new(());
 
 // ---------------------------------------------------------------------------
-// AppData — holds our Vfs plus the open-file table
+// State structs
 // ---------------------------------------------------------------------------
 
-struct AppData<V: Vfs> {
+/// Heap-allocated state that lives for the lifetime of the registered VFS.
+/// A raw pointer to this is stored in `sqlite3_vfs.pAppData`.
+struct VfsState<V: Vfs> {
+    /// Kept alive so the `zName` pointer in `sqlite3_vfs` remains valid.
+    #[allow(dead_code)]
+    name: CString,
     vfs: V,
-    files: RefCell<HashMap<String, WrappedFile<V::File>>>,
+    io_methods: ffi::sqlite3_io_methods,
 }
 
-// ---------------------------------------------------------------------------
-// File wrapper — bridges our File to rsqlite_vfs::VfsFile
-// ---------------------------------------------------------------------------
+/// Per-open-file state.  The first field **must** be `sqlite3_file` so that
+/// a `*mut FileState<V>` and a `*mut sqlite3_file` are interchangeable
+/// (`#[repr(C)]` guarantees no leading padding).
+#[repr(C)]
+struct FileState<V: Vfs> {
+    base: ffi::sqlite3_file,
+    /// The file handle.  [`MaybeUninit`] because `SQLite` allocates this
+    /// struct (via `szOsFile`) before calling `xOpen` to initialise it;
+    /// `xClose` drops it in place.
+    file: MaybeUninit<V::File>,
+    /// Back-pointer to the owning VFS state (valid for the process lifetime).
+    vfs_state: *const VfsState<V>,
+}
 
-struct WrappedFile<F>(F);
-
-impl<F: File> VfsFile for WrappedFile<F> {
-    fn read(&self, buf: &mut [u8], offset: usize) -> VfsResult<bool> {
-        #[allow(clippy::cast_possible_truncation)]
-        let size = self.0.file_size().map_err(io_to_vfs)? as usize;
-        self.0.read(buf, offset as u64).map_err(io_to_vfs)?;
-        Ok(offset + buf.len() <= size)
-    }
-
-    fn write(&mut self, buf: &[u8], offset: usize) -> VfsResult<()> {
-        self.0.write(buf, offset as u64).map_err(io_to_vfs)
-    }
-
-    fn truncate(&mut self, size: usize) -> VfsResult<()> {
-        self.0.truncate(size as u64).map_err(io_to_vfs)
-    }
-
-    fn flush(&mut self) -> VfsResult<()> {
-        self.0.sync(super::SyncFlags::Normal).map_err(io_to_vfs)
-    }
-
-    #[allow(clippy::cast_possible_truncation)]
-    fn size(&self) -> VfsResult<usize> {
-        self.0.file_size().map(|s| s as usize).map_err(io_to_vfs)
+impl<V: Vfs> FileState<V> {
+    /// Returns a shared reference to the initialised file handle.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure `self.file` has been initialised (i.e. `xOpen`
+    /// has run and `xClose` has not yet run).
+    unsafe fn file(&self) -> &V::File {
+        unsafe { self.file.assume_init_ref() }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Store — manages open files for the VFS
+// Errors
 // ---------------------------------------------------------------------------
-
-struct Store<V: Vfs>(PhantomData<V>);
-
-impl<V: Vfs + 'static> VfsStore<WrappedFile<V::File>, AppData<V>> for Store<V> {
-    fn add_file(vfs: *mut rsqlite_vfs::ffi::sqlite3_vfs, file: &str, flags: i32) -> VfsResult<()> {
-        // SAFETY: `pAppData` was set to a leaked `VfsAppData<AppData<V>>` by
-        // `register_vfs`.
-        let app_data = unsafe { Self::app_data(vfs) };
-        let kind = open_kind_from_flags(flags);
-        let open_flags = open_flags_from_c(flags);
-        let f = app_data
-            .vfs
-            .open(Some(file), kind, open_flags)
-            .map_err(io_to_vfs)?;
-        app_data
-            .files
-            .borrow_mut()
-            .insert(file.into(), WrappedFile(f));
-        Ok(())
-    }
-
-    fn contains_file(vfs: *mut rsqlite_vfs::ffi::sqlite3_vfs, file: &str) -> VfsResult<bool> {
-        // SAFETY: same as `add_file`.
-        let app_data = unsafe { Self::app_data(vfs) };
-        if app_data.files.borrow().contains_key(file) {
-            return Ok(true);
-        }
-        app_data
-            .vfs
-            .access(file, AccessCheck::Exists)
-            .map_err(io_to_vfs)
-    }
-
-    fn delete_file(vfs: *mut rsqlite_vfs::ffi::sqlite3_vfs, file: &str) -> VfsResult<()> {
-        // SAFETY: same as `add_file`.
-        let app_data = unsafe { Self::app_data(vfs) };
-        app_data.files.borrow_mut().remove(file);
-        app_data.vfs.delete(file, false).map_err(io_to_vfs)
-    }
-
-    fn with_file<F: Fn(&WrappedFile<V::File>) -> VfsResult<i32>>(
-        vfs_file: &SQLiteVfsFile,
-        f: F,
-    ) -> VfsResult<i32> {
-        // SAFETY: `name()` dereferences the name pointer that was set during
-        // `xOpen` by `rsqlite-vfs`.
-        let name = unsafe { vfs_file.name() };
-        // SAFETY: same as `add_file`.
-        let app_data = unsafe { Self::app_data(vfs_file.vfs) };
-        let files = app_data.files.borrow();
-        let file = files
-            .get(name)
-            .ok_or_else(|| VfsError::new(SQLITE_IOERR, format!("{name} not found")))?;
-        f(file)
-    }
-
-    fn with_file_mut<F: Fn(&mut WrappedFile<V::File>) -> VfsResult<i32>>(
-        vfs_file: &SQLiteVfsFile,
-        f: F,
-    ) -> VfsResult<i32> {
-        // SAFETY: same as `with_file`.
-        let name = unsafe { vfs_file.name() };
-        let app_data = unsafe { Self::app_data(vfs_file.vfs) };
-        let mut files = app_data.files.borrow_mut();
-        let file = files
-            .get_mut(name)
-            .ok_or_else(|| VfsError::new(SQLITE_IOERR, format!("{name} not found")))?;
-        f(file)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// IO methods and VFS adapter types
-// ---------------------------------------------------------------------------
-
-struct Io<V: Vfs>(PhantomData<V>);
-
-impl<V: Vfs + 'static> SQLiteIoMethods for Io<V> {
-    type File = WrappedFile<V::File>;
-    type AppData = AppData<V>;
-    type Store = Store<V>;
-
-    const VERSION: core::ffi::c_int = 1;
-}
-
-struct VfsAdapter<V: Vfs>(PhantomData<V>);
-
-impl<V: Vfs + 'static> SQLiteVfs<Io<V>> for VfsAdapter<V> {
-    const VERSION: core::ffi::c_int = 1;
-
-    fn sleep(dur: Duration) {
-        std::thread::sleep(dur);
-    }
-
-    fn random(buf: &mut [u8]) {
-        buf.fill(0);
-    }
-
-    fn epoch_timestamp_in_ms() -> i64 {
-        #[allow(clippy::cast_possible_truncation)]
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_millis() as i64)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Flag conversions
-// ---------------------------------------------------------------------------
-
-fn open_kind_from_flags(flags: i32) -> OpenKind {
-    if flags & SQLITE_OPEN_MAIN_DB != 0 {
-        OpenKind::MainDb
-    } else if flags & SQLITE_OPEN_MAIN_JOURNAL != 0 {
-        OpenKind::Journal
-    } else if flags & SQLITE_OPEN_WAL != 0 {
-        OpenKind::Wal
-    } else {
-        OpenKind::Temp
-    }
-}
-
-fn open_flags_from_c(flags: i32) -> OpenFlags {
-    let mut out = OpenFlags::empty();
-    if flags & SQLITE_OPEN_CREATE != 0 {
-        out |= OpenFlags::CREATE;
-    }
-    if flags & SQLITE_OPEN_EXCLUSIVE != 0 {
-        out |= OpenFlags::EXCLUSIVE;
-    }
-    if flags & SQLITE_OPEN_READONLY != 0 {
-        out |= OpenFlags::READ_ONLY;
-    }
-    if flags & SQLITE_OPEN_DELETEONCLOSE != 0 {
-        out |= OpenFlags::DELETE_ON_CLOSE;
-    }
-    out
-}
-
-// ---------------------------------------------------------------------------
-// Error types
-// ---------------------------------------------------------------------------
-
-#[allow(clippy::needless_pass_by_value)]
-fn io_to_vfs(err: std::io::Error) -> VfsError {
-    VfsError::new(SQLITE_IOERR, err.to_string())
-}
 
 /// Errors returned by [`register`].
 #[derive(Debug)]
@@ -230,8 +93,8 @@ pub enum RegisterError {
     InvalidName,
     /// A VFS with this name is already registered with `SQLite`.
     AlreadyRegistered,
-    /// `sqlite3_vfs_register` failed.
-    RegistrationFailed(rsqlite_vfs::RegisterVfsError),
+    /// `sqlite3_vfs_register` returned a non-OK result code.
+    RegistrationFailed(c_int),
 }
 
 impl fmt::Display for RegisterError {
@@ -241,25 +104,14 @@ impl fmt::Display for RegisterError {
             Self::AlreadyRegistered => {
                 write!(f, "a VFS with this name is already registered")
             }
-            Self::RegistrationFailed(e) => write!(f, "sqlite3_vfs_register failed: {e}"),
+            Self::RegistrationFailed(rc) => {
+                write!(f, "sqlite3_vfs_register failed with code {rc}")
+            }
         }
     }
 }
 
-impl std::error::Error for RegisterError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::RegistrationFailed(e) => Some(e),
-            _ => None,
-        }
-    }
-}
-
-impl From<rsqlite_vfs::RegisterVfsError> for RegisterError {
-    fn from(e: rsqlite_vfs::RegisterVfsError) -> Self {
-        Self::RegistrationFailed(e)
-    }
-}
+impl std::error::Error for RegisterError {}
 
 // ---------------------------------------------------------------------------
 // Public entry point
@@ -278,16 +130,24 @@ impl From<rsqlite_vfs::RegisterVfsError> for RegisterError {
 /// under the same name is undefined behaviour in `SQLite`, so this check
 /// (serialised by an internal mutex) prevents that.
 ///
+/// # Leaks
+///
+/// The [`VfsState`] and `sqlite3_vfs` structs are intentionally leaked —
+/// they must live as long as the `SQLite` library itself.  There is no
+/// `unregister` counterpart.
+///
 /// # Errors
 ///
 /// Returns an error if the name contains a NUL byte, a VFS with the same
 /// name already exists, or if `sqlite3_vfs_register` fails.
-pub fn register<V: Vfs + 'static>(
+#[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+pub fn register<V: Vfs + Send + Sync + 'static>(
     name: &str,
     vfs: V,
     as_default: bool,
 ) -> Result<(), RegisterError> {
-    let c_name = CString::new(name).map_err(|_| RegisterError::InvalidName)?;
+    let name = CString::new(name).map_err(|_| RegisterError::InvalidName)?;
+    let name_ptr = name.as_ptr();
 
     let _guard = REGISTER_LOCK
         .lock()
@@ -295,16 +155,476 @@ pub fn register<V: Vfs + 'static>(
 
     // SAFETY: `sqlite3_vfs_find` reads the global VFS list; we serialise
     // with the mutex above so no concurrent `register` call can insert
-    // between this check and the `register_vfs` below.
-    let existing = unsafe { rsqlite_vfs::ffi::sqlite3_vfs_find(c_name.as_ptr()) };
+    // between this check and `sqlite3_vfs_register` below.
+    let existing = unsafe { ffi::sqlite3_vfs_find(name_ptr) };
     if !existing.is_null() {
         return Err(RegisterError::AlreadyRegistered);
     }
 
-    let app_data = AppData {
-        vfs,
-        files: RefCell::new(HashMap::new()),
+    let io_methods = ffi::sqlite3_io_methods {
+        iVersion: 1,
+        xClose: Some(x_close::<V>),
+        xRead: Some(x_read::<V>),
+        xWrite: Some(x_write::<V>),
+        xTruncate: Some(x_truncate::<V>),
+        xSync: Some(x_sync::<V>),
+        xFileSize: Some(x_file_size::<V>),
+        xLock: Some(x_lock::<V>),
+        xUnlock: Some(x_unlock::<V>),
+        xCheckReservedLock: Some(x_check_reserved_lock::<V>),
+        xFileControl: Some(x_file_control),
+        xSectorSize: Some(x_sector_size::<V>),
+        xDeviceCharacteristics: Some(x_device_characteristics::<V>),
+        xShmMap: None,
+        xShmLock: None,
+        xShmBarrier: None,
+        xShmUnmap: None,
+        xFetch: None,
+        xUnfetch: None,
     };
-    rsqlite_vfs::register_vfs::<Io<V>, VfsAdapter<V>>(name, app_data, as_default)?;
+
+    // `name` is moved into the leaked `VfsState`; `name_ptr` remains valid
+    // because `CString` stores its data on the heap and moving the owner
+    // does not move the underlying buffer.
+    let state = Box::into_raw(Box::new(VfsState {
+        name,
+        vfs,
+        io_methods,
+    }));
+
+    let vfs_obj = Box::into_raw(Box::new(ffi::sqlite3_vfs {
+        iVersion: 2,
+        szOsFile: mem::size_of::<FileState<V>>() as c_int,
+        mxPathname: MAX_PATH as c_int,
+        pNext: ptr::null_mut(),
+        zName: name_ptr,
+        pAppData: state.cast::<c_void>(),
+        xOpen: Some(x_open::<V>),
+        xDelete: Some(x_delete::<V>),
+        xAccess: Some(x_access::<V>),
+        xFullPathname: Some(x_full_pathname::<V>),
+        xDlOpen: None,
+        xDlError: None,
+        xDlSym: None,
+        xDlClose: None,
+        xRandomness: Some(x_randomness),
+        xSleep: Some(x_sleep),
+        xCurrentTime: Some(x_current_time),
+        xGetLastError: Some(x_get_last_error),
+        xCurrentTimeInt64: Some(x_current_time_int64),
+        xSetSystemCall: None,
+        xGetSystemCall: None,
+        xNextSystemCall: None,
+    }));
+
+    // SAFETY: `vfs_obj` points to a valid, fully-initialised `sqlite3_vfs`.
+    let rc = unsafe { ffi::sqlite3_vfs_register(vfs_obj, c_int::from(as_default)) };
+    if rc != ffi::SQLITE_OK {
+        // SAFETY: registration failed — `SQLite` has not taken ownership.
+        unsafe {
+            drop(Box::from_raw(vfs_obj));
+            drop(Box::from_raw(state));
+        }
+        return Err(RegisterError::RegistrationFailed(rc));
+    }
+
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Helpers: recover state pointers
+// ---------------------------------------------------------------------------
+
+/// Recovers the [`VfsState`] from a `sqlite3_vfs` pointer.
+///
+/// # Safety
+///
+/// `p_vfs` must point to a live `sqlite3_vfs` whose `pAppData` was set by
+/// [`register`].
+unsafe fn vfs_state<'a, V: Vfs>(p_vfs: *mut ffi::sqlite3_vfs) -> &'a VfsState<V> {
+    unsafe { &*((*p_vfs).pAppData.cast::<VfsState<V>>()) }
+}
+
+/// Recovers the [`FileState`] from a `sqlite3_file` pointer.
+///
+/// # Safety
+///
+/// `p_file` must point to a `FileState<V>` whose `file` field has been
+/// initialised by `x_open` and not yet dropped by `x_close`.
+unsafe fn file_state<'a, V: Vfs>(p_file: *mut ffi::sqlite3_file) -> &'a FileState<V> {
+    unsafe { &*(p_file.cast::<FileState<V>>()) }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers: enum conversions
+// ---------------------------------------------------------------------------
+
+fn lock_level_from_c(level: c_int) -> LockLevel {
+    match level {
+        ffi::SQLITE_LOCK_SHARED => LockLevel::Shared,
+        ffi::SQLITE_LOCK_RESERVED => LockLevel::Reserved,
+        ffi::SQLITE_LOCK_PENDING => LockLevel::Pending,
+        ffi::SQLITE_LOCK_EXCLUSIVE => LockLevel::Exclusive,
+        _ => LockLevel::None,
+    }
+}
+
+fn open_kind_from_flags(flags: c_int) -> OpenKind {
+    if flags & ffi::SQLITE_OPEN_MAIN_DB != 0 {
+        OpenKind::MainDb
+    } else if flags & ffi::SQLITE_OPEN_MAIN_JOURNAL != 0 {
+        OpenKind::Journal
+    } else if flags & ffi::SQLITE_OPEN_WAL != 0 {
+        OpenKind::Wal
+    } else {
+        OpenKind::Temp
+    }
+}
+
+fn open_flags_from_c(flags: c_int) -> OpenFlags {
+    let mut out = OpenFlags::empty();
+    if flags & ffi::SQLITE_OPEN_CREATE != 0 {
+        out |= OpenFlags::CREATE;
+    }
+    if flags & ffi::SQLITE_OPEN_EXCLUSIVE != 0 {
+        out |= OpenFlags::EXCLUSIVE;
+    }
+    if flags & ffi::SQLITE_OPEN_READONLY != 0 {
+        out |= OpenFlags::READ_ONLY;
+    }
+    if flags & ffi::SQLITE_OPEN_DELETEONCLOSE != 0 {
+        out |= OpenFlags::DELETE_ON_CLOSE;
+    }
+    out
+}
+
+fn sync_flags_from_c(flags: c_int) -> SyncFlags {
+    if flags & ffi::SQLITE_SYNC_DATAONLY != 0 {
+        SyncFlags::DataOnly
+    } else if flags & 0x0F == ffi::SQLITE_SYNC_FULL {
+        SyncFlags::Full
+    } else {
+        SyncFlags::Normal
+    }
+}
+
+fn access_check_from_c(flags: c_int) -> AccessCheck {
+    match flags {
+        ffi::SQLITE_ACCESS_READWRITE => AccessCheck::ReadWrite,
+        ffi::SQLITE_ACCESS_READ => AccessCheck::Read,
+        _ => AccessCheck::Exists,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// VFS trampolines
+// ---------------------------------------------------------------------------
+
+/// # Safety
+///
+/// Called by `SQLite`.  All pointer arguments are valid per the `xOpen`
+/// contract.
+#[allow(clippy::cast_sign_loss)]
+unsafe extern "C" fn x_open<V: Vfs + Send + Sync + 'static>(
+    p_vfs: *mut ffi::sqlite3_vfs,
+    z_name: *const c_char,
+    p_file: *mut ffi::sqlite3_file,
+    flags: c_int,
+    p_out_flags: *mut c_int,
+) -> c_int {
+    let state = unsafe { vfs_state::<V>(p_vfs) };
+
+    let path = if z_name.is_null() {
+        None
+    } else {
+        match unsafe { CStr::from_ptr(z_name) }.to_str() {
+            Ok(s) => Some(s),
+            Err(_) => return ffi::SQLITE_CANTOPEN,
+        }
+    };
+
+    let Ok(file) = state
+        .vfs
+        .open(path, open_kind_from_flags(flags), open_flags_from_c(flags))
+    else {
+        return ffi::SQLITE_CANTOPEN;
+    };
+
+    // SAFETY: `SQLite` allocated `szOsFile` bytes at `p_file`, which equals
+    // `size_of::<FileState<V>>()`.  We write each field individually to
+    // avoid requiring the whole struct to be initialised up front.
+    let fs = p_file.cast::<FileState<V>>();
+    unsafe {
+        ptr::addr_of_mut!((*fs).base).write(ffi::sqlite3_file {
+            pMethods: &raw const state.io_methods,
+        });
+        ptr::addr_of_mut!((*fs).file).write(MaybeUninit::new(file));
+        ptr::addr_of_mut!((*fs).vfs_state).write(state);
+    }
+
+    if !p_out_flags.is_null() {
+        unsafe { *p_out_flags = flags };
+    }
+
+    ffi::SQLITE_OK
+}
+
+/// # Safety
+///
+/// Called by `SQLite`.  Pointer arguments are valid per the `xDelete`
+/// contract.
+unsafe extern "C" fn x_delete<V: Vfs + Send + Sync + 'static>(
+    p_vfs: *mut ffi::sqlite3_vfs,
+    z_path: *const c_char,
+    sync_dir: c_int,
+) -> c_int {
+    let state = unsafe { vfs_state::<V>(p_vfs) };
+    let Ok(path) = unsafe { CStr::from_ptr(z_path) }.to_str() else {
+        return ffi::SQLITE_IOERR_DELETE;
+    };
+    match state.vfs.delete(path, sync_dir != 0) {
+        Ok(()) => ffi::SQLITE_OK,
+        Err(_) => ffi::SQLITE_IOERR_DELETE,
+    }
+}
+
+/// # Safety
+///
+/// Called by `SQLite`.  Pointer arguments are valid per the `xAccess`
+/// contract.
+unsafe extern "C" fn x_access<V: Vfs + Send + Sync + 'static>(
+    p_vfs: *mut ffi::sqlite3_vfs,
+    z_path: *const c_char,
+    flags: c_int,
+    p_res_out: *mut c_int,
+) -> c_int {
+    let state = unsafe { vfs_state::<V>(p_vfs) };
+    let Ok(path) = unsafe { CStr::from_ptr(z_path) }.to_str() else {
+        return ffi::SQLITE_IOERR_ACCESS;
+    };
+    match state.vfs.access(path, access_check_from_c(flags)) {
+        Ok(result) => {
+            unsafe { *p_res_out = c_int::from(result) };
+            ffi::SQLITE_OK
+        }
+        Err(_) => ffi::SQLITE_IOERR_ACCESS,
+    }
+}
+
+/// # Safety
+///
+/// Called by `SQLite`.  Pointer arguments are valid per the
+/// `xFullPathname` contract.
+#[allow(clippy::cast_sign_loss)]
+unsafe extern "C" fn x_full_pathname<V: Vfs + Send + Sync + 'static>(
+    p_vfs: *mut ffi::sqlite3_vfs,
+    z_path: *const c_char,
+    n_out: c_int,
+    z_out: *mut c_char,
+) -> c_int {
+    let state = unsafe { vfs_state::<V>(p_vfs) };
+    let Ok(path) = unsafe { CStr::from_ptr(z_path) }.to_str() else {
+        return ffi::SQLITE_ERROR;
+    };
+    let Ok(full) = state.vfs.full_pathname(path) else {
+        return ffi::SQLITE_ERROR;
+    };
+    let Ok(c_full) = CString::new(full) else {
+        return ffi::SQLITE_ERROR;
+    };
+    let bytes = c_full.as_bytes_with_nul();
+    if bytes.len() > n_out as usize {
+        return ffi::SQLITE_CANTOPEN;
+    }
+    let out = unsafe { slice::from_raw_parts_mut(z_out.cast::<u8>(), bytes.len()) };
+    out.copy_from_slice(bytes);
+    ffi::SQLITE_OK
+}
+
+#[allow(clippy::cast_sign_loss)]
+unsafe extern "C" fn x_randomness(
+    _p_vfs: *mut ffi::sqlite3_vfs,
+    n_byte: c_int,
+    z_out: *mut c_char,
+) -> c_int {
+    let buf = unsafe { slice::from_raw_parts_mut(z_out.cast::<u8>(), n_byte as usize) };
+    buf.fill(0);
+    n_byte
+}
+
+unsafe extern "C" fn x_sleep(_p_vfs: *mut ffi::sqlite3_vfs, microseconds: c_int) -> c_int {
+    microseconds
+}
+
+unsafe extern "C" fn x_current_time(p_vfs: *mut ffi::sqlite3_vfs, p_time_out: *mut f64) -> c_int {
+    let mut ms: ffi::sqlite3_int64 = 0;
+    unsafe { x_current_time_int64(p_vfs, &raw mut ms) };
+    #[allow(clippy::cast_precision_loss)]
+    unsafe {
+        *p_time_out = ms as f64 / 86_400_000.0;
+    };
+    ffi::SQLITE_OK
+}
+
+#[allow(clippy::cast_possible_truncation)]
+unsafe extern "C" fn x_current_time_int64(
+    _p_vfs: *mut ffi::sqlite3_vfs,
+    p: *mut ffi::sqlite3_int64,
+) -> c_int {
+    // Milliseconds from Julian day 0 to the Unix epoch.
+    const UNIX_EPOCH_JULIAN_MS: i64 = 24_405_875 * 8_640_000;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as i64);
+    unsafe { *p = now_ms + UNIX_EPOCH_JULIAN_MS };
+    ffi::SQLITE_OK
+}
+
+unsafe extern "C" fn x_get_last_error(
+    _p_vfs: *mut ffi::sqlite3_vfs,
+    _n_byte: c_int,
+    _z_err_msg: *mut c_char,
+) -> c_int {
+    0
+}
+
+// ---------------------------------------------------------------------------
+// File (io_methods) trampolines
+// ---------------------------------------------------------------------------
+
+/// # Safety
+///
+/// Called by `SQLite` exactly once per successful `xOpen`.  After this call
+/// the `FileState`'s `file` field is invalid.
+unsafe extern "C" fn x_close<V: Vfs + Send + Sync + 'static>(
+    p_file: *mut ffi::sqlite3_file,
+) -> c_int {
+    let fs = p_file.cast::<FileState<V>>();
+    // SAFETY: the file was initialised in `x_open` and `SQLite` guarantees
+    // `xClose` is called exactly once.
+    unsafe { ptr::drop_in_place((*fs).file.as_mut_ptr()) };
+    ffi::SQLITE_OK
+}
+
+#[allow(clippy::cast_sign_loss)]
+unsafe extern "C" fn x_read<V: Vfs + Send + Sync + 'static>(
+    p_file: *mut ffi::sqlite3_file,
+    z_buf: *mut c_void,
+    i_amt: c_int,
+    i_ofst: ffi::sqlite3_int64,
+) -> c_int {
+    let file = unsafe { file_state::<V>(p_file).file() };
+    let buf = unsafe { slice::from_raw_parts_mut(z_buf.cast::<u8>(), i_amt as usize) };
+    match file.read(buf, i_ofst.cast_unsigned()) {
+        Ok(()) => ffi::SQLITE_OK,
+        Err(_) => ffi::SQLITE_IOERR_READ,
+    }
+}
+
+#[allow(clippy::cast_sign_loss)]
+unsafe extern "C" fn x_write<V: Vfs + Send + Sync + 'static>(
+    p_file: *mut ffi::sqlite3_file,
+    z_buf: *const c_void,
+    i_amt: c_int,
+    i_ofst: ffi::sqlite3_int64,
+) -> c_int {
+    let file = unsafe { file_state::<V>(p_file).file() };
+    let buf = unsafe { slice::from_raw_parts(z_buf.cast::<u8>(), i_amt as usize) };
+    match file.write(buf, i_ofst.cast_unsigned()) {
+        Ok(()) => ffi::SQLITE_OK,
+        Err(_) => ffi::SQLITE_IOERR_WRITE,
+    }
+}
+
+unsafe extern "C" fn x_truncate<V: Vfs + Send + Sync + 'static>(
+    p_file: *mut ffi::sqlite3_file,
+    size: ffi::sqlite3_int64,
+) -> c_int {
+    let file = unsafe { file_state::<V>(p_file).file() };
+    match file.truncate(size.cast_unsigned()) {
+        Ok(()) => ffi::SQLITE_OK,
+        Err(_) => ffi::SQLITE_IOERR_TRUNCATE,
+    }
+}
+
+unsafe extern "C" fn x_sync<V: Vfs + Send + Sync + 'static>(
+    p_file: *mut ffi::sqlite3_file,
+    flags: c_int,
+) -> c_int {
+    let file = unsafe { file_state::<V>(p_file).file() };
+    match file.sync(sync_flags_from_c(flags)) {
+        Ok(()) => ffi::SQLITE_OK,
+        Err(_) => ffi::SQLITE_IOERR_FSYNC,
+    }
+}
+
+#[allow(clippy::cast_possible_wrap)]
+unsafe extern "C" fn x_file_size<V: Vfs + Send + Sync + 'static>(
+    p_file: *mut ffi::sqlite3_file,
+    p_size: *mut ffi::sqlite3_int64,
+) -> c_int {
+    let file = unsafe { file_state::<V>(p_file).file() };
+    match file.file_size() {
+        Ok(size) => {
+            unsafe { *p_size = size.cast_signed() };
+            ffi::SQLITE_OK
+        }
+        Err(_) => ffi::SQLITE_IOERR_FSTAT,
+    }
+}
+
+unsafe extern "C" fn x_lock<V: Vfs + Send + Sync + 'static>(
+    p_file: *mut ffi::sqlite3_file,
+    e_lock: c_int,
+) -> c_int {
+    let file = unsafe { file_state::<V>(p_file).file() };
+    match file.lock(lock_level_from_c(e_lock)) {
+        Ok(()) => ffi::SQLITE_OK,
+        Err(_) => ffi::SQLITE_IOERR_LOCK,
+    }
+}
+
+unsafe extern "C" fn x_unlock<V: Vfs + Send + Sync + 'static>(
+    p_file: *mut ffi::sqlite3_file,
+    e_lock: c_int,
+) -> c_int {
+    let file = unsafe { file_state::<V>(p_file).file() };
+    match file.unlock(lock_level_from_c(e_lock)) {
+        Ok(()) => ffi::SQLITE_OK,
+        Err(_) => ffi::SQLITE_IOERR_UNLOCK,
+    }
+}
+
+unsafe extern "C" fn x_check_reserved_lock<V: Vfs + Send + Sync + 'static>(
+    p_file: *mut ffi::sqlite3_file,
+    p_res_out: *mut c_int,
+) -> c_int {
+    let file = unsafe { file_state::<V>(p_file).file() };
+    unsafe { *p_res_out = c_int::from(file.reserved()) };
+    ffi::SQLITE_OK
+}
+
+unsafe extern "C" fn x_file_control(
+    _p_file: *mut ffi::sqlite3_file,
+    _op: c_int,
+    _p_arg: *mut c_void,
+) -> c_int {
+    ffi::SQLITE_NOTFOUND
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+unsafe extern "C" fn x_sector_size<V: Vfs + Send + Sync + 'static>(
+    p_file: *mut ffi::sqlite3_file,
+) -> c_int {
+    let file = unsafe { file_state::<V>(p_file).file() };
+    let size = file.sector_size();
+    if size == 0 { 4096 } else { size as c_int }
+}
+
+#[allow(clippy::cast_possible_wrap)]
+unsafe extern "C" fn x_device_characteristics<V: Vfs + Send + Sync + 'static>(
+    p_file: *mut ffi::sqlite3_file,
+) -> c_int {
+    let file = unsafe { file_state::<V>(p_file).file() };
+    file.device_characteristics().bits().cast_signed()
 }

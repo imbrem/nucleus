@@ -12,7 +12,6 @@
 
 use std::collections::HashMap;
 use std::io;
-use std::sync::Mutex;
 
 use super::{
     AccessCheck, DeviceCharacteristics, File, LockLevel, OpenFlags, OpenKind, SyncFlags, Vfs,
@@ -32,7 +31,6 @@ use super::{
 /// can skip change detection.
 pub struct ReadOnlyFile<T> {
     data: T,
-    lock: Mutex<LockLevel>,
 }
 
 impl<T: std::fmt::Debug> std::fmt::Debug for ReadOnlyFile<T> {
@@ -47,10 +45,7 @@ impl<T> ReadOnlyFile<T> {
     /// Wraps `data` in a read-only file handle.
     #[must_use]
     pub fn new(data: T) -> Self {
-        Self {
-            data,
-            lock: Mutex::new(LockLevel::None),
-        }
+        Self { data }
     }
 }
 
@@ -90,18 +85,16 @@ impl<T: AsRef<[u8]> + Send + Sync> File for ReadOnlyFile<T> {
         Ok(self.data.as_ref().len() as u64)
     }
 
-    fn lock(&self, level: LockLevel) -> io::Result<()> {
-        *self.lock.lock().unwrap() = level;
+    fn lock(&self, _level: LockLevel) -> io::Result<()> {
         Ok(())
     }
 
-    fn unlock(&self, level: LockLevel) -> io::Result<()> {
-        *self.lock.lock().unwrap() = level;
+    fn unlock(&self, _level: LockLevel) -> io::Result<()> {
         Ok(())
     }
 
     fn current_lock(&self) -> LockLevel {
-        *self.lock.lock().unwrap()
+        LockLevel::None
     }
 
     fn device_characteristics(&self) -> DeviceCharacteristics {
@@ -319,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    fn lock_transitions() {
+    fn lock_is_noop() {
         let vfs = make_vfs();
         let file = vfs
             .open(Some("test.db"), OpenKind::MainDb, OpenFlags::READ_ONLY)
@@ -327,7 +320,7 @@ mod tests {
 
         assert_eq!(file.current_lock(), LockLevel::None);
         file.lock(LockLevel::Shared).unwrap();
-        assert_eq!(file.current_lock(), LockLevel::Shared);
+        assert_eq!(file.current_lock(), LockLevel::None);
         file.unlock(LockLevel::None).unwrap();
         assert_eq!(file.current_lock(), LockLevel::None);
     }
