@@ -23,5 +23,15 @@ max-jobs = 1
 cores = 2"
 fi
 
-CI=true nix develop "path:$PWD" --command pnpm install --frozen-lockfile
+if ! CI=true nix develop "path:$PWD" --command pnpm install --frozen-lockfile; then
+  if [[ "${NUCLEUS_GITHUB_ACTIONS:-}" != "true" ]] ||
+    nix store ping >/dev/null 2>&1; then
+    exit 1
+  fi
+
+  # The nested daemon can be killed under transient runner resource pressure.
+  # Preserve the partially populated store, restart it, and retry once.
+  sudo /usr/local/share/nix-entrypoint.sh
+  CI=true nix develop "path:$PWD" --command pnpm install --frozen-lockfile
+fi
 glu doctor
