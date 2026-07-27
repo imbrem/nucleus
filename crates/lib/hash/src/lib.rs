@@ -10,7 +10,7 @@ use std::{
 use covalence_lib_error::snafu;
 use snafu::Snafu;
 
-mod blake3;
+pub mod blake3;
 mod git;
 
 pub use blake3::{
