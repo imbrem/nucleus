@@ -8,10 +8,12 @@
 
 #![deny(unsafe_code)]
 
+mod addition;
 mod cas;
 mod connection;
 mod image;
 
+pub use addition::{AdditionError, AdditionFact, AdditionLayout, AdditionTable};
 pub use bytes::Bytes;
 pub use cas::{Cas, CasError, CasId};
 pub use connection::{
