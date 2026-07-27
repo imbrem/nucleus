@@ -1,3 +1,4 @@
+#![allow(unsafe_code)]
 //! Process-global registry for Rust [`Vfs`] implementations.
 
 use std::ffi::{CString, c_int};
@@ -121,11 +122,19 @@ static REGISTRY: LazyLock<Mutex<Registry>> = LazyLock::new(|| Mutex::new(Registr
 /// Registered VFS state intentionally lives for the process lifetime because
 /// `SQLite` exposes VFS registration as global state.
 ///
+/// # Safety
+///
+/// The caller must ensure that no code outside this registry concurrently
+/// registers or unregisters an `SQLite` VFS with the same name. `SQLite`'s
+/// process-global registry does not provide an atomic reserve-by-name
+/// operation, so the check performed here cannot make that external race
+/// safe.
+///
 /// # Errors
 ///
 /// Returns an error for an invalid or conflicting name, or when `SQLite`
 /// rejects the registration.
-pub fn register<V: Vfs + Send + Sync + 'static>(
+pub unsafe fn register<V: Vfs + Send + Sync + 'static>(
     name: &str,
     vfs: V,
     as_default: bool,
@@ -190,7 +199,8 @@ mod tests {
             logical_path.to_owned(),
             Arc::<[u8]>::from(bytes.into_boxed_slice()),
         )]);
-        let name = register(&unique_name(), ReadOnlyVfs::new(files), false).unwrap();
+        // SAFETY: test names are unique and no external code registers them.
+        let name = unsafe { register(&unique_name(), ReadOnlyVfs::new(files), false) }.unwrap();
 
         let connection = Connection::open_with_flags_and_vfs(
             logical_path,
@@ -209,9 +219,13 @@ mod tests {
     #[test]
     fn registered_names_identify_instances() {
         let name = unique_name();
-        register(&name, ReadOnlyVfs::<Arc<[u8]>>::new(HashMap::new()), false).unwrap();
+        // SAFETY: this test exclusively owns its unique registration name.
+        unsafe { register(&name, ReadOnlyVfs::<Arc<[u8]>>::new(HashMap::new()), false) }.unwrap();
         assert_eq!(
-            register(&name, ReadOnlyVfs::<Arc<[u8]>>::new(HashMap::new()), false).unwrap_err(),
+            // SAFETY: this is serialized with the first call and exercises
+            // the registry's duplicate-name error.
+            unsafe { register(&name, ReadOnlyVfs::<Arc<[u8]>>::new(HashMap::new()), false) }
+                .unwrap_err(),
             RegisterError::AlreadyRegistered
         );
     }
