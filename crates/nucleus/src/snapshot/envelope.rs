@@ -287,3 +287,194 @@ pub enum SnapshotError {
         source: covalence_neutron::TrustMetadataError,
     },
 }
+
+#[cfg(test)]
+mod tests {
+    use covalence_lib_crypto::ed25519::SigningKey;
+
+    use super::*;
+    use crate::{AdditionFact, Ed25519Signer, Ed25519Verifier, Signer};
+
+    fn signed_fixture() -> (SignedSnapshot, SigningKey) {
+        let key = SigningKey::from_bytes(&[19; 32]);
+        let signing_capability = Ed25519Signer::new(key.clone());
+        let mut connection = Connection::create_in_memory().expect("create");
+        let positive = connection
+            .create_addition("positive")
+            .expect("positive table");
+        let negative = connection
+            .create_addition("negative")
+            .expect("negative table");
+        positive
+            .insert(AdditionFact::sum(20, 22).expect("fact"))
+            .expect("insert");
+        negative
+            .insert(AdditionFact::sum(-20, -22).expect("fact"))
+            .expect("insert");
+        connection
+            .cas()
+            .store(b"connection-local CAS exercise")
+            .expect("store CAS data");
+        connection
+            .register_signer(signing_capability.key_id(), Box::new(signing_capability))
+            .expect("register signer");
+        let signed = connection
+            .sign_snapshot(crate::ed25519_key_id(key.verifying_key().as_bytes()))
+            .expect("sign snapshot");
+        (signed, key)
+    }
+
+    #[test]
+    fn envelope_round_trips_and_opens_multiple_addition_tables() {
+        let (signed, key) = signed_fixture();
+        let encoded = signed.encode().expect("encode");
+        let decoded = SignedSnapshot::decode(&encoded).expect("decode");
+        assert_eq!(decoded, signed);
+
+        let connection = Connection::open_signed_snapshot(
+            &decoded,
+            Box::new(Ed25519Verifier::new(key.verifying_key())),
+        )
+        .expect("open signed snapshot");
+        assert_eq!(connection.additions().expect("validate").len(), 2);
+        assert_eq!(
+            connection
+                .cas()
+                .fetch(decoded.snapshot_hash())
+                .expect("fetch")
+                .as_deref(),
+            Some(decoded.image().as_ref())
+        );
+        assert!(
+            connection
+                .snapshot_is_trusted(
+                    covalence_neutron::TRUSTED_SNAPSHOTS,
+                    decoded.snapshot_hash()
+                )
+                .expect("query trust")
+        );
+    }
+
+    #[test]
+    fn rejects_image_signature_and_key_tampering() {
+        let (signed, key) = signed_fixture();
+
+        let mut modified_image_bytes = signed.image.to_vec();
+        modified_image_bytes[100] ^= 1;
+        let modified_image = SignedSnapshot {
+            image: Bytes::from(modified_image_bytes),
+            ..signed.clone()
+        };
+        assert_verify_error(&modified_image, &key);
+
+        let mut modified_signature_bytes = signed.signature.to_vec();
+        modified_signature_bytes[0] ^= 1;
+        let modified_signature = SignedSnapshot {
+            signature: Bytes::from(modified_signature_bytes),
+            ..signed.clone()
+        };
+        assert_verify_error(&modified_signature, &key);
+
+        assert!(matches!(
+            Connection::open_signed_snapshot(
+                &signed,
+                Box::new(Ed25519Verifier::new(
+                    SigningKey::from_bytes(&[20; 32]).verifying_key()
+                ))
+            ),
+            Err(SnapshotError::Verify { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_malformed_and_oversized_framing() {
+        let (signed, _) = signed_fixture();
+        let encoded = signed.encode().expect("encode");
+        for prefix_len in [0, 1, MAGIC.len(), HEADER_LEN - 1, encoded.len() - 1] {
+            assert!(matches!(
+                SignedSnapshot::decode(&encoded[..prefix_len]),
+                Err(SnapshotError::MalformedEnvelope)
+            ));
+        }
+
+        let mut wrong_magic = encoded.to_vec();
+        wrong_magic[0] ^= 1;
+        assert!(matches!(
+            SignedSnapshot::decode(&wrong_magic),
+            Err(SnapshotError::MalformedEnvelope)
+        ));
+
+        let mut trailing = encoded.to_vec();
+        trailing.extend_from_slice(b"trailing");
+        assert!(matches!(
+            SignedSnapshot::decode(&trailing),
+            Err(SnapshotError::MalformedEnvelope)
+        ));
+
+        let mut oversized_signature = encoded.to_vec();
+        oversized_signature[48..52].copy_from_slice(
+            &u32::try_from(MAX_SIGNATURE_LEN + 1)
+                .expect("fits")
+                .to_be_bytes(),
+        );
+        assert!(matches!(
+            SignedSnapshot::decode(&oversized_signature),
+            Err(SnapshotError::SignatureTooLarge)
+        ));
+    }
+
+    #[test]
+    fn valid_signature_does_not_bypass_relation_validation() {
+        let key = SigningKey::from_bytes(&[31; 32]);
+        let signing_capability = Ed25519Signer::new(key.clone());
+        let neutron = covalence_neutron::Connection::open_in_memory().expect("open");
+        neutron
+            .sqlite()
+            .execute_batch(
+                "CREATE TABLE cov_catalog (
+                    table_name TEXT PRIMARY KEY,
+                    interpretation TEXT NOT NULL
+                ) STRICT, WITHOUT ROWID;
+                CREATE TABLE hostile (
+                    tm INTEGER NOT NULL,
+                    lhs INTEGER NOT NULL,
+                    rhs INTEGER NOT NULL,
+                    PRIMARY KEY (tm, lhs, rhs)
+                ) STRICT, WITHOUT ROWID;
+                INSERT INTO hostile VALUES (4, 2, 3);
+                INSERT INTO cov_catalog VALUES ('hostile', 'cov.addition/v0');",
+            )
+            .expect("construct hostile image");
+        let image = neutron.serialize().expect("serialize");
+        let snapshot_hash = O256::from_bytes(&image);
+        let signature = signing_capability
+            .sign(
+                signing_capability.key_id(),
+                valid_snapshot_statement(snapshot_hash),
+            )
+            .expect("sign invalid state");
+        let signed = SignedSnapshot {
+            image,
+            key: signing_capability.key_id(),
+            signature,
+        };
+
+        assert!(matches!(
+            Connection::open_signed_snapshot(
+                &signed,
+                Box::new(Ed25519Verifier::new(key.verifying_key()))
+            ),
+            Err(SnapshotError::Import { .. })
+        ));
+    }
+
+    fn assert_verify_error(snapshot: &SignedSnapshot, key: &SigningKey) {
+        assert!(matches!(
+            Connection::open_signed_snapshot(
+                snapshot,
+                Box::new(Ed25519Verifier::new(key.verifying_key()))
+            ),
+            Err(SnapshotError::Verify { .. })
+        ));
+    }
+}
