@@ -237,8 +237,9 @@ impl Runner {
         expect_output(
             "nucleus CLI smoke test",
             &output,
-            "hello from nucleus: SQLite returned 42",
+            "opened in-memory Nucleus database",
         )?;
+
         eprintln!("• test nucleus CLI… done");
         Ok(())
     }
@@ -501,8 +502,9 @@ impl Runner {
         expect_output(
             "CLI component smoke test",
             &output,
-            "hello from nucleus: SQLite returned 42",
+            "opened in-memory Nucleus database",
         )?;
+
         eprintln!("• test Wasm components… done");
         Ok(())
     }
