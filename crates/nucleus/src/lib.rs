@@ -1,5 +1,9 @@
 //! Portable trusted core for Nucleus.
 
+mod connection;
+
+pub use connection::{Connection, ConnectionError};
+
 #[cfg(target_os = "wasi")]
 #[allow(unsafe_code)]
 #[rustfmt::skip]

@@ -7,7 +7,7 @@ _PACKAGE_FILES = glob(
 )
 
 _RUST_SOURCES = glob(
-    ["**/*.rs"],
+    ["**/*.rs", "**/*.sql"],
     exclude = ["target/**"],
 )
 
@@ -26,6 +26,7 @@ rust_library(
     tests = [":covalence_nucleus-unit-test"],
     named_deps = {
         "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
+        "covalence_neutron": "nucleus//crates/neutron:covalence_neutron",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -54,6 +55,7 @@ rust_test(
     srcs = _RUST_SOURCES,
     named_deps = {
         "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
+        "covalence_neutron": "nucleus//crates/neutron:covalence_neutron",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -82,6 +84,7 @@ rust_test(
     srcs = _RUST_SOURCES,
     named_deps = {
         "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
+        "covalence_neutron": "nucleus//crates/neutron:covalence_neutron",
         "covalence_nucleus": ":covalence_nucleus",
     },
     env = {
