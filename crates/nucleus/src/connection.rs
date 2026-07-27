@@ -225,11 +225,85 @@ pub enum DatabaseError {
 
 #[cfg(test)]
 mod tests {
+    use covalence_lib_crypto::ed25519::SigningKey;
+    use covalence_lib_hash::O256;
+    use covalence_neutron as neutron;
+
     use super::Connection;
 
     #[test]
     fn opens_through_neutron() {
         let connection = Connection::open_in_memory().expect("open Nucleus connection");
         let _cas: crate::Cas<'_> = connection.cas();
+    }
+
+    #[test]
+    fn capabilities_and_trust_are_independent_and_connection_local() {
+        let signing_key = SigningKey::from_bytes(&[11; 32]);
+        let signer = crate::Ed25519Signer::new(signing_key.clone());
+        let verifier = crate::Ed25519Verifier::new(signing_key.verifying_key());
+        let key = signer.key_id();
+        let statement = O256::from_bytes(b"statement");
+
+        let mut connection = Connection::create_in_memory().expect("create");
+        connection
+            .register_signer(key, Box::new(signer))
+            .expect("register signer");
+        let signature = connection.sign(key, statement).expect("sign");
+        assert!(matches!(
+            connection.verify(key, statement, &signature),
+            Err(crate::VerificationError::UnknownKey { .. })
+        ));
+
+        connection
+            .trust_verifier(key, Box::new(verifier))
+            .expect("trust verifier");
+        connection
+            .verify(key, statement, &signature)
+            .expect("verify");
+
+        let image = connection.serialize().expect("serialize");
+        let restored = Connection::from_image(&image).expect("restore");
+        assert!(matches!(
+            restored.sign(key, statement),
+            Err(crate::SignError::UnknownKey { .. })
+        ));
+        assert!(matches!(
+            restored.verify(key, statement, &signature),
+            Err(crate::VerificationError::UnknownKey { .. })
+        ));
+    }
+
+    #[test]
+    fn snapshot_trust_is_not_serialized() {
+        let snapshot = O256::from_bytes(b"snapshot");
+        let evidence = O256::from_bytes(b"evidence");
+        let mut connection = Connection::create_in_memory().expect("create");
+        connection
+            .create_trusted_snapshot_table("cov_conn_peer_snapshots")
+            .expect("create peer table");
+        connection
+            .record_trusted_snapshot(neutron::TRUSTED_SNAPSHOTS, snapshot, Some(evidence))
+            .expect("trust default");
+        connection
+            .record_trusted_snapshot("cov_conn_peer_snapshots", snapshot, None)
+            .expect("trust peer");
+        assert!(
+            connection
+                .snapshot_is_trusted("cov_conn_peer_snapshots", snapshot)
+                .expect("query peer")
+        );
+
+        let image = connection.serialize().expect("serialize");
+        let restored = Connection::from_image(&image).expect("restore");
+        assert!(
+            !restored
+                .snapshot_is_trusted(neutron::TRUSTED_SNAPSHOTS, snapshot)
+                .expect("query empty default")
+        );
+        assert!(matches!(
+            restored.snapshot_is_trusted("cov_conn_peer_snapshots", snapshot),
+            Err(neutron::TrustMetadataError::NotSnapshotTable { .. })
+        ));
     }
 }

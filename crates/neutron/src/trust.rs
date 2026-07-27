@@ -198,3 +198,79 @@ pub enum TrustMetadataError {
         source: crate::ConnectionError,
     },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::TRUSTED_SNAPSHOTS;
+
+    #[test]
+    fn supports_multiple_registered_snapshot_relations() {
+        let mut connection = Connection::open_in_memory().expect("open");
+        let snapshot = O256::from_bytes(b"snapshot");
+        let evidence = O256::from_bytes(b"evidence");
+        connection
+            .create_trusted_snapshot_table("cov_conn_peer_snapshots")
+            .expect("create peer relation");
+        connection
+            .record_trusted_snapshot(TRUSTED_SNAPSHOTS, snapshot, Some(evidence))
+            .expect("trust default");
+        connection
+            .record_trusted_snapshot("cov_conn_peer_snapshots", snapshot, None)
+            .expect("trust peer");
+
+        assert!(
+            connection
+                .snapshot_is_trusted(TRUSTED_SNAPSHOTS, snapshot)
+                .expect("query default")
+        );
+        assert!(
+            connection
+                .snapshot_is_trusted("cov_conn_peer_snapshots", snapshot)
+                .expect("query peer")
+        );
+        assert!(matches!(
+            connection.record_trusted_snapshot("not_registered", snapshot, None),
+            Err(TrustMetadataError::NotSnapshotTable { .. })
+        ));
+    }
+
+    #[test]
+    fn persistent_tables_cannot_grant_connection_trust() {
+        let connection = Connection::open_in_memory().expect("open");
+        let snapshot = O256::from_bytes(b"self-granted");
+        connection
+            .sqlite()
+            .execute(
+                "CREATE TABLE main.cov_conn_trusted_snapshots (
+                    snapshot_hash BLOB PRIMARY KEY,
+                    justification BLOB
+                ) STRICT",
+                (),
+            )
+            .expect("create persistent impostor");
+        connection
+            .sqlite()
+            .execute(
+                "INSERT INTO main.cov_conn_trusted_snapshots
+                 (snapshot_hash, justification) VALUES (?1, NULL)",
+                [snapshot.as_ref()],
+            )
+            .expect("insert persistent claim");
+
+        assert!(
+            !connection
+                .snapshot_is_trusted(TRUSTED_SNAPSHOTS, snapshot)
+                .expect("query real connection relation")
+        );
+    }
+
+    #[test]
+    fn connection_relation_names_are_reserved() {
+        let mut connection = Connection::open_in_memory().expect("open");
+        assert!(matches!(
+            connection.create_trusted_snapshot_table("persistent_name"),
+            Err(TrustMetadataError::InvalidName { .. })
+        ));
+    }
+}
