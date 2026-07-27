@@ -181,6 +181,9 @@ dependencies = [
 name = "covalence-nucleus"
 version = "0.0.0"
 dependencies = [
+ "bytes",
+ "covalence-lib-crypto",
+ "covalence-lib-error",
  "covalence-lib-hash",
  "covalence-lib-sqlite",
  "covalence-neutron",

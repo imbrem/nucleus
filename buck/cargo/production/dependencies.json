@@ -1562,6 +1562,14 @@
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1"
       ]
+    },
+    {
+      "id": "workspace#covalence-nucleus@0.0.0",
+      "name": "covalence-nucleus",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1"
+      ]
     }
   ],
   "edges": [
