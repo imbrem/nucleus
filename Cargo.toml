@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/lib/error",
+  "crates/lib/crypto",
   "crates/lib/hash",
   "crates/lib/rand",
   "crates/lib/sqlite",
