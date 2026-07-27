@@ -10,8 +10,9 @@ pub use covalence_neutron::Cas;
 mod snapshot;
 
 pub use snapshot::{
-    COV_VALID_DB_V0, ED25519_PUBLIC_KEY_V0, Ed25519Signer, Ed25519Verifier, SignError, Signer,
-    VerificationError, Verifier, ed25519_key_id, valid_snapshot_statement,
+    COV_VALID_DB_V0, ED25519_PUBLIC_KEY_V0, Ed25519Signer, Ed25519Verifier, SignError,
+    SignedSnapshot, Signer, SnapshotError, VerificationError, Verifier, ed25519_key_id,
+    valid_snapshot_statement,
 };
 
 #[cfg(target_os = "wasi")]
