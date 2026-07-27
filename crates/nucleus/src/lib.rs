@@ -2,7 +2,7 @@
 
 mod connection;
 
-pub use connection::{Connection, ConnectionError, DatabaseId, DatabaseRole};
+pub use connection::{Connection, ConnectionError, DatabaseId, DatabaseRole, VfsInstance};
 
 #[cfg(target_os = "wasi")]
 #[allow(unsafe_code)]

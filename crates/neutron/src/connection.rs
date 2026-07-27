@@ -4,12 +4,16 @@ use covalence_lib_error::snafu::{ResultExt, Snafu};
 use covalence_lib_sqlite as sqlite;
 
 const CREATE_CONNECTION_CATALOG_SQL: &str = include_str!("../sql/create_connection_catalog.sql");
+const CREATE_VFS_INSTANCES_SQL: &str = include_str!("../sql/create_vfs_instances.sql");
 const CREATE_ATTACHED_DATABASES_SQL: &str = include_str!("../sql/create_attached_databases.sql");
 const REGISTER_TABLE_SQL: &str = include_str!("../sql/register_table.sql");
+const REGISTER_VFS_INSTANCE_SQL: &str = include_str!("../sql/register_vfs_instance.sql");
 const REGISTER_ATTACHED_DATABASE_SQL: &str = include_str!("../sql/register_attached_database.sql");
 const LIST_ATTACHED_DATABASES_SQL: &str = include_str!("../sql/list_attached_databases.sql");
 const DATABASE_IS_EXCLUSIVE_SQL: &str = include_str!("../sql/database_is_exclusive.sql");
 const DATABASE_ROLE_SQL: &str = include_str!("../sql/database_role.sql");
+const DATABASE_VFS_SQL: &str = include_str!("../sql/database_vfs.sql");
+const MAIN_DATABASE_ID_SQL: &str = include_str!("../sql/main_database_id.sql");
 
 /// Physical name of Neutron's connection catalog in `temp`.
 pub const CONNECTION_CATALOG: &str = "cov_conn_catalog";
@@ -17,11 +21,17 @@ pub const CONNECTION_CATALOG: &str = "cov_conn_catalog";
 /// Physical name of Neutron's registered-database table in `temp`.
 pub const ATTACHED_DATABASES: &str = "cov_conn_attached";
 
+/// Physical name of Neutron's connection-local VFS registry in `temp`.
+pub const VFS_INSTANCES: &str = "cov_conn_vfs";
+
 /// Uninterpreted symbol assigned to the connection catalog.
 pub const CONNECTION_CATALOG_INTERPRETATION: &str = "cov.conn.catalog/v0";
 
 /// Uninterpreted symbol assigned to the attached-database registry.
 pub const ATTACHED_DATABASES_INTERPRETATION: &str = "cov.conn.attached/v0";
+
+/// Uninterpreted symbol assigned to the VFS-instance registry.
+pub const VFS_INSTANCES_INTERPRETATION: &str = "cov.conn.vfs/v0";
 
 /// Connection-local identity of a database registered with Neutron.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -32,6 +42,36 @@ impl DatabaseId {
     #[must_use]
     pub const fn get(self) -> i64 {
         self.0
+    }
+}
+
+/// A connection-local use of a `SQLite` VFS.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VfsInstance {
+    id: i64,
+    name: Option<String>,
+    is_readonly: bool,
+}
+
+impl VfsInstance {
+    /// Returns the integer stored in `cov_conn_vfs`.
+    #[must_use]
+    pub const fn id(&self) -> i64 {
+        self.id
+    }
+
+    /// Returns the explicitly selected VFS name.
+    ///
+    /// `None` means that `SQLite` selected its default VFS.
+    #[must_use]
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    /// Returns whether this database use is read-only.
+    #[must_use]
+    pub const fn is_readonly(&self) -> bool {
+        self.is_readonly
     }
 }
 
@@ -79,7 +119,23 @@ impl Connection {
     /// metadata cannot be initialized atomically.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ConnectionError> {
         let sqlite = sqlite::Connection::open(path).context(OpenSnafu)?;
-        Self::from_sqlite(sqlite)
+        Self::from_sqlite_with_main_vfs(sqlite, None, false)
+    }
+
+    /// Opens a `SQLite` database using `vfs_name` and initializes Neutron.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the database cannot be opened with the requested
+    /// VFS or the connection metadata cannot be initialized atomically.
+    pub fn open_with_vfs(path: impl AsRef<Path>, vfs_name: &str) -> Result<Self, ConnectionError> {
+        let sqlite = sqlite::Connection::open_with_flags_and_vfs(
+            path,
+            sqlite::OpenFlags::default(),
+            vfs_name,
+        )
+        .context(OpenSnafu)?;
+        Self::from_sqlite_with_main_vfs(sqlite, Some(vfs_name), false)
     }
 
     /// Opens an in-memory `SQLite` database and initializes Neutron.
@@ -89,9 +145,22 @@ impl Connection {
     /// Returns an error when the connection metadata cannot be initialized.
     pub fn open_in_memory() -> Result<Self, ConnectionError> {
         let sqlite = sqlite::Connection::open_in_memory().context(OpenSnafu)?;
-        let mut sqlite = sqlite;
-        initialize(&mut sqlite, true)?;
-        Ok(Self { sqlite })
+        Self::from_sqlite_with_main_vfs(sqlite, None, true)
+    }
+
+    /// Opens an in-memory database using `vfs_name` and initializes Neutron.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the database cannot be opened with the requested
+    /// VFS or the connection metadata cannot be initialized.
+    pub fn open_in_memory_with_vfs(vfs_name: &str) -> Result<Self, ConnectionError> {
+        let sqlite = sqlite::Connection::open_in_memory_with_flags_and_vfs(
+            sqlite::OpenFlags::default(),
+            vfs_name,
+        )
+        .context(OpenSnafu)?;
+        Self::from_sqlite_with_main_vfs(sqlite, Some(vfs_name), true)
     }
 
     /// Adopts a raw connection and initializes Neutron's temporary metadata.
@@ -103,7 +172,16 @@ impl Connection {
     ///
     /// Returns an error when the connection metadata cannot be initialized.
     pub fn from_sqlite(mut sqlite: sqlite::Connection) -> Result<Self, ConnectionError> {
-        initialize(&mut sqlite, false)?;
+        initialize(&mut sqlite, false, None)?;
+        Ok(Self { sqlite })
+    }
+
+    fn from_sqlite_with_main_vfs(
+        mut sqlite: sqlite::Connection,
+        main_vfs_name: Option<&str>,
+        main_is_exclusive: bool,
+    ) -> Result<Self, ConnectionError> {
+        initialize(&mut sqlite, main_is_exclusive, main_vfs_name)?;
         Ok(Self { sqlite })
     }
 
@@ -138,7 +216,21 @@ impl Connection {
     /// Returns an error if `SQLite` cannot attach the database or Neutron cannot
     /// record it in the connection metadata.
     pub fn attach_in_memory(&mut self, schema_name: &str) -> Result<DatabaseId, ConnectionError> {
-        self.attach_database(":memory:", schema_name, true)
+        self.attach_database(":memory:", schema_name, true, None)
+    }
+
+    /// Attaches and registers a new in-memory database using `vfs_name`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `SQLite` cannot attach the database using the
+    /// requested VFS or Neutron cannot record it.
+    pub fn attach_in_memory_with_vfs(
+        &mut self,
+        schema_name: &str,
+        vfs_name: &str,
+    ) -> Result<DatabaseId, ConnectionError> {
+        self.attach_database(":memory:", schema_name, true, Some(vfs_name))
     }
 
     /// Attaches and registers a file-backed database.
@@ -161,7 +253,28 @@ impl Connection {
             .ok_or_else(|| ConnectionError::NonUtf8Path {
                 path: path.as_ref().to_path_buf(),
             })?;
-        self.attach_database(path, schema_name, false)
+        self.attach_database(path, schema_name, false, None)
+    }
+
+    /// Attaches and registers a file-backed database using `vfs_name`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `SQLite` cannot attach the database using the
+    /// requested VFS or Neutron cannot record it.
+    pub fn attach_file_with_vfs(
+        &mut self,
+        path: impl AsRef<Path>,
+        schema_name: &str,
+        vfs_name: &str,
+    ) -> Result<DatabaseId, ConnectionError> {
+        let path = path
+            .as_ref()
+            .to_str()
+            .ok_or_else(|| ConnectionError::NonUtf8Path {
+                path: path.as_ref().to_path_buf(),
+            })?;
+        self.attach_database(path, schema_name, false, Some(vfs_name))
     }
 
     fn attach_database(
@@ -169,20 +282,34 @@ impl Connection {
         location: &str,
         schema_name: &str,
         is_exclusive: bool,
+        vfs_name: Option<&str>,
     ) -> Result<DatabaseId, ConnectionError> {
         let attach_sql = format!("ATTACH DATABASE ?1 AS {}", quote_identifier(schema_name));
+        let location_with_vfs = vfs_name.map(|vfs_name| sqlite_uri_with_vfs(location, vfs_name));
         self.sqlite
-            .execute(&attach_sql, [location])
+            .execute(
+                &attach_sql,
+                [location_with_vfs.as_deref().unwrap_or(location)],
+            )
             .with_context(|_| AttachSnafu {
                 schema_name: schema_name.to_owned(),
             })?;
 
-        match register_attached_database(
-            &self.sqlite,
-            schema_name,
-            DatabaseRole::Auxiliary,
-            is_exclusive,
-        ) {
+        let registration = (|| -> sqlite::Result<DatabaseId> {
+            let transaction = self.sqlite.transaction()?;
+            let is_readonly = transaction.is_readonly(schema_name)?;
+            let vfs_id = register_vfs_instance(&transaction, vfs_name, is_readonly)?;
+            let database_id = register_attached_database(
+                &transaction,
+                schema_name,
+                DatabaseRole::Auxiliary,
+                is_exclusive,
+                vfs_id,
+            )?;
+            transaction.commit()?;
+            Ok(database_id)
+        })();
+        match registration {
             Ok(database_id) => Ok(database_id),
             Err(source) => {
                 let detach_sql = format!("DETACH DATABASE {}", quote_identifier(schema_name));
@@ -230,6 +357,38 @@ impl Connection {
             database_id: database_id.get(),
             role,
         })
+    }
+
+    /// Returns the connection-local VFS instance used by a database.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection metadata cannot be queried.
+    pub fn database_vfs(&self, database_id: DatabaseId) -> Result<VfsInstance, ConnectionError> {
+        self.sqlite
+            .query_row(DATABASE_VFS_SQL, [database_id.get()], |row| {
+                Ok(VfsInstance {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    is_readonly: row.get(2)?,
+                })
+            })
+            .with_context(|_| QueryDatabaseSnafu {
+                database_id: database_id.get(),
+            })
+    }
+
+    /// Returns the connection's primary database identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection metadata cannot be queried.
+    pub fn main_database_id(&self) -> Result<DatabaseId, ConnectionError> {
+        self.sqlite
+            .query_row(MAIN_DATABASE_ID_SQL, (), |row| {
+                row.get::<_, i64>(0).map(DatabaseId)
+            })
+            .with_context(|_| QueryMainDatabaseSnafu)
     }
 }
 
@@ -297,11 +456,19 @@ pub enum ConnectionError {
         /// Invalid stored role.
         role: String,
     },
+
+    /// Connection metadata for the main database could not be queried.
+    #[snafu(display("could not query the connection's main database: {source}"))]
+    QueryMainDatabase {
+        /// Underlying `SQLite` failure.
+        source: sqlite::Error,
+    },
 }
 
 fn initialize(
     connection: &mut sqlite::Connection,
     main_is_exclusive: bool,
+    main_vfs_name: Option<&str>,
 ) -> Result<(), ConnectionError> {
     let transaction = connection.transaction().context(InitializeSnafu)?;
 
@@ -317,13 +484,21 @@ fn initialize(
 
     create_and_register_table(
         &transaction,
+        3,
+        VFS_INSTANCES,
+        VFS_INSTANCES_INTERPRETATION,
+        CREATE_VFS_INSTANCES_SQL,
+    )?;
+
+    create_and_register_table(
+        &transaction,
         2,
         ATTACHED_DATABASES,
         ATTACHED_DATABASES_INTERPRETATION,
         CREATE_ATTACHED_DATABASES_SQL,
     )?;
 
-    register_visible_databases(&transaction, main_is_exclusive)?;
+    register_visible_databases(&transaction, main_is_exclusive, main_vfs_name)?;
 
     transaction.commit().context(InitializeSnafu)
 }
@@ -358,17 +533,28 @@ fn register_attached_database(
     sqlite_name: &str,
     role: DatabaseRole,
     is_exclusive: bool,
+    vfs_id: i64,
 ) -> sqlite::Result<DatabaseId> {
     connection.execute(
         REGISTER_ATTACHED_DATABASE_SQL,
-        (sqlite_name, role.as_str(), is_exclusive),
+        (sqlite_name, role.as_str(), is_exclusive, vfs_id),
     )?;
     Ok(DatabaseId(connection.last_insert_rowid()))
+}
+
+fn register_vfs_instance(
+    connection: &sqlite::Connection,
+    vfs_name: Option<&str>,
+    is_readonly: bool,
+) -> sqlite::Result<i64> {
+    connection.execute(REGISTER_VFS_INSTANCE_SQL, (vfs_name, is_readonly))?;
+    Ok(connection.last_insert_rowid())
 }
 
 fn register_visible_databases(
     transaction: &sqlite::Transaction<'_>,
     main_is_exclusive: bool,
+    main_vfs_name: Option<&str>,
 ) -> Result<(), ConnectionError> {
     let databases = {
         let mut statement = transaction
@@ -389,10 +575,47 @@ fn register_visible_databases(
         };
         let is_exclusive =
             sqlite_name == "temp" || (role == DatabaseRole::Main && main_is_exclusive);
-        register_attached_database(transaction, &sqlite_name, role, is_exclusive)
+        let vfs_name = (role == DatabaseRole::Main)
+            .then_some(main_vfs_name)
+            .flatten();
+        let is_readonly = transaction
+            .is_readonly(sqlite_name.as_str())
+            .context(InitializeSnafu)?;
+        let vfs_id =
+            register_vfs_instance(transaction, vfs_name, is_readonly).context(InitializeSnafu)?;
+        register_attached_database(transaction, &sqlite_name, role, is_exclusive, vfs_id)
             .context(InitializeSnafu)?;
     }
     Ok(())
+}
+
+fn sqlite_uri_with_vfs(location: &str, vfs_name: &str) -> String {
+    let location = if location == ":memory:" {
+        String::from(":memory:")
+    } else {
+        percent_encode_uri_component(location, true)
+    };
+    format!(
+        "file:{location}?vfs={}",
+        percent_encode_uri_component(vfs_name, false)
+    )
+}
+
+fn percent_encode_uri_component(value: &str, preserve_slash: bool) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric()
+            || matches!(byte, b'-' | b'.' | b'_' | b'~')
+            || (preserve_slash && byte == b'/')
+            || (preserve_slash && byte == b':')
+        {
+            encoded.push(char::from(byte));
+        } else {
+            use std::fmt::Write;
+            write!(encoded, "%{byte:02X}").expect("writing to a String cannot fail");
+        }
+    }
+    encoded
 }
 
 fn quote_identifier(identifier: &str) -> String {
@@ -403,7 +626,10 @@ fn quote_identifier(identifier: &str) -> String {
 mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use super::{ATTACHED_DATABASES, CONNECTION_CATALOG, Connection, ConnectionError, initialize};
+    use super::{
+        ATTACHED_DATABASES, CONNECTION_CATALOG, Connection, ConnectionError, VFS_INSTANCES,
+        initialize,
+    };
     use covalence_lib_sqlite as sqlite;
 
     static NEXT_DATABASE: AtomicU64 = AtomicU64::new(0);
@@ -444,6 +670,11 @@ mod tests {
                     String::from(ATTACHED_DATABASES),
                     String::from("cov.conn.attached/v0")
                 ),
+                (
+                    3,
+                    String::from(VFS_INSTANCES),
+                    String::from("cov.conn.vfs/v0")
+                ),
             ]
         );
 
@@ -472,6 +703,93 @@ mod tests {
                 (String::from("temp"), String::from("aux"), true),
             ]
         );
+
+        let vfs_instances = connection
+            .sqlite()
+            .prepare(
+                "SELECT vfs_name, is_readonly
+                 FROM temp.cov_conn_vfs
+                 ORDER BY vfs_id",
+            )
+            .expect("prepare VFS query")
+            .query_map((), |row| {
+                Ok((row.get::<_, Option<String>>(0)?, row.get::<_, bool>(1)?))
+            })
+            .expect("query VFS instances")
+            .collect::<sqlite::Result<Vec<_>>>()
+            .expect("read VFS instances");
+        assert_eq!(vfs_instances, [(None, false), (None, false)]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn records_explicit_vfs_for_main_and_attached_databases() {
+        let mut connection =
+            Connection::open_in_memory_with_vfs("unix").expect("open main through unix VFS");
+        let main_id = connection.main_database_id().expect("find main database");
+        let main_vfs = connection.database_vfs(main_id).expect("query main VFS");
+        assert_eq!(main_vfs.name(), Some("unix"));
+        assert!(!main_vfs.is_readonly());
+
+        let attached_id = connection
+            .attach_in_memory_with_vfs("scratch", "unix")
+            .expect("attach through unix VFS");
+        let attached_vfs = connection
+            .database_vfs(attached_id)
+            .expect("query attached VFS");
+        assert_eq!(attached_vfs.name(), Some("unix"));
+        assert!(!attached_vfs.is_readonly());
+        assert_ne!(main_vfs.id(), attached_vfs.id());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn explicit_vfs_supports_file_paths_requiring_uri_encoding() {
+        let suffix = NEXT_DATABASE.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "nucleus neutron vfs {} {suffix}.sqlite",
+            std::process::id()
+        ));
+        let mut connection = Connection::open_in_memory().expect("initialize Neutron");
+        let id = connection
+            .attach_file_with_vfs(&path, "persistent", "unix")
+            .expect("attach file through unix VFS");
+
+        let vfs = connection.database_vfs(id).expect("query attached VFS");
+        assert_eq!(vfs.name(), Some("unix"));
+        assert!(!vfs.is_readonly());
+
+        drop(connection);
+        std::fs::remove_file(path).expect("remove test database");
+    }
+
+    #[test]
+    fn records_readonly_state_from_sqlite() {
+        let suffix = NEXT_DATABASE.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "nucleus-neutron-readonly-{}-{suffix}.sqlite",
+            std::process::id()
+        ));
+        drop(sqlite::Connection::open(&path).expect("create SQLite database"));
+
+        let sqlite = sqlite::Connection::open_with_flags(
+            &path,
+            sqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                | sqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX
+                | sqlite::OpenFlags::SQLITE_OPEN_URI,
+        )
+        .expect("open read-only SQLite database");
+        let connection = Connection::from_sqlite(sqlite).expect("initialize Neutron");
+        let main_id = connection.main_database_id().expect("find main database");
+        assert!(
+            connection
+                .database_vfs(main_id)
+                .expect("query main VFS")
+                .is_readonly()
+        );
+
+        drop(connection);
+        std::fs::remove_file(path).expect("remove test database");
     }
 
     #[test]
@@ -571,6 +889,12 @@ mod tests {
     #[test]
     fn failed_registration_compensates_by_detaching() {
         let mut connection = Connection::open_in_memory().expect("initialize Neutron");
+        let original_vfs_count = connection
+            .sqlite()
+            .query_row("SELECT count(*) FROM temp.cov_conn_vfs", (), |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("count VFS instances");
         connection
             .sqlite_mut()
             .execute("DROP TABLE temp.cov_conn_attached", ())
@@ -593,6 +917,14 @@ mod tests {
             )
             .expect("inspect SQLite database list");
         assert_eq!(visible, 0);
+
+        let vfs_count = connection
+            .sqlite()
+            .query_row("SELECT count(*) FROM temp.cov_conn_vfs", (), |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("count VFS instances after rollback");
+        assert_eq!(vfs_count, original_vfs_count);
     }
 
     #[test]
@@ -620,7 +952,7 @@ mod tests {
             .expect("reserve connection name");
 
         assert!(matches!(
-            initialize(&mut sqlite, false),
+            initialize(&mut sqlite, false, None),
             Err(ConnectionError::Initialize { .. })
         ));
 
@@ -656,7 +988,7 @@ mod tests {
             .expect("reserve catalog name");
 
         assert!(matches!(
-            initialize(&mut sqlite, false),
+            initialize(&mut sqlite, false, None),
             Err(ConnectionError::Initialize { .. })
         ));
 
