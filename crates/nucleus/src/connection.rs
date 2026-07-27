@@ -11,6 +11,9 @@ pub type DatabaseId = neutron::DatabaseId;
 /// A database's role within its `SQLite` connection.
 pub type DatabaseRole = neutron::DatabaseRole;
 
+/// A connection-local use of a `SQLite` VFS.
+pub type VfsInstance = neutron::VfsInstance;
+
 /// A policy-enforcing connection to Nucleus state.
 ///
 /// This initial wrapper intentionally exposes no access to its underlying
@@ -32,6 +35,16 @@ impl Connection {
         neutron::Connection::open(path).map(|neutron| Self { neutron })
     }
 
+    /// Opens a database through the requested `SQLite` VFS.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the database cannot be opened with the requested
+    /// VFS or Neutron's connection metadata cannot be initialized.
+    pub fn open_with_vfs(path: impl AsRef<Path>, vfs_name: &str) -> Result<Self, ConnectionError> {
+        neutron::Connection::open_with_vfs(path, vfs_name).map(|neutron| Self { neutron })
+    }
+
     /// Opens an in-memory database through Neutron.
     ///
     /// # Errors
@@ -40,6 +53,16 @@ impl Connection {
     /// initialized.
     pub fn open_in_memory() -> Result<Self, ConnectionError> {
         neutron::Connection::open_in_memory().map(|neutron| Self { neutron })
+    }
+
+    /// Opens an in-memory database through the requested `SQLite` VFS.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the database cannot be opened with the requested
+    /// VFS or Neutron's connection metadata cannot be initialized.
+    pub fn open_in_memory_with_vfs(vfs_name: &str) -> Result<Self, ConnectionError> {
+        neutron::Connection::open_in_memory_with_vfs(vfs_name).map(|neutron| Self { neutron })
     }
 
     /// Attaches an in-memory database while preserving Nucleus connection
@@ -54,6 +77,21 @@ impl Connection {
     /// register it.
     pub fn attach_in_memory(&mut self, schema_name: &str) -> Result<DatabaseId, ConnectionError> {
         self.neutron.attach_in_memory(schema_name)
+    }
+
+    /// Attaches an in-memory database through the requested `SQLite` VFS.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `SQLite` cannot attach the database using the
+    /// requested VFS or Neutron cannot register it.
+    pub fn attach_in_memory_with_vfs(
+        &mut self,
+        schema_name: &str,
+        vfs_name: &str,
+    ) -> Result<DatabaseId, ConnectionError> {
+        self.neutron
+            .attach_in_memory_with_vfs(schema_name, vfs_name)
     }
 
     /// Attaches a file-backed database while preserving Nucleus connection
@@ -74,6 +112,22 @@ impl Connection {
         self.neutron.attach_file(path, schema_name)
     }
 
+    /// Attaches a file-backed database through the requested `SQLite` VFS.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `SQLite` cannot attach the database using the
+    /// requested VFS or Neutron cannot register it.
+    pub fn attach_file_with_vfs(
+        &mut self,
+        path: impl AsRef<Path>,
+        schema_name: &str,
+        vfs_name: &str,
+    ) -> Result<DatabaseId, ConnectionError> {
+        self.neutron
+            .attach_file_with_vfs(path, schema_name, vfs_name)
+    }
+
     /// Returns whether a database is exclusive to this connection.
     ///
     /// # Errors
@@ -90,6 +144,24 @@ impl Connection {
     /// Returns an error if the connection metadata cannot be queried.
     pub fn database_role(&self, database_id: DatabaseId) -> Result<DatabaseRole, ConnectionError> {
         self.neutron.database_role(database_id)
+    }
+
+    /// Returns the connection-local VFS instance used by a database.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection metadata cannot be queried.
+    pub fn database_vfs(&self, database_id: DatabaseId) -> Result<VfsInstance, ConnectionError> {
+        self.neutron.database_vfs(database_id)
+    }
+
+    /// Returns the connection's primary database identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection metadata cannot be queried.
+    pub fn main_database_id(&self) -> Result<DatabaseId, ConnectionError> {
+        self.neutron.main_database_id()
     }
 }
 
@@ -117,6 +189,32 @@ mod tests {
         assert_eq!(
             connection.database_role(id).expect("query role"),
             super::DatabaseRole::Auxiliary
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exposes_vfs_selection_without_exposing_neutron() {
+        let mut connection =
+            Connection::open_in_memory_with_vfs("unix").expect("open through unix VFS");
+        let main = connection.main_database_id().expect("find main database");
+        assert_eq!(
+            connection
+                .database_vfs(main)
+                .expect("query main VFS")
+                .name(),
+            Some("unix")
+        );
+
+        let auxiliary = connection
+            .attach_in_memory_with_vfs("scratch", "unix")
+            .expect("attach through unix VFS");
+        assert_eq!(
+            connection
+                .database_vfs(auxiliary)
+                .expect("query auxiliary VFS")
+                .name(),
+            Some("unix")
         );
     }
 }
