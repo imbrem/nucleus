@@ -91,7 +91,7 @@ impl Connection {
         self.sqlite()
             .execute(
                 &format!(
-                    "INSERT INTO {quoted} (snapshot_hash, justification)
+                    "INSERT INTO temp.{quoted} (snapshot_hash, justification)
                      VALUES (?1, ?2)
                      ON CONFLICT (snapshot_hash)
                      DO UPDATE SET justification = excluded.justification"
@@ -122,7 +122,7 @@ impl Connection {
             .query_row(
                 &format!(
                     "SELECT EXISTS(
-                        SELECT 1 FROM {quoted} WHERE snapshot_hash = ?1
+                        SELECT 1 FROM temp.{quoted} WHERE snapshot_hash = ?1
                     )"
                 ),
                 [snapshot.as_ref()],
