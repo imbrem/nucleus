@@ -135,6 +135,12 @@
       "category": "tcb",
       "targets": [
         {
+          "name": "addition",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "covalence_nucleus",
           "kinds": [
             "cdylib",
