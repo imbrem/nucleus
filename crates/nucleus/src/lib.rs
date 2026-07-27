@@ -3,8 +3,10 @@
 mod connection;
 mod snapshot;
 
-pub use connection::{Connection, ConnectionError};
-pub use covalence_neutron::Cas;
+pub use connection::{Connection, ConnectionError, DatabaseError};
+pub use covalence_neutron::{
+    AdditionError, AdditionFact, AdditionLayout, AdditionTable, Bytes, Cas,
+};
 pub use snapshot::{
     COV_VALID_DB_V0, ED25519_PUBLIC_KEY_V0, Ed25519Signer, Ed25519Verifier, SignError, Signer,
     VerificationError, Verifier, ed25519_key_id, valid_snapshot_statement,
