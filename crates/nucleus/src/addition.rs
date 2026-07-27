@@ -1,10 +1,9 @@
 use covalence_lib_error::snafu::{ResultExt, Snafu};
 use covalence_lib_sqlite as sqlite;
 
-use crate::Connection;
+use crate::{Connection, catalog};
 
-const CATALOG: &str = "cov_catalog";
-const INTERPRETATION: &str = "cov.addition/v0";
+pub(crate) const INTERPRETATION: &str = "cov.addition/v0";
 
 /// One proposed integer-addition fact.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -74,7 +73,7 @@ impl Addition<'_> {
             .execute(
                 &format!(
                     "INSERT INTO {} (tm, lhs, rhs) VALUES (?1, ?2, ?3)",
-                    quote_identifier(&self.name)
+                    catalog::quote_identifier(&self.name)
                 ),
                 (fact.tm, fact.lhs, fact.rhs),
             )
@@ -94,18 +93,6 @@ impl Addition<'_> {
 }
 
 impl Connection {
-    pub(crate) fn create_persistent_catalog(&self) -> Result<(), AdditionError> {
-        self.neutron
-            .sqlite()
-            .execute_batch(
-                "CREATE TABLE cov_catalog (
-                    table_name TEXT PRIMARY KEY,
-                    interpretation TEXT NOT NULL
-                ) STRICT, WITHOUT ROWID;",
-            )
-            .context(CatalogSnafu)
-    }
-
     /// Creates, catalogs, and returns a canonical addition relation.
     ///
     /// Addition relations use one physical representation in this version:
@@ -116,8 +103,12 @@ impl Connection {
     /// Returns an error for reserved or duplicate names, nested transactions,
     /// or `SQLite` failures.
     pub fn create_addition(&self, name: &str) -> Result<Addition<'_>, AdditionError> {
-        validate_name(name)?;
-        let quoted = quote_identifier(name);
+        if catalog::name_is_reserved(name) {
+            return Err(AdditionError::ReservedName {
+                name: name.to_owned(),
+            });
+        }
+        let quoted = catalog::quote_identifier(name);
         let transaction = self
             .neutron
             .sqlite()
@@ -158,70 +149,29 @@ impl Connection {
     /// incompatible tables, invalid rows, or `SQLite` failures.
     pub fn additions(&self) -> Result<Vec<Addition<'_>>, AdditionError> {
         let sqlite = self.neutron.sqlite();
-        validate_catalog(sqlite)?;
-        let mut statement = sqlite
-            .prepare("SELECT table_name, interpretation FROM cov_catalog ORDER BY table_name")
-            .context(ScanSnafu)?;
-        let entries = statement
-            .query_map((), |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })
-            .context(ScanSnafu)?
-            .collect::<sqlite::Result<Vec<_>>>()
-            .context(ScanSnafu)?;
-
-        entries
+        catalog::entries(sqlite)
+            .map_err(map_catalog_error)?
             .into_iter()
-            .map(|(name, interpretation)| {
-                if interpretation != INTERPRETATION {
-                    return Err(AdditionError::UnknownInterpretation {
-                        table: name,
-                        interpretation,
-                    });
-                }
-                validate_table(sqlite, &name)?;
-                Ok(Addition { sqlite, name })
+            .filter(|entry| entry.interpretation == INTERPRETATION)
+            .map(|entry| {
+                validate_table(sqlite, &entry.table)?;
+                Ok(Addition {
+                    sqlite,
+                    name: entry.table,
+                })
             })
             .collect()
     }
 }
 
-fn validate_name(name: &str) -> Result<(), AdditionError> {
-    if name == CATALOG || name.starts_with("cov_conn_") || name.starts_with("sqlite_") {
-        return Err(AdditionError::ReservedName {
-            name: name.to_owned(),
-        });
-    }
-    Ok(())
-}
-
-fn validate_catalog(sqlite: &sqlite::Connection) -> Result<(), AdditionError> {
-    let columns = table_columns(sqlite, CATALOG).context(CatalogSnafu)?;
-    if columns
-        != [
-            (String::from("table_name"), String::from("TEXT"), true, 1),
-            (
-                String::from("interpretation"),
-                String::from("TEXT"),
-                true,
-                0,
-            ),
-        ]
-        || table_flags(sqlite, CATALOG).context(CatalogSnafu)? != (true, true)
-    {
-        return Err(AdditionError::MalformedCatalog);
-    }
-    Ok(())
-}
-
-fn validate_table(sqlite: &sqlite::Connection, name: &str) -> Result<(), AdditionError> {
-    if table_columns(sqlite, name).context(ScanSnafu)?
+pub(crate) fn validate_table(sqlite: &sqlite::Connection, name: &str) -> Result<(), AdditionError> {
+    if catalog::table_columns(sqlite, name).context(ScanSnafu)?
         != [
             (String::from("tm"), String::from("INTEGER"), true, 1),
             (String::from("lhs"), String::from("INTEGER"), true, 2),
             (String::from("rhs"), String::from("INTEGER"), true, 3),
         ]
-        || table_flags(sqlite, name).context(ScanSnafu)? != (true, true)
+        || catalog::table_flags(sqlite, name).context(ScanSnafu)? != (true, true)
     {
         return Err(AdditionError::MalformedTable {
             table: name.to_owned(),
@@ -231,36 +181,11 @@ fn validate_table(sqlite: &sqlite::Connection, name: &str) -> Result<(), Additio
     Ok(())
 }
 
-fn table_columns(
-    sqlite: &sqlite::Connection,
-    name: &str,
-) -> sqlite::Result<Vec<(String, String, bool, i64)>> {
-    sqlite
-        .prepare(&format!("PRAGMA table_info({})", quote_identifier(name)))?
-        .query_map((), |row| {
-            Ok((
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, bool>(3)?,
-                row.get::<_, i64>(5)?,
-            ))
-        })?
-        .collect()
-}
-
-fn table_flags(sqlite: &sqlite::Connection, name: &str) -> sqlite::Result<(bool, bool)> {
-    sqlite.query_row(
-        "SELECT strict, wr FROM pragma_table_list WHERE schema = 'main' AND name = ?1",
-        [name],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )
-}
-
 fn load_facts(sqlite: &sqlite::Connection, name: &str) -> Result<Vec<AdditionFact>, AdditionError> {
     let mut statement = sqlite
         .prepare(&format!(
             "SELECT tm, lhs, rhs FROM {} ORDER BY tm, lhs, rhs",
-            quote_identifier(name)
+            catalog::quote_identifier(name)
         ))
         .context(ScanSnafu)?;
     let rows = statement
@@ -279,8 +204,11 @@ fn load_facts(sqlite: &sqlite::Connection, name: &str) -> Result<Vec<AdditionFac
         .collect()
 }
 
-fn quote_identifier(identifier: &str) -> String {
-    format!("\"{}\"", identifier.replace('"', "\"\""))
+fn map_catalog_error(error: catalog::CatalogError) -> AdditionError {
+    match error {
+        catalog::CatalogError::Malformed => AdditionError::MalformedCatalog,
+        catalog::CatalogError::Sqlite { source } => AdditionError::Catalog { source },
+    }
 }
 
 /// Failure to construct, discover, or use an addition relation.
@@ -317,15 +245,6 @@ pub enum AdditionError {
     /// The persistent catalog does not have the required representation.
     #[snafu(display("persistent Nucleus catalog is malformed"))]
     MalformedCatalog,
-
-    /// A catalog entry has no known logical interpretation.
-    #[snafu(display("table {table:?} has unknown interpretation {interpretation:?}"))]
-    UnknownInterpretation {
-        /// Physical table.
-        table: String,
-        /// Unrecognized interpretation.
-        interpretation: String,
-    },
 
     /// A catalogued addition relation has the wrong representation.
     #[snafu(display("addition table {table:?} has incompatible geometry"))]

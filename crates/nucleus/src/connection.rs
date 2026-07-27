@@ -58,9 +58,7 @@ impl Connection {
     /// created.
     pub fn create_in_memory() -> Result<Self, DatabaseError> {
         let connection = Self::open_in_memory().context(OpenSnafu)?;
-        connection
-            .create_persistent_catalog()
-            .context(AdditionSnafu)?;
+        crate::catalog::create(connection.neutron.sqlite()).context(CreateCatalogSnafu)?;
         Ok(connection)
     }
 
@@ -74,7 +72,7 @@ impl Connection {
     pub fn from_image(bytes: &neutron::Bytes) -> Result<Self, DatabaseError> {
         let connection =
             Self::from_neutron(neutron::Connection::deserialize(bytes).context(ImageSnafu)?);
-        connection.additions().context(AdditionSnafu)?;
+        connection.validate().context(ValidateSnafu)?;
         Ok(connection)
     }
 
@@ -93,6 +91,24 @@ impl Connection {
     #[must_use]
     pub const fn cas(&self) -> crate::Cas<'_> {
         self.neutron.cas()
+    }
+
+    fn validate(&self) -> Result<(), ValidationError> {
+        let sqlite = self.neutron.sqlite();
+        for entry in crate::catalog::entries(sqlite).context(CatalogSnafu)? {
+            match entry.interpretation.as_str() {
+                crate::addition::INTERPRETATION => {
+                    crate::addition::validate_table(sqlite, &entry.table).context(AdditionSnafu)?;
+                }
+                _ => {
+                    return Err(ValidationError::UnknownInterpretation {
+                        table: entry.table,
+                        interpretation: entry.interpretation,
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Installs a signing capability for `key`.
@@ -215,8 +231,43 @@ pub enum DatabaseError {
         source: neutron::ImageError,
     },
 
+    /// The persistent catalog could not be created.
+    #[snafu(display("could not create Nucleus catalog: {source}"))]
+    CreateCatalog {
+        /// Underlying failure.
+        source: crate::CatalogError,
+    },
+
     /// Persistent logical relations are invalid.
     #[snafu(display("invalid Nucleus relations: {source}"))]
+    Validate {
+        /// Underlying failure.
+        source: ValidationError,
+    },
+}
+
+/// Failure to validate persistent Nucleus relations.
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+pub enum ValidationError {
+    /// The persistent catalog is missing or malformed.
+    #[snafu(display("{source}"))]
+    Catalog {
+        /// Underlying failure.
+        source: crate::CatalogError,
+    },
+
+    /// A catalog entry has no known logical interpretation.
+    #[snafu(display("table {table:?} has unknown interpretation {interpretation:?}"))]
+    UnknownInterpretation {
+        /// Physical table.
+        table: String,
+        /// Unrecognized interpretation.
+        interpretation: String,
+    },
+
+    /// An addition relation is invalid.
+    #[snafu(display("{source}"))]
     Addition {
         /// Underlying failure.
         source: crate::AdditionError,
