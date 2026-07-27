@@ -13,8 +13,8 @@ pub(crate) const INTERPRETATION: &str = "cov.cas/v0";
 /// persistent form has no local integer index and no unresolved entries.
 #[derive(Debug)]
 pub struct CasTable<'conn> {
-    sqlite: &'conn sqlite::Connection,
-    name: String,
+    pub(crate) sqlite: &'conn sqlite::Connection,
+    pub(crate) name: String,
 }
 
 impl CasTable<'_> {
@@ -62,18 +62,26 @@ impl CasTable<'_> {
     ///
     /// Returns an error if the table cannot be queried.
     pub fn fetch(&self, hash: O256) -> Result<Option<Vec<u8>>, CasTableError> {
-        self.sqlite
-            .query_row(
-                &format!(
-                    "SELECT data FROM {} WHERE hash = ?1",
-                    catalog::quote_identifier(&self.name)
-                ),
-                [hash.as_ref()],
-                |row| row.get(0),
-            )
-            .optional()
-            .context(FetchSnafu)
+        fetch(self.sqlite, &self.name, hash)
     }
+}
+
+pub(crate) fn fetch(
+    sqlite: &sqlite::Connection,
+    name: &str,
+    hash: O256,
+) -> Result<Option<Vec<u8>>, CasTableError> {
+    sqlite
+        .query_row(
+            &format!(
+                "SELECT data FROM {} WHERE hash = ?1",
+                catalog::quote_identifier(name)
+            ),
+            [hash.as_ref()],
+            |row| row.get(0),
+        )
+        .optional()
+        .context(FetchSnafu)
 }
 
 impl Connection {

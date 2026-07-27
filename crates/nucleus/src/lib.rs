@@ -1,11 +1,13 @@
 //! Portable trusted core for Nucleus.
 
 mod addition;
+mod byte_length;
 mod cas_table;
 mod catalog;
 mod connection;
 
 pub use addition::{Addition, AdditionError, AdditionFact};
+pub use byte_length::{ByteLengthError, ByteLengthFact, ByteLengths};
 pub use cas_table::{CasTable, CasTableError};
 pub use catalog::CatalogError;
 pub use connection::{Connection, ConnectionError, DatabaseError, ValidationError};
