@@ -37,7 +37,10 @@ fn exports_then_imports_signed_facts_in_a_fresh_process() {
         "export failed: {}",
         String::from_utf8_lossy(&export.stderr)
     );
-    assert!(String::from_utf8_lossy(&export.stdout).contains("2 addition tables"));
+    let export_stdout = String::from_utf8_lossy(&export.stdout);
+    assert!(export_stdout.contains("2 addition tables"));
+    assert!(export_stdout.contains("2 persistent CAS tables"));
+    assert!(export_stdout.contains("1 byte-length relations"));
     assert_eq!(
         fs::read(&paths.public).expect("read generated public key"),
         SigningKey::from_bytes(&[23; 32]).verifying_key().to_bytes()
@@ -58,6 +61,15 @@ fn exports_then_imports_signed_facts_in_a_fresh_process() {
     assert!(stdout.contains("naturals: 2 facts"));
     assert!(stdout.contains("2 = 1 + 1"));
     assert!(stdout.contains("42 = 20 + 22"));
+    assert!(stdout.contains("persistent CAS tables: 2"));
+    assert!(stdout.contains("  binary_cas"));
+    assert!(stdout.contains("  text_cas"));
+    assert!(stdout.contains("byte_lengths: 4 byte-length facts"));
+    assert!(stdout.contains("binary_cas/"));
+    assert!(stdout.contains("text_cas/"));
+    assert!(stdout.contains(": 4 bytes"));
+    assert!(stdout.contains(": 6 bytes"));
+    assert!(stdout.contains(": 14 bytes"));
     assert!(stdout.contains("snapshot image resident in CAS: true"));
 }
 
