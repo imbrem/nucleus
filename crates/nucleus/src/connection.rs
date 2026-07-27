@@ -173,4 +173,29 @@ mod tests {
         let connection = Connection::open_in_memory().expect("open Nucleus connection");
         let _cas: crate::Cas<'_> = connection.cas();
     }
+    #[test]
+    fn relation_discovery_filters_before_database_validation() {
+        let connection = Connection::create_in_memory().expect("create");
+        connection
+            .create_addition("addition")
+            .expect("create addition");
+        connection
+            .neutron
+            .sqlite()
+            .execute_batch(
+                "CREATE TABLE future (value INTEGER PRIMARY KEY) STRICT;
+                 INSERT INTO cov_catalog VALUES ('future', 'cov.future/v0');",
+            )
+            .expect("add future interpretation");
+
+        assert_eq!(connection.additions().expect("discover additions").len(), 1);
+
+        let image = connection.serialize().expect("serialize");
+        assert!(matches!(
+            Connection::from_image(&image),
+            Err(super::DatabaseError::Validate {
+                source: super::ValidationError::UnknownInterpretation { .. }
+            })
+        ));
+    }
 }
