@@ -742,6 +742,27 @@ mod tests {
         assert_ne!(main_vfs.id(), attached_vfs.id());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn explicit_vfs_supports_file_paths_requiring_uri_encoding() {
+        let suffix = NEXT_DATABASE.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "nucleus neutron vfs {} {suffix}.sqlite",
+            std::process::id()
+        ));
+        let mut connection = Connection::open_in_memory().expect("initialize Neutron");
+        let id = connection
+            .attach_file_with_vfs(&path, "persistent", "unix")
+            .expect("attach file through unix VFS");
+
+        let vfs = connection.database_vfs(id).expect("query attached VFS");
+        assert_eq!(vfs.name(), Some("unix"));
+        assert!(!vfs.is_readonly());
+
+        drop(connection);
+        std::fs::remove_file(path).expect("remove test database");
+    }
+
     #[test]
     fn records_readonly_state_from_sqlite() {
         let suffix = NEXT_DATABASE.fetch_add(1, Ordering::Relaxed);
@@ -868,6 +889,12 @@ mod tests {
     #[test]
     fn failed_registration_compensates_by_detaching() {
         let mut connection = Connection::open_in_memory().expect("initialize Neutron");
+        let original_vfs_count = connection
+            .sqlite()
+            .query_row("SELECT count(*) FROM temp.cov_conn_vfs", (), |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("count VFS instances");
         connection
             .sqlite_mut()
             .execute("DROP TABLE temp.cov_conn_attached", ())
@@ -890,6 +917,14 @@ mod tests {
             )
             .expect("inspect SQLite database list");
         assert_eq!(visible, 0);
+
+        let vfs_count = connection
+            .sqlite()
+            .query_row("SELECT count(*) FROM temp.cov_conn_vfs", (), |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("count VFS instances after rollback");
+        assert_eq!(vfs_count, original_vfs_count);
     }
 
     #[test]
