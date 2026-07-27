@@ -7,7 +7,10 @@ use std::{
     ops::Range,
 };
 
-use crate::{Blake3Cv, Blake3Hash, Blake3Merkle};
+use crate::{
+    Blake3Hash,
+    blake3::{Blake3Cv, Blake3Merkle},
+};
 
 /// Index of an actual scheme leaf, before retention grouping.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
