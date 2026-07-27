@@ -100,6 +100,10 @@ impl Connection {
                 crate::addition::INTERPRETATION => {
                     crate::addition::validate_table(sqlite, &entry.table).context(AdditionSnafu)?;
                 }
+                crate::cas_table::INTERPRETATION => {
+                    crate::cas_table::validate_table(sqlite, &entry.table)
+                        .context(CasTableSnafu)?;
+                }
                 _ => {
                     return Err(ValidationError::UnknownInterpretation {
                         table: entry.table,
@@ -271,6 +275,13 @@ pub enum ValidationError {
     Addition {
         /// Underlying failure.
         source: crate::AdditionError,
+    },
+
+    /// A persistent CAS table is invalid.
+    #[snafu(display("{source}"))]
+    CasTable {
+        /// Underlying failure.
+        source: crate::CasTableError,
     },
 }
 
