@@ -147,6 +147,12 @@
           ]
         },
         {
+          "name": "cas_table",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "covalence_nucleus",
           "kinds": [
             "cdylib",
