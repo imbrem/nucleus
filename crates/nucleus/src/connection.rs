@@ -1,7 +1,10 @@
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
 
 use covalence_lib_error::snafu::{ResultExt, Snafu};
+use covalence_lib_hash::O256;
 use covalence_neutron as neutron;
+
+use crate::{SignError, Signer, VerificationError, Verifier};
 
 /// Failure to open a Nucleus connection.
 pub type ConnectionError = neutron::ConnectionError;
@@ -14,11 +17,17 @@ pub type ConnectionError = neutron::ConnectionError;
 #[derive(Debug)]
 pub struct Connection {
     pub(crate) neutron: neutron::Connection,
+    signers: BTreeMap<O256, Box<dyn Signer>>,
+    verifiers: BTreeMap<O256, Box<dyn Verifier>>,
 }
 
 impl Connection {
     fn from_neutron(neutron: neutron::Connection) -> Self {
-        Self { neutron }
+        Self {
+            neutron,
+            signers: BTreeMap::new(),
+            verifiers: BTreeMap::new(),
+        }
     }
 
     /// Opens a database through Neutron and encloses it in the Nucleus boundary.
@@ -84,6 +93,107 @@ impl Connection {
     #[must_use]
     pub const fn cas(&self) -> crate::Cas<'_> {
         self.neutron.cas()
+    }
+
+    /// Installs a signing capability for `key`.
+    ///
+    /// Installing a signer does not make the key trusted.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when connection-local metadata cannot be updated.
+    pub fn register_signer(
+        &mut self,
+        key: O256,
+        signer: Box<dyn Signer>,
+    ) -> Result<Option<Box<dyn Signer>>, neutron::TrustMetadataError> {
+        self.neutron.record_signing_key(key)?;
+        Ok(self.signers.insert(key, signer))
+    }
+
+    /// Installs and trusts a verification capability for `key`.
+    ///
+    /// Trusting a verifier does not require possessing the signing key.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when connection-local metadata cannot be updated.
+    pub fn trust_verifier(
+        &mut self,
+        key: O256,
+        verifier: Box<dyn Verifier>,
+    ) -> Result<Option<Box<dyn Verifier>>, neutron::TrustMetadataError> {
+        self.neutron.record_trusted_key(key)?;
+        Ok(self.verifiers.insert(key, verifier))
+    }
+
+    /// Signs an O256 statement using an installed capability.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no signer is installed for `key` or signing fails.
+    pub fn sign(&self, key: O256, statement: O256) -> Result<neutron::Bytes, SignError> {
+        self.signers
+            .get(&key)
+            .ok_or(SignError::UnknownKey { key })?
+            .sign(key, statement)
+    }
+
+    /// Verifies a statement using a connection-trusted capability.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `key` is not trusted or verification fails.
+    pub fn verify(
+        &self,
+        key: O256,
+        statement: O256,
+        signature: &[u8],
+    ) -> Result<(), VerificationError> {
+        self.verifiers
+            .get(&key)
+            .ok_or(VerificationError::UnknownKey { key })?
+            .verify(key, statement, signature)
+    }
+
+    /// Creates another connection-local trusted-snapshot relation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid or duplicate name or a database failure.
+    pub fn create_trusted_snapshot_table(
+        &mut self,
+        name: &str,
+    ) -> Result<(), neutron::TrustMetadataError> {
+        self.neutron.create_trusted_snapshot_table(name)
+    }
+
+    /// Records an accepted snapshot and optional evidence hash.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `table` is a registered trusted-snapshot table.
+    pub fn record_trusted_snapshot(
+        &self,
+        table: &str,
+        snapshot: O256,
+        justification: Option<O256>,
+    ) -> Result<(), neutron::TrustMetadataError> {
+        self.neutron
+            .record_trusted_snapshot(table, snapshot, justification)
+    }
+
+    /// Tests whether a connection table records a snapshot as trusted.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the table is registered or it cannot be queried.
+    pub fn snapshot_is_trusted(
+        &self,
+        table: &str,
+        snapshot: O256,
+    ) -> Result<bool, neutron::TrustMetadataError> {
+        self.neutron.snapshot_is_trusted(table, snapshot)
     }
 }
 
