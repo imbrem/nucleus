@@ -50,9 +50,14 @@ pub struct DecimalParts {
 /// An exact finite base-10 value.
 ///
 /// The mathematical value is `coefficient × 10^-scale`. The representation is
-/// canonical: a non-zero coefficient is never divisible by ten, and zero
-/// always has scale zero. Consequently `1`, `1.0`, and `1.00` are one value for
+/// canonical: the scale is the smallest one that represents the value, so
+/// either it is zero or the coefficient is not divisible by ten. Zero always
+/// has scale zero. Consequently `1`, `1.0`, and `1.00` are one value for
 /// equality, ordering, and hashing.
+///
+/// Normalization only cancels tens against a positive scale; it never
+/// introduces a negative exponent. `1000` is therefore coefficient `1000` at
+/// scale `0`, not `1` at scale `-3`.
 #[derive(Clone)]
 pub struct Decimal {
     coefficient: Int,
@@ -355,6 +360,20 @@ mod tests {
             assert_eq!(decimal(value), Decimal::ZERO);
             assert_eq!(decimal(value).scale(), 0);
         }
+    }
+
+    #[test]
+    fn normalization_cancels_tens_but_never_creates_a_negative_exponent() {
+        // Tens cancel only against a positive scale.
+        assert_eq!(decimal("1.00").coefficient(), &Int::from(1_i8));
+        assert_eq!(decimal("1.00").scale(), 0);
+
+        // With the scale already at zero there is nowhere for them to go, so
+        // trailing zeros stay in the coefficient.
+        assert_eq!(decimal("1000").coefficient(), &Int::from(1000_i16));
+        assert_eq!(decimal("1000").scale(), 0);
+        assert_eq!(decimal("1.25e3").coefficient(), &Int::from(1250_i16));
+        assert_eq!(decimal("1.25e3").scale(), 0);
     }
 
     #[test]
