@@ -9,10 +9,11 @@ publish = false
 
 [features]
 vfs = ["dep:bitflags"]
-vfs-register = ["vfs"]
+vfs-register = ["vfs", "dep:indexmap"]
 
 [dependencies]
 bitflags = { version = "2", optional = true }
+indexmap = { version = "2", optional = true }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 rusqlite = "=0.40.1"

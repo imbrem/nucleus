@@ -11,13 +11,15 @@
 //! files. Advisory locking is included because `SQLite` calls these methods
 //! even for single-connection in-process databases.
 
+#[cfg(feature = "vfs-register")]
+mod ffi;
 mod readonly;
 #[cfg(feature = "vfs-register")]
-mod register;
+mod registry;
 
 pub use readonly::{ReadOnlyFile, ReadOnlyVfs};
 #[cfg(feature = "vfs-register")]
-pub use register::{RegisterError, register};
+pub use registry::{RegisterError, VfsName, register};
 
 use std::io;
 
@@ -30,8 +32,38 @@ pub enum OpenKind {
     Journal,
     /// The write-ahead log.
     Wal,
-    /// A temporary or transient file.
+    /// A temporary, transient, subjournal, or super-journal file.
+    ///
+    /// These roles are intentionally collapsed in the first-pass API because
+    /// the immutable VFS does not serve them. They can be separated without
+    /// changing the FFI adapter's ownership model when an implementation
+    /// needs role-specific behavior.
     Temp,
+}
+
+/// A file opened by a [`Vfs`], together with the access mode actually granted.
+#[derive(Debug)]
+pub struct OpenedFile<F> {
+    /// Open file handle.
+    pub file: F,
+    /// Actual open flags. These may be narrower than those requested.
+    pub flags: OpenFlags,
+}
+
+impl<F> OpenedFile<F> {
+    /// Creates an open result with its actual access flags.
+    #[must_use]
+    pub fn new(file: F, flags: OpenFlags) -> Self {
+        Self { file, flags }
+    }
+}
+
+impl<F> std::ops::Deref for OpenedFile<F> {
+    type Target = F;
+
+    fn deref(&self) -> &Self::Target {
+        &self.file
+    }
 }
 
 bitflags::bitflags! {
@@ -46,6 +78,8 @@ bitflags::bitflags! {
         const READ_ONLY        = 1 << 2;
         /// The file should be deleted when closed.
         const DELETE_ON_CLOSE  = 1 << 3;
+        /// The file should be opened for reads and writes.
+        const READ_WRITE       = 1 << 4;
     }
 }
 
@@ -122,12 +156,16 @@ bitflags::bitflags! {
         const SAFE_APPEND         = 1 << 9;
         /// The file is on sequential-access storage.
         const SEQUENTIAL          = 1 << 10;
+        /// The file cannot be deleted while open.
+        const UNDELETABLE_WHEN_OPEN =
+            crate::ffi::SQLITE_IOCAP_UNDELETABLE_WHEN_OPEN as u32;
         /// The file does not need to be synced.
-        const POWERSAFE_OVERWRITE = 1 << 11;
-        /// The storage layer batches writes and syncs them together.
-        const BATCH_ATOMIC        = 1 << 12;
+        const POWERSAFE_OVERWRITE =
+            crate::ffi::SQLITE_IOCAP_POWERSAFE_OVERWRITE as u32;
         /// The file is immutable — it will never change.
-        const IMMUTABLE           = 1 << 13;
+        const IMMUTABLE = crate::ffi::SQLITE_IOCAP_IMMUTABLE as u32;
+        /// The storage layer batches writes and syncs them together.
+        const BATCH_ATOMIC = crate::ffi::SQLITE_IOCAP_BATCH_ATOMIC as u32;
     }
 }
 
@@ -149,7 +187,12 @@ pub trait Vfs {
     /// # Errors
     ///
     /// Returns an error if the file cannot be opened under the given flags.
-    fn open(&self, path: Option<&str>, kind: OpenKind, flags: OpenFlags) -> io::Result<Self::File>;
+    fn open(
+        &self,
+        path: Option<&str>,
+        kind: OpenKind,
+        flags: OpenFlags,
+    ) -> io::Result<OpenedFile<Self::File>>;
 
     /// Deletes the file at `path`.
     ///
@@ -188,17 +231,16 @@ pub trait Vfs {
 /// multiple threads. Implementations should use interior mutability (e.g.
 /// `Mutex`) for any mutable state.
 pub trait File: Send + Sync {
-    /// Reads exactly `buf.len()` bytes starting at `offset`.
+    /// Reads bytes starting at `offset`, returning the initialized byte count.
     ///
-    /// If the file is shorter than `offset + buf.len()`, the trailing bytes
-    /// in `buf` must be zero-filled and the method should return
-    /// `Ok(())`. This matches `SQLite`'s short-read semantics.
+    /// A short read returns a count smaller than `buf.len()`. The FFI adapter
+    /// zero-fills the remainder and reports `SQLITE_IOERR_SHORT_READ`.
     ///
     /// # Errors
     ///
     /// Returns an error if the read fails for a reason other than a short
     /// file.
-    fn read(&self, buf: &mut [u8], offset: u64) -> io::Result<()>;
+    fn read(&self, buf: &mut [u8], offset: u64) -> io::Result<usize>;
 
     /// Writes `buf` starting at `offset`.
     ///
@@ -287,12 +329,15 @@ mod tests {
             &self,
             _path: Option<&str>,
             _kind: OpenKind,
-            _flags: OpenFlags,
-        ) -> io::Result<Self::File> {
-            Ok(MemFile {
-                data: Mutex::new(Vec::new()),
-                lock: Mutex::new(LockLevel::None),
-            })
+            flags: OpenFlags,
+        ) -> io::Result<OpenedFile<Self::File>> {
+            Ok(OpenedFile::new(
+                MemFile {
+                    data: Mutex::new(Vec::new()),
+                    lock: Mutex::new(LockLevel::None),
+                },
+                flags,
+            ))
         }
 
         fn delete(&self, _path: &str, _sync_dir: bool) -> io::Result<()> {
@@ -309,21 +354,22 @@ mod tests {
     }
 
     impl File for MemFile {
-        fn read(&self, buf: &mut [u8], offset: u64) -> io::Result<()> {
+        fn read(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
             let data = self.data.lock().unwrap();
-            let offset = offset as usize;
+            let offset = usize::try_from(offset).unwrap_or(usize::MAX);
             let available = data.len().saturating_sub(offset);
             let to_copy = buf.len().min(available);
             if to_copy > 0 {
                 buf[..to_copy].copy_from_slice(&data[offset..offset + to_copy]);
             }
             buf[to_copy..].fill(0);
-            Ok(())
+            Ok(to_copy)
         }
 
         fn write(&self, buf: &[u8], offset: u64) -> io::Result<()> {
             let mut data = self.data.lock().unwrap();
-            let offset = offset as usize;
+            let offset = usize::try_from(offset)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "offset too large"))?;
             let end = offset + buf.len();
             if end > data.len() {
                 data.resize(end, 0);
@@ -333,7 +379,9 @@ mod tests {
         }
 
         fn truncate(&self, size: u64) -> io::Result<()> {
-            self.data.lock().unwrap().truncate(size as usize);
+            let size = usize::try_from(size)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "size too large"))?;
+            self.data.lock().unwrap().truncate(size);
             Ok(())
         }
 
@@ -367,11 +415,11 @@ mod tests {
             .open(None, OpenKind::MainDb, OpenFlags::default())
             .unwrap();
 
-        file.write(b"hello", 0).unwrap();
-        assert_eq!(file.file_size().unwrap(), 5);
+        file.file.write(b"hello", 0).unwrap();
+        assert_eq!(file.file.file_size().unwrap(), 5);
 
         let mut buf = [0u8; 5];
-        file.read(&mut buf, 0).unwrap();
+        file.file.read(&mut buf, 0).unwrap();
         assert_eq!(&buf, b"hello");
     }
 
@@ -519,6 +567,26 @@ mod tests {
         assert!(chars.contains(DeviceCharacteristics::ATOMIC));
         assert!(chars.contains(DeviceCharacteristics::IMMUTABLE));
         assert!(!chars.contains(DeviceCharacteristics::SEQUENTIAL));
+    }
+
+    #[test]
+    fn device_characteristics_match_sqlite_abi() {
+        assert_eq!(
+            DeviceCharacteristics::UNDELETABLE_WHEN_OPEN.bits(),
+            crate::ffi::SQLITE_IOCAP_UNDELETABLE_WHEN_OPEN as u32
+        );
+        assert_eq!(
+            DeviceCharacteristics::POWERSAFE_OVERWRITE.bits(),
+            crate::ffi::SQLITE_IOCAP_POWERSAFE_OVERWRITE as u32
+        );
+        assert_eq!(
+            DeviceCharacteristics::IMMUTABLE.bits(),
+            crate::ffi::SQLITE_IOCAP_IMMUTABLE as u32
+        );
+        assert_eq!(
+            DeviceCharacteristics::BATCH_ATOMIC.bits(),
+            crate::ffi::SQLITE_IOCAP_BATCH_ATOMIC as u32
+        );
     }
 
     #[test]

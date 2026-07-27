@@ -14,7 +14,8 @@ use std::collections::HashMap;
 use std::io;
 
 use super::{
-    AccessCheck, DeviceCharacteristics, File, LockLevel, OpenFlags, OpenKind, SyncFlags, Vfs,
+    AccessCheck, DeviceCharacteristics, File, LockLevel, OpenFlags, OpenKind, OpenedFile,
+    SyncFlags, Vfs,
 };
 
 // ---------------------------------------------------------------------------
@@ -50,7 +51,7 @@ impl<T> ReadOnlyFile<T> {
 }
 
 impl<T: AsRef<[u8]> + Send + Sync> File for ReadOnlyFile<T> {
-    fn read(&self, buf: &mut [u8], offset: u64) -> io::Result<()> {
+    fn read(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
         let data = self.data.as_ref();
         #[allow(clippy::cast_possible_truncation)]
         let offset = offset as usize;
@@ -60,7 +61,7 @@ impl<T: AsRef<[u8]> + Send + Sync> File for ReadOnlyFile<T> {
             buf[..to_copy].copy_from_slice(&data[offset..offset + to_copy]);
         }
         buf[to_copy..].fill(0);
-        Ok(())
+        Ok(to_copy)
     }
 
     fn write(&self, _buf: &[u8], _offset: u64) -> io::Result<()> {
@@ -134,7 +135,7 @@ impl<T: AsRef<[u8]> + Clone + Send + Sync> Vfs for ReadOnlyVfs<T> {
         path: Option<&str>,
         _kind: OpenKind,
         _flags: OpenFlags,
-    ) -> io::Result<Self::File> {
+    ) -> io::Result<OpenedFile<Self::File>> {
         let path = path.ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -146,7 +147,10 @@ impl<T: AsRef<[u8]> + Clone + Send + Sync> Vfs for ReadOnlyVfs<T> {
             .get(path)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, path.to_owned()))?
             .clone();
-        Ok(ReadOnlyFile::new(data))
+        Ok(OpenedFile::new(
+            ReadOnlyFile::new(data),
+            OpenFlags::READ_ONLY,
+        ))
     }
 
     fn delete(&self, _path: &str, _sync_dir: bool) -> io::Result<()> {
