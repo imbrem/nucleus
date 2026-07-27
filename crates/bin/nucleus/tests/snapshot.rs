@@ -37,7 +37,7 @@ fn exports_then_imports_signed_facts_in_a_fresh_process() {
         "export failed: {}",
         String::from_utf8_lossy(&export.stderr)
     );
-    assert!(String::from_utf8_lossy(&export.stdout).contains("exported 2 addition tables"));
+    assert!(String::from_utf8_lossy(&export.stdout).contains("2 addition tables"));
     assert_eq!(
         fs::read(&paths.public).expect("read generated public key"),
         SigningKey::from_bytes(&[23; 32]).verifying_key().to_bytes()

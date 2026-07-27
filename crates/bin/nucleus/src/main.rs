@@ -85,6 +85,14 @@ fn export_snapshot(
         ] {
             addition.insert(AdditionFact::sum(lhs, rhs)?)?;
         }
+
+        let text = connection.create_cas_table("text_cas")?;
+        let binary = connection.create_cas_table("binary_cas")?;
+        let lengths = connection.create_byte_lengths("byte_lengths")?;
+        lengths.record(&text, b"shared")?;
+        lengths.record(&text, b"hello, nucleus")?;
+        lengths.record(&binary, b"shared")?;
+        lengths.record(&binary, &[0, 1, 2, 3])?;
     }
     connection
         .cas()
@@ -94,9 +102,12 @@ fn export_snapshot(
     let snapshot = connection.sign_snapshot(key_id)?;
     fs::write(envelope_path, snapshot.encode()?)?;
     fs::write(public_key_path, public_key)?;
+    println!("exported snapshot signed by {key_id}");
+    println!("  {} addition tables", connection.additions()?.len());
+    println!("  {} persistent CAS tables", connection.cas_tables()?.len());
     println!(
-        "exported {} addition tables signed by {key_id}",
-        connection.additions()?.len()
+        "  {} byte-length relations",
+        connection.byte_length_tables()?.len()
     );
     Ok(())
 }
@@ -117,6 +128,18 @@ fn import_snapshot(envelope_path: &Path, public_key_path: &Path) -> Result<(), B
         println!("{}: {} facts", addition.name(), facts.len());
         for fact in facts {
             println!("  {} = {} + {}", fact.tm, fact.lhs, fact.rhs);
+        }
+    }
+    let cas_tables = connection.cas_tables()?;
+    println!("persistent CAS tables: {}", cas_tables.len());
+    for cas in &cas_tables {
+        println!("  {}", cas.name());
+    }
+    for relation in connection.byte_length_tables()? {
+        let facts = relation.facts()?;
+        println!("{}: {} byte-length facts", relation.name(), facts.len());
+        for fact in facts {
+            println!("  {}/{}: {} bytes", fact.cas_table, fact.hash, fact.length);
         }
     }
     let stored = connection.cas().fetch(snapshot.snapshot_hash())?.is_some();
