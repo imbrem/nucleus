@@ -103,8 +103,10 @@ fn import_rechecks_rows_instead_of_trusting_sql_constraints() {
 
     assert!(matches!(
         Connection::from_image(&bytes),
-        Err(DatabaseError::Addition {
-            source: AdditionError::False { .. }
+        Err(DatabaseError::Validate {
+            source: covalence_nucleus::ValidationError::Addition {
+                source: AdditionError::False { .. }
+            }
         })
     ));
 }
@@ -122,8 +124,10 @@ fn import_rejects_noncanonical_layouts_and_unknown_meanings() {
     );
     assert!(matches!(
         Connection::from_image(&rowid),
-        Err(DatabaseError::Addition {
-            source: AdditionError::MalformedTable { .. }
+        Err(DatabaseError::Validate {
+            source: covalence_nucleus::ValidationError::Addition {
+                source: AdditionError::MalformedTable { .. }
+            }
         })
     ));
 
@@ -138,8 +142,8 @@ fn import_rejects_noncanonical_layouts_and_unknown_meanings() {
     );
     assert!(matches!(
         Connection::from_image(&unknown),
-        Err(DatabaseError::Addition {
-            source: AdditionError::UnknownInterpretation { .. }
+        Err(DatabaseError::Validate {
+            source: covalence_nucleus::ValidationError::UnknownInterpretation { .. }
         })
     ));
 }
