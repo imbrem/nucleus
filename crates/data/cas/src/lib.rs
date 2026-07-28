@@ -4,6 +4,13 @@
 //! byte range, but the bytes must belong to the object named by the address.
 //! [`Verified`] upgrades an untrusted [`RangeSource`] by checking every
 //! response with a [`RangeVerifier`] before exposing it through [`Cas`].
+//!
+//! [`MemoryCas`] is the concrete starting point: whole objects, resident in
+//! memory, admitted by hashing complete bytes.
+
+mod memory;
+
+pub use memory::{AdmissionError, CasStats, InvalidRange, MAX_OBJECT_BYTES, MemoryCas};
 
 use std::ops::Range;
 

@@ -9,7 +9,7 @@ publish = false
 
 [dependencies]
 bytes = "1"
-covalence-lib-hash = { path = "../../lib/hash", default-features = false }
+covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["blake3"] }
 
 [lints]
 workspace = true
