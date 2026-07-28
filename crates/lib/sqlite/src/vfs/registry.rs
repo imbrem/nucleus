@@ -149,15 +149,22 @@ pub unsafe fn register<V: Vfs + Send + Sync + 'static>(
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::io;
+    use std::ops::Range;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use crate::{Connection, OpenFlags as SqliteOpenFlags};
 
     use super::*;
-    use crate::vfs::ReadOnlyVfs;
+    use bytes::Bytes;
+    use covalence_data_cas::Cas;
+    use covalence_lib_hash::{O256, Obj};
+
+    use crate::vfs::{CasVfs, ReadOnlyVfs};
 
     static NEXT_NAME: AtomicU64 = AtomicU64::new(0);
+    const CAS_ADDRESS: O256 = Obj::from_array([0x42; 32]);
 
     fn unique_name() -> String {
         format!(
@@ -204,6 +211,62 @@ mod tests {
 
         let connection = Connection::open_with_flags_and_vfs(
             logical_path,
+            SqliteOpenFlags::SQLITE_OPEN_READ_ONLY,
+            name.as_str(),
+        )
+        .unwrap();
+        assert_eq!(
+            connection
+                .query_row("SELECT n FROM value", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            42
+        );
+    }
+
+    struct MemoryCas(Bytes);
+
+    impl Cas for MemoryCas {
+        type Error = io::Error;
+
+        fn len(&self, address: O256) -> io::Result<Option<u64>> {
+            Ok((address == CAS_ADDRESS).then_some(self.0.len() as u64))
+        }
+
+        fn read(&self, address: O256, range: Range<u64>) -> io::Result<Option<Bytes>> {
+            if address != CAS_ADDRESS {
+                return Ok(None);
+            }
+            let start = usize::try_from(range.start)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "range too large"))?;
+            let end = usize::try_from(range.end)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "range too large"))?;
+            Ok(self.0.get(start..end).map(Bytes::copy_from_slice))
+        }
+    }
+
+    #[test]
+    fn registered_cas_vfs_queries_database_by_address() {
+        let path = std::env::temp_dir().join(format!("{}.sqlite", unique_name()));
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .execute_batch("CREATE TABLE value (n INTEGER); INSERT INTO value VALUES (42);")
+                .unwrap();
+        }
+        let bytes = std::fs::read(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        // SAFETY: test names are unique and no external code registers them.
+        let name = unsafe {
+            register(
+                &unique_name(),
+                CasVfs::new(Arc::new(MemoryCas(Bytes::from(bytes)))),
+                false,
+            )
+        }
+        .unwrap();
+
+        let connection = Connection::open_with_flags_and_vfs(
+            CAS_ADDRESS.to_string(),
             SqliteOpenFlags::SQLITE_OPEN_READ_ONLY,
             name.as_str(),
         )

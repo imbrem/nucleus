@@ -193,3 +193,103 @@ where
         DeviceCharacteristics::IMMUTABLE
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::ops::Range;
+    use std::sync::Mutex;
+
+    use bytes::Bytes;
+    use covalence_lib_hash::Obj;
+
+    use super::*;
+
+    const ADDRESS: O256 = Obj::from_array([0x42; 32]);
+
+    struct MemoryCas {
+        data: Bytes,
+        reads: Mutex<Vec<Range<u64>>>,
+    }
+
+    impl Cas for MemoryCas {
+        type Error = io::Error;
+
+        fn len(&self, address: O256) -> io::Result<Option<u64>> {
+            Ok((address == ADDRESS).then_some(self.data.len() as u64))
+        }
+
+        fn read(&self, address: O256, range: Range<u64>) -> io::Result<Option<Bytes>> {
+            if address != ADDRESS {
+                return Ok(None);
+            }
+            self.reads.lock().unwrap().push(range.clone());
+            let start = usize::try_from(range.start)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "range too large"))?;
+            let end = usize::try_from(range.end)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "range too large"))?;
+            Ok(self.data.get(start..end).map(Bytes::copy_from_slice))
+        }
+    }
+
+    #[test]
+    fn file_reads_only_the_requested_range() {
+        let cas = Arc::new(MemoryCas {
+            data: Bytes::from_static(b"abcdefgh"),
+            reads: Mutex::new(Vec::new()),
+        });
+        let vfs = CasVfs::new(Arc::clone(&cas));
+        let file = vfs
+            .open(
+                Some(&ADDRESS.to_string()),
+                OpenKind::MainDb,
+                OpenFlags::READ_ONLY,
+            )
+            .unwrap();
+
+        let mut output = [0; 3];
+        assert_eq!(file.read(&mut output, 2).unwrap(), 3);
+        assert_eq!(&output, b"cde");
+        let reads = cas.reads.lock().unwrap();
+        assert_eq!(reads.len(), 1);
+        assert_eq!(reads[0], 2..5);
+    }
+
+    #[test]
+    fn rejects_non_addresses_and_writable_opens() {
+        let vfs = CasVfs::new(Arc::new(MemoryCas {
+            data: Bytes::new(),
+            reads: Mutex::new(Vec::new()),
+        }));
+
+        assert_eq!(
+            vfs.open(
+                Some("not-an-address"),
+                OpenKind::MainDb,
+                OpenFlags::READ_ONLY
+            )
+            .unwrap_err()
+            .kind(),
+            io::ErrorKind::InvalidInput
+        );
+        assert_eq!(
+            vfs.open(
+                Some(&ADDRESS.to_string()),
+                OpenKind::MainDb,
+                OpenFlags::READ_WRITE,
+            )
+            .unwrap_err()
+            .kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        assert_eq!(
+            vfs.open(
+                Some(&ADDRESS.to_string()),
+                OpenKind::MainDb,
+                OpenFlags::READ_ONLY | OpenFlags::DELETE_ON_CLOSE,
+            )
+            .unwrap_err()
+            .kind(),
+            io::ErrorKind::PermissionDenied
+        );
+    }
+}
