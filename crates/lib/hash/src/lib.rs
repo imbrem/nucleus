@@ -19,11 +19,18 @@ use snafu::Snafu;
 
 pub mod blake3;
 mod git;
+#[cfg(feature = "blake3")]
+mod incremental;
 
 pub use blake3::{
     Blake3, Blake3Hash, COV, COV_ROOT, Cov, CtxKey, CtxKeyNamespace, Sha256, Sha256Hash,
 };
 pub use git::{Git, GitHash, Sha1};
+#[cfg(feature = "blake3")]
+pub use incremental::{
+    Blake3Leaf, CleanTree, CvTree, DynamicGeometry, GeometryError, IncompleteUpdate, LeafIndex,
+    MerkleScheme, NewCvs, RebuildError, UpdateError,
+};
 
 #[cfg(feature = "git-sha1")]
 pub use git::{git_blob, git_object, sha1};
