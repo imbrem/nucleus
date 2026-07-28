@@ -91,6 +91,10 @@ impl Connection {
                 crate::addition::INTERPRETATION => {
                     crate::addition::validate_table(sqlite, &entry.table).context(AdditionSnafu)?;
                 }
+                crate::byte_length::INTERPRETATION => {
+                    crate::byte_length::validate_table(sqlite, &entry.table)
+                        .context(ByteLengthSnafu)?;
+                }
                 _ => {
                     return Err(ValidationError::UnknownInterpretation {
                         table: entry.table,
@@ -161,6 +165,13 @@ pub enum ValidationError {
     Addition {
         /// Underlying failure.
         source: crate::AdditionError,
+    },
+
+    /// A byte-length relation is invalid.
+    #[snafu(display("{source}"))]
+    ByteLength {
+        /// Underlying failure.
+        source: crate::ByteLengthError,
     },
 }
 

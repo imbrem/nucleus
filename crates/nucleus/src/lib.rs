@@ -1,10 +1,12 @@
 //! Portable trusted core for Nucleus.
 
 mod addition;
+mod byte_length;
 mod catalog;
 mod connection;
 
 pub use addition::{Addition, AdditionError, AdditionFact};
+pub use byte_length::{ByteLengthError, ByteLengthFact, ByteLengths};
 pub use catalog::CatalogError;
 pub use connection::{Connection, ConnectionError, DatabaseError, ValidationError};
 pub use covalence_neutron::Cas;
