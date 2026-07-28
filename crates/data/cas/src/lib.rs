@@ -221,3 +221,159 @@ where
         Ok(Some(response.data))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use covalence_lib_hash::Obj;
+
+    use super::*;
+
+    const ADDRESS: O256 = Obj::from_array([7; 32]);
+
+    struct Source {
+        response: Option<UntrustedRange>,
+        requests: Mutex<Vec<Range<u64>>>,
+    }
+
+    impl RangeSource for Source {
+        type Error = ();
+
+        fn fetch(
+            &self,
+            address: O256,
+            range: Range<u64>,
+        ) -> Result<Option<UntrustedRange>, Self::Error> {
+            assert_eq!(address, ADDRESS);
+            self.requests.lock().unwrap().push(range);
+            Ok(self.response.clone())
+        }
+    }
+
+    struct Verifier {
+        accepted: bool,
+    }
+
+    impl RangeVerifier for Verifier {
+        type Error = &'static str;
+
+        fn verify(
+            &self,
+            address: O256,
+            range: Range<u64>,
+            response: &UntrustedRange,
+        ) -> Result<(), Self::Error> {
+            assert_eq!(address, ADDRESS);
+            assert_eq!(response.proof, Bytes::from_static(b"proof"));
+            if self.accepted && range == (2..5) {
+                Ok(())
+            } else {
+                Err("bad proof")
+            }
+        }
+    }
+
+    fn response(data: &'static [u8]) -> UntrustedRange {
+        UntrustedRange {
+            total_len: 9,
+            data: Bytes::from_static(data),
+            proof: Bytes::from_static(b"proof"),
+        }
+    }
+
+    #[test]
+    fn authenticated_range_is_exposed() {
+        let source = Source {
+            response: Some(response(b"cde")),
+            requests: Mutex::new(Vec::new()),
+        };
+        let cas = Verified::new(source, Verifier { accepted: true });
+
+        assert_eq!(
+            cas.read(ADDRESS, 2..5).unwrap(),
+            Some(Bytes::from_static(b"cde"))
+        );
+        let requests = cas.source().requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0], 2..5);
+    }
+
+    #[test]
+    fn rejected_proof_never_exposes_data() {
+        let cas = Verified::new(
+            Source {
+                response: Some(response(b"cde")),
+                requests: Mutex::new(Vec::new()),
+            },
+            Verifier { accepted: false },
+        );
+
+        assert_eq!(
+            cas.read(ADDRESS, 2..5),
+            Err(VerifiedError::Verify("bad proof"))
+        );
+    }
+
+    #[test]
+    fn wrong_data_length_is_rejected_before_verification() {
+        let cas = Verified::new(
+            Source {
+                response: Some(response(b"cd")),
+                requests: Mutex::new(Vec::new()),
+            },
+            Verifier { accepted: true },
+        );
+
+        assert_eq!(
+            cas.read(ADDRESS, 2..5),
+            Err(VerifiedError::WrongLength {
+                expected: 3,
+                actual: 2
+            })
+        );
+    }
+
+    #[test]
+    fn absence_is_preserved() {
+        let cas = Verified::new(
+            Source {
+                response: None,
+                requests: Mutex::new(Vec::new()),
+            },
+            Verifier { accepted: true },
+        );
+
+        assert_eq!(cas.read(ADDRESS, 2..5).unwrap(), None);
+    }
+
+    #[test]
+    fn invalid_ranges_are_rejected() {
+        let cas = Verified::new(
+            Source {
+                response: Some(response(b"")),
+                requests: Mutex::new(Vec::new()),
+            },
+            Verifier { accepted: true },
+        );
+
+        let start = 5;
+        let end = 2;
+        assert_eq!(
+            cas.read(ADDRESS, start..end),
+            Err(VerifiedError::InvalidRange {
+                start: 5,
+                end: 2,
+                total_len: None,
+            })
+        );
+        assert_eq!(
+            cas.read(ADDRESS, 9..10),
+            Err(VerifiedError::InvalidRange {
+                start: 9,
+                end: 10,
+                total_len: Some(9),
+            })
+        );
+    }
+}
