@@ -10,11 +10,13 @@ publish = false
 [features]
 default = ["serialize"]
 serialize = ["rusqlite/serialize"]
-vfs = ["dep:bitflags"]
+vfs = ["dep:bitflags", "dep:covalence-data-cas", "dep:covalence-lib-hash"]
 vfs-register = ["vfs", "dep:indexmap"]
 
 [dependencies]
 bitflags = { version = "2", optional = true }
+covalence-data-cas = { path = "../../data/cas", optional = true }
+covalence-lib-hash = { path = "../hash", default-features = false, optional = true }
 indexmap = { version = "2", optional = true }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
