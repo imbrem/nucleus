@@ -141,6 +141,12 @@
           ]
         },
         {
+          "name": "byte_length",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "covalence_nucleus",
           "kinds": [
             "cdylib",

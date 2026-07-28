@@ -119,6 +119,40 @@ rust_test(
 )
 
 rust_test(
+    name = "byte_length",
+    crate = "byte_length",
+    crate_root = "tests/byte_length.rs",
+    edition = "2024",
+    srcs = _RUST_SOURCES,
+    named_deps = {
+        "bytes": "nucleus//buck/cargo/production:bytes-1.12.1",
+        "covalence_lib_crypto": "nucleus//crates/lib/crypto:covalence_lib_crypto",
+        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
+        "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
+        "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
+        "covalence_neutron": "nucleus//crates/neutron:covalence_neutron",
+        "covalence_nucleus": ":covalence_nucleus",
+    },
+    env = {
+        "CARGO_PKG_AUTHORS": "",
+        "CARGO_PKG_DESCRIPTION": "Portable trusted core for Nucleus",
+        "CARGO_PKG_HOMEPAGE": "",
+        "CARGO_PKG_LICENSE": "CC0-1.0",
+        "CARGO_PKG_LICENSE_FILE": "",
+        "CARGO_PKG_NAME": "covalence-nucleus",
+        "CARGO_PKG_README": "",
+        "CARGO_PKG_REPOSITORY": "",
+        "CARGO_PKG_RUST_VERSION": "",
+        "CARGO_PKG_VERSION": "0.0.0",
+        "CARGO_PKG_VERSION_MAJOR": "0",
+        "CARGO_PKG_VERSION_MINOR": "0",
+        "CARGO_PKG_VERSION_PATCH": "0",
+        "CARGO_PKG_VERSION_PRE": "",
+    },
+    visibility = ["PUBLIC"],
+)
+
+rust_test(
     name = "sqlite",
     crate = "sqlite",
     crate_root = "tests/sqlite.rs",
