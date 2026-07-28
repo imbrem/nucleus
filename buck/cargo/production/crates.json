@@ -158,6 +158,12 @@
           "kinds": [
             "test"
           ]
+        },
+        {
+          "name": "table_meaning",
+          "kinds": [
+            "test"
+          ]
         }
       ]
     },

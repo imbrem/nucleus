@@ -73,7 +73,7 @@ impl Addition<'_> {
             .execute(
                 &format!(
                     "INSERT INTO {} (tm, lhs, rhs) VALUES (?1, ?2, ?3)",
-                    catalog::quote_identifier(&self.name)
+                    catalog::main_table(&self.name)
                 ),
                 (fact.tm, fact.lhs, fact.rhs),
             )
@@ -108,34 +108,20 @@ impl Connection {
                 name: name.to_owned(),
             });
         }
-        let quoted = catalog::quote_identifier(name);
         let transaction = self
             .neutron
             .sqlite()
             .unchecked_transaction()
             .context(CreateSnafu)?;
-        transaction
-            .execute_batch(&format!(
-                "CREATE TABLE {quoted} (
-                    tm INTEGER NOT NULL,
-                    lhs INTEGER NOT NULL,
-                    rhs INTEGER NOT NULL,
-                    PRIMARY KEY (tm, lhs, rhs),
-                    CHECK (typeof(lhs + rhs) = 'integer' AND tm = lhs + rhs)
-                ) STRICT, WITHOUT ROWID;"
-            ))
-            .context(CreateSnafu)?;
+        create_table(&transaction, name).context(CreateSnafu)?;
         transaction
             .execute(
-                "INSERT INTO cov_catalog (table_name, interpretation) VALUES (?1, ?2)",
+                "INSERT INTO main.cov_catalog (table_name, interpretation) VALUES (?1, ?2)",
                 (name, INTERPRETATION),
             )
             .context(CreateSnafu)?;
         transaction.commit().context(CreateSnafu)?;
-        Ok(Addition {
-            sqlite: self.neutron.sqlite(),
-            name: name.to_owned(),
-        })
+        Ok(wrapper(self.neutron.sqlite(), name))
     }
 
     /// Discovers and validates every persistent addition relation.
@@ -164,6 +150,26 @@ impl Connection {
     }
 }
 
+pub(crate) fn create_table(sqlite: &sqlite::Connection, name: &str) -> sqlite::Result<()> {
+    let quoted = catalog::main_table(name);
+    sqlite.execute_batch(&format!(
+        "CREATE TABLE {quoted} (
+            tm INTEGER NOT NULL,
+            lhs INTEGER NOT NULL,
+            rhs INTEGER NOT NULL,
+            PRIMARY KEY (tm, lhs, rhs),
+            CHECK (typeof(lhs + rhs) = 'integer' AND tm = lhs + rhs)
+        ) STRICT, WITHOUT ROWID;"
+    ))
+}
+
+pub(crate) fn wrapper<'conn>(sqlite: &'conn sqlite::Connection, name: &str) -> Addition<'conn> {
+    Addition {
+        sqlite,
+        name: name.to_owned(),
+    }
+}
+
 pub(crate) fn validate_table(sqlite: &sqlite::Connection, name: &str) -> Result<(), AdditionError> {
     if catalog::table_columns(sqlite, name).context(ScanSnafu)?
         != [
@@ -185,7 +191,7 @@ fn load_facts(sqlite: &sqlite::Connection, name: &str) -> Result<Vec<AdditionFac
     let mut statement = sqlite
         .prepare(&format!(
             "SELECT tm, lhs, rhs FROM {} ORDER BY tm, lhs, rhs",
-            catalog::quote_identifier(name)
+            catalog::main_table(name)
         ))
         .context(ScanSnafu)?;
     let rows = statement
@@ -206,8 +212,8 @@ fn load_facts(sqlite: &sqlite::Connection, name: &str) -> Result<Vec<AdditionFac
 
 fn map_catalog_error(error: catalog::CatalogError) -> AdditionError {
     match error {
-        catalog::CatalogError::Malformed => AdditionError::MalformedCatalog,
         catalog::CatalogError::Sqlite { source } => AdditionError::Catalog { source },
+        _ => AdditionError::MalformedCatalog,
     }
 }
 

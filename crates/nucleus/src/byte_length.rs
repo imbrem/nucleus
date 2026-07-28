@@ -81,7 +81,7 @@ impl ByteLengths<'_> {
             .execute(
                 &format!(
                     "INSERT INTO {} (bytes, byte_length) VALUES (?1, ?2)",
-                    catalog::quote_identifier(&self.name)
+                    catalog::main_table(&self.name)
                 ),
                 (fact.bytes, length),
             )
@@ -115,32 +115,20 @@ impl Connection {
                 name: name.to_owned(),
             });
         }
-        let quoted = catalog::quote_identifier(name);
         let transaction = self
             .neutron
             .sqlite()
             .unchecked_transaction()
             .context(CreateSnafu)?;
-        transaction
-            .execute_batch(&format!(
-                "CREATE TABLE {quoted} (
-                    bytes BLOB NOT NULL PRIMARY KEY,
-                    byte_length INTEGER NOT NULL
-                        CHECK (byte_length >= 0 AND byte_length = length(bytes))
-                ) STRICT, WITHOUT ROWID;"
-            ))
-            .context(CreateSnafu)?;
+        create_table(&transaction, name).context(CreateSnafu)?;
         transaction
             .execute(
-                "INSERT INTO cov_catalog (table_name, interpretation) VALUES (?1, ?2)",
+                "INSERT INTO main.cov_catalog (table_name, interpretation) VALUES (?1, ?2)",
                 (name, INTERPRETATION),
             )
             .context(CreateSnafu)?;
         transaction.commit().context(CreateSnafu)?;
-        Ok(ByteLengths {
-            sqlite: self.neutron.sqlite(),
-            name: name.to_owned(),
-        })
+        Ok(wrapper(self.neutron.sqlite(), name))
     }
 
     /// Discovers and validates every directly catalogued byte-length relation.
@@ -163,6 +151,24 @@ impl Connection {
                 })
             })
             .collect()
+    }
+}
+
+pub(crate) fn create_table(sqlite: &sqlite::Connection, name: &str) -> sqlite::Result<()> {
+    let quoted = catalog::main_table(name);
+    sqlite.execute_batch(&format!(
+        "CREATE TABLE {quoted} (
+            bytes BLOB NOT NULL PRIMARY KEY,
+            byte_length INTEGER NOT NULL
+                CHECK (byte_length >= 0 AND byte_length = length(bytes))
+        ) STRICT, WITHOUT ROWID;"
+    ))
+}
+
+pub(crate) fn wrapper<'conn>(sqlite: &'conn sqlite::Connection, name: &str) -> ByteLengths<'conn> {
+    ByteLengths {
+        sqlite,
+        name: name.to_owned(),
     }
 }
 
@@ -197,7 +203,7 @@ fn load_facts(
     let rows = sqlite
         .prepare(&format!(
             "SELECT bytes, byte_length FROM {} ORDER BY bytes",
-            catalog::quote_identifier(name)
+            catalog::main_table(name)
         ))
         .context(ScanSnafu)?
         .query_map((), |row| {
@@ -218,8 +224,8 @@ fn load_facts(
 
 fn map_catalog_error(error: catalog::CatalogError) -> ByteLengthError {
     match error {
-        catalog::CatalogError::Malformed => ByteLengthError::MalformedCatalog,
         catalog::CatalogError::Sqlite { source } => ByteLengthError::Catalog { source },
+        _ => ByteLengthError::MalformedCatalog,
     }
 }
 

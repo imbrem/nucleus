@@ -95,6 +95,10 @@ impl Connection {
                     crate::byte_length::validate_table(sqlite, &entry.table)
                         .context(ByteLengthSnafu)?;
                 }
+                crate::table_meaning::INTERPRETATION => {
+                    crate::table_meaning::validate_table(sqlite, &entry.table)
+                        .context(TableMeaningSnafu)?;
+                }
                 _ => {
                     return Err(ValidationError::UnknownInterpretation {
                         table: entry.table,
@@ -172,6 +176,13 @@ pub enum ValidationError {
     ByteLength {
         /// Underlying failure.
         source: crate::ByteLengthError,
+    },
+
+    /// A table-meaning relation is invalid.
+    #[snafu(display("{source}"))]
+    TableMeaning {
+        /// Underlying failure.
+        source: crate::TableMeaningError,
     },
 }
 
