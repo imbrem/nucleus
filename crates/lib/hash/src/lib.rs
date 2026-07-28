@@ -410,6 +410,45 @@ pub trait RootedNamespace: Namespace + Sized {
     const ROOT: Obj<Self>;
 }
 
+/// A namespace supporting range verification with evidence of type `E`.
+pub trait RangeProofNamespace<E>: Namespace + Sized {
+    /// Verification failure.
+    type Error;
+
+    /// Verifies `data` against `evidence` and an expected root.
+    ///
+    /// The returned absolute range is the portion of the original object
+    /// authenticated by the proof.
+    ///
+    /// # Errors
+    ///
+    /// Returns the namespace implementation's error when the evidence, data,
+    /// or reconstructed root is invalid.
+    fn verify_range(
+        root: &Obj<Self>,
+        evidence: E,
+        data: &[u8],
+    ) -> Result<std::ops::Range<u64>, Self::Error>;
+}
+
+impl<N: Namespace> Obj<N> {
+    /// Verifies a byte range against this expected root.
+    ///
+    /// # Errors
+    ///
+    /// Returns the namespace implementation's error when verification fails.
+    pub fn verify_range<E>(
+        &self,
+        evidence: E,
+        data: &[u8],
+    ) -> Result<std::ops::Range<u64>, <N as RangeProofNamespace<E>>::Error>
+    where
+        N: RangeProofNamespace<E>,
+    {
+        N::verify_range(self, evidence, data)
+    }
+}
+
 /// A lowercase hexadecimal view.
 #[derive(Clone, Copy, Debug)]
 pub struct Hex<'a>(&'a [u8]);
