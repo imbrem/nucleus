@@ -1,7 +1,7 @@
 use covalence_lib_error::snafu::{ResultExt, Snafu};
 use covalence_lib_sqlite as sqlite;
 
-use crate::{ByteLengths, Connection, byte_length, catalog};
+use crate::{Addition, ByteLengths, Connection, addition, byte_length, catalog};
 
 pub(crate) const INTERPRETATION: &str = "cov.table-meanings/v0";
 
@@ -40,6 +40,28 @@ impl TableMeanings<'_> {
         &self.name
     }
 
+    /// Creates an owned addition relation.
+    ///
+    /// The child table and its meaning row are installed atomically.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for reserved or duplicate names, nested
+    /// transactions, or `SQLite` failures.
+    pub fn create_addition(&self, name: &str) -> Result<Addition<'_>, TableMeaningError> {
+        self.ensure_unowned(name)?;
+        let transaction = self
+            .connection
+            .neutron
+            .sqlite()
+            .unchecked_transaction()
+            .context(CreateChildSnafu)?;
+        addition::create_table(&transaction, name).context(CreateChildSnafu)?;
+        self.record_meaning(&transaction, name, TableMeaning::Addition)?;
+        transaction.commit().context(CreateChildSnafu)?;
+        Ok(addition::wrapper(self.connection.neutron.sqlite(), name))
+    }
+
     /// Creates an owned direct byte-length relation.
     ///
     /// The child table and its meaning row are installed atomically.
@@ -49,6 +71,20 @@ impl TableMeanings<'_> {
     /// Returns an error for reserved or duplicate names, nested
     /// transactions, or `SQLite` failures.
     pub fn create_byte_lengths(&self, name: &str) -> Result<ByteLengths<'_>, TableMeaningError> {
+        self.ensure_unowned(name)?;
+        let transaction = self
+            .connection
+            .neutron
+            .sqlite()
+            .unchecked_transaction()
+            .context(CreateChildSnafu)?;
+        byte_length::create_table(&transaction, name).context(CreateChildSnafu)?;
+        self.record_meaning(&transaction, name, TableMeaning::ByteLength)?;
+        transaction.commit().context(CreateChildSnafu)?;
+        Ok(byte_length::wrapper(self.connection.neutron.sqlite(), name))
+    }
+
+    fn ensure_unowned(&self, name: &str) -> Result<(), TableMeaningError> {
         if catalog::name_is_reserved(name) {
             return Err(TableMeaningError::ReservedName {
                 name: name.to_owned(),
@@ -63,25 +99,25 @@ impl TableMeanings<'_> {
                 table: name.to_owned(),
             });
         }
+        Ok(())
+    }
 
-        let transaction = self
-            .connection
-            .neutron
-            .sqlite()
-            .unchecked_transaction()
-            .context(CreateChildSnafu)?;
-        byte_length::create_table(&transaction, name).context(CreateChildSnafu)?;
-        transaction
+    fn record_meaning(
+        &self,
+        sqlite: &sqlite::Connection,
+        name: &str,
+        meaning: TableMeaning,
+    ) -> Result<(), TableMeaningError> {
+        sqlite
             .execute(
                 &format!(
                     "INSERT INTO {} (table_name, interpretation) VALUES (?1, ?2)",
                     catalog::main_table(&self.name)
                 ),
-                (name, TableMeaning::ByteLength.interpretation()),
+                (name, meaning.interpretation()),
             )
             .context(CreateChildSnafu)?;
-        transaction.commit().context(CreateChildSnafu)?;
-        Ok(byte_length::wrapper(self.connection.neutron.sqlite(), name))
+        Ok(())
     }
 
     /// Returns the compiled meanings assigned by this relation.
