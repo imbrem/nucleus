@@ -99,6 +99,10 @@ impl Connection {
                     crate::table_meaning::validate_table(sqlite, &entry.table)
                         .context(TableMeaningSnafu)?;
                 }
+                crate::cas_table::INTERPRETATION => {
+                    crate::cas_table::validate_table(sqlite, &entry.table)
+                        .context(CasTableSnafu)?;
+                }
                 _ => {
                     return Err(ValidationError::UnknownInterpretation {
                         table: entry.table,
@@ -183,6 +187,13 @@ pub enum ValidationError {
     TableMeaning {
         /// Underlying failure.
         source: crate::TableMeaningError,
+    },
+
+    /// A persistent indexed CAS is invalid.
+    #[snafu(display("{source}"))]
+    CasTable {
+        /// Underlying failure.
+        source: crate::CasTableError,
     },
 }
 

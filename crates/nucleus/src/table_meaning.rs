@@ -1,7 +1,9 @@
 use covalence_lib_error::snafu::{ResultExt, Snafu};
 use covalence_lib_sqlite as sqlite;
 
-use crate::{Addition, ByteLengths, Connection, addition, byte_length, catalog};
+use crate::{
+    Addition, ByteLengths, CasTable, Connection, addition, byte_length, cas_table, catalog,
+};
 
 pub(crate) const INTERPRETATION: &str = "cov.table-meanings/v0";
 
@@ -12,6 +14,8 @@ pub enum TableMeaning {
     Addition,
     /// Checked direct byte-length facts.
     ByteLength,
+    /// Indexed ordinary-byte content-addressed storage.
+    Cas,
 }
 
 impl TableMeaning {
@@ -19,6 +23,7 @@ impl TableMeaning {
         match self {
             Self::Addition => crate::addition::INTERPRETATION,
             Self::ByteLength => crate::byte_length::INTERPRETATION,
+            Self::Cas => crate::cas_table::INTERPRETATION,
         }
     }
 }
@@ -84,6 +89,28 @@ impl TableMeanings<'_> {
         Ok(byte_length::wrapper(self.connection.neutron.sqlite(), name))
     }
 
+    /// Creates an owned indexed CAS table.
+    ///
+    /// The child table and its meaning row are installed atomically.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for reserved or duplicate names, nested
+    /// transactions, or `SQLite` failures.
+    pub fn create_cas(&self, name: &str) -> Result<CasTable<'_>, TableMeaningError> {
+        self.ensure_unowned(name)?;
+        let transaction = self
+            .connection
+            .neutron
+            .sqlite()
+            .unchecked_transaction()
+            .context(CreateChildSnafu)?;
+        cas_table::create_table(&transaction, name).context(CreateChildSnafu)?;
+        self.record_meaning(&transaction, name, TableMeaning::Cas)?;
+        transaction.commit().context(CreateChildSnafu)?;
+        Ok(cas_table::wrapper(self.connection, name))
+    }
+
     fn ensure_unowned(&self, name: &str) -> Result<(), TableMeaningError> {
         if catalog::name_is_reserved(name) {
             return Err(TableMeaningError::ReservedName {
@@ -133,6 +160,7 @@ impl TableMeanings<'_> {
                 let meaning = match entry.interpretation.as_str() {
                     crate::addition::INTERPRETATION => TableMeaning::Addition,
                     crate::byte_length::INTERPRETATION => TableMeaning::ByteLength,
+                    crate::cas_table::INTERPRETATION => TableMeaning::Cas,
                     _ => {
                         return Err(TableMeaningError::UnknownMeaning {
                             table: entry.table,
