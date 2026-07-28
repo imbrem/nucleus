@@ -118,6 +118,39 @@ pub(crate) fn table_flags(sqlite: &sqlite::Connection, name: &str) -> sqlite::Re
     )
 }
 
+pub(crate) fn unique_indexes(
+    sqlite: &sqlite::Connection,
+    table: &str,
+) -> sqlite::Result<Vec<Vec<String>>> {
+    let indexes = sqlite
+        .prepare(&format!(
+            "PRAGMA main.index_list({})",
+            quote_identifier(table)
+        ))?
+        .query_map((), |row| {
+            Ok((
+                row.get::<_, String>(1)?,
+                row.get::<_, bool>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?
+        .collect::<sqlite::Result<Vec<_>>>()?;
+
+    indexes
+        .into_iter()
+        .filter(|(_, unique, origin)| *unique && origin == "u")
+        .map(|(index, _, _)| {
+            sqlite
+                .prepare(&format!(
+                    "PRAGMA main.index_info({})",
+                    quote_identifier(&index)
+                ))?
+                .query_map((), |row| row.get::<_, String>(2))?
+                .collect()
+        })
+        .collect()
+}
+
 fn validate(sqlite: &sqlite::Connection) -> Result<(), CatalogError> {
     let columns = table_columns(sqlite, NAME).context(SqliteSnafu)?;
     if columns
