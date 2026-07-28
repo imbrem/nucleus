@@ -73,7 +73,7 @@ impl Addition<'_> {
             .execute(
                 &format!(
                     "INSERT INTO {} (tm, lhs, rhs) VALUES (?1, ?2, ?3)",
-                    catalog::quote_identifier(&self.name)
+                    catalog::main_table(&self.name)
                 ),
                 (fact.tm, fact.lhs, fact.rhs),
             )
@@ -108,7 +108,7 @@ impl Connection {
                 name: name.to_owned(),
             });
         }
-        let quoted = catalog::quote_identifier(name);
+        let quoted = catalog::main_table(name);
         let transaction = self
             .neutron
             .sqlite()
@@ -127,7 +127,7 @@ impl Connection {
             .context(CreateSnafu)?;
         transaction
             .execute(
-                "INSERT INTO cov_catalog (table_name, interpretation) VALUES (?1, ?2)",
+                "INSERT INTO main.cov_catalog (table_name, interpretation) VALUES (?1, ?2)",
                 (name, INTERPRETATION),
             )
             .context(CreateSnafu)?;
@@ -185,7 +185,7 @@ fn load_facts(sqlite: &sqlite::Connection, name: &str) -> Result<Vec<AdditionFac
     let mut statement = sqlite
         .prepare(&format!(
             "SELECT tm, lhs, rhs FROM {} ORDER BY tm, lhs, rhs",
-            catalog::quote_identifier(name)
+            catalog::main_table(name)
         ))
         .context(ScanSnafu)?;
     let rows = statement
@@ -206,8 +206,8 @@ fn load_facts(sqlite: &sqlite::Connection, name: &str) -> Result<Vec<AdditionFac
 
 fn map_catalog_error(error: catalog::CatalogError) -> AdditionError {
     match error {
-        catalog::CatalogError::Malformed => AdditionError::MalformedCatalog,
         catalog::CatalogError::Sqlite { source } => AdditionError::Catalog { source },
+        _ => AdditionError::MalformedCatalog,
     }
 }
 
