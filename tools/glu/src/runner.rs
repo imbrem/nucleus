@@ -6,7 +6,7 @@ use std::{
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
-    process::{Command, Output, Stdio},
+    process::{self, Command, Output, Stdio},
     time::Instant,
 };
 
@@ -253,8 +253,25 @@ impl Runner {
         expect_output(
             "nucleus CLI smoke test",
             &output,
-            "hello from nucleus: SQLite returned 42",
+            "opened in-memory Nucleus database",
         )?;
+
+        let directory = cli_test_directory("native")?;
+        let database = directory.join("nucleus.sqlite3");
+        let output = self.command("test nucleus CLI file", cli.as_ref(), [&database])?;
+        expect_output(
+            "nucleus CLI file test",
+            &output,
+            &format!("opened Nucleus database {}", database.display()),
+        )?;
+        if !database.is_file() {
+            bail!(
+                "nucleus CLI file test did not create {}",
+                database.display()
+            );
+        }
+        fs::remove_dir_all(directory).wrap_err("could not clear native CLI test directory")?;
+
         eprintln!("• test nucleus CLI… done");
         Ok(())
     }
@@ -517,8 +534,36 @@ impl Runner {
         expect_output(
             "CLI component smoke test",
             &output,
-            "hello from nucleus: SQLite returned 42",
+            "opened in-memory Nucleus database",
         )?;
+
+        let directory = cli_test_directory("component")?;
+        let database = directory.join("nucleus.sqlite3");
+        let preopen = format!("{}::/data", directory.display());
+        let output = self.command(
+            "test CLI component file",
+            "wasmtime",
+            [
+                OsStr::new("run"),
+                OsStr::new("--dir"),
+                OsStr::new(&preopen),
+                cli.as_os_str(),
+                OsStr::new("/data/nucleus.sqlite3"),
+            ],
+        )?;
+        expect_output(
+            "CLI component file test",
+            &output,
+            "opened Nucleus database /data/nucleus.sqlite3",
+        )?;
+        if !database.is_file() {
+            bail!(
+                "CLI component file test did not create {}",
+                database.display()
+            );
+        }
+        fs::remove_dir_all(directory).wrap_err("could not clear component CLI test directory")?;
+
         eprintln!("• test Wasm components… done");
         Ok(())
     }
@@ -606,6 +651,17 @@ fn expect_output(phase: &str, output: &Output, expected: &str) -> Result<()> {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     )
+}
+
+fn cli_test_directory(kind: &str) -> Result<PathBuf> {
+    let directory = env::temp_dir().join(format!("nucleus-cli-{kind}-test-{}", process::id()));
+    fs::create_dir(&directory).wrap_err_with(|| {
+        format!(
+            "could not create CLI test directory {}",
+            directory.display()
+        )
+    })?;
+    Ok(directory)
 }
 
 fn command_path(name: &str) -> Result<PathBuf> {
