@@ -508,3 +508,143 @@ impl<S: Blake3RangeSource> CachedBlake3Source<S> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::RefCell, convert::Infallible, rc::Rc};
+
+    use super::*;
+
+    fn patterned(len: usize) -> Vec<u8> {
+        (0..len)
+            .map(|index| u8::try_from(index % 251).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn unknown_leaves_are_canonical_zeros_with_a_stable_mask() {
+        let mut snapshot = Blake3Snapshot::new(3 * CHUNK_BYTES + 17).unwrap();
+
+        assert_eq!(snapshot.leaves(), 4);
+        assert!(
+            snapshot
+                .canonical_cvs()
+                .iter()
+                .all(|cv| *cv == Blake3Cv::from_array([0; 32]))
+        );
+        assert_eq!(
+            snapshot.leaf_mask().to_string(),
+            "a0f62cb9f434c8e792ec7b90557e78c979b91656e3742b1771ab7d9725beb673"
+        );
+        assert!(matches!(snapshot.root(), Blake3SnapshotRoot::Partial(_)));
+
+        let third = patterned(blake3::CHUNK_LEN);
+        assert_eq!(snapshot.fill(2, &third), Ok(Fill::Inserted));
+        assert!(!snapshot.contains(0));
+        assert!(!snapshot.contains(1));
+        assert!(snapshot.contains(2));
+        assert_eq!(snapshot.canonical_cvs()[0], Blake3Cv::from_array([0; 32]));
+        assert_ne!(
+            snapshot.leaf_mask(),
+            Blake3Snapshot::new(3 * CHUNK_BYTES + 17)
+                .unwrap()
+                .leaf_mask()
+        );
+    }
+
+    #[test]
+    fn complete_snapshots_produce_the_standard_blake3_root() {
+        for len in [
+            0,
+            1,
+            blake3::CHUNK_LEN,
+            blake3::CHUNK_LEN + 1,
+            3 * blake3::CHUNK_LEN + 17,
+            5 * blake3::CHUNK_LEN,
+        ] {
+            let input = patterned(len);
+            let mut snapshot = Blake3Snapshot::new(len as u64).unwrap();
+            for (leaf, bytes) in input.chunks(blake3::CHUNK_LEN).enumerate() {
+                snapshot.fill(leaf, bytes).unwrap();
+            }
+
+            assert_eq!(
+                snapshot.root(),
+                Blake3SnapshotRoot::Complete(Blake3Hash::from_bytes(&input)),
+                "length {len}"
+            );
+        }
+    }
+
+    #[derive(Clone)]
+    struct MemorySource(Rc<RefCell<Vec<u8>>>);
+
+    impl Blake3RangeSource for MemorySource {
+        type Error = Infallible;
+
+        fn fetch(&mut self, range: Range<u64>) -> Result<Vec<u8>, Self::Error> {
+            let start = usize::try_from(range.start).unwrap();
+            let end = usize::try_from(range.end).unwrap();
+            Ok(self.0.borrow()[start..end].to_vec())
+        }
+    }
+
+    #[test]
+    fn ranges_fill_covering_pages_and_leave_preceding_leaves_unknown() {
+        let input = patterned(4 * blake3::CHUNK_LEN + 17);
+        let mut source = CachedBlake3Source::new(
+            input.len() as u64,
+            MemorySource(Rc::new(RefCell::new(input.clone()))),
+        )
+        .unwrap();
+        let range = (2 * CHUNK_BYTES + 11)..(3 * CHUNK_BYTES + 23);
+        let start = usize::try_from(range.start).unwrap();
+        let end = usize::try_from(range.end).unwrap();
+
+        assert_eq!(source.fetch(range.clone()).unwrap(), input[start..end]);
+        assert!(!source.snapshot().contains(0));
+        assert!(!source.snapshot().contains(1));
+        assert!(source.snapshot().contains(2));
+        assert!(source.snapshot().contains(3));
+        assert!(!source.snapshot().contains(4));
+        assert!(!source.is_resident(1));
+        assert!(source.is_resident(2));
+        assert!(matches!(
+            source.snapshot().root(),
+            Blake3SnapshotRoot::Partial(_)
+        ));
+    }
+
+    #[test]
+    fn eviction_retains_hash_and_rejects_changed_refills() {
+        let input = patterned(2 * blake3::CHUNK_LEN);
+        let shared = Rc::new(RefCell::new(input));
+        let mut source =
+            CachedBlake3Source::new(2 * CHUNK_BYTES, MemorySource(Rc::clone(&shared))).unwrap();
+
+        source.fetch(0..32).unwrap();
+        let retained = source.snapshot().leaf(0);
+        assert_eq!(source.evict(0), Ok(true));
+        assert_eq!(source.snapshot().leaf(0), retained);
+        assert!(!source.is_resident(0));
+
+        shared.borrow_mut()[0] ^= 1;
+        assert!(matches!(
+            source.fetch(0..32),
+            Err(Blake3RangeError::Snapshot(
+                Blake3SnapshotError::LeafHashMismatch { leaf: 0 }
+            ))
+        ));
+        assert!(!source.is_resident(0));
+        assert_eq!(source.snapshot().leaf(0), retained);
+    }
+
+    #[test]
+    fn repeated_identical_fill_is_idempotent() {
+        let bytes = patterned(blake3::CHUNK_LEN);
+        let mut snapshot = Blake3Snapshot::new(CHUNK_BYTES).unwrap();
+
+        assert_eq!(snapshot.fill(0, &bytes), Ok(Fill::Inserted));
+        assert_eq!(snapshot.fill(0, &bytes), Ok(Fill::AlreadyPresent));
+    }
+}
