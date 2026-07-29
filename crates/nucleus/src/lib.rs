@@ -3,6 +3,7 @@
 mod cas;
 mod catalog;
 mod connection;
+mod handle;
 mod invariant;
 mod protocol;
 mod registry;
@@ -13,6 +14,7 @@ pub use connection::{
     ATTACHED_DATABASES, ATTACHED_DATABASES_INTERPRETATION, Connection, ConnectionError,
     DEFAULT_CAS, DEFAULT_CAS_INTERPRETATION,
 };
+pub use handle::{Database, Exclusive, HandleError, LockMode, Shared, Table};
 pub use invariant::{Invariant, Standard, Unchecked};
 pub use protocol::{SessionProtocol, ViewProtocol};
 pub use registry::{Registry, RegistryError, RegistryInvariant, RegistrySession};
