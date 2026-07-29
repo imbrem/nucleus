@@ -147,6 +147,12 @@
           ]
         },
         {
+          "name": "byte_length_reference",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "cas_table",
           "kinds": [
             "test"
