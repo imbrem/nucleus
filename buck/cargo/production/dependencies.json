@@ -1513,6 +1513,14 @@
   ],
   "roots": [
     {
+      "id": "workspace#covalence-data-cas@0.0.0",
+      "name": "covalence-data-cas",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1"
+      ]
+    },
+    {
       "id": "workspace#covalence-lib-crypto@0.0.0",
       "name": "covalence-lib-crypto",
       "category": "tcb",
