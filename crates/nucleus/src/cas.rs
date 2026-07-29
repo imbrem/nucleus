@@ -1,12 +1,16 @@
+use std::borrow::Cow;
+
 use bytes::Bytes;
 use covalence_lib_error::snafu::{ResultExt, Snafu};
 use covalence_lib_hash::O256;
 use covalence_lib_sqlite as sqlite;
 use sqlite::OptionalExtension;
 
-use covalence_neutron as neutron;
-
-use crate::{Connection, RegistryInvariant, RegistrySession, Standard};
+use crate::catalog::quote_identifier;
+use crate::{
+    Connection, Database, Exclusive, HandleError, RegistryInvariant, RegistrySession, Standard,
+    Table,
+};
 
 const STORE_SQL: &str = include_str!("../sql/cas/store.sql");
 const HASH_SQL: &str = include_str!("../sql/cas/address.sql");
@@ -18,8 +22,10 @@ const EVICT_SQL: &str = include_str!("../sql/cas/evict.sql");
 const REMOVE_SQL: &str = include_str!("../sql/cas/remove.sql");
 const FILL_SQL: &str = include_str!("../sql/cas/fill.sql");
 const FILL_STATE_SQL: &str = include_str!("../sql/cas/fill_state.sql");
+const CREATE_SQL: &str = include_str!("../sql/cas/create.sql");
+const REGISTER_SQL: &str = include_str!("../sql/cas/register.sql");
 
-/// Connection-local integer identity for an entry in the default CAS.
+/// Connection-local integer identity for an entry in a CAS.
 ///
 /// This identity is meaningful only within the Neutron connection that
 /// returned it. The content hash is the stable identity across connections.
@@ -34,13 +40,15 @@ impl CasId {
     }
 }
 
-/// A handle to a content-addressed store owned by a Neutron connection.
+/// A capability for one content-addressed store.
 ///
-/// Its internals are private so later versions can carry the identity,
-/// configuration, and prepared operations of one CAS among several.
+/// A user-defined CAS owns an exclusive table capability. The standard
+/// connection CAS is owned directly by [`Standard`].
 #[derive(Debug)]
 pub struct Cas<'conn> {
-    connection: &'conn neutron::Connection,
+    connection: &'conn sqlite::Connection,
+    qualified_table: Option<String>,
+    _table: Option<Table<'conn, Standard, Exclusive>>,
 }
 
 impl Connection<Standard> {
@@ -48,7 +56,9 @@ impl Connection<Standard> {
     #[must_use]
     pub const fn cas(&self) -> Cas<'_> {
         Cas {
-            connection: &self.neutron,
+            connection: self.sqlite(),
+            qualified_table: None,
+            _table: None,
         }
     }
 }
@@ -58,27 +68,77 @@ impl<I: RegistryInvariant> RegistrySession<'_, I> {
     #[must_use]
     pub const fn cas(&self) -> Cas<'_> {
         Cas {
-            connection: &self.connection.neutron,
+            connection: self.connection.sqlite(),
+            qualified_table: None,
+            _table: None,
         }
     }
 }
 
+impl Database<'_, Standard, Exclusive> {
+    /// Creates a catalogued CAS table and returns a capability which owns it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the name is reserved, storage creation fails, or
+    /// the new table capability cannot be acquired.
+    pub fn create_cas(&self, name: impl Into<String>) -> Result<Cas<'_>, CasError> {
+        let name = name.into();
+        if name.starts_with("cov_conn_") || name.starts_with("cov_db_") {
+            return Err(CasError::ReservedName { name });
+        }
+
+        let database = quote_identifier(self.name());
+        let table = quote_identifier(&name);
+        let qualified_table = format!("{database}.{table}");
+        let catalog_name = if self.name() == "temp" {
+            "cov_conn_catalog"
+        } else {
+            "cov_db_catalog"
+        };
+        let qualified_catalog = format!("{database}.{}", quote_identifier(catalog_name));
+        let create = CREATE_SQL.replace("{table}", &qualified_table);
+        let register = REGISTER_SQL.replace("{catalog}", &qualified_catalog);
+
+        let transaction = self.sqlite().unchecked_transaction().context(CreateSnafu)?;
+        transaction.execute_batch(&create).context(CreateSnafu)?;
+        transaction
+            .execute(&register, [&name])
+            .context(CreateSnafu)?;
+        transaction.commit().context(CreateSnafu)?;
+
+        let table = self.exclusive_table(name).context(HandleSnafu)?;
+        Ok(Cas {
+            connection: table.sqlite(),
+            qualified_table: Some(qualified_table),
+            _table: Some(table),
+        })
+    }
+}
+
 impl Cas<'_> {
+    fn sql<'sql>(&self, standard: &'sql str) -> Cow<'sql, str> {
+        self.qualified_table.as_ref().map_or_else(
+            || Cow::Borrowed(standard),
+            |table| Cow::Owned(standard.replace("temp.cov_conn_cas", table)),
+        )
+    }
+
     /// Computes the stable content address of `data`.
     #[must_use]
     pub fn hash(&self, data: &[u8]) -> O256 {
         O256::from_bytes(data)
     }
 
-    /// Stores `data` in the default CAS and returns its stable content address.
+    /// Stores `data` in this CAS and returns its stable content address.
     ///
-    /// Neutron computes the stable [`O256`] content address. An existing address
+    /// Nucleus computes the stable [`O256`] content address. An existing address
     /// with different resident bytes indicates corruption or a hash collision
     /// and is rejected.
     ///
     /// # Errors
     ///
-    /// Returns an error when the default CAS cannot be written or its existing
+    /// Returns an error when the CAS cannot be written or its existing
     /// state conflicts with the computed content address.
     pub fn store(&self, data: &[u8]) -> Result<O256, CasError> {
         let hash = self.hash(data);
@@ -92,13 +152,14 @@ impl Cas<'_> {
     ///
     /// # Errors
     ///
-    /// Returns an error when the default CAS cannot be queried.
+    /// Returns an error when the CAS cannot be queried.
     pub fn fetch(&self, hash: O256) -> Result<Option<Bytes>, CasError> {
         self.connection
-            .sqlite()
-            .query_row(GET_BY_HASH_SQL, [hash.as_bytes().as_slice()], |row| {
-                row.get::<_, Option<Vec<u8>>>(0)
-            })
+            .query_row(
+                self.sql(GET_BY_HASH_SQL).as_ref(),
+                [hash.as_bytes().as_slice()],
+                |row| row.get::<_, Option<Vec<u8>>>(0),
+            )
             .optional()
             .context(FetchSnafu)
             .map(Option::flatten)
@@ -112,7 +173,7 @@ impl Cas<'_> {
     ///
     /// # Errors
     ///
-    /// Returns an error when the default CAS cannot be written or its existing
+    /// Returns an error when the CAS cannot be written or its existing
     /// state conflicts with the computed content address.
     pub fn intern(&self, data: &[u8]) -> Result<CasId, CasError> {
         let hash = self.hash(data);
@@ -121,10 +182,11 @@ impl Cas<'_> {
 
     fn store_with_hash(&self, hash: O256, data: &[u8]) -> Result<CasId, CasError> {
         self.connection
-            .sqlite()
-            .query_row(STORE_SQL, (hash.as_bytes().as_slice(), data), |row| {
-                row.get::<_, i64>(0).map(CasId)
-            })
+            .query_row(
+                self.sql(STORE_SQL).as_ref(),
+                (hash.as_bytes().as_slice(), data),
+                |row| row.get::<_, i64>(0).map(CasId),
+            )
             .optional()
             .context(StoreSnafu)?
             .ok_or(CasError::HashCollision { hash })
@@ -134,13 +196,14 @@ impl Cas<'_> {
     ///
     /// # Errors
     ///
-    /// Returns an error when the default CAS cannot be queried or contains a
+    /// Returns an error when the CAS cannot be queried or contains a
     /// malformed address.
     pub fn address(&self, id: CasId) -> Result<Option<O256>, CasError> {
         let bytes = self
             .connection
-            .sqlite()
-            .query_row(HASH_SQL, [id.0], |row| row.get::<_, Vec<u8>>(0))
+            .query_row(self.sql(HASH_SQL).as_ref(), [id.0], |row| {
+                row.get::<_, Vec<u8>>(0)
+            })
             .optional()
             .context(AddressSnafu)?;
         bytes.map(|bytes| decode_address(id, bytes)).transpose()
@@ -153,13 +216,14 @@ impl Cas<'_> {
     ///
     /// # Errors
     ///
-    /// Returns an error when the default CAS cannot be queried.
+    /// Returns an error when the CAS cannot be queried.
     pub fn resolve(&self, hash: O256) -> Result<Option<CasId>, CasError> {
         self.connection
-            .sqlite()
-            .query_row(RESOLVE_SQL, [hash.as_bytes().as_slice()], |row| {
-                row.get::<_, i64>(0).map(CasId)
-            })
+            .query_row(
+                self.sql(RESOLVE_SQL).as_ref(),
+                [hash.as_bytes().as_slice()],
+                |row| row.get::<_, i64>(0).map(CasId),
+            )
             .optional()
             .context(ResolveSnafu)
     }
@@ -171,17 +235,17 @@ impl Cas<'_> {
     ///
     /// # Errors
     ///
-    /// Returns an error when the default CAS cannot be updated or queried.
+    /// Returns an error when the CAS cannot be updated or queried.
     pub fn reserve(&self, hash: O256) -> Result<CasId, CasError> {
         self.connection
-            .sqlite()
-            .execute(RESERVE_SQL, [hash.as_bytes().as_slice()])
+            .execute(self.sql(RESERVE_SQL).as_ref(), [hash.as_bytes().as_slice()])
             .context(ReserveSnafu)?;
         self.connection
-            .sqlite()
-            .query_row(RESOLVE_SQL, [hash.as_bytes().as_slice()], |row| {
-                row.get::<_, i64>(0).map(CasId)
-            })
+            .query_row(
+                self.sql(RESOLVE_SQL).as_ref(),
+                [hash.as_bytes().as_slice()],
+                |row| row.get::<_, i64>(0).map(CasId),
+            )
             .context(ReserveSnafu)
     }
 
@@ -191,11 +255,12 @@ impl Cas<'_> {
     ///
     /// # Errors
     ///
-    /// Returns an error when the default CAS cannot be queried.
+    /// Returns an error when the CAS cannot be queried.
     pub fn fetch_id(&self, id: CasId) -> Result<Option<Bytes>, CasError> {
         self.connection
-            .sqlite()
-            .query_row(GET_SQL, [id.0], |row| row.get::<_, Option<Vec<u8>>>(0))
+            .query_row(self.sql(GET_SQL).as_ref(), [id.0], |row| {
+                row.get::<_, Option<Vec<u8>>>(0)
+            })
             .optional()
             .context(FetchSnafu)
             .map(Option::flatten)
@@ -211,12 +276,11 @@ impl Cas<'_> {
     /// # Errors
     ///
     /// Returns an error when the ID is missing, the content address does not
-    /// match, or the default CAS cannot be accessed.
+    /// match, or the CAS cannot be accessed.
     pub fn fill(&self, id: CasId, data: &[u8]) -> Result<bool, CasError> {
         let state = self
             .connection
-            .sqlite()
-            .query_row(FILL_STATE_SQL, [id.0], |row| {
+            .query_row(self.sql(FILL_STATE_SQL).as_ref(), [id.0], |row| {
                 Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, bool>(1)?))
             })
             .optional()
@@ -233,8 +297,7 @@ impl Cas<'_> {
         }
 
         self.connection
-            .sqlite()
-            .execute(FILL_SQL, (id.0, data))
+            .execute(self.sql(FILL_SQL).as_ref(), (id.0, data))
             .context(FillSnafu)?;
         Ok(state.1)
     }
@@ -246,11 +309,10 @@ impl Cas<'_> {
     ///
     /// # Errors
     ///
-    /// Returns an error when the default CAS cannot be updated.
+    /// Returns an error when the CAS cannot be updated.
     pub fn evict(&self, id: CasId) -> Result<bool, CasError> {
         self.connection
-            .sqlite()
-            .execute(EVICT_SQL, [id.0])
+            .execute(self.sql(EVICT_SQL).as_ref(), [id.0])
             .context(EvictSnafu)
             .map(|changed| changed != 0)
     }
@@ -262,11 +324,10 @@ impl Cas<'_> {
     ///
     /// # Errors
     ///
-    /// Returns an error when the default CAS cannot be updated.
+    /// Returns an error when the CAS cannot be updated.
     pub fn remove(&self, id: CasId) -> Result<bool, CasError> {
         self.connection
-            .sqlite()
-            .execute(REMOVE_SQL, [id.0])
+            .execute(self.sql(REMOVE_SQL).as_ref(), [id.0])
             .context(RemoveSnafu)
             .map(|changed| changed != 0)
     }
@@ -278,12 +339,24 @@ fn decode_address(id: CasId, bytes: Vec<u8>) -> Result<O256, CasError> {
         .map_err(|_| CasError::MalformedHash { id })
 }
 
-/// Failure to access Neutron's connection-local default CAS.
+/// Failure to create or access a Nucleus CAS.
 #[derive(Debug, Snafu)]
 #[snafu(crate_root(covalence_lib_error::snafu))]
 pub enum CasError {
+    /// User-defined storage cannot use a Nucleus-reserved table name.
+    #[snafu(display("CAS table name {name:?} is reserved by Nucleus"))]
+    ReservedName { name: String },
+
+    /// A CAS table could not be created and catalogued.
+    #[snafu(display("could not create CAS storage: {source}"))]
+    Create { source: sqlite::Error },
+
+    /// The CAS table capability could not be acquired.
+    #[snafu(display("could not acquire the CAS table: {source}"))]
+    Handle { source: HandleError },
+
     /// Bytes could not be stored.
-    #[snafu(display("could not store bytes in the default CAS: {source}"))]
+    #[snafu(display("could not store bytes in the CAS: {source}"))]
     Store {
         /// Underlying `SQLite` error.
         source: sqlite::Error,
@@ -304,42 +377,42 @@ pub enum CasError {
     },
 
     /// A content address could not be loaded for a local ID.
-    #[snafu(display("could not load a content address from the default CAS: {source}"))]
+    #[snafu(display("could not load a content address from the CAS: {source}"))]
     Address {
         /// Underlying `SQLite` error.
         source: sqlite::Error,
     },
 
     /// A content address could not be resolved to a local ID.
-    #[snafu(display("could not resolve an address in the default CAS: {source}"))]
+    #[snafu(display("could not resolve an address in the CAS: {source}"))]
     Resolve {
         /// Underlying `SQLite` error.
         source: sqlite::Error,
     },
 
     /// An unresolved address could not be reserved.
-    #[snafu(display("could not reserve an address in the default CAS: {source}"))]
+    #[snafu(display("could not reserve an address in the CAS: {source}"))]
     Reserve {
         /// Underlying `SQLite` error.
         source: sqlite::Error,
     },
 
     /// Resident bytes could not be loaded.
-    #[snafu(display("could not load bytes from the default CAS: {source}"))]
+    #[snafu(display("could not load bytes from the CAS: {source}"))]
     Fetch {
         /// Underlying `SQLite` error.
         source: sqlite::Error,
     },
 
     /// Resident bytes could not be evicted.
-    #[snafu(display("could not evict bytes from the default CAS: {source}"))]
+    #[snafu(display("could not evict bytes from the CAS: {source}"))]
     Evict {
         /// Underlying `SQLite` error.
         source: sqlite::Error,
     },
 
     /// A connection-local CAS entry could not be removed.
-    #[snafu(display("could not remove an entry from the default CAS: {source}"))]
+    #[snafu(display("could not remove an entry from the CAS: {source}"))]
     Remove {
         /// Underlying `SQLite` error.
         source: sqlite::Error,
@@ -364,7 +437,7 @@ pub enum CasError {
     },
 
     /// An existing CAS entry could not be filled.
-    #[snafu(display("could not fill an entry in the default CAS: {source}"))]
+    #[snafu(display("could not fill an entry in the CAS: {source}"))]
     Fill {
         /// Underlying `SQLite` error.
         source: sqlite::Error,

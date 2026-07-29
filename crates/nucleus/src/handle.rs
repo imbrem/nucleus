@@ -56,6 +56,10 @@ impl<I: RegistryInvariant, K: LockMode> Database<'_, I, K> {
         &self.name
     }
 
+    pub(crate) fn sqlite(&self) -> &sqlite::Connection {
+        self.session.connection.sqlite()
+    }
+
     /// Acquires a shared handle to a table in this database.
     ///
     /// # Errors
@@ -77,7 +81,7 @@ impl<I: RegistryInvariant, K: LockMode> Database<'_, I, K> {
         let lease =
             TableLease::acquire(self.session.connection.sqlite(), &self.name, &name, owner)?;
         Ok(Table {
-            _session: self.session,
+            session: self.session,
             database: self.name.clone(),
             name,
             _lease: lease,
@@ -103,14 +107,14 @@ impl<I: RegistryInvariant> Database<'_, I, Exclusive> {
 /// A visibility capability for one table.
 #[derive(Debug)]
 pub struct Table<'database, I: RegistryInvariant, K: LockMode> {
-    _session: &'database RegistrySession<'database, I>,
+    session: &'database RegistrySession<'database, I>,
     database: String,
     name: String,
     _lease: TableLease<'database>,
     mode: PhantomData<K>,
 }
 
-impl<I: RegistryInvariant, K: LockMode> Table<'_, I, K> {
+impl<'database, I: RegistryInvariant, K: LockMode> Table<'database, I, K> {
     /// Returns the physical database name.
     #[must_use]
     pub fn database_name(&self) -> &str {
@@ -121,6 +125,10 @@ impl<I: RegistryInvariant, K: LockMode> Table<'_, I, K> {
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub(crate) fn sqlite(&self) -> &'database sqlite::Connection {
+        self.session.connection.sqlite()
     }
 }
 
