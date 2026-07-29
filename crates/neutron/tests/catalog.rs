@@ -4,6 +4,7 @@ use covalence_neutron::{CatalogEntry, CatalogError, Connection};
 fn creates_reopens_and_uses_main_catalog() {
     let connection = Connection::open_in_memory().unwrap();
     let catalog = connection.catalog("main").unwrap();
+    assert!(catalog.is_trusted_exclusive().unwrap());
     catalog.register("facts", "example/v0").unwrap();
     assert_eq!(
         catalog.entries().unwrap(),

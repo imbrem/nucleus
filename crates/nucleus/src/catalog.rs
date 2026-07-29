@@ -1,9 +1,20 @@
+use covalence_lib_error::snafu::Snafu;
 use covalence_neutron as neutron;
 
 use crate::Connection;
 
-/// Failure to create or structurally validate a database-local catalog.
-pub type CatalogError = neutron::CatalogError;
+/// Failure to access a trusted database-local catalog.
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+pub enum CatalogError {
+    /// Neutron could not create, validate, or inspect the catalog.
+    #[snafu(display("could not access database catalog: {source}"))]
+    Neutron { source: neutron::CatalogError },
+
+    /// Nucleus only interprets catalogs in trusted, exclusively owned databases.
+    #[snafu(display("database {database_name:?} is not trusted and exclusive"))]
+    NotTrustedExclusive { database_name: String },
+}
 
 /// Policy boundary around a database-local Neutron catalog.
 ///
@@ -31,8 +42,18 @@ impl Connection {
     /// Returns an error for a missing or temporary database, incompatible
     /// existing catalog, or storage failure.
     pub fn catalog(&self, database_name: &str) -> Result<Catalog<'_>, CatalogError> {
-        self.neutron
+        let neutron = self
+            .neutron
             .catalog(database_name)
-            .map(|neutron| Catalog { neutron })
+            .map_err(|source| CatalogError::Neutron { source })?;
+        if !neutron
+            .is_trusted_exclusive()
+            .map_err(|source| CatalogError::Neutron { source })?
+        {
+            return Err(CatalogError::NotTrustedExclusive {
+                database_name: database_name.to_owned(),
+            });
+        }
+        Ok(Catalog { neutron })
     }
 }

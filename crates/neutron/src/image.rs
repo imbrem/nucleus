@@ -5,8 +5,9 @@ use crate::{Bytes, Connection, ConnectionError};
 
 const NEXT_DATABASE_ID_SQL: &str =
     "SELECT COALESCE(MAX(database_id), 0) + 1 FROM temp.cov_conn_attached";
-const REGISTER_DATABASE_SQL: &str =
-    "INSERT INTO temp.cov_conn_attached (database_id, schema_name) VALUES (?1, ?2)";
+const REGISTER_DATABASE_SQL: &str = "INSERT INTO temp.cov_conn_attached
+     (database_id, schema_name, is_trusted, is_exclusive)
+     VALUES (?1, ?2, 0, 1)";
 const DATABASE_IS_ATTACHED_SQL: &str =
     "SELECT EXISTS(SELECT 1 FROM pragma_database_list WHERE name = ?1)";
 
@@ -45,7 +46,7 @@ impl Connection {
         sqlite
             .deserialize_read_exact(sqlite::MAIN_DB, bytes.as_ref(), bytes.len(), false)
             .context(DeserializeSnafu)?;
-        Self::from_sqlite(sqlite).context(InitializeSnafu)
+        Self::from_sqlite_with_main_access(sqlite, false, true).context(InitializeSnafu)
     }
 
     /// Attaches `bytes` as a new, writable in-memory database.

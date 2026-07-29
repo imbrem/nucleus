@@ -59,6 +59,30 @@ impl<'conn> Catalog<'conn> {
         self.connection
     }
 
+    /// Tests whether this database is marked both trusted and exclusive.
+    ///
+    /// This reads Neutron's connection-local database registry. It does not
+    /// independently establish either property.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the registry cannot be read or no longer contains
+    /// this database.
+    pub fn is_trusted_exclusive(&self) -> Result<bool, CatalogError> {
+        self.connection
+            .sqlite()
+            .query_row(
+                "SELECT is_trusted AND is_exclusive
+                 FROM temp.cov_conn_attached
+                 WHERE schema_name = ?1",
+                [&self.database_name],
+                |row| row.get(0),
+            )
+            .context(DatabaseRegistrationSnafu {
+                database_name: &self.database_name,
+            })
+    }
+
     /// Loads all uninterpreted catalog entries.
     ///
     /// # Errors
@@ -220,6 +244,13 @@ pub enum CatalogError {
     /// An existing catalog has incompatible geometry.
     #[snafu(display("database {database_name:?} has a malformed catalog"))]
     Malformed { database_name: String },
+
+    /// The database is absent from Neutron's connection-local registry.
+    #[snafu(display("database {database_name:?} is absent from Neutron's connection registry"))]
+    DatabaseRegistration {
+        database_name: String,
+        source: sqlite::Error,
+    },
 
     /// The underlying storage operation failed.
     #[snafu(display("database catalog storage operation failed: {source}"))]

@@ -45,7 +45,7 @@ impl Connection {
     /// metadata cannot be initialized atomically.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ConnectionError> {
         let sqlite = sqlite::Connection::open(path).context(OpenSnafu)?;
-        Self::from_sqlite(sqlite)
+        Self::from_sqlite_with_main_access(sqlite, false, false)
     }
 
     /// Opens an in-memory `SQLite` database and initializes Neutron.
@@ -55,7 +55,7 @@ impl Connection {
     /// Returns an error when the connection metadata cannot be initialized.
     pub fn open_in_memory() -> Result<Self, ConnectionError> {
         let sqlite = sqlite::Connection::open_in_memory().context(OpenSnafu)?;
-        Self::from_sqlite(sqlite)
+        Self::from_sqlite_with_main_access(sqlite, true, true)
     }
 
     /// Adopts a raw connection and initializes Neutron's temporary metadata.
@@ -67,7 +67,16 @@ impl Connection {
     ///
     /// Returns an error when the connection metadata cannot be initialized.
     pub fn from_sqlite(mut sqlite: sqlite::Connection) -> Result<Self, ConnectionError> {
-        initialize(&mut sqlite)?;
+        initialize(&mut sqlite, false, false)?;
+        Ok(Self { sqlite })
+    }
+
+    pub(crate) fn from_sqlite_with_main_access(
+        mut sqlite: sqlite::Connection,
+        is_trusted: bool,
+        is_exclusive: bool,
+    ) -> Result<Self, ConnectionError> {
+        initialize(&mut sqlite, is_trusted, is_exclusive)?;
         Ok(Self { sqlite })
     }
 
@@ -112,7 +121,11 @@ pub enum ConnectionError {
     },
 }
 
-fn initialize(connection: &mut sqlite::Connection) -> Result<(), ConnectionError> {
+fn initialize(
+    connection: &mut sqlite::Connection,
+    main_is_trusted: bool,
+    main_is_exclusive: bool,
+) -> Result<(), ConnectionError> {
     let transaction = connection.transaction().context(InitializeSnafu)?;
 
     transaction
@@ -141,7 +154,7 @@ fn initialize(connection: &mut sqlite::Connection) -> Result<(), ConnectionError
         CREATE_DEFAULT_CAS_SQL,
     )?;
 
-    register_attached_database(&transaction, 1, "main")?;
+    register_attached_database(&transaction, 1, "main", main_is_trusted, main_is_exclusive)?;
 
     transaction.commit().context(InitializeSnafu)
 }
@@ -175,9 +188,14 @@ fn register_attached_database(
     transaction: &sqlite::Transaction<'_>,
     database_id: i64,
     schema_name: &str,
+    is_trusted: bool,
+    is_exclusive: bool,
 ) -> Result<(), ConnectionError> {
     transaction
-        .execute(REGISTER_ATTACHED_DATABASE_SQL, (database_id, schema_name))
+        .execute(
+            REGISTER_ATTACHED_DATABASE_SQL,
+            (database_id, schema_name, is_trusted, is_exclusive),
+        )
         .context(InitializeSnafu)?;
     Ok(())
 }
@@ -237,12 +255,20 @@ mod tests {
         let attached = connection
             .sqlite()
             .query_row(
-                "SELECT database_id, schema_name FROM temp.cov_conn_attached",
+                "SELECT database_id, schema_name, is_trusted, is_exclusive
+                 FROM temp.cov_conn_attached",
                 (),
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, bool>(2)?,
+                        row.get::<_, bool>(3)?,
+                    ))
+                },
             )
             .expect("read attached database");
-        assert_eq!(attached, (1, String::from("main")));
+        assert_eq!(attached, (1, String::from("main"), true, true));
     }
 
     #[test]
@@ -270,7 +296,7 @@ mod tests {
             .expect("reserve connection name");
 
         assert!(matches!(
-            initialize(&mut sqlite),
+            initialize(&mut sqlite, false, false),
             Err(ConnectionError::Initialize { .. })
         ));
 
@@ -306,7 +332,7 @@ mod tests {
             .expect("reserve catalog name");
 
         assert!(matches!(
-            initialize(&mut sqlite),
+            initialize(&mut sqlite, false, false),
             Err(ConnectionError::Initialize { .. })
         ));
 
