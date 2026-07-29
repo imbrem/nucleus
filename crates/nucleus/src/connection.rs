@@ -103,6 +103,10 @@ impl Connection {
                     crate::cas_table::validate_table(sqlite, &entry.table)
                         .context(CasTableSnafu)?;
                 }
+                crate::byte_length_reference::INTERPRETATION => {
+                    crate::byte_length_reference::validate_table(sqlite, &entry.table)
+                        .context(ByteLengthReferenceSnafu)?;
+                }
                 _ => {
                     return Err(ValidationError::UnknownInterpretation {
                         table: entry.table,
@@ -194,6 +198,13 @@ pub enum ValidationError {
     CasTable {
         /// Underlying failure.
         source: crate::CasTableError,
+    },
+
+    /// A cross-table byte-length relation is invalid.
+    #[snafu(display("{source}"))]
+    ByteLengthReference {
+        /// Underlying failure.
+        source: crate::ByteLengthReferenceError,
     },
 }
 

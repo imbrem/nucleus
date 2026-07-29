@@ -2,6 +2,7 @@
 
 mod addition;
 mod byte_length;
+mod byte_length_reference;
 mod cas_table;
 mod catalog;
 mod connection;
@@ -9,6 +10,9 @@ mod table_meaning;
 
 pub use addition::{Addition, AdditionError, AdditionFact};
 pub use byte_length::{ByteLengthError, ByteLengthFact, ByteLengths};
+pub use byte_length_reference::{
+    ByteLengthReference, ByteLengthReferenceError, ByteLengthReferences,
+};
 pub use cas_table::{CasObjectId, CasTable, CasTableError};
 pub use catalog::CatalogError;
 pub use connection::{Connection, ConnectionError, DatabaseError, ValidationError};
