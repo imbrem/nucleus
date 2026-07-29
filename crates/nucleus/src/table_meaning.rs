@@ -2,7 +2,8 @@ use covalence_lib_error::snafu::{ResultExt, Snafu};
 use covalence_lib_sqlite as sqlite;
 
 use crate::{
-    Addition, ByteLengths, CasTable, Connection, addition, byte_length, cas_table, catalog,
+    Addition, ByteLengthReferences, ByteLengths, CasTable, Connection, addition, byte_length,
+    byte_length_reference, cas_table, catalog,
 };
 
 pub(crate) const INTERPRETATION: &str = "cov.table-meanings/v0";
@@ -16,6 +17,8 @@ pub enum TableMeaning {
     ByteLength,
     /// Indexed ordinary-byte content-addressed storage.
     Cas,
+    /// Byte-length facts which reference interpreted CAS tables.
+    ByteLengthReference,
 }
 
 impl TableMeaning {
@@ -24,6 +27,7 @@ impl TableMeaning {
             Self::Addition => crate::addition::INTERPRETATION,
             Self::ByteLength => crate::byte_length::INTERPRETATION,
             Self::Cas => crate::cas_table::INTERPRETATION,
+            Self::ByteLengthReference => crate::byte_length_reference::INTERPRETATION,
         }
     }
 }
@@ -111,6 +115,29 @@ impl TableMeanings<'_> {
         Ok(cas_table::wrapper(self.connection, name))
     }
 
+    /// Creates an owned cross-table byte-length relation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for reserved or duplicate names, nested
+    /// transactions, or `SQLite` failures.
+    pub fn create_byte_length_references(
+        &self,
+        name: &str,
+    ) -> Result<ByteLengthReferences<'_>, TableMeaningError> {
+        self.ensure_unowned(name)?;
+        let transaction = self
+            .connection
+            .neutron
+            .sqlite()
+            .unchecked_transaction()
+            .context(CreateChildSnafu)?;
+        byte_length_reference::create_table(&transaction, name).context(CreateChildSnafu)?;
+        self.record_meaning(&transaction, name, TableMeaning::ByteLengthReference)?;
+        transaction.commit().context(CreateChildSnafu)?;
+        Ok(byte_length_reference::wrapper(self.connection, name))
+    }
+
     fn ensure_unowned(&self, name: &str) -> Result<(), TableMeaningError> {
         if catalog::name_is_reserved(name) {
             return Err(TableMeaningError::ReservedName {
@@ -161,6 +188,9 @@ impl TableMeanings<'_> {
                     crate::addition::INTERPRETATION => TableMeaning::Addition,
                     crate::byte_length::INTERPRETATION => TableMeaning::ByteLength,
                     crate::cas_table::INTERPRETATION => TableMeaning::Cas,
+                    crate::byte_length_reference::INTERPRETATION => {
+                        TableMeaning::ByteLengthReference
+                    }
                     _ => {
                         return Err(TableMeaningError::UnknownMeaning {
                             table: entry.table,
