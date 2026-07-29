@@ -9,7 +9,7 @@ use crate::{Invariant, Standard, Unchecked};
 
 const CREATE_CONNECTION_CATALOG_SQL: &str = include_str!("../sql/create_connection_catalog.sql");
 const CREATE_ATTACHED_DATABASES_SQL: &str = include_str!("../sql/create_attached_databases.sql");
-const CREATE_DEFAULT_CAS_SQL: &str = include_str!("../sql/create_default_cas.sql");
+const CREATE_CONNECTION_CAS_SQL: &str = include_str!("../sql/create_connection_cas.sql");
 const CREATE_DATABASE_CATALOG_SQL: &str = include_str!("../sql/create_database_catalog.sql");
 const CREATE_DATABASE_VISIBILITY_SQL: &str = include_str!("../sql/create_database_visibility.sql");
 const CREATE_TABLE_VISIBILITY_SQL: &str = include_str!("../sql/create_table_visibility.sql");
@@ -20,7 +20,7 @@ const REGISTER_ATTACHED_DATABASE_SQL: &str = include_str!("../sql/register_attac
 pub const ATTACHED_DATABASES: &str = "cov_conn_attached";
 
 /// Physical name of the connection's default CAS.
-pub const DEFAULT_CAS: &str = "cov_conn_default_cas";
+pub const CONNECTION_CAS: &str = "cov_conn_cas";
 
 /// Interpretation of the connection catalog.
 pub const CONNECTION_CATALOG_INTERPRETATION: &str = "cov.conn.catalog/v0";
@@ -29,7 +29,7 @@ pub const CONNECTION_CATALOG_INTERPRETATION: &str = "cov.conn.catalog/v0";
 pub const ATTACHED_DATABASES_INTERPRETATION: &str = "cov.conn.attached/v0";
 
 /// Interpretation of the default CAS.
-pub const DEFAULT_CAS_INTERPRETATION: &str = "cov.cas.default/v0";
+pub const CONNECTION_CAS_INTERPRETATION: &str = "cov.cas.default/v0";
 
 /// A policy-enforcing connection to Nucleus state.
 #[derive(Debug)]
@@ -130,9 +130,9 @@ fn initialize(connection: &mut neutron::Connection) -> Result<(), ConnectionErro
     create_and_register_table(
         &transaction,
         3,
-        DEFAULT_CAS,
-        DEFAULT_CAS_INTERPRETATION,
-        CREATE_DEFAULT_CAS_SQL,
+        CONNECTION_CAS,
+        CONNECTION_CAS_INTERPRETATION,
+        CREATE_CONNECTION_CAS_SQL,
     )?;
     create_and_register_table(
         &transaction,
@@ -198,7 +198,7 @@ pub enum ConnectionError {
 
 #[cfg(test)]
 mod tests {
-    use super::{Connection, DEFAULT_CAS};
+    use super::{CONNECTION_CAS, Connection};
 
     #[test]
     fn nucleus_owns_connection_initialization() {
@@ -208,7 +208,7 @@ mod tests {
             .query_row(
                 "SELECT count(*) FROM temp.sqlite_schema
                  WHERE name IN ('cov_conn_catalog', 'cov_conn_attached', ?1)",
-                [DEFAULT_CAS],
+                [CONNECTION_CAS],
                 |row| row.get::<_, i64>(0),
             )
             .unwrap();

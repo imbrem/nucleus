@@ -6,7 +6,7 @@ use sqlite::OptionalExtension;
 
 use covalence_neutron as neutron;
 
-use crate::{Connection, Standard};
+use crate::{Connection, RegistryInvariant, RegistrySession, Standard};
 
 const STORE_SQL: &str = include_str!("../sql/cas/store.sql");
 const HASH_SQL: &str = include_str!("../sql/cas/address.sql");
@@ -49,6 +49,16 @@ impl Connection<Standard> {
     pub const fn cas(&self) -> Cas<'_> {
         Cas {
             connection: &self.neutron,
+        }
+    }
+}
+
+impl<I: RegistryInvariant> RegistrySession<'_, I> {
+    /// Returns the connection's standard content-addressed store.
+    #[must_use]
+    pub const fn cas(&self) -> Cas<'_> {
+        Cas {
+            connection: &self.connection.neutron,
         }
     }
 }
@@ -364,7 +374,7 @@ pub enum CasError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DEFAULT_CAS, DEFAULT_CAS_INTERPRETATION};
+    use crate::{CONNECTION_CAS, CONNECTION_CAS_INTERPRETATION};
 
     #[test]
     fn stores_hashes_and_resolves_bytes() {
@@ -396,11 +406,9 @@ mod tests {
         let rows = connection
             .neutron
             .sqlite()
-            .query_row(
-                "SELECT count(*) FROM temp.cov_conn_default_cas",
-                (),
-                |row| row.get::<_, i64>(0),
-            )
+            .query_row("SELECT count(*) FROM temp.cov_conn_cas", (), |row| {
+                row.get::<_, i64>(0)
+            })
             .expect("count rows");
         assert_eq!(rows, 1);
     }
@@ -413,7 +421,7 @@ mod tests {
             .neutron
             .sqlite()
             .execute(
-                "INSERT INTO temp.cov_conn_default_cas (hash, data) VALUES (?1, ?2)",
+                "INSERT INTO temp.cov_conn_cas (hash, data) VALUES (?1, ?2)",
                 (hash.as_bytes().as_slice(), b"corrupt".as_slice()),
             )
             .expect("inject conflicting row");
@@ -530,11 +538,9 @@ mod tests {
         let rows = connection
             .neutron
             .sqlite()
-            .query_row(
-                "SELECT count(*) FROM temp.cov_conn_default_cas",
-                (),
-                |row| row.get::<_, i64>(0),
-            )
+            .query_row("SELECT count(*) FROM temp.cov_conn_cas", (), |row| {
+                row.get::<_, i64>(0)
+            })
             .expect("count rows");
         assert_eq!(rows, 0);
     }
@@ -613,7 +619,7 @@ mod tests {
             .neutron
             .sqlite()
             .execute(
-                "UPDATE temp.cov_conn_default_cas SET data = ?2 WHERE object_id = ?1",
+                "UPDATE temp.cov_conn_cas SET data = ?2 WHERE object_id = ?1",
                 (id.0, b"stale".as_slice()),
             )
             .expect("inject stale data");
@@ -635,7 +641,7 @@ mod tests {
                 "SELECT table_name, interpretation
                  FROM temp.cov_conn_catalog
                  WHERE table_name = ?1",
-                [DEFAULT_CAS],
+                [CONNECTION_CAS],
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
             )
             .expect("read registration");
@@ -643,8 +649,8 @@ mod tests {
         assert_eq!(
             registration,
             (
-                String::from(DEFAULT_CAS),
-                String::from(DEFAULT_CAS_INTERPRETATION)
+                String::from(CONNECTION_CAS),
+                String::from(CONNECTION_CAS_INTERPRETATION)
             )
         );
     }

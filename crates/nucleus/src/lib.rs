@@ -11,8 +11,8 @@ mod registry;
 pub use cas::{Cas, CasError, CasId};
 pub use catalog::{CONNECTION_CATALOG, Catalog, CatalogEntry, CatalogError, DB_CATALOG};
 pub use connection::{
-    ATTACHED_DATABASES, ATTACHED_DATABASES_INTERPRETATION, Connection, ConnectionError,
-    DEFAULT_CAS, DEFAULT_CAS_INTERPRETATION,
+    ATTACHED_DATABASES, ATTACHED_DATABASES_INTERPRETATION, CONNECTION_CAS,
+    CONNECTION_CAS_INTERPRETATION, Connection, ConnectionError,
 };
 pub use handle::{Database, Exclusive, HandleError, LockMode, Shared, Table};
 pub use invariant::{Invariant, Standard, Unchecked};

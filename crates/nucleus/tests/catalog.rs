@@ -9,7 +9,7 @@ fn exposes_connection_and_main_catalog_roles() {
     assert!(!conn.is_main());
     assert!(conn.entries().unwrap().contains(&CatalogEntry {
         table_id: 3,
-        table_name: String::from("cov_conn_default_cas"),
+        table_name: String::from("cov_conn_cas"),
         interpretation: String::from("cov.cas.default/v0"),
     }));
 
