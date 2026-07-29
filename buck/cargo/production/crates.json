@@ -166,6 +166,12 @@
           ]
         },
         {
+          "name": "owned_cas",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "sqlite",
           "kinds": [
             "test"
