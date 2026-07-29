@@ -1,15 +1,19 @@
 //! Portable trusted core for Nucleus.
 
+mod addition;
 mod cas;
 mod catalog;
 mod connection;
+mod theorem;
 
+pub use addition::{Addition, AdditionError, AdditionFact};
 pub use cas::{Cas, CasError, CasId};
 pub use catalog::{CONNECTION_CATALOG, Catalog, CatalogEntry, CatalogError, DB_CATALOG};
 pub use connection::{
     ATTACHED_DATABASES, ATTACHED_DATABASES_INTERPRETATION, Connection, ConnectionError,
     DEFAULT_CAS, DEFAULT_CAS_INTERPRETATION,
 };
+pub use theorem::Thm;
 
 mod snapshot;
 
