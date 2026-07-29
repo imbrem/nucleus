@@ -74,3 +74,43 @@ pub enum RegistryError {
     #[snafu(display("could not access the connection visibility registry: {source}"))]
     Storage { source: sqlite::Error },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ADD_VISIBLE_DATABASE: &str = "
+        INSERT INTO temp.cov_conn_dbvis
+            (db_name, lock_type, ref_count, owner_type)
+        VALUES ('main', 'EXCLUSIVE', 1, 'test')
+    ";
+
+    #[test]
+    fn a_session_clears_its_visibility_rows_on_drop() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        {
+            let session = connection.enter(Registry).unwrap();
+            session
+                .connection
+                .sqlite()
+                .execute(ADD_VISIBLE_DATABASE, ())
+                .unwrap();
+        }
+
+        connection.enter(Registry).unwrap();
+    }
+
+    #[test]
+    fn a_session_rejects_preexisting_visibility_rows() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .sqlite()
+            .execute(ADD_VISIBLE_DATABASE, ())
+            .unwrap();
+
+        assert!(matches!(
+            connection.enter(Registry),
+            Err(RegistryError::AlreadyActive)
+        ));
+    }
+}
