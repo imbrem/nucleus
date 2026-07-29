@@ -559,9 +559,19 @@ mod tests {
         for len in [
             0,
             1,
+            blake3::CHUNK_LEN - 1,
             blake3::CHUNK_LEN,
             blake3::CHUNK_LEN + 1,
+            2 * blake3::CHUNK_LEN - 1,
+            2 * blake3::CHUNK_LEN,
+            2 * blake3::CHUNK_LEN + 1,
+            3 * blake3::CHUNK_LEN - 1,
+            3 * blake3::CHUNK_LEN,
+            3 * blake3::CHUNK_LEN + 1,
             3 * blake3::CHUNK_LEN + 17,
+            4 * blake3::CHUNK_LEN - 1,
+            4 * blake3::CHUNK_LEN,
+            4 * blake3::CHUNK_LEN + 1,
             5 * blake3::CHUNK_LEN,
         ] {
             let input = patterned(len);
