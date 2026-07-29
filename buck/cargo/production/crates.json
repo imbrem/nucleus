@@ -120,6 +120,12 @@
       "category": "tcb",
       "targets": [
         {
+          "name": "catalog",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "covalence_neutron",
           "kinds": [
             "lib"
@@ -134,6 +140,12 @@
       "path": "crates/nucleus",
       "category": "tcb",
       "targets": [
+        {
+          "name": "catalog",
+          "kinds": [
+            "test"
+          ]
+        },
         {
           "name": "covalence_nucleus",
           "kinds": [

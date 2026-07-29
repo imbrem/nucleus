@@ -1,7 +1,9 @@
 //! Portable trusted core for Nucleus.
 
+mod catalog;
 mod connection;
 
+pub use catalog::{Catalog, CatalogError};
 pub use connection::{Connection, ConnectionError};
 pub use covalence_neutron::Cas;
 
