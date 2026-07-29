@@ -141,6 +141,12 @@
       "category": "tcb",
       "targets": [
         {
+          "name": "addition",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "catalog",
           "kinds": [
             "test"

@@ -1,0 +1,258 @@
+use covalence_lib_error::snafu::{ResultExt, Snafu};
+use covalence_neutron as neutron;
+
+use crate::{Catalog, Thm};
+
+const INTERPRETATION: &str = "cov.addition/v0";
+
+/// One integer-addition row.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct AdditionFact {
+    /// Claimed result.
+    pub tm: i64,
+    /// Left operand.
+    pub lhs: i64,
+    /// Right operand.
+    pub rhs: i64,
+}
+
+impl AdditionFact {
+    /// Applies the checked integer-addition rule.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if addition overflows or the claimed result is false.
+    pub fn new(tm: i64, lhs: i64, rhs: i64) -> Result<Thm<Self>, AdditionError> {
+        let sum = lhs
+            .checked_add(rhs)
+            .ok_or(AdditionError::Overflow { lhs, rhs })?;
+        if tm != sum {
+            return Err(AdditionError::False { tm, lhs, rhs });
+        }
+        Ok(Thm::new(Self { tm, lhs, rhs }))
+    }
+
+    /// Computes integer addition and returns its theorem.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if addition overflows.
+    pub fn sum(lhs: i64, rhs: i64) -> Result<Thm<Self>, AdditionError> {
+        let tm = lhs
+            .checked_add(rhs)
+            .ok_or(AdditionError::Overflow { lhs, rhs })?;
+        Ok(Thm::new(Self { tm, lhs, rhs }))
+    }
+}
+
+/// Capability for a table maintained as true integer-addition facts.
+///
+/// The table starts empty. Its prepared insertion path accepts only
+/// [`Thm<AdditionFact>`], so rows read through this capability need no
+/// potentially expensive revalidation.
+#[derive(Debug)]
+pub struct Addition<'conn> {
+    insert: neutron::Statement<'conn>,
+    contains: neutron::Statement<'conn>,
+    scan: neutron::Statement<'conn>,
+}
+
+impl Addition<'_> {
+    /// Inserts an admitted addition fact.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if storage rejects the row.
+    pub fn insert(&mut self, fact: &Thm<AdditionFact>) -> Result<(), AdditionError> {
+        self.insert
+            .execute((fact.tm, fact.lhs, fact.rhs))
+            .context(StorageSnafu)?;
+        Ok(())
+    }
+
+    /// Returns whether this trusted table contains exactly `fact`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if storage cannot answer the query.
+    pub fn contains(&mut self, fact: &AdditionFact) -> Result<bool, AdditionError> {
+        self.contains
+            .query_row((fact.tm, fact.lhs, fact.rhs), |row| row.get(0))
+            .context(StorageSnafu)
+    }
+
+    /// Loads the theorems maintained by this trusted table.
+    ///
+    /// Rows are not rechecked: the capability and restricted insertion path
+    /// preserve the invariant established by the empty table.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if storage cannot decode a row.
+    pub fn facts(&mut self) -> Result<Vec<Thm<AdditionFact>>, AdditionError> {
+        self.scan
+            .query_map((), |row| {
+                Ok(Thm::new(AdditionFact {
+                    tm: row.get(0)?,
+                    lhs: row.get(1)?,
+                    rhs: row.get(2)?,
+                }))
+            })
+            .context(StorageSnafu)?
+            .collect::<Result<Vec<_>, _>>()
+            .context(StorageSnafu)
+    }
+}
+
+impl<'conn> Catalog<'conn> {
+    /// Creates an empty user-named table governed by integer addition.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for reserved names, an externally modified catalog,
+    /// duplicate objects, or storage failure.
+    pub fn create_addition(&self, table_name: &str) -> Result<Addition<'conn>, AdditionError> {
+        validate_user_table_name(table_name)?;
+        ensure_catalog_has_no_triggers(&self.neutron)?;
+        let sqlite = self.neutron.connection().sqlite();
+        let table = qualified_table(self.neutron.database_name(), table_name);
+        let transaction = sqlite.unchecked_transaction().context(StorageSnafu)?;
+        transaction
+            .execute_batch(&format!(
+                "CREATE TABLE {table} (
+                    tm INTEGER NOT NULL,
+                    lhs INTEGER NOT NULL,
+                    rhs INTEGER NOT NULL,
+                    PRIMARY KEY (tm, lhs, rhs),
+                    CHECK (typeof(lhs + rhs) = 'integer' AND tm = lhs + rhs)
+                ) STRICT, WITHOUT ROWID;"
+            ))
+            .context(StorageSnafu)?;
+        self.neutron
+            .register(table_name, INTERPRETATION)
+            .context(CatalogSnafu)?;
+        transaction.commit().context(StorageSnafu)?;
+
+        Ok(Addition {
+            insert: sqlite
+                .prepare(&format!(
+                    "INSERT INTO {table} (tm, lhs, rhs) VALUES (?1, ?2, ?3)"
+                ))
+                .context(StorageSnafu)?,
+            contains: sqlite
+                .prepare(&format!(
+                    "SELECT EXISTS(
+                        SELECT 1 FROM {table}
+                        WHERE tm = ?1 AND lhs = ?2 AND rhs = ?3
+                    )"
+                ))
+                .context(StorageSnafu)?,
+            scan: sqlite
+                .prepare(&format!(
+                    "SELECT tm, lhs, rhs FROM {table} ORDER BY tm, lhs, rhs"
+                ))
+                .context(StorageSnafu)?,
+        })
+    }
+}
+
+fn validate_user_table_name(name: &str) -> Result<(), AdditionError> {
+    if name.is_empty()
+        || name.contains('\0')
+        || name.starts_with("cov_db_")
+        || name.starts_with("cov_conn_")
+        || name.starts_with("sqlite_")
+    {
+        return Err(AdditionError::ReservedName {
+            name: name.to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn ensure_catalog_has_no_triggers(catalog: &neutron::Catalog<'_>) -> Result<(), AdditionError> {
+    let catalog_table = if catalog.is_conn() {
+        neutron::CONNECTION_CATALOG
+    } else {
+        neutron::DB_CATALOG
+    };
+    let count = catalog
+        .connection()
+        .sqlite()
+        .query_row(
+            &format!(
+                "SELECT count(*) FROM {}.sqlite_schema
+                 WHERE type = 'trigger' AND tbl_name = ?1",
+                quote_identifier(catalog.database_name())
+            ),
+            [catalog_table],
+            |row| row.get::<_, i64>(0),
+        )
+        .context(StorageSnafu)?;
+    if count != 0 {
+        return Err(AdditionError::ModifiedCatalog);
+    }
+    Ok(())
+}
+
+fn qualified_table(database_name: &str, table_name: &str) -> String {
+    format!(
+        "{}.{}",
+        quote_identifier(database_name),
+        quote_identifier(table_name)
+    )
+}
+
+fn quote_identifier(identifier: &str) -> String {
+    format!("\"{}\"", identifier.replace('"', "\"\""))
+}
+
+/// Failure to derive or maintain trusted addition facts.
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+pub enum AdditionError {
+    /// Integer addition overflowed or underflowed.
+    #[snafu(display("integer addition {lhs} + {rhs} overflows"))]
+    Overflow {
+        /// Left operand.
+        lhs: i64,
+        /// Right operand.
+        rhs: i64,
+    },
+
+    /// A proposed fact is false.
+    #[snafu(display("{tm} is not equal to {lhs} + {rhs}"))]
+    False {
+        /// Claimed result.
+        tm: i64,
+        /// Left operand.
+        lhs: i64,
+        /// Right operand.
+        rhs: i64,
+    },
+
+    /// Infrastructure and SQLite-reserved names cannot denote user tables.
+    #[snafu(display("addition table name {name:?} is reserved"))]
+    ReservedName {
+        /// Rejected table name.
+        name: String,
+    },
+
+    /// An existing trigger could violate atomic catalog registration.
+    #[snafu(display("database catalog was externally modified"))]
+    ModifiedCatalog,
+
+    /// Catalog registration failed.
+    #[snafu(display("could not register addition semantics: {source}"))]
+    Catalog {
+        /// Mechanical catalog failure.
+        source: neutron::CatalogError,
+    },
+
+    /// The underlying storage operation failed.
+    #[snafu(display("could not access trusted addition storage: {source}"))]
+    Storage {
+        /// Underlying storage failure.
+        source: neutron::SqliteError,
+    },
+}

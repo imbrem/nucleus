@@ -22,4 +22,5 @@ pub use connection::{
     DEFAULT_CAS_INTERPRETATION,
 };
 pub use covalence_lib_hash::O256;
+pub use covalence_lib_sqlite::{Error as SqliteError, Statement};
 pub use image::ImageError;
