@@ -1,61 +1,23 @@
+use bytes::Bytes;
 use covalence_lib_error::snafu::{ResultExt, Snafu};
 use covalence_lib_hash::O256;
 use covalence_lib_sqlite as sqlite;
 use sqlite::OptionalExtension;
 
-use crate::{Bytes, Connection};
+use covalence_neutron as neutron;
 
-const STORE_SQL: &str = "
-    INSERT INTO temp.cov_conn_default_cas (hash, data)
-    VALUES (?1, ?2)
-    ON CONFLICT (hash) DO UPDATE SET data = excluded.data
-    WHERE cov_conn_default_cas.data IS NULL OR cov_conn_default_cas.data = excluded.data
-    RETURNING object_id
-";
-const HASH_SQL: &str = "
-    SELECT hash
-    FROM temp.cov_conn_default_cas
-    WHERE object_id = ?1
-";
-const RESOLVE_SQL: &str = "
-    SELECT object_id
-    FROM temp.cov_conn_default_cas
-    WHERE hash = ?1
-";
-const RESERVE_SQL: &str = "
-    INSERT INTO temp.cov_conn_default_cas (hash, data)
-    VALUES (?1, NULL)
-    ON CONFLICT (hash) DO NOTHING
-";
-const GET_SQL: &str = "
-    SELECT data
-    FROM temp.cov_conn_default_cas
-    WHERE object_id = ?1
-";
-const GET_BY_HASH_SQL: &str = "
-    SELECT data
-    FROM temp.cov_conn_default_cas
-    WHERE hash = ?1
-";
-const EVICT_SQL: &str = "
-    UPDATE temp.cov_conn_default_cas
-    SET data = NULL
-    WHERE object_id = ?1 AND data IS NOT NULL
-";
-const REMOVE_SQL: &str = "
-    DELETE FROM temp.cov_conn_default_cas
-    WHERE object_id = ?1
-";
-const FILL_SQL: &str = "
-    UPDATE temp.cov_conn_default_cas
-    SET data = ?2
-    WHERE object_id = ?1
-";
-const FILL_STATE_SQL: &str = "
-    SELECT hash, data IS NOT NULL
-    FROM temp.cov_conn_default_cas
-    WHERE object_id = ?1
-";
+use crate::Connection;
+
+const STORE_SQL: &str = include_str!("../sql/cas/store.sql");
+const HASH_SQL: &str = include_str!("../sql/cas/address.sql");
+const RESOLVE_SQL: &str = include_str!("../sql/cas/resolve.sql");
+const RESERVE_SQL: &str = include_str!("../sql/cas/reserve.sql");
+const GET_SQL: &str = include_str!("../sql/cas/fetch_id.sql");
+const GET_BY_HASH_SQL: &str = include_str!("../sql/cas/fetch.sql");
+const EVICT_SQL: &str = include_str!("../sql/cas/evict.sql");
+const REMOVE_SQL: &str = include_str!("../sql/cas/remove.sql");
+const FILL_SQL: &str = include_str!("../sql/cas/fill.sql");
+const FILL_STATE_SQL: &str = include_str!("../sql/cas/fill_state.sql");
 
 /// Connection-local integer identity for an entry in the default CAS.
 ///
@@ -78,14 +40,16 @@ impl CasId {
 /// configuration, and prepared operations of one CAS among several.
 #[derive(Debug)]
 pub struct Cas<'conn> {
-    connection: &'conn Connection,
+    connection: &'conn neutron::Connection,
 }
 
 impl Connection {
     /// Returns this connection's default content-addressed store.
     #[must_use]
     pub const fn cas(&self) -> Cas<'_> {
-        Cas { connection: self }
+        Cas {
+            connection: &self.neutron,
+        }
     }
 }
 
@@ -430,6 +394,7 @@ mod tests {
 
         assert_eq!(first, second);
         let rows = connection
+            .neutron
             .sqlite()
             .query_row(
                 "SELECT count(*) FROM temp.cov_conn_default_cas",
@@ -445,6 +410,7 @@ mod tests {
         let connection = Connection::open_in_memory().expect("open connection");
         let hash = O256::from_bytes(b"correct");
         connection
+            .neutron
             .sqlite()
             .execute(
                 "INSERT INTO temp.cov_conn_default_cas (hash, data) VALUES (?1, ?2)",
@@ -552,6 +518,7 @@ mod tests {
             None
         );
         let rows = connection
+            .neutron
             .sqlite()
             .query_row(
                 "SELECT count(*) FROM temp.cov_conn_default_cas",
@@ -633,6 +600,7 @@ mod tests {
         let hash = cas.hash(b"authoritative");
         let id = cas.reserve(hash).expect("reserve");
         connection
+            .neutron
             .sqlite()
             .execute(
                 "UPDATE temp.cov_conn_default_cas SET data = ?2 WHERE object_id = ?1",
@@ -651,6 +619,7 @@ mod tests {
     fn default_cas_is_registered_by_role() {
         let connection = Connection::open_in_memory().expect("open connection");
         let registration = connection
+            .neutron
             .sqlite()
             .query_row(
                 "SELECT table_name, interpretation

@@ -1,9 +1,15 @@
 //! Portable trusted core for Nucleus.
 
+mod cas;
+mod catalog;
 mod connection;
 
-pub use connection::{Connection, ConnectionError};
-pub use covalence_neutron::Cas;
+pub use cas::{Cas, CasError, CasId};
+pub use catalog::{CONNECTION_CATALOG, Catalog, CatalogEntry, CatalogError, DB_CATALOG};
+pub use connection::{
+    ATTACHED_DATABASES, ATTACHED_DATABASES_INTERPRETATION, Connection, ConnectionError,
+    DEFAULT_CAS, DEFAULT_CAS_INTERPRETATION,
+};
 
 mod snapshot;
 

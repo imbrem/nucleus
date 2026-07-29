@@ -1,12 +1,7 @@
 use covalence_lib_error::snafu::{ResultExt, Snafu};
 use covalence_lib_sqlite as sqlite;
 
-use crate::{Bytes, Connection, ConnectionError};
-
-const NEXT_DATABASE_ID_SQL: &str =
-    "SELECT COALESCE(MAX(database_id), 0) + 1 FROM temp.cov_conn_attached";
-const REGISTER_DATABASE_SQL: &str =
-    "INSERT INTO temp.cov_conn_attached (database_id, schema_name) VALUES (?1, ?2)";
+use crate::{Bytes, Connection};
 const DATABASE_IS_ATTACHED_SQL: &str =
     "SELECT EXISTS(SELECT 1 FROM pragma_database_list WHERE name = ?1)";
 
@@ -27,11 +22,10 @@ impl Connection {
         Ok(Bytes::copy_from_slice(&data))
     }
 
-    /// Creates an in-memory Neutron connection from an `SQLite` database image.
+    /// Creates an in-memory Neutron connection from a `SQLite` database image.
     ///
     /// `SQLite` takes its own copy of `bytes`; the returned connection does not
-    /// borrow from the input. Neutron's connection-local metadata is rebuilt
-    /// in `temp`.
+    /// borrow from the input. Neutron adds no connection-local metadata.
     ///
     /// This is a low-level image operation, not content verification. Callers
     /// establishing trust from a content address must verify `bytes` first.
@@ -39,30 +33,29 @@ impl Connection {
     /// # Errors
     ///
     /// Returns an error when the in-memory connection cannot be opened, the
-    /// image cannot be installed, or Neutron metadata cannot be initialized.
+    /// image cannot be installed.
     pub fn deserialize(bytes: &Bytes) -> Result<Self, ImageError> {
         let mut sqlite = sqlite::Connection::open_in_memory().context(OpenSnafu)?;
         sqlite
             .deserialize_read_exact(sqlite::MAIN_DB, bytes.as_ref(), bytes.len(), false)
             .context(DeserializeSnafu)?;
-        Self::from_sqlite(sqlite).context(InitializeSnafu)
+        Ok(Self::from_sqlite(sqlite))
     }
 
     /// Attaches `bytes` as a new, writable in-memory database.
     ///
-    /// The attached database is private to this connection and registered in
-    /// Neutron's connection-local database catalog. The returned value is its
-    /// connection-local database identifier.
+    /// The attached database is private to this connection. Neutron assigns no
+    /// application identity or semantics to it.
     ///
     /// # Errors
     ///
     /// Returns an error when the schema name is already in use, the image
-    /// cannot be installed, or the database cannot be registered.
+    /// cannot be installed.
     pub fn attach_deserialized(
         &mut self,
         schema_name: &str,
         bytes: &Bytes,
-    ) -> Result<i64, ImageError> {
+    ) -> Result<(), ImageError> {
         let attached = self
             .sqlite()
             .query_row(DATABASE_IS_ATTACHED_SQL, [schema_name], |row| {
@@ -75,10 +68,6 @@ impl Connection {
             });
         }
 
-        let database_id = self
-            .sqlite()
-            .query_row(NEXT_DATABASE_ID_SQL, (), |row| row.get(0))
-            .context(RegisterSnafu)?;
         let schema = quote_identifier(schema_name);
         self.sqlite()
             .execute(&format!("ATTACH DATABASE ':memory:' AS {schema}"), ())
@@ -94,15 +83,7 @@ impl Connection {
             return Err(ImageError::Deserialize { source: error });
         }
 
-        if let Err(error) = self
-            .sqlite()
-            .execute(REGISTER_DATABASE_SQL, (database_id, schema_name))
-        {
-            self.detach_after_failed_attach(&schema);
-            return Err(ImageError::Register { source: error });
-        }
-
-        Ok(database_id)
+        Ok(())
     }
 
     fn detach_after_failed_attach(&self, quoted_schema: &str) {
@@ -154,26 +135,11 @@ pub enum ImageError {
         /// Conflicting `SQLite` schema name.
         schema_name: String,
     },
-
-    /// An attached database could not be recorded in Neutron's catalog.
-    #[snafu(display("could not register attached Neutron database: {source}"))]
-    Register {
-        /// Underlying `SQLite` error.
-        source: sqlite::Error,
-    },
-
-    /// Neutron's connection-local metadata could not be initialized.
-    #[snafu(display("could not initialize deserialized Neutron database: {source}"))]
-    Initialize {
-        /// Underlying Neutron connection error.
-        source: ConnectionError,
-    },
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ATTACHED_DATABASES, CONNECTION_CATALOG, DEFAULT_CAS};
 
     #[test]
     fn round_trips_main_database() {
@@ -229,7 +195,7 @@ mod tests {
     }
 
     #[test]
-    fn connection_metadata_is_rebuilt_not_serialized() {
+    fn deserialization_adds_no_temp_tables() {
         let connection = Connection::open_in_memory().expect("open source");
         let bytes = connection.serialize().expect("serialize");
         let restored = Connection::deserialize(&bytes).expect("deserialize");
@@ -246,10 +212,7 @@ mod tests {
             .expect("query metadata")
             .collect::<sqlite::Result<Vec<_>>>()
             .expect("read metadata");
-        assert_eq!(
-            temp_tables,
-            [ATTACHED_DATABASES, CONNECTION_CATALOG, DEFAULT_CAS]
-        );
+        assert!(temp_tables.is_empty());
     }
 
     #[test]
@@ -265,7 +228,7 @@ mod tests {
         let bytes = source.serialize().expect("serialize");
 
         let mut connection = Connection::open_in_memory().expect("open destination");
-        let database_id = connection
+        connection
             .attach_deserialized("aux", &bytes)
             .expect("attach image");
 
@@ -276,18 +239,6 @@ mod tests {
             })
             .expect("query attached image");
         assert_eq!(value, "attached");
-        assert_eq!(
-            connection
-                .sqlite()
-                .query_row(
-                    "SELECT schema_name FROM temp.cov_conn_attached
-                     WHERE database_id = ?1",
-                    [database_id],
-                    |row| row.get::<_, String>(0),
-                )
-                .expect("query database catalog"),
-            "aux"
-        );
     }
 
     #[test]
