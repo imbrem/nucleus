@@ -1,4 +1,4 @@
-use covalence_nucleus::{CatalogEntry, Connection};
+use covalence_nucleus::{CatalogEntry, Connection, Unchecked};
 
 #[test]
 fn exposes_connection_and_main_catalog_roles() {
@@ -20,14 +20,14 @@ fn exposes_connection_and_main_catalog_roles() {
 }
 
 #[test]
-fn rejects_an_untrusted_file_database() {
+fn opens_a_file_database_without_admitting_the_standard_invariant() {
     let path = std::env::temp_dir().join(format!(
         "nucleus-catalog-{}-{}.sqlite",
         std::process::id(),
         std::thread::current().name().unwrap_or("test")
     ));
     let connection = Connection::open(&path).unwrap();
-    assert!(connection.catalog("main").is_err());
+    let _: &Connection<Unchecked> = &connection;
     drop(connection);
     std::fs::remove_file(path).unwrap();
 }

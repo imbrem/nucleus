@@ -5,9 +5,12 @@ use covalence_lib_error::snafu::{ResultExt, Snafu};
 use covalence_lib_sqlite as sqlite;
 use covalence_neutron as neutron;
 
+use crate::{Invariant, Standard, Unchecked};
+
 const CREATE_CONNECTION_CATALOG_SQL: &str = include_str!("../sql/create_connection_catalog.sql");
 const CREATE_ATTACHED_DATABASES_SQL: &str = include_str!("../sql/create_attached_databases.sql");
 const CREATE_DEFAULT_CAS_SQL: &str = include_str!("../sql/create_default_cas.sql");
+const CREATE_DATABASE_CATALOG_SQL: &str = include_str!("../sql/create_database_catalog.sql");
 const REGISTER_TABLE_SQL: &str = include_str!("../sql/register_table.sql");
 const REGISTER_ATTACHED_DATABASE_SQL: &str = include_str!("../sql/register_attached_database.sql");
 
@@ -28,23 +31,24 @@ pub const DEFAULT_CAS_INTERPRETATION: &str = "cov.cas.default/v0";
 
 /// A policy-enforcing connection to Nucleus state.
 #[derive(Debug)]
-pub struct Connection {
+pub struct Connection<I: Invariant = Standard> {
     pub(crate) neutron: neutron::Connection,
+    pub(crate) invariant: I,
 }
 
-impl Connection {
-    /// Opens a file-backed database and initializes Nucleus connection state.
-    ///
-    /// File-backed `main` is conservatively marked neither trusted nor
-    /// exclusive.
+impl Connection<Standard> {
+    /// Opens a file-backed database without asserting semantic validity.
     ///
     /// # Errors
     ///
     /// Returns an error when opening or initialization fails.
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, ConnectionError> {
-        let mut neutron = neutron::Connection::open(path).context(OpenSnafu)?;
-        initialize(&mut neutron, false, false)?;
-        Ok(Self { neutron })
+    pub fn open(path: impl AsRef<Path>) -> Result<Connection<Unchecked>, ConnectionError> {
+        neutron::Connection::open(path)
+            .map(|neutron| Connection {
+                neutron,
+                invariant: Unchecked::new(),
+            })
+            .context(OpenSnafu)
     }
 
     /// Opens a fresh trusted, exclusive in-memory Nucleus connection.
@@ -54,8 +58,33 @@ impl Connection {
     /// Returns an error when opening or initialization fails.
     pub fn open_in_memory() -> Result<Self, ConnectionError> {
         let mut neutron = neutron::Connection::open_in_memory().context(OpenSnafu)?;
-        initialize(&mut neutron, true, true)?;
-        Ok(Self { neutron })
+        initialize(&mut neutron)?;
+        Ok(Self {
+            neutron,
+            invariant: Standard::new(),
+        })
+    }
+
+    /// Loads a database image without asserting semantic validity.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when loading fails.
+    pub fn deserialize(bytes: &Bytes) -> Result<Connection<Unchecked>, ConnectionError> {
+        neutron::Connection::deserialize(bytes)
+            .map(|neutron| Connection {
+                neutron,
+                invariant: Unchecked::new(),
+            })
+            .context(ImageSnafu)
+    }
+}
+
+impl<I: Invariant> Connection<I> {
+    /// Borrows the evidence carried as this connection's invariant.
+    #[must_use]
+    pub const fn invariant(&self) -> &I {
+        &self.invariant
     }
 
     /// Serializes the primary database without connection-local state.
@@ -67,33 +96,21 @@ impl Connection {
         self.neutron.serialize().context(ImageSnafu)
     }
 
-    /// Loads an untrusted, exclusively owned in-memory database image.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when loading or Nucleus initialization fails.
-    pub fn deserialize(bytes: &Bytes) -> Result<Self, ConnectionError> {
-        let mut neutron = neutron::Connection::deserialize(bytes).context(ImageSnafu)?;
-        initialize(&mut neutron, false, true)?;
-        Ok(Self { neutron })
-    }
-
     pub(crate) const fn sqlite(&self) -> &sqlite::Connection {
         self.neutron.sqlite()
     }
 }
 
-fn initialize(
-    connection: &mut neutron::Connection,
-    main_is_trusted: bool,
-    main_is_exclusive: bool,
-) -> Result<(), ConnectionError> {
+fn initialize(connection: &mut neutron::Connection) -> Result<(), ConnectionError> {
     let transaction = connection
         .sqlite_mut()
         .transaction()
         .context(InitializeSnafu)?;
     transaction
         .execute_batch(CREATE_CONNECTION_CATALOG_SQL)
+        .context(InitializeSnafu)?;
+    transaction
+        .execute_batch(CREATE_DATABASE_CATALOG_SQL)
         .context(InitializeSnafu)?;
     register_table(
         &transaction,
@@ -116,10 +133,7 @@ fn initialize(
         CREATE_DEFAULT_CAS_SQL,
     )?;
     transaction
-        .execute(
-            REGISTER_ATTACHED_DATABASE_SQL,
-            (1, "main", main_is_trusted, main_is_exclusive),
-        )
+        .execute(REGISTER_ATTACHED_DATABASE_SQL, (1, "main", true, true))
         .context(InitializeSnafu)?;
     transaction.commit().context(InitializeSnafu)
 }
