@@ -52,3 +52,11 @@ fn supports_attached_non_temporary_databases() {
     catalog.register("terms", "example/terms/v0").unwrap();
     assert_eq!(catalog.entries().unwrap()[0].table_name, "terms");
 }
+
+#[test]
+fn reports_untrusted_nonexclusive_database_access() {
+    let sqlite = covalence_lib_sqlite::Connection::open_in_memory().unwrap();
+    let connection = Connection::from_sqlite(sqlite).unwrap();
+    let catalog = connection.catalog("main").unwrap();
+    assert!(!catalog.is_trusted_exclusive().unwrap());
+}

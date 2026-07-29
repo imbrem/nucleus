@@ -57,3 +57,21 @@ impl Connection {
         Ok(Catalog { neutron })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{CatalogError, Connection};
+
+    #[test]
+    fn rejects_a_database_without_trusted_exclusive_access() {
+        let sqlite = covalence_lib_sqlite::Connection::open_in_memory().unwrap();
+        let neutron = covalence_neutron::Connection::from_sqlite(sqlite).unwrap();
+        let connection = Connection { neutron };
+
+        assert!(matches!(
+            connection.catalog("main"),
+            Err(CatalogError::NotTrustedExclusive { database_name })
+                if database_name == "main"
+        ));
+    }
+}
