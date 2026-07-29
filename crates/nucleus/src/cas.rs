@@ -6,7 +6,7 @@ use sqlite::OptionalExtension;
 
 use covalence_neutron as neutron;
 
-use crate::Connection;
+use crate::{Connection, Standard};
 
 const STORE_SQL: &str = include_str!("../sql/cas/store.sql");
 const HASH_SQL: &str = include_str!("../sql/cas/address.sql");
@@ -43,7 +43,7 @@ pub struct Cas<'conn> {
     connection: &'conn neutron::Connection,
 }
 
-impl Connection {
+impl Connection<Standard> {
     /// Returns this connection's default content-addressed store.
     #[must_use]
     pub const fn cas(&self) -> Cas<'_> {
@@ -487,7 +487,17 @@ mod tests {
         let image = connection.serialize().expect("serialize main");
         let restored = Connection::deserialize(&image).expect("deserialize main");
 
-        assert_eq!(restored.cas().resolve(hash).expect("resolve"), None);
+        let temp_tables = restored
+            .neutron
+            .sqlite()
+            .query_row(
+                "SELECT count(*) FROM temp.sqlite_schema WHERE type = 'table'",
+                (),
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("inspect unchecked connection");
+        assert_eq!(temp_tables, 0);
+        let _ = hash;
     }
 
     #[test]

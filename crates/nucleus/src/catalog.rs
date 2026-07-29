@@ -1,7 +1,7 @@
 use covalence_lib_error::snafu::{ResultExt, Snafu};
 use covalence_lib_sqlite as sqlite;
 
-use crate::Connection;
+use crate::{Connection, Standard};
 
 /// Physical name of the connection-local catalog.
 pub const CONNECTION_CATALOG: &str = "cov_conn_catalog";
@@ -23,11 +23,11 @@ pub struct CatalogEntry {
 /// Nucleus assertions about tables in one database or this connection.
 #[derive(Debug)]
 pub struct Catalog<'conn> {
-    pub(crate) connection: &'conn Connection,
+    pub(crate) connection: &'conn Connection<Standard>,
     pub(crate) database_name: String,
 }
 
-impl Connection {
+impl Connection<Standard> {
     /// Opens a trusted catalog, creating a database-local catalog when absent.
     ///
     /// `temp` selects the connection catalog.

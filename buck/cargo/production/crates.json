@@ -148,6 +148,12 @@
           ]
         },
         {
+          "name": "invariant",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "sqlite",
           "kinds": [
             "test"

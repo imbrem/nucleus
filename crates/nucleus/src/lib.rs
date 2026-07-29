@@ -3,6 +3,7 @@
 mod cas;
 mod catalog;
 mod connection;
+mod invariant;
 
 pub use cas::{Cas, CasError, CasId};
 pub use catalog::{CONNECTION_CATALOG, Catalog, CatalogEntry, CatalogError, DB_CATALOG};
@@ -10,6 +11,7 @@ pub use connection::{
     ATTACHED_DATABASES, ATTACHED_DATABASES_INTERPRETATION, Connection, ConnectionError,
     DEFAULT_CAS, DEFAULT_CAS_INTERPRETATION,
 };
+pub use invariant::{Invariant, Standard, Unchecked};
 
 mod snapshot;
 
