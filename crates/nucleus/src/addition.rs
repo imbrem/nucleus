@@ -171,6 +171,11 @@ fn validate_user_table_name(name: &str) -> Result<(), AdditionError> {
 }
 
 fn ensure_catalog_has_no_triggers(catalog: &neutron::Catalog<'_>) -> Result<(), AdditionError> {
+    let catalog_table = if catalog.is_conn() {
+        neutron::CONNECTION_CATALOG
+    } else {
+        neutron::DB_CATALOG
+    };
     let count = catalog
         .connection()
         .sqlite()
@@ -180,7 +185,7 @@ fn ensure_catalog_has_no_triggers(catalog: &neutron::Catalog<'_>) -> Result<(), 
                  WHERE type = 'trigger' AND tbl_name = ?1",
                 quote_identifier(catalog.database_name())
             ),
-            [neutron::DB_CATALOG],
+            [catalog_table],
             |row| row.get::<_, i64>(0),
         )
         .context(StorageSnafu)?;
