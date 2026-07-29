@@ -135,6 +135,12 @@
       "category": "tcb",
       "targets": [
         {
+          "name": "cas_session",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "catalog",
           "kinds": [
             "test"
