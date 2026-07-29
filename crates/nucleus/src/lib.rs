@@ -1,11 +1,15 @@
 //! Portable trusted core for Nucleus.
 
+mod addition;
 mod catalog;
 mod connection;
+mod theorem;
 
+pub use addition::{Addition, AdditionError, AdditionFact};
 pub use catalog::{Catalog, CatalogError};
 pub use connection::{Connection, ConnectionError};
 pub use covalence_neutron::Cas;
+pub use theorem::Thm;
 
 mod snapshot;
 
