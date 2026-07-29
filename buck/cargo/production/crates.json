@@ -148,6 +148,12 @@
           ]
         },
         {
+          "name": "handles",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "invariant",
           "kinds": [
             "test"
