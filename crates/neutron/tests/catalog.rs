@@ -5,10 +5,13 @@ fn creates_reopens_and_uses_main_catalog() {
     let connection = Connection::open_in_memory().unwrap();
     let catalog = connection.catalog("main").unwrap();
     assert!(catalog.is_trusted_exclusive().unwrap());
+    assert!(catalog.is_main());
+    assert!(!catalog.is_conn());
     catalog.register("facts", "example/v0").unwrap();
     assert_eq!(
         catalog.entries().unwrap(),
         [CatalogEntry {
+            table_id: 1,
             table_name: String::from("facts"),
             interpretation: String::from("example/v0"),
         }]
@@ -20,12 +23,20 @@ fn creates_reopens_and_uses_main_catalog() {
 }
 
 #[test]
-fn rejects_temp_missing_and_malformed_catalogs() {
+fn supports_connection_catalog_and_rejects_missing_and_malformed_catalogs() {
     let connection = Connection::open_in_memory().unwrap();
-    assert!(matches!(
-        connection.catalog("temp"),
-        Err(CatalogError::TemporaryDatabase)
-    ));
+    let catalog = connection.catalog("temp").unwrap();
+    assert!(catalog.is_conn());
+    assert!(!catalog.is_main());
+    assert!(catalog.is_trusted_exclusive().unwrap());
+    catalog
+        .register("cov_conn_example", "example/conn/v0")
+        .unwrap();
+    assert!(catalog.entries().unwrap().contains(&CatalogEntry {
+        table_id: 4,
+        table_name: String::from("cov_conn_example"),
+        interpretation: String::from("example/conn/v0"),
+    }));
     assert!(matches!(
         connection.catalog("missing"),
         Err(CatalogError::MissingDatabase { .. })

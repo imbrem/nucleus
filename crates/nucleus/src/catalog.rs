@@ -32,15 +32,27 @@ impl Catalog<'_> {
     pub fn database_name(&self) -> &str {
         self.neutron.database_name()
     }
+
+    /// Tests whether this is the connection-local catalog.
+    #[must_use]
+    pub fn is_conn(&self) -> bool {
+        self.neutron.is_conn()
+    }
+
+    /// Tests whether this is the primary database's catalog.
+    #[must_use]
+    pub fn is_main(&self) -> bool {
+        self.neutron.is_main()
+    }
 }
 
 impl Connection {
-    /// Opens or creates a catalog in an attached non-temporary database.
+    /// Opens or creates a catalog for an attached database or the connection.
     ///
     /// # Errors
     ///
-    /// Returns an error for a missing or temporary database, incompatible
-    /// existing catalog, or storage failure.
+    /// Returns an error for a missing database, incompatible existing catalog,
+    /// insufficient trust or exclusivity, or storage failure.
     pub fn catalog(&self, database_name: &str) -> Result<Catalog<'_>, CatalogError> {
         let neutron = self
             .neutron

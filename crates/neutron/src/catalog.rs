@@ -3,21 +3,23 @@
 use covalence_lib_error::snafu::{ResultExt, Snafu};
 use covalence_lib_sqlite as sqlite;
 
-use crate::Connection;
+use crate::{CONNECTION_CATALOG, Connection};
 
-/// Physical catalog table name within each non-temporary database.
+/// Physical catalog table name within each persistent database.
 pub const DB_CATALOG: &str = "cov_db_catalog";
 
 /// One uninterpreted database-catalog entry.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CatalogEntry {
+    /// Catalog-local stable identifier for the physical table.
+    pub table_id: i64,
     /// Physical table name within the catalog's database.
     pub table_name: String,
     /// Uninterpreted meaning assigned by the higher layer.
     pub interpretation: String,
 }
 
-/// Mechanical access to one non-temporary database's catalog.
+/// Mechanical access to a database or connection catalog.
 #[derive(Debug)]
 pub struct Catalog<'conn> {
     connection: &'conn Connection,
@@ -25,15 +27,14 @@ pub struct Catalog<'conn> {
 }
 
 impl Connection {
-    /// Opens a database-local catalog, creating an empty one when absent.
+    /// Opens a catalog, creating an empty database-local one when absent.
     ///
-    /// `temp` is deliberately excluded: connection-local metadata uses the
-    /// `cov_conn_*` convention instead.
+    /// `temp` selects the connection catalog initialized by Neutron.
     ///
     /// # Errors
     ///
-    /// Returns an error for a missing or temporary database, incompatible
-    /// existing catalog, or storage failure.
+    /// Returns an error for a missing database, incompatible existing catalog,
+    /// or storage failure.
     pub fn catalog(&self, database_name: &str) -> Result<Catalog<'_>, CatalogError> {
         validate_database(self.sqlite(), database_name)?;
         let catalog = Catalog {
@@ -53,6 +54,18 @@ impl<'conn> Catalog<'conn> {
         &self.database_name
     }
 
+    /// Tests whether this is the connection-local catalog in `temp`.
+    #[must_use]
+    pub fn is_conn(&self) -> bool {
+        self.database_name == "temp"
+    }
+
+    /// Tests whether this is the primary database's catalog.
+    #[must_use]
+    pub fn is_main(&self) -> bool {
+        self.database_name == "main"
+    }
+
     /// Returns the underlying permeable Neutron connection.
     #[must_use]
     pub const fn connection(&self) -> &'conn Connection {
@@ -69,6 +82,9 @@ impl<'conn> Catalog<'conn> {
     /// Returns an error if the registry cannot be read or no longer contains
     /// this database.
     pub fn is_trusted_exclusive(&self) -> Result<bool, CatalogError> {
+        if self.is_conn() {
+            return Ok(true);
+        }
         self.connection
             .sqlite()
             .query_row(
@@ -93,15 +109,17 @@ impl<'conn> Catalog<'conn> {
             .connection
             .sqlite()
             .prepare(&format!(
-                "SELECT table_name, interpretation FROM {} ORDER BY table_name",
+                "SELECT table_id, table_name, interpretation
+                 FROM {} ORDER BY table_id",
                 self.qualified_catalog()
             ))
             .context(StorageSnafu)?;
         statement
             .query_map((), |row| {
                 Ok(CatalogEntry {
-                    table_name: row.get(0)?,
-                    interpretation: row.get(1)?,
+                    table_id: row.get(0)?,
+                    table_name: row.get(1)?,
+                    interpretation: row.get(2)?,
                 })
             })
             .context(StorageSnafu)?
@@ -123,7 +141,13 @@ impl<'conn> Catalog<'conn> {
             .sqlite()
             .execute(
                 &format!(
-                    "INSERT INTO {} (table_name, interpretation) VALUES (?1, ?2)",
+                    "INSERT INTO {} (table_id, table_name, interpretation)
+                     VALUES (
+                         (SELECT COALESCE(MAX(table_id), 0) + 1 FROM {}),
+                         ?1,
+                         ?2
+                     )",
+                    self.qualified_catalog(),
                     self.qualified_catalog()
                 ),
                 (table_name, interpretation),
@@ -133,26 +157,31 @@ impl<'conn> Catalog<'conn> {
     }
 
     fn create_if_absent(&self) -> Result<(), CatalogError> {
+        if self.is_conn() {
+            return Ok(());
+        }
         self.connection
             .sqlite()
             .execute_batch(&format!(
                 "CREATE TABLE IF NOT EXISTS {} (
-                    table_name TEXT PRIMARY KEY,
+                    table_id INTEGER PRIMARY KEY,
+                    table_name TEXT NOT NULL UNIQUE,
                     interpretation TEXT NOT NULL
-                ) STRICT, WITHOUT ROWID;",
+                ) STRICT;",
                 self.qualified_catalog()
             ))
             .context(StorageSnafu)
     }
 
     fn validate(&self) -> Result<(), CatalogError> {
+        let catalog_name = self.catalog_name();
         let columns = self
             .connection
             .sqlite()
             .prepare(&format!(
                 "PRAGMA {}.table_info({})",
                 quote_identifier(&self.database_name),
-                quote_identifier(DB_CATALOG)
+                quote_identifier(catalog_name)
             ))
             .context(StorageSnafu)?
             .query_map((), |row| {
@@ -172,22 +201,21 @@ impl<'conn> Catalog<'conn> {
             .query_row(
                 "SELECT strict, wr FROM pragma_table_list
                  WHERE schema = ?1 AND name = ?2",
-                (&self.database_name, DB_CATALOG),
+                (&self.database_name, catalog_name),
                 |row| Ok((row.get::<_, bool>(0)?, row.get::<_, bool>(1)?)),
             )
             .context(StorageSnafu)?;
-        if columns
-            != [
-                (String::from("table_name"), String::from("TEXT"), true, 1),
-                (
-                    String::from("interpretation"),
-                    String::from("TEXT"),
-                    true,
-                    0,
-                ),
-            ]
-            || flags != (true, true)
-        {
+        let expected_columns = [
+            (String::from("table_id"), String::from("INTEGER"), false, 1),
+            (String::from("table_name"), String::from("TEXT"), true, 0),
+            (
+                String::from("interpretation"),
+                String::from("TEXT"),
+                true,
+                0,
+            ),
+        ];
+        if columns != expected_columns || flags != (true, false) {
             return Err(CatalogError::Malformed {
                 database_name: self.database_name.clone(),
             });
@@ -199,15 +227,20 @@ impl<'conn> Catalog<'conn> {
         format!(
             "{}.{}",
             quote_identifier(&self.database_name),
-            quote_identifier(DB_CATALOG)
+            quote_identifier(self.catalog_name())
         )
+    }
+
+    fn catalog_name(&self) -> &'static str {
+        if self.is_conn() {
+            CONNECTION_CATALOG
+        } else {
+            DB_CATALOG
+        }
     }
 }
 
 fn validate_database(sqlite: &sqlite::Connection, database_name: &str) -> Result<(), CatalogError> {
-    if database_name == "temp" {
-        return Err(CatalogError::TemporaryDatabase);
-    }
     let exists = sqlite
         .prepare("PRAGMA database_list")
         .context(StorageSnafu)?
@@ -233,10 +266,6 @@ fn quote_identifier(identifier: &str) -> String {
 #[derive(Debug, Snafu)]
 #[snafu(crate_root(covalence_lib_error::snafu))]
 pub enum CatalogError {
-    /// Temporary state uses connection-local metadata instead.
-    #[snafu(display("temporary databases do not have a database-local catalog"))]
-    TemporaryDatabase,
-
     /// The requested attached database does not exist.
     #[snafu(display("database {database_name:?} is not attached"))]
     MissingDatabase { database_name: String },
