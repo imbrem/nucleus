@@ -4,6 +4,8 @@ mod cas;
 mod catalog;
 mod connection;
 mod invariant;
+mod protocol;
+mod registry;
 
 pub use cas::{Cas, CasError, CasId};
 pub use catalog::{CONNECTION_CATALOG, Catalog, CatalogEntry, CatalogError, DB_CATALOG};
@@ -12,6 +14,8 @@ pub use connection::{
     DEFAULT_CAS, DEFAULT_CAS_INTERPRETATION,
 };
 pub use invariant::{Invariant, Standard, Unchecked};
+pub use protocol::{SessionProtocol, ViewProtocol};
+pub use registry::{Registry, RegistryError, RegistryInvariant, RegistrySession};
 
 mod snapshot;
 

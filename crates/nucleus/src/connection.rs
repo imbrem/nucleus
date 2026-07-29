@@ -11,6 +11,8 @@ const CREATE_CONNECTION_CATALOG_SQL: &str = include_str!("../sql/create_connecti
 const CREATE_ATTACHED_DATABASES_SQL: &str = include_str!("../sql/create_attached_databases.sql");
 const CREATE_DEFAULT_CAS_SQL: &str = include_str!("../sql/create_default_cas.sql");
 const CREATE_DATABASE_CATALOG_SQL: &str = include_str!("../sql/create_database_catalog.sql");
+const CREATE_DATABASE_VISIBILITY_SQL: &str = include_str!("../sql/create_database_visibility.sql");
+const CREATE_TABLE_VISIBILITY_SQL: &str = include_str!("../sql/create_table_visibility.sql");
 const REGISTER_TABLE_SQL: &str = include_str!("../sql/register_table.sql");
 const REGISTER_ATTACHED_DATABASE_SQL: &str = include_str!("../sql/register_attached_database.sql");
 
@@ -131,6 +133,20 @@ fn initialize(connection: &mut neutron::Connection) -> Result<(), ConnectionErro
         DEFAULT_CAS,
         DEFAULT_CAS_INTERPRETATION,
         CREATE_DEFAULT_CAS_SQL,
+    )?;
+    create_and_register_table(
+        &transaction,
+        4,
+        "cov_conn_dbvis",
+        "cov.conn.dbvis/v0",
+        CREATE_DATABASE_VISIBILITY_SQL,
+    )?;
+    create_and_register_table(
+        &transaction,
+        5,
+        "cov_conn_tabvis",
+        "cov.conn.tabvis/v0",
+        CREATE_TABLE_VISIBILITY_SQL,
     )?;
     transaction
         .execute(REGISTER_ATTACHED_DATABASE_SQL, (1, "main", true, true))
