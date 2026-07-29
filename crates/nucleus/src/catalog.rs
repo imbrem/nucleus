@@ -151,6 +151,36 @@ pub(crate) fn unique_indexes(
         .collect()
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct ForeignKey {
+    pub(crate) table: String,
+    pub(crate) from: String,
+    pub(crate) to: String,
+    pub(crate) on_update: String,
+    pub(crate) on_delete: String,
+}
+
+pub(crate) fn foreign_keys(
+    sqlite: &sqlite::Connection,
+    table: &str,
+) -> sqlite::Result<Vec<ForeignKey>> {
+    sqlite
+        .prepare(&format!(
+            "PRAGMA main.foreign_key_list({})",
+            quote_identifier(table)
+        ))?
+        .query_map((), |row| {
+            Ok(ForeignKey {
+                table: row.get(2)?,
+                from: row.get(3)?,
+                to: row.get(4)?,
+                on_update: row.get(5)?,
+                on_delete: row.get(6)?,
+            })
+        })?
+        .collect()
+}
+
 fn validate(sqlite: &sqlite::Connection) -> Result<(), CatalogError> {
     let columns = table_columns(sqlite, NAME).context(SqliteSnafu)?;
     if columns

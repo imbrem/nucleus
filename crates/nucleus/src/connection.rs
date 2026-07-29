@@ -103,6 +103,14 @@ impl Connection {
                     crate::cas_table::validate_table(sqlite, &entry.table)
                         .context(CasTableSnafu)?;
                 }
+                crate::cas_derived::KEYED_INTERPRETATION => {
+                    crate::cas_derived::validate_keyed(sqlite, &entry.table)
+                        .context(DerivedObjectSnafu)?;
+                }
+                crate::cas_derived::CONTEXT_INTERPRETATION => {
+                    crate::cas_derived::validate_context(sqlite, &entry.table)
+                        .context(DerivedObjectSnafu)?;
+                }
                 _ => {
                     return Err(ValidationError::UnknownInterpretation {
                         table: entry.table,
@@ -194,6 +202,13 @@ pub enum ValidationError {
     CasTable {
         /// Underlying failure.
         source: crate::CasTableError,
+    },
+
+    /// A derived CAS representation is invalid.
+    #[snafu(display("{source}"))]
+    DerivedObject {
+        /// Underlying failure.
+        source: crate::DerivedObjectError,
     },
 }
 

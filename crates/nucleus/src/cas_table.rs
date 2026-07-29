@@ -8,7 +8,7 @@ pub(crate) const INTERPRETATION: &str = "cov.cas.indexed/v0";
 
 /// A table-local integer identity for one persistent CAS entry.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct CasObjectId(i64);
+pub struct CasObjectId(pub(crate) i64);
 
 impl CasObjectId {
     /// Returns the underlying table-local integer.
@@ -306,6 +306,28 @@ pub(crate) fn fetch(
         .optional()
         .context(FetchSnafu)
         .map(Option::flatten)
+}
+
+pub(crate) type CasEntry = (O256, Option<Vec<u8>>);
+
+pub(crate) fn entry(
+    sqlite: &sqlite::Connection,
+    name: &str,
+    id: CasObjectId,
+) -> Result<Option<CasEntry>, CasTableError> {
+    let row = sqlite
+        .query_row(
+            &format!(
+                "SELECT hash, data FROM {} WHERE object_id = ?1",
+                catalog::main_table(name)
+            ),
+            [id.0],
+            |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Option<Vec<u8>>>(1)?)),
+        )
+        .optional()
+        .context(FetchSnafu)?;
+    row.map(|(hash, data)| decode_address(name, hash).map(|hash| (hash, data)))
+        .transpose()
 }
 
 pub(crate) fn validate_table(sqlite: &sqlite::Connection, name: &str) -> Result<(), CasTableError> {

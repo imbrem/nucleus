@@ -2,7 +2,9 @@ use covalence_lib_error::snafu::{ResultExt, Snafu};
 use covalence_lib_sqlite as sqlite;
 
 use crate::{
-    Addition, ByteLengths, CasTable, Connection, addition, byte_length, cas_table, catalog,
+    Addition, ByteLengths, CasTable, Connection, addition, byte_length,
+    cas_derived::{self, ContextObjects, KeyedObjects},
+    cas_table, catalog,
 };
 
 pub(crate) const INTERPRETATION: &str = "cov.table-meanings/v0";
@@ -16,6 +18,10 @@ pub enum TableMeaning {
     ByteLength,
     /// Indexed ordinary-byte content-addressed storage.
     Cas,
+    /// Keyed-BLAKE3 preimages for objects in one indexed CAS.
+    KeyedObjects,
+    /// BLAKE3 derive-key-context preimages for objects in one indexed CAS.
+    ContextObjects,
 }
 
 impl TableMeaning {
@@ -24,6 +30,8 @@ impl TableMeaning {
             Self::Addition => crate::addition::INTERPRETATION,
             Self::ByteLength => crate::byte_length::INTERPRETATION,
             Self::Cas => crate::cas_table::INTERPRETATION,
+            Self::KeyedObjects => crate::cas_derived::KEYED_INTERPRETATION,
+            Self::ContextObjects => crate::cas_derived::CONTEXT_INTERPRETATION,
         }
     }
 }
@@ -111,6 +119,73 @@ impl TableMeanings<'_> {
         Ok(cas_table::wrapper(self.connection, name))
     }
 
+    /// Creates an owned keyed-object table targeting `cas`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for wrong-connection wrappers, reserved or duplicate
+    /// names, nested transactions, or `SQLite` failures.
+    pub fn create_keyed_objects(
+        &self,
+        name: &str,
+        cas: &CasTable<'_>,
+    ) -> Result<KeyedObjects<'_>, TableMeaningError> {
+        self.ensure_target(cas)?;
+        self.ensure_unowned(name)?;
+        let transaction = self
+            .connection
+            .neutron
+            .sqlite()
+            .unchecked_transaction()
+            .context(CreateChildSnafu)?;
+        cas_derived::create_keyed_table(&transaction, name, cas.name())
+            .context(CreateChildSnafu)?;
+        self.record_meaning(&transaction, name, TableMeaning::KeyedObjects)?;
+        transaction.commit().context(CreateChildSnafu)?;
+        Ok(cas_derived::keyed_wrapper(
+            self.connection,
+            name,
+            cas.name(),
+        ))
+    }
+
+    /// Creates an owned context-object table targeting `cas`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for wrong-connection wrappers, reserved or duplicate
+    /// names, nested transactions, or `SQLite` failures.
+    pub fn create_context_objects(
+        &self,
+        name: &str,
+        cas: &CasTable<'_>,
+    ) -> Result<ContextObjects<'_>, TableMeaningError> {
+        self.ensure_target(cas)?;
+        self.ensure_unowned(name)?;
+        let transaction = self
+            .connection
+            .neutron
+            .sqlite()
+            .unchecked_transaction()
+            .context(CreateChildSnafu)?;
+        cas_derived::create_context_table(&transaction, name, cas.name())
+            .context(CreateChildSnafu)?;
+        self.record_meaning(&transaction, name, TableMeaning::ContextObjects)?;
+        transaction.commit().context(CreateChildSnafu)?;
+        Ok(cas_derived::context_wrapper(
+            self.connection,
+            name,
+            cas.name(),
+        ))
+    }
+
+    fn ensure_target(&self, cas: &CasTable<'_>) -> Result<(), TableMeaningError> {
+        if !std::ptr::eq(cas.connection, self.connection) {
+            return Err(TableMeaningError::DifferentConnection);
+        }
+        Ok(())
+    }
+
     fn ensure_unowned(&self, name: &str) -> Result<(), TableMeaningError> {
         if catalog::name_is_reserved(name) {
             return Err(TableMeaningError::ReservedName {
@@ -161,6 +236,8 @@ impl TableMeanings<'_> {
                     crate::addition::INTERPRETATION => TableMeaning::Addition,
                     crate::byte_length::INTERPRETATION => TableMeaning::ByteLength,
                     crate::cas_table::INTERPRETATION => TableMeaning::Cas,
+                    crate::cas_derived::KEYED_INTERPRETATION => TableMeaning::KeyedObjects,
+                    crate::cas_derived::CONTEXT_INTERPRETATION => TableMeaning::ContextObjects,
                     _ => {
                         return Err(TableMeaningError::UnknownMeaning {
                             table: entry.table,
@@ -293,6 +370,10 @@ fn map_catalog_error(error: catalog::CatalogError) -> TableMeaningError {
 #[derive(Debug, Snafu)]
 #[snafu(crate_root(covalence_lib_error::snafu))]
 pub enum TableMeaningError {
+    /// Wrappers from different Nucleus connections were combined.
+    #[snafu(display("table-meaning and target wrappers belong to different connections"))]
+    DifferentConnection,
+
     /// The requested name belongs to Nucleus or `SQLite`.
     #[snafu(display("table name {name:?} is reserved"))]
     ReservedName {
