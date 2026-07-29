@@ -102,7 +102,8 @@ impl std::error::Error for Blake3SnapshotError {}
 ///
 /// Unknown leaves occupy canonical all-zero CV slots. Presence is represented
 /// separately, so an actual all-zero CV remains representable. Raw bytes are
-/// intentionally not retained here.
+/// intentionally not retained here. A zero slot means “absent”; it is never
+/// the CV of an implicitly hashed zero-filled leaf.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Blake3Snapshot {
     bytes: u64,
@@ -432,9 +433,10 @@ impl<S> CachedBlake3Source<S> {
 impl<S: Blake3RangeSource> CachedBlake3Source<S> {
     /// Fetches a range, filling every covering BLAKE3 leaf.
     ///
-    /// Earlier unknown leaves remain canonical zeros. Covering leaves are
-    /// fetched in full, checked against retained CVs, and cached outside the
-    /// snapshot.
+    /// Earlier unknown leaves remain absent with canonical zero CV slots; the
+    /// wrapper does not synthesize or hash zero-filled bytes. Covering leaves
+    /// are fetched in full, checked against retained CVs, and cached outside
+    /// the snapshot.
     ///
     /// # Errors
     ///
