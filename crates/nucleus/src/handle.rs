@@ -325,3 +325,62 @@ pub enum HandleError {
     #[snafu(display("could not update the visibility registry: {source}"))]
     Storage { source: sqlite::Error },
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{Connection, Registry};
+
+    #[test]
+    fn registry_rows_record_counts_modes_and_exclusive_owners() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        let session = connection.enter(Registry).unwrap();
+        let first = session.shared_database("main").unwrap();
+        let second = session.shared_database("main").unwrap();
+
+        let shared = session
+            .connection
+            .sqlite()
+            .query_row(
+                "SELECT lock_type, ref_count, owner_type
+                 FROM temp.cov_conn_dbvis WHERE db_name = 'main'",
+                (),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(shared, (String::from("SHARED"), 2, None));
+
+        drop(first);
+        drop(second);
+        let database = session.exclusive_database("main").unwrap();
+        let owner = session
+            .connection
+            .sqlite()
+            .query_row(
+                "SELECT owner_type FROM temp.cov_conn_dbvis WHERE db_name = 'main'",
+                (),
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+        assert_eq!(owner, "covalence_nucleus::Database<Exclusive>");
+
+        let table = database.exclusive_table("cov_db_catalog").unwrap();
+        let owner = session
+            .connection
+            .sqlite()
+            .query_row(
+                "SELECT owner_type FROM temp.cov_conn_tabvis
+                 WHERE db_name = 'main' AND table_name = 'cov_db_catalog'",
+                (),
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+        assert_eq!(owner, "covalence_nucleus::Table<Exclusive>");
+        drop(table);
+    }
+}
