@@ -144,3 +144,37 @@ fn owned_session_can_restore_its_connection() {
 
     assert_eq!(lock_count(&mut connection, "cov_conn_db_lock"), 0);
 }
+
+#[test]
+fn lock_capabilities_share_the_connection_cas() {
+    let mut connection = Connection::open_in_memory().unwrap();
+    let address = connection
+        .cas()
+        .store(b"shared through lock protocol")
+        .unwrap();
+
+    {
+        let mut locks = connection.session(Lock).unwrap();
+        assert_eq!(
+            locks.cas().fetch(address).unwrap().unwrap().as_ref(),
+            b"shared through lock protocol"
+        );
+
+        let mut database = locks.view(Lock::database("main")).unwrap();
+        assert_eq!(
+            database.cas().fetch(address).unwrap().unwrap().as_ref(),
+            b"shared through lock protocol"
+        );
+
+        let table = database.table("cov_db_catalog").unwrap();
+        assert_eq!(
+            table.cas().fetch(address).unwrap().unwrap().as_ref(),
+            b"shared through lock protocol"
+        );
+    }
+
+    assert_eq!(
+        connection.cas().fetch(address).unwrap().unwrap().as_ref(),
+        b"shared through lock protocol"
+    );
+}
