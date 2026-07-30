@@ -977,6 +977,7 @@
         "default",
         "ffi-sqlite-wasm-rs",
         "hashlink",
+        "hooks",
         "modern_sqlite",
         "serialize"
       ],

@@ -18,10 +18,10 @@ bitflags = { version = "2", optional = true }
 indexmap = { version = "2", optional = true }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
-rusqlite = "=0.40.1"
+rusqlite = { version = "=0.40.1", features = ["hooks"] }
 
 [target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
-rusqlite = { version = "=0.40.1", default-features = false, features = ["bundled"] }
+rusqlite = { version = "=0.40.1", default-features = false, features = ["bundled", "hooks"] }
 
 [lints]
 workspace = true
