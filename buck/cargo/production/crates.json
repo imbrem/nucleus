@@ -160,6 +160,12 @@
           ]
         },
         {
+          "name": "reader",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "sqlite",
           "kinds": [
             "test"
