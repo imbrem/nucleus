@@ -697,3 +697,31 @@ pub enum LockError {
     #[snafu(display("could not access the logical lock registry: {source}"))]
     Storage { source: sqlite::Error },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Connection, ConnectionCarrier};
+
+    #[test]
+    fn missing_lock_during_drop_poisons_the_connection() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        {
+            let view = connection.view_mut(Lock::database("main")).unwrap();
+            view.carrier()
+                .connection()
+                .sqlite()
+                .execute(
+                    "DELETE FROM temp.cov_conn_db_lock WHERE db_name = 'main'",
+                    [],
+                )
+                .unwrap();
+        }
+
+        assert!(connection.is_poisoned());
+        assert!(matches!(
+            connection.session(Lock::database("main")),
+            Err(LockError::Poisoned)
+        ));
+    }
+}
