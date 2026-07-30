@@ -154,6 +154,12 @@
           ]
         },
         {
+          "name": "protocol",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "sqlite",
           "kinds": [
             "test"

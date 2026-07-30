@@ -1,10 +1,16 @@
 //! Portable trusted core for Nucleus.
 
+mod carrier;
 mod cas;
 mod catalog;
 mod connection;
 mod invariant;
+mod protocol;
 
+pub use carrier::{
+    BorrowedConnection, ConnectionCarrier, MutableConnectionCarrier, OwnedConnection,
+    SharedConnection,
+};
 pub use cas::{Cas, CasError, CasId};
 pub use catalog::{CONNECTION_CATALOG, Catalog, CatalogEntry, CatalogError, DB_CATALOG};
 pub use connection::{
@@ -12,6 +18,7 @@ pub use connection::{
     DEFAULT_CAS, DEFAULT_CAS_INTERPRETATION,
 };
 pub use invariant::{Invariant, Standard, Unchecked};
+pub use protocol::{OwnedSessionResult, OwnedViewResult, SessionProtocol, ViewProtocol};
 
 mod snapshot;
 
