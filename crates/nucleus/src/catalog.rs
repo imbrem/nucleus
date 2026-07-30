@@ -1,7 +1,7 @@
 use covalence_lib_error::snafu::{ResultExt, Snafu};
 use covalence_lib_sqlite as sqlite;
 
-use crate::{Connection, Standard};
+use crate::{Connection, LockError, Standard};
 
 /// Physical name of the connection-local catalog.
 pub const CONNECTION_CATALOG: &str = "cov_conn_catalog";
@@ -47,7 +47,11 @@ impl Connection<Standard> {
                 database_name: database_name.to_owned(),
             });
         }
-        catalog.create_if_absent()?;
+        if !catalog.exists()? {
+            crate::lock::ensure_database_write_unlocked(self, database_name)
+                .map_err(|source| CatalogError::Locked { source })?;
+            catalog.create()?;
+        }
         catalog.validate()?;
         Ok(catalog)
     }
@@ -114,14 +118,28 @@ impl Catalog<'_> {
             .context(StorageSnafu)
     }
 
-    fn create_if_absent(&self) -> Result<(), CatalogError> {
+    fn exists(&self) -> Result<bool, CatalogError> {
+        self.connection
+            .sqlite()
+            .query_row(
+                "SELECT EXISTS (
+                    SELECT 1 FROM pragma_table_list
+                    WHERE schema = ?1 AND name = ?2
+                )",
+                (&self.database_name, self.catalog_name()),
+                |row| row.get(0),
+            )
+            .context(StorageSnafu)
+    }
+
+    fn create(&self) -> Result<(), CatalogError> {
         if self.is_conn() {
             return Ok(());
         }
         self.connection
             .sqlite()
             .execute_batch(&format!(
-                "CREATE TABLE IF NOT EXISTS {} (
+                "CREATE TABLE {} (
                     table_id INTEGER PRIMARY KEY,
                     table_name TEXT NOT NULL UNIQUE,
                     interpretation TEXT NOT NULL
@@ -236,6 +254,10 @@ pub enum CatalogError {
     /// The catalog has incompatible geometry.
     #[snafu(display("database {database_name:?} has a malformed catalog"))]
     Malformed { database_name: String },
+
+    /// A logical lock prevents creation of the database-local catalog.
+    #[snafu(display("database catalog creation conflicts with a logical lock: {source}"))]
+    Locked { source: LockError },
 
     /// Catalog storage failed.
     #[snafu(display("catalog storage operation failed: {source}"))]

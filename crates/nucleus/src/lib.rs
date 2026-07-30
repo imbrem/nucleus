@@ -5,6 +5,7 @@ mod cas;
 mod catalog;
 mod connection;
 mod invariant;
+mod lock;
 mod protocol;
 mod read_only;
 mod reader;
@@ -20,6 +21,10 @@ pub use connection::{
     DEFAULT_CAS, DEFAULT_CAS_INTERPRETATION,
 };
 pub use invariant::{Invariant, Standard, Unchecked};
+pub use lock::{
+    DATABASE_LOCKS, DatabaseLock, DatabaseSession, DatabaseView, InheritedTableView, Lock,
+    LockError, LockSession, TABLE_LOCKS, TableView,
+};
 pub use protocol::{OwnedSessionResult, OwnedViewResult, SessionProtocol, ViewProtocol};
 pub use read_only::{ReadOnly, ReadOnlyView};
 pub use reader::Reader;
