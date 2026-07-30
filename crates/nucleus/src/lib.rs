@@ -6,6 +6,7 @@ mod catalog;
 mod connection;
 mod invariant;
 mod protocol;
+mod read_only;
 mod reader;
 
 pub use carrier::{
@@ -20,6 +21,7 @@ pub use connection::{
 };
 pub use invariant::{Invariant, Standard, Unchecked};
 pub use protocol::{OwnedSessionResult, OwnedViewResult, SessionProtocol, ViewProtocol};
+pub use read_only::{ReadOnly, ReadOnlyView};
 pub use reader::Reader;
 
 mod snapshot;
