@@ -6,6 +6,7 @@ mod catalog;
 mod connection;
 mod invariant;
 mod protocol;
+mod reader;
 
 pub use carrier::{
     BorrowedConnection, ConnectionCarrier, MutableConnectionCarrier, OwnedConnection,
@@ -19,6 +20,7 @@ pub use connection::{
 };
 pub use invariant::{Invariant, Standard, Unchecked};
 pub use protocol::{OwnedSessionResult, OwnedViewResult, SessionProtocol, ViewProtocol};
+pub use reader::Reader;
 
 mod snapshot;
 
