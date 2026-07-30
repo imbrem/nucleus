@@ -3,8 +3,8 @@ use covalence_lib_sqlite as sqlite;
 use sqlite::OptionalExtension;
 
 use crate::{
-    BorrowedConnection, Connection, MutableConnectionCarrier, Reader, SessionProtocol, Standard,
-    ViewProtocol,
+    BorrowedConnection, Cas, Connection, MutableConnectionCarrier, Reader, SessionProtocol,
+    Standard, ViewProtocol,
 };
 
 const ACQUIRE_SHARED_DATABASE_SQL: &str = include_str!("../sql/lock/acquire_shared_database.sql");
@@ -106,6 +106,12 @@ impl<C> LockSession<C>
 where
     C: MutableConnectionCarrier<Invariant = Standard>,
 {
+    /// Returns the connection-local standard CAS.
+    #[must_use]
+    pub fn cas(&self) -> Cas<'_> {
+        Cas::new(self.carrier().connection())
+    }
+
     /// Creates a shared database view within this cleanup boundary.
     ///
     /// # Errors
@@ -260,6 +266,12 @@ impl<C, const EXCLUSIVE: bool> Database<C, EXCLUSIVE>
 where
     C: MutableConnectionCarrier<Invariant = Standard>,
 {
+    /// Returns the connection-local standard CAS.
+    #[must_use]
+    pub fn cas(&self) -> Cas<'_> {
+        Cas::new(self.carrier().connection())
+    }
+
     /// Returns the attached database name.
     #[must_use]
     pub fn database_name(&self) -> &str {
@@ -408,6 +420,12 @@ pub struct TableView<'connection, const LOCKED: bool> {
 }
 
 impl<const LOCKED: bool> TableView<'_, LOCKED> {
+    /// Returns the connection-local standard CAS.
+    #[must_use]
+    pub fn cas(&self) -> Cas<'_> {
+        Cas::new(self.connection)
+    }
+
     /// Returns the containing database name.
     #[must_use]
     pub fn database_name(&self) -> &str {

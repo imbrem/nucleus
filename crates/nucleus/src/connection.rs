@@ -20,7 +20,7 @@ const REGISTER_ATTACHED_DATABASE_SQL: &str = include_str!("../sql/register_attac
 pub const ATTACHED_DATABASES: &str = "cov_conn_attached";
 
 /// Physical name of the connection's default CAS.
-pub const DEFAULT_CAS: &str = "cov_conn_default_cas";
+pub const DEFAULT_CAS: &str = "cov_conn_cas";
 
 /// Interpretation of the connection catalog.
 pub const CONNECTION_CATALOG_INTERPRETATION: &str = "cov.conn.catalog/v0";

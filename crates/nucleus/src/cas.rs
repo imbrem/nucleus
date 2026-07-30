@@ -47,13 +47,17 @@ impl Connection<Standard> {
     /// Returns this connection's default content-addressed store.
     #[must_use]
     pub const fn cas(&self) -> Cas<'_> {
-        Cas {
-            connection: &self.neutron,
-        }
+        Cas::new(self)
     }
 }
 
 impl Cas<'_> {
+    pub(crate) const fn new(connection: &Connection<Standard>) -> Cas<'_> {
+        Cas {
+            connection: &connection.neutron,
+        }
+    }
+
     /// Computes the stable content address of `data`.
     #[must_use]
     pub fn hash(&self, data: &[u8]) -> O256 {
@@ -396,11 +400,9 @@ mod tests {
         let rows = connection
             .neutron
             .sqlite()
-            .query_row(
-                "SELECT count(*) FROM temp.cov_conn_default_cas",
-                (),
-                |row| row.get::<_, i64>(0),
-            )
+            .query_row("SELECT count(*) FROM temp.cov_conn_cas", (), |row| {
+                row.get::<_, i64>(0)
+            })
             .expect("count rows");
         assert_eq!(rows, 1);
     }
@@ -413,7 +415,7 @@ mod tests {
             .neutron
             .sqlite()
             .execute(
-                "INSERT INTO temp.cov_conn_default_cas (hash, data) VALUES (?1, ?2)",
+                "INSERT INTO temp.cov_conn_cas (hash, data) VALUES (?1, ?2)",
                 (hash.as_bytes().as_slice(), b"corrupt".as_slice()),
             )
             .expect("inject conflicting row");
@@ -530,11 +532,9 @@ mod tests {
         let rows = connection
             .neutron
             .sqlite()
-            .query_row(
-                "SELECT count(*) FROM temp.cov_conn_default_cas",
-                (),
-                |row| row.get::<_, i64>(0),
-            )
+            .query_row("SELECT count(*) FROM temp.cov_conn_cas", (), |row| {
+                row.get::<_, i64>(0)
+            })
             .expect("count rows");
         assert_eq!(rows, 0);
     }
@@ -613,7 +613,7 @@ mod tests {
             .neutron
             .sqlite()
             .execute(
-                "UPDATE temp.cov_conn_default_cas SET data = ?2 WHERE object_id = ?1",
+                "UPDATE temp.cov_conn_cas SET data = ?2 WHERE object_id = ?1",
                 (id.0, b"stale".as_slice()),
             )
             .expect("inject stale data");
