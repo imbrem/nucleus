@@ -5,7 +5,9 @@ mod private {
 /// A trusted property maintained by a Nucleus connection.
 ///
 /// This trait is sealed because admitting an invalid starting invariant would
-/// invalidate every safe capability derived from the connection.
+/// invalidate every safe capability derived from the connection. Applications
+/// express their own propositions through trusted Nucleus wrapper types rather
+/// than by implementing this trait.
 pub trait Invariant: private::Sealed {}
 
 /// The standard Nucleus invariant.
