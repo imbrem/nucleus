@@ -154,6 +154,12 @@
           ]
         },
         {
+          "name": "json_storage",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "lock",
           "kinds": [
             "test"
