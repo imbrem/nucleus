@@ -124,6 +124,10 @@ name = "covalence-data-basic"
 version = "0.0.0"
 
 [[package]]
+name = "covalence-data-container"
+version = "0.0.0"
+
+[[package]]
 name = "covalence-lib-crypto"
 version = "0.0.0"
 dependencies = [
