@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{cell::Cell, path::Path};
 
 use bytes::Bytes;
 use covalence_lib_error::snafu::{ResultExt, Snafu};
@@ -11,6 +11,8 @@ const CREATE_CONNECTION_CATALOG_SQL: &str = include_str!("../sql/create_connecti
 const CREATE_ATTACHED_DATABASES_SQL: &str = include_str!("../sql/create_attached_databases.sql");
 const CREATE_DEFAULT_CAS_SQL: &str = include_str!("../sql/create_default_cas.sql");
 const CREATE_DATABASE_CATALOG_SQL: &str = include_str!("../sql/create_database_catalog.sql");
+const CREATE_DATABASE_LOCKS_SQL: &str = include_str!("../sql/lock/create_database_locks.sql");
+const CREATE_TABLE_LOCKS_SQL: &str = include_str!("../sql/lock/create_table_locks.sql");
 const REGISTER_TABLE_SQL: &str = include_str!("../sql/register_table.sql");
 const REGISTER_ATTACHED_DATABASE_SQL: &str = include_str!("../sql/register_attached_database.sql");
 
@@ -34,6 +36,7 @@ pub const DEFAULT_CAS_INTERPRETATION: &str = "cov.cas.default/v0";
 pub struct Connection<I: Invariant = Standard> {
     pub(crate) neutron: neutron::Connection,
     pub(crate) invariant: I,
+    pub(crate) poisoned: Cell<bool>,
 }
 
 impl Connection<Standard> {
@@ -47,6 +50,7 @@ impl Connection<Standard> {
             .map(|neutron| Connection {
                 neutron,
                 invariant: Unchecked::new(),
+                poisoned: Cell::new(false),
             })
             .context(OpenSnafu)
     }
@@ -62,6 +66,7 @@ impl Connection<Standard> {
         Ok(Self {
             neutron,
             invariant: Standard::new(),
+            poisoned: Cell::new(false),
         })
     }
 
@@ -75,6 +80,7 @@ impl Connection<Standard> {
             .map(|neutron| Connection {
                 neutron,
                 invariant: Unchecked::new(),
+                poisoned: Cell::new(false),
             })
             .context(ImageSnafu)
     }
@@ -85,6 +91,13 @@ impl<I: Invariant> Connection<I> {
     #[must_use]
     pub const fn invariant(&self) -> &I {
         &self.invariant
+    }
+
+    /// Reports whether a failed capability cleanup has poisoned this
+    /// connection's mutation discipline.
+    #[must_use]
+    pub fn is_poisoned(&self) -> bool {
+        self.poisoned.get()
     }
 
     /// Serializes the primary database without connection-local state.
@@ -98,6 +111,10 @@ impl<I: Invariant> Connection<I> {
 
     pub(crate) const fn sqlite(&self) -> &sqlite::Connection {
         self.neutron.sqlite()
+    }
+
+    pub(crate) fn poison(&self) {
+        self.poisoned.set(true);
     }
 }
 
@@ -131,6 +148,20 @@ fn initialize(connection: &mut neutron::Connection) -> Result<(), ConnectionErro
         DEFAULT_CAS,
         DEFAULT_CAS_INTERPRETATION,
         CREATE_DEFAULT_CAS_SQL,
+    )?;
+    create_and_register_table(
+        &transaction,
+        4,
+        crate::DATABASE_LOCKS,
+        "cov.conn.db-lock/v0",
+        CREATE_DATABASE_LOCKS_SQL,
+    )?;
+    create_and_register_table(
+        &transaction,
+        5,
+        crate::TABLE_LOCKS,
+        "cov.conn.tab-lock/v0",
+        CREATE_TABLE_LOCKS_SQL,
     )?;
     transaction
         .execute(REGISTER_ATTACHED_DATABASE_SQL, (1, "main", true, true))

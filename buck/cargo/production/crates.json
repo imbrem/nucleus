@@ -154,6 +154,12 @@
           ]
         },
         {
+          "name": "lock",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "protocol",
           "kinds": [
             "test"
