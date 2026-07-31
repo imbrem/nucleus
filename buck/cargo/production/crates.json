@@ -160,6 +160,12 @@
           ]
         },
         {
+          "name": "read_only",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "reader",
           "kinds": [
             "test"
