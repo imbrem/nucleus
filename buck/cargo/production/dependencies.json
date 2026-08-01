@@ -652,6 +652,10 @@
       "version": "0.2.189",
       "checksum": "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2",
       "edition": "2021",
+      "features": [
+        "default",
+        "std"
+      ],
       "env": {
         "CARGO_PKG_DESCRIPTION": "Raw FFI bindings to platform libraries like libc.",
         "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
@@ -693,6 +697,26 @@
           "vcpkg": ":vcpkg-0.2.15"
         }
       }
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#memmap2@0.9.11",
+      "name": "memmap2",
+      "version": "0.9.11",
+      "checksum": "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Dan Burkert <dan@danburkert.com>:Yevhenii Reizner <razrfalcon@gmail.com>:The Contributors",
+        "CARGO_PKG_DESCRIPTION": "Cross-platform Rust API for memory-mapped file IO",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/RazrFalcon/memmap2-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "libc": ":libc-0.2.189"
+          }
+        }
+      ]
     },
     {
       "id": "registry+https://github.com/rust-lang/crates.io-index#miette@7.6.0",
@@ -1513,6 +1537,14 @@
   ],
   "roots": [
     {
+      "id": "workspace#covalence-data-file@0.0.0",
+      "name": "covalence-data-file",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#memmap2@0.9.11"
+      ]
+    },
+    {
       "id": "workspace#covalence-lib-crypto@0.0.0",
       "name": "covalence-lib-crypto",
       "category": "tcb",
@@ -1886,6 +1918,13 @@
       "target": "registry+https://github.com/rust-lang/crates.io-index#vcpkg@0.2.15",
       "kinds": [
         "build"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#memmap2@0.9.11",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
+      "kinds": [
+        "normal (cfg(unix))"
       ]
     },
     {

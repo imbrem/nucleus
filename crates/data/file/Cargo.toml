@@ -1,0 +1,15 @@
+[package]
+name = "covalence-data-file"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Authenticated file backing experiments for Nucleus"
+publish = false
+
+[dependencies]
+covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["blake3"] }
+memmap2 = "0.9.11"
+
+[lints]
+workspace = true
