@@ -47,6 +47,27 @@
       ]
     },
     {
+      "id": "workspace#covalence-data-file@0.0.0",
+      "name": "covalence-data-file",
+      "version": "0.0.0",
+      "path": "crates/data/file",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "backing",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
+          "name": "covalence_data_file",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-lib-crypto@0.0.0",
       "name": "covalence-lib-crypto",
       "version": "0.0.0",
@@ -184,6 +205,13 @@
     {
       "source": "workspace#covalence-bin-nucleus@0.0.0",
       "target": "workspace#covalence-nucleus@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-file@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
       "kinds": [
         "normal"
       ]
