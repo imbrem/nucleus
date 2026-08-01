@@ -21,6 +21,7 @@ const CREATE_PROOFS_SQL: &str = include_str!("../sql/create_segment_cas_proofs.s
 const RESERVE_SQL: &str = include_str!("../sql/reserve_segment_cas_object.sql");
 const GET_OBJECT_SQL: &str = include_str!("../sql/get_segment_cas_object.sql");
 const UPDATE_BLAKE3_SQL: &str = include_str!("../sql/update_segment_cas_blake3.sql");
+const DELETE_SEGMENTS_SQL: &str = include_str!("../sql/delete_segment_cas_segments.sql");
 const DELETE_PROOFS_SQL: &str = include_str!("../sql/delete_segment_cas_proofs.sql");
 const INSERT_PROOF_SQL: &str = include_str!("../sql/insert_segment_cas_proof.sql");
 const LOAD_PROOFS_SQL: &str = include_str!("../sql/load_segment_cas_proofs.sql");
@@ -84,6 +85,11 @@ pub struct SegmentCasProof {
 /// schemas, the segment map's database-enforced non-overlap invariant, all
 /// foreign identities, and every evidence partition against its explicit pure
 /// unkeyed BLAKE3 root. No keyed or context-keyed mode is accepted.
+///
+/// This remains a design experiment: opening and serving load and validate a
+/// whole object's resident bytes and proof frontier. It establishes the trust
+/// boundary but is not yet suitable for objects whose full evidence cannot fit
+/// in memory.
 pub struct Blake3SegmentCas<'conn> {
     connection: &'conn covalence_neutron::Connection,
     objects: SegmentTableName,
@@ -92,6 +98,7 @@ pub struct Blake3SegmentCas<'conn> {
     reserve: sqlite::Statement<'conn>,
     get_object: sqlite::Statement<'conn>,
     update_blake3: sqlite::Statement<'conn>,
+    delete_segments: sqlite::Statement<'conn>,
     delete_proofs: sqlite::Statement<'conn>,
     insert_proof: sqlite::Statement<'conn>,
 }
@@ -119,6 +126,7 @@ impl<'conn> Blake3SegmentCas<'conn> {
         table: &str,
     ) -> Result<Self, SegmentCasError> {
         let names = TableNames::new(table)?;
+        enable_foreign_keys(connection.sqlite())?;
         connection
             .sqlite()
             .execute_batch("SAVEPOINT cov_nucleus_create_segment_cas")
@@ -175,6 +183,7 @@ impl<'conn> Blake3SegmentCas<'conn> {
         connection: &'conn covalence_neutron::Connection,
         names: TableNames,
     ) -> Result<Self, SegmentCasError> {
+        enable_foreign_keys(connection.sqlite())?;
         validate_integrity(connection.sqlite())?;
         validate_schema(connection.sqlite(), &names)?;
         let segments = SegmentMap::open(connection, names.segments.as_str())?;
@@ -190,6 +199,7 @@ impl<'conn> Blake3SegmentCas<'conn> {
             reserve: prepare(RESERVE_SQL, "prepare object reservation")?,
             get_object: prepare(GET_OBJECT_SQL, "prepare object lookup")?,
             update_blake3: prepare(UPDATE_BLAKE3_SQL, "prepare BLAKE3 update")?,
+            delete_segments: prepare(DELETE_SEGMENTS_SQL, "prepare segment replacement")?,
             delete_proofs: prepare(DELETE_PROOFS_SQL, "prepare proof replacement")?,
             insert_proof: prepare(INSERT_PROOF_SQL, "prepare proof insertion")?,
             objects: names.objects,
@@ -212,6 +222,7 @@ impl<'conn> Blake3SegmentCas<'conn> {
         blake3: Option<Blake3Hash>,
         size: Option<u64>,
     ) -> Result<FileId, SegmentCasError> {
+        require_foreign_keys(self.connection.sqlite())?;
         let sqlite_size = size
             .map(|size| i64::try_from(size).map_err(|_| SegmentCasError::SizeTooLarge { size }))
             .transpose()?;
@@ -271,14 +282,7 @@ impl<'conn> Blake3SegmentCas<'conn> {
         resident: &[ResidentSegment],
         proofs: &[Blake3ProofNode],
     ) -> Result<Blake3Hash, SegmentCasError> {
-        let object = self
-            .object(file_id)?
-            .ok_or(SegmentCasError::MissingObject { file_id })?;
-        let size = object
-            .size
-            .ok_or(SegmentCasError::UnknownSize { file_id })?;
-        let derived = validate_evidence(size, object.blake3, resident, proofs)?;
-
+        require_foreign_keys(self.connection.sqlite())?;
         self.connection
             .sqlite()
             .execute_batch("SAVEPOINT cov_nucleus_replace_segment_evidence")
@@ -286,45 +290,40 @@ impl<'conn> Blake3SegmentCas<'conn> {
                 operation: "begin evidence replacement",
                 source,
             })?;
-        let result = self.persist_replacement(file_id, size, derived, resident, proofs);
-        match result {
-            Ok(()) => {
-                if let Err(source) = self
-                    .connection
-                    .sqlite()
-                    .execute_batch("RELEASE cov_nucleus_replace_segment_evidence")
-                {
-                    rollback_savepoint(self.connection, "cov_nucleus_replace_segment_evidence");
-                    Err(SegmentCasError::Sqlite {
-                        operation: "commit evidence replacement",
-                        source,
-                    })
-                } else {
-                    Ok(derived)
-                }
-            }
-            Err(error) => {
-                rollback_savepoint(self.connection, "cov_nucleus_replace_segment_evidence");
-                Err(error)
-            }
-        }
+        let result = (|| {
+            let object = self
+                .object(file_id)?
+                .ok_or(SegmentCasError::MissingObject { file_id })?;
+            let size = object
+                .size
+                .ok_or(SegmentCasError::UnknownSize { file_id })?;
+            let derived = validate_evidence(size, object.blake3, resident, proofs)?;
+            self.persist_replacement(file_id, size, object.blake3, derived, resident, proofs)?;
+            Ok(derived)
+        })();
+        finish_savepoint(
+            self.connection,
+            "cov_nucleus_replace_segment_evidence",
+            "commit evidence replacement",
+            result,
+        )
     }
 
     fn persist_replacement(
         &mut self,
         file_id: FileId,
         size: u64,
+        previous_blake3: Option<Blake3Hash>,
         blake3: Blake3Hash,
         resident: &[ResidentSegment],
         proofs: &[Blake3ProofNode],
     ) -> Result<(), SegmentCasError> {
-        if size != 0 {
-            let whole = SegmentRange::new(0, size).expect("non-empty complete range");
-            let old = self.segments.overlapping(&file_key(file_id), whole)?;
-            for segment in old {
-                self.segments.remove(segment.id)?;
-            }
-        }
+        self.delete_segments
+            .execute([file_key(file_id).as_slice()])
+            .map_err(|source| SegmentCasError::Sqlite {
+                operation: "delete old resident segments",
+                source,
+            })?;
         self.delete_proofs
             .execute([file_id.0])
             .map_err(|source| SegmentCasError::Sqlite {
@@ -350,12 +349,24 @@ impl<'conn> Blake3SegmentCas<'conn> {
                     source,
                 })?;
         }
-        self.update_blake3
-            .execute((file_id.0, blake3.as_bytes().as_slice()))
+        let previous_blake3 = previous_blake3.map(|hash| *hash.as_bytes());
+        let sqlite_size =
+            i64::try_from(size).map_err(|_| SegmentCasError::SizeTooLarge { size })?;
+        let changed = self
+            .update_blake3
+            .execute((
+                file_id.0,
+                blake3.as_bytes().as_slice(),
+                previous_blake3.as_ref().map(<[u8; 32]>::as_slice),
+                sqlite_size,
+            ))
             .map_err(|source| SegmentCasError::Sqlite {
                 operation: "record derived BLAKE3 address",
                 source,
             })?;
+        if changed != 1 {
+            return Err(SegmentCasError::ObjectChanged { file_id });
+        }
         Ok(())
     }
 
@@ -370,72 +381,32 @@ impl<'conn> Blake3SegmentCas<'conn> {
         file_id: FileId,
         requested: Range<u64>,
     ) -> Result<Option<Bytes>, SegmentCasError> {
-        let object = self
-            .object(file_id)?
-            .ok_or(SegmentCasError::MissingObject { file_id })?;
-        let size = object
-            .size
-            .ok_or(SegmentCasError::UnknownSize { file_id })?;
-        let blake3 = object
-            .blake3
-            .ok_or(SegmentCasError::UnknownBlake3 { file_id })?;
-        let (resident, proofs) = load_evidence(self.connection.sqlite(), &self.names(), file_id)?;
-        validated_state(size, Some(blake3), &resident, &proofs)?;
-        self.read_resident_range(file_id, requested, size)
-    }
-
-    fn read_resident_range(
-        &mut self,
-        file_id: FileId,
-        requested: Range<u64>,
-        size: u64,
-    ) -> Result<Option<Bytes>, SegmentCasError> {
-        if requested.start > requested.end || requested.end > size {
-            return Err(SegmentCasError::InvalidRange { requested, size });
-        }
-        if requested.is_empty() {
-            return Ok(Some(Bytes::new()));
-        }
-        let range = SegmentRange::new(requested.start, requested.end).map_err(|_| {
-            SegmentCasError::InvalidRange {
-                requested: requested.clone(),
-                size,
-            }
-        })?;
-        let segments = self.segments.overlapping(&file_key(file_id), range)?;
-        let mut cursor = requested.start;
-        let capacity = usize::try_from(requested.end - requested.start)
-            .map_err(|_| SegmentCasError::SizeTooLarge { size })?;
-        let mut output = Vec::with_capacity(capacity);
-        for segment in segments {
-            if segment.range.lo() > cursor {
-                return Ok(None);
-            }
-            let stored_width = usize::try_from(segment.range.width())
-                .map_err(|_| SegmentCasError::SizeTooLarge { size })?;
-            if segment.value.len() != stored_width {
-                return Err(SegmentCasError::MalformedEvidence {
-                    reason: format!(
-                        "resident range {}..{} has {} bytes, expected {stored_width}",
-                        segment.range.lo(),
-                        segment.range.hi(),
-                        segment.value.len()
-                    ),
-                });
-            }
-            let copy_start = cursor.max(segment.range.lo());
-            let copy_end = requested.end.min(segment.range.hi());
-            let start = usize::try_from(copy_start - segment.range.lo())
-                .map_err(|_| SegmentCasError::SizeTooLarge { size })?;
-            let end = usize::try_from(copy_end - segment.range.lo())
-                .map_err(|_| SegmentCasError::SizeTooLarge { size })?;
-            output.extend_from_slice(&segment.value[start..end]);
-            cursor = copy_end;
-            if cursor == requested.end {
-                return Ok(Some(Bytes::from(output)));
-            }
-        }
-        Ok(None)
+        begin_savepoint(
+            self.connection,
+            "cov_nucleus_read_segment_range",
+            "begin authenticated range read",
+        )?;
+        let result = (|| {
+            let object = self
+                .object(file_id)?
+                .ok_or(SegmentCasError::MissingObject { file_id })?;
+            let size = object
+                .size
+                .ok_or(SegmentCasError::UnknownSize { file_id })?;
+            let blake3 = object
+                .blake3
+                .ok_or(SegmentCasError::UnknownBlake3 { file_id })?;
+            let (resident, proofs) =
+                load_evidence(self.connection.sqlite(), &self.names(), file_id)?;
+            validated_state(size, Some(blake3), &resident, &proofs)?;
+            read_resident_range(&resident, requested, size)
+        })();
+        finish_savepoint(
+            self.connection,
+            "cov_nucleus_read_segment_range",
+            "finish authenticated range read",
+            result,
+        )
     }
 
     /// Returns resident chunk-rounded bytes and their minimal BLAKE3 frontier.
@@ -449,32 +420,46 @@ impl<'conn> Blake3SegmentCas<'conn> {
         file_id: FileId,
         requested: Range<u64>,
     ) -> Result<SegmentCasProof, SegmentCasError> {
-        let object = self
-            .object(file_id)?
-            .ok_or(SegmentCasError::MissingObject { file_id })?;
-        let size = object
-            .size
-            .ok_or(SegmentCasError::UnknownSize { file_id })?;
-        let blake3 = object
-            .blake3
-            .ok_or(SegmentCasError::UnknownBlake3 { file_id })?;
-        let (resident, nodes) = load_evidence(self.connection.sqlite(), &self.names(), file_id)?;
-        let state = validated_state(size, Some(blake3), &resident, &nodes)?;
-        let proof = state
-            .proof(requested)
-            .map_err(SegmentCasError::ProofState)?;
-        let bytes = self
-            .read_resident_range(file_id, proof.disclosed.clone(), size)?
-            .ok_or_else(|| SegmentCasError::RangeUnavailable {
-                file_id,
-                requested: proof.disclosed.clone(),
-            })?;
-        Ok(SegmentCasProof {
-            blake3,
-            size,
-            proof,
-            bytes,
-        })
+        begin_savepoint(
+            self.connection,
+            "cov_nucleus_read_segment_proof",
+            "begin authenticated proof read",
+        )?;
+        let result = (|| {
+            let object = self
+                .object(file_id)?
+                .ok_or(SegmentCasError::MissingObject { file_id })?;
+            let size = object
+                .size
+                .ok_or(SegmentCasError::UnknownSize { file_id })?;
+            let blake3 = object
+                .blake3
+                .ok_or(SegmentCasError::UnknownBlake3 { file_id })?;
+            let (resident, nodes) =
+                load_evidence(self.connection.sqlite(), &self.names(), file_id)?;
+            let state = validated_state(size, Some(blake3), &resident, &nodes)?;
+            let proof = state
+                .proof(requested)
+                .map_err(SegmentCasError::ProofState)?;
+            let bytes = read_resident_range(&resident, proof.disclosed.clone(), size)?.ok_or_else(
+                || SegmentCasError::RangeUnavailable {
+                    file_id,
+                    requested: proof.disclosed.clone(),
+                },
+            )?;
+            Ok(SegmentCasProof {
+                blake3,
+                size,
+                proof,
+                bytes,
+            })
+        })();
+        finish_savepoint(
+            self.connection,
+            "cov_nucleus_read_segment_proof",
+            "finish authenticated proof read",
+            result,
+        )
     }
 
     fn names(&self) -> TableNames {
@@ -513,6 +498,7 @@ fn quote(name: &SegmentTableName) -> String {
 fn instantiate(template: &str, names: &TableNames) -> String {
     template
         .replace("{objects}", &quote(&names.objects))
+        .replace("{segments}", &quote(&names.segments))
         .replace("{proofs}", &quote(&names.proofs))
 }
 
@@ -522,6 +508,142 @@ fn create_objects_sql(names: &TableNames) -> String {
 
 fn create_proofs_sql(names: &TableNames) -> String {
     instantiate(CREATE_PROOFS_SQL, names)
+}
+
+fn enable_foreign_keys(connection: &sqlite::Connection) -> Result<(), SegmentCasError> {
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON")
+        .map_err(|source| SegmentCasError::Sqlite {
+            operation: "enable SQLite foreign keys",
+            source,
+        })?;
+    require_foreign_keys(connection)
+}
+
+fn require_foreign_keys(connection: &sqlite::Connection) -> Result<(), SegmentCasError> {
+    let enabled = connection
+        .query_row("PRAGMA foreign_keys", (), |row| row.get::<_, bool>(0))
+        .map_err(|source| SegmentCasError::Sqlite {
+            operation: "check SQLite foreign keys",
+            source,
+        })?;
+    if enabled {
+        Ok(())
+    } else {
+        Err(SegmentCasError::ForeignKeysDisabled)
+    }
+}
+
+fn begin_savepoint(
+    connection: &covalence_neutron::Connection,
+    name: &str,
+    operation: &'static str,
+) -> Result<(), SegmentCasError> {
+    connection
+        .sqlite()
+        .execute_batch(&format!("SAVEPOINT {name}"))
+        .map_err(|source| SegmentCasError::Sqlite { operation, source })
+}
+
+fn finish_savepoint<T>(
+    connection: &covalence_neutron::Connection,
+    name: &str,
+    operation: &'static str,
+    result: Result<T, SegmentCasError>,
+) -> Result<T, SegmentCasError> {
+    match result {
+        Ok(value) => {
+            if let Err(source) = connection
+                .sqlite()
+                .execute_batch(&format!("RELEASE {name}"))
+            {
+                rollback_savepoint(connection, name);
+                Err(SegmentCasError::Sqlite { operation, source })
+            } else {
+                Ok(value)
+            }
+        }
+        Err(error) => {
+            rollback_savepoint(connection, name);
+            Err(error)
+        }
+    }
+}
+
+fn read_resident_range(
+    resident: &[ResidentSegment],
+    requested: Range<u64>,
+    size: u64,
+) -> Result<Option<Bytes>, SegmentCasError> {
+    if requested.start > requested.end || requested.end > size {
+        return Err(SegmentCasError::InvalidRange { requested, size });
+    }
+    if requested.is_empty() {
+        return Ok(Some(Bytes::new()));
+    }
+
+    let mut cursor = requested.start;
+    for segment in resident {
+        if segment.range.hi() <= cursor {
+            continue;
+        }
+        if segment.range.lo() >= requested.end {
+            break;
+        }
+        if segment.range.lo() > cursor {
+            return Ok(None);
+        }
+        let stored_width = usize::try_from(segment.range.width())
+            .map_err(|_| SegmentCasError::SizeTooLarge { size })?;
+        if segment.bytes.len() != stored_width {
+            return Err(SegmentCasError::MalformedEvidence {
+                reason: format!(
+                    "resident range {}..{} has {} bytes, expected {stored_width}",
+                    segment.range.lo(),
+                    segment.range.hi(),
+                    segment.bytes.len()
+                ),
+            });
+        }
+        cursor = requested.end.min(segment.range.hi());
+        if cursor == requested.end {
+            break;
+        }
+    }
+    if cursor != requested.end {
+        return Ok(None);
+    }
+
+    let mut output = allocate_range_buffer(requested.end - requested.start, size)?;
+    let mut cursor = requested.start;
+    for segment in resident {
+        if segment.range.hi() <= cursor {
+            continue;
+        }
+        if segment.range.lo() >= requested.end {
+            break;
+        }
+        let copy_start = cursor.max(segment.range.lo());
+        let copy_end = requested.end.min(segment.range.hi());
+        let start = usize::try_from(copy_start - segment.range.lo())
+            .map_err(|_| SegmentCasError::SizeTooLarge { size })?;
+        let end = usize::try_from(copy_end - segment.range.lo())
+            .map_err(|_| SegmentCasError::SizeTooLarge { size })?;
+        output.extend_from_slice(&segment.bytes[start..end]);
+        cursor = copy_end;
+    }
+    debug_assert_eq!(cursor, requested.end, "coverage was checked before copying");
+    Ok(Some(Bytes::from(output)))
+}
+
+fn allocate_range_buffer(bytes: u64, object_size: u64) -> Result<Vec<u8>, SegmentCasError> {
+    let capacity =
+        usize::try_from(bytes).map_err(|_| SegmentCasError::SizeTooLarge { size: object_size })?;
+    let mut output = Vec::new();
+    output
+        .try_reserve_exact(capacity)
+        .map_err(|_| SegmentCasError::AllocationFailed { bytes })?;
+    Ok(output)
 }
 
 fn validate_integrity(connection: &sqlite::Connection) -> Result<(), SegmentCasError> {
@@ -975,6 +1097,8 @@ pub enum SegmentCasError {
         /// Complete non-`ok` integrity output.
         results: Vec<String>,
     },
+    /// Foreign-key enforcement is disabled for this connection.
+    ForeignKeysDisabled,
     /// A required table does not have the canonical schema.
     InvalidSchema {
         /// Physical table name.
@@ -1002,6 +1126,11 @@ pub enum SegmentCasError {
         /// Missing identity.
         file_id: FileId,
     },
+    /// Object metadata changed during an evidence replacement.
+    ObjectChanged {
+        /// Concurrently or unexpectedly changed identity.
+        file_id: FileId,
+    },
     /// Fixed object geometry is not known.
     UnknownSize {
         /// Affected identity.
@@ -1016,6 +1145,11 @@ pub enum SegmentCasError {
     SizeTooLarge {
         /// Rejected size.
         size: u64,
+    },
+    /// A requested output buffer could not be allocated.
+    AllocationFailed {
+        /// Requested output bytes.
+        bytes: u64,
     },
     /// A requested range is reversed or outside the object.
     InvalidRange {
@@ -1057,6 +1191,9 @@ impl fmt::Display for SegmentCasError {
                     results.join("; ")
                 )
             }
+            Self::ForeignKeysDisabled => {
+                formatter.write_str("SQLite foreign-key enforcement is disabled")
+            }
             Self::InvalidSchema { table, reason } => {
                 write!(formatter, "invalid segment-CAS table {table}: {reason}")
             }
@@ -1080,6 +1217,11 @@ impl fmt::Display for SegmentCasError {
                     file_id.get()
                 )
             }
+            Self::ObjectChanged { file_id } => write!(
+                formatter,
+                "segment-CAS object {} changed during evidence replacement",
+                file_id.get()
+            ),
             Self::UnknownSize { file_id } => {
                 write!(
                     formatter,
@@ -1099,6 +1241,9 @@ impl fmt::Display for SegmentCasError {
                     formatter,
                     "object size {size} exceeds signed SQLite INTEGER"
                 )
+            }
+            Self::AllocationFailed { bytes } => {
+                write!(formatter, "could not allocate {bytes} range bytes")
             }
             Self::InvalidRange { requested, size } => write!(
                 formatter,
