@@ -58,6 +58,12 @@
           "kinds": [
             "lib"
           ]
+        },
+        {
+          "name": "segment_map",
+          "kinds": [
+            "test"
+          ]
         }
       ]
     },
