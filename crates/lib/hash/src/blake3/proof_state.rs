@@ -82,6 +82,9 @@ pub struct Blake3Proof {
 pub enum ProofStateError {
     /// The fixed tree cannot be represented on this platform.
     TreeTooLarge,
+    /// The fixed tree geometry is representable but its buffers cannot be
+    /// allocated.
+    AllocationFailed,
     /// Invalid byte range for the fixed input.
     InvalidRange {
         /// Inclusive byte offset.
@@ -161,7 +164,8 @@ impl Blake3ProofState {
     /// # Errors
     ///
     /// Returns [`ProofStateError::TreeTooLarge`] when the node count cannot be
-    /// indexed on this platform.
+    /// indexed on this platform, or [`ProofStateError::AllocationFailed`] when
+    /// its fixed buffers cannot be allocated.
     pub fn new(size: u64, expected_root: Option<Blake3Hash>) -> Result<Self, ProofStateError> {
         let chunks = size.div_ceil(CHUNK_BYTES);
         let node_count = match chunks {
@@ -179,12 +183,17 @@ impl Blake3ProofState {
         {
             return Err(ProofStateError::RootMismatch { expected, actual });
         }
+        let mut nodes = Vec::new();
+        nodes
+            .try_reserve_exact(node_count)
+            .map_err(|_| ProofStateError::AllocationFailed)?;
+        nodes.resize(node_count, Blake3Cv::default());
         Ok(Self {
             size,
             chunks,
             expected_root,
-            nodes: vec![Blake3Cv::default(); node_count],
-            known: KnownBits::new(node_count),
+            nodes,
+            known: KnownBits::try_new(node_count)?,
             claimed_root,
             appended: 0,
             trailing: Vec::new(),
@@ -679,10 +688,14 @@ struct KnownBits {
 }
 
 impl KnownBits {
-    fn new(bits: usize) -> Self {
-        Self {
-            words: vec![0; bits.div_ceil(u64::BITS as usize)],
-        }
+    fn try_new(bits: usize) -> Result<Self, ProofStateError> {
+        let words = bits.div_ceil(u64::BITS as usize);
+        let mut storage = Vec::new();
+        storage
+            .try_reserve_exact(words)
+            .map_err(|_| ProofStateError::AllocationFailed)?;
+        storage.resize(words, 0);
+        Ok(Self { words: storage })
     }
 
     fn contains(&self, bit: usize) -> bool {
