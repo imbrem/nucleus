@@ -363,4 +363,12 @@ mod tests {
                 .is_err()
         );
     }
+
+    #[test]
+    fn erasure_returns_a_permeable_raw_connection() {
+        let raw = Cas::create().expect("create CAS").into_connection();
+        raw.sqlite()
+            .execute("DROP TABLE main.cov_db_cas", ())
+            .expect("raw connection is intentionally unrestricted");
+    }
 }
