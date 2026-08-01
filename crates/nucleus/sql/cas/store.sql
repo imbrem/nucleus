@@ -8,4 +8,4 @@ WHERE (
         AND (cov_db_cas.size IS NULL OR cov_db_cas.size = excluded.size)
     )
     OR cov_db_cas.blob = excluded.blob
-RETURNING blake3
+RETURNING TRUE

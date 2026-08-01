@@ -5,4 +5,4 @@ ON CONFLICT (blake3) DO UPDATE SET
 WHERE cov_db_cas.size IS NULL
    OR excluded.size IS NULL
    OR cov_db_cas.size = excluded.size
-RETURNING blake3
+RETURNING TRUE

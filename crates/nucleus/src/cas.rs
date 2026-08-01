@@ -67,11 +67,16 @@ impl Cas {
     pub fn store(&self, data: impl AsRef<[u8]>) -> Result<Blake3Hash, CasError> {
         let data = data.as_ref();
         let blake3 = self.hash(data);
+        self.store_at(blake3, data)?;
+        Ok(blake3)
+    }
+
+    fn store_at(&self, blake3: Blake3Hash, data: &[u8]) -> Result<(), CasError> {
         let stored = self
             .connection
             .sqlite()
             .query_row(STORE_SQL, (blake3.as_bytes().as_slice(), data), |row| {
-                row.get::<_, Vec<u8>>(0)
+                row.get::<_, bool>(0)
             })
             .optional()
             .context(StoreSnafu)?;
@@ -79,7 +84,7 @@ impl Cas {
         if stored.is_none() {
             return Err(CasError::Conflict { blake3 });
         }
-        Ok(blake3)
+        Ok(())
     }
 
     /// Reserves a non-resident address with an optional known size.
@@ -145,7 +150,7 @@ impl Cas {
                 });
             }
         }
-        self.store(data)?;
+        self.store_at(blake3, data)?;
         Ok(resident)
     }
 
@@ -571,4 +576,5 @@ mod tests {
             Err(CasError::Missing { blake3 }) if blake3 == address
         ));
     }
+
 }
