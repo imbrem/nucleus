@@ -165,3 +165,117 @@ fn from_bao(root: ::bao::Hash) -> Blake3Hash {
 fn to_bao(root: Blake3Hash) -> ::bao::Hash {
     ::bao::Hash::from(*root.as_bytes())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn input() -> Vec<u8> {
+        (0_u16..5_000)
+            .map(|index| u8::try_from(index % 251).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn combined_and_outboard_round_trip_to_the_same_blake3_root() {
+        let data = input();
+        let expected = Blake3Hash::from_bytes(&data);
+
+        let (combined, combined_root) = encode_combined(&data);
+        let (outboard, outboard_root) = encode_outboard(&data);
+
+        assert_eq!(combined_root, expected);
+        assert_eq!(outboard_root, expected);
+        assert_eq!(
+            decode_combined(&combined, expected).expect("decode combined"),
+            data
+        );
+        assert_eq!(
+            decode_outboard(&data, &outboard, expected).expect("decode outboard"),
+            data
+        );
+    }
+
+    #[test]
+    fn single_chunk_encodings_match_the_canonical_wire_layout() {
+        let (combined, root) = encode_combined(b"abc");
+        let (outboard, outboard_root) = encode_outboard(b"abc");
+
+        assert_eq!(root, Blake3Hash::from_bytes(b"abc"));
+        assert_eq!(outboard_root, root);
+        assert_eq!(combined, [3_u64.to_le_bytes().as_slice(), b"abc"].concat());
+        assert_eq!(outboard, 3_u64.to_le_bytes());
+    }
+
+    #[test]
+    fn corrupted_combined_content_outboard_and_roots_are_rejected() {
+        let data = input();
+        let (mut combined, root) = encode_combined(&data);
+        let (mut outboard, _) = encode_outboard(&data);
+
+        let combined_last = combined.len() - 1;
+        combined[combined_last] ^= 1;
+        assert!(decode_combined(&combined, root).is_err());
+
+        outboard[8] ^= 1;
+        assert!(decode_outboard(&data, &outboard, root).is_err());
+
+        let mut corrupt_data = data.clone();
+        corrupt_data[2_048] ^= 1;
+        let (outboard, _) = encode_outboard(&data);
+        assert!(decode_outboard(&corrupt_data, &outboard, root).is_err());
+
+        let (short_outboard, short_root) = encode_outboard(b"prefix");
+        assert!(decode_outboard(b"prefix plus suffix", short_outboard, short_root).is_err());
+
+        assert!(
+            decode_combined(encode_combined(&data).0, Blake3Hash::from_bytes(b"wrong")).is_err()
+        );
+    }
+
+    #[test]
+    fn combined_and_outboard_extract_the_same_validated_slice() {
+        let data = input();
+        let range = 777..3_333;
+        let (combined, root) = encode_combined(&data);
+        let (outboard, _) = encode_outboard(&data);
+
+        let from_combined = extract_slice(&combined, range.clone()).expect("extract combined");
+        let from_outboard =
+            extract_slice_outboard(&data, &outboard, range.clone()).expect("extract outboard");
+
+        assert_eq!(from_combined, from_outboard);
+        let start = usize::try_from(range.start).unwrap();
+        let end = usize::try_from(range.end).unwrap();
+        assert_eq!(
+            decode_slice(&from_combined, root, range.clone()).expect("validate slice"),
+            data[start..end]
+        );
+
+        let mut corrupt = from_combined;
+        let last = corrupt.len() - 1;
+        corrupt[last] ^= 1;
+        assert!(decode_slice(&corrupt, root, range).is_err());
+    }
+
+    #[test]
+    fn empty_ranges_are_validated_and_invalid_ranges_are_rejected() {
+        let data = input();
+        let (combined, root) = encode_combined(&data);
+        let encoded_slice = extract_slice(&combined, 1_500..1_500).expect("extract empty range");
+
+        assert_eq!(
+            decode_slice(&encoded_slice, root, 1_500..1_500).expect("validate empty range"),
+            Vec::<u8>::new()
+        );
+
+        let reversed = Range { start: 10, end: 9 };
+        assert_eq!(
+            extract_slice(&combined, reversed).unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+
+        let beyond = extract_slice(&combined, 6_000..6_001).expect("extract final proof");
+        assert!(decode_slice(&beyond, root, 6_000..6_001).is_err());
+    }
+}
