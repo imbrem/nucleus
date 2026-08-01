@@ -75,3 +75,33 @@ rust_test(
     },
     visibility = ["PUBLIC"],
 )
+
+rust_test(
+    name = "backing",
+    crate = "backing",
+    crate_root = "tests/backing.rs",
+    edition = "2024",
+    srcs = _RUST_SOURCES,
+    named_deps = {
+        "covalence_data_file": ":covalence_data_file",
+        "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
+        "memmap2": "nucleus//buck/cargo/production:memmap2-0.9.11",
+    },
+    env = {
+        "CARGO_PKG_AUTHORS": "",
+        "CARGO_PKG_DESCRIPTION": "Authenticated file backing experiments for Nucleus",
+        "CARGO_PKG_HOMEPAGE": "",
+        "CARGO_PKG_LICENSE": "CC0-1.0",
+        "CARGO_PKG_LICENSE_FILE": "",
+        "CARGO_PKG_NAME": "covalence-data-file",
+        "CARGO_PKG_README": "",
+        "CARGO_PKG_REPOSITORY": "",
+        "CARGO_PKG_RUST_VERSION": "",
+        "CARGO_PKG_VERSION": "0.0.0",
+        "CARGO_PKG_VERSION_MAJOR": "0",
+        "CARGO_PKG_VERSION_MINOR": "0",
+        "CARGO_PKG_VERSION_PATCH": "0",
+        "CARGO_PKG_VERSION_PRE": "",
+    },
+    visibility = ["PUBLIC"],
+)

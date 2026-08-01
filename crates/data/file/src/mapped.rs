@@ -361,3 +361,108 @@ fn overlaps(left: &Range<u64>, right: &Range<u64>) -> bool {
 fn intersection(left: &Range<u64>, right: &Range<u64>) -> Range<u64> {
     left.start.max(right.start)..left.end.min(right.end)
 }
+
+#[cfg(test)]
+mod tests {
+    use covalence_lib_hash::Blake3Hash;
+
+    use crate::checked::VerifiedRange;
+
+    use super::{Blake3Mmap, RangeError, RangeState, StateSpan};
+
+    #[test]
+    fn anonymous_pages_start_zero_but_semantically_unknown() {
+        let root = Blake3Hash::from_bytes([7; 32]);
+        let mapped = Blake3Mmap::new(32, root).expect("anonymous mapping");
+
+        assert_eq!(mapped.bytes(), &[0; 32]);
+        assert_eq!(
+            mapped.states(),
+            &[StateSpan {
+                range: 0..32,
+                state: RangeState::Unknown,
+            }]
+        );
+    }
+
+    #[test]
+    fn empty_object_does_not_require_an_operating_system_mapping() {
+        let root = Blake3Hash::from_bytes([]);
+        let mapped = Blake3Mmap::new(0, root).expect("empty mapping");
+
+        assert!(mapped.bytes.is_none());
+        assert!(mapped.states().is_empty());
+        assert_eq!(mapped.read_verified(0..0).expect("empty read"), b"");
+    }
+
+    #[test]
+    fn installation_defensively_checks_capability_byte_length() {
+        let root = Blake3Hash::from_bytes([3; 8]);
+        let mut mapped = Blake3Mmap::new(8, root).expect("anonymous mapping");
+        let malformed = VerifiedRange::new(root, 8, 2..6, vec![1, 2]);
+
+        assert!(matches!(
+            mapped.install(malformed),
+            Err(RangeError::ByteLengthMismatch {
+                range,
+                expected: 4,
+                actual: 2,
+            }) if range == (2..6)
+        ));
+        assert_eq!(mapped.states()[0].state(), RangeState::Unknown);
+    }
+
+    #[test]
+    fn state_updates_split_and_coalesce_maximal_runs() {
+        let root = Blake3Hash::from_bytes([9; 32]);
+        let mut mapped = Blake3Mmap::new(12, root).expect("anonymous mapping");
+
+        mapped.write(2, [1, 2, 3]).expect("first write");
+        mapped.write(5, [4, 5]).expect("adjacent write");
+        assert_eq!(
+            mapped.states(),
+            &[
+                StateSpan {
+                    range: 0..2,
+                    state: RangeState::Unknown,
+                },
+                StateSpan {
+                    range: 2..7,
+                    state: RangeState::Dirty,
+                },
+                StateSpan {
+                    range: 7..12,
+                    state: RangeState::Unknown,
+                },
+            ]
+        );
+
+        mapped.discard(3..6).expect("discard middle");
+        assert_eq!(&mapped.bytes()[3..6], &[0; 3]);
+        assert_eq!(
+            mapped.states(),
+            &[
+                StateSpan {
+                    range: 0..2,
+                    state: RangeState::Unknown,
+                },
+                StateSpan {
+                    range: 2..3,
+                    state: RangeState::Dirty,
+                },
+                StateSpan {
+                    range: 3..6,
+                    state: RangeState::Unknown,
+                },
+                StateSpan {
+                    range: 6..7,
+                    state: RangeState::Dirty,
+                },
+                StateSpan {
+                    range: 7..12,
+                    state: RangeState::Unknown,
+                },
+            ]
+        );
+    }
+}

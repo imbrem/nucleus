@@ -54,6 +54,12 @@
       "category": "tcb",
       "targets": [
         {
+          "name": "backing",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "covalence_data_file",
           "kinds": [
             "lib"
