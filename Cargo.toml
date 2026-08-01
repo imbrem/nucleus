@@ -6,6 +6,7 @@ members = [
   "crates/lib/rand",
   "crates/lib/sqlite",
   "crates/data/basic",
+  "crates/data/segment",
   "crates/data/container",
   "crates/proton",
   "crates/neutron",
