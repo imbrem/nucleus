@@ -803,6 +803,14 @@ mod tests {
     }
 
     #[test]
+    fn hostile_declared_size_fails_without_panicking() {
+        assert!(matches!(
+            Blake3ProofState::new(u64::MAX, None),
+            Err(ProofStateError::TreeTooLarge | ProofStateError::AllocationFailed)
+        ));
+    }
+
+    #[test]
     fn fragmented_append_reproduces_roots_without_growing_geometry() {
         for size in [0, 1, 63, 1_024, 1_025, 3_089, 7_211] {
             let data = bytes(size);
