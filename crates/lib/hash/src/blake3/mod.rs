@@ -1,5 +1,8 @@
 //! Covalence and BLAKE3-family namespaces and operations.
 
+#[cfg(feature = "bao")]
+pub mod bao;
+
 #[cfg(feature = "blake3")]
 mod cv;
 
