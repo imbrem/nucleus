@@ -64,6 +64,12 @@
           "kinds": [
             "lib"
           ]
+        },
+        {
+          "name": "loader",
+          "kinds": [
+            "test"
+          ]
         }
       ]
     },
