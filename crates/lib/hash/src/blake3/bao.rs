@@ -138,7 +138,13 @@ pub fn decode_slice(
         ::bao::decode::SliceDecoder::new(encoded_slice.as_ref(), &expected, range.start, length);
     let capacity = usize::try_from(length)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "range is too large"))?;
-    let mut output = Vec::with_capacity(capacity);
+    let mut output = Vec::new();
+    output.try_reserve_exact(capacity).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::OutOfMemory,
+            "could not reserve the requested Bao slice",
+        )
+    })?;
     decoder.read_to_end(&mut output)?;
     if output.len() != capacity {
         return Err(io::Error::new(
