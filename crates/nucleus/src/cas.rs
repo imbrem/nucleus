@@ -577,4 +577,45 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn reservation_preserves_and_refines_size_state() {
+        let cas = Cas::create().expect("create CAS");
+        let address = cas.hash(b"four");
+
+        assert!(!cas.reserve(address, None).expect("reserve unknown size"));
+        assert_eq!(
+            cas.state(address).expect("read unknown state"),
+            Some((None, false))
+        );
+        assert!(cas.reserve(address, Some(4)).expect("learn size"));
+        assert_eq!(
+            cas.state(address).expect("read known state"),
+            Some((Some(4), false))
+        );
+        assert!(cas.reserve(address, None).expect("preserve known size"));
+        assert_eq!(
+            cas.state(address).expect("read preserved state"),
+            Some((Some(4), false))
+        );
+
+        cas.fill(address, b"four").expect("fill placeholder");
+        assert!(cas.reserve(address, Some(4)).expect("reserve resident"));
+        assert!(matches!(
+            cas.reserve(address, Some(5)),
+            Err(CasError::Conflict { blake3 }) if blake3 == address
+        ));
+        assert!(cas.evict(address).expect("evict resident"));
+        assert_eq!(
+            cas.state(address).expect("read evicted state"),
+            Some((Some(4), false))
+        );
+        assert!(matches!(
+            cas.fill(address, b"four!"),
+            Err(CasError::AddressMismatch { expected, .. }) if expected == address
+        ));
+        assert_eq!(
+            cas.state(address).expect("failed fill is non-mutating"),
+            Some((Some(4), false))
+        );
+    }
 }
