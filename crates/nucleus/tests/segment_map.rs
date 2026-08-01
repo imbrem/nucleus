@@ -97,6 +97,100 @@ fn sqlite_triggers_guard_writes_outside_the_adapter() {
             (b"b".as_slice(), 15_i64, 25_i64, b"other key".as_slice()),
         )
         .expect("other key does not overlap");
+
+    neutron
+        .sqlite()
+        .execute(
+            "INSERT INTO segments (segment_key, lo, hi, value) VALUES (?1, ?2, ?3, ?4)",
+            (b"a".as_slice(), 20_i64, 30_i64, b"adjacent".as_slice()),
+        )
+        .expect("insert adjacent row for update test");
+    let update_error = neutron
+        .sqlite()
+        .execute(
+            "UPDATE segments SET lo = 19 WHERE segment_key = ?1 AND lo = 20",
+            [b"a".as_slice()],
+        )
+        .expect_err("update trigger rejects overlap");
+    assert!(update_error.to_string().contains("segment overlap"));
+    assert_eq!(
+        neutron
+            .sqlite()
+            .query_row(
+                "SELECT lo FROM segments WHERE segment_key = ?1 AND hi = 30",
+                [b"a".as_slice()],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("failed update leaves geometry unchanged"),
+        20
+    );
+}
+
+#[test]
+fn failed_create_removes_partial_schema_without_touching_outer_state() {
+    let neutron = covalence_neutron::Connection::open_in_memory().expect("open connection");
+    neutron
+        .sqlite()
+        .execute_batch(
+            "SAVEPOINT caller_scope;
+             CREATE TABLE caller_marker (value INTEGER) STRICT;
+             CREATE TABLE broken_key_lo (collision INTEGER) STRICT;",
+        )
+        .expect("prepare outer state and derived-name collision");
+
+    assert!(matches!(
+        SegmentMap::create(&neutron, "broken"),
+        Err(SegmentMapError::Sqlite { .. })
+    ));
+    assert_eq!(
+        neutron
+            .sqlite()
+            .query_row(
+                "SELECT count(*) FROM main.sqlite_schema WHERE name = 'broken'",
+                (),
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("query partial table"),
+        0
+    );
+    assert_eq!(
+        neutron
+            .sqlite()
+            .query_row("SELECT count(*) FROM caller_marker", (), |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("caller savepoint remains active"),
+        0
+    );
+    neutron
+        .sqlite()
+        .execute_batch("RELEASE caller_scope")
+        .expect("caller retains control of outer savepoint");
+}
+
+#[test]
+fn failed_open_cleans_up_only_its_validation_snapshot() {
+    let neutron = covalence_neutron::Connection::open_in_memory().expect("open connection");
+    neutron
+        .sqlite()
+        .execute_batch(
+            "SAVEPOINT caller_scope;
+             CREATE TABLE caller_marker (value INTEGER) STRICT;",
+        )
+        .expect("prepare outer state");
+
+    assert!(matches!(
+        SegmentMap::open(&neutron, "missing"),
+        Err(SegmentMapError::InvalidSchema { .. })
+    ));
+    neutron
+        .sqlite()
+        .execute("INSERT INTO caller_marker VALUES (42)", ())
+        .expect("outer transaction remains writable");
+    neutron
+        .sqlite()
+        .execute_batch("RELEASE caller_scope")
+        .expect("caller retains control of outer savepoint");
 }
 
 #[test]
