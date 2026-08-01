@@ -95,3 +95,43 @@ rust_test(
     },
     visibility = ["PUBLIC"],
 )
+
+rust_test(
+    name = "blake3_lazy",
+    crate = "blake3_lazy",
+    crate_root = "tests/blake3_lazy.rs",
+    edition = "2024",
+    srcs = _RUST_SOURCES,
+    features = [
+        "blake3",
+        "default",
+        "git-sha1",
+        "random",
+        "sha256",
+    ],
+    named_deps = {
+        "blake3": "nucleus//buck/cargo/production:blake3-1.8.5",
+        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
+        "covalence_lib_hash": ":covalence_lib_hash",
+        "covalence_lib_rand": "nucleus//crates/lib/rand:covalence_lib_rand",
+        "sha1": "nucleus//buck/cargo/production:sha1-0.10.7",
+        "sha2": "nucleus//buck/cargo/production:sha2-0.10.9",
+    },
+    env = {
+        "CARGO_PKG_AUTHORS": "",
+        "CARGO_PKG_DESCRIPTION": "Hashing primitives for Nucleus",
+        "CARGO_PKG_HOMEPAGE": "",
+        "CARGO_PKG_LICENSE": "CC0-1.0",
+        "CARGO_PKG_LICENSE_FILE": "",
+        "CARGO_PKG_NAME": "covalence-lib-hash",
+        "CARGO_PKG_README": "",
+        "CARGO_PKG_REPOSITORY": "",
+        "CARGO_PKG_RUST_VERSION": "",
+        "CARGO_PKG_VERSION": "0.0.0",
+        "CARGO_PKG_VERSION_MAJOR": "0",
+        "CARGO_PKG_VERSION_MINOR": "0",
+        "CARGO_PKG_VERSION_PATCH": "0",
+        "CARGO_PKG_VERSION_PRE": "",
+    },
+    visibility = ["PUBLIC"],
+)
