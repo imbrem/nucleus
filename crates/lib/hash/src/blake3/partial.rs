@@ -73,13 +73,17 @@ pub enum Blake3Retention {
     Dense,
 }
 
-/// Result of comparing an aligned range of two partial trees.
+/// Result of comparing claims about an aligned range of two partial trees.
+///
+/// This is an algebraic comparison, not proof verification. `ClaimsEqual`
+/// becomes authenticated equality only when both trees have separately been
+/// tied to a trusted root.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Blake3RangeComparison {
-    /// Every canonical node needed for the range was known and equal.
-    Equal,
-    /// At least one comparable canonical node differed.
-    Different(Blake3Span),
+    /// Every canonical claim needed for the range was known and equal.
+    ClaimsEqual,
+    /// At least one pair of comparable claims differed.
+    ClaimsDifferent(Blake3Span),
     /// The trees did not contain enough compatible evidence to decide.
     Unknown(Blake3Span),
 }
@@ -341,7 +345,15 @@ impl Blake3Segment {
 ///
 /// Missing nodes are holes, not zero-filled data. The map may retain both a
 /// parent and its children, allowing dense evidence to remain useful for
-/// mutation. [`Self::frontier`] projects it to a minimal representation.
+/// mutation. [`Self::frontier`] projects it to a minimal representation. This
+/// type validates geometry and internal consistency, not authenticity: every
+/// node and root imported as evidence remains an untrusted claim.
+///
+/// Validation is intentionally straightforward in this experiment. It checks
+/// each retained node against canonical geometry and checks redundant parents
+/// against derivable children. Dense maps therefore cost roughly
+/// `O(nodes * log(nodes))` to validate; a production mutation structure may
+/// maintain this invariant incrementally instead.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Blake3PartialTree {
     total_length: u64,
@@ -448,7 +460,7 @@ impl Blake3PartialTree {
         Ok(())
     }
 
-    /// Returns the ordinary BLAKE3 root when the tree is complete.
+    /// Returns the claimed ordinary BLAKE3 root when the tree is complete.
     ///
     /// Empty inputs have a root without evidence. Inputs of at most one chunk
     /// require the root output retained while hashing bytes: a chunk CV cannot
@@ -462,7 +474,7 @@ impl Blake3PartialTree {
     /// # Errors
     ///
     /// Returns an error if retained parent and child evidence conflicts.
-    pub fn root(&self) -> Result<Option<Blake3Hash>, Blake3PartialError> {
+    pub fn claimed_root(&self) -> Result<Option<Blake3Hash>, Blake3PartialError> {
         self.validate()?;
         if self.total_length == 0 {
             return Ok(Some(Obj::<Blake3>::from_bytes([])));
@@ -493,6 +505,8 @@ impl Blake3PartialTree {
                 if let Some(cv) = self.derived_cv(span) {
                     output.push((span, cv));
                     Visit::Prune
+                } else if !self.has_evidence_within(span) {
+                    Visit::Prune
                 } else {
                     Visit::Descend
                 }
@@ -521,7 +535,7 @@ impl Blake3PartialTree {
         visit_forest(self.total_length, |span| {
             if self.derived_cv(span).is_some() {
                 Visit::Prune
-            } else if span.length() <= CHUNK_BYTES {
+            } else if !self.has_evidence_within(span) || span.length() <= CHUNK_BYTES {
                 output.push(span);
                 Visit::Prune
             } else {
@@ -531,11 +545,12 @@ impl Blake3PartialTree {
         Ok(output)
     }
 
-    /// Compares a chunk-aligned range using whatever evidence both trees know.
+    /// Compares claims about a chunk-aligned range using known evidence.
     ///
-    /// Equality is cryptographic equality: matching CVs are treated as equal
-    /// under BLAKE3's collision-resistance assumption. A mismatch wins over an
-    /// unrelated hole; otherwise the first unknown canonical span is returned.
+    /// `ClaimsEqual` means the available CV claims match under BLAKE3's
+    /// collision-resistance assumption; it does not authenticate either tree.
+    /// A mismatch wins over an unrelated hole; otherwise the first unknown
+    /// canonical span is returned.
     ///
     /// # Errors
     ///
@@ -563,9 +578,9 @@ impl Blake3PartialTree {
             };
             match (self.single_chunk_root, other.single_chunk_root) {
                 (Some(left), Some(right)) if left != right => {
-                    return Ok(Blake3RangeComparison::Different(span));
+                    return Ok(Blake3RangeComparison::ClaimsDifferent(span));
                 }
-                (Some(_), Some(_)) => return Ok(Blake3RangeComparison::Equal),
+                (Some(_), Some(_)) => return Ok(Blake3RangeComparison::ClaimsEqual),
                 _ => {}
             }
         }
@@ -586,7 +601,10 @@ impl Blake3PartialTree {
                     _ => {}
                 }
             }
-            if span.length() <= CHUNK_BYTES {
+            if span.length() <= CHUNK_BYTES
+                || !self.has_evidence_within(span)
+                || !other.has_evidence_within(span)
+            {
                 unknown.get_or_insert(span);
                 Visit::Prune
             } else {
@@ -594,9 +612,12 @@ impl Blake3PartialTree {
             }
         });
         if let Some(span) = different {
-            return Ok(Blake3RangeComparison::Different(span));
+            return Ok(Blake3RangeComparison::ClaimsDifferent(span));
         }
-        Ok(unknown.map_or(Blake3RangeComparison::Equal, Blake3RangeComparison::Unknown))
+        Ok(unknown.map_or(
+            Blake3RangeComparison::ClaimsEqual,
+            Blake3RangeComparison::Unknown,
+        ))
     }
 
     fn validate(&self) -> Result<(), Blake3PartialError> {
@@ -610,19 +631,10 @@ impl Blake3PartialTree {
                 total_length: self.total_length,
             });
         }
-        if self.total_length > 0 {
-            let mut conflict = None;
-            visit_forest(self.total_length, |span| {
-                if conflict.is_none()
-                    && let (Some(stored), Some(derived)) =
-                        (self.nodes.get(&span), self.derived_from_children(span))
-                    && *stored != derived
-                {
-                    conflict = Some(span);
-                }
-                Visit::Descend
-            });
-            if let Some(span) = conflict {
+        for (&span, &stored) in &self.nodes {
+            if let Some(derived) = self.derived_from_children(span)
+                && stored != derived
+            {
                 return Err(Blake3PartialError::ConflictingNode(span));
             }
         }
@@ -632,6 +644,9 @@ impl Blake3PartialTree {
     fn derived_cv(&self, span: Blake3Span) -> Option<Blake3Cv> {
         if let Some(cv) = self.nodes.get(&span) {
             return Some(*cv);
+        }
+        if !self.has_evidence_within(span) {
+            return None;
         }
         self.derived_from_children(span)
     }
@@ -645,6 +660,20 @@ impl Blake3PartialTree {
             (Some(left), Some(right)) => Some(left.merge(right)),
             _ => None,
         }
+    }
+
+    fn has_evidence_within(&self, span: Blake3Span) -> bool {
+        let start = Blake3Span {
+            offset: span.offset(),
+            length: 0,
+        };
+        let end = Blake3Span {
+            offset: span.end(),
+            length: 0,
+        };
+        self.nodes
+            .range(start..end)
+            .any(|(candidate, _)| candidate.end() <= span.end())
     }
 }
 
@@ -779,7 +808,7 @@ mod tests {
             let bytes = input(length, 0x5a);
             for retention in [Blake3Retention::Frontier, Blake3Retention::Dense] {
                 assert_eq!(
-                    complete(&bytes, retention).root().unwrap(),
+                    complete(&bytes, retention).claimed_root().unwrap(),
                     Some(Obj::<Blake3>::from_bytes(&bytes)),
                     "length {length}, retention {retention:?}"
                 );
@@ -805,7 +834,7 @@ mod tests {
         }
         assert!(tree.holes().unwrap().is_empty());
         assert_eq!(
-            tree.root().unwrap(),
+            tree.claimed_root().unwrap(),
             Some(Obj::<Blake3>::from_bytes(&bytes))
         );
     }
@@ -823,8 +852,15 @@ mod tests {
         .unwrap();
         let mut tree = Blake3PartialTree::from_segment(left).unwrap();
 
-        assert_eq!(tree.holes().unwrap().len(), 3);
-        assert_eq!(tree.root().unwrap(), None);
+        assert_eq!(
+            tree.holes().unwrap(),
+            vec![
+                Blake3Span::new(CHUNK_BYTES, CHUNK_BYTES).unwrap(),
+                Blake3Span::new(2 * CHUNK_BYTES, 2 * CHUNK_BYTES).unwrap(),
+            ],
+            "holes are a maximal missing frontier, not one entry per chunk"
+        );
+        assert_eq!(tree.claimed_root().unwrap(), None);
 
         tree.insert_segment_in_place(
             Blake3Segment::from_bytes(
@@ -841,7 +877,7 @@ mod tests {
             tree.frontier().unwrap()[0].0,
             Blake3Span::new(0, 2048).unwrap()
         );
-        assert_eq!(tree.root().unwrap(), None);
+        assert_eq!(tree.claimed_root().unwrap(), None);
     }
 
     #[test]
@@ -856,7 +892,7 @@ mod tests {
             dense
                 .compare_aligned(&frontier, 0..bytes.len() as u64)
                 .unwrap(),
-            Blake3RangeComparison::Equal
+            Blake3RangeComparison::ClaimsEqual
         );
     }
 
@@ -871,12 +907,12 @@ mod tests {
         let right = complete(&right_bytes, Blake3Retention::Dense);
         assert_eq!(
             left.compare_aligned(&right, 0..2 * CHUNK_BYTES).unwrap(),
-            Blake3RangeComparison::Equal
+            Blake3RangeComparison::ClaimsEqual
         );
         assert!(matches!(
             left.compare_aligned(&right, 2 * CHUNK_BYTES..3 * CHUNK_BYTES)
                 .unwrap(),
-            Blake3RangeComparison::Different(_)
+            Blake3RangeComparison::ClaimsDifferent(_)
         ));
 
         let partial = Blake3PartialTree::from_segment(
@@ -930,7 +966,7 @@ mod tests {
         let bytes = input(127, 7);
         let from_bytes = complete(&bytes, Blake3Retention::Frontier);
         assert_eq!(
-            from_bytes.root().unwrap(),
+            from_bytes.claimed_root().unwrap(),
             Some(Obj::<Blake3>::from_bytes(&bytes))
         );
         assert_ne!(
@@ -946,7 +982,7 @@ mod tests {
             )]),
             single_chunk_root: None,
         };
-        assert_eq!(without_root.root().unwrap(), None);
+        assert_eq!(without_root.claimed_root().unwrap(), None);
     }
 
     #[test]
@@ -974,7 +1010,7 @@ mod tests {
         assert_eq!(
             Blake3PartialTree::from_segment(rebuilt)
                 .unwrap()
-                .root()
+                .claimed_root()
                 .unwrap(),
             Some(Obj::<Blake3>::from_bytes(&bytes))
         );
@@ -1027,7 +1063,7 @@ mod tests {
                     tree.insert_segment_in_place(segment).unwrap();
                 }
                 assert_eq!(
-                    tree.root().unwrap(),
+                    tree.claimed_root().unwrap(),
                     Some(Obj::<Blake3>::from_bytes(&bytes)),
                     "{chunks} chunks, reverse {reverse}"
                 );
@@ -1050,7 +1086,7 @@ mod tests {
         .unwrap();
         let cv_only = Blake3PartialTree::from_segment(cv_only).unwrap();
         assert_eq!(cv_only.holes().unwrap(), vec![span]);
-        assert_eq!(cv_only.root().unwrap(), None);
+        assert_eq!(cv_only.claimed_root().unwrap(), None);
 
         let complete = complete(&bytes, Blake3Retention::Frontier);
         assert!(complete.holes().unwrap().is_empty());
@@ -1058,7 +1094,7 @@ mod tests {
             cv_only
                 .compare_aligned(&complete, 0..bytes.len() as u64)
                 .unwrap(),
-            Blake3RangeComparison::Equal,
+            Blake3RangeComparison::ClaimsEqual,
             "matching CVs can compare equal even though only one side retained the root output"
         );
     }
@@ -1085,7 +1121,7 @@ mod tests {
 
         assert!(matches!(
             left.compare_aligned(&right, 0..total).unwrap(),
-            Blake3RangeComparison::Different(span) if span.offset() == 0
+            Blake3RangeComparison::ClaimsDifferent(span) if span.offset() == 0
         ));
     }
 
@@ -1111,6 +1147,58 @@ mod tests {
         assert_eq!(
             left.clone().combine(right.clone()).unwrap(),
             right.combine(left).unwrap()
+        );
+    }
+
+    #[test]
+    fn evidence_constructor_rejects_noncanonical_and_internally_conflicting_nodes() {
+        let bytes = input(4 * blake3::CHUNK_LEN, 41);
+        let total = bytes.len() as u64;
+        let noncanonical = Blake3Node {
+            span: Blake3Span::new(CHUNK_BYTES, 2 * CHUNK_BYTES).unwrap(),
+            cv: Blake3Cv::from_array([1; 32]),
+        };
+        assert_eq!(
+            Blake3Segment::from_evidence(total, 0..total, [noncanonical], None),
+            Err(Blake3PartialError::NonCanonicalNode(noncanonical.span))
+        );
+
+        let dense = Blake3Segment::from_bytes(total, 0, &bytes, Blake3Retention::Dense).unwrap();
+        let mut nodes = dense.nodes().collect::<Vec<_>>();
+        let parent = nodes
+            .iter_mut()
+            .find(|node| node.span == Blake3Span::new(0, 2 * CHUNK_BYTES).unwrap())
+            .unwrap();
+        parent.cv = Blake3Cv::from_array([0xa5; 32]);
+        assert!(matches!(
+            Blake3Segment::from_evidence(total, 0..total, nodes, None),
+            Err(Blake3PartialError::ConflictingNode(span))
+                if span == Blake3Span::new(0, 2 * CHUNK_BYTES).unwrap()
+        ));
+    }
+
+    #[test]
+    fn one_chunk_root_assertions_participate_in_comparison_and_merge() {
+        let bytes = input(33, 44);
+        let total = bytes.len() as u64;
+        let span = Blake3Span::new(0, total).unwrap();
+        let cv = Blake3Cv::from_subtree(0, &bytes);
+        let actual = Obj::<Blake3>::from_bytes(&bytes);
+        let wrong = Obj::<Blake3>::from_array([0x5c; 32]);
+        let segment = |root| {
+            Blake3Segment::from_evidence(total, 0..total, [Blake3Node { span, cv }], Some(root))
+                .unwrap()
+        };
+        let left = Blake3PartialTree::from_segment(segment(actual)).unwrap();
+        let right = Blake3PartialTree::from_segment(segment(wrong)).unwrap();
+
+        assert_eq!(
+            left.compare_aligned(&right, 0..total).unwrap(),
+            Blake3RangeComparison::ClaimsDifferent(span)
+        );
+        assert_eq!(
+            segment(actual).combine(segment(wrong)),
+            Err(Blake3PartialError::ConflictingSingleChunkRoot)
         );
     }
 }
