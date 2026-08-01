@@ -619,6 +619,13 @@ mod tests {
                 leaf_bytes: 4096,
             })
         );
+        assert_eq!(
+            tree.replace_leaves(0, [0; 8192]),
+            Err(TreeError::WrongLeafLength {
+                expected: 19,
+                actual: 4096,
+            })
+        );
         assert_eq!(tree.root(), root);
     }
 
