@@ -510,4 +510,65 @@ mod tests {
             .execute("DROP TABLE main.cov_db_cas", ())
             .expect("raw connection is intentionally unrestricted");
     }
+
+    #[test]
+    fn placeholders_fill_evict_and_refill_without_changing_identity() {
+        let cas = Cas::create().expect("create CAS");
+        let address = cas.hash(b"eventual bytes");
+
+        assert!(!cas.reserve(address, Some(14)).expect("reserve new"));
+        assert!(cas.reserve(address, Some(14)).expect("reserve existing"));
+        assert_eq!(cas.fetch(address).expect("unresolved fetch"), None);
+        assert!(!cas.fill(address, b"eventual bytes").expect("first fill"));
+        assert!(cas.fill(address, b"eventual bytes").expect("repeat fill"));
+        assert_eq!(
+            cas.fetch(address).expect("resident fetch"),
+            Some(Bytes::from_static(b"eventual bytes"))
+        );
+
+        assert!(cas.evict(address).expect("evict resident"));
+        assert!(!cas.evict(address).expect("repeat eviction"));
+        assert_eq!(cas.fetch(address).expect("evicted fetch"), None);
+        assert!(!cas.fill(address, b"eventual bytes").expect("refill"));
+    }
+
+    #[test]
+    fn placeholder_conflicts_are_non_mutating() {
+        let cas = Cas::create().expect("create CAS");
+        let data = b"four";
+        let address = cas.hash(data);
+        cas.reserve(address, Some(5)).expect("reserve wrong size");
+
+        assert!(matches!(
+            cas.reserve(address, Some(4)),
+            Err(CasError::Conflict { blake3 }) if blake3 == address
+        ));
+        assert!(matches!(
+            cas.fill(address, data),
+            Err(CasError::SizeMismatch {
+                blake3,
+                expected: 5,
+                actual: 4,
+            }) if blake3 == address
+        ));
+        assert_eq!(cas.fetch(address).expect("still unresolved"), None);
+
+        let other = cas.hash(b"other");
+        assert!(matches!(
+            cas.fill(other, data),
+            Err(CasError::AddressMismatch { expected, actual })
+                if expected == other && actual == address
+        ));
+        assert_eq!(cas.fetch(other).expect("not implicitly reserved"), None);
+    }
+
+    #[test]
+    fn fill_requires_an_existing_placeholder() {
+        let cas = Cas::create().expect("create CAS");
+        let address = cas.hash(b"missing row");
+        assert!(matches!(
+            cas.fill(address, b"missing row"),
+            Err(CasError::Missing { blake3 }) if blake3 == address
+        ));
+    }
 }
