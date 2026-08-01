@@ -1,8 +1,84 @@
-//! Low-level operations over the unkeyed BLAKE3 tree.
+//! Low-level operations over BLAKE3 trees.
+//!
+//! [`Blake3Mode`] is the explicit API for unkeyed, keyed, and context-keyed
+//! trees. The convenience methods on [`Blake3Cv`] always use
+//! [`Blake3Mode::Unkeyed`].
 
 use blake3::hazmat::{self, HasherExt, Mode};
 
-use crate::{Blake3, Blake3Hash, Namespace, Obj, Opaque};
+use crate::{Blake3Hash, CtxKey, Namespace, O256, Obj, Opaque};
+
+/// Public BLAKE3 tree mode used to hash leaves and combine chaining values.
+///
+/// Keys are namespace material, not secrets carried by this type. All three
+/// modes produce values in the same [`Blake3Hash`] namespace.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Blake3Mode {
+    /// Ordinary unkeyed BLAKE3.
+    Unkeyed,
+    /// BLAKE3 keyed hashing with a public 256-bit key.
+    Keyed(O256),
+    /// BLAKE3 derive-key material hashing with a prederived context key.
+    ContextKeyed(CtxKey),
+}
+
+impl Blake3Mode {
+    /// Hashes a complete byte string in this mode.
+    #[must_use]
+    pub fn hash(self, bytes: impl AsRef<[u8]>) -> Blake3Hash {
+        let mut hasher = self.hasher();
+        hasher.update(bytes.as_ref());
+        Obj::from_array(*hasher.finalize().as_bytes())
+    }
+
+    /// Hashes a non-empty canonical subtree starting at `input_offset`.
+    ///
+    /// # Panics
+    ///
+    /// In accordance with BLAKE3's hazmat API, this panics for empty input, an
+    /// offset that is not chunk-aligned, or input that exceeds the maximum
+    /// subtree size permitted at its offset.
+    #[must_use]
+    pub fn subtree_cv(self, input_offset: u64, bytes: impl AsRef<[u8]>) -> Blake3Cv {
+        let mut hasher = self.hasher();
+        hasher.set_input_offset(input_offset);
+        hasher.update(bytes.as_ref());
+        Obj::from_array(hasher.finalize_non_root())
+    }
+
+    /// Combines two non-root child chaining values in this mode.
+    #[must_use]
+    pub fn merge(self, left: Blake3Cv, right: Blake3Cv) -> Blake3Cv {
+        Obj::from_array(hazmat::merge_subtrees_non_root(
+            left.as_bytes(),
+            right.as_bytes(),
+            self.hazmat(),
+        ))
+    }
+
+    /// Combines the final child pair into a root digest in this mode.
+    #[must_use]
+    pub fn root(self, left: Blake3Cv, right: Blake3Cv) -> Blake3Hash {
+        let hash = hazmat::merge_subtrees_root(left.as_bytes(), right.as_bytes(), self.hazmat());
+        Obj::from_array(*hash.as_bytes())
+    }
+
+    fn hasher(self) -> blake3::Hasher {
+        match self {
+            Self::Unkeyed => blake3::Hasher::new(),
+            Self::Keyed(key) => blake3::Hasher::new_keyed(key.as_bytes()),
+            Self::ContextKeyed(key) => blake3::Hasher::new_from_context_key(key.as_bytes()),
+        }
+    }
+
+    fn hazmat(&self) -> Mode<'_> {
+        match self {
+            Self::Unkeyed => Mode::Hash,
+            Self::Keyed(key) => Mode::KeyedHash(key.as_bytes()),
+            Self::ContextKeyed(key) => Mode::DeriveKeyMaterial(key.as_bytes()),
+        }
+    }
+}
 
 /// The namespace of non-root BLAKE3 Merkle-tree chaining values.
 ///
@@ -21,9 +97,10 @@ impl Namespace for Blake3Merkle {
 pub type Blake3Cv = Obj<Blake3Merkle>;
 
 impl Blake3Cv {
-    /// Hashes a non-empty chunk or subtree starting at `input_offset`.
+    /// Hashes a non-empty chunk or subtree in unkeyed BLAKE3 mode.
     ///
     /// The offset is measured in bytes from the start of the complete input.
+    /// Use [`Blake3Mode::subtree_cv`] instead for keyed or context-keyed trees.
     ///
     /// # Panics
     ///
@@ -32,33 +109,27 @@ impl Blake3Cv {
     /// subtree size permitted at its offset.
     #[must_use]
     pub fn from_subtree(input_offset: u64, bytes: impl AsRef<[u8]>) -> Self {
-        let mut hasher = blake3::Hasher::new();
-        hasher.set_input_offset(input_offset);
-        hasher.update(bytes.as_ref());
-        Self::from_array(hasher.finalize_non_root())
+        Blake3Mode::Unkeyed.subtree_cv(input_offset, bytes)
     }
 
-    /// Combines two child chaining values into a non-root parent.
+    /// Combines two child chaining values in unkeyed BLAKE3 mode.
     ///
     /// The caller is responsible for supplying left and right children that
-    /// occupy a valid position in the intended BLAKE3 tree.
+    /// occupy a valid position in the intended unkeyed BLAKE3 tree. Use
+    /// [`Blake3Mode::merge`] instead for keyed or context-keyed trees.
     #[must_use]
     pub fn merge(self, right: Self) -> Self {
-        Self::from_array(hazmat::merge_subtrees_non_root(
-            self.as_bytes(),
-            right.as_bytes(),
-            Mode::Hash,
-        ))
+        Blake3Mode::Unkeyed.merge(self, right)
     }
 
-    /// Combines the final pair of child chaining values into a root digest.
+    /// Combines the final child pair into an unkeyed BLAKE3 root digest.
     ///
     /// The caller is responsible for supplying the left and right children in
-    /// the correct order and tree position.
+    /// the correct order and tree position. Use [`Blake3Mode::root`] instead
+    /// for keyed or context-keyed trees.
     #[must_use]
     pub fn root(self, right: Self) -> Blake3Hash {
-        let hash = hazmat::merge_subtrees_root(self.as_bytes(), right.as_bytes(), Mode::Hash);
-        Obj::<Blake3>::from_array(*hash.as_bytes())
+        Blake3Mode::Unkeyed.root(self, right)
     }
 }
 
@@ -93,5 +164,44 @@ mod tests {
         let arbitrary = Blake3Cv::from_array([0xa5; 32]);
         let root = arbitrary.root(arbitrary);
         assert_ne!(root, Blake3Hash::default());
+    }
+
+    #[test]
+    fn public_modes_match_reference_hashers() {
+        let data = b"public BLAKE3 namespace material";
+        let key = O256::from_array([0x42; 32]);
+        let context_key = CtxKey::derive("nucleus test context");
+
+        assert_eq!(
+            Blake3Mode::Unkeyed.hash(data),
+            Obj::from_array(*blake3::hash(data).as_bytes())
+        );
+        assert_eq!(
+            Blake3Mode::Keyed(key).hash(data),
+            Obj::from_array(*blake3::keyed_hash(key.as_bytes(), data).as_bytes())
+        );
+
+        let mut reference = blake3::Hasher::new_from_context_key(context_key.as_bytes());
+        reference.update(data);
+        assert_eq!(
+            Blake3Mode::ContextKeyed(context_key).hash(data),
+            Obj::from_array(*reference.finalize().as_bytes())
+        );
+    }
+
+    #[test]
+    fn cv_convenience_methods_are_exactly_unkeyed_mode() {
+        let left_bytes = [b'l'; blake3::CHUNK_LEN];
+        let right_bytes = [b'r'; blake3::CHUNK_LEN];
+        let left = Blake3Cv::from_subtree(0, left_bytes);
+        let right = Blake3Cv::from_subtree(blake3::CHUNK_LEN as u64, right_bytes);
+
+        assert_eq!(left, Blake3Mode::Unkeyed.subtree_cv(0, left_bytes));
+        assert_eq!(left.merge(right), Blake3Mode::Unkeyed.merge(left, right));
+        assert_eq!(left.root(right), Blake3Mode::Unkeyed.root(left, right));
+
+        let keyed = Blake3Mode::Keyed(O256::from_array([0x5a; 32]));
+        assert_ne!(left, keyed.subtree_cv(0, left_bytes));
+        assert_ne!(left.root(right), keyed.root(left, right));
     }
 }
