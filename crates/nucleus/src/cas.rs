@@ -216,3 +216,142 @@ pub enum CasError {
         size: u64,
     },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stores_and_fetches_pure_blake3_objects() {
+        let cas = Cas::create().expect("create CAS");
+
+        let address = cas.store(b"hello").expect("store bytes");
+
+        assert_eq!(address, Blake3Hash::from_bytes(b"hello"));
+        assert_eq!(cas.hash(b"hello"), address);
+        assert_eq!(
+            cas.fetch(address).expect("fetch bytes"),
+            Some(Bytes::from_static(b"hello"))
+        );
+        assert_eq!(cas.store(b"hello").expect("repeat store"), address);
+    }
+
+    #[test]
+    fn missing_and_unresolved_objects_are_not_resident() {
+        let cas = Cas::create().expect("create CAS");
+        let missing = cas.hash(b"missing");
+        assert_eq!(cas.fetch(missing).expect("fetch missing"), None);
+
+        let unresolved = cas.hash(b"known later");
+        cas.connection
+            .sqlite()
+            .execute(
+                "INSERT INTO main.cov_db_cas (blake3, size) VALUES (?1, ?2)",
+                (unresolved.as_bytes().as_slice(), 11_i64),
+            )
+            .expect("reserve placeholder");
+
+        assert_eq!(cas.fetch(unresolved).expect("fetch unresolved"), None);
+        assert_eq!(
+            cas.fetch_range(unresolved, 0..11)
+                .expect("fetch unresolved range"),
+            None
+        );
+        assert_eq!(
+            cas.store(b"known later").expect("fill placeholder"),
+            unresolved
+        );
+        assert_eq!(
+            cas.fetch(unresolved).expect("fetch filled"),
+            Some(Bytes::from_static(b"known later"))
+        );
+    }
+
+    #[test]
+    fn conflicting_rows_are_rejected_without_overwrite() {
+        let cas = Cas::create().expect("create CAS");
+        let address = cas.hash(b"right");
+        cas.connection
+            .sqlite()
+            .execute(
+                "INSERT INTO main.cov_db_cas (blake3, blob, size) VALUES (?1, ?2, ?3)",
+                (address.as_bytes().as_slice(), b"wrong".as_slice(), 5_i64),
+            )
+            .expect("inject conflict");
+
+        assert!(matches!(
+            cas.store(b"right"),
+            Err(CasError::Conflict { blake3 }) if blake3 == address
+        ));
+        assert_eq!(
+            cas.fetch(address).expect("fetch original row"),
+            Some(Bytes::from_static(b"wrong"))
+        );
+
+        let sized = cas.hash(b"four");
+        cas.connection
+            .sqlite()
+            .execute(
+                "INSERT INTO main.cov_db_cas (blake3, size) VALUES (?1, ?2)",
+                (sized.as_bytes().as_slice(), 99_i64),
+            )
+            .expect("inject conflicting size");
+        assert!(matches!(
+            cas.store(b"four"),
+            Err(CasError::Conflict { blake3 }) if blake3 == sized
+        ));
+    }
+
+    #[test]
+    fn fetches_exact_ranges_without_loading_the_whole_blob() {
+        let cas = Cas::create().expect("create CAS");
+        let address = cas.store(b"abcdefgh").expect("store bytes");
+
+        assert_eq!(
+            cas.fetch_range(address, 2..6).expect("middle range"),
+            Some(Bytes::from_static(b"cdef"))
+        );
+        assert_eq!(
+            cas.fetch_range(address, 8..8).expect("empty range"),
+            Some(Bytes::new())
+        );
+        let reversed = Range { start: 4, end: 3 };
+        assert!(matches!(
+            cas.fetch_range(address, reversed.clone()),
+            Err(CasError::InvalidRange { range }) if range == reversed
+        ));
+        assert!(matches!(
+            cas.fetch_range(address, 0..9),
+            Err(CasError::RangeOutOfBounds { range, size: 8 }) if range == (0..9)
+        ));
+        assert!(matches!(
+            cas.fetch_range(address, u64::MAX..u64::MAX),
+            Err(CasError::UnsupportedRange { .. })
+        ));
+    }
+
+    #[test]
+    fn schema_enforces_address_and_resident_size_invariants() {
+        let cas = Cas::create().expect("create CAS");
+        assert!(
+            cas.connection
+                .sqlite()
+                .execute(
+                    "INSERT INTO main.cov_db_cas (blake3) VALUES (?1)",
+                    [b"short".as_slice()],
+                )
+                .is_err()
+        );
+
+        let address = cas.hash(b"blob");
+        assert!(
+            cas.connection
+                .sqlite()
+                .execute(
+                    "INSERT INTO main.cov_db_cas (blake3, blob, size) VALUES (?1, ?2, ?3)",
+                    (address.as_bytes().as_slice(), b"blob".as_slice(), 3_i64),
+                )
+                .is_err()
+        );
+    }
+}
