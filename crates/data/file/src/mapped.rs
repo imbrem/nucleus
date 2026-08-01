@@ -132,8 +132,8 @@ impl Blake3Mmap {
         let range = offset..end;
         self.validate(&range)?;
         let indices = Self::indices(&range);
+        self.states.set(range, RangeState::Dirty)?;
         self.bytes_mut()[indices].copy_from_slice(bytes);
-        self.states.set(range, RangeState::Dirty);
         Ok(())
     }
 
@@ -173,8 +173,8 @@ impl Blake3Mmap {
             });
         }
         let indices = Self::indices(&range);
+        self.states.set(range, RangeState::Verified)?;
         self.bytes_mut()[indices].copy_from_slice(&bytes);
-        self.states.set(range, RangeState::Verified);
         Ok(())
     }
 
@@ -186,8 +186,8 @@ impl Blake3Mmap {
     pub fn discard(&mut self, range: Range<u64>) -> Result<(), RangeError> {
         self.validate(&range)?;
         let indices = Self::indices(&range);
+        self.states.set(range, RangeState::Unknown)?;
         self.bytes_mut()[indices].fill(0);
-        self.states.set(range, RangeState::Unknown);
         Ok(())
     }
 
@@ -247,6 +247,8 @@ pub enum RangeError {
     InvalidRange { range: Range<u64>, size: u64 },
     /// A host-side byte slice length could not be represented.
     RangeTooLarge,
+    /// Storage for the byte-state map could not be reserved.
+    Allocation,
     /// The first subrange which did not meet a read requirement.
     Unavailable {
         range: Range<u64>,
@@ -305,11 +307,19 @@ impl StateMap {
             .find(|span| overlaps(&span.range, range) && predicate(span.state))
     }
 
-    fn set(&mut self, range: Range<u64>, state: RangeState) {
+    fn set(&mut self, range: Range<u64>, state: RangeState) -> Result<(), RangeError> {
         if range.is_empty() {
-            return;
+            return Ok(());
         }
-        let mut output = Vec::with_capacity(self.spans.len() + 2);
+        let capacity = self
+            .spans
+            .len()
+            .checked_add(2)
+            .ok_or(RangeError::Allocation)?;
+        let mut output = Vec::new();
+        output
+            .try_reserve_exact(capacity)
+            .map_err(|_| RangeError::Allocation)?;
         for span in self.spans.drain(..) {
             if !overlaps(&span.range, &range) {
                 push_merged(&mut output, span);
@@ -340,6 +350,7 @@ impl StateMap {
             }
         }
         self.spans = output;
+        Ok(())
     }
 }
 

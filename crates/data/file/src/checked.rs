@@ -154,7 +154,11 @@ impl Blake3File {
             .min(self.size());
         let disclosed_len = usize::try_from(disclosed_end - disclosed_start)
             .map_err(|_| FileProofError::RangeTooLarge)?;
-        let mut disclosed = vec![0; disclosed_len];
+        let mut disclosed = Vec::new();
+        disclosed
+            .try_reserve_exact(disclosed_len)
+            .map_err(|_| FileProofError::Allocation)?;
+        disclosed.resize(disclosed_len, 0);
         self.file
             .seek(SeekFrom::Start(disclosed_start))
             .and_then(|_| self.file.read_exact(&mut disclosed))
@@ -171,12 +175,9 @@ impl Blake3File {
             .map_err(|_| FileProofError::RangeTooLarge)?;
         let len =
             usize::try_from(range.end - range.start).map_err(|_| FileProofError::RangeTooLarge)?;
-        Ok(VerifiedRange::new(
-            self.root,
-            self.size(),
-            range,
-            disclosed[start..start + len].to_vec(),
-        ))
+        disclosed.copy_within(start..start + len, 0);
+        disclosed.truncate(len);
+        Ok(VerifiedRange::new(self.root, self.size(), range, disclosed))
     }
 
     /// Recovers the untrusted file and accumulated proof state.
@@ -193,6 +194,8 @@ pub enum FileProofError {
     InvalidRange { range: Range<u64>, size: u64 },
     /// The physical range cannot be represented in this process.
     RangeTooLarge,
+    /// Storage for the selected bytes could not be reserved.
+    Allocation,
     /// The file could not provide the exact selected bytes.
     Io(io::Error),
     /// Supplied bytes or proof nodes contradicted fixed BLAKE3 evidence.
@@ -211,6 +214,7 @@ impl fmt::Display for FileProofError {
                 )
             }
             Self::RangeTooLarge => formatter.write_str("byte range is too large for this process"),
+            Self::Allocation => formatter.write_str("could not reserve storage for byte range"),
             Self::Io(error) => write!(formatter, "could not read candidate file bytes: {error}"),
             Self::Proof(error) => write!(formatter, "BLAKE3 evidence rejected: {error}"),
             Self::MissingEvidence => {
@@ -225,7 +229,10 @@ impl Error for FileProofError {
         match self {
             Self::Io(error) => Some(error),
             Self::Proof(error) => Some(error),
-            Self::InvalidRange { .. } | Self::RangeTooLarge | Self::MissingEvidence => None,
+            Self::InvalidRange { .. }
+            | Self::RangeTooLarge
+            | Self::Allocation
+            | Self::MissingEvidence => None,
         }
     }
 }
