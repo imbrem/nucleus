@@ -316,3 +316,167 @@ pub enum KvError {
         source: sqlite::Error,
     },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::CONNECTION_CATALOG;
+
+    #[test]
+    fn creates_and_operates_on_a_selected_table() {
+        let connection = Connection::open_in_memory().expect("open connection");
+        let mut table = KvTable::create(&connection, "application_kv").expect("create KV");
+
+        assert_eq!(table.get(b"missing").expect("get missing"), None);
+        table
+            .insert_or_replace(b"beta", b"second")
+            .expect("insert beta");
+        table
+            .insert_or_replace(b"alpha", b"first")
+            .expect("insert alpha");
+        table
+            .insert_or_replace(b"beta", b"replacement")
+            .expect("replace beta");
+
+        assert_eq!(
+            table.get(b"beta").expect("get beta"),
+            Some(Bytes::from_static(b"replacement"))
+        );
+        assert_eq!(
+            table
+                .scan()
+                .expect("start scan")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("finish scan"),
+            vec![
+                KvEntry {
+                    key: Bytes::from_static(b"alpha"),
+                    value: Bytes::from_static(b"first"),
+                },
+                KvEntry {
+                    key: Bytes::from_static(b"beta"),
+                    value: Bytes::from_static(b"replacement"),
+                },
+            ]
+        );
+
+        assert!(table.remove(b"alpha").expect("remove present key"));
+        assert!(!table.remove(b"alpha").expect("remove missing key"));
+    }
+
+    #[test]
+    fn opens_an_existing_canonical_table() {
+        let connection = Connection::open_in_memory().expect("open connection");
+        {
+            let mut created = KvTable::create(&connection, "persistent").expect("create KV");
+            created
+                .insert_or_replace(b"key", b"value")
+                .expect("insert value");
+        }
+
+        let mut reopened = KvTable::open(&connection, "persistent").expect("reopen KV");
+        assert_eq!(
+            reopened.get(b"key").expect("get value"),
+            Some(Bytes::from_static(b"value"))
+        );
+    }
+
+    #[test]
+    fn create_does_not_adopt_an_existing_table() {
+        let connection = Connection::open_in_memory().expect("open connection");
+        drop(KvTable::create(&connection, "unique_name").expect("first create"));
+
+        assert!(matches!(
+            KvTable::create(&connection, "unique_name"),
+            Err(KvError::Create { .. })
+        ));
+        KvTable::open(&connection, "unique_name").expect("existing table remains valid");
+    }
+
+    #[test]
+    fn treats_selected_name_as_one_literal_identifier() {
+        let connection = Connection::open_in_memory().expect("open connection");
+        let unusual_name = "odd.name\"; DROP TABLE cov_conn_catalog; --";
+        let mut table = KvTable::create(&connection, unusual_name).expect("create quoted name");
+        table
+            .insert_or_replace(b"key", b"value")
+            .expect("write quoted table");
+        drop(table);
+
+        let catalog_rows: i64 = connection
+            .sqlite()
+            .query_row(
+                &format!("SELECT count(*) FROM temp.{CONNECTION_CATALOG}"),
+                [],
+                |row| row.get(0),
+            )
+            .expect("Neutron catalog still exists");
+        assert!(catalog_rows > 0);
+        assert_eq!(
+            connection
+                .sqlite()
+                .query_row(
+                    "SELECT count(*) FROM main.sqlite_schema WHERE name = ?1",
+                    [unusual_name],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("query literal table name"),
+            1
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_names_before_using_sql() {
+        let connection = Connection::open_in_memory().expect("open connection");
+        assert!(matches!(
+            KvTable::create(&connection, ""),
+            Err(KvError::InvalidTableName)
+        ));
+        assert!(matches!(
+            KvTable::open(&connection, "nul\0name"),
+            Err(KvError::InvalidTableName)
+        ));
+    }
+
+    #[test]
+    fn rejects_missing_and_noncanonical_objects() {
+        let connection = Connection::open_in_memory().expect("open connection");
+        connection
+            .sqlite()
+            .execute_batch(
+                "
+                CREATE TABLE wrong_types (
+                    key TEXT PRIMARY KEY,
+                    value BLOB NOT NULL
+                ) STRICT, WITHOUT ROWID;
+                CREATE TABLE extra_column (
+                    key BLOB PRIMARY KEY,
+                    value BLOB NOT NULL,
+                    metadata BLOB
+                ) STRICT, WITHOUT ROWID;
+                CREATE TABLE rowid_table (
+                    key BLOB PRIMARY KEY,
+                    value BLOB NOT NULL
+                ) STRICT;
+                CREATE VIEW kv_view AS SELECT x'' AS key, x'' AS value;
+                ",
+            )
+            .expect("create noncanonical objects");
+
+        for name in [
+            "missing",
+            "wrong_types",
+            "extra_column",
+            "rowid_table",
+            "kv_view",
+        ] {
+            assert!(
+                matches!(
+                    KvTable::open(&connection, name),
+                    Err(KvError::InvalidSchema { table_name }) if table_name == name
+                ),
+                "unexpected result for {name}"
+            );
+        }
+    }
+}
