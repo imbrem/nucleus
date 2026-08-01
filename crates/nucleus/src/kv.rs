@@ -2,17 +2,18 @@ use covalence_lib_error::snafu::{ResultExt, Snafu};
 use covalence_lib_sqlite as sqlite;
 use sqlite::OptionalExtension;
 
-use crate::{Bytes, Connection};
+use bytes::Bytes;
+use covalence_neutron::Connection;
 
-const CREATE_SQL: &str = include_str!("../sql/create_kv_table.sql");
-const GET_SQL: &str = include_str!("../sql/get_kv.sql");
-const INSERT_OR_REPLACE_SQL: &str = include_str!("../sql/insert_or_replace_kv.sql");
-const REMOVE_SQL: &str = include_str!("../sql/remove_kv.sql");
-const ITERATE_SQL: &str = include_str!("../sql/iterate_kv.sql");
-const INSPECT_TABLE_SQL: &str = include_str!("../sql/inspect_kv_table.sql");
-const INSPECT_COLUMNS_SQL: &str = include_str!("../sql/inspect_kv_columns.sql");
+const CREATE_SQL: &str = include_str!("../sql/kv/create.sql");
+const GET_SQL: &str = include_str!("../sql/kv/get.sql");
+const INSERT_OR_REPLACE_SQL: &str = include_str!("../sql/kv/insert_or_replace.sql");
+const REMOVE_SQL: &str = include_str!("../sql/kv/remove.sql");
+const ITERATE_SQL: &str = include_str!("../sql/kv/iterate.sql");
+const INSPECT_TABLE_SQL: &str = include_str!("../sql/kv/inspect_table.sql");
+const INSPECT_COLUMNS_SQL: &str = include_str!("../sql/kv/inspect_columns.sql");
 
-/// A prepared byte-keyed table on a borrowed Neutron connection.
+/// A prepared byte-keyed Nucleus table on a borrowed Neutron connection.
 ///
 /// The table name is interpreted as one object name in `SQLite`'s `main`
 /// schema, never as SQL or as a schema-qualified name. It is quoted before it
@@ -23,7 +24,7 @@ const INSPECT_COLUMNS_SQL: &str = include_str!("../sql/inspect_kv_columns.sql");
 /// exactly `key BLOB PRIMARY KEY` and `value BLOB NOT NULL`. This check is only
 /// a point-in-time structural assertion. A caller can use
 /// [`Connection::sqlite`] to change or replace the table afterwards, and
-/// Neutron does not assign application semantics or trust to its bytes.
+/// this wrapper does not assign application semantics or trust to its bytes.
 #[derive(Debug)]
 pub struct KvTable<'conn> {
     get: sqlite::Statement<'conn>,
@@ -320,7 +321,7 @@ pub enum KvError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::CONNECTION_CATALOG;
+    use covalence_neutron::CONNECTION_CATALOG;
 
     #[test]
     fn creates_and_operates_on_a_selected_table() {

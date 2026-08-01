@@ -11,7 +11,6 @@
 mod cas;
 mod connection;
 mod image;
-mod kv;
 
 pub use bytes::Bytes;
 pub use cas::{Cas, CasError, CasId};
@@ -22,4 +21,3 @@ pub use connection::{
 };
 pub use covalence_lib_hash::O256;
 pub use image::ImageError;
-pub use kv::{KvEntry, KvError, KvIter, KvTable};
