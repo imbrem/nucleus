@@ -165,4 +165,43 @@ mod tests {
         let root = arbitrary.root(arbitrary);
         assert_ne!(root, Blake3Hash::default());
     }
+
+    #[test]
+    fn public_modes_match_reference_hashers() {
+        let data = b"public BLAKE3 namespace material";
+        let key = O256::from_array([0x42; 32]);
+        let context_key = CtxKey::derive("nucleus test context");
+
+        assert_eq!(
+            Blake3Mode::Unkeyed.hash(data),
+            Obj::from_array(*blake3::hash(data).as_bytes())
+        );
+        assert_eq!(
+            Blake3Mode::Keyed(key).hash(data),
+            Obj::from_array(*blake3::keyed_hash(key.as_bytes(), data).as_bytes())
+        );
+
+        let mut reference = blake3::Hasher::new_from_context_key(context_key.as_bytes());
+        reference.update(data);
+        assert_eq!(
+            Blake3Mode::ContextKeyed(context_key).hash(data),
+            Obj::from_array(*reference.finalize().as_bytes())
+        );
+    }
+
+    #[test]
+    fn cv_convenience_methods_are_exactly_unkeyed_mode() {
+        let left_bytes = [b'l'; blake3::CHUNK_LEN];
+        let right_bytes = [b'r'; blake3::CHUNK_LEN];
+        let left = Blake3Cv::from_subtree(0, left_bytes);
+        let right = Blake3Cv::from_subtree(blake3::CHUNK_LEN as u64, right_bytes);
+
+        assert_eq!(left, Blake3Mode::Unkeyed.subtree_cv(0, left_bytes));
+        assert_eq!(left.merge(right), Blake3Mode::Unkeyed.merge(left, right));
+        assert_eq!(left.root(right), Blake3Mode::Unkeyed.root(left, right));
+
+        let keyed = Blake3Mode::Keyed(O256::from_array([0x5a; 32]));
+        assert_ne!(left, keyed.subtree_cv(0, left_bytes));
+        assert_ne!(left.root(right), keyed.root(left, right));
+    }
 }

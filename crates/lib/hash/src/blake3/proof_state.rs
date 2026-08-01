@@ -1208,4 +1208,42 @@ mod tests {
         assert_eq!(state.appended(), 0);
         assert_eq!(state.holes().len(), 2);
     }
+
+    #[test]
+    fn every_public_mode_reproduces_its_complete_tree_root() {
+        let data = bytes(5 * blake3::CHUNK_LEN + 91);
+        let modes = [
+            Blake3Mode::Unkeyed,
+            Blake3Mode::Keyed(crate::O256::from_array([0x55; 32])),
+            Blake3Mode::ContextKeyed(crate::CtxKey::derive("nucleus proof test")),
+        ];
+
+        for mode in modes {
+            let expected = mode.hash(&data);
+            let mut state =
+                Blake3ProofState::new_with_mode(data.len() as u64, Some(expected), mode).unwrap();
+            for chunk in (0..usize::try_from(state.chunks()).unwrap()).rev() {
+                let (offset, input) = chunk_range(&data, chunk);
+                state.insert_aligned(offset, input).unwrap();
+            }
+            assert_eq!(state.mode(), mode);
+            assert_eq!(state.claimed_root(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn evidence_from_another_mode_cannot_authenticate() {
+        let data = bytes(3 * blake3::CHUNK_LEN);
+        let keyed = Blake3Mode::Keyed(crate::O256::from_array([0x33; 32]));
+        let expected = keyed.hash(&data);
+        let mut wrong =
+            Blake3ProofState::new_with_mode(data.len() as u64, Some(expected), Blake3Mode::Unkeyed)
+                .unwrap();
+
+        assert!(matches!(
+            wrong.insert_aligned(0, &data),
+            Err(ProofStateError::RootMismatch { .. })
+        ));
+        assert_eq!(wrong.claimed_root(), None);
+    }
 }
