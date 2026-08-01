@@ -178,6 +178,12 @@
           ]
         },
         {
+          "name": "segment_map",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "sqlite",
           "kinds": [
             "test"
@@ -240,6 +246,13 @@
     {
       "source": "workspace#covalence-neutron@0.0.0",
       "target": "workspace#covalence-lib-sqlite@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus@0.0.0",
+      "target": "workspace#covalence-data-segment@0.0.0",
       "kinds": [
         "normal"
       ]
