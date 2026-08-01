@@ -1,0 +1,4 @@
+CREATE TABLE {table} (
+    key   BLOB PRIMARY KEY,
+    value BLOB NOT NULL
+) STRICT, WITHOUT ROWID;
