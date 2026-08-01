@@ -178,6 +178,12 @@
           ]
         },
         {
+          "name": "segment_cas",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "segment_map",
           "kinds": [
             "test"
