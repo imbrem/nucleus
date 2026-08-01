@@ -37,6 +37,15 @@ impl Cas {
         Ok(Self { connection })
     }
 
+    /// Erases the CAS invariant and returns the permeable raw connection.
+    ///
+    /// The returned connection may freely mutate or remove the CAS table and
+    /// therefore carries none of this wrapper's guarantees.
+    #[must_use]
+    pub fn into_connection(self) -> neutron::Connection {
+        self.connection
+    }
+
     /// Computes the pure, unkeyed BLAKE3 digest of `data`.
     #[must_use]
     pub fn hash(&self, data: impl AsRef<[u8]>) -> Blake3Hash {
