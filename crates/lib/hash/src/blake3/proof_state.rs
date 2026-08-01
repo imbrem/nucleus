@@ -762,3 +762,195 @@ fn parent_step_in(
         parent_step_in(right, needle, false)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bytes(size: usize) -> Vec<u8> {
+        (0..size)
+            .map(|index| index.wrapping_mul(31).wrapping_add(index / 7).to_le_bytes()[0])
+            .collect()
+    }
+
+    fn chunk_range(data: &[u8], chunk: usize) -> (u64, &[u8]) {
+        let start = chunk * blake3::CHUNK_LEN;
+        let end = (start + blake3::CHUNK_LEN).min(data.len());
+        (u64::try_from(start).unwrap(), &data[start..end])
+    }
+
+    #[test]
+    fn allocation_matches_fixed_tree_geometry() {
+        let cases = [(0, 0), (1, 1), (2, 2), (3, 4), (4, 6), (5, 8)];
+        for (chunks, slots) in cases {
+            let size = chunks * blake3::CHUNK_LEN;
+            let state = Blake3ProofState::new(u64::try_from(size).unwrap(), None).unwrap();
+            assert_eq!(state.node_capacity(), slots);
+        }
+    }
+
+    #[test]
+    fn fragmented_append_reproduces_roots_without_growing_geometry() {
+        for size in [0, 1, 63, 1_024, 1_025, 3_089, 7_211] {
+            let data = bytes(size);
+            let mut state = Blake3ProofState::new(u64::try_from(size).unwrap(), None).unwrap();
+            let capacity = state.node_capacity();
+            let mut offset = 0;
+            for width in [1, 17, 1_003, 2, 2_111] {
+                if offset == data.len() {
+                    break;
+                }
+                let end = (offset + width).min(data.len());
+                state.append(&data[offset..end]).unwrap();
+                assert_eq!(state.node_capacity(), capacity);
+                offset = end;
+            }
+            if offset < data.len() {
+                state.append(&data[offset..]).unwrap();
+            }
+            assert_eq!(state.appended(), u64::try_from(size).unwrap());
+            assert!(state.trailing_bytes().is_empty());
+            assert_eq!(state.claimed_root(), Some(Blake3Hash::from_bytes(data)));
+            assert!(state.holes().is_empty());
+        }
+    }
+
+    #[test]
+    fn aligned_chunks_may_arrive_out_of_order() {
+        for chunks in [2, 3, 5, 8] {
+            let data = bytes(chunks * blake3::CHUNK_LEN - 37);
+            let expected = Blake3Hash::from_bytes(&data);
+            let mut state = Blake3ProofState::new(data.len() as u64, Some(expected)).unwrap();
+            for chunk in (0..chunks).rev() {
+                let (offset, input) = chunk_range(&data, chunk);
+                state.insert_aligned(offset, input).unwrap();
+            }
+            assert_eq!(state.claimed_root(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn generated_range_proof_verifies_disclosed_bytes() {
+        let data = bytes(6 * blake3::CHUNK_LEN + 317);
+        let expected = Blake3Hash::from_bytes(&data);
+        let mut source = Blake3ProofState::new(data.len() as u64, None).unwrap();
+        source.insert_aligned(0, &data).unwrap();
+
+        let requested = 2 * CHUNK_BYTES + 13..4 * CHUNK_BYTES + 29;
+        let proof = source.proof(requested.clone()).unwrap();
+        assert_eq!(proof.requested, requested);
+        assert_eq!(proof.disclosed, 2 * CHUNK_BYTES..5 * CHUNK_BYTES);
+
+        let mut verifier = Blake3ProofState::new(data.len() as u64, Some(expected)).unwrap();
+        verifier.insert_nodes(proof.nodes).unwrap();
+        let disclosed = proof.disclosed;
+        let start = usize::try_from(disclosed.start).unwrap();
+        let end = usize::try_from(disclosed.end).unwrap();
+        verifier
+            .insert_aligned(disclosed.start, &data[start..end])
+            .unwrap();
+        assert_eq!(verifier.claimed_root(), Some(expected));
+    }
+
+    #[test]
+    fn proof_reports_the_minimal_missing_frontier() {
+        let size = 4 * CHUNK_BYTES;
+        let state = Blake3ProofState::new(size, None).unwrap();
+        let error = state.proof(CHUNK_BYTES..2 * CHUNK_BYTES).unwrap_err();
+        let ProofStateError::MissingProof { nodes } = error else {
+            panic!("unexpected error: {error:?}");
+        };
+        assert_eq!(
+            nodes,
+            vec![
+                Blake3Node::new(0, 1).unwrap(),
+                Blake3Node::new(2, 2).unwrap(),
+            ]
+        );
+    }
+
+    #[test]
+    fn internal_evidence_satisfies_holes_without_expanding_it() {
+        let mut state = Blake3ProofState::new(4 * CHUNK_BYTES, None).unwrap();
+        let left = Blake3Node::new(0, 2).unwrap();
+        state
+            .insert_node(Blake3ProofNode {
+                node: left,
+                cv: Blake3Cv::from_array([7; 32]),
+            })
+            .unwrap();
+        assert_eq!(state.holes()[0], Blake3Node::new(2, 2).unwrap());
+        assert_eq!(state.holes().len(), 1);
+    }
+
+    #[test]
+    fn noncanonical_and_virtual_root_nodes_are_rejected() {
+        let mut state = Blake3ProofState::new(4 * CHUNK_BYTES, None).unwrap();
+        for node in [
+            Blake3Node::new(1, 2).unwrap(),
+            Blake3Node::new(0, 4).unwrap(),
+            Blake3Node::new(4, 1).unwrap(),
+        ] {
+            assert!(matches!(
+                state.insert_node(Blake3ProofNode {
+                    node,
+                    cv: Blake3Cv::default(),
+                }),
+                Err(ProofStateError::InvalidNode { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn failed_batch_is_atomic() {
+        let data = bytes(3 * blake3::CHUNK_LEN);
+        let mut state = Blake3ProofState::new(data.len() as u64, None).unwrap();
+        let (offset, chunk0) = chunk_range(&data, 0);
+        state.insert_aligned(offset, chunk0).unwrap();
+        let holes_before = state.holes();
+        let (_, chunk1) = chunk_range(&data, 1);
+        let error = state
+            .insert_nodes([
+                Blake3ProofNode {
+                    node: Blake3Node::new(1, 1).unwrap(),
+                    cv: Blake3Cv::from_subtree(CHUNK_BYTES, chunk1),
+                },
+                Blake3ProofNode {
+                    node: Blake3Node::new(0, 1).unwrap(),
+                    cv: Blake3Cv::default(),
+                },
+            ])
+            .unwrap_err();
+        assert!(matches!(error, ProofStateError::ConflictingNode { .. }));
+        assert_eq!(state.holes(), holes_before);
+    }
+
+    #[test]
+    fn wrong_expected_root_rejects_complete_input_atomically() {
+        let data = bytes(2 * blake3::CHUNK_LEN);
+        let wrong = Blake3Hash::from_array([42; 32]);
+        let mut state = Blake3ProofState::new(data.len() as u64, Some(wrong)).unwrap();
+        let holes = state.holes();
+        assert!(matches!(
+            state.insert_aligned(0, &data),
+            Err(ProofStateError::RootMismatch { expected, .. }) if expected == wrong
+        ));
+        assert_eq!(state.holes(), holes);
+        assert_eq!(state.claimed_root(), None);
+    }
+
+    #[test]
+    fn invalid_ranges_and_append_overflow_do_not_mutate_state() {
+        let mut state = Blake3ProofState::new(2 * CHUNK_BYTES, None).unwrap();
+        assert!(matches!(
+            state.insert_aligned(1, [0; 32]),
+            Err(ProofStateError::InvalidRange { .. })
+        ));
+        assert!(matches!(
+            state.append(vec![0; 2 * blake3::CHUNK_LEN + 1]),
+            Err(ProofStateError::AppendPastEnd { .. })
+        ));
+        assert_eq!(state.appended(), 0);
+        assert_eq!(state.holes().len(), 2);
+    }
+}
