@@ -10,6 +10,9 @@ const CREATE_SQL: &str = include_str!("../sql/cas/create.sql");
 const STORE_SQL: &str = include_str!("../sql/cas/store.sql");
 const FETCH_SQL: &str = include_str!("../sql/cas/fetch.sql");
 const FETCH_RANGE_SQL: &str = include_str!("../sql/cas/fetch_range.sql");
+const RESERVE_SQL: &str = include_str!("../sql/cas/reserve.sql");
+const STATE_SQL: &str = include_str!("../sql/cas/state.sql");
+const EVICT_SQL: &str = include_str!("../sql/cas/evict.sql");
 
 /// An in-memory `SQLite` database maintained as a BLAKE3 content-addressed store.
 ///
@@ -64,11 +67,16 @@ impl Cas {
     pub fn store(&self, data: impl AsRef<[u8]>) -> Result<Blake3Hash, CasError> {
         let data = data.as_ref();
         let blake3 = self.hash(data);
+        self.store_at(blake3, data)?;
+        Ok(blake3)
+    }
+
+    fn store_at(&self, blake3: Blake3Hash, data: &[u8]) -> Result<(), CasError> {
         let stored = self
             .connection
             .sqlite()
             .query_row(STORE_SQL, (blake3.as_bytes().as_slice(), data), |row| {
-                row.get::<_, Vec<u8>>(0)
+                row.get::<_, bool>(0)
             })
             .optional()
             .context(StoreSnafu)?;
@@ -76,7 +84,90 @@ impl Cas {
         if stored.is_none() {
             return Err(CasError::Conflict { blake3 });
         }
-        Ok(blake3)
+        Ok(())
+    }
+
+    /// Reserves a non-resident address with an optional known size.
+    ///
+    /// This changes only local index and availability state; it does not claim
+    /// that bytes for `blake3` are resident. Returns `true` when the address
+    /// already existed. A newly supplied size fills an unknown size but cannot
+    /// replace a conflicting one.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the size is not representable, conflicts with an
+    /// existing row, or the CAS cannot be written.
+    pub fn reserve(&self, blake3: Blake3Hash, size: Option<u64>) -> Result<bool, CasError> {
+        let existing = self.state(blake3)?;
+        let size = size
+            .map(|size| i64::try_from(size).map_err(|_| CasError::UnsupportedSize { size }))
+            .transpose()?;
+        let reserved = self
+            .connection
+            .sqlite()
+            .query_row(
+                RESERVE_SQL,
+                (blake3.as_bytes().as_slice(), size),
+                |_| Ok(()),
+            )
+            .optional()
+            .context(StoreSnafu)?;
+        if reserved.is_none() {
+            return Err(CasError::Conflict { blake3 });
+        }
+        Ok(existing.is_some())
+    }
+
+    /// Fills an existing placeholder with bytes matching its address.
+    ///
+    /// Returns `true` when resident bytes were already present.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the address is missing, the bytes hash to another
+    /// address, the known size conflicts, or the CAS cannot be accessed.
+    pub fn fill(&self, blake3: Blake3Hash, data: impl AsRef<[u8]>) -> Result<bool, CasError> {
+        let data = data.as_ref();
+        let actual = self.hash(data);
+        if actual != blake3 {
+            return Err(CasError::AddressMismatch {
+                expected: blake3,
+                actual,
+            });
+        }
+        let Some((size, resident)) = self.state(blake3)? else {
+            return Err(CasError::Missing { blake3 });
+        };
+        if let Some(size) = size {
+            let actual_size = u64::try_from(data.len())
+                .map_err(|_| CasError::UnsupportedSize { size: u64::MAX })?;
+            if size != actual_size {
+                return Err(CasError::SizeMismatch {
+                    blake3,
+                    expected: size,
+                    actual: actual_size,
+                });
+            }
+        }
+        self.store_at(blake3, data)?;
+        Ok(resident)
+    }
+
+    /// Evicts resident bytes while retaining the address and known size.
+    ///
+    /// Returns `true` when bytes were removed. Missing and already unresolved
+    /// addresses return `false`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the CAS cannot be written.
+    pub fn evict(&self, blake3: Blake3Hash) -> Result<bool, CasError> {
+        self.connection
+            .sqlite()
+            .execute(EVICT_SQL, [blake3.as_bytes().as_slice()])
+            .context(StoreSnafu)
+            .map(|changed| changed != 0)
     }
 
     /// Fetches a resident blob by BLAKE3 content address.
@@ -154,6 +245,23 @@ impl Cas {
         }
         Ok(blob.map(Bytes::from))
     }
+
+    fn state(&self, blake3: Blake3Hash) -> Result<Option<(Option<u64>, bool)>, CasError> {
+        self.connection
+            .sqlite()
+            .query_row(STATE_SQL, [blake3.as_bytes().as_slice()], |row| {
+                Ok((row.get::<_, Option<i64>>(0)?, row.get::<_, bool>(1)?))
+            })
+            .optional()
+            .context(FetchSnafu)?
+            .map(|(size, resident)| {
+                let size = size
+                    .map(|size| u64::try_from(size).map_err(|_| CasError::MalformedSize { size }))
+                    .transpose()?;
+                Ok((size, resident))
+            })
+            .transpose()
+    }
 }
 
 /// Failure to create or access a flat `SQLite` CAS.
@@ -186,6 +294,42 @@ pub enum CasError {
     Conflict {
         /// Conflicting pure BLAKE3 address.
         blake3: Blake3Hash,
+    },
+
+    /// Supplied bytes do not have the requested address.
+    #[snafu(display("bytes hash to {actual}, not requested BLAKE3 address {expected}"))]
+    AddressMismatch {
+        /// Requested address.
+        expected: Blake3Hash,
+        /// Address computed from supplied bytes.
+        actual: Blake3Hash,
+    },
+
+    /// An address has not been reserved.
+    #[snafu(display("BLAKE3 address {blake3} is not present in the CAS"))]
+    Missing {
+        /// Missing address.
+        blake3: Blake3Hash,
+    },
+
+    /// A known size disagrees with supplied bytes.
+    #[snafu(display(
+        "BLAKE3 address {blake3} has size {expected}, but supplied bytes have size {actual}"
+    ))]
+    SizeMismatch {
+        /// Address with conflicting size state.
+        blake3: Blake3Hash,
+        /// Previously known size.
+        expected: u64,
+        /// Supplied byte length.
+        actual: u64,
+    },
+
+    /// An object size cannot be represented by `SQLite`.
+    #[snafu(display("object size {size} is too large for SQLite"))]
+    UnsupportedSize {
+        /// Unsupported size.
+        size: u64,
     },
 
     /// Resident bytes could not be fetched.
@@ -370,5 +514,108 @@ mod tests {
         raw.sqlite()
             .execute("DROP TABLE main.cov_db_cas", ())
             .expect("raw connection is intentionally unrestricted");
+    }
+
+    #[test]
+    fn placeholders_fill_evict_and_refill_without_changing_identity() {
+        let cas = Cas::create().expect("create CAS");
+        let address = cas.hash(b"eventual bytes");
+
+        assert!(!cas.reserve(address, Some(14)).expect("reserve new"));
+        assert!(cas.reserve(address, Some(14)).expect("reserve existing"));
+        assert_eq!(cas.fetch(address).expect("unresolved fetch"), None);
+        assert!(!cas.fill(address, b"eventual bytes").expect("first fill"));
+        assert!(cas.fill(address, b"eventual bytes").expect("repeat fill"));
+        assert_eq!(
+            cas.fetch(address).expect("resident fetch"),
+            Some(Bytes::from_static(b"eventual bytes"))
+        );
+
+        assert!(cas.evict(address).expect("evict resident"));
+        assert!(!cas.evict(address).expect("repeat eviction"));
+        assert_eq!(cas.fetch(address).expect("evicted fetch"), None);
+        assert!(!cas.fill(address, b"eventual bytes").expect("refill"));
+    }
+
+    #[test]
+    fn placeholder_conflicts_are_non_mutating() {
+        let cas = Cas::create().expect("create CAS");
+        let data = b"four";
+        let address = cas.hash(data);
+        cas.reserve(address, Some(5)).expect("reserve wrong size");
+
+        assert!(matches!(
+            cas.reserve(address, Some(4)),
+            Err(CasError::Conflict { blake3 }) if blake3 == address
+        ));
+        assert!(matches!(
+            cas.fill(address, data),
+            Err(CasError::SizeMismatch {
+                blake3,
+                expected: 5,
+                actual: 4,
+            }) if blake3 == address
+        ));
+        assert_eq!(cas.fetch(address).expect("still unresolved"), None);
+
+        let other = cas.hash(b"other");
+        assert!(matches!(
+            cas.fill(other, data),
+            Err(CasError::AddressMismatch { expected, actual })
+                if expected == other && actual == address
+        ));
+        assert_eq!(cas.fetch(other).expect("not implicitly reserved"), None);
+    }
+
+    #[test]
+    fn fill_requires_an_existing_placeholder() {
+        let cas = Cas::create().expect("create CAS");
+        let address = cas.hash(b"missing row");
+        assert!(matches!(
+            cas.fill(address, b"missing row"),
+            Err(CasError::Missing { blake3 }) if blake3 == address
+        ));
+    }
+
+    #[test]
+    fn reservation_preserves_and_refines_size_state() {
+        let cas = Cas::create().expect("create CAS");
+        let address = cas.hash(b"four");
+
+        assert!(!cas.reserve(address, None).expect("reserve unknown size"));
+        assert_eq!(
+            cas.state(address).expect("read unknown state"),
+            Some((None, false))
+        );
+        assert!(cas.reserve(address, Some(4)).expect("learn size"));
+        assert_eq!(
+            cas.state(address).expect("read known state"),
+            Some((Some(4), false))
+        );
+        assert!(cas.reserve(address, None).expect("preserve known size"));
+        assert_eq!(
+            cas.state(address).expect("read preserved state"),
+            Some((Some(4), false))
+        );
+
+        cas.fill(address, b"four").expect("fill placeholder");
+        assert!(cas.reserve(address, Some(4)).expect("reserve resident"));
+        assert!(matches!(
+            cas.reserve(address, Some(5)),
+            Err(CasError::Conflict { blake3 }) if blake3 == address
+        ));
+        assert!(cas.evict(address).expect("evict resident"));
+        assert_eq!(
+            cas.state(address).expect("read evicted state"),
+            Some((Some(4), false))
+        );
+        assert!(matches!(
+            cas.fill(address, b"four!"),
+            Err(CasError::AddressMismatch { expected, .. }) if expected == address
+        ));
+        assert_eq!(
+            cas.state(address).expect("failed fill is non-mutating"),
+            Some((Some(4), false))
+        );
     }
 }
