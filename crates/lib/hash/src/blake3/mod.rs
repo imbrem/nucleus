@@ -7,7 +7,7 @@ mod cv;
 mod proof_state;
 
 #[cfg(feature = "blake3")]
-pub use cv::{Blake3Cv, Blake3Merkle};
+pub use cv::{Blake3Cv, Blake3Merkle, Blake3Mode};
 
 #[cfg(feature = "blake3")]
 pub use proof_state::{
@@ -34,10 +34,11 @@ impl Namespace for Cov {
     type Opaque = Opaque<32>;
 }
 
-/// Unkeyed BLAKE3 digests.
+/// BLAKE3-family output digests.
 ///
-/// This algorithm-specific namespace deliberately supports neither random
-/// construction nor self-tagging.
+/// Unkeyed, keyed, and context-keyed hashing intentionally inject into this
+/// same namespace. This algorithm-specific namespace deliberately supports
+/// neither random construction nor self-tagging.
 ///
 /// ```compile_fail
 /// use covalence_lib_hash::{Blake3, RandomNamespace};
@@ -53,7 +54,7 @@ impl Namespace for Blake3 {
     type Opaque = Opaque<32>;
 }
 
-/// An unkeyed BLAKE3 digest.
+/// A BLAKE3 output digest.
 pub type Blake3Hash = Obj<Blake3>;
 
 /// SHA-256 digests.

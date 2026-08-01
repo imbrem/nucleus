@@ -1,4 +1,4 @@
-//! Preallocated, I/O-free state for ordinary unkeyed BLAKE3 proofs.
+//! Preallocated, I/O-free state for BLAKE3 proofs in one fixed mode.
 //!
 //! The total byte length fixes the complete tree geometry, so construction
 //! allocates every non-root CV slot and its validity bitmap exactly once.
@@ -13,7 +13,7 @@ use std::{
     ops::Range,
 };
 
-use super::{Blake3Cv, Blake3Hash};
+use super::{Blake3Cv, Blake3Hash, Blake3Mode};
 
 const CHUNK_BYTES: u64 = blake3::CHUNK_LEN as u64;
 
@@ -67,7 +67,8 @@ impl Blake3Node {
 pub struct Blake3ProofNode {
     /// Claimed tree position.
     pub node: Blake3Node,
-    /// Claimed non-root chaining value.
+    /// Claimed non-root chaining value; its mode is not encoded in the value
+    /// and must match the receiving proof state.
     pub cv: Blake3Cv,
 }
 
@@ -87,8 +88,7 @@ pub struct Blake3Proof {
 pub enum ProofStateError {
     /// The fixed tree cannot be represented on this platform.
     TreeTooLarge,
-    /// The fixed tree geometry is representable but its buffers cannot be
-    /// allocated.
+    /// A required state or operation buffer cannot be allocated.
     AllocationFailed,
     /// Invalid byte range for the fixed input.
     InvalidRange {
@@ -154,14 +154,16 @@ impl fmt::Display for ProofStateError {
 
 impl Error for ProofStateError {}
 
-/// Fixed-size, preallocated proof state for ordinary unkeyed BLAKE3.
+/// Fixed-size, preallocated proof state for one BLAKE3 mode.
 ///
 /// No reader, callback, file, database, or async operation is stored here.
 /// Imported CVs remain untrusted evidence. Supplying enough evidence derives a
 /// pure [`Blake3Hash`], and an optional expected root is checked before the
-/// evidence is committed.
+/// evidence is committed. [`Self::new`] selects unkeyed mode;
+/// [`Self::new_with_mode`] makes keyed and context-keyed use explicit.
 #[derive(Clone)]
 pub struct Blake3ProofState {
+    mode: Blake3Mode,
     size: u64,
     chunks: u64,
     expected_root: Option<Blake3Hash>,
@@ -173,7 +175,7 @@ pub struct Blake3ProofState {
 }
 
 impl Blake3ProofState {
-    /// Allocates the exact non-root CV buffer for `size`.
+    /// Allocates the exact non-root CV buffer for `size` in unkeyed mode.
     ///
     /// `expected_root` changes verification, not tree geometry. With no
     /// expected root the state can instead generate a root from complete
@@ -185,6 +187,25 @@ impl Blake3ProofState {
     /// indexed on this platform, or [`ProofStateError::AllocationFailed`] when
     /// its fixed buffers cannot be allocated.
     pub fn new(size: u64, expected_root: Option<Blake3Hash>) -> Result<Self, ProofStateError> {
+        Self::new_with_mode(size, expected_root, Blake3Mode::Unkeyed)
+    }
+
+    /// Allocates fixed proof geometry for one explicit BLAKE3 mode.
+    ///
+    /// Key and context-key bytes are public namespace material stored with the
+    /// proof state. Evidence produced in another mode will fail root checking.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProofStateError::TreeTooLarge`] when the node count cannot be
+    /// indexed on this platform, [`ProofStateError::AllocationFailed`] when
+    /// the fixed buffers cannot be allocated, or a root mismatch for empty
+    /// input.
+    pub fn new_with_mode(
+        size: u64,
+        expected_root: Option<Blake3Hash>,
+        mode: Blake3Mode,
+    ) -> Result<Self, ProofStateError> {
         let chunks = size.div_ceil(CHUNK_BYTES);
         let node_count = match chunks {
             0 => 0,
@@ -195,7 +216,7 @@ impl Blake3ProofState {
                 .ok_or(ProofStateError::TreeTooLarge)?,
         };
         let node_count = usize::try_from(node_count).map_err(|_| ProofStateError::TreeTooLarge)?;
-        let claimed_root = (size == 0).then(|| Blake3Hash::from_bytes([]));
+        let claimed_root = (size == 0).then(|| mode.hash([]));
         if let (Some(expected), Some(actual)) = (expected_root, claimed_root)
             && expected != actual
         {
@@ -207,6 +228,7 @@ impl Blake3ProofState {
             .map_err(|_| ProofStateError::AllocationFailed)?;
         nodes.resize(node_count, Blake3Cv::default());
         Ok(Self {
+            mode,
             size,
             chunks,
             expected_root,
@@ -216,6 +238,12 @@ impl Blake3ProofState {
             appended: 0,
             trailing: Vec::new(),
         })
+    }
+
+    /// BLAKE3 mode shared by every leaf, parent, and root operation.
+    #[must_use]
+    pub const fn mode(&self) -> Blake3Mode {
+        self.mode
     }
 
     /// Complete byte length fixed at construction.
@@ -324,9 +352,9 @@ impl Blake3ProofState {
                 completed.push((
                     Blake3ProofNode {
                         node,
-                        cv: Blake3Cv::from_subtree(chunk_start, &trailing),
+                        cv: self.mode.subtree_cv(chunk_start, &trailing),
                     },
-                    (self.chunks == 1).then(|| Blake3Hash::from_bytes(&trailing)),
+                    (self.chunks == 1).then(|| self.mode.hash(&trailing)),
                 ));
                 trailing.clear();
                 chunk_start +=
@@ -365,6 +393,7 @@ impl Blake3ProofState {
         if !self.trailing.is_empty() {
             return Err(ProofStateError::UnverifiedTrailingBytes);
         }
+        let mode = self.mode;
         let first_chunk = offset / CHUNK_BYTES;
         let evidence =
             bytes
@@ -375,9 +404,9 @@ impl Blake3ProofState {
                         first_chunk: chunk_index,
                         chunks: 1,
                     },
-                    cv: Blake3Cv::from_subtree(chunk_index * CHUNK_BYTES, chunk),
+                    cv: mode.subtree_cv(chunk_index * CHUNK_BYTES, chunk),
                 });
-        let single_root = (self.chunks == 1).then(|| Blake3Hash::from_bytes(bytes));
+        let single_root = (self.chunks == 1).then(|| mode.hash(bytes));
         self.insert_batch(evidence, single_root)
     }
 
@@ -540,12 +569,12 @@ impl Blake3ProofState {
                     (sibling_cv, current_cv)
                 };
                 if let Some(parent) = parent {
-                    let parent_cv = left.merge(right);
+                    let parent_cv = self.mode.merge(left, right);
                     let parent_slot = self.slot(parent).expect("canonical non-root parent");
                     self.stage_value(parent, parent_slot, parent_cv, &mut staged)?;
                     current = parent;
                 } else {
-                    let root = left.root(right);
+                    let root = self.mode.root(left, right);
                     if let Some(existing) = proposed_root
                         && existing != root
                     {
@@ -637,7 +666,10 @@ impl Blake3ProofState {
             return None;
         }
         let (left, right) = children(node);
-        Some(self.value(left, staged)?.merge(self.value(right, staged)?))
+        Some(
+            self.mode
+                .merge(self.value(left, staged)?, self.value(right, staged)?),
+        )
     }
 
     fn incomplete_refinement(
