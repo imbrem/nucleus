@@ -89,7 +89,10 @@ impl Error for InvalidRange {}
 pub struct SegmentId(u64);
 
 impl SegmentId {
-    /// Numeric representation, suitable for an `SQLite` integer key.
+    /// Monotonic numeric representation.
+    ///
+    /// Storage adapters with a narrower integer domain, including `SQLite`'s
+    /// signed 64-bit `INTEGER`, must reject values they cannot represent.
     #[must_use]
     pub const fn get(self) -> u64 {
         self.0
@@ -231,6 +234,12 @@ impl<V> SegmentMap<V> {
         self.inner.overlapping(&(), range)
     }
 
+    /// Every segment in increasing range order.
+    #[must_use]
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = &Segment<V>> {
+        self.inner.iter_key(&())
+    }
+
     /// Removes one exact segment by identity.
     pub fn remove(&mut self, id: SegmentId) -> Option<Segment<V>> {
         self.inner.remove(id).map(|((), segment)| segment)
@@ -369,6 +378,19 @@ impl<K: Clone + Ord, V> KeyedSegmentMap<K, V> {
         }
     }
 
+    /// Every segment for `key`, in increasing range order.
+    pub fn iter_key(&self, key: &K) -> impl DoubleEndedIterator<Item = &Segment<V>> {
+        self.by_key.get(key).into_iter().flat_map(BTreeMap::values)
+    }
+
+    /// Every key and segment in lexicographic key/range order.
+    #[must_use]
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = (&K, &Segment<V>)> {
+        self.by_key
+            .iter()
+            .flat_map(|(key, segments)| segments.values().map(move |segment| (key, segment)))
+    }
+
     /// Removes one exact segment by identity.
     pub fn remove(&mut self, id: SegmentId) -> Option<(K, Segment<V>)> {
         let (key, lo) = self.by_id.remove(&id)?;
@@ -387,6 +409,8 @@ impl<K: Clone + Ord, V> KeyedSegmentMap<K, V> {
     ///
     /// Returns [`InsertError::IdExhausted`] before mutation if retained
     /// fragments cannot all receive fresh identities.
+    ///
+    /// If `split` panics, the map and its ID allocator remain unchanged.
     pub fn remove_range(
         &mut self,
         key: &K,
@@ -402,6 +426,8 @@ impl<K: Clone + Ord, V> KeyedSegmentMap<K, V> {
     ///
     /// Returns [`InsertError::IdExhausted`] before mutation if the replacement
     /// and retained fragments cannot all receive fresh identities.
+    ///
+    /// If `split` panics, the map and its ID allocator remain unchanged.
     pub fn replace(
         &mut self,
         key: &K,
@@ -431,16 +457,11 @@ impl<K: Clone + Ord, V> KeyedSegmentMap<K, V> {
             })
             .sum::<usize>();
         let insert_count = fragment_count + usize::from(replacement.is_some());
-        let first_id = self.reserve_ids(insert_count)?;
-
-        let mut removed = Vec::with_capacity(affected.len());
-        for id in affected {
-            let (_, segment) = self.remove(id).expect("overlap came from this map");
-            removed.push(segment);
-        }
+        let first_id = self.preview_ids(insert_count)?;
 
         let mut planned = Vec::with_capacity(insert_count);
-        for segment in &removed {
+        for id in &affected {
+            let (_, segment) = self.get_id(*id).expect("overlap came from this map");
             if segment.range.lo < range.lo {
                 let retained = SegmentRange {
                     lo: segment.range.lo,
@@ -460,6 +481,13 @@ impl<K: Clone + Ord, V> KeyedSegmentMap<K, V> {
             planned.push((range, value));
         }
         planned.sort_by_key(|(range, _)| range.lo);
+
+        self.next_id = first_id.0 + u64::try_from(insert_count).expect("IDs were checked");
+        let mut removed = Vec::with_capacity(affected.len());
+        for id in affected {
+            let (_, segment) = self.remove(id).expect("overlap came from this map");
+            removed.push(segment);
+        }
 
         let mut inserted = Vec::with_capacity(planned.len());
         for (offset, (range, value)) in planned.into_iter().enumerate() {
@@ -484,10 +512,15 @@ impl<K: Clone + Ord, V> KeyedSegmentMap<K, V> {
     }
 
     fn reserve_ids(&mut self, count: usize) -> Result<SegmentId, InsertError> {
+        let first = self.preview_ids(count)?;
+        self.next_id = first.0 + u64::try_from(count).map_err(|_| InsertError::IdExhausted)?;
+        Ok(first)
+    }
+
+    fn preview_ids(&self, count: usize) -> Result<SegmentId, InsertError> {
         let count = u64::try_from(count).map_err(|_| InsertError::IdExhausted)?;
         let first = self.next_id;
-        self.next_id = self
-            .next_id
+        self.next_id
             .checked_add(count)
             .ok_or(InsertError::IdExhausted)?;
         Ok(SegmentId(first))
