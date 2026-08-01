@@ -1,11 +1,13 @@
 //! Portable trusted core for Nucleus.
 
 mod snapshot;
+mod wf_connection;
 
 pub use snapshot::{
     COV_VALID_DB_V0, ED25519_PUBLIC_KEY_V0, Ed25519Signer, Ed25519Verifier, SignError, Signer,
     VerificationError, Verifier, ed25519_key_id, valid_snapshot_statement,
 };
+pub use wf_connection::{WfConnection, WfError};
 
 #[cfg(target_os = "wasi")]
 #[allow(unsafe_code)]
