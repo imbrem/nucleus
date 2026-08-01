@@ -1051,6 +1051,104 @@ mod tests {
     }
 
     #[test]
+    fn claimed_root_rejects_incomplete_descendant_refinement_atomically() {
+        let data = bytes(4 * blake3::CHUNK_LEN);
+        let expected = Blake3Hash::from_bytes(&data);
+        let left = Blake3Node::new(0, 2).unwrap();
+        let right = Blake3Node::new(2, 2).unwrap();
+        let mut state = Blake3ProofState::new(data.len() as u64, Some(expected)).unwrap();
+        state
+            .insert_nodes([
+                Blake3ProofNode {
+                    node: left,
+                    cv: Blake3Cv::from_subtree(0, &data[..2 * blake3::CHUNK_LEN]),
+                },
+                Blake3ProofNode {
+                    node: right,
+                    cv: Blake3Cv::from_subtree(2 * CHUNK_BYTES, &data[2 * blake3::CHUNK_LEN..]),
+                },
+            ])
+            .unwrap();
+        assert_eq!(state.claimed_root(), Some(expected));
+
+        let error = state
+            .insert_node(Blake3ProofNode {
+                node: Blake3Node::new(0, 1).unwrap(),
+                cv: Blake3Cv::default(),
+            })
+            .unwrap_err();
+        assert_eq!(
+            error,
+            ProofStateError::IncompleteRefinement { ancestor: left }
+        );
+        assert_eq!(state.claimed_root(), Some(expected));
+        assert!(state.holes().is_empty());
+    }
+
+    #[test]
+    fn claimed_root_accepts_complete_consistent_refinement() {
+        let data = bytes(4 * blake3::CHUNK_LEN);
+        let expected = Blake3Hash::from_bytes(&data);
+        let mut state = Blake3ProofState::new(data.len() as u64, Some(expected)).unwrap();
+        state
+            .insert_nodes([
+                Blake3ProofNode {
+                    node: Blake3Node::new(0, 2).unwrap(),
+                    cv: Blake3Cv::from_subtree(0, &data[..2 * blake3::CHUNK_LEN]),
+                },
+                Blake3ProofNode {
+                    node: Blake3Node::new(2, 2).unwrap(),
+                    cv: Blake3Cv::from_subtree(2 * CHUNK_BYTES, &data[2 * blake3::CHUNK_LEN..]),
+                },
+            ])
+            .unwrap();
+
+        state
+            .insert_nodes((0..2).map(|chunk| {
+                let (offset, input) = chunk_range(&data, chunk);
+                Blake3ProofNode {
+                    node: Blake3Node::new(chunk as u64, 1).unwrap(),
+                    cv: Blake3Cv::from_subtree(offset, input),
+                }
+            }))
+            .unwrap();
+        assert_eq!(state.claimed_root(), Some(expected));
+        assert!(state.holes().is_empty());
+    }
+
+    #[test]
+    fn claimed_root_rejects_unverified_append_trailing_bytes() {
+        let data = bytes(2 * blake3::CHUNK_LEN);
+        let expected = Blake3Hash::from_bytes(&data);
+        let mut state = Blake3ProofState::new(data.len() as u64, Some(expected)).unwrap();
+        state.insert_aligned(0, &data).unwrap();
+
+        assert_eq!(
+            state.append(&data[..1]),
+            Err(ProofStateError::UnverifiedTrailingBytes)
+        );
+        assert_eq!(state.appended(), 0);
+        assert!(state.trailing_bytes().is_empty());
+        assert_eq!(state.claimed_root(), Some(expected));
+    }
+
+    #[test]
+    fn trailing_bytes_prevent_other_evidence_from_claiming_a_root() {
+        let data = bytes(2 * blake3::CHUNK_LEN);
+        let expected = Blake3Hash::from_bytes(&data);
+        let mut state = Blake3ProofState::new(data.len() as u64, Some(expected)).unwrap();
+        state.append(&data[..1]).unwrap();
+
+        assert_eq!(
+            state.insert_aligned(0, &data),
+            Err(ProofStateError::UnverifiedTrailingBytes)
+        );
+        assert_eq!(state.appended(), 1);
+        assert_eq!(state.trailing_bytes(), &data[..1]);
+        assert_eq!(state.claimed_root(), None);
+    }
+
+    #[test]
     fn wrong_expected_root_rejects_complete_input_atomically() {
         let data = bytes(2 * blake3::CHUNK_LEN);
         let wrong = Blake3Hash::from_array([42; 32]);
