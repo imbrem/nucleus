@@ -1,9 +1,11 @@
 //! Portable trusted core for Nucleus.
 
 mod connection;
+mod segment_map;
 
 pub use connection::{Connection, ConnectionError};
 pub use covalence_neutron::Cas;
+pub use segment_map::{Segment, SegmentId, SegmentMap, SegmentMapError, SegmentTableName};
 
 mod snapshot;
 

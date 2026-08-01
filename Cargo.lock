@@ -190,6 +190,7 @@ name = "covalence-nucleus"
 version = "0.0.0"
 dependencies = [
  "bytes",
+ "covalence-data-segment",
  "covalence-lib-crypto",
  "covalence-lib-error",
  "covalence-lib-hash",
