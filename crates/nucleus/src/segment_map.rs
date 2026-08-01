@@ -1,4 +1,9 @@
-//! A prepared `SQLite` table adapter for non-overlapping segment maps.
+//! A low-level prepared `SQLite` table adapter for non-overlapping segment maps.
+//!
+//! Opening establishes structural validity in one read snapshot. The returned
+//! handle does not keep that transaction open: direct DDL through Neutron's
+//! permeable connection, or through another connection, invalidates the
+//! assertion and requires reopening the map.
 
 use std::{error::Error, fmt};
 
@@ -77,6 +82,12 @@ pub struct Segment {
 }
 
 /// A caller-selected `SQLite` segment table represented by prepared operations.
+///
+/// This is a low-level table handle, not an enduring trust claim. Schema and
+/// contents are validated together in one snapshot when the handle is opened.
+/// Database triggers continue to guard overlap during ordinary writes, but
+/// direct DDL can replace those guards or the table itself. Drop and reopen the
+/// handle after any direct schema mutation.
 pub struct SegmentMap<'conn> {
     table: SegmentTableName,
     find_overlap: sqlite::Statement<'conn>,
@@ -111,31 +122,37 @@ impl<'conn> SegmentMap<'conn> {
         let key_lo = table.derived_quoted("_key_lo");
         let insert_guard = table.derived_quoted("_no_overlap_insert");
         let update_guard = table.derived_quoted("_no_overlap_update");
+        begin_savepoint(
+            connection.sqlite(),
+            "cov_nucleus_create_segment_map",
+            "begin segment-map creation",
+        )?;
         let sql = format!(
-            "SAVEPOINT cov_nucleus_create_segment_map;
+            "{};
              {};
              {};
-             {};
-             {};
-             RELEASE cov_nucleus_create_segment_map;",
+             {};",
             create_table_sql(&q),
             create_index_sql(&q, &key_lo),
             create_insert_trigger_sql(&q, &insert_guard),
             create_update_trigger_sql(&q, &update_guard),
         );
         if let Err(source) = connection.sqlite().execute_batch(&sql) {
-            // `execute_batch` leaves an explicitly opened savepoint active on
-            // error. Clean up only the innermost savepoint with our name.
-            let _ = connection.sqlite().execute_batch(
-                "ROLLBACK TO cov_nucleus_create_segment_map;
-                 RELEASE cov_nucleus_create_segment_map;",
-            );
-            return Err(SegmentMapError::Sqlite {
-                operation: "create segment-map schema",
-                source,
-            });
+            return Err(rollback_or_report(
+                connection.sqlite(),
+                "cov_nucleus_create_segment_map",
+                SegmentMapError::Sqlite {
+                    operation: "create segment-map schema",
+                    source,
+                },
+            ));
         }
-        Self::open_named(connection, table)
+        finish_prepared_savepoint(
+            connection,
+            table,
+            "cov_nucleus_create_segment_map",
+            "commit segment-map creation",
+        )
     }
 
     /// Opens an existing table after checking its schema and every row.
@@ -148,10 +165,21 @@ impl<'conn> SegmentMap<'conn> {
         connection: &'conn covalence_neutron::Connection,
         table: &str,
     ) -> Result<Self, SegmentMapError> {
-        Self::open_named(connection, SegmentTableName::new(table)?)
+        let table = SegmentTableName::new(table)?;
+        begin_savepoint(
+            connection.sqlite(),
+            "cov_nucleus_open_segment_map",
+            "begin segment-map validation snapshot",
+        )?;
+        finish_prepared_savepoint(
+            connection,
+            table,
+            "cov_nucleus_open_segment_map",
+            "finish segment-map validation snapshot",
+        )
     }
 
-    fn open_named(
+    fn validate_and_prepare(
         connection: &'conn covalence_neutron::Connection,
         table: SegmentTableName,
     ) -> Result<Self, SegmentMapError> {
@@ -317,6 +345,61 @@ impl<'conn> SegmentMap<'conn> {
             })?
             .map(validate_segment)
             .transpose()
+    }
+}
+
+fn begin_savepoint(
+    connection: &sqlite::Connection,
+    name: &'static str,
+    operation: &'static str,
+) -> Result<(), SegmentMapError> {
+    connection
+        .execute_batch(&format!("SAVEPOINT {name}"))
+        .map_err(|source| SegmentMapError::Sqlite { operation, source })
+}
+
+fn finish_prepared_savepoint<'conn>(
+    connection: &'conn covalence_neutron::Connection,
+    table: SegmentTableName,
+    savepoint: &'static str,
+    commit_operation: &'static str,
+) -> Result<SegmentMap<'conn>, SegmentMapError> {
+    let map = match SegmentMap::validate_and_prepare(connection, table) {
+        Ok(map) => map,
+        Err(error) => {
+            return Err(rollback_or_report(connection.sqlite(), savepoint, error));
+        }
+    };
+    if let Err(source) = connection
+        .sqlite()
+        .execute_batch(&format!("RELEASE {savepoint}"))
+    {
+        drop(map);
+        return Err(rollback_or_report(
+            connection.sqlite(),
+            savepoint,
+            SegmentMapError::Sqlite {
+                operation: commit_operation,
+                source,
+            },
+        ));
+    }
+    Ok(map)
+}
+
+fn rollback_or_report(
+    connection: &sqlite::Connection,
+    savepoint: &'static str,
+    primary: SegmentMapError,
+) -> SegmentMapError {
+    let cleanup =
+        connection.execute_batch(&format!("ROLLBACK TO {savepoint}; RELEASE {savepoint}"));
+    match cleanup {
+        Ok(()) => primary,
+        Err(cleanup) => SegmentMapError::Cleanup {
+            primary: Box::new(primary),
+            cleanup,
+        },
     }
 }
 
@@ -607,6 +690,13 @@ pub enum SegmentMapError {
         operation: &'static str,
         source: sqlite::Error,
     },
+    /// An operation failed and its savepoint could not be rolled back cleanly.
+    Cleanup {
+        /// Original operation failure.
+        primary: Box<SegmentMapError>,
+        /// Additional rollback or release failure.
+        cleanup: sqlite::Error,
+    },
 }
 
 impl fmt::Display for SegmentMapError {
@@ -662,6 +752,12 @@ impl fmt::Display for SegmentMapError {
             Self::Sqlite { operation, source } => {
                 write!(formatter, "could not {operation}: {source}")
             }
+            Self::Cleanup { primary, cleanup } => {
+                write!(
+                    formatter,
+                    "{primary}; additionally could not roll back: {cleanup}"
+                )
+            }
         }
     }
 }
@@ -670,6 +766,7 @@ impl Error for SegmentMapError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Sqlite { source, .. } => Some(source),
+            Self::Cleanup { primary, .. } => Some(primary),
             _ => None,
         }
     }
