@@ -237,6 +237,26 @@ mod tests {
     }
 
     #[test]
+    fn initialization_does_not_install_cas_policy() {
+        let connection = Connection::open_in_memory().expect("initialize Neutron");
+        let cas_metadata = connection
+            .sqlite()
+            .query_row(
+                "SELECT
+                    (SELECT count(*) FROM temp.sqlite_schema
+                     WHERE name = 'cov_conn_default_cas')
+                    +
+                    (SELECT count(*) FROM temp.cov_conn_catalog
+                     WHERE interpretation LIKE 'cov.cas.%')",
+                (),
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("inspect connection metadata");
+
+        assert_eq!(cas_metadata, 0);
+    }
+
+    #[test]
     fn failed_initialization_rolls_back_new_metadata() {
         let mut sqlite = sqlite::Connection::open_in_memory().expect("open SQLite");
         sqlite
