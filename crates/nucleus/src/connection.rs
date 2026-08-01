@@ -41,6 +41,32 @@ impl Connection {
     pub const fn cas(&self) -> crate::Cas<'_> {
         self.neutron.cas()
     }
+
+    /// Creates a persistent segment-map table and returns its prepared adapter.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `table` is not a safe `SQLite` identifier, the
+    /// table already exists, or `SQLite` cannot create and prepare the map.
+    pub fn create_segment_map(
+        &self,
+        table: &str,
+    ) -> Result<crate::SegmentMap<'_>, crate::SegmentMapError> {
+        crate::SegmentMap::create(&self.neutron, table)
+    }
+
+    /// Opens and validates an existing persistent segment-map table.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the table schema or any stored segment violates
+    /// the segment-map invariants, or `SQLite` cannot prepare the map.
+    pub fn open_segment_map(
+        &self,
+        table: &str,
+    ) -> Result<crate::SegmentMap<'_>, crate::SegmentMapError> {
+        crate::SegmentMap::open(&self.neutron, table)
+    }
 }
 
 #[cfg(test)]
