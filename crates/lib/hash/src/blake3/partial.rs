@@ -7,8 +7,6 @@
 
 use std::{collections::BTreeMap, fmt, ops::Range};
 
-use blake3::hazmat;
-
 use super::{Blake3, Blake3Cv, Blake3Hash};
 use crate::Obj;
 
@@ -111,7 +109,7 @@ pub enum Blake3PartialError {
     ConflictingNode(Blake3Span),
     /// Segments describe inputs with different total lengths.
     TotalLengthMismatch { left: u64, right: u64 },
-    /// A single-chunk root was attached to a multi-chunk input.
+    /// A single-chunk root was attached to an empty or multi-chunk input.
     InvalidSingleChunkRoot { total_length: u64 },
     /// Two pieces of evidence carry different single-chunk root digests.
     ConflictingSingleChunkRoot,
@@ -155,7 +153,7 @@ impl fmt::Display for Blake3PartialError {
             }
             Self::InvalidSingleChunkRoot { total_length } => write!(
                 formatter,
-                "a {total_length}-byte BLAKE3 input does not use a single-chunk root"
+                "a {total_length}-byte BLAKE3 input does not accept a single-chunk root claim"
             ),
             Self::ConflictingSingleChunkRoot => {
                 formatter.write_str("conflicting single-chunk BLAKE3 roots")
@@ -239,8 +237,9 @@ impl Blake3Segment {
             });
         }
 
-        let single_chunk_root = (target == (0..total_length) && total_length <= CHUNK_BYTES)
-            .then(|| Obj::<Blake3>::from_bytes(bytes));
+        let single_chunk_root =
+            (target == (0..total_length) && total_length > 0 && total_length <= CHUNK_BYTES)
+                .then(|| Obj::<Blake3>::from_bytes(bytes));
         Ok(Self {
             total_length,
             range: target,
@@ -276,7 +275,8 @@ impl Blake3Segment {
                     total_length,
                 })?;
         valid_segment(total_length, range.start, length)?;
-        if single_chunk_root.is_some() && (total_length > CHUNK_BYTES || range != (0..total_length))
+        if single_chunk_root.is_some()
+            && (total_length == 0 || total_length > CHUNK_BYTES || range != (0..total_length))
         {
             return Err(Blake3PartialError::InvalidSingleChunkRoot { total_length });
         }
@@ -722,12 +722,19 @@ fn overlaps(range: &Range<u64>, span: Blake3Span) -> bool {
 }
 
 fn children(span: Blake3Span) -> (Blake3Span, Blake3Span) {
-    let left_length = hazmat::left_subtree_len(span.length());
+    let left_length = left_subtree_len(span.length());
     (
         Blake3Span::new(span.offset(), left_length).expect("left child is non-empty"),
         Blake3Span::new(span.offset() + left_length, span.length() - left_length)
             .expect("right child is non-empty"),
     )
+}
+
+fn left_subtree_len(length: u64) -> u64 {
+    debug_assert!(length > CHUNK_BYTES);
+    // The largest power of two strictly below `length`, matching BLAKE3's
+    // hazmat helper without overflowing for `u64::MAX`.
+    1_u64 << (u64::BITS - 1 - (length - 1).leading_zeros())
 }
 
 fn root_children(total_length: u64) -> (Blake3Span, Blake3Span) {
@@ -1199,6 +1206,85 @@ mod tests {
         assert_eq!(
             segment(actual).combine(segment(wrong)),
             Err(Blake3PartialError::ConflictingSingleChunkRoot)
+        );
+    }
+
+    #[test]
+    fn maximal_holes_follow_the_uneven_blake3_tree_geometry() {
+        let bytes = input(5 * blake3::CHUNK_LEN, 52);
+        let total = bytes.len() as u64;
+        let tail = Blake3Segment::from_bytes(
+            total,
+            4 * CHUNK_BYTES,
+            &bytes[4 * blake3::CHUNK_LEN..],
+            Blake3Retention::Frontier,
+        )
+        .unwrap();
+        let tree = Blake3PartialTree::from_segment(tail).unwrap();
+
+        assert_eq!(
+            tree.holes().unwrap(),
+            vec![Blake3Span::new(0, 4 * CHUNK_BYTES).unwrap()]
+        );
+        assert_eq!(
+            tree.frontier().unwrap(),
+            vec![(
+                Blake3Span::new(4 * CHUNK_BYTES, CHUNK_BYTES).unwrap(),
+                Blake3Cv::from_subtree(4 * CHUNK_BYTES, &bytes[4 * blake3::CHUNK_LEN..]),
+            )]
+        );
+    }
+
+    #[test]
+    fn inputs_of_different_lengths_never_combine_or_compare() {
+        let short = input(2 * blake3::CHUNK_LEN, 60);
+        let long = input(3 * blake3::CHUNK_LEN, 60);
+        let short_segment =
+            Blake3Segment::from_bytes(short.len() as u64, 0, &short, Blake3Retention::Frontier)
+                .unwrap();
+        let long_segment =
+            Blake3Segment::from_bytes(long.len() as u64, 0, &long, Blake3Retention::Frontier)
+                .unwrap();
+        let short_tree = Blake3PartialTree::from_segment(short_segment.clone()).unwrap();
+        let long_tree = Blake3PartialTree::from_segment(long_segment.clone()).unwrap();
+
+        assert!(matches!(
+            short_segment.combine(long_segment),
+            Err(Blake3PartialError::TotalLengthMismatch { .. })
+        ));
+        assert!(matches!(
+            short_tree.compare_aligned(&long_tree, 0..short.len() as u64),
+            Err(Blake3PartialError::TotalLengthMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn geometry_supports_the_largest_u64_length_without_overflow() {
+        let tree = Blake3PartialTree::empty(u64::MAX);
+        assert_eq!(
+            tree.holes().unwrap(),
+            vec![
+                Blake3Span::new(0, 1_u64 << 63).unwrap(),
+                Blake3Span::new(1_u64 << 63, (1_u64 << 63) - 1).unwrap(),
+            ]
+        );
+        assert_eq!(tree.claimed_root().unwrap(), None);
+    }
+
+    #[test]
+    fn empty_input_root_is_intrinsic_and_rejects_external_root_claims() {
+        let segment = Blake3Segment::from_bytes(0, 0, [], Blake3Retention::Frontier).unwrap();
+        assert_eq!(segment.node_count(), 0);
+        assert_eq!(
+            Blake3PartialTree::from_segment(segment)
+                .unwrap()
+                .claimed_root()
+                .unwrap(),
+            Some(Obj::<Blake3>::from_bytes([]))
+        );
+        assert_eq!(
+            Blake3Segment::from_evidence(0, 0..0, [], Some(Obj::<Blake3>::from_array([0x7a; 32]))),
+            Err(Blake3PartialError::InvalidSingleChunkRoot { total_length: 0 })
         );
     }
 }
