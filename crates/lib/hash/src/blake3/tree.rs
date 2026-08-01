@@ -427,3 +427,201 @@ impl<const LEAF_BYTES: usize> FixedTree<LEAF_BYTES> {
         self.tree.replace_leaves(first, bytes)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn painted(len: usize) -> Vec<u8> {
+        (0..len)
+            .map(|index| {
+                let index = index as u64;
+                index
+                    .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                    .rotate_left(17)
+                    .to_le_bytes()[0]
+            })
+            .collect()
+    }
+
+    fn assert_reference<const LEAF_BYTES: usize>(bytes: &[u8]) {
+        let tree = EagerTree::<LEAF_BYTES>::from_bytes(bytes);
+        assert_eq!(tree.len(), bytes.len());
+        assert_eq!(tree.is_empty(), bytes.is_empty());
+        assert_eq!(tree.root(), Blake3Hash::from_bytes(bytes));
+        assert_eq!(tree.leaf_count(), bytes.len().div_ceil(LEAF_BYTES));
+        assert_eq!(
+            tree.trailing_bytes(),
+            &bytes[bytes.len() / LEAF_BYTES * LEAF_BYTES..]
+        );
+    }
+
+    fn assert_boundaries<const LEAF_BYTES: usize>() {
+        for len in [
+            0,
+            1,
+            63,
+            64,
+            CHUNK_BYTES - 1,
+            CHUNK_BYTES,
+            CHUNK_BYTES + 1,
+            LEAF_BYTES - 1,
+            LEAF_BYTES,
+            LEAF_BYTES + 1,
+            2 * LEAF_BYTES - 1,
+            2 * LEAF_BYTES,
+            2 * LEAF_BYTES + 1,
+            3 * LEAF_BYTES + 17,
+            8 * LEAF_BYTES,
+            8 * LEAF_BYTES + CHUNK_BYTES + 3,
+        ] {
+            assert_reference::<LEAF_BYTES>(&painted(len));
+        }
+    }
+
+    #[test]
+    fn roots_match_blake3_at_native_and_pruned_boundaries() {
+        assert_boundaries::<1024>();
+        assert_boundaries::<4096>();
+        assert_boundaries::<65536>();
+    }
+
+    fn assert_fragmented_append<const LEAF_BYTES: usize>() {
+        let bytes = painted(5 * LEAF_BYTES + CHUNK_BYTES + 79);
+        let mut tree = EagerTree::<LEAF_BYTES>::new();
+        let mut offset: usize = 0;
+        for requested in [
+            1,
+            17,
+            CHUNK_BYTES - 18,
+            1,
+            LEAF_BYTES - CHUNK_BYTES,
+            LEAF_BYTES + 3,
+            2 * LEAF_BYTES - 5,
+            7,
+            usize::MAX,
+        ] {
+            let end = offset.saturating_add(requested).min(bytes.len());
+            tree.append(&bytes[offset..end]).unwrap();
+            offset = end;
+            assert_eq!(tree.root(), Blake3Hash::from_bytes(&bytes[..offset]));
+            assert_eq!(tree.len(), offset);
+            if offset == bytes.len() {
+                break;
+            }
+        }
+        assert_eq!(offset, bytes.len());
+    }
+
+    #[test]
+    fn fragmented_append_preserves_only_the_incomplete_leaf() {
+        assert_fragmented_append::<1024>();
+        assert_fragmented_append::<4096>();
+        assert_fragmented_append::<65536>();
+    }
+
+    fn assert_edits<const LEAF_BYTES: usize>() {
+        let mut bytes = painted(4 * LEAF_BYTES + LEAF_BYTES / 2 + 19);
+        let mut tree = EagerTree::<LEAF_BYTES>::from_bytes(&bytes);
+
+        for index in [0, 2, 3, 1] {
+            let byte = u8::try_from(index)
+                .unwrap_or_default()
+                .wrapping_mul(53)
+                .wrapping_add(11);
+            let replacement = vec![byte; LEAF_BYTES];
+            tree.replace_leaf(index, &replacement).unwrap();
+            bytes[index * LEAF_BYTES..(index + 1) * LEAF_BYTES].copy_from_slice(&replacement);
+            assert_eq!(tree.root(), Blake3Hash::from_bytes(&bytes));
+        }
+
+        let final_index = tree.leaf_count() - 1;
+        let final_len = bytes.len() - final_index * LEAF_BYTES;
+        let replacement = vec![0xd7; final_len];
+        tree.replace_leaf(final_index, &replacement).unwrap();
+        bytes[final_index * LEAF_BYTES..].copy_from_slice(&replacement);
+        assert_eq!(tree.trailing_bytes(), replacement);
+        assert_eq!(tree.root(), Blake3Hash::from_bytes(&bytes));
+
+        let replacements = vec![0x4b; 2 * LEAF_BYTES];
+        tree.replace_leaves(1, &replacements).unwrap();
+        bytes[LEAF_BYTES..3 * LEAF_BYTES].copy_from_slice(&replacements);
+        assert_eq!(tree.root(), Blake3Hash::from_bytes(&bytes));
+    }
+
+    #[test]
+    fn aligned_edits_match_reference_hashes_for_each_geometry() {
+        assert_edits::<1024>();
+        assert_edits::<4096>();
+        assert_edits::<65536>();
+    }
+
+    #[test]
+    fn sole_complete_leaf_keeps_a_root_without_keeping_its_bytes() {
+        let original = painted(4096);
+        let mut tree = EagerTree::<4096>::from_bytes(&original);
+        assert!(tree.trailing_bytes().is_empty());
+        assert_eq!(tree.root(), Blake3Hash::from_bytes(&original));
+
+        let replacement = vec![0xa5; 4096];
+        tree.replace_leaf(0, &replacement).unwrap();
+        assert!(tree.trailing_bytes().is_empty());
+        assert_eq!(tree.root(), Blake3Hash::from_bytes(&replacement));
+
+        tree.append(b"right edge").unwrap();
+        let mut expected = replacement;
+        expected.extend_from_slice(b"right edge");
+        assert_eq!(tree.root(), Blake3Hash::from_bytes(expected));
+    }
+
+    #[test]
+    fn fixed_tree_updates_but_does_not_change_geometry() {
+        let mut bytes = painted(2 * 4096 + 777);
+        let mut tree = FixedTree::<4096>::from_bytes(&bytes);
+        let len = tree.len();
+        let leaves = tree.leaf_count();
+
+        let replacement = vec![0x31; 4096];
+        tree.replace_leaf(1, &replacement).unwrap();
+        bytes[4096..8192].copy_from_slice(&replacement);
+        assert_eq!(tree.len(), len);
+        assert_eq!(tree.leaf_count(), leaves);
+        assert_eq!(tree.root(), Blake3Hash::from_bytes(bytes));
+    }
+
+    #[test]
+    fn invalid_edits_are_rejected_without_changing_the_root() {
+        let bytes = painted(4096 + 19);
+        let mut tree = EagerTree::<4096>::from_bytes(&bytes);
+        let root = tree.root();
+
+        assert_eq!(
+            tree.replace_leaf(2, []),
+            Err(TreeError::LeafOutOfBounds {
+                index: 2,
+                leaf_count: 2,
+            })
+        );
+        assert_eq!(
+            tree.replace_leaf(0, [0; 17]),
+            Err(TreeError::WrongLeafLength {
+                expected: 4096,
+                actual: 17,
+            })
+        );
+        assert_eq!(
+            tree.replace_leaves(0, [0; 4097]),
+            Err(TreeError::UnalignedRange {
+                len: 4097,
+                leaf_bytes: 4096,
+            })
+        );
+        assert_eq!(tree.root(), root);
+    }
+
+    #[test]
+    #[should_panic(expected = "power-of-two multiple")]
+    fn invalid_retained_geometry_is_rejected() {
+        let _ = EagerTree::<3072>::new();
+    }
+}
