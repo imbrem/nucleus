@@ -67,6 +67,34 @@ impl Connection {
     ) -> Result<crate::SegmentMap<'_>, crate::SegmentMapError> {
         crate::SegmentMap::open(&self.neutron, table)
     }
+
+    /// Creates a persistent, unkeyed BLAKE3 segment CAS.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the caller-selected table family cannot be
+    /// created and validated atomically.
+    pub fn create_blake3_segment_cas(
+        &self,
+        table: &str,
+    ) -> Result<crate::Blake3SegmentCas<'_>, crate::SegmentCasError> {
+        crate::Blake3SegmentCas::create(&self.neutron, table)
+    }
+
+    /// Opens a persistent, unkeyed BLAKE3 segment CAS after physical and
+    /// semantic validation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the database fails `SQLite` integrity checking,
+    /// the table family is incompatible, or stored evidence does not prove its
+    /// claimed BLAKE3 object.
+    pub fn open_blake3_segment_cas(
+        &self,
+        table: &str,
+    ) -> Result<crate::Blake3SegmentCas<'_>, crate::SegmentCasError> {
+        crate::Blake3SegmentCas::open(&self.neutron, table)
+    }
 }
 
 #[cfg(test)]
