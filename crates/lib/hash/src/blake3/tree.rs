@@ -279,14 +279,17 @@ impl<const LEAF_BYTES: usize> EagerTree<LEAF_BYTES> {
                 leaf_count: self.leaf_count(),
             });
         }
-        for (offset, leaf) in bytes.chunks_exact(LEAF_BYTES).enumerate() {
-            let index = first + offset;
-            if self.leaf_len(index)? != LEAF_BYTES {
+        for index in first..first + count {
+            let expected = self.leaf_len(index)?;
+            if expected != LEAF_BYTES {
                 return Err(TreeError::WrongLeafLength {
-                    expected: self.leaf_len(index)?,
+                    expected,
                     actual: LEAF_BYTES,
                 });
             }
+        }
+        for (offset, leaf) in bytes.chunks_exact(LEAF_BYTES).enumerate() {
+            let index = first + offset;
             self.replace_cv(index, Self::leaf_cv(index, leaf));
         }
         if self.leaf_count() == 1 && count == 1 {
