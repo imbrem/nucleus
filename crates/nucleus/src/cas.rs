@@ -10,6 +10,9 @@ const CREATE_SQL: &str = include_str!("../sql/cas/create.sql");
 const STORE_SQL: &str = include_str!("../sql/cas/store.sql");
 const FETCH_SQL: &str = include_str!("../sql/cas/fetch.sql");
 const FETCH_RANGE_SQL: &str = include_str!("../sql/cas/fetch_range.sql");
+const RESERVE_SQL: &str = include_str!("../sql/cas/reserve.sql");
+const STATE_SQL: &str = include_str!("../sql/cas/state.sql");
+const EVICT_SQL: &str = include_str!("../sql/cas/evict.sql");
 
 /// An in-memory `SQLite` database maintained as a BLAKE3 content-addressed store.
 ///
@@ -77,6 +80,89 @@ impl Cas {
             return Err(CasError::Conflict { blake3 });
         }
         Ok(blake3)
+    }
+
+    /// Reserves a non-resident address with an optional known size.
+    ///
+    /// This changes only local index and availability state; it does not claim
+    /// that bytes for `blake3` are resident. Returns `true` when the address
+    /// already existed. A newly supplied size fills an unknown size but cannot
+    /// replace a conflicting one.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the size is not representable, conflicts with an
+    /// existing row, or the CAS cannot be written.
+    pub fn reserve(&self, blake3: Blake3Hash, size: Option<u64>) -> Result<bool, CasError> {
+        let existing = self.state(blake3)?;
+        let size = size
+            .map(|size| i64::try_from(size).map_err(|_| CasError::UnsupportedSize { size }))
+            .transpose()?;
+        let reserved = self
+            .connection
+            .sqlite()
+            .query_row(
+                RESERVE_SQL,
+                (blake3.as_bytes().as_slice(), size),
+                |_| Ok(()),
+            )
+            .optional()
+            .context(StoreSnafu)?;
+        if reserved.is_none() {
+            return Err(CasError::Conflict { blake3 });
+        }
+        Ok(existing.is_some())
+    }
+
+    /// Fills an existing placeholder with bytes matching its address.
+    ///
+    /// Returns `true` when resident bytes were already present.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the address is missing, the bytes hash to another
+    /// address, the known size conflicts, or the CAS cannot be accessed.
+    pub fn fill(&self, blake3: Blake3Hash, data: impl AsRef<[u8]>) -> Result<bool, CasError> {
+        let data = data.as_ref();
+        let actual = self.hash(data);
+        if actual != blake3 {
+            return Err(CasError::AddressMismatch {
+                expected: blake3,
+                actual,
+            });
+        }
+        let Some((size, resident)) = self.state(blake3)? else {
+            return Err(CasError::Missing { blake3 });
+        };
+        if let Some(size) = size {
+            let actual_size = u64::try_from(data.len())
+                .map_err(|_| CasError::UnsupportedSize { size: u64::MAX })?;
+            if size != actual_size {
+                return Err(CasError::SizeMismatch {
+                    blake3,
+                    expected: size,
+                    actual: actual_size,
+                });
+            }
+        }
+        self.store(data)?;
+        Ok(resident)
+    }
+
+    /// Evicts resident bytes while retaining the address and known size.
+    ///
+    /// Returns `true` when bytes were removed. Missing and already unresolved
+    /// addresses return `false`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the CAS cannot be written.
+    pub fn evict(&self, blake3: Blake3Hash) -> Result<bool, CasError> {
+        self.connection
+            .sqlite()
+            .execute(EVICT_SQL, [blake3.as_bytes().as_slice()])
+            .context(StoreSnafu)
+            .map(|changed| changed != 0)
     }
 
     /// Fetches a resident blob by BLAKE3 content address.
@@ -154,6 +240,23 @@ impl Cas {
         }
         Ok(blob.map(Bytes::from))
     }
+
+    fn state(&self, blake3: Blake3Hash) -> Result<Option<(Option<u64>, bool)>, CasError> {
+        self.connection
+            .sqlite()
+            .query_row(STATE_SQL, [blake3.as_bytes().as_slice()], |row| {
+                Ok((row.get::<_, Option<i64>>(0)?, row.get::<_, bool>(1)?))
+            })
+            .optional()
+            .context(FetchSnafu)?
+            .map(|(size, resident)| {
+                let size = size
+                    .map(|size| u64::try_from(size).map_err(|_| CasError::MalformedSize { size }))
+                    .transpose()?;
+                Ok((size, resident))
+            })
+            .transpose()
+    }
 }
 
 /// Failure to create or access a flat `SQLite` CAS.
@@ -186,6 +289,42 @@ pub enum CasError {
     Conflict {
         /// Conflicting pure BLAKE3 address.
         blake3: Blake3Hash,
+    },
+
+    /// Supplied bytes do not have the requested address.
+    #[snafu(display("bytes hash to {actual}, not requested BLAKE3 address {expected}"))]
+    AddressMismatch {
+        /// Requested address.
+        expected: Blake3Hash,
+        /// Address computed from supplied bytes.
+        actual: Blake3Hash,
+    },
+
+    /// An address has not been reserved.
+    #[snafu(display("BLAKE3 address {blake3} is not present in the CAS"))]
+    Missing {
+        /// Missing address.
+        blake3: Blake3Hash,
+    },
+
+    /// A known size disagrees with supplied bytes.
+    #[snafu(display(
+        "BLAKE3 address {blake3} has size {expected}, but supplied bytes have size {actual}"
+    ))]
+    SizeMismatch {
+        /// Address with conflicting size state.
+        blake3: Blake3Hash,
+        /// Previously known size.
+        expected: u64,
+        /// Supplied byte length.
+        actual: u64,
+    },
+
+    /// An object size cannot be represented by `SQLite`.
+    #[snafu(display("object size {size} is too large for SQLite"))]
+    UnsupportedSize {
+        /// Unsupported size.
+        size: u64,
     },
 
     /// Resident bytes could not be fetched.
