@@ -275,3 +275,172 @@ fn single_chunk_objects_require_bytes_not_only_a_cv() {
     cas.replace_evidence(file, &[resident(0, data.len(), &data)], &[])
         .expect("full final chunk authenticates root output");
 }
+
+#[test]
+fn live_reads_reject_bytes_changed_after_the_handle_was_opened() {
+    let neutron = covalence_neutron::Connection::open_in_memory().expect("open connection");
+    let data = bytes(2 * CHUNK + 23);
+    let root = Blake3Hash::from_bytes(&data);
+    let mut cas = Blake3SegmentCas::create(&neutron, "files").expect("create segment CAS");
+    let file = cas
+        .reserve(Some(root), Some(data.len() as u64))
+        .expect("reserve object");
+    cas.replace_evidence(file, &[resident(0, data.len(), &data)], &[])
+        .expect("persist evidence");
+
+    let mut corrupted = data.clone();
+    corrupted[CHUNK + 3] ^= 0x80;
+    neutron
+        .sqlite()
+        .execute(
+            "UPDATE files_segments SET value = ?1",
+            [corrupted.as_slice()],
+        )
+        .expect("mutate through raw connection");
+
+    assert!(matches!(
+        cas.read_range(file, 0..data.len() as u64),
+        Err(SegmentCasError::ProofState(
+            ProofStateError::RootMismatch { .. }
+        ))
+    ));
+    assert!(matches!(
+        cas.proof(file, 0..CHUNK as u64),
+        Err(SegmentCasError::ProofState(
+            ProofStateError::RootMismatch { .. }
+        ))
+    ));
+
+    neutron
+        .sqlite()
+        .execute("UPDATE files_segments SET value = ?1", [data.as_slice()])
+        .expect("restore resident bytes");
+    assert_eq!(
+        cas.read_range(file, 0..17)
+            .expect("read after failed snapshots")
+            .unwrap()
+            .as_ref(),
+        &data[..17]
+    );
+}
+
+#[test]
+fn replacement_deletes_segments_outside_the_declared_object() {
+    let neutron = covalence_neutron::Connection::open_in_memory().expect("open connection");
+    let data = bytes(2 * CHUNK + 7);
+    let root = Blake3Hash::from_bytes(&data);
+    let mut cas = Blake3SegmentCas::create(&neutron, "files").expect("create segment CAS");
+    let file = cas
+        .reserve(Some(root), Some(data.len() as u64))
+        .expect("reserve object");
+    cas.replace_evidence(file, &[resident(0, data.len(), &data)], &[])
+        .expect("persist evidence");
+
+    neutron
+        .sqlite()
+        .execute(
+            "INSERT INTO files_segments (segment_key, lo, hi, value)
+             VALUES (?1, ?2, ?3, ?4)",
+            (
+                file.get().to_be_bytes().as_slice(),
+                10_000_i64,
+                10_001_i64,
+                b"x".as_slice(),
+            ),
+        )
+        .expect("inject out-of-geometry segment");
+
+    cas.replace_evidence(file, &[resident(0, data.len(), &data)], &[])
+        .expect("replace every old segment");
+    assert_eq!(
+        neutron
+            .sqlite()
+            .query_row(
+                "SELECT count(*) FROM files_segments WHERE segment_key = ?1",
+                [file.get().to_be_bytes().as_slice()],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("count remaining segments"),
+        1
+    );
+}
+
+#[test]
+fn metadata_compare_and_set_rolls_back_triggered_changes() {
+    let neutron = covalence_neutron::Connection::open_in_memory().expect("open connection");
+    let data = bytes(2 * CHUNK + 7);
+    let root = Blake3Hash::from_bytes(&data);
+    let mut cas = Blake3SegmentCas::create(&neutron, "files").expect("create segment CAS");
+    let file = cas
+        .reserve(Some(root), Some(data.len() as u64))
+        .expect("reserve object");
+    cas.replace_evidence(file, &[resident(0, data.len(), &data)], &[])
+        .expect("persist evidence");
+
+    neutron
+        .sqlite()
+        .execute_batch(&format!(
+            "CREATE TRIGGER change_object_during_replacement
+             AFTER DELETE ON files_segments
+             BEGIN
+                 UPDATE files SET size = size + 1 WHERE file_id = {};
+             END;",
+            file.get()
+        ))
+        .expect("install hostile trigger");
+    assert!(matches!(
+        cas.replace_evidence(file, &[resident(0, data.len(), &data)], &[]),
+        Err(SegmentCasError::ObjectChanged { file_id }) if file_id == file
+    ));
+    neutron
+        .sqlite()
+        .execute_batch("DROP TRIGGER change_object_during_replacement")
+        .expect("drop hostile trigger");
+
+    assert_eq!(
+        cas.object(file)
+            .expect("load rolled-back object")
+            .unwrap()
+            .size,
+        Some(data.len() as u64)
+    );
+    assert_eq!(
+        cas.read_range(file, 0..data.len() as u64)
+            .expect("read rolled-back evidence")
+            .unwrap()
+            .as_ref(),
+        data
+    );
+}
+
+#[test]
+fn mutations_require_enabled_foreign_keys() {
+    let neutron = covalence_neutron::Connection::open_in_memory().expect("open connection");
+    let mut cas = Blake3SegmentCas::create(&neutron, "files").expect("create segment CAS");
+    assert!(
+        neutron
+            .sqlite()
+            .query_row("PRAGMA foreign_keys", (), |row| row.get::<_, bool>(0))
+            .expect("read foreign-key state")
+    );
+    assert!(
+        neutron
+            .sqlite()
+            .execute(
+                "INSERT INTO files_blake3_proofs
+                 (file_id, first_chunk, chunks, blake3_cv)
+                 VALUES (?1, 0, 1, ?2)",
+                (i64::MAX, [0_u8; 32].as_slice()),
+            )
+            .is_err()
+    );
+
+    neutron
+        .sqlite()
+        .execute_batch("PRAGMA foreign_keys = OFF")
+        .expect("disable foreign keys");
+    assert!(matches!(
+        cas.reserve(None, None),
+        Err(SegmentCasError::ForeignKeysDisabled)
+    ));
+}

@@ -1275,3 +1275,18 @@ impl Error for SegmentCasError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oversized_range_allocation_is_fallible() {
+        let end = u64::try_from(i64::MAX).unwrap();
+        match allocate_range_buffer(end, end).unwrap_err() {
+            SegmentCasError::AllocationFailed { bytes } => assert_eq!(bytes, end),
+            SegmentCasError::SizeTooLarge { size } => assert_eq!(size, end),
+            error => panic!("unexpected range-allocation error: {error}"),
+        }
+    }
+}
