@@ -141,3 +141,57 @@ fn check_schema(connection: &neutron::Connection, schema: &str) -> Result<(), Wf
 fn quote_identifier(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fresh_memory_is_well_formed_and_can_be_erased() {
+        let checked = WfConnection::open_in_memory().unwrap();
+        let raw = checked.into_connection();
+        raw.sqlite()
+            .execute("CREATE TABLE ordinary (value INTEGER)", ())
+            .unwrap();
+    }
+
+    #[test]
+    fn every_attached_schema_is_checked_with_quoted_names() {
+        let raw = neutron::Connection::open_in_memory().unwrap();
+        raw.sqlite()
+            .execute("ATTACH DATABASE ':memory:' AS \"aux\"\"quoted\"", ())
+            .unwrap();
+        raw.sqlite()
+            .execute(
+                "CREATE TABLE \"aux\"\"quoted\".present (value BLOB NOT NULL)",
+                (),
+            )
+            .unwrap();
+
+        WfConnection::check(raw).unwrap();
+    }
+
+    #[test]
+    fn malformed_attached_schema_is_rejected() {
+        let raw = neutron::Connection::open_in_memory().unwrap();
+        raw.sqlite()
+            .execute_batch(
+                "ATTACH DATABASE ':memory:' AS aux;
+                 CREATE TABLE aux.broken (value INTEGER);
+                 PRAGMA aux.writable_schema = ON;
+                 UPDATE aux.sqlite_schema
+                 SET sql = 'CREATE TABLE broken ('
+                 WHERE name = 'broken';
+                 PRAGMA aux.writable_schema = OFF;
+                 PRAGMA aux.schema_version = 2;",
+            )
+            .unwrap();
+
+        let error = WfConnection::check(raw).unwrap_err();
+        assert!(matches!(
+            error,
+            WfError::Check { schema, .. } | WfError::Malformed { schema, .. }
+                if schema == "aux"
+        ));
+    }
+}
