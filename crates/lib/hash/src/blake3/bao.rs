@@ -284,4 +284,13 @@ mod tests {
         let beyond = extract_slice(&combined, 6_000..6_001).expect("extract final proof");
         assert!(decode_slice(&beyond, root, 6_000..6_001).is_err());
     }
+
+    #[test]
+    fn hostile_slice_lengths_fail_without_infallible_allocation() {
+        let error = decode_slice([], Blake3Hash::default(), 0..u64::MAX).unwrap_err();
+        assert!(matches!(
+            error.kind(),
+            io::ErrorKind::InvalidInput | io::ErrorKind::OutOfMemory
+        ));
+    }
 }
