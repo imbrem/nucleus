@@ -86,6 +86,47 @@ fn keyed_maps_isolate_geometry_and_allocate_global_ids() {
 }
 
 #[test]
+fn iteration_exposes_complete_ordered_state() {
+    let mut map = KeyedSegmentMap::new();
+    map.insert("beta", range(8, 9), 3).unwrap();
+    map.insert("alpha", range(10, 20), 2).unwrap();
+    map.insert("alpha", range(0, 5), 1).unwrap();
+
+    assert_eq!(
+        map.iter_key(&"alpha")
+            .map(|segment| (segment.range(), *segment.value()))
+            .collect::<Vec<_>>(),
+        vec![(range(0, 5), 1), (range(10, 20), 2)]
+    );
+    assert_eq!(
+        map.iter()
+            .map(|(key, segment)| (*key, segment.range()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("alpha", range(0, 5)),
+            ("alpha", range(10, 20)),
+            ("beta", range(8, 9)),
+        ]
+    );
+}
+
+#[test]
+fn panicking_split_leaves_contents_and_ids_unchanged() {
+    let mut map = SegmentMap::new();
+    let original = map.insert(range(0, 10), 'a').unwrap();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = map.remove_range(range(2, 8), |_, _| -> char {
+            panic!("failed payload projection")
+        });
+    }));
+
+    assert!(result.is_err());
+    assert_eq!(map.get_id(original).unwrap().range(), range(0, 10));
+    let next = map.insert(range(10, 11), 'b').unwrap();
+    assert_eq!(next.get(), original.get() + 1);
+}
+
+#[test]
 fn replacement_retires_old_ids_and_splits_all_intersections() {
     let mut map = SegmentMap::new();
     let first = map.insert(range(0, 10), 'a').unwrap();
