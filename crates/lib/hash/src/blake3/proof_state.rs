@@ -6,7 +6,12 @@
 //! or fill complete chunk-aligned ranges out of order with
 //! [`Blake3ProofState::insert_aligned`].
 
-use std::{collections::BTreeMap, error::Error, fmt, ops::Range};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fmt,
+    ops::Range,
+};
 
 use super::{Blake3Cv, Blake3Hash};
 
@@ -114,6 +119,19 @@ pub enum ProofStateError {
         /// Position of the first detected disagreement.
         node: Blake3Node,
     },
+    /// A claimed root would contain a stored ancestor refined by an incomplete
+    /// child frontier.
+    ///
+    /// Refinement must provide enough evidence in one batch to recompute the
+    /// ancestor. Otherwise accepting the descendant would make the claimed
+    /// root a false authority for all stored evidence.
+    IncompleteRefinement {
+        /// Stored ancestor which cannot yet be recomputed.
+        ancestor: Blake3Node,
+    },
+    /// Sequential input would leave bytes outside an already claimed root's
+    /// verified CV frontier.
+    UnverifiedTrailingBytes,
     /// Complete evidence derives a different root from the expected root.
     RootMismatch {
         /// Root supplied when the state was constructed.
@@ -273,9 +291,22 @@ impl Blake3ProofState {
             return Ok(());
         }
 
-        let mut trailing = self.trailing.clone();
+        let mut trailing = Vec::new();
+        trailing
+            .try_reserve_exact(blake3::CHUNK_LEN)
+            .map_err(|_| ProofStateError::AllocationFailed)?;
+        trailing.extend_from_slice(&self.trailing);
         let mut input = bytes;
         let mut completed = Vec::new();
+        completed
+            .try_reserve_exact(
+                self.trailing
+                    .len()
+                    .checked_add(bytes.len())
+                    .ok_or(ProofStateError::TreeTooLarge)?
+                    .div_ceil(blake3::CHUNK_LEN),
+            )
+            .map_err(|_| ProofStateError::AllocationFailed)?;
         let trailing_len =
             u64::try_from(trailing.len()).map_err(|_| ProofStateError::TreeTooLarge)?;
         let mut chunk_start = self.appended - trailing_len;
@@ -303,6 +334,10 @@ impl Blake3ProofState {
             }
         }
 
+        if self.claimed_root.is_some() && !trailing.is_empty() {
+            return Err(ProofStateError::UnverifiedTrailingBytes);
+        }
+
         let single_root = completed.iter().find_map(|(_, root)| *root);
         self.insert_batch(completed.into_iter().map(|(node, _)| node), single_root)?;
         self.appended = new_appended;
@@ -327,18 +362,21 @@ impl Blake3ProofState {
         let bytes = bytes.as_ref();
         let length = u64::try_from(bytes.len()).map_err(|_| ProofStateError::TreeTooLarge)?;
         self.validate_byte_range(offset, length)?;
-        let mut evidence = Vec::with_capacity(bytes.len().div_ceil(blake3::CHUNK_LEN));
-        for (index, chunk) in bytes.chunks(blake3::CHUNK_LEN).enumerate() {
-            let chunk_offset = offset
-                + u64::try_from(index).map_err(|_| ProofStateError::TreeTooLarge)? * CHUNK_BYTES;
-            evidence.push(Blake3ProofNode {
-                node: Blake3Node {
-                    first_chunk: chunk_offset / CHUNK_BYTES,
-                    chunks: 1,
-                },
-                cv: Blake3Cv::from_subtree(chunk_offset, chunk),
-            });
+        if !self.trailing.is_empty() {
+            return Err(ProofStateError::UnverifiedTrailingBytes);
         }
+        let first_chunk = offset / CHUNK_BYTES;
+        let evidence =
+            bytes
+                .chunks(blake3::CHUNK_LEN)
+                .zip(first_chunk..)
+                .map(|(chunk, chunk_index)| Blake3ProofNode {
+                    node: Blake3Node {
+                        first_chunk: chunk_index,
+                        chunks: 1,
+                    },
+                    cv: Blake3Cv::from_subtree(chunk_index * CHUNK_BYTES, chunk),
+                });
         let single_root = (self.chunks == 1).then(|| Blake3Hash::from_bytes(bytes));
         self.insert_batch(evidence, single_root)
     }
@@ -350,6 +388,9 @@ impl Blake3ProofState {
     /// Returns an error before mutation unless the node is canonical and
     /// compatible with all existing evidence and the optional expected root.
     pub fn insert_node(&mut self, evidence: Blake3ProofNode) -> Result<(), ProofStateError> {
+        if !self.trailing.is_empty() {
+            return Err(ProofStateError::UnverifiedTrailingBytes);
+        }
         self.insert_batch([evidence], None)
     }
 
@@ -363,6 +404,9 @@ impl Blake3ProofState {
         &mut self,
         evidence: impl IntoIterator<Item = Blake3ProofNode>,
     ) -> Result<(), ProofStateError> {
+        if !self.trailing.is_empty() {
+            return Err(ProofStateError::UnverifiedTrailingBytes);
+        }
         self.insert_batch(evidence, None)
     }
 
@@ -448,6 +492,7 @@ impl Blake3ProofState {
         single_root: Option<Blake3Hash>,
     ) -> Result<(), ProofStateError> {
         let mut staged = BTreeMap::new();
+        let mut refined_ancestors = BTreeSet::new();
         let mut proposed_root = self.claimed_root.or(single_root);
         if let (Some(existing), Some(supplied)) = (self.claimed_root, single_root)
             && existing != supplied
@@ -464,6 +509,14 @@ impl Blake3ProofState {
                 .ok_or(ProofStateError::InvalidNode {
                     node: evidence.node,
                 })?;
+            let mut ancestor = evidence.node;
+            while let Some((parent, _, _)) = self.parent_step(ancestor) {
+                let Some(parent) = parent else {
+                    break;
+                };
+                refined_ancestors.insert(parent);
+                ancestor = parent;
+            }
             self.stage_value(evidence.node, slot, evidence.cv, &mut staged)?;
             if let Some(derived) = self.derive_from_children(evidence.node, &staged)
                 && derived != evidence.cv
@@ -503,6 +556,29 @@ impl Blake3ProofState {
                     }
                     proposed_root = Some(root);
                     break;
+                }
+            }
+        }
+
+        if self.claimed_root.is_none() && proposed_root.is_some() && self.chunks > 1 {
+            let (left, right) = children(Blake3Node {
+                first_chunk: 0,
+                chunks: self.chunks,
+            });
+            if let Some(ancestor) = self
+                .incomplete_refinement(left, &staged)
+                .or_else(|| self.incomplete_refinement(right, &staged))
+            {
+                return Err(ProofStateError::IncompleteRefinement { ancestor });
+            }
+        } else if self.claimed_root.is_some() {
+            for ancestor in refined_ancestors {
+                if self.value(ancestor, &staged).is_none() {
+                    continue;
+                }
+                let (left, right) = children(ancestor);
+                if self.value(left, &staged).is_none() || self.value(right, &staged).is_none() {
+                    return Err(ProofStateError::IncompleteRefinement { ancestor });
                 }
             }
         }
@@ -562,6 +638,34 @@ impl Blake3ProofState {
         }
         let (left, right) = children(node);
         Some(self.value(left, staged)?.merge(self.value(right, staged)?))
+    }
+
+    fn incomplete_refinement(
+        &self,
+        node: Blake3Node,
+        staged: &BTreeMap<usize, Blake3Cv>,
+    ) -> Option<Blake3Node> {
+        self.value(node, staged)?;
+        if node.chunks == 1 || !self.has_value_descendant(node, staged) {
+            return None;
+        }
+        let (left, right) = children(node);
+        if self.value(left, staged).is_none() || self.value(right, staged).is_none() {
+            return Some(node);
+        }
+        self.incomplete_refinement(left, staged)
+            .or_else(|| self.incomplete_refinement(right, staged))
+    }
+
+    fn has_value_descendant(&self, node: Blake3Node, staged: &BTreeMap<usize, Blake3Cv>) -> bool {
+        if node.chunks == 1 {
+            return false;
+        }
+        let (left, right) = children(node);
+        self.value(left, staged).is_some()
+            || self.value(right, staged).is_some()
+            || self.has_value_descendant(left, staged)
+            || self.has_value_descendant(right, staged)
     }
 
     fn validate_byte_range(&self, offset: u64, length: u64) -> Result<(), ProofStateError> {
