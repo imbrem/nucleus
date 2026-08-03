@@ -12,7 +12,7 @@ pub type ConnectionError = neutron::ConnectionError;
 /// Nucleus can preserve their semantic invariants by construction.
 #[derive(Debug)]
 pub struct Connection {
-    neutron: neutron::Connection,
+    _neutron: neutron::Connection,
 }
 
 impl Connection {
@@ -23,7 +23,7 @@ impl Connection {
     /// Returns an error when the underlying `SQLite` connection cannot be
     /// opened or Neutron's connection metadata cannot be initialized.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ConnectionError> {
-        neutron::Connection::open(path).map(|neutron| Self { neutron })
+        neutron::Connection::open(path).map(|neutron| Self { _neutron: neutron })
     }
 
     /// Opens an in-memory database through Neutron.
@@ -33,13 +33,7 @@ impl Connection {
     /// Returns an error when Neutron's connection metadata cannot be
     /// initialized.
     pub fn open_in_memory() -> Result<Self, ConnectionError> {
-        neutron::Connection::open_in_memory().map(|neutron| Self { neutron })
-    }
-
-    /// Returns the connection's default content-addressed store.
-    #[must_use]
-    pub const fn cas(&self) -> crate::Cas<'_> {
-        self.neutron.cas()
+        neutron::Connection::open_in_memory().map(|neutron| Self { _neutron: neutron })
     }
 }
 
@@ -49,7 +43,6 @@ mod tests {
 
     #[test]
     fn opens_through_neutron() {
-        let connection = Connection::open_in_memory().expect("open Nucleus connection");
-        let _cas: crate::Cas<'_> = connection.cas();
+        let _connection = Connection::open_in_memory().expect("open Nucleus connection");
     }
 }
