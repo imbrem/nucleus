@@ -3,6 +3,7 @@
 mod export;
 mod import;
 mod namespace;
+mod reader;
 mod trust;
 mod validate;
 
@@ -13,6 +14,10 @@ pub use import::{
 pub use namespace::{
     ExportError, ExportId, ExportSort, ExportView, NamespaceError, NamespaceExport, NamespaceId,
     NamespaceView,
+};
+pub use reader::{
+    ImportedContextId, ImportedExport, ImportedHolReader, ImportedKindId, ImportedReaderError,
+    ImportedTermId, ImportedTermView, ImportedTypeId,
 };
 pub use trust::{
     MatchedTrustedHolImage, SnapshotTrustError, TrustedImportError, TrustedImportId,
@@ -432,6 +437,12 @@ pub enum Operation {
     ReadTrustedImport,
     /// Match authenticated, structurally validated bytes to one persistent accepted import.
     MatchTrustedImportImage,
+    /// Open a matched image through an internally verified immutable VFS.
+    OpenTrustedImportReader,
+    /// Read namespace/export structure from a scoped imported image.
+    ReadImportedImageNamespace,
+    /// Read term structure from a scoped imported image.
+    ReadImportedImageTerm,
     /// Check and persist one exact structural context union.
     ProveContextUnion,
     /// Load and recheck one exact structural context union.
