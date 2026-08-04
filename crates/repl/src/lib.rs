@@ -25,12 +25,12 @@ pub use covalence_nucleus::{
     ContextError, ContextId, ContextImplication, ExportError, ExportId, ExportSort, ExportView,
     Hol, HolDatabaseRef, HolExportError, HolOpenError, HolSchema, HolSchemaDescriptor,
     HolSchemaDescriptorError, ImportError, ImportId, ImportedExport, ImportedReaderError,
-    ImportedTermView, Kernel, Kind, KindError, KindId, KindView, MetadataSchemaError,
-    MetadataTable, MetadataTarget, MetadataType, MetadataValue, NamespaceError, NamespaceExport,
-    NamespaceId, NamespaceView, ProofError, ProofSession, SignedSnapshotAttestation,
-    SignedSnapshotEnvelope, SnapshotAuthenticationError, SnapshotTrustError, Sql, TermError,
-    TermId, TermView, Theorem, TrustedImportError, TrustedImportId, TrustedImportImageError,
-    TypeError, TypeId, TypeView, ValidatedHolImage,
+    ImportedTermView, Kernel, Kind, KindError, KindId, KindView, MatchedTrustedHolImage,
+    MetadataSchemaError, MetadataTable, MetadataTarget, MetadataType, MetadataValue,
+    NamespaceError, NamespaceExport, NamespaceId, NamespaceView, ProofError, ProofSession,
+    SignedSnapshotAttestation, SignedSnapshotEnvelope, SnapshotAuthenticationError,
+    SnapshotTrustError, Sql, TermError, TermId, TermView, Theorem, TrustedImportError,
+    TrustedImportId, TrustedImportImageError, TypeError, TypeId, TypeView, ValidatedHolImage,
 };
 
 const SCHEMA: &str = "
@@ -50,6 +50,12 @@ CREATE TABLE repl_connection (
 CREATE TABLE repl_image (
     image_hash BLOB PRIMARY KEY CHECK (length(image_hash) = 32),
     byte_length INTEGER NOT NULL CHECK (byte_length >= 0)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE repl_hol_image (
+    schema_hash BLOB NOT NULL CHECK (length(schema_hash) = 32),
+    image_hash BLOB NOT NULL REFERENCES repl_image CHECK (length(image_hash) = 32),
+    descriptor BLOB NOT NULL,
+    PRIMARY KEY (schema_hash, image_hash)
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE repl_state (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 0),
@@ -263,6 +269,7 @@ pub struct LocalRepl {
     kernel: Kernel,
     directory: Repl<LocalConnection>,
     images: HashMap<O256, covalence_neutron::ImmutableImage>,
+    hol_images: HashMap<HolDatabaseRef, Vec<u8>>,
     resident_image_bytes: usize,
 }
 
@@ -422,6 +429,37 @@ fn check_image_cache_capacity(
         })
 }
 
+fn record_resident_hol_descriptor(
+    state: &covalence_neutron::Connection,
+    hol_images: &mut HashMap<HolDatabaseRef, Vec<u8>>,
+    database: HolDatabaseRef,
+    descriptor: Vec<u8>,
+) -> Result<(), LocalReplError> {
+    if let Some(existing) = hol_images.get(&database) {
+        return if existing == &descriptor {
+            Ok(())
+        } else {
+            Err(ReplImageError::ConflictingHolDescriptor { database }.into())
+        };
+    }
+    state
+        .sqlite()
+        .execute(
+            "INSERT INTO repl_hol_image(schema_hash, image_hash, descriptor)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(schema_hash, image_hash)
+             DO UPDATE SET descriptor = excluded.descriptor",
+            sqlite::params![
+                database.schema().as_ref(),
+                database.image().as_ref(),
+                descriptor.as_slice()
+            ],
+        )
+        .map_err(ReplError::from)?;
+    hol_images.insert(database, descriptor);
+    Ok(())
+}
+
 fn copy_imported_term(term: ImportedTermView<'_>) -> LocalImportedHolTerm {
     match term {
         ImportedTermView::Bool(value) => LocalImportedHolTerm::Bool(value),
@@ -457,6 +495,46 @@ fn copy_imported_term(term: ImportedTermView<'_>) -> LocalImportedHolTerm {
             ty: ty.get(),
         },
     }
+}
+
+fn read_matched_hol_export(
+    id: ConnectionId,
+    trusted_import: TrustedImportId,
+    matched: MatchedTrustedHolImage<'_, AllowAll>,
+    mounted: &covalence_neutron::ImmutableImage,
+    namespace: NamespaceId,
+    export: ExportId,
+) -> Result<Option<LocalImportedHolExport>, LocalReplError> {
+    let import = matched.import();
+    let result = matched.with_mounted_reader(
+        namespace,
+        mounted,
+        |mut reader| -> Result<Option<LocalImportedHolExport>, ImportedReaderError> {
+            let Some(value) = reader.namespace_export(export.get())? else {
+                return Ok(None);
+            };
+            let value = match value {
+                ImportedExport::Kind(source_id) => LocalImportedHolValue::Kind(source_id.get()),
+                ImportedExport::Type(source_id) => LocalImportedHolValue::Type(source_id.get()),
+                ImportedExport::Context(source_id) => {
+                    LocalImportedHolValue::Context(source_id.get())
+                }
+                ImportedExport::Term(source_id) => LocalImportedHolValue::Term {
+                    id: source_id.get(),
+                    term: copy_imported_term(reader.term(source_id)?),
+                },
+            };
+            Ok(Some(LocalImportedHolExport {
+                connection: id,
+                trusted_import,
+                import,
+                namespace,
+                export,
+                value,
+            }))
+        },
+    )?;
+    Ok(result?)
 }
 
 impl LocalTrustedHolImport {
@@ -542,6 +620,7 @@ impl LocalRepl {
             kernel,
             directory,
             images: HashMap::new(),
+            hol_images: HashMap::new(),
             resident_image_bytes: 0,
         })
     }
@@ -559,6 +638,64 @@ impl LocalRepl {
     pub fn put_image(&mut self, bytes: &[u8]) -> Result<O256, LocalReplError> {
         let image = O256::from_bytes(bytes);
         self.put_verified_image(image, bytes)?;
+        Ok(image)
+    }
+
+    /// Authenticates and validates one complete signed HOL snapshot before admitting it as a
+    /// reusable resident `(schema, image)`.
+    ///
+    /// Admission is REPL-global operational state, not logical trust. No HOL connection is
+    /// consulted or modified. Later reads must use one destination connection's independently
+    /// persisted trusted-import row.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for cache limits, authentication, malformed/noncanonical descriptors,
+    /// detached HOL validation, conflicting resident evidence, VFS registration, or state writes.
+    #[allow(clippy::too_many_arguments)]
+    pub fn put_signed_hol_snapshot_with_descriptor(
+        &mut self,
+        bytes: &[u8],
+        descriptor: &[u8],
+        schema: O256,
+        image: O256,
+        signer: O256,
+        public_key: [u8; 32],
+        signature: &[u8],
+    ) -> Result<O256, LocalReplError> {
+        if let Some(existing) = self.images.get(&image) {
+            if existing.bytes() != bytes {
+                return Err(ReplImageError::HashCollision { image }.into());
+            }
+        } else {
+            check_image_cache_capacity(
+                self.images.len(),
+                self.resident_image_bytes,
+                bytes.len(),
+                IMAGE_CACHE_LIMITS,
+            )?;
+        }
+        let authenticated =
+            SignedSnapshotEnvelope::new(bytes, schema, image, signer, public_key, signature)
+                .authenticate()?;
+        let descriptor = HolSchemaDescriptor::decode(descriptor)?;
+        let validated =
+            AuthenticatedValidatedHolImage::validate_with_descriptor(authenticated, &descriptor)?;
+        let database = HolDatabaseRef::new(schema, image);
+        let canonical = descriptor.encode().to_vec();
+        if let Some(existing) = self.hol_images.get(&database) {
+            if existing == &canonical {
+                return Ok(image);
+            }
+            return Err(ReplImageError::ConflictingHolDescriptor { database }.into());
+        }
+        self.put_verified_image(image, validated.image().bytes())?;
+        record_resident_hol_descriptor(
+            self.directory.state(),
+            &mut self.hol_images,
+            database,
+            canonical,
+        )?;
         Ok(image)
     }
 
@@ -934,8 +1071,9 @@ impl LocalRepl {
     ///
     /// The returned integers are inert coordinates in the imported database. This operation does
     /// not import values into the local node table or grant authority to imported judgements.
-    /// This first whole-image demo copies the received bytes and registers a process-lifetime
-    /// immutable VFS for the one-shot read; repeated reads are not yet a cached mount API.
+    /// Successful connection-local trust matching admits the exact bytes and descriptor to the
+    /// bounded shared resident cache, so later independently authorized connections can reuse the
+    /// immutable mount without receiving the bytes again.
     ///
     /// # Errors
     ///
@@ -999,9 +1137,12 @@ impl LocalRepl {
         let descriptor = HolSchemaDescriptor::decode(descriptor)?;
         let validated =
             AuthenticatedValidatedHolImage::validate_with_descriptor(authenticated, &descriptor)?;
+        let canonical_descriptor = descriptor.encode().to_vec();
+        let database = HolDatabaseRef::new(schema, image);
         let Self {
             directory,
             images,
+            hol_images,
             resident_image_bytes,
             ..
         } = self;
@@ -1027,40 +1168,81 @@ impl LocalRepl {
             image,
             matched.image().bytes(),
         )?;
+        record_resident_hol_descriptor(state, hol_images, database, canonical_descriptor)?;
         let mounted = images
             .get(&image)
             .cloned()
             .ok_or(ReplImageError::Missing { image })?;
-        let import = matched.import();
-        let result = matched.with_mounted_reader(
-            namespace,
-            &mounted,
-            |mut reader| -> Result<Option<LocalImportedHolExport>, ImportedReaderError> {
-                let Some(value) = reader.namespace_export(export.get())? else {
-                    return Ok(None);
-                };
-                let value = match value {
-                    ImportedExport::Kind(source_id) => LocalImportedHolValue::Kind(source_id.get()),
-                    ImportedExport::Type(source_id) => LocalImportedHolValue::Type(source_id.get()),
-                    ImportedExport::Context(source_id) => {
-                        LocalImportedHolValue::Context(source_id.get())
-                    }
-                    ImportedExport::Term(source_id) => LocalImportedHolValue::Term {
-                        id: source_id.get(),
-                        term: copy_imported_term(reader.term(source_id)?),
-                    },
-                };
-                Ok(Some(LocalImportedHolExport {
-                    connection: id,
-                    trusted_import,
-                    import,
-                    namespace,
-                    export,
-                    value,
-                }))
-            },
-        )?;
-        Ok(result?)
+        read_matched_hol_export(id, trusted_import, matched, &mounted, namespace, export)
+    }
+
+    /// Authenticates and validates one already-resident signed HOL snapshot, then reads an exact
+    /// trusted namespace export without receiving its bytes, descriptor, or attestation again.
+    ///
+    /// Residency is only an operational cache fact. The destination connection's persistent
+    /// trusted-import row supplies the exact schema, signer, key, and signature; it is checked
+    /// before cache lookup and full detached validation. Namespace provenance and actual VFS
+    /// identity are then checked by the scoped structural reader.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the destination does not independently trust the requested image, its
+    /// validated resident interpretation is absent, revalidation fails, or immutable reading fails.
+    pub fn inspect_resident_trusted_hol_export(
+        &mut self,
+        id: ConnectionId,
+        trusted_import: TrustedImportId,
+        image: O256,
+        namespace: NamespaceId,
+        export: ExportId,
+    ) -> Result<Option<LocalImportedHolExport>, LocalReplError> {
+        let (trusted, database) = {
+            let connection = self.hol_mut(id)?;
+            let trusted = connection.trusted_import(trusted_import)?;
+            let database = connection.import_reference(trusted.import)?.database;
+            (trusted, database)
+        };
+        if database.image() != image {
+            return Err(ReplImageError::TrustedImageMismatch {
+                expected: database.image(),
+                actual: image,
+            }
+            .into());
+        }
+        SignedSnapshotAttestation::new(
+            database.schema(),
+            image,
+            trusted.signer,
+            trusted.public_key,
+            &trusted.signature,
+        )
+        .authenticate()?;
+        let descriptor = self
+            .hol_images
+            .get(&database)
+            .cloned()
+            .ok_or(ReplImageError::MissingHolImage { database })?;
+        let mounted = self
+            .images
+            .get(&image)
+            .cloned()
+            .ok_or(ReplImageError::Missing { image })?;
+        let authenticated = SignedSnapshotEnvelope::new(
+            mounted.bytes(),
+            database.schema(),
+            image,
+            trusted.signer,
+            trusted.public_key,
+            &trusted.signature,
+        )
+        .authenticate()?;
+        let descriptor = HolSchemaDescriptor::decode(&descriptor)?;
+        let validated =
+            AuthenticatedValidatedHolImage::validate_with_descriptor(authenticated, &descriptor)?;
+        let matched = self
+            .hol_mut(id)?
+            .match_trusted_import_image(trusted_import, validated)?;
+        read_matched_hol_export(id, trusted_import, matched, &mounted, namespace, export)
     }
 
     /// Introduces one exact implication from persisted witness keys.
@@ -1243,6 +1425,12 @@ pub enum ReplImageError {
     HashCollision { image: O256 },
     /// The requested complete image is not resident.
     Missing { image: O256 },
+    /// No validated resident HOL interpretation exists for these coordinates.
+    MissingHolImage { database: HolDatabaseRef },
+    /// The same schema/image coordinates were associated with different canonical descriptors.
+    ConflictingHolDescriptor { database: HolDatabaseRef },
+    /// The requested resident image differs from the connection's trusted import.
+    TrustedImageMismatch { expected: O256, actual: O256 },
     /// One image exceeds the fixed resident byte limit.
     ImageTooLarge { length: usize, maximum: usize },
     /// The fixed number of distinct resident images has been reached.
@@ -1269,6 +1457,22 @@ impl fmt::Display for ReplImageError {
                 )
             }
             Self::Missing { image } => write!(formatter, "database image {image} is not resident"),
+            Self::MissingHolImage { database } => write!(
+                formatter,
+                "HOL database ({}, {}) is not resident",
+                database.schema(),
+                database.image()
+            ),
+            Self::ConflictingHolDescriptor { database } => write!(
+                formatter,
+                "HOL database ({}, {}) has conflicting resident descriptors",
+                database.schema(),
+                database.image()
+            ),
+            Self::TrustedImageMismatch { expected, actual } => write!(
+                formatter,
+                "requested resident image {actual} differs from trusted image {expected}"
+            ),
             Self::ImageTooLarge { length, maximum } => write!(
                 formatter,
                 "database image contains {length} bytes; resident limit is {maximum}"
@@ -1854,6 +2058,87 @@ mod tests {
     }
 
     #[test]
+    fn resident_hol_admission_is_operational_and_schema_qualified() {
+        let mut repl = LocalRepl::new().unwrap();
+        let source = repl.open_hol().unwrap();
+        let target = repl.open_hol().unwrap();
+        let star = repl
+            .hol_mut(source)
+            .unwrap()
+            .insert_kind(&Kind::Star)
+            .unwrap();
+        repl.bind_hol_export(
+            source,
+            NamespaceId::root(),
+            ExportId::from_i64(5),
+            NamespaceExport::Kind(star),
+            Some("star"),
+        )
+        .unwrap();
+        let snapshot = repl.export_hol_snapshot(source).unwrap();
+        let trusted = repl
+            .trust_hol_import(
+                target,
+                snapshot.schema(),
+                snapshot.image(),
+                snapshot.signer(),
+                *snapshot.public_key(),
+                snapshot.signature(),
+            )
+            .unwrap();
+        let namespace = repl
+            .create_hol_imported_namespace(target, None, Some("resident"), trusted.import(), 0)
+            .unwrap();
+        assert!(matches!(
+            repl.inspect_resident_trusted_hol_export(
+                target,
+                trusted.trusted_import(),
+                snapshot.image(),
+                namespace,
+                ExportId::from_i64(5),
+            ),
+            Err(LocalReplError::Image(
+                ReplImageError::MissingHolImage { .. }
+            ))
+        ));
+        assert_eq!(
+            repl.put_signed_hol_snapshot_with_descriptor(
+                snapshot.bytes(),
+                snapshot.descriptor(),
+                snapshot.schema(),
+                snapshot.image(),
+                snapshot.signer(),
+                *snapshot.public_key(),
+                snapshot.signature(),
+            )
+            .unwrap(),
+            snapshot.image()
+        );
+        assert_eq!(
+            repl.inspect_resident_trusted_hol_export(
+                target,
+                trusted.trusted_import(),
+                snapshot.image(),
+                namespace,
+                ExportId::from_i64(5),
+            )
+            .unwrap()
+            .unwrap()
+            .value,
+            LocalImportedHolValue::Kind(star.get())
+        );
+        assert_eq!(repl.resident_image_count(), 1);
+        let rows = repl
+            .state()
+            .sqlite()
+            .query_row("SELECT count(*) FROM repl_hol_image", (), |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(rows, 1);
+    }
+
+    #[test]
     #[allow(clippy::too_many_lines)]
     fn shared_repl_trusts_one_hash_first_snapshot_across_connections() {
         let mut repl = LocalRepl::new().unwrap();
@@ -1960,21 +2245,15 @@ mod tests {
             ))
         ));
         assert!(matches!(
-            repl.inspect_trusted_hol_export_with_descriptor(
+            repl.inspect_resident_trusted_hol_export(
                 observer,
                 trusted.trusted_import(),
-                snapshot.bytes(),
-                snapshot.descriptor(),
-                snapshot.schema(),
                 snapshot.image(),
-                snapshot.signer(),
-                *snapshot.public_key(),
-                snapshot.signature(),
                 imported_namespace,
                 ExportId::from_i64(7),
             ),
-            Err(LocalReplError::TrustedImportImage(
-                TrustedImportImageError::Unknown(_)
+            Err(LocalReplError::TrustedImport(
+                TrustedImportError::UnknownTrustedImport(_)
             ))
         ));
         assert_eq!(repl.resident_image_count(), 1);
@@ -2006,16 +2285,10 @@ mod tests {
             .unwrap();
         repl.close(target).unwrap();
         assert_eq!(
-            repl.inspect_trusted_hol_export_with_descriptor(
+            repl.inspect_resident_trusted_hol_export(
                 observer,
                 observer_trusted.trusted_import(),
-                snapshot.bytes(),
-                snapshot.descriptor(),
-                snapshot.schema(),
                 snapshot.image(),
-                snapshot.signer(),
-                *snapshot.public_key(),
-                snapshot.signature(),
                 observer_namespace,
                 ExportId::from_i64(7),
             )

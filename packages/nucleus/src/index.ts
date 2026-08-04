@@ -55,9 +55,12 @@ export interface SignedHolAttestation {
   signature: Uint8Array;
 }
 
-export interface SignedHolSnapshot extends SignedHolAttestation {
-  bytes: Uint8Array;
+export interface ResidentHolSnapshot extends SignedHolAttestation {
   descriptor: Uint8Array;
+}
+
+export interface SignedHolSnapshot extends ResidentHolSnapshot {
+  bytes: Uint8Array;
 }
 
 export type HolMetadataTable =
@@ -234,6 +237,12 @@ export interface BrowserHolConnection {
     exportId: number,
     snapshot: SignedHolSnapshot,
   ): Promise<ImportedHolNamespaceExport | null>;
+  inspectResidentTrustedExport(
+    trustedImportId: number,
+    namespace: number,
+    exportId: number,
+    image: string,
+  ): Promise<ImportedHolNamespaceExport | null>;
   close(): Promise<void>;
 }
 
@@ -241,6 +250,7 @@ export interface BrowserRepl {
   open(): Promise<BrowserSqlConnection>;
   openHol(source?: HolSchemaSource): Promise<BrowserHolConnection>;
   compileHolSchema(schema: HolSchemaSpecV1): Promise<Uint8Array>;
+  putHolSnapshot(snapshot: SignedHolSnapshot): Promise<string>;
   close(): void;
 }
 
@@ -248,6 +258,7 @@ type RequestBody =
   | { operation: "open" }
   | { operation: "openHol"; source?: HolSchemaSource }
   | { operation: "compileHolSchema"; schema: HolSchemaSpecV1 }
+  | { operation: "holPutSnapshot"; snapshot: SignedHolSnapshot }
   | { operation: "close"; connection: number }
   | { operation: "run"; connection: number; sql: string }
   | { operation: "putImage"; connection: number; bytes: Uint8Array }
@@ -430,6 +441,14 @@ type RequestBody =
       namespace: number;
       exportId: number;
       snapshot: SignedHolSnapshot;
+    }
+  | {
+      operation: "holInspectResidentTrustedExport";
+      connection: number;
+      trustedImportId: number;
+      namespace: number;
+      exportId: number;
+      image: string;
     };
 
 type WorkerResponse =
@@ -498,6 +517,25 @@ class WorkerRepl implements BrowserRepl {
 
   compileHolSchema(schema: HolSchemaSpecV1): Promise<Uint8Array> {
     return this.request({ operation: "compileHolSchema", schema });
+  }
+
+  putHolSnapshot(snapshot: SignedHolSnapshot): Promise<string> {
+    const transferred = {
+      ...snapshot,
+      bytes: snapshot.bytes.slice(),
+      descriptor: snapshot.descriptor.slice(),
+      publicKey: snapshot.publicKey.slice(),
+      signature: snapshot.signature.slice(),
+    };
+    return this.request(
+      { operation: "holPutSnapshot", snapshot: transferred },
+      [
+        transferred.bytes.buffer,
+        transferred.descriptor.buffer,
+        transferred.publicKey.buffer,
+        transferred.signature.buffer,
+      ],
+    );
   }
 
   close(): void {
@@ -997,6 +1035,22 @@ class WorkerHolConnection implements BrowserHolConnection {
         transferred.signature.buffer,
       ],
     );
+  }
+
+  inspectResidentTrustedExport(
+    trustedImportId: number,
+    namespace: number,
+    exportId: number,
+    image: string,
+  ): Promise<ImportedHolNamespaceExport | null> {
+    return this.#request({
+      operation: "holInspectResidentTrustedExport",
+      connection: this.connection,
+      trustedImportId,
+      namespace,
+      exportId,
+      image,
+    });
   }
 
   async close(): Promise<void> {

@@ -75,6 +75,7 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
   });
   assert.equal(result.resolved, 7);
   assert.equal(result.snapshotHash, result.snapshotImage);
+  assert.equal(result.residentHash, result.snapshotImage);
   assert.match(result.snapshotSchema, /^[0-9a-f]{64}$/);
   assert.match(result.snapshotSigner, /^[0-9a-f]{64}$/);
   assert.equal(result.publicKeyLength, 32);
