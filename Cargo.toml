@@ -12,6 +12,7 @@ members = [
   "crates/nucleus",
   "crates/kernel-service",
   "crates/hol-proof-guest-beta",
+  "crates/hol-library",
   "crates/repl",
   "crates/bin/nucleus",
 ]

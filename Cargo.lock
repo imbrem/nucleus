@@ -167,6 +167,14 @@ name = "covalence-data-container"
 version = "0.0.0"
 
 [[package]]
+name = "covalence-hol-library"
+version = "0.0.0"
+dependencies = [
+ "covalence-neutron",
+ "covalence-nucleus",
+]
+
+[[package]]
 name = "covalence-hol-proof-guest-beta"
 version = "0.0.0"
 dependencies = [
