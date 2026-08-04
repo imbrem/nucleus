@@ -24,6 +24,7 @@ use sqlite::OptionalExtension as _;
 
 mod metadata_spec;
 mod schema_spec;
+mod signed_client;
 
 pub use metadata_spec::MetadataSpecError;
 use metadata_spec::{
@@ -32,6 +33,9 @@ use metadata_spec::{
 pub use schema_spec::{
     HolMetadataColumnSpec, HolMetadataIndexSpec, HolMetadataSchemaSpec, HolMetadataStorageSpec,
     HolMetadataTableSpec, HolSchemaSpecError, compile_hol_schema_json,
+};
+pub use signed_client::{
+    ChannelCoordinates, PendingInvocation, SignedClientError, SignedKernelClient,
 };
 
 pub use covalence_lib_hash::O256;
