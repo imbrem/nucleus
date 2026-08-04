@@ -34,9 +34,10 @@ export class KernelFetchTransport {
 
   constructor(endpoint: string | URL, options: KernelFetchOptions = {}) {
     this.#baseUrl = normalizeEndpoint(endpoint);
-    this.#fetch = options.fetch ?? globalThis.fetch;
-    if (typeof this.#fetch !== "function")
+    const fetch = options.fetch ?? globalThis.fetch;
+    if (typeof fetch !== "function")
       throw new TypeError("fetch is unavailable in this environment");
+    this.#fetch = options.fetch === undefined ? fetch.bind(globalThis) : fetch;
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     if (
       !Number.isSafeInteger(this.#timeoutMs) ||

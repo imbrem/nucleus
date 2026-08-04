@@ -1234,10 +1234,19 @@ async function dispatchRemote(
       pending.free();
     }
     try {
-      if (progress.kind() === "complete") return progress.take_output();
-      if (progress.kind() !== "dispatch")
-        throw new Error("kernel returned invalid operation progress");
-      pending = progress.take_pending();
+      const kind = progress.kind();
+      if (kind === "complete") return progress.take_output();
+      if (kind === "dispatch") {
+        pending = progress.take_pending();
+        continue;
+      }
+      if (kind === "error") throw new Error(progress.error());
+      if (kind === "invalidated") {
+        invalidateRemoteKernel(kernelId);
+        throw new Error(progress.error());
+      }
+      invalidateRemoteKernel(kernelId);
+      throw new Error("kernel returned invalid operation progress");
     } finally {
       progress.free();
     }

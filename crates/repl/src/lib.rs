@@ -554,6 +554,9 @@ pub enum ReplOperationOutput {
 pub enum ReplOperationProgress {
     /// The operation reached its final typed result.
     Complete(Result<ReplOperationOutput, LocalReplError>),
+    /// The result was not an acceptable response to this exact signed operation. The route and
+    /// every SQL handle associated with it have been invalidated.
+    Invalidated(LocalReplError),
     /// A local commit failed after the remote operation succeeded, so these exact signed bytes
     /// must be transported once to compensate before the original error is returned.
     Dispatch(Box<PendingReplOperation>),
@@ -1080,10 +1083,6 @@ fn service_outcome(outcome: SqlOutcome) -> Result<Outcome, ServiceError> {
             })
         }
     })
-}
-
-fn response_mismatch_progress() -> ReplOperationProgress {
-    ReplOperationProgress::Complete(Err(LocalSignedExchangeError::ResponseMismatch.into()))
 }
 
 fn service_image_error(error: &ReplImageError) -> ServiceError {
@@ -2110,18 +2109,23 @@ impl LocalRepl {
             request,
             completion,
         } = operation;
+        let kernel = request.pending.kernel();
+        let coordinates = request.coordinates;
         let response = self.accept_kernel_result(request, result);
         if let ReplOperationCompletion::CompensateOpen { original } = completion {
             // The synchronous API deliberately ignores every close-compensation result while the
             // signed layer still verifies it and poisons the route on invalid evidence.
-            let _ = response;
-            return ReplOperationProgress::Complete(Err(*original));
+            return if response.is_ok() {
+                ReplOperationProgress::Complete(Err(*original))
+            } else {
+                ReplOperationProgress::Invalidated(*original)
+            };
         }
         let response = match response {
             Ok(response) => response,
-            Err(error) => return ReplOperationProgress::Complete(Err(error)),
+            Err(error) => return ReplOperationProgress::Invalidated(error),
         };
-        self.finalize_operation(&completion, response)
+        self.finalize_operation(&completion, response, kernel, coordinates)
     }
 
     /// Abandons an ambiguously transported operation and invalidates its route and SQL handles.
@@ -2165,10 +2169,12 @@ impl LocalRepl {
         &mut self,
         completion: &ReplOperationCompletion,
         response: ServiceResponse,
+        route_kernel: KernelId,
+        coordinates: ChannelCoordinates,
     ) -> ReplOperationProgress {
         let result = match completion {
             ReplOperationCompletion::OpenSql { kernel } => {
-                return self.finalize_open_operation(*kernel, &response);
+                return self.finalize_open_operation(*kernel, coordinates, &response);
             }
             ReplOperationCompletion::CloseSql { connection } => match response {
                 ServiceResponse::Close(result) => match result {
@@ -2179,14 +2185,14 @@ impl LocalRepl {
                         .map_err(Into::into),
                     Err(error) => Err(LocalReplError::Service(error)),
                 },
-                _ => return response_mismatch_progress(),
+                _ => return self.response_mismatch_progress(route_kernel, coordinates),
             },
             ReplOperationCompletion::RunSql => match response {
                 ServiceResponse::Run(result) => result
                     .and_then(|outcome| service_outcome(outcome).map_err(SqlRunError::Service))
                     .map(ReplOperationOutput::Sql)
                     .map_err(LocalReplError::SqlRun),
-                _ => return response_mismatch_progress(),
+                _ => return self.response_mismatch_progress(route_kernel, coordinates),
             },
             ReplOperationCompletion::PutImage {
                 kernel,
@@ -2208,26 +2214,26 @@ impl LocalRepl {
                     .into()),
                     Err(error) => Err(LocalReplError::Service(error)),
                 },
-                _ => return response_mismatch_progress(),
+                _ => return self.response_mismatch_progress(route_kernel, coordinates),
             },
             ReplOperationCompletion::HasImage => match response {
                 ServiceResponse::HasImage(result) => result
                     .map(ReplOperationOutput::ImageResident)
                     .map_err(LocalReplError::Service),
-                _ => return response_mismatch_progress(),
+                _ => return self.response_mismatch_progress(route_kernel, coordinates),
             },
             ReplOperationCompletion::AttachImage => match response {
                 ServiceResponse::Attach(result) => result
                     .map(|()| ReplOperationOutput::Attached)
                     .map_err(LocalReplError::Service),
-                _ => return response_mismatch_progress(),
+                _ => return self.response_mismatch_progress(route_kernel, coordinates),
             },
             ReplOperationCompletion::SerializeMain => match response {
                 ServiceResponse::Serialize(result) => result
                     .map(ImageBytes::into_vec)
                     .map(ReplOperationOutput::Serialized)
                     .map_err(LocalReplError::Service),
-                _ => return response_mismatch_progress(),
+                _ => return self.response_mismatch_progress(route_kernel, coordinates),
             },
             ReplOperationCompletion::CompensateOpen { .. } => {
                 unreachable!("close compensation handled before response dispatch")
@@ -2236,9 +2242,20 @@ impl LocalRepl {
         ReplOperationProgress::Complete(result)
     }
 
+    fn response_mismatch_progress(
+        &mut self,
+        kernel: KernelId,
+        coordinates: ChannelCoordinates,
+    ) -> ReplOperationProgress {
+        let _ = self.signed_client.remove_route(kernel);
+        self.revoke_sql_client_channel(kernel, coordinates);
+        ReplOperationProgress::Invalidated(LocalSignedExchangeError::ResponseMismatch.into())
+    }
+
     fn finalize_open_operation(
         &mut self,
         kernel: KernelId,
+        coordinates: ChannelCoordinates,
         response: &ServiceResponse,
     ) -> ReplOperationProgress {
         let service_connection = match response {
@@ -2248,7 +2265,7 @@ impl LocalRepl {
                     return ReplOperationProgress::Complete(Err(LocalReplError::Service(*error)));
                 }
             },
-            _ => return response_mismatch_progress(),
+            _ => return self.response_mismatch_progress(kernel, coordinates),
         };
         let inserted = self.directory.insert_on(
             kernel,
@@ -3903,6 +3920,17 @@ mod tests {
         };
         assert_eq!(repl.active().unwrap(), Some(connection));
 
+        let rejected = repl
+            .prepare_operation(ReplOperation::RunSql {
+                connection,
+                sql: "SELECT * FROM missing_table".to_owned(),
+            })
+            .unwrap();
+        assert!(matches!(
+            exchange(&mut repl, &mut remote, rejected),
+            ReplOperationProgress::Complete(Err(LocalReplError::SqlRun(_)))
+        ));
+
         let run = repl
             .prepare_operation(ReplOperation::RunSql {
                 connection,
@@ -3954,6 +3982,45 @@ mod tests {
         ));
         assert!(matches!(
             repl.prepare_operation(ReplOperation::SerializeMain { connection }),
+            Err(LocalReplError::Directory(ReplError::UnknownConnection(id))) if id == connection
+        ));
+    }
+
+    #[test]
+    fn split_repl_operation_distinguishes_invalid_signed_evidence() {
+        let mut repl = LocalRepl::new().unwrap();
+        let mut remote = LocalKernelService::new(Kernel::ephemeral());
+        let caller = repl.remote_caller_public_key();
+        let grant = remote.issue_sql_channel(caller).unwrap();
+        let recipient = remote.identity().unwrap().public_key;
+        let kernel = repl
+            .accept_remote_kernel("test-bytes", Some("opaque"), recipient, &grant.encode())
+            .unwrap();
+        let open = repl
+            .prepare_operation(ReplOperation::OpenSql { kernel })
+            .unwrap();
+        let result = remote.exchange_sql(&open.encode()).unwrap();
+        let ReplOperationProgress::Complete(Ok(ReplOperationOutput::Opened(connection))) =
+            repl.accept_operation_result(open, &result)
+        else {
+            panic!("open did not reach its typed completion");
+        };
+
+        let run = repl
+            .prepare_operation(ReplOperation::RunSql {
+                connection,
+                sql: "SELECT 1".to_owned(),
+            })
+            .unwrap();
+        assert!(matches!(
+            repl.accept_operation_result(run, b"not a signed result"),
+            ReplOperationProgress::Invalidated(LocalReplError::SignedClient(_))
+        ));
+        assert!(matches!(
+            repl.prepare_operation(ReplOperation::RunSql {
+                connection,
+                sql: "SELECT 2".to_owned(),
+            }),
             Err(LocalReplError::Directory(ReplError::UnknownConnection(id))) if id == connection
         ));
     }

@@ -40,6 +40,7 @@ pub struct WebReplOperationProgress {
 enum WebReplOperationProgressValue {
     Complete(WebReplOperationOutput),
     Dispatch(Box<WebPendingReplOperation>),
+    Failed { error: String, invalidated: bool },
 }
 
 /// Typed final result of one transported SQL/image operation.
@@ -267,8 +268,8 @@ impl WebKernel {
     ///
     /// # Errors
     ///
-    /// Returns a JavaScript error if the pending value was already consumed, result verification
-    /// fails, the service rejects the operation, or its local directory commit fails.
+    /// Returns a JavaScript error only if the pending value was already consumed. Authenticated
+    /// operation failures and signed-route invalidation are returned as distinct progress kinds.
     pub fn accept_operation_result(
         &mut self,
         operation: &mut WebPendingReplOperation,
@@ -276,9 +277,14 @@ impl WebKernel {
     ) -> Result<WebReplOperationProgress, JsValue> {
         let operation = operation.take()?;
         match self.repl.accept_operation_result(operation, result) {
-            ReplOperationProgress::Complete(result) => {
-                let output = result.map_err(js_error)?;
+            ReplOperationProgress::Complete(Ok(output)) => {
                 Ok(WebReplOperationProgress::complete(output))
+            }
+            ReplOperationProgress::Complete(Err(error)) => {
+                Ok(WebReplOperationProgress::failed(error.to_string(), false))
+            }
+            ReplOperationProgress::Invalidated(error) => {
+                Ok(WebReplOperationProgress::failed(error.to_string(), true))
             }
             ReplOperationProgress::Dispatch(operation) => {
                 Ok(WebReplOperationProgress::dispatch(*operation))
@@ -1437,11 +1443,17 @@ impl WebReplOperationProgress {
             ))),
         }
     }
+
+    fn failed(error: String, invalidated: bool) -> Self {
+        Self {
+            value: Some(WebReplOperationProgressValue::Failed { error, invalidated }),
+        }
+    }
 }
 
 #[wasm_bindgen]
 impl WebReplOperationProgress {
-    /// Returns `complete` or `dispatch`.
+    /// Returns `complete`, `dispatch`, `error`, or `invalidated`.
     ///
     /// A `dispatch` value is a close compensation and must be transported exactly once before its
     /// result is accepted.
@@ -1450,6 +1462,12 @@ impl WebReplOperationProgress {
         match self.value {
             Some(WebReplOperationProgressValue::Complete(_)) => "complete",
             Some(WebReplOperationProgressValue::Dispatch(_)) => "dispatch",
+            Some(WebReplOperationProgressValue::Failed {
+                invalidated: false, ..
+            }) => "error",
+            Some(WebReplOperationProgressValue::Failed {
+                invalidated: true, ..
+            }) => "invalidated",
             None => "consumed",
         }
         .to_owned()
@@ -1467,6 +1485,10 @@ impl WebReplOperationProgress {
                 self.value = Some(value);
                 Err(JsValue::from_str("operation progress requires dispatch"))
             }
+            Some(value @ WebReplOperationProgressValue::Failed { .. }) => {
+                self.value = Some(value);
+                Err(JsValue::from_str("operation progress contains an error"))
+            }
             None => Err(JsValue::from_str("operation progress was already consumed")),
         }
     }
@@ -1483,7 +1505,25 @@ impl WebReplOperationProgress {
                 self.value = Some(value);
                 Err(JsValue::from_str("operation progress is already complete"))
             }
+            Some(value @ WebReplOperationProgressValue::Failed { .. }) => {
+                self.value = Some(value);
+                Err(JsValue::from_str("operation progress contains an error"))
+            }
             None => Err(JsValue::from_str("operation progress was already consumed")),
+        }
+    }
+
+    /// Returns the authenticated operation error or invalidation diagnostic.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error unless this is an `error` or `invalidated` progress value.
+    pub fn error(&self) -> Result<String, JsValue> {
+        match self.value.as_ref() {
+            Some(WebReplOperationProgressValue::Failed { error, .. }) => Ok(error.clone()),
+            _ => Err(JsValue::from_str(
+                "operation progress does not contain an error",
+            )),
         }
     }
 }
