@@ -206,6 +206,12 @@ pub fn spawn_native_kernel_server(
     })
 }
 
+/// Generates a fresh high-entropy one-time enrollment capability.
+#[must_use]
+pub fn random_bootstrap_token() -> BootstrapToken {
+    covalence_lib_rand::random()
+}
+
 fn validate_config(config: &NativeKernelServerConfig) -> Result<(), NativeKernelServerError> {
     if !config.bind_address.ip().is_loopback() {
         return Err(NativeKernelServerError::NonLoopbackAddress(

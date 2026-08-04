@@ -44,7 +44,7 @@ use metadata_spec::{
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use native_http::{
     NativeKernelServerConfig, NativeKernelServerError, NativeKernelServerHandle,
-    spawn_native_kernel_server,
+    random_bootstrap_token, spawn_native_kernel_server,
 };
 pub use schema_spec::{
     HolMetadataColumnSpec, HolMetadataIndexSpec, HolMetadataSchemaSpec, HolMetadataStorageSpec,
