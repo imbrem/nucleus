@@ -13,7 +13,7 @@ const contentTypes = {
   ".wasm": "application/wasm",
 };
 
-test("loads the Wasm binding in a browser", async (context) => {
+test("downloads and attaches an immutable SQLite image in a Worker", async (context) => {
   const server = createServer(async (request, response) => {
     const relative = new URL(request.url ?? "/", "http://localhost").pathname;
     const path = join(root, relative);
@@ -45,6 +45,25 @@ test("loads the Wasm binding in a browser", async (context) => {
   assert.notEqual(address, null);
   assert.equal(typeof address, "object");
   await page.goto(`http://127.0.0.1:${address.port}/test/browser.html`);
-  await page.waitForFunction(() => document.body.dataset.result !== undefined);
-  assert.equal(await page.locator("body").getAttribute("data-result"), "42");
+  await page.waitForFunction(
+    () =>
+      document.body.dataset.result !== undefined ||
+      document.body.dataset.error !== undefined,
+  );
+  assert.equal(await page.locator("body").getAttribute("data-error"), null);
+  const result = JSON.parse(
+    await page.locator("body").getAttribute("data-result"),
+  );
+  assert.match(result.hash, /^[0-9a-f]{64}$/);
+  assert.deepEqual(result.result, {
+    kind: "rows",
+    columns: ["name", "value"],
+    rows: [
+      [
+        { kind: "text", value: "exact" },
+        { kind: "integer", value: "9223372036854775807" },
+      ],
+    ],
+  });
+  assert.equal(result.readonly, true);
 });

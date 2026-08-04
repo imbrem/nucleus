@@ -6,13 +6,13 @@ use covalence_lib_hash::O256;
 use covalence_lib_sqlite as sqlite;
 use sqlite::vfs::{ReadOnlyVfs, register_unique};
 
-use super::Repl;
+use super::Sql;
 use crate::Connection;
 
 const DATABASE_IS_ATTACHED_SQL: &str =
     "SELECT EXISTS(SELECT 1 FROM pragma_database_list WHERE name = ?1)";
 
-impl Connection<Repl> {
+impl Connection<Sql> {
     /// Stores a complete resident image and returns its content address.
     ///
     /// Existing matching bytes are deduplicated. Different bytes at the same
@@ -222,7 +222,7 @@ mod tests {
     use crate::repl::{Outcome, QueryResult, Value};
 
     fn image() -> Vec<u8> {
-        let mut source = Connection::<Repl>::open_in_memory().expect("open source");
+        let mut source = Connection::<Sql>::open_in_memory().expect("open source");
         source
             .execute_batch(
                 "CREATE TABLE example(value TEXT NOT NULL);
@@ -236,7 +236,7 @@ mod tests {
     fn stores_deduplicated_verified_images() {
         let bytes = image();
         let hash = O256::from_bytes(&bytes);
-        let mut connection = Connection::<Repl>::open_in_memory().expect("open destination");
+        let mut connection = Connection::<Sql>::open_in_memory().expect("open destination");
 
         assert_eq!(connection.put_image(&bytes).unwrap(), hash);
         connection.put_verified_image(hash, &bytes).unwrap();
@@ -255,7 +255,7 @@ mod tests {
     #[test]
     fn attaches_and_queries_an_immutable_image() {
         let bytes = image();
-        let mut connection = Connection::<Repl>::open_in_memory().expect("open destination");
+        let mut connection = Connection::<Sql>::open_in_memory().expect("open destination");
         let hash = connection.put_image(&bytes).expect("store image");
         connection
             .attach_immutable_image(hash, "library")
@@ -280,7 +280,7 @@ mod tests {
     #[test]
     fn quotes_schema_names_and_rejects_collisions() {
         let bytes = image();
-        let mut connection = Connection::<Repl>::open_in_memory().expect("open destination");
+        let mut connection = Connection::<Sql>::open_in_memory().expect("open destination");
         let hash = connection.put_image(&bytes).expect("store image");
         connection
             .attach_immutable_image(hash, "quoted\"name")
@@ -294,7 +294,7 @@ mod tests {
 
     #[test]
     fn rejects_missing_and_malformed_images() {
-        let mut connection = Connection::<Repl>::open_in_memory().expect("open destination");
+        let mut connection = Connection::<Sql>::open_in_memory().expect("open destination");
         let missing = O256::from_bytes(b"missing");
         assert!(matches!(
             connection.attach_immutable_image(missing, "missing"),

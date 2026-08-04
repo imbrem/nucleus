@@ -11,14 +11,22 @@ test("runs the REPL kernel through the Wasm binding in Node", async () => {
   assert.equal(smoke(), 42);
 
   const source = new WebKernel();
-  source.run("CREATE TABLE example(value TEXT)").free();
-  source.run("INSERT INTO example VALUES ('immutable')").free();
-  const image = source.serialize_main();
+  const sourceConnection = source.open_connection();
+  source.run(sourceConnection, "CREATE TABLE example(value TEXT)").free();
+  source
+    .run(sourceConnection, "INSERT INTO example VALUES ('immutable')")
+    .free();
+  const image = source.serialize_main(sourceConnection);
 
   const kernel = new WebKernel();
-  const hash = kernel.put_image(image);
-  kernel.attach_image(hash, "library");
-  const result = kernel.run("SELECT value, 9223372036854775807 FROM library.example");
+  const connection = kernel.open_connection();
+  const otherConnection = kernel.open_connection();
+  const hash = kernel.put_image(connection, image);
+  kernel.attach_image(connection, hash, "library");
+  const result = kernel.run(
+    connection,
+    "SELECT value, 9223372036854775807 FROM library.example",
+  );
   assert.equal(result.kind(), "rows");
   assert.equal(result.column_count(), 2);
   assert.equal(result.row_count(), 1);
@@ -27,8 +35,13 @@ test("runs the REPL kernel through the Wasm binding in Node", async () => {
   assert.equal(result.value_kind(0, 1), "integer");
   assert.equal(result.integer(0, 1), "9223372036854775807");
   assert.throws(() =>
-    kernel.run("INSERT INTO library.example VALUES ('changed')"),
+    kernel.run(connection, "INSERT INTO library.example VALUES ('changed')"),
   );
+  assert.throws(() =>
+    kernel.run(otherConnection, "SELECT * FROM library.example"),
+  );
+  assert.equal(kernel.close_connection(otherConnection), true);
+  assert.throws(() => kernel.run(otherConnection, "SELECT 1"));
 
   result.free();
   kernel.free();

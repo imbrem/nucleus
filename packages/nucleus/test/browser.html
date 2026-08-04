@@ -2,17 +2,49 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Nucleus browser smoke test</title>
+    <title>Nucleus browser kernel test</title>
   </head>
   <body>
     <script type="module">
-      import init, { smoke } from "../generated/nucleus.js";
+      import { createBrowserRepl } from "../dist/index.js";
 
+      const repl = createBrowserRepl();
+      let source;
+      let target;
+      let url;
       try {
-        await init();
-        document.body.dataset.result = String(smoke());
+        source = await repl.open();
+        target = await repl.open();
+        await source.run("CREATE TABLE facts (name TEXT, value INTEGER)");
+        await source.run(
+          "INSERT INTO facts VALUES ('exact', 9223372036854775807)",
+        );
+        const image = await source.serializeMain();
+        url = URL.createObjectURL(new Blob([image]));
+        const hash = await target.loadUrl(url, "library");
+        const result = await target.run(
+          "SELECT name, value FROM library.facts",
+        );
+
+        let readonly = false;
+        try {
+          await target.run("INSERT INTO library.facts VALUES ('no', 0)");
+        } catch {
+          readonly = true;
+        }
+
+        document.body.dataset.result = JSON.stringify({
+          hash,
+          result,
+          readonly,
+        });
       } catch (error) {
         document.body.dataset.error = String(error);
+      } finally {
+        if (url !== undefined) URL.revokeObjectURL(url);
+        await source?.close();
+        await target?.close();
+        repl.close();
       }
     </script>
   </body>
