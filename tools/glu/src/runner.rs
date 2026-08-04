@@ -245,9 +245,14 @@ impl Runner {
         }
         self.exec("test Buck Rust targets", "buck2", ["test", "//crates/..."])?;
         self.build(BuildTarget::Wasm)?;
-        self.pnpm("test web", &["run", "test"])?;
-        self.test_components()?;
         let cli = self.buck_output("//crates/bin/nucleus:nucleus")?;
+        self.run_with_env(
+            "test web",
+            "pnpm",
+            ["run", "test"],
+            &[("NUCLEUS_BIN", cli.as_os_str())],
+        )?;
+        self.test_components()?;
         let cli = cli.to_string_lossy();
         let output = self.command(
             "test nucleus CLI",

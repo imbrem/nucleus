@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Nucleus native kernel browser test</title>
+  </head>
+  <body>
+    <script type="module">
+      import { createBrowserRepl } from "../dist/index.js";
+
+      const repl = createBrowserRepl();
+      globalThis.nativeKernelTestRepl = repl;
+      try {
+        const key = await repl.controllerKey();
+        document.body.dataset.controllerKey = Array.from(key, (byte) =>
+          byte.toString(16).padStart(2, "0"),
+        ).join("");
+      } catch (error) {
+        document.body.dataset.error = String(error);
+      }
+    </script>
+  </body>
+</html>
