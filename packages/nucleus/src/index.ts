@@ -72,6 +72,20 @@ export interface BrowserHolConnection {
     abstraction: number,
     argument: number,
   ): Promise<number>;
+  proveContextImplication(
+    antecedent: number,
+    consequent: number,
+    witnesses: number[],
+  ): Promise<void>;
+  weaken(
+    antecedent: number,
+    consequent: number,
+    conclusion: number,
+  ): Promise<number>;
+  contextImplicationProved(
+    antecedent: number,
+    consequent: number,
+  ): Promise<boolean>;
   proved(context: number, term: number): Promise<boolean>;
   close(): Promise<void>;
 }
@@ -175,6 +189,26 @@ type RequestBody =
       context: number;
       abstraction: number;
       argument: number;
+    }
+  | {
+      operation: "holProveContextImplication";
+      connection: number;
+      antecedent: number;
+      consequent: number;
+      witnesses: number[];
+    }
+  | {
+      operation: "holWeaken";
+      connection: number;
+      antecedent: number;
+      consequent: number;
+      conclusion: number;
+    }
+  | {
+      operation: "holContextImplicationProved";
+      connection: number;
+      antecedent: number;
+      consequent: number;
     }
   | {
       operation: "holProved";
@@ -522,6 +556,46 @@ class WorkerHolConnection implements BrowserHolConnection {
       context,
       abstraction,
       argument,
+    });
+  }
+
+  proveContextImplication(
+    antecedent: number,
+    consequent: number,
+    witnesses: number[],
+  ): Promise<void> {
+    return this.#request({
+      operation: "holProveContextImplication",
+      connection: this.connection,
+      antecedent,
+      consequent,
+      witnesses,
+    });
+  }
+
+  weaken(
+    antecedent: number,
+    consequent: number,
+    conclusion: number,
+  ): Promise<number> {
+    return this.#request({
+      operation: "holWeaken",
+      connection: this.connection,
+      antecedent,
+      consequent,
+      conclusion,
+    });
+  }
+
+  contextImplicationProved(
+    antecedent: number,
+    consequent: number,
+  ): Promise<boolean> {
+    return this.#request({
+      operation: "holContextImplicationProved",
+      connection: this.connection,
+      antecedent,
+      consequent,
     });
   }
 

@@ -123,6 +123,9 @@
         Prove identity reflexivity
       </button>
       <button id="hol-beta-demo" type="button">Prove identity beta</button>
+      <button id="hol-weakening-demo" type="button">
+        Prove context weakening
+      </button>
     </div>
 
     <script type="module">
@@ -436,6 +439,34 @@
             }
             const proved = await hol.proved(0, equality);
             output.textContent = `theorem 0 |- ${equality}; (${application.function} ${application.argument}) = ${view.right}; proved = ${proved}`;
+          } catch (error) {
+            showError(error);
+          }
+        });
+
+      document
+        .querySelector("#hol-weakening-demo")
+        .addEventListener("click", async () => {
+          try {
+            const hol = selectedProtocol("hol");
+            const boolType = await hol.boolType();
+            const p = await hol.freeTerm(200, boolType);
+            const q = await hol.freeTerm(201, boolType);
+            const consequent = await hol.defineContext([p]);
+            const antecedent = await hol.defineContext([p, q]);
+            const equality = await hol.proveReflexivity(consequent, p);
+            const witness = await hol.proveHypothesis(antecedent, p);
+            await hol.proveContextImplication(antecedent, consequent, [
+              witness,
+            ]);
+            const implication = await hol.contextImplicationProved(
+              antecedent,
+              consequent,
+            );
+            const before = await hol.proved(antecedent, equality);
+            const weakened = await hol.weaken(antecedent, consequent, equality);
+            const after = await hol.proved(antecedent, equality);
+            output.textContent = `context ${antecedent} => ${consequent} proved=${implication}; theorem ${antecedent} |- ${weakened}; before=${before} after=${after}`;
           } catch (error) {
             showError(error);
           }

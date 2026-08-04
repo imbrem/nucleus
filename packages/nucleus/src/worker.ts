@@ -148,6 +148,29 @@ type Request =
     }
   | {
       id: number;
+      operation: "holProveContextImplication";
+      connection: number;
+      antecedent: number;
+      consequent: number;
+      witnesses: number[];
+    }
+  | {
+      id: number;
+      operation: "holWeaken";
+      connection: number;
+      antecedent: number;
+      consequent: number;
+      conclusion: number;
+    }
+  | {
+      id: number;
+      operation: "holContextImplicationProved";
+      connection: number;
+      antecedent: number;
+      consequent: number;
+    }
+  | {
+      id: number;
       operation: "holProved";
       connection: number;
       context: number;
@@ -375,6 +398,27 @@ async function execute(request: Request): Promise<unknown> {
         request.context,
         request.abstraction,
         request.argument,
+      );
+    case "holProveContextImplication":
+      connection.hol_prove_context_implication(
+        request.connection,
+        request.antecedent,
+        request.consequent,
+        new Uint32Array(request.witnesses),
+      );
+      return undefined;
+    case "holWeaken":
+      return connection.hol_weaken(
+        request.connection,
+        request.antecedent,
+        request.consequent,
+        request.conclusion,
+      );
+    case "holContextImplicationProved":
+      return connection.hol_context_implication_proved(
+        request.connection,
+        request.antecedent,
+        request.consequent,
       );
     case "holProved":
       return connection.hol_proved(

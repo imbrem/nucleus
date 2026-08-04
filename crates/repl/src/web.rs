@@ -558,6 +558,65 @@ impl WebKernel {
         u32::try_from(conclusion.get()).map_err(js_error)
     }
 
+    /// Introduces one exact context implication from persisted witness terms.
+    pub fn hol_prove_context_implication(
+        &mut self,
+        connection: u32,
+        antecedent: u32,
+        consequent: u32,
+        witnesses: Vec<u32>,
+    ) -> Result<(), JsValue> {
+        let witnesses = witnesses
+            .into_iter()
+            .map(|term| TermId::from_i64(i64::from(term)))
+            .collect::<Vec<_>>();
+        self.repl
+            .prove_context_implication(
+                ConnectionId::from_u32(connection),
+                ContextId::from_i64(i64::from(antecedent)),
+                ContextId::from_i64(i64::from(consequent)),
+                &witnesses,
+            )
+            .map_err(js_error)
+    }
+
+    /// Weakens one exact theorem along one exact context implication.
+    pub fn hol_weaken(
+        &mut self,
+        connection: u32,
+        antecedent: u32,
+        consequent: u32,
+        conclusion: u32,
+    ) -> Result<u32, JsValue> {
+        let conclusion = self
+            .repl
+            .weaken(
+                ConnectionId::from_u32(connection),
+                ContextId::from_i64(i64::from(antecedent)),
+                ContextId::from_i64(i64::from(consequent)),
+                TermId::from_i64(i64::from(conclusion)),
+            )
+            .map_err(js_error)?;
+        u32::try_from(conclusion.get()).map_err(js_error)
+    }
+
+    /// Queries one exact persisted context implication.
+    pub fn hol_context_implication_proved(
+        &mut self,
+        connection: u32,
+        antecedent: u32,
+        consequent: u32,
+    ) -> Result<bool, JsValue> {
+        self.repl
+            .hol_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .proved_context_implication(
+                ContextId::from_i64(i64::from(antecedent)),
+                ContextId::from_i64(i64::from(consequent)),
+            )
+            .map_err(js_error)
+    }
+
     /// Queries whether the judgement has already been proved.
     pub fn hol_proved(
         &mut self,

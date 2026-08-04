@@ -116,7 +116,7 @@ fn run_line(repl: &mut LocalRepl, output: &mut impl io::Write, line: &str) -> Re
             ".hol term ...      admit/inspect simply typed terms and binders"
         )?;
         writeln!(output, ".hol ctx ...       define/inspect Boolean contexts")?;
-        writeln!(output, ".hol prove ...     apply hypothesis or truth")?;
+        writeln!(output, ".hol prove ...     apply an explicit HOL rule")?;
         writeln!(output, ".quit              exit")?;
         return Ok(true);
     }
@@ -338,9 +338,34 @@ fn run_hol_proof<'a>(
                 Ok::<_, ProofError>((theorem.context(), theorem.conclusion()))
             })?
         }
+        Some("implies") => {
+            let antecedent = parse_context_id(arguments.next(), "antecedent")?;
+            let consequent = parse_context_id(arguments.next(), "consequent")?;
+            let witnesses = arguments
+                .map(|value| value.parse().map(TermId::from_i64))
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            repl.prove_context_implication(connection, antecedent, consequent, &witnesses)?;
+            writeln!(
+                output,
+                "context implication {} => {}",
+                antecedent.get(),
+                consequent.get()
+            )?;
+            return Ok(());
+        }
+        Some("weaken") => {
+            let antecedent = parse_context_id(arguments.next(), "antecedent")?;
+            let consequent = parse_context_id(arguments.next(), "consequent")?;
+            let conclusion = parse_term_id(arguments.next(), "conclusion")?;
+            if arguments.next().is_some() {
+                return Err("usage: .hol prove weaken ANTECEDENT CONSEQUENT CONCLUSION".into());
+            }
+            let conclusion = repl.weaken(connection, antecedent, consequent, conclusion)?;
+            (antecedent, conclusion)
+        }
         _ => {
             return Err(
-                "usage: .hol prove hyp CONTEXT TERM|truth CONTEXT|refl CONTEXT TERM|beta CONTEXT ABSTRACTION ARGUMENT".into(),
+                "usage: .hol prove hyp CONTEXT TERM|truth CONTEXT|refl CONTEXT TERM|beta CONTEXT ABSTRACTION ARGUMENT|implies ANTECEDENT CONSEQUENT WITNESS_TERM...|weaken ANTECEDENT CONSEQUENT CONCLUSION".into(),
             );
         }
     };
@@ -722,7 +747,7 @@ mod tests {
     #[test]
     fn manages_sql_and_hol_connections_in_one_repl() {
         let mut input = Cursor::new(
-            ".open hol\n.hol star\n.hol arrow 1 1\n.hol show 3\n.hol rank 3\n.hol type bool\n.hol type arrow 2 2\n.hol term free 100 4\n.hol term free 101 2\n.hol term app 5 6\n.hol term type 7\n.hol term freevars 7\n.hol ctx define 7\n.hol ctx show 1\n.hol prove hyp 1 7\n.hol prove truth 0\n.hol proved 1 7\n.hol proved 0 8\n.hol term bound 0 2\n.hol term unbound 9\n.hol term closed 9\n.hol term lam 2 9\n.hol term show 10\n.hol term closed 10\n.hol prove refl 0 10\n.hol term show 11\n.hol proved 0 11\n.hol prove beta 0 10 8\n.hol term show 13\n.hol proved 0 13\n.connections\n.use 1\nSELECT 42 AS sql_still_live\n.quit\n",
+            ".open hol\n.hol star\n.hol arrow 1 1\n.hol show 3\n.hol rank 3\n.hol type bool\n.hol type arrow 2 2\n.hol term free 100 4\n.hol term free 101 2\n.hol term app 5 6\n.hol term type 7\n.hol term freevars 7\n.hol ctx define 7\n.hol ctx show 1\n.hol prove hyp 1 7\n.hol prove truth 0\n.hol proved 1 7\n.hol proved 0 8\n.hol term bound 0 2\n.hol term unbound 9\n.hol term closed 9\n.hol term lam 2 9\n.hol term show 10\n.hol term closed 10\n.hol prove refl 0 10\n.hol term show 11\n.hol proved 0 11\n.hol prove beta 0 10 8\n.hol term show 13\n.hol proved 0 13\n.hol ctx define 6\n.hol ctx define 6 8\n.hol prove refl 2 6\n.hol prove hyp 3 6\n.hol prove implies 3 2 6\n.hol proved 3 14\n.hol prove weaken 3 2 14\n.hol proved 3 14\n.connections\n.use 1\nSELECT 42 AS sql_still_live\n.quit\n",
         );
         let mut output = Vec::new();
         let mut errors = Vec::new();
@@ -756,8 +781,12 @@ mod tests {
         assert!(output.contains("theorem 0 |- 13\n"));
         assert!(output.contains("term 13 = eq 12 8\n"));
         assert!(output.contains("proved 0 13 = true\n"));
+        assert!(output.contains("context implication 3 => 2\n"));
+        assert!(output.contains("proved 3 14 = false\n"));
+        assert!(output.contains("theorem 3 |- 14\n"));
+        assert!(output.contains("proved 3 14 = true\n"));
         assert!(output.contains("  1\tnucleus/sql\n"));
-        assert!(output.contains("* 2\tnucleus/hol-omega-v0\n"));
+        assert!(output.contains("* 2\tnucleus/hol-common-v2\n"));
         assert!(output.contains("sql_still_live\n42\n"));
         assert!(errors.is_empty());
     }

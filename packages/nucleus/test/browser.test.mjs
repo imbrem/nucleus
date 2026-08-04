@@ -105,4 +105,10 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
     .waitFor();
   await demo.locator("#hol-beta-demo").click();
   await demo.getByText("theorem 0 |- 13; (10 8) = 8; proved = true").waitFor();
+  await demo.locator("#hol-weakening-demo").click();
+  await demo
+    .getByText(
+      "context 3 => 2 proved=true; theorem 3 |- 16; before=false after=true",
+    )
+    .waitFor();
 });
