@@ -497,6 +497,113 @@ impl PendingKernelRequest {
     }
 }
 
+/// One high-level SQL/image operation whose signed bytes may cross an asynchronous transport.
+///
+/// This is deliberately narrower than [`ServiceRequest`]: callers name REPL connections and
+/// kernels, while Rust resolves authoritative service handles and retains every local commit or
+/// compensation step.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ReplOperation {
+    /// Open and select one raw in-memory SQL connection on a kernel.
+    OpenSql { kernel: KernelId },
+    /// Close one managed raw SQL connection.
+    CloseSql { connection: ConnectionId },
+    /// Execute one complete SQL statement.
+    RunSql {
+        connection: ConnectionId,
+        sql: String,
+    },
+    /// Admit exact complete database bytes under an expected operational address.
+    PutImage {
+        kernel: KernelId,
+        expected: O256,
+        bytes: Vec<u8>,
+    },
+    /// Test operational residency on one kernel.
+    HasImage { kernel: KernelId, image: O256 },
+    /// Attach one resident immutable image to a raw SQL connection.
+    AttachImage {
+        connection: ConnectionId,
+        image: O256,
+        schema: String,
+    },
+    /// Serialize the writable `main` database of a raw SQL connection.
+    SerializeMain { connection: ConnectionId },
+}
+
+/// Typed completion of one [`ReplOperation`].
+#[derive(Debug)]
+pub enum ReplOperationOutput {
+    /// Newly opened and selected REPL connection.
+    Opened(ConnectionId),
+    /// A connection was closed.
+    Closed,
+    /// Result of executing one SQL statement.
+    Sql(Outcome),
+    /// Exact image address admitted to the kernel and mirrored in REPL state.
+    Image(O256),
+    /// Whether the exact image is resident.
+    ImageResident(bool),
+    /// An immutable image was attached.
+    Attached,
+    /// Exact serialized `main` database bytes.
+    Serialized(Vec<u8>),
+}
+
+/// Next Rust-owned step after accepting a transported operation result.
+pub enum ReplOperationProgress {
+    /// The operation reached its final typed result.
+    Complete(Result<ReplOperationOutput, LocalReplError>),
+    /// A local commit failed after the remote operation succeeded, so these exact signed bytes
+    /// must be transported once to compensate before the original error is returned.
+    Dispatch(Box<PendingReplOperation>),
+}
+
+/// One linear high-level operation with Rust-owned finalization state.
+///
+/// Transport adapters can inspect only its destination and canonical signed bytes. They must
+/// consume it with [`LocalRepl::accept_operation_result`] or
+/// [`LocalRepl::abandon_operation`], and must dispatch any follow-up returned by the former.
+pub struct PendingReplOperation {
+    request: PendingKernelRequest,
+    completion: ReplOperationCompletion,
+}
+
+impl PendingReplOperation {
+    /// Kernel route which must receive this operation step.
+    #[must_use]
+    pub const fn kernel(&self) -> KernelId {
+        self.request.kernel()
+    }
+
+    /// Exact canonical signed bytes to transport without interpretation or retry.
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        self.request.encode()
+    }
+}
+
+enum ReplOperationCompletion {
+    OpenSql {
+        kernel: KernelId,
+    },
+    CloseSql {
+        connection: ConnectionId,
+    },
+    RunSql,
+    PutImage {
+        kernel: KernelId,
+        expected: O256,
+        byte_length: usize,
+    },
+    HasImage,
+    AttachImage,
+    SerializeMain,
+    CompensateOpen {
+        original: Box<LocalReplError>,
+    },
+}
+
 /// One in-process kernel endpoint with service-local SQL handles and immutable image residency.
 ///
 /// Its maps are authoritative runtime state. Rows in a [`LocalRepl`]'s raw state database are
@@ -973,6 +1080,10 @@ fn service_outcome(outcome: SqlOutcome) -> Result<Outcome, ServiceError> {
             })
         }
     })
+}
+
+fn response_mismatch_progress() -> ReplOperationProgress {
+    ReplOperationProgress::Complete(Err(LocalSignedExchangeError::ResponseMismatch.into()))
 }
 
 fn service_image_error(error: &ReplImageError) -> ServiceError {
@@ -1882,6 +1993,291 @@ impl LocalRepl {
         let kernel = request.pending.kernel();
         let _ = self.signed_client.abandon_pending(request.pending);
         self.revoke_sql_client_channel(kernel, request.coordinates);
+    }
+
+    /// Resolves and signs one high-level SQL/image operation without performing transport I/O.
+    ///
+    /// The returned token retains all state needed to validate the response, commit local REPL
+    /// state, and (for an opened remote handle whose local directory insert fails) construct a
+    /// signed close compensation. A browser or other asynchronous adapter therefore handles only
+    /// opaque bytes and [`ReplOperationProgress`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error before dispatch for an unknown/wrong-protocol connection, invalid bounded
+    /// request value, unavailable route, or signed-client state failure.
+    pub fn prepare_operation(
+        &mut self,
+        operation: ReplOperation,
+    ) -> Result<PendingReplOperation, LocalReplError> {
+        let (kernel, request, completion) = match operation {
+            ReplOperation::OpenSql { kernel } => (
+                kernel,
+                ServiceRequest::Open,
+                ReplOperationCompletion::OpenSql { kernel },
+            ),
+            ReplOperation::CloseSql { connection } => {
+                let (kernel, service_connection) = self.sql_operation_target(connection)?;
+                (
+                    kernel,
+                    ServiceRequest::Close {
+                        connection: service_connection,
+                    },
+                    ReplOperationCompletion::CloseSql { connection },
+                )
+            }
+            ReplOperation::RunSql { connection, sql } => {
+                let (kernel, service_connection) = self.sql_operation_target(connection)?;
+                let statement = SqlStatement::new(sql).map_err(LocalReplError::Service)?;
+                (
+                    kernel,
+                    ServiceRequest::Run {
+                        connection: service_connection,
+                        statement,
+                    },
+                    ReplOperationCompletion::RunSql,
+                )
+            }
+            ReplOperation::PutImage {
+                kernel,
+                expected,
+                bytes,
+            } => {
+                let byte_length = bytes.len();
+                let bytes = ImageBytes::new(bytes).map_err(LocalReplError::Service)?;
+                (
+                    kernel,
+                    ServiceRequest::PutImage { bytes },
+                    ReplOperationCompletion::PutImage {
+                        kernel,
+                        expected,
+                        byte_length,
+                    },
+                )
+            }
+            ReplOperation::HasImage { kernel, image } => (
+                kernel,
+                ServiceRequest::HasImage { image },
+                ReplOperationCompletion::HasImage,
+            ),
+            ReplOperation::AttachImage {
+                connection,
+                image,
+                schema,
+            } => {
+                let (kernel, service_connection) = self.sql_operation_target(connection)?;
+                (
+                    kernel,
+                    ServiceRequest::Attach {
+                        connection: service_connection,
+                        image,
+                        schema,
+                    },
+                    ReplOperationCompletion::AttachImage,
+                )
+            }
+            ReplOperation::SerializeMain { connection } => {
+                let (kernel, service_connection) = self.sql_operation_target(connection)?;
+                (
+                    kernel,
+                    ServiceRequest::Serialize {
+                        connection: service_connection,
+                    },
+                    ReplOperationCompletion::SerializeMain,
+                )
+            }
+        };
+        self.ensure_sql_client_channel(kernel)?;
+        let request = self.prepare_kernel_request(kernel, &request)?;
+        Ok(PendingReplOperation {
+            request,
+            completion,
+        })
+    }
+
+    /// Verifies one transported operation result and performs its exact Rust-owned finalization.
+    ///
+    /// A [`ReplOperationProgress::Dispatch`] is the signed close compensation for a service handle
+    /// which opened successfully but could not be recorded locally. Its bytes must be dispatched
+    /// exactly once just like the original operation.
+    #[must_use]
+    pub fn accept_operation_result(
+        &mut self,
+        operation: PendingReplOperation,
+        result: &[u8],
+    ) -> ReplOperationProgress {
+        let PendingReplOperation {
+            request,
+            completion,
+        } = operation;
+        let response = self.accept_kernel_result(request, result);
+        if let ReplOperationCompletion::CompensateOpen { original } = completion {
+            // The synchronous API deliberately ignores every close-compensation result while the
+            // signed layer still verifies it and poisons the route on invalid evidence.
+            let _ = response;
+            return ReplOperationProgress::Complete(Err(*original));
+        }
+        let response = match response {
+            Ok(response) => response,
+            Err(error) => return ReplOperationProgress::Complete(Err(error)),
+        };
+        self.finalize_operation(&completion, response)
+    }
+
+    /// Abandons an ambiguously transported operation and invalidates its route and SQL handles.
+    ///
+    /// The invocation bytes must not be retried. If the abandoned step was only a close
+    /// compensation, the returned error is the original local commit failure which the
+    /// compensation was trying to clean up; otherwise transport failure remains the caller's
+    /// primary error and this returns `None`.
+    #[must_use]
+    pub fn abandon_operation(&mut self, operation: PendingReplOperation) -> Option<LocalReplError> {
+        let PendingReplOperation {
+            request,
+            completion,
+        } = operation;
+        self.abandon_kernel_request(request);
+        match completion {
+            ReplOperationCompletion::CompensateOpen { original } => Some(*original),
+            _ => None,
+        }
+    }
+
+    fn sql_operation_target(
+        &mut self,
+        id: ConnectionId,
+    ) -> Result<(KernelId, SqlConnectionId), LocalReplError> {
+        let kernel = self.directory.connection_kernel(id)?;
+        let connection = match self.directory.get_mut(id)? {
+            LocalConnection::Sql(connection) => *connection,
+            other @ LocalConnection::Hol(_) => {
+                return Err(LocalReplError::WrongProtocol {
+                    id,
+                    expected: "nucleus/sql",
+                    actual: other.protocol(),
+                });
+            }
+        };
+        Ok((kernel, connection))
+    }
+
+    fn finalize_operation(
+        &mut self,
+        completion: &ReplOperationCompletion,
+        response: ServiceResponse,
+    ) -> ReplOperationProgress {
+        let result = match completion {
+            ReplOperationCompletion::OpenSql { kernel } => {
+                return self.finalize_open_operation(*kernel, &response);
+            }
+            ReplOperationCompletion::CloseSql { connection } => match response {
+                ServiceResponse::Close(result) => match result {
+                    Ok(()) => self
+                        .directory
+                        .remove(*connection)
+                        .map(|_| ReplOperationOutput::Closed)
+                        .map_err(Into::into),
+                    Err(error) => Err(LocalReplError::Service(error)),
+                },
+                _ => return response_mismatch_progress(),
+            },
+            ReplOperationCompletion::RunSql => match response {
+                ServiceResponse::Run(result) => result
+                    .and_then(|outcome| service_outcome(outcome).map_err(SqlRunError::Service))
+                    .map(ReplOperationOutput::Sql)
+                    .map_err(LocalReplError::SqlRun),
+                _ => return response_mismatch_progress(),
+            },
+            ReplOperationCompletion::PutImage {
+                kernel,
+                expected,
+                byte_length,
+            } => match response {
+                ServiceResponse::PutImage(result) => match result {
+                    Ok(actual) if actual == *expected => record_resident_image(
+                        self.directory.state(),
+                        *kernel,
+                        *expected,
+                        *byte_length,
+                    )
+                    .map(|()| ReplOperationOutput::Image(*expected)),
+                    Ok(actual) => Err(ReplImageError::AddressMismatch {
+                        expected: *expected,
+                        actual,
+                    }
+                    .into()),
+                    Err(error) => Err(LocalReplError::Service(error)),
+                },
+                _ => return response_mismatch_progress(),
+            },
+            ReplOperationCompletion::HasImage => match response {
+                ServiceResponse::HasImage(result) => result
+                    .map(ReplOperationOutput::ImageResident)
+                    .map_err(LocalReplError::Service),
+                _ => return response_mismatch_progress(),
+            },
+            ReplOperationCompletion::AttachImage => match response {
+                ServiceResponse::Attach(result) => result
+                    .map(|()| ReplOperationOutput::Attached)
+                    .map_err(LocalReplError::Service),
+                _ => return response_mismatch_progress(),
+            },
+            ReplOperationCompletion::SerializeMain => match response {
+                ServiceResponse::Serialize(result) => result
+                    .map(ImageBytes::into_vec)
+                    .map(ReplOperationOutput::Serialized)
+                    .map_err(LocalReplError::Service),
+                _ => return response_mismatch_progress(),
+            },
+            ReplOperationCompletion::CompensateOpen { .. } => {
+                unreachable!("close compensation handled before response dispatch")
+            }
+        };
+        ReplOperationProgress::Complete(result)
+    }
+
+    fn finalize_open_operation(
+        &mut self,
+        kernel: KernelId,
+        response: &ServiceResponse,
+    ) -> ReplOperationProgress {
+        let service_connection = match response {
+            ServiceResponse::Open(result) => match result {
+                Ok(connection) => *connection,
+                Err(error) => {
+                    return ReplOperationProgress::Complete(Err(LocalReplError::Service(*error)));
+                }
+            },
+            _ => return response_mismatch_progress(),
+        };
+        let inserted = self.directory.insert_on(
+            kernel,
+            "nucleus/sql",
+            Some(&service_connection.get().to_string()),
+            LocalConnection::Sql(service_connection),
+        );
+        let id = match inserted {
+            Ok(id) => id,
+            Err(error) => {
+                let original = Box::new(LocalReplError::Directory(error));
+                let close = ServiceRequest::Close {
+                    connection: service_connection,
+                };
+                let Ok(request) = self.prepare_kernel_request(kernel, &close) else {
+                    return ReplOperationProgress::Complete(Err(*original));
+                };
+                return ReplOperationProgress::Dispatch(Box::new(PendingReplOperation {
+                    request,
+                    completion: ReplOperationCompletion::CompensateOpen { original },
+                }));
+            }
+        };
+        let result = if let Err(error) = self.directory.select(id) {
+            Err(error.into())
+        } else {
+            Ok(ReplOperationOutput::Opened(id))
+        };
+        ReplOperationProgress::Complete(result)
     }
 
     fn signed_sql_request(
@@ -3475,6 +3871,124 @@ mod tests {
                 SignedClientError::UnknownRoute(route)
             )) if route == kernel
         ));
+    }
+
+    #[test]
+    fn split_repl_operations_keep_typed_finalization_in_rust() {
+        fn exchange(
+            repl: &mut LocalRepl,
+            remote: &mut LocalKernelService,
+            operation: PendingReplOperation,
+        ) -> ReplOperationProgress {
+            let result = remote.exchange_sql(&operation.encode()).unwrap();
+            repl.accept_operation_result(operation, &result)
+        }
+
+        let mut repl = LocalRepl::new().unwrap();
+        let mut remote = LocalKernelService::new(Kernel::ephemeral());
+        let caller = repl.remote_caller_public_key();
+        let grant = remote.issue_sql_channel(caller).unwrap();
+        let recipient = remote.identity().unwrap().public_key;
+        let kernel = repl
+            .accept_remote_kernel("test-bytes", Some("opaque"), recipient, &grant.encode())
+            .unwrap();
+
+        let open = repl
+            .prepare_operation(ReplOperation::OpenSql { kernel })
+            .unwrap();
+        let ReplOperationProgress::Complete(Ok(ReplOperationOutput::Opened(connection))) =
+            exchange(&mut repl, &mut remote, open)
+        else {
+            panic!("open did not reach its typed completion");
+        };
+        assert_eq!(repl.active().unwrap(), Some(connection));
+
+        let run = repl
+            .prepare_operation(ReplOperation::RunSql {
+                connection,
+                sql: "SELECT 42 AS answer".to_owned(),
+            })
+            .unwrap();
+        assert!(matches!(
+            exchange(&mut repl, &mut remote, run),
+            ReplOperationProgress::Complete(Ok(ReplOperationOutput::Sql(Outcome::Rows(
+                QueryResult { columns, rows }
+            )))) if columns == ["answer"] && rows == [vec![Value::Integer(42)]]
+        ));
+
+        let serialize = repl
+            .prepare_operation(ReplOperation::SerializeMain { connection })
+            .unwrap();
+        let ReplOperationProgress::Complete(Ok(ReplOperationOutput::Serialized(bytes))) =
+            exchange(&mut repl, &mut remote, serialize)
+        else {
+            panic!("serialize did not reach its typed completion");
+        };
+        let image = O256::from_bytes(&bytes);
+        let put = repl
+            .prepare_operation(ReplOperation::PutImage {
+                kernel,
+                expected: image,
+                bytes,
+            })
+            .unwrap();
+        assert!(matches!(
+            exchange(&mut repl, &mut remote, put),
+            ReplOperationProgress::Complete(Ok(ReplOperationOutput::Image(actual)))
+                if actual == image
+        ));
+        let resident = repl
+            .prepare_operation(ReplOperation::HasImage { kernel, image })
+            .unwrap();
+        assert!(matches!(
+            exchange(&mut repl, &mut remote, resident),
+            ReplOperationProgress::Complete(Ok(ReplOperationOutput::ImageResident(true)))
+        ));
+
+        let close = repl
+            .prepare_operation(ReplOperation::CloseSql { connection })
+            .unwrap();
+        assert!(matches!(
+            exchange(&mut repl, &mut remote, close),
+            ReplOperationProgress::Complete(Ok(ReplOperationOutput::Closed))
+        ));
+        assert!(matches!(
+            repl.prepare_operation(ReplOperation::SerializeMain { connection }),
+            Err(LocalReplError::Directory(ReplError::UnknownConnection(id))) if id == connection
+        ));
+    }
+
+    #[test]
+    fn split_open_dispatches_close_compensation_after_directory_failure() {
+        let mut repl = LocalRepl::new().unwrap();
+        let mut remote = LocalKernelService::new(Kernel::ephemeral());
+        let caller = repl.remote_caller_public_key();
+        let grant = remote.issue_sql_channel(caller).unwrap();
+        let recipient = remote.identity().unwrap().public_key;
+        let kernel = repl
+            .accept_remote_kernel("test-bytes", Some("opaque"), recipient, &grant.encode())
+            .unwrap();
+        let open = repl
+            .prepare_operation(ReplOperation::OpenSql { kernel })
+            .unwrap();
+        let open_result = remote.exchange_sql(&open.encode()).unwrap();
+        assert_eq!(remote.sql_connections.len(), 1);
+
+        repl.state()
+            .sqlite()
+            .execute_batch("DROP TABLE repl_connection")
+            .unwrap();
+        let ReplOperationProgress::Dispatch(compensation) =
+            repl.accept_operation_result(open, &open_result)
+        else {
+            panic!("failed local open commit did not request compensation");
+        };
+        let close_result = remote.exchange_sql(&compensation.encode()).unwrap();
+        assert!(matches!(
+            repl.accept_operation_result(*compensation, &close_result),
+            ReplOperationProgress::Complete(Err(LocalReplError::Directory(_)))
+        ));
+        assert!(remote.sql_connections.is_empty());
     }
 
     #[test]
