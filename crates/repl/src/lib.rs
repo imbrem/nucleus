@@ -10,8 +10,8 @@ use std::fmt;
 use std::sync::Arc;
 
 use covalence_kernel_service::{
-    ImageBytes, KernelIdentity, KernelService, ServiceError, SqlConnectionId, SqlOutcome,
-    SqlStatement, SqlValue, operation_schema,
+    ImageBytes, KernelIdentity, KernelService, ServiceError, SqlConnectionId, SqlDiagnostic,
+    SqlOutcome, SqlRunError, SqlStatement, SqlValue, operation_schema,
     rpc::{RpcCodecError, ServiceRequest, ServiceResponse},
     wire::{
         ChannelGrant, ChannelNonce, InvocationChannel, MessageSigningError, PublicKeyIdentity,
@@ -443,13 +443,8 @@ impl LocalConnection {
 /// A local kernel and heterogeneous connection directory shared by all UIs.
 pub struct LocalRepl {
     kernels: HashMap<KernelId, LocalKernelService>,
-    sql_client_channels: HashMap<(KernelId, KernelId), SqlClientChannel>,
+    signed_client: SignedKernelClient,
     directory: Repl<LocalConnection>,
-}
-
-struct SqlClientChannel {
-    grant: ChannelGrant,
-    next_sequence: Option<u64>,
 }
 
 /// One in-process kernel endpoint with service-local SQL handles and immutable image residency.
@@ -653,7 +648,7 @@ impl LocalKernelService {
                 let result = if owns {
                     KernelService::run_sql(self, connection, statement)
                 } else {
-                    Err(ServiceError::NotFound)
+                    Err(SqlRunError::Service(ServiceError::NotFound))
                 };
                 ServiceResponse::Run(result)
             }
@@ -720,16 +715,6 @@ impl LocalKernelService {
         self.sql_connections
             .get_mut(&connection)
             .ok_or(ServiceError::NotFound)
-    }
-
-    fn run_sql_local(
-        &mut self,
-        connection: SqlConnectionId,
-        statement: &str,
-    ) -> sqlite::Result<Outcome> {
-        self.sql_mut(connection)
-            .map_err(|_| sqlite::Error::InvalidQuery)?
-            .run(statement, &[])
     }
 
     fn image(&self, image: O256) -> Result<covalence_neutron::ImmutableImage, ReplImageError> {
@@ -841,20 +826,22 @@ impl KernelService for LocalKernelService {
         &mut self,
         connection: SqlConnectionId,
         statement: SqlStatement,
-    ) -> Result<SqlOutcome, ServiceError> {
+    ) -> Result<SqlOutcome, SqlRunError> {
         let outcome = self
-            .run_sql_local(connection, statement.as_str())
-            .map_err(|_| ServiceError::InvalidRequest)?;
+            .sql_mut(connection)
+            .map_err(SqlRunError::Service)?
+            .run(statement.as_str(), &[])
+            .map_err(|error| sql_run_error(&error))?;
         match outcome {
             Outcome::Changed(count) => Ok(SqlOutcome::changed(
                 u64::try_from(count).map_err(|_| ServiceError::ResourceLimit)?,
             )),
-            Outcome::Rows(QueryResult { columns, rows }) => SqlOutcome::rows(
+            Outcome::Rows(QueryResult { columns, rows }) => Ok(SqlOutcome::rows(
                 columns,
                 rows.into_iter()
                     .map(|row| row.into_iter().map(service_sql_value).collect())
                     .collect(),
-            ),
+            )?),
         }
     }
 
@@ -890,6 +877,15 @@ impl KernelService for LocalKernelService {
             LocalKernelServiceError::Image(_) => ServiceError::Internal,
         })
     }
+}
+
+fn sql_run_error(error: &sqlite::Error) -> SqlRunError {
+    let extended_code = error.sqlite_error().map_or(0, |code| code.extended_code);
+    SqlRunError::Sqlite(SqlDiagnostic::new(
+        extended_code & 0xff,
+        extended_code,
+        error.to_string(),
+    ))
 }
 
 fn service_sql_value(value: Value) -> SqlValue {
@@ -1371,7 +1367,7 @@ impl LocalRepl {
         let kernels = HashMap::from([(KernelId::local(), LocalKernelService::new(kernel))]);
         Ok(Self {
             kernels,
-            sql_client_channels: HashMap::new(),
+            signed_client: SignedKernelClient::ephemeral(),
             directory,
         })
     }
@@ -1573,24 +1569,15 @@ impl LocalRepl {
         expected: O256,
         bytes: &[u8],
     ) -> Result<(), LocalReplError> {
-        if kernel == KernelId::local() {
-            self.kernels
-                .get_mut(&kernel)
-                .ok_or(ReplError::UnknownKernel(kernel))?
-                .put_verified_image(expected, bytes)?;
-        } else {
-            let image_bytes = ImageBytes::new(bytes.to_vec()).map_err(LocalReplError::Service)?;
-            let actual = match self.signed_sql_request(
-                KernelId::local(),
-                kernel,
-                &ServiceRequest::PutImage { bytes: image_bytes },
-            )? {
-                ServiceResponse::PutImage(result) => result.map_err(LocalReplError::Service)?,
-                _ => return Err(LocalSignedExchangeError::ResponseMismatch.into()),
-            };
-            if actual != expected {
-                return Err(ReplImageError::AddressMismatch { expected, actual }.into());
-            }
+        let image_bytes = ImageBytes::new(bytes.to_vec()).map_err(LocalReplError::Service)?;
+        let actual = match self
+            .signed_sql_request(kernel, &ServiceRequest::PutImage { bytes: image_bytes })?
+        {
+            ServiceResponse::PutImage(result) => result.map_err(LocalReplError::Service)?,
+            _ => return Err(LocalSignedExchangeError::ResponseMismatch.into()),
+        };
+        if actual != expected {
+            return Err(ReplImageError::AddressMismatch { expected, actual }.into());
         }
         record_resident_image(self.directory.state(), kernel, expected, bytes.len())
     }
@@ -1607,21 +1594,9 @@ impl LocalRepl {
     ///
     /// Returns an error when `kernel` does not identify a live local service.
     pub fn has_image_on(&mut self, kernel: KernelId, image: O256) -> Result<bool, LocalReplError> {
-        if kernel == KernelId::local() {
-            self.kernels
-                .get(&kernel)
-                .ok_or(ReplError::UnknownKernel(kernel))?
-                .has_image(image)
-                .map_err(LocalReplError::Service)
-        } else {
-            match self.signed_sql_request(
-                KernelId::local(),
-                kernel,
-                &ServiceRequest::HasImage { image },
-            )? {
-                ServiceResponse::HasImage(result) => result.map_err(LocalReplError::Service),
-                _ => Err(LocalSignedExchangeError::ResponseMismatch.into()),
-            }
+        match self.signed_sql_request(kernel, &ServiceRequest::HasImage { image })? {
+            ServiceResponse::HasImage(result) => result.map_err(LocalReplError::Service),
+            _ => Err(LocalSignedExchangeError::ResponseMismatch.into()),
         }
     }
 
@@ -1665,132 +1640,84 @@ impl LocalRepl {
         self.directory.select(id).map_err(Into::into)
     }
 
-    fn ensure_sql_client_channel(
-        &mut self,
-        caller: KernelId,
-        recipient: KernelId,
-    ) -> Result<(), LocalReplError> {
-        if caller == recipient {
-            return Err(LocalSignedExchangeError::ResponseMismatch.into());
-        }
-        let route = (caller, recipient);
-        if self.sql_client_channels.contains_key(&route) {
+    fn ensure_sql_client_channel(&mut self, recipient: KernelId) -> Result<(), LocalReplError> {
+        if self.signed_client.grant(recipient).is_some() {
             return Ok(());
         }
-        let caller_key = *self
-            .kernels
-            .get(&caller)
-            .ok_or(ReplError::UnknownKernel(caller))?
-            .kernel
-            .verifying_key()
-            .as_bytes();
+        let caller_key = self.signed_client.caller_public_key();
         let grant = self
             .kernels
             .get_mut(&recipient)
             .ok_or(ReplError::UnknownKernel(recipient))?
             .issue_sql_channel(caller_key)?;
-        let recipient_key = self
+        let recipient_key = *self
             .kernels
             .get(&recipient)
             .ok_or(ReplError::UnknownKernel(recipient))?
             .kernel
-            .verifying_key();
-        grant
-            .verify(caller_key, &recipient_key)
-            .map_err(LocalSignedExchangeError::Wire)?;
-        self.sql_client_channels.insert(
-            route,
-            SqlClientChannel {
-                next_sequence: Some(grant.initial_sequence()),
-                grant,
-            },
-        );
+            .verifying_key()
+            .as_bytes();
+        if let Err(error) =
+            self.signed_client
+                .accept_grant(recipient, recipient_key, &grant.encode())
+        {
+            self.kernels
+                .get_mut(&recipient)
+                .ok_or(ReplError::UnknownKernel(recipient))?
+                .revoke_sql_channel(caller_key, grant.channel());
+            return Err(error.into());
+        }
         Ok(())
     }
 
     fn signed_sql_request(
         &mut self,
-        caller: KernelId,
         recipient: KernelId,
         request: &ServiceRequest,
     ) -> Result<ServiceResponse, LocalReplError> {
-        self.ensure_sql_client_channel(caller, recipient)?;
-        let route = (caller, recipient);
-        let client = self
-            .sql_client_channels
-            .get(&route)
-            .ok_or(LocalSignedExchangeError::UnknownChannel)?;
-        let Some(sequence) = client.next_sequence else {
-            self.abandon_sql_client_channel(caller, recipient);
-            return Err(LocalSignedExchangeError::Wire(WireError::SequenceExhausted).into());
-        };
-        let grant = client.grant.clone();
-        let payload = request.encode();
-        let invocation = SignedInvocation::sign(
-            operation_schema(request.operation()),
-            &NucleusStatementSigner(
-                self.kernels
-                    .get(&caller)
-                    .ok_or(ReplError::UnknownKernel(caller))?
-                    .kernel
-                    .signer(),
-            ),
-            grant.recipient(),
-            grant.channel(),
-            sequence,
-            request.value_id(),
-            payload,
-        )
-        .map_err(LocalSignedExchangeError::signing)?;
+        self.ensure_sql_client_channel(recipient)?;
+        let pending = self.signed_client.prepare(recipient, request)?;
+        let coordinates = pending.channel_coordinates();
         let result_bytes = match self
             .kernels
             .get_mut(&recipient)
             .ok_or(ReplError::UnknownKernel(recipient))?
-            .exchange_sql(&invocation.encode())
+            .exchange_sql(&pending.encode())
         {
             Ok(bytes) => bytes,
             Err(error) => {
-                self.abandon_sql_client_channel(caller, recipient);
+                let _ = self.signed_client.abandon_pending(pending);
+                self.revoke_sql_client_channel(recipient, coordinates);
                 return Err(error.into());
             }
         };
-        let result = SignedResult::decode(&result_bytes).map_err(|error| {
-            self.abandon_sql_client_channel(caller, recipient);
-            LocalSignedExchangeError::Wire(error)
-        })?;
-        let recipient_key = self
-            .kernels
-            .get(&recipient)
-            .ok_or(ReplError::UnknownKernel(recipient))?
-            .kernel
-            .verifying_key();
-        result
-            .verify(&invocation, &recipient_key)
-            .map_err(|error| {
-                self.abandon_sql_client_channel(caller, recipient);
-                LocalSignedExchangeError::Wire(error)
-            })?;
-        let response = ServiceResponse::decode(result.payload()).map_err(|error| {
-            self.abandon_sql_client_channel(caller, recipient);
-            LocalSignedExchangeError::Codec(error)
-        })?;
-        if response.operation() != request.operation() || result.output_id() != response.value_id()
-        {
-            self.abandon_sql_client_channel(caller, recipient);
-            return Err(LocalSignedExchangeError::ResponseMismatch.into());
+        match self.signed_client.accept_result(pending, &result_bytes) {
+            Ok(response) => Ok(response),
+            Err(error) => {
+                self.revoke_sql_client_channel(recipient, coordinates);
+                Err(error.into())
+            }
         }
-        self.sql_client_channels
-            .get_mut(&route)
-            .ok_or(LocalSignedExchangeError::UnknownChannel)?
-            .next_sequence = sequence.checked_add(1);
-        Ok(response)
     }
 
-    fn abandon_sql_client_channel(&mut self, caller: KernelId, recipient: KernelId) {
-        if let Some(client) = self.sql_client_channels.remove(&(caller, recipient))
-            && let Some(service) = self.kernels.get_mut(&recipient)
-        {
-            service.revoke_sql_channel(client.grant.caller(), client.grant.channel());
+    fn revoke_sql_client_channel(&mut self, recipient: KernelId, coordinates: ChannelCoordinates) {
+        if let Some(service) = self.kernels.get_mut(&recipient) {
+            service.revoke_sql_channel(coordinates.caller, coordinates.channel);
+        }
+        let stale = self
+            .directory
+            .connections
+            .iter()
+            .filter_map(|(id, managed)| {
+                (managed.kernel == recipient
+                    && matches!(managed.connection, LocalConnection::Sql(_)))
+                .then_some(*id)
+            })
+            .collect::<Vec<_>>();
+        for id in stale {
+            if self.directory.remove(id).is_err() {
+                self.directory.connections.remove(&id);
+            }
         }
     }
 
@@ -1809,17 +1736,9 @@ impl LocalRepl {
     ///
     /// Returns an error for an unknown/nonlocal kernel or failed connection/directory creation.
     pub fn open_sql_on(&mut self, kernel: KernelId) -> Result<ConnectionId, LocalReplError> {
-        let service_connection = if kernel == KernelId::local() {
-            self.kernels
-                .get_mut(&kernel)
-                .ok_or(ReplError::UnknownKernel(kernel))?
-                .open_sql()
-                .map_err(LocalReplError::Service)?
-        } else {
-            match self.signed_sql_request(KernelId::local(), kernel, &ServiceRequest::Open)? {
-                ServiceResponse::Open(result) => result.map_err(LocalReplError::Service)?,
-                _ => return Err(LocalSignedExchangeError::ResponseMismatch.into()),
-            }
+        let service_connection = match self.signed_sql_request(kernel, &ServiceRequest::Open)? {
+            ServiceResponse::Open(result) => result.map_err(LocalReplError::Service)?,
+            _ => return Err(LocalSignedExchangeError::ResponseMismatch.into()),
         };
         let inserted = self.directory.insert_on(
             kernel,
@@ -1830,19 +1749,12 @@ impl LocalRepl {
         let id = match inserted {
             Ok(id) => id,
             Err(error) => {
-                if kernel == KernelId::local() {
-                    if let Some(service) = self.kernels.get_mut(&kernel) {
-                        let _ = service.close_sql(service_connection);
-                    }
-                } else {
-                    let _ = self.signed_sql_request(
-                        KernelId::local(),
-                        kernel,
-                        &ServiceRequest::Close {
-                            connection: service_connection,
-                        },
-                    );
-                }
+                let _ = self.signed_sql_request(
+                    kernel,
+                    &ServiceRequest::Close {
+                        connection: service_connection,
+                    },
+                );
                 return Err(error.into());
             }
         };
@@ -1969,52 +1881,20 @@ impl LocalRepl {
             LocalConnection::Hol(_) => None,
         };
         if let Some(service_connection) = service_connection {
-            if kernel == KernelId::local() {
-                self.kernels
-                    .get_mut(&kernel)
-                    .ok_or(ReplError::UnknownKernel(kernel))?
-                    .close_sql(service_connection)
-                    .map_err(LocalReplError::Service)?;
-            } else {
-                match self.signed_sql_request(
-                    KernelId::local(),
-                    kernel,
-                    &ServiceRequest::Close {
-                        connection: service_connection,
-                    },
-                )? {
-                    ServiceResponse::Close(result) => {
-                        result.map_err(LocalReplError::Service)?;
-                    }
-                    _ => return Err(LocalSignedExchangeError::ResponseMismatch.into()),
+            match self.signed_sql_request(
+                kernel,
+                &ServiceRequest::Close {
+                    connection: service_connection,
+                },
+            )? {
+                ServiceResponse::Close(result) => {
+                    result.map_err(LocalReplError::Service)?;
                 }
+                _ => return Err(LocalSignedExchangeError::ResponseMismatch.into()),
             }
         }
         self.directory.remove(id)?;
         Ok(())
-    }
-
-    /// Returns a mutable SQL session to crate-local tests, rejecting HOL connection IDs.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for an unknown ID or protocol mismatch.
-    #[cfg(test)]
-    fn sql_mut(&mut self, id: ConnectionId) -> Result<&mut Connection<Sql>, LocalReplError> {
-        let kernel = self.directory.connection_kernel(id)?;
-        let service_connection = match self.directory.get_mut(id)? {
-            LocalConnection::Sql(connection) => *connection,
-            other @ LocalConnection::Hol(_) => Err(LocalReplError::WrongProtocol {
-                id,
-                expected: "nucleus/sql",
-                actual: other.protocol(),
-            })?,
-        };
-        self.kernels
-            .get_mut(&kernel)
-            .ok_or(ReplError::UnknownKernel(kernel))?
-            .sql_mut(service_connection)
-            .map_err(LocalReplError::Service)
     }
 
     /// Executes one statement through the connection's authoritative kernel route.
@@ -2035,27 +1915,18 @@ impl LocalRepl {
                 });
             }
         };
-        if kernel == KernelId::local() {
-            self.kernels
-                .get_mut(&kernel)
-                .ok_or(ReplError::UnknownKernel(kernel))?
-                .run_sql_local(service_connection, sql)
-                .map_err(LocalReplError::Sql)
-        } else {
-            let statement = SqlStatement::new(sql.to_owned()).map_err(LocalReplError::Service)?;
-            match self.signed_sql_request(
-                KernelId::local(),
-                kernel,
-                &ServiceRequest::Run {
-                    connection: service_connection,
-                    statement,
-                },
-            )? {
-                ServiceResponse::Run(result) => result
-                    .and_then(service_outcome)
-                    .map_err(LocalReplError::Service),
-                _ => Err(LocalSignedExchangeError::ResponseMismatch.into()),
-            }
+        let statement = SqlStatement::new(sql.to_owned()).map_err(LocalReplError::Service)?;
+        match self.signed_sql_request(
+            kernel,
+            &ServiceRequest::Run {
+                connection: service_connection,
+                statement,
+            },
+        )? {
+            ServiceResponse::Run(result) => result
+                .and_then(|outcome| service_outcome(outcome).map_err(SqlRunError::Service))
+                .map_err(LocalReplError::SqlRun),
+            _ => Err(LocalSignedExchangeError::ResponseMismatch.into()),
         }
     }
 
@@ -2097,25 +1968,16 @@ impl LocalRepl {
                 });
             }
         };
-        if kernel == KernelId::local() {
-            self.kernels
-                .get_mut(&kernel)
-                .ok_or(ReplError::UnknownKernel(kernel))?
-                .attach_image(service_connection, image, schema)
-                .map_err(LocalReplError::Service)
-        } else {
-            match self.signed_sql_request(
-                KernelId::local(),
-                kernel,
-                &ServiceRequest::Attach {
-                    connection: service_connection,
-                    image,
-                    schema: schema.to_owned(),
-                },
-            )? {
-                ServiceResponse::Attach(result) => result.map_err(LocalReplError::Service),
-                _ => Err(LocalSignedExchangeError::ResponseMismatch.into()),
-            }
+        match self.signed_sql_request(
+            kernel,
+            &ServiceRequest::Attach {
+                connection: service_connection,
+                image,
+                schema: schema.to_owned(),
+            },
+        )? {
+            ServiceResponse::Attach(result) => result.map_err(LocalReplError::Service),
+            _ => Err(LocalSignedExchangeError::ResponseMismatch.into()),
         }
     }
 
@@ -2137,26 +1999,16 @@ impl LocalRepl {
                 });
             }
         };
-        if kernel == KernelId::local() {
-            self.kernels
-                .get_mut(&kernel)
-                .ok_or(ReplError::UnknownKernel(kernel))?
-                .serialize_sql(service_connection)
+        match self.signed_sql_request(
+            kernel,
+            &ServiceRequest::Serialize {
+                connection: service_connection,
+            },
+        )? {
+            ServiceResponse::Serialize(result) => result
                 .map(ImageBytes::into_vec)
-                .map_err(LocalReplError::KernelService)
-        } else {
-            match self.signed_sql_request(
-                KernelId::local(),
-                kernel,
-                &ServiceRequest::Serialize {
-                    connection: service_connection,
-                },
-            )? {
-                ServiceResponse::Serialize(result) => result
-                    .map(ImageBytes::into_vec)
-                    .map_err(LocalReplError::Service),
-                _ => Err(LocalSignedExchangeError::ResponseMismatch.into()),
-            }
+                .map_err(LocalReplError::Service),
+            _ => Err(LocalSignedExchangeError::ResponseMismatch.into()),
         }
     }
 
@@ -2520,35 +2372,49 @@ impl LocalRepl {
             AuthenticatedValidatedHolImage::validate_with_descriptor(authenticated, &descriptor)?;
         let canonical_descriptor = descriptor.encode().to_vec();
         let database = HolDatabaseRef::new(schema, image);
-        let Self {
-            directory, kernels, ..
-        } = self;
-        let Repl {
-            state, connections, ..
-        } = directory;
-        let managed = connections
-            .get_mut(&id)
-            .ok_or(ReplError::UnknownConnection(id))?;
-        let connection = match &mut managed.connection {
-            LocalConnection::Hol(connection) => connection,
-            other @ LocalConnection::Sql(_) => {
-                return Err(LocalReplError::WrongProtocol {
-                    id,
-                    expected: "nucleus/hol-common-v2",
-                    actual: other.protocol(),
-                });
-            }
-        };
-        let kernel_id = managed.kernel;
-        let matched = connection.match_trusted_import_image(trusted_import, validated)?;
-        let service = kernels
+        let kernel_id = self.directory.connection_kernel(id)?;
+        {
+            let connection = match self.directory.get_mut(id)? {
+                LocalConnection::Hol(connection) => connection,
+                other @ LocalConnection::Sql(_) => {
+                    return Err(LocalReplError::WrongProtocol {
+                        id,
+                        expected: "nucleus/hol-common-v2",
+                        actual: other.protocol(),
+                    });
+                }
+            };
+            let _ = connection.match_trusted_import_image(trusted_import, validated)?;
+        }
+
+        // Admission happens only after connection-local trust matching, and uses the same signed
+        // image operation as every SQL-facing transport. Rematch afterwards to reconstruct the
+        // scoped logical capability without letting operational residency imply trust.
+        self.put_verified_image_on(kernel_id, image, bytes)?;
+        let service = self
+            .kernels
             .get_mut(&kernel_id)
             .ok_or(ReplError::UnknownKernel(kernel_id))?;
-        service.put_verified_image(image, matched.image().bytes())?;
-        record_resident_image(state, kernel_id, image, matched.image().bytes().len())?;
         service.record_hol_descriptor(database, canonical_descriptor.clone())?;
-        record_resident_hol_descriptor(state, kernel_id, database, &canonical_descriptor)?;
+        record_resident_hol_descriptor(
+            self.directory.state(),
+            kernel_id,
+            database,
+            &canonical_descriptor,
+        )?;
         let mounted = service.image(image)?;
+        let authenticated =
+            SignedSnapshotEnvelope::new(bytes, schema, image, signer, public_key, signature)
+                .authenticate()?;
+        let descriptor = HolSchemaDescriptor::decode(descriptor.encode())?;
+        let validated =
+            AuthenticatedValidatedHolImage::validate_with_descriptor(authenticated, &descriptor)?;
+        let matched = match self.directory.get_mut(id)? {
+            LocalConnection::Hol(connection) => {
+                connection.match_trusted_import_image(trusted_import, validated)?
+            }
+            LocalConnection::Sql(_) => unreachable!("protocol checked before image admission"),
+        };
         read_matched_hol_export(id, trusted_import, matched, &mounted, namespace, export)
     }
 
@@ -2886,10 +2752,14 @@ pub enum LocalReplError {
     Sql(sqlite::Error),
     /// A portable kernel-service operation failed.
     Service(ServiceError),
+    /// A raw SQL service operation failed with a portable or `SQLite` diagnostic.
+    SqlRun(SqlRunError),
     /// A local kernel service extension failed.
     KernelService(LocalKernelServiceError),
     /// A signed inter-kernel exchange failed before producing a verified service result.
     SignedExchange(LocalSignedExchangeError),
+    /// The transport-neutral signed caller rejected a grant, request, or result.
+    SignedClient(SignedClientError),
     /// A HOL connection or its schema could not open.
     HolOpen(HolOpenError),
     /// A portable HOL metadata schema descriptor was invalid.
@@ -2940,8 +2810,10 @@ impl fmt::Display for LocalReplError {
             Self::SqlOpen(error) => write!(formatter, "could not open SQL connection: {error}"),
             Self::Sql(error) => error.fmt(formatter),
             Self::Service(error) => error.fmt(formatter),
+            Self::SqlRun(error) => error.fmt(formatter),
             Self::KernelService(error) => error.fmt(formatter),
             Self::SignedExchange(error) => error.fmt(formatter),
+            Self::SignedClient(error) => error.fmt(formatter),
             Self::HolOpen(error) => error.fmt(formatter),
             Self::HolSchemaDescriptor(error) => error.fmt(formatter),
             Self::HolSchemaSpec(error) => error.fmt(formatter),
@@ -2977,8 +2849,10 @@ impl StdError for LocalReplError {
             Self::SqlOpen(error) => Some(error),
             Self::Sql(error) => Some(error),
             Self::Service(error) => Some(error),
+            Self::SqlRun(error) => Some(error),
             Self::KernelService(error) => Some(error),
             Self::SignedExchange(error) => Some(error),
+            Self::SignedClient(error) => Some(error),
             Self::HolOpen(error) => Some(error),
             Self::HolSchemaDescriptor(error) => Some(error),
             Self::HolSchemaSpec(error) => Some(error),
@@ -3009,6 +2883,12 @@ impl From<ReplError> for LocalReplError {
 impl From<LocalSignedExchangeError> for LocalReplError {
     fn from(error: LocalSignedExchangeError) -> Self {
         Self::SignedExchange(error)
+    }
+}
+
+impl From<SignedClientError> for LocalReplError {
+    fn from(error: SignedClientError) -> Self {
+        Self::SignedClient(error)
     }
 }
 
@@ -3290,11 +3170,11 @@ mod tests {
         let sql = repl.open_sql().unwrap();
         let hol = repl.open_hol().unwrap();
 
-        repl.sql_mut(sql).unwrap().run("SELECT 1", &[]).unwrap();
+        repl.run_sql(sql, "SELECT 1").unwrap();
         let star = repl.hol_mut(hol).unwrap().insert_kind(&Kind::Star).unwrap();
         assert_eq!(star.get(), 1);
         assert!(matches!(
-            repl.sql_mut(hol),
+            repl.run_sql(hol, "SELECT 1"),
             Err(LocalReplError::WrongProtocol {
                 expected: "nucleus/sql",
                 actual: "nucleus/hol-common-v2",
@@ -3441,7 +3321,7 @@ mod tests {
         );
         assert_eq!(
             cross_channel,
-            ServiceResponse::Run(Err(ServiceError::NotFound))
+            ServiceResponse::Run(Err(SqlRunError::Service(ServiceError::NotFound)))
         );
 
         let (_, closed) = signed_sql_call(
@@ -3524,9 +3404,15 @@ mod tests {
         let other_kernel = repl.create_local_kernel().unwrap();
         let first = repl.open_sql().unwrap();
         let second = repl.open_sql_on(other_kernel).unwrap();
-        assert!(
-            repl.sql_client_channels
-                .contains_key(&(KernelId::local(), other_kernel))
+        assert!(repl.signed_client.grant(KernelId::local()).is_some());
+        assert!(repl.signed_client.grant(other_kernel).is_some());
+        assert_ne!(
+            repl.signed_client.caller_public_key(),
+            repl.kernel(KernelId::local()).unwrap().public_key
+        );
+        assert_ne!(
+            repl.signed_client.caller_public_key(),
+            repl.kernel(other_kernel).unwrap().public_key
         );
         let remote_handles = repl
             .state()
@@ -3653,9 +3539,7 @@ mod tests {
         );
 
         let first_sql = repl.open_sql_on(first_kernel).unwrap();
-        repl.sql_mut(first_sql)
-            .unwrap()
-            .execute_batch("CREATE TABLE only_first(value INTEGER) STRICT;")
+        repl.run_sql(first_sql, "CREATE TABLE only_first(value INTEGER) STRICT")
             .unwrap();
         let second_sql = repl.open_sql_on(second_kernel).unwrap();
         assert_eq!(
@@ -3755,10 +3639,7 @@ mod tests {
             repl.directory.connection_kernel(first_connection).unwrap(),
             KernelId::local()
         );
-        repl.sql_mut(first_connection)
-            .unwrap()
-            .run("SELECT 1", &[])
-            .unwrap();
+        repl.run_sql(first_connection, "SELECT 1").unwrap();
     }
 
     #[test]
