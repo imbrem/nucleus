@@ -5,7 +5,8 @@ use std::io;
 use std::process::ExitCode;
 
 use covalence_repl::{
-    ConnectionId, KindId, KindView, LocalRepl, Outcome, TermId, TermView, TypeId, TypeView, Value,
+    ConnectionId, ContextId, KindId, KindView, LocalRepl, Outcome, TermId, TermView, TypeId,
+    TypeView, Value,
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
@@ -114,6 +115,8 @@ fn run_line(repl: &mut LocalRepl, output: &mut impl io::Write, line: &str) -> Re
             output,
             ".hol term ...      admit/inspect Bool, free, and app terms"
         )?;
+        writeln!(output, ".hol ctx ...       define/inspect Boolean contexts")?;
+        writeln!(output, ".hol prove ...     apply hypothesis or truth")?;
         writeln!(output, ".quit              exit")?;
         return Ok(true);
     }
@@ -230,8 +233,90 @@ fn run_hol(repl: &mut LocalRepl, output: &mut impl io::Write, arguments: &str) -
         }
         Some("type") => run_hol_type(repl, output, connection, arguments)?,
         Some("term") => run_hol_term(repl, output, connection, arguments)?,
-        _ => return Err("usage: .hol star|arrow|show|rank|type|term ...".into()),
+        Some("ctx") => run_hol_context(repl, output, connection, arguments)?,
+        Some("prove") => run_hol_proof(repl, output, connection, arguments)?,
+        Some("proved") => {
+            let context = parse_context_id(arguments.next(), "context")?;
+            let term = parse_term_id(arguments.next(), "term")?;
+            if arguments.next().is_some() {
+                return Err("usage: .hol proved CONTEXT TERM".into());
+            }
+            let proved = repl.hol_mut(connection)?.proved_judgement(context, term)?;
+            writeln!(output, "proved {} {} = {proved}", context.get(), term.get())?;
+        }
+        _ => {
+            return Err("usage: .hol star|arrow|show|rank|type|term|ctx|prove|proved ...".into());
+        }
     }
+    Ok(())
+}
+
+fn run_hol_context<'a>(
+    repl: &mut LocalRepl,
+    output: &mut impl io::Write,
+    connection: ConnectionId,
+    mut arguments: impl Iterator<Item = &'a str>,
+) -> Result<()> {
+    match arguments.next() {
+        Some("define") => {
+            let members = arguments
+                .map(|value| value.parse().map(TermId::from_i64))
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            let context = repl.hol_mut(connection)?.define_context(members)?;
+            writeln!(output, "context {} defined", context.get())?;
+        }
+        Some("show") => {
+            let context = parse_context_id(arguments.next(), "context")?;
+            if arguments.next().is_some() {
+                return Err("usage: .hol ctx show ID".into());
+            }
+            let members = repl.hol_mut(connection)?.context_members(context)?;
+            writeln!(
+                output,
+                "context {} = {}",
+                context.get(),
+                members
+                    .iter()
+                    .map(|term| term.get().to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )?;
+        }
+        _ => return Err("usage: .hol ctx define [TERM...]|show ID".into()),
+    }
+    Ok(())
+}
+
+fn run_hol_proof<'a>(
+    repl: &mut LocalRepl,
+    output: &mut impl io::Write,
+    connection: ConnectionId,
+    mut arguments: impl Iterator<Item = &'a str>,
+) -> Result<()> {
+    let theorem = match arguments.next() {
+        Some("hyp") => {
+            let context = parse_context_id(arguments.next(), "context")?;
+            let term = parse_term_id(arguments.next(), "term")?;
+            if arguments.next().is_some() {
+                return Err("usage: .hol prove hyp CONTEXT TERM".into());
+            }
+            repl.hol_mut(connection)?.prove_hypothesis(context, term)?
+        }
+        Some("truth") => {
+            let context = parse_context_id(arguments.next(), "context")?;
+            if arguments.next().is_some() {
+                return Err("usage: .hol prove truth CONTEXT".into());
+            }
+            repl.hol_mut(connection)?.prove_truth(context)?
+        }
+        _ => return Err("usage: .hol prove hyp CONTEXT TERM|truth CONTEXT".into()),
+    };
+    writeln!(
+        output,
+        "theorem {} |- {}",
+        theorem.context().get(),
+        theorem.conclusion().get()
+    )?;
     Ok(())
 }
 
@@ -393,6 +478,11 @@ fn parse_term_id(value: Option<&str>, name: &str) -> Result<TermId> {
     Ok(TermId::from_i64(value.parse()?))
 }
 
+fn parse_context_id(value: Option<&str>, name: &str) -> Result<ContextId> {
+    let value = value.ok_or_else(|| format!("missing {name} context ID"))?;
+    Ok(ContextId::from_i64(value.parse()?))
+}
+
 fn run_repl(
     input: &mut impl io::BufRead,
     output: &mut impl io::Write,
@@ -514,7 +604,7 @@ mod tests {
     #[test]
     fn manages_sql_and_hol_connections_in_one_repl() {
         let mut input = Cursor::new(
-            ".open hol\n.hol star\n.hol arrow 1 1\n.hol show 3\n.hol rank 3\n.hol type bool\n.hol type arrow 2 2\n.hol term free 100 4\n.hol term free 101 2\n.hol term app 5 6\n.hol term type 7\n.hol term freevars 7\n.connections\n.use 1\nSELECT 42 AS sql_still_live\n.quit\n",
+            ".open hol\n.hol star\n.hol arrow 1 1\n.hol show 3\n.hol rank 3\n.hol type bool\n.hol type arrow 2 2\n.hol term free 100 4\n.hol term free 101 2\n.hol term app 5 6\n.hol term type 7\n.hol term freevars 7\n.hol ctx define 7\n.hol ctx show 1\n.hol prove hyp 1 7\n.hol prove truth 0\n.hol proved 1 7\n.hol proved 0 8\n.connections\n.use 1\nSELECT 42 AS sql_still_live\n.quit\n",
         );
         let mut output = Vec::new();
         let mut errors = Vec::new();
@@ -531,6 +621,12 @@ mod tests {
         assert!(output.contains("term 7 = app 5 6\n"));
         assert!(output.contains("term 7 : 2\n"));
         assert!(output.contains("freevars 7 = 100,101\n"));
+        assert!(output.contains("context 1 defined\n"));
+        assert!(output.contains("context 1 = 7\n"));
+        assert!(output.contains("theorem 1 |- 7\n"));
+        assert!(output.contains("theorem 0 |- 8\n"));
+        assert!(output.contains("proved 1 7 = true\n"));
+        assert!(output.contains("proved 0 8 = true\n"));
         assert!(output.contains("  1\tnucleus/sql\n"));
         assert!(output.contains("* 2\tnucleus/hol-omega-v0\n"));
         assert!(output.contains("sql_still_live\n42\n"));

@@ -49,6 +49,11 @@ export interface BrowserHolConnection {
   term(id: number): Promise<HolTerm>;
   termType(id: number): Promise<number>;
   termFreeVariables(id: number): Promise<number[]>;
+  defineContext(members: number[]): Promise<number>;
+  contextMembers(id: number): Promise<number[]>;
+  proveHypothesis(context: number, term: number): Promise<number>;
+  proveTruth(context: number): Promise<number>;
+  proved(context: number, term: number): Promise<boolean>;
   close(): Promise<void>;
 }
 
@@ -109,7 +114,22 @@ type RequestBody =
     }
   | { operation: "holTerm"; connection: number; term: number }
   | { operation: "holTermType"; connection: number; term: number }
-  | { operation: "holTermFreeVariables"; connection: number; term: number };
+  | { operation: "holTermFreeVariables"; connection: number; term: number }
+  | { operation: "holDefineContext"; connection: number; members: number[] }
+  | { operation: "holContextMembers"; connection: number; context: number }
+  | {
+      operation: "holProveHypothesis";
+      connection: number;
+      context: number;
+      term: number;
+    }
+  | { operation: "holProveTruth"; connection: number; context: number }
+  | {
+      operation: "holProved";
+      connection: number;
+      context: number;
+      term: number;
+    };
 
 type WorkerResponse =
   | { id: number; ok: true; value: unknown }
@@ -351,6 +371,48 @@ class WorkerHolConnection implements BrowserHolConnection {
       operation: "holTermFreeVariables",
       connection: this.connection,
       term: id,
+    });
+  }
+
+  defineContext(members: number[]): Promise<number> {
+    return this.#request({
+      operation: "holDefineContext",
+      connection: this.connection,
+      members,
+    });
+  }
+
+  contextMembers(id: number): Promise<number[]> {
+    return this.#request({
+      operation: "holContextMembers",
+      connection: this.connection,
+      context: id,
+    });
+  }
+
+  proveHypothesis(context: number, term: number): Promise<number> {
+    return this.#request({
+      operation: "holProveHypothesis",
+      connection: this.connection,
+      context,
+      term,
+    });
+  }
+
+  proveTruth(context: number): Promise<number> {
+    return this.#request({
+      operation: "holProveTruth",
+      connection: this.connection,
+      context,
+    });
+  }
+
+  proved(context: number, term: number): Promise<boolean> {
+    return this.#request({
+      operation: "holProved",
+      connection: this.connection,
+      context,
+      term,
     });
   }
 

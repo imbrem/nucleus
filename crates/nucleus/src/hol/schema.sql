@@ -14,6 +14,23 @@ CREATE TABLE hol_node (
     ty INTEGER
 ) STRICT;
 
+CREATE TABLE hol_context (
+    ctx_id INTEGER PRIMARY KEY
+) STRICT;
+
+CREATE TABLE hol_context_member (
+    ctx_id INTEGER NOT NULL,
+    term_id INTEGER NOT NULL,
+    PRIMARY KEY (ctx_id, term_id)
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE hol_theorem (
+    ctx_id INTEGER NOT NULL,
+    term_id INTEGER NOT NULL,
+    rule TEXT NOT NULL,
+    PRIMARY KEY (ctx_id, term_id)
+) STRICT, WITHOUT ROWID;
+
 CREATE UNIQUE INDEX hol_kstar_unique
     ON hol_node((1)) WHERE tag = 'KSTAR';
 
@@ -38,3 +55,4 @@ CREATE UNIQUE INDEX hol_mapp_unique
 INSERT INTO hol_schema(version, representation) VALUES (0, 'tagged-node');
 INSERT INTO hol_node(node_id, tag) VALUES (1, 'KSTAR');
 INSERT INTO hol_node(node_id, tag, ty) VALUES (2, 'TBOOL', 1);
+INSERT INTO hol_context(ctx_id) VALUES (0);
