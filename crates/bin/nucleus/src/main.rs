@@ -1083,6 +1083,9 @@ fn run_hol_type<'a>(
                 TypeView::Base { symbol } => {
                     writeln!(output, "type {} = base {symbol}", ty.get())?;
                 }
+                TypeView::Free { symbol } => {
+                    writeln!(output, "type {} = free {symbol}", ty.get())?;
+                }
                 TypeView::Arrow { domain, codomain } => writeln!(
                     output,
                     "type {} = {} -> {}",

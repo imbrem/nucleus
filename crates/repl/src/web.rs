@@ -1966,12 +1966,13 @@ impl WebKind {
 
 #[wasm_bindgen]
 impl WebType {
-    /// Returns `bool`, `base`, or `arrow`.
+    /// Returns `bool`, `base`, `free`, or `arrow`.
     #[must_use]
     pub fn tag(&self) -> String {
         match self.ty {
             TypeView::Bool => "bool",
             TypeView::Base { .. } => "base",
+            TypeView::Free { .. } => "free",
             TypeView::Arrow { .. } => "arrow",
         }
         .to_owned()
@@ -1985,7 +1986,7 @@ impl WebType {
     pub fn domain(&self) -> Result<u32, JsValue> {
         match self.ty {
             TypeView::Arrow { domain, .. } => u32::try_from(domain.get()).map_err(js_error),
-            TypeView::Bool | TypeView::Base { .. } => {
+            TypeView::Bool | TypeView::Base { .. } | TypeView::Free { .. } => {
                 Err(JsValue::from_str("non-arrow type has no domain"))
             }
         }
@@ -1999,7 +2000,7 @@ impl WebType {
     pub fn codomain(&self) -> Result<u32, JsValue> {
         match self.ty {
             TypeView::Arrow { codomain, .. } => u32::try_from(codomain.get()).map_err(js_error),
-            TypeView::Bool | TypeView::Base { .. } => {
+            TypeView::Bool | TypeView::Base { .. } | TypeView::Free { .. } => {
                 Err(JsValue::from_str("non-arrow type has no codomain"))
             }
         }
