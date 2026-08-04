@@ -1,4 +1,4 @@
-use std::{error::Error as StdError, fmt, marker::PhantomData, sync::Arc};
+use std::{error::Error as StdError, fmt, marker::PhantomData};
 
 use covalence_lib_hash::O256;
 use covalence_lib_sqlite as sqlite;
@@ -99,25 +99,6 @@ pub struct ImportedHolReader<'reader, 'connection, P> {
 }
 
 impl<'connection, P: Policy> MatchedTrustedHolImage<'connection, P> {
-    /// Binds the matched bytes to one destination-local complete namespace alias, opens them
-    /// through a private immutable VFS, and invokes `run`.
-    ///
-    /// The higher-ranked lifetime prevents imported IDs from escaping. The actual post-attach VFS
-    /// pointer is checked before `run` and before every structural read.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for policy denial, a local/wrong-import namespace, hash mismatch,
-    /// connection/VFS/attach failure, or an unexpected actual VFS pointer.
-    pub fn with_reader<R>(
-        self,
-        namespace: NamespaceId,
-        run: impl for<'reader> FnOnce(ImportedHolReader<'reader, 'connection, P>) -> R,
-    ) -> Result<R, ImportedReaderError> {
-        let mounted = covalence_neutron::ImmutableImage::register(Arc::from(self.image().bytes()))?;
-        self.with_mounted_reader(namespace, &mounted, run)
-    }
-
     /// Opens a scoped reader through one previously registered immutable image handle.
     ///
     /// The handle must serve bytes exactly equal to the independently authenticated and validated
@@ -427,6 +408,7 @@ mod tests {
         AllowAll, AuthenticatedValidatedHolImage, ExportId, HolDatabaseRef, Kernel, NamespaceError,
         NamespaceExport, SignedSnapshotEnvelope,
     };
+    use std::sync::Arc;
 
     #[test]
     #[allow(clippy::too_many_lines)]
@@ -459,6 +441,9 @@ mod tests {
             AuthenticatedValidatedHolImage::validate_default(authenticated).unwrap()
         };
         let evidence = authenticated_image();
+        let mounted =
+            covalence_neutron::ImmutableImage::register(Arc::from(evidence.image().bytes()))
+                .unwrap();
         drop(source);
 
         let mut target = source_kernel.open_hol(AllowAll).unwrap();
@@ -485,14 +470,14 @@ mod tests {
             target
                 .match_trusted_import_image(trusted, authenticated_image())
                 .unwrap()
-                .with_reader(NamespaceId::root(), |_| ()),
+                .with_mounted_reader(NamespaceId::root(), &mounted, |_| ()),
             Err(ImportedReaderError::Import(ImportError::LocalNamespace(_)))
         ));
         assert!(matches!(
             target
                 .match_trusted_import_image(trusted, authenticated_image())
                 .unwrap()
-                .with_reader(NamespaceId::from_i64(999), |_| ()),
+                .with_mounted_reader(NamespaceId::from_i64(999), &mounted, |_| ()),
             Err(ImportedReaderError::Import(ImportError::Namespace(
                 NamespaceError::UnknownNamespace(_)
             )))
@@ -501,7 +486,7 @@ mod tests {
             target
                 .match_trusted_import_image(trusted, authenticated_image())
                 .unwrap()
-                .with_reader(wrong_namespace, |_| ()),
+                .with_mounted_reader(wrong_namespace, &mounted, |_| ()),
             Err(ImportedReaderError::NamespaceImportMismatch { .. })
         ));
         let wrong_mount = covalence_neutron::ImmutableImage::register(Arc::from(
@@ -521,7 +506,7 @@ mod tests {
             .unwrap();
 
         matched
-            .with_reader(imported_namespace, |mut reader| {
+            .with_mounted_reader(imported_namespace, &mounted, |mut reader| {
                 assert_eq!(reader.trusted_import(), trusted);
                 assert_eq!(reader.import(), import);
                 assert_eq!(reader.namespace(), imported_namespace);

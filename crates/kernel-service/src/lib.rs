@@ -48,6 +48,8 @@ pub enum Operation {
     AttachImage,
     /// Close one raw `SQLite` connection.
     CloseSql,
+    /// Serialize one raw connection's writable `main` database as a bounded complete image.
+    SerializeSqlMain,
 }
 
 impl Operation {
@@ -63,11 +65,12 @@ impl Operation {
             Self::RunSql => 5,
             Self::AttachImage => 6,
             Self::CloseSql => 7,
+            Self::SerializeSqlMain => 8,
         }
     }
 
     /// Every operation in canonical identity order.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Identity,
         Self::HasImage,
         Self::ListImages,
@@ -76,6 +79,7 @@ impl Operation {
         Self::RunSql,
         Self::AttachImage,
         Self::CloseSql,
+        Self::SerializeSqlMain,
     ];
 }
 
@@ -407,6 +411,17 @@ pub trait KernelService {
         schema: &str,
     ) -> Result<(), ServiceError>;
 
+    /// Serializes a caller-owned raw connection's writable `main` database.
+    ///
+    /// # Errors
+    ///
+    /// Returns a classified service error for an unknown handle, serialization failure, or an
+    /// image exceeding [`MAX_IMAGE_BYTES`].
+    fn serialize_sql_main(
+        &mut self,
+        connection: SqlConnectionId,
+    ) -> Result<ImageBytes, ServiceError>;
+
     /// Closes one caller-owned raw `SQLite` handle.
     ///
     /// # Errors
@@ -456,7 +471,7 @@ mod tests {
         assert_eq!(
             contract_id(),
             covalence_lib_hash::o256!(
-                "341ca5d906c6850a12b96a73e39d8225cf2da2ca8f0aec23dd7795b625d31d95"
+                "87fed161a53d257baedb2205f3ee7e468411860cd8cdaf3d13837a5124d17edf"
             )
         );
         assert_ne!(contract_id(), O256::from_bytes(b"similar contract"));

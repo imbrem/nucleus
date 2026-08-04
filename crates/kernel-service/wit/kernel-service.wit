@@ -18,6 +18,7 @@ interface service {
     run-sql,
     attach-image,
     close-sql,
+    serialize-sql-main,
   }
 
   record operation-contract {
@@ -82,6 +83,9 @@ interface service {
 
   /// Closes one caller-owned SQL handle.
   close-sql: func(connection: u64) -> result<_, error-code>;
+
+  /// Serializes `main` as at most 64 MiB of complete SQLite image bytes.
+  serialize-sql-main: func(connection: u64) -> result<list<u8>, error-code>;
 }
 
 world kernel-service {

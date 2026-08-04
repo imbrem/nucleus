@@ -80,9 +80,8 @@ fn load_image(
 ) -> Result<()> {
     let bytes = fs::read(path)?;
     let id = repl.active()?.ok_or("no active connection")?;
-    let connection = repl.sql_mut(id)?;
-    let hash = connection.put_image(&bytes)?;
-    connection.attach_immutable_image(hash, schema)?;
+    let hash = repl.put_image_for_connection(id, &bytes)?;
+    repl.attach_image(id, hash, schema)?;
     writeln!(output, "attached {schema} {hash}")?;
     Ok(())
 }
@@ -188,7 +187,7 @@ fn run_line(repl: &mut LocalRepl, output: &mut impl io::Write, line: &str) -> Re
     }
 
     let id = repl.active()?.ok_or("no active connection")?;
-    let outcome = repl.sql_mut(id)?.run(line, &[])?;
+    let outcome = repl.run_sql(id, line)?;
     print_outcome(output, &outcome)?;
     Ok(true)
 }
@@ -1288,7 +1287,7 @@ fn run() -> Result<()> {
             }
             let mut repl = LocalRepl::new()?;
             let id = open_connection(&mut repl, "sql")?;
-            let outcome = repl.sql_mut(id)?.run(&sql, &[])?;
+            let outcome = repl.run_sql(id, &sql)?;
             print_outcome(&mut io::stdout().lock(), &outcome)?;
             Ok(())
         }

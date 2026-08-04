@@ -269,8 +269,8 @@ impl WebKernel {
     ///
     /// Returns a JavaScript error when the statement fails.
     pub fn run(&mut self, connection: u32, sql: &str) -> Result<WebOutcome, JsValue> {
-        self.connection_mut(connection)?
-            .run(sql, &[])
+        self.repl
+            .run_sql(ConnectionId::from_u32(connection), sql)
             .map(|outcome| WebOutcome { outcome })
             .map_err(js_error)
     }
@@ -281,8 +281,8 @@ impl WebKernel {
     ///
     /// Returns a JavaScript error on a resident hash collision.
     pub fn put_image(&mut self, connection: u32, bytes: &[u8]) -> Result<String, JsValue> {
-        self.connection_mut(connection)?
-            .put_image(bytes)
+        self.repl
+            .put_image_for_connection(ConnectionId::from_u32(connection), bytes)
             .map(|hash| hash.to_string())
             .map_err(js_error)
     }
@@ -329,8 +329,8 @@ impl WebKernel {
         schema: &str,
     ) -> Result<(), JsValue> {
         let hash = O256::from_hex(hash).map_err(js_error)?;
-        self.connection_mut(connection)?
-            .attach_immutable_image(hash, schema)
+        self.repl
+            .attach_image(ConnectionId::from_u32(connection), hash, schema)
             .map_err(js_error)
     }
 
@@ -340,9 +340,8 @@ impl WebKernel {
     ///
     /// Returns a JavaScript error when SQLite cannot serialize the database.
     pub fn serialize_main(&mut self, connection: u32) -> Result<Vec<u8>, JsValue> {
-        self.connection_mut(connection)?
-            .serialize_main()
-            .map(|bytes| bytes.to_vec())
+        self.repl
+            .serialize_main(ConnectionId::from_u32(connection))
             .map_err(js_error)
     }
 
@@ -1137,15 +1136,6 @@ impl WebKernel {
                 ExportId::from_i64(i64::from(export)),
             )
             .map(|value| value.map(|value| WebImportedHolExport { value }))
-            .map_err(js_error)
-    }
-
-    fn connection_mut(
-        &mut self,
-        id: u32,
-    ) -> Result<&mut covalence_nucleus::Connection<covalence_nucleus::Sql>, JsValue> {
-        self.repl
-            .sql_mut(ConnectionId::from_u32(id))
             .map_err(js_error)
     }
 }

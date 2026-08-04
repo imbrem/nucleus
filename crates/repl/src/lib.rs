@@ -9,6 +9,10 @@ use std::error::Error as StdError;
 use std::fmt;
 use std::sync::Arc;
 
+use covalence_kernel_service::{
+    ImageBytes, KernelIdentity, KernelService, ServiceError, SqlConnectionId, SqlOutcome,
+    SqlStatement, SqlValue,
+};
 use covalence_lib_sqlite as sqlite;
 use sqlite::OptionalExtension as _;
 
@@ -25,7 +29,8 @@ pub use schema_spec::{
 };
 
 pub use covalence_lib_hash::O256;
-pub use covalence_nucleus::sql::{ImageError, Outcome, QueryResult, Statement, Value};
+pub use covalence_neutron::ImageError;
+pub use covalence_nucleus::sql::{Outcome, QueryResult, Statement, Value};
 pub use covalence_nucleus::{
     AllowAll, AuthenticatedHolImageValidationError, AuthenticatedValidatedHolImage, Connection,
     ContextError, ContextId, ContextImplication, ExportError, ExportId, ExportSort, ExportView,
@@ -54,14 +59,18 @@ CREATE TABLE repl_connection (
     remote_connection_id TEXT
 ) STRICT;
 CREATE TABLE repl_image (
-    image_hash BLOB PRIMARY KEY CHECK (length(image_hash) = 32),
-    byte_length INTEGER NOT NULL CHECK (byte_length >= 0)
+    kernel_id INTEGER NOT NULL REFERENCES repl_kernel,
+    image_hash BLOB NOT NULL CHECK (length(image_hash) = 32),
+    byte_length INTEGER NOT NULL CHECK (byte_length >= 0),
+    PRIMARY KEY (kernel_id, image_hash)
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE repl_hol_image (
+    kernel_id INTEGER NOT NULL,
     schema_hash BLOB NOT NULL CHECK (length(schema_hash) = 32),
-    image_hash BLOB NOT NULL REFERENCES repl_image CHECK (length(image_hash) = 32),
+    image_hash BLOB NOT NULL CHECK (length(image_hash) = 32),
     descriptor BLOB NOT NULL,
-    PRIMARY KEY (schema_hash, image_hash)
+    PRIMARY KEY (kernel_id, schema_hash, image_hash),
+    FOREIGN KEY (kernel_id, image_hash) REFERENCES repl_image(kernel_id, image_hash)
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE repl_state (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 0),
@@ -406,8 +415,8 @@ impl<C> Repl<C> {
 
 /// One process-local connection managed by the shared terminal/browser core.
 pub enum LocalConnection {
-    /// An unrestricted raw SQL session.
-    Sql(Connection<Sql>),
+    /// Route to an unrestricted raw SQL session owned by the connection's kernel service.
+    Sql(SqlConnectionId),
     /// The current minimal HOL-omega protocol under an explicit demo policy.
     Hol(Connection<Hol<AllowAll>>),
 }
@@ -423,11 +432,267 @@ impl LocalConnection {
 
 /// A local kernel and heterogeneous connection directory shared by all UIs.
 pub struct LocalRepl {
-    kernels: HashMap<KernelId, Kernel>,
+    kernels: HashMap<KernelId, LocalKernelService>,
     directory: Repl<LocalConnection>,
+}
+
+/// One in-process kernel endpoint with service-local SQL handles and immutable image residency.
+///
+/// Its maps are authoritative runtime state. Rows in a [`LocalRepl`]'s raw state database are
+/// inspectable mirrors and never grant a handle, image, or identity authority.
+pub struct LocalKernelService {
+    kernel: Kernel,
+    sql_connections: HashMap<SqlConnectionId, Connection<Sql>>,
+    next_sql_connection_id: u64,
     images: HashMap<O256, covalence_neutron::ImmutableImage>,
     hol_images: HashMap<HolDatabaseRef, Vec<u8>>,
     resident_image_bytes: usize,
+}
+
+impl LocalKernelService {
+    fn new(kernel: Kernel) -> Self {
+        Self {
+            kernel,
+            sql_connections: HashMap::new(),
+            next_sql_connection_id: 1,
+            images: HashMap::new(),
+            hol_images: HashMap::new(),
+            resident_image_bytes: 0,
+        }
+    }
+
+    fn sql_mut(
+        &mut self,
+        connection: SqlConnectionId,
+    ) -> Result<&mut Connection<Sql>, ServiceError> {
+        self.sql_connections
+            .get_mut(&connection)
+            .ok_or(ServiceError::NotFound)
+    }
+
+    fn run_sql_local(
+        &mut self,
+        connection: SqlConnectionId,
+        statement: &str,
+    ) -> sqlite::Result<Outcome> {
+        self.sql_mut(connection)
+            .map_err(|_| sqlite::Error::InvalidQuery)?
+            .run(statement, &[])
+    }
+
+    fn image(&self, image: O256) -> Result<covalence_neutron::ImmutableImage, ReplImageError> {
+        self.images
+            .get(&image)
+            .cloned()
+            .ok_or(ReplImageError::Missing { image })
+    }
+
+    fn put_verified_image(&mut self, expected: O256, bytes: &[u8]) -> Result<bool, ReplImageError> {
+        let actual = O256::from_bytes(bytes);
+        if actual != expected {
+            return Err(ReplImageError::AddressMismatch { expected, actual });
+        }
+        if let Some(existing) = self.images.get(&expected) {
+            return if existing.bytes() == bytes {
+                Ok(false)
+            } else {
+                Err(ReplImageError::HashCollision { image: expected })
+            };
+        }
+        let new_total = check_image_cache_capacity(
+            self.images.len(),
+            self.resident_image_bytes,
+            bytes.len(),
+            IMAGE_CACHE_LIMITS,
+        )?;
+        let mounted = covalence_neutron::ImmutableImage::register(Arc::from(bytes))
+            .map_err(ReplImageError::Register)?;
+        self.images.insert(expected, mounted);
+        self.resident_image_bytes = new_total;
+        Ok(true)
+    }
+
+    fn record_hol_descriptor(
+        &mut self,
+        database: HolDatabaseRef,
+        descriptor: Vec<u8>,
+    ) -> Result<bool, ReplImageError> {
+        if let Some(existing) = self.hol_images.get(&database) {
+            return if existing == &descriptor {
+                Ok(false)
+            } else {
+                Err(ReplImageError::ConflictingHolDescriptor { database })
+            };
+        }
+        self.hol_images.insert(database, descriptor);
+        Ok(true)
+    }
+
+    /// Serializes one service-local writable SQL connection's `main` database.
+    ///
+    /// # Errors
+    ///
+    /// Returns a service error for an unknown handle or oversized result, or the original Neutron
+    /// image error when `SQLite` serialization fails.
+    pub fn serialize_sql(
+        &mut self,
+        connection: SqlConnectionId,
+    ) -> Result<ImageBytes, LocalKernelServiceError> {
+        let bytes = self
+            .sql_mut(connection)?
+            .serialize_main()
+            .map_err(LocalKernelServiceError::Image)?;
+        ImageBytes::new(bytes.to_vec()).map_err(LocalKernelServiceError::Service)
+    }
+}
+
+impl KernelService for LocalKernelService {
+    fn identity(&self) -> Result<KernelIdentity, ServiceError> {
+        Ok(KernelIdentity::complete(
+            *self.kernel.verifying_key().as_bytes(),
+        ))
+    }
+
+    fn has_image(&self, image: O256) -> Result<bool, ServiceError> {
+        Ok(self.images.contains_key(&image))
+    }
+
+    fn list_images(&self) -> Result<Vec<O256>, ServiceError> {
+        let mut images = self.images.keys().copied().collect::<Vec<_>>();
+        images.sort_unstable();
+        images.truncate(covalence_kernel_service::MAX_LISTED_IMAGES);
+        Ok(images)
+    }
+
+    fn put_image(&mut self, bytes: ImageBytes) -> Result<O256, ServiceError> {
+        let image = O256::from_bytes(bytes.as_slice());
+        self.put_verified_image(image, bytes.as_slice())
+            .map(|_| image)
+            .map_err(|error| service_image_error(&error))
+    }
+
+    fn open_sql(&mut self) -> Result<SqlConnectionId, ServiceError> {
+        let id = SqlConnectionId::from_u64(self.next_sql_connection_id);
+        let next = self
+            .next_sql_connection_id
+            .checked_add(1)
+            .ok_or(ServiceError::ResourceLimit)?;
+        let connection = self.kernel.open_sql().map_err(|_| ServiceError::Internal)?;
+        if self.sql_connections.insert(id, connection).is_some() {
+            return Err(ServiceError::Internal);
+        }
+        self.next_sql_connection_id = next;
+        Ok(id)
+    }
+
+    fn run_sql(
+        &mut self,
+        connection: SqlConnectionId,
+        statement: SqlStatement,
+    ) -> Result<SqlOutcome, ServiceError> {
+        let outcome = self
+            .run_sql_local(connection, statement.as_str())
+            .map_err(|_| ServiceError::InvalidRequest)?;
+        match outcome {
+            Outcome::Changed(count) => Ok(SqlOutcome::changed(
+                u64::try_from(count).map_err(|_| ServiceError::ResourceLimit)?,
+            )),
+            Outcome::Rows(QueryResult { columns, rows }) => SqlOutcome::rows(
+                columns,
+                rows.into_iter()
+                    .map(|row| row.into_iter().map(service_sql_value).collect())
+                    .collect(),
+            ),
+        }
+    }
+
+    fn attach_image(
+        &mut self,
+        connection: SqlConnectionId,
+        image: O256,
+        schema: &str,
+    ) -> Result<(), ServiceError> {
+        let image = self
+            .images
+            .get(&image)
+            .cloned()
+            .ok_or(ServiceError::NotFound)?;
+        self.sql_mut(connection)?
+            .attach_immutable(&image, schema)
+            .map_err(|_| ServiceError::InvalidRequest)
+    }
+
+    fn close_sql(&mut self, connection: SqlConnectionId) -> Result<(), ServiceError> {
+        self.sql_connections
+            .remove(&connection)
+            .map(drop)
+            .ok_or(ServiceError::NotFound)
+    }
+
+    fn serialize_sql_main(
+        &mut self,
+        connection: SqlConnectionId,
+    ) -> Result<ImageBytes, ServiceError> {
+        self.serialize_sql(connection).map_err(|error| match error {
+            LocalKernelServiceError::Service(error) => error,
+            LocalKernelServiceError::Image(_) => ServiceError::Internal,
+        })
+    }
+}
+
+fn service_sql_value(value: Value) -> SqlValue {
+    match value {
+        Value::Null => SqlValue::Null,
+        Value::Integer(value) => SqlValue::Integer(value),
+        Value::Real(value) => SqlValue::Real(value),
+        Value::Text(value) => SqlValue::Text(value),
+        Value::Blob(value) => SqlValue::Blob(value),
+    }
+}
+
+fn service_image_error(error: &ReplImageError) -> ServiceError {
+    match error {
+        ReplImageError::ImageTooLarge { .. }
+        | ReplImageError::ImageCountLimit { .. }
+        | ReplImageError::TotalBytesLimit { .. } => ServiceError::ResourceLimit,
+        ReplImageError::AddressMismatch { .. } | ReplImageError::HashCollision { .. } => {
+            ServiceError::InvalidRequest
+        }
+        _ => ServiceError::Internal,
+    }
+}
+
+/// Failure from a local service extension which is not part of the portable typed contract.
+#[derive(Debug)]
+pub enum LocalKernelServiceError {
+    /// Portable service failure.
+    Service(ServiceError),
+    /// `SQLite` image serialization failed.
+    Image(ImageError),
+}
+
+impl fmt::Display for LocalKernelServiceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Service(error) => error.fmt(formatter),
+            Self::Image(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl StdError for LocalKernelServiceError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            Self::Service(error) => Some(error),
+            Self::Image(error) => Some(error),
+        }
+    }
+}
+
+impl From<ServiceError> for LocalKernelServiceError {
+    fn from(error: ServiceError) -> Self {
+        Self::Service(error)
+    }
 }
 
 /// Transport-neutral owned signed HOL snapshot returned by the shared REPL.
@@ -510,54 +775,25 @@ pub enum LocalImportedHolTerm {
     Equality { left: i64, right: i64, ty: i64 },
 }
 
-fn cache_verified_image(
+fn record_resident_image(
     state: &covalence_neutron::Connection,
-    images: &mut HashMap<O256, covalence_neutron::ImmutableImage>,
-    resident_bytes: &mut usize,
-    expected: O256,
-    bytes: &[u8],
+    kernel: KernelId,
+    image: O256,
+    byte_length: usize,
 ) -> Result<(), LocalReplError> {
-    let actual = O256::from_bytes(bytes);
-    if actual != expected {
-        return Err(ReplImageError::AddressMismatch { expected, actual }.into());
-    }
-    if let Some(existing) = images.get(&expected) {
-        return if existing.bytes() == bytes {
-            Ok(())
-        } else {
-            Err(ReplImageError::HashCollision { image: expected }.into())
-        };
-    }
-    let new_total = check_image_cache_capacity(
-        images.len(),
-        *resident_bytes,
-        bytes.len(),
-        IMAGE_CACHE_LIMITS,
-    )?;
-    let byte_length = i64::try_from(bytes.len()).map_err(|_| ReplImageError::ImageTooLarge {
-        length: bytes.len(),
+    let byte_length = i64::try_from(byte_length).map_err(|_| ReplImageError::ImageTooLarge {
+        length: byte_length,
         maximum: IMAGE_CACHE_LIMITS.image_bytes,
     })?;
     state
         .sqlite()
         .execute(
-            "INSERT INTO repl_image(image_hash, byte_length) VALUES (?1, ?2)
-             ON CONFLICT(image_hash) DO UPDATE SET byte_length = excluded.byte_length",
-            sqlite::params![expected.as_ref(), byte_length],
+            "INSERT INTO repl_image(kernel_id, image_hash, byte_length) VALUES (?1, ?2, ?3)
+             ON CONFLICT(kernel_id, image_hash)
+             DO UPDATE SET byte_length = excluded.byte_length",
+            sqlite::params![kernel.get(), image.as_ref(), byte_length],
         )
         .map_err(ReplError::from)?;
-    let mounted = match covalence_neutron::ImmutableImage::register(Arc::from(bytes)) {
-        Ok(mounted) => mounted,
-        Err(error) => {
-            let _ = state.sqlite().execute(
-                "DELETE FROM repl_image WHERE image_hash = ?1",
-                [expected.as_ref()],
-            );
-            return Err(ReplImageError::Register(error).into());
-        }
-    };
-    images.insert(expected, mounted);
-    *resident_bytes = new_total;
     Ok(())
 }
 
@@ -588,32 +824,25 @@ fn check_image_cache_capacity(
 
 fn record_resident_hol_descriptor(
     state: &covalence_neutron::Connection,
-    hol_images: &mut HashMap<HolDatabaseRef, Vec<u8>>,
+    kernel: KernelId,
     database: HolDatabaseRef,
-    descriptor: Vec<u8>,
+    descriptor: &[u8],
 ) -> Result<(), LocalReplError> {
-    if let Some(existing) = hol_images.get(&database) {
-        return if existing == &descriptor {
-            Ok(())
-        } else {
-            Err(ReplImageError::ConflictingHolDescriptor { database }.into())
-        };
-    }
     state
         .sqlite()
         .execute(
-            "INSERT INTO repl_hol_image(schema_hash, image_hash, descriptor)
-             VALUES (?1, ?2, ?3)
-             ON CONFLICT(schema_hash, image_hash)
+            "INSERT INTO repl_hol_image(kernel_id, schema_hash, image_hash, descriptor)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(kernel_id, schema_hash, image_hash)
              DO UPDATE SET descriptor = excluded.descriptor",
             sqlite::params![
+                kernel.get(),
                 database.schema().as_ref(),
                 database.image().as_ref(),
-                descriptor.as_slice()
+                descriptor
             ],
         )
         .map_err(ReplError::from)?;
-    hol_images.insert(database, descriptor);
     Ok(())
 }
 
@@ -773,14 +1002,8 @@ impl LocalRepl {
     pub fn new() -> Result<Self, LocalReplError> {
         let kernel = Kernel::ephemeral();
         let directory = Repl::new(kernel.verifying_key().as_bytes())?;
-        let kernels = HashMap::from([(KernelId::local(), kernel)]);
-        Ok(Self {
-            kernels,
-            directory,
-            images: HashMap::new(),
-            hol_images: HashMap::new(),
-            resident_image_bytes: 0,
-        })
+        let kernels = HashMap::from([(KernelId::local(), LocalKernelService::new(kernel))]);
+        Ok(Self { kernels, directory })
     }
 
     /// Creates and records another independently keyed in-process kernel.
@@ -793,7 +1016,7 @@ impl LocalRepl {
         let id = self
             .directory
             .insert_kernel("local", None, kernel.verifying_key().as_bytes())?;
-        self.kernels.insert(id, kernel);
+        self.kernels.insert(id, LocalKernelService::new(kernel));
         Ok(id)
     }
 
@@ -803,11 +1026,14 @@ impl LocalRepl {
     ///
     /// Returns an error for an unknown live local kernel.
     pub fn kernel(&self, id: KernelId) -> Result<KernelView, LocalReplError> {
-        let kernel = self.kernels.get(&id).ok_or(ReplError::UnknownKernel(id))?;
+        let service = self.kernels.get(&id).ok_or(ReplError::UnknownKernel(id))?;
         Ok(KernelView {
             transport: "local".to_owned(),
             endpoint: None,
-            public_key: *kernel.verifying_key().as_bytes(),
+            public_key: service
+                .identity()
+                .map_err(LocalReplError::Service)?
+                .public_key,
         })
     }
 
@@ -817,43 +1043,55 @@ impl LocalRepl {
         let mut kernels = self
             .kernels
             .iter()
-            .map(|(id, kernel)| {
+            .filter_map(|(id, service)| {
+                let identity = service.identity().ok()?;
                 (
                     *id,
                     KernelView {
                         transport: "local".to_owned(),
                         endpoint: None,
-                        public_key: *kernel.verifying_key().as_bytes(),
+                        public_key: identity.public_key,
                     },
                 )
+                    .into()
             })
             .collect::<Vec<_>>();
         kernels.sort_unstable_by_key(|(id, _)| *id);
         kernels
     }
 
-    /// Stores one uninterpreted complete database image in the shared process-local REPL cache.
+    /// Stores one uninterpreted complete database image in the initial kernel's resident cache.
     ///
     /// The returned content address is an operational lookup key only. This does not validate a
     /// `SQLite` schema, authenticate a signer, or grant any protocol authority. Matching bytes reuse
-    /// one fixed immutable VFS across every managed connection.
+    /// one fixed immutable VFS across connections owned by the initial kernel.
     ///
     /// # Errors
     ///
     /// Returns an error for an address collision, an image too large to record, VFS registration,
     /// or REPL state database failure.
     pub fn put_image(&mut self, bytes: &[u8]) -> Result<O256, LocalReplError> {
+        self.put_image_on(KernelId::local(), bytes)
+    }
+
+    /// Stores one complete immutable image in an explicit kernel's bounded resident cache.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown kernel, a residency bound, VFS registration, or debug-state
+    /// mirror failure.
+    pub fn put_image_on(&mut self, kernel: KernelId, bytes: &[u8]) -> Result<O256, LocalReplError> {
         let image = O256::from_bytes(bytes);
-        self.put_verified_image(image, bytes)?;
+        self.put_verified_image_on(kernel, image, bytes)?;
         Ok(image)
     }
 
     /// Authenticates and validates one complete signed HOL snapshot before admitting it as a
     /// reusable resident `(schema, image)`.
     ///
-    /// Admission is REPL-global operational state, not logical trust. No HOL connection is
-    /// consulted or modified. Later reads must use one destination connection's independently
-    /// persisted trusted-import row.
+    /// Admission is operational state local to the initial kernel, not logical trust. No HOL
+    /// connection is consulted or modified. Later reads must use one destination connection's
+    /// independently persisted trusted-import row.
     ///
     /// # Errors
     ///
@@ -870,14 +1108,48 @@ impl LocalRepl {
         public_key: [u8; 32],
         signature: &[u8],
     ) -> Result<O256, LocalReplError> {
-        if let Some(existing) = self.images.get(&image) {
+        self.put_signed_hol_snapshot_with_descriptor_on(
+            KernelId::local(),
+            bytes,
+            descriptor,
+            schema,
+            image,
+            signer,
+            public_key,
+            signature,
+        )
+    }
+
+    /// Authenticates, validates, and admits a signed HOL snapshot to one kernel's residency.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown kernel, invalid authentication or schema evidence,
+    /// detached validation failure, a residency bound, or debug-state mirror failure.
+    #[allow(clippy::too_many_arguments)]
+    pub fn put_signed_hol_snapshot_with_descriptor_on(
+        &mut self,
+        kernel: KernelId,
+        bytes: &[u8],
+        descriptor: &[u8],
+        schema: O256,
+        image: O256,
+        signer: O256,
+        public_key: [u8; 32],
+        signature: &[u8],
+    ) -> Result<O256, LocalReplError> {
+        let service = self
+            .kernels
+            .get(&kernel)
+            .ok_or(ReplError::UnknownKernel(kernel))?;
+        if let Some(existing) = service.images.get(&image) {
             if existing.bytes() != bytes {
                 return Err(ReplImageError::HashCollision { image }.into());
             }
         } else {
             check_image_cache_capacity(
-                self.images.len(),
-                self.resident_image_bytes,
+                service.images.len(),
+                service.resident_image_bytes,
                 bytes.len(),
                 IMAGE_CACHE_LIMITS,
             )?;
@@ -890,19 +1162,18 @@ impl LocalRepl {
             AuthenticatedValidatedHolImage::validate_with_descriptor(authenticated, &descriptor)?;
         let database = HolDatabaseRef::new(schema, image);
         let canonical = descriptor.encode().to_vec();
-        if let Some(existing) = self.hol_images.get(&database) {
+        if let Some(existing) = service.hol_images.get(&database) {
             if existing == &canonical {
                 return Ok(image);
             }
             return Err(ReplImageError::ConflictingHolDescriptor { database }.into());
         }
-        self.put_verified_image(image, validated.image().bytes())?;
-        record_resident_hol_descriptor(
-            self.directory.state(),
-            &mut self.hol_images,
-            database,
-            canonical,
-        )?;
+        self.put_verified_image_on(kernel, image, validated.image().bytes())?;
+        self.kernels
+            .get_mut(&kernel)
+            .ok_or(ReplError::UnknownKernel(kernel))?
+            .record_hol_descriptor(database, canonical.clone())?;
+        record_resident_hol_descriptor(self.directory.state(), kernel, database, &canonical)?;
         Ok(image)
     }
 
@@ -917,31 +1188,61 @@ impl LocalRepl {
         expected: O256,
         bytes: &[u8],
     ) -> Result<(), LocalReplError> {
-        cache_verified_image(
-            self.directory.state(),
-            &mut self.images,
-            &mut self.resident_image_bytes,
-            expected,
-            bytes,
-        )
+        self.put_verified_image_on(KernelId::local(), expected, bytes)
     }
 
-    /// Reports whether a complete image is resident in this REPL process.
+    /// Stores one image on a selected kernel after checking its operational address.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown kernel, address mismatch, residency bound, VFS
+    /// registration, or debug-state mirror failure.
+    pub fn put_verified_image_on(
+        &mut self,
+        kernel: KernelId,
+        expected: O256,
+        bytes: &[u8],
+    ) -> Result<(), LocalReplError> {
+        self.kernels
+            .get_mut(&kernel)
+            .ok_or(ReplError::UnknownKernel(kernel))?
+            .put_verified_image(expected, bytes)?;
+        record_resident_image(self.directory.state(), kernel, expected, bytes.len())
+    }
+
+    /// Reports whether a complete image is resident on the initial kernel.
     #[must_use]
     pub fn has_image(&self, image: O256) -> bool {
-        self.images.contains_key(&image)
+        self.has_image_on(KernelId::local(), image).unwrap_or(false)
+    }
+
+    /// Reports operational residency on one exact kernel.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `kernel` does not identify a live local service.
+    pub fn has_image_on(&self, kernel: KernelId, image: O256) -> Result<bool, LocalReplError> {
+        self.kernels
+            .get(&kernel)
+            .ok_or(ReplError::UnknownKernel(kernel))?
+            .has_image(image)
+            .map_err(LocalReplError::Service)
     }
 
     /// Returns the number of deduplicated resident immutable images.
     #[must_use]
     pub fn resident_image_count(&self) -> usize {
-        self.images.len()
+        self.kernels
+            .get(&KernelId::local())
+            .map_or(0, |service| service.images.len())
     }
 
     /// Returns the total exact byte length of deduplicated resident images.
     #[must_use]
-    pub const fn resident_image_bytes(&self) -> usize {
-        self.resident_image_bytes
+    pub fn resident_image_bytes(&self) -> usize {
+        self.kernels
+            .get(&KernelId::local())
+            .map_or(0, |service| service.resident_image_bytes)
     }
 
     /// Returns the inspectable raw REPL state database.
@@ -983,18 +1284,27 @@ impl LocalRepl {
     ///
     /// Returns an error for an unknown/nonlocal kernel or failed connection/directory creation.
     pub fn open_sql_on(&mut self, kernel: KernelId) -> Result<ConnectionId, LocalReplError> {
-        let connection = self
+        let service_connection = self
             .kernels
-            .get(&kernel)
+            .get_mut(&kernel)
             .ok_or(ReplError::UnknownKernel(kernel))?
             .open_sql()
-            .map_err(LocalReplError::SqlOpen)?;
-        let id = self.directory.insert_on(
+            .map_err(LocalReplError::Service)?;
+        let inserted = self.directory.insert_on(
             kernel,
             "nucleus/sql",
-            None,
-            LocalConnection::Sql(connection),
-        )?;
+            Some(&service_connection.get().to_string()),
+            LocalConnection::Sql(service_connection),
+        );
+        let id = match inserted {
+            Ok(id) => id,
+            Err(error) => {
+                if let Some(service) = self.kernels.get_mut(&kernel) {
+                    let _ = service.close_sql(service_connection);
+                }
+                return Err(error.into());
+            }
+        };
         self.directory.select(id)?;
         Ok(id)
     }
@@ -1022,6 +1332,7 @@ impl LocalRepl {
             .kernels
             .get(&kernel)
             .ok_or(ReplError::UnknownKernel(kernel))?
+            .kernel
             .open_hol(AllowAll)
             .map_err(LocalReplError::HolOpen)?;
         let id = self.directory.insert_on(
@@ -1111,24 +1422,135 @@ impl LocalRepl {
     ///
     /// Returns an error for an unknown ID or state update failure.
     pub fn close(&mut self, id: ConnectionId) -> Result<(), LocalReplError> {
-        self.directory.remove(id).map(drop).map_err(Into::into)
+        let kernel = self.directory.connection_kernel(id)?;
+        let connection = self.directory.remove(id)?;
+        if let LocalConnection::Sql(service_connection) = connection {
+            self.kernels
+                .get_mut(&kernel)
+                .ok_or(ReplError::UnknownKernel(kernel))?
+                .close_sql(service_connection)
+                .map_err(LocalReplError::Service)?;
+        }
+        Ok(())
     }
 
-    /// Returns a mutable SQL session, rejecting HOL connection IDs.
+    /// Returns a mutable SQL session to crate-local tests, rejecting HOL connection IDs.
     ///
     /// # Errors
     ///
     /// Returns an error for an unknown ID or protocol mismatch.
-    pub fn sql_mut(&mut self, id: ConnectionId) -> Result<&mut Connection<Sql>, LocalReplError> {
-        let connection = self.directory.get_mut(id)?;
-        match connection {
-            LocalConnection::Sql(connection) => Ok(connection),
+    #[cfg(test)]
+    fn sql_mut(&mut self, id: ConnectionId) -> Result<&mut Connection<Sql>, LocalReplError> {
+        let kernel = self.directory.connection_kernel(id)?;
+        let service_connection = match self.directory.get_mut(id)? {
+            LocalConnection::Sql(connection) => *connection,
             other @ LocalConnection::Hol(_) => Err(LocalReplError::WrongProtocol {
                 id,
                 expected: "nucleus/sql",
                 actual: other.protocol(),
-            }),
-        }
+            })?,
+        };
+        self.kernels
+            .get_mut(&kernel)
+            .ok_or(ReplError::UnknownKernel(kernel))?
+            .sql_mut(service_connection)
+            .map_err(LocalReplError::Service)
+    }
+
+    /// Executes one statement through the connection's authoritative kernel route.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown connection or kernel, a protocol mismatch, or the original
+    /// local `SQLite` diagnostic.
+    pub fn run_sql(&mut self, id: ConnectionId, sql: &str) -> Result<Outcome, LocalReplError> {
+        let kernel = self.directory.connection_kernel(id)?;
+        let service_connection = match self.directory.get_mut(id)? {
+            LocalConnection::Sql(connection) => *connection,
+            other @ LocalConnection::Hol(_) => {
+                return Err(LocalReplError::WrongProtocol {
+                    id,
+                    expected: "nucleus/sql",
+                    actual: other.protocol(),
+                });
+            }
+        };
+        self.kernels
+            .get_mut(&kernel)
+            .ok_or(ReplError::UnknownKernel(kernel))?
+            .run_sql_local(service_connection, sql)
+            .map_err(LocalReplError::Sql)
+    }
+
+    /// Admits an image to the exact kernel which owns `id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown connection/kernel, residency failure, or debug-state mirror
+    /// failure.
+    pub fn put_image_for_connection(
+        &mut self,
+        id: ConnectionId,
+        bytes: &[u8],
+    ) -> Result<O256, LocalReplError> {
+        let kernel = self.directory.connection_kernel(id)?;
+        self.put_image_on(kernel, bytes)
+    }
+
+    /// Attaches a resident image through the exact kernel-local SQL handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown connection/kernel/image, protocol mismatch, invalid schema,
+    /// attachment failure, or actual VFS-pointer mismatch.
+    pub fn attach_image(
+        &mut self,
+        id: ConnectionId,
+        image: O256,
+        schema: &str,
+    ) -> Result<(), LocalReplError> {
+        let kernel = self.directory.connection_kernel(id)?;
+        let service_connection = match self.directory.get_mut(id)? {
+            LocalConnection::Sql(connection) => *connection,
+            other @ LocalConnection::Hol(_) => {
+                return Err(LocalReplError::WrongProtocol {
+                    id,
+                    expected: "nucleus/sql",
+                    actual: other.protocol(),
+                });
+            }
+        };
+        self.kernels
+            .get_mut(&kernel)
+            .ok_or(ReplError::UnknownKernel(kernel))?
+            .attach_image(service_connection, image, schema)
+            .map_err(LocalReplError::Service)
+    }
+
+    /// Serializes the writable `main` database through its kernel-local SQL handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown connection/kernel, protocol mismatch, serialization failure,
+    /// or a result exceeding the service image bound.
+    pub fn serialize_main(&mut self, id: ConnectionId) -> Result<Vec<u8>, LocalReplError> {
+        let kernel = self.directory.connection_kernel(id)?;
+        let service_connection = match self.directory.get_mut(id)? {
+            LocalConnection::Sql(connection) => *connection,
+            other @ LocalConnection::Hol(_) => {
+                return Err(LocalReplError::WrongProtocol {
+                    id,
+                    expected: "nucleus/sql",
+                    actual: other.protocol(),
+                });
+            }
+        };
+        self.kernels
+            .get_mut(&kernel)
+            .ok_or(ReplError::UnknownKernel(kernel))?
+            .serialize_sql(service_connection)
+            .map(ImageBytes::into_vec)
+            .map_err(LocalReplError::KernelService)
     }
 
     /// Returns a mutable HOL session, rejecting SQL connection IDs.
@@ -1331,7 +1753,7 @@ impl LocalRepl {
                 });
             }
         };
-        let snapshot = kernel.export_hol(connection)?;
+        let snapshot = kernel.kernel.export_hol(connection)?;
         let attestation = snapshot.attestation();
         Ok(LocalSignedHolSnapshot {
             bytes: snapshot.image().bytes().to_vec(),
@@ -1491,13 +1913,7 @@ impl LocalRepl {
             AuthenticatedValidatedHolImage::validate_with_descriptor(authenticated, &descriptor)?;
         let canonical_descriptor = descriptor.encode().to_vec();
         let database = HolDatabaseRef::new(schema, image);
-        let Self {
-            directory,
-            images,
-            hol_images,
-            resident_image_bytes,
-            ..
-        } = self;
+        let Self { directory, kernels } = self;
         let Repl {
             state, connections, ..
         } = directory;
@@ -1514,19 +1930,16 @@ impl LocalRepl {
                 });
             }
         };
+        let kernel_id = managed.kernel;
         let matched = connection.match_trusted_import_image(trusted_import, validated)?;
-        cache_verified_image(
-            state,
-            images,
-            resident_image_bytes,
-            image,
-            matched.image().bytes(),
-        )?;
-        record_resident_hol_descriptor(state, hol_images, database, canonical_descriptor)?;
-        let mounted = images
-            .get(&image)
-            .cloned()
-            .ok_or(ReplImageError::Missing { image })?;
+        let service = kernels
+            .get_mut(&kernel_id)
+            .ok_or(ReplError::UnknownKernel(kernel_id))?;
+        service.put_verified_image(image, matched.image().bytes())?;
+        record_resident_image(state, kernel_id, image, matched.image().bytes().len())?;
+        service.record_hol_descriptor(database, canonical_descriptor.clone())?;
+        record_resident_hol_descriptor(state, kernel_id, database, &canonical_descriptor)?;
+        let mounted = service.image(image)?;
         read_matched_hol_export(id, trusted_import, matched, &mounted, namespace, export)
     }
 
@@ -1550,6 +1963,7 @@ impl LocalRepl {
         namespace: NamespaceId,
         export: ExportId,
     ) -> Result<Option<LocalImportedHolExport>, LocalReplError> {
+        let kernel_id = self.directory.connection_kernel(id)?;
         let (trusted, database) = {
             let connection = self.hol_mut(id)?;
             let trusted = connection.trusted_import(trusted_import)?;
@@ -1571,16 +1985,16 @@ impl LocalRepl {
             &trusted.signature,
         )
         .authenticate()?;
-        let descriptor = self
+        let service = self
+            .kernels
+            .get(&kernel_id)
+            .ok_or(ReplError::UnknownKernel(kernel_id))?;
+        let descriptor = service
             .hol_images
             .get(&database)
             .cloned()
             .ok_or(ReplImageError::MissingHolImage { database })?;
-        let mounted = self
-            .images
-            .get(&image)
-            .cloned()
-            .ok_or(ReplImageError::Missing { image })?;
+        let mounted = service.image(image)?;
         let authenticated = SignedSnapshotEnvelope::new(
             mounted.bytes(),
             database.schema(),
@@ -1859,6 +2273,12 @@ pub enum LocalReplError {
     Directory(ReplError),
     /// A raw SQL connection could not open.
     SqlOpen(covalence_neutron::ConnectionError),
+    /// A local raw SQL operation failed with its original diagnostic.
+    Sql(sqlite::Error),
+    /// A portable kernel-service operation failed.
+    Service(ServiceError),
+    /// A local kernel service extension failed.
+    KernelService(LocalKernelServiceError),
     /// A HOL connection or its schema could not open.
     HolOpen(HolOpenError),
     /// A portable HOL metadata schema descriptor was invalid.
@@ -1869,7 +2289,7 @@ pub enum LocalReplError {
     MetadataSpec(MetadataSpecError),
     /// A HOL metadata read or write failed.
     Metadata(MetadataError),
-    /// The shared immutable image cache failed.
+    /// One kernel's immutable image residency failed.
     Image(ReplImageError),
     /// A namespace operation failed.
     Namespace(NamespaceError),
@@ -1907,6 +2327,9 @@ impl fmt::Display for LocalReplError {
         match self {
             Self::Directory(error) => error.fmt(formatter),
             Self::SqlOpen(error) => write!(formatter, "could not open SQL connection: {error}"),
+            Self::Sql(error) => error.fmt(formatter),
+            Self::Service(error) => error.fmt(formatter),
+            Self::KernelService(error) => error.fmt(formatter),
             Self::HolOpen(error) => error.fmt(formatter),
             Self::HolSchemaDescriptor(error) => error.fmt(formatter),
             Self::HolSchemaSpec(error) => error.fmt(formatter),
@@ -1940,6 +2363,9 @@ impl StdError for LocalReplError {
         match self {
             Self::Directory(error) => Some(error),
             Self::SqlOpen(error) => Some(error),
+            Self::Sql(error) => Some(error),
+            Self::Service(error) => Some(error),
+            Self::KernelService(error) => Some(error),
             Self::HolOpen(error) => Some(error),
             Self::HolSchemaDescriptor(error) => Some(error),
             Self::HolSchemaSpec(error) => Some(error),
@@ -2274,6 +2700,131 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
         assert_eq!(protocols, ["nucleus/sql", "nucleus/hol-common-v2"]);
+    }
+
+    #[test]
+    fn local_kernel_service_runs_select_42_through_an_opaque_handle() {
+        let mut service = LocalKernelService::new(Kernel::ephemeral());
+        let connection = service.open_sql().unwrap();
+        let outcome = KernelService::run_sql(
+            &mut service,
+            connection,
+            SqlStatement::new("SELECT 42 AS answer".to_owned()).unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(
+            outcome.kind(),
+            covalence_kernel_service::SqlOutcomeKind::Rows { columns, rows }
+                if columns == &["answer"] && rows == &[vec![SqlValue::Integer(42)]]
+        ));
+    }
+
+    #[test]
+    fn sql_handles_are_service_local_and_runtime_routing_resists_directory_tampering() {
+        let mut repl = LocalRepl::new().unwrap();
+        let other_kernel = repl.create_local_kernel().unwrap();
+        let first = repl.open_sql().unwrap();
+        let second = repl.open_sql_on(other_kernel).unwrap();
+        let remote_handles = repl
+            .state()
+            .sqlite()
+            .prepare("SELECT remote_connection_id FROM repl_connection ORDER BY connection_id")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(remote_handles, ["1", "1"]);
+
+        repl.run_sql(first, "CREATE TABLE only_first(value INTEGER) STRICT")
+            .unwrap();
+        repl.state()
+            .sqlite()
+            .execute(
+                "UPDATE repl_connection SET kernel_id = ?1 WHERE connection_id = ?2",
+                sqlite::params![other_kernel.get(), first.get()],
+            )
+            .unwrap();
+        assert_eq!(
+            repl.run_sql(
+                first,
+                "SELECT count(*) FROM sqlite_schema WHERE name = 'only_first'",
+            )
+            .unwrap(),
+            Outcome::Rows(QueryResult {
+                columns: vec!["count(*)".to_owned()],
+                rows: vec![vec![Value::Integer(1)]],
+            })
+        );
+        assert_eq!(
+            repl.run_sql(
+                second,
+                "SELECT count(*) FROM sqlite_schema WHERE name = 'only_first'",
+            )
+            .unwrap(),
+            Outcome::Rows(QueryResult {
+                columns: vec!["count(*)".to_owned()],
+                rows: vec![vec![Value::Integer(0)]],
+            })
+        );
+    }
+
+    #[test]
+    fn immutable_images_are_shared_within_one_kernel_but_not_across_kernels() {
+        let mut repl = LocalRepl::new().unwrap();
+        let local = KernelId::local();
+        let other = repl.create_local_kernel().unwrap();
+        let source = repl.open_sql_on(local).unwrap();
+        repl.run_sql(source, "CREATE TABLE payload(value INTEGER) STRICT")
+            .unwrap();
+        repl.run_sql(source, "INSERT INTO payload VALUES (42)")
+            .unwrap();
+        let bytes = repl.serialize_main(source).unwrap();
+        let image = repl.put_image_for_connection(source, &bytes).unwrap();
+        assert!(repl.has_image_on(local, image).unwrap());
+        assert!(!repl.has_image_on(other, image).unwrap());
+
+        let first_reader = repl.open_sql_on(local).unwrap();
+        let second_reader = repl.open_sql_on(local).unwrap();
+        repl.attach_image(first_reader, image, "snapshot").unwrap();
+        repl.attach_image(second_reader, image, "snapshot").unwrap();
+        for reader in [first_reader, second_reader] {
+            assert_eq!(
+                repl.run_sql(reader, "SELECT value FROM snapshot.payload")
+                    .unwrap(),
+                Outcome::Rows(QueryResult {
+                    columns: vec!["value".to_owned()],
+                    rows: vec![vec![Value::Integer(42)]],
+                })
+            );
+        }
+
+        let other_reader = repl.open_sql_on(other).unwrap();
+        assert!(matches!(
+            repl.attach_image(other_reader, image, "snapshot"),
+            Err(LocalReplError::Service(ServiceError::NotFound))
+        ));
+        assert_eq!(repl.put_image_on(other, &bytes).unwrap(), image);
+        assert!(repl.has_image_on(other, image).unwrap());
+        repl.attach_image(other_reader, image, "snapshot").unwrap();
+        assert_eq!(
+            repl.run_sql(other_reader, "SELECT value FROM snapshot.payload")
+                .unwrap(),
+            Outcome::Rows(QueryResult {
+                columns: vec!["value".to_owned()],
+                rows: vec![vec![Value::Integer(42)]],
+            })
+        );
+        let mirrored_kernel_rows = repl
+            .state()
+            .sqlite()
+            .query_row(
+                "SELECT count(*) FROM repl_image WHERE image_hash = ?1",
+                [image.as_ref()],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(mirrored_kernel_rows, 2);
     }
 
     #[test]
