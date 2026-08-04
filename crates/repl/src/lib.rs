@@ -22,10 +22,17 @@ use covalence_lib_crypto::ed25519::VerifyingKey;
 use covalence_lib_sqlite as sqlite;
 use sqlite::OptionalExtension as _;
 
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod http_transport;
 mod metadata_spec;
 mod schema_spec;
 mod signed_client;
 
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+pub use http_transport::{
+    CHANNEL_PATH, HttpTransportError, INVOCATION_PATH, KernelHttpRequest, LoopbackHttpEndpoint,
+    read_server_request, write_server_boundary_error, write_server_success,
+};
 pub use metadata_spec::MetadataSpecError;
 use metadata_spec::{
     encode_metadata_values_json, parse_metadata_read_json, parse_metadata_write_json,
