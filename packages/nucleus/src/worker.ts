@@ -337,24 +337,21 @@ const commands = new SerializedCommandQueue();
 const remoteKernels = new Map<number, KernelFetchTransport>();
 const remoteConnections = new Map<number, number>();
 
-globalThis.addEventListener(
-  "message",
-  ({ data }: MessageEvent<Request>) => {
-    void commands.enqueue(async () => {
-      try {
-        const value = await execute(data);
-        const transfer = transferables(value);
-        globalThis.postMessage({ id: data.id, ok: true, value }, { transfer });
-      } catch (error) {
-        globalThis.postMessage({
-          id: data.id,
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    });
-  },
-);
+globalThis.addEventListener("message", ({ data }: MessageEvent<Request>) => {
+  void commands.enqueue(async () => {
+    try {
+      const value = await execute(data);
+      const transfer = transferables(value);
+      globalThis.postMessage({ id: data.id, ok: true, value }, { transfer });
+    } catch (error) {
+      globalThis.postMessage({
+        id: data.id,
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+});
 
 function transferables(value: unknown): Transferable[] {
   if (value instanceof Uint8Array) return [value.buffer as ArrayBuffer];
@@ -571,11 +568,7 @@ async function execute(request: Request): Promise<unknown> {
       }
       await consumeRemoteOutput(
         connection,
-        connection.begin_attach_image(
-          request.connection,
-          hash,
-          request.schema,
-        ),
+        connection.begin_attach_image(request.connection, hash, request.schema),
         "attached",
       );
       return hash;
@@ -1276,7 +1269,9 @@ async function consumeRemoteOutput(
 function requireOutput(output: WebReplOperationOutput, expected: string): void {
   const actual = output.kind();
   if (actual !== expected)
-    throw new Error(`remote operation returned ${actual}; expected ${expected}`);
+    throw new Error(
+      `remote operation returned ${actual}; expected ${expected}`,
+    );
 }
 
 function kernelInfo(connection: WebKernel, id: number): BrowserKernelInfo {
