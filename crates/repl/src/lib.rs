@@ -32,6 +32,7 @@ mod metadata_spec;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod native_http;
 mod proof_script;
+mod proof_script_json;
 mod schema_spec;
 mod signed_client;
 
@@ -55,6 +56,9 @@ pub use proof_script::{
     LocalHolProofOutput, LocalHolProofRef, LocalHolProofScriptError, LocalHolProofSort,
     LocalHolProofStep, LocalHolTermInstantiation, MAX_LOCAL_HOL_PROOF_STEPS,
     MAX_TOTAL_LOCAL_HOL_PROOF_OPERANDS, run_local_hol_proof_script,
+};
+pub use proof_script_json::{
+    LocalHolProofJsonError, MAX_LOCAL_HOL_PROOF_JSON_BYTES, run_local_hol_proof_script_json,
 };
 pub use schema_spec::{
     HolMetadataColumnSpec, HolMetadataIndexSpec, HolMetadataSchemaSpec, HolMetadataStorageSpec,
@@ -2717,6 +2721,27 @@ impl LocalRepl {
     ) -> Result<Vec<LocalHolProofOutput>, LocalHolProofRunError> {
         let connection = self.hol_mut(id)?;
         run_local_hol_proof_script(connection, steps).map_err(Into::into)
+    }
+
+    /// Strictly decodes and replays one bounded version-one JSON proof recipe.
+    ///
+    /// This is the shared terminal/browser transport boundary. JSON values grant no authority:
+    /// they decode only to [`LocalHolProofStep`] and replay through the same branded engine as
+    /// [`Self::run_hol_proof_script`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an oversized document, malformed/unknown fields or operations, a
+    /// version other than one, a boundedness/reference violation, or a rejected proof operation.
+    pub fn run_hol_proof_script_json(
+        &mut self,
+        id: ConnectionId,
+        request: &str,
+    ) -> Result<String, LocalHolProofJsonError> {
+        let connection = self
+            .hol_mut(id)
+            .map_err(LocalHolProofJsonError::Connection)?;
+        run_local_hol_proof_script_json(connection, request)
     }
 
     /// Reads user-declared metadata from one existing HOL structural row.

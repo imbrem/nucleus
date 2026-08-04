@@ -336,6 +336,10 @@ fn print_help(output: &mut impl io::Write) -> io::Result<()> {
     writeln!(output, ".hol prove ...     apply an explicit HOL rule")?;
     writeln!(
         output,
+        ".hol script JSON   replay one strict bounded proof recipe"
+    )?;
+    writeln!(
+        output,
         ".hol-schema compile JSON OUT  compile editable schema JSON"
     )?;
     writeln!(
@@ -398,6 +402,11 @@ fn run_hol(repl: &mut LocalRepl, output: &mut impl io::Write, arguments: &str) -
     let connection = repl.active()?.ok_or("no active connection")?;
     if let Some(arguments) = arguments.strip_prefix("metadata ") {
         return run_hol_metadata(repl, output, connection, arguments);
+    }
+    if let Some(request) = arguments.strip_prefix("script ") {
+        let response = repl.run_hol_proof_script_json(connection, request)?;
+        writeln!(output, "{response}")?;
+        return Ok(());
     }
     let mut arguments = arguments.split_whitespace();
     match arguments.next() {
@@ -467,7 +476,7 @@ fn run_hol(repl: &mut LocalRepl, output: &mut impl io::Write, arguments: &str) -
         }
         _ => {
             return Err(
-                "usage: .hol star|arrow|show|rank|type|term|ctx|namespace|export|snapshot|import|metadata|prove|proved ..."
+                "usage: .hol star|arrow|show|rank|type|term|ctx|namespace|export|snapshot|import|metadata|script|prove|proved ..."
                     .into(),
             );
         }
@@ -1585,6 +1594,22 @@ mod tests {
         assert!(output.contains("  1\t@0\tnucleus/sql\n"));
         assert!(output.contains("* 2\t@0\tnucleus/hol-common-v2\n"));
         assert!(output.contains("sql_still_live\n42\n"));
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn terminal_replays_the_shared_strict_json_proof_recipe() {
+        let mut input = Cursor::new(
+            ".open hol\n.hol script {\"version\":1,\"steps\":[{\"op\":\"truth\",\"context\":0},{\"op\":\"persist_theorem\",\"theorem\":0}]}\n.quit\n",
+        );
+        let mut output = Vec::new();
+        let mut errors = Vec::new();
+
+        run_repl(&mut input, &mut output, &mut errors, false).expect("run REPL");
+
+        assert!(String::from_utf8(output).unwrap().contains(
+            "{\"version\":1,\"outputs\":[{\"kind\":\"theorem\",\"context\":0,\"conclusion\":3},{\"kind\":\"unit\"}]}\n"
+        ));
         assert!(errors.is_empty());
     }
 

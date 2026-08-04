@@ -956,6 +956,21 @@ impl WebKernel {
             .collect()
     }
 
+    /// Strictly decodes and replays one bounded version-one JSON proof recipe.
+    ///
+    /// The returned JSON is the transport-neutral observation produced by the same engine used
+    /// by the terminal REPL. Recipe-local references and proof capabilities do not survive this
+    /// call.
+    pub fn hol_run_proof_script_json(
+        &mut self,
+        connection: u32,
+        request: &str,
+    ) -> Result<String, JsValue> {
+        self.repl
+            .run_hol_proof_script_json(ConnectionId::from_u32(connection), request)
+            .map_err(js_error)
+    }
+
     /// Proves a context member using the HOL hypothesis rule.
     pub fn hol_prove_hypothesis(
         &mut self,

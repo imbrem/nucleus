@@ -45,6 +45,31 @@ test("runs the REPL kernel through the Wasm binding in Node", async () => {
 
   const holSource = kernel.open_hol_connection();
   const holTarget = kernel.open_hol_connection();
+  const proofRecipe = {
+    version: 1,
+    steps: [
+      { op: "truth", context: 0 },
+      { op: "persist_theorem", theorem: 0 },
+    ],
+  };
+  assert.deepEqual(
+    JSON.parse(
+      kernel.hol_run_proof_script_json(holTarget, JSON.stringify(proofRecipe)),
+    ),
+    {
+      version: 1,
+      outputs: [
+        { kind: "theorem", context: 0, conclusion: 3 },
+        { kind: "unit" },
+      ],
+    },
+  );
+  assert.throws(() =>
+    kernel.hol_run_proof_script_json(
+      holTarget,
+      '{"version":1,"steps":[{"op":"truth","context":0,"unknown":true}]}',
+    ),
+  );
   const holSnapshot = kernel.hol_export_snapshot(holSource);
   const descriptor = holSnapshot.descriptor();
   assert.deepEqual(
