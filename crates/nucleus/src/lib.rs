@@ -10,12 +10,13 @@ pub use hol::{
     ContextId, ContextImplication, ExportError, ExportId, ExportSort, ExportView,
     ExternalExportRef, Hol, HolDatabaseRef, HolExportError, HolImageCounts,
     HolImageValidationError, HolOpenError, HolSchema, HolSnapshotAttestation, ImportError,
-    ImportId, ImportView, Kind, KindError, KindId, KindView, MetadataError, MetadataSchemaError,
-    MetadataTable, MetadataTarget, MetadataType, MetadataValue, NamespaceError, NamespaceExport,
-    NamespaceId, NamespaceSource, NamespaceView, Operation, Policy, ProofError, ProofSession,
-    SignedHolSnapshot, SnapshotTrustError, TermError, TermId, TermView, Theorem,
-    TrustedImportError, TrustedImportId, TrustedImportView, TypeError, TypeId, TypeView,
-    UnboundVariable, ValidatedHolImage, stlc_bool_eq_v0_schema_id, stlc_bool_eq_v0_semantics,
+    ImportId, ImportView, Kind, KindError, KindId, KindView, MatchedTrustedHolImage, MetadataError,
+    MetadataSchemaError, MetadataTable, MetadataTarget, MetadataType, MetadataValue,
+    NamespaceError, NamespaceExport, NamespaceId, NamespaceSource, NamespaceView, Operation,
+    Policy, ProofError, ProofSession, SignedHolSnapshot, SnapshotTrustError, TermError, TermId,
+    TermView, Theorem, TrustedImportError, TrustedImportId, TrustedImportImageError,
+    TrustedImportView, TypeError, TypeId, TypeView, UnboundVariable, ValidatedHolImage,
+    stlc_bool_eq_v0_schema_id, stlc_bool_eq_v0_semantics,
 };
 pub use kernel::Kernel;
 

@@ -14,7 +14,10 @@ pub use namespace::{
     ExportError, ExportId, ExportSort, ExportView, NamespaceError, NamespaceExport, NamespaceId,
     NamespaceView,
 };
-pub use trust::{SnapshotTrustError, TrustedImportError, TrustedImportId, TrustedImportView};
+pub use trust::{
+    MatchedTrustedHolImage, SnapshotTrustError, TrustedImportError, TrustedImportId,
+    TrustedImportImageError, TrustedImportView,
+};
 pub use validate::{
     AuthenticatedHolImageValidationError, AuthenticatedValidatedHolImage, HolImageCounts,
     HolImageValidationError, ValidatedHolImage, stlc_bool_eq_v0_schema_id,
@@ -427,6 +430,8 @@ pub enum Operation {
     AcceptTrustedImport,
     /// Read a persistent accepted-import assumption.
     ReadTrustedImport,
+    /// Match authenticated, structurally validated bytes to one persistent accepted import.
+    MatchTrustedImportImage,
     /// Check and persist one exact structural context union.
     ProveContextUnion,
     /// Load and recheck one exact structural context union.
