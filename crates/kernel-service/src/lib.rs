@@ -25,6 +25,8 @@ pub const MAX_SQL_BYTES: usize = 1 << 20;
 /// The metric counts sequence lengths, UTF-8 text and blob bytes, and fixed-width scalars. It is
 /// independent of any future transport encoding.
 pub const MAX_SQL_OUTCOME_BYTES: usize = 16 << 20;
+/// Maximum UTF-8 `SQLite` diagnostic carried by one failed statement.
+pub const MAX_SQL_DIAGNOSTIC_BYTES: usize = 4 << 10;
 /// Maximum image addresses returned by one listing.
 pub const MAX_LISTED_IMAGES: usize = 1024;
 
@@ -364,6 +366,92 @@ impl fmt::Display for ServiceError {
 
 impl StdError for ServiceError {}
 
+/// Bounded `SQLite` diagnostic preserved across a kernel-service boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SqlDiagnostic {
+    primary_code: i32,
+    extended_code: i32,
+    message: String,
+}
+
+impl SqlDiagnostic {
+    /// Creates a diagnostic while truncating its UTF-8 message to the portable bound.
+    #[must_use]
+    pub fn new(primary_code: i32, extended_code: i32, mut message: String) -> Self {
+        if message.len() > MAX_SQL_DIAGNOSTIC_BYTES {
+            let mut end = MAX_SQL_DIAGNOSTIC_BYTES;
+            while !message.is_char_boundary(end) {
+                end -= 1;
+            }
+            message.truncate(end);
+        }
+        Self {
+            primary_code,
+            extended_code,
+            message,
+        }
+    }
+
+    /// `SQLite` primary result code, or zero when unavailable.
+    #[must_use]
+    pub const fn primary_code(&self) -> i32 {
+        self.primary_code
+    }
+
+    /// `SQLite` extended result code, or zero when unavailable.
+    #[must_use]
+    pub const fn extended_code(&self) -> i32 {
+        self.extended_code
+    }
+
+    /// Bounded human-readable `SQLite` diagnostic.
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl fmt::Display for SqlDiagnostic {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.message.fmt(formatter)
+    }
+}
+
+impl StdError for SqlDiagnostic {}
+
+/// Failure specific to executing raw `SQLite` through the portable service.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SqlRunError {
+    /// Portable routing, ownership, or resource failure.
+    Service(ServiceError),
+    /// Bounded diagnostic produced by `SQLite` itself.
+    Sqlite(SqlDiagnostic),
+}
+
+impl From<ServiceError> for SqlRunError {
+    fn from(error: ServiceError) -> Self {
+        Self::Service(error)
+    }
+}
+
+impl fmt::Display for SqlRunError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Service(error) => error.fmt(formatter),
+            Self::Sqlite(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl StdError for SqlRunError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            Self::Service(error) => Some(error),
+            Self::Sqlite(error) => Some(error),
+        }
+    }
+}
+
 /// Minimal typed service implemented by a local, Worker, HTTP, or WebSocket kernel endpoint.
 ///
 /// This trait is a control-plane wrapper. It does not bypass `Connection<P>` and must not infer
@@ -414,7 +502,7 @@ pub trait KernelService {
         &mut self,
         connection: SqlConnectionId,
         statement: SqlStatement,
-    ) -> Result<SqlOutcome, ServiceError>;
+    ) -> Result<SqlOutcome, SqlRunError>;
 
     /// Attaches one resident image immutably under `schema`.
     ///
@@ -489,7 +577,7 @@ mod tests {
         assert_eq!(
             contract_id(),
             covalence_lib_hash::o256!(
-                "87fed161a53d257baedb2205f3ee7e468411860cd8cdaf3d13837a5124d17edf"
+                "e9970bacb41845dd89fd317ac59438e01e79ecdef560f7f4195e1b69d075f8af"
             )
         );
         assert_ne!(contract_id(), O256::from_bytes(b"similar contract"));
@@ -515,5 +603,18 @@ mod tests {
             ),
             Err(ServiceError::ResourceLimit)
         );
+    }
+
+    #[test]
+    fn sqlite_diagnostics_are_utf8_bounded() {
+        let diagnostic = SqlDiagnostic::new(8, 8, "é".repeat(MAX_SQL_DIAGNOSTIC_BYTES));
+        assert!(diagnostic.message().len() <= MAX_SQL_DIAGNOSTIC_BYTES);
+        assert!(
+            diagnostic
+                .message()
+                .is_char_boundary(diagnostic.message().len())
+        );
+        assert_eq!(diagnostic.primary_code(), 8);
+        assert_eq!(diagnostic.extended_code(), 8);
     }
 }

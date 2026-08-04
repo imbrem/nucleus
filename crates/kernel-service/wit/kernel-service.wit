@@ -60,6 +60,17 @@ interface service {
     rows(sql-query),
   }
 
+  record sqlite-diagnostic {
+    primary-code: s32,
+    extended-code: s32,
+    message: string,
+  }
+
+  variant sql-run-error {
+    service(error-code),
+    sqlite(sqlite-diagnostic),
+  }
+
   /// Returns observed identity and operation-contract claims. It does not establish trust.
   identity: func() -> result<kernel-identity, error-code>;
 
@@ -76,7 +87,7 @@ interface service {
   open-sql: func() -> result<u64, error-code>;
 
   /// Executes one SQLite statement of at most 1 MiB and returns at most 16 MiB of owned output.
-  run-sql: func(connection: u64, statement: string) -> result<sql-outcome, error-code>;
+  run-sql: func(connection: u64, statement: string) -> result<sql-outcome, sql-run-error>;
 
   /// Attaches one resident complete image immutably under an exact SQLite schema identifier.
   attach-image: func(connection: u64, image: digest, schema: string) -> result<_, error-code>;

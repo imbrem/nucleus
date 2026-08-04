@@ -7,8 +7,9 @@ use covalence_lib_hash::O256;
 
 use crate::{
     ImageBytes, KernelIdentity, MAX_IMAGE_BYTES, MAX_LISTED_IMAGES, MAX_SQL_BYTES,
-    MAX_SQL_OUTCOME_BYTES, Operation, OperationContract, ServiceError, SqlConnectionId, SqlOutcome,
-    SqlOutcomeKind, SqlStatement, SqlValue,
+    MAX_SQL_DIAGNOSTIC_BYTES, MAX_SQL_OUTCOME_BYTES, Operation, OperationContract, ServiceError,
+    SqlConnectionId, SqlDiagnostic, SqlOutcome, SqlOutcomeKind, SqlRunError, SqlStatement,
+    SqlValue,
 };
 
 const REQUEST_MAGIC: [u8; 8] = *b"COVKSRQI";
@@ -200,7 +201,7 @@ pub enum ServiceResponse {
     /// Result of opening a connection.
     Open(Result<SqlConnectionId, ServiceError>),
     /// Result of running a statement.
-    Run(Result<SqlOutcome, ServiceError>),
+    Run(Result<SqlOutcome, SqlRunError>),
     /// Result of attaching a resident image.
     Attach(Result<(), ServiceError>),
     /// Result of closing a connection.
@@ -250,7 +251,7 @@ impl ServiceResponse {
             Self::Open(result) => encode_result(&mut bytes, result, |bytes, connection| {
                 bytes.extend_from_slice(&connection.get().to_be_bytes());
             }),
-            Self::Run(result) => encode_result(&mut bytes, result, encode_outcome),
+            Self::Run(result) => encode_run_result(&mut bytes, result),
             Self::Attach(result) => encode_result(&mut bytes, result, |_, ()| {}),
             Self::Close(result) => encode_result(&mut bytes, result, |_, ()| {}),
             Self::Serialize(result) => encode_result(&mut bytes, result, |bytes, image| {
@@ -278,11 +279,29 @@ impl ServiceResponse {
                 Operation::ListImages => Self::ListImages(Err(error)),
                 Operation::PutImage => Self::PutImage(Err(error)),
                 Operation::OpenSql => Self::Open(Err(error)),
-                Operation::RunSql => Self::Run(Err(error)),
+                Operation::RunSql => Self::Run(Err(SqlRunError::Service(error))),
                 Operation::AttachImage => Self::Attach(Err(error)),
                 Operation::CloseSql => Self::Close(Err(error)),
                 Operation::SerializeSqlMain => Self::Serialize(Err(error)),
             });
+        }
+        if status == 2 {
+            if operation != Operation::RunSql {
+                return Err(RpcCodecError::InvalidTag);
+            }
+            let primary = i32::from_be_bytes(cursor.array()?);
+            let extended = i32::from_be_bytes(cursor.array()?);
+            let message = cursor.bytes()?;
+            if message.len() > MAX_SQL_DIAGNOSTIC_BYTES {
+                return Err(RpcCodecError::ResourceLimit);
+            }
+            let message = std::str::from_utf8(message)
+                .map_err(|_| RpcCodecError::InvalidUtf8)?
+                .to_owned();
+            cursor.finish()?;
+            return Ok(Self::Run(Err(SqlRunError::Sqlite(SqlDiagnostic::new(
+                primary, extended, message,
+            )))));
         }
         if status != 0 {
             return Err(RpcCodecError::InvalidTag);
@@ -392,6 +411,25 @@ fn encode_result<T>(
         Err(error) => {
             bytes.push(1);
             bytes.push(service_error_tag(*error));
+        }
+    }
+}
+
+fn encode_run_result(bytes: &mut Vec<u8>, result: &Result<SqlOutcome, SqlRunError>) {
+    match result {
+        Ok(value) => {
+            bytes.push(0);
+            encode_outcome(bytes, value);
+        }
+        Err(SqlRunError::Service(error)) => {
+            bytes.push(1);
+            bytes.push(service_error_tag(*error));
+        }
+        Err(SqlRunError::Sqlite(error)) => {
+            bytes.push(2);
+            bytes.extend_from_slice(&error.primary_code().to_be_bytes());
+            bytes.extend_from_slice(&error.extended_code().to_be_bytes());
+            put_bytes(bytes, error.message().as_bytes());
         }
     }
 }
@@ -770,7 +808,12 @@ mod tests {
             ServiceResponse::Attach(Ok(())),
             ServiceResponse::Close(Ok(())),
             ServiceResponse::Serialize(Ok(ImageBytes::new(b"sqlite".to_vec()).unwrap())),
-            ServiceResponse::Run(Err(ServiceError::NotFound)),
+            ServiceResponse::Run(Err(SqlRunError::Service(ServiceError::NotFound))),
+            ServiceResponse::Run(Err(SqlRunError::Sqlite(SqlDiagnostic::new(
+                8,
+                8,
+                "attempt to write a readonly database".to_owned(),
+            )))),
         ];
         for response in responses {
             let bytes = response.encode();
