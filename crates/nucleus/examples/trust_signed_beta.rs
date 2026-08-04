@@ -97,6 +97,17 @@ fn main() -> Result<(), AnyError> {
             reader.term(body)?,
             ImportedTermView::Bound { index: 0, .. }
         ));
+        let ImportedExport::Context(context) = reader
+            .namespace_export(1)?
+            .ok_or_else(|| io::Error::other("signed beta namespace does not export context 1"))?
+        else {
+            return Err(io::Error::other("signed beta context export is not a context").into());
+        };
+        let imported_theorem = reader
+            .theorem(context, equality)?
+            .ok_or_else(|| io::Error::other("signed beta judgement is absent"))?;
+        assert_eq!(imported_theorem.context(), context);
+        assert_eq!(imported_theorem.conclusion(), equality);
         Ok::<_, AnyError>(())
     })??;
 
@@ -135,6 +146,12 @@ fn build_source() -> Result<WireSnapshot, AnyError> {
         ExportId::from_i64(0),
         NamespaceExport::Term(theorem),
         Some("identity_true_beta"),
+    )?;
+    database.export_value(
+        namespace,
+        ExportId::from_i64(1),
+        NamespaceExport::Context(ContextId::empty()),
+        Some("empty_context"),
     )?;
     let snapshot = kernel.export_hol(&mut database)?;
     let attestation = snapshot.attestation();

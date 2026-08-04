@@ -18,7 +18,7 @@ pub use namespace::{
 };
 pub use reader::{
     ImportedContextId, ImportedExport, ImportedHolReader, ImportedKindId, ImportedReaderError,
-    ImportedTermId, ImportedTermView, ImportedTypeId,
+    ImportedTermId, ImportedTermView, ImportedTheorem, ImportedTypeId,
 };
 pub use schema_descriptor::{HolSchemaDescriptor, HolSchemaDescriptorError};
 pub use trust::{
@@ -506,6 +506,8 @@ pub enum Operation {
     ReadImportedImageNamespace,
     /// Read term structure from a scoped imported image.
     ReadImportedImageTerm,
+    /// Read an exact persisted judgement from a scoped imported image.
+    ReadImportedImageTheorem,
     /// Check and persist one exact structural context union.
     ProveContextUnion,
     /// Load and recheck one exact structural context union.
