@@ -108,7 +108,13 @@ impl Runner {
                 "ES2022,DOM,ESNext.Disposable",
             ],
         )?;
-        copy_dir(&generated, &out.join("generated"))
+        copy_dir(&generated, &out.join("generated"))?;
+        fs::copy(
+            self.root().join("packages/nucleus/repl.html"),
+            out.join("repl.html"),
+        )
+        .wrap_err("could not stage browser REPL demo")?;
+        Ok(())
     }
 
     pub(crate) fn artifact_docs(
