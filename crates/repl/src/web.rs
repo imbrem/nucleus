@@ -5,8 +5,8 @@ use super::{
     ConnectionId, ContextId, ExportId, KernelId, Kind, KindId, KindView, LocalImportedHolExport,
     LocalImportedHolTerm, LocalImportedHolValue, LocalRepl, LocalSignedHolSnapshot,
     LocalTrustedHolImport, NamespaceExport, NamespaceId, NamespaceView, Outcome, ProofError,
-    QueryResult, TermId, TermView, TrustedImportId, TypeId, TypeView, Value,
-    compile_hol_schema_json,
+    QueryResult, ReplOperation, ReplOperationOutput, ReplOperationProgress, TermId, TermView,
+    TrustedImportId, TypeId, TypeView, Value, compile_hol_schema_json,
 };
 
 /// Browser adapter for the shared REPL connection directory.
@@ -19,6 +19,33 @@ pub struct WebKernel {
 #[wasm_bindgen]
 pub struct WebOutcome {
     outcome: Outcome,
+}
+
+/// One linear signed REPL operation waiting for transport.
+///
+/// JavaScript may inspect the destination and copy the opaque request bytes, but only Rust can
+/// interpret or complete the operation. The value must be consumed exactly once by
+/// [`WebKernel::accept_operation_result`] or [`WebKernel::abandon_operation`].
+#[wasm_bindgen]
+pub struct WebPendingReplOperation {
+    operation: Option<super::PendingReplOperation>,
+}
+
+/// Rust-owned progress after accepting one transported operation result.
+#[wasm_bindgen]
+pub struct WebReplOperationProgress {
+    value: Option<WebReplOperationProgressValue>,
+}
+
+enum WebReplOperationProgressValue {
+    Complete(WebReplOperationOutput),
+    Dispatch(Box<WebPendingReplOperation>),
+}
+
+/// Typed final result of one transported SQL/image operation.
+#[wasm_bindgen]
+pub struct WebReplOperationOutput {
+    output: Option<ReplOperationOutput>,
 }
 
 /// Owned view of one admitted HOL kind.
@@ -81,6 +108,201 @@ impl WebKernel {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Result<WebKernel, JsValue> {
         LocalRepl::new().map(|repl| Self { repl }).map_err(js_error)
+    }
+
+    /// Returns the ephemeral controller public key which a remote grant must name as caller.
+    #[must_use]
+    pub fn controller_caller_key(&self) -> Vec<u8> {
+        self.repl.remote_caller_public_key().to_vec()
+    }
+
+    /// Verifies a recipient-signed channel grant and records its transport-neutral route.
+    ///
+    /// `pinned_recipient` is an out-of-band identity pin. The descriptive transport and endpoint
+    /// confer no authority, and no directory entry is created until the grant is authenticated.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for a non-32-byte identity, malformed or mismatched grant, an
+    /// existing route, or a failed directory update.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn accept_remote_grant(
+        &mut self,
+        transport: &str,
+        endpoint: Option<String>,
+        pinned_recipient: &[u8],
+        grant: &[u8],
+    ) -> Result<u32, JsValue> {
+        let pinned_recipient = pinned_recipient
+            .try_into()
+            .map_err(|_| JsValue::from_str("Ed25519 public key must contain exactly 32 bytes"))?;
+        let id = self
+            .repl
+            .accept_remote_kernel(transport, endpoint.as_deref(), pinned_recipient, grant)
+            .map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
+    /// Begins opening an in-memory raw SQL connection on `kernel` without performing transport.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error when the kernel route cannot prepare the signed operation.
+    pub fn begin_open_sql(&mut self, kernel: u32) -> Result<WebPendingReplOperation, JsValue> {
+        self.begin_operation(ReplOperation::OpenSql {
+            kernel: KernelId::from_u32(kernel),
+        })
+    }
+
+    /// Begins closing a managed raw SQL connection without performing transport.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for an unknown or wrong-protocol connection, or when its kernel
+    /// route cannot prepare the signed operation.
+    pub fn begin_close_sql(&mut self, connection: u32) -> Result<WebPendingReplOperation, JsValue> {
+        self.begin_operation(ReplOperation::CloseSql {
+            connection: ConnectionId::from_u32(connection),
+        })
+    }
+
+    /// Begins executing one complete parameterless SQL statement without performing transport.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for an invalid statement, unknown or wrong-protocol connection,
+    /// or unavailable kernel route.
+    pub fn begin_run_sql(
+        &mut self,
+        connection: u32,
+        sql: String,
+    ) -> Result<WebPendingReplOperation, JsValue> {
+        self.begin_operation(ReplOperation::RunSql {
+            connection: ConnectionId::from_u32(connection),
+            sql,
+        })
+    }
+
+    /// Begins admitting one complete immutable image to a connection's kernel without transport.
+    ///
+    /// The expected operational address is computed inside Rust and checked again against the
+    /// signed kernel result before local residency is recorded.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for an unknown connection, oversized image, or unavailable
+    /// kernel route.
+    pub fn begin_put_image(
+        &mut self,
+        connection: u32,
+        bytes: Vec<u8>,
+    ) -> Result<WebPendingReplOperation, JsValue> {
+        let kernel = self
+            .repl
+            .directory
+            .connection_kernel(ConnectionId::from_u32(connection))
+            .map_err(js_error)?;
+        let expected = O256::from_bytes(&bytes);
+        self.begin_operation(ReplOperation::PutImage {
+            kernel,
+            expected,
+            bytes,
+        })
+    }
+
+    /// Begins checking whether an exact immutable image is resident on `kernel`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for an invalid image address or unavailable kernel route.
+    pub fn begin_has_image(
+        &mut self,
+        kernel: u32,
+        image: &str,
+    ) -> Result<WebPendingReplOperation, JsValue> {
+        self.begin_operation(ReplOperation::HasImage {
+            kernel: KernelId::from_u32(kernel),
+            image: O256::from_hex(image).map_err(js_error)?,
+        })
+    }
+
+    /// Begins attaching a resident immutable image to a managed raw SQL connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for an invalid image address, schema or connection, or an
+    /// unavailable kernel route.
+    pub fn begin_attach_image(
+        &mut self,
+        connection: u32,
+        image: &str,
+        schema: String,
+    ) -> Result<WebPendingReplOperation, JsValue> {
+        self.begin_operation(ReplOperation::AttachImage {
+            connection: ConnectionId::from_u32(connection),
+            image: O256::from_hex(image).map_err(js_error)?,
+            schema,
+        })
+    }
+
+    /// Begins serializing a managed raw SQL connection's writable `main` database.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for an unknown or wrong-protocol connection, or an unavailable
+    /// kernel route.
+    pub fn begin_serialize_main(
+        &mut self,
+        connection: u32,
+    ) -> Result<WebPendingReplOperation, JsValue> {
+        self.begin_operation(ReplOperation::SerializeMain {
+            connection: ConnectionId::from_u32(connection),
+        })
+    }
+
+    /// Authenticates one exact result and performs the operation's Rust-owned finalization.
+    ///
+    /// A `dispatch` progress value contains a signed close compensation which must itself be sent
+    /// exactly once. JavaScript must never retry either request after an ambiguous failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error if the pending value was already consumed, result verification
+    /// fails, the service rejects the operation, or its local directory commit fails.
+    pub fn accept_operation_result(
+        &mut self,
+        operation: &mut WebPendingReplOperation,
+        result: &[u8],
+    ) -> Result<WebReplOperationProgress, JsValue> {
+        let operation = operation.take()?;
+        match self.repl.accept_operation_result(operation, result) {
+            ReplOperationProgress::Complete(result) => {
+                let output = result.map_err(js_error)?;
+                Ok(WebReplOperationProgress::complete(output))
+            }
+            ReplOperationProgress::Dispatch(operation) => {
+                Ok(WebReplOperationProgress::dispatch(*operation))
+            }
+        }
+    }
+
+    /// Abandons an ambiguously transported operation and poisons its signed route.
+    ///
+    /// The request bytes must not be retried. For a close compensation this reports the original
+    /// local commit failure which caused compensation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error if the pending value was already consumed or represents a
+    /// compensation whose original operation failed locally.
+    pub fn abandon_operation(
+        &mut self,
+        operation: &mut WebPendingReplOperation,
+    ) -> Result<(), JsValue> {
+        let operation = operation.take()?;
+        self.repl
+            .abandon_operation(operation)
+            .map_or(Ok(()), |error| Err(js_error(error)))
     }
 
     /// Opens a writable in-memory SQL connection and returns its local ID.
@@ -1137,6 +1359,227 @@ impl WebKernel {
             )
             .map(|value| value.map(|value| WebImportedHolExport { value }))
             .map_err(js_error)
+    }
+}
+
+impl WebKernel {
+    fn begin_operation(
+        &mut self,
+        operation: ReplOperation,
+    ) -> Result<WebPendingReplOperation, JsValue> {
+        self.repl
+            .prepare_operation(operation)
+            .map(WebPendingReplOperation::new)
+            .map_err(js_error)
+    }
+}
+
+impl WebPendingReplOperation {
+    fn new(operation: super::PendingReplOperation) -> Self {
+        Self {
+            operation: Some(operation),
+        }
+    }
+
+    fn take(&mut self) -> Result<super::PendingReplOperation, JsValue> {
+        self.operation
+            .take()
+            .ok_or_else(|| JsValue::from_str("pending REPL operation was already consumed"))
+    }
+}
+
+#[wasm_bindgen]
+impl WebPendingReplOperation {
+    /// Returns the kernel directory ID which must receive these bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error after this linear value has been consumed.
+    pub fn kernel(&self) -> Result<u32, JsValue> {
+        let operation = self
+            .operation
+            .as_ref()
+            .ok_or_else(|| JsValue::from_str("pending REPL operation was already consumed"))?;
+        u32::try_from(operation.kernel().get()).map_err(js_error)
+    }
+
+    /// Copies the exact canonical signed request bytes for opaque transport.
+    ///
+    /// The returned bytes may be transported once. They must not be retried after an ambiguous
+    /// transport failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error after this linear value has been consumed.
+    pub fn request_bytes(&self) -> Result<Vec<u8>, JsValue> {
+        self.operation
+            .as_ref()
+            .map(super::PendingReplOperation::encode)
+            .ok_or_else(|| JsValue::from_str("pending REPL operation was already consumed"))
+    }
+}
+
+impl WebReplOperationProgress {
+    fn complete(output: ReplOperationOutput) -> Self {
+        Self {
+            value: Some(WebReplOperationProgressValue::Complete(
+                WebReplOperationOutput {
+                    output: Some(output),
+                },
+            )),
+        }
+    }
+
+    fn dispatch(operation: super::PendingReplOperation) -> Self {
+        Self {
+            value: Some(WebReplOperationProgressValue::Dispatch(Box::new(
+                WebPendingReplOperation::new(operation),
+            ))),
+        }
+    }
+}
+
+#[wasm_bindgen]
+impl WebReplOperationProgress {
+    /// Returns `complete` or `dispatch`.
+    ///
+    /// A `dispatch` value is a close compensation and must be transported exactly once before its
+    /// result is accepted.
+    #[must_use]
+    pub fn kind(&self) -> String {
+        match self.value {
+            Some(WebReplOperationProgressValue::Complete(_)) => "complete",
+            Some(WebReplOperationProgressValue::Dispatch(_)) => "dispatch",
+            None => "consumed",
+        }
+        .to_owned()
+    }
+
+    /// Takes the typed final output from a `complete` progress value.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for `dispatch` or after the value was consumed.
+    pub fn take_output(&mut self) -> Result<WebReplOperationOutput, JsValue> {
+        match self.value.take() {
+            Some(WebReplOperationProgressValue::Complete(output)) => Ok(output),
+            Some(value @ WebReplOperationProgressValue::Dispatch(_)) => {
+                self.value = Some(value);
+                Err(JsValue::from_str("operation progress requires dispatch"))
+            }
+            None => Err(JsValue::from_str("operation progress was already consumed")),
+        }
+    }
+
+    /// Takes the next linear request from a `dispatch` progress value.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for `complete` or after the value was consumed.
+    pub fn take_pending(&mut self) -> Result<WebPendingReplOperation, JsValue> {
+        match self.value.take() {
+            Some(WebReplOperationProgressValue::Dispatch(operation)) => Ok(*operation),
+            Some(value @ WebReplOperationProgressValue::Complete(_)) => {
+                self.value = Some(value);
+                Err(JsValue::from_str("operation progress is already complete"))
+            }
+            None => Err(JsValue::from_str("operation progress was already consumed")),
+        }
+    }
+}
+
+#[wasm_bindgen]
+impl WebReplOperationOutput {
+    /// Returns the typed output discriminator.
+    #[must_use]
+    pub fn kind(&self) -> String {
+        match self.output {
+            Some(ReplOperationOutput::Opened(_)) => "opened",
+            Some(ReplOperationOutput::Closed) => "closed",
+            Some(ReplOperationOutput::Sql(_)) => "sql",
+            Some(ReplOperationOutput::Image(_)) => "image",
+            Some(ReplOperationOutput::ImageResident(_)) => "image-resident",
+            Some(ReplOperationOutput::Attached) => "attached",
+            Some(ReplOperationOutput::Serialized(_)) => "serialized",
+            None => "consumed",
+        }
+        .to_owned()
+    }
+
+    /// Returns the newly opened REPL connection ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for another output kind or an out-of-range ID.
+    pub fn connection(&self) -> Result<u32, JsValue> {
+        match self.output.as_ref() {
+            Some(ReplOperationOutput::Opened(connection)) => {
+                u32::try_from(connection.get()).map_err(js_error)
+            }
+            _ => Err(JsValue::from_str(
+                "operation output is not an opened connection",
+            )),
+        }
+    }
+
+    /// Takes the SQL statement outcome.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for another output kind or after this output was consumed.
+    pub fn take_sql_outcome(&mut self) -> Result<WebOutcome, JsValue> {
+        if !matches!(self.output, Some(ReplOperationOutput::Sql(_))) {
+            return Err(JsValue::from_str("operation output is not a SQL outcome"));
+        }
+        match self.output.take() {
+            Some(ReplOperationOutput::Sql(outcome)) => Ok(WebOutcome { outcome }),
+            _ => unreachable!("output kind was checked"),
+        }
+    }
+
+    /// Returns the admitted image's exact operational address.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for another output kind.
+    pub fn image(&self) -> Result<String, JsValue> {
+        match self.output.as_ref() {
+            Some(ReplOperationOutput::Image(image)) => Ok(image.to_string()),
+            _ => Err(JsValue::from_str(
+                "operation output is not an image address",
+            )),
+        }
+    }
+
+    /// Returns whether the queried image is resident.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for another output kind.
+    pub fn image_resident(&self) -> Result<bool, JsValue> {
+        match self.output {
+            Some(ReplOperationOutput::ImageResident(resident)) => Ok(resident),
+            _ => Err(JsValue::from_str(
+                "operation output is not an image-residency result",
+            )),
+        }
+    }
+
+    /// Takes exact serialized `main` database bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for another output kind or after this output was consumed.
+    pub fn take_serialized(&mut self) -> Result<Vec<u8>, JsValue> {
+        if !matches!(self.output, Some(ReplOperationOutput::Serialized(_))) {
+            return Err(JsValue::from_str(
+                "operation output is not serialized bytes",
+            ));
+        }
+        match self.output.take() {
+            Some(ReplOperationOutput::Serialized(bytes)) => Ok(bytes),
+            _ => unreachable!("output kind was checked"),
+        }
     }
 }
 
