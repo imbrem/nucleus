@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     LocalHolProofOutput, LocalHolProofRef, LocalHolProofScriptError, LocalHolProofStep,
-    LocalHolTermInstantiation, LocalReplError, run_local_hol_proof_script,
+    LocalHolTermInstantiation, LocalHolTypeInstantiation, LocalReplError,
+    run_local_hol_proof_script,
 };
 
 /// Maximum UTF-8 byte length accepted at the JSON transport boundary.
@@ -113,6 +114,10 @@ enum WireStep {
         second: u32,
     },
     InstantiateTerms {
+        theorem: u32,
+        instantiations: Vec<WireInstantiation>,
+    },
+    InstantiateTypes {
         theorem: u32,
         instantiations: Vec<WireInstantiation>,
     },
@@ -288,6 +293,19 @@ impl From<WireStep> for LocalHolProofStep {
                     .map(|item| LocalHolTermInstantiation {
                         variable: term(item.variable),
                         replacement: term(item.replacement),
+                    })
+                    .collect(),
+            },
+            WireStep::InstantiateTypes {
+                theorem,
+                instantiations,
+            } => Self::InstantiateTypes {
+                theorem: reference(theorem),
+                instantiations: instantiations
+                    .into_iter()
+                    .map(|item| LocalHolTypeInstantiation {
+                        variable: TypeId::from_i64(item.variable),
+                        replacement: TypeId::from_i64(item.replacement),
                     })
                     .collect(),
             },
@@ -505,6 +523,32 @@ mod tests {
         assert_eq!(
             response,
             r#"{"version":1,"outputs":[{"kind":"theorem","context":0,"conclusion":3},{"kind":"unit"}]}"#
+        );
+    }
+
+    #[test]
+    fn strict_json_replays_type_instantiation() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let alpha = connection.insert_free_type(800).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let x_alpha = connection.insert_free_term(801, alpha).unwrap();
+        let x_bool = connection.insert_free_term(801, bool_type).unwrap();
+        let expected = connection.insert_equality(x_bool, x_bool).unwrap();
+        let request = format!(
+            r#"{{"version":1,"steps":[{{"op":"reflexivity","context":0,"term":{}}},{{"op":"instantiate_types","theorem":0,"instantiations":[{{"variable":{},"replacement":{}}}]}}]}}"#,
+            x_alpha.get(),
+            alpha.get(),
+            bool_type.get(),
+        );
+
+        let response = run_local_hol_proof_script_json(&mut connection, &request).unwrap();
+        assert_eq!(
+            response,
+            format!(
+                r#"{{"version":1,"outputs":[{{"kind":"theorem","context":0,"conclusion":{}}},{{"kind":"theorem","context":0,"conclusion":{}}}]}}"#,
+                connection.insert_equality(x_alpha, x_alpha).unwrap().get(),
+                expected.get(),
+            )
         );
     }
 

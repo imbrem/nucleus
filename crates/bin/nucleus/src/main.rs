@@ -1056,6 +1056,17 @@ fn run_hol_type<'a>(
             let ty = repl.hol_mut(connection)?.insert_base_type(symbol)?;
             writeln!(output, "type {} = base {symbol}", ty.get())?;
         }
+        Some("free") => {
+            let symbol: i64 = arguments
+                .next()
+                .ok_or("missing free type symbol")?
+                .parse()?;
+            if arguments.next().is_some() {
+                return Err("usage: .hol type free SYMBOL".into());
+            }
+            let ty = repl.hol_free_type(connection, symbol)?;
+            writeln!(output, "type {} = free {symbol}", ty.get())?;
+        }
         Some("arrow") => {
             let domain = parse_type_id(arguments.next(), "domain")?;
             let codomain = parse_type_id(arguments.next(), "codomain")?;
@@ -1078,7 +1089,7 @@ fn run_hol_type<'a>(
             if arguments.next().is_some() {
                 return Err("usage: .hol type show ID".into());
             }
-            match repl.hol_mut(connection)?.type_view(ty)? {
+            match repl.hol_type_view(connection, ty)? {
                 TypeView::Bool => writeln!(output, "type {} = Bool", ty.get())?,
                 TypeView::Base { symbol } => {
                     writeln!(output, "type {} = base {symbol}", ty.get())?;
@@ -1095,7 +1106,7 @@ fn run_hol_type<'a>(
                 )?,
             }
         }
-        _ => return Err("usage: .hol type bool|base SYMBOL|arrow D C|show ID".into()),
+        _ => return Err("usage: .hol type bool|base SYMBOL|free SYMBOL|arrow D C|show ID".into()),
     }
     Ok(())
 }
@@ -1612,6 +1623,24 @@ mod tests {
 
         assert!(String::from_utf8(output).unwrap().contains(
             "{\"version\":1,\"outputs\":[{\"kind\":\"theorem\",\"context\":0,\"conclusion\":3},{\"kind\":\"unit\"}]}\n"
+        ));
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn terminal_constructs_and_inspects_a_schematic_type() {
+        let mut input = Cursor::new(
+            ".open hol\n.hol type free 700\n.hol type show 3\n.hol term free 701 3\n.hol term free 701 2\n.hol term eq 5 5\n.hol script {\"version\":1,\"steps\":[{\"op\":\"reflexivity\",\"context\":0,\"term\":4},{\"op\":\"instantiate_types\",\"theorem\":0,\"instantiations\":[{\"variable\":3,\"replacement\":2}]}]}\n.quit\n",
+        );
+        let mut output = Vec::new();
+        let mut errors = Vec::new();
+
+        run_repl(&mut input, &mut output, &mut errors, false).expect("run REPL");
+
+        let output = String::from_utf8(output).unwrap();
+        assert_eq!(output.matches("type 3 = free 700\n").count(), 2);
+        assert!(output.contains(
+            "{\"version\":1,\"outputs\":[{\"kind\":\"theorem\",\"context\":0,\"conclusion\":7},{\"kind\":\"theorem\",\"context\":0,\"conclusion\":6}]}\n"
         ));
         assert!(errors.is_empty());
     }

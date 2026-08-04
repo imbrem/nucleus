@@ -54,8 +54,8 @@ pub use native_http::{
 };
 pub use proof_script::{
     LocalHolProofOutput, LocalHolProofRef, LocalHolProofScriptError, LocalHolProofSort,
-    LocalHolProofStep, LocalHolTermInstantiation, MAX_LOCAL_HOL_PROOF_STEPS,
-    MAX_TOTAL_LOCAL_HOL_PROOF_OPERANDS, run_local_hol_proof_script,
+    LocalHolProofStep, LocalHolTermInstantiation, LocalHolTypeInstantiation,
+    MAX_LOCAL_HOL_PROOF_STEPS, MAX_TOTAL_LOCAL_HOL_PROOF_OPERANDS, run_local_hol_proof_script,
 };
 pub use proof_script_json::{
     LocalHolProofJsonError, MAX_LOCAL_HOL_PROOF_JSON_BYTES, run_local_hol_proof_script_json,
@@ -2704,6 +2704,34 @@ impl LocalRepl {
         }
     }
 
+    /// Canonically interns a rank-zero schematic HOL type variable.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a wrong connection protocol, policy denial, or failed admission.
+    pub fn hol_free_type(
+        &mut self,
+        id: ConnectionId,
+        symbol: i64,
+    ) -> Result<TypeId, LocalReplError> {
+        self.hol_mut(id)?
+            .insert_free_type(symbol)
+            .map_err(Into::into)
+    }
+
+    /// Reads one admitted HOL type through the shared local connection directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a wrong protocol, policy denial, or invalid type ID.
+    pub fn hol_type_view(
+        &mut self,
+        id: ConnectionId,
+        ty: TypeId,
+    ) -> Result<TypeView, LocalReplError> {
+        self.hol_mut(id)?.type_view(ty).map_err(Into::into)
+    }
+
     /// Replays a bounded append-only HOL proof recipe in one fresh generative session.
     ///
     /// Recipe references are meaningful only within this call. The returned values are inert
@@ -3619,6 +3647,8 @@ pub enum LocalReplError {
     MetadataSpec(MetadataSpecError),
     /// A HOL metadata read or write failed.
     Metadata(MetadataError),
+    /// A HOL type operation failed.
+    Type(TypeError),
     /// One kernel's immutable image residency failed.
     Image(ReplImageError),
     /// A namespace operation failed.
@@ -3674,6 +3704,7 @@ impl fmt::Display for LocalReplError {
             Self::HolSchemaSpec(error) => error.fmt(formatter),
             Self::MetadataSpec(error) => error.fmt(formatter),
             Self::Metadata(error) => error.fmt(formatter),
+            Self::Type(error) => error.fmt(formatter),
             Self::Image(error) => error.fmt(formatter),
             Self::Namespace(error) => error.fmt(formatter),
             Self::Export(error) => error.fmt(formatter),
@@ -3715,6 +3746,7 @@ impl StdError for LocalReplError {
             Self::HolSchemaSpec(error) => Some(error),
             Self::MetadataSpec(error) => Some(error),
             Self::Metadata(error) => Some(error),
+            Self::Type(error) => Some(error),
             Self::Image(error) => Some(error),
             Self::Namespace(error) => Some(error),
             Self::Export(error) => Some(error),
@@ -3734,6 +3766,12 @@ impl StdError for LocalReplError {
 impl From<ReplError> for LocalReplError {
     fn from(error: ReplError) -> Self {
         Self::Directory(error)
+    }
+}
+
+impl From<TypeError> for LocalReplError {
+    fn from(error: TypeError) -> Self {
+        Self::Type(error)
     }
 }
 

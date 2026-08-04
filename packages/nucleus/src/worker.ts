@@ -91,6 +91,12 @@ type Request =
   | { id: number; operation: "holBoolType"; connection: number }
   | {
       id: number;
+      operation: "holFreeType";
+      connection: number;
+      symbol: number;
+    }
+  | {
+      id: number;
       operation: "holArrowType";
       connection: number;
       domain: number;
@@ -646,6 +652,8 @@ async function execute(request: Request): Promise<unknown> {
       return connection.hol_rank(request.connection, request.kind);
     case "holBoolType":
       return connection.hol_bool_type(request.connection);
+    case "holFreeType":
+      return connection.hol_free_type(request.connection, request.symbol);
     case "holArrowType":
       return connection.hol_arrow_type(
         request.connection,
@@ -655,13 +663,16 @@ async function execute(request: Request): Promise<unknown> {
     case "holType": {
       const type = connection.hol_type(request.connection, request.type);
       try {
-        return type.tag() === "bool"
-          ? { kind: "bool" }
-          : {
-              kind: "arrow",
-              domain: type.domain(),
-              codomain: type.codomain(),
-            };
+        const tag = type.tag();
+        if (tag === "bool") return { kind: "bool" };
+        if (tag === "base" || tag === "free") {
+          return { kind: tag, symbol: type.symbol() };
+        }
+        return {
+          kind: "arrow",
+          domain: type.domain(),
+          codomain: type.codomain(),
+        };
       } finally {
         type.free();
       }
