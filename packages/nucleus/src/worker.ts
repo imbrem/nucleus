@@ -183,7 +183,45 @@ type Request =
       connection: number;
       context: number;
       term: number;
-    };
+    }
+  | {
+      id: number;
+      operation: "holNamespaceCreate";
+      connection: number;
+      parent: number | null;
+      name: string | null;
+    }
+  | {
+      id: number;
+      operation: "holNamespace";
+      connection: number;
+      namespace: number;
+    }
+  | {
+      id: number;
+      operation: "holExportBind";
+      connection: number;
+      namespace: number;
+      exportId: number;
+      sort: "kind" | "type" | "term" | "context";
+      local: number;
+      name?: string;
+    }
+  | {
+      id: number;
+      operation: "holNamespaceExport";
+      connection: number;
+      namespace: number;
+      exportId: number;
+    }
+  | {
+      id: number;
+      operation: "holExportResolve";
+      connection: number;
+      namespace: number;
+      name: string;
+    }
+  | { id: number; operation: "holExportSnapshot"; connection: number };
 
 type SqlValue =
   | { kind: "null" }
@@ -199,8 +237,7 @@ globalThis.addEventListener(
   async ({ data }: MessageEvent<Request>) => {
     try {
       const value = await execute(data);
-      const transfer =
-        value instanceof Uint8Array ? [value.buffer as ArrayBuffer] : [];
+      const transfer = transferables(value);
       globalThis.postMessage({ id: data.id, ok: true, value }, { transfer });
     } catch (error) {
       globalThis.postMessage({
@@ -211,6 +248,29 @@ globalThis.addEventListener(
     }
   },
 );
+
+function transferables(value: unknown): Transferable[] {
+  if (value instanceof Uint8Array) return [value.buffer as ArrayBuffer];
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "bytes" in value &&
+    "publicKey" in value &&
+    "signature" in value
+  ) {
+    const snapshot = value as {
+      bytes: Uint8Array;
+      publicKey: Uint8Array;
+      signature: Uint8Array;
+    };
+    return [
+      snapshot.bytes.buffer as ArrayBuffer,
+      snapshot.publicKey.buffer as ArrayBuffer,
+      snapshot.signature.buffer as ArrayBuffer,
+    ];
+  }
+  return [];
+}
 
 async function execute(request: Request): Promise<unknown> {
   const connection = await kernel;
@@ -441,6 +501,75 @@ async function execute(request: Request): Promise<unknown> {
         request.context,
         request.term,
       );
+    case "holNamespaceCreate":
+      return connection.hol_namespace_create(
+        request.connection,
+        request.parent ?? undefined,
+        request.name ?? undefined,
+      );
+    case "holNamespace": {
+      const namespace = connection.hol_namespace(
+        request.connection,
+        request.namespace,
+      );
+      try {
+        return {
+          parent: namespace.parent() ?? null,
+          name: namespace.name() ?? null,
+        };
+      } finally {
+        namespace.free();
+      }
+    }
+    case "holExportBind":
+      connection.hol_export_bind(
+        request.connection,
+        request.namespace,
+        request.exportId,
+        request.sort,
+        request.local,
+        request.name,
+      );
+      return undefined;
+    case "holNamespaceExport": {
+      const value = connection.hol_export(
+        request.connection,
+        request.namespace,
+        request.exportId,
+      );
+      try {
+        return {
+          sort: value.sort(),
+          local: value.local(),
+          name: value.name() ?? null,
+        };
+      } finally {
+        value.free();
+      }
+    }
+    case "holExportResolve":
+      return (
+        connection.hol_export_resolve(
+          request.connection,
+          request.namespace,
+          request.name,
+        ) ?? null
+      );
+    case "holExportSnapshot": {
+      const snapshot = connection.hol_export_snapshot(request.connection);
+      try {
+        return {
+          bytes: snapshot.bytes(),
+          schema: snapshot.schema(),
+          image: snapshot.image(),
+          signer: snapshot.signer(),
+          publicKey: snapshot.public_key(),
+          signature: snapshot.signature(),
+        };
+      } finally {
+        snapshot.free();
+      }
+    }
   }
 }
 

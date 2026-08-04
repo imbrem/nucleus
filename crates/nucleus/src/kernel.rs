@@ -105,6 +105,10 @@ mod tests {
         assert_ne!(first.attestation().image(), second.attestation().image());
         let verifier = crate::Ed25519Verifier::new(kernel.verifying_key());
         let attestation = second.attestation();
+        assert_eq!(
+            crate::ed25519_key_id(attestation.public_key()),
+            attestation.signer()
+        );
         verifier
             .verify(
                 attestation.signer(),

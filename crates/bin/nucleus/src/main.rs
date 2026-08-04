@@ -5,8 +5,8 @@ use std::io;
 use std::process::ExitCode;
 
 use covalence_repl::{
-    ConnectionId, ContextId, KindId, KindView, LocalRepl, Outcome, ProofError, TermId, TermView,
-    TypeId, TypeView, Value,
+    ConnectionId, ContextId, ExportId, KindId, KindView, LocalRepl, NamespaceExport, NamespaceId,
+    Outcome, ProofError, TermId, TermView, TypeId, TypeView, Value,
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
@@ -116,6 +116,15 @@ fn run_line(repl: &mut LocalRepl, output: &mut impl io::Write, line: &str) -> Re
             ".hol term ...      admit/inspect simply typed terms and binders"
         )?;
         writeln!(output, ".hol ctx ...       define/inspect Boolean contexts")?;
+        writeln!(
+            output,
+            ".hol namespace ... define/inspect export namespaces"
+        )?;
+        writeln!(output, ".hol export ...    bind/inspect namespace exports")?;
+        writeln!(
+            output,
+            ".hol snapshot export PATH  write a signed HOL image"
+        )?;
         writeln!(output, ".hol prove ...     apply an explicit HOL rule")?;
         writeln!(output, ".quit              exit")?;
         return Ok(true);
@@ -234,6 +243,9 @@ fn run_hol(repl: &mut LocalRepl, output: &mut impl io::Write, arguments: &str) -
         Some("type") => run_hol_type(repl, output, connection, arguments)?,
         Some("term") => run_hol_term(repl, output, connection, arguments)?,
         Some("ctx") => run_hol_context(repl, output, connection, arguments)?,
+        Some("namespace") => run_hol_namespace(repl, output, connection, arguments)?,
+        Some("export") => run_hol_export(repl, output, connection, arguments)?,
+        Some("snapshot") => run_hol_snapshot(repl, output, connection, arguments)?,
         Some("prove") => run_hol_proof(repl, output, connection, arguments)?,
         Some("proved") => {
             let context = parse_context_id(arguments.next(), "context")?;
@@ -245,10 +257,199 @@ fn run_hol(repl: &mut LocalRepl, output: &mut impl io::Write, arguments: &str) -
             writeln!(output, "proved {} {} = {proved}", context.get(), term.get())?;
         }
         _ => {
-            return Err("usage: .hol star|arrow|show|rank|type|term|ctx|prove|proved ...".into());
+            return Err(
+                "usage: .hol star|arrow|show|rank|type|term|ctx|namespace|export|snapshot|prove|proved ..."
+                    .into(),
+            );
         }
     }
     Ok(())
+}
+
+fn run_hol_namespace<'a>(
+    repl: &mut LocalRepl,
+    output: &mut impl io::Write,
+    connection: ConnectionId,
+    mut arguments: impl Iterator<Item = &'a str>,
+) -> Result<()> {
+    match arguments.next() {
+        Some("create") => {
+            let parent = parse_optional_id(arguments.next(), "parent")?.map(NamespaceId::from_i64);
+            let name = parse_optional_text(arguments.next());
+            if arguments.next().is_some() {
+                return Err("usage: .hol namespace create PARENT|- NAME|-".into());
+            }
+            let namespace = repl.create_hol_namespace(connection, parent, name)?;
+            writeln!(output, "namespace {} defined", namespace.get())?;
+        }
+        Some("show") => {
+            let namespace = parse_namespace_id(arguments.next(), "namespace")?;
+            if arguments.next().is_some() {
+                return Err("usage: .hol namespace show ID".into());
+            }
+            let view = repl.hol_namespace(connection, namespace)?;
+            writeln!(
+                output,
+                "namespace {} parent={} name={}",
+                namespace.get(),
+                view.parent
+                    .map_or_else(|| "-".to_owned(), |id| id.get().to_string()),
+                view.name.as_deref().unwrap_or("-")
+            )?;
+        }
+        _ => return Err("usage: .hol namespace create PARENT|- NAME|-|show ID".into()),
+    }
+    Ok(())
+}
+
+fn run_hol_export<'a>(
+    repl: &mut LocalRepl,
+    output: &mut impl io::Write,
+    connection: ConnectionId,
+    mut arguments: impl Iterator<Item = &'a str>,
+) -> Result<()> {
+    match arguments.next() {
+        Some("bind") => {
+            let namespace = parse_namespace_id(arguments.next(), "namespace")?;
+            let export = parse_export_id(arguments.next(), "export")?;
+            let sort = arguments.next().ok_or("missing export sort")?;
+            let local: i64 = arguments.next().ok_or("missing local ID")?.parse()?;
+            let name = parse_optional_text(arguments.next());
+            if arguments.next().is_some() {
+                return Err(
+                    "usage: .hol export bind NAMESPACE EXPORT KIND|TYPE|TERM|CONTEXT LOCAL [NAME|-]"
+                        .into(),
+                );
+            }
+            let value = parse_namespace_export(sort, local)?;
+            repl.bind_hol_export(connection, namespace, export, value, name)?;
+            writeln!(
+                output,
+                "export {}:{} = {} {}",
+                namespace.get(),
+                export.get(),
+                sort,
+                local
+            )?;
+        }
+        Some("show") => {
+            let namespace = parse_namespace_id(arguments.next(), "namespace")?;
+            let export = parse_export_id(arguments.next(), "export")?;
+            if arguments.next().is_some() {
+                return Err("usage: .hol export show NAMESPACE EXPORT".into());
+            }
+            let view = repl
+                .hol_export(connection, namespace, export)?
+                .ok_or("unknown export")?;
+            let (sort, local) = format_namespace_export(view.value);
+            writeln!(
+                output,
+                "export {}:{} = {} {} name={}",
+                namespace.get(),
+                export.get(),
+                sort,
+                local,
+                view.name.as_deref().unwrap_or("-")
+            )?;
+        }
+        Some("resolve") => {
+            let namespace = parse_namespace_id(arguments.next(), "namespace")?;
+            let name = arguments.next().ok_or("missing export name")?;
+            if arguments.next().is_some() {
+                return Err("usage: .hol export resolve NAMESPACE NAME".into());
+            }
+            let (export, _) = repl
+                .resolve_hol_export_name(connection, namespace, name)?
+                .ok_or("unknown export name")?;
+            writeln!(output, "export {}:{}", namespace.get(), export.get())?;
+        }
+        _ => {
+            return Err(
+                "usage: .hol export bind NAMESPACE EXPORT SORT LOCAL [NAME|-]|show NAMESPACE EXPORT|resolve NAMESPACE NAME"
+                    .into(),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn run_hol_snapshot<'a>(
+    repl: &mut LocalRepl,
+    output: &mut impl io::Write,
+    connection: ConnectionId,
+    mut arguments: impl Iterator<Item = &'a str>,
+) -> Result<()> {
+    if arguments.next() != Some("export") {
+        return Err("usage: .hol snapshot export PATH".into());
+    }
+    let path = arguments.next().ok_or("missing snapshot path")?;
+    if arguments.next().is_some() {
+        return Err("usage: .hol snapshot export PATH".into());
+    }
+    let snapshot = repl.export_hol_snapshot(connection)?;
+    fs::write(path, snapshot.bytes())?;
+    writeln!(output, "schema {}", snapshot.schema())?;
+    writeln!(output, "image {}", snapshot.image())?;
+    writeln!(output, "signer {}", snapshot.signer())?;
+    writeln!(output, "public-key {}", hex(snapshot.public_key()))?;
+    writeln!(output, "signature {}", hex(snapshot.signature()))?;
+    Ok(())
+}
+
+fn parse_optional_id(value: Option<&str>, label: &str) -> Result<Option<i64>> {
+    match value {
+        Some("-") => Ok(None),
+        Some(value) => Ok(Some(value.parse()?)),
+        None => Err(format!("missing {label}").into()),
+    }
+}
+
+fn parse_optional_text(value: Option<&str>) -> Option<&str> {
+    value.filter(|value| *value != "-")
+}
+
+fn parse_namespace_id(value: Option<&str>, label: &str) -> Result<NamespaceId> {
+    value
+        .ok_or_else(|| format!("missing {label}"))?
+        .parse()
+        .map(NamespaceId::from_i64)
+        .map_err(Into::into)
+}
+
+fn parse_export_id(value: Option<&str>, label: &str) -> Result<ExportId> {
+    value
+        .ok_or_else(|| format!("missing {label}"))?
+        .parse()
+        .map(ExportId::from_i64)
+        .map_err(Into::into)
+}
+
+fn parse_namespace_export(sort: &str, local: i64) -> Result<NamespaceExport> {
+    match sort {
+        "kind" => Ok(NamespaceExport::Kind(KindId::from_i64(local))),
+        "type" => Ok(NamespaceExport::Type(TypeId::from_i64(local))),
+        "term" => Ok(NamespaceExport::Term(TermId::from_i64(local))),
+        "context" => Ok(NamespaceExport::Context(ContextId::from_i64(local))),
+        _ => Err(format!("unknown export sort: {sort}").into()),
+    }
+}
+
+fn format_namespace_export(value: NamespaceExport) -> (&'static str, i64) {
+    match value {
+        NamespaceExport::Kind(id) => ("kind", id.get()),
+        NamespaceExport::Type(id) => ("type", id.get()),
+        NamespaceExport::Term(id) => ("term", id.get()),
+        NamespaceExport::Context(id) => ("context", id.get()),
+    }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        write!(encoded, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    encoded
 }
 
 fn run_hol_context<'a>(
@@ -850,5 +1051,34 @@ mod tests {
                 .unwrap()
                 .contains("attempt to write a readonly database")
         );
+    }
+
+    #[test]
+    fn exports_named_hol_snapshot_through_the_terminal_surface() {
+        let path = std::env::temp_dir().join(format!(
+            "nucleus-hol-export-{}.sqlite",
+            NEXT_FILE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let script = format!(
+            ".open hol\n.hol star\n.hol namespace create 0 demo\n.hol namespace show 1\n.hol export bind 1 7 kind 1 star\n.hol export show 1 7\n.hol export resolve 1 star\n.hol snapshot export {}\n.quit\n",
+            path.display()
+        );
+        let mut input = Cursor::new(script);
+        let mut output = Vec::new();
+        let mut errors = Vec::new();
+        run_repl(&mut input, &mut output, &mut errors, false).expect("run REPL");
+        let bytes = fs::read(&path).expect("read signed snapshot");
+        fs::remove_file(path).expect("remove signed snapshot");
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("namespace 1 defined\n"));
+        assert!(output.contains("namespace 1 parent=0 name=demo\n"));
+        assert!(output.contains("export 1:7 = kind 1 name=star\n"));
+        assert!(output.contains("schema "));
+        assert!(output.contains("image "));
+        assert!(output.contains("public-key "));
+        assert!(output.contains("signature "));
+        assert!(bytes.starts_with(b"SQLite format 3"));
+        assert!(errors.is_empty(), "{}", String::from_utf8(errors).unwrap());
     }
 }

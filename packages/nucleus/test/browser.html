@@ -11,10 +11,12 @@
       const repl = createBrowserRepl();
       let source;
       let target;
+      let hol;
       let url;
       try {
         source = await repl.open();
         target = await repl.open();
+        hol = await repl.openHol();
         await source.run("CREATE TABLE facts (name TEXT, value INTEGER)");
         await source.run(
           "INSERT INTO facts VALUES ('exact', 9223372036854775807)",
@@ -33,10 +35,34 @@
           readonly = true;
         }
 
+        const truth = await hol.boolTerm(true);
+        const namespace = await hol.createNamespace(0, "demo");
+        await hol.bindExport(namespace, 7, "term", truth, "truth");
+        const namespaceView = await hol.namespace(namespace);
+        const exportView = await hol.namespaceExport(namespace, 7);
+        const resolved = await hol.resolveExportName(namespace, "truth");
+        const snapshot = await hol.exportSnapshot();
+        const snapshotHash = await target.putImage(snapshot.bytes);
+        await target.attachImage(snapshotHash, "hol_snapshot");
+        const snapshotRows = await target.run(
+          "SELECT namespace_id, export_id, sort, local_id, name FROM hol_snapshot.hol_namespace_export",
+        );
+
         document.body.dataset.result = JSON.stringify({
           hash,
           result,
           readonly,
+          namespace,
+          namespaceView,
+          exportView,
+          resolved,
+          snapshotHash,
+          snapshotImage: snapshot.image,
+          snapshotSchema: snapshot.schema,
+          snapshotSigner: snapshot.signer,
+          publicKeyLength: snapshot.publicKey.length,
+          signatureLength: snapshot.signature.length,
+          snapshotRows,
         });
       } catch (error) {
         document.body.dataset.error = String(error);
@@ -44,6 +70,7 @@
         if (url !== undefined) URL.revokeObjectURL(url);
         await source?.close();
         await target?.close();
+        await hol?.close();
         repl.close();
       }
     </script>

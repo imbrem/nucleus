@@ -12,9 +12,10 @@ use covalence_lib_sqlite as sqlite;
 
 pub use covalence_nucleus::sql::{ImageError, Outcome, QueryResult, Statement, Value};
 pub use covalence_nucleus::{
-    AllowAll, Connection, ContextError, ContextId, ContextImplication, Hol, HolOpenError, Kernel,
-    Kind, KindError, KindId, KindView, ProofError, ProofSession, Sql, TermError, TermId, TermView,
-    Theorem, TypeError, TypeId, TypeView,
+    AllowAll, Connection, ContextError, ContextId, ContextImplication, ExportError, ExportId,
+    ExportSort, ExportView, Hol, HolExportError, HolOpenError, Kernel, Kind, KindError, KindId,
+    KindView, NamespaceError, NamespaceExport, NamespaceId, NamespaceView, ProofError,
+    ProofSession, Sql, TermError, TermId, TermView, Theorem, TypeError, TypeId, TypeView,
 };
 
 const SCHEMA: &str = "
@@ -231,6 +232,54 @@ pub struct LocalRepl {
     directory: Repl<LocalConnection>,
 }
 
+/// Transport-neutral owned signed HOL snapshot returned by the shared REPL.
+pub struct LocalSignedHolSnapshot {
+    bytes: Vec<u8>,
+    schema: covalence_lib_hash::O256,
+    image: covalence_lib_hash::O256,
+    signer: covalence_lib_hash::O256,
+    public_key: [u8; 32],
+    signature: Vec<u8>,
+}
+
+impl LocalSignedHolSnapshot {
+    /// Returns the exact signed `SQLite` image bytes.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Returns the exact physical HOL schema hash.
+    #[must_use]
+    pub const fn schema(&self) -> covalence_lib_hash::O256 {
+        self.schema
+    }
+
+    /// Returns the exact image hash.
+    #[must_use]
+    pub const fn image(&self) -> covalence_lib_hash::O256 {
+        self.image
+    }
+
+    /// Returns the content-derived signing-key identity.
+    #[must_use]
+    pub const fn signer(&self) -> covalence_lib_hash::O256 {
+        self.signer
+    }
+
+    /// Returns the kernel's public verification key.
+    #[must_use]
+    pub const fn public_key(&self) -> &[u8; 32] {
+        &self.public_key
+    }
+
+    /// Returns the schema-qualified snapshot signature.
+    #[must_use]
+    pub fn signature(&self) -> &[u8] {
+        &self.signature
+    }
+}
+
 impl LocalRepl {
     /// Creates a REPL with one fresh ephemeral kernel identity.
     ///
@@ -345,6 +394,119 @@ impl LocalRepl {
                 actual: other.protocol(),
             }),
         }
+    }
+
+    /// Defines a local hierarchical namespace in one HOL connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a wrong connection protocol or rejected namespace definition.
+    pub fn create_hol_namespace(
+        &mut self,
+        id: ConnectionId,
+        parent: Option<NamespaceId>,
+        name: Option<&str>,
+    ) -> Result<NamespaceId, LocalReplError> {
+        self.hol_mut(id)?
+            .create_namespace(parent, name)
+            .map_err(Into::into)
+    }
+
+    /// Reads a local HOL namespace.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a wrong connection protocol or rejected namespace read.
+    pub fn hol_namespace(
+        &mut self,
+        id: ConnectionId,
+        namespace: NamespaceId,
+    ) -> Result<NamespaceView, LocalReplError> {
+        self.hol_mut(id)?.namespace(namespace).map_err(Into::into)
+    }
+
+    /// Binds one local HOL value to a namespace-wide export ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a wrong protocol, invalid local value, or conflicting export.
+    pub fn bind_hol_export(
+        &mut self,
+        id: ConnectionId,
+        namespace: NamespaceId,
+        export: ExportId,
+        value: NamespaceExport,
+        name: Option<&str>,
+    ) -> Result<(), LocalReplError> {
+        self.hol_mut(id)?
+            .export_value(namespace, export, value, name)
+            .map_err(Into::into)
+    }
+
+    /// Reads one local namespace export.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a wrong protocol or rejected export read.
+    pub fn hol_export(
+        &mut self,
+        id: ConnectionId,
+        namespace: NamespaceId,
+        export: ExportId,
+    ) -> Result<Option<ExportView>, LocalReplError> {
+        self.hol_mut(id)?
+            .resolve_export(namespace, export)
+            .map_err(Into::into)
+    }
+
+    /// Resolves one namespace-local export name.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a wrong protocol or rejected export read.
+    pub fn resolve_hol_export_name(
+        &mut self,
+        id: ConnectionId,
+        namespace: NamespaceId,
+        name: &str,
+    ) -> Result<Option<(ExportId, ExportView)>, LocalReplError> {
+        self.hol_mut(id)?
+            .resolve_export_name(namespace, name)
+            .map_err(Into::into)
+    }
+
+    /// Serializes and signs one complete local HOL connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a wrong protocol, denied export, serialization, validation, or
+    /// signing failure.
+    pub fn export_hol_snapshot(
+        &mut self,
+        id: ConnectionId,
+    ) -> Result<LocalSignedHolSnapshot, LocalReplError> {
+        let Self { kernel, directory } = self;
+        let managed = directory.get_mut(id)?;
+        let connection = match managed {
+            LocalConnection::Hol(connection) => connection,
+            other @ LocalConnection::Sql(_) => {
+                return Err(LocalReplError::WrongProtocol {
+                    id,
+                    expected: "nucleus/hol-common-v2",
+                    actual: other.protocol(),
+                });
+            }
+        };
+        let snapshot = kernel.export_hol(connection)?;
+        let attestation = snapshot.attestation();
+        Ok(LocalSignedHolSnapshot {
+            bytes: snapshot.image().bytes().to_vec(),
+            schema: attestation.schema(),
+            image: attestation.image(),
+            signer: attestation.signer(),
+            public_key: *attestation.public_key(),
+            signature: attestation.signature().to_vec(),
+        })
     }
 
     /// Introduces one exact implication from persisted witness keys.
@@ -527,6 +689,12 @@ pub enum LocalReplError {
     SqlOpen(covalence_neutron::ConnectionError),
     /// A HOL connection or its schema could not open.
     HolOpen(HolOpenError),
+    /// A namespace operation failed.
+    Namespace(NamespaceError),
+    /// A namespace export operation failed.
+    Export(ExportError),
+    /// Signed HOL snapshot export failed.
+    HolExport(HolExportError),
     /// A command was sent to a connection of another protocol.
     WrongProtocol {
         /// Requested connection.
@@ -544,6 +712,9 @@ impl fmt::Display for LocalReplError {
             Self::Directory(error) => error.fmt(formatter),
             Self::SqlOpen(error) => write!(formatter, "could not open SQL connection: {error}"),
             Self::HolOpen(error) => error.fmt(formatter),
+            Self::Namespace(error) => error.fmt(formatter),
+            Self::Export(error) => error.fmt(formatter),
+            Self::HolExport(error) => error.fmt(formatter),
             Self::WrongProtocol {
                 id,
                 expected,
@@ -562,6 +733,9 @@ impl StdError for LocalReplError {
             Self::Directory(error) => Some(error),
             Self::SqlOpen(error) => Some(error),
             Self::HolOpen(error) => Some(error),
+            Self::Namespace(error) => Some(error),
+            Self::Export(error) => Some(error),
+            Self::HolExport(error) => Some(error),
             Self::WrongProtocol { .. } => None,
         }
     }
@@ -570,6 +744,24 @@ impl StdError for LocalReplError {
 impl From<ReplError> for LocalReplError {
     fn from(error: ReplError) -> Self {
         Self::Directory(error)
+    }
+}
+
+impl From<NamespaceError> for LocalReplError {
+    fn from(error: NamespaceError) -> Self {
+        Self::Namespace(error)
+    }
+}
+
+impl From<ExportError> for LocalReplError {
+    fn from(error: ExportError) -> Self {
+        Self::Export(error)
+    }
+}
+
+impl From<HolExportError> for LocalReplError {
+    fn from(error: HolExportError) -> Self {
+        Self::HolExport(error)
     }
 }
 
@@ -623,7 +815,9 @@ impl From<sqlite::Error> for ReplError {
 mod web;
 
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-pub use web::{WebKernel, WebKind, WebOutcome, WebTerm, WebType};
+pub use web::{
+    WebExport, WebKernel, WebKind, WebNamespace, WebOutcome, WebSignedHolSnapshot, WebTerm, WebType,
+};
 
 /// Returns the cross-target `SQLite` smoke-test value.
 #[must_use]
@@ -707,6 +901,44 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
         assert_eq!(protocols, ["nucleus/sql", "nucleus/hol-common-v2"]);
+    }
+
+    #[test]
+    fn shared_namespace_and_signed_snapshot_surface_is_transport_neutral() {
+        let mut repl = LocalRepl::new().unwrap();
+        let hol = repl.open_hol().unwrap();
+        let namespace = repl
+            .create_hol_namespace(hol, Some(NamespaceId::root()), Some("demo"))
+            .unwrap();
+        let star = repl.hol_mut(hol).unwrap().insert_kind(&Kind::Star).unwrap();
+        repl.bind_hol_export(
+            hol,
+            namespace,
+            ExportId::from_i64(7),
+            NamespaceExport::Kind(star),
+            Some("star"),
+        )
+        .unwrap();
+        let snapshot = repl.export_hol_snapshot(hol).unwrap();
+        assert_eq!(
+            snapshot.image(),
+            covalence_lib_hash::O256::from_bytes(snapshot.bytes())
+        );
+        assert_eq!(
+            snapshot.signer(),
+            covalence_nucleus::ed25519_key_id(snapshot.public_key())
+        );
+        assert_eq!(snapshot.signature().len(), 64);
+        let validated = covalence_nucleus::ValidatedHolImage::validate(snapshot.bytes()).unwrap();
+        assert_eq!(validated.schema(), snapshot.schema());
+        assert_eq!(validated.counts().namespaces, 2);
+        assert_eq!(validated.counts().namespace_exports, 1);
+
+        let sql = repl.open_sql().unwrap();
+        assert!(matches!(
+            repl.export_hol_snapshot(sql),
+            Err(LocalReplError::WrongProtocol { .. })
+        ));
     }
 
     #[test]

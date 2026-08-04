@@ -6,12 +6,13 @@ mod kernel;
 
 pub use connection::Connection;
 pub use hol::{
-    AllowAll, ContextError, ContextId, ContextImplication, Hol, HolExportError, HolImageCounts,
-    HolImageValidationError, HolOpenError, HolSchema, HolSnapshotAttestation, Kind, KindError,
-    KindId, KindView, MetadataError, MetadataSchemaError, MetadataTable, MetadataTarget,
-    MetadataType, MetadataValue, Operation, Policy, ProofError, ProofSession, SignedHolSnapshot,
-    TermError, TermId, TermView, Theorem, TypeError, TypeId, TypeView, UnboundVariable,
-    ValidatedHolImage,
+    AllowAll, ContextError, ContextId, ContextImplication, ExportError, ExportId, ExportSort,
+    ExportView, Hol, HolExportError, HolImageCounts, HolImageValidationError, HolOpenError,
+    HolSchema, HolSnapshotAttestation, Kind, KindError, KindId, KindView, MetadataError,
+    MetadataSchemaError, MetadataTable, MetadataTarget, MetadataType, MetadataValue,
+    NamespaceError, NamespaceExport, NamespaceId, NamespaceView, Operation, Policy, ProofError,
+    ProofSession, SignedHolSnapshot, TermError, TermId, TermView, Theorem, TypeError, TypeId,
+    TypeView, UnboundVariable, ValidatedHolImage,
 };
 pub use kernel::Kernel;
 

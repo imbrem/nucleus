@@ -34,6 +34,28 @@ export interface HolUnboundVariable {
   type: number;
 }
 
+export type HolExportSort = "kind" | "type" | "term" | "context";
+
+export interface HolNamespace {
+  parent: number | null;
+  name: string | null;
+}
+
+export interface HolNamespaceExport {
+  sort: HolExportSort;
+  local: number;
+  name: string | null;
+}
+
+export interface SignedHolSnapshot {
+  bytes: Uint8Array;
+  schema: string;
+  image: string;
+  signer: string;
+  publicKey: Uint8Array;
+  signature: Uint8Array;
+}
+
 export interface BrowserSqlConnection {
   run(sql: string): Promise<SqlOutcome>;
   putImage(bytes: Uint8Array): Promise<string>;
@@ -92,6 +114,21 @@ export interface BrowserHolConnection {
     consequent: number,
   ): Promise<boolean>;
   proved(context: number, term: number): Promise<boolean>;
+  createNamespace(parent: number | null, name: string | null): Promise<number>;
+  namespace(id: number): Promise<HolNamespace>;
+  bindExport(
+    namespace: number,
+    exportId: number,
+    sort: HolExportSort,
+    local: number,
+    name?: string,
+  ): Promise<void>;
+  namespaceExport(
+    namespace: number,
+    exportId: number,
+  ): Promise<HolNamespaceExport>;
+  resolveExportName(namespace: number, name: string): Promise<number | null>;
+  exportSnapshot(): Promise<SignedHolSnapshot>;
   close(): Promise<void>;
 }
 
@@ -227,7 +264,36 @@ type RequestBody =
       connection: number;
       context: number;
       term: number;
-    };
+    }
+  | {
+      operation: "holNamespaceCreate";
+      connection: number;
+      parent: number | null;
+      name: string | null;
+    }
+  | { operation: "holNamespace"; connection: number; namespace: number }
+  | {
+      operation: "holExportBind";
+      connection: number;
+      namespace: number;
+      exportId: number;
+      sort: HolExportSort;
+      local: number;
+      name?: string;
+    }
+  | {
+      operation: "holNamespaceExport";
+      connection: number;
+      namespace: number;
+      exportId: number;
+    }
+  | {
+      operation: "holExportResolve";
+      connection: number;
+      namespace: number;
+      name: string;
+    }
+  | { operation: "holExportSnapshot"; connection: number };
 
 type WorkerResponse =
   | { id: number; ok: true; value: unknown }
@@ -631,6 +697,69 @@ class WorkerHolConnection implements BrowserHolConnection {
       connection: this.connection,
       context,
       term,
+    });
+  }
+
+  createNamespace(parent: number | null, name: string | null): Promise<number> {
+    return this.#request({
+      operation: "holNamespaceCreate",
+      connection: this.connection,
+      parent,
+      name,
+    });
+  }
+
+  namespace(id: number): Promise<HolNamespace> {
+    return this.#request({
+      operation: "holNamespace",
+      connection: this.connection,
+      namespace: id,
+    });
+  }
+
+  bindExport(
+    namespace: number,
+    exportId: number,
+    sort: HolExportSort,
+    local: number,
+    name?: string,
+  ): Promise<void> {
+    return this.#request({
+      operation: "holExportBind",
+      connection: this.connection,
+      namespace,
+      exportId,
+      sort,
+      local,
+      name,
+    });
+  }
+
+  namespaceExport(
+    namespace: number,
+    exportId: number,
+  ): Promise<HolNamespaceExport> {
+    return this.#request({
+      operation: "holNamespaceExport",
+      connection: this.connection,
+      namespace,
+      exportId,
+    });
+  }
+
+  resolveExportName(namespace: number, name: string): Promise<number | null> {
+    return this.#request({
+      operation: "holExportResolve",
+      connection: this.connection,
+      namespace,
+      name,
+    });
+  }
+
+  exportSnapshot(): Promise<SignedHolSnapshot> {
+    return this.#request({
+      operation: "holExportSnapshot",
+      connection: this.connection,
     });
   }
 
