@@ -79,6 +79,13 @@ type Request =
       parameterType: number;
       body: number;
     }
+  | {
+      id: number;
+      operation: "holEquality";
+      connection: number;
+      left: number;
+      right: number;
+    }
   | { id: number; operation: "holTerm"; connection: number; term: number }
   | { id: number; operation: "holTermType"; connection: number; term: number }
   | {
@@ -123,6 +130,13 @@ type Request =
       operation: "holProveTruth";
       connection: number;
       context: number;
+    }
+  | {
+      id: number;
+      operation: "holProveReflexivity";
+      connection: number;
+      context: number;
+      term: number;
     }
   | {
       id: number;
@@ -262,6 +276,12 @@ async function execute(request: Request): Promise<unknown> {
         request.parameterType,
         request.body,
       );
+    case "holEquality":
+      return connection.hol_equality(
+        request.connection,
+        request.left,
+        request.right,
+      );
     case "holTerm": {
       const term = connection.hol_term(request.connection, request.term);
       try {
@@ -283,6 +303,12 @@ async function execute(request: Request): Promise<unknown> {
               kind: "lambda",
               parameterType: term.parameter_type(),
               body: term.body(),
+            };
+          case "equality":
+            return {
+              kind: "equality",
+              left: term.left(),
+              right: term.right(),
             };
           default:
             throw new Error("kernel returned an unknown HOL term tag");
@@ -329,6 +355,12 @@ async function execute(request: Request): Promise<unknown> {
       );
     case "holProveTruth":
       return connection.hol_prove_truth(request.connection, request.context);
+    case "holProveReflexivity":
+      return connection.hol_prove_reflexivity(
+        request.connection,
+        request.context,
+        request.term,
+      );
     case "holProved":
       return connection.hol_proved(
         request.connection,
