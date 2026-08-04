@@ -6,12 +6,13 @@
 //! (e.g. `Vec<u8>`, `Arc<[u8]>`, `&'static [u8]`) and exposes it through
 //! the [`File`] trait.
 //!
-//! This is a building block for content-addressed storage: a CAS VFS can
-//! resolve paths to content hashes, fetch the corresponding blob, and hand
-//! it back as a `ReadOnlyFile<Arc<[u8]>>`.
+//! This is a building block for content-addressed storage: a CAS VFS is a
+//! [`ReadOnlyVfs`] whose paths are content hashes, so `SQLite` reads
+//! resolve immutable blobs by address.
 
 use std::collections::HashMap;
 use std::io;
+use std::sync::{Arc, RwLock};
 
 use super::{
     AccessCheck, DeviceCharacteristics, File, LockLevel, OpenFlags, OpenKind, OpenedFile,
@@ -107,23 +108,77 @@ impl<T: AsRef<[u8]> + Send + Sync> File for ReadOnlyFile<T> {
 // ReadOnlyVfs
 // ---------------------------------------------------------------------------
 
-/// A read-only [`Vfs`] backed by a fixed set of named files.
+/// A read-only [`Vfs`] backed by a shared set of named files.
 ///
 /// Each entry maps a path to a byte buffer of type `T`.  When `SQLite`
 /// opens a path, the corresponding buffer is cloned into a
 /// [`ReadOnlyFile`].  For cheap clones, use `T = Arc<[u8]>`.
 ///
+/// Clones share one file map, so a handle retained by the caller can keep
+/// [`insert`](Self::insert)-ing entries after a clone has been registered
+/// with `SQLite`.  Individual entries are immutable in spirit: callers such
+/// as a content-addressed image store only ever add entries, and `SQLite`
+/// resolves them on read.
+///
 /// Deletions and writes are rejected with
 /// [`io::ErrorKind::PermissionDenied`].
 pub struct ReadOnlyVfs<T> {
-    files: HashMap<String, T>,
+    files: Arc<RwLock<HashMap<String, T>>>,
+}
+
+impl<T> Clone for ReadOnlyVfs<T> {
+    fn clone(&self) -> Self {
+        Self {
+            files: Arc::clone(&self.files),
+        }
+    }
 }
 
 impl<T> ReadOnlyVfs<T> {
     /// Creates a VFS from the given path-to-data mapping.
     #[must_use]
     pub fn new(files: HashMap<String, T>) -> Self {
-        Self { files }
+        Self {
+            files: Arc::new(RwLock::new(files)),
+        }
+    }
+
+    /// Adds or replaces a file, returning any previous data for the path.
+    pub fn insert(&self, path: impl Into<String>, data: T) -> Option<T> {
+        self.write().insert(path.into(), data)
+    }
+
+    /// Returns a clone of the data served for `path`, if any.
+    #[must_use]
+    pub fn get(&self, path: &str) -> Option<T>
+    where
+        T: Clone,
+    {
+        self.read().get(path).cloned()
+    }
+
+    /// Returns the number of files currently served by this VFS.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.read().len()
+    }
+
+    /// Returns whether this VFS currently serves no files.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.read().is_empty()
+    }
+
+    fn read(&self) -> std::sync::RwLockReadGuard<'_, HashMap<String, T>> {
+        self.files
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn write(&self) -> std::sync::RwLockWriteGuard<'_, HashMap<String, T>> {
+        self.files
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -143,7 +198,7 @@ impl<T: AsRef<[u8]> + Clone + Send + Sync> Vfs for ReadOnlyVfs<T> {
             )
         })?;
         let data = self
-            .files
+            .read()
             .get(path)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, path.to_owned()))?
             .clone();
@@ -162,7 +217,7 @@ impl<T: AsRef<[u8]> + Clone + Send + Sync> Vfs for ReadOnlyVfs<T> {
 
     fn access(&self, path: &str, check: AccessCheck) -> io::Result<bool> {
         match check {
-            AccessCheck::Exists | AccessCheck::Read => Ok(self.files.contains_key(path)),
+            AccessCheck::Exists | AccessCheck::Read => Ok(self.read().contains_key(path)),
             AccessCheck::ReadWrite => Ok(false),
         }
     }
@@ -340,6 +395,32 @@ mod tests {
         let mut buf = [0xffu8; 2];
         file.read(&mut buf, 0).unwrap();
         assert_eq!(&buf, &[0, 0]);
+    }
+
+    #[test]
+    fn clones_share_one_growable_file_map() {
+        let vfs = make_vfs();
+        let clone = vfs.clone();
+
+        assert_eq!(vfs.len(), 2);
+        assert!(vfs.get("added.db").is_none());
+        assert!(
+            vfs.insert("added.db", Arc::from(b"added" as &[u8]))
+                .is_none()
+        );
+
+        // The entry is visible through the clone and resolved on read.
+        assert_eq!(clone.len(), 3);
+        assert!(!clone.is_empty());
+        assert_eq!(clone.get("added.db").as_deref(), Some(b"added" as &[u8]));
+        assert!(clone.access("added.db", AccessCheck::Exists).unwrap());
+        let file = clone
+            .open(Some("added.db"), OpenKind::MainDb, OpenFlags::READ_ONLY)
+            .unwrap();
+        assert_eq!(file.file_size().unwrap(), 5);
+        let mut buf = [0u8; 5];
+        file.read(&mut buf, 0).unwrap();
+        assert_eq!(&buf, b"added");
     }
 
     #[test]
