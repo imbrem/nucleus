@@ -3,7 +3,7 @@ use std::error::Error as StdError;
 use std::fmt;
 
 use covalence_lib_crypto::ed25519::VerifyingKey;
-use covalence_lib_hash::O256;
+use covalence_lib_hash::{O256, o256_path};
 use covalence_lib_sqlite as sqlite;
 
 use super::{
@@ -15,6 +15,22 @@ use super::{
 use crate::{Ed25519Verifier, Verifier as _, ed25519_key_id, schema_valid_snapshot_statement};
 
 const MAX_GRAPH_DEPTH: usize = 512;
+const STLC_BOOL_EQ_V0_SPEC: &[u8] = include_bytes!("semantics-v0.txt");
+
+/// Returns the content hash of the normative semantics implemented by `hol-common-v2`.
+#[must_use]
+pub fn stlc_bool_eq_v0_semantics() -> O256 {
+    o256_path!(::nucleus.hol.protocol.stlc_bool_eq.v0).tag(STLC_BOOL_EQ_V0_SPEC)
+}
+
+/// Derives the signed schema identity from semantic and exact physical commitments.
+#[must_use]
+pub fn stlc_bool_eq_v0_schema_id(physical_schema: O256) -> O256 {
+    let mut commitments = [0_u8; 64];
+    commitments[..32].copy_from_slice(stlc_bool_eq_v0_semantics().as_ref());
+    commitments[32..].copy_from_slice(physical_schema.as_ref());
+    o256_path!(::nucleus.hol.protocol.stlc_bool_eq.sqlite_schema.v0).tag(commitments)
+}
 
 /// Counts established while validating one complete HOL database image.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -45,7 +61,7 @@ pub struct HolImageCounts {
 
 /// Exact bytes admitted as one expected tagged-node HOL physical schema.
 ///
-/// This evidence establishes `SQLite` integrity, exact physical schema, syntax
+/// This evidence establishes `SQLite` integrity, exact physical and semantic schema, syntax
 /// typing, binder closure invariants, context well-formedness, and judgement
 /// row shape. It deliberately does not establish that imported judgements are
 /// true merely because their rows or optional rule labels exist. Hash-first
@@ -54,6 +70,7 @@ pub struct HolImageCounts {
 pub struct ValidatedHolImage {
     hash: O256,
     schema: O256,
+    physical_schema: O256,
     bytes: covalence_neutron::Bytes,
     counts: HolImageCounts,
 }
@@ -85,11 +102,13 @@ impl ValidatedHolImage {
         let disposable = covalence_neutron::Connection::deserialize(&owned)
             .map_err(HolImageValidationError::Image)?;
         validate_integrity(disposable.sqlite())?;
-        let schema = validate_schema(disposable.sqlite(), expected_schema)?;
+        let physical_schema = validate_schema(disposable.sqlite(), expected_schema)?;
+        let schema = stlc_bool_eq_v0_schema_id(physical_schema);
         let counts = validate_contents(disposable.sqlite())?;
         Ok(Self {
             hash,
             schema,
+            physical_schema,
             bytes: owned,
             counts,
         })
@@ -101,10 +120,28 @@ impl ValidatedHolImage {
         self.hash
     }
 
-    /// Returns the physical schema identifier used for this validation.
+    /// Returns the signed composite semantic and physical schema identifier.
     #[must_use]
     pub const fn schema(&self) -> O256 {
         self.schema
+    }
+
+    /// Returns the interpretation-qualified schema identity signed by snapshots.
+    #[must_use]
+    pub const fn semantic_schema(&self) -> O256 {
+        self.schema
+    }
+
+    /// Returns the exact physical `SQLite` manifest identifier.
+    #[must_use]
+    pub const fn physical_schema(&self) -> O256 {
+        self.physical_schema
+    }
+
+    /// Returns the exact domain-separated `SQLite` schema-manifest identifier.
+    #[must_use]
+    pub const fn physical_schema_manifest(&self) -> O256 {
+        self.physical_schema
     }
 
     /// Returns the admitted exact bytes.
@@ -146,7 +183,8 @@ fn schema_manifest(connection: &sqlite::Connection) -> Result<Vec<SchemaObject>,
             "SELECT type, name, tbl_name, sql
              FROM main.sqlite_schema
              WHERE name NOT LIKE 'sqlite_%' AND sql IS NOT NULL
-             ORDER BY type, name",
+             ORDER BY type COLLATE BINARY, name COLLATE BINARY,
+                      tbl_name COLLATE BINARY, sql COLLATE BINARY",
         )?
         .query_map([], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
@@ -171,7 +209,7 @@ fn validate_schema(
         [],
         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
     )?;
-    if identity == (6, "tagged-node".to_owned()) {
+    if identity == (7, "tagged-node".to_owned()) {
         Ok(schema_manifest_id(&expected_manifest))
     } else {
         Err(HolImageValidationError::SchemaMismatch)
@@ -180,13 +218,14 @@ fn validate_schema(
 
 fn schema_manifest_id(manifest: &[SchemaObject]) -> O256 {
     let mut encoded = Vec::new();
+    encoded.extend_from_slice(&(manifest.len() as u64).to_le_bytes());
     for object in manifest {
         for field in [&object.0, &object.1, &object.2, &object.3] {
             encoded.extend_from_slice(&(field.len() as u64).to_le_bytes());
             encoded.extend_from_slice(field.as_bytes());
         }
     }
-    O256::from_bytes(&encoded)
+    o256_path!(::nucleus.sqlite.schema_manifest.v0).tag(&encoded)
 }
 
 #[allow(clippy::too_many_lines)]
@@ -1082,10 +1121,26 @@ mod tests {
         assert_eq!(validated.hash(), O256::from_bytes(&bytes));
         let expected = covalence_neutron::Connection::open_in_memory().unwrap();
         expected.sqlite().execute_batch(SCHEMA).unwrap();
+        let physical = schema_manifest_id(&schema_manifest(expected.sqlite()).unwrap());
         assert_eq!(
-            validated.schema(),
-            schema_manifest_id(&schema_manifest(expected.sqlite()).unwrap())
+            stlc_bool_eq_v0_semantics(),
+            O256::from_hex("29e50cd6be8bd98b6d9a7b38f67f96516e87f9b1c16f21ede694778d11a866ac")
+                .unwrap()
         );
+        assert_eq!(
+            physical,
+            O256::from_hex("2eb961549975a6f4e2e82523f1736d1575cd6fd54a2e89d1e4bf57ead1964393")
+                .unwrap()
+        );
+        assert_eq!(
+            stlc_bool_eq_v0_schema_id(physical),
+            O256::from_hex("33a93a41832843022143c26f63b99d946a69ccbbfdf5cba0486fff70e9963ee5")
+                .unwrap()
+        );
+        assert_eq!(validated.physical_schema(), physical);
+        assert_eq!(validated.schema(), stlc_bool_eq_v0_schema_id(physical));
+        assert_ne!(validated.schema(), validated.physical_schema());
+        assert_ne!(validated.schema(), stlc_bool_eq_v0_semantics());
         assert_eq!(validated.bytes(), bytes.as_ref());
         assert_eq!(
             validated.counts(),
@@ -1244,6 +1299,16 @@ mod tests {
         ));
         let validated = ValidatedHolImage::validate_with_schema(&bytes, &schema).unwrap();
         assert_eq!(validated.bytes(), bytes.as_ref());
+        assert_eq!(
+            validated.semantic_schema(),
+            stlc_bool_eq_v0_schema_id(validated.physical_schema_manifest())
+        );
+        let default = ValidatedHolImage::validate(&sample_image()).unwrap();
+        assert_ne!(
+            validated.physical_schema_manifest(),
+            default.physical_schema_manifest()
+        );
+        assert_ne!(validated.semantic_schema(), default.semantic_schema());
     }
 
     #[test]

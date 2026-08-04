@@ -1,0 +1,27 @@
+Nucleus hol-common-v2 semantics, version 0
+
+This protocol is the currently implemented minimal simply typed HOL fragment. It is not a claim
+of compatibility with the future full HOL-omega calculus.
+
+Syntax is one canonical tagged node graph. KSTAR has rank 0. KARR(a,b) has rank
+max(rank(a)+1,rank(b)). TBOOL has kind KSTAR. TARR(a,b) has kind KSTAR when a and b do. Terms are
+Boolean literals, typed free symbols, typed de Bruijn occurrences, applications, lambdas, and
+same-typed equality. Application and lambda typing are the ordinary simply typed rules. A term is
+locally closed exactly when every de Bruijn occurrence is bound by an enclosing lambda.
+
+A context is a canonical finite set of locally closed Boolean terms. The authoritative judgement
+relation contains only conclusions introduced through the implemented LCF rules and explicit
+persistence. Version 0 rules are hypothesis, truth, equality reflexivity, closed beta reduction,
+equality modus ponens, exact context implication introduction, explicit implication-path
+composition, and weakening. Exact context union is a separately checked structural relation.
+Context equivalence is a pair of opposite proved implications. Proof-event tables are diagnostic
+metadata and carry no authority.
+
+Namespaces and exports name already-admitted local kinds, types, terms, and contexts. Hash-first
+imports and imported namespace aliases are inert coordinates. A persistent trusted-import row is
+an auditable accepted assumption with cryptographically coherent evidence; it does not fetch the
+referenced image, import syntax, create theorem capabilities, or transitively establish truth.
+
+User-declared metadata columns and indexes are physical annotations. They never affect canonical
+syntax identity, typing, proof rules, or authority except that their exact physical SQLite manifest
+is independently committed by the composite signed schema identity.

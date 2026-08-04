@@ -207,14 +207,15 @@ impl<P: Policy> Connection<Hol<P>> {
 
     /// Persists an auditable accepted assumption for one exact registered import.
     ///
-    /// This requires only the hash-first authenticated claim and a connection-local trusted
-    /// signer. It does not fetch, parse, attach, or expose the imported database.
+    /// This requires the hash-first authenticated claim, its connection-local trusted signer, and
+    /// an exact prior connection-local acceptance of that claim. It does not fetch, parse, attach,
+    /// or expose the imported database.
     ///
     /// # Errors
     ///
     /// Returns an error if policy denies persistence, the import coordinates differ from the
-    /// claim, the signer is not trusted on this connection, IDs are exhausted, evidence
-    /// conflicts, or `SQLite` rejects the transaction.
+    /// claim, its signer/claim was not explicitly accepted on this connection, IDs are exhausted,
+    /// evidence conflicts, or `SQLite` rejects the transaction.
     pub fn accept_trusted_import(
         &mut self,
         import: ImportId,

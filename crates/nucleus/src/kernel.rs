@@ -117,6 +117,18 @@ mod tests {
             )
             .unwrap();
         assert!(
+            verifier
+                .verify(
+                    attestation.signer(),
+                    schema_valid_snapshot_statement(
+                        second.image().physical_schema_manifest(),
+                        attestation.image()
+                    ),
+                    attestation.signature(),
+                )
+                .is_err()
+        );
+        assert!(
             connection
                 .proved_judgement(ContextId::from_i64(context.get()), term)
                 .unwrap()

@@ -26,7 +26,7 @@ impl HolDatabaseRef {
         Self { schema, image }
     }
 
-    /// Returns the claimed exact physical schema.
+    /// Returns the claimed interpretation-qualified schema identity.
     #[must_use]
     pub const fn schema(self) -> O256 {
         self.schema

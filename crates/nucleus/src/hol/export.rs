@@ -20,7 +20,7 @@ pub struct HolSnapshotAttestation {
 }
 
 impl HolSnapshotAttestation {
-    /// Returns the exact physical schema named by the signature.
+    /// Returns the interpretation-qualified schema identity named by the signature.
     #[must_use]
     pub const fn schema(&self) -> O256 {
         self.schema
