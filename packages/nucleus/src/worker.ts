@@ -8,6 +8,7 @@ import type {
   HolSchemaSpecV1,
   SignedHolSnapshot,
 } from "./index.js";
+import { SerializedCommandQueue } from "./serialized_commands.js";
 
 type Request =
   | { id: number; operation: "open" }
@@ -317,21 +318,24 @@ type SqlValue =
   | { kind: "blob"; value: Uint8Array };
 
 const kernel = init().then(() => new WebKernel());
+const commands = new SerializedCommandQueue();
 
 globalThis.addEventListener(
   "message",
-  async ({ data }: MessageEvent<Request>) => {
-    try {
-      const value = await execute(data);
-      const transfer = transferables(value);
-      globalThis.postMessage({ id: data.id, ok: true, value }, { transfer });
-    } catch (error) {
-      globalThis.postMessage({
-        id: data.id,
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+  ({ data }: MessageEvent<Request>) => {
+    void commands.enqueue(async () => {
+      try {
+        const value = await execute(data);
+        const transfer = transferables(value);
+        globalThis.postMessage({ id: data.id, ok: true, value }, { transfer });
+      } catch (error) {
+        globalThis.postMessage({
+          id: data.id,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    });
   },
 );
 

@@ -1,5 +1,14 @@
 import init, { smoke, WebKernel, WebOutcome } from "../generated/nucleus.js";
 
+export {
+  KERNEL_CHANNEL_PATH,
+  KERNEL_INVOCATION_PATH,
+  KernelFetchTransport,
+  MAX_KERNEL_CHANNEL_GRANT_BYTES,
+  MAX_KERNEL_SIGNED_FRAME_BYTES,
+  type KernelFetchOptions,
+} from "./fetch_transport.js";
+
 export { init, smoke, WebKernel, WebOutcome };
 
 export type SqlValue =

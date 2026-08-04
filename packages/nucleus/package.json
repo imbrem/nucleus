@@ -14,6 +14,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./fetch-transport": {
+      "types": "./dist/fetch_transport.d.ts",
+      "import": "./dist/fetch_transport.js"
+    },
     "./wasm": "./generated/nucleus_bg.wasm"
   },
   "scripts": {
