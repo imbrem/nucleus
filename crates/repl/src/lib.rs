@@ -287,7 +287,7 @@ impl LocalSignedHolSnapshot {
         &self.bytes
     }
 
-    /// Returns the exact physical HOL schema hash.
+    /// Returns the interpretation-qualified HOL schema identity.
     #[must_use]
     pub const fn schema(&self) -> covalence_lib_hash::O256 {
         self.schema

@@ -15,7 +15,10 @@ pub use namespace::{
     NamespaceView,
 };
 pub use trust::{SnapshotTrustError, TrustedImportError, TrustedImportId, TrustedImportView};
-pub use validate::{HolImageCounts, HolImageValidationError, ValidatedHolImage};
+pub use validate::{
+    HolImageCounts, HolImageValidationError, ValidatedHolImage, stlc_bool_eq_v0_schema_id,
+    stlc_bool_eq_v0_semantics,
+};
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error as StdError;
