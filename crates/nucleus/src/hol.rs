@@ -4,6 +4,7 @@ mod export;
 mod import;
 mod namespace;
 mod reader;
+mod schema_descriptor;
 mod trust;
 mod validate;
 
@@ -19,6 +20,7 @@ pub use reader::{
     ImportedContextId, ImportedExport, ImportedHolReader, ImportedKindId, ImportedReaderError,
     ImportedTermId, ImportedTermView, ImportedTypeId,
 };
+pub use schema_descriptor::{HolSchemaDescriptor, HolSchemaDescriptorError};
 pub use trust::{
     MatchedTrustedHolImage, SnapshotTrustError, TrustedImportError, TrustedImportId,
     TrustedImportImageError, TrustedImportView,
