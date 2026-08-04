@@ -1,9 +1,14 @@
 //! Portable trusted core for Nucleus.
 
 mod connection;
+pub mod hol;
 mod kernel;
 
 pub use connection::Connection;
+pub use hol::{
+    AllowAll, Hol, HolOpenError, HolSchema, Kind, KindError, KindId, KindView, MetadataSchemaError,
+    MetadataType, MetadataValue, Operation, Policy,
+};
 pub use kernel::Kernel;
 
 #[path = "repl.rs"]

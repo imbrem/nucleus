@@ -13,6 +13,10 @@ export type SqlOutcome =
   | { kind: "changed"; changed: number }
   | { kind: "rows"; columns: string[]; rows: SqlValue[][] };
 
+export type HolKind =
+  | { kind: "star" }
+  | { kind: "arrow"; domain: number; codomain: number };
+
 export interface BrowserSqlConnection {
   run(sql: string): Promise<SqlOutcome>;
   putImage(bytes: Uint8Array): Promise<string>;
@@ -22,13 +26,23 @@ export interface BrowserSqlConnection {
   close(): Promise<void>;
 }
 
+export interface BrowserHolConnection {
+  star(): Promise<number>;
+  arrow(domain: number, codomain: number): Promise<number>;
+  kind(id: number): Promise<HolKind>;
+  rank(id: number): Promise<number>;
+  close(): Promise<void>;
+}
+
 export interface BrowserRepl {
   open(): Promise<BrowserSqlConnection>;
+  openHol(): Promise<BrowserHolConnection>;
   close(): void;
 }
 
 type RequestBody =
   | { operation: "open" }
+  | { operation: "openHol" }
   | { operation: "close"; connection: number }
   | { operation: "run"; connection: number; sql: string }
   | { operation: "putImage"; connection: number; bytes: Uint8Array }
@@ -44,7 +58,16 @@ type RequestBody =
       url: string;
       schema: string;
     }
-  | { operation: "serializeMain"; connection: number };
+  | { operation: "serializeMain"; connection: number }
+  | { operation: "holStar"; connection: number }
+  | {
+      operation: "holArrow";
+      connection: number;
+      domain: number;
+      codomain: number;
+    }
+  | { operation: "holKind"; connection: number; kind: number }
+  | { operation: "holRank"; connection: number; kind: number };
 
 type WorkerResponse =
   | { id: number; ok: true; value: unknown }
@@ -80,6 +103,11 @@ class WorkerRepl implements BrowserRepl {
   async open(): Promise<BrowserSqlConnection> {
     const id = await this.request<number>({ operation: "open" });
     return new WorkerConnection(this, id);
+  }
+
+  async openHol(): Promise<BrowserHolConnection> {
+    const id = await this.request<number>({ operation: "openHol" });
+    return new WorkerHolConnection(this, id);
   }
 
   close(): void {
@@ -170,6 +198,59 @@ class WorkerConnection implements BrowserSqlConnection {
     if (this.#closed)
       return Promise.reject(new Error("SQL connection is closed"));
     return this.repl.request(body, transfer);
+  }
+}
+
+class WorkerHolConnection implements BrowserHolConnection {
+  #closed = false;
+
+  constructor(
+    private readonly repl: WorkerRepl,
+    private readonly connection: number,
+  ) {}
+
+  star(): Promise<number> {
+    return this.#request({ operation: "holStar", connection: this.connection });
+  }
+
+  arrow(domain: number, codomain: number): Promise<number> {
+    return this.#request({
+      operation: "holArrow",
+      connection: this.connection,
+      domain,
+      codomain,
+    });
+  }
+
+  kind(id: number): Promise<HolKind> {
+    return this.#request({
+      operation: "holKind",
+      connection: this.connection,
+      kind: id,
+    });
+  }
+
+  rank(id: number): Promise<number> {
+    return this.#request({
+      operation: "holRank",
+      connection: this.connection,
+      kind: id,
+    });
+  }
+
+  async close(): Promise<void> {
+    if (this.#closed) return;
+    this.#closed = true;
+    await this.repl.request({
+      operation: "close",
+      connection: this.connection,
+    });
+  }
+
+  #request<T>(body: RequestBody): Promise<T> {
+    if (this.#closed)
+      return Promise.reject(new Error("HOL connection is closed"));
+    return this.repl.request(body);
   }
 }
 

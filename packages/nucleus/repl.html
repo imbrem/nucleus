@@ -63,16 +63,18 @@
     </style>
   </head>
   <body>
-    <h1>Nucleus SQL connections</h1>
+    <h1>Nucleus SQL and HOL-omega connections</h1>
     <p>
-      Each connection has a writable in-memory main database. URL loads fetch a
-      complete SQLite image into the Worker, then attach it immutably.
+      One Worker kernel manages heterogeneous connections. SQL sessions have a
+      writable in-memory main database; HOL sessions expose only their
+      policy-enclosed operations.
     </p>
 
     <div class="bar">
       <label for="connection">Connection</label>
       <select id="connection"></select>
-      <button id="new" type="button">New connection</button>
+      <button id="new" type="button">New SQL connection</button>
+      <button id="new-hol" type="button">New HOL connection</button>
       <button id="close" type="button">Close connection</button>
       <button id="export" type="button">Export main snapshot</button>
     </div>
@@ -95,6 +97,27 @@
     </div>
     <div id="output" aria-live="polite"></div>
 
+    <h2>HOL-omega kinds</h2>
+    <div class="bar">
+      <button id="hol-star" type="button">Intern star</button>
+      <input
+        id="hol-domain"
+        inputmode="numeric"
+        value="1"
+        aria-label="Domain kind ID"
+      />
+      <input
+        id="hol-codomain"
+        inputmode="numeric"
+        value="1"
+        aria-label="Codomain kind ID"
+      />
+      <button id="hol-arrow" type="button">Intern arrow</button>
+      <input id="hol-id" inputmode="numeric" value="1" aria-label="Kind ID" />
+      <button id="hol-show" type="button">Show kind</button>
+      <button id="hol-rank" type="button">Show rank</button>
+    </div>
+
     <script type="module">
       import { createBrowserRepl } from "./dist/index.js";
 
@@ -112,13 +135,23 @@
         return connection;
       }
 
-      async function addConnection() {
+      function selectedProtocol(protocol) {
+        const selectedConnection = selected();
+        if (selectedConnection.protocol !== protocol)
+          throw new Error(
+            `selected connection uses ${selectedConnection.protocol}; operation requires ${protocol}`,
+          );
+        return selectedConnection.connection;
+      }
+
+      async function addConnection(protocol) {
         const id = String(nextConnection++);
-        const connection = await repl.open();
-        connections.set(id, connection);
+        const connection =
+          protocol === "sql" ? await repl.open() : await repl.openHol();
+        connections.set(id, { protocol, connection });
         const option = document.createElement("option");
         option.value = id;
-        option.textContent = `connection ${id}`;
+        option.textContent = `${protocol} connection ${id}`;
         connectionSelect.append(option);
         connectionSelect.value = id;
         status.textContent = `${option.textContent} ready`;
@@ -170,7 +203,15 @@
 
       document.querySelector("#new").addEventListener("click", async () => {
         try {
-          await addConnection();
+          await addConnection("sql");
+        } catch (error) {
+          showError(error);
+        }
+      });
+
+      document.querySelector("#new-hol").addEventListener("click", async () => {
+        try {
+          await addConnection("hol");
         } catch (error) {
           showError(error);
         }
@@ -179,7 +220,7 @@
       document.querySelector("#close").addEventListener("click", async () => {
         try {
           const id = connectionSelect.value;
-          await selected().close();
+          await selected().connection.close();
           connections.delete(id);
           connectionSelect.selectedOptions[0]?.remove();
           status.textContent =
@@ -193,7 +234,9 @@
         status.textContent = "Running…";
         try {
           showOutcome(
-            await selected().run(document.querySelector("#sql").value),
+            await selectedProtocol("sql").run(
+              document.querySelector("#sql").value,
+            ),
           );
           status.textContent = "Ready";
         } catch (error) {
@@ -204,7 +247,7 @@
       document.querySelector("#load").addEventListener("click", async () => {
         status.textContent = "Downloading complete image…";
         try {
-          const hash = await selected().loadUrl(
+          const hash = await selectedProtocol("sql").loadUrl(
             document.querySelector("#url").value,
             document.querySelector("#schema").value,
           );
@@ -218,7 +261,7 @@
 
       document.querySelector("#export").addEventListener("click", async () => {
         try {
-          const image = await selected().serializeMain();
+          const image = await selectedProtocol("sql").serializeMain();
           const url = URL.createObjectURL(new Blob([image]));
           const anchor = document.createElement("a");
           anchor.href = url;
@@ -230,9 +273,63 @@
         }
       });
 
+      document
+        .querySelector("#hol-star")
+        .addEventListener("click", async () => {
+          try {
+            const id = await selectedProtocol("hol").star();
+            output.textContent = `kind ${id} = star`;
+          } catch (error) {
+            showError(error);
+          }
+        });
+
+      document
+        .querySelector("#hol-arrow")
+        .addEventListener("click", async () => {
+          try {
+            const domain = Number(document.querySelector("#hol-domain").value);
+            const codomain = Number(
+              document.querySelector("#hol-codomain").value,
+            );
+            const id = await selectedProtocol("hol").arrow(domain, codomain);
+            output.textContent = `kind ${id} = ${domain} -> ${codomain}`;
+            document.querySelector("#hol-id").value = String(id);
+          } catch (error) {
+            showError(error);
+          }
+        });
+
+      document
+        .querySelector("#hol-show")
+        .addEventListener("click", async () => {
+          try {
+            const id = Number(document.querySelector("#hol-id").value);
+            const kind = await selectedProtocol("hol").kind(id);
+            output.textContent =
+              kind.kind === "star"
+                ? `kind ${id} = star`
+                : `kind ${id} = ${kind.domain} -> ${kind.codomain}`;
+          } catch (error) {
+            showError(error);
+          }
+        });
+
+      document
+        .querySelector("#hol-rank")
+        .addEventListener("click", async () => {
+          try {
+            const id = Number(document.querySelector("#hol-id").value);
+            const rank = await selectedProtocol("hol").rank(id);
+            output.textContent = `rank ${id} = ${rank}`;
+          } catch (error) {
+            showError(error);
+          }
+        });
+
       addEventListener("beforeunload", () => repl.close());
       try {
-        await addConnection();
+        await addConnection("sql");
       } catch (error) {
         showError(error);
       }

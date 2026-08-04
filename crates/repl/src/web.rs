@@ -1,19 +1,24 @@
 use covalence_lib_hash::O256;
 use wasm_bindgen::prelude::*;
 
-use super::{Connection, ConnectionId, Kernel, Outcome, QueryResult, Repl, Sql, Value};
+use super::{ConnectionId, Kind, KindId, KindView, LocalRepl, Outcome, QueryResult, Value};
 
 /// Browser adapter for the shared REPL connection directory.
 #[wasm_bindgen]
 pub struct WebKernel {
-    kernel: Kernel,
-    repl: Repl<Connection<Sql>>,
+    repl: LocalRepl,
 }
 
 /// Owned result of one statement executed by [`WebKernel`].
 #[wasm_bindgen]
 pub struct WebOutcome {
     outcome: Outcome,
+}
+
+/// Owned view of one admitted HOL kind.
+#[wasm_bindgen]
+pub struct WebKind {
+    kind: KindView,
 }
 
 #[wasm_bindgen]
@@ -25,9 +30,7 @@ impl WebKernel {
     /// Returns a JavaScript error if the state database cannot be opened.
     #[wasm_bindgen(constructor)]
     pub fn new() -> Result<WebKernel, JsValue> {
-        let kernel = Kernel::ephemeral();
-        let repl = Repl::new(kernel.verifying_key().as_bytes()).map_err(js_error)?;
-        Ok(Self { kernel, repl })
+        LocalRepl::new().map(|repl| Self { repl }).map_err(js_error)
     }
 
     /// Opens a writable in-memory SQL connection and returns its local ID.
@@ -37,11 +40,18 @@ impl WebKernel {
     /// Returns a JavaScript error when the connection or directory row cannot
     /// be opened.
     pub fn open_connection(&mut self) -> Result<u32, JsValue> {
-        let connection = self.kernel.open_sql().map_err(js_error)?;
-        let id = self
-            .repl
-            .insert("nucleus/sql", connection)
-            .map_err(js_error)?;
+        let id = self.repl.open_sql().map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
+    /// Opens a policy-enclosed HOL-omega connection and returns its local ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error when the connection/schema or directory row
+    /// cannot be opened.
+    pub fn open_hol_connection(&mut self) -> Result<u32, JsValue> {
+        let id = self.repl.open_hol().map_err(js_error)?;
         u32::try_from(id.get()).map_err(js_error)
     }
 
@@ -52,8 +62,7 @@ impl WebKernel {
     /// Returns a JavaScript error for an unknown ID or state update failure.
     pub fn close_connection(&mut self, connection: u32) -> Result<(), JsValue> {
         self.repl
-            .remove(ConnectionId::from_u32(connection))
-            .map(drop)
+            .close(ConnectionId::from_u32(connection))
             .map_err(js_error)
     }
 
@@ -110,13 +119,120 @@ impl WebKernel {
             .map(|bytes| bytes.to_vec())
             .map_err(js_error)
     }
+
+    /// Returns the canonical `star` kind ID in a HOL connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for an unknown/wrong-protocol connection or
+    /// denied/failed HOL admission.
+    pub fn hol_star(&mut self, connection: u32) -> Result<u32, JsValue> {
+        let id = self
+            .repl
+            .hol_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .insert_kind(&Kind::Star)
+            .map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
+    /// Canonically interns `domain -> codomain` in a HOL connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for invalid IDs, protocol mismatch, policy
+    /// denial, or failed admission.
+    pub fn hol_arrow(
+        &mut self,
+        connection: u32,
+        domain: u32,
+        codomain: u32,
+    ) -> Result<u32, JsValue> {
+        let id = self
+            .repl
+            .hol_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .insert_kind_arrow(
+                KindId::from_i64(i64::from(domain)),
+                KindId::from_i64(i64::from(codomain)),
+            )
+            .map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
+    /// Reads one admitted HOL kind.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for an invalid ID, protocol mismatch, policy
+    /// denial, or corrupt/unknown kind.
+    pub fn hol_kind(&mut self, connection: u32, kind: u32) -> Result<WebKind, JsValue> {
+        self.repl
+            .hol_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .kind(KindId::from_i64(i64::from(kind)))
+            .map(|kind| WebKind { kind })
+            .map_err(js_error)
+    }
+
+    /// Derives the order rank of one admitted HOL kind.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for invalid IDs, protocol mismatch, policy
+    /// denial, malformed nodes, or rank overflow.
+    pub fn hol_rank(&mut self, connection: u32, kind: u32) -> Result<u32, JsValue> {
+        self.repl
+            .hol_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .kind_rank(KindId::from_i64(i64::from(kind)))
+            .map_err(js_error)
+    }
+
+    fn connection_mut(
+        &mut self,
+        id: u32,
+    ) -> Result<&mut covalence_nucleus::Connection<covalence_nucleus::Sql>, JsValue> {
+        self.repl
+            .sql_mut(ConnectionId::from_u32(id))
+            .map_err(js_error)
+    }
 }
 
-impl WebKernel {
-    fn connection_mut(&mut self, id: u32) -> Result<&mut Connection<Sql>, JsValue> {
-        self.repl
-            .get_mut(ConnectionId::from_u32(id))
-            .map_err(js_error)
+#[wasm_bindgen]
+impl WebKind {
+    /// Returns `star` or `arrow`.
+    #[must_use]
+    pub fn tag(&self) -> String {
+        match self.kind {
+            KindView::Star => "star",
+            KindView::Arrow { .. } => "arrow",
+        }
+        .to_owned()
+    }
+
+    /// Returns the domain ID of an arrow kind.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error if this is `star` or the ID exceeds `u32`.
+    pub fn domain(&self) -> Result<u32, JsValue> {
+        match self.kind {
+            KindView::Arrow { domain, .. } => u32::try_from(domain.get()).map_err(js_error),
+            KindView::Star => Err(JsValue::from_str("star has no domain")),
+        }
+    }
+
+    /// Returns the codomain ID of an arrow kind.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error if this is `star` or the ID exceeds `u32`.
+    pub fn codomain(&self) -> Result<u32, JsValue> {
+        match self.kind {
+            KindView::Arrow { codomain, .. } => u32::try_from(codomain.get()).map_err(js_error),
+            KindView::Star => Err(JsValue::from_str("star has no codomain")),
+        }
     }
 }
 
