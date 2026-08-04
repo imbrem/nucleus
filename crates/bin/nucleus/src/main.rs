@@ -2,12 +2,15 @@ use std::env;
 use std::error::Error;
 use std::fs;
 use std::io;
+use std::io::Write as _;
+use std::net::SocketAddr;
 use std::process::ExitCode;
 
 use covalence_repl::{
     ConnectionId, ContextId, ExportId, KernelId, KindId, KindView, LocalRepl, NamespaceExport,
-    NamespaceId, O256, Outcome, ProofError, TermId, TermView, TrustedImportId, TypeId, TypeView,
-    Value, compile_hol_schema_json,
+    NamespaceId, NativeKernelServerConfig, O256, Outcome, ProofError, TermId, TermView,
+    TrustedImportId, TypeId, TypeView, Value, compile_hol_schema_json, random_bootstrap_token,
+    spawn_native_kernel_server,
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
@@ -115,6 +118,10 @@ fn run_line(repl: &mut LocalRepl, output: &mut impl io::Write, line: &str) -> Re
         writeln!(output, "created local kernel {id}")?;
         return Ok(true);
     }
+    if let Some(arguments) = line.strip_prefix(".kernel connect-http ") {
+        connect_http_kernel(repl, output, arguments)?;
+        return Ok(true);
+    }
     if line == ".kernels" {
         for (id, kernel) in repl.kernels() {
             writeln!(
@@ -192,6 +199,29 @@ fn run_line(repl: &mut LocalRepl, output: &mut impl io::Write, line: &str) -> Re
     Ok(true)
 }
 
+fn connect_http_kernel(
+    repl: &mut LocalRepl,
+    output: &mut impl io::Write,
+    arguments: &str,
+) -> Result<()> {
+    let mut arguments = arguments.split_whitespace();
+    let address = arguments
+        .next()
+        .ok_or("missing native kernel address")?
+        .parse::<SocketAddr>()?;
+    let public_key = parse_fixed_hex::<32>(arguments.next(), "kernel public key")?;
+    let bootstrap = match arguments.next() {
+        None | Some("-") => None,
+        token => Some(parse_fixed_hex::<32>(token, "bootstrap token")?),
+    };
+    if arguments.next().is_some() {
+        return Err("usage: .kernel connect-http ADDRESS PUBLIC_KEY [BOOTSTRAP_TOKEN|-]".into());
+    }
+    let kernel = repl.connect_native_http(address, public_key, bootstrap)?;
+    writeln!(output, "connected native HTTP kernel {kernel}")?;
+    Ok(())
+}
+
 fn open_repl_connection(
     repl: &mut LocalRepl,
     output: &mut impl io::Write,
@@ -245,6 +275,10 @@ fn print_help(output: &mut impl io::Write) -> io::Result<()> {
     writeln!(
         output,
         ".kernel new        create an independently keyed local kernel"
+    )?;
+    writeln!(
+        output,
+        ".kernel connect-http ADDRESS PUBLIC_KEY [BOOTSTRAP_TOKEN|-]  connect a pinned loopback kernel"
     )?;
     writeln!(
         output,
@@ -1268,7 +1302,49 @@ fn run_repl(
 
 fn usage(output: &mut impl io::Write) -> io::Result<()> {
     writeln!(output, "usage: nucleus [-c SQL]")?;
+    writeln!(
+        output,
+        "       nucleus serve [--listen ADDRESS] [--allow-key PUBLIC_KEY]... [--bootstrap]"
+    )?;
     writeln!(output, "       nucleus --help")
+}
+
+fn run_native_server(mut arguments: impl Iterator<Item = String>) -> Result<()> {
+    let mut listen = "127.0.0.1:0".parse::<SocketAddr>()?;
+    let mut allowed_callers = Vec::new();
+    let mut bootstrap = None;
+    while let Some(argument) = arguments.next() {
+        match argument.as_str() {
+            "--listen" => {
+                listen = arguments
+                    .next()
+                    .ok_or("--listen requires a numeric loopback address")?
+                    .parse()?;
+            }
+            "--allow-key" => allowed_callers.push(parse_fixed_hex::<32>(
+                arguments.next().as_deref(),
+                "allowed caller public key",
+            )?),
+            "--bootstrap" if bootstrap.is_none() => bootstrap = Some(random_bootstrap_token()),
+            "--bootstrap" => return Err("--bootstrap may be supplied only once".into()),
+            _ => return Err(format!("unexpected serve argument: {argument}").into()),
+        }
+    }
+    let mut config = NativeKernelServerConfig::new(listen, allowed_callers);
+    if let Some(token) = bootstrap {
+        config = config.with_bootstrap_token(token);
+    }
+    let server = spawn_native_kernel_server(config)?;
+    let mut output = io::stdout().lock();
+    writeln!(output, "listen {}", server.address())?;
+    writeln!(output, "kernel-key {}", hex(&server.public_key()))?;
+    if let Some(token) = bootstrap {
+        writeln!(output, "bootstrap-token {}", hex(&token))?;
+    }
+    output.flush()?;
+    loop {
+        std::thread::park();
+    }
 }
 
 fn run() -> Result<()> {
@@ -1295,6 +1371,7 @@ fn run() -> Result<()> {
             usage(&mut io::stdout().lock())?;
             Ok(())
         }
+        Some("serve") => run_native_server(arguments),
         Some(argument) => Err(format!("unexpected argument: {argument}").into()),
     }
 }
@@ -1315,7 +1392,7 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
-    use covalence_repl::{Connection, Sql};
+    use covalence_repl::{Connection, NativeKernelServerError, Sql};
 
     static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
 
@@ -1385,6 +1462,48 @@ mod tests {
         assert!(output.contains("  2\t@1\tnucleus/sql\n"));
         assert!(output.contains("* 3\t@1\tnucleus/hol-common-v2\n"));
         assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn connects_the_terminal_repl_to_a_native_http_kernel() {
+        let bootstrap = [0x6b; 32];
+        let server = match spawn_native_kernel_server(
+            NativeKernelServerConfig::new("127.0.0.1:0".parse().unwrap(), [])
+                .with_bootstrap_token(bootstrap),
+        ) {
+            Ok(server) => server,
+            Err(NativeKernelServerError::Io(error))
+                if error.kind() == io::ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(error) => panic!("could not start loopback kernel: {error}"),
+        };
+        let mut repl = LocalRepl::new().unwrap();
+        let mut output = Vec::new();
+        let connect = format!(
+            ".kernel connect-http {} {} {}",
+            server.address(),
+            hex(&server.public_key()),
+            hex(&bootstrap)
+        );
+
+        assert!(run_line(&mut repl, &mut output, &connect).unwrap());
+        assert!(run_line(&mut repl, &mut output, ".open @1 sql").unwrap());
+        assert!(run_line(&mut repl, &mut output, "SELECT 42 AS native_http_answer").unwrap());
+        assert!(run_line(&mut repl, &mut output, ".kernels").unwrap());
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("connected native HTTP kernel 1\n"));
+        assert!(output.contains("opened sql connection 1 on kernel 1\n"));
+        assert!(output.contains("native_http_answer\n42\n"));
+        assert!(output.contains(&format!(
+            "1\tnative-http\t{}\t{}",
+            server.address(),
+            hex(&server.public_key())
+        )));
+        drop(repl);
+        server.shutdown().unwrap();
     }
 
     #[test]
