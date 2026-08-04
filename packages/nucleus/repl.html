@@ -116,6 +116,7 @@
       <input id="hol-id" inputmode="numeric" value="1" aria-label="Kind ID" />
       <button id="hol-show" type="button">Show kind</button>
       <button id="hol-rank" type="button">Show rank</button>
+      <button id="hol-term-demo" type="button">Build typed application</button>
     </div>
 
     <script type="module">
@@ -322,6 +323,27 @@
             const id = Number(document.querySelector("#hol-id").value);
             const rank = await selectedProtocol("hol").rank(id);
             output.textContent = `rank ${id} = ${rank}`;
+          } catch (error) {
+            showError(error);
+          }
+        });
+
+      document
+        .querySelector("#hol-term-demo")
+        .addEventListener("click", async () => {
+          try {
+            const hol = selectedProtocol("hol");
+            const boolType = await hol.boolType();
+            const functionType = await hol.arrowType(boolType, boolType);
+            const functionTerm = await hol.freeTerm(100, functionType);
+            const argumentTerm = await hol.freeTerm(101, boolType);
+            const application = await hol.application(
+              functionTerm,
+              argumentTerm,
+            );
+            const type = await hol.termType(application);
+            const free = await hol.termFreeVariables(application);
+            output.textContent = `term ${application} : ${type}; freevars = ${free.join(",")}`;
           } catch (error) {
             showError(error);
           }

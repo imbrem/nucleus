@@ -86,7 +86,9 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
   await demo.locator("#hol-star").click();
   await demo.getByText("kind 1 = star").waitFor();
   await demo.locator("#hol-arrow").click();
-  await demo.getByText("kind 2 = 1 -> 1").waitFor();
+  await demo.getByText("kind 3 = 1 -> 1").waitFor();
   await demo.locator("#hol-rank").click();
-  await demo.getByText("rank 2 = 1").waitFor();
+  await demo.getByText("rank 3 = 1").waitFor();
+  await demo.locator("#hol-term-demo").click();
+  await demo.getByText("term 7 : 2; freevars = 100,101").waitFor();
 });

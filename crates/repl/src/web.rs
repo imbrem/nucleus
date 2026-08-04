@@ -1,7 +1,10 @@
 use covalence_lib_hash::O256;
 use wasm_bindgen::prelude::*;
 
-use super::{ConnectionId, Kind, KindId, KindView, LocalRepl, Outcome, QueryResult, Value};
+use super::{
+    ConnectionId, Kind, KindId, KindView, LocalRepl, Outcome, QueryResult, TermId, TermView,
+    TypeId, TypeView, Value,
+};
 
 /// Browser adapter for the shared REPL connection directory.
 #[wasm_bindgen]
@@ -19,6 +22,18 @@ pub struct WebOutcome {
 #[wasm_bindgen]
 pub struct WebKind {
     kind: KindView,
+}
+
+/// Owned view of one admitted HOL type.
+#[wasm_bindgen]
+pub struct WebType {
+    ty: TypeView,
+}
+
+/// Owned view of one admitted HOL term.
+#[wasm_bindgen]
+pub struct WebTerm {
+    term: TermView,
 }
 
 #[wasm_bindgen]
@@ -189,6 +204,162 @@ impl WebKernel {
             .map_err(js_error)
     }
 
+    /// Returns the canonical Boolean type ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for connection/policy/admission failure.
+    pub fn hol_bool_type(&mut self, connection: u32) -> Result<u32, JsValue> {
+        let id = self
+            .repl
+            .hol_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .insert_bool_type()
+            .map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
+    /// Canonically interns a closed function type.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for invalid IDs or failed admission.
+    pub fn hol_arrow_type(
+        &mut self,
+        connection: u32,
+        domain: u32,
+        codomain: u32,
+    ) -> Result<u32, JsValue> {
+        let id = self
+            .repl
+            .hol_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .insert_arrow_type(
+                TypeId::from_i64(i64::from(domain)),
+                TypeId::from_i64(i64::from(codomain)),
+            )
+            .map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
+    /// Reads one admitted HOL type.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for invalid IDs or a denied/corrupt read.
+    pub fn hol_type(&mut self, connection: u32, ty: u32) -> Result<WebType, JsValue> {
+        self.repl
+            .hol_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .type_view(TypeId::from_i64(i64::from(ty)))
+            .map(|ty| WebType { ty })
+            .map_err(js_error)
+    }
+
+    /// Canonically interns a Boolean term.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for connection/policy/admission failure.
+    pub fn hol_bool_term(&mut self, connection: u32, value: bool) -> Result<u32, JsValue> {
+        let id = self
+            .repl
+            .hol_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .insert_bool_term(value)
+            .map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
+    /// Canonically interns a closed free symbol with a declared type.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for invalid IDs or failed admission.
+    pub fn hol_free_term(&mut self, connection: u32, symbol: u32, ty: u32) -> Result<u32, JsValue> {
+        let id = self
+            .repl
+            .hol_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .insert_free_term(i64::from(symbol), TypeId::from_i64(i64::from(ty)))
+            .map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
+    /// Checks and canonically interns a term application.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for invalid IDs, a typing failure, or failed
+    /// admission.
+    pub fn hol_application(
+        &mut self,
+        connection: u32,
+        function: u32,
+        argument: u32,
+    ) -> Result<u32, JsValue> {
+        let id = self
+            .repl
+            .hol_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .insert_application(
+                TermId::from_i64(i64::from(function)),
+                TermId::from_i64(i64::from(argument)),
+            )
+            .map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
+    /// Reads one admitted HOL term.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for invalid IDs or a denied/corrupt read.
+    pub fn hol_term(&mut self, connection: u32, term: u32) -> Result<WebTerm, JsValue> {
+        self.repl
+            .hol_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .term(TermId::from_i64(i64::from(term)))
+            .map(|term| WebTerm { term })
+            .map_err(js_error)
+    }
+
+    /// Returns the admitted type ID of a term.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for invalid IDs or a denied/corrupt read.
+    pub fn hol_term_type(&mut self, connection: u32, term: u32) -> Result<u32, JsValue> {
+        let ty = self
+            .repl
+            .hol_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .term_type(TermId::from_i64(i64::from(term)))
+            .map_err(js_error)?;
+        u32::try_from(ty.get()).map_err(js_error)
+    }
+
+    /// Returns sorted free-symbol IDs reachable from a term.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for invalid IDs, denied/corrupt reads, or a
+    /// symbol outside the browser ABI's `u32` range.
+    pub fn hol_term_free_variables(
+        &mut self,
+        connection: u32,
+        term: u32,
+    ) -> Result<Vec<u32>, JsValue> {
+        self.repl
+            .hol_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .term_free_variables(TermId::from_i64(i64::from(term)))
+            .map_err(js_error)?
+            .into_iter()
+            .map(|symbol| u32::try_from(symbol).map_err(js_error))
+            .collect()
+    }
+
     fn connection_mut(
         &mut self,
         id: u32,
@@ -232,6 +403,112 @@ impl WebKind {
         match self.kind {
             KindView::Arrow { codomain, .. } => u32::try_from(codomain.get()).map_err(js_error),
             KindView::Star => Err(JsValue::from_str("star has no codomain")),
+        }
+    }
+}
+
+#[wasm_bindgen]
+impl WebType {
+    /// Returns `bool` or `arrow`.
+    #[must_use]
+    pub fn tag(&self) -> String {
+        match self.ty {
+            TypeView::Bool => "bool",
+            TypeView::Arrow { .. } => "arrow",
+        }
+        .to_owned()
+    }
+
+    /// Returns an arrow type's domain ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for `bool` or an ID outside `u32`.
+    pub fn domain(&self) -> Result<u32, JsValue> {
+        match self.ty {
+            TypeView::Arrow { domain, .. } => u32::try_from(domain.get()).map_err(js_error),
+            TypeView::Bool => Err(JsValue::from_str("Bool has no domain")),
+        }
+    }
+
+    /// Returns an arrow type's codomain ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for `bool` or an ID outside `u32`.
+    pub fn codomain(&self) -> Result<u32, JsValue> {
+        match self.ty {
+            TypeView::Arrow { codomain, .. } => u32::try_from(codomain.get()).map_err(js_error),
+            TypeView::Bool => Err(JsValue::from_str("Bool has no codomain")),
+        }
+    }
+}
+
+#[wasm_bindgen]
+impl WebTerm {
+    /// Returns `bool`, `free`, or `application`.
+    #[must_use]
+    pub fn tag(&self) -> String {
+        match self.term {
+            TermView::Bool(_) => "bool",
+            TermView::Free { .. } => "free",
+            TermView::Application { .. } => "application",
+        }
+        .to_owned()
+    }
+
+    /// Returns a Boolean literal's value.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for another constructor.
+    pub fn boolean(&self) -> Result<bool, JsValue> {
+        match self.term {
+            TermView::Bool(value) => Ok(value),
+            _ => Err(JsValue::from_str("term is not a Boolean literal")),
+        }
+    }
+
+    /// Returns a free term's symbol ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for another constructor or a symbol outside
+    /// `u32`.
+    pub fn symbol(&self) -> Result<u32, JsValue> {
+        match self.term {
+            TermView::Free { symbol } => u32::try_from(symbol).map_err(js_error),
+            _ => Err(JsValue::from_str("term is not a free symbol")),
+        }
+    }
+
+    /// Returns an application's function term ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for another constructor or an ID outside
+    /// `u32`.
+    pub fn function(&self) -> Result<u32, JsValue> {
+        match self.term {
+            TermView::Application { function, .. } => {
+                u32::try_from(function.get()).map_err(js_error)
+            }
+            _ => Err(JsValue::from_str("term is not an application")),
+        }
+    }
+
+    /// Returns an application's argument term ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for another constructor or an ID outside
+    /// `u32`.
+    pub fn argument(&self) -> Result<u32, JsValue> {
+        match self.term {
+            TermView::Application { argument, .. } => {
+                u32::try_from(argument.get()).map_err(js_error)
+            }
+            _ => Err(JsValue::from_str("term is not an application")),
         }
     }
 }

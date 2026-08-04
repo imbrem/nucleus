@@ -4,7 +4,9 @@ use std::fs;
 use std::io;
 use std::process::ExitCode;
 
-use covalence_repl::{ConnectionId, KindId, KindView, LocalRepl, Outcome, Value};
+use covalence_repl::{
+    ConnectionId, KindId, KindView, LocalRepl, Outcome, TermId, TermView, TypeId, TypeView, Value,
+};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 fn open_connection(repl: &mut LocalRepl, protocol: &str) -> Result<ConnectionId> {
@@ -104,6 +106,14 @@ fn run_line(repl: &mut LocalRepl, output: &mut impl io::Write, line: &str) -> Re
         writeln!(output, ".hol arrow D C     intern the kind D -> C")?;
         writeln!(output, ".hol show ID       inspect a kind")?;
         writeln!(output, ".hol rank ID       derive a kind's order rank")?;
+        writeln!(
+            output,
+            ".hol type ...      admit/inspect Bool and arrow types"
+        )?;
+        writeln!(
+            output,
+            ".hol term ...      admit/inspect Bool, free, and app terms"
+        )?;
         writeln!(output, ".quit              exit")?;
         return Ok(true);
     }
@@ -218,7 +228,152 @@ fn run_hol(repl: &mut LocalRepl, output: &mut impl io::Write, arguments: &str) -
             let rank = repl.hol_mut(connection)?.kind_rank(kind)?;
             writeln!(output, "rank {} = {rank}", kind.get())?;
         }
-        _ => return Err("usage: .hol star|arrow D C|show ID|rank ID".into()),
+        Some("type") => run_hol_type(repl, output, connection, arguments)?,
+        Some("term") => run_hol_term(repl, output, connection, arguments)?,
+        _ => return Err("usage: .hol star|arrow|show|rank|type|term ...".into()),
+    }
+    Ok(())
+}
+
+fn run_hol_type<'a>(
+    repl: &mut LocalRepl,
+    output: &mut impl io::Write,
+    connection: ConnectionId,
+    mut arguments: impl Iterator<Item = &'a str>,
+) -> Result<()> {
+    match arguments.next() {
+        Some("bool") if arguments.next().is_none() => {
+            let ty = repl.hol_mut(connection)?.insert_bool_type()?;
+            writeln!(output, "type {} = Bool", ty.get())?;
+        }
+        Some("arrow") => {
+            let domain = parse_type_id(arguments.next(), "domain")?;
+            let codomain = parse_type_id(arguments.next(), "codomain")?;
+            if arguments.next().is_some() {
+                return Err("usage: .hol type arrow DOMAIN CODOMAIN".into());
+            }
+            let ty = repl
+                .hol_mut(connection)?
+                .insert_arrow_type(domain, codomain)?;
+            writeln!(
+                output,
+                "type {} = {} -> {}",
+                ty.get(),
+                domain.get(),
+                codomain.get()
+            )?;
+        }
+        Some("show") => {
+            let ty = parse_type_id(arguments.next(), "type")?;
+            if arguments.next().is_some() {
+                return Err("usage: .hol type show ID".into());
+            }
+            match repl.hol_mut(connection)?.type_view(ty)? {
+                TypeView::Bool => writeln!(output, "type {} = Bool", ty.get())?,
+                TypeView::Arrow { domain, codomain } => writeln!(
+                    output,
+                    "type {} = {} -> {}",
+                    ty.get(),
+                    domain.get(),
+                    codomain.get()
+                )?,
+            }
+        }
+        _ => return Err("usage: .hol type bool|arrow D C|show ID".into()),
+    }
+    Ok(())
+}
+
+fn run_hol_term<'a>(
+    repl: &mut LocalRepl,
+    output: &mut impl io::Write,
+    connection: ConnectionId,
+    mut arguments: impl Iterator<Item = &'a str>,
+) -> Result<()> {
+    match arguments.next() {
+        Some("bool") => {
+            let value = match arguments.next() {
+                Some("true") => true,
+                Some("false") => false,
+                _ => return Err("usage: .hol term bool true|false".into()),
+            };
+            if arguments.next().is_some() {
+                return Err("usage: .hol term bool true|false".into());
+            }
+            let term = repl.hol_mut(connection)?.insert_bool_term(value)?;
+            writeln!(output, "term {} = {value}", term.get())?;
+        }
+        Some("free") => {
+            let symbol: i64 = arguments.next().ok_or("missing symbol ID")?.parse()?;
+            let ty = parse_type_id(arguments.next(), "type")?;
+            if arguments.next().is_some() {
+                return Err("usage: .hol term free SYMBOL TYPE".into());
+            }
+            let term = repl.hol_mut(connection)?.insert_free_term(symbol, ty)?;
+            writeln!(output, "term {} = free {symbol} : {}", term.get(), ty.get())?;
+        }
+        Some("app") => {
+            let function = parse_term_id(arguments.next(), "function")?;
+            let argument = parse_term_id(arguments.next(), "argument")?;
+            if arguments.next().is_some() {
+                return Err("usage: .hol term app FUNCTION ARGUMENT".into());
+            }
+            let term = repl
+                .hol_mut(connection)?
+                .insert_application(function, argument)?;
+            writeln!(
+                output,
+                "term {} = app {} {}",
+                term.get(),
+                function.get(),
+                argument.get()
+            )?;
+        }
+        Some("show") => {
+            let term = parse_term_id(arguments.next(), "term")?;
+            if arguments.next().is_some() {
+                return Err("usage: .hol term show ID".into());
+            }
+            match repl.hol_mut(connection)?.term(term)? {
+                TermView::Bool(value) => writeln!(output, "term {} = {value}", term.get())?,
+                TermView::Free { symbol } => {
+                    writeln!(output, "term {} = free {symbol}", term.get())?;
+                }
+                TermView::Application { function, argument } => writeln!(
+                    output,
+                    "term {} = app {} {}",
+                    term.get(),
+                    function.get(),
+                    argument.get()
+                )?,
+            }
+        }
+        Some("type") => {
+            let term = parse_term_id(arguments.next(), "term")?;
+            if arguments.next().is_some() {
+                return Err("usage: .hol term type ID".into());
+            }
+            let ty = repl.hol_mut(connection)?.term_type(term)?;
+            writeln!(output, "term {} : {}", term.get(), ty.get())?;
+        }
+        Some("freevars") => {
+            let term = parse_term_id(arguments.next(), "term")?;
+            if arguments.next().is_some() {
+                return Err("usage: .hol term freevars ID".into());
+            }
+            let variables = repl.hol_mut(connection)?.term_free_variables(term)?;
+            writeln!(
+                output,
+                "freevars {} = {}",
+                term.get(),
+                variables
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )?;
+        }
+        _ => return Err("usage: .hol term bool|free|app|show|type|freevars ...".into()),
     }
     Ok(())
 }
@@ -226,6 +381,16 @@ fn run_hol(repl: &mut LocalRepl, output: &mut impl io::Write, arguments: &str) -
 fn parse_kind_id(value: Option<&str>, name: &str) -> Result<KindId> {
     let value = value.ok_or_else(|| format!("missing {name} kind ID"))?;
     Ok(KindId::from_i64(value.parse()?))
+}
+
+fn parse_type_id(value: Option<&str>, name: &str) -> Result<TypeId> {
+    let value = value.ok_or_else(|| format!("missing {name} type ID"))?;
+    Ok(TypeId::from_i64(value.parse()?))
+}
+
+fn parse_term_id(value: Option<&str>, name: &str) -> Result<TermId> {
+    let value = value.ok_or_else(|| format!("missing {name} term ID"))?;
+    Ok(TermId::from_i64(value.parse()?))
 }
 
 fn run_repl(
@@ -349,7 +514,7 @@ mod tests {
     #[test]
     fn manages_sql_and_hol_connections_in_one_repl() {
         let mut input = Cursor::new(
-            ".open hol\n.hol star\n.hol arrow 1 1\n.hol show 2\n.hol rank 2\n.connections\n.use 1\nSELECT 42 AS sql_still_live\n.quit\n",
+            ".open hol\n.hol star\n.hol arrow 1 1\n.hol show 3\n.hol rank 3\n.hol type bool\n.hol type arrow 2 2\n.hol term free 100 4\n.hol term free 101 2\n.hol term app 5 6\n.hol term type 7\n.hol term freevars 7\n.connections\n.use 1\nSELECT 42 AS sql_still_live\n.quit\n",
         );
         let mut output = Vec::new();
         let mut errors = Vec::new();
@@ -359,8 +524,13 @@ mod tests {
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("opened hol connection 2\n"));
         assert!(output.contains("kind 1 = star\n"));
-        assert!(output.contains("kind 2 = 1 -> 1\n"));
-        assert!(output.contains("rank 2 = 1\n"));
+        assert!(output.contains("kind 3 = 1 -> 1\n"));
+        assert!(output.contains("rank 3 = 1\n"));
+        assert!(output.contains("type 2 = Bool\n"));
+        assert!(output.contains("type 4 = 2 -> 2\n"));
+        assert!(output.contains("term 7 = app 5 6\n"));
+        assert!(output.contains("term 7 : 2\n"));
+        assert!(output.contains("freevars 7 = 100,101\n"));
         assert!(output.contains("  1\tnucleus/sql\n"));
         assert!(output.contains("* 2\tnucleus/hol-omega-v0\n"));
         assert!(output.contains("sql_still_live\n42\n"));
