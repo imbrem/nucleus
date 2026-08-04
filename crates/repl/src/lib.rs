@@ -413,6 +413,108 @@ impl LocalRepl {
                 .map_err(Into::into)
         })
     }
+
+    /// Finds a context-implication path with an untrusted recursive SQL query,
+    /// then checks every edge with the trusted Nucleus proof session.
+    ///
+    /// The temporary candidate graph lives in the REPL state database. Neither
+    /// it nor the recursive query carries logical authority: only
+    /// [`ProofSession::prove_context_implication_path`] can mint the resulting
+    /// branded capability and persist the derived edge.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a protocol mismatch, denied edge read, SQL failure,
+    /// absent route, malformed SQL candidate, or rejected trusted path.
+    pub fn prove_context_implication_sql_path(
+        &mut self,
+        id: ConnectionId,
+        antecedent: ContextId,
+        consequent: ContextId,
+    ) -> Result<Vec<ContextId>, LocalProofError> {
+        let edges = self.hol_mut(id)?.context_implication_edges()?;
+        let transaction = self.state().sqlite().unchecked_transaction()?;
+        transaction.execute_batch(
+            "CREATE TEMP TABLE IF NOT EXISTS repl_hol_implication_edge (
+                antecedent INTEGER NOT NULL,
+                consequent INTEGER NOT NULL,
+                PRIMARY KEY (antecedent, consequent)
+             ) STRICT, WITHOUT ROWID;
+             DELETE FROM temp.repl_hol_implication_edge;",
+        )?;
+        {
+            let mut insert = transaction.prepare(
+                "INSERT INTO temp.repl_hol_implication_edge(antecedent, consequent)
+                 VALUES (?1, ?2)",
+            )?;
+            for (source, target) in &edges {
+                insert.execute((source.get(), target.get()))?;
+            }
+        }
+
+        let encoded = {
+            let mut query = transaction.prepare(
+                "WITH RECURSIVE route(node, path, depth) AS (
+                    SELECT ?1, ',' || CAST(?1 AS TEXT) || ',', 0
+                    UNION ALL
+                    SELECT edge.consequent,
+                           route.path || CAST(edge.consequent AS TEXT) || ',',
+                           route.depth + 1
+                    FROM route
+                    JOIN temp.repl_hol_implication_edge AS edge
+                      ON edge.antecedent = route.node
+                    WHERE route.depth < ?3
+                      AND instr(
+                          route.path,
+                          ',' || CAST(edge.consequent AS TEXT) || ','
+                      ) = 0
+                 )
+                 SELECT path
+                 FROM route
+                 WHERE node = ?2
+                 ORDER BY depth, path
+                 LIMIT 1",
+            )?;
+            let mut rows = query.query((
+                antecedent.get(),
+                consequent.get(),
+                i64::try_from(edges.len()).unwrap_or(i64::MAX),
+            ))?;
+            rows.next()?
+                .map(|row| row.get::<_, String>(0))
+                .transpose()?
+        };
+        transaction.commit()?;
+
+        let encoded = encoded.ok_or(LocalProofError::NoImplicationPath {
+            antecedent,
+            consequent,
+        })?;
+        let path = parse_context_path(&encoded).ok_or_else(|| {
+            LocalProofError::MalformedImplicationPath {
+                candidate: encoded.clone(),
+            }
+        })?;
+        if path.first() != Some(&antecedent) || path.last() != Some(&consequent) {
+            return Err(LocalProofError::MalformedImplicationPath { candidate: encoded });
+        }
+
+        self.hol_mut(id)?.with_proof_session(|mut proof| {
+            proof.prove_context_implication_path(&path).map(|_| ())
+        })?;
+        Ok(path)
+    }
+}
+
+fn parse_context_path(candidate: &str) -> Option<Vec<ContextId>> {
+    let candidate = candidate.strip_prefix(',')?.strip_suffix(',')?;
+    if candidate.is_empty() {
+        return None;
+    }
+    candidate
+        .split(',')
+        .map(|id| id.parse().ok().map(ContextId::from_i64))
+        .collect()
 }
 
 /// Failure while reconstructing proof capabilities for a REPL request.
@@ -432,6 +534,15 @@ pub enum LocalProofError {
         antecedent: ContextId,
         consequent: ContextId,
     },
+    /// The untrusted candidate query found no directed route.
+    NoImplicationPath {
+        antecedent: ContextId,
+        consequent: ContextId,
+    },
+    /// The untrusted candidate query returned an invalid encoding or endpoints.
+    MalformedImplicationPath { candidate: String },
+    /// The raw REPL-state database rejected candidate-search SQL.
+    CandidateSql(sqlite::Error),
 }
 
 impl fmt::Display for LocalProofError {
@@ -457,6 +568,22 @@ impl fmt::Display for LocalProofError {
                 antecedent.get(),
                 consequent.get()
             ),
+            Self::NoImplicationPath {
+                antecedent,
+                consequent,
+            } => write!(
+                formatter,
+                "no context implication path from {} to {}",
+                antecedent.get(),
+                consequent.get()
+            ),
+            Self::MalformedImplicationPath { candidate } => {
+                write!(
+                    formatter,
+                    "SQL returned malformed implication path {candidate:?}"
+                )
+            }
+            Self::CandidateSql(error) => write!(formatter, "candidate SQL failed: {error}"),
         }
     }
 }
@@ -466,7 +593,11 @@ impl StdError for LocalProofError {
         match self {
             Self::Repl(error) => Some(error),
             Self::Proof(error) => Some(error),
-            Self::MissingTheorem { .. } | Self::MissingImplication { .. } => None,
+            Self::CandidateSql(error) => Some(error),
+            Self::MissingTheorem { .. }
+            | Self::MissingImplication { .. }
+            | Self::NoImplicationPath { .. }
+            | Self::MalformedImplicationPath { .. } => None,
         }
     }
 }
@@ -480,6 +611,12 @@ impl From<LocalReplError> for LocalProofError {
 impl From<ProofError> for LocalProofError {
     fn from(error: ProofError) -> Self {
         Self::Proof(error)
+    }
+}
+
+impl From<sqlite::Error> for LocalProofError {
+    fn from(error: sqlite::Error) -> Self {
+        Self::CandidateSql(error)
     }
 }
 
@@ -720,5 +857,68 @@ mod tests {
                 .proved_judgement(antecedent, equality.1)
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn sql_finds_candidates_but_nucleus_checks_the_path() {
+        let mut repl = LocalRepl::new().unwrap();
+        let id = repl.open_hol().unwrap();
+        let bool_type = repl.hol_mut(id).unwrap().insert_bool_type().unwrap();
+        let terms = [30, 31, 32, 33].map(|name| {
+            repl.hol_mut(id)
+                .unwrap()
+                .insert_free_term(name, bool_type)
+                .unwrap()
+        });
+        let [p, q, r, s] = terms;
+        let bottom = repl.hol_mut(id).unwrap().define_context([p]).unwrap();
+        let left = repl.hol_mut(id).unwrap().define_context([p, q]).unwrap();
+        let right = repl.hol_mut(id).unwrap().define_context([p, r]).unwrap();
+        let top = repl.hol_mut(id).unwrap().define_context([p, q, r]).unwrap();
+        let isolated = repl.hol_mut(id).unwrap().define_context([s]).unwrap();
+
+        repl.hol_mut(id)
+            .unwrap()
+            .with_proof_session(|mut proof| {
+                for (context, members) in [
+                    (top, &[p, q, r][..]),
+                    (left, &[p, q][..]),
+                    (right, &[p, r][..]),
+                ] {
+                    for member in members {
+                        proof.prove_hypothesis(context, *member)?;
+                    }
+                }
+                Ok::<_, ProofError>(())
+            })
+            .unwrap();
+        repl.prove_context_implication(id, top, left, &[p, q])
+            .unwrap();
+        repl.prove_context_implication(id, top, right, &[p, r])
+            .unwrap();
+        repl.prove_context_implication(id, left, bottom, &[p])
+            .unwrap();
+        repl.prove_context_implication(id, right, bottom, &[p])
+            .unwrap();
+
+        let path = repl
+            .prove_context_implication_sql_path(id, top, bottom)
+            .unwrap();
+        assert_eq!(path, [top, left, bottom]);
+        assert!(
+            repl.hol_mut(id)
+                .unwrap()
+                .proved_context_implication(top, bottom)
+                .unwrap()
+        );
+        assert_eq!(
+            repl.prove_context_implication_sql_path(id, isolated, isolated)
+                .unwrap(),
+            [isolated]
+        );
+        assert!(matches!(
+            repl.prove_context_implication_sql_path(id, top, isolated),
+            Err(LocalProofError::NoImplicationPath { .. })
+        ));
     }
 }
