@@ -1,10 +1,15 @@
 import init, { WebKernel, type WebOutcome } from "../generated/nucleus.js";
-import type { HolSchemaSource, HolSchemaSpecV1 } from "./index.js";
+import type {
+  HolSchemaSource,
+  HolSchemaSpecV1,
+  SignedHolSnapshot,
+} from "./index.js";
 
 type Request =
   | { id: number; operation: "open" }
   | { id: number; operation: "openHol"; source?: HolSchemaSource }
   | { id: number; operation: "compileHolSchema"; schema: HolSchemaSpecV1 }
+  | { id: number; operation: "holPutSnapshot"; snapshot: SignedHolSnapshot }
   | { id: number; operation: "close"; connection: number }
   | { id: number; operation: "run"; connection: number; sql: string }
   | {
@@ -265,6 +270,15 @@ type Request =
         publicKey: Uint8Array;
         signature: Uint8Array;
       };
+    }
+  | {
+      id: number;
+      operation: "holInspectResidentTrustedExport";
+      connection: number;
+      trustedImportId: number;
+      namespace: number;
+      exportId: number;
+      image: string;
     };
 
 type SqlValue =
@@ -346,6 +360,18 @@ async function execute(request: Request): Promise<unknown> {
       throw new TypeError("invalid or ambiguous HOL schema source");
     case "compileHolSchema":
       return connection.compile_hol_schema_json(JSON.stringify(request.schema));
+    case "holPutSnapshot": {
+      const snapshot = request.snapshot;
+      return connection.put_resident_hol_snapshot(
+        snapshot.bytes,
+        snapshot.descriptor,
+        snapshot.schema,
+        snapshot.image,
+        snapshot.signer,
+        snapshot.publicKey,
+        snapshot.signature,
+      );
+    }
     case "close":
       connection.close_connection(request.connection);
       return undefined;
@@ -664,21 +690,30 @@ async function execute(request: Request): Promise<unknown> {
         request.importId,
         request.sourceNamespace,
       );
-    case "holInspectTrustedExport": {
-      const snapshot = request.snapshot;
-      const exported = connection.hol_inspect_trusted_export(
-        request.connection,
-        request.trustedImportId,
-        snapshot.bytes,
-        snapshot.descriptor,
-        snapshot.schema,
-        snapshot.image,
-        snapshot.signer,
-        snapshot.publicKey,
-        snapshot.signature,
-        request.namespace,
-        request.exportId,
-      );
+    case "holInspectTrustedExport":
+    case "holInspectResidentTrustedExport": {
+      const exported =
+        request.operation === "holInspectTrustedExport"
+          ? connection.hol_inspect_trusted_export(
+              request.connection,
+              request.trustedImportId,
+              request.snapshot.bytes,
+              request.snapshot.descriptor,
+              request.snapshot.schema,
+              request.snapshot.image,
+              request.snapshot.signer,
+              request.snapshot.publicKey,
+              request.snapshot.signature,
+              request.namespace,
+              request.exportId,
+            )
+          : connection.hol_inspect_resident_trusted_export(
+              request.connection,
+              request.trustedImportId,
+              request.image,
+              request.namespace,
+              request.exportId,
+            );
       if (exported === undefined) return null;
       try {
         const sort = exported.sort();

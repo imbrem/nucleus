@@ -180,6 +180,35 @@ impl WebKernel {
             .map_err(js_error)
     }
 
+    /// Authenticates and validates one signed HOL snapshot into the shared REPL cache.
+    #[allow(clippy::too_many_arguments)]
+    pub fn put_resident_hol_snapshot(
+        &mut self,
+        bytes: &[u8],
+        descriptor: &[u8],
+        schema: &str,
+        image: &str,
+        signer: &str,
+        public_key: &[u8],
+        signature: &[u8],
+    ) -> Result<String, JsValue> {
+        let public_key = public_key
+            .try_into()
+            .map_err(|_| JsValue::from_str("Ed25519 public key must contain exactly 32 bytes"))?;
+        self.repl
+            .put_signed_hol_snapshot_with_descriptor(
+                bytes,
+                descriptor,
+                O256::from_hex(schema).map_err(js_error)?,
+                O256::from_hex(image).map_err(js_error)?,
+                O256::from_hex(signer).map_err(js_error)?,
+                public_key,
+                signature,
+            )
+            .map(|hash| hash.to_string())
+            .map_err(js_error)
+    }
+
     /// Attaches a resident image immutably under `schema`.
     ///
     /// # Errors
@@ -951,6 +980,28 @@ impl WebKernel {
                 O256::from_hex(signer).map_err(js_error)?,
                 public_key,
                 signature,
+                NamespaceId::from_i64(i64::from(namespace)),
+                ExportId::from_i64(i64::from(export)),
+            )
+            .map(|value| value.map(|value| WebImportedHolExport { value }))
+            .map_err(js_error)
+    }
+
+    /// Authenticates and inspects one exact trusted export from an already-resident image.
+    #[allow(clippy::too_many_arguments)]
+    pub fn hol_inspect_resident_trusted_export(
+        &mut self,
+        connection: u32,
+        trusted_import: u32,
+        image: &str,
+        namespace: u32,
+        export: u32,
+    ) -> Result<Option<WebImportedHolExport>, JsValue> {
+        self.repl
+            .inspect_resident_trusted_hol_export(
+                ConnectionId::from_u32(connection),
+                TrustedImportId::from_i64(i64::from(trusted_import)),
+                O256::from_hex(image).map_err(js_error)?,
                 NamespaceId::from_i64(i64::from(namespace)),
                 ExportId::from_i64(i64::from(export)),
             )

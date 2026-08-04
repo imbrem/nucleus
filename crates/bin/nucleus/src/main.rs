@@ -165,6 +165,10 @@ fn run_line(repl: &mut LocalRepl, output: &mut impl io::Write, line: &str) -> Re
         compile_hol_schema(output, arguments)?;
         return Ok(true);
     }
+    if let Some(arguments) = line.strip_prefix(".hol-snapshot ") {
+        put_hol_snapshot(repl, output, arguments)?;
+        return Ok(true);
+    }
     if let Some(arguments) = line.strip_prefix(".hol ") {
         run_hol(repl, output, arguments)?;
         return Ok(true);
@@ -230,10 +234,18 @@ fn print_help(output: &mut impl io::Write) -> io::Result<()> {
         output,
         ".hol import inspect ...     read a downloaded trusted export"
     )?;
+    writeln!(
+        output,
+        ".hol import inspect-resident ...  read an already-admitted trusted export"
+    )?;
     writeln!(output, ".hol prove ...     apply an explicit HOL rule")?;
     writeln!(
         output,
         ".hol-schema compile JSON OUT  compile editable schema JSON"
+    )?;
+    writeln!(
+        output,
+        ".hol-snapshot put ...  admit one signed resident image"
     )?;
     writeln!(output, ".quit              exit")
 }
@@ -252,6 +264,38 @@ fn compile_hol_schema(output: &mut impl io::Write, arguments: &str) -> Result<()
     fs::write(descriptor_path, descriptor.encode())?;
     writeln!(output, "descriptor {descriptor_path}")?;
     writeln!(output, "schema {}", descriptor.schema_id())?;
+    Ok(())
+}
+
+fn put_hol_snapshot(
+    repl: &mut LocalRepl,
+    output: &mut impl io::Write,
+    arguments: &str,
+) -> Result<()> {
+    let mut arguments = arguments.split_whitespace();
+    if arguments.next() != Some("put") {
+        return Err("usage: .hol-snapshot put PATH DESCRIPTOR_PATH SCHEMA IMAGE SIGNER PUBLIC_KEY SIGNATURE".into());
+    }
+    let path = arguments.next().ok_or("missing snapshot path")?;
+    let descriptor_path = arguments.next().ok_or("missing descriptor path")?;
+    let schema = parse_o256(arguments.next(), "schema")?;
+    let image = parse_o256(arguments.next(), "image")?;
+    let signer = parse_o256(arguments.next(), "signer")?;
+    let public_key = parse_fixed_hex::<32>(arguments.next(), "public key")?;
+    let signature = parse_hex(arguments.next(), "signature")?;
+    if arguments.next().is_some() {
+        return Err("usage: .hol-snapshot put PATH DESCRIPTOR_PATH SCHEMA IMAGE SIGNER PUBLIC_KEY SIGNATURE".into());
+    }
+    let admitted = repl.put_signed_hol_snapshot_with_descriptor(
+        &fs::read(path)?,
+        &fs::read(descriptor_path)?,
+        schema,
+        image,
+        signer,
+        public_key,
+        &signature,
+    )?;
+    writeln!(output, "resident-hol {admitted} schema={schema}")?;
     Ok(())
 }
 
@@ -386,8 +430,11 @@ fn run_hol_import<'a>(
         }
         Some("namespace") => run_hol_import_namespace(repl, output, connection, arguments)?,
         Some("inspect") => run_hol_import_inspect(repl, output, connection, arguments)?,
+        Some("inspect-resident") => {
+            run_hol_import_inspect_resident(repl, output, connection, arguments)?;
+        }
         _ => {
-            return Err("usage: .hol import trust ...|show ID|namespace ...|inspect ...".into());
+            return Err("usage: .hol import trust ...|show ID|namespace ...|inspect ...|inspect-resident ...".into());
         }
     }
     Ok(())
@@ -462,6 +509,37 @@ fn run_hol_import_inspect<'a>(
         namespace,
         export,
     )?;
+    writeln!(output, "imported-export {value:?}")?;
+    Ok(())
+}
+
+fn run_hol_import_inspect_resident<'a>(
+    repl: &mut LocalRepl,
+    output: &mut impl io::Write,
+    connection: ConnectionId,
+    mut arguments: impl Iterator<Item = &'a str>,
+) -> Result<()> {
+    let trusted = TrustedImportId::from_i64(
+        arguments
+            .next()
+            .ok_or("missing trusted-import ID")?
+            .parse()?,
+    );
+    let namespace = NamespaceId::from_i64(
+        arguments
+            .next()
+            .ok_or("missing imported namespace ID")?
+            .parse()?,
+    );
+    let export = ExportId::from_i64(arguments.next().ok_or("missing export ID")?.parse()?);
+    let image = parse_o256(arguments.next(), "image")?;
+    if arguments.next().is_some() {
+        return Err(
+            "usage: .hol import inspect-resident TRUSTED_IMPORT NAMESPACE EXPORT IMAGE".into(),
+        );
+    }
+    let value =
+        repl.inspect_resident_trusted_hol_export(connection, trusted, image, namespace, export)?;
     writeln!(output, "imported-export {value:?}")?;
     Ok(())
 }
@@ -1290,8 +1368,8 @@ mod tests {
             )
             .unwrap()
         );
-        let inspect = format!(
-            ".hol import inspect 0 1 7 {} {} {} {} {} {} {}",
+        let put = format!(
+            ".hol-snapshot put {} {} {} {} {} {} {}",
             path.display(),
             descriptor_path.display(),
             snapshot.schema(),
@@ -1300,9 +1378,11 @@ mod tests {
             hex(snapshot.public_key()),
             hex(snapshot.signature())
         );
-        assert!(run_line(&mut repl, &mut output, &inspect).unwrap());
+        assert!(run_line(&mut repl, &mut output, &put).unwrap());
         fs::remove_file(path).unwrap();
         fs::remove_file(descriptor_path).unwrap();
+        let inspect = format!(".hol import inspect-resident 0 1 7 {}", snapshot.image());
+        assert!(run_line(&mut repl, &mut output, &inspect).unwrap());
 
         let output = String::from_utf8(output).unwrap();
         let expected = format!(
@@ -1312,6 +1392,7 @@ mod tests {
             snapshot.signer()
         );
         assert_eq!(output.matches(&expected).count(), 2);
+        assert!(output.contains(&format!("resident-hol {}", snapshot.image())));
         assert!(output.contains("imported-namespace 1\n"));
         assert!(output.contains("term: Bool(true)"));
         let exported = repl.export_hol_snapshot(target).unwrap();
