@@ -1,5 +1,9 @@
 //! Minimal HOL-omega protocol, beginning with canonical kinds.
 
+mod validate;
+
+pub use validate::{HolImageCounts, HolImageValidationError, ValidatedHolImage};
+
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error as StdError;
 use std::fmt;
