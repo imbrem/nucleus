@@ -22,6 +22,7 @@ const MAX_GRAPH_DEPTH: usize = 512;
 const STLC_BOOL_EQ_V1_SPEC: &[u8] = include_bytes!("semantics-v1.txt");
 const STLC_BOOL_EQ_V2_SPEC: &[u8] = include_bytes!("semantics-v2.txt");
 const STLC_BOOL_EQ_V3_SPEC: &[u8] = include_bytes!("semantics-v3.txt");
+const STLC_BOOL_EQ_V4_SPEC: &[u8] = include_bytes!("semantics-v4.txt");
 
 /// Returns the content hash of version one of the normative `hol-common-v2` semantics.
 #[must_use]
@@ -44,7 +45,7 @@ pub fn stlc_bool_eq_v2_semantics() -> O256 {
     o256_path!(::nucleus.hol.protocol.stlc_bool_eq.v2).tag(STLC_BOOL_EQ_V2_SPEC)
 }
 
-/// Derives the current signed schema identity from version-two semantics and exact physical bytes.
+/// Derives the version-two signed schema identity from its semantics and exact physical bytes.
 #[must_use]
 pub fn stlc_bool_eq_v2_schema_id(physical_schema: O256) -> O256 {
     let mut commitments = [0_u8; 64];
@@ -59,13 +60,28 @@ pub fn stlc_bool_eq_v3_semantics() -> O256 {
     o256_path!(::nucleus.hol.protocol.stlc_bool_eq.v3).tag(STLC_BOOL_EQ_V3_SPEC)
 }
 
-/// Derives the current signed schema identity from version-three semantics and exact physical bytes.
+/// Derives the version-three signed schema identity from its semantics and exact physical bytes.
 #[must_use]
 pub fn stlc_bool_eq_v3_schema_id(physical_schema: O256) -> O256 {
     let mut commitments = [0_u8; 64];
     commitments[..32].copy_from_slice(stlc_bool_eq_v3_semantics().as_ref());
     commitments[32..].copy_from_slice(physical_schema.as_ref());
     o256_path!(::nucleus.hol.protocol.stlc_bool_eq.sqlite_schema.v3).tag(commitments)
+}
+
+/// Returns the content hash of version four of the normative `hol-common-v2` semantics.
+#[must_use]
+pub fn stlc_bool_eq_v4_semantics() -> O256 {
+    o256_path!(::nucleus.hol.protocol.stlc_bool_eq.v4).tag(STLC_BOOL_EQ_V4_SPEC)
+}
+
+/// Derives the current signed schema identity from version-four semantics and exact physical bytes.
+#[must_use]
+pub fn stlc_bool_eq_v4_schema_id(physical_schema: O256) -> O256 {
+    let mut commitments = [0_u8; 64];
+    commitments[..32].copy_from_slice(stlc_bool_eq_v4_semantics().as_ref());
+    commitments[32..].copy_from_slice(physical_schema.as_ref());
+    o256_path!(::nucleus.hol.protocol.stlc_bool_eq.sqlite_schema.v4).tag(commitments)
 }
 
 /// Counts established while validating one complete HOL database image.
@@ -228,7 +244,7 @@ impl ValidatedHolImage {
             .map_err(HolImageValidationError::Image)?;
         validate_integrity(disposable.sqlite())?;
         let physical_schema = validate_schema(disposable.sqlite(), expected_schema)?;
-        let schema = stlc_bool_eq_v3_schema_id(physical_schema);
+        let schema = stlc_bool_eq_v4_schema_id(physical_schema);
         let counts = validate_contents(disposable.sqlite())?;
         Ok(Self {
             hash,
@@ -348,7 +364,7 @@ pub(super) fn expected_composite_schema_id(
         .map_err(HolImageValidationError::Connection)?;
     expected.sqlite().execute_batch(SCHEMA)?;
     install_metadata_schema(expected.sqlite(), schema)?;
-    Ok(stlc_bool_eq_v3_schema_id(schema_manifest_id(
+    Ok(stlc_bool_eq_v4_schema_id(schema_manifest_id(
         &schema_manifest(expected.sqlite())?,
     )))
 }
@@ -1441,6 +1457,16 @@ mod tests {
             O256::from_hex("f6b2498fcfcc14cc158b785cfab976cec4ae4bb96d0c04146bf73addeeccca62")
                 .unwrap()
         );
+        assert_eq!(
+            stlc_bool_eq_v4_semantics(),
+            O256::from_hex("aae8e45ff51ad971a32f92d7078cd202e80ce9bfe2bccfc309915ed5c42919b8")
+                .unwrap()
+        );
+        assert_eq!(
+            stlc_bool_eq_v4_schema_id(physical),
+            O256::from_hex("9a03ae5a657d0520fdd18487016238907566854ea6b562314a1bd9b28dceb429")
+                .unwrap()
+        );
         assert_ne!(
             stlc_bool_eq_v1_schema_id(physical),
             stlc_bool_eq_v2_schema_id(physical)
@@ -1448,6 +1474,10 @@ mod tests {
         assert_ne!(
             stlc_bool_eq_v2_schema_id(physical),
             stlc_bool_eq_v3_schema_id(physical)
+        );
+        assert_ne!(
+            stlc_bool_eq_v3_schema_id(physical),
+            stlc_bool_eq_v4_schema_id(physical)
         );
     }
 
@@ -1460,10 +1490,10 @@ mod tests {
         expected.sqlite().execute_batch(SCHEMA).unwrap();
         let physical = schema_manifest_id(&schema_manifest(expected.sqlite()).unwrap());
         assert_eq!(validated.physical_schema(), physical);
-        assert_eq!(validated.schema(), stlc_bool_eq_v3_schema_id(physical));
-        assert_ne!(validated.schema(), stlc_bool_eq_v2_schema_id(physical));
+        assert_eq!(validated.schema(), stlc_bool_eq_v4_schema_id(physical));
+        assert_ne!(validated.schema(), stlc_bool_eq_v3_schema_id(physical));
         assert_ne!(validated.schema(), validated.physical_schema());
-        assert_ne!(validated.schema(), stlc_bool_eq_v3_semantics());
+        assert_ne!(validated.schema(), stlc_bool_eq_v4_semantics());
         assert_eq!(validated.bytes(), bytes.as_ref());
         assert_eq!(
             validated.counts(),
@@ -1665,7 +1695,7 @@ mod tests {
         assert_eq!(validated.bytes(), bytes.as_ref());
         assert_eq!(
             validated.semantic_schema(),
-            stlc_bool_eq_v3_schema_id(validated.physical_schema_manifest())
+            stlc_bool_eq_v4_schema_id(validated.physical_schema_manifest())
         );
         let default = ValidatedHolImage::validate(&sample_image()).unwrap();
         assert_ne!(

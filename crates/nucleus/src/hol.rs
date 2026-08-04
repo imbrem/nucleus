@@ -29,7 +29,8 @@ pub use validate::{
     AuthenticatedHolImageValidationError, AuthenticatedValidatedHolImage, HolImageCounts,
     HolImageValidationError, ValidatedHolImage, stlc_bool_eq_v1_schema_id,
     stlc_bool_eq_v1_semantics, stlc_bool_eq_v2_schema_id, stlc_bool_eq_v2_semantics,
-    stlc_bool_eq_v3_schema_id, stlc_bool_eq_v3_semantics,
+    stlc_bool_eq_v3_schema_id, stlc_bool_eq_v3_semantics, stlc_bool_eq_v4_schema_id,
+    stlc_bool_eq_v4_semantics,
 };
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -150,6 +151,18 @@ impl TermId {
     pub const fn get(self) -> i64 {
         self.0
     }
+}
+
+/// One exact free-variable replacement for simultaneous theorem instantiation.
+///
+/// `variable` must identify an admitted `MFV` node. Matching is by its exact
+/// database-local [`TermId`], not merely by its user-facing symbol.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TermInstantiation {
+    /// Exact free-variable node to replace.
+    pub variable: TermId,
+    /// Locally closed, same-typed replacement term.
+    pub replacement: TermId,
 }
 
 /// One external de Bruijn variable required to type an open term.
@@ -293,6 +306,7 @@ enum TheoremOrigin {
     EqualityModusPonens,
     EqualitySubstitution,
     DeductionAntisymmetry,
+    TermInstantiation,
     ConversionEquality,
     Conversion,
 }
@@ -308,6 +322,7 @@ impl TheoremOrigin {
             Self::EqualityModusPonens => "equality_modus_ponens",
             Self::EqualitySubstitution => "equality_substitution",
             Self::DeductionAntisymmetry => "deduction_antisymmetry",
+            Self::TermInstantiation => "term_instantiation",
             Self::ConversionEquality => "conversion_equality",
             Self::Conversion => "conversion",
         }
@@ -487,6 +502,8 @@ pub enum Operation {
     ProveEqualitySubstitution,
     /// Discharge opposite conclusions through deduction antisymmetry.
     ProveDeductionAntisymmetry,
+    /// Simultaneously instantiate exact free variables throughout a theorem.
+    ProveTermInstantiation,
     /// Load or inspect a persisted context implication.
     ReadContextImplication,
     /// Persist a branded context implication as authoritative connection state.
@@ -2499,6 +2516,95 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         })
     }
 
+    /// Simultaneously instantiates exact free variables throughout a theorem.
+    ///
+    /// Every key must be an `MFV` node, keys must be distinct, and each
+    /// replacement must be locally closed and have the key's type. The
+    /// substitution is simultaneous: replacement terms are copied unchanged,
+    /// including beneath lambdas. Both the conclusion and every assumption in
+    /// the theorem's context are transformed, then canonically interned.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the rule, term insertion, or context
+    /// construction; the theorem graph or context is invalid; an
+    /// instantiation key is not an exact free-variable node or is duplicated;
+    /// or a replacement is open or has the wrong type.
+    pub fn instantiate_terms(
+        &mut self,
+        theorem: &Theorem<'brand>,
+        instantiations: &[TermInstantiation],
+    ) -> Result<Theorem<'brand>, ProofError> {
+        let (neutron, hol) = self.connection.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ProveTermInstantiation)?;
+        authorize_proof(&mut hol.policy, Operation::InsertTerm)?;
+        authorize_context(&mut hol.policy, Operation::DefineContext)?;
+
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        require_context(&transaction, theorem.context)?;
+        let members = read_context_members(&transaction, theorem.context)?;
+
+        // Validate every root before walking and interning any transformed graph.
+        validate_term(&transaction, theorem.conclusion)?;
+        for member in &members {
+            validate_term(&transaction, *member)?;
+        }
+        let mut replacements = HashMap::with_capacity(instantiations.len());
+        for instantiation in instantiations {
+            let variable = validate_term(&transaction, instantiation.variable)?;
+            if !matches!(variable.view, TermView::Free { .. }) {
+                return Err(ProofError::InstantiationKeyNotFree(instantiation.variable));
+            }
+            if replacements
+                .insert(instantiation.variable, instantiation.replacement)
+                .is_some()
+            {
+                return Err(ProofError::DuplicateTermInstantiation(
+                    instantiation.variable,
+                ));
+            }
+            let replacement = validate_term(&transaction, instantiation.replacement)?;
+            if variable.ty != replacement.ty {
+                return Err(ProofError::TermInstantiationTypeMismatch {
+                    variable: instantiation.variable,
+                    replacement: instantiation.replacement,
+                    expected: variable.ty,
+                    actual: replacement.ty,
+                });
+            }
+            if !replacement.boundary.is_empty() {
+                return Err(ProofError::OpenTermInstantiationReplacement(
+                    instantiation.replacement,
+                ));
+            }
+        }
+
+        let mut memo = HashMap::new();
+        let conclusion = instantiate_free_terms_inner(
+            &transaction,
+            theorem.conclusion,
+            &replacements,
+            &mut memo,
+        )?;
+        let mut transformed_members = members
+            .into_iter()
+            .map(|member| {
+                instantiate_free_terms_inner(&transaction, member, &replacements, &mut memo)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        transformed_members.sort_unstable();
+        transformed_members.dedup();
+        validate_term(&transaction, conclusion)?;
+        let context = intern_context(&transaction, &transformed_members)?;
+        transaction.commit()?;
+        Ok(Theorem {
+            context,
+            conclusion,
+            origin: Some(TheoremOrigin::TermInstantiation),
+            brand: PhantomData,
+        })
+    }
+
     /// Applies equality modus ponens: `Γ ⊢ p = q` and `Γ ⊢ p` yield `Γ ⊢ q`.
     ///
     /// # Errors
@@ -3660,6 +3766,46 @@ fn substitute_closed_inner(
     Ok(result)
 }
 
+fn instantiate_free_terms_inner(
+    connection: &sqlite::Connection,
+    term: TermId,
+    replacements: &HashMap<TermId, TermId>,
+    memo: &mut HashMap<TermId, TermId>,
+) -> Result<TermId, TermError> {
+    if let Some(replacement) = replacements.get(&term) {
+        return Ok(*replacement);
+    }
+    if let Some(result) = memo.get(&term) {
+        return Ok(*result);
+    }
+    let (view, ty) = read_term_node(connection, term)?;
+    let result = match view {
+        TermView::Bool(_)
+        | TermView::Free { .. }
+        | TermView::Constant { .. }
+        | TermView::Bound { .. } => term,
+        TermView::Application { function, argument } => {
+            let function = instantiate_free_terms_inner(connection, function, replacements, memo)?;
+            let argument = instantiate_free_terms_inner(connection, argument, replacements, memo)?;
+            intern_application(connection, function, argument, ty)?
+        }
+        TermView::Lambda {
+            parameter_type,
+            body,
+        } => {
+            let body = instantiate_free_terms_inner(connection, body, replacements, memo)?;
+            intern_lambda(connection, parameter_type, body, ty)?
+        }
+        TermView::Equality { left, right } => {
+            let left = instantiate_free_terms_inner(connection, left, replacements, memo)?;
+            let right = instantiate_free_terms_inner(connection, right, replacements, memo)?;
+            intern_equality(connection, left, right)?
+        }
+    };
+    memo.insert(term, result);
+    Ok(result)
+}
+
 fn free_term_symbols(connection: &sqlite::Connection, root: TermId) -> Result<Vec<i64>, TermError> {
     let mut statement = connection.prepare(
         "WITH RECURSIVE
@@ -4284,6 +4430,19 @@ pub enum ProofError {
         argument: TermId,
         actual: TermId,
     },
+    /// A theorem-instantiation key is not an exact `MFV` node.
+    InstantiationKeyNotFree(TermId),
+    /// The same exact free-variable key occurs more than once.
+    DuplicateTermInstantiation(TermId),
+    /// A theorem-instantiation replacement has a different type from its key.
+    TermInstantiationTypeMismatch {
+        variable: TermId,
+        replacement: TermId,
+        expected: TypeId,
+        actual: TypeId,
+    },
+    /// A theorem-instantiation replacement is not locally closed.
+    OpenTermInstantiationReplacement(TermId),
     /// Two conversions cannot compose because their middle terms differ.
     ConversionChainMismatch {
         first_right: TermId,
@@ -4380,6 +4539,7 @@ impl fmt::Display for ProofError {
             | Self::ContextUnionUnexpectedMember { .. }
             | Self::ContextUnionConflict { .. }
             | Self::ContextEquivalenceMismatch { .. }
+            | Self::WeakeningContextMismatch { .. }
             | Self::MismatchedTheoremContexts { .. }
             | Self::EqualitySubstitutionContextMismatch { .. }
             | Self::ExpectedEquality(_)
@@ -4389,16 +4549,14 @@ impl fmt::Display for ProofError {
             | Self::EqualityPredicateDomainMismatch { .. }
             | Self::EqualityPredicateNonBoolean { .. }
             | Self::EqualitySubstitutionPremiseMismatch { .. }
+            | Self::InstantiationKeyNotFree(_)
+            | Self::DuplicateTermInstantiation(_)
+            | Self::TermInstantiationTypeMismatch { .. }
+            | Self::OpenTermInstantiationReplacement(_)
             | Self::ConversionChainMismatch { .. }
             | Self::ConversionBoundaryMismatch { .. }
             | Self::NonBooleanConversion { .. }
             | Self::ConversionPremiseMismatch { .. } => unreachable!("handled above"),
-            Self::WeakeningContextMismatch { expected, actual } => write!(
-                formatter,
-                "weakening theorem has context {}, expected {}",
-                actual.get(),
-                expected.get()
-            ),
             Self::Sqlite(error) => error.fmt(formatter),
         }
     }
@@ -4491,6 +4649,12 @@ fn format_relational_proof_error(
             backward_antecedent.get(),
             backward_consequent.get()
         )),
+        ProofError::WeakeningContextMismatch { expected, actual } => Some(write!(
+            formatter,
+            "weakening theorem has context {}, expected {}",
+            actual.get(),
+            expected.get()
+        )),
         ProofError::MismatchedTheoremContexts { expected, actual } => Some(write!(
             formatter,
             "theorem context {} does not match {}",
@@ -4565,6 +4729,34 @@ fn format_substitution_proof_error(
             predicate.get(),
             argument.get()
         )),
+        ProofError::InstantiationKeyNotFree(variable) => Some(write!(
+            formatter,
+            "term {} is not an exact free-variable instantiation key",
+            variable.get()
+        )),
+        ProofError::DuplicateTermInstantiation(variable) => Some(write!(
+            formatter,
+            "free-variable instantiation key {} occurs more than once",
+            variable.get()
+        )),
+        ProofError::TermInstantiationTypeMismatch {
+            variable,
+            replacement,
+            expected,
+            actual,
+        } => Some(write!(
+            formatter,
+            "replacement {} for free variable {} has type {}, expected {}",
+            replacement.get(),
+            variable.get(),
+            actual.get(),
+            expected.get()
+        )),
+        ProofError::OpenTermInstantiationReplacement(replacement) => Some(write!(
+            formatter,
+            "free-term instantiation replacement {} is not locally closed",
+            replacement.get()
+        )),
         _ => None,
     }
 }
@@ -4636,6 +4828,10 @@ impl StdError for ProofError {
             | Self::EqualityPredicateDomainMismatch { .. }
             | Self::EqualityPredicateNonBoolean { .. }
             | Self::EqualitySubstitutionPremiseMismatch { .. }
+            | Self::InstantiationKeyNotFree(_)
+            | Self::DuplicateTermInstantiation(_)
+            | Self::TermInstantiationTypeMismatch { .. }
+            | Self::OpenTermInstantiationReplacement(_)
             | Self::ConversionChainMismatch { .. }
             | Self::ConversionBoundaryMismatch { .. }
             | Self::NonBooleanConversion { .. }
@@ -5599,6 +5795,352 @@ mod tests {
         assert!(
             !operations.ends_with(&[Operation::ProveEqualitySubstitution, Operation::InsertTerm])
         );
+    }
+
+    #[test]
+    fn term_instantiation_is_simultaneous_and_transforms_the_context() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let x = connection.insert_free_term(700, bool_type).unwrap();
+        let y = connection.insert_free_term(701, bool_type).unwrap();
+        let z = connection.insert_free_term(702, bool_type).unwrap();
+        let context = connection.define_context([x, y]).unwrap();
+
+        let (simultaneous_context, collapsed_context, conclusion) = connection
+            .with_proof_session(|mut proof| {
+                let theorem = proof.prove_hypothesis(context, x)?;
+                let simultaneous = proof.instantiate_terms(
+                    &theorem,
+                    &[
+                        TermInstantiation {
+                            variable: x,
+                            replacement: y,
+                        },
+                        TermInstantiation {
+                            variable: y,
+                            replacement: z,
+                        },
+                    ],
+                )?;
+                assert_eq!(simultaneous.conclusion(), y);
+                let collapsed = proof.instantiate_terms(
+                    &theorem,
+                    &[
+                        TermInstantiation {
+                            variable: x,
+                            replacement: z,
+                        },
+                        TermInstantiation {
+                            variable: y,
+                            replacement: z,
+                        },
+                    ],
+                )?;
+                proof.persist_theorem(&simultaneous)?;
+                Ok::<_, ProofError>((
+                    simultaneous.context(),
+                    collapsed.context(),
+                    simultaneous.conclusion(),
+                ))
+            })
+            .unwrap();
+
+        assert_eq!(conclusion, y);
+        assert_eq!(
+            connection.context_members(simultaneous_context).unwrap(),
+            [y, z]
+        );
+        assert_eq!(connection.context_members(collapsed_context).unwrap(), [z]);
+        let rule = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row(
+                "SELECT rule FROM hol_proof_event WHERE ctx_id = ?1 AND term_id = ?2",
+                [simultaneous_context.get(), y.get()],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+        assert_eq!(rule, "term_instantiation");
+    }
+
+    #[test]
+    fn empty_and_identity_term_instantiations_preserve_canonical_ids() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let x = connection.insert_free_term(705, bool_type).unwrap();
+        let context = connection.define_context([x]).unwrap();
+
+        let results = connection
+            .with_proof_session(|mut proof| {
+                let theorem = proof.prove_hypothesis(context, x)?;
+                let empty = proof.instantiate_terms(&theorem, &[])?;
+                let identity = proof.instantiate_terms(
+                    &theorem,
+                    &[TermInstantiation {
+                        variable: x,
+                        replacement: x,
+                    }],
+                )?;
+                Ok::<_, ProofError>([
+                    (empty.context(), empty.conclusion()),
+                    (identity.context(), identity.conclusion()),
+                ])
+            })
+            .unwrap();
+        assert_eq!(results, [(context, x), (context, x)]);
+    }
+
+    #[test]
+    fn term_instantiation_copies_closed_replacements_unchanged_beneath_lambdas() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let bool_to_bool = connection.insert_arrow_type(bool_type, bool_type).unwrap();
+        let function = connection.insert_free_term(710, bool_to_bool).unwrap();
+        let bound = connection.insert_bound_term(0, bool_type).unwrap();
+        let application = connection.insert_application(function, bound).unwrap();
+        let abstraction = connection.insert_lambda(bool_type, application).unwrap();
+        let proposition = connection
+            .insert_equality(abstraction, abstraction)
+            .unwrap();
+        let context = connection.define_context([proposition]).unwrap();
+
+        let identity_body = connection.insert_bound_term(0, bool_type).unwrap();
+        let identity = connection.insert_lambda(bool_type, identity_body).unwrap();
+        let expected_application = connection.insert_application(identity, bound).unwrap();
+        let expected_abstraction = connection
+            .insert_lambda(bool_type, expected_application)
+            .unwrap();
+        let expected = connection
+            .insert_equality(expected_abstraction, expected_abstraction)
+            .unwrap();
+
+        let (result_context, conclusion) = connection
+            .with_proof_session(|mut proof| {
+                let theorem = proof.prove_hypothesis(context, proposition)?;
+                let result = proof.instantiate_terms(
+                    &theorem,
+                    &[TermInstantiation {
+                        variable: function,
+                        replacement: identity,
+                    }],
+                )?;
+                Ok::<_, ProofError>((result.context(), result.conclusion()))
+            })
+            .unwrap();
+        assert_eq!(conclusion, expected);
+        assert_eq!(
+            connection.context_members(result_context).unwrap(),
+            [expected]
+        );
+        let TermView::Equality { left, .. } = connection.term(conclusion).unwrap() else {
+            panic!("instantiated conclusion is not equality")
+        };
+        let TermView::Lambda { body, .. } = connection.term(left).unwrap() else {
+            panic!("instantiated operand is not a lambda")
+        };
+        let TermView::Application {
+            function: copied, ..
+        } = connection.term(body).unwrap()
+        else {
+            panic!("instantiated lambda body is not an application")
+        };
+        assert_eq!(copied, identity);
+    }
+
+    #[test]
+    fn term_instantiation_rejects_invalid_maps_without_writes() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let ind = connection.insert_base_type(720).unwrap();
+        let x = connection.insert_free_term(721, bool_type).unwrap();
+        let truth = connection.insert_bool_term(true).unwrap();
+        let constant = connection.insert_constant(722, bool_type).unwrap();
+        let wrong_type = connection.insert_constant(723, ind).unwrap();
+        let open = connection.insert_bound_term(0, bool_type).unwrap();
+        let context = connection.define_context([x]).unwrap();
+        let before = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row(
+                "SELECT (SELECT count(*) FROM hol_node), (SELECT count(*) FROM hol_context)",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .unwrap();
+
+        connection
+            .with_proof_session(|mut proof| {
+                let theorem = proof.prove_hypothesis(context, x)?;
+                assert!(matches!(
+                    proof.instantiate_terms(
+                        &theorem,
+                        &[TermInstantiation { variable: constant, replacement: truth }]
+                    ),
+                    Err(ProofError::InstantiationKeyNotFree(term)) if term == constant
+                ));
+                assert!(matches!(
+                    proof.instantiate_terms(
+                        &theorem,
+                        &[
+                            TermInstantiation { variable: x, replacement: truth },
+                            TermInstantiation { variable: x, replacement: truth },
+                        ]
+                    ),
+                    Err(ProofError::DuplicateTermInstantiation(term)) if term == x
+                ));
+                assert!(matches!(
+                    proof.instantiate_terms(
+                        &theorem,
+                        &[TermInstantiation { variable: x, replacement: wrong_type }]
+                    ),
+                    Err(ProofError::TermInstantiationTypeMismatch { variable, replacement, .. })
+                        if variable == x && replacement == wrong_type
+                ));
+                assert!(matches!(
+                    proof.instantiate_terms(
+                        &theorem,
+                        &[TermInstantiation { variable: x, replacement: open }]
+                    ),
+                    Err(ProofError::OpenTermInstantiationReplacement(term)) if term == open
+                ));
+                Ok::<_, ProofError>(())
+            })
+            .unwrap();
+        let after = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row(
+                "SELECT (SELECT count(*) FROM hol_node), (SELECT count(*) FROM hol_context)",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .unwrap();
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    fn term_instantiation_rolls_back_syntax_when_context_interning_fails() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let x = connection.insert_free_term(725, bool_type).unwrap();
+        let truth = connection.insert_bool_term(true).unwrap();
+        let proposition = connection.insert_equality(x, x).unwrap();
+        let context = connection.define_context([proposition]).unwrap();
+        let before = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row("SELECT count(*) FROM hol_node", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .execute_batch(
+                "CREATE TEMP TRIGGER reject_instantiated_context
+                 BEFORE INSERT ON hol_context
+                 BEGIN
+                   SELECT RAISE(ABORT, 'test context rejection');
+                 END",
+            )
+            .unwrap();
+
+        let result = connection.with_proof_session(|mut proof| {
+            let theorem = proof.prove_hypothesis(context, proposition)?;
+            proof
+                .instantiate_terms(
+                    &theorem,
+                    &[TermInstantiation {
+                        variable: x,
+                        replacement: truth,
+                    }],
+                )
+                .map(|_| ())
+        });
+        assert!(matches!(
+            result,
+            Err(ProofError::Context(ContextError::Sqlite(_)))
+        ));
+        let after = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row("SELECT count(*) FROM hol_node", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(after, before);
+        assert!(
+            connection
+                .parts_mut()
+                .0
+                .sqlite()
+                .query_row(
+                    "SELECT NOT EXISTS(
+                     SELECT 1 FROM hol_node
+                     WHERE tag = 'MEQ' AND lhs = ?1 AND rhs = ?1
+                 )",
+                    [truth.get()],
+                    |row| row.get::<_, bool>(0),
+                )
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn term_instantiation_checks_all_policy_gates_before_database_work() {
+        for denied in [
+            Operation::ProveTermInstantiation,
+            Operation::InsertTerm,
+            Operation::DefineContext,
+        ] {
+            let armed = Rc::new(Cell::new(false));
+            let mut connection = Connection::open_hol_in_memory(ArmedDenial {
+                operation: denied,
+                armed: Rc::clone(&armed),
+            })
+            .unwrap();
+            let bool_type = connection.insert_bool_type().unwrap();
+            let x = connection.insert_free_term(730, bool_type).unwrap();
+            let truth = connection.insert_bool_term(true).unwrap();
+            let context = connection.define_context([x]).unwrap();
+            armed.set(true);
+
+            let result = connection.with_proof_session(|mut proof| {
+                let theorem = proof.prove_hypothesis(context, x)?;
+                proof
+                    .instantiate_terms(
+                        &theorem,
+                        &[TermInstantiation {
+                            variable: x,
+                            replacement: truth,
+                        }],
+                    )
+                    .map(|_| ())
+            });
+            let expected = match denied {
+                Operation::DefineContext => ProofError::Context(ContextError::Denied(denied)),
+                _ => ProofError::Denied(denied),
+            };
+            assert_eq!(result.unwrap_err().to_string(), expected.to_string());
+            let counts = connection
+                .parts_mut()
+                .0
+                .sqlite()
+                .query_row(
+                    "SELECT (SELECT count(*) FROM hol_judgement),
+                            (SELECT count(*) FROM hol_proof_event)",
+                    [],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+                )
+                .unwrap();
+            assert_eq!(counts, (0, 0));
+        }
     }
 
     #[test]

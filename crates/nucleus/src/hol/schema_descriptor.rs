@@ -494,7 +494,7 @@ mod tests {
         assert_eq!(descriptor.encode(), expected);
         assert_eq!(
             descriptor.schema_id().to_string(),
-            "94ea2b678c70191ba52fe7b587bcf41e8e716b324578fa27234be58c68e27c77"
+            "c53243a6f8f7bd57fa295908344ba0f6ba07646f898922799bc3d7720c4e0402"
         );
     }
 

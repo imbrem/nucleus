@@ -16,11 +16,12 @@ pub use hol::{
     KindView, MatchedTrustedHolImage, MetadataError, MetadataSchemaError, MetadataTable,
     MetadataTarget, MetadataType, MetadataValue, NamespaceError, NamespaceExport, NamespaceId,
     NamespaceSource, NamespaceView, Operation, Policy, ProofError, ProofSession, SignedHolSnapshot,
-    SnapshotTrustError, TermError, TermId, TermView, Theorem, TrustedImportError, TrustedImportId,
-    TrustedImportImageError, TrustedImportView, TypeError, TypeId, TypeView, UnboundVariable,
-    ValidatedHolImage, stlc_bool_eq_v1_schema_id, stlc_bool_eq_v1_semantics,
-    stlc_bool_eq_v2_schema_id, stlc_bool_eq_v2_semantics, stlc_bool_eq_v3_schema_id,
-    stlc_bool_eq_v3_semantics,
+    SnapshotTrustError, TermError, TermId, TermInstantiation, TermView, Theorem,
+    TrustedImportError, TrustedImportId, TrustedImportImageError, TrustedImportView, TypeError,
+    TypeId, TypeView, UnboundVariable, ValidatedHolImage, stlc_bool_eq_v1_schema_id,
+    stlc_bool_eq_v1_semantics, stlc_bool_eq_v2_schema_id, stlc_bool_eq_v2_semantics,
+    stlc_bool_eq_v3_schema_id, stlc_bool_eq_v3_semantics, stlc_bool_eq_v4_schema_id,
+    stlc_bool_eq_v4_semantics,
 };
 pub use kernel::Kernel;
 
