@@ -11,7 +11,7 @@ use std::fmt;
 use covalence_nucleus::hol::{ContextEquivalence, ContextUnion};
 use covalence_nucleus::{
     Connection, ContextId, ContextImplication, Conversion, Hol, Policy, ProofError, TermId,
-    Theorem, TypeId,
+    TermInstantiation, Theorem, TypeId,
 };
 
 /// Maximum number of steps accepted in one untrusted proof recipe.
@@ -36,6 +36,15 @@ impl LocalHolProofRef {
     pub const fn get(self) -> u32 {
         self.0
     }
+}
+
+/// One exact free-variable replacement carried by an untrusted proof recipe.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LocalHolTermInstantiation {
+    /// Exact free-variable term to replace.
+    pub variable: TermId,
+    /// Locally closed, same-typed replacement term.
+    pub replacement: TermId,
 }
 
 /// One checked operation replayed in a fresh Nucleus proof session.
@@ -193,6 +202,20 @@ pub enum LocalHolProofStep {
         first: LocalHolProofRef,
         /// Second earlier theorem slot.
         second: LocalHolProofRef,
+    },
+    /// Simultaneously instantiate exact free variables in an earlier theorem.
+    InstantiateTerms {
+        /// Earlier theorem slot.
+        theorem: LocalHolProofRef,
+        /// Bounded variable/replacement pairs.
+        instantiations: Vec<LocalHolTermInstantiation>,
+    },
+    /// Abstract one exact free-variable node in both sides of an equality theorem.
+    Abstraction {
+        /// Earlier equality theorem slot.
+        theorem: LocalHolProofRef,
+        /// Exact free-variable term to bind.
+        variable: TermId,
     },
     /// Check and persist an exact structural context union.
     ContextUnion {
@@ -525,7 +548,9 @@ fn declared_sort(step: &LocalHolProofStep) -> LocalHolProofSort {
         | LocalHolProofStep::Weaken { .. }
         | LocalHolProofStep::EqualityModusPonens { .. }
         | LocalHolProofStep::EqualitySubstitution { .. }
-        | LocalHolProofStep::DeductionAntisymmetry { .. } => LocalHolProofSort::Theorem,
+        | LocalHolProofStep::DeductionAntisymmetry { .. }
+        | LocalHolProofStep::InstantiateTerms { .. }
+        | LocalHolProofStep::Abstraction { .. } => LocalHolProofSort::Theorem,
         LocalHolProofStep::ConversionReflexivity { .. }
         | LocalHolProofStep::ConversionSymmetry { .. }
         | LocalHolProofStep::ConversionTransitivity { .. }
@@ -667,6 +692,29 @@ fn preflight(steps: &[LocalHolProofStep]) -> Result<(), LocalHolProofScriptError
             LocalHolProofStep::DeductionAntisymmetry { first, second } => {
                 check(*first, LocalHolProofSort::Theorem)?;
                 check(*second, LocalHolProofSort::Theorem)?;
+            }
+            LocalHolProofStep::InstantiateTerms {
+                theorem,
+                instantiations,
+            } => {
+                check(*theorem, LocalHolProofSort::Theorem)?;
+                if instantiations.len() > MAX_LOCAL_HOL_PROOF_STEPS {
+                    return Err(LocalHolProofScriptError::TooManyOperands {
+                        step: u32::try_from(index).unwrap_or(u32::MAX),
+                        count: instantiations.len(),
+                        maximum: MAX_LOCAL_HOL_PROOF_STEPS,
+                    });
+                }
+                total_operands = total_operands
+                    .checked_add(instantiations.len())
+                    .filter(|count| *count <= MAX_TOTAL_LOCAL_HOL_PROOF_OPERANDS)
+                    .ok_or(LocalHolProofScriptError::TooManyTotalOperands {
+                        count: total_operands.saturating_add(instantiations.len()),
+                        maximum: MAX_TOTAL_LOCAL_HOL_PROOF_OPERANDS,
+                    })?;
+            }
+            LocalHolProofStep::Abstraction { theorem, .. } => {
+                check(*theorem, LocalHolProofSort::Theorem)?;
             }
             LocalHolProofStep::ContextEquivalence { forward, backward } => {
                 check(*forward, LocalHolProofSort::ContextImplication)?;
@@ -883,6 +931,28 @@ pub fn run_local_hol_proof_script<P: Policy>(
                         theorem(&slots, index, *second)?,
                     )?)
                 }
+                LocalHolProofStep::InstantiateTerms {
+                    theorem: theorem_ref,
+                    instantiations,
+                } => {
+                    let instantiations = instantiations
+                        .iter()
+                        .map(|instantiation| TermInstantiation {
+                            variable: instantiation.variable,
+                            replacement: instantiation.replacement,
+                        })
+                        .collect::<Vec<_>>();
+                    Capability::Theorem(proof.instantiate_terms(
+                        theorem(&slots, index, *theorem_ref)?,
+                        &instantiations,
+                    )?)
+                }
+                LocalHolProofStep::Abstraction {
+                    theorem: theorem_ref,
+                    variable,
+                } => Capability::Theorem(
+                    proof.abstraction(theorem(&slots, index, *theorem_ref)?, *variable)?,
+                ),
                 LocalHolProofStep::ContextUnion {
                     left,
                     right,
@@ -929,12 +999,14 @@ mod tests {
         let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
         let bool_type = connection.insert_bool_type().unwrap();
         let truth = connection.insert_bool_term(true).unwrap();
+        let free = connection.insert_free_term(17, bool_type).unwrap();
         let bound = connection.insert_bound_term(0, bool_type).unwrap();
         let identity = connection.insert_lambda(bool_type, bound).unwrap();
         let identity_truth = connection.insert_application(identity, truth).unwrap();
         let empty = ContextId::empty();
         let truth_context = connection.define_context([truth]).unwrap();
         let identity_truth_context = connection.define_context([identity_truth]).unwrap();
+        let free_context = connection.define_context([free]).unwrap();
 
         let steps = vec![
             LocalHolProofStep::Truth { context: empty }, // 0 theorem
@@ -1049,6 +1121,26 @@ mod tests {
                 first: reference(0),
                 second: reference(0),
             }, // 32 theorem true = true under empty
+            LocalHolProofStep::Hypothesis {
+                context: free_context,
+                term: free,
+            }, // 33 theorem free under {free}
+            LocalHolProofStep::InstantiateTerms {
+                theorem: reference(33),
+                instantiations: vec![LocalHolTermInstantiation {
+                    variable: free,
+                    replacement: truth,
+                }],
+            }, // 34 theorem true under {true}
+            LocalHolProofStep::Beta {
+                context: empty,
+                abstraction: identity,
+                argument: free,
+            }, // 35 theorem (lambda x. x) free = free
+            LocalHolProofStep::Abstraction {
+                theorem: reference(35),
+                variable: free,
+            }, // 36 theorem abstracting the exact free node
         ];
 
         let outputs = run_local_hol_proof_script(&mut connection, &steps).unwrap();
@@ -1090,6 +1182,163 @@ mod tests {
             outputs[32],
             LocalHolProofOutput::Theorem { context, .. } if context == empty
         ));
+        assert_eq!(
+            outputs[34],
+            LocalHolProofOutput::Theorem {
+                context: truth_context,
+                conclusion: truth,
+            }
+        );
+        assert!(matches!(
+            outputs[36],
+            LocalHolProofOutput::Theorem { context, .. } if context == empty
+        ));
+    }
+
+    #[test]
+    fn term_instantiation_reference_is_preflighted_as_an_earlier_theorem() {
+        let operations = Rc::new(RefCell::new(Vec::new()));
+        let policy = RecordingPolicy {
+            operations: Rc::clone(&operations),
+            denied: None,
+        };
+        let mut connection = Connection::open_hol_in_memory(policy).unwrap();
+
+        let forward = run_local_hol_proof_script(
+            &mut connection,
+            &[
+                LocalHolProofStep::InstantiateTerms {
+                    theorem: reference(1),
+                    instantiations: Vec::new(),
+                },
+                LocalHolProofStep::Truth {
+                    context: ContextId::empty(),
+                },
+            ],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            forward,
+            LocalHolProofScriptError::InvalidReference {
+                step: 0,
+                reference: bad_reference,
+            } if bad_reference == reference(1)
+        ));
+
+        let wrong_sort = run_local_hol_proof_script(
+            &mut connection,
+            &[
+                LocalHolProofStep::ConversionReflexivity {
+                    term: TermId::from_i64(i64::MAX),
+                },
+                LocalHolProofStep::InstantiateTerms {
+                    theorem: reference(0),
+                    instantiations: Vec::new(),
+                },
+            ],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            wrong_sort,
+            LocalHolProofScriptError::WrongSort {
+                step: 1,
+                reference: bad_reference,
+                expected: LocalHolProofSort::Theorem,
+                actual: LocalHolProofSort::Conversion,
+            } if bad_reference == reference(0)
+        ));
+        assert!(operations.borrow().is_empty());
+    }
+
+    #[test]
+    fn abstraction_reference_is_preflighted_as_an_earlier_theorem() {
+        let operations = Rc::new(RefCell::new(Vec::new()));
+        let policy = RecordingPolicy {
+            operations: Rc::clone(&operations),
+            denied: None,
+        };
+        let mut connection = Connection::open_hol_in_memory(policy).unwrap();
+
+        let forward = run_local_hol_proof_script(
+            &mut connection,
+            &[
+                LocalHolProofStep::Abstraction {
+                    theorem: reference(1),
+                    variable: TermId::from_i64(i64::MAX),
+                },
+                LocalHolProofStep::Truth {
+                    context: ContextId::empty(),
+                },
+            ],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            forward,
+            LocalHolProofScriptError::InvalidReference {
+                step: 0,
+                reference: bad_reference,
+            } if bad_reference == reference(1)
+        ));
+
+        let wrong_sort = run_local_hol_proof_script(
+            &mut connection,
+            &[
+                LocalHolProofStep::ConversionReflexivity {
+                    term: TermId::from_i64(i64::MAX),
+                },
+                LocalHolProofStep::Abstraction {
+                    theorem: reference(0),
+                    variable: TermId::from_i64(i64::MAX),
+                },
+            ],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            wrong_sort,
+            LocalHolProofScriptError::WrongSort {
+                step: 1,
+                reference: bad_reference,
+                expected: LocalHolProofSort::Theorem,
+                actual: LocalHolProofSort::Conversion,
+            } if bad_reference == reference(0)
+        ));
+        assert!(operations.borrow().is_empty());
+    }
+
+    #[test]
+    fn term_instantiation_pairs_count_toward_aggregate_operand_bound() {
+        let operations = Rc::new(RefCell::new(Vec::new()));
+        let policy = RecordingPolicy {
+            operations: Rc::clone(&operations),
+            denied: None,
+        };
+        let mut connection = Connection::open_hol_in_memory(policy).unwrap();
+        let pair = LocalHolTermInstantiation {
+            variable: TermId::from_i64(i64::MAX),
+            replacement: TermId::from_i64(i64::MAX),
+        };
+        let steps = [
+            LocalHolProofStep::Truth {
+                context: ContextId::empty(),
+            },
+            LocalHolProofStep::InstantiateTerms {
+                theorem: reference(0),
+                instantiations: vec![pair; MAX_TOTAL_LOCAL_HOL_PROOF_OPERANDS],
+            },
+            LocalHolProofStep::ContextImplicationPath {
+                path: vec![ContextId::empty()],
+            },
+        ];
+
+        let error = run_local_hol_proof_script(&mut connection, &steps).unwrap_err();
+        assert!(matches!(
+            error,
+            LocalHolProofScriptError::TooManyTotalOperands {
+                count,
+                maximum: MAX_TOTAL_LOCAL_HOL_PROOF_OPERANDS,
+            } if count == MAX_TOTAL_LOCAL_HOL_PROOF_OPERANDS + 1
+        ));
+        assert!(operations.borrow().is_empty());
     }
 
     #[test]

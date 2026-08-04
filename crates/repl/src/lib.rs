@@ -53,8 +53,8 @@ pub use native_http::{
 };
 pub use proof_script::{
     LocalHolProofOutput, LocalHolProofRef, LocalHolProofScriptError, LocalHolProofSort,
-    LocalHolProofStep, MAX_LOCAL_HOL_PROOF_STEPS, MAX_TOTAL_LOCAL_HOL_PROOF_OPERANDS,
-    run_local_hol_proof_script,
+    LocalHolProofStep, LocalHolTermInstantiation, MAX_LOCAL_HOL_PROOF_STEPS,
+    MAX_TOTAL_LOCAL_HOL_PROOF_OPERANDS, run_local_hol_proof_script,
 };
 pub use schema_spec::{
     HolMetadataColumnSpec, HolMetadataIndexSpec, HolMetadataSchemaSpec, HolMetadataStorageSpec,
