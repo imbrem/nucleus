@@ -49,6 +49,22 @@ pub enum ImportedExport<'reader> {
     Context(ImportedContextId<'reader>),
 }
 
+/// Read-only structural view of an imported type.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ImportedTypeView<'reader> {
+    /// Primitive Boolean type.
+    Bool,
+    /// Opaque base-type declaration.
+    Base { symbol: i64 },
+    /// Free rank-zero schematic type variable.
+    Free { symbol: i64 },
+    /// Function type.
+    Arrow {
+        domain: ImportedTypeId<'reader>,
+        codomain: ImportedTypeId<'reader>,
+    },
+}
+
 /// Read-only structural view of an imported term.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ImportedTermView<'reader> {
@@ -279,6 +295,30 @@ impl<'reader, P: Policy> ImportedHolReader<'reader, '_, P> {
         decode_term(row, id.0)
     }
 
+    /// Reads one imported type's validated structural representation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for policy denial, changed VFS identity, absence, or corruption.
+    pub fn type_view(
+        &mut self,
+        id: ImportedTypeId<'reader>,
+    ) -> Result<ImportedTypeView<'reader>, ImportedReaderError> {
+        self.authorize(Operation::ReadImportedImageType)?;
+        self.verify_vfs()?;
+        let row = self
+            .sqlite
+            .sqlite()
+            .query_row(
+                "SELECT tag, lhs, rhs, ty FROM imported.hol_node WHERE node_id = ?1",
+                [id.0],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()?
+            .ok_or(ImportedReaderError::UnknownType(id.0))?;
+        decode_type(row, id.0)
+    }
+
     /// Looks up one exact persisted judgement in the verified imported image.
     ///
     /// The returned capability witnesses only the imported row. It cannot be converted into a
@@ -324,6 +364,26 @@ impl<'reader, P: Policy> ImportedHolReader<'reader, '_, P> {
 }
 
 type TermRow = (String, Option<i64>, Option<i64>, Option<i64>);
+
+fn decode_type<'reader>(
+    row: TermRow,
+    id: i64,
+) -> Result<ImportedTypeView<'reader>, ImportedReaderError> {
+    match row {
+        (tag, None, None, Some(1)) if tag == "TBOOL" => Ok(ImportedTypeView::Bool),
+        (tag, Some(symbol), None, Some(1)) if tag == "TBASE" => {
+            Ok(ImportedTypeView::Base { symbol })
+        }
+        (tag, Some(symbol), None, Some(1)) if tag == "TFV" => Ok(ImportedTypeView::Free { symbol }),
+        (tag, Some(domain), Some(codomain), Some(1)) if tag == "TARR" => {
+            Ok(ImportedTypeView::Arrow {
+                domain: ImportedTypeId(domain, PhantomData),
+                codomain: ImportedTypeId(codomain, PhantomData),
+            })
+        }
+        _ => Err(ImportedReaderError::CorruptType(id)),
+    }
+}
 
 fn decode_term<'reader>(
     row: TermRow,
@@ -393,6 +453,8 @@ pub enum ImportedReaderError {
         namespace: i64,
         export: i64,
     },
+    UnknownType(i64),
+    CorruptType(i64),
     UnknownTerm(i64),
     CorruptTerm(i64),
 }
@@ -429,6 +491,8 @@ impl fmt::Display for ImportedReaderError {
             Self::CorruptExport { namespace, export } => {
                 write!(f, "imported export ({namespace}, {export}) is corrupt")
             }
+            Self::UnknownType(id) => write!(f, "unknown imported type {id}"),
+            Self::CorruptType(id) => write!(f, "imported type {id} is corrupt"),
             Self::UnknownTerm(id) => write!(f, "unknown imported term {id}"),
             Self::CorruptTerm(id) => write!(f, "imported term {id} is corrupt"),
         }
@@ -536,6 +600,7 @@ mod tests {
         let bound = source.insert_bound_term(0, bool_type).unwrap();
         let predicate = source.insert_lambda(bool_type, bound).unwrap();
         let epsilon = source.insert_epsilon(predicate).unwrap();
+        let schematic_type = source.insert_free_type(77).unwrap();
         let namespace = source.create_namespace(None, Some("demo")).unwrap();
         source
             .export_value(
@@ -543,6 +608,14 @@ mod tests {
                 ExportId::from_i64(7),
                 NamespaceExport::Term(truth),
                 Some("truth"),
+            )
+            .unwrap();
+        source
+            .export_value(
+                namespace,
+                ExportId::from_i64(11),
+                NamespaceExport::Type(schematic_type),
+                Some("schematic"),
             )
             .unwrap();
         source
@@ -690,6 +763,24 @@ mod tests {
                         ty: ImportedTypeId(bool_type.get(), PhantomData),
                     }
                 );
+                let ImportedExport::Type(imported_type) =
+                    reader.namespace_export(11).unwrap().unwrap()
+                else {
+                    panic!("expected imported type export")
+                };
+                assert_eq!(imported_type.get(), schematic_type.get());
+                assert_eq!(
+                    reader.type_view(imported_type).unwrap(),
+                    ImportedTypeView::Free { symbol: 77 }
+                );
+                denied.set(Some(Operation::ReadImportedImageType));
+                assert!(matches!(
+                    reader.type_view(imported_type),
+                    Err(ImportedReaderError::Denied(
+                        Operation::ReadImportedImageType
+                    ))
+                ));
+                denied.set(None);
                 denied.set(Some(Operation::ReadImportedImageTheorem));
                 assert!(matches!(
                     reader.theorem(context, term),

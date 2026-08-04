@@ -1,5 +1,5 @@
 CREATE TABLE hol_schema (
-    version INTEGER PRIMARY KEY CHECK (version = 9),
+    version INTEGER PRIMARY KEY CHECK (version = 10),
     representation TEXT NOT NULL CHECK (representation = 'tagged-node')
 ) STRICT;
 
@@ -17,6 +17,7 @@ CREATE TABLE hol_node (
         OR (tag = 'KARR' AND lhs IS NOT NULL AND rhs IS NOT NULL AND ty IS NULL)
         OR (tag = 'TBOOL' AND node_id = 2 AND lhs IS NULL AND rhs IS NULL AND ty = 1)
         OR (tag = 'TBASE' AND lhs IS NOT NULL AND rhs IS NULL AND ty = 1)
+        OR (tag = 'TFV' AND lhs IS NOT NULL AND rhs IS NULL AND ty = 1)
         OR (tag = 'TARR' AND lhs IS NOT NULL AND rhs IS NOT NULL AND ty = 1)
         OR (
             tag = 'MBOOL'
@@ -189,6 +190,9 @@ CREATE UNIQUE INDEX hol_tbool_unique
 CREATE UNIQUE INDEX hol_tbase_unique
     ON hol_node(lhs) WHERE tag = 'TBASE';
 
+CREATE UNIQUE INDEX hol_tfv_unique
+    ON hol_node(lhs, ty) WHERE tag = 'TFV';
+
 CREATE UNIQUE INDEX hol_tarr_unique
     ON hol_node(lhs, rhs) WHERE tag = 'TARR';
 
@@ -216,7 +220,7 @@ CREATE UNIQUE INDEX hol_meq_unique
 CREATE UNIQUE INDEX hol_meps_unique
     ON hol_node(lhs) WHERE tag = 'MEPS';
 
-INSERT INTO hol_schema(version, representation) VALUES (9, 'tagged-node');
+INSERT INTO hol_schema(version, representation) VALUES (10, 'tagged-node');
 INSERT INTO hol_node(node_id, tag) VALUES (1, 'KSTAR');
 INSERT INTO hol_node(node_id, tag, ty) VALUES (2, 'TBOOL', 1);
 INSERT INTO hol_context(ctx_id) VALUES (0);
