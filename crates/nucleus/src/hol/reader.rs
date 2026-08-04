@@ -87,6 +87,11 @@ pub enum ImportedTermView<'reader> {
         right: ImportedTermId<'reader>,
         ty: ImportedTypeId<'reader>,
     },
+    /// Hilbert choice applied to a Boolean-valued predicate.
+    Epsilon {
+        predicate: ImportedTermId<'reader>,
+        ty: ImportedTypeId<'reader>,
+    },
 }
 
 /// Evidence that one exact judgement row occurs in a verified imported image.
@@ -355,6 +360,10 @@ fn decode_term<'reader>(
             right: ImportedTermId(right, PhantomData),
             ty: ImportedTypeId(ty, PhantomData),
         }),
+        ("MEPS", Some(predicate), None, Some(ty)) => Ok(ImportedTermView::Epsilon {
+            predicate: ImportedTermId(predicate, PhantomData),
+            ty: ImportedTypeId(ty, PhantomData),
+        }),
         _ => Err(corrupt()),
     }
 }
@@ -496,6 +505,20 @@ mod tests {
     }
 
     #[test]
+    fn imported_epsilon_preserves_its_predicate_and_result_type() {
+        let view = decode_term(("MEPS".to_owned(), Some(17), None, Some(42)), 9).unwrap();
+        let ImportedTermView::Epsilon { predicate, ty } = view else {
+            panic!("expected imported epsilon")
+        };
+        assert_eq!(predicate.get(), 17);
+        assert_eq!(ty.get(), 42);
+        assert!(matches!(
+            decode_term(("MEPS".to_owned(), Some(17), Some(18), Some(42)), 9),
+            Err(ImportedReaderError::CorruptTerm(9))
+        ));
+    }
+
+    #[test]
     #[allow(clippy::too_many_lines)]
     fn scoped_reader_uses_verified_vfs_and_exposes_only_scoped_evidence() {
         let source_kernel = Kernel::ephemeral();
@@ -509,6 +532,10 @@ mod tests {
             })
             .unwrap();
         let falsehood = source.insert_bool_term(false).unwrap();
+        let bool_type = source.insert_bool_type().unwrap();
+        let bound = source.insert_bound_term(0, bool_type).unwrap();
+        let predicate = source.insert_lambda(bool_type, bound).unwrap();
+        let epsilon = source.insert_epsilon(predicate).unwrap();
         let namespace = source.create_namespace(None, Some("demo")).unwrap();
         source
             .export_value(
@@ -516,6 +543,14 @@ mod tests {
                 ExportId::from_i64(7),
                 NamespaceExport::Term(truth),
                 Some("truth"),
+            )
+            .unwrap();
+        source
+            .export_value(
+                namespace,
+                ExportId::from_i64(10),
+                NamespaceExport::Term(epsilon),
+                Some("epsilon"),
             )
             .unwrap();
         source
@@ -642,6 +677,19 @@ mod tests {
                     panic!("expected imported term export")
                 };
                 assert!(reader.theorem(context, falsehood).unwrap().is_none());
+                let ImportedExport::Term(imported_epsilon) =
+                    reader.namespace_export(10).unwrap().unwrap()
+                else {
+                    panic!("expected imported epsilon export")
+                };
+                assert_eq!(imported_epsilon.get(), epsilon.get());
+                assert_eq!(
+                    reader.term(imported_epsilon).unwrap(),
+                    ImportedTermView::Epsilon {
+                        predicate: ImportedTermId(predicate.get(), PhantomData),
+                        ty: ImportedTypeId(bool_type.get(), PhantomData),
+                    }
+                );
                 denied.set(Some(Operation::ReadImportedImageTheorem));
                 assert!(matches!(
                     reader.theorem(context, term),
