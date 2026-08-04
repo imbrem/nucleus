@@ -100,6 +100,11 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
   assert.equal(result.signatureLength, 64);
   assert.ok(result.descriptorLength > 0);
   assert.equal(result.compiledDescriptorMatches, true);
+  assert.deepEqual(result.proofRecipe, {
+    version: 1,
+    outputs: [{ kind: "theorem", context: 0, conclusion: 3 }, { kind: "unit" }],
+  });
+  assert.equal(result.unknownProofFieldRejected, true);
   assert.equal(result.malformedDescriptorRejected, true);
   assert.equal(result.ambiguousSchemaSourceRejected, true);
   assert.equal(result.attestationHasBytes, false);

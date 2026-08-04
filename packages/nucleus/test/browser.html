@@ -159,6 +159,22 @@
         }
 
         const truth = await hol.boolTerm(true);
+        const proofRecipe = await hol.runProofScript({
+          version: 1,
+          steps: [
+            { op: "truth", context: 0 },
+            { op: "persist_theorem", theorem: 0 },
+          ],
+        });
+        let unknownProofFieldRejected = false;
+        try {
+          await hol.runProofScript({
+            version: 1,
+            steps: [{ op: "truth", context: 0, unknown: true }],
+          });
+        } catch {
+          unknownProofFieldRejected = true;
+        }
         const namespace = await hol.createNamespace(0, "demo");
         await hol.bindExport(namespace, 7, "term", truth, "truth");
         const namespaceView = await hol.namespace(namespace);
@@ -309,6 +325,8 @@
           ambiguousSchemaSourceRejected,
           attestationHasBytes: "bytes" in attestation,
           snapshotRows,
+          proofRecipe,
+          unknownProofFieldRejected,
           trustedImport,
           inspectedImport,
           importedNamespace,

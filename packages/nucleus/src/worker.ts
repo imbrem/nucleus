@@ -9,6 +9,7 @@ import type {
   HolMetadataAssignment,
   HolMetadataTarget,
   HolMetadataValue,
+  HolProofRecipeV1,
   HolSchemaSource,
   HolSchemaSpecV1,
   SignedHolSnapshot,
@@ -168,6 +169,12 @@ type Request =
       operation: "holContextMembers";
       connection: number;
       context: number;
+    }
+  | {
+      id: number;
+      operation: "holRunProofScript";
+      connection: number;
+      recipe: HolProofRecipeV1;
     }
   | {
       id: number;
@@ -755,6 +762,13 @@ async function execute(request: Request): Promise<unknown> {
     case "holContextMembers":
       return Array.from(
         connection.hol_context_members(request.connection, request.context),
+      );
+    case "holRunProofScript":
+      return JSON.parse(
+        connection.hol_run_proof_script_json(
+          request.connection,
+          JSON.stringify(request.recipe),
+        ),
       );
     case "holProveHypothesis":
       return connection.hol_prove_hypothesis(

@@ -36,7 +36,83 @@ export type HolTerm =
   | { kind: "bound"; index: number }
   | { kind: "application"; function: number; argument: number }
   | { kind: "lambda"; parameterType: number; body: number }
-  | { kind: "equality"; left: number; right: number };
+  | { kind: "equality"; left: number; right: number }
+  | { kind: "epsilon"; predicate: number };
+
+export type HolProofStepV1 =
+  | { op: "load_theorem"; context: number; conclusion: number }
+  | { op: "hypothesis"; context: number; term: number }
+  | { op: "truth"; context: number }
+  | { op: "reflexivity"; context: number; term: number }
+  | { op: "beta"; context: number; abstraction: number; argument: number }
+  | { op: "persist_theorem"; theorem: number }
+  | { op: "conversion_reflexivity"; term: number }
+  | { op: "conversion_symmetry"; conversion: number }
+  | { op: "conversion_transitivity"; first: number; second: number }
+  | { op: "conversion_application"; function: number; argument: number }
+  | { op: "conversion_lambda"; parameter_type: number; body: number }
+  | { op: "conversion_beta"; abstraction: number; argument: number }
+  | { op: "conversion_eta"; function: number }
+  | { op: "conversion_equality"; context: number; conversion: number }
+  | { op: "convert_theorem"; theorem: number; conversion: number }
+  | {
+      op: "context_implication";
+      antecedent: number;
+      consequent: number;
+      witnesses: number[];
+    }
+  | {
+      op: "load_context_implication";
+      antecedent: number;
+      consequent: number;
+    }
+  | { op: "context_implication_path"; path: number[] }
+  | { op: "persist_context_implication"; implication: number }
+  | { op: "weaken"; implication: number; theorem: number }
+  | { op: "equality_modus_ponens"; equality: number; premise: number }
+  | {
+      op: "equality_substitution";
+      equality: number;
+      predicate: number;
+      premise: number;
+    }
+  | { op: "deduction_antisymmetry"; first: number; second: number }
+  | {
+      op: "instantiate_terms";
+      theorem: number;
+      instantiations: { variable: number; replacement: number }[];
+    }
+  | { op: "abstraction"; theorem: number; variable: number }
+  | { op: "context_union"; left: number; right: number; result: number }
+  | { op: "load_context_union"; left: number; right: number }
+  | { op: "context_equivalence"; forward: number; backward: number };
+
+export interface HolProofRecipeV1 {
+  version: 1;
+  steps: HolProofStepV1[];
+}
+
+export type HolProofOutputV1 =
+  | { kind: "theorem"; context: number; conclusion: number }
+  | {
+      kind: "conversion";
+      left: number;
+      right: number;
+      ty: number;
+      closed: boolean;
+    }
+  | { kind: "context_implication"; antecedent: number; consequent: number }
+  | { kind: "context_union"; left: number; right: number; result: number }
+  | { kind: "context_equivalence"; left: number; right: number }
+  | { kind: "missing_theorem" }
+  | { kind: "missing_context_implication" }
+  | { kind: "missing_context_union" }
+  | { kind: "unit" };
+
+export interface HolProofResponseV1 {
+  version: 1;
+  outputs: HolProofOutputV1[];
+}
 
 export interface HolUnboundVariable {
   index: number;
@@ -235,6 +311,7 @@ export interface BrowserHolConnection {
   termUnboundVariables(id: number): Promise<HolUnboundVariable[]>;
   defineContext(members: number[]): Promise<number>;
   contextMembers(id: number): Promise<number[]>;
+  runProofScript(recipe: HolProofRecipeV1): Promise<HolProofResponseV1>;
   proveHypothesis(context: number, term: number): Promise<number>;
   proveTruth(context: number): Promise<number>;
   proveReflexivity(context: number, term: number): Promise<number>;
@@ -422,6 +499,11 @@ type RequestBody =
   | { operation: "holTermUnboundVariables"; connection: number; term: number }
   | { operation: "holDefineContext"; connection: number; members: number[] }
   | { operation: "holContextMembers"; connection: number; context: number }
+  | {
+      operation: "holRunProofScript";
+      connection: number;
+      recipe: HolProofRecipeV1;
+    }
   | {
       operation: "holProveHypothesis";
       connection: number;
@@ -979,6 +1061,14 @@ class WorkerHolConnection implements BrowserHolConnection {
       operation: "holContextMembers",
       connection: this.connection,
       context: id,
+    });
+  }
+
+  runProofScript(recipe: HolProofRecipeV1): Promise<HolProofResponseV1> {
+    return this.#request({
+      operation: "holRunProofScript",
+      connection: this.connection,
+      recipe,
     });
   }
 
