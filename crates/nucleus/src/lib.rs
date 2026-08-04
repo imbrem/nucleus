@@ -21,7 +21,7 @@ pub use hol::{
     TypeId, TypeView, UnboundVariable, ValidatedHolImage, stlc_bool_eq_v1_schema_id,
     stlc_bool_eq_v1_semantics, stlc_bool_eq_v2_schema_id, stlc_bool_eq_v2_semantics,
     stlc_bool_eq_v3_schema_id, stlc_bool_eq_v3_semantics, stlc_bool_eq_v4_schema_id,
-    stlc_bool_eq_v4_semantics,
+    stlc_bool_eq_v4_semantics, stlc_bool_eq_v5_schema_id, stlc_bool_eq_v5_semantics,
 };
 pub use kernel::Kernel;
 
