@@ -54,6 +54,15 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
   const result = JSON.parse(
     await page.locator("body").getAttribute("data-result"),
   );
+  assert.equal(result.kernelKeysDiffer, true);
+  assert.equal(result.kernelDirectoryMatches, true);
+  assert.deepEqual(result.secondKernelSqlResult, {
+    kind: "rows",
+    columns: ["independently_routed"],
+    rows: [[{ kind: "integer", value: "126" }]],
+  });
+  assert.equal(result.secondKernelSnapshotKeyMatches, true);
+  assert.equal(result.secondKernelDescriptorMatches, true);
   assert.match(result.hash, /^[0-9a-f]{64}$/);
   assert.deepEqual(result.result, {
     kind: "rows",
@@ -100,8 +109,11 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
   });
   assert.deepEqual(result.inspectedImport, result.trustedImport);
   assert.equal(result.importedNamespace, 1);
-  assert.deepEqual(result.importedExport, {
-    connectionId: 3,
+  const { connectionId: importedConnectionId, ...importedExport } =
+    result.importedExport;
+  assert.equal(Number.isInteger(importedConnectionId), true);
+  assert.ok(importedConnectionId > 0);
+  assert.deepEqual(importedExport, {
     trustedImportId: 0,
     importId: 0,
     namespaceId: 1,

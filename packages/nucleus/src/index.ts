@@ -59,6 +59,13 @@ export interface ResidentHolSnapshot extends SignedHolAttestation {
   descriptor: Uint8Array;
 }
 
+export interface BrowserKernelInfo {
+  id: number;
+  transport: string;
+  endpoint: string | null;
+  publicKey: Uint8Array;
+}
+
 export interface SignedHolSnapshot extends ResidentHolSnapshot {
   bytes: Uint8Array;
 }
@@ -248,7 +255,15 @@ export interface BrowserHolConnection {
 
 export interface BrowserRepl {
   open(): Promise<BrowserSqlConnection>;
+  openAt(kernel: number): Promise<BrowserSqlConnection>;
   openHol(source?: HolSchemaSource): Promise<BrowserHolConnection>;
+  openHolAt(
+    kernel: number,
+    source?: HolSchemaSource,
+  ): Promise<BrowserHolConnection>;
+  createKernel(): Promise<BrowserKernelInfo>;
+  kernel(id: number): Promise<BrowserKernelInfo>;
+  kernels(): Promise<BrowserKernelInfo[]>;
   compileHolSchema(schema: HolSchemaSpecV1): Promise<Uint8Array>;
   putHolSnapshot(snapshot: SignedHolSnapshot): Promise<string>;
   close(): void;
@@ -256,7 +271,12 @@ export interface BrowserRepl {
 
 type RequestBody =
   | { operation: "open" }
+  | { operation: "openAt"; kernel: number }
   | { operation: "openHol"; source?: HolSchemaSource }
+  | { operation: "openHolAt"; kernel: number; source?: HolSchemaSource }
+  | { operation: "createKernel" }
+  | { operation: "kernel"; kernel: number }
+  | { operation: "kernels" }
   | { operation: "compileHolSchema"; schema: HolSchemaSpecV1 }
   | { operation: "holPutSnapshot"; snapshot: SignedHolSnapshot }
   | { operation: "close"; connection: number }
@@ -487,7 +507,19 @@ class WorkerRepl implements BrowserRepl {
     return new WorkerConnection(this, id);
   }
 
+  async openAt(kernel: number): Promise<BrowserSqlConnection> {
+    const id = await this.request<number>({ operation: "openAt", kernel });
+    return new WorkerConnection(this, id);
+  }
+
   async openHol(source?: HolSchemaSource): Promise<BrowserHolConnection> {
+    return this.openHolAt(0, source);
+  }
+
+  async openHolAt(
+    kernel: number,
+    source?: HolSchemaSource,
+  ): Promise<BrowserHolConnection> {
     if (
       source !== undefined &&
       !(
@@ -509,10 +541,23 @@ class WorkerRepl implements BrowserRepl {
         ? { kind: "descriptor" as const, descriptor: transferred! }
         : source;
     const id = await this.request<number>(
-      { operation: "openHol", source: requestSource },
+      { operation: "openHolAt", kernel, source: requestSource },
       transferred === undefined ? [] : [transferred.buffer],
     );
     return new WorkerHolConnection(this, id);
+  }
+
+  async createKernel(): Promise<BrowserKernelInfo> {
+    const id = await this.request<number>({ operation: "createKernel" });
+    return this.kernel(id);
+  }
+
+  kernel(id: number): Promise<BrowserKernelInfo> {
+    return this.request({ operation: "kernel", kernel: id });
+  }
+
+  kernels(): Promise<BrowserKernelInfo[]> {
+    return this.request({ operation: "kernels" });
   }
 
   compileHolSchema(schema: HolSchemaSpecV1): Promise<Uint8Array> {
