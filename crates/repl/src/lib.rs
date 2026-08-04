@@ -459,10 +459,42 @@ impl LocalConnection {
 /// A local kernel and heterogeneous connection directory shared by all UIs.
 pub struct LocalRepl {
     kernels: HashMap<KernelId, LocalKernelService>,
+    remote_kernels: HashMap<KernelId, RemoteKernelRoute>,
     #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     remote_http: HashMap<KernelId, LoopbackHttpEndpoint>,
     signed_client: SignedKernelClient,
     directory: Repl<LocalConnection>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RemoteKernelRoute {
+    transport: String,
+    endpoint: Option<String>,
+    public_key: PublicKeyIdentity,
+}
+
+/// One linear signed request whose exact bytes may cross an asynchronous transport boundary.
+///
+/// The controller signing key and replay state remain inside [`LocalRepl`]. Transport adapters
+/// must consume this value through result acceptance or abandonment and must never retry its bytes
+/// after an ambiguous failure.
+pub struct PendingKernelRequest {
+    pending: PendingInvocation,
+    coordinates: ChannelCoordinates,
+}
+
+impl PendingKernelRequest {
+    /// Kernel route which must receive this request.
+    #[must_use]
+    pub const fn kernel(&self) -> KernelId {
+        self.pending.kernel()
+    }
+
+    /// Exact canonical signed bytes to carry without interpretation.
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        self.pending.encode()
+    }
 }
 
 /// One in-process kernel endpoint with service-local SQL handles and immutable image residency.
@@ -1385,6 +1417,7 @@ impl LocalRepl {
         let kernels = HashMap::from([(KernelId::local(), LocalKernelService::new(kernel))]);
         Ok(Self {
             kernels,
+            remote_kernels: HashMap::new(),
             #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
             remote_http: HashMap::new(),
             signed_client: SignedKernelClient::ephemeral(),
@@ -1431,18 +1464,50 @@ impl LocalRepl {
         let enrollment_endpoint =
             bootstrap_token.map_or(endpoint, |token| endpoint.with_bootstrap_token(token));
         let grant = enrollment_endpoint.request_channel(self.signed_client.caller_public_key())?;
+        let id = self.accept_remote_kernel(
+            "native-http",
+            Some(&address.to_string()),
+            pinned_recipient,
+            &grant,
+        )?;
+        let replaced = self.remote_http.insert(id, endpoint);
+        debug_assert!(replaced.is_none());
+        Ok(id)
+    }
 
+    /// Returns the ephemeral controller key which a remote kernel must bind into its grant.
+    #[must_use]
+    pub fn remote_caller_public_key(&self) -> PublicKeyIdentity {
+        self.signed_client.caller_public_key()
+    }
+
+    /// Verifies and records one transport-neutral remote-kernel channel.
+    ///
+    /// The inspectable `SQLite` directory row is inserted only after the recipient-signed grant is
+    /// authenticated against `pinned_recipient`. The transport and endpoint are descriptive route
+    /// metadata and confer no authority.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a malformed or mismatched grant, invalid recipient key, or failed
+    /// directory update.
+    pub fn accept_remote_kernel(
+        &mut self,
+        transport: &str,
+        endpoint: Option<&str>,
+        pinned_recipient: PublicKeyIdentity,
+        grant: &[u8],
+    ) -> Result<KernelId, LocalReplError> {
         // `insert_kernel` allocates this exact next ID. Installing the verified route first makes
         // a failed directory transaction locally atomic; the remote may retain only an unused,
         // bounded channel grant.
         let candidate = KernelId(self.directory.next_kernel_id);
         self.signed_client
-            .accept_grant(candidate, pinned_recipient, &grant)?;
-        let id = match self.directory.insert_kernel(
-            "native-http",
-            Some(&address.to_string()),
-            &pinned_recipient,
-        ) {
+            .accept_grant(candidate, pinned_recipient, grant)?;
+        let id = match self
+            .directory
+            .insert_kernel(transport, endpoint, &pinned_recipient)
+        {
             Ok(id) => id,
             Err(error) => {
                 let _ = self.signed_client.remove_route(candidate);
@@ -1450,7 +1515,14 @@ impl LocalRepl {
             }
         };
         debug_assert_eq!(id, candidate);
-        let replaced = self.remote_http.insert(id, endpoint);
+        let replaced = self.remote_kernels.insert(
+            id,
+            RemoteKernelRoute {
+                transport: transport.to_owned(),
+                endpoint: endpoint.map(str::to_owned),
+                public_key: pinned_recipient,
+            },
+        );
         debug_assert!(replaced.is_none());
         Ok(id)
     }
@@ -1471,12 +1543,11 @@ impl LocalRepl {
                     .public_key,
             });
         }
-        #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-        if let Some(endpoint) = self.remote_http.get(&id) {
+        if let Some(route) = self.remote_kernels.get(&id) {
             return Ok(KernelView {
-                transport: "native-http".to_owned(),
-                endpoint: Some(endpoint.address().to_string()),
-                public_key: endpoint.pinned_recipient(),
+                transport: route.transport.clone(),
+                endpoint: route.endpoint.clone(),
+                public_key: route.public_key,
             });
         }
         Err(ReplError::UnknownKernel(id).into())
@@ -1501,14 +1572,13 @@ impl LocalRepl {
                     .into()
             })
             .collect::<Vec<_>>();
-        #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-        kernels.extend(self.remote_http.iter().map(|(id, endpoint)| {
+        kernels.extend(self.remote_kernels.iter().map(|(id, route)| {
             (
                 *id,
                 KernelView {
-                    transport: "native-http".to_owned(),
-                    endpoint: Some(endpoint.address().to_string()),
-                    public_key: endpoint.pinned_recipient(),
+                    transport: route.transport.clone(),
+                    endpoint: route.endpoint.clone(),
+                    public_key: route.public_key,
                 },
             )
         }));
@@ -1758,14 +1828,69 @@ impl LocalRepl {
         Err(ReplError::UnknownKernel(recipient).into())
     }
 
+    /// Signs one request for an already established kernel route without performing I/O.
+    ///
+    /// At most one request may be pending per kernel. The returned linear token retains no secret
+    /// key material and must be consumed by [`Self::accept_kernel_result`] or
+    /// [`Self::abandon_kernel_request`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown/unestablished route, an existing pending request, sequence
+    /// exhaustion, frame bounds, or signing failure.
+    pub fn prepare_kernel_request(
+        &mut self,
+        kernel: KernelId,
+        request: &ServiceRequest,
+    ) -> Result<PendingKernelRequest, LocalReplError> {
+        let pending = self.signed_client.prepare(kernel, request)?;
+        let coordinates = pending.channel_coordinates();
+        Ok(PendingKernelRequest {
+            pending,
+            coordinates,
+        })
+    }
+
+    /// Verifies one exact result and advances its signed route without performing I/O.
+    ///
+    /// Any malformed, unauthenticated, mismatched, or stale result poisons the route and
+    /// invalidates all SQL handles associated with it.
+    ///
+    /// # Errors
+    ///
+    /// Returns the precise signed-client verification or response-codec failure.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn accept_kernel_result(
+        &mut self,
+        request: PendingKernelRequest,
+        result: &[u8],
+    ) -> Result<ServiceResponse, LocalReplError> {
+        let kernel = request.pending.kernel();
+        match self.signed_client.accept_result(request.pending, result) {
+            Ok(response) => Ok(response),
+            Err(error) => {
+                self.revoke_sql_client_channel(kernel, request.coordinates);
+                Err(error.into())
+            }
+        }
+    }
+
+    /// Abandons an ambiguously transported request, poisons its route, and invalidates its SQL
+    /// handles. The invocation bytes must not be retried.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn abandon_kernel_request(&mut self, request: PendingKernelRequest) {
+        let kernel = request.pending.kernel();
+        let _ = self.signed_client.abandon_pending(request.pending);
+        self.revoke_sql_client_channel(kernel, request.coordinates);
+    }
+
     fn signed_sql_request(
         &mut self,
         recipient: KernelId,
         request: &ServiceRequest,
     ) -> Result<ServiceResponse, LocalReplError> {
         self.ensure_sql_client_channel(recipient)?;
-        let pending = self.signed_client.prepare(recipient, request)?;
-        let coordinates = pending.channel_coordinates();
+        let pending = self.prepare_kernel_request(recipient, request)?;
         let invocation = pending.encode();
         let exchange = if let Some(service) = self.kernels.get_mut(&recipient) {
             service
@@ -1788,18 +1913,11 @@ impl LocalRepl {
         let result_bytes = match exchange {
             Ok(bytes) => bytes,
             Err(error) => {
-                let _ = self.signed_client.abandon_pending(pending);
-                self.revoke_sql_client_channel(recipient, coordinates);
+                self.abandon_kernel_request(pending);
                 return Err(error);
             }
         };
-        match self.signed_client.accept_result(pending, &result_bytes) {
-            Ok(response) => Ok(response),
-            Err(error) => {
-                self.revoke_sql_client_channel(recipient, coordinates);
-                Err(error.into())
-            }
-        }
+        self.accept_kernel_result(pending, &result_bytes)
     }
 
     fn revoke_sql_client_channel(&mut self, recipient: KernelId, coordinates: ChannelCoordinates) {
@@ -1827,8 +1945,7 @@ impl LocalRepl {
         if self.kernels.contains_key(&kernel) {
             return Ok(());
         }
-        #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-        if self.remote_http.contains_key(&kernel) {
+        if self.remote_kernels.contains_key(&kernel) {
             return Err(LocalReplError::RemoteProtocolUnsupported {
                 kernel,
                 protocol: "nucleus/hol-common-v2",
@@ -3272,6 +3389,18 @@ mod tests {
             .directory
             .insert_kernel("native-http", Some(&address.to_string()), &public_key)
             .unwrap();
+        assert!(
+            repl.remote_kernels
+                .insert(
+                    id,
+                    RemoteKernelRoute {
+                        transport: "native-http".to_owned(),
+                        endpoint: Some(address.to_string()),
+                        public_key,
+                    },
+                )
+                .is_none()
+        );
         assert!(repl.remote_http.insert(id, endpoint).is_none());
 
         assert_eq!(
@@ -3306,6 +3435,59 @@ mod tests {
             )) if address == non_loopback
         ));
         assert_eq!(repl.kernels().len(), before);
+    }
+
+    #[test]
+    fn split_remote_rpc_keeps_linear_signed_state_in_rust() {
+        let mut repl = LocalRepl::new().unwrap();
+        let mut remote = LocalKernelService::new(Kernel::ephemeral());
+        let caller = repl.remote_caller_public_key();
+        let grant = remote.issue_sql_channel(caller).unwrap();
+        let recipient = remote.identity().unwrap().public_key;
+        let kernel = repl
+            .accept_remote_kernel("test-bytes", Some("opaque"), recipient, &grant.encode())
+            .unwrap();
+        assert_eq!(
+            repl.kernel(kernel).unwrap(),
+            KernelView {
+                transport: "test-bytes".to_owned(),
+                endpoint: Some("opaque".to_owned()),
+                public_key: recipient,
+            }
+        );
+
+        let pending = repl
+            .prepare_kernel_request(kernel, &ServiceRequest::Identity)
+            .unwrap();
+        let result = remote.exchange_sql(&pending.encode()).unwrap();
+        assert!(matches!(
+            repl.accept_kernel_result(pending, &result).unwrap(),
+            ServiceResponse::Identity(Ok(identity)) if identity.public_key == recipient
+        ));
+
+        let abandoned = repl
+            .prepare_kernel_request(kernel, &ServiceRequest::Identity)
+            .unwrap();
+        repl.abandon_kernel_request(abandoned);
+        assert!(matches!(
+            repl.prepare_kernel_request(kernel, &ServiceRequest::Identity),
+            Err(LocalReplError::SignedClient(
+                SignedClientError::UnknownRoute(route)
+            )) if route == kernel
+        ));
+    }
+
+    #[test]
+    fn rejected_remote_grant_leaves_no_directory_or_route() {
+        let mut repl = LocalRepl::new().unwrap();
+        let before = repl.kernels();
+        let recipient = *Kernel::ephemeral().verifying_key().as_bytes();
+        assert!(
+            repl.accept_remote_kernel("fetch", Some("https://example.invalid"), recipient, b"bad")
+                .is_err()
+        );
+        assert_eq!(repl.kernels(), before);
+        assert!(repl.remote_kernels.is_empty());
     }
 
     #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
