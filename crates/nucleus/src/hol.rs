@@ -62,6 +62,192 @@ pub enum Operation {
     ReadKind,
     /// Validate and canonically intern a kind.
     InsertKind,
+    /// Read user-declared metadata attached to an admitted node.
+    ReadMetadata,
+    /// Write user-declared metadata attached to an admitted node.
+    WriteMetadata,
+}
+
+/// `SQLite` storage class of a user-declared metadata column.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MetadataType {
+    /// Signed 64-bit integer metadata.
+    Integer,
+    /// IEEE-754 binary64 metadata.
+    Real,
+    /// UTF-8 text metadata.
+    Text,
+    /// Arbitrary byte-string metadata.
+    Blob,
+    /// Any `SQLite` value, preserving its storage class.
+    Any,
+}
+
+impl MetadataType {
+    const fn sql(self) -> &'static str {
+        match self {
+            Self::Integer => "INTEGER",
+            Self::Real => "REAL",
+            Self::Text => "TEXT",
+            Self::Blob => "BLOB",
+            Self::Any => "ANY",
+        }
+    }
+}
+
+/// A value read from or written to a user metadata column.
+#[derive(Clone, Debug, PartialEq)]
+pub enum MetadataValue {
+    /// SQL NULL.
+    Null,
+    /// Signed 64-bit integer.
+    Integer(i64),
+    /// IEEE-754 binary64 value.
+    Real(f64),
+    /// UTF-8 text.
+    Text(String),
+    /// Arbitrary bytes.
+    Blob(Vec<u8>),
+}
+
+impl From<MetadataValue> for sqlite::types::Value {
+    fn from(value: MetadataValue) -> Self {
+        match value {
+            MetadataValue::Null => Self::Null,
+            MetadataValue::Integer(value) => Self::Integer(value),
+            MetadataValue::Real(value) => Self::Real(value),
+            MetadataValue::Text(value) => Self::Text(value),
+            MetadataValue::Blob(value) => Self::Blob(value),
+        }
+    }
+}
+
+impl From<sqlite::types::Value> for MetadataValue {
+    fn from(value: sqlite::types::Value) -> Self {
+        match value {
+            sqlite::types::Value::Null => Self::Null,
+            sqlite::types::Value::Integer(value) => Self::Integer(value),
+            sqlite::types::Value::Real(value) => Self::Real(value),
+            sqlite::types::Value::Text(value) => Self::Text(value),
+            sqlite::types::Value::Blob(value) => Self::Blob(value),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct MetadataColumn {
+    name: String,
+    storage: MetadataType,
+}
+
+#[derive(Clone, Debug)]
+struct MetadataIndex {
+    name: String,
+    columns: Vec<String>,
+    unique: bool,
+}
+
+/// User-selected physical metadata columns and ordinary `SQLite` indexes.
+///
+/// Metadata never participates in canonical HOL node identity.
+#[derive(Clone, Debug, Default)]
+pub struct HolSchema {
+    columns: Vec<MetadataColumn>,
+    indexes: Vec<MetadataIndex>,
+}
+
+impl HolSchema {
+    /// Creates the zero-metadata schema.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            columns: Vec::new(),
+            indexes: Vec::new(),
+        }
+    }
+
+    /// Adds a nullable user metadata column to `hol_node`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an empty, reserved, NUL-containing, or duplicate
+    /// identifier.
+    pub fn add_column(
+        &mut self,
+        name: impl Into<String>,
+        storage: MetadataType,
+    ) -> Result<(), MetadataSchemaError> {
+        let name = name.into();
+        validate_identifier(&name)?;
+        if is_core_column(&name)
+            || self
+                .columns
+                .iter()
+                .any(|column| column.name.eq_ignore_ascii_case(&name))
+        {
+            return Err(MetadataSchemaError::DuplicateOrReservedColumn(name));
+        }
+        self.columns.push(MetadataColumn { name, storage });
+        Ok(())
+    }
+
+    /// Adds an index over one or more declared metadata columns.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid/duplicate index name, an empty column
+    /// list, or a column which has not been declared on this schema.
+    pub fn add_index<I, S>(
+        &mut self,
+        name: impl Into<String>,
+        columns: I,
+        unique: bool,
+    ) -> Result<(), MetadataSchemaError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let name = name.into();
+        validate_identifier(&name)?;
+        if self
+            .indexes
+            .iter()
+            .any(|index| index.name.eq_ignore_ascii_case(&name))
+        {
+            return Err(MetadataSchemaError::DuplicateIndex(name));
+        }
+        let columns: Vec<String> = columns.into_iter().map(Into::into).collect();
+        if columns.is_empty() {
+            return Err(MetadataSchemaError::EmptyIndex(name));
+        }
+        for column in &columns {
+            if !self
+                .columns
+                .iter()
+                .any(|declared| declared.name.eq_ignore_ascii_case(column))
+            {
+                return Err(MetadataSchemaError::UnknownColumn(column.clone()));
+            }
+        }
+        self.indexes.push(MetadataIndex {
+            name,
+            columns,
+            unique,
+        });
+        Ok(())
+    }
+
+    fn column(&self, name: &str) -> Option<&MetadataColumn> {
+        self.columns
+            .iter()
+            .find(|column| column.name.eq_ignore_ascii_case(name))
+    }
+
+    /// Returns the declared storage class of a metadata column.
+    #[must_use]
+    pub fn metadata_type(&self, name: &str) -> Option<MetadataType> {
+        self.column(name).map(|column| column.storage)
+    }
 }
 
 /// Connection-local permission and operation-recording policy.
@@ -85,6 +271,7 @@ impl Policy for AllowAll {
 /// HOL protocol state carried by [`Connection`].
 pub struct Hol<P> {
     policy: P,
+    schema: HolSchema,
 }
 
 impl<P> Hol<P> {
@@ -92,6 +279,12 @@ impl<P> Hol<P> {
     #[must_use]
     pub const fn policy(&self) -> &P {
         &self.policy
+    }
+
+    /// Returns the connection's declared metadata schema.
+    #[must_use]
+    pub const fn schema(&self) -> &HolSchema {
+        &self.schema
     }
 }
 
@@ -103,9 +296,25 @@ impl<P: Policy> Connection<Hol<P>> {
     /// Returns an error if the Neutron connection or HOL schema cannot be
     /// opened.
     pub fn open_hol_in_memory(policy: P) -> Result<Self, HolOpenError> {
+        Self::open_hol_in_memory_with_schema(policy, HolSchema::new())
+    }
+
+    /// Opens an in-memory store with user metadata columns and indexes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Neutron connection or complete physical schema
+    /// cannot be installed atomically.
+    pub fn open_hol_in_memory_with_schema(
+        policy: P,
+        schema: HolSchema,
+    ) -> Result<Self, HolOpenError> {
         let neutron = covalence_neutron::Connection::open_in_memory()?;
-        neutron.sqlite().execute_batch(SCHEMA)?;
-        Ok(Self::from_neutron(neutron, Hol { policy }))
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        transaction.execute_batch(SCHEMA)?;
+        install_metadata_schema(&transaction, &schema)?;
+        transaction.commit()?;
+        Ok(Self::from_neutron(neutron, Hol { policy, schema }))
     }
 
     /// Validates and canonically interns a kind.
@@ -118,10 +327,31 @@ impl<P: Policy> Connection<Hol<P>> {
     /// Returns an error if policy denies insertion or the store rejects the
     /// transaction.
     pub fn insert_kind(&mut self, kind: &Kind) -> Result<KindId, KindError> {
+        self.insert_kind_with_metadata(kind, &[])
+    }
+
+    /// Interns a kind and sets declared metadata on its canonical root row.
+    ///
+    /// If the kind already exists, supplied metadata replaces the selected
+    /// single-valued columns. Metadata is not part of canonical identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies either operation, a column is unknown
+    /// or repeated, or `SQLite` rejects the atomic transaction.
+    pub fn insert_kind_with_metadata(
+        &mut self,
+        kind: &Kind,
+        metadata: &[(&str, MetadataValue)],
+    ) -> Result<KindId, KindError> {
         let (neutron, hol) = self.parts_mut();
         authorize(&mut hol.policy, Operation::InsertKind)?;
+        if !metadata.is_empty() {
+            authorize(&mut hol.policy, Operation::WriteMetadata)?;
+        }
         let transaction = neutron.sqlite().unchecked_transaction()?;
         let id = intern_kind(&transaction, kind)?;
+        write_metadata(&transaction, &hol.schema, id, metadata)?;
         transaction.commit()?;
         Ok(id)
     }
@@ -154,6 +384,137 @@ impl<P: Policy> Connection<Hol<P>> {
             &mut HashMap::new(),
         )
     }
+
+    /// Reads selected user metadata columns from an admitted kind.
+    ///
+    /// Values are returned in the requested order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the read, a column is undeclared, the
+    /// kind is unknown/corrupt, or `SQLite` rejects the query.
+    pub fn kind_metadata(
+        &mut self,
+        id: KindId,
+        columns: &[&str],
+    ) -> Result<Vec<MetadataValue>, KindError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize(&mut hol.policy, Operation::ReadMetadata)?;
+        read_kind(neutron.sqlite(), id)?;
+        read_metadata(neutron.sqlite(), &hol.schema, id, columns)
+    }
+}
+
+fn install_metadata_schema(
+    connection: &sqlite::Connection,
+    schema: &HolSchema,
+) -> Result<(), sqlite::Error> {
+    for column in &schema.columns {
+        connection.execute_batch(&format!(
+            "ALTER TABLE hol_node ADD COLUMN {} {}",
+            quote_identifier(&column.name),
+            column.storage.sql()
+        ))?;
+    }
+    for index in &schema.indexes {
+        let columns = index
+            .columns
+            .iter()
+            .map(|column| quote_identifier(column))
+            .collect::<Vec<_>>()
+            .join(", ");
+        connection.execute_batch(&format!(
+            "CREATE {}INDEX {} ON hol_node({columns})",
+            if index.unique { "UNIQUE " } else { "" },
+            quote_identifier(&index.name),
+        ))?;
+    }
+    Ok(())
+}
+
+fn write_metadata(
+    connection: &sqlite::Connection,
+    schema: &HolSchema,
+    id: KindId,
+    metadata: &[(&str, MetadataValue)],
+) -> Result<(), KindError> {
+    if metadata.is_empty() {
+        return Ok(());
+    }
+    let mut seen = HashSet::new();
+    let mut assignments = Vec::with_capacity(metadata.len());
+    let mut values = Vec::with_capacity(metadata.len() + 1);
+    for (name, value) in metadata {
+        let column = schema
+            .column(name)
+            .ok_or_else(|| KindError::UnknownMetadataColumn((*name).to_owned()))?;
+        let folded = column.name.to_ascii_lowercase();
+        if !seen.insert(folded) {
+            return Err(KindError::DuplicateMetadataColumn((*name).to_owned()));
+        }
+        assignments.push(format!("{} = ?", quote_identifier(&column.name)));
+        values.push(sqlite::types::Value::from(value.clone()));
+    }
+    values.push(sqlite::types::Value::Integer(id.0));
+    let sql = format!(
+        "UPDATE hol_node SET {} WHERE node_id = ?",
+        assignments.join(", ")
+    );
+    connection.execute(&sql, sqlite::params_from_iter(values.iter()))?;
+    Ok(())
+}
+
+fn read_metadata(
+    connection: &sqlite::Connection,
+    schema: &HolSchema,
+    id: KindId,
+    columns: &[&str],
+) -> Result<Vec<MetadataValue>, KindError> {
+    if columns.is_empty() {
+        return Ok(Vec::new());
+    }
+    let columns = columns
+        .iter()
+        .map(|name| {
+            schema
+                .column(name)
+                .map(|column| quote_identifier(&column.name))
+                .ok_or_else(|| KindError::UnknownMetadataColumn((*name).to_owned()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let sql = format!(
+        "SELECT {} FROM hol_node WHERE node_id = ?1",
+        columns.join(", ")
+    );
+    connection
+        .query_row(&sql, [id.0], |row| {
+            (0..columns.len())
+                .map(|index| row.get::<_, sqlite::types::Value>(index))
+                .collect::<Result<Vec<_>, _>>()
+        })?
+        .into_iter()
+        .map(|value| Ok(MetadataValue::from(value)))
+        .collect()
+}
+
+fn validate_identifier(identifier: &str) -> Result<(), MetadataSchemaError> {
+    if identifier.is_empty() || identifier.contains('\0') {
+        Err(MetadataSchemaError::InvalidIdentifier(
+            identifier.to_owned(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn is_core_column(name: &str) -> bool {
+    ["node_id", "tag", "lhs", "rhs", "ty"]
+        .iter()
+        .any(|core| core.eq_ignore_ascii_case(name))
+}
+
+fn quote_identifier(identifier: &str) -> String {
+    format!("\"{}\"", identifier.replace('"', "\"\""))
 }
 
 fn authorize(policy: &mut impl Policy, operation: Operation) -> Result<(), KindError> {
@@ -284,6 +645,39 @@ impl From<sqlite::Error> for HolOpenError {
     }
 }
 
+/// Invalid user metadata schema declaration.
+#[derive(Debug, Eq, PartialEq)]
+pub enum MetadataSchemaError {
+    /// `SQLite` cannot represent this identifier.
+    InvalidIdentifier(String),
+    /// A column duplicates another metadata column or a fixed core column.
+    DuplicateOrReservedColumn(String),
+    /// An index duplicates an earlier user index name.
+    DuplicateIndex(String),
+    /// An index has no columns.
+    EmptyIndex(String),
+    /// An index names a column not declared as metadata.
+    UnknownColumn(String),
+}
+
+impl fmt::Display for MetadataSchemaError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidIdentifier(name) => {
+                write!(formatter, "invalid SQLite identifier {name:?}")
+            }
+            Self::DuplicateOrReservedColumn(name) => {
+                write!(formatter, "duplicate or reserved metadata column {name:?}")
+            }
+            Self::DuplicateIndex(name) => write!(formatter, "duplicate metadata index {name:?}"),
+            Self::EmptyIndex(name) => write!(formatter, "metadata index {name:?} has no columns"),
+            Self::UnknownColumn(name) => write!(formatter, "unknown metadata column {name:?}"),
+        }
+    }
+}
+
+impl StdError for MetadataSchemaError {}
+
 /// Failure to insert or inspect an admitted kind.
 #[derive(Debug)]
 pub enum KindError {
@@ -295,6 +689,10 @@ pub enum KindError {
     CorruptKind(KindId),
     /// The normative rank does not fit in `SQLite`'s integer representation.
     RankOverflow,
+    /// A metadata operation names a column absent from this connection.
+    UnknownMetadataColumn(String),
+    /// One metadata update names the same column more than once.
+    DuplicateMetadataColumn(String),
     /// `SQLite` rejected an operation.
     Sqlite(sqlite::Error),
 }
@@ -306,6 +704,12 @@ impl fmt::Display for KindError {
             Self::UnknownKind(id) => write!(formatter, "unknown kind {}", id.get()),
             Self::CorruptKind(id) => write!(formatter, "kind {} is structurally corrupt", id.get()),
             Self::RankOverflow => formatter.write_str("kind rank overflow"),
+            Self::UnknownMetadataColumn(name) => {
+                write!(formatter, "unknown HOL metadata column {name:?}")
+            }
+            Self::DuplicateMetadataColumn(name) => {
+                write!(formatter, "duplicate HOL metadata column {name:?}")
+            }
             Self::Sqlite(error) => error.fmt(formatter),
         }
     }
@@ -315,9 +719,12 @@ impl StdError for KindError {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match self {
             Self::Sqlite(error) => Some(error),
-            Self::Denied(_) | Self::UnknownKind(_) | Self::CorruptKind(_) | Self::RankOverflow => {
-                None
-            }
+            Self::Denied(_)
+            | Self::UnknownKind(_)
+            | Self::CorruptKind(_)
+            | Self::RankOverflow
+            | Self::UnknownMetadataColumn(_)
+            | Self::DuplicateMetadataColumn(_) => None,
         }
     }
 }
@@ -446,5 +853,122 @@ mod tests {
             )
             .unwrap();
         assert_eq!(rows, (2, 2, 2));
+    }
+
+    #[test]
+    fn user_metadata_columns_are_typed_indexed_and_not_canonical_identity() {
+        let mut schema = HolSchema::new();
+        schema
+            .add_column("source label", MetadataType::Text)
+            .unwrap();
+        schema
+            .add_column("priority", MetadataType::Integer)
+            .unwrap();
+        schema
+            .add_index("by source", ["source label"], false)
+            .unwrap();
+        let mut connection = Connection::open_hol_in_memory_with_schema(
+            RecordingPolicy {
+                allowed: true,
+                operations: Vec::new(),
+            },
+            schema,
+        )
+        .unwrap();
+
+        let first = connection
+            .insert_kind_with_metadata(
+                &Kind::Star,
+                &[
+                    ("source label", MetadataValue::Text("first".to_owned())),
+                    ("priority", MetadataValue::Integer(7)),
+                ],
+            )
+            .unwrap();
+        let second = connection
+            .insert_kind_with_metadata(
+                &Kind::Star,
+                &[("source label", MetadataValue::Text("second".to_owned()))],
+            )
+            .unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(
+            connection
+                .kind_metadata(first, &["source label", "priority"])
+                .unwrap(),
+            [
+                MetadataValue::Text("second".to_owned()),
+                MetadataValue::Integer(7)
+            ]
+        );
+        assert_eq!(
+            connection.protocol().schema().metadata_type("SOURCE LABEL"),
+            Some(MetadataType::Text)
+        );
+        let index_exists = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_index_list('hol_node') WHERE name = 'by source')",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .unwrap();
+        assert!(index_exists);
+        assert_eq!(
+            connection.protocol().policy().operations,
+            [
+                Operation::InsertKind,
+                Operation::WriteMetadata,
+                Operation::InsertKind,
+                Operation::WriteMetadata,
+                Operation::ReadMetadata,
+            ]
+        );
+    }
+
+    #[test]
+    fn metadata_schema_rejects_ambiguous_declarations() {
+        let mut schema = HolSchema::new();
+        assert_eq!(
+            schema.add_column("TAG", MetadataType::Text),
+            Err(MetadataSchemaError::DuplicateOrReservedColumn(
+                "TAG".to_owned()
+            ))
+        );
+        schema.add_column("origin", MetadataType::Text).unwrap();
+        assert_eq!(
+            schema.add_column("ORIGIN", MetadataType::Blob),
+            Err(MetadataSchemaError::DuplicateOrReservedColumn(
+                "ORIGIN".to_owned()
+            ))
+        );
+        assert_eq!(
+            schema.add_index("bad", ["missing"], false),
+            Err(MetadataSchemaError::UnknownColumn("missing".to_owned()))
+        );
+    }
+
+    #[test]
+    fn metadata_failure_rolls_back_new_canonical_nodes() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        assert!(matches!(
+            connection.insert_kind_with_metadata(
+                &Kind::arrow(Kind::Star, Kind::Star),
+                &[("missing", MetadataValue::Integer(1))],
+            ),
+            Err(KindError::UnknownMetadataColumn(name)) if name == "missing"
+        ));
+        let count = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row("SELECT count(*) FROM hol_node", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(count, 1);
     }
 }
