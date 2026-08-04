@@ -1,8 +1,10 @@
 //! Portable trusted core for Nucleus.
 
 mod connection;
+pub mod hol;
 
 pub use connection::Connection;
+pub use hol::{AllowAll, Hol, Kind, KindError, KindId, KindView, Operation, Policy};
 
 mod snapshot;
 
