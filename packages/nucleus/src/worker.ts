@@ -737,6 +737,8 @@ async function execute(request: Request): Promise<unknown> {
               left: term.left(),
               right: term.right(),
             };
+          case "epsilon":
+            return { kind: "epsilon", predicate: term.predicate() };
           default:
             throw new Error("kernel returned an unknown HOL term tag");
         }

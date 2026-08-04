@@ -130,6 +130,11 @@ pub enum LocalHolProofStep {
         /// Body conversion slot.
         body: LocalHolProofRef,
     },
+    /// Apply conversion congruence beneath Hilbert choice.
+    ConversionEpsilon {
+        /// Earlier Boolean-valued predicate conversion slot.
+        predicate: LocalHolProofRef,
+    },
     /// Produce one closed beta conversion.
     ConversionBeta {
         /// Closed lambda abstraction.
@@ -211,6 +216,11 @@ pub enum LocalHolProofStep {
         first: LocalHolProofRef,
         /// Second earlier theorem slot.
         second: LocalHolProofRef,
+    },
+    /// Apply Hilbert choice to an earlier theorem proving a predicate application.
+    Choice {
+        /// Earlier theorem slot used as the exact choice premise.
+        premise: LocalHolProofRef,
     },
     /// Simultaneously instantiate exact free variables in an earlier theorem.
     InstantiateTerms {
@@ -565,6 +575,7 @@ fn declared_sort(step: &LocalHolProofStep) -> LocalHolProofSort {
         | LocalHolProofStep::EqualityModusPonens { .. }
         | LocalHolProofStep::EqualitySubstitution { .. }
         | LocalHolProofStep::DeductionAntisymmetry { .. }
+        | LocalHolProofStep::Choice { .. }
         | LocalHolProofStep::InstantiateTerms { .. }
         | LocalHolProofStep::InstantiateTypes { .. }
         | LocalHolProofStep::Abstraction { .. } => LocalHolProofSort::Theorem,
@@ -573,6 +584,7 @@ fn declared_sort(step: &LocalHolProofStep) -> LocalHolProofSort {
         | LocalHolProofStep::ConversionTransitivity { .. }
         | LocalHolProofStep::ConversionApplication { .. }
         | LocalHolProofStep::ConversionLambda { .. }
+        | LocalHolProofStep::ConversionEpsilon { .. }
         | LocalHolProofStep::ConversionBeta { .. }
         | LocalHolProofStep::ConversionEta { .. } => LocalHolProofSort::Conversion,
         LocalHolProofStep::ContextImplication { .. }
@@ -629,6 +641,7 @@ fn preflight(steps: &[LocalHolProofStep]) -> Result<(), LocalHolProofScriptError
             }
             LocalHolProofStep::ConversionSymmetry { conversion: source }
             | LocalHolProofStep::ConversionLambda { body: source, .. }
+            | LocalHolProofStep::ConversionEpsilon { predicate: source }
             | LocalHolProofStep::ConversionEquality {
                 conversion: source, ..
             } => check(*source, LocalHolProofSort::Conversion)?,
@@ -709,6 +722,9 @@ fn preflight(steps: &[LocalHolProofStep]) -> Result<(), LocalHolProofScriptError
             LocalHolProofStep::DeductionAntisymmetry { first, second } => {
                 check(*first, LocalHolProofSort::Theorem)?;
                 check(*second, LocalHolProofSort::Theorem)?;
+            }
+            LocalHolProofStep::Choice { premise } => {
+                check(*premise, LocalHolProofSort::Theorem)?;
             }
             LocalHolProofStep::InstantiateTerms {
                 theorem,
@@ -853,6 +869,9 @@ pub fn run_local_hol_proof_script<P: Policy>(
                 } => Capability::Conversion(
                     proof.conversion_lambda(*parameter_type, conversion(&slots, index, *body)?)?,
                 ),
+                LocalHolProofStep::ConversionEpsilon { predicate } => Capability::Conversion(
+                    proof.conversion_epsilon(conversion(&slots, index, *predicate)?)?,
+                ),
                 LocalHolProofStep::ConversionBeta {
                     abstraction,
                     argument,
@@ -967,6 +986,9 @@ pub fn run_local_hol_proof_script<P: Policy>(
                         theorem(&slots, index, *first)?,
                         theorem(&slots, index, *second)?,
                     )?)
+                }
+                LocalHolProofStep::Choice { premise } => {
+                    Capability::Theorem(proof.choice(theorem(&slots, index, *premise)?)?)
                 }
                 LocalHolProofStep::InstantiateTerms {
                     theorem: theorem_ref,
@@ -1282,6 +1304,109 @@ mod tests {
                 conclusion: expected,
             }
         );
+    }
+
+    #[test]
+    fn choice_and_epsilon_conversion_replay_to_inert_outputs() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let bound = connection.insert_bound_term(0, bool_type).unwrap();
+        let predicate = connection.insert_lambda(bool_type, bound).unwrap();
+        let witness = connection.insert_bool_term(true).unwrap();
+        let premise = connection.insert_application(predicate, witness).unwrap();
+        let context = connection.define_context([premise]).unwrap();
+        let epsilon = connection.insert_epsilon(predicate).unwrap();
+        let expected_choice = connection.insert_application(predicate, epsilon).unwrap();
+
+        let outputs = run_local_hol_proof_script(
+            &mut connection,
+            &[
+                LocalHolProofStep::Hypothesis {
+                    context,
+                    term: premise,
+                },
+                LocalHolProofStep::Choice {
+                    premise: reference(0),
+                },
+                LocalHolProofStep::ConversionReflexivity { term: predicate },
+                LocalHolProofStep::ConversionEpsilon {
+                    predicate: reference(2),
+                },
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(
+            outputs[1],
+            LocalHolProofOutput::Theorem {
+                context,
+                conclusion: expected_choice,
+            }
+        );
+        assert_eq!(
+            outputs[3],
+            LocalHolProofOutput::Conversion {
+                left: epsilon,
+                right: epsilon,
+                ty: bool_type,
+                closed: true,
+            }
+        );
+    }
+
+    #[test]
+    fn choice_and_epsilon_conversion_references_are_preflighted_by_sort() {
+        let operations = Rc::new(RefCell::new(Vec::new()));
+        let policy = RecordingPolicy {
+            operations: Rc::clone(&operations),
+            denied: None,
+        };
+        let mut connection = Connection::open_hol_in_memory(policy).unwrap();
+
+        let choice_error = run_local_hol_proof_script(
+            &mut connection,
+            &[
+                LocalHolProofStep::ConversionReflexivity {
+                    term: TermId::from_i64(i64::MAX),
+                },
+                LocalHolProofStep::Choice {
+                    premise: reference(0),
+                },
+            ],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            choice_error,
+            LocalHolProofScriptError::WrongSort {
+                step: 1,
+                expected: LocalHolProofSort::Theorem,
+                actual: LocalHolProofSort::Conversion,
+                ..
+            }
+        ));
+
+        let epsilon_error = run_local_hol_proof_script(
+            &mut connection,
+            &[
+                LocalHolProofStep::Truth {
+                    context: ContextId::empty(),
+                },
+                LocalHolProofStep::ConversionEpsilon {
+                    predicate: reference(0),
+                },
+            ],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            epsilon_error,
+            LocalHolProofScriptError::WrongSort {
+                step: 1,
+                expected: LocalHolProofSort::Conversion,
+                actual: LocalHolProofSort::Theorem,
+                ..
+            }
+        ));
+        assert!(operations.borrow().is_empty());
     }
 
     #[test]

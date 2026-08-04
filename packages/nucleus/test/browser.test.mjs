@@ -113,6 +113,24 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
     result.typeInstantiationRecipe.outputs.map((output) => output.kind),
     ["theorem", "theorem"],
   );
+  assert.deepEqual(
+    result.choiceRecipe.outputs.map((output) => output.kind),
+    ["theorem", "theorem", "conversion", "conversion"],
+  );
+  assert.deepEqual(result.choiceConclusionView, {
+    kind: "application",
+    function: result.choicePredicate,
+    argument: result.choiceRecipe.outputs[3].left,
+  });
+  assert.deepEqual(result.epsilonConversionView, {
+    kind: "epsilon",
+    predicate: result.choicePredicate,
+  });
+  assert.equal(
+    result.choiceRecipe.outputs[3].left,
+    result.choiceRecipe.outputs[3].right,
+  );
+  assert.equal(result.choiceRecipe.outputs[3].closed, true);
   assert.equal(result.unknownProofFieldRejected, true);
   assert.equal(result.malformedDescriptorRejected, true);
   assert.equal(result.ambiguousSchemaSourceRejected, true);

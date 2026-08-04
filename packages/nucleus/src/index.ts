@@ -53,6 +53,7 @@ export type HolProofStepV1 =
   | { op: "conversion_transitivity"; first: number; second: number }
   | { op: "conversion_application"; function: number; argument: number }
   | { op: "conversion_lambda"; parameter_type: number; body: number }
+  | { op: "conversion_epsilon"; predicate: number }
   | { op: "conversion_beta"; abstraction: number; argument: number }
   | { op: "conversion_eta"; function: number }
   | { op: "conversion_equality"; context: number; conversion: number }
@@ -79,6 +80,7 @@ export type HolProofStepV1 =
       premise: number;
     }
   | { op: "deduction_antisymmetry"; first: number; second: number }
+  | { op: "choice"; premise: number }
   | {
       op: "instantiate_terms";
       theorem: number;

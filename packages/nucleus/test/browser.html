@@ -186,6 +186,29 @@
             },
           ],
         });
+        const choiceBound = await hol.boundTerm(0, boolType);
+        const choicePredicate = await hol.lambda(boolType, choiceBound);
+        const choicePremise = await hol.application(choicePredicate, truth);
+        const choiceContext = await hol.defineContext([choicePremise]);
+        const choiceRecipe = await hol.runProofScript({
+          version: 1,
+          steps: [
+            {
+              op: "hypothesis",
+              context: choiceContext,
+              term: choicePremise,
+            },
+            { op: "choice", premise: 0 },
+            { op: "conversion_reflexivity", term: choicePredicate },
+            { op: "conversion_epsilon", predicate: 2 },
+          ],
+        });
+        const choiceConclusionView = await hol.term(
+          choiceRecipe.outputs[1].conclusion,
+        );
+        const epsilonConversionView = await hol.term(
+          choiceRecipe.outputs[3].left,
+        );
         let unknownProofFieldRejected = false;
         try {
           await hol.runProofScript({
@@ -349,6 +372,10 @@
           freeTypeView,
           expectedInstantiatedEquality,
           typeInstantiationRecipe,
+          choicePredicate,
+          choiceRecipe,
+          choiceConclusionView,
+          epsilonConversionView,
           unknownProofFieldRejected,
           trustedImport,
           inspectedImport,

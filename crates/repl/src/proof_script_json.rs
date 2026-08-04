@@ -66,6 +66,9 @@ enum WireStep {
         parameter_type: i64,
         body: u32,
     },
+    ConversionEpsilon {
+        predicate: u32,
+    },
     ConversionBeta {
         abstraction: i64,
         argument: i64,
@@ -112,6 +115,9 @@ enum WireStep {
     DeductionAntisymmetry {
         first: u32,
         second: u32,
+    },
+    Choice {
+        premise: u32,
     },
     InstantiateTerms {
         theorem: u32,
@@ -211,6 +217,9 @@ impl From<WireStep> for LocalHolProofStep {
                 parameter_type: TypeId::from_i64(parameter_type),
                 body: reference(body),
             },
+            WireStep::ConversionEpsilon { predicate } => Self::ConversionEpsilon {
+                predicate: reference(predicate),
+            },
             WireStep::ConversionBeta {
                 abstraction,
                 argument,
@@ -282,6 +291,9 @@ impl From<WireStep> for LocalHolProofStep {
             WireStep::DeductionAntisymmetry { first, second } => Self::DeductionAntisymmetry {
                 first: reference(first),
                 second: reference(second),
+            },
+            WireStep::Choice { premise } => Self::Choice {
+                premise: reference(premise),
             },
             WireStep::InstantiateTerms {
                 theorem,
@@ -550,6 +562,33 @@ mod tests {
                 expected.get(),
             )
         );
+    }
+
+    #[test]
+    fn strict_json_replays_choice_and_epsilon_conversion() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let bound = connection.insert_bound_term(0, bool_type).unwrap();
+        let predicate = connection.insert_lambda(bool_type, bound).unwrap();
+        let witness = connection.insert_bool_term(true).unwrap();
+        let premise = connection.insert_application(predicate, witness).unwrap();
+        let context = connection.define_context([premise]).unwrap();
+        let epsilon = connection.insert_epsilon(predicate).unwrap();
+        let expected_choice = connection.insert_application(predicate, epsilon).unwrap();
+        let request = format!(
+            r#"{{"version":1,"steps":[{{"op":"hypothesis","context":{},"term":{}}},{{"op":"choice","premise":0}},{{"op":"conversion_reflexivity","term":{}}},{{"op":"conversion_epsilon","predicate":2}}]}}"#,
+            context.get(),
+            premise.get(),
+            predicate.get(),
+        );
+
+        let response = run_local_hol_proof_script_json(&mut connection, &request).unwrap();
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(response["outputs"][1]["conclusion"], expected_choice.get());
+        assert_eq!(response["outputs"][3]["left"], epsilon.get());
+        assert_eq!(response["outputs"][3]["right"], epsilon.get());
+        assert_eq!(response["outputs"][3]["ty"], bool_type.get());
+        assert_eq!(response["outputs"][3]["closed"], true);
     }
 
     #[test]
