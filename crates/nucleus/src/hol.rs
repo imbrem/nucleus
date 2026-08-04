@@ -31,6 +31,7 @@ pub use validate::{
     stlc_bool_eq_v1_semantics, stlc_bool_eq_v2_schema_id, stlc_bool_eq_v2_semantics,
     stlc_bool_eq_v3_schema_id, stlc_bool_eq_v3_semantics, stlc_bool_eq_v4_schema_id,
     stlc_bool_eq_v4_semantics, stlc_bool_eq_v5_schema_id, stlc_bool_eq_v5_semantics,
+    stlc_bool_eq_v6_schema_id, stlc_bool_eq_v6_semantics,
 };
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -215,6 +216,11 @@ pub enum TermView {
         /// Right operand.
         right: TermId,
     },
+    /// Hilbert choice applied to a Boolean-valued predicate.
+    Epsilon {
+        /// Predicate of type `A -> bool`; the epsilon term has type `A`.
+        predicate: TermId,
+    },
 }
 
 /// Database-local identity of an immutable Boolean assumption context.
@@ -308,6 +314,7 @@ enum TheoremOrigin {
     DeductionAntisymmetry,
     TermInstantiation,
     Abstraction,
+    Choice,
     ConversionEquality,
     Conversion,
 }
@@ -325,6 +332,7 @@ impl TheoremOrigin {
             Self::DeductionAntisymmetry => "deduction_antisymmetry",
             Self::TermInstantiation => "term_instantiation",
             Self::Abstraction => "abstraction",
+            Self::Choice => "choice",
             Self::ConversionEquality => "conversion_equality",
             Self::Conversion => "conversion",
         }
@@ -484,6 +492,8 @@ pub enum Operation {
     ProveConversionBeta,
     /// Apply closed eta conversion.
     ProveConversionEta,
+    /// Apply conversion congruence beneath Hilbert choice.
+    ProveConversionEpsilon,
     /// Turn a closed conversion into a theorem of equality.
     ProveConversionEquality,
     /// Transport a Boolean theorem along a conversion.
@@ -508,6 +518,8 @@ pub enum Operation {
     ProveTermInstantiation,
     /// Abstract one exact free variable from both sides of a proved equality.
     ProveAbstraction,
+    /// Select a witness for one proved inhabited predicate.
+    ProveChoice,
     /// Load or inspect a persisted context implication.
     ReadContextImplication,
     /// Persist a branded context implication as authoritative connection state.
@@ -1371,6 +1383,39 @@ impl<P: Policy> Connection<Hol<P>> {
         Ok(id)
     }
 
+    /// Checks and canonically interns Hilbert choice for one predicate.
+    ///
+    /// If `predicate` has type `A -> bool`, the resulting term has type `A`.
+    /// Its external de Bruijn boundary is exactly the predicate's boundary, so
+    /// open epsilon syntax can be closed by an enclosing lambda.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies admission, the predicate is invalid,
+    /// is not a function, does not return Boolean, or `SQLite` rejects the
+    /// atomic insertion.
+    pub fn insert_epsilon(&mut self, predicate: TermId) -> Result<TermId, TermError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_term(&mut hol.policy, Operation::InsertTerm)?;
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        let predicate_validation = validate_term(&transaction, predicate)?;
+        let TypeView::Arrow { domain, codomain } =
+            read_type(&transaction, predicate_validation.ty)?
+        else {
+            return Err(TermError::NotFunction(predicate_validation.ty));
+        };
+        if codomain != BOOL_TYPE_ID {
+            return Err(TermError::EpsilonPredicateNonBoolean {
+                predicate,
+                codomain,
+            });
+        }
+        let id = intern_epsilon(&transaction, predicate, domain)?;
+        validate_term(&transaction, id)?;
+        transaction.commit()?;
+        Ok(id)
+    }
+
     /// Checks and canonically interns a typed term abstraction.
     ///
     /// Every de Bruijn occurrence captured by the new binder must carry the
@@ -1824,6 +1869,43 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         let body = intern_application(&transaction, function, variable, codomain)?;
         let left = intern_lambda(&transaction, domain, body, validated.ty)?;
         let conversion = checked_conversion(&transaction, left, function)?;
+        transaction.commit()?;
+        Ok(conversion)
+    }
+
+    /// Applies definitional-conversion congruence beneath Hilbert choice.
+    ///
+    /// From `p ≡ q` at type `A -> bool`, derives `εp ≡ εq`. Open
+    /// predicate conversions are supported and retain their exact common
+    /// external de Bruijn boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the rule/insertion, the conversion is
+    /// not between Boolean-valued predicates, or atomic interning fails.
+    pub fn conversion_epsilon(
+        &mut self,
+        predicate: &Conversion<'brand>,
+    ) -> Result<Conversion<'brand>, ProofError> {
+        let (neutron, hol) = self.connection.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ProveConversionEpsilon)?;
+        authorize_proof(&mut hol.policy, Operation::InsertTerm)?;
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        let TypeView::Arrow { domain, codomain } =
+            read_type(&transaction, predicate.ty).map_err(TermError::Type)?
+        else {
+            return Err(TermError::NotFunction(predicate.ty).into());
+        };
+        if codomain != BOOL_TYPE_ID {
+            return Err(TermError::EpsilonPredicateNonBoolean {
+                predicate: predicate.left,
+                codomain,
+            }
+            .into());
+        }
+        let left = intern_epsilon(&transaction, predicate.left, domain)?;
+        let right = intern_epsilon(&transaction, predicate.right, domain)?;
+        let conversion = checked_conversion(&transaction, left, right)?;
         transaction.commit()?;
         Ok(conversion)
     }
@@ -2683,6 +2765,66 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
             context: theorem.context,
             conclusion,
             origin: Some(TheoremOrigin::Abstraction),
+            brand: PhantomData,
+        })
+    }
+
+    /// Applies Hilbert choice to one proved predicate application.
+    ///
+    /// From an exact premise `Γ ⊢ predicate witness`, this derives
+    /// `Γ ⊢ predicate (ε predicate)`. The predicate and witness are
+    /// inferred from the premise's canonical application node, avoiding any
+    /// redundant caller-supplied coordinates.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the rule/insertion, the premise is
+    /// invalid, open, non-Boolean, not an application, or atomic interning
+    /// fails.
+    pub fn choice(&mut self, premise: &Theorem<'brand>) -> Result<Theorem<'brand>, ProofError> {
+        let (neutron, hol) = self.connection.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ProveChoice)?;
+        authorize_proof(&mut hol.policy, Operation::InsertTerm)?;
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        require_context(&transaction, premise.context)?;
+        let conclusion = validate_term(&transaction, premise.conclusion)?;
+        if conclusion.ty != BOOL_TYPE_ID {
+            return Err(ProofError::NonBooleanConclusion {
+                term: premise.conclusion,
+                ty: conclusion.ty,
+            });
+        }
+        if !conclusion.boundary.is_empty() {
+            return Err(ProofError::OpenConclusion(premise.conclusion));
+        }
+        let TermView::Application {
+            function: predicate,
+            argument: _,
+        } = conclusion.view
+        else {
+            return Err(ProofError::ChoicePremiseNotApplication(premise.conclusion));
+        };
+        let predicate_validation = validate_term(&transaction, predicate)?;
+        let TypeView::Arrow { domain, codomain } =
+            read_type(&transaction, predicate_validation.ty).map_err(TermError::Type)?
+        else {
+            return Err(TermError::NotFunction(predicate_validation.ty).into());
+        };
+        if codomain != BOOL_TYPE_ID {
+            return Err(TermError::EpsilonPredicateNonBoolean {
+                predicate,
+                codomain,
+            }
+            .into());
+        }
+        let epsilon = intern_epsilon(&transaction, predicate, domain)?;
+        let conclusion = intern_application(&transaction, predicate, epsilon, BOOL_TYPE_ID)?;
+        validate_term(&transaction, conclusion)?;
+        transaction.commit()?;
+        Ok(Theorem {
+            context: premise.context,
+            conclusion,
+            origin: Some(TheoremOrigin::Choice),
             brand: PhantomData,
         })
     }
@@ -3574,6 +3716,29 @@ fn intern_equality(
     Ok(TermId(connection.last_insert_rowid()))
 }
 
+fn intern_epsilon(
+    connection: &sqlite::Connection,
+    predicate: TermId,
+    ty: TypeId,
+) -> Result<TermId, TermError> {
+    if let Some(id) = connection
+        .query_row(
+            "SELECT node_id FROM hol_node
+             WHERE tag = 'MEPS' AND lhs = ?1 AND rhs IS NULL AND ty = ?2",
+            [predicate.0, ty.0],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+    {
+        return Ok(TermId(id));
+    }
+    connection.execute(
+        "INSERT INTO hol_node(tag, lhs, ty) VALUES ('MEPS', ?1, ?2)",
+        [predicate.0, ty.0],
+    )?;
+    Ok(TermId(connection.last_insert_rowid()))
+}
+
 fn read_term_node(
     connection: &sqlite::Connection,
     id: TermId,
@@ -3631,6 +3796,12 @@ fn read_term_node(
             TermView::Equality {
                 left: TermId(left),
                 right: TermId(right),
+            },
+            TypeId(ty),
+        ),
+        (tag, Some(predicate), None, Some(ty)) if tag == "MEPS" => (
+            TermView::Epsilon {
+                predicate: TermId(predicate),
             },
             TypeId(ty),
         ),
@@ -3718,6 +3889,24 @@ fn validate_term_inner(
                 });
             }
             merge_term_boundaries(left.boundary, right.boundary)?
+        }
+        TermView::Epsilon { predicate } => {
+            let predicate_validation = validate_term_inner(connection, predicate, active, memo)?;
+            let TypeView::Arrow { domain, codomain } =
+                read_type(connection, predicate_validation.ty)?
+            else {
+                return Err(TermError::NotFunction(predicate_validation.ty));
+            };
+            if codomain != BOOL_TYPE_ID {
+                return Err(TermError::EpsilonPredicateNonBoolean {
+                    predicate,
+                    codomain,
+                });
+            }
+            if domain != ty {
+                return Err(TermError::CorruptTerm(id));
+            }
+            predicate_validation.boundary
         }
     };
     active.remove(&id);
@@ -3843,6 +4032,11 @@ fn substitute_closed_inner(
             let right = substitute_closed_inner(connection, right, replacement, depth, memo)?;
             intern_equality(connection, left, right)?
         }
+        TermView::Epsilon { predicate } => {
+            let predicate =
+                substitute_closed_inner(connection, predicate, replacement, depth, memo)?;
+            intern_epsilon(connection, predicate, ty)?
+        }
     };
     memo.insert((term, depth), result);
     Ok(result)
@@ -3883,6 +4077,11 @@ fn instantiate_free_terms_inner(
             let right = instantiate_free_terms_inner(connection, right, replacements, memo)?;
             intern_equality(connection, left, right)?
         }
+        TermView::Epsilon { predicate } => {
+            let predicate =
+                instantiate_free_terms_inner(connection, predicate, replacements, memo)?;
+            intern_epsilon(connection, predicate, ty)?
+        }
     };
     memo.insert(term, result);
     Ok(result)
@@ -3914,6 +4113,9 @@ fn term_contains_exact(
         TermView::Equality { left, right } => {
             term_contains_exact(connection, left, needle, memo)?
                 || term_contains_exact(connection, right, needle, memo)?
+        }
+        TermView::Epsilon { predicate } => {
+            term_contains_exact(connection, predicate, needle, memo)?
         }
     };
     memo.insert(term, result);
@@ -3982,6 +4184,17 @@ fn abstract_free_term_inner(
                 abstract_free_term_inner(connection, right, variable, variable_type, depth, memo)?;
             intern_equality(connection, left, right)?
         }
+        TermView::Epsilon { predicate } => {
+            let predicate = abstract_free_term_inner(
+                connection,
+                predicate,
+                variable,
+                variable_type,
+                depth,
+                memo,
+            )?;
+            intern_epsilon(connection, predicate, ty)?
+        }
     };
     memo.insert((term, depth), result);
     Ok(result)
@@ -4000,6 +4213,8 @@ fn free_term_symbols(connection: &sqlite::Connection, root: TermId) -> Result<Ve
              SELECT node_id, lhs FROM hol_node WHERE tag = 'MEQ'
              UNION ALL
              SELECT node_id, rhs FROM hol_node WHERE tag = 'MEQ'
+             UNION ALL
+             SELECT node_id, lhs FROM hol_node WHERE tag = 'MEPS'
          ),
          reachable(node_id) AS (
              SELECT ?1
@@ -4289,6 +4504,13 @@ pub enum TermError {
         /// Actual argument type.
         actual: TypeId,
     },
+    /// Hilbert choice was requested for a predicate with non-Boolean codomain.
+    EpsilonPredicateNonBoolean {
+        /// Proposed predicate term.
+        predicate: TermId,
+        /// Its actual result type.
+        codomain: TypeId,
+    },
     /// Equality operands have different types.
     EqualityTypeMismatch {
         /// Left operand type.
@@ -4345,6 +4567,15 @@ impl fmt::Display for TermError {
                 expected.get(),
                 actual.get()
             ),
+            Self::EpsilonPredicateNonBoolean {
+                predicate,
+                codomain,
+            } => write!(
+                formatter,
+                "epsilon predicate {} has non-Boolean codomain {}",
+                predicate.get(),
+                codomain.get()
+            ),
             Self::EqualityTypeMismatch { left, right } => write!(
                 formatter,
                 "equality operands have different types {} and {}",
@@ -4386,6 +4617,7 @@ impl StdError for TermError {
             | Self::ConstantTypeConflict { .. }
             | Self::NotFunction(_)
             | Self::ApplicationTypeMismatch { .. }
+            | Self::EpsilonPredicateNonBoolean { .. }
             | Self::EqualityTypeMismatch { .. }
             | Self::InconsistentUnboundVariable { .. }
             | Self::BoundVariableTypeMismatch { .. }
@@ -4631,6 +4863,8 @@ pub enum ProofError {
         variable: TermId,
         assumption: TermId,
     },
+    /// Hilbert choice requires a premise whose conclusion is an application.
+    ChoicePremiseNotApplication(TermId),
     /// Two conversions cannot compose because their middle terms differ.
     ConversionChainMismatch {
         first_right: TermId,
@@ -4741,6 +4975,7 @@ impl fmt::Display for ProofError {
             | Self::OpenTermInstantiationReplacement(_)
             | Self::AbstractionKeyNotFree(_)
             | Self::AbstractionVariableFreeInAssumption { .. }
+            | Self::ChoicePremiseNotApplication(_)
             | Self::ConversionChainMismatch { .. }
             | Self::ConversionBoundaryMismatch { .. }
             | Self::NonBooleanConversion { .. }
@@ -4959,6 +5194,11 @@ fn format_substitution_proof_error(
             variable.get(),
             assumption.get()
         )),
+        ProofError::ChoicePremiseNotApplication(conclusion) => Some(write!(
+            formatter,
+            "choice premise {} is not a predicate application",
+            conclusion.get()
+        )),
         _ => None,
     }
 }
@@ -5036,6 +5276,7 @@ impl StdError for ProofError {
             | Self::OpenTermInstantiationReplacement(_)
             | Self::AbstractionKeyNotFree(_)
             | Self::AbstractionVariableFreeInAssumption { .. }
+            | Self::ChoicePremiseNotApplication(_)
             | Self::ConversionChainMismatch { .. }
             | Self::ConversionBoundaryMismatch { .. }
             | Self::NonBooleanConversion { .. }
@@ -6625,6 +6866,441 @@ mod tests {
             });
             assert!(matches!(result, Err(ProofError::Denied(operation)) if operation == denied));
         }
+    }
+
+    #[test]
+    fn epsilon_is_canonical_typed_and_inherits_its_predicate_boundary() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let ind = connection.insert_base_type(850).unwrap();
+        let bool_predicate_type = connection.insert_arrow_type(bool_type, bool_type).unwrap();
+        let bound = connection.insert_bound_term(0, bool_type).unwrap();
+        let identity = connection.insert_lambda(bool_type, bound).unwrap();
+        let epsilon = connection.insert_epsilon(identity).unwrap();
+        assert_eq!(connection.insert_epsilon(identity).unwrap(), epsilon);
+        assert_eq!(connection.term_type(epsilon).unwrap(), bool_type);
+        assert_eq!(
+            connection.term(epsilon).unwrap(),
+            TermView::Epsilon {
+                predicate: identity
+            }
+        );
+        assert!(connection.term_is_locally_closed(epsilon).unwrap());
+
+        let open_predicate = connection
+            .insert_bound_term(0, bool_predicate_type)
+            .unwrap();
+        let open_epsilon = connection.insert_epsilon(open_predicate).unwrap();
+        assert_eq!(
+            connection.term_unbound_variables(open_epsilon).unwrap(),
+            [UnboundVariable {
+                index: 0,
+                ty: bool_predicate_type
+            }]
+        );
+        let closed = connection
+            .insert_lambda(bool_predicate_type, open_epsilon)
+            .unwrap();
+        assert!(connection.term_is_locally_closed(closed).unwrap());
+
+        let truth = connection.insert_bool_term(true).unwrap();
+        assert!(matches!(
+            connection.insert_epsilon(truth),
+            Err(TermError::NotFunction(ty)) if ty == bool_type
+        ));
+        let ind_bound = connection.insert_bound_term(0, ind).unwrap();
+        let ind_identity = connection.insert_lambda(ind, ind_bound).unwrap();
+        assert!(matches!(
+            connection.insert_epsilon(ind_identity),
+            Err(TermError::EpsilonPredicateNonBoolean { predicate, codomain })
+                if predicate == ind_identity && codomain == ind
+        ));
+    }
+
+    #[test]
+    fn epsilon_participates_in_beta_instantiation_abstraction_and_free_variable_queries() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let predicate_type = connection.insert_arrow_type(bool_type, bool_type).unwrap();
+        let bool_bound = connection.insert_bound_term(0, bool_type).unwrap();
+        let identity = connection.insert_lambda(bool_type, bool_bound).unwrap();
+        let predicate_bound = connection.insert_bound_term(0, predicate_type).unwrap();
+        let open_epsilon = connection.insert_epsilon(predicate_bound).unwrap();
+        let chooser = connection
+            .insert_lambda(predicate_type, open_epsilon)
+            .unwrap();
+        let expected = connection.insert_epsilon(identity).unwrap();
+        connection
+            .with_proof_session(|mut proof| {
+                let beta = proof.conversion_beta(chooser, identity)?;
+                assert_eq!(beta.right(), expected);
+                Ok::<_, ProofError>(())
+            })
+            .unwrap();
+
+        let free_predicate = connection.insert_free_term(851, predicate_type).unwrap();
+        let free_epsilon = connection.insert_epsilon(free_predicate).unwrap();
+        assert_eq!(connection.term_free_variables(free_epsilon).unwrap(), [851]);
+        let (instantiated_conclusion, abstracted_conclusion) = connection
+            .with_proof_session(|mut proof| {
+                let theorem = proof.prove_reflexivity(ContextId::empty(), free_epsilon)?;
+                let instantiated = proof.instantiate_terms(
+                    &theorem,
+                    &[TermInstantiation {
+                        variable: free_predicate,
+                        replacement: identity,
+                    }],
+                )?;
+                let abstracted = proof.abstraction(&theorem, free_predicate)?;
+                Ok::<_, ProofError>((instantiated.conclusion(), abstracted.conclusion()))
+            })
+            .unwrap();
+        assert_eq!(
+            connection.term(instantiated_conclusion).unwrap(),
+            TermView::Equality {
+                left: expected,
+                right: expected
+            }
+        );
+        let TermView::Equality { left, right } = connection.term(abstracted_conclusion).unwrap()
+        else {
+            panic!("ABS result is not equality")
+        };
+        assert_eq!(left, right);
+        let TermView::Lambda { body, .. } = connection.term(left).unwrap() else {
+            panic!("ABS result endpoint is not lambda")
+        };
+        let TermView::Epsilon { predicate } = connection.term(body).unwrap() else {
+            panic!("ABS did not preserve epsilon")
+        };
+        assert_eq!(
+            connection.term(predicate).unwrap(),
+            TermView::Bound { index: 0 }
+        );
+    }
+
+    #[test]
+    fn choice_selects_from_an_exact_proved_application_and_persists_its_origin() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let predicate_bound = connection.insert_bound_term(0, bool_type).unwrap();
+        let predicate = connection
+            .insert_lambda(bool_type, predicate_bound)
+            .unwrap();
+        let witness = connection.insert_bool_term(true).unwrap();
+        let premise = connection.insert_application(predicate, witness).unwrap();
+        let context = connection.define_context([premise]).unwrap();
+        let predicate_type = connection.term_type(predicate).unwrap();
+        let fake_epsilon_type = connection
+            .insert_arrow_type(predicate_type, bool_type)
+            .unwrap();
+        let fake_epsilon = connection.insert_constant(852, fake_epsilon_type).unwrap();
+        let fake_choice = connection
+            .insert_application(fake_epsilon, predicate)
+            .unwrap();
+
+        let conclusion = connection
+            .with_proof_session(|mut proof| {
+                let premise = proof.prove_hypothesis(context, premise)?;
+                let theorem = proof.choice(&premise)?;
+                assert_eq!(theorem.context(), context);
+                proof.persist_theorem(&theorem)?;
+                Ok::<_, ProofError>(theorem.conclusion())
+            })
+            .unwrap();
+        let TermView::Application { function, argument } = connection.term(conclusion).unwrap()
+        else {
+            panic!("choice conclusion is not an application")
+        };
+        assert_eq!(function, predicate);
+        assert_ne!(argument, fake_choice);
+        assert_eq!(
+            connection.term(argument).unwrap(),
+            TermView::Epsilon { predicate }
+        );
+        let rule = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row(
+                "SELECT rule FROM hol_proof_event WHERE ctx_id = ?1 AND term_id = ?2",
+                [context.get(), conclusion.get()],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+        assert_eq!(rule, "choice");
+    }
+
+    #[test]
+    fn choice_rejects_nonapplications_and_all_policy_denials_precede_database_work() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let truth = connection.insert_bool_term(true).unwrap();
+        connection
+            .with_proof_session(|mut proof| {
+                let theorem = proof.prove_truth(ContextId::empty())?;
+                assert!(matches!(
+                    proof.choice(&theorem),
+                    Err(ProofError::ChoicePremiseNotApplication(term)) if term == truth
+                ));
+                Ok::<_, ProofError>(())
+            })
+            .unwrap();
+
+        for denied in [Operation::ProveChoice, Operation::InsertTerm] {
+            let armed = Rc::new(Cell::new(false));
+            let mut connection = Connection::open_hol_in_memory(ArmedDenial {
+                operation: denied,
+                armed: Rc::clone(&armed),
+            })
+            .unwrap();
+            armed.set(true);
+            let result = connection.with_proof_session(|mut proof| {
+                let theorem = Theorem {
+                    context: ContextId::empty(),
+                    conclusion: TermId::from_i64(i64::MAX),
+                    origin: None,
+                    brand: PhantomData,
+                };
+                proof.choice(&theorem).map(|_| ())
+            });
+            assert!(matches!(result, Err(ProofError::Denied(operation)) if operation == denied));
+        }
+    }
+
+    #[test]
+    fn epsilon_conversion_is_congruent_and_preserves_open_boundaries() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let predicate_type = connection.insert_arrow_type(bool_type, bool_type).unwrap();
+        let predicate_bound = connection.insert_bound_term(0, predicate_type).unwrap();
+        let chooser = connection
+            .insert_lambda(predicate_type, predicate_bound)
+            .unwrap();
+        let bool_bound = connection.insert_bound_term(0, bool_type).unwrap();
+        let identity = connection.insert_lambda(bool_type, bool_bound).unwrap();
+
+        let (left, right, open_epsilon) = connection
+            .with_proof_session(|mut proof| {
+                let predicate_beta = proof.conversion_beta(chooser, identity)?;
+                let epsilon = proof.conversion_epsilon(&predicate_beta)?;
+                assert!(epsilon.is_closed());
+                let open = proof.conversion_reflexivity(predicate_bound)?;
+                let open_epsilon = proof.conversion_epsilon(&open)?;
+                assert!(!open_epsilon.is_closed());
+                assert_eq!(open_epsilon.ty(), bool_type);
+                Ok::<_, ProofError>((epsilon.left(), epsilon.right(), open_epsilon.left()))
+            })
+            .unwrap();
+        let TermView::Epsilon {
+            predicate: left_predicate,
+        } = connection.term(left).unwrap()
+        else {
+            panic!("left conversion endpoint is not epsilon")
+        };
+        assert_eq!(
+            connection.term(left_predicate).unwrap(),
+            TermView::Application {
+                function: chooser,
+                argument: identity
+            }
+        );
+        assert_eq!(
+            connection.term(right).unwrap(),
+            TermView::Epsilon {
+                predicate: identity
+            }
+        );
+        assert_eq!(
+            connection.term(open_epsilon).unwrap(),
+            TermView::Epsilon {
+                predicate: predicate_bound
+            }
+        );
+        assert_eq!(
+            connection.term_unbound_variables(open_epsilon).unwrap(),
+            [UnboundVariable {
+                index: 0,
+                ty: predicate_type
+            }]
+        );
+    }
+
+    #[test]
+    fn epsilon_conversion_rejects_wrong_types_and_checks_policy_before_reads() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let ind = connection.insert_base_type(853).unwrap();
+        let bound = connection.insert_bound_term(0, ind).unwrap();
+        let non_boolean_predicate = connection.insert_lambda(ind, bound).unwrap();
+        connection
+            .with_proof_session(|mut proof| {
+                let conversion = proof.conversion_reflexivity(non_boolean_predicate)?;
+                assert!(matches!(
+                    proof.conversion_epsilon(&conversion),
+                    Err(ProofError::Term(TermError::EpsilonPredicateNonBoolean {
+                        predicate,
+                        codomain
+                    })) if predicate == non_boolean_predicate && codomain == ind
+                ));
+                Ok::<_, ProofError>(())
+            })
+            .unwrap();
+
+        for denied in [Operation::ProveConversionEpsilon, Operation::InsertTerm] {
+            let armed = Rc::new(Cell::new(true));
+            let mut connection = Connection::open_hol_in_memory(ArmedDenial {
+                operation: denied,
+                armed,
+            })
+            .unwrap();
+            let result = connection.with_proof_session(|mut proof| {
+                let invalid = Conversion {
+                    left: TermId::from_i64(i64::MAX),
+                    right: TermId::from_i64(i64::MAX),
+                    ty: TypeId::from_i64(i64::MAX),
+                    boundary: BTreeMap::new(),
+                    brand: PhantomData,
+                };
+                proof.conversion_epsilon(&invalid).map(|_| ())
+            });
+            assert!(matches!(result, Err(ProofError::Denied(operation)) if operation == denied));
+        }
+    }
+
+    #[test]
+    fn choice_rolls_back_epsilon_when_result_insertion_fails() {
+        let mut choice_connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = choice_connection.insert_bool_type().unwrap();
+        let bound = choice_connection.insert_bound_term(0, bool_type).unwrap();
+        let predicate = choice_connection.insert_lambda(bool_type, bound).unwrap();
+        let witness = choice_connection.insert_bool_term(true).unwrap();
+        let application = choice_connection
+            .insert_application(predicate, witness)
+            .unwrap();
+        let before = choice_connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row("SELECT count(*) FROM hol_node", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        choice_connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .execute_batch(
+                "CREATE TEMP TRIGGER reject_choice_result
+                 BEFORE INSERT ON hol_node WHEN NEW.tag = 'MAPP'
+                 BEGIN SELECT RAISE(ABORT, 'test choice result rejection'); END",
+            )
+            .unwrap();
+        let result = choice_connection.with_proof_session(|mut proof| {
+            let premise = Theorem {
+                context: ContextId::empty(),
+                conclusion: application,
+                origin: None,
+                brand: PhantomData,
+            };
+            proof.choice(&premise).map(|_| ())
+        });
+        assert!(matches!(
+            result,
+            Err(ProofError::Term(TermError::Sqlite(_)))
+        ));
+        assert_eq!(
+            choice_connection
+                .parts_mut()
+                .0
+                .sqlite()
+                .query_row("SELECT count(*) FROM hol_node", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            before
+        );
+    }
+
+    #[test]
+    fn epsilon_conversion_rolls_back_its_first_endpoint_when_the_second_fails() {
+        let mut conversion_connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = conversion_connection.insert_bool_type().unwrap();
+        let predicate_type = conversion_connection
+            .insert_arrow_type(bool_type, bool_type)
+            .unwrap();
+        let predicate_bound = conversion_connection
+            .insert_bound_term(0, predicate_type)
+            .unwrap();
+        let chooser = conversion_connection
+            .insert_lambda(predicate_type, predicate_bound)
+            .unwrap();
+        let bound = conversion_connection
+            .insert_bound_term(0, bool_type)
+            .unwrap();
+        let predicate = conversion_connection
+            .insert_lambda(bool_type, bound)
+            .unwrap();
+        conversion_connection
+            .insert_application(chooser, predicate)
+            .unwrap();
+        let before = conversion_connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row("SELECT count(*) FROM hol_node", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        conversion_connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .execute_batch(
+                "CREATE TEMP TABLE rejected_epsilon_predicate(term_id INTEGER NOT NULL) STRICT;
+                 CREATE TEMP TRIGGER reject_second_epsilon
+                 BEFORE INSERT ON hol_node
+                 WHEN NEW.tag = 'MEPS'
+                      AND NEW.lhs = (SELECT term_id FROM rejected_epsilon_predicate)
+                 BEGIN SELECT RAISE(ABORT, 'test second epsilon rejection'); END",
+            )
+            .unwrap();
+        conversion_connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .execute(
+                "INSERT INTO rejected_epsilon_predicate(term_id) VALUES (?1)",
+                [predicate.get()],
+            )
+            .unwrap();
+        let result = conversion_connection.with_proof_session(|mut proof| {
+            let predicate_conversion = proof.conversion_beta(chooser, predicate)?;
+            proof.conversion_epsilon(&predicate_conversion).map(|_| ())
+        });
+        assert!(matches!(
+            result,
+            Err(ProofError::Term(TermError::Sqlite(_)))
+        ));
+        assert_eq!(
+            conversion_connection
+                .parts_mut()
+                .0
+                .sqlite()
+                .query_row("SELECT count(*) FROM hol_node", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            before
+        );
+        assert!(
+            conversion_connection
+                .parts_mut()
+                .0
+                .sqlite()
+                .query_row(
+                    "SELECT NOT EXISTS(SELECT 1 FROM hol_node WHERE tag = 'MEPS')",
+                    [],
+                    |row| row.get::<_, bool>(0),
+                )
+                .unwrap()
+        );
     }
 
     #[test]

@@ -1,0 +1,51 @@
+Nucleus hol-common-v2 semantics, version 6
+
+This protocol is the currently implemented monomorphic HOL fragment. It is not a claim of
+compatibility with the future full HOL-omega calculus.
+
+Syntax is one canonical tagged node graph. KSTAR has rank 0. KARR(a,b) has rank
+max(rank(a)+1,rank(b)). TBOOL and opaque TBASE declarations have kind KSTAR. TARR(a,b) has kind
+KSTAR when a and b do. Each base declaration denotes an arbitrary nonempty carrier. Each MCONST
+declaration denotes an arbitrary element of its one declared type and asserts no equation,
+infinitude, choice property, or other theorem. Terms also include Boolean literals, typed free
+symbols, typed de Bruijn occurrences, applications, lambdas, same-typed equality, and Hilbert
+choice. Application and lambda typing are the ordinary simply typed rules. MEPS(p) has type A
+exactly when p has type A -> bool, and has exactly p's external de Bruijn boundary. A term is
+locally closed exactly when every de Bruijn occurrence is bound by an enclosing lambda.
+
+Every admitted type denotes a nonempty carrier. Hilbert choice denotes a fixed function which maps
+each predicate p : A -> bool to an element satisfying p when one exists, and to an arbitrary
+element of A otherwise. Choice is a function of the predicate denotation, so equality of predicates
+is respected. Ordinary MCONST declarations are never interpreted as Hilbert choice operators.
+
+A context is a canonical finite set of locally closed Boolean terms. The authoritative judgement
+relation contains only conclusions introduced through the implemented LCF rules and explicit
+persistence. Version 6 rules are hypothesis, truth, equality reflexivity, closed beta reduction,
+the monomorphic conversion rules including congruence beneath epsilon, equality modus ponens,
+typed Leibniz equality substitution through a closed predicate, deduction antisymmetry,
+simultaneous typed free-term instantiation, standard HOL abstraction, Hilbert choice, exact context
+implication introduction, explicit implication-path composition, and weakening. Choice derives
+Gamma |- p (epsilon p) from Gamma |- p x. Free-term instantiation replaces exact MFV node
+identities simultaneously in both the conclusion and every context member. Keys are distinct; each
+replacement has the key's type and is locally closed. Replacement terms are not recursively
+instantiated and pass unchanged beneath lambdas. Deduction antisymmetry derives
+(Gamma - {q}) union (Delta - {p}) |- p = q from Gamma |- p and Delta |- q. Abstraction derives
+Gamma |- (lambda x. l) = (lambda x. r) from Gamma |- l = r when the exact free-variable node x
+does not occur in any member of Gamma. Occurrences beneath existing lambdas become the correctly
+typed de Bruijn index, while existing bound occurrences remain unchanged. Exact context union is a
+separately checked structural relation. Context equivalence is a pair of opposite proved
+implications. Proof-event tables are diagnostic metadata and carry no authority.
+
+Namespaces and exports name already-admitted local kinds, types, terms, and contexts. Hash-first
+imports and imported namespace aliases are inert coordinates. A persistent trusted-import row is
+an auditable accepted assumption with cryptographically coherent evidence; it does not fetch the
+referenced image, import syntax, create theorem capabilities, or transitively establish truth.
+
+User-declared metadata columns and indexes are physical annotations. They never affect canonical
+syntax identity, typing, proof rules, or authority except that their exact physical SQLite manifest
+is independently committed by the composite signed schema identity.
+
+Current validation, descriptors, signing, and authenticated import use only this version 6
+interpretation and physical schema version 9. Version 1 through version 5 semantic identities
+remain stable and distinct, but multi-version authenticated import is not implemented by this
+prototype.

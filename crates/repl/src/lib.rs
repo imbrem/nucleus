@@ -1308,6 +1308,8 @@ pub enum LocalImportedHolTerm {
     },
     /// Same-typed equality.
     Equality { left: i64, right: i64, ty: i64 },
+    /// Hilbert choice applied to a Boolean-valued predicate.
+    Epsilon { predicate: i64, ty: i64 },
 }
 
 fn record_resident_image(
@@ -1417,6 +1419,10 @@ fn copy_imported_term(term: ImportedTermView<'_>) -> LocalImportedHolTerm {
         ImportedTermView::Equality { left, right, ty } => LocalImportedHolTerm::Equality {
             left: left.get(),
             right: right.get(),
+            ty: ty.get(),
+        },
+        ImportedTermView::Epsilon { predicate, ty } => LocalImportedHolTerm::Epsilon {
+            predicate: predicate.get(),
             ty: ty.get(),
         },
     }
