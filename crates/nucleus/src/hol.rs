@@ -34,6 +34,14 @@ impl Kind {
 pub struct KindId(i64);
 
 impl KindId {
+    /// Creates a database-local lookup handle from its stored integer.
+    ///
+    /// Operations still validate that the ID names a kind in their connection.
+    #[must_use]
+    pub const fn from_i64(id: i64) -> Self {
+        Self(id)
+    }
+
     /// Returns the integer stored in the HOL database.
     #[must_use]
     pub const fn get(self) -> i64 {
@@ -356,6 +364,27 @@ impl<P: Policy> Connection<Hol<P>> {
         Ok(id)
     }
 
+    /// Canonically interns a kind arrow from already-admitted child IDs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies insertion, either child is not an
+    /// admitted kind, or the store rejects the transaction.
+    pub fn insert_kind_arrow(
+        &mut self,
+        domain: KindId,
+        codomain: KindId,
+    ) -> Result<KindId, KindError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize(&mut hol.policy, Operation::InsertKind)?;
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        read_kind(&transaction, domain)?;
+        read_kind(&transaction, codomain)?;
+        let id = intern_kind_arrow(&transaction, domain, codomain)?;
+        transaction.commit()?;
+        Ok(id)
+    }
+
     /// Reads the constructor of an admitted kind.
     ///
     /// # Errors
@@ -531,6 +560,14 @@ fn intern_kind(connection: &sqlite::Connection, kind: &Kind) -> Result<KindId, K
     };
     let domain = intern_kind(connection, domain)?;
     let codomain = intern_kind(connection, codomain)?;
+    intern_kind_arrow(connection, domain, codomain)
+}
+
+fn intern_kind_arrow(
+    connection: &sqlite::Connection,
+    domain: KindId,
+    codomain: KindId,
+) -> Result<KindId, KindError> {
     if let Some(id) = connection
         .query_row(
             "SELECT node_id FROM hol_node

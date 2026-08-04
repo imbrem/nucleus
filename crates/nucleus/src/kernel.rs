@@ -1,6 +1,6 @@
 use covalence_lib_crypto::ed25519::{SigningKey, VerifyingKey};
 
-use crate::{Connection, Sql};
+use crate::{Connection, Hol, HolOpenError, Policy, Sql};
 
 /// One kernel instance and its ephemeral signing identity.
 ///
@@ -46,6 +46,15 @@ impl Kernel {
     /// Returns an error if `SQLite` cannot open the in-memory database.
     pub fn open_sql(&self) -> Result<Connection<Sql>, covalence_neutron::ConnectionError> {
         Connection::<Sql>::open_in_memory()
+    }
+
+    /// Opens a policy-enclosed HOL connection owned by this kernel.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the in-memory database or HOL schema cannot open.
+    pub fn open_hol<P: Policy>(&self, policy: P) -> Result<Connection<Hol<P>>, HolOpenError> {
+        Connection::open_hol_in_memory(policy)
     }
 }
 

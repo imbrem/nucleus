@@ -11,7 +11,9 @@ use std::fmt;
 use covalence_lib_sqlite as sqlite;
 
 pub use covalence_nucleus::sql::{ImageError, Outcome, QueryResult, Statement, Value};
-pub use covalence_nucleus::{Connection, Kernel, Sql};
+pub use covalence_nucleus::{
+    AllowAll, Connection, Hol, HolOpenError, Kernel, Kind, KindError, KindId, KindView, Sql,
+};
 
 const SCHEMA: &str = "
 PRAGMA foreign_keys = ON;
@@ -204,6 +206,201 @@ impl<C> Repl<C> {
     }
 }
 
+/// One process-local connection managed by the shared terminal/browser core.
+pub enum LocalConnection {
+    /// An unrestricted raw SQL session.
+    Sql(Connection<Sql>),
+    /// The current minimal HOL-omega protocol under an explicit demo policy.
+    Hol(Connection<Hol<AllowAll>>),
+}
+
+impl LocalConnection {
+    const fn protocol(&self) -> &'static str {
+        match self {
+            Self::Sql(_) => "nucleus/sql",
+            Self::Hol(_) => "nucleus/hol-omega-v0",
+        }
+    }
+}
+
+/// A local kernel and heterogeneous connection directory shared by all UIs.
+pub struct LocalRepl {
+    kernel: Kernel,
+    directory: Repl<LocalConnection>,
+}
+
+impl LocalRepl {
+    /// Creates a REPL with one fresh ephemeral kernel identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if its raw `SQLite` state database cannot open.
+    pub fn new() -> Result<Self, LocalReplError> {
+        let kernel = Kernel::ephemeral();
+        let directory = Repl::new(kernel.verifying_key().as_bytes())?;
+        Ok(Self { kernel, directory })
+    }
+
+    /// Returns the inspectable raw REPL state database.
+    #[must_use]
+    pub const fn state(&self) -> &covalence_neutron::Connection {
+        self.directory.state()
+    }
+
+    /// Returns the selected connection ID, if any.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the state database cannot be read.
+    pub fn active(&self) -> Result<Option<ConnectionId>, LocalReplError> {
+        self.directory.active().map_err(Into::into)
+    }
+
+    /// Selects an existing heterogeneous connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown ID or state update failure.
+    pub fn select(&mut self, id: ConnectionId) -> Result<(), LocalReplError> {
+        self.directory.select(id).map_err(Into::into)
+    }
+
+    /// Opens and selects a raw in-memory SQL session.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection or directory row cannot be created.
+    pub fn open_sql(&mut self) -> Result<ConnectionId, LocalReplError> {
+        let connection = self.kernel.open_sql().map_err(LocalReplError::SqlOpen)?;
+        let id = self
+            .directory
+            .insert("nucleus/sql", LocalConnection::Sql(connection))?;
+        self.directory.select(id)?;
+        Ok(id)
+    }
+
+    /// Opens and selects a minimal HOL-omega connection.
+    ///
+    /// The demo explicitly chooses [`AllowAll`]; it does not weaken the HOL
+    /// connection API or expose its underlying `SQLite` handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection/schema or directory row cannot open.
+    pub fn open_hol(&mut self) -> Result<ConnectionId, LocalReplError> {
+        let connection = self
+            .kernel
+            .open_hol(AllowAll)
+            .map_err(LocalReplError::HolOpen)?;
+        let id = self
+            .directory
+            .insert("nucleus/hol-omega-v0", LocalConnection::Hol(connection))?;
+        self.directory.select(id)?;
+        Ok(id)
+    }
+
+    /// Closes any managed connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown ID or state update failure.
+    pub fn close(&mut self, id: ConnectionId) -> Result<(), LocalReplError> {
+        self.directory.remove(id).map(drop).map_err(Into::into)
+    }
+
+    /// Returns a mutable SQL session, rejecting HOL connection IDs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown ID or protocol mismatch.
+    pub fn sql_mut(&mut self, id: ConnectionId) -> Result<&mut Connection<Sql>, LocalReplError> {
+        let connection = self.directory.get_mut(id)?;
+        match connection {
+            LocalConnection::Sql(connection) => Ok(connection),
+            other @ LocalConnection::Hol(_) => Err(LocalReplError::WrongProtocol {
+                id,
+                expected: "nucleus/sql",
+                actual: other.protocol(),
+            }),
+        }
+    }
+
+    /// Returns a mutable HOL session, rejecting SQL connection IDs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown ID or protocol mismatch.
+    pub fn hol_mut(
+        &mut self,
+        id: ConnectionId,
+    ) -> Result<&mut Connection<Hol<AllowAll>>, LocalReplError> {
+        let connection = self.directory.get_mut(id)?;
+        match connection {
+            LocalConnection::Hol(connection) => Ok(connection),
+            other @ LocalConnection::Sql(_) => Err(LocalReplError::WrongProtocol {
+                id,
+                expected: "nucleus/hol-omega-v0",
+                actual: other.protocol(),
+            }),
+        }
+    }
+}
+
+/// Failure in the shared local-kernel REPL layer.
+#[derive(Debug)]
+pub enum LocalReplError {
+    /// The connection directory failed.
+    Directory(ReplError),
+    /// A raw SQL connection could not open.
+    SqlOpen(covalence_neutron::ConnectionError),
+    /// A HOL connection or its schema could not open.
+    HolOpen(HolOpenError),
+    /// A command was sent to a connection of another protocol.
+    WrongProtocol {
+        /// Requested connection.
+        id: ConnectionId,
+        /// Protocol required by the operation.
+        expected: &'static str,
+        /// Protocol actually owned by the connection.
+        actual: &'static str,
+    },
+}
+
+impl fmt::Display for LocalReplError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Directory(error) => error.fmt(formatter),
+            Self::SqlOpen(error) => write!(formatter, "could not open SQL connection: {error}"),
+            Self::HolOpen(error) => error.fmt(formatter),
+            Self::WrongProtocol {
+                id,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "connection {id} uses {actual}; operation requires {expected}"
+            ),
+        }
+    }
+}
+
+impl StdError for LocalReplError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            Self::Directory(error) => Some(error),
+            Self::SqlOpen(error) => Some(error),
+            Self::HolOpen(error) => Some(error),
+            Self::WrongProtocol { .. } => None,
+        }
+    }
+}
+
+impl From<ReplError> for LocalReplError {
+    fn from(error: ReplError) -> Self {
+        Self::Directory(error)
+    }
+}
+
 /// Failure to operate the REPL directory.
 #[derive(Debug)]
 pub enum ReplError {
@@ -254,7 +451,7 @@ impl From<sqlite::Error> for ReplError {
 mod web;
 
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-pub use web::{WebKernel, WebOutcome};
+pub use web::{WebKernel, WebKind, WebOutcome};
 
 /// Returns the cross-target `SQLite` smoke-test value.
 #[must_use]
@@ -301,5 +498,42 @@ mod tests {
             )
             .unwrap();
         assert_eq!(public_key, vec![7; 32]);
+    }
+
+    #[test]
+    fn local_kernel_directory_manages_sql_and_hol_without_crossing_protocols() {
+        let mut repl = LocalRepl::new().unwrap();
+        let sql = repl.open_sql().unwrap();
+        let hol = repl.open_hol().unwrap();
+
+        repl.sql_mut(sql).unwrap().run("SELECT 1", &[]).unwrap();
+        let star = repl.hol_mut(hol).unwrap().insert_kind(&Kind::Star).unwrap();
+        assert_eq!(star.get(), 1);
+        assert!(matches!(
+            repl.sql_mut(hol),
+            Err(LocalReplError::WrongProtocol {
+                expected: "nucleus/sql",
+                actual: "nucleus/hol-omega-v0",
+                ..
+            })
+        ));
+        assert!(matches!(
+            repl.hol_mut(sql),
+            Err(LocalReplError::WrongProtocol {
+                expected: "nucleus/hol-omega-v0",
+                actual: "nucleus/sql",
+                ..
+            })
+        ));
+        let protocols = repl
+            .state()
+            .sqlite()
+            .prepare("SELECT protocol FROM repl_connection ORDER BY connection_id")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(protocols, ["nucleus/sql", "nucleus/hol-omega-v0"]);
     }
 }

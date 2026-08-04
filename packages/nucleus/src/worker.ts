@@ -2,6 +2,7 @@ import init, { WebKernel, type WebOutcome } from "../generated/nucleus.js";
 
 type Request =
   | { id: number; operation: "open" }
+  | { id: number; operation: "openHol" }
   | { id: number; operation: "close"; connection: number }
   | { id: number; operation: "run"; connection: number; sql: string }
   | {
@@ -24,7 +25,17 @@ type Request =
       url: string;
       schema: string;
     }
-  | { id: number; operation: "serializeMain"; connection: number };
+  | { id: number; operation: "serializeMain"; connection: number }
+  | { id: number; operation: "holStar"; connection: number }
+  | {
+      id: number;
+      operation: "holArrow";
+      connection: number;
+      domain: number;
+      codomain: number;
+    }
+  | { id: number; operation: "holKind"; connection: number; kind: number }
+  | { id: number; operation: "holRank"; connection: number; kind: number };
 
 type SqlValue =
   | { kind: "null" }
@@ -58,6 +69,8 @@ async function execute(request: Request): Promise<unknown> {
   switch (request.operation) {
     case "open":
       return connection.open_connection();
+    case "openHol":
+      return connection.open_hol_connection();
     case "close":
       connection.close_connection(request.connection);
       return undefined;
@@ -82,6 +95,30 @@ async function execute(request: Request): Promise<unknown> {
     }
     case "serializeMain":
       return connection.serialize_main(request.connection);
+    case "holStar":
+      return connection.hol_star(request.connection);
+    case "holArrow":
+      return connection.hol_arrow(
+        request.connection,
+        request.domain,
+        request.codomain,
+      );
+    case "holKind": {
+      const kind = connection.hol_kind(request.connection, request.kind);
+      try {
+        return kind.tag() === "star"
+          ? { kind: "star" }
+          : {
+              kind: "arrow",
+              domain: kind.domain(),
+              codomain: kind.codomain(),
+            };
+      } finally {
+        kind.free();
+      }
+    }
+    case "holRank":
+      return connection.hol_rank(request.connection, request.kind);
   }
 }
 

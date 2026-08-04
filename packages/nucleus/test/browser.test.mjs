@@ -80,4 +80,13 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
   await demo.locator("#sql").fill("SELECT 84 AS independent");
   await demo.locator("#run").click();
   await demo.getByRole("cell", { name: "84" }).waitFor();
+
+  await demo.locator("#new-hol").click();
+  await demo.getByText("hol connection 3 ready").waitFor();
+  await demo.locator("#hol-star").click();
+  await demo.getByText("kind 1 = star").waitFor();
+  await demo.locator("#hol-arrow").click();
+  await demo.getByText("kind 2 = 1 -> 1").waitFor();
+  await demo.locator("#hol-rank").click();
+  await demo.getByText("rank 2 = 1").waitFor();
 });
