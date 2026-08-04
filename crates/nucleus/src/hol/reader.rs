@@ -84,9 +84,35 @@ pub enum ImportedTermView<'reader> {
     },
 }
 
+/// Evidence that one exact judgement row occurs in a verified imported image.
+///
+/// This capability is scoped to the imported reader that produced it. It is not a
+/// local [`super::Theorem`] and cannot be used by the local proof rules.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ImportedTheorem<'reader> {
+    context: ImportedContextId<'reader>,
+    conclusion: ImportedTermId<'reader>,
+}
+
+impl<'reader> ImportedTheorem<'reader> {
+    /// Returns the imported context coordinate of the persisted judgement.
+    #[must_use]
+    pub const fn context(self) -> ImportedContextId<'reader> {
+        self.context
+    }
+
+    /// Returns the imported Boolean conclusion coordinate of the persisted judgement.
+    #[must_use]
+    pub const fn conclusion(self) -> ImportedTermId<'reader> {
+        self.conclusion
+    }
+}
+
 /// Scoped immutable structural reader for one exact trusted imported image.
 ///
-/// It exposes no raw SQL, judgement authority, local-ID conversion, or proof operation.
+/// It exposes no raw SQL, local judgement authority, local-ID conversion, or proof operation.
+/// Persisted imported judgements can only be observed as reader-scoped [`ImportedTheorem`]
+/// evidence.
 pub struct ImportedHolReader<'reader, 'connection, P> {
     owner: &'connection mut Connection<Hol<P>>,
     sqlite: covalence_neutron::Connection,
@@ -241,6 +267,35 @@ impl<'reader, P: Policy> ImportedHolReader<'reader, '_, P> {
             .optional()?
             .ok_or(ImportedReaderError::UnknownTerm(id.0))?;
         decode_term(row, id.0)
+    }
+
+    /// Looks up one exact persisted judgement in the verified imported image.
+    ///
+    /// The returned capability witnesses only the imported row. It cannot be converted into a
+    /// local theorem capability.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for policy denial, changed VFS identity, or `SQLite` failure.
+    pub fn theorem(
+        &mut self,
+        context: ImportedContextId<'reader>,
+        conclusion: ImportedTermId<'reader>,
+    ) -> Result<Option<ImportedTheorem<'reader>>, ImportedReaderError> {
+        self.authorize(Operation::ReadImportedImageTheorem)?;
+        self.verify_vfs()?;
+        let exists = self.sqlite.sqlite().query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM imported.hol_judgement
+                 WHERE ctx_id = ?1 AND term_id = ?2
+             )",
+            [context.0, conclusion.0],
+            |row| row.get::<_, bool>(0),
+        )?;
+        Ok(exists.then_some(ImportedTheorem {
+            context,
+            conclusion,
+        }))
     }
 
     fn authorize(&mut self, operation: Operation) -> Result<(), ImportedReaderError> {
@@ -405,17 +460,36 @@ impl From<covalence_neutron::DatabaseVfsError> for ImportedReaderError {
 mod tests {
     use super::*;
     use crate::{
-        AllowAll, AuthenticatedValidatedHolImage, ExportId, HolDatabaseRef, Kernel, NamespaceError,
-        NamespaceExport, SignedSnapshotEnvelope,
+        AllowAll, AuthenticatedValidatedHolImage, ContextId, ExportId, HolDatabaseRef, Kernel,
+        NamespaceError, NamespaceExport, SignedSnapshotEnvelope,
     };
-    use std::sync::Arc;
+    use std::{cell::Cell, rc::Rc, sync::Arc};
+
+    #[derive(Clone)]
+    struct SelectivePolicy {
+        denied: Rc<Cell<Option<Operation>>>,
+    }
+
+    impl Policy for SelectivePolicy {
+        fn allows(&mut self, operation: Operation) -> bool {
+            self.denied.get() != Some(operation)
+        }
+    }
 
     #[test]
     #[allow(clippy::too_many_lines)]
-    fn scoped_reader_uses_verified_immutable_vfs_and_exposes_only_structure() {
+    fn scoped_reader_uses_verified_vfs_and_exposes_only_scoped_evidence() {
         let source_kernel = Kernel::ephemeral();
         let mut source = source_kernel.open_hol(AllowAll).unwrap();
         let truth = source.insert_bool_term(true).unwrap();
+        source
+            .with_proof_session(|mut proof| {
+                let theorem = proof.prove_truth(ContextId::empty())?;
+                assert_eq!(theorem.conclusion(), truth);
+                proof.persist_theorem(&theorem)
+            })
+            .unwrap();
+        let falsehood = source.insert_bool_term(false).unwrap();
         let namespace = source.create_namespace(None, Some("demo")).unwrap();
         source
             .export_value(
@@ -423,6 +497,22 @@ mod tests {
                 ExportId::from_i64(7),
                 NamespaceExport::Term(truth),
                 Some("truth"),
+            )
+            .unwrap();
+        source
+            .export_value(
+                namespace,
+                ExportId::from_i64(8),
+                NamespaceExport::Context(ContextId::empty()),
+                Some("empty"),
+            )
+            .unwrap();
+        source
+            .export_value(
+                namespace,
+                ExportId::from_i64(9),
+                NamespaceExport::Term(falsehood),
+                Some("false"),
             )
             .unwrap();
         let signed = source_kernel.export_hol(&mut source).unwrap();
@@ -446,7 +536,12 @@ mod tests {
                 .unwrap();
         drop(source);
 
-        let mut target = source_kernel.open_hol(AllowAll).unwrap();
+        let denied = Rc::new(Cell::new(None));
+        let mut target = source_kernel
+            .open_hol(SelectivePolicy {
+                denied: Rc::clone(&denied),
+            })
+            .unwrap();
         let claim = evidence.claim();
         target.trust_snapshot_signer(claim).unwrap();
         target.accept_authenticated_snapshot(claim).unwrap();
@@ -516,6 +611,25 @@ mod tests {
                 };
                 assert_eq!(term.get(), truth.get());
                 assert_eq!(reader.term(term).unwrap(), ImportedTermView::Bool(true));
+                let ImportedExport::Context(context) = reader.namespace_export(8).unwrap().unwrap()
+                else {
+                    panic!("expected imported context export")
+                };
+                let theorem = reader.theorem(context, term).unwrap().unwrap();
+                assert_eq!(theorem.context(), context);
+                assert_eq!(theorem.conclusion(), term);
+                let ImportedExport::Term(falsehood) = reader.namespace_export(9).unwrap().unwrap()
+                else {
+                    panic!("expected imported term export")
+                };
+                assert!(reader.theorem(context, falsehood).unwrap().is_none());
+                denied.set(Some(Operation::ReadImportedImageTheorem));
+                assert!(matches!(
+                    reader.theorem(context, term),
+                    Err(ImportedReaderError::Denied(
+                        Operation::ReadImportedImageTheorem
+                    ))
+                ));
                 reader
                     .mounted
                     .verify(&reader.sqlite, IMPORTED_SCHEMA)
