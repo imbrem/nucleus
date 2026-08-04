@@ -79,6 +79,7 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
   assert.match(result.snapshotSigner, /^[0-9a-f]{64}$/);
   assert.equal(result.publicKeyLength, 32);
   assert.equal(result.signatureLength, 64);
+  assert.equal(result.attestationHasBytes, false);
   assert.deepEqual(result.snapshotRows, {
     kind: "rows",
     columns: ["namespace_id", "export_id", "sort", "local_id", "name"],
@@ -89,6 +90,50 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
         { kind: "text", value: "term" },
         { kind: "integer", value: "3" },
         { kind: "text", value: "truth" },
+      ],
+    ],
+  });
+  assert.deepEqual(result.inspectedImport, result.trustedImport);
+  assert.equal(result.trustedImport.importId, 0);
+  assert.equal(result.trustedImport.trustedImportId, 0);
+  assert.equal(result.trustedImport.schema, result.snapshotSchema);
+  assert.equal(result.trustedImport.image, result.snapshotImage);
+  assert.equal(result.trustedImport.signer, result.snapshotSigner);
+  assert.equal(result.tamperedRejected, true);
+  assert.equal(result.observerReadRejected, true);
+  assert.deepEqual(result.trustedRows, {
+    kind: "rows",
+    columns: [
+      "import_id",
+      "hex(i.schema_hash)",
+      "hex(i.image_hash)",
+      "trusted_import_id",
+      "hex(t.signer_hash)",
+      "length(t.public_key)",
+      "length(t.signature)",
+    ],
+    rows: [
+      [
+        { kind: "integer", value: "0" },
+        { kind: "text", value: result.snapshotSchema.toUpperCase() },
+        { kind: "text", value: result.snapshotImage.toUpperCase() },
+        { kind: "integer", value: "0" },
+        { kind: "text", value: result.snapshotSigner.toUpperCase() },
+        { kind: "integer", value: "32" },
+        { kind: "integer", value: "64" },
+      ],
+    ],
+  });
+  assert.deepEqual(result.observerRows, {
+    kind: "rows",
+    columns: [
+      "(SELECT count(*) FROM observer_snapshot.hol_import)",
+      "(SELECT count(*) FROM observer_snapshot.hol_trusted_import)",
+    ],
+    rows: [
+      [
+        { kind: "integer", value: "0" },
+        { kind: "integer", value: "0" },
       ],
     ],
   });
@@ -137,4 +182,10 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
       "context 3 => 2 proved=true; theorem 3 |- 16; before=false after=true",
     )
     .waitFor();
+  await demo.locator("#hol-export-signed").click();
+  await demo.getByText(/signed HOL snapshot [0-9a-f]{64}/).waitFor();
+  await demo.locator("#new-hol").click();
+  await demo.getByText("hol connection 4 ready").waitFor();
+  await demo.locator("#hol-trust-import").click();
+  await demo.getByText(/trusted import 0 references local import 0/).waitFor();
 });

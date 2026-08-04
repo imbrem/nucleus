@@ -3,8 +3,8 @@ use wasm_bindgen::prelude::*;
 
 use super::{
     ConnectionId, ContextId, ExportId, Kind, KindId, KindView, LocalRepl, LocalSignedHolSnapshot,
-    NamespaceExport, NamespaceId, NamespaceView, Outcome, ProofError, QueryResult, TermId,
-    TermView, TypeId, TypeView, Value,
+    LocalTrustedHolImport, NamespaceExport, NamespaceId, NamespaceView, Outcome, ProofError,
+    QueryResult, TermId, TermView, TrustedImportId, TypeId, TypeView, Value,
 };
 
 /// Browser adapter for the shared REPL connection directory.
@@ -55,6 +55,12 @@ pub struct WebExport {
 #[wasm_bindgen]
 pub struct WebSignedHolSnapshot {
     snapshot: LocalSignedHolSnapshot,
+}
+
+/// Owned view of one persistent hash-first trusted-import assumption.
+#[wasm_bindgen]
+pub struct WebTrustedHolImport {
+    trusted: LocalTrustedHolImport,
 }
 
 #[wasm_bindgen]
@@ -789,6 +795,62 @@ impl WebKernel {
             .map_err(js_error)
     }
 
+    /// Authenticates and persists one hash-first HOL import attestation.
+    ///
+    /// This operation does not fetch or attach the named database image.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed hashes or key bytes, invalid authentication evidence, a
+    /// wrong connection protocol, or rejected trust/import persistence.
+    pub fn hol_trust_import(
+        &mut self,
+        connection: u32,
+        schema: &str,
+        image: &str,
+        signer: &str,
+        public_key: &[u8],
+        signature: &[u8],
+    ) -> Result<WebTrustedHolImport, JsValue> {
+        let schema = O256::from_hex(schema).map_err(js_error)?;
+        let image = O256::from_hex(image).map_err(js_error)?;
+        let signer = O256::from_hex(signer).map_err(js_error)?;
+        let public_key = public_key
+            .try_into()
+            .map_err(|_| JsValue::from_str("Ed25519 public key must contain exactly 32 bytes"))?;
+        self.repl
+            .trust_hol_import(
+                ConnectionId::from_u32(connection),
+                schema,
+                image,
+                signer,
+                public_key,
+                signature,
+            )
+            .map(|trusted| WebTrustedHolImport { trusted })
+            .map_err(js_error)
+    }
+
+    /// Reads one persistent trusted-import assumption.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a wrong connection protocol, unknown ID, rejected read, or an ID that
+    /// cannot be represented by the browser API.
+    pub fn hol_trusted_import(
+        &mut self,
+        connection: u32,
+        trusted_import: u32,
+    ) -> Result<WebTrustedHolImport, JsValue> {
+        self.repl
+            .hol_trusted_import(
+                ConnectionId::from_u32(connection),
+                TrustedImportId::from_i64(i64::from(trusted_import)),
+            )
+            .map(|trusted| WebTrustedHolImport { trusted })
+            .map_err(js_error)
+    }
+
     fn connection_mut(
         &mut self,
         id: u32,
@@ -884,6 +946,45 @@ impl WebSignedHolSnapshot {
     #[must_use]
     pub fn signature(&self) -> Vec<u8> {
         self.snapshot.signature().to_vec()
+    }
+}
+
+#[wasm_bindgen]
+impl WebTrustedHolImport {
+    /// Returns the inert local import ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the ID cannot be represented by the browser API.
+    pub fn import_id(&self) -> Result<u32, JsValue> {
+        u32::try_from(self.trusted.import().get()).map_err(js_error)
+    }
+
+    /// Returns the persistent trusted-import ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the ID cannot be represented by the browser API.
+    pub fn trusted_import_id(&self) -> Result<u32, JsValue> {
+        u32::try_from(self.trusted.trusted_import().get()).map_err(js_error)
+    }
+
+    /// Returns the exact interpretation-qualified schema identity.
+    #[must_use]
+    pub fn schema(&self) -> String {
+        self.trusted.database().schema().to_string()
+    }
+
+    /// Returns the exact snapshot image hash.
+    #[must_use]
+    pub fn image(&self) -> String {
+        self.trusted.database().image().to_string()
+    }
+
+    /// Returns the authenticated signer identity.
+    #[must_use]
+    pub fn signer(&self) -> String {
+        self.trusted.signer().to_string()
     }
 }
 

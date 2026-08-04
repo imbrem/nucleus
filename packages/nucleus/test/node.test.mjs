@@ -43,6 +43,72 @@ test("runs the REPL kernel through the Wasm binding in Node", async () => {
   kernel.close_connection(otherConnection);
   assert.throws(() => kernel.run(otherConnection, "SELECT 1"));
 
+  const holSource = kernel.open_hol_connection();
+  const holTarget = kernel.open_hol_connection();
+  const holSnapshot = kernel.hol_export_snapshot(holSource);
+  const schema = holSnapshot.schema();
+  const holImage = holSnapshot.image();
+  const signer = holSnapshot.signer();
+  const publicKey = holSnapshot.public_key();
+  const signature = holSnapshot.signature();
+  kernel.close_connection(holSource);
+
+  assert.throws(() =>
+    kernel.hol_trust_import(
+      holTarget,
+      schema,
+      holImage,
+      signer,
+      publicKey.slice(1),
+      signature,
+    ),
+  );
+  const tampered = signature.slice();
+  tampered[0] ^= 1;
+  assert.throws(() =>
+    kernel.hol_trust_import(
+      holTarget,
+      schema,
+      holImage,
+      signer,
+      publicKey,
+      tampered,
+    ),
+  );
+  assert.throws(() =>
+    kernel.hol_trust_import(
+      connection,
+      schema,
+      holImage,
+      signer,
+      publicKey,
+      signature,
+    ),
+  );
+
+  const trusted = kernel.hol_trust_import(
+    holTarget,
+    schema,
+    holImage,
+    signer,
+    publicKey,
+    signature,
+  );
+  assert.equal(trusted.import_id(), 0);
+  assert.equal(trusted.trusted_import_id(), 0);
+  assert.equal(trusted.schema(), schema);
+  assert.equal(trusted.image(), holImage);
+  assert.equal(trusted.signer(), signer);
+  const inspected = kernel.hol_trusted_import(
+    holTarget,
+    trusted.trusted_import_id(),
+  );
+  assert.equal(inspected.import_id(), trusted.import_id());
+  assert.equal(inspected.schema(), schema);
+
+  inspected.free();
+  trusted.free();
+  holSnapshot.free();
   result.free();
   kernel.free();
   source.free();

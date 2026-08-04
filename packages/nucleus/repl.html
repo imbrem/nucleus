@@ -126,6 +126,12 @@
       <button id="hol-weakening-demo" type="button">
         Prove context weakening
       </button>
+      <button id="hol-export-signed" type="button">
+        Export signed HOL snapshot
+      </button>
+      <button id="hol-trust-import" type="button">
+        Trust signer and persist snapshot import
+      </button>
     </div>
 
     <script type="module">
@@ -134,6 +140,7 @@
       const repl = createBrowserRepl();
       const connections = new Map();
       let nextConnection = 1;
+      let lastHolAttestation;
 
       const connectionSelect = document.querySelector("#connection");
       const status = document.querySelector("#status");
@@ -467,6 +474,38 @@
             const weakened = await hol.weaken(antecedent, consequent, equality);
             const after = await hol.proved(antecedent, equality);
             output.textContent = `context ${antecedent} => ${consequent} proved=${implication}; theorem ${antecedent} |- ${weakened}; before=${before} after=${after}`;
+          } catch (error) {
+            showError(error);
+          }
+        });
+
+      document
+        .querySelector("#hol-export-signed")
+        .addEventListener("click", async () => {
+          try {
+            const snapshot = await selectedProtocol("hol").exportSnapshot();
+            lastHolAttestation = {
+              schema: snapshot.schema,
+              image: snapshot.image,
+              signer: snapshot.signer,
+              publicKey: snapshot.publicKey,
+              signature: snapshot.signature,
+            };
+            output.textContent = `signed HOL snapshot ${snapshot.image} with schema ${snapshot.schema}`;
+          } catch (error) {
+            showError(error);
+          }
+        });
+
+      document
+        .querySelector("#hol-trust-import")
+        .addEventListener("click", async () => {
+          try {
+            if (lastHolAttestation === undefined)
+              throw new Error("export a signed HOL snapshot first");
+            const trusted =
+              await selectedProtocol("hol").trustImport(lastHolAttestation);
+            output.textContent = `trusted import ${trusted.trustedImportId} references local import ${trusted.importId} (${trusted.image})`;
           } catch (error) {
             showError(error);
           }
