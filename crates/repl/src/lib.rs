@@ -10,12 +10,15 @@ use std::fmt;
 
 use covalence_lib_sqlite as sqlite;
 
+pub use covalence_lib_hash::O256;
 pub use covalence_nucleus::sql::{ImageError, Outcome, QueryResult, Statement, Value};
 pub use covalence_nucleus::{
     AllowAll, Connection, ContextError, ContextId, ContextImplication, ExportError, ExportId,
-    ExportSort, ExportView, Hol, HolExportError, HolOpenError, Kernel, Kind, KindError, KindId,
-    KindView, NamespaceError, NamespaceExport, NamespaceId, NamespaceView, ProofError,
-    ProofSession, Sql, TermError, TermId, TermView, Theorem, TypeError, TypeId, TypeView,
+    ExportSort, ExportView, Hol, HolDatabaseRef, HolExportError, HolOpenError, ImportError,
+    ImportId, Kernel, Kind, KindError, KindId, KindView, NamespaceError, NamespaceExport,
+    NamespaceId, NamespaceView, ProofError, ProofSession, SignedSnapshotAttestation,
+    SnapshotAuthenticationError, SnapshotTrustError, Sql, TermError, TermId, TermView, Theorem,
+    TrustedImportError, TrustedImportId, TypeError, TypeId, TypeView, ValidatedHolImage,
 };
 
 const SCHEMA: &str = "
@@ -240,6 +243,41 @@ pub struct LocalSignedHolSnapshot {
     signer: covalence_lib_hash::O256,
     public_key: [u8; 32],
     signature: Vec<u8>,
+}
+
+/// Result of explicitly trusting and persisting one hash-first HOL import attestation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LocalTrustedHolImport {
+    import: ImportId,
+    trusted_import: TrustedImportId,
+    database: HolDatabaseRef,
+    signer: O256,
+}
+
+impl LocalTrustedHolImport {
+    /// Returns the inert registered import ID.
+    #[must_use]
+    pub const fn import(&self) -> ImportId {
+        self.import
+    }
+
+    /// Returns the persistent accepted-assumption ID.
+    #[must_use]
+    pub const fn trusted_import(&self) -> TrustedImportId {
+        self.trusted_import
+    }
+
+    /// Returns the exact schema/image coordinates.
+    #[must_use]
+    pub const fn database(&self) -> HolDatabaseRef {
+        self.database
+    }
+
+    /// Returns the authenticated signer identity.
+    #[must_use]
+    pub const fn signer(&self) -> O256 {
+        self.signer
+    }
 }
 
 impl LocalSignedHolSnapshot {
@@ -509,6 +547,61 @@ impl LocalRepl {
         })
     }
 
+    /// Authenticates, explicitly trusts, and persists one hash-first import attestation.
+    ///
+    /// This is transport orchestration over Nucleus APIs. It performs no cryptography itself and
+    /// never fetches, parses, or attaches the named database.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a wrong connection protocol, malformed/invalid authentication
+    /// evidence, rejected trust/import operations, or failed persistence.
+    pub fn trust_hol_import(
+        &mut self,
+        id: ConnectionId,
+        schema: O256,
+        image: O256,
+        signer: O256,
+        public_key: [u8; 32],
+        signature: &[u8],
+    ) -> Result<LocalTrustedHolImport, LocalReplError> {
+        let claim = SignedSnapshotAttestation::new(schema, image, signer, public_key, signature)
+            .authenticate()?;
+        let connection = self.hol_mut(id)?;
+        connection.trust_snapshot_signer(&claim)?;
+        connection.accept_authenticated_snapshot(&claim)?;
+        let database = HolDatabaseRef::new(schema, image);
+        let import = connection.register_import(database)?;
+        let trusted_import = connection.accept_trusted_import(import, &claim)?;
+        Ok(LocalTrustedHolImport {
+            import,
+            trusted_import,
+            database,
+            signer,
+        })
+    }
+
+    /// Reads one persistent trusted-import assumption through the shared connection directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a wrong protocol or rejected/unknown trusted-import read.
+    pub fn hol_trusted_import(
+        &mut self,
+        id: ConnectionId,
+        trusted_import: TrustedImportId,
+    ) -> Result<LocalTrustedHolImport, LocalReplError> {
+        let connection = self.hol_mut(id)?;
+        let view = connection.trusted_import(trusted_import)?;
+        let database = connection.import_reference(view.import)?.database;
+        Ok(LocalTrustedHolImport {
+            import: view.import,
+            trusted_import,
+            database,
+            signer: view.signer,
+        })
+    }
+
     /// Introduces one exact implication from persisted witness keys.
     ///
     /// This shared orchestration performs no search: every supplied term must
@@ -695,6 +788,14 @@ pub enum LocalReplError {
     Export(ExportError),
     /// Signed HOL snapshot export failed.
     HolExport(HolExportError),
+    /// Hash-first snapshot authentication failed.
+    SnapshotAuthentication(SnapshotAuthenticationError),
+    /// Connection-local snapshot trust failed.
+    SnapshotTrust(SnapshotTrustError),
+    /// Import-directory operation failed.
+    Import(ImportError),
+    /// Persistent trusted-import operation failed.
+    TrustedImport(TrustedImportError),
     /// A command was sent to a connection of another protocol.
     WrongProtocol {
         /// Requested connection.
@@ -715,6 +816,10 @@ impl fmt::Display for LocalReplError {
             Self::Namespace(error) => error.fmt(formatter),
             Self::Export(error) => error.fmt(formatter),
             Self::HolExport(error) => error.fmt(formatter),
+            Self::SnapshotAuthentication(error) => error.fmt(formatter),
+            Self::SnapshotTrust(error) => error.fmt(formatter),
+            Self::Import(error) => error.fmt(formatter),
+            Self::TrustedImport(error) => error.fmt(formatter),
             Self::WrongProtocol {
                 id,
                 expected,
@@ -736,6 +841,10 @@ impl StdError for LocalReplError {
             Self::Namespace(error) => Some(error),
             Self::Export(error) => Some(error),
             Self::HolExport(error) => Some(error),
+            Self::SnapshotAuthentication(error) => Some(error),
+            Self::SnapshotTrust(error) => Some(error),
+            Self::Import(error) => Some(error),
+            Self::TrustedImport(error) => Some(error),
             Self::WrongProtocol { .. } => None,
         }
     }
@@ -762,6 +871,30 @@ impl From<ExportError> for LocalReplError {
 impl From<HolExportError> for LocalReplError {
     fn from(error: HolExportError) -> Self {
         Self::HolExport(error)
+    }
+}
+
+impl From<SnapshotAuthenticationError> for LocalReplError {
+    fn from(error: SnapshotAuthenticationError) -> Self {
+        Self::SnapshotAuthentication(error)
+    }
+}
+
+impl From<SnapshotTrustError> for LocalReplError {
+    fn from(error: SnapshotTrustError) -> Self {
+        Self::SnapshotTrust(error)
+    }
+}
+
+impl From<ImportError> for LocalReplError {
+    fn from(error: ImportError) -> Self {
+        Self::Import(error)
+    }
+}
+
+impl From<TrustedImportError> for LocalReplError {
+    fn from(error: TrustedImportError) -> Self {
+        Self::TrustedImport(error)
     }
 }
 
@@ -939,6 +1072,74 @@ mod tests {
             repl.export_hol_snapshot(sql),
             Err(LocalReplError::WrongProtocol { .. })
         ));
+    }
+
+    #[test]
+    fn shared_repl_trusts_one_hash_first_snapshot_across_connections() {
+        let mut repl = LocalRepl::new().unwrap();
+        let source = repl.open_hol().unwrap();
+        let target = repl.open_hol().unwrap();
+        let observer = repl.open_hol().unwrap();
+        let snapshot = repl.export_hol_snapshot(source).unwrap();
+        repl.close(source).unwrap();
+
+        let trusted = repl
+            .trust_hol_import(
+                target,
+                snapshot.schema(),
+                snapshot.image(),
+                snapshot.signer(),
+                *snapshot.public_key(),
+                snapshot.signature(),
+            )
+            .unwrap();
+        assert_eq!(trusted.database().schema(), snapshot.schema());
+        assert_eq!(trusted.database().image(), snapshot.image());
+        assert_eq!(trusted.signer(), snapshot.signer());
+        assert_eq!(
+            repl.hol_trusted_import(target, trusted.trusted_import())
+                .unwrap(),
+            trusted
+        );
+        assert!(matches!(
+            repl.hol_trusted_import(observer, trusted.trusted_import()),
+            Err(LocalReplError::TrustedImport(
+                TrustedImportError::UnknownTrustedImport(_)
+            ))
+        ));
+
+        let exported_target = repl.export_hol_snapshot(target).unwrap();
+        let validated =
+            covalence_nucleus::ValidatedHolImage::validate(exported_target.bytes()).unwrap();
+        assert_eq!(validated.counts().import_references, 1);
+        assert_eq!(validated.counts().untrusted_trusted_import_rows, 1);
+    }
+
+    #[test]
+    fn shared_repl_rejects_tampered_attestations_before_import_state() {
+        let mut repl = LocalRepl::new().unwrap();
+        let source = repl.open_hol().unwrap();
+        let target = repl.open_hol().unwrap();
+        let snapshot = repl.export_hol_snapshot(source).unwrap();
+        let mut signature = snapshot.signature().to_vec();
+        signature[0] ^= 1;
+
+        assert!(matches!(
+            repl.trust_hol_import(
+                target,
+                snapshot.schema(),
+                snapshot.image(),
+                snapshot.signer(),
+                *snapshot.public_key(),
+                &signature,
+            ),
+            Err(LocalReplError::SnapshotAuthentication(_))
+        ));
+        let exported_target = repl.export_hol_snapshot(target).unwrap();
+        let validated =
+            covalence_nucleus::ValidatedHolImage::validate(exported_target.bytes()).unwrap();
+        assert_eq!(validated.counts().import_references, 0);
+        assert_eq!(validated.counts().untrusted_trusted_import_rows, 0);
     }
 
     #[test]
