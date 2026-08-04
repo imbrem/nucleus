@@ -11,7 +11,11 @@
       const repl = createBrowserRepl();
       const customSchema = {
         version: 1,
-        columns: [{ table: "node", name: "origin", storage: "text" }],
+        columns: [
+          { table: "node", name: "origin", storage: "text" },
+          { table: "node", name: "priority", storage: "integer" },
+          { table: "node", name: "payload", storage: "blob" },
+        ],
         indexes: [
           {
             table: "node",
@@ -52,7 +56,61 @@
           kind: "schema",
           schema: customSchema,
         });
-        await secondKernelHol.boolTerm(true);
+        const secondTruth = await secondKernelHol.boolTerm(true);
+        const callerMetadataBlob = new Uint8Array([0, 255, 128]);
+        const setMetadata = secondKernelHol.setMetadata(
+          { kind: "node", id: secondTruth },
+          [
+            {
+              column: "origin",
+              value: { kind: "text", value: "browser demo" },
+            },
+            {
+              column: "priority",
+              value: { kind: "integer", value: "9223372036854775807" },
+            },
+            {
+              column: "payload",
+              value: { kind: "blob", value: callerMetadataBlob },
+            },
+          ],
+        );
+        callerMetadataBlob.fill(7);
+        await setMetadata;
+        const secondKernelMetadata = await secondKernelHol.metadata(
+          { kind: "node", id: secondTruth },
+          ["payload", "priority", "origin"],
+        );
+        let nonByteBlobRejected = false;
+        try {
+          await secondKernelHol.setMetadata({ kind: "node", id: secondTruth }, [
+            { column: "payload", value: { kind: "blob", value: [1, 2] } },
+          ]);
+        } catch {
+          nonByteBlobRejected = true;
+        }
+        let oversizedMetadataRejected = false;
+        try {
+          await secondKernelHol.setMetadata({ kind: "node", id: secondTruth }, [
+            {
+              column: "payload",
+              value: { kind: "blob", value: new Uint8Array(1 << 20) },
+            },
+          ]);
+        } catch {
+          oversizedMetadataRejected = true;
+        }
+        let expandingMetadataRejected = false;
+        try {
+          await secondKernelHol.setMetadata({ kind: "node", id: secondTruth }, [
+            {
+              column: "origin",
+              value: { kind: "text", value: '"'.repeat(600_000) },
+            },
+          ]);
+        } catch {
+          expandingMetadataRejected = true;
+        }
         const secondKernelSnapshot = await secondKernelHol.exportSnapshot();
         const secondKernelSnapshotKeyMatches =
           secondKernelSnapshot.publicKey.length ===
@@ -213,6 +271,14 @@
           secondKernelSqlResult,
           secondKernelSnapshotKeyMatches,
           secondKernelDescriptorMatches,
+          secondKernelMetadata: secondKernelMetadata.map((value) =>
+            value.kind === "blob"
+              ? { ...value, value: Array.from(value.value) }
+              : value,
+          ),
+          nonByteBlobRejected,
+          oversizedMetadataRejected,
+          expandingMetadataRejected,
           hash,
           result,
           readonly,

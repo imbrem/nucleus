@@ -1,6 +1,9 @@
 import init, { WebKernel, type WebOutcome } from "../generated/nucleus.js";
 import type {
   BrowserKernelInfo,
+  HolMetadataAssignment,
+  HolMetadataTarget,
+  HolMetadataValue,
   HolSchemaSource,
   HolSchemaSpecV1,
   SignedHolSnapshot,
@@ -44,6 +47,20 @@ type Request =
       schema: string;
     }
   | { id: number; operation: "serializeMain"; connection: number }
+  | {
+      id: number;
+      operation: "holMetadata";
+      connection: number;
+      target: HolMetadataTarget;
+      columns: string[];
+    }
+  | {
+      id: number;
+      operation: "holSetMetadata";
+      connection: number;
+      target: HolMetadataTarget;
+      assignments: HolMetadataAssignment[];
+    }
   | { id: number; operation: "holStar"; connection: number }
   | {
       id: number;
@@ -433,6 +450,32 @@ async function execute(request: Request): Promise<unknown> {
     }
     case "serializeMain":
       return connection.serialize_main(request.connection);
+    case "holMetadata": {
+      validateMetadataTarget(request.target);
+      validateMetadataColumns(request.columns);
+      const json = connection.hol_metadata(
+        request.connection,
+        JSON.stringify({
+          target: request.target,
+          columns: request.columns,
+        }),
+      );
+      return decodeMetadataValues(json);
+    }
+    case "holSetMetadata":
+      validateMetadataTarget(request.target);
+      validateMetadataAssignments(request.assignments);
+      connection.set_hol_metadata(
+        request.connection,
+        JSON.stringify({
+          target: request.target,
+          assignments: request.assignments.map(({ column, value }) => ({
+            column,
+            value: encodeMetadataValue(value),
+          })),
+        }),
+      );
+      return undefined;
     case "holStar":
       return connection.hol_star(request.connection);
     case "holArrow":
@@ -838,6 +881,168 @@ async function execute(request: Request): Promise<unknown> {
       }
     }
   }
+}
+
+function validateMetadataTarget(target: HolMetadataTarget): void {
+  switch (target.kind) {
+    case "node":
+    case "context":
+    case "namespace":
+    case "import":
+    case "trustedImport":
+      validateMetadataId(target.id, `${target.kind}.id`);
+      return;
+    case "contextMember":
+    case "judgement":
+      validateMetadataId(target.context, `${target.kind}.context`);
+      validateMetadataId(target.term, `${target.kind}.term`);
+      return;
+    case "contextImplication":
+      validateMetadataId(target.antecedent, "contextImplication.antecedent");
+      validateMetadataId(target.consequent, "contextImplication.consequent");
+      return;
+    case "contextUnion":
+      validateMetadataId(target.left, "contextUnion.left");
+      validateMetadataId(target.right, "contextUnion.right");
+      return;
+    case "namespaceExport":
+      validateMetadataId(target.namespace, "namespaceExport.namespace");
+      validateMetadataId(target.export, "namespaceExport.export");
+  }
+}
+
+function validateMetadataId(value: number, name: string): void {
+  if (!Number.isSafeInteger(value) || value < 0 || value > 0xffff_ffff)
+    throw new TypeError(`${name} must be a non-negative 32-bit integer`);
+}
+
+function encodeMetadataValue(
+  value: HolMetadataValue,
+): Record<string, string> | { kind: "null" } {
+  switch (value.kind) {
+    case "null":
+      return { kind: "null" };
+    case "integer":
+    case "real":
+    case "text":
+      if (typeof value.value !== "string")
+        throw new TypeError(`metadata ${value.kind} value must be a string`);
+      return { kind: value.kind, value: value.value };
+    case "blob":
+      if (!(value.value instanceof Uint8Array))
+        throw new TypeError("metadata blob value must be a Uint8Array");
+      return { kind: "blob", hex: encodeBytes(value.value) };
+  }
+}
+
+const MAX_METADATA_JSON_BYTES = 1 << 20;
+const MAX_METADATA_COLUMNS = 128;
+
+function validateMetadataColumns(columns: readonly string[]): void {
+  if (columns.length > MAX_METADATA_COLUMNS)
+    throw new RangeError("metadata request has too many columns");
+  let bytes = 128;
+  for (const column of columns) {
+    if (typeof column !== "string")
+      throw new TypeError("metadata column names must be strings");
+    bytes += metadataJsonStringLength(column) + 8;
+    checkMetadataBytes(bytes);
+  }
+}
+
+function validateMetadataAssignments(
+  assignments: readonly HolMetadataAssignment[],
+): void {
+  if (assignments.length > MAX_METADATA_COLUMNS)
+    throw new RangeError("metadata request has too many assignments");
+  let bytes = 128;
+  for (const { column, value } of assignments) {
+    if (typeof column !== "string")
+      throw new TypeError("metadata column names must be strings");
+    bytes += metadataJsonStringLength(column) + 64;
+    switch (value.kind) {
+      case "null":
+        break;
+      case "integer":
+      case "real":
+      case "text":
+        if (typeof value.value !== "string")
+          throw new TypeError(`metadata ${value.kind} value must be a string`);
+        bytes += metadataJsonStringLength(value.value) + 8;
+        break;
+      case "blob":
+        if (!(value.value instanceof Uint8Array))
+          throw new TypeError("metadata blob value must be a Uint8Array");
+        bytes += value.value.byteLength * 2 + 8;
+        break;
+      default:
+        throw new TypeError("unknown metadata value kind");
+    }
+    checkMetadataBytes(bytes);
+  }
+}
+
+function checkMetadataBytes(bytes: number): void {
+  if (!Number.isSafeInteger(bytes) || bytes > MAX_METADATA_JSON_BYTES)
+    throw new RangeError("encoded metadata request exceeds 1 MiB");
+}
+
+function metadataJsonStringLength(value: string): number {
+  let bytes = 2;
+  for (let index = 0; index < value.length; index += 1) {
+    const codePoint = value.codePointAt(index)!;
+    if (codePoint <= 0x1f) bytes += 6;
+    else if (codePoint === 0x22 || codePoint === 0x5c) bytes += 2;
+    else if (codePoint >= 0xd800 && codePoint <= 0xdfff) bytes += 6;
+    else if (codePoint <= 0x7f) bytes += 1;
+    else if (codePoint <= 0x7ff) bytes += 2;
+    else if (codePoint <= 0xffff) bytes += 3;
+    else {
+      bytes += 4;
+      index += 1;
+    }
+  }
+  return bytes;
+}
+
+function decodeMetadataValues(json: string): HolMetadataValue[] {
+  const values: unknown = JSON.parse(json);
+  if (!Array.isArray(values))
+    throw new Error("kernel returned invalid metadata JSON");
+  return values.map((value): HolMetadataValue => {
+    if (typeof value !== "object" || value === null || !("kind" in value))
+      throw new Error("kernel returned invalid metadata value");
+    switch (value.kind) {
+      case "null":
+        return { kind: "null" };
+      case "integer":
+      case "real":
+      case "text":
+        if (!("value" in value) || typeof value.value !== "string")
+          throw new Error("kernel returned invalid metadata scalar");
+        return { kind: value.kind, value: value.value };
+      case "blob":
+        if (!("hex" in value) || typeof value.hex !== "string")
+          throw new Error("kernel returned invalid metadata blob");
+        return { kind: "blob", value: decodeBytes(value.hex) };
+      default:
+        throw new Error("kernel returned unknown metadata value kind");
+    }
+  });
+}
+
+function encodeBytes(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(
+    "",
+  );
+}
+
+function decodeBytes(hex: string): Uint8Array {
+  if (hex.length % 2 !== 0 || !/^[0-9a-f]*$/u.test(hex))
+    throw new Error("kernel returned invalid metadata blob hex");
+  return Uint8Array.from({ length: hex.length / 2 }, (_, index) =>
+    Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16),
+  );
 }
 
 function kernelInfo(connection: WebKernel, id: number): BrowserKernelInfo {
