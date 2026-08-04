@@ -233,6 +233,45 @@ pub struct Theorem<'brand> {
     brand: Invariant<'brand>,
 }
 
+/// A checked definitional equality between two terms in one proof session.
+///
+/// The endpoints have the same type and the same typed external de Bruijn
+/// boundary.  Consequently an open conversion cannot directly become a
+/// theorem, but it can be closed by [`ProofSession::conversion_lambda`].
+pub struct Conversion<'brand> {
+    left: TermId,
+    right: TermId,
+    ty: TypeId,
+    boundary: BTreeMap<u32, TypeId>,
+    brand: Invariant<'brand>,
+}
+
+impl Conversion<'_> {
+    /// Returns the left endpoint.
+    #[must_use]
+    pub const fn left(&self) -> TermId {
+        self.left
+    }
+
+    /// Returns the right endpoint.
+    #[must_use]
+    pub const fn right(&self) -> TermId {
+        self.right
+    }
+
+    /// Returns the common endpoint type.
+    #[must_use]
+    pub const fn ty(&self) -> TypeId {
+        self.ty
+    }
+
+    /// Returns whether both endpoints are locally closed.
+    #[must_use]
+    pub fn is_closed(&self) -> bool {
+        self.boundary.is_empty()
+    }
+}
+
 #[derive(Clone, Copy)]
 enum TheoremOrigin {
     Hypothesis,
@@ -241,6 +280,8 @@ enum TheoremOrigin {
     Beta,
     Weakening,
     EqualityModusPonens,
+    ConversionEquality,
+    Conversion,
 }
 
 impl TheoremOrigin {
@@ -252,6 +293,8 @@ impl TheoremOrigin {
             Self::Beta => "beta",
             Self::Weakening => "weakening",
             Self::EqualityModusPonens => "equality_modus_ponens",
+            Self::ConversionEquality => "conversion_equality",
+            Self::Conversion => "conversion",
         }
     }
 }
@@ -391,6 +434,24 @@ pub enum Operation {
     ProveReflexivity,
     /// Apply closed beta reduction.
     ProveBeta,
+    /// Introduce conversion reflexivity.
+    ProveConversionReflexivity,
+    /// Reverse a conversion.
+    ProveConversionSymmetry,
+    /// Compose two conversions.
+    ProveConversionTransitivity,
+    /// Apply conversion congruence to a function and argument.
+    ProveConversionApplication,
+    /// Close a common-boundary conversion beneath a lambda.
+    ProveConversionLambda,
+    /// Apply closed beta conversion.
+    ProveConversionBeta,
+    /// Apply closed eta conversion.
+    ProveConversionEta,
+    /// Turn a closed conversion into a theorem of equality.
+    ProveConversionEquality,
+    /// Transport a Boolean theorem along a conversion.
+    ProveTheoremConversion,
     /// Query whether a judgement has already been proved.
     ReadTheorem,
     /// Persist a branded theorem as authoritative connection state.
@@ -1484,6 +1545,290 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
             context,
             conclusion: truth,
             origin: Some(TheoremOrigin::Truth),
+            brand: PhantomData,
+        })
+    }
+
+    /// Introduces reflexive conversion for an admitted term.
+    ///
+    /// Unlike theorem reflexivity, this rule admits an open term.  Its typed
+    /// boundary is retained in the capability and must be closed before the
+    /// conversion can produce a theorem.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the rule or the term is invalid.
+    pub fn conversion_reflexivity(
+        &mut self,
+        term: TermId,
+    ) -> Result<Conversion<'brand>, ProofError> {
+        let (neutron, hol) = self.connection.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ProveConversionReflexivity)?;
+        let validated = validate_term(neutron.sqlite(), term)?;
+        Ok(Conversion {
+            left: term,
+            right: term,
+            ty: validated.ty,
+            boundary: validated.boundary,
+            brand: PhantomData,
+        })
+    }
+
+    /// Reverses a checked conversion.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the rule.
+    pub fn conversion_symmetry(
+        &mut self,
+        conversion: &Conversion<'brand>,
+    ) -> Result<Conversion<'brand>, ProofError> {
+        let (_, hol) = self.connection.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ProveConversionSymmetry)?;
+        Ok(Conversion {
+            left: conversion.right,
+            right: conversion.left,
+            ty: conversion.ty,
+            boundary: conversion.boundary.clone(),
+            brand: PhantomData,
+        })
+    }
+
+    /// Composes conversions whose middle endpoints are exactly identical.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the rule or the endpoints differ.
+    pub fn conversion_transitivity(
+        &mut self,
+        first: &Conversion<'brand>,
+        second: &Conversion<'brand>,
+    ) -> Result<Conversion<'brand>, ProofError> {
+        let (_, hol) = self.connection.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ProveConversionTransitivity)?;
+        if first.right != second.left || first.ty != second.ty || first.boundary != second.boundary
+        {
+            return Err(ProofError::ConversionChainMismatch {
+                first_right: first.right,
+                second_left: second.left,
+            });
+        }
+        Ok(Conversion {
+            left: first.left,
+            right: second.right,
+            ty: first.ty,
+            boundary: first.boundary.clone(),
+            brand: PhantomData,
+        })
+    }
+
+    /// Applies congruence to checked function and argument conversions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the rule/insertion, types or open
+    /// boundaries are incompatible, or syntax interning fails.
+    pub fn conversion_application(
+        &mut self,
+        function: &Conversion<'brand>,
+        argument: &Conversion<'brand>,
+    ) -> Result<Conversion<'brand>, ProofError> {
+        let (neutron, hol) = self.connection.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ProveConversionApplication)?;
+        authorize_proof(&mut hol.policy, Operation::InsertTerm)?;
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        let TypeView::Arrow { domain, codomain } =
+            read_type(&transaction, function.ty).map_err(TermError::Type)?
+        else {
+            return Err(TermError::NotFunction(function.ty).into());
+        };
+        if domain != argument.ty {
+            return Err(TermError::ApplicationTypeMismatch {
+                expected: domain,
+                actual: argument.ty,
+            }
+            .into());
+        }
+        merge_term_boundaries(function.boundary.clone(), argument.boundary.clone())?;
+        let left = intern_application(&transaction, function.left, argument.left, codomain)?;
+        let right = intern_application(&transaction, function.right, argument.right, codomain)?;
+        let conversion = checked_conversion(&transaction, left, right)?;
+        transaction.commit()?;
+        Ok(conversion)
+    }
+
+    /// Closes one binder in both endpoints of a common-boundary conversion.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the rule/insertion, the binder type
+    /// is invalid, its capture annotations differ, or syntax interning fails.
+    pub fn conversion_lambda(
+        &mut self,
+        parameter_type: TypeId,
+        body: &Conversion<'brand>,
+    ) -> Result<Conversion<'brand>, ProofError> {
+        let (neutron, hol) = self.connection.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ProveConversionLambda)?;
+        authorize_proof(&mut hol.policy, Operation::InsertTerm)?;
+        authorize_proof(&mut hol.policy, Operation::InsertType)?;
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        read_type(&transaction, parameter_type).map_err(TermError::Type)?;
+        // Check the capture type before writing either endpoint.
+        close_term_boundary(body.boundary.clone(), parameter_type)?;
+        let function_type =
+            intern_type_arrow(&transaction, parameter_type, body.ty).map_err(TermError::Type)?;
+        let left = intern_lambda(&transaction, parameter_type, body.left, function_type)?;
+        let right = intern_lambda(&transaction, parameter_type, body.right, function_type)?;
+        let conversion = checked_conversion(&transaction, left, right)?;
+        transaction.commit()?;
+        Ok(conversion)
+    }
+
+    /// Produces the definitional conversion `(λx. body) argument ≡ body[argument/x]`.
+    ///
+    /// Both the abstraction and argument must be closed, so substitution does
+    /// not require a general shifting operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the rule/insertion, either input is
+    /// open or invalid, types differ, or substitution/interning fails.
+    pub fn conversion_beta(
+        &mut self,
+        abstraction: TermId,
+        argument: TermId,
+    ) -> Result<Conversion<'brand>, ProofError> {
+        let (neutron, hol) = self.connection.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ProveConversionBeta)?;
+        authorize_proof(&mut hol.policy, Operation::InsertTerm)?;
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        let abstraction_validation = validate_term(&transaction, abstraction)?;
+        if !abstraction_validation.boundary.is_empty() {
+            return Err(ProofError::OpenConclusion(abstraction));
+        }
+        let TermView::Lambda {
+            parameter_type,
+            body,
+        } = abstraction_validation.view
+        else {
+            return Err(ProofError::NotLambda(abstraction));
+        };
+        let argument_validation = validate_term(&transaction, argument)?;
+        if !argument_validation.boundary.is_empty() {
+            return Err(ProofError::OpenConclusion(argument));
+        }
+        if argument_validation.ty != parameter_type {
+            return Err(ProofError::BetaTypeMismatch {
+                expected: parameter_type,
+                actual: argument_validation.ty,
+            });
+        }
+        let TypeView::Arrow { codomain, .. } =
+            read_type(&transaction, abstraction_validation.ty).map_err(TermError::Type)?
+        else {
+            return Err(ProofError::NotLambda(abstraction));
+        };
+        let left = intern_application(&transaction, abstraction, argument, codomain)?;
+        let right = substitute_closed(&transaction, body, argument, 0)?;
+        let conversion = checked_conversion(&transaction, left, right)?;
+        transaction.commit()?;
+        Ok(conversion)
+    }
+
+    /// Produces the restricted closed eta conversion `λx. f x ≡ f`.
+    ///
+    /// Requiring `f` to be closed is the exact condition which lets this
+    /// fragment place it beneath a binder without a shifting primitive.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the rule/insertion, `f` is open or
+    /// not a valid function, or syntax interning fails.
+    pub fn conversion_eta(&mut self, function: TermId) -> Result<Conversion<'brand>, ProofError> {
+        let (neutron, hol) = self.connection.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ProveConversionEta)?;
+        authorize_proof(&mut hol.policy, Operation::InsertTerm)?;
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        let validated = validate_term(&transaction, function)?;
+        if !validated.boundary.is_empty() {
+            return Err(ProofError::OpenConclusion(function));
+        }
+        let TypeView::Arrow { domain, codomain } =
+            read_type(&transaction, validated.ty).map_err(TermError::Type)?
+        else {
+            return Err(TermError::NotFunction(validated.ty).into());
+        };
+        let variable = intern_bound_term(&transaction, 0, domain)?;
+        let body = intern_application(&transaction, function, variable, codomain)?;
+        let left = intern_lambda(&transaction, domain, body, validated.ty)?;
+        let conversion = checked_conversion(&transaction, left, function)?;
+        transaction.commit()?;
+        Ok(conversion)
+    }
+
+    /// Turns a closed conversion into a theorem `Γ ⊢ left = right`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the rule/insertion, the conversion is
+    /// open, the context is invalid, or equality interning fails.
+    pub fn prove_conversion_equality(
+        &mut self,
+        context: ContextId,
+        conversion: &Conversion<'brand>,
+    ) -> Result<Theorem<'brand>, ProofError> {
+        let (neutron, hol) = self.connection.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ProveConversionEquality)?;
+        authorize_proof(&mut hol.policy, Operation::InsertTerm)?;
+        if !conversion.boundary.is_empty() {
+            return Err(ProofError::OpenConclusion(conversion.left));
+        }
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        require_context(&transaction, context)?;
+        let equality = intern_equality(&transaction, conversion.left, conversion.right)?;
+        validate_term(&transaction, equality)?;
+        transaction.commit()?;
+        Ok(Theorem {
+            context,
+            conclusion: equality,
+            origin: Some(TheoremOrigin::ConversionEquality),
+            brand: PhantomData,
+        })
+    }
+
+    /// Transports `Γ ⊢ left` along a closed Boolean conversion `left ≡ right`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the rule, the conversion is open or
+    /// non-Boolean, or the premise conclusion is not its left endpoint.
+    pub fn convert_theorem(
+        &mut self,
+        theorem: &Theorem<'brand>,
+        conversion: &Conversion<'brand>,
+    ) -> Result<Theorem<'brand>, ProofError> {
+        let (_, hol) = self.connection.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ProveTheoremConversion)?;
+        if !conversion.boundary.is_empty() {
+            return Err(ProofError::OpenConclusion(conversion.left));
+        }
+        if conversion.ty != BOOL_TYPE_ID {
+            return Err(ProofError::NonBooleanConversion {
+                term: conversion.left,
+                ty: conversion.ty,
+            });
+        }
+        if theorem.conclusion != conversion.left {
+            return Err(ProofError::ConversionPremiseMismatch {
+                expected: conversion.left,
+                actual: theorem.conclusion,
+            });
+        }
+        Ok(Theorem {
+            context: theorem.context,
+            conclusion: conversion.right,
+            origin: Some(TheoremOrigin::Conversion),
             brand: PhantomData,
         })
     }
@@ -2952,6 +3297,32 @@ fn close_term_boundary(
         .collect())
 }
 
+fn checked_conversion<'brand>(
+    connection: &sqlite::Connection,
+    left: TermId,
+    right: TermId,
+) -> Result<Conversion<'brand>, ProofError> {
+    let left_validation = validate_term(connection, left)?;
+    let right_validation = validate_term(connection, right)?;
+    if left_validation.ty != right_validation.ty {
+        return Err(TermError::EqualityTypeMismatch {
+            left: left_validation.ty,
+            right: right_validation.ty,
+        }
+        .into());
+    }
+    if left_validation.boundary != right_validation.boundary {
+        return Err(ProofError::ConversionBoundaryMismatch { left, right });
+    }
+    Ok(Conversion {
+        left,
+        right,
+        ty: left_validation.ty,
+        boundary: left_validation.boundary,
+        brand: PhantomData,
+    })
+}
+
 fn substitute_closed(
     connection: &sqlite::Connection,
     body: TermId,
@@ -3590,6 +3961,17 @@ pub enum ProofError {
     ExpectedEquality(TermId),
     /// Equality modus ponens' premise does not match the equality's left side.
     EqualityPremiseMismatch { expected: TermId, actual: TermId },
+    /// Two conversions cannot compose because their middle terms differ.
+    ConversionChainMismatch {
+        first_right: TermId,
+        second_left: TermId,
+    },
+    /// Constructed conversion endpoints do not have one common open boundary.
+    ConversionBoundaryMismatch { left: TermId, right: TermId },
+    /// Boolean theorem conversion was requested at a non-Boolean type.
+    NonBooleanConversion { term: TermId, ty: TypeId },
+    /// The theorem conclusion is not the conversion's left endpoint.
+    ConversionPremiseMismatch { expected: TermId, actual: TermId },
     /// `SQLite` rejected an operation.
     Sqlite(sqlite::Error),
 }
@@ -3597,6 +3979,9 @@ pub enum ProofError {
 impl fmt::Display for ProofError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(result) = format_relational_proof_error(self, formatter) {
+            return result;
+        }
+        if let Some(result) = format_conversion_proof_error(self, formatter) {
             return result;
         }
         match self {
@@ -3671,7 +4056,11 @@ impl fmt::Display for ProofError {
             | Self::ContextEquivalenceMismatch { .. }
             | Self::MismatchedTheoremContexts { .. }
             | Self::ExpectedEquality(_)
-            | Self::EqualityPremiseMismatch { .. } => unreachable!("handled above"),
+            | Self::EqualityPremiseMismatch { .. }
+            | Self::ConversionChainMismatch { .. }
+            | Self::ConversionBoundaryMismatch { .. }
+            | Self::NonBooleanConversion { .. }
+            | Self::ConversionPremiseMismatch { .. } => unreachable!("handled above"),
             Self::WeakeningContextMismatch { expected, actual } => write!(
                 formatter,
                 "weakening theorem has context {}, expected {}",
@@ -3680,6 +4069,42 @@ impl fmt::Display for ProofError {
             ),
             Self::Sqlite(error) => error.fmt(formatter),
         }
+    }
+}
+
+fn format_conversion_proof_error(
+    error: &ProofError,
+    formatter: &mut fmt::Formatter<'_>,
+) -> Option<fmt::Result> {
+    match error {
+        ProofError::ConversionChainMismatch {
+            first_right,
+            second_left,
+        } => Some(write!(
+            formatter,
+            "conversion chain has middle terms {} and {}",
+            first_right.get(),
+            second_left.get()
+        )),
+        ProofError::ConversionBoundaryMismatch { left, right } => Some(write!(
+            formatter,
+            "conversion endpoints {} and {} have different open boundaries",
+            left.get(),
+            right.get()
+        )),
+        ProofError::NonBooleanConversion { term, ty } => Some(write!(
+            formatter,
+            "conversion endpoint {} has non-Boolean type {}",
+            term.get(),
+            ty.get()
+        )),
+        ProofError::ConversionPremiseMismatch { expected, actual } => Some(write!(
+            formatter,
+            "theorem conclusion {} does not match conversion endpoint {}",
+            actual.get(),
+            expected.get()
+        )),
+        _ => None,
     }
 }
 
@@ -3815,7 +4240,11 @@ impl StdError for ProofError {
             | Self::WeakeningContextMismatch { .. }
             | Self::MismatchedTheoremContexts { .. }
             | Self::ExpectedEquality(_)
-            | Self::EqualityPremiseMismatch { .. } => None,
+            | Self::EqualityPremiseMismatch { .. }
+            | Self::ConversionChainMismatch { .. }
+            | Self::ConversionBoundaryMismatch { .. }
+            | Self::NonBooleanConversion { .. }
+            | Self::ConversionPremiseMismatch { .. } => None,
         }
     }
 }
@@ -4536,6 +4965,88 @@ mod tests {
                     .map(|_| ())
             }),
             Err(ProofError::NotLambda(term)) if term == function
+        ));
+    }
+
+    #[test]
+    fn common_boundary_lambda_conversion_becomes_a_closed_equality_theorem() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let variable = connection.insert_bound_term(0, bool_type).unwrap();
+
+        let conclusion = connection
+            .with_proof_session(|mut proof| {
+                let body = proof.conversion_reflexivity(variable)?;
+                assert!(!body.is_closed());
+                let lambda = proof.conversion_lambda(bool_type, &body)?;
+                assert!(lambda.is_closed());
+                let theorem = proof.prove_conversion_equality(ContextId::empty(), &lambda)?;
+                Ok::<_, ProofError>(theorem.conclusion())
+            })
+            .unwrap();
+        let TermView::Equality { left, right } = connection.term(conclusion).unwrap() else {
+            panic!("conversion theorem is not equality");
+        };
+        assert_eq!(left, right);
+        assert!(connection.term_is_locally_closed(left).unwrap());
+    }
+
+    #[test]
+    fn conversion_rules_compose_beta_congruence_symmetry_and_transitivity() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let variable = connection.insert_bound_term(0, bool_type).unwrap();
+        let identity = connection.insert_lambda(bool_type, variable).unwrap();
+        let truth = connection.insert_bool_term(true).unwrap();
+
+        let (application, reduct, congruent_left) = connection
+            .with_proof_session(|mut proof| {
+                let beta = proof.conversion_beta(identity, truth)?;
+                let reverse = proof.conversion_symmetry(&beta)?;
+                let round_trip = proof.conversion_transitivity(&beta, &reverse)?;
+                assert_eq!(round_trip.left(), round_trip.right());
+
+                let function = proof.conversion_reflexivity(identity)?;
+                let argument = proof.conversion_reflexivity(truth)?;
+                let congruent = proof.conversion_application(&function, &argument)?;
+                Ok::<_, ProofError>((beta.left(), beta.right(), congruent.left()))
+            })
+            .unwrap();
+        assert_eq!(application, congruent_left);
+        assert_eq!(reduct, truth);
+    }
+
+    #[test]
+    fn closed_eta_and_boolean_theorem_conversion_are_restricted_and_sound() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let function_type = connection.insert_arrow_type(bool_type, bool_type).unwrap();
+        let function = connection.insert_free_term(7, function_type).unwrap();
+        let variable = connection.insert_bound_term(0, bool_type).unwrap();
+        let identity = connection.insert_lambda(bool_type, variable).unwrap();
+        let truth = connection.insert_bool_term(true).unwrap();
+        let application = connection.insert_application(identity, truth).unwrap();
+        let context = connection.define_context([application]).unwrap();
+
+        let converted = connection
+            .with_proof_session(|mut proof| {
+                let eta = proof.conversion_eta(function)?;
+                assert!(eta.is_closed());
+                assert_eq!(eta.right(), function);
+
+                let premise = proof.prove_hypothesis(context, application)?;
+                let beta = proof.conversion_beta(identity, truth)?;
+                let theorem = proof.convert_theorem(&premise, &beta)?;
+                Ok::<_, ProofError>(theorem.conclusion())
+            })
+            .unwrap();
+        assert_eq!(converted, truth);
+
+        assert!(matches!(
+            connection.with_proof_session(|mut proof| proof
+                .conversion_eta(variable)
+                .map(|_| ())),
+            Err(ProofError::OpenConclusion(term)) if term == variable
         ));
     }
 

@@ -7,7 +7,7 @@ mod kernel;
 pub use connection::Connection;
 pub use hol::{
     AllowAll, AuthenticatedHolImageValidationError, AuthenticatedValidatedHolImage, ContextError,
-    ContextId, ContextImplication, ExportError, ExportId, ExportSort, ExportView,
+    ContextId, ContextImplication, Conversion, ExportError, ExportId, ExportSort, ExportView,
     ExternalExportRef, Hol, HolDatabaseRef, HolExportError, HolImageCounts,
     HolImageValidationError, HolOpenError, HolSchema, HolSchemaDescriptor,
     HolSchemaDescriptorError, HolSnapshotAttestation, ImportError, ImportId, ImportView,
