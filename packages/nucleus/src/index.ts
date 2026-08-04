@@ -72,6 +72,11 @@ export interface BrowserHolConnection {
     abstraction: number,
     argument: number,
   ): Promise<number>;
+  equalityModusPonens(
+    context: number,
+    equality: number,
+    premise: number,
+  ): Promise<number>;
   proveContextImplication(
     antecedent: number,
     consequent: number,
@@ -189,6 +194,13 @@ type RequestBody =
       context: number;
       abstraction: number;
       argument: number;
+    }
+  | {
+      operation: "holEqualityModusPonens";
+      connection: number;
+      context: number;
+      equality: number;
+      premise: number;
     }
   | {
       operation: "holProveContextImplication";
@@ -556,6 +568,20 @@ class WorkerHolConnection implements BrowserHolConnection {
       context,
       abstraction,
       argument,
+    });
+  }
+
+  equalityModusPonens(
+    context: number,
+    equality: number,
+    premise: number,
+  ): Promise<number> {
+    return this.#request({
+      operation: "holEqualityModusPonens",
+      connection: this.connection,
+      context,
+      equality,
+      premise,
     });
   }
 

@@ -413,6 +413,41 @@ impl LocalRepl {
             Ok(conclusion)
         })
     }
+
+    /// Applies `EqMp` to two exact persisted theorem keys and persists the result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for missing exact premises, a protocol mismatch, a
+    /// rejected inference, or denied persistence.
+    pub fn equality_modus_ponens(
+        &mut self,
+        id: ConnectionId,
+        context: ContextId,
+        equality: TermId,
+        premise: TermId,
+    ) -> Result<TermId, LocalProofError> {
+        self.hol_mut(id)?.with_proof_session(|mut proof| {
+            let equality =
+                proof
+                    .load_theorem(context, equality)?
+                    .ok_or(LocalProofError::MissingTheorem {
+                        context,
+                        conclusion: equality,
+                    })?;
+            let premise =
+                proof
+                    .load_theorem(context, premise)?
+                    .ok_or(LocalProofError::MissingTheorem {
+                        context,
+                        conclusion: premise,
+                    })?;
+            let theorem = proof.equality_modus_ponens(&equality, &premise)?;
+            let conclusion = theorem.conclusion();
+            proof.persist_theorem(&theorem)?;
+            Ok(conclusion)
+        })
+    }
 }
 
 /// Failure while reconstructing proof capabilities for a REPL request.
@@ -715,6 +750,11 @@ mod tests {
         assert_eq!(
             repl.weaken(id, antecedent, consequent, equality.1).unwrap(),
             equality.1
+        );
+        assert_eq!(
+            repl.equality_modus_ponens(id, antecedent, equality.1, p)
+                .unwrap(),
+            p
         );
         assert!(
             repl.hol_mut(id)
