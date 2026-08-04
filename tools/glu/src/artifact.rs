@@ -105,6 +105,8 @@ impl Runner {
                 "--strict",
                 "--target",
                 "ES2022",
+                "--lib",
+                "ES2022,DOM,ESNext.Disposable",
             ],
         )?;
         copy_dir(&generated, &out.join("generated"))
