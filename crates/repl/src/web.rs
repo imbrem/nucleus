@@ -681,6 +681,17 @@ impl WebKernel {
         u32::try_from(id.get()).map_err(js_error)
     }
 
+    /// Canonically interns a primitive base type symbol.
+    pub fn hol_base_type(&mut self, connection: u32, symbol: u32) -> Result<u32, JsValue> {
+        let id = self
+            .repl
+            .hol_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .insert_base_type(i64::from(symbol))
+            .map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
     /// Canonically interns a closed function type.
     ///
     /// # Errors
@@ -744,6 +755,17 @@ impl WebKernel {
             .hol_mut(ConnectionId::from_u32(connection))
             .map_err(js_error)?
             .insert_free_term(i64::from(symbol), TypeId::from_i64(i64::from(ty)))
+            .map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
+    /// Canonically interns a typed primitive constant.
+    pub fn hol_constant(&mut self, connection: u32, symbol: u32, ty: u32) -> Result<u32, JsValue> {
+        let id = self
+            .repl
+            .hol_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .insert_constant(i64::from(symbol), TypeId::from_i64(i64::from(ty)))
             .map_err(js_error)?;
         u32::try_from(id.get()).map_err(js_error)
     }
@@ -1677,6 +1699,7 @@ impl WebImportedHolExport {
         self.term().map(|term| {
             match term {
                 LocalImportedHolTerm::Bool(_) => "bool",
+                LocalImportedHolTerm::Constant { .. } => "constant",
                 LocalImportedHolTerm::Free { .. } => "free",
                 LocalImportedHolTerm::Bound { .. } => "bound",
                 LocalImportedHolTerm::Application { .. } => "application",
@@ -1696,6 +1719,7 @@ impl WebImportedHolExport {
 
     pub fn source_lhs(&self) -> Result<u32, JsValue> {
         let id = match self.term() {
+            Some(LocalImportedHolTerm::Constant { symbol, .. }) => symbol,
             Some(LocalImportedHolTerm::Free { symbol, .. }) => {
                 i64::try_from(symbol).map_err(js_error)?
             }
@@ -1723,7 +1747,8 @@ impl WebImportedHolExport {
     pub fn source_type(&self) -> Result<u32, JsValue> {
         let ty = match self.term() {
             Some(
-                LocalImportedHolTerm::Free { ty, .. }
+                LocalImportedHolTerm::Constant { ty, .. }
+                | LocalImportedHolTerm::Free { ty, .. }
                 | LocalImportedHolTerm::Bound { ty, .. }
                 | LocalImportedHolTerm::Application { ty, .. }
                 | LocalImportedHolTerm::Lambda { ty, .. }
@@ -1920,11 +1945,12 @@ impl WebKind {
 
 #[wasm_bindgen]
 impl WebType {
-    /// Returns `bool` or `arrow`.
+    /// Returns `bool`, `base`, or `arrow`.
     #[must_use]
     pub fn tag(&self) -> String {
         match self.ty {
             TypeView::Bool => "bool",
+            TypeView::Base { .. } => "base",
             TypeView::Arrow { .. } => "arrow",
         }
         .to_owned()
@@ -1938,7 +1964,9 @@ impl WebType {
     pub fn domain(&self) -> Result<u32, JsValue> {
         match self.ty {
             TypeView::Arrow { domain, .. } => u32::try_from(domain.get()).map_err(js_error),
-            TypeView::Bool => Err(JsValue::from_str("Bool has no domain")),
+            TypeView::Bool | TypeView::Base { .. } => {
+                Err(JsValue::from_str("non-arrow type has no domain"))
+            }
         }
     }
 
@@ -1950,7 +1978,17 @@ impl WebType {
     pub fn codomain(&self) -> Result<u32, JsValue> {
         match self.ty {
             TypeView::Arrow { codomain, .. } => u32::try_from(codomain.get()).map_err(js_error),
-            TypeView::Bool => Err(JsValue::from_str("Bool has no codomain")),
+            TypeView::Bool | TypeView::Base { .. } => {
+                Err(JsValue::from_str("non-arrow type has no codomain"))
+            }
+        }
+    }
+
+    /// Returns a primitive base type's symbol ID.
+    pub fn symbol(&self) -> Result<u32, JsValue> {
+        match self.ty {
+            TypeView::Base { symbol } => u32::try_from(symbol).map_err(js_error),
+            _ => Err(JsValue::from_str("type is not a primitive base type")),
         }
     }
 }
@@ -1962,6 +2000,7 @@ impl WebTerm {
     pub fn tag(&self) -> String {
         match self.term {
             TermView::Bool(_) => "bool",
+            TermView::Constant { .. } => "constant",
             TermView::Free { .. } => "free",
             TermView::Bound { .. } => "bound",
             TermView::Application { .. } => "application",
@@ -1983,7 +2022,7 @@ impl WebTerm {
         }
     }
 
-    /// Returns a free term's symbol ID.
+    /// Returns a primitive constant or free term's symbol ID.
     ///
     /// # Errors
     ///
@@ -1991,8 +2030,10 @@ impl WebTerm {
     /// `u32`.
     pub fn symbol(&self) -> Result<u32, JsValue> {
         match self.term {
-            TermView::Free { symbol } => u32::try_from(symbol).map_err(js_error),
-            _ => Err(JsValue::from_str("term is not a free symbol")),
+            TermView::Constant { symbol } | TermView::Free { symbol } => {
+                u32::try_from(symbol).map_err(js_error)
+            }
+            _ => Err(JsValue::from_str("term has no symbol")),
         }
     }
 

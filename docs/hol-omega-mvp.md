@@ -1,8 +1,8 @@
 # HOL-omega table MVP
 
-Status: proposed API and representation direction. The kind slice is ready to
-implement. The complete type/term constructor vocabulary is blocked on one
-small formal-specification mismatch described below.
+Status: historical design notes plus the implemented monomorphic prototype.
+The current store uses the tagged-node representation described below. Full
+HOL-omega type abstraction/application and subtype rules remain future work.
 
 ## Goals
 
@@ -166,30 +166,15 @@ not logical authority.
 
 ## Physical representation
 
-Use separate object tables for kinds, types, and terms, plus one narrow table
-per constructor. This is more verbose than a wide tagged row, but each table
-has one meaning, imports are easier to diagnose, and future constructor changes
-do not add more nullable columns to every node.
+The implemented prototype uses one narrow tagged node table for kinds, types,
+and terms. The trusted Rust insertion and detached-validation paths enforce
+tag-dependent sort, child, typing, and closure invariants; partial unique
+indexes provide canonical constructor identity.
 
 ### Kinds
 
-```sql
-CREATE TABLE hol_kind (
-    kind_id INTEGER PRIMARY KEY,
-    rank INTEGER NOT NULL CHECK (rank >= 0)
-) STRICT;
-
-CREATE TABLE hol_kind_star (
-    kind_id INTEGER PRIMARY KEY REFERENCES hol_kind
-) STRICT;
-
-CREATE TABLE hol_kind_arrow (
-    kind_id INTEGER PRIMARY KEY REFERENCES hol_kind,
-    domain_id INTEGER NOT NULL REFERENCES hol_kind,
-    codomain_id INTEGER NOT NULL REFERENCES hol_kind,
-    UNIQUE(domain_id, codomain_id)
-) STRICT;
-```
+`KSTAR` and `KARR(domain,codomain)` share the universal node table. Rank is
+derived and checked rather than authoritative stored data.
 
 Seed one canonical `star`. Define rank normatively as:
 
@@ -201,42 +186,31 @@ rank(K -> L) = max(rank(K) + 1, rank(L))
 This is the order convention, not plain syntax-tree height. The Lean work does
 not currently define kind rank, so Nucleus must state and test this convention.
 
-The schema-level invariant that every object has exactly one constructor row
-is enforced on trusted writes and rechecked when admitting an imported
-database.
+Each object is exactly one row, so constructor exclusivity follows directly
+from its tag and checked payload shape.
 
 ### Types and terms
 
-The common headers are stable even while constructor tags remain versioned:
+`TBOOL`, opaque `TBASE(symbol)`, and `TARR(domain,codomain)` are the current
+types. Each base symbol denotes an arbitrary nonempty carrier; declaring one
+asserts no theorem. Terms include `MCONST(symbol,type)` for opaque signature
+constants and `MFV(symbol,type)` for logical free symbols. Constants are closed
+and excluded from free-variable queries. One constant symbol has one declared
+type; neither declaration form asserts equations, infinitude, or arithmetic
+meaning.
 
-```sql
-CREATE TABLE hol_type (
-    type_id INTEGER PRIMARY KEY,
-    kind_id INTEGER NOT NULL REFERENCES hol_kind,
-    required_type_depth INTEGER NOT NULL CHECK (required_type_depth >= 0)
-) STRICT;
+The `lhs`, `rhs`, and `ty` columns carry constructor-specific children and
+annotations. Partial unique indexes provide hash-consing. Trusted insertion
+builds an acyclic DAG from already-admitted children; detached import admission
+also performs explicit cycle and typing checks.
 
-CREATE TABLE hol_term (
-    term_id INTEGER PRIMARY KEY,
-    type_id INTEGER NOT NULL REFERENCES hol_type,
-    required_type_depth INTEGER NOT NULL CHECK (required_type_depth >= 0),
-    required_term_depth INTEGER NOT NULL CHECK (required_term_depth >= 0)
-) STRICT;
-```
+### Why a tagged node table?
 
-Constructor tables contain the object ID, immutable child IDs, and immediate
-annotations. A uniqueness constraint over the complete constructor payload
-provides hash-consing. Children must already exist, so ordinary trusted
-insertion builds an acyclic DAG even though type and term tables refer to one
-another. Import admission still performs an explicit cycle check.
-
-### Why not a tagged wide table?
-
-A tagged wide table gives shorter traversal queries and fewer tables. It is a
-credible alternative and should be benchmarked. Its nullable columns and
-tag-dependent checks make malformed imports less obvious, however, and a new
-constructor changes the shared table. For a first auditable TCB, constructor
-tables win narrowly.
+It keeps traversal and user metadata uniform and matches the planned
+LeanNDJSON-style interchange shape without making that future importer trusted.
+The cost is that constructor additions change the shared schema and every
+tag-dependent validator, so each addition receives a new semantic/schema
+identity.
 
 ### Why not one universal syntax table?
 
@@ -430,7 +404,8 @@ Before the type/term slice, settle:
 
 - explicit `all/instantiation` versus overloaded type lambda/application;
 - exact syntactic type equality versus beta-eta definitional equality;
-- whether free symbols are primitive variables or signature constants;
+- the eventual stable identity format for base and constant declarations
+  beyond connection-local integer symbols;
 - the exact Boolean theorem calculus versus typed equality judgement;
 - whether subtype constructors remain in the first executable kernel.
 
