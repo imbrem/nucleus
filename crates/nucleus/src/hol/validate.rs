@@ -19,21 +19,21 @@ use crate::{
 };
 
 const MAX_GRAPH_DEPTH: usize = 512;
-const STLC_BOOL_EQ_V0_SPEC: &[u8] = include_bytes!("semantics-v0.txt");
+const STLC_BOOL_EQ_V1_SPEC: &[u8] = include_bytes!("semantics-v1.txt");
 
-/// Returns the content hash of the normative semantics implemented by `hol-common-v2`.
+/// Returns the content hash of version one of the normative `hol-common-v2` semantics.
 #[must_use]
-pub fn stlc_bool_eq_v0_semantics() -> O256 {
-    o256_path!(::nucleus.hol.protocol.stlc_bool_eq.v0).tag(STLC_BOOL_EQ_V0_SPEC)
+pub fn stlc_bool_eq_v1_semantics() -> O256 {
+    o256_path!(::nucleus.hol.protocol.stlc_bool_eq.v1).tag(STLC_BOOL_EQ_V1_SPEC)
 }
 
 /// Derives the signed schema identity from semantic and exact physical commitments.
 #[must_use]
-pub fn stlc_bool_eq_v0_schema_id(physical_schema: O256) -> O256 {
+pub fn stlc_bool_eq_v1_schema_id(physical_schema: O256) -> O256 {
     let mut commitments = [0_u8; 64];
-    commitments[..32].copy_from_slice(stlc_bool_eq_v0_semantics().as_ref());
+    commitments[..32].copy_from_slice(stlc_bool_eq_v1_semantics().as_ref());
     commitments[32..].copy_from_slice(physical_schema.as_ref());
-    o256_path!(::nucleus.hol.protocol.stlc_bool_eq.sqlite_schema.v0).tag(commitments)
+    o256_path!(::nucleus.hol.protocol.stlc_bool_eq.sqlite_schema.v1).tag(commitments)
 }
 
 /// Counts established while validating one complete HOL database image.
@@ -196,7 +196,7 @@ impl ValidatedHolImage {
             .map_err(HolImageValidationError::Image)?;
         validate_integrity(disposable.sqlite())?;
         let physical_schema = validate_schema(disposable.sqlite(), expected_schema)?;
-        let schema = stlc_bool_eq_v0_schema_id(physical_schema);
+        let schema = stlc_bool_eq_v1_schema_id(physical_schema);
         let counts = validate_contents(disposable.sqlite())?;
         Ok(Self {
             hash,
@@ -302,7 +302,7 @@ fn validate_schema(
         [],
         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
     )?;
-    if identity == (7, "tagged-node".to_owned()) {
+    if identity == (8, "tagged-node".to_owned()) {
         Ok(schema_manifest_id(&expected_manifest))
     } else {
         Err(HolImageValidationError::SchemaMismatch)
@@ -316,7 +316,7 @@ pub(super) fn expected_composite_schema_id(
         .map_err(HolImageValidationError::Connection)?;
     expected.sqlite().execute_batch(SCHEMA)?;
     install_metadata_schema(expected.sqlite(), schema)?;
-    Ok(stlc_bool_eq_v0_schema_id(schema_manifest_id(
+    Ok(stlc_bool_eq_v1_schema_id(schema_manifest_id(
         &schema_manifest(expected.sqlite())?,
     )))
 }
@@ -781,7 +781,7 @@ fn validate_graph_depth(nodes: &[NodeRow]) -> Result<(), HolImageValidationError
         .map(|(id, tag, lhs, rhs, ty)| {
             let children = match tag.as_str() {
                 "KARR" => vec![*lhs, *rhs],
-                "TBOOL" | "MBOOL" | "MFV" | "MBV" => vec![*ty],
+                "TBOOL" | "TBASE" | "MBOOL" | "MFV" | "MCONST" | "MBV" => vec![*ty],
                 "TARR" | "MAPP" | "MLAM" | "MEQ" => vec![*lhs, *rhs, *ty],
                 _ => Vec::new(),
             }
@@ -851,7 +851,7 @@ fn validate_type_graph(
         return Err(TypeError::CorruptType(id));
     }
     match read_type(connection, id)? {
-        TypeView::Bool => {}
+        TypeView::Bool | TypeView::Base { .. } => {}
         TypeView::Arrow { domain, codomain } => {
             validate_type_graph(connection, domain, active, memo)?;
             validate_type_graph(connection, codomain, active, memo)?;
@@ -1378,24 +1378,24 @@ mod tests {
         expected.sqlite().execute_batch(SCHEMA).unwrap();
         let physical = schema_manifest_id(&schema_manifest(expected.sqlite()).unwrap());
         assert_eq!(
-            stlc_bool_eq_v0_semantics(),
-            O256::from_hex("29e50cd6be8bd98b6d9a7b38f67f96516e87f9b1c16f21ede694778d11a866ac")
+            stlc_bool_eq_v1_semantics(),
+            O256::from_hex("8bcd46ee221fbedcb3feca5d32cf137b1502873bd69094615fecab49780af5a5")
                 .unwrap()
         );
         assert_eq!(
             physical,
-            O256::from_hex("2eb961549975a6f4e2e82523f1736d1575cd6fd54a2e89d1e4bf57ead1964393")
+            O256::from_hex("56858da836ea998df43c79c0a11fc203fb57eab38b32f887079e57730c200b0d")
                 .unwrap()
         );
         assert_eq!(
-            stlc_bool_eq_v0_schema_id(physical),
-            O256::from_hex("33a93a41832843022143c26f63b99d946a69ccbbfdf5cba0486fff70e9963ee5")
+            stlc_bool_eq_v1_schema_id(physical),
+            O256::from_hex("5e5cfa1574f0c6474e4e41738813508a4c3941de3712cb50f0f03a79dffbe7a7")
                 .unwrap()
         );
         assert_eq!(validated.physical_schema(), physical);
-        assert_eq!(validated.schema(), stlc_bool_eq_v0_schema_id(physical));
+        assert_eq!(validated.schema(), stlc_bool_eq_v1_schema_id(physical));
         assert_ne!(validated.schema(), validated.physical_schema());
-        assert_ne!(validated.schema(), stlc_bool_eq_v0_semantics());
+        assert_ne!(validated.schema(), stlc_bool_eq_v1_semantics());
         assert_eq!(validated.bytes(), bytes.as_ref());
         assert_eq!(
             validated.counts(),
@@ -1511,6 +1511,47 @@ mod tests {
     }
 
     #[test]
+    fn detached_validation_rechecks_opaque_signature_declarations() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let base = connection.insert_base_type(100).unwrap();
+        let constant = connection.insert_constant(200, base).unwrap();
+        let bytes = connection.parts_mut().0.serialize().unwrap();
+
+        let corrupt_constant = covalence_neutron::Connection::deserialize(&bytes).unwrap();
+        corrupt_constant
+            .sqlite()
+            .execute(
+                "UPDATE hol_node SET ty = 999 WHERE node_id = ?1",
+                [constant.get()],
+            )
+            .unwrap();
+        assert!(matches!(
+            ValidatedHolImage::validate(&corrupt_constant.serialize().unwrap()),
+            Err(HolImageValidationError::Term(TermError::Type(
+                TypeError::UnknownType(_)
+            )))
+        ));
+
+        let corrupt_base = covalence_neutron::Connection::deserialize(&bytes).unwrap();
+        corrupt_base
+            .sqlite()
+            .execute_batch("PRAGMA ignore_check_constraints = ON")
+            .unwrap();
+        corrupt_base
+            .sqlite()
+            .execute(
+                "UPDATE hol_node SET ty = 2 WHERE node_id = ?1",
+                [base.get()],
+            )
+            .unwrap();
+        assert!(matches!(
+            ValidatedHolImage::validate(&corrupt_base.serialize().unwrap()),
+            Err(HolImageValidationError::Integrity(_)
+                | HolImageValidationError::Type(TypeError::CorruptType(_)))
+        ));
+    }
+
+    #[test]
     fn rejects_non_sqlite_bytes() {
         assert!(ValidatedHolImage::validate(b"not sqlite").is_err());
     }
@@ -1556,7 +1597,7 @@ mod tests {
         assert_eq!(validated.bytes(), bytes.as_ref());
         assert_eq!(
             validated.semantic_schema(),
-            stlc_bool_eq_v0_schema_id(validated.physical_schema_manifest())
+            stlc_bool_eq_v1_schema_id(validated.physical_schema_manifest())
         );
         let default = ValidatedHolImage::validate(&sample_image()).unwrap();
         assert_ne!(

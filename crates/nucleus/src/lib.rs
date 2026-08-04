@@ -18,7 +18,7 @@ pub use hol::{
     NamespaceSource, NamespaceView, Operation, Policy, ProofError, ProofSession, SignedHolSnapshot,
     SnapshotTrustError, TermError, TermId, TermView, Theorem, TrustedImportError, TrustedImportId,
     TrustedImportImageError, TrustedImportView, TypeError, TypeId, TypeView, UnboundVariable,
-    ValidatedHolImage, stlc_bool_eq_v0_schema_id, stlc_bool_eq_v0_semantics,
+    ValidatedHolImage, stlc_bool_eq_v1_schema_id, stlc_bool_eq_v1_semantics,
 };
 pub use kernel::Kernel;
 

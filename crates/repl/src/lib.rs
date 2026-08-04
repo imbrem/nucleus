@@ -1278,6 +1278,8 @@ pub enum LocalImportedHolValue {
 pub enum LocalImportedHolTerm {
     /// Boolean literal.
     Bool(bool),
+    /// Typed primitive constant.
+    Constant { symbol: i64, ty: i64 },
     /// Typed free symbol.
     Free { symbol: u64, ty: i64 },
     /// Typed de Bruijn occurrence.
@@ -1372,6 +1374,10 @@ fn record_resident_hol_descriptor(
 fn copy_imported_term(term: ImportedTermView<'_>) -> LocalImportedHolTerm {
     match term {
         ImportedTermView::Bool(value) => LocalImportedHolTerm::Bool(value),
+        ImportedTermView::Constant { symbol, ty } => LocalImportedHolTerm::Constant {
+            symbol,
+            ty: ty.get(),
+        },
         ImportedTermView::Free { symbol, ty } => LocalImportedHolTerm::Free {
             symbol,
             ty: ty.get(),

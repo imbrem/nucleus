@@ -59,6 +59,11 @@ pub enum ImportedTermView<'reader> {
         symbol: u64,
         ty: ImportedTypeId<'reader>,
     },
+    /// Closed opaque constant declaration.
+    Constant {
+        symbol: i64,
+        ty: ImportedTypeId<'reader>,
+    },
     /// Typed de Bruijn occurrence.
     Bound {
         index: u64,
@@ -327,6 +332,10 @@ fn decode_term<'reader>(
             symbol: u64::try_from(symbol).map_err(|_| corrupt())?,
             ty: ImportedTypeId(ty, PhantomData),
         }),
+        ("MCONST", Some(symbol), None, Some(ty)) => Ok(ImportedTermView::Constant {
+            symbol,
+            ty: ImportedTypeId(ty, PhantomData),
+        }),
         ("MBV", Some(index), None, Some(ty)) => Ok(ImportedTermView::Bound {
             index: u64::try_from(index).map_err(|_| corrupt())?,
             ty: ImportedTypeId(ty, PhantomData),
@@ -474,6 +483,16 @@ mod tests {
         fn allows(&mut self, operation: Operation) -> bool {
             self.denied.get() != Some(operation)
         }
+    }
+
+    #[test]
+    fn imported_constant_preserves_its_closed_signature_symbol_and_type() {
+        let view = decode_term(("MCONST".to_owned(), Some(-7), None, Some(42)), 9).unwrap();
+        let ImportedTermView::Constant { symbol, ty } = view else {
+            panic!("expected imported constant")
+        };
+        assert_eq!(symbol, -7);
+        assert_eq!(ty.get(), 42);
     }
 
     #[test]

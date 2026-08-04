@@ -27,8 +27,8 @@ pub use trust::{
 };
 pub use validate::{
     AuthenticatedHolImageValidationError, AuthenticatedValidatedHolImage, HolImageCounts,
-    HolImageValidationError, ValidatedHolImage, stlc_bool_eq_v0_schema_id,
-    stlc_bool_eq_v0_semantics,
+    HolImageValidationError, ValidatedHolImage, stlc_bool_eq_v1_schema_id,
+    stlc_bool_eq_v1_semantics,
 };
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -114,11 +114,16 @@ impl TypeId {
     }
 }
 
-/// One admitted type in the settled closed Boolean/function fragment.
+/// One admitted type in the settled monomorphic fragment.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TypeView {
     /// The primitive Boolean type.
     Bool,
+    /// An opaque, connection-local base-type declaration.
+    Base {
+        /// Declaration symbol interpreted by the surrounding signature.
+        symbol: i64,
+    },
     /// A function type.
     Arrow {
         /// Argument type.
@@ -163,6 +168,11 @@ pub enum TermView {
     /// A closed free symbol with a declared type.
     Free {
         /// Connection-local symbol identity.
+        symbol: i64,
+    },
+    /// A closed opaque constant declaration.
+    Constant {
+        /// Declaration symbol interpreted by the surrounding signature.
         symbol: i64,
     },
     /// A de Bruijn occurrence, annotated with its admitted type.
@@ -418,10 +428,14 @@ pub enum Operation {
     ReadType,
     /// Validate and canonically intern a type.
     InsertType,
+    /// Extend the opaque base-type signature.
+    DeclareBaseType,
     /// Read an admitted term or its type.
     ReadTerm,
     /// Validate and canonically intern a term.
     InsertTerm,
+    /// Extend the opaque typed-constant signature.
+    DeclareConstant,
     /// Define an immutable finite set of closed Boolean assumptions.
     DefineContext,
     /// Read context membership.
@@ -1161,6 +1175,23 @@ impl<P: Policy> Connection<Hol<P>> {
         Ok(BOOL_TYPE_ID)
     }
 
+    /// Declares an opaque nonempty base type under a connection-local symbol.
+    ///
+    /// Repeating the same symbol returns the same canonical type. This operation
+    /// asserts no property such as infinitude and introduces no theorem.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies signature extension/type insertion or
+    /// `SQLite` rejects the transaction.
+    pub fn insert_base_type(&mut self, symbol: i64) -> Result<TypeId, TypeError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_type(&mut hol.policy, Operation::DeclareBaseType)?;
+        authorize_type(&mut hol.policy, Operation::InsertType)?;
+        let id = intern_base_type(neutron.sqlite(), symbol)?;
+        Ok(id)
+    }
+
     /// Canonically interns a closed function type.
     ///
     /// # Errors
@@ -1232,6 +1263,27 @@ impl<P: Policy> Connection<Hol<P>> {
         let transaction = neutron.sqlite().unchecked_transaction()?;
         read_type(&transaction, ty)?;
         let id = intern_free_term(&transaction, symbol, ty)?;
+        transaction.commit()?;
+        Ok(id)
+    }
+
+    /// Declares one closed opaque constant at an admitted type.
+    ///
+    /// A symbol has one canonical declared type. Redeclaring it at another type
+    /// fails atomically. Declaration introduces no equation or theorem.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies signature extension/term insertion,
+    /// the type is invalid, the symbol already has another type, or `SQLite`
+    /// rejects the transaction.
+    pub fn insert_constant(&mut self, symbol: i64, ty: TypeId) -> Result<TermId, TermError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_term(&mut hol.policy, Operation::DeclareConstant)?;
+        authorize_term(&mut hol.policy, Operation::InsertTerm)?;
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        read_type(&transaction, ty)?;
+        let id = intern_constant(&transaction, symbol, ty)?;
         transaction.commit()?;
         Ok(id)
     }
@@ -2925,6 +2977,25 @@ fn persist_context_union(
     Ok(())
 }
 
+fn intern_base_type(connection: &sqlite::Connection, symbol: i64) -> Result<TypeId, TypeError> {
+    if let Some(id) = connection
+        .query_row(
+            "SELECT node_id FROM hol_node
+             WHERE tag = 'TBASE' AND lhs = ?1 AND rhs IS NULL AND ty = ?2",
+            [symbol, STAR_ID.0],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+    {
+        return Ok(TypeId(id));
+    }
+    connection.execute(
+        "INSERT INTO hol_node(tag, lhs, ty) VALUES ('TBASE', ?1, ?2)",
+        [symbol, STAR_ID.0],
+    )?;
+    Ok(TypeId(connection.last_insert_rowid()))
+}
+
 fn intern_type_arrow(
     connection: &sqlite::Connection,
     domain: TypeId,
@@ -2966,6 +3037,9 @@ fn read_type(connection: &sqlite::Connection, id: TypeId) -> Result<TypeView, Ty
         .ok_or(TypeError::UnknownType(id))?;
     match row {
         (tag, None, None, Some(kind)) if tag == "TBOOL" && kind == STAR_ID.0 => Ok(TypeView::Bool),
+        (tag, Some(symbol), None, Some(kind)) if tag == "TBASE" && kind == STAR_ID.0 => {
+            Ok(TypeView::Base { symbol })
+        }
         (tag, Some(domain), Some(codomain), Some(kind)) if tag == "TARR" && kind == STAR_ID.0 => {
             Ok(TypeView::Arrow {
                 domain: TypeId(domain),
@@ -3014,6 +3088,36 @@ fn intern_free_term(
     }
     connection.execute(
         "INSERT INTO hol_node(tag, lhs, ty) VALUES ('MFV', ?1, ?2)",
+        [symbol, ty.0],
+    )?;
+    Ok(TermId(connection.last_insert_rowid()))
+}
+
+fn intern_constant(
+    connection: &sqlite::Connection,
+    symbol: i64,
+    ty: TypeId,
+) -> Result<TermId, TermError> {
+    if let Some((id, existing)) = connection
+        .query_row(
+            "SELECT node_id, ty FROM hol_node
+             WHERE tag = 'MCONST' AND lhs = ?1 AND rhs IS NULL",
+            [symbol],
+            |row| Ok((row.get::<_, i64>(0)?, TypeId(row.get::<_, i64>(1)?))),
+        )
+        .optional()?
+    {
+        if existing != ty {
+            return Err(TermError::ConstantTypeConflict {
+                symbol,
+                existing,
+                requested: ty,
+            });
+        }
+        return Ok(TermId(id));
+    }
+    connection.execute(
+        "INSERT INTO hol_node(tag, lhs, ty) VALUES ('MCONST', ?1, ?2)",
         [symbol, ty.0],
     )?;
     Ok(TermId(connection.last_insert_rowid()))
@@ -3140,6 +3244,9 @@ fn read_term_node(
         (tag, Some(symbol), None, Some(ty)) if tag == "MFV" => {
             (TermView::Free { symbol }, TypeId(ty))
         }
+        (tag, Some(symbol), None, Some(ty)) if tag == "MCONST" => {
+            (TermView::Constant { symbol }, TypeId(ty))
+        }
         (tag, Some(index), None, Some(ty))
             if tag == "MBV" && (0..=i64::from(u32::MAX)).contains(&index) =>
         {
@@ -3210,7 +3317,7 @@ fn validate_term_inner(
     }
     let (view, ty) = read_term_node(connection, id)?;
     let boundary = match view {
-        TermView::Bool(_) | TermView::Free { .. } => BTreeMap::new(),
+        TermView::Bool(_) | TermView::Free { .. } | TermView::Constant { .. } => BTreeMap::new(),
         TermView::Bound { index } => BTreeMap::from([(index, ty)]),
         TermView::Application { function, argument } => {
             let function = validate_term_inner(connection, function, active, memo)?;
@@ -3351,7 +3458,10 @@ fn substitute_closed_inner(
     let result = match view {
         TermView::Bound { index } if index == depth => replacement,
         TermView::Bound { index } if index > depth => intern_bound_term(connection, index - 1, ty)?,
-        TermView::Bool(_) | TermView::Free { .. } | TermView::Bound { .. } => term,
+        TermView::Bool(_)
+        | TermView::Free { .. }
+        | TermView::Constant { .. }
+        | TermView::Bound { .. } => term,
         TermView::Application { function, argument } => {
             let function = substitute_closed_inner(connection, function, replacement, depth, memo)?;
             let argument = substitute_closed_inner(connection, argument, replacement, depth, memo)?;
@@ -3666,6 +3776,15 @@ pub enum TermError {
     UnknownTerm(TermId),
     /// A tagged node has an invalid term shape or classifier.
     CorruptTerm(TermId),
+    /// One constant symbol was already declared at another type.
+    ConstantTypeConflict {
+        /// Connection-local declaration symbol.
+        symbol: i64,
+        /// Previously declared type.
+        existing: TypeId,
+        /// Newly requested type.
+        requested: TypeId,
+    },
     /// The function position does not have a function type.
     NotFunction(TypeId),
     /// An application's argument type differs from its function domain.
@@ -3714,6 +3833,16 @@ impl fmt::Display for TermError {
             Self::Denied(operation) => write!(formatter, "HOL policy denied {operation:?}"),
             Self::UnknownTerm(id) => write!(formatter, "unknown term {}", id.get()),
             Self::CorruptTerm(id) => write!(formatter, "term {} is structurally corrupt", id.get()),
+            Self::ConstantTypeConflict {
+                symbol,
+                existing,
+                requested,
+            } => write!(
+                formatter,
+                "constant symbol {symbol} has type {}, not requested type {}",
+                existing.get(),
+                requested.get()
+            ),
             Self::NotFunction(ty) => write!(formatter, "type {} is not a function type", ty.get()),
             Self::ApplicationTypeMismatch { expected, actual } => write!(
                 formatter,
@@ -3759,6 +3888,7 @@ impl StdError for TermError {
             Self::Denied(_)
             | Self::UnknownTerm(_)
             | Self::CorruptTerm(_)
+            | Self::ConstantTypeConflict { .. }
             | Self::NotFunction(_)
             | Self::ApplicationTypeMismatch { .. }
             | Self::EqualityTypeMismatch { .. }
@@ -4460,6 +4590,125 @@ mod tests {
             )
             .unwrap();
         assert_eq!(rows, (2, 2, 2));
+    }
+
+    #[test]
+    fn opaque_signature_declarations_are_canonical_typed_and_closed() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let ind = connection.insert_base_type(100).unwrap();
+        let same_ind = connection.insert_base_type(100).unwrap();
+        let zero = connection.insert_constant(200, ind).unwrap();
+        let same_zero = connection.insert_constant(200, ind).unwrap();
+
+        assert_eq!(ind, same_ind);
+        assert_eq!(zero, same_zero);
+        assert_eq!(
+            connection.type_view(ind).unwrap(),
+            TypeView::Base { symbol: 100 }
+        );
+        assert_eq!(connection.type_kind(ind).unwrap(), STAR_ID);
+        assert_eq!(
+            connection.term(zero).unwrap(),
+            TermView::Constant { symbol: 200 }
+        );
+        assert_eq!(connection.term_type(zero).unwrap(), ind);
+        assert!(connection.term_is_locally_closed(zero).unwrap());
+        assert!(connection.term_free_variables(zero).unwrap().is_empty());
+
+        assert!(matches!(
+            connection.insert_constant(200, BOOL_TYPE_ID),
+            Err(TermError::ConstantTypeConflict {
+                symbol: 200,
+                existing,
+                requested
+            }) if existing == ind && requested == BOOL_TYPE_ID
+        ));
+        let declarations = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row(
+                "SELECT count(*) FROM hol_node WHERE tag = 'MCONST' AND lhs = 200",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(declarations, 1);
+    }
+
+    #[test]
+    fn signature_extension_is_separately_policy_visible_and_atomic() {
+        let mut denied = Connection::open_hol_in_memory(RecordingPolicy::default()).unwrap();
+        assert!(matches!(
+            denied.insert_base_type(100),
+            Err(TypeError::Denied(Operation::DeclareBaseType))
+        ));
+        assert_eq!(
+            denied
+                .parts_mut()
+                .0
+                .sqlite()
+                .query_row(
+                    "SELECT count(*) FROM hol_node WHERE tag = 'TBASE'",
+                    [],
+                    |row| { row.get::<_, i64>(0) }
+                )
+                .unwrap(),
+            0
+        );
+
+        let mut allowed = Connection::open_hol_in_memory(RecordingPolicy {
+            allowed: true,
+            operations: Vec::new(),
+        })
+        .unwrap();
+        let base = allowed.insert_base_type(100).unwrap();
+        allowed.insert_constant(200, base).unwrap();
+        assert_eq!(
+            allowed.protocol().policy().operations,
+            [
+                Operation::DeclareBaseType,
+                Operation::InsertType,
+                Operation::DeclareConstant,
+                Operation::InsertTerm,
+            ]
+        );
+    }
+
+    #[test]
+    fn closed_beta_over_opaque_ind_uses_only_conversion_rules() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let ind = connection.insert_base_type(100).unwrap();
+        let zero = connection.insert_constant(200, ind).unwrap();
+        let ind_to_ind = connection.insert_arrow_type(ind, ind).unwrap();
+        let succ = connection.insert_constant(201, ind_to_ind).unwrap();
+        let variable = connection.insert_bound_term(0, ind).unwrap();
+        let succ_variable = connection.insert_application(succ, variable).unwrap();
+        let abstraction = connection.insert_lambda(ind, succ_variable).unwrap();
+        let succ_zero = connection.insert_application(succ, zero).unwrap();
+
+        let conclusion = connection
+            .with_proof_session(|mut proof| {
+                let conversion = proof.conversion_beta(abstraction, zero)?;
+                assert_eq!(conversion.right(), succ_zero);
+                let theorem = proof.prove_conversion_equality(ContextId::empty(), &conversion)?;
+                let conclusion = theorem.conclusion();
+                proof.persist_theorem(&theorem)?;
+                Ok::<_, ProofError>(conclusion)
+            })
+            .unwrap();
+
+        assert!(
+            connection
+                .proved_judgement(ContextId::empty(), conclusion)
+                .unwrap()
+        );
+        assert!(
+            connection
+                .term_free_variables(conclusion)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

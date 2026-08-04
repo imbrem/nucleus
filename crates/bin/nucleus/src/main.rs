@@ -1036,6 +1036,17 @@ fn run_hol_type<'a>(
             let ty = repl.hol_mut(connection)?.insert_bool_type()?;
             writeln!(output, "type {} = Bool", ty.get())?;
         }
+        Some("base") => {
+            let symbol: i64 = arguments
+                .next()
+                .ok_or("missing base type symbol")?
+                .parse()?;
+            if arguments.next().is_some() {
+                return Err("usage: .hol type base SYMBOL".into());
+            }
+            let ty = repl.hol_mut(connection)?.insert_base_type(symbol)?;
+            writeln!(output, "type {} = base {symbol}", ty.get())?;
+        }
         Some("arrow") => {
             let domain = parse_type_id(arguments.next(), "domain")?;
             let codomain = parse_type_id(arguments.next(), "codomain")?;
@@ -1060,6 +1071,9 @@ fn run_hol_type<'a>(
             }
             match repl.hol_mut(connection)?.type_view(ty)? {
                 TypeView::Bool => writeln!(output, "type {} = Bool", ty.get())?,
+                TypeView::Base { symbol } => {
+                    writeln!(output, "type {} = base {symbol}", ty.get())?;
+                }
                 TypeView::Arrow { domain, codomain } => writeln!(
                     output,
                     "type {} = {} -> {}",
@@ -1069,11 +1083,12 @@ fn run_hol_type<'a>(
                 )?,
             }
         }
-        _ => return Err("usage: .hol type bool|arrow D C|show ID".into()),
+        _ => return Err("usage: .hol type bool|base SYMBOL|arrow D C|show ID".into()),
     }
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn run_hol_term<'a>(
     repl: &mut LocalRepl,
     output: &mut impl io::Write,
@@ -1101,6 +1116,20 @@ fn run_hol_term<'a>(
             }
             let term = repl.hol_mut(connection)?.insert_free_term(symbol, ty)?;
             writeln!(output, "term {} = free {symbol} : {}", term.get(), ty.get())?;
+        }
+        Some("constant") => {
+            let symbol: i64 = arguments.next().ok_or("missing constant symbol")?.parse()?;
+            let ty = parse_type_id(arguments.next(), "type")?;
+            if arguments.next().is_some() {
+                return Err("usage: .hol term constant SYMBOL TYPE".into());
+            }
+            let term = repl.hol_mut(connection)?.insert_constant(symbol, ty)?;
+            writeln!(
+                output,
+                "term {} = constant {symbol} : {}",
+                term.get(),
+                ty.get()
+            )?;
         }
         Some("bound") => {
             let index: u32 = arguments.next().ok_or("missing de Bruijn index")?.parse()?;
@@ -1165,7 +1194,7 @@ fn run_hol_term<'a>(
         }
         _ => {
             return Err(
-                "usage: .hol term bool|free|bound|app|lam|eq|show|type|freevars|closed|unbound ..."
+                "usage: .hol term bool|constant|free|bound|app|lam|eq|show|type|freevars|closed|unbound ..."
                     .into(),
             );
         }
@@ -1187,6 +1216,9 @@ fn run_hol_term_query<'a>(
     match operation {
         "show" => match repl.hol_mut(connection)?.term(term)? {
             TermView::Bool(value) => writeln!(output, "term {} = {value}", term.get())?,
+            TermView::Constant { symbol } => {
+                writeln!(output, "term {} = constant {symbol}", term.get())?;
+            }
             TermView::Free { symbol } => writeln!(output, "term {} = free {symbol}", term.get())?,
             TermView::Bound { index } => writeln!(output, "term {} = bound {index}", term.get())?,
             TermView::Application { function, argument } => writeln!(

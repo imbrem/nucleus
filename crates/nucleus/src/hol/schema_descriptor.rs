@@ -19,9 +19,11 @@ const CORE_INDEX_NAMES: &[&str] = &[
     "hol_kstar_unique",
     "hol_karr_unique",
     "hol_tbool_unique",
+    "hol_tbase_unique",
     "hol_tarr_unique",
     "hol_mbool_unique",
     "hol_mfv_unique",
+    "hol_mconst_unique",
     "hol_mbv_unique",
     "hol_mapp_unique",
     "hol_mlam_unique",
@@ -492,7 +494,7 @@ mod tests {
         assert_eq!(descriptor.encode(), expected);
         assert_eq!(
             descriptor.schema_id().to_string(),
-            "eef60d4bf73e051a185a87d1036c396070f0514b43d873d90e1bf13e23dcdc19"
+            "cdee0062f687fced9267d69bd874dc61c42eef1caf326896ed890869d3530b8a"
         );
     }
 
