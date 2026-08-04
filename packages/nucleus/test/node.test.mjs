@@ -40,7 +40,7 @@ test("runs the REPL kernel through the Wasm binding in Node", async () => {
   assert.throws(() =>
     kernel.run(otherConnection, "SELECT * FROM library.example"),
   );
-  assert.equal(kernel.close_connection(otherConnection), true);
+  kernel.close_connection(otherConnection);
   assert.throws(() => kernel.run(otherConnection, "SELECT 1"));
 
   result.free();

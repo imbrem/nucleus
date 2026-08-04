@@ -1,11 +1,14 @@
 //! Portable trusted core for Nucleus.
 
 mod connection;
+mod kernel;
 
 pub use connection::Connection;
+pub use kernel::Kernel;
 
-pub mod repl;
-pub use repl::Sql;
+#[path = "repl.rs"]
+pub mod sql;
+pub use sql::Sql;
 
 mod snapshot;
 
@@ -13,12 +16,6 @@ pub use snapshot::{
     COV_VALID_DB_V0, ED25519_PUBLIC_KEY_V0, Ed25519Signer, Ed25519Verifier, SignError, Signer,
     VerificationError, Verifier, ed25519_key_id, valid_snapshot_statement,
 };
-
-#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-mod web;
-
-#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-pub use web::{WebKernel, WebOutcome};
 
 #[cfg(target_os = "wasi")]
 #[allow(unsafe_code)]
@@ -31,10 +28,6 @@ mod bindings;
 ///
 /// Panics if the linked `SQLite` runtime cannot execute the smoke query.
 #[must_use]
-#[cfg_attr(
-    all(target_arch = "wasm32", target_os = "unknown"),
-    wasm_bindgen::prelude::wasm_bindgen
-)]
 pub fn smoke() -> u32 {
     sqlite_smoke().expect("SQLite smoke query should succeed")
 }

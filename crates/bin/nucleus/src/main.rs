@@ -4,10 +4,17 @@ use std::fs;
 use std::io;
 use std::process::ExitCode;
 
-use covalence_nucleus::repl::{Outcome, Value};
-use covalence_nucleus::{Connection, Sql};
+use covalence_repl::{Connection, ConnectionId, Kernel, Outcome, Repl, Sql, Value};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
+type LocalRepl = Repl<Connection<Sql>>;
+
+fn open_connection(kernel: &Kernel, repl: &mut LocalRepl) -> Result<ConnectionId> {
+    let connection = kernel.open_sql()?;
+    let id = repl.insert("nucleus/sql", connection)?;
+    repl.select(id)?;
+    Ok(id)
+}
 
 fn print_outcome(output: &mut impl io::Write, outcome: &Outcome) -> io::Result<()> {
     match outcome {
@@ -55,12 +62,13 @@ fn format_value(value: &Value) -> String {
 }
 
 fn load_image(
-    connection: &mut Connection<Sql>,
+    repl: &mut LocalRepl,
     output: &mut impl io::Write,
     schema: &str,
     path: &str,
 ) -> Result<()> {
     let bytes = fs::read(path)?;
+    let connection = repl.active_mut()?;
     let hash = connection.put_image(&bytes)?;
     connection.attach_immutable_image(hash, schema)?;
     writeln!(output, "attached {schema} {hash}")?;
@@ -76,7 +84,8 @@ fn parse_load(command: &str) -> Option<(&str, &str)> {
 }
 
 fn run_line(
-    connection: &mut Connection<Sql>,
+    kernel: &Kernel,
+    repl: &mut LocalRepl,
     output: &mut impl io::Write,
     line: &str,
 ) -> Result<bool> {
@@ -92,19 +101,62 @@ fn run_line(
             output,
             ".load SCHEMA PATH  attach a complete immutable SQLite image"
         )?;
+        writeln!(output, ".open              open and select a connection")?;
+        writeln!(output, ".use ID            select a connection")?;
+        writeln!(output, ".close [ID]        close a connection")?;
+        writeln!(output, ".connections       list open connections")?;
         writeln!(output, ".quit              exit")?;
+        return Ok(true);
+    }
+    if line == ".open" {
+        let id = open_connection(kernel, repl)?;
+        writeln!(output, "opened connection {id}")?;
+        return Ok(true);
+    }
+    if let Some(argument) = line.strip_prefix(".use ") {
+        let id = ConnectionId::from_u32(argument.trim().parse()?);
+        repl.select(id)?;
+        writeln!(output, "using connection {id}")?;
+        return Ok(true);
+    }
+    if line == ".connections" {
+        let active = repl.active()?;
+        let mut statement = repl.state().sqlite().prepare(
+            "SELECT connection_id, protocol FROM repl_connection ORDER BY connection_id",
+        )?;
+        let rows = statement.query_map((), |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (id, protocol) = row?;
+            let marker = if active.is_some_and(|active| active.get() == id) {
+                '*'
+            } else {
+                ' '
+            };
+            writeln!(output, "{marker} {id}\t{protocol}")?;
+        }
+        return Ok(true);
+    }
+    if line == ".close" || line.starts_with(".close ") {
+        let id = match line.strip_prefix(".close ") {
+            Some(argument) => ConnectionId::from_u32(argument.trim().parse()?),
+            None => repl.active()?.ok_or("no active connection")?,
+        };
+        repl.remove(id)?;
+        writeln!(output, "closed connection {id}")?;
         return Ok(true);
     }
     if line.starts_with(".load") {
         let (schema, path) = parse_load(line).ok_or("usage: .load SCHEMA PATH")?;
-        load_image(connection, output, schema, path)?;
+        load_image(repl, output, schema, path)?;
         return Ok(true);
     }
     if line.starts_with('.') {
         return Err(format!("unknown command: {line}").into());
     }
 
-    let outcome = connection.run(line, &[])?;
+    let outcome = repl.active_mut()?.run(line, &[])?;
     print_outcome(output, &outcome)?;
     Ok(true)
 }
@@ -115,7 +167,9 @@ fn run_repl(
     errors: &mut impl io::Write,
     prompt: bool,
 ) -> Result<()> {
-    let mut connection = Connection::<Sql>::open_in_memory()?;
+    let kernel = Kernel::ephemeral();
+    let mut repl = Repl::new(kernel.verifying_key().as_bytes())?;
+    open_connection(&kernel, &mut repl)?;
     let mut line = String::new();
     loop {
         if prompt {
@@ -126,7 +180,7 @@ fn run_repl(
         if input.read_line(&mut line)? == 0 {
             break;
         }
-        match run_line(&mut connection, output, &line) {
+        match run_line(&kernel, &mut repl, output, &line) {
             Ok(true) => {}
             Ok(false) => break,
             Err(error) => writeln!(errors, "error: {error}")?,
@@ -154,8 +208,10 @@ fn run() -> Result<()> {
             if arguments.next().is_some() {
                 return Err("unexpected arguments after SQL statement".into());
             }
-            let mut connection = Connection::<Sql>::open_in_memory()?;
-            let outcome = connection.run(&sql, &[])?;
+            let kernel = Kernel::ephemeral();
+            let mut repl = Repl::new(kernel.verifying_key().as_bytes())?;
+            open_connection(&kernel, &mut repl)?;
+            let outcome = repl.active_mut()?.run(&sql, &[])?;
             print_outcome(&mut io::stdout().lock(), &outcome)?;
             Ok(())
         }
@@ -200,6 +256,27 @@ mod tests {
         assert!(output.contains("changed 0\n"));
         assert!(output.contains("changed 1\n"));
         assert!(output.contains("answer\n42\n"));
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn manages_independent_connections_like_the_browser_repl() {
+        let mut input = Cursor::new(
+            "CREATE TABLE first(value INTEGER)\nINSERT INTO first VALUES (42)\n.open\nSELECT count(*) AS absent FROM sqlite_schema WHERE name = 'first'\n.use 1\nSELECT value FROM first\n.connections\n.close 2\n.quit\n",
+        );
+        let mut output = Vec::new();
+        let mut errors = Vec::new();
+
+        run_repl(&mut input, &mut output, &mut errors, false).expect("run REPL");
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("opened connection 2\n"));
+        assert!(output.contains("absent\n0\n"));
+        assert!(output.contains("using connection 1\n"));
+        assert!(output.contains("value\n42\n"));
+        assert!(output.contains("* 1\tnucleus/sql\n"));
+        assert!(output.contains("  2\tnucleus/sql\n"));
+        assert!(output.contains("closed connection 2\n"));
         assert!(errors.is_empty());
     }
 

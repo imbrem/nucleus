@@ -59,9 +59,7 @@ async function execute(request: Request): Promise<unknown> {
     case "open":
       return connection.open_connection();
     case "close":
-      if (!connection.close_connection(request.connection)) {
-        throw new Error("unknown or closed browser connection");
-      }
+      connection.close_connection(request.connection);
       return undefined;
     case "run":
       return readOutcome(connection.run(request.connection, request.sql));

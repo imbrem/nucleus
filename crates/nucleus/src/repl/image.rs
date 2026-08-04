@@ -219,7 +219,7 @@ pub enum ImageError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::repl::{Outcome, QueryResult, Value};
+    use crate::sql::{Outcome, QueryResult, Value};
 
     fn image() -> Vec<u8> {
         let mut source = Connection::<Sql>::open_in_memory().expect("open source");

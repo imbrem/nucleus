@@ -12,6 +12,7 @@ use covalence_lib_sqlite as sqlite;
 
 use crate::Connection;
 
+#[path = "repl/image.rs"]
 mod image;
 
 pub use image::ImageError;

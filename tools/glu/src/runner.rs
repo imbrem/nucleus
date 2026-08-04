@@ -249,12 +249,12 @@ impl Runner {
         self.test_components()?;
         let cli = self.buck_output("//crates/bin/nucleus:nucleus")?;
         let cli = cli.to_string_lossy();
-        let output = self.command("test nucleus CLI", cli.as_ref(), std::iter::empty::<&str>())?;
-        expect_output(
-            "nucleus CLI smoke test",
-            &output,
-            "hello from nucleus: SQLite returned 42",
+        let output = self.command(
+            "test nucleus CLI",
+            cli.as_ref(),
+            ["-c", "SELECT 42 AS answer"],
         )?;
+        expect_output("nucleus CLI smoke test", &output, "answer\n42")?;
         eprintln!("• test nucleus CLI… done");
         Ok(())
     }
