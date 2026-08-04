@@ -374,10 +374,10 @@ impl LocalRepl {
                 )?;
                 witnesses.push(theorem);
             }
-            proof
-                .prove_context_implication(antecedent, consequent, &witnesses)
-                .map(|_| ())
-                .map_err(Into::into)
+            let implication =
+                proof.prove_context_implication(antecedent, consequent, &witnesses)?;
+            proof.persist_context_implication(&implication)?;
+            Ok(())
         })
     }
 
@@ -407,10 +407,10 @@ impl LocalRepl {
                     conclusion,
                 },
             )?;
-            proof
-                .weaken(&implication, &theorem)
-                .map(|theorem| theorem.conclusion())
-                .map_err(Into::into)
+            let theorem = proof.weaken(&implication, &theorem)?;
+            let conclusion = theorem.conclusion();
+            proof.persist_theorem(&theorem)?;
+            Ok(conclusion)
         })
     }
 }
@@ -697,6 +697,8 @@ mod tests {
             .with_proof_session(|mut proof| {
                 let witness = proof.prove_hypothesis(antecedent, p)?;
                 let equality = proof.prove_reflexivity(consequent, p)?;
+                proof.persist_theorem(&witness)?;
+                proof.persist_theorem(&equality)?;
                 Ok::<_, ProofError>((witness.conclusion(), equality.conclusion()))
             })
             .unwrap();

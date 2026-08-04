@@ -2,8 +2,8 @@ use covalence_lib_hash::O256;
 use wasm_bindgen::prelude::*;
 
 use super::{
-    ConnectionId, ContextId, Kind, KindId, KindView, LocalRepl, Outcome, QueryResult, TermId,
-    TermView, TypeId, TypeView, Value,
+    ConnectionId, ContextId, Kind, KindId, KindView, LocalRepl, Outcome, ProofError, QueryResult,
+    TermId, TermView, TypeId, TypeView, Value,
 };
 
 /// Browser adapter for the shared REPL connection directory.
@@ -484,12 +484,13 @@ impl WebKernel {
             .hol_mut(ConnectionId::from_u32(connection))
             .map_err(js_error)?
             .with_proof_session(|mut proof| {
-                proof
-                    .prove_hypothesis(
-                        ContextId::from_i64(i64::from(context)),
-                        TermId::from_i64(i64::from(term)),
-                    )
-                    .map(|theorem| theorem.conclusion())
+                let theorem = proof.prove_hypothesis(
+                    ContextId::from_i64(i64::from(context)),
+                    TermId::from_i64(i64::from(term)),
+                )?;
+                let conclusion = theorem.conclusion();
+                proof.persist_theorem(&theorem)?;
+                Ok::<_, ProofError>(conclusion)
             })
             .map_err(js_error)?;
         u32::try_from(conclusion.get()).map_err(js_error)
@@ -502,9 +503,10 @@ impl WebKernel {
             .hol_mut(ConnectionId::from_u32(connection))
             .map_err(js_error)?
             .with_proof_session(|mut proof| {
-                proof
-                    .prove_truth(ContextId::from_i64(i64::from(context)))
-                    .map(|theorem| theorem.conclusion())
+                let theorem = proof.prove_truth(ContextId::from_i64(i64::from(context)))?;
+                let conclusion = theorem.conclusion();
+                proof.persist_theorem(&theorem)?;
+                Ok::<_, ProofError>(conclusion)
             })
             .map_err(js_error)?;
         u32::try_from(conclusion.get()).map_err(js_error)
@@ -522,12 +524,13 @@ impl WebKernel {
             .hol_mut(ConnectionId::from_u32(connection))
             .map_err(js_error)?
             .with_proof_session(|mut proof| {
-                proof
-                    .prove_reflexivity(
-                        ContextId::from_i64(i64::from(context)),
-                        TermId::from_i64(i64::from(term)),
-                    )
-                    .map(|theorem| theorem.conclusion())
+                let theorem = proof.prove_reflexivity(
+                    ContextId::from_i64(i64::from(context)),
+                    TermId::from_i64(i64::from(term)),
+                )?;
+                let conclusion = theorem.conclusion();
+                proof.persist_theorem(&theorem)?;
+                Ok::<_, ProofError>(conclusion)
             })
             .map_err(js_error)?;
         u32::try_from(conclusion.get()).map_err(js_error)
@@ -546,13 +549,14 @@ impl WebKernel {
             .hol_mut(ConnectionId::from_u32(connection))
             .map_err(js_error)?
             .with_proof_session(|mut proof| {
-                proof
-                    .prove_beta(
-                        ContextId::from_i64(i64::from(context)),
-                        TermId::from_i64(i64::from(abstraction)),
-                        TermId::from_i64(i64::from(argument)),
-                    )
-                    .map(|theorem| theorem.conclusion())
+                let theorem = proof.prove_beta(
+                    ContextId::from_i64(i64::from(context)),
+                    TermId::from_i64(i64::from(abstraction)),
+                    TermId::from_i64(i64::from(argument)),
+                )?;
+                let conclusion = theorem.conclusion();
+                proof.persist_theorem(&theorem)?;
+                Ok::<_, ProofError>(conclusion)
             })
             .map_err(js_error)?;
         u32::try_from(conclusion.get()).map_err(js_error)

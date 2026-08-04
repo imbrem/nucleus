@@ -202,7 +202,29 @@ pub struct ProofSession<'brand, P> {
 pub struct Theorem<'brand> {
     context: ContextId,
     conclusion: TermId,
+    origin: Option<TheoremOrigin>,
     brand: Invariant<'brand>,
+}
+
+#[derive(Clone, Copy)]
+enum TheoremOrigin {
+    Hypothesis,
+    Truth,
+    Reflexivity,
+    Beta,
+    Weakening,
+}
+
+impl TheoremOrigin {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Hypothesis => "hypothesis",
+            Self::Truth => "truth",
+            Self::Reflexivity => "reflexivity",
+            Self::Beta => "beta",
+            Self::Weakening => "weakening",
+        }
+    }
 }
 
 /// A proved implication between two contexts in one proof session.
@@ -212,7 +234,25 @@ pub struct Theorem<'brand> {
 pub struct ContextImplication<'brand> {
     antecedent: ContextId,
     consequent: ContextId,
+    origin: Option<ImplicationOrigin>,
     brand: Invariant<'brand>,
+}
+
+#[derive(Clone, Copy)]
+enum ImplicationOrigin {
+    Introduction,
+    Reflexivity,
+    Transitivity,
+}
+
+impl ImplicationOrigin {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Introduction => "introduction",
+            Self::Reflexivity => "reflexivity",
+            Self::Transitivity => "transitivity",
+        }
+    }
 }
 
 /// A checked exact structural union of immutable context member sets.
@@ -324,6 +364,8 @@ pub enum Operation {
     ProveBeta,
     /// Query whether a judgement has already been proved.
     ReadTheorem,
+    /// Persist a branded theorem as authoritative connection state.
+    PersistJudgement,
     /// Introduce a context implication from theorem witnesses.
     ProveContextImplication,
     /// Compose an explicit path of proved context implications.
@@ -332,6 +374,8 @@ pub enum Operation {
     ProveWeakening,
     /// Load or inspect a persisted context implication.
     ReadContextImplication,
+    /// Persist a branded context implication as authoritative connection state.
+    PersistContextImplication,
     /// Check and persist one exact structural context union.
     ProveContextUnion,
     /// Load and recheck one exact structural context union.
@@ -1224,12 +1268,12 @@ impl<P: Policy> Connection<Hol<P>> {
 }
 
 impl<'brand, P: Policy> ProofSession<'brand, P> {
-    /// Applies the hypothesis rule and persists the resulting judgement.
+    /// Applies the hypothesis rule and returns a session capability.
     ///
     /// # Errors
     ///
     /// Returns an error if policy denies the rule, the context is unknown, the
-    /// term is not a member, or persistence fails.
+    /// term is not a member, or `SQLite` rejects the membership check.
     pub fn prove_hypothesis(
         &mut self,
         context: ContextId,
@@ -1249,42 +1293,42 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         if !member {
             return Err(ProofError::NotMember { context, term });
         }
-        persist_judgement(&transaction, context, term, "hypothesis")?;
-        transaction.commit()?;
         Ok(Theorem {
             context,
             conclusion: term,
+            origin: Some(TheoremOrigin::Hypothesis),
             brand: PhantomData,
         })
     }
 
-    /// Applies primitive truth in an existing context and persists it.
+    /// Applies primitive truth in an existing context.
     ///
     /// # Errors
     ///
-    /// Returns an error if policy denies the rule, the context is unknown, or
-    /// persistence fails.
+    /// Returns an error if policy denies the rule or syntax insertion, the
+    /// context is unknown, or `SQLite` rejects syntax interning.
     pub fn prove_truth(&mut self, context: ContextId) -> Result<Theorem<'brand>, ProofError> {
         let (neutron, hol) = self.connection.parts_mut();
         authorize_proof(&mut hol.policy, Operation::ProveTruth)?;
+        authorize_proof(&mut hol.policy, Operation::InsertTerm)?;
         let transaction = neutron.sqlite().unchecked_transaction()?;
         require_context(&transaction, context)?;
         let truth = intern_bool_term(&transaction, true)?;
-        persist_judgement(&transaction, context, truth, "truth")?;
         transaction.commit()?;
         Ok(Theorem {
             context,
             conclusion: truth,
+            origin: Some(TheoremOrigin::Truth),
             brand: PhantomData,
         })
     }
 
-    /// Applies equality reflexivity in an existing context and persists it.
+    /// Applies equality reflexivity in an existing context.
     ///
     /// # Errors
     ///
     /// Returns an error if policy denies the rule, the context or term is
-    /// invalid, the term is locally open, or persistence fails.
+    /// invalid, the term is locally open, or syntax interning fails.
     pub fn prove_reflexivity(
         &mut self,
         context: ContextId,
@@ -1292,6 +1336,7 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
     ) -> Result<Theorem<'brand>, ProofError> {
         let (neutron, hol) = self.connection.parts_mut();
         authorize_proof(&mut hol.policy, Operation::ProveReflexivity)?;
+        authorize_proof(&mut hol.policy, Operation::InsertTerm)?;
         let transaction = neutron.sqlite().unchecked_transaction()?;
         require_context(&transaction, context)?;
         let validation = validate_term(&transaction, term)?;
@@ -1300,11 +1345,11 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         }
         let equality = intern_equality(&transaction, term, term)?;
         validate_term(&transaction, equality)?;
-        persist_judgement(&transaction, context, equality, "reflexivity")?;
         transaction.commit()?;
         Ok(Theorem {
             context,
             conclusion: equality,
+            origin: Some(TheoremOrigin::Reflexivity),
             brand: PhantomData,
         })
     }
@@ -1318,7 +1363,7 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
     ///
     /// Returns an error if policy denies the rule, the context or terms are
     /// invalid, either input is open, the first term is not a lambda, the
-    /// argument type differs, substitution fails, or persistence fails.
+    /// argument type differs, substitution or syntax interning fails.
     pub fn prove_beta(
         &mut self,
         context: ContextId,
@@ -1327,6 +1372,7 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
     ) -> Result<Theorem<'brand>, ProofError> {
         let (neutron, hol) = self.connection.parts_mut();
         authorize_proof(&mut hol.policy, Operation::ProveBeta)?;
+        authorize_proof(&mut hol.policy, Operation::InsertTerm)?;
         let transaction = neutron.sqlite().unchecked_transaction()?;
         require_context(&transaction, context)?;
         let abstraction_validation = validate_term(&transaction, abstraction)?;
@@ -1360,13 +1406,36 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         validate_term(&transaction, application)?;
         let equality = intern_equality(&transaction, application, reduct)?;
         validate_term(&transaction, equality)?;
-        persist_judgement(&transaction, context, equality, "beta")?;
         transaction.commit()?;
         Ok(Theorem {
             context,
             conclusion: equality,
+            origin: Some(TheoremOrigin::Beta),
             brand: PhantomData,
         })
+    }
+
+    /// Persists one branded theorem as an authoritative judgement row.
+    ///
+    /// A freshly derived capability also appends its fixed observational rule
+    /// label. Re-persisting a capability loaded from the database is an
+    /// idempotent row insertion and creates no invented provenance event.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies persistence or `SQLite` rejects it.
+    pub fn persist_theorem(&mut self, theorem: &Theorem<'brand>) -> Result<(), ProofError> {
+        let (neutron, hol) = self.connection.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::PersistJudgement)?;
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        persist_judgement(
+            &transaction,
+            theorem.context,
+            theorem.conclusion,
+            theorem.origin.map(TheoremOrigin::label),
+        )?;
+        transaction.commit()?;
+        Ok(())
     }
 
     /// Loads one already persisted local judgement as a session capability.
@@ -1403,6 +1472,7 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         Ok(exists.then_some(Theorem {
             context,
             conclusion,
+            origin: None,
             brand: PhantomData,
         }))
     }
@@ -1460,11 +1530,10 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
                 term: *term,
             });
         }
-        persist_context_implication(&transaction, antecedent, consequent, "introduction")?;
-        transaction.commit()?;
         Ok(ContextImplication {
             antecedent,
             consequent,
+            origin: Some(ImplicationOrigin::Introduction),
             brand: PhantomData,
         })
     }
@@ -1497,6 +1566,7 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         Ok(exists.then_some(ContextImplication {
             antecedent,
             consequent,
+            origin: None,
             brand: PhantomData,
         }))
     }
@@ -1510,7 +1580,7 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
     /// # Errors
     ///
     /// Returns an error if policy denies composition, the path is empty, a
-    /// context is unknown, an adjacent edge is absent, or persistence fails.
+    /// context is unknown, or an adjacent persisted edge is absent.
     pub fn prove_context_implication_path(
         &mut self,
         path: &[ContextId],
@@ -1541,22 +1611,41 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
                 });
             }
         }
-        persist_context_implication(
-            &transaction,
-            antecedent,
-            consequent,
-            if path.len() == 1 {
-                "reflexivity"
-            } else {
-                "transitivity"
-            },
-        )?;
-        transaction.commit()?;
         Ok(ContextImplication {
             antecedent,
             consequent,
+            origin: Some(if path.len() == 1 {
+                ImplicationOrigin::Reflexivity
+            } else {
+                ImplicationOrigin::Transitivity
+            }),
             brand: PhantomData,
         })
+    }
+
+    /// Persists one branded implication as an authoritative directed edge.
+    ///
+    /// Fresh derivations append their fixed observational rule label. A
+    /// capability loaded from the database adds no new provenance event.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies persistence or `SQLite` rejects it.
+    pub fn persist_context_implication(
+        &mut self,
+        implication: &ContextImplication<'brand>,
+    ) -> Result<(), ProofError> {
+        let (neutron, hol) = self.connection.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::PersistContextImplication)?;
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        persist_context_implication(
+            &transaction,
+            implication.antecedent,
+            implication.consequent,
+            implication.origin.map(ImplicationOrigin::label),
+        )?;
+        transaction.commit()?;
+        Ok(())
     }
 
     /// Checks and records that `result` has exactly the members of `left ∪ right`.
@@ -1685,14 +1774,14 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
     ///
     /// # Errors
     ///
-    /// Returns an error if policy denies weakening, the theorem is not proved
-    /// under the implication's consequent, or persistence fails.
+    /// Returns an error if policy denies weakening or the theorem is not proved
+    /// under the implication's consequent.
     pub fn weaken(
         &mut self,
         implication: &ContextImplication<'brand>,
         theorem: &Theorem<'brand>,
     ) -> Result<Theorem<'brand>, ProofError> {
-        let (neutron, hol) = self.connection.parts_mut();
+        let (_, hol) = self.connection.parts_mut();
         authorize_proof(&mut hol.policy, Operation::ProveWeakening)?;
         if theorem.context != implication.consequent {
             return Err(ProofError::WeakeningContextMismatch {
@@ -1700,17 +1789,10 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
                 actual: theorem.context,
             });
         }
-        let transaction = neutron.sqlite().unchecked_transaction()?;
-        persist_judgement(
-            &transaction,
-            implication.antecedent,
-            theorem.conclusion,
-            "weakening",
-        )?;
-        transaction.commit()?;
         Ok(Theorem {
             context: implication.antecedent,
             conclusion: theorem.conclusion,
+            origin: Some(TheoremOrigin::Weakening),
             brand: PhantomData,
         })
     }
@@ -2225,16 +2307,18 @@ fn persist_judgement(
     connection: &sqlite::Connection,
     context: ContextId,
     term: TermId,
-    rule: &str,
+    rule: Option<&str>,
 ) -> Result<(), sqlite::Error> {
     connection.execute(
         "INSERT OR IGNORE INTO hol_judgement(ctx_id, term_id) VALUES (?1, ?2)",
         (context.0, term.0),
     )?;
-    connection.execute(
-        "INSERT INTO hol_proof_event(ctx_id, term_id, rule) VALUES (?1, ?2, ?3)",
-        (context.0, term.0, rule),
-    )?;
+    if let Some(rule) = rule {
+        connection.execute(
+            "INSERT INTO hol_proof_event(ctx_id, term_id, rule) VALUES (?1, ?2, ?3)",
+            (context.0, term.0, rule),
+        )?;
+    }
     Ok(())
 }
 
@@ -2242,7 +2326,7 @@ fn persist_context_implication(
     connection: &sqlite::Connection,
     antecedent: ContextId,
     consequent: ContextId,
-    rule: &str,
+    rule: Option<&str>,
 ) -> Result<(), sqlite::Error> {
     connection.execute(
         "INSERT OR IGNORE INTO hol_context_implication(
@@ -2250,12 +2334,14 @@ fn persist_context_implication(
          ) VALUES (?1, ?2)",
         (antecedent.0, consequent.0),
     )?;
-    connection.execute(
-        "INSERT INTO hol_context_implication_event(
-             antecedent_ctx_id, consequent_ctx_id, rule
-         ) VALUES (?1, ?2, ?3)",
-        (antecedent.0, consequent.0, rule),
-    )?;
+    if let Some(rule) = rule {
+        connection.execute(
+            "INSERT INTO hol_context_implication_event(
+                 antecedent_ctx_id, consequent_ctx_id, rule
+             ) VALUES (?1, ?2, ?3)",
+            (antecedent.0, consequent.0, rule),
+        )?;
+    }
     Ok(())
 }
 
@@ -3582,8 +3668,19 @@ mod tests {
         }
     }
 
-    fn theorem_conclusion(theorem: Result<Theorem<'_>, ProofError>) -> Result<TermId, ProofError> {
-        theorem.map(|theorem| theorem.conclusion())
+    #[derive(Default)]
+    struct DenyPersistence {
+        operations: Vec<Operation>,
+    }
+
+    impl Policy for DenyPersistence {
+        fn allows(&mut self, operation: Operation) -> bool {
+            self.operations.push(operation);
+            !matches!(
+                operation,
+                Operation::PersistJudgement | Operation::PersistContextImplication
+            )
+        }
     }
 
     #[test]
@@ -3977,9 +4074,10 @@ mod tests {
         let identity = connection.insert_lambda(bool_type, variable).unwrap();
         let conclusion = connection
             .with_proof_session(|mut proof| {
-                proof
-                    .prove_reflexivity(ContextId::empty(), identity)
-                    .map(|theorem| theorem.conclusion())
+                let theorem = proof.prove_reflexivity(ContextId::empty(), identity)?;
+                let conclusion = theorem.conclusion();
+                proof.persist_theorem(&theorem)?;
+                Ok::<_, ProofError>(conclusion)
             })
             .unwrap();
         assert_eq!(
@@ -3996,9 +4094,8 @@ mod tests {
         );
         connection
             .with_proof_session(|mut proof| {
-                proof
-                    .prove_reflexivity(ContextId::empty(), identity)
-                    .map(|_| ())
+                let theorem = proof.prove_reflexivity(ContextId::empty(), identity)?;
+                proof.persist_theorem(&theorem)
             })
             .unwrap();
         let counts = connection
@@ -4060,9 +4157,10 @@ mod tests {
         let truth = connection.insert_bool_term(true).unwrap();
         let conclusion = connection
             .with_proof_session(|mut proof| {
-                proof
-                    .prove_beta(ContextId::empty(), identity, truth)
-                    .map(|theorem| theorem.conclusion())
+                let theorem = proof.prove_beta(ContextId::empty(), identity, truth)?;
+                let conclusion = theorem.conclusion();
+                proof.persist_theorem(&theorem)?;
+                Ok::<_, ProofError>(conclusion)
             })
             .unwrap();
         let TermView::Equality { left, right } = connection.term(conclusion).unwrap() else {
@@ -4205,12 +4303,15 @@ mod tests {
             .with_proof_session(|mut proof| {
                 let hypothesis = proof.prove_hypothesis(context, assumption)?;
                 let truth = proof.prove_truth(ContextId::empty())?;
-                Ok::<_, ProofError>((
+                let result = (
                     hypothesis.context(),
                     hypothesis.conclusion(),
                     truth.context(),
                     truth.conclusion(),
-                ))
+                );
+                proof.persist_theorem(&hypothesis)?;
+                proof.persist_theorem(&truth)?;
+                Ok::<_, ProofError>(result)
             })
             .unwrap();
         assert_eq!(hypothesis_context, context);
@@ -4234,7 +4335,10 @@ mod tests {
             .with_proof_session(|mut proof| {
                 let hypothesis = proof.load_theorem(context, assumption)?.unwrap();
                 let truth = proof.load_theorem(ContextId::empty(), truth_id)?.unwrap();
-                Ok::<_, ProofError>((hypothesis.conclusion(), truth.conclusion()))
+                let result = (hypothesis.conclusion(), truth.conclusion());
+                proof.persist_theorem(&hypothesis)?;
+                proof.persist_theorem(&truth)?;
+                Ok::<_, ProofError>(result)
             })
             .unwrap();
         assert_eq!(reloaded, (assumption, truth_id));
@@ -4273,6 +4377,62 @@ mod tests {
     }
 
     #[test]
+    fn derivation_capabilities_are_separate_from_persistence_policy() {
+        let mut connection = Connection::open_hol_in_memory(DenyPersistence::default()).unwrap();
+        let p = connection.insert_bool_term(false).unwrap();
+        let context = connection.define_context([p]).unwrap();
+        connection
+            .with_proof_session(|mut proof| {
+                let theorem = proof.prove_hypothesis(context, p)?;
+                assert!(proof.load_theorem(context, p)?.is_none());
+                assert!(matches!(
+                    proof.persist_theorem(&theorem),
+                    Err(ProofError::Denied(Operation::PersistJudgement))
+                ));
+                let implication = proof.prove_context_implication(context, context, &[theorem])?;
+                assert!(matches!(
+                    proof.persist_context_implication(&implication),
+                    Err(ProofError::Denied(Operation::PersistContextImplication))
+                ));
+                Ok::<_, ProofError>(())
+            })
+            .unwrap();
+        let (neutron, hol) = connection.parts_mut();
+        assert_eq!(
+            hol.policy.operations,
+            [
+                Operation::InsertTerm,
+                Operation::DefineContext,
+                Operation::ProveHypothesis,
+                Operation::ReadTheorem,
+                Operation::PersistJudgement,
+                Operation::ProveContextImplication,
+                Operation::PersistContextImplication,
+            ]
+        );
+        let counts = neutron
+            .sqlite()
+            .query_row(
+                "SELECT
+                     (SELECT count(*) FROM hol_judgement),
+                     (SELECT count(*) FROM hol_proof_event),
+                     (SELECT count(*) FROM hol_context_implication),
+                     (SELECT count(*) FROM hol_context_implication_event)",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(counts, (0, 0, 0, 0));
+    }
+
+    #[test]
     fn context_implication_weakens_a_branded_theorem() {
         let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
         let bool_type = connection.insert_bool_type().unwrap();
@@ -4289,13 +4449,16 @@ mod tests {
                     proof.prove_context_implication(antecedent, consequent, &[witness])?;
                 assert_eq!(implication.antecedent(), antecedent);
                 assert_eq!(implication.consequent(), consequent);
-                let wrong_context = proof.load_theorem(antecedent, p)?.unwrap();
+                let wrong_context = proof.prove_hypothesis(antecedent, p)?;
                 assert!(matches!(
                     proof.weaken(&implication, &wrong_context),
                     Err(ProofError::WeakeningContextMismatch { .. })
                 ));
                 let weakened = proof.weaken(&implication, &equality)?;
-                Ok::<_, ProofError>((equality.conclusion(), weakened.conclusion()))
+                let result = (equality.conclusion(), weakened.conclusion());
+                proof.persist_context_implication(&implication)?;
+                proof.persist_theorem(&weakened)?;
+                Ok::<_, ProofError>(result)
             })
             .unwrap();
 
@@ -4334,7 +4497,7 @@ mod tests {
         connection
             .with_proof_session(|mut proof| {
                 let p_at_antecedent = proof.prove_hypothesis(antecedent, p)?;
-                let duplicate = proof.load_theorem(antecedent, p)?.unwrap();
+                let duplicate = proof.prove_hypothesis(antecedent, p)?;
                 let q_at_antecedent = proof.prove_hypothesis(antecedent, q)?;
                 let p_at_consequent = proof.prove_hypothesis(consequent, p)?;
                 assert!(matches!(
@@ -4349,7 +4512,7 @@ mod tests {
                     ),
                     Err(ProofError::DuplicateImplicationWitness(term)) if term == p
                 ));
-                let p_with_extra = proof.load_theorem(antecedent, p)?.unwrap();
+                let p_with_extra = proof.prove_hypothesis(antecedent, p)?;
                 assert!(matches!(
                     proof.prove_context_implication(
                         antecedent,
@@ -4393,9 +4556,9 @@ mod tests {
         let mut connection = Connection::open_hol_in_memory_with_schema(AllowAll, schema).unwrap();
         connection
             .with_proof_session(|mut proof| {
-                proof
-                    .prove_context_implication(ContextId::empty(), ContextId::empty(), &[])
-                    .map(|_| ())
+                let implication =
+                    proof.prove_context_implication(ContextId::empty(), ContextId::empty(), &[])?;
+                proof.persist_context_implication(&implication)
             })
             .unwrap();
         let target = MetadataTarget::context_implication(ContextId::empty(), ContextId::empty());
@@ -4416,12 +4579,12 @@ mod tests {
         let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
         connection
             .with_proof_session(|mut proof| {
-                proof
-                    .prove_context_implication(ContextId::empty(), ContextId::empty(), &[])
-                    .map(|_| ())?;
-                proof
-                    .prove_context_implication(ContextId::empty(), ContextId::empty(), &[])
-                    .map(|_| ())
+                let first =
+                    proof.prove_context_implication(ContextId::empty(), ContextId::empty(), &[])?;
+                proof.persist_context_implication(&first)?;
+                let second =
+                    proof.prove_context_implication(ContextId::empty(), ContextId::empty(), &[])?;
+                proof.persist_context_implication(&second)
             })
             .unwrap();
         let counts = connection
@@ -4480,13 +4643,13 @@ mod tests {
         connection
             .with_proof_session(|mut proof| {
                 let first_to_second = proof.prove_hypothesis(first, p)?;
-                proof
-                    .prove_context_implication(first, second, &[first_to_second])
-                    .map(|_| ())?;
+                let first_to_second =
+                    proof.prove_context_implication(first, second, &[first_to_second])?;
+                proof.persist_context_implication(&first_to_second)?;
                 let second_to_third = proof.prove_truth(second)?;
-                proof
-                    .prove_context_implication(second, third, &[second_to_third])
-                    .map(|_| ())?;
+                let second_to_third =
+                    proof.prove_context_implication(second, third, &[second_to_third])?;
+                proof.persist_context_implication(&second_to_third)?;
                 let composed = proof.prove_context_implication_path(&[first, second, third])?;
                 assert_eq!(composed.antecedent(), first);
                 assert_eq!(composed.consequent(), third);
@@ -4504,6 +4667,8 @@ mod tests {
                         consequent,
                     }) if antecedent == third && consequent == second
                 ));
+                proof.persist_context_implication(&composed)?;
+                proof.persist_context_implication(&reflexive)?;
                 Ok::<_, ProofError>(())
             })
             .unwrap();
@@ -4701,6 +4866,8 @@ mod tests {
                 let equivalence = proof.prove_context_equivalence(&forward, &backward)?;
                 assert_eq!(equivalence.left(), left);
                 assert_eq!(equivalence.right(), right);
+                proof.persist_context_implication(&forward)?;
+                proof.persist_context_implication(&backward)?;
                 Ok::<_, ProofError>(())
             })
             .unwrap();
@@ -4841,7 +5008,9 @@ mod tests {
         let context = connection.define_context([term]).unwrap();
         let conclusion = connection
             .with_proof_session(|mut proof| {
-                theorem_conclusion(proof.prove_hypothesis(context, term))
+                let theorem = proof.prove_hypothesis(context, term)?;
+                proof.persist_theorem(&theorem)?;
+                Ok::<_, ProofError>(theorem.conclusion())
             })
             .unwrap();
         connection
@@ -4879,13 +5048,6 @@ mod tests {
             [MetadataValue::Integer(1)]
         );
 
-        assert_eq!(
-            connection
-                .protocol()
-                .schema()
-                .metadata_type_on(MetadataTable::Context, "LABEL"),
-            Some(MetadataType::Text)
-        );
         let (neutron, _) = connection.parts_mut();
         for (table, column) in [
             ("hol_context", "label"),
