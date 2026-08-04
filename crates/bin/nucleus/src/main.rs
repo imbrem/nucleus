@@ -302,7 +302,9 @@ fn run_hol_proof<'a>(
             }
             repl.hol_mut(connection)?.with_proof_session(|mut proof| {
                 let theorem = proof.prove_hypothesis(context, term)?;
-                Ok::<_, ProofError>((theorem.context(), theorem.conclusion()))
+                let result = (theorem.context(), theorem.conclusion());
+                proof.persist_theorem(&theorem)?;
+                Ok::<_, ProofError>(result)
             })?
         }
         Some("truth") => {
@@ -312,7 +314,9 @@ fn run_hol_proof<'a>(
             }
             repl.hol_mut(connection)?.with_proof_session(|mut proof| {
                 let theorem = proof.prove_truth(context)?;
-                Ok::<_, ProofError>((theorem.context(), theorem.conclusion()))
+                let result = (theorem.context(), theorem.conclusion());
+                proof.persist_theorem(&theorem)?;
+                Ok::<_, ProofError>(result)
             })?
         }
         Some("refl") => {
@@ -323,7 +327,9 @@ fn run_hol_proof<'a>(
             }
             repl.hol_mut(connection)?.with_proof_session(|mut proof| {
                 let theorem = proof.prove_reflexivity(context, term)?;
-                Ok::<_, ProofError>((theorem.context(), theorem.conclusion()))
+                let result = (theorem.context(), theorem.conclusion());
+                proof.persist_theorem(&theorem)?;
+                Ok::<_, ProofError>(result)
             })?
         }
         Some("beta") => {
@@ -335,7 +341,9 @@ fn run_hol_proof<'a>(
             }
             repl.hol_mut(connection)?.with_proof_session(|mut proof| {
                 let theorem = proof.prove_beta(context, abstraction, argument)?;
-                Ok::<_, ProofError>((theorem.context(), theorem.conclusion()))
+                let result = (theorem.context(), theorem.conclusion());
+                proof.persist_theorem(&theorem)?;
+                Ok::<_, ProofError>(result)
             })?
         }
         Some("implies") => {

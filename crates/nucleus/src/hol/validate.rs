@@ -665,9 +665,8 @@ mod tests {
         let truth = connection.insert_bool_term(true).unwrap();
         connection
             .with_proof_session(|mut proof| {
-                proof
-                    .prove_beta(ContextId::empty(), identity, truth)
-                    .map(|_| ())
+                let theorem = proof.prove_beta(ContextId::empty(), identity, truth)?;
+                proof.persist_theorem(&theorem)
             })
             .unwrap();
         connection.parts_mut().0.serialize().unwrap()
