@@ -1628,6 +1628,44 @@ mod tests {
     }
 
     #[test]
+    fn terminal_replays_choice_and_epsilon_conversion_recipe_steps() {
+        let mut repl = LocalRepl::new().unwrap();
+        let connection = repl.open_hol().unwrap();
+        repl.select(connection).unwrap();
+        let hol = repl.hol_mut(connection).unwrap();
+        let bool_type = hol.insert_bool_type().unwrap();
+        let bound = hol.insert_bound_term(0, bool_type).unwrap();
+        let predicate = hol.insert_lambda(bool_type, bound).unwrap();
+        let witness = hol.insert_bool_term(true).unwrap();
+        let premise = hol.insert_application(predicate, witness).unwrap();
+        let context = hol.define_context([premise]).unwrap();
+        let epsilon = hol.insert_epsilon(predicate).unwrap();
+        let expected_choice = hol.insert_application(predicate, epsilon).unwrap();
+        let command = format!(
+            ".hol script {{\"version\":1,\"steps\":[{{\"op\":\"hypothesis\",\"context\":{},\"term\":{}}},{{\"op\":\"choice\",\"premise\":0}},{{\"op\":\"conversion_reflexivity\",\"term\":{}}},{{\"op\":\"conversion_epsilon\",\"predicate\":2}}]}}",
+            context.get(),
+            premise.get(),
+            predicate.get(),
+        );
+        let mut output = Vec::new();
+
+        assert!(run_line(&mut repl, &mut output, &command).unwrap());
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains(&format!(
+            "{{\"kind\":\"theorem\",\"context\":{},\"conclusion\":{}}}",
+            context.get(),
+            expected_choice.get()
+        )));
+        assert!(output.contains(&format!(
+            "{{\"kind\":\"conversion\",\"left\":{},\"right\":{},\"ty\":{},\"closed\":true}}",
+            epsilon.get(),
+            epsilon.get(),
+            bool_type.get()
+        )));
+    }
+
+    #[test]
     fn terminal_constructs_and_inspects_a_schematic_type() {
         let mut input = Cursor::new(
             ".open hol\n.hol type free 700\n.hol type show 3\n.hol term free 701 3\n.hol term free 701 2\n.hol term eq 5 5\n.hol script {\"version\":1,\"steps\":[{\"op\":\"reflexivity\",\"context\":0,\"term\":4},{\"op\":\"instantiate_types\",\"theorem\":0,\"instantiations\":[{\"variable\":3,\"replacement\":2}]}]}\n.quit\n",
