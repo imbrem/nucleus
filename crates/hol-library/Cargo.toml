@@ -1,0 +1,15 @@
+[package]
+name = "covalence-hol-library"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Derived HOL definitions and proofs outside the Covalence trusted kernel"
+publish = false
+
+[dependencies]
+covalence-nucleus = { path = "../nucleus" }
+covalence-neutron = { path = "../neutron" }
+
+[lints]
+workspace = true
