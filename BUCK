@@ -75,6 +75,7 @@ genrule(
         {
             "lib-sqlite": "//crates/lib/sqlite:package_files",
             "nucleus": "//crates/nucleus:package_files",
+            "repl": "//crates/repl:package_files",
         },
         _NUCLEUS_PACKAGE_SOURCES +
         [
