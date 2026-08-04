@@ -10,6 +10,7 @@ use std::{error::Error as StdError, fmt};
 
 use covalence_lib_hash::O256;
 
+pub mod rpc;
 pub mod wire;
 
 /// Checked-in WIT source which normatively describes the typed service surface.
@@ -28,6 +29,7 @@ pub const MAX_SQL_OUTCOME_BYTES: usize = 16 << 20;
 pub const MAX_LISTED_IMAGES: usize = 1024;
 
 const OPERATION_CONTRACT_DOMAIN: &[u8] = b"covalence/kernel-service/operation-contract/v0\0";
+const OPERATION_SCHEMA_DOMAIN: &[u8] = b"covalence/kernel-service/operation-schema/v0\0";
 
 /// One operation in the checked-in typed service contract.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -98,6 +100,22 @@ pub fn operation_contract(operation: Operation) -> O256 {
     let contract = contract_id();
     let mut statement = Vec::with_capacity(OPERATION_CONTRACT_DOMAIN.len() + 33);
     statement.extend_from_slice(OPERATION_CONTRACT_DOMAIN);
+    statement.extend_from_slice(contract.as_ref());
+    statement.push(operation.tag());
+    O256::from_bytes(&statement)
+}
+
+/// Derives the semantic schema for a canonical operation input/result relation.
+///
+/// The relation accepts the canonical request and response encodings for `operation`; value IDs
+/// are direction-separated hashes beneath this schema. This is deliberately distinct from the
+/// typed WIT contract identifier so signatures state both which operation ran and how its values
+/// are named.
+#[must_use]
+pub fn operation_schema(operation: Operation) -> O256 {
+    let contract = contract_id();
+    let mut statement = Vec::with_capacity(OPERATION_SCHEMA_DOMAIN.len() + 33);
+    statement.extend_from_slice(OPERATION_SCHEMA_DOMAIN);
     statement.extend_from_slice(contract.as_ref());
     statement.push(operation.tag());
     O256::from_bytes(&statement)

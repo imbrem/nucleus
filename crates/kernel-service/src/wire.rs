@@ -10,7 +10,10 @@ use covalence_lib_crypto::ed25519::{Signature, Signer as _, SigningKey, Verifyin
 use covalence_lib_hash::{O256, o256_path};
 
 /// Maximum payload carried by one signed kernel message.
-pub const MAX_WIRE_PAYLOAD_BYTES: usize = super::MAX_IMAGE_BYTES;
+///
+/// The largest canonical service payload is a maximum-sized serialized image plus its 18-byte RPC
+/// response prefix. The signed frame's own fixed fields are accounted for separately.
+pub const MAX_WIRE_PAYLOAD_BYTES: usize = super::MAX_IMAGE_BYTES + 18;
 
 const VERSION: u8 = 0;
 const RESERVED_BYTES: [u8; 3] = [0; 3];
@@ -18,6 +21,8 @@ const SIGNATURE_BYTES: usize = 64;
 const LENGTH_BYTES: usize = 4;
 const INVOCATION_MAGIC: [u8; 8] = *b"COVKINVK";
 const RESULT_MAGIC: [u8; 8] = *b"COVKRESL";
+const CHANNEL_GRANT_MAGIC: [u8; 8] = *b"COVKCHNL";
+const CHANNEL_GRANT_BYTES: usize = 8 + 1 + 3 + 32 * 3 + 8 + SIGNATURE_BYTES;
 const INVOCATION_FIXED_BYTES: usize = 8 + 1 + 3 + 32 * 6 + 8 + LENGTH_BYTES + SIGNATURE_BYTES;
 const RESULT_FIXED_BYTES: usize = 8 + 1 + 3 + 32 * 7 + 8 + LENGTH_BYTES + SIGNATURE_BYTES;
 
@@ -88,6 +93,160 @@ pub fn invocation_domain() -> O256 {
 #[must_use]
 pub fn result_domain() -> O256 {
     o256_path!(::nucleus.kernel.result.v0)
+}
+
+/// Domain root for v0 recipient-issued channel grants.
+#[must_use]
+pub fn channel_grant_domain() -> O256 {
+    o256_path!(::nucleus.kernel.channel.v0)
+}
+
+/// A recipient-signed grant binding one caller to a fresh replay channel.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChannelGrant {
+    caller: PublicKeyIdentity,
+    recipient: PublicKeyIdentity,
+    channel: ChannelNonce,
+    initial_sequence: u64,
+    signature: [u8; SIGNATURE_BYTES],
+}
+
+impl ChannelGrant {
+    /// Issues a channel grant signed by the recipient.
+    ///
+    /// The caller identity is not trusted merely because it is named here. Every invocation on
+    /// the granted channel must still carry a valid signature from that exact caller key.
+    ///
+    /// # Errors
+    ///
+    /// Returns the recipient signing capability's precise failure.
+    pub fn issue<S: StatementSigner + ?Sized>(
+        recipient: &S,
+        caller: PublicKeyIdentity,
+        channel: ChannelNonce,
+        initial_sequence: u64,
+    ) -> Result<Self, MessageSigningError<S::Error>> {
+        let recipient_identity = recipient.public_key();
+        let signature = recipient
+            .sign_statement(channel_grant_statement(
+                &caller,
+                &recipient_identity,
+                channel,
+                initial_sequence,
+            ))
+            .map_err(MessageSigningError::Signer)?;
+        Ok(Self {
+            caller,
+            recipient: recipient_identity,
+            channel,
+            initial_sequence,
+            signature,
+        })
+    }
+
+    /// Decodes one exact canonical channel-grant frame without authenticating it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a precise wire error for malformed or non-canonical input.
+    pub fn decode(bytes: &[u8]) -> Result<Self, WireError> {
+        if bytes.len() < CHANNEL_GRANT_BYTES {
+            return Err(WireError::Truncated);
+        }
+        if bytes.len() != CHANNEL_GRANT_BYTES {
+            return Err(WireError::InvalidLength);
+        }
+        let mut cursor = Cursor::new(bytes);
+        cursor.expect(&CHANNEL_GRANT_MAGIC)?;
+        cursor.version_and_reserved()?;
+        let caller = cursor.array()?;
+        let recipient = cursor.array()?;
+        let channel = ChannelNonce(cursor.array()?);
+        let initial_sequence = cursor.u64()?;
+        let signature = cursor.array()?;
+        debug_assert!(cursor.is_empty());
+        Ok(Self {
+            caller,
+            recipient,
+            channel,
+            initial_sequence,
+            signature,
+        })
+    }
+
+    /// Encodes the unique v0 frame representation.
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(CHANNEL_GRANT_BYTES);
+        bytes.extend_from_slice(&CHANNEL_GRANT_MAGIC);
+        bytes.push(VERSION);
+        bytes.extend_from_slice(&RESERVED_BYTES);
+        bytes.extend_from_slice(&self.caller);
+        bytes.extend_from_slice(&self.recipient);
+        bytes.extend_from_slice(self.channel.as_bytes());
+        bytes.extend_from_slice(&self.initial_sequence.to_be_bytes());
+        bytes.extend_from_slice(&self.signature);
+        bytes
+    }
+
+    /// Verifies the recipient signature and the expected caller identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns a public-key, channel-context, or signature error.
+    pub fn verify(
+        &self,
+        caller: PublicKeyIdentity,
+        recipient: &VerifyingKey,
+    ) -> Result<(), WireError> {
+        if self.caller != caller {
+            return Err(WireError::ChannelMismatch);
+        }
+        if recipient.as_bytes() != &self.recipient {
+            return Err(WireError::PublicKeyMismatch);
+        }
+        recipient
+            .verify_strict(
+                self.statement().as_ref(),
+                &Signature::from_bytes(&self.signature),
+            )
+            .map_err(|_| WireError::InvalidSignature)
+    }
+
+    /// Returns the exact statement signed by the recipient.
+    #[must_use]
+    pub fn statement(&self) -> O256 {
+        channel_grant_statement(
+            &self.caller,
+            &self.recipient,
+            self.channel,
+            self.initial_sequence,
+        )
+    }
+
+    /// Caller authorized to authenticate invocations on this channel.
+    #[must_use]
+    pub const fn caller(&self) -> PublicKeyIdentity {
+        self.caller
+    }
+
+    /// Recipient which issued and signed this channel.
+    #[must_use]
+    pub const fn recipient(&self) -> PublicKeyIdentity {
+        self.recipient
+    }
+
+    /// Fresh recipient-issued channel nonce.
+    #[must_use]
+    pub const fn channel(&self) -> ChannelNonce {
+        self.channel
+    }
+
+    /// First sequence accepted by the channel.
+    #[must_use]
+    pub const fn initial_sequence(&self) -> u64 {
+        self.initial_sequence
+    }
 }
 
 /// A bounded canonical invocation signed by its caller.
@@ -605,6 +764,20 @@ fn result_statement(
     result_domain().tag(fields)
 }
 
+fn channel_grant_statement(
+    caller: &PublicKeyIdentity,
+    recipient: &PublicKeyIdentity,
+    channel: ChannelNonce,
+    initial_sequence: u64,
+) -> O256 {
+    let mut fields = Vec::with_capacity(32 * 3 + 8);
+    fields.extend_from_slice(caller);
+    fields.extend_from_slice(recipient);
+    fields.extend_from_slice(channel.as_bytes());
+    fields.extend_from_slice(&initial_sequence.to_be_bytes());
+    channel_grant_domain().tag(fields)
+}
+
 fn check_payload_len(len: usize) -> Result<(), WireError> {
     if len > MAX_WIRE_PAYLOAD_BYTES || u32::try_from(len).is_err() {
         return Err(WireError::PayloadTooLarge);
@@ -808,7 +981,48 @@ mod tests {
     fn domains_are_fixed_named_roots() {
         assert_o256_path!(invocation_domain(), ::nucleus.kernel.invoke.v0);
         assert_o256_path!(result_domain(), ::nucleus.kernel.result.v0);
+        assert_o256_path!(channel_grant_domain(), ::nucleus.kernel.channel.v0);
         assert_ne!(invocation_domain(), result_domain());
+        assert_ne!(channel_grant_domain(), invocation_domain());
+    }
+
+    #[test]
+    fn recipient_signed_channel_grant_round_trips_and_authenticates() {
+        let caller = SigningKey::from_bytes(&[7; 32]);
+        let recipient = SigningKey::from_bytes(&[9; 32]);
+        let grant = ChannelGrant::issue(
+            &recipient,
+            *caller.verifying_key().as_bytes(),
+            ChannelNonce::new([0x35; 32]),
+            17,
+        )
+        .unwrap();
+        let decoded = ChannelGrant::decode(&grant.encode()).unwrap();
+        assert_eq!(decoded, grant);
+        decoded
+            .verify(
+                *caller.verifying_key().as_bytes(),
+                &recipient.verifying_key(),
+            )
+            .unwrap();
+
+        let wrong_caller = SigningKey::from_bytes(&[11; 32]);
+        assert_eq!(
+            decoded.verify(
+                *wrong_caller.verifying_key().as_bytes(),
+                &recipient.verifying_key(),
+            ),
+            Err(WireError::ChannelMismatch)
+        );
+        let mut tampered = decoded.encode();
+        *tampered.last_mut().unwrap() ^= 1;
+        assert_eq!(
+            ChannelGrant::decode(&tampered).unwrap().verify(
+                *caller.verifying_key().as_bytes(),
+                &recipient.verifying_key(),
+            ),
+            Err(WireError::InvalidSignature)
+        );
     }
 
     #[test]
