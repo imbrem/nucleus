@@ -25,11 +25,53 @@
       let hol;
       let trustedHol;
       let observerHol;
+      let secondKernelSql;
+      let secondKernelHol;
       let url;
       try {
+        const initialKernel = await repl.kernel(0);
+        const secondKernel = await repl.createKernel();
+        const kernelDirectory = await repl.kernels();
+        const kernelDirectoryMatches =
+          kernelDirectory.length === 2 &&
+          kernelDirectory.every(
+            (kernel, id) =>
+              kernel.id === id &&
+              kernel.transport === "local" &&
+              kernel.endpoint === null,
+          );
+        const kernelKeysDiffer = secondKernel.publicKey.some(
+          (byte, index) => byte !== initialKernel.publicKey[index],
+        );
+        const compiledDescriptor = await repl.compileHolSchema(customSchema);
+        secondKernelSql = await repl.openAt(secondKernel.id);
+        const secondKernelSqlResult = await secondKernelSql.run(
+          "SELECT 126 AS independently_routed",
+        );
+        secondKernelHol = await repl.openHolAt(secondKernel.id, {
+          kind: "schema",
+          schema: customSchema,
+        });
+        await secondKernelHol.boolTerm(true);
+        const secondKernelSnapshot = await secondKernelHol.exportSnapshot();
+        const secondKernelSnapshotKeyMatches =
+          secondKernelSnapshot.publicKey.length ===
+            secondKernel.publicKey.length &&
+          secondKernelSnapshot.publicKey.every(
+            (byte, index) => byte === secondKernel.publicKey[index],
+          );
+        const secondKernelDescriptorMatches =
+          secondKernelSnapshot.descriptor.length ===
+            compiledDescriptor.length &&
+          secondKernelSnapshot.descriptor.every(
+            (byte, index) => byte === compiledDescriptor[index],
+          );
+        await secondKernelSql.close();
+        secondKernelSql = undefined;
+        await secondKernelHol.close();
+        secondKernelHol = undefined;
         source = await repl.open();
         target = await repl.open();
-        const compiledDescriptor = await repl.compileHolSchema(customSchema);
         hol = await repl.openHol({ kind: "schema", schema: customSchema });
         await source.run("CREATE TABLE facts (name TEXT, value INTEGER)");
         await source.run(
@@ -166,6 +208,11 @@
         );
 
         document.body.dataset.result = JSON.stringify({
+          kernelKeysDiffer,
+          kernelDirectoryMatches,
+          secondKernelSqlResult,
+          secondKernelSnapshotKeyMatches,
+          secondKernelDescriptorMatches,
           hash,
           result,
           readonly,
@@ -204,6 +251,8 @@
         await hol?.close();
         await trustedHol?.close();
         await observerHol?.close();
+        await secondKernelSql?.close();
+        await secondKernelHol?.close();
         repl.close();
       }
     </script>

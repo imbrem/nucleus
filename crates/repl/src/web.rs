@@ -2,7 +2,7 @@ use covalence_lib_hash::O256;
 use wasm_bindgen::prelude::*;
 
 use super::{
-    ConnectionId, ContextId, ExportId, Kind, KindId, KindView, LocalImportedHolExport,
+    ConnectionId, ContextId, ExportId, KernelId, Kind, KindId, KindView, LocalImportedHolExport,
     LocalImportedHolTerm, LocalImportedHolValue, LocalRepl, LocalSignedHolSnapshot,
     LocalTrustedHolImport, NamespaceExport, NamespaceId, NamespaceView, Outcome, ProofError,
     QueryResult, TermId, TermView, TrustedImportId, TypeId, TypeView, Value,
@@ -94,6 +94,74 @@ impl WebKernel {
         u32::try_from(id.get()).map_err(js_error)
     }
 
+    /// Creates another independently keyed in-Worker kernel.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error if its identity cannot be recorded.
+    pub fn create_local_kernel(&mut self) -> Result<u32, JsValue> {
+        let id = self.repl.create_local_kernel().map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
+    /// Lists authoritative live local kernel IDs.
+    pub fn kernel_ids(&self) -> Result<Vec<u32>, JsValue> {
+        self.repl
+            .kernels()
+            .into_iter()
+            .map(|(id, _)| u32::try_from(id.get()).map_err(js_error))
+            .collect()
+    }
+
+    /// Returns one kernel's exact public key.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for an unknown kernel.
+    pub fn kernel_public_key(&self, kernel: u32) -> Result<Vec<u8>, JsValue> {
+        self.repl
+            .kernel(KernelId::from_u32(kernel))
+            .map(|view| view.public_key.to_vec())
+            .map_err(js_error)
+    }
+
+    /// Returns one kernel's transport label.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for an unknown kernel.
+    pub fn kernel_transport(&self, kernel: u32) -> Result<String, JsValue> {
+        self.repl
+            .kernel(KernelId::from_u32(kernel))
+            .map(|view| view.transport)
+            .map_err(js_error)
+    }
+
+    /// Returns one kernel's optional transport endpoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for an unknown kernel.
+    pub fn kernel_endpoint(&self, kernel: u32) -> Result<Option<String>, JsValue> {
+        self.repl
+            .kernel(KernelId::from_u32(kernel))
+            .map(|view| view.endpoint)
+            .map_err(js_error)
+    }
+
+    /// Opens a writable in-memory SQL connection on one local kernel.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for an unknown kernel or connection-opening failure.
+    pub fn open_connection_on(&mut self, kernel: u32) -> Result<u32, JsValue> {
+        let id = self
+            .repl
+            .open_sql_on(KernelId::from_u32(kernel))
+            .map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
     /// Opens a policy-enclosed HOL-omega connection and returns its local ID.
     ///
     /// # Errors
@@ -102,6 +170,19 @@ impl WebKernel {
     /// cannot be opened.
     pub fn open_hol_connection(&mut self) -> Result<u32, JsValue> {
         let id = self.repl.open_hol().map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
+    /// Opens a policy-enclosed HOL-omega connection on one local kernel.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for an unknown kernel or connection-opening failure.
+    pub fn open_hol_connection_on(&mut self, kernel: u32) -> Result<u32, JsValue> {
+        let id = self
+            .repl
+            .open_hol_on(KernelId::from_u32(kernel))
+            .map_err(js_error)?;
         u32::try_from(id.get()).map_err(js_error)
     }
 
@@ -121,6 +202,19 @@ impl WebKernel {
         u32::try_from(id.get()).map_err(js_error)
     }
 
+    /// Opens a policy-enclosed HOL connection with a descriptor on one local kernel.
+    pub fn open_hol_connection_with_descriptor_on(
+        &mut self,
+        kernel: u32,
+        descriptor: &[u8],
+    ) -> Result<u32, JsValue> {
+        let id = self
+            .repl
+            .open_hol_with_descriptor_on(KernelId::from_u32(kernel), descriptor)
+            .map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
     /// Opens a policy-enclosed HOL-omega connection from a strict JSON metadata schema.
     ///
     /// # Errors
@@ -130,6 +224,19 @@ impl WebKernel {
         let id = self
             .repl
             .open_hol_with_schema_json(json)
+            .map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
+    /// Opens a policy-enclosed HOL connection from schema JSON on one local kernel.
+    pub fn open_hol_connection_with_schema_json_on(
+        &mut self,
+        kernel: u32,
+        json: &str,
+    ) -> Result<u32, JsValue> {
+        let id = self
+            .repl
+            .open_hol_with_schema_json_on(KernelId::from_u32(kernel), json)
             .map_err(js_error)?;
         u32::try_from(id.get()).map_err(js_error)
     }

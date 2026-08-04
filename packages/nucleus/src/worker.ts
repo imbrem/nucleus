@@ -1,5 +1,6 @@
 import init, { WebKernel, type WebOutcome } from "../generated/nucleus.js";
 import type {
+  BrowserKernelInfo,
   HolSchemaSource,
   HolSchemaSpecV1,
   SignedHolSnapshot,
@@ -7,7 +8,17 @@ import type {
 
 type Request =
   | { id: number; operation: "open" }
+  | { id: number; operation: "openAt"; kernel: number }
   | { id: number; operation: "openHol"; source?: HolSchemaSource }
+  | {
+      id: number;
+      operation: "openHolAt";
+      kernel: number;
+      source?: HolSchemaSource;
+    }
+  | { id: number; operation: "createKernel" }
+  | { id: number; operation: "kernel"; kernel: number }
+  | { id: number; operation: "kernels" }
   | { id: number; operation: "compileHolSchema"; schema: HolSchemaSpecV1 }
   | { id: number; operation: "holPutSnapshot"; snapshot: SignedHolSnapshot }
   | { id: number; operation: "close"; connection: number }
@@ -338,26 +349,52 @@ async function execute(request: Request): Promise<unknown> {
   switch (request.operation) {
     case "open":
       return connection.open_connection();
+    case "openAt":
+      return connection.open_connection_on(request.kernel);
+    case "createKernel":
+      return connection.create_local_kernel();
+    case "kernel":
+      return kernelInfo(connection, request.kernel);
+    case "kernels":
+      return Array.from(connection.kernel_ids(), (id) =>
+        kernelInfo(connection, id),
+      );
     case "openHol":
-      if (request.source === undefined) return connection.open_hol_connection();
+    case "openHolAt": {
+      const kernel = request.operation === "openHolAt" ? request.kernel : null;
+      if (request.source === undefined)
+        return kernel === null
+          ? connection.open_hol_connection()
+          : connection.open_hol_connection_on(kernel);
       if (
         request.source.kind === "descriptor" &&
         request.source.descriptor instanceof Uint8Array &&
         !("schema" in request.source)
       )
-        return connection.open_hol_connection_with_descriptor(
-          request.source.descriptor,
-        );
+        return kernel === null
+          ? connection.open_hol_connection_with_descriptor(
+              request.source.descriptor,
+            )
+          : connection.open_hol_connection_with_descriptor_on(
+              kernel,
+              request.source.descriptor,
+            );
       if (
         request.source.kind === "schema" &&
         typeof request.source.schema === "object" &&
         request.source.schema !== null &&
         !("descriptor" in request.source)
       )
-        return connection.open_hol_connection_with_schema_json(
-          JSON.stringify(request.source.schema),
-        );
+        return kernel === null
+          ? connection.open_hol_connection_with_schema_json(
+              JSON.stringify(request.source.schema),
+            )
+          : connection.open_hol_connection_with_schema_json_on(
+              kernel,
+              JSON.stringify(request.source.schema),
+            );
       throw new TypeError("invalid or ambiguous HOL schema source");
+    }
     case "compileHolSchema":
       return connection.compile_hol_schema_json(JSON.stringify(request.schema));
     case "holPutSnapshot": {
@@ -801,6 +838,15 @@ async function execute(request: Request): Promise<unknown> {
       }
     }
   }
+}
+
+function kernelInfo(connection: WebKernel, id: number): BrowserKernelInfo {
+  return {
+    id,
+    transport: connection.kernel_transport(id),
+    endpoint: connection.kernel_endpoint(id) ?? null,
+    publicKey: connection.kernel_public_key(id),
+  };
 }
 
 function readTrustedImport(trusted: {

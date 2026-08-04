@@ -10,6 +10,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use covalence_lib_sqlite as sqlite;
+use sqlite::OptionalExtension as _;
 
 mod schema_spec;
 
@@ -101,10 +102,58 @@ impl fmt::Display for ConnectionId {
     }
 }
 
+/// Process-local identifier for one kernel known to the REPL controller.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct KernelId(i64);
+
+impl KernelId {
+    /// Returns the initial local kernel ID.
+    #[must_use]
+    pub const fn local() -> Self {
+        Self(0)
+    }
+
+    /// Creates an ID from the browser ABI's unsigned representation.
+    #[must_use]
+    pub const fn from_u32(id: u32) -> Self {
+        Self(id as i64)
+    }
+
+    /// Returns the integer stored in the REPL state database.
+    #[must_use]
+    pub const fn get(self) -> i64 {
+        self.0
+    }
+}
+
+impl fmt::Display for KernelId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+/// Inspectable transport and identity metadata for one kernel directory entry.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct KernelView {
+    /// Transport selected by the controller.
+    pub transport: String,
+    /// Optional transport endpoint.
+    pub endpoint: Option<String>,
+    /// Exact observed Ed25519 public key.
+    pub public_key: [u8; 32],
+}
+
 /// A connection directory backed by its own raw `SQLite` database.
 pub struct Repl<C> {
     state: covalence_neutron::Connection,
-    connections: HashMap<ConnectionId, C>,
+    connections: HashMap<ConnectionId, ManagedConnection<C>>,
+    next_kernel_id: i64,
+    next_connection_id: i64,
+}
+
+struct ManagedConnection<C> {
+    kernel: KernelId,
+    connection: C,
 }
 
 impl<C> Repl<C> {
@@ -126,6 +175,8 @@ impl<C> Repl<C> {
         Ok(Self {
             state,
             connections: HashMap::new(),
+            next_kernel_id: 1,
+            next_connection_id: 1,
         })
     }
 
@@ -135,18 +186,100 @@ impl<C> Repl<C> {
         &self.state
     }
 
+    /// Adds one kernel identity to the inspectable controller directory.
+    ///
+    /// This records routing metadata only. It does not trust the key or grant any protocol
+    /// authority.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the state database rejects the row.
+    pub fn insert_kernel(
+        &mut self,
+        transport: &str,
+        endpoint: Option<&str>,
+        public_key: &[u8; 32],
+    ) -> Result<KernelId, ReplError> {
+        let id = KernelId(self.next_kernel_id);
+        let next = self
+            .next_kernel_id
+            .checked_add(1)
+            .ok_or(ReplError::IdentifierExhausted("kernel"))?;
+        self.state.sqlite().execute(
+            "INSERT INTO repl_kernel(kernel_id, transport, endpoint, public_key)
+             VALUES (?1, ?2, ?3, ?4)",
+            sqlite::params![id.0, transport, endpoint, public_key.as_slice()],
+        )?;
+        self.next_kernel_id = next;
+        Ok(id)
+    }
+
+    /// Reads one kernel directory entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown kernel, malformed stored key, or state database failure.
+    pub fn kernel(&self, id: KernelId) -> Result<KernelView, ReplError> {
+        let row = self
+            .state
+            .sqlite()
+            .query_row(
+                "SELECT transport, endpoint, public_key FROM repl_kernel WHERE kernel_id = ?1",
+                [id.0],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Vec<u8>>(2)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(ReplError::UnknownKernel(id))?;
+        let public_key = row.2.try_into().map_err(|_| ReplError::CorruptKernel(id))?;
+        Ok(KernelView {
+            transport: row.0,
+            endpoint: row.1,
+            public_key,
+        })
+    }
+
     /// Adds a runtime handle and records its protocol in the state database.
     ///
     /// # Errors
     ///
     /// Returns an error if the directory cannot be updated.
     pub fn insert(&mut self, protocol: &str, connection: C) -> Result<ConnectionId, ReplError> {
+        self.insert_on(KernelId::local(), protocol, None, connection)
+    }
+
+    /// Adds one runtime handle owned by an explicit kernel directory entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown kernel or failed directory update.
+    pub fn insert_on(
+        &mut self,
+        kernel: KernelId,
+        protocol: &str,
+        remote_connection_id: Option<&str>,
+        connection: C,
+    ) -> Result<ConnectionId, ReplError> {
+        self.kernel(kernel)?;
+        let id = ConnectionId(self.next_connection_id);
+        if self.connections.contains_key(&id) {
+            return Err(ReplError::RuntimeIdentifierCollision("connection", id.0));
+        }
+        let next = self
+            .next_connection_id
+            .checked_add(1)
+            .ok_or(ReplError::IdentifierExhausted("connection"))?;
         let transaction = self.state.sqlite().unchecked_transaction()?;
         transaction.execute(
-            "INSERT INTO repl_connection(kernel_id, protocol) VALUES (0, ?1)",
-            [protocol],
+            "INSERT INTO repl_connection(connection_id, kernel_id, protocol, remote_connection_id)
+             VALUES (?1, ?2, ?3, ?4)",
+            sqlite::params![id.0, kernel.0, protocol, remote_connection_id],
         )?;
-        let id = ConnectionId(transaction.last_insert_rowid());
         transaction.execute(
             "UPDATE repl_state
              SET active_connection_id = COALESCE(active_connection_id, ?1)
@@ -154,8 +287,25 @@ impl<C> Repl<C> {
             [id.0],
         )?;
         transaction.commit()?;
-        self.connections.insert(id, connection);
+        self.next_connection_id = next;
+        self.connections
+            .insert(id, ManagedConnection { kernel, connection });
         Ok(id)
+    }
+
+    /// Returns the kernel which owns one managed connection.
+    ///
+    /// # Errors
+    ///
+    /// The runtime association is authoritative; the raw `SQLite` directory is only an inspectable
+    /// mirror and cannot redirect a live handle to another kernel.
+    ///
+    /// Returns an error for an unknown runtime connection.
+    pub fn connection_kernel(&self, id: ConnectionId) -> Result<KernelId, ReplError> {
+        self.connections
+            .get(&id)
+            .map(|managed| managed.kernel)
+            .ok_or(ReplError::UnknownConnection(id))
     }
 
     /// Returns the active connection ID, if any.
@@ -197,6 +347,7 @@ impl<C> Repl<C> {
     pub fn get_mut(&mut self, id: ConnectionId) -> Result<&mut C, ReplError> {
         self.connections
             .get_mut(&id)
+            .map(|managed| &mut managed.connection)
             .ok_or(ReplError::UnknownConnection(id))
     }
 
@@ -235,6 +386,7 @@ impl<C> Repl<C> {
         transaction.commit()?;
         self.connections
             .remove(&id)
+            .map(|managed| managed.connection)
             .ok_or(ReplError::UnknownConnection(id))
     }
 
@@ -266,7 +418,7 @@ impl LocalConnection {
 
 /// A local kernel and heterogeneous connection directory shared by all UIs.
 pub struct LocalRepl {
-    kernel: Kernel,
+    kernels: HashMap<KernelId, Kernel>,
     directory: Repl<LocalConnection>,
     images: HashMap<O256, covalence_neutron::ImmutableImage>,
     hol_images: HashMap<HolDatabaseRef, Vec<u8>>,
@@ -616,13 +768,63 @@ impl LocalRepl {
     pub fn new() -> Result<Self, LocalReplError> {
         let kernel = Kernel::ephemeral();
         let directory = Repl::new(kernel.verifying_key().as_bytes())?;
+        let kernels = HashMap::from([(KernelId::local(), kernel)]);
         Ok(Self {
-            kernel,
+            kernels,
             directory,
             images: HashMap::new(),
             hol_images: HashMap::new(),
             resident_image_bytes: 0,
         })
+    }
+
+    /// Creates and records another independently keyed in-process kernel.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the inspectable directory cannot record its public identity.
+    pub fn create_local_kernel(&mut self) -> Result<KernelId, LocalReplError> {
+        let kernel = Kernel::ephemeral();
+        let id = self
+            .directory
+            .insert_kernel("local", None, kernel.verifying_key().as_bytes())?;
+        self.kernels.insert(id, kernel);
+        Ok(id)
+    }
+
+    /// Reads one kernel's transport and public identity metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown live local kernel.
+    pub fn kernel(&self, id: KernelId) -> Result<KernelView, LocalReplError> {
+        let kernel = self.kernels.get(&id).ok_or(ReplError::UnknownKernel(id))?;
+        Ok(KernelView {
+            transport: "local".to_owned(),
+            endpoint: None,
+            public_key: *kernel.verifying_key().as_bytes(),
+        })
+    }
+
+    /// Lists live local kernels using their authoritative runtime identities.
+    #[must_use]
+    pub fn kernels(&self) -> Vec<(KernelId, KernelView)> {
+        let mut kernels = self
+            .kernels
+            .iter()
+            .map(|(id, kernel)| {
+                (
+                    *id,
+                    KernelView {
+                        transport: "local".to_owned(),
+                        endpoint: None,
+                        public_key: *kernel.verifying_key().as_bytes(),
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        kernels.sort_unstable_by_key(|(id, _)| *id);
+        kernels
     }
 
     /// Stores one uninterpreted complete database image in the shared process-local REPL cache.
@@ -767,10 +969,27 @@ impl LocalRepl {
     ///
     /// Returns an error if the connection or directory row cannot be created.
     pub fn open_sql(&mut self) -> Result<ConnectionId, LocalReplError> {
-        let connection = self.kernel.open_sql().map_err(LocalReplError::SqlOpen)?;
-        let id = self
-            .directory
-            .insert("nucleus/sql", LocalConnection::Sql(connection))?;
+        self.open_sql_on(KernelId::local())
+    }
+
+    /// Opens and selects a raw in-memory SQL session on one local kernel.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown/nonlocal kernel or failed connection/directory creation.
+    pub fn open_sql_on(&mut self, kernel: KernelId) -> Result<ConnectionId, LocalReplError> {
+        let connection = self
+            .kernels
+            .get(&kernel)
+            .ok_or(ReplError::UnknownKernel(kernel))?
+            .open_sql()
+            .map_err(LocalReplError::SqlOpen)?;
+        let id = self.directory.insert_on(
+            kernel,
+            "nucleus/sql",
+            None,
+            LocalConnection::Sql(connection),
+        )?;
         self.directory.select(id)?;
         Ok(id)
     }
@@ -784,13 +1003,28 @@ impl LocalRepl {
     ///
     /// Returns an error if the connection/schema or directory row cannot open.
     pub fn open_hol(&mut self) -> Result<ConnectionId, LocalReplError> {
+        self.open_hol_on(KernelId::local())
+    }
+
+    /// Opens and selects a minimal HOL-omega connection on one local kernel.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown/nonlocal kernel or failed connection/schema/directory
+    /// creation.
+    pub fn open_hol_on(&mut self, kernel: KernelId) -> Result<ConnectionId, LocalReplError> {
         let connection = self
-            .kernel
+            .kernels
+            .get(&kernel)
+            .ok_or(ReplError::UnknownKernel(kernel))?
             .open_hol(AllowAll)
             .map_err(LocalReplError::HolOpen)?;
-        let id = self
-            .directory
-            .insert("nucleus/hol-common-v2", LocalConnection::Hol(connection))?;
+        let id = self.directory.insert_on(
+            kernel,
+            "nucleus/hol-common-v2",
+            None,
+            LocalConnection::Hol(connection),
+        )?;
         self.directory.select(id)?;
         Ok(id)
     }
@@ -805,13 +1039,34 @@ impl LocalRepl {
         &mut self,
         descriptor: &[u8],
     ) -> Result<ConnectionId, LocalReplError> {
+        self.open_hol_with_descriptor_on(KernelId::local(), descriptor)
+    }
+
+    /// Opens and selects a HOL-omega connection with one checked metadata schema on a local
+    /// kernel.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown/nonlocal kernel, malformed descriptor, or failed
+    /// connection/schema/directory creation.
+    pub fn open_hol_with_descriptor_on(
+        &mut self,
+        kernel: KernelId,
+        descriptor: &[u8],
+    ) -> Result<ConnectionId, LocalReplError> {
+        if !self.kernels.contains_key(&kernel) {
+            return Err(ReplError::UnknownKernel(kernel).into());
+        }
         let descriptor = HolSchemaDescriptor::decode(descriptor)?;
         let connection =
             Connection::open_hol_in_memory_with_schema(AllowAll, descriptor.into_schema())
                 .map_err(LocalReplError::HolOpen)?;
-        let id = self
-            .directory
-            .insert("nucleus/hol-common-v2", LocalConnection::Hol(connection))?;
+        let id = self.directory.insert_on(
+            kernel,
+            "nucleus/hol-common-v2",
+            None,
+            LocalConnection::Hol(connection),
+        )?;
         self.directory.select(id)?;
         Ok(id)
     }
@@ -828,6 +1083,21 @@ impl LocalRepl {
     ) -> Result<ConnectionId, LocalReplError> {
         let descriptor = compile_hol_schema_json(json)?;
         self.open_hol_with_descriptor(descriptor.encode())
+    }
+
+    /// Opens and selects a HOL-omega connection from declarative metadata JSON on a local kernel.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid JSON/schema declarations, an unknown kernel, or failed
+    /// connection creation.
+    pub fn open_hol_with_schema_json_on(
+        &mut self,
+        kernel: KernelId,
+        json: &str,
+    ) -> Result<ConnectionId, LocalReplError> {
+        let descriptor = compile_hol_schema_json(json)?;
+        self.open_hol_with_descriptor_on(kernel, descriptor.encode())
     }
 
     /// Closes any managed connection.
@@ -966,8 +1236,12 @@ impl LocalRepl {
         id: ConnectionId,
     ) -> Result<LocalSignedHolSnapshot, LocalReplError> {
         let Self {
-            kernel, directory, ..
+            kernels, directory, ..
         } = self;
+        let kernel_id = directory.connection_kernel(id)?;
+        let kernel = kernels
+            .get(&kernel_id)
+            .ok_or(ReplError::UnknownKernel(kernel_id))?;
         let managed = directory.get_mut(id)?;
         let connection = match managed {
             LocalConnection::Hol(connection) => connection,
@@ -1146,11 +1420,13 @@ impl LocalRepl {
             resident_image_bytes,
             ..
         } = self;
-        let Repl { state, connections } = directory;
+        let Repl {
+            state, connections, ..
+        } = directory;
         let managed = connections
             .get_mut(&id)
             .ok_or(ReplError::UnknownConnection(id))?;
-        let connection = match managed {
+        let connection = match &mut managed.connection {
             LocalConnection::Hol(connection) => connection,
             other @ LocalConnection::Sql(_) => {
                 return Err(LocalReplError::WrongProtocol {
@@ -1696,8 +1972,16 @@ pub enum ReplError {
     Open(covalence_neutron::ConnectionError),
     /// The state database rejected an operation.
     State(sqlite::Error),
+    /// A requested kernel directory entry does not exist.
+    UnknownKernel(KernelId),
+    /// A stored kernel directory entry is malformed.
+    CorruptKernel(KernelId),
     /// A requested runtime connection does not exist.
     UnknownConnection(ConnectionId),
+    /// A process-local identifier counter was exhausted.
+    IdentifierExhausted(&'static str),
+    /// Runtime state unexpectedly already owns a freshly allocated identifier.
+    RuntimeIdentifierCollision(&'static str, i64),
     /// No runtime connection is currently selected.
     NoActiveConnection,
 }
@@ -1707,7 +1991,18 @@ impl fmt::Display for ReplError {
         match self {
             Self::Open(error) => write!(formatter, "could not open REPL state: {error}"),
             Self::State(error) => write!(formatter, "could not access REPL state: {error}"),
+            Self::UnknownKernel(id) => write!(formatter, "unknown kernel {id}"),
+            Self::CorruptKernel(id) => write!(formatter, "kernel {id} is corrupt"),
             Self::UnknownConnection(id) => write!(formatter, "unknown connection {id}"),
+            Self::IdentifierExhausted(kind) => {
+                write!(formatter, "REPL exhausted process-local {kind} identifiers")
+            }
+            Self::RuntimeIdentifierCollision(kind, id) => {
+                write!(
+                    formatter,
+                    "runtime {kind} identifier {id} is already in use"
+                )
+            }
             Self::NoActiveConnection => formatter.write_str("no active connection"),
         }
     }
@@ -1718,7 +2013,12 @@ impl StdError for ReplError {
         match self {
             Self::Open(error) => Some(error),
             Self::State(error) => Some(error),
-            Self::UnknownConnection(_) | Self::NoActiveConnection => None,
+            Self::UnknownKernel(_)
+            | Self::CorruptKernel(_)
+            | Self::UnknownConnection(_)
+            | Self::IdentifierExhausted(_)
+            | Self::RuntimeIdentifierCollision(_, _)
+            | Self::NoActiveConnection => None,
         }
     }
 }
@@ -1879,6 +2179,139 @@ mod tests {
     }
 
     #[test]
+    fn one_repl_routes_connections_to_independently_keyed_local_kernels() {
+        let mut repl = LocalRepl::new().unwrap();
+        let first_kernel = KernelId::local();
+        let second_kernel = repl.create_local_kernel().unwrap();
+        let first_identity = repl.kernel(first_kernel).unwrap();
+        let second_identity = repl.kernel(second_kernel).unwrap();
+        assert_eq!(first_identity.transport, "local");
+        assert_eq!(second_identity.transport, "local");
+        assert_ne!(first_identity.public_key, second_identity.public_key);
+        repl.state()
+            .sqlite()
+            .execute(
+                "UPDATE repl_kernel SET public_key = zeroblob(32) WHERE kernel_id = ?1",
+                [second_kernel.get()],
+            )
+            .unwrap();
+        assert_eq!(
+            repl.kernel(second_kernel).unwrap().public_key,
+            second_identity.public_key
+        );
+
+        let first_sql = repl.open_sql_on(first_kernel).unwrap();
+        repl.sql_mut(first_sql)
+            .unwrap()
+            .execute_batch("CREATE TABLE only_first(value INTEGER) STRICT;")
+            .unwrap();
+        let second_sql = repl.open_sql_on(second_kernel).unwrap();
+        assert_eq!(
+            repl.sql_mut(second_sql)
+                .unwrap()
+                .run(
+                    "SELECT count(*) FROM sqlite_schema WHERE name = 'only_first'",
+                    &[],
+                )
+                .unwrap(),
+            Outcome::Rows(QueryResult {
+                columns: vec!["count(*)".to_owned()],
+                rows: vec![vec![Value::Integer(0)]],
+            })
+        );
+
+        let first_hol = repl.open_hol_on(first_kernel).unwrap();
+        let mut metadata_schema = HolSchema::new();
+        metadata_schema
+            .add_column("origin", MetadataType::Text)
+            .unwrap();
+        metadata_schema
+            .add_index("by_origin", ["origin"], false)
+            .unwrap();
+        let descriptor = HolSchemaDescriptor::from_schema(&metadata_schema).unwrap();
+        let second_hol = repl
+            .open_hol_with_descriptor_on(second_kernel, descriptor.encode())
+            .unwrap();
+        repl.hol_mut(second_hol)
+            .unwrap()
+            .insert_kind_with_metadata(
+                &Kind::Star,
+                &[("origin", MetadataValue::Text("second".to_owned()))],
+            )
+            .unwrap();
+        repl.state()
+            .sqlite()
+            .execute(
+                "UPDATE repl_connection SET kernel_id = ?1 WHERE connection_id = ?2",
+                sqlite::params![second_kernel.get(), first_hol.get()],
+            )
+            .unwrap();
+        let first_snapshot = repl.export_hol_snapshot(first_hol).unwrap();
+        let second_snapshot = repl.export_hol_snapshot(second_hol).unwrap();
+        assert_eq!(first_snapshot.public_key(), &first_identity.public_key);
+        assert_eq!(second_snapshot.public_key(), &second_identity.public_key);
+        assert_ne!(first_snapshot.signer(), second_snapshot.signer());
+        assert_eq!(second_snapshot.descriptor(), descriptor.encode());
+        assert_eq!(
+            repl.directory.connection_kernel(first_sql).unwrap(),
+            first_kernel
+        );
+        assert_eq!(
+            repl.directory.connection_kernel(first_hol).unwrap(),
+            first_kernel
+        );
+        assert_eq!(
+            repl.directory.connection_kernel(second_sql).unwrap(),
+            second_kernel
+        );
+    }
+
+    #[test]
+    fn mutable_directory_rows_cannot_reuse_live_runtime_identifiers() {
+        let mut repl = LocalRepl::new().unwrap();
+        let second_kernel = repl.create_local_kernel().unwrap();
+        let second_identity = repl.kernel(second_kernel).unwrap();
+        repl.state()
+            .sqlite()
+            .execute(
+                "DELETE FROM repl_kernel WHERE kernel_id = ?1",
+                [second_kernel.get()],
+            )
+            .unwrap();
+        let third_kernel = repl.create_local_kernel().unwrap();
+        assert_eq!(second_kernel.get(), 1);
+        assert_eq!(third_kernel.get(), 2);
+        assert_eq!(
+            repl.kernel(second_kernel).unwrap().public_key,
+            second_identity.public_key
+        );
+
+        let first_connection = repl.open_sql().unwrap();
+        repl.state()
+            .sqlite()
+            .execute("UPDATE repl_state SET active_connection_id = NULL", ())
+            .unwrap();
+        repl.state()
+            .sqlite()
+            .execute(
+                "DELETE FROM repl_connection WHERE connection_id = ?1",
+                [first_connection.get()],
+            )
+            .unwrap();
+        let second_connection = repl.open_sql().unwrap();
+        assert_eq!(first_connection.get(), 1);
+        assert_eq!(second_connection.get(), 2);
+        assert_eq!(
+            repl.directory.connection_kernel(first_connection).unwrap(),
+            KernelId::local()
+        );
+        repl.sql_mut(first_connection)
+            .unwrap()
+            .run("SELECT 1", &[])
+            .unwrap();
+    }
+
+    #[test]
     fn shared_namespace_and_signed_snapshot_surface_is_transport_neutral() {
         let mut repl = LocalRepl::new().unwrap();
         let hol = repl.open_hol().unwrap();
@@ -1928,8 +2361,11 @@ mod tests {
             .unwrap();
         let descriptor = HolSchemaDescriptor::from_schema(&schema).unwrap();
         let mut repl = LocalRepl::new().unwrap();
+        let source_identity = repl.kernel(KernelId::local()).unwrap();
+        let target_kernel = repl.create_local_kernel().unwrap();
+        let target_identity = repl.kernel(target_kernel).unwrap();
         let source = repl.open_hol_with_descriptor(descriptor.encode()).unwrap();
-        let target = repl.open_hol().unwrap();
+        let target = repl.open_hol_on(target_kernel).unwrap();
         let star = repl
             .hol_mut(source)
             .unwrap()
@@ -1950,6 +2386,7 @@ mod tests {
         )
         .unwrap();
         let snapshot = repl.export_hol_snapshot(source).unwrap();
+        assert_eq!(snapshot.public_key(), &source_identity.public_key);
         assert_eq!(snapshot.descriptor(), descriptor.encode());
         assert_eq!(
             HolSchemaDescriptor::decode(snapshot.descriptor())
@@ -2055,6 +2492,16 @@ mod tests {
             ),
             Err(LocalReplError::SnapshotAuthentication(_))
         ));
+        let target_snapshot = repl.export_hol_snapshot(target).unwrap();
+        assert_eq!(
+            repl.hol_trusted_import(target, trusted.trusted_import())
+                .unwrap(),
+            trusted
+        );
+        assert_eq!(target_snapshot.public_key(), &target_identity.public_key);
+        assert_ne!(target_snapshot.signer(), snapshot.signer());
+        let target_image = ValidatedHolImage::validate(target_snapshot.bytes()).unwrap();
+        assert_eq!(target_image.counts().untrusted_trusted_import_rows, 1);
     }
 
     #[test]

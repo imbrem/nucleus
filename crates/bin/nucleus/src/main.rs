@@ -5,16 +5,24 @@ use std::io;
 use std::process::ExitCode;
 
 use covalence_repl::{
-    ConnectionId, ContextId, ExportId, KindId, KindView, LocalRepl, NamespaceExport, NamespaceId,
-    O256, Outcome, ProofError, TermId, TermView, TrustedImportId, TypeId, TypeView, Value,
-    compile_hol_schema_json,
+    ConnectionId, ContextId, ExportId, KernelId, KindId, KindView, LocalRepl, NamespaceExport,
+    NamespaceId, O256, Outcome, ProofError, TermId, TermView, TrustedImportId, TypeId, TypeView,
+    Value, compile_hol_schema_json,
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 fn open_connection(repl: &mut LocalRepl, protocol: &str) -> Result<ConnectionId> {
+    open_connection_on(repl, KernelId::local(), protocol)
+}
+
+fn open_connection_on(
+    repl: &mut LocalRepl,
+    kernel: KernelId,
+    protocol: &str,
+) -> Result<ConnectionId> {
     match protocol {
-        "sql" => Ok(repl.open_sql()?),
-        "hol" => Ok(repl.open_hol()?),
+        "sql" => Ok(repl.open_sql_on(kernel)?),
+        "hol" => Ok(repl.open_hol_on(kernel)?),
         _ => Err(format!("unknown connection protocol: {protocol}").into()),
     }
 }
@@ -100,26 +108,24 @@ fn run_line(repl: &mut LocalRepl, output: &mut impl io::Write, line: &str) -> Re
         return Ok(true);
     }
     if line == ".open" || line.starts_with(".open ") {
-        let arguments = line
-            .strip_prefix(".open")
-            .expect("matched prefix")
-            .split_whitespace()
-            .collect::<Vec<_>>();
-        let (protocol, id) = match arguments.as_slice() {
-            [] | ["sql"] => ("sql", open_connection(repl, "sql")?),
-            ["hol"] => ("hol", open_connection(repl, "hol")?),
-            ["hol", "--descriptor", path] => {
-                ("hol", repl.open_hol_with_descriptor(&fs::read(path)?)?)
-            }
-            ["hol", "--schema-json", path] => (
-                "hol",
-                repl.open_hol_with_schema_json(&fs::read_to_string(path)?)?,
-            ),
-            _ => {
-                return Err("usage: .open [sql|hol [--descriptor PATH|--schema-json PATH]]".into());
-            }
-        };
-        writeln!(output, "opened {protocol} connection {id}")?;
+        open_repl_connection(repl, output, line)?;
+        return Ok(true);
+    }
+    if line == ".kernel new" {
+        let id = repl.create_local_kernel()?;
+        writeln!(output, "created local kernel {id}")?;
+        return Ok(true);
+    }
+    if line == ".kernels" {
+        for (id, kernel) in repl.kernels() {
+            writeln!(
+                output,
+                "{id}\t{transport}\t{}\t{}",
+                kernel.endpoint.as_deref().unwrap_or("-"),
+                hex(&kernel.public_key),
+                transport = kernel.transport,
+            )?;
+        }
         return Ok(true);
     }
     if let Some(argument) = line.strip_prefix(".use ") {
@@ -131,19 +137,23 @@ fn run_line(repl: &mut LocalRepl, output: &mut impl io::Write, line: &str) -> Re
     if line == ".connections" {
         let active = repl.active()?;
         let mut statement = repl.state().sqlite().prepare(
-            "SELECT connection_id, protocol FROM repl_connection ORDER BY connection_id",
+            "SELECT connection_id, kernel_id, protocol FROM repl_connection ORDER BY connection_id",
         )?;
         let rows = statement.query_map((), |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+            ))
         })?;
         for row in rows {
-            let (id, protocol) = row?;
+            let (id, kernel, protocol) = row?;
             let marker = if active.is_some_and(|active| active.get() == id) {
                 '*'
             } else {
                 ' '
             };
-            writeln!(output, "{marker} {id}\t{protocol}")?;
+            writeln!(output, "{marker} {id}\t@{kernel}\t{protocol}")?;
         }
         return Ok(true);
     }
@@ -183,6 +193,46 @@ fn run_line(repl: &mut LocalRepl, output: &mut impl io::Write, line: &str) -> Re
     Ok(true)
 }
 
+fn open_repl_connection(
+    repl: &mut LocalRepl,
+    output: &mut impl io::Write,
+    line: &str,
+) -> Result<()> {
+    let arguments = line
+        .strip_prefix(".open")
+        .expect("matched prefix")
+        .split_whitespace()
+        .collect::<Vec<_>>();
+    let (kernel, arguments) = match arguments.first() {
+        Some(value) if value.starts_with('@') => {
+            (KernelId::from_u32(value[1..].parse()?), &arguments[1..])
+        }
+        _ => (KernelId::local(), arguments.as_slice()),
+    };
+    let (protocol, id) = match arguments {
+        [] | ["sql"] => ("sql", open_connection_on(repl, kernel, "sql")?),
+        ["hol"] => ("hol", open_connection_on(repl, kernel, "hol")?),
+        ["hol", "--descriptor", path] => (
+            "hol",
+            repl.open_hol_with_descriptor_on(kernel, &fs::read(path)?)?,
+        ),
+        ["hol", "--schema-json", path] => (
+            "hol",
+            repl.open_hol_with_schema_json_on(kernel, &fs::read_to_string(path)?)?,
+        ),
+        _ => {
+            return Err(
+                "usage: .open [@KERNEL] [sql|hol [--descriptor PATH|--schema-json PATH]]".into(),
+            );
+        }
+    };
+    writeln!(
+        output,
+        "opened {protocol} connection {id} on kernel {kernel}"
+    )?;
+    Ok(())
+}
+
 fn print_help(output: &mut impl io::Write) -> io::Result<()> {
     writeln!(
         output,
@@ -190,9 +240,17 @@ fn print_help(output: &mut impl io::Write) -> io::Result<()> {
     )?;
     writeln!(
         output,
-        ".open hol [--descriptor PATH|--schema-json PATH]  open a HOL connection"
+        ".open [@KERNEL] hol [--descriptor PATH|--schema-json PATH]  open a HOL connection"
     )?;
-    writeln!(output, ".open [sql]         open a raw SQL connection")?;
+    writeln!(output, ".open [@KERNEL] [sql]  open a raw SQL connection")?;
+    writeln!(
+        output,
+        ".kernel new        create an independently keyed local kernel"
+    )?;
+    writeln!(
+        output,
+        ".kernels           list kernel identities and transports"
+    )?;
     writeln!(output, ".use ID            select a connection")?;
     writeln!(output, ".close [ID]        close a connection")?;
     writeln!(output, ".connections       list open connections")?;
@@ -1264,13 +1322,43 @@ mod tests {
         run_repl(&mut input, &mut output, &mut errors, false).expect("run REPL");
 
         let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("opened sql connection 2\n"));
+        assert!(output.contains("opened sql connection 2 on kernel 0\n"));
         assert!(output.contains("absent\n0\n"));
         assert!(output.contains("using connection 1\n"));
         assert!(output.contains("value\n42\n"));
-        assert!(output.contains("* 1\tnucleus/sql\n"));
-        assert!(output.contains("  2\tnucleus/sql\n"));
+        assert!(output.contains("* 1\t@0\tnucleus/sql\n"));
+        assert!(output.contains("  2\t@0\tnucleus/sql\n"));
         assert!(output.contains("closed connection 2\n"));
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn routes_terminal_connections_to_independently_keyed_kernels() {
+        let mut input = Cursor::new(
+            ".kernel new\n.kernels\n.open @1 sql\nSELECT 42 AS remote_local\n.open @1 hol\n.hol star\n.connections\n.quit\n",
+        );
+        let mut output = Vec::new();
+        let mut errors = Vec::new();
+
+        run_repl(&mut input, &mut output, &mut errors, false).expect("run REPL");
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("created local kernel 1\n"));
+        let kernel_rows = output
+            .lines()
+            .filter(|line| line.starts_with("0\tlocal\t-") || line.starts_with("1\tlocal\t-"))
+            .collect::<Vec<_>>();
+        assert_eq!(kernel_rows.len(), 2);
+        assert_ne!(
+            kernel_rows[0].split('\t').nth(3),
+            kernel_rows[1].split('\t').nth(3)
+        );
+        assert!(output.contains("opened sql connection 2 on kernel 1\n"));
+        assert!(output.contains("remote_local\n42\n"));
+        assert!(output.contains("opened hol connection 3 on kernel 1\n"));
+        assert!(output.contains("kind 1 = star\n"));
+        assert!(output.contains("  2\t@1\tnucleus/sql\n"));
+        assert!(output.contains("* 3\t@1\tnucleus/hol-common-v2\n"));
         assert!(errors.is_empty());
     }
 
@@ -1285,7 +1373,7 @@ mod tests {
         run_repl(&mut input, &mut output, &mut errors, false).expect("run REPL");
 
         let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("opened hol connection 2\n"));
+        assert!(output.contains("opened hol connection 2 on kernel 0\n"));
         assert!(output.contains("kind 1 = star\n"));
         assert!(output.contains("kind 3 = 1 -> 1\n"));
         assert!(output.contains("rank 3 = 1\n"));
@@ -1315,8 +1403,8 @@ mod tests {
         assert!(output.contains("proved 3 14 = false\n"));
         assert!(output.contains("theorem 3 |- 14\n"));
         assert!(output.contains("proved 3 14 = true\n"));
-        assert!(output.contains("  1\tnucleus/sql\n"));
-        assert!(output.contains("* 2\tnucleus/hol-common-v2\n"));
+        assert!(output.contains("  1\t@0\tnucleus/sql\n"));
+        assert!(output.contains("* 2\t@0\tnucleus/hol-common-v2\n"));
         assert!(output.contains("sql_still_live\n42\n"));
         assert!(errors.is_empty());
     }
@@ -1450,7 +1538,7 @@ mod tests {
         .unwrap();
         let descriptor_path = format!("{}.hol-schema", path.display());
         let script = format!(
-            ".hol-schema compile {} {}\n.open hol --schema-json {}\n.hol star\n.hol namespace create 0 demo\n.hol namespace show 1\n.hol export bind 1 7 kind 1 star\n.hol export show 1 7\n.hol export resolve 1 star\n.hol snapshot export {}\n.open hol --descriptor {}\n.quit\n",
+            ".kernel new\n.hol-schema compile {} {}\n.open @1 hol --schema-json {}\n.hol star\n.hol namespace create 0 demo\n.hol namespace show 1\n.hol export bind 1 7 kind 1 star\n.hol export show 1 7\n.hol export resolve 1 star\n.hol snapshot export {}\n.open @1 hol --descriptor {}\n.quit\n",
             json_path.display(),
             compiled_path.display(),
             json_path.display(),
@@ -1471,6 +1559,8 @@ mod tests {
 
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("namespace 1 defined\n"));
+        assert!(output.contains("opened hol connection 2 on kernel 1\n"));
+        assert!(output.contains("opened hol connection 3 on kernel 1\n"));
         assert!(output.contains("namespace 1 parent=0 name=demo\n"));
         assert!(output.contains("export 1:7 = kind 1 name=star\n"));
         assert!(output.contains("schema "));
