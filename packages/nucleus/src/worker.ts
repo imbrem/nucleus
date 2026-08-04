@@ -2,7 +2,7 @@ import init, { WebKernel, type WebOutcome } from "../generated/nucleus.js";
 
 type Request =
   | { id: number; operation: "open" }
-  | { id: number; operation: "openHol" }
+  | { id: number; operation: "openHol"; descriptor?: Uint8Array }
   | { id: number; operation: "close"; connection: number }
   | { id: number; operation: "run"; connection: number; sql: string }
   | {
@@ -256,6 +256,7 @@ type Request =
       exportId: number;
       snapshot: {
         bytes: Uint8Array;
+        descriptor: Uint8Array;
         schema: string;
         image: string;
         signer: string;
@@ -296,16 +297,19 @@ function transferables(value: unknown): Transferable[] {
     typeof value === "object" &&
     value !== null &&
     "bytes" in value &&
+    "descriptor" in value &&
     "publicKey" in value &&
     "signature" in value
   ) {
     const snapshot = value as {
       bytes: Uint8Array;
+      descriptor: Uint8Array;
       publicKey: Uint8Array;
       signature: Uint8Array;
     };
     return [
       snapshot.bytes.buffer as ArrayBuffer,
+      snapshot.descriptor.buffer as ArrayBuffer,
       snapshot.publicKey.buffer as ArrayBuffer,
       snapshot.signature.buffer as ArrayBuffer,
     ];
@@ -319,7 +323,9 @@ async function execute(request: Request): Promise<unknown> {
     case "open":
       return connection.open_connection();
     case "openHol":
-      return connection.open_hol_connection();
+      return request.descriptor === undefined
+        ? connection.open_hol_connection()
+        : connection.open_hol_connection_with_descriptor(request.descriptor);
     case "close":
       connection.close_connection(request.connection);
       return undefined;
@@ -601,6 +607,7 @@ async function execute(request: Request): Promise<unknown> {
       try {
         return {
           bytes: snapshot.bytes(),
+          descriptor: snapshot.descriptor(),
           schema: snapshot.schema(),
           image: snapshot.image(),
           signer: snapshot.signer(),
@@ -643,6 +650,7 @@ async function execute(request: Request): Promise<unknown> {
         request.connection,
         request.trustedImportId,
         snapshot.bytes,
+        snapshot.descriptor,
         snapshot.schema,
         snapshot.image,
         snapshot.signer,

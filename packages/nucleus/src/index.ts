@@ -57,6 +57,7 @@ export interface SignedHolAttestation {
 
 export interface SignedHolSnapshot extends SignedHolAttestation {
   bytes: Uint8Array;
+  descriptor: Uint8Array;
 }
 
 export interface TrustedHolImport {
@@ -201,13 +202,13 @@ export interface BrowserHolConnection {
 
 export interface BrowserRepl {
   open(): Promise<BrowserSqlConnection>;
-  openHol(): Promise<BrowserHolConnection>;
+  openHol(descriptor?: Uint8Array): Promise<BrowserHolConnection>;
   close(): void;
 }
 
 type RequestBody =
   | { operation: "open" }
-  | { operation: "openHol" }
+  | { operation: "openHol"; descriptor?: Uint8Array }
   | { operation: "close"; connection: number }
   | { operation: "run"; connection: number; sql: string }
   | { operation: "putImage"; connection: number; bytes: Uint8Array }
@@ -428,8 +429,12 @@ class WorkerRepl implements BrowserRepl {
     return new WorkerConnection(this, id);
   }
 
-  async openHol(): Promise<BrowserHolConnection> {
-    const id = await this.request<number>({ operation: "openHol" });
+  async openHol(descriptor?: Uint8Array): Promise<BrowserHolConnection> {
+    const transferred = descriptor?.slice();
+    const id = await this.request<number>(
+      { operation: "openHol", descriptor: transferred },
+      transferred === undefined ? [] : [transferred.buffer],
+    );
     return new WorkerHolConnection(this, id);
   }
 
@@ -910,6 +915,7 @@ class WorkerHolConnection implements BrowserHolConnection {
     const transferred = {
       ...snapshot,
       bytes: snapshot.bytes.slice(),
+      descriptor: snapshot.descriptor.slice(),
       publicKey: snapshot.publicKey.slice(),
       signature: snapshot.signature.slice(),
     };
@@ -924,6 +930,7 @@ class WorkerHolConnection implements BrowserHolConnection {
       },
       [
         transferred.bytes.buffer,
+        transferred.descriptor.buffer,
         transferred.publicKey.buffer,
         transferred.signature.buffer,
       ],

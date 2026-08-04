@@ -9,6 +9,57 @@
       import { createBrowserRepl } from "../dist/index.js";
 
       const repl = createBrowserRepl();
+      const customDescriptor = Uint8Array.of(
+        67,
+        79,
+        86,
+        72,
+        83,
+        68,
+        48,
+        49,
+        1,
+        0,
+        0,
+        0,
+        0,
+        2,
+        6,
+        0,
+        111,
+        114,
+        105,
+        103,
+        105,
+        110,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        9,
+        0,
+        98,
+        121,
+        95,
+        111,
+        114,
+        105,
+        103,
+        105,
+        110,
+        1,
+        0,
+        6,
+        0,
+        111,
+        114,
+        105,
+        103,
+        105,
+        110,
+      );
       let source;
       let target;
       let hol;
@@ -18,7 +69,7 @@
       try {
         source = await repl.open();
         target = await repl.open();
-        hol = await repl.openHol();
+        hol = await repl.openHol(customDescriptor);
         await source.run("CREATE TABLE facts (name TEXT, value INTEGER)");
         await source.run(
           "INSERT INTO facts VALUES ('exact', 9223372036854775807)",
@@ -54,7 +105,16 @@
         await hol.close();
         hol = undefined;
 
-        trustedHol = await repl.openHol();
+        const malformedDescriptor = snapshot.descriptor.slice();
+        malformedDescriptor[0] ^= 1;
+        let malformedDescriptorRejected = false;
+        try {
+          const invalid = await repl.openHol(malformedDescriptor);
+          await invalid.close();
+        } catch {
+          malformedDescriptorRejected = true;
+        }
+        trustedHol = await repl.openHol(snapshot.descriptor);
         const callerPublicKey = attestation.publicKey.slice();
         const callerSignature = attestation.signature.slice();
         const trustPromise = trustedHol.trustImport({
@@ -136,6 +196,8 @@
           snapshotSigner: snapshot.signer,
           publicKeyLength: snapshot.publicKey.length,
           signatureLength: snapshot.signature.length,
+          descriptorLength: snapshot.descriptor.length,
+          malformedDescriptorRejected,
           attestationHasBytes: "bytes" in attestation,
           snapshotRows,
           trustedImport,
