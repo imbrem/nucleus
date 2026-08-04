@@ -7,10 +7,11 @@ use covalence_lib_hash::{O256, o256_path};
 use covalence_lib_sqlite as sqlite;
 
 use super::{
-    BOOL_TYPE_ID, ContextError, ContextId, ExportId, HolDatabaseRef, HolSchema, ImportId,
-    KindError, KindId, KindView, NamespaceId, SCHEMA, STAR_ID, TermError, TermId, TrustedImportId,
-    TypeError, TypeId, TypeView, ValidatedTerm, install_metadata_schema, kind_rank,
-    read_context_members, read_kind, read_type, validate_term_inner,
+    BOOL_TYPE_ID, ContextError, ContextId, ExportId, HolDatabaseRef, HolSchema,
+    HolSchemaDescriptor, ImportId, KindError, KindId, KindView, NamespaceId, SCHEMA, STAR_ID,
+    TermError, TermId, TrustedImportId, TypeError, TypeId, TypeView, ValidatedTerm,
+    install_metadata_schema, kind_rank, read_context_members, read_kind, read_type,
+    validate_term_inner,
 };
 use crate::{
     AuthenticatedSnapshot, AuthenticatedSnapshotClaim, Ed25519Verifier, Verifier as _,
@@ -88,6 +89,28 @@ pub struct AuthenticatedValidatedHolImage {
 }
 
 impl AuthenticatedValidatedHolImage {
+    /// Validates an authenticated snapshot against one checked portable metadata schema.
+    ///
+    /// The descriptor is an untrusted reconstruction witness. Exact manifest validation derives
+    /// the composite schema identity independently and compares it with the authenticated claim.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if detached validation fails or the independently computed image/schema
+    /// coordinates differ from the authenticated claim.
+    pub fn validate_with_descriptor(
+        snapshot: AuthenticatedSnapshot,
+        descriptor: &HolSchemaDescriptor,
+    ) -> Result<Self, AuthenticatedHolImageValidationError> {
+        if descriptor.schema_id() != snapshot.schema() {
+            return Err(AuthenticatedHolImageValidationError::SchemaMismatch {
+                claimed: snapshot.schema(),
+                actual: descriptor.schema_id(),
+            });
+        }
+        Self::validate_with_schema(snapshot, descriptor.schema())
+    }
+
     /// Validates an authenticated snapshot against the exact zero-metadata HOL schema.
     ///
     /// Validation uses the existing disposable-connection boundary and additionally requires the
@@ -100,7 +123,14 @@ impl AuthenticatedValidatedHolImage {
     pub fn validate_default(
         snapshot: AuthenticatedSnapshot,
     ) -> Result<Self, AuthenticatedHolImageValidationError> {
-        let image = ValidatedHolImage::validate(snapshot.bytes())?;
+        Self::validate_with_schema(snapshot, &HolSchema::new())
+    }
+
+    fn validate_with_schema(
+        snapshot: AuthenticatedSnapshot,
+        schema: &HolSchema,
+    ) -> Result<Self, AuthenticatedHolImageValidationError> {
+        let image = ValidatedHolImage::validate_with_schema(snapshot.bytes(), schema)?;
         if image.hash() != snapshot.image() {
             return Err(AuthenticatedHolImageValidationError::ImageMismatch {
                 claimed: snapshot.image(),
@@ -277,6 +307,18 @@ fn validate_schema(
     } else {
         Err(HolImageValidationError::SchemaMismatch)
     }
+}
+
+pub(super) fn expected_composite_schema_id(
+    schema: &HolSchema,
+) -> Result<O256, HolImageValidationError> {
+    let expected = covalence_neutron::Connection::open_in_memory()
+        .map_err(HolImageValidationError::Connection)?;
+    expected.sqlite().execute_batch(SCHEMA)?;
+    install_metadata_schema(expected.sqlite(), schema)?;
+    Ok(stlc_bool_eq_v0_schema_id(schema_manifest_id(
+        &schema_manifest(expected.sqlite())?,
+    )))
 }
 
 fn schema_manifest_id(manifest: &[SchemaObject]) -> O256 {
