@@ -24,7 +24,11 @@ rust_library(
     edition = "2024",
     srcs = _RUST_SOURCES,
     tests = [":covalence_proton-unit-test"],
+    named_deps = {
+        "wasmtime": "nucleus//buck/cargo/production:wasmtime-46.0.1",
+    },
     env = {
+        "CARGO_MANIFEST_DIR": "crates/proton",
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Execution instances for Nucleus",
         "CARGO_PKG_HOMEPAGE": "",
@@ -49,7 +53,11 @@ rust_test(
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
+    named_deps = {
+        "wasmtime": "nucleus//buck/cargo/production:wasmtime-46.0.1",
+    },
     env = {
+        "CARGO_MANIFEST_DIR": "crates/proton",
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Execution instances for Nucleus",
         "CARGO_PKG_HOMEPAGE": "",

@@ -23,6 +23,10 @@ rust_library(
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
+    mapped_srcs = {
+        "Cargo.toml": "crates/repl/Cargo.toml",
+        "nucleus//crates/nucleus:package_files": "crates/nucleus",
+    },
     tests = [":covalence_repl-unit-test"],
     named_deps = {
         "covalence_kernel_service": "nucleus//crates/kernel-service:covalence_kernel_service",
@@ -32,10 +36,12 @@ rust_library(
         "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
         "covalence_neutron": "nucleus//crates/neutron:covalence_neutron",
         "covalence_nucleus": "nucleus//crates/nucleus:covalence_nucleus",
+        "covalence_proton": "nucleus//crates/proton:covalence_proton",
         "serde": "nucleus//buck/cargo/production:serde-1.0.229",
         "serde_json": "nucleus//buck/cargo/production:serde_json-1.0.151",
     },
     env = {
+        "CARGO_MANIFEST_DIR": "crates/repl",
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Transport-neutral REPL orchestration for Covalence kernels",
         "CARGO_PKG_HOMEPAGE": "",
@@ -60,6 +66,10 @@ rust_test(
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
+    mapped_srcs = {
+        "Cargo.toml": "crates/repl/Cargo.toml",
+        "nucleus//crates/nucleus:package_files": "crates/nucleus",
+    },
     named_deps = {
         "covalence_kernel_service": "nucleus//crates/kernel-service:covalence_kernel_service",
         "covalence_lib_crypto": "nucleus//crates/lib/crypto:covalence_lib_crypto",
@@ -68,10 +78,12 @@ rust_test(
         "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
         "covalence_neutron": "nucleus//crates/neutron:covalence_neutron",
         "covalence_nucleus": "nucleus//crates/nucleus:covalence_nucleus",
+        "covalence_proton": "nucleus//crates/proton:covalence_proton",
         "serde": "nucleus//buck/cargo/production:serde-1.0.229",
         "serde_json": "nucleus//buck/cargo/production:serde_json-1.0.151",
     },
     env = {
+        "CARGO_MANIFEST_DIR": "crates/repl",
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Transport-neutral REPL orchestration for Covalence kernels",
         "CARGO_PKG_HOMEPAGE": "",

@@ -28,6 +28,7 @@ rust_binary(
         "covalence_repl": "nucleus//crates/repl:covalence_repl",
     },
     env = {
+        "CARGO_MANIFEST_DIR": "crates/bin/nucleus",
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Command-line interface for Nucleus",
         "CARGO_PKG_HOMEPAGE": "",
@@ -56,6 +57,7 @@ rust_test(
         "covalence_repl": "nucleus//crates/repl:covalence_repl",
     },
     env = {
+        "CARGO_MANIFEST_DIR": "crates/bin/nucleus",
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Command-line interface for Nucleus",
         "CARGO_PKG_HOMEPAGE": "",

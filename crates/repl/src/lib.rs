@@ -24,6 +24,8 @@ use covalence_lib_crypto::ed25519::VerifyingKey;
 use covalence_lib_sqlite as sqlite;
 use sqlite::OptionalExtension as _;
 
+#[cfg(not(target_arch = "wasm32"))]
+mod hol_guest;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod http_transport;
 mod metadata_spec;
@@ -33,6 +35,8 @@ mod proof_script;
 mod schema_spec;
 mod signed_client;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use hol_guest::{HolGuestError, run_hol_proof_component};
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use http_transport::{
     BootstrapToken, CHANNEL_PATH, HttpTransportError, INVOCATION_PATH, KernelHttpRequest,

@@ -28,6 +28,7 @@ rust_library(
         "rand": "nucleus//buck/cargo/production:rand-0.9.5",
     },
     env = {
+        "CARGO_MANIFEST_DIR": "crates/lib/rand",
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Randomness primitives for Nucleus",
         "CARGO_PKG_HOMEPAGE": "",
@@ -56,6 +57,7 @@ rust_test(
         "rand": "nucleus//buck/cargo/production:rand-0.9.5",
     },
     env = {
+        "CARGO_MANIFEST_DIR": "crates/lib/rand",
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Randomness primitives for Nucleus",
         "CARGO_PKG_HOMEPAGE": "",
