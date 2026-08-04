@@ -29,6 +29,7 @@ mod http_transport;
 mod metadata_spec;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod native_http;
+mod proof_script;
 mod schema_spec;
 mod signed_client;
 
@@ -45,6 +46,11 @@ use metadata_spec::{
 pub use native_http::{
     NativeKernelServerConfig, NativeKernelServerError, NativeKernelServerHandle,
     random_bootstrap_token, spawn_native_kernel_server,
+};
+pub use proof_script::{
+    LocalHolProofOutput, LocalHolProofRef, LocalHolProofScriptError, LocalHolProofSort,
+    LocalHolProofStep, MAX_LOCAL_HOL_PROOF_STEPS, MAX_TOTAL_LOCAL_HOL_PROOF_OPERANDS,
+    run_local_hol_proof_script,
 };
 pub use schema_spec::{
     HolMetadataColumnSpec, HolMetadataIndexSpec, HolMetadataSchemaSpec, HolMetadataStorageSpec,
@@ -2684,6 +2690,25 @@ impl LocalRepl {
         }
     }
 
+    /// Replays a bounded append-only HOL proof recipe in one fresh generative session.
+    ///
+    /// Recipe references are meaningful only within this call. The returned values are inert
+    /// observations, never branded Nucleus capabilities, so no proof authority is retained by
+    /// the REPL or transferable to a later call.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a wrong connection protocol, an invalid/forward/sort-confused recipe
+    /// reference, a boundedness violation, or any rejected checked HOL operation.
+    pub fn run_hol_proof_script(
+        &mut self,
+        id: ConnectionId,
+        steps: &[LocalHolProofStep],
+    ) -> Result<Vec<LocalHolProofOutput>, LocalHolProofRunError> {
+        let connection = self.hol_mut(id)?;
+        run_local_hol_proof_script(connection, steps).map_err(Into::into)
+    }
+
     /// Reads user-declared metadata from one existing HOL structural row.
     ///
     /// # Errors
@@ -3328,6 +3353,45 @@ impl LocalRepl {
             proof.persist_theorem(&theorem)?;
             Ok(conclusion)
         })
+    }
+}
+
+/// Failure while selecting a HOL connection or replaying one bounded proof recipe.
+#[derive(Debug)]
+pub enum LocalHolProofRunError {
+    /// The managed connection could not be selected as HOL.
+    Repl(LocalReplError),
+    /// The append-only recipe or a checked rule was rejected.
+    Script(LocalHolProofScriptError),
+}
+
+impl fmt::Display for LocalHolProofRunError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Repl(error) => error.fmt(formatter),
+            Self::Script(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl StdError for LocalHolProofRunError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            Self::Repl(error) => Some(error),
+            Self::Script(error) => Some(error),
+        }
+    }
+}
+
+impl From<LocalReplError> for LocalHolProofRunError {
+    fn from(error: LocalReplError) -> Self {
+        Self::Repl(error)
+    }
+}
+
+impl From<LocalHolProofScriptError> for LocalHolProofRunError {
+    fn from(error: LocalHolProofScriptError) -> Self {
+        Self::Script(error)
     }
 }
 
