@@ -6,9 +6,9 @@ use covalence_lib_hash::O256;
 use covalence_lib_sqlite as sqlite;
 
 use super::{
-    BOOL_TYPE_ID, ContextError, ContextId, ExportId, HolSchema, KindError, KindId, KindView,
-    NamespaceId, SCHEMA, STAR_ID, TermError, TermId, TypeError, TypeId, TypeView, ValidatedTerm,
-    install_metadata_schema, kind_rank, read_context_members, read_kind, read_type,
+    BOOL_TYPE_ID, ContextError, ContextId, ExportId, HolSchema, ImportId, KindError, KindId,
+    KindView, NamespaceId, SCHEMA, STAR_ID, TermError, TermId, TypeError, TypeId, TypeView,
+    ValidatedTerm, install_metadata_schema, kind_rank, read_context_members, read_kind, read_type,
     validate_term_inner,
 };
 
@@ -33,6 +33,10 @@ pub struct HolImageCounts {
     pub namespaces: u64,
     /// Validated local namespace exports.
     pub namespace_exports: u64,
+    /// Inert schema-qualified external database references.
+    pub import_references: u64,
+    /// Local namespace handles aliasing complete external namespaces.
+    pub imported_namespaces: u64,
 }
 
 /// Exact bytes admitted as one expected tagged-node HOL physical schema.
@@ -40,7 +44,9 @@ pub struct HolImageCounts {
 /// This evidence establishes `SQLite` integrity, exact physical schema, syntax
 /// typing, binder closure invariants, context well-formedness, and judgement
 /// row shape. It deliberately does not establish that imported judgements are
-/// true merely because their rows or optional rule labels exist.
+/// true merely because their rows or optional rule labels exist. Hash-first
+/// import references are checked only as inert coordinates: validation does
+/// not fetch them or establish their existence, authenticity, trust, or truth.
 pub struct ValidatedHolImage {
     hash: O256,
     schema: O256,
@@ -161,7 +167,7 @@ fn validate_schema(
         [],
         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
     )?;
-    if identity == (4, "tagged-node".to_owned()) {
+    if identity == (5, "tagged-node".to_owned()) {
         Ok(schema_manifest_id(&expected_manifest))
     } else {
         Err(HolImageValidationError::SchemaMismatch)
@@ -274,7 +280,7 @@ fn validate_contents(
 
     let implication_count = validate_context_implications(connection, &contexts)?;
     let context_union_count = validate_context_unions(connection, &contexts)?;
-    let (namespace_count, namespace_export_count) =
+    let (namespace_count, namespace_export_count, import_count, imported_namespace_count) =
         validate_namespaces(connection, &nodes, &contexts.iter().copied().collect())?;
 
     Ok(HolImageCounts {
@@ -292,6 +298,10 @@ fn validate_contents(
             .map_err(|_| HolImageValidationError::CountOverflow)?,
         namespace_exports: u64::try_from(namespace_export_count)
             .map_err(|_| HolImageValidationError::CountOverflow)?,
+        import_references: u64::try_from(import_count)
+            .map_err(|_| HolImageValidationError::CountOverflow)?,
+        imported_namespaces: u64::try_from(imported_namespace_count)
+            .map_err(|_| HolImageValidationError::CountOverflow)?,
     })
 }
 
@@ -300,10 +310,27 @@ fn validate_namespaces(
     connection: &sqlite::Connection,
     nodes: &[NodeRow],
     contexts: &HashSet<ContextId>,
-) -> Result<(usize, usize), HolImageValidationError> {
+) -> Result<(usize, usize, usize, usize), HolImageValidationError> {
+    let imports = connection
+        .prepare("SELECT import_id, schema_hash, image_hash FROM hol_import ORDER BY import_id")?
+        .query_map([], |row| {
+            Ok((
+                ImportId::from_i64(row.get(0)?),
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let import_ids = imports.iter().map(|(id, _, _)| *id).collect::<HashSet<_>>();
+    for (import, schema, image) in &imports {
+        if schema.len() != 32 || image.len() != 32 {
+            return Err(HolImageValidationError::MalformedImportHash(*import));
+        }
+    }
     let namespaces = connection
         .prepare(
-            "SELECT namespace_id, parent_namespace_id, name
+            "SELECT namespace_id, parent_namespace_id, name,
+                    source_import_id, source_namespace_id
              FROM hol_namespace ORDER BY namespace_id",
         )?
         .query_map([], |row| {
@@ -311,26 +338,64 @@ fn validate_namespaces(
                 NamespaceId::from_i64(row.get(0)?),
                 row.get::<_, Option<i64>>(1)?.map(NamespaceId::from_i64),
                 row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<i64>>(3)?.map(ImportId::from_i64),
+                row.get::<_, Option<i64>>(4)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     let parents = namespaces
         .iter()
-        .map(|(id, parent, _)| (*id, *parent))
+        .map(|(id, parent, _, _, _)| (*id, *parent))
+        .collect::<HashMap<_, _>>();
+    let sources = namespaces
+        .iter()
+        .map(|(id, _, _, import, source)| (*id, (*import, *source)))
         .collect::<HashMap<_, _>>();
     if parents.get(&NamespaceId::root()) != Some(&None)
         || namespaces
             .iter()
-            .find(|(id, _, _)| *id == NamespaceId::root())
-            .is_none_or(|(_, _, name)| name.is_some())
+            .find(|(id, _, _, _, _)| *id == NamespaceId::root())
+            .is_none_or(|(_, _, name, import, source)| {
+                name.is_some() || import.is_some() || source.is_some()
+            })
     {
         return Err(HolImageValidationError::InvalidRootNamespace);
     }
-    for (namespace, parent, _) in &namespaces {
+    let mut imported_namespaces = HashSet::new();
+    for (namespace, (source_import, source_namespace)) in &sources {
+        match (source_import, source_namespace) {
+            (None, None) => {}
+            (Some(import), Some(source_namespace))
+                if import_ids.contains(import) && *source_namespace >= 0 =>
+            {
+                imported_namespaces.insert(*namespace);
+            }
+            (Some(import), Some(_)) if !import_ids.contains(import) => {
+                return Err(HolImageValidationError::OrphanNamespaceImport {
+                    namespace: *namespace,
+                    import: *import,
+                });
+            }
+            _ => {
+                return Err(HolImageValidationError::MalformedNamespaceSource(
+                    *namespace,
+                ));
+            }
+        }
+    }
+    for (namespace, parent, _, _, _) in &namespaces {
         if let Some(parent) = parent
             && !parents.contains_key(parent)
         {
             return Err(HolImageValidationError::OrphanNamespaceParent {
+                namespace: *namespace,
+                parent: *parent,
+            });
+        }
+        if let Some(parent) = parent
+            && imported_namespaces.contains(parent)
+        {
+            return Err(HolImageValidationError::ImportedNamespaceHasChild {
                 namespace: *namespace,
                 parent: *parent,
             });
@@ -388,6 +453,12 @@ fn validate_namespaces(
                 export: *export,
             });
         }
+        if imported_namespaces.contains(namespace) {
+            return Err(HolImageValidationError::ImportedNamespaceHasLocalExport {
+                namespace: *namespace,
+                export: *export,
+            });
+        }
         let valid = match sort.as_str() {
             "kind" => kinds.contains(local_id),
             "type" => types.contains(local_id),
@@ -404,7 +475,12 @@ fn validate_namespaces(
             });
         }
     }
-    Ok((namespaces.len(), exports.len()))
+    Ok((
+        namespaces.len(),
+        exports.len(),
+        imports.len(),
+        imported_namespaces.len(),
+    ))
 }
 
 fn validate_reserved_primitives(
@@ -655,6 +731,25 @@ pub enum HolImageValidationError {
         sort: String,
         local_id: i64,
     },
+    /// An import-directory row has a malformed hash representation.
+    MalformedImportHash(ImportId),
+    /// A namespace source names an absent import-directory row.
+    OrphanNamespaceImport {
+        namespace: NamespaceId,
+        import: ImportId,
+    },
+    /// A namespace has only half of its imported-source discriminator.
+    MalformedNamespaceSource(NamespaceId),
+    /// Imported aliases cannot contain local child paths in v0.
+    ImportedNamespaceHasChild {
+        namespace: NamespaceId,
+        parent: NamespaceId,
+    },
+    /// Imported aliases cannot contain local export rows.
+    ImportedNamespaceHasLocalExport {
+        namespace: NamespaceId,
+        export: ExportId,
+    },
     /// A diagnostic count exceeded its representation.
     CountOverflow,
 }
@@ -776,6 +871,36 @@ impl fmt::Display for HolImageValidationError {
                 export.get(),
                 namespace.get()
             ),
+            Self::MalformedImportHash(import) => {
+                write!(
+                    formatter,
+                    "import reference {} has a malformed hash",
+                    import.get()
+                )
+            }
+            Self::OrphanNamespaceImport { namespace, import } => write!(
+                formatter,
+                "namespace {} names absent import reference {}",
+                namespace.get(),
+                import.get()
+            ),
+            Self::MalformedNamespaceSource(namespace) => write!(
+                formatter,
+                "namespace {} has a malformed source discriminator",
+                namespace.get()
+            ),
+            Self::ImportedNamespaceHasChild { namespace, parent } => write!(
+                formatter,
+                "namespace {} is a local child of imported namespace {}",
+                namespace.get(),
+                parent.get()
+            ),
+            Self::ImportedNamespaceHasLocalExport { namespace, export } => write!(
+                formatter,
+                "imported namespace {} contains local export {}",
+                namespace.get(),
+                export.get()
+            ),
             Self::CountOverflow => formatter.write_str("HOL validation count overflow"),
         }
     }
@@ -870,6 +995,8 @@ mod tests {
                 context_exact_unions: 0,
                 namespaces: 1,
                 namespace_exports: 0,
+                import_references: 0,
+                imported_namespaces: 0,
             }
         );
 

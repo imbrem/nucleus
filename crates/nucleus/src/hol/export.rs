@@ -7,6 +7,10 @@ use super::{Hol, Operation, Policy, ValidatedHolImage};
 use crate::{Connection, Kernel, SignError, Signer as _, schema_valid_snapshot_statement};
 
 /// Out-of-band authentication of exact HOL database bytes under one schema.
+///
+/// This authenticates inert import declarations contained in those bytes; it
+/// does not transitively authenticate, validate, trust, or endorse the
+/// databases they name.
 pub struct HolSnapshotAttestation {
     schema: O256,
     image: O256,

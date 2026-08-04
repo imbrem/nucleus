@@ -6,8 +6,8 @@ use covalence_lib_sqlite as sqlite;
 use sqlite::OptionalExtension as _;
 
 use super::{
-    ContextError, ContextId, Hol, KindError, KindId, Operation, Policy, TermError, TermId,
-    TypeError, TypeId, read_kind, read_type, require_context, validate_term,
+    ContextError, ContextId, Hol, ImportId, KindError, KindId, NamespaceSource, Operation, Policy,
+    TermError, TermId, TypeError, TypeId, read_kind, read_type, require_context, validate_term,
 };
 use crate::Connection;
 
@@ -117,6 +117,8 @@ pub struct NamespaceView {
     pub parent: Option<NamespaceId>,
     /// Optional local name.
     pub name: Option<String>,
+    /// Whether this row is local or an inert alias of a complete external namespace.
+    pub source: NamespaceSource,
 }
 
 /// Read-only view of one namespace export.
@@ -145,19 +147,33 @@ impl<P: Policy> Connection<Hol<P>> {
         validate_name(name)?;
         let transaction = neutron.sqlite().unchecked_transaction()?;
         if let Some(parent) = parent {
-            require_namespace(&transaction, parent)
-                .map_err(|_| NamespaceError::UnknownParent(parent))?;
+            require_local_namespace(&transaction, parent)?;
         }
         if let Some(name) = name
-            && let Some(id) = transaction
+            && let Some((id, source_import, source_namespace)) = transaction
                 .query_row(
-                    "SELECT namespace_id FROM hol_namespace
+                    "SELECT namespace_id, source_import_id, source_namespace_id
+                     FROM hol_namespace
                      WHERE parent_namespace_id IS ?1 AND name = ?2",
                     sqlite::params![parent.map(NamespaceId::get), name],
-                    |row| row.get::<_, i64>(0).map(NamespaceId),
+                    |row| {
+                        Ok((
+                            NamespaceId(row.get(0)?),
+                            row.get::<_, Option<i64>>(1)?,
+                            row.get::<_, Option<i64>>(2)?,
+                        ))
+                    },
                 )
                 .optional()?
         {
+            let actual = decode_source(id, source_import, source_namespace)?;
+            if actual != NamespaceSource::Local {
+                return Err(NamespaceError::SourceConflict {
+                    namespace: id,
+                    expected: NamespaceSource::Local,
+                    actual,
+                });
+            }
             transaction.commit()?;
             return Ok(id);
         }
@@ -183,12 +199,15 @@ impl<P: Policy> Connection<Hol<P>> {
         neutron
             .sqlite()
             .query_row(
-                "SELECT parent_namespace_id, name FROM hol_namespace WHERE namespace_id = ?1",
+                "SELECT parent_namespace_id, name, source_import_id, source_namespace_id
+                 FROM hol_namespace WHERE namespace_id = ?1",
                 [id.get()],
                 |row| {
                     Ok(NamespaceView {
                         parent: row.get::<_, Option<i64>>(0)?.map(NamespaceId),
                         name: row.get(1)?,
+                        source: decode_source(id, row.get(2)?, row.get(3)?)
+                            .map_err(|_| sqlite::Error::InvalidQuery)?,
                     })
                 },
             )
@@ -216,7 +235,7 @@ impl<P: Policy> Connection<Hol<P>> {
             return Err(ExportError::InvalidExportId(export));
         }
         let transaction = neutron.sqlite().unchecked_transaction()?;
-        require_namespace(&transaction, namespace)?;
+        require_exportable_namespace(&transaction, namespace)?;
         validate_local(&transaction, value)?;
         insert_export(&transaction, namespace, export, value, name)?;
         transaction.commit()?;
@@ -242,7 +261,7 @@ impl<P: Policy> Connection<Hol<P>> {
             return Err(ExportError::InvalidExportId(first_export));
         }
         let transaction = neutron.sqlite().unchecked_transaction()?;
-        require_namespace(&transaction, namespace)?;
+        require_exportable_namespace(&transaction, namespace)?;
         let values = local
             .enumerate()
             .map(|(offset, local_id)| {
@@ -313,7 +332,7 @@ impl<P: Policy> Connection<Hol<P>> {
     }
 }
 
-fn validate_name(name: Option<&str>) -> Result<(), NamespaceError> {
+pub(super) fn validate_name(name: Option<&str>) -> Result<(), NamespaceError> {
     if name.is_some_and(str::is_empty) {
         Err(NamespaceError::InvalidName(String::new()))
     } else {
@@ -321,7 +340,7 @@ fn validate_name(name: Option<&str>) -> Result<(), NamespaceError> {
     }
 }
 
-fn next_id(
+pub(super) fn next_id(
     connection: &sqlite::Connection,
     table: &str,
     column: &str,
@@ -333,7 +352,7 @@ fn next_id(
     maximum.checked_add(1).ok_or(NamespaceError::IdOverflow)
 }
 
-fn require_namespace(
+pub(super) fn require_namespace(
     connection: &sqlite::Connection,
     id: NamespaceId,
 ) -> Result<(), NamespaceError> {
@@ -349,6 +368,61 @@ fn require_namespace(
         Ok(())
     } else {
         Err(NamespaceError::UnknownNamespace(id))
+    }
+}
+
+pub(super) fn namespace_source(
+    connection: &sqlite::Connection,
+    id: NamespaceId,
+) -> Result<NamespaceSource, NamespaceError> {
+    connection
+        .query_row(
+            "SELECT source_import_id, source_namespace_id
+             FROM hol_namespace WHERE namespace_id = ?1",
+            [id.get()],
+            |row| Ok((row.get::<_, Option<i64>>(0)?, row.get::<_, Option<i64>>(1)?)),
+        )
+        .optional()?
+        .ok_or(NamespaceError::UnknownNamespace(id))
+        .and_then(|(import, source)| decode_source(id, import, source))
+}
+
+fn decode_source(
+    namespace: NamespaceId,
+    import: Option<i64>,
+    source_namespace: Option<i64>,
+) -> Result<NamespaceSource, NamespaceError> {
+    match (import, source_namespace) {
+        (None, None) => Ok(NamespaceSource::Local),
+        (Some(import), Some(source_namespace)) if import >= 0 && source_namespace >= 0 => {
+            Ok(NamespaceSource::Imported {
+                import: ImportId::from_i64(import),
+                source_namespace,
+            })
+        }
+        _ => Err(NamespaceError::CorruptSource(namespace)),
+    }
+}
+
+fn require_local_namespace(
+    connection: &sqlite::Connection,
+    id: NamespaceId,
+) -> Result<(), NamespaceError> {
+    match namespace_source(connection, id) {
+        Ok(NamespaceSource::Local) => Ok(()),
+        Ok(NamespaceSource::Imported { .. }) => Err(NamespaceError::ImportedParent(id)),
+        Err(NamespaceError::UnknownNamespace(_)) => Err(NamespaceError::UnknownParent(id)),
+        Err(error) => Err(error),
+    }
+}
+
+fn require_exportable_namespace(
+    connection: &sqlite::Connection,
+    id: NamespaceId,
+) -> Result<(), ExportError> {
+    match namespace_source(connection, id)? {
+        NamespaceSource::Local => Ok(()),
+        NamespaceSource::Imported { .. } => Err(ExportError::ImportedNamespace(id)),
     }
 }
 
@@ -463,6 +537,16 @@ pub enum NamespaceError {
     UnknownParent(NamespaceId),
     /// Namespace names must be nonempty when present.
     InvalidName(String),
+    /// A local and imported namespace definition collided at one path.
+    SourceConflict {
+        namespace: NamespaceId,
+        expected: NamespaceSource,
+        actual: NamespaceSource,
+    },
+    /// Imported namespace aliases cannot be extended with local child paths in v0.
+    ImportedParent(NamespaceId),
+    /// A stored namespace has a malformed source discriminator.
+    CorruptSource(NamespaceId),
     /// No further non-negative namespace ID can be allocated.
     IdOverflow,
     /// `SQLite` rejected the operation.
@@ -476,6 +560,23 @@ impl fmt::Display for NamespaceError {
             Self::UnknownNamespace(id) => write!(formatter, "unknown namespace {}", id.get()),
             Self::UnknownParent(id) => write!(formatter, "unknown parent namespace {}", id.get()),
             Self::InvalidName(name) => write!(formatter, "invalid namespace name {name:?}"),
+            Self::SourceConflict {
+                namespace,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "namespace {} source conflict: expected {expected:?}, found {actual:?}",
+                namespace.get()
+            ),
+            Self::ImportedParent(id) => write!(
+                formatter,
+                "imported namespace {} cannot contain local child paths",
+                id.get()
+            ),
+            Self::CorruptSource(id) => {
+                write!(formatter, "namespace {} has a corrupt source", id.get())
+            }
             Self::IdOverflow => formatter.write_str("namespace ID overflow"),
             Self::Sqlite(error) => error.fmt(formatter),
         }
@@ -506,6 +607,8 @@ pub enum ExportError {
     Namespace(NamespaceError),
     /// Export IDs must be non-negative.
     InvalidExportId(ExportId),
+    /// Imported aliases cannot contain local export rows.
+    ImportedNamespace(NamespaceId),
     /// An export ID already denotes another value or name.
     ExportConflict {
         namespace: NamespaceId,
@@ -536,6 +639,11 @@ impl fmt::Display for ExportError {
             Self::Denied(operation) => write!(formatter, "HOL policy denied {operation:?}"),
             Self::Namespace(error) => error.fmt(formatter),
             Self::InvalidExportId(id) => write!(formatter, "invalid export ID {}", id.get()),
+            Self::ImportedNamespace(id) => write!(
+                formatter,
+                "imported namespace {} cannot contain local exports",
+                id.get()
+            ),
             Self::ExportConflict { namespace, export } => write!(
                 formatter,
                 "export {} already has another meaning in namespace {}",
@@ -617,7 +725,8 @@ mod tests {
             connection.namespace(NamespaceId::root()).unwrap(),
             NamespaceView {
                 parent: None,
-                name: None
+                name: None,
+                source: NamespaceSource::Local,
             }
         );
         let parent = connection
