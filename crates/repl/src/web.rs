@@ -2,8 +2,9 @@ use covalence_lib_hash::O256;
 use wasm_bindgen::prelude::*;
 
 use super::{
-    ConnectionId, ContextId, Kind, KindId, KindView, LocalRepl, Outcome, ProofError, QueryResult,
-    TermId, TermView, TypeId, TypeView, Value,
+    ConnectionId, ContextId, ExportId, Kind, KindId, KindView, LocalRepl, LocalSignedHolSnapshot,
+    NamespaceExport, NamespaceId, NamespaceView, Outcome, ProofError, QueryResult, TermId,
+    TermView, TypeId, TypeView, Value,
 };
 
 /// Browser adapter for the shared REPL connection directory.
@@ -34,6 +35,26 @@ pub struct WebType {
 #[wasm_bindgen]
 pub struct WebTerm {
     term: TermView,
+}
+
+/// Owned view of one local HOL namespace.
+#[wasm_bindgen]
+pub struct WebNamespace {
+    namespace: NamespaceView,
+}
+
+/// Owned view of one local HOL namespace export.
+#[wasm_bindgen]
+pub struct WebExport {
+    sort: &'static str,
+    local: i64,
+    name: Option<String>,
+}
+
+/// Owned signed HOL image and verification envelope.
+#[wasm_bindgen]
+pub struct WebSignedHolSnapshot {
+    snapshot: LocalSignedHolSnapshot,
 }
 
 #[wasm_bindgen]
@@ -658,6 +679,116 @@ impl WebKernel {
             .map_err(js_error)
     }
 
+    /// Defines one local HOL namespace.
+    pub fn hol_namespace_create(
+        &mut self,
+        connection: u32,
+        parent: Option<u32>,
+        name: Option<String>,
+    ) -> Result<u32, JsValue> {
+        let namespace = self
+            .repl
+            .create_hol_namespace(
+                ConnectionId::from_u32(connection),
+                parent.map(|id| NamespaceId::from_i64(i64::from(id))),
+                name.as_deref(),
+            )
+            .map_err(js_error)?;
+        u32::try_from(namespace.get()).map_err(js_error)
+    }
+
+    /// Reads one local HOL namespace.
+    pub fn hol_namespace(
+        &mut self,
+        connection: u32,
+        namespace: u32,
+    ) -> Result<WebNamespace, JsValue> {
+        self.repl
+            .hol_namespace(
+                ConnectionId::from_u32(connection),
+                NamespaceId::from_i64(i64::from(namespace)),
+            )
+            .map(|namespace| WebNamespace { namespace })
+            .map_err(js_error)
+    }
+
+    /// Binds one local HOL value to an explicit namespace-wide export ID.
+    pub fn hol_export_bind(
+        &mut self,
+        connection: u32,
+        namespace: u32,
+        export: u32,
+        sort: &str,
+        local: u32,
+        name: Option<String>,
+    ) -> Result<(), JsValue> {
+        let local = i64::from(local);
+        let value = match sort {
+            "kind" => NamespaceExport::Kind(KindId::from_i64(local)),
+            "type" => NamespaceExport::Type(TypeId::from_i64(local)),
+            "term" => NamespaceExport::Term(TermId::from_i64(local)),
+            "context" => NamespaceExport::Context(ContextId::from_i64(local)),
+            _ => return Err(JsValue::from_str("unknown HOL export sort")),
+        };
+        self.repl
+            .bind_hol_export(
+                ConnectionId::from_u32(connection),
+                NamespaceId::from_i64(i64::from(namespace)),
+                ExportId::from_i64(i64::from(export)),
+                value,
+                name.as_deref(),
+            )
+            .map_err(js_error)
+    }
+
+    /// Reads one local HOL namespace export.
+    pub fn hol_export(
+        &mut self,
+        connection: u32,
+        namespace: u32,
+        export: u32,
+    ) -> Result<WebExport, JsValue> {
+        let view = self
+            .repl
+            .hol_export(
+                ConnectionId::from_u32(connection),
+                NamespaceId::from_i64(i64::from(namespace)),
+                ExportId::from_i64(i64::from(export)),
+            )
+            .map_err(js_error)?
+            .ok_or_else(|| JsValue::from_str("unknown HOL namespace export"))?;
+        Ok(WebExport::new(view.value, view.name))
+    }
+
+    /// Resolves one namespace-local export name.
+    pub fn hol_export_resolve(
+        &mut self,
+        connection: u32,
+        namespace: u32,
+        name: &str,
+    ) -> Result<Option<u32>, JsValue> {
+        self.repl
+            .resolve_hol_export_name(
+                ConnectionId::from_u32(connection),
+                NamespaceId::from_i64(i64::from(namespace)),
+                name,
+            )
+            .map_err(js_error)?
+            .map(|(export, _)| u32::try_from(export.get()).map_err(js_error))
+            .transpose()
+    }
+
+    /// Serializes and signs the complete persistent HOL database.
+    pub fn hol_export_snapshot(
+        &mut self,
+        connection: u32,
+    ) -> Result<WebSignedHolSnapshot, JsValue> {
+        self.repl
+            .export_hol_snapshot(ConnectionId::from_u32(connection))
+            .map(|snapshot| WebSignedHolSnapshot { snapshot })
+            .map_err(js_error)
+    }
+
     fn connection_mut(
         &mut self,
         id: u32,
@@ -665,6 +796,94 @@ impl WebKernel {
         self.repl
             .sql_mut(ConnectionId::from_u32(id))
             .map_err(js_error)
+    }
+}
+
+impl WebExport {
+    fn new(value: NamespaceExport, name: Option<String>) -> Self {
+        let (sort, local) = match value {
+            NamespaceExport::Kind(id) => ("kind", id.get()),
+            NamespaceExport::Type(id) => ("type", id.get()),
+            NamespaceExport::Term(id) => ("term", id.get()),
+            NamespaceExport::Context(id) => ("context", id.get()),
+        };
+        Self { sort, local, name }
+    }
+}
+
+#[wasm_bindgen]
+impl WebNamespace {
+    /// Returns the parent ID, or no value for a top-level namespace.
+    pub fn parent(&self) -> Result<Option<u32>, JsValue> {
+        self.namespace
+            .parent
+            .map(|parent| u32::try_from(parent.get()).map_err(js_error))
+            .transpose()
+    }
+
+    /// Returns the optional local name.
+    #[must_use]
+    pub fn name(&self) -> Option<String> {
+        self.namespace.name.clone()
+    }
+}
+
+#[wasm_bindgen]
+impl WebExport {
+    /// Returns `kind`, `type`, `term`, or `context`.
+    #[must_use]
+    pub fn sort(&self) -> String {
+        self.sort.to_owned()
+    }
+
+    /// Returns the database-local ID.
+    pub fn local(&self) -> Result<u32, JsValue> {
+        u32::try_from(self.local).map_err(js_error)
+    }
+
+    /// Returns the optional export name.
+    #[must_use]
+    pub fn name(&self) -> Option<String> {
+        self.name.clone()
+    }
+}
+
+#[wasm_bindgen]
+impl WebSignedHolSnapshot {
+    /// Returns the exact `SQLite` bytes.
+    #[must_use]
+    pub fn bytes(&self) -> Vec<u8> {
+        self.snapshot.bytes().to_vec()
+    }
+
+    /// Returns the exact schema hash in hexadecimal.
+    #[must_use]
+    pub fn schema(&self) -> String {
+        self.snapshot.schema().to_string()
+    }
+
+    /// Returns the exact image hash in hexadecimal.
+    #[must_use]
+    pub fn image(&self) -> String {
+        self.snapshot.image().to_string()
+    }
+
+    /// Returns the signing-key identity in hexadecimal.
+    #[must_use]
+    pub fn signer(&self) -> String {
+        self.snapshot.signer().to_string()
+    }
+
+    /// Returns the Ed25519 public key bytes.
+    #[must_use]
+    pub fn public_key(&self) -> Vec<u8> {
+        self.snapshot.public_key().to_vec()
+    }
+
+    /// Returns the Ed25519 signature bytes.
+    #[must_use]
+    pub fn signature(&self) -> Vec<u8> {
+        self.snapshot.signature().to_vec()
     }
 }
 

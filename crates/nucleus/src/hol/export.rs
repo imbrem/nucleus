@@ -11,6 +11,7 @@ pub struct HolSnapshotAttestation {
     schema: O256,
     image: O256,
     signer: O256,
+    public_key: [u8; 32],
     signature: covalence_neutron::Bytes,
 }
 
@@ -31,6 +32,12 @@ impl HolSnapshotAttestation {
     #[must_use]
     pub const fn signer(&self) -> O256 {
         self.signer
+    }
+
+    /// Returns the signing kernel's public verification key.
+    #[must_use]
+    pub const fn public_key(&self) -> &[u8; 32] {
+        &self.public_key
     }
 
     /// Returns the out-of-band signature bytes.
@@ -136,6 +143,7 @@ impl Kernel {
                 schema,
                 image: image_hash,
                 signer,
+                public_key: *self.verifying_key().as_bytes(),
                 signature,
             },
         })

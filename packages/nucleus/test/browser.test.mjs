@@ -66,6 +66,32 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
     ],
   });
   assert.equal(result.readonly, true);
+  assert.equal(result.namespace, 1);
+  assert.deepEqual(result.namespaceView, { parent: 0, name: "demo" });
+  assert.deepEqual(result.exportView, {
+    sort: "term",
+    local: 3,
+    name: "truth",
+  });
+  assert.equal(result.resolved, 7);
+  assert.equal(result.snapshotHash, result.snapshotImage);
+  assert.match(result.snapshotSchema, /^[0-9a-f]{64}$/);
+  assert.match(result.snapshotSigner, /^[0-9a-f]{64}$/);
+  assert.equal(result.publicKeyLength, 32);
+  assert.equal(result.signatureLength, 64);
+  assert.deepEqual(result.snapshotRows, {
+    kind: "rows",
+    columns: ["namespace_id", "export_id", "sort", "local_id", "name"],
+    rows: [
+      [
+        { kind: "integer", value: "1" },
+        { kind: "integer", value: "7" },
+        { kind: "text", value: "term" },
+        { kind: "integer", value: "3" },
+        { kind: "text", value: "truth" },
+      ],
+    ],
+  });
 
   const demo = await browser.newPage();
   await demo.goto(`http://127.0.0.1:${address.port}/repl.html`);
