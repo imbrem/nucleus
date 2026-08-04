@@ -68,13 +68,13 @@ pub struct TrustedImportView {
 /// This capability keeps its originating connection mutably borrowed. It does not expose imported
 /// theorem authority; later scoped readers may consume it to expose validated immutable data.
 pub struct MatchedTrustedHolImage<'connection, P> {
-    _connection: &'connection mut Connection<Hol<P>>,
+    connection: &'connection mut Connection<Hol<P>>,
     trusted_import: TrustedImportId,
     import: ImportId,
     image: AuthenticatedValidatedHolImage,
 }
 
-impl<P> MatchedTrustedHolImage<'_, P> {
+impl<'connection, P> MatchedTrustedHolImage<'connection, P> {
     /// Returns the exact persistent assumption matched by this capability.
     #[must_use]
     pub const fn trusted_import(&self) -> TrustedImportId {
@@ -97,6 +97,22 @@ impl<P> MatchedTrustedHolImage<'_, P> {
     #[must_use]
     pub const fn signer(&self) -> O256 {
         self.image.claim().signer()
+    }
+
+    pub(super) fn into_parts(
+        self,
+    ) -> (
+        &'connection mut Connection<Hol<P>>,
+        TrustedImportId,
+        ImportId,
+        AuthenticatedValidatedHolImage,
+    ) {
+        (
+            self.connection,
+            self.trusted_import,
+            self.import,
+            self.image,
+        )
     }
 }
 
@@ -429,7 +445,7 @@ impl<P: Policy> Connection<Hol<P>> {
             row.0
         };
         Ok(MatchedTrustedHolImage {
-            _connection: self,
+            connection: self,
             trusted_import: id,
             import,
             image,
