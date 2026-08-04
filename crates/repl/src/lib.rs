@@ -12,9 +12,9 @@ use covalence_lib_sqlite as sqlite;
 
 pub use covalence_nucleus::sql::{ImageError, Outcome, QueryResult, Statement, Value};
 pub use covalence_nucleus::{
-    AllowAll, Connection, ContextError, ContextId, Hol, HolOpenError, Kernel, Kind, KindError,
-    KindId, KindView, ProofError, ProofSession, Sql, TermError, TermId, TermView, Theorem,
-    TypeError, TypeId, TypeView,
+    AllowAll, Connection, ContextError, ContextId, ContextImplication, Hol, HolOpenError, Kernel,
+    Kind, KindError, KindId, KindView, ProofError, ProofSession, Sql, TermError, TermId, TermView,
+    Theorem, TypeError, TypeId, TypeView,
 };
 
 const SCHEMA: &str = "
@@ -220,7 +220,7 @@ impl LocalConnection {
     const fn protocol(&self) -> &'static str {
         match self {
             Self::Sql(_) => "nucleus/sql",
-            Self::Hol(_) => "nucleus/hol-omega-v0",
+            Self::Hol(_) => "nucleus/hol-common-v2",
         }
     }
 }
@@ -296,7 +296,7 @@ impl LocalRepl {
             .map_err(LocalReplError::HolOpen)?;
         let id = self
             .directory
-            .insert("nucleus/hol-omega-v0", LocalConnection::Hol(connection))?;
+            .insert("nucleus/hol-common-v2", LocalConnection::Hol(connection))?;
         self.directory.select(id)?;
         Ok(id)
     }
@@ -341,10 +341,145 @@ impl LocalRepl {
             LocalConnection::Hol(connection) => Ok(connection),
             other @ LocalConnection::Sql(_) => Err(LocalReplError::WrongProtocol {
                 id,
-                expected: "nucleus/hol-omega-v0",
+                expected: "nucleus/hol-common-v2",
                 actual: other.protocol(),
             }),
         }
+    }
+
+    /// Introduces one exact implication from persisted witness keys.
+    ///
+    /// This shared orchestration performs no search: every supplied term must
+    /// identify an exact judgement under `antecedent`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a protocol mismatch, absent witness judgement, or
+    /// rejected trusted rule.
+    pub fn prove_context_implication(
+        &mut self,
+        id: ConnectionId,
+        antecedent: ContextId,
+        consequent: ContextId,
+        witness_terms: &[TermId],
+    ) -> Result<(), LocalProofError> {
+        self.hol_mut(id)?.with_proof_session(|mut proof| {
+            let mut witnesses = Vec::with_capacity(witness_terms.len());
+            for term in witness_terms {
+                let theorem = proof.load_theorem(antecedent, *term)?.ok_or(
+                    LocalProofError::MissingTheorem {
+                        context: antecedent,
+                        conclusion: *term,
+                    },
+                )?;
+                witnesses.push(theorem);
+            }
+            proof
+                .prove_context_implication(antecedent, consequent, &witnesses)
+                .map(|_| ())
+                .map_err(Into::into)
+        })
+    }
+
+    /// Weakens an exact persisted theorem along an exact persisted edge.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for missing exact inputs, a protocol mismatch, or a
+    /// rejected trusted rule.
+    pub fn weaken(
+        &mut self,
+        id: ConnectionId,
+        antecedent: ContextId,
+        consequent: ContextId,
+        conclusion: TermId,
+    ) -> Result<TermId, LocalProofError> {
+        self.hol_mut(id)?.with_proof_session(|mut proof| {
+            let implication = proof
+                .load_context_implication(antecedent, consequent)?
+                .ok_or(LocalProofError::MissingImplication {
+                    antecedent,
+                    consequent,
+                })?;
+            let theorem = proof.load_theorem(consequent, conclusion)?.ok_or(
+                LocalProofError::MissingTheorem {
+                    context: consequent,
+                    conclusion,
+                },
+            )?;
+            proof
+                .weaken(&implication, &theorem)
+                .map(|theorem| theorem.conclusion())
+                .map_err(Into::into)
+        })
+    }
+}
+
+/// Failure while reconstructing proof capabilities for a REPL request.
+#[derive(Debug)]
+pub enum LocalProofError {
+    /// The managed connection could not be selected as HOL.
+    Repl(LocalReplError),
+    /// Nucleus rejected a proof operation.
+    Proof(ProofError),
+    /// An exact persisted theorem key is absent.
+    MissingTheorem {
+        context: ContextId,
+        conclusion: TermId,
+    },
+    /// An exact persisted implication edge is absent.
+    MissingImplication {
+        antecedent: ContextId,
+        consequent: ContextId,
+    },
+}
+
+impl fmt::Display for LocalProofError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Repl(error) => error.fmt(formatter),
+            Self::Proof(error) => error.fmt(formatter),
+            Self::MissingTheorem {
+                context,
+                conclusion,
+            } => write!(
+                formatter,
+                "judgement {} |- {} is not persisted",
+                context.get(),
+                conclusion.get()
+            ),
+            Self::MissingImplication {
+                antecedent,
+                consequent,
+            } => write!(
+                formatter,
+                "context implication {} => {} is not persisted",
+                antecedent.get(),
+                consequent.get()
+            ),
+        }
+    }
+}
+
+impl StdError for LocalProofError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            Self::Repl(error) => Some(error),
+            Self::Proof(error) => Some(error),
+            Self::MissingTheorem { .. } | Self::MissingImplication { .. } => None,
+        }
+    }
+}
+
+impl From<LocalReplError> for LocalProofError {
+    fn from(error: LocalReplError) -> Self {
+        Self::Repl(error)
+    }
+}
+
+impl From<ProofError> for LocalProofError {
+    fn from(error: ProofError) -> Self {
+        Self::Proof(error)
     }
 }
 
@@ -515,14 +650,14 @@ mod tests {
             repl.sql_mut(hol),
             Err(LocalReplError::WrongProtocol {
                 expected: "nucleus/sql",
-                actual: "nucleus/hol-omega-v0",
+                actual: "nucleus/hol-common-v2",
                 ..
             })
         ));
         assert!(matches!(
             repl.hol_mut(sql),
             Err(LocalReplError::WrongProtocol {
-                expected: "nucleus/hol-omega-v0",
+                expected: "nucleus/hol-common-v2",
                 actual: "nucleus/sql",
                 ..
             })
@@ -536,6 +671,54 @@ mod tests {
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert_eq!(protocols, ["nucleus/sql", "nucleus/hol-omega-v0"]);
+        assert_eq!(protocols, ["nucleus/sql", "nucleus/hol-common-v2"]);
+    }
+
+    #[test]
+    fn shared_repl_reconstructs_exact_weakening_capabilities() {
+        let mut repl = LocalRepl::new().unwrap();
+        let id = repl.open_hol().unwrap();
+        let bool_type = repl.hol_mut(id).unwrap().insert_bool_type().unwrap();
+        let p = repl
+            .hol_mut(id)
+            .unwrap()
+            .insert_free_term(20, bool_type)
+            .unwrap();
+        let q = repl
+            .hol_mut(id)
+            .unwrap()
+            .insert_free_term(21, bool_type)
+            .unwrap();
+        let consequent = repl.hol_mut(id).unwrap().define_context([p]).unwrap();
+        let antecedent = repl.hol_mut(id).unwrap().define_context([p, q]).unwrap();
+        let equality = repl
+            .hol_mut(id)
+            .unwrap()
+            .with_proof_session(|mut proof| {
+                let witness = proof.prove_hypothesis(antecedent, p)?;
+                let equality = proof.prove_reflexivity(consequent, p)?;
+                Ok::<_, ProofError>((witness.conclusion(), equality.conclusion()))
+            })
+            .unwrap();
+        assert!(
+            !repl
+                .hol_mut(id)
+                .unwrap()
+                .proved_judgement(antecedent, equality.1)
+                .unwrap()
+        );
+
+        repl.prove_context_implication(id, antecedent, consequent, &[equality.0])
+            .unwrap();
+        assert_eq!(
+            repl.weaken(id, antecedent, consequent, equality.1).unwrap(),
+            equality.1
+        );
+        assert!(
+            repl.hol_mut(id)
+                .unwrap()
+                .proved_judgement(antecedent, equality.1)
+                .unwrap()
+        );
     }
 }
