@@ -27,14 +27,24 @@ test("fetch transport sends exact channel enrollment without mutating caller byt
   const requests = [];
   const transport = new KernelFetchTransport("https://kernel.test/api", {
     fetch: async (input, init) => {
-      requests.push({ input: String(input), init, body: new Uint8Array(init.body) });
+      requests.push({
+        input: String(input),
+        init,
+        body: new Uint8Array(init.body),
+      });
       return binaryResponse(new Uint8Array([1, 2, 3]));
     },
   });
 
-  assert.deepEqual(await transport.requestChannel(caller, token), new Uint8Array([1, 2, 3]));
+  assert.deepEqual(
+    await transport.requestChannel(caller, token),
+    new Uint8Array([1, 2, 3]),
+  );
   caller.fill(0);
-  assert.equal(requests[0].input, `https://kernel.test/api/${KERNEL_CHANNEL_PATH}`);
+  assert.equal(
+    requests[0].input,
+    `https://kernel.test/api/${KERNEL_CHANNEL_PATH}`,
+  );
   assert.deepEqual(requests[0].body, new Uint8Array(32).fill(7));
   assert.equal(requests[0].init.method, "POST");
   assert.equal(requests[0].init.redirect, "error");
@@ -50,12 +60,18 @@ test("fetch invocation is one bounded retry-free POST", async () => {
   const transport = new KernelFetchTransport("https://kernel.test/", {
     fetch: async (input, init) => {
       calls += 1;
-      assert.equal(String(input), `https://kernel.test/${KERNEL_INVOCATION_PATH}`);
+      assert.equal(
+        String(input),
+        `https://kernel.test/${KERNEL_INVOCATION_PATH}`,
+      );
       assert.deepEqual(new Uint8Array(init.body), new Uint8Array([9, 8]));
       return binaryResponse(new Uint8Array([6, 5, 4]));
     },
   });
-  assert.deepEqual(await transport.invoke(new Uint8Array([9, 8])), new Uint8Array([6, 5, 4]));
+  assert.deepEqual(
+    await transport.invoke(new Uint8Array([9, 8])),
+    new Uint8Array([6, 5, 4]),
+  );
   assert.equal(calls, 1);
   assert.throws(
     () => transport.invoke(new Uint8Array(MAX_KERNEL_SIGNED_FRAME_BYTES + 1)),
@@ -71,7 +87,10 @@ test("fetch transport rejects deceptive or unbounded response framing", async ()
         headers: { "content-type": "application/octet-stream" },
       }),
   });
-  await assert.rejects(missingLength.invoke(new Uint8Array()), /Content-Length/);
+  await assert.rejects(
+    missingLength.invoke(new Uint8Array()),
+    /Content-Length/,
+  );
 
   const longerThanDeclared = new KernelFetchTransport("https://kernel.test/", {
     fetch: async () =>

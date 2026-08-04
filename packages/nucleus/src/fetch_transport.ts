@@ -59,11 +59,7 @@ export class KernelFetchTransport {
   ): Promise<Uint8Array> {
     requireBytes(caller, CALLER_KEY_BYTES, "caller public key");
     if (bootstrapToken !== undefined)
-      requireBytes(
-        bootstrapToken,
-        BOOTSTRAP_TOKEN_BYTES,
-        "bootstrap token",
-      );
+      requireBytes(bootstrapToken, BOOTSTRAP_TOKEN_BYTES, "bootstrap token");
     const headers = new Headers({ "Content-Type": BINARY_CONTENT_TYPE });
     if (bootstrapToken !== undefined)
       headers.set(
@@ -118,10 +114,11 @@ export class KernelFetchTransport {
 
       if (response.status !== 200) {
         if (
-          response.headers.get("content-type") !==
-          "text/plain; charset=utf-8"
+          response.headers.get("content-type") !== "text/plain; charset=utf-8"
         )
-          throw new Error("kernel boundary error has an unexpected Content-Type");
+          throw new Error(
+            "kernel boundary error has an unexpected Content-Type",
+          );
         if (response.headers.has("content-encoding"))
           throw new Error("kernel response Content-Encoding is forbidden");
         const diagnostic = await readBoundedBody(
@@ -154,7 +151,9 @@ function normalizeEndpoint(endpoint: string | URL): URL {
   if (url.username !== "" || url.password !== "")
     throw new TypeError("kernel fetch endpoint must not contain credentials");
   if (url.search !== "" || url.hash !== "")
-    throw new TypeError("kernel fetch endpoint must not contain a query or fragment");
+    throw new TypeError(
+      "kernel fetch endpoint must not contain a query or fragment",
+    );
   if (!url.pathname.endsWith("/")) url.pathname += "/";
   return url;
 }
@@ -181,7 +180,10 @@ async function readBoundedBody(
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      if (offset + value.byteLength > expected || offset + value.byteLength > limit)
+      if (
+        offset + value.byteLength > expected ||
+        offset + value.byteLength > limit
+      )
         throw new Error("kernel response exceeds its declared Content-Length");
       output.set(value, offset);
       offset += value.byteLength;
