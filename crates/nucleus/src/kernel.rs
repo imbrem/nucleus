@@ -61,6 +61,15 @@ impl Kernel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{AllowAll, ContextId, Verifier as _, schema_valid_snapshot_statement};
+
+    struct DenyExport;
+
+    impl crate::Policy for DenyExport {
+        fn allows(&mut self, operation: crate::Operation) -> bool {
+            operation != crate::Operation::ExportSignedSnapshot
+        }
+    }
 
     #[test]
     fn kernel_identities_are_independent_within_one_process() {
@@ -71,5 +80,54 @@ mod tests {
             first.verifying_key().as_bytes(),
             second.verifying_key().as_bytes()
         );
+    }
+
+    #[test]
+    fn signed_hol_export_contains_only_explicitly_persisted_authority() {
+        let kernel = Kernel::ephemeral();
+        let mut connection = kernel.open_hol(AllowAll).unwrap();
+        let term = connection.insert_bool_term(false).unwrap();
+        let context = connection.define_context([term]).unwrap();
+        connection
+            .with_proof_session(|mut proof| proof.prove_hypothesis(context, term).map(|_| ()))
+            .unwrap();
+
+        let first = kernel.export_hol(&mut connection).unwrap();
+        assert_eq!(first.image().counts().untrusted_judgement_rows, 0);
+        connection
+            .with_proof_session(|mut proof| {
+                let theorem = proof.prove_hypothesis(context, term)?;
+                proof.persist_theorem(&theorem)
+            })
+            .unwrap();
+        let second = kernel.export_hol(&mut connection).unwrap();
+        assert_eq!(second.image().counts().untrusted_judgement_rows, 1);
+        assert_ne!(first.attestation().image(), second.attestation().image());
+        let verifier = crate::Ed25519Verifier::new(kernel.verifying_key());
+        let attestation = second.attestation();
+        verifier
+            .verify(
+                attestation.signer(),
+                schema_valid_snapshot_statement(attestation.schema(), attestation.image()),
+                attestation.signature(),
+            )
+            .unwrap();
+        assert!(
+            connection
+                .proved_judgement(ContextId::from_i64(context.get()), term)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn signed_hol_export_is_policy_gated() {
+        let kernel = Kernel::ephemeral();
+        let mut connection = kernel.open_hol(DenyExport).unwrap();
+        assert!(matches!(
+            kernel.export_hol(&mut connection),
+            Err(crate::HolExportError::Denied(
+                crate::Operation::ExportSignedSnapshot
+            ))
+        ));
     }
 }

@@ -1,7 +1,9 @@
 //! Minimal HOL-omega protocol, beginning with canonical kinds.
 
+mod export;
 mod validate;
 
+pub use export::{HolExportError, HolSnapshotAttestation, SignedHolSnapshot};
 pub use validate::{HolImageCounts, HolImageValidationError, ValidatedHolImage};
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -380,6 +382,8 @@ pub enum Operation {
     ReadContextImplication,
     /// Persist a branded context implication as authoritative connection state.
     PersistContextImplication,
+    /// Serialize and sign the complete persistent HOL database state.
+    ExportSignedSnapshot,
     /// Check and persist one exact structural context union.
     ProveContextUnion,
     /// Load and recheck one exact structural context union.
