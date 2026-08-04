@@ -7,6 +7,9 @@ license.workspace = true
 description = "Transport-neutral REPL orchestration for Covalence kernels"
 publish = false
 
+[package.metadata.glu]
+buck-mapped-srcs = { "Cargo.toml" = "crates/repl/Cargo.toml", "nucleus//crates/nucleus:package_files" = "crates/nucleus" }
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 

@@ -28,6 +28,7 @@ rust_library(
         "wasmtime": "nucleus//buck/cargo/production:wasmtime-46.0.1",
     },
     env = {
+        "CARGO_MANIFEST_DIR": "crates/proton",
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Execution instances for Nucleus",
         "CARGO_PKG_HOMEPAGE": "",
@@ -56,6 +57,7 @@ rust_test(
         "wasmtime": "nucleus//buck/cargo/production:wasmtime-46.0.1",
     },
     env = {
+        "CARGO_MANIFEST_DIR": "crates/proton",
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Execution instances for Nucleus",
         "CARGO_PKG_HOMEPAGE": "",

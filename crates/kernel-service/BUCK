@@ -29,6 +29,7 @@ rust_library(
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
     },
     env = {
+        "CARGO_MANIFEST_DIR": "crates/kernel-service",
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Transport-neutral control-plane contract for Covalence kernels",
         "CARGO_PKG_HOMEPAGE": "",
@@ -58,6 +59,7 @@ rust_test(
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
     },
     env = {
+        "CARGO_MANIFEST_DIR": "crates/kernel-service",
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Transport-neutral control-plane contract for Covalence kernels",
         "CARGO_PKG_HOMEPAGE": "",
