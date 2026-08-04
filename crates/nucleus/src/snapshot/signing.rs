@@ -2,7 +2,7 @@ use std::{error::Error, fmt};
 
 use bytes::Bytes;
 use covalence_lib_crypto::ed25519::{
-    Signature as Ed25519Signature, Signer as _, SigningKey, Verifier as _, VerifyingKey,
+    Signature as Ed25519Signature, Signer as _, SigningKey, VerifyingKey,
 };
 use covalence_lib_error::snafu::Snafu;
 use covalence_lib_hash::O256;
@@ -157,7 +157,7 @@ impl Verifier for Ed25519Verifier {
         let signature = Ed25519Signature::try_from(signature)
             .map_err(|_| VerificationError::MalformedSignature { key })?;
         self.verifying_key
-            .verify(statement.as_ref(), &signature)
+            .verify_strict(statement.as_ref(), &signature)
             .map_err(|_| VerificationError::InvalidSignature { key })
     }
 }
