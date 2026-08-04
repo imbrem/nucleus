@@ -2,8 +2,13 @@
 
 mod connection;
 mod kernel;
+pub mod hol;
 
 pub use connection::Connection;
+pub use hol::{
+    AllowAll, Hol, HolSchema, Kind, KindError, KindId, KindView, MetadataSchemaError, MetadataType,
+    MetadataValue, Operation, Policy,
+};
 pub use kernel::Kernel;
 
 #[path = "repl.rs"]

@@ -26,6 +26,7 @@ _NUCLEUS_PACKAGE_SOURCES = glob(
 _REPOSITORY_SOURCES = glob([
     ".devcontainer/**",
     "buck/**",
+    "docs/**",
     "*.json",
     "*.nix",
     "*.toml",
