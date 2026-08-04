@@ -29,6 +29,8 @@ rust_library(
         "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
         "covalence_neutron": "nucleus//crates/neutron:covalence_neutron",
         "covalence_nucleus": "nucleus//crates/nucleus:covalence_nucleus",
+        "serde": "nucleus//buck/cargo/production:serde-1.0.229",
+        "serde_json": "nucleus//buck/cargo/production:serde_json-1.0.151",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -60,6 +62,8 @@ rust_test(
         "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
         "covalence_neutron": "nucleus//crates/neutron:covalence_neutron",
         "covalence_nucleus": "nucleus//crates/nucleus:covalence_nucleus",
+        "serde": "nucleus//buck/cargo/production:serde-1.0.229",
+        "serde_json": "nucleus//buck/cargo/production:serde_json-1.0.151",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",

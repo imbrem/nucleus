@@ -7,6 +7,7 @@ use std::process::ExitCode;
 use covalence_repl::{
     ConnectionId, ContextId, ExportId, KindId, KindView, LocalRepl, NamespaceExport, NamespaceId,
     O256, Outcome, ProofError, TermId, TermView, TrustedImportId, TypeId, TypeView, Value,
+    compile_hol_schema_json,
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
@@ -99,18 +100,24 @@ fn run_line(repl: &mut LocalRepl, output: &mut impl io::Write, line: &str) -> Re
         return Ok(true);
     }
     if line == ".open" || line.starts_with(".open ") {
-        let mut arguments = line
+        let arguments = line
             .strip_prefix(".open")
             .expect("matched prefix")
-            .split_whitespace();
-        let protocol = arguments.next().unwrap_or("sql");
-        let descriptor = arguments.next();
-        if arguments.next().is_some() || (descriptor.is_some() && protocol != "hol") {
-            return Err("usage: .open [sql|hol [DESCRIPTOR_PATH]]".into());
-        }
-        let id = match descriptor {
-            Some(path) => repl.open_hol_with_descriptor(&fs::read(path)?)?,
-            None => open_connection(repl, protocol)?,
+            .split_whitespace()
+            .collect::<Vec<_>>();
+        let (protocol, id) = match arguments.as_slice() {
+            [] | ["sql"] => ("sql", open_connection(repl, "sql")?),
+            ["hol"] => ("hol", open_connection(repl, "hol")?),
+            ["hol", "--descriptor", path] => {
+                ("hol", repl.open_hol_with_descriptor(&fs::read(path)?)?)
+            }
+            ["hol", "--schema-json", path] => (
+                "hol",
+                repl.open_hol_with_schema_json(&fs::read_to_string(path)?)?,
+            ),
+            _ => {
+                return Err("usage: .open [sql|hol [--descriptor PATH|--schema-json PATH]]".into());
+            }
         };
         writeln!(output, "opened {protocol} connection {id}")?;
         return Ok(true);
@@ -154,6 +161,10 @@ fn run_line(repl: &mut LocalRepl, output: &mut impl io::Write, line: &str) -> Re
         load_image(repl, output, schema, path)?;
         return Ok(true);
     }
+    if let Some(arguments) = line.strip_prefix(".hol-schema ") {
+        compile_hol_schema(output, arguments)?;
+        return Ok(true);
+    }
     if let Some(arguments) = line.strip_prefix(".hol ") {
         run_hol(repl, output, arguments)?;
         return Ok(true);
@@ -175,8 +186,9 @@ fn print_help(output: &mut impl io::Write) -> io::Result<()> {
     )?;
     writeln!(
         output,
-        ".open [sql|hol [DESCRIPTOR_PATH]]  open and select a connection"
+        ".open hol [--descriptor PATH|--schema-json PATH]  open a HOL connection"
     )?;
+    writeln!(output, ".open [sql]         open a raw SQL connection")?;
     writeln!(output, ".use ID            select a connection")?;
     writeln!(output, ".close [ID]        close a connection")?;
     writeln!(output, ".connections       list open connections")?;
@@ -219,7 +231,28 @@ fn print_help(output: &mut impl io::Write) -> io::Result<()> {
         ".hol import inspect ...     read a downloaded trusted export"
     )?;
     writeln!(output, ".hol prove ...     apply an explicit HOL rule")?;
+    writeln!(
+        output,
+        ".hol-schema compile JSON OUT  compile editable schema JSON"
+    )?;
     writeln!(output, ".quit              exit")
+}
+
+fn compile_hol_schema(output: &mut impl io::Write, arguments: &str) -> Result<()> {
+    let mut arguments = arguments.split_whitespace();
+    if arguments.next() != Some("compile") {
+        return Err("usage: .hol-schema compile JSON_PATH DESCRIPTOR_PATH".into());
+    }
+    let json_path = arguments.next().ok_or("missing schema JSON path")?;
+    let descriptor_path = arguments.next().ok_or("missing descriptor path")?;
+    if arguments.next().is_some() {
+        return Err("usage: .hol-schema compile JSON_PATH DESCRIPTOR_PATH".into());
+    }
+    let descriptor = compile_hol_schema_json(&fs::read_to_string(json_path)?)?;
+    fs::write(descriptor_path, descriptor.encode())?;
+    writeln!(output, "descriptor {descriptor_path}")?;
+    writeln!(output, "schema {}", descriptor.schema_id())?;
+    Ok(())
 }
 
 fn run_hol(repl: &mut LocalRepl, output: &mut impl io::Write, arguments: &str) -> Result<()> {
@@ -1327,9 +1360,19 @@ mod tests {
             "nucleus-hol-export-{}.sqlite",
             NEXT_FILE.fetch_add(1, Ordering::Relaxed)
         ));
+        let json_path = path.with_extension("schema.json");
+        let compiled_path = path.with_extension("compiled.hol-schema");
+        fs::write(
+            &json_path,
+            r#"{"version":1,"columns":[{"table":"node","name":"origin","storage":"text"}],"indexes":[{"table":"node","name":"by_origin","columns":["origin"]}]}"#,
+        )
+        .unwrap();
         let descriptor_path = format!("{}.hol-schema", path.display());
         let script = format!(
-            ".open hol\n.hol star\n.hol namespace create 0 demo\n.hol namespace show 1\n.hol export bind 1 7 kind 1 star\n.hol export show 1 7\n.hol export resolve 1 star\n.hol snapshot export {}\n.open hol {}\n.quit\n",
+            ".hol-schema compile {} {}\n.open hol --schema-json {}\n.hol star\n.hol namespace create 0 demo\n.hol namespace show 1\n.hol export bind 1 7 kind 1 star\n.hol export show 1 7\n.hol export resolve 1 star\n.hol snapshot export {}\n.open hol --descriptor {}\n.quit\n",
+            json_path.display(),
+            compiled_path.display(),
+            json_path.display(),
             path.display(),
             descriptor_path
         );
@@ -1339,8 +1382,11 @@ mod tests {
         run_repl(&mut input, &mut output, &mut errors, false).expect("run REPL");
         let bytes = fs::read(&path).expect("read signed snapshot");
         let descriptor = fs::read(&descriptor_path).expect("read schema descriptor");
+        let compiled = fs::read(&compiled_path).expect("read compiled descriptor");
         fs::remove_file(path).expect("remove signed snapshot");
         fs::remove_file(descriptor_path).expect("remove schema descriptor");
+        fs::remove_file(json_path).expect("remove schema JSON");
+        fs::remove_file(compiled_path).expect("remove compiled descriptor");
 
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("namespace 1 defined\n"));
@@ -1351,6 +1397,7 @@ mod tests {
         assert!(output.contains("public-key "));
         assert!(output.contains("signature "));
         assert!(bytes.starts_with(b"SQLite format 3"));
+        assert_eq!(compiled, descriptor);
         covalence_repl::HolSchemaDescriptor::decode(&descriptor).unwrap();
         assert!(errors.is_empty(), "{}", String::from_utf8(errors).unwrap());
     }

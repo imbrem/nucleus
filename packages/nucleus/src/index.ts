@@ -60,6 +60,43 @@ export interface SignedHolSnapshot extends SignedHolAttestation {
   descriptor: Uint8Array;
 }
 
+export type HolMetadataTable =
+  | "node"
+  | "context"
+  | "context_member"
+  | "judgement"
+  | "context_implication"
+  | "context_union"
+  | "namespace"
+  | "namespace_export"
+  | "import"
+  | "trusted_import";
+
+export type HolMetadataStorage = "integer" | "real" | "text" | "blob" | "any";
+
+export interface HolMetadataColumn {
+  table: HolMetadataTable;
+  name: string;
+  storage: HolMetadataStorage;
+}
+
+export interface HolMetadataIndex {
+  table: HolMetadataTable;
+  name: string;
+  columns: string[];
+  unique?: boolean;
+}
+
+export interface HolSchemaSpecV1 {
+  version: 1;
+  columns?: HolMetadataColumn[];
+  indexes?: HolMetadataIndex[];
+}
+
+export type HolSchemaSource =
+  | { kind: "descriptor"; descriptor: Uint8Array }
+  | { kind: "schema"; schema: HolSchemaSpecV1 };
+
 export interface TrustedHolImport {
   importId: number;
   trustedImportId: number;
@@ -202,13 +239,15 @@ export interface BrowserHolConnection {
 
 export interface BrowserRepl {
   open(): Promise<BrowserSqlConnection>;
-  openHol(descriptor?: Uint8Array): Promise<BrowserHolConnection>;
+  openHol(source?: HolSchemaSource): Promise<BrowserHolConnection>;
+  compileHolSchema(schema: HolSchemaSpecV1): Promise<Uint8Array>;
   close(): void;
 }
 
 type RequestBody =
   | { operation: "open" }
-  | { operation: "openHol"; descriptor?: Uint8Array }
+  | { operation: "openHol"; source?: HolSchemaSource }
+  | { operation: "compileHolSchema"; schema: HolSchemaSpecV1 }
   | { operation: "close"; connection: number }
   | { operation: "run"; connection: number; sql: string }
   | { operation: "putImage"; connection: number; bytes: Uint8Array }
@@ -429,13 +468,36 @@ class WorkerRepl implements BrowserRepl {
     return new WorkerConnection(this, id);
   }
 
-  async openHol(descriptor?: Uint8Array): Promise<BrowserHolConnection> {
-    const transferred = descriptor?.slice();
+  async openHol(source?: HolSchemaSource): Promise<BrowserHolConnection> {
+    if (
+      source !== undefined &&
+      !(
+        (source.kind === "descriptor" &&
+          source.descriptor instanceof Uint8Array &&
+          !("schema" in source)) ||
+        (source.kind === "schema" &&
+          typeof source.schema === "object" &&
+          source.schema !== null &&
+          !("descriptor" in source))
+      )
+    ) {
+      throw new TypeError("invalid or ambiguous HOL schema source");
+    }
+    const transferred =
+      source?.kind === "descriptor" ? source.descriptor.slice() : undefined;
+    const requestSource =
+      source?.kind === "descriptor"
+        ? { kind: "descriptor" as const, descriptor: transferred! }
+        : source;
     const id = await this.request<number>(
-      { operation: "openHol", descriptor: transferred },
+      { operation: "openHol", source: requestSource },
       transferred === undefined ? [] : [transferred.buffer],
     );
     return new WorkerHolConnection(this, id);
+  }
+
+  compileHolSchema(schema: HolSchemaSpecV1): Promise<Uint8Array> {
+    return this.request({ operation: "compileHolSchema", schema });
   }
 
   close(): void {
