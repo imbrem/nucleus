@@ -167,6 +167,7 @@ fn inspect_import(reader: &mut ImportedHolReader<'_, '_, AllowAll>) -> Result<()
 
     let conclusion_shape = summarize(reader, conclusion)?;
     assert!(conclusion_shape.equalities >= 2);
+    assert_eq!(conclusion_shape.epsilons, 0);
     assert_eq!(
         conclusion_shape.symbols,
         HashSet::from([ZERO_SYMBOL, SUCCESSOR_SYMBOL])
@@ -179,6 +180,7 @@ fn inspect_import(reader: &mut ImportedHolReader<'_, '_, AllowAll>) -> Result<()
     let h0_shape = summarize(reader, h0)?;
     assert!(h0_shape.lambdas >= 3);
     assert!(h0_shape.equalities >= 4);
+    assert_eq!(h0_shape.epsilons, 0);
     assert_eq!(
         h0_shape.symbols,
         HashSet::from([ZERO_SYMBOL, SUCCESSOR_SYMBOL])
@@ -186,6 +188,7 @@ fn inspect_import(reader: &mut ImportedHolReader<'_, '_, AllowAll>) -> Result<()
     let hinj_shape = summarize(reader, hinj)?;
     assert!(hinj_shape.lambdas >= 5);
     assert!(hinj_shape.equalities >= 5);
+    assert_eq!(hinj_shape.epsilons, 0);
     assert_eq!(hinj_shape.symbols, HashSet::from([SUCCESSOR_SYMBOL]));
     Ok(())
 }
@@ -208,6 +211,7 @@ struct Shape {
     applications: usize,
     bounds: usize,
     equalities: usize,
+    epsilons: usize,
     lambdas: usize,
     symbols: HashSet<i64>,
 }
@@ -242,6 +246,10 @@ fn summarize<'reader>(
                 shape.equalities += 1;
                 visit(reader, left, shape)?;
                 visit(reader, right, shape)?;
+            }
+            ImportedTermView::Epsilon { predicate, .. } => {
+                shape.epsilons += 1;
+                visit(reader, predicate, shape)?;
             }
         }
         Ok(())

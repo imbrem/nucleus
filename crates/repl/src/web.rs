@@ -1705,6 +1705,7 @@ impl WebImportedHolExport {
                 LocalImportedHolTerm::Application { .. } => "application",
                 LocalImportedHolTerm::Lambda { .. } => "lambda",
                 LocalImportedHolTerm::Equality { .. } => "equality",
+                LocalImportedHolTerm::Epsilon { .. } => "epsilon",
             }
             .to_owned()
         })
@@ -1729,6 +1730,7 @@ impl WebImportedHolExport {
             Some(LocalImportedHolTerm::Application { function, .. }) => function,
             Some(LocalImportedHolTerm::Lambda { parameter_type, .. }) => parameter_type,
             Some(LocalImportedHolTerm::Equality { left, .. }) => left,
+            Some(LocalImportedHolTerm::Epsilon { predicate, .. }) => predicate,
             _ => return Err(JsValue::from_str("imported term has no lhs coordinate")),
         };
         u32::try_from(id).map_err(js_error)
@@ -1739,6 +1741,9 @@ impl WebImportedHolExport {
             Some(LocalImportedHolTerm::Application { argument, .. }) => argument,
             Some(LocalImportedHolTerm::Lambda { body, .. }) => body,
             Some(LocalImportedHolTerm::Equality { right, .. }) => right,
+            Some(LocalImportedHolTerm::Epsilon { .. }) => {
+                return Err(JsValue::from_str("epsilon terms have no rhs"));
+            }
             _ => return Err(JsValue::from_str("imported term has no rhs coordinate")),
         };
         u32::try_from(id).map_err(js_error)
@@ -1752,7 +1757,8 @@ impl WebImportedHolExport {
                 | LocalImportedHolTerm::Bound { ty, .. }
                 | LocalImportedHolTerm::Application { ty, .. }
                 | LocalImportedHolTerm::Lambda { ty, .. }
-                | LocalImportedHolTerm::Equality { ty, .. },
+                | LocalImportedHolTerm::Equality { ty, .. }
+                | LocalImportedHolTerm::Epsilon { ty, .. },
             ) => ty,
             _ => {
                 return Err(JsValue::from_str(
@@ -2006,6 +2012,7 @@ impl WebTerm {
             TermView::Application { .. } => "application",
             TermView::Lambda { .. } => "lambda",
             TermView::Equality { .. } => "equality",
+            TermView::Epsilon { .. } => "epsilon",
         }
         .to_owned()
     }
@@ -2106,6 +2113,14 @@ impl WebTerm {
         match self.term {
             TermView::Equality { right, .. } => u32::try_from(right.get()).map_err(js_error),
             _ => Err(JsValue::from_str("term is not an equality")),
+        }
+    }
+
+    /// Returns a Hilbert-choice term's predicate.
+    pub fn predicate(&self) -> Result<u32, JsValue> {
+        match self.term {
+            TermView::Epsilon { predicate } => u32::try_from(predicate.get()).map_err(js_error),
+            _ => Err(JsValue::from_str("term is not Hilbert choice")),
         }
     }
 }

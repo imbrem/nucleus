@@ -1245,6 +1245,9 @@ fn run_hol_term_query<'a>(
                 left.get(),
                 right.get()
             )?,
+            TermView::Epsilon { predicate } => {
+                writeln!(output, "term {} = epsilon {}", term.get(), predicate.get())?;
+            }
         },
         "type" => {
             let ty = repl.hol_mut(connection)?.term_type(term)?;
