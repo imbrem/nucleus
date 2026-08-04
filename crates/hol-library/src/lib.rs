@@ -8,7 +8,7 @@ use std::fmt;
 
 use covalence_nucleus::{
     Connection, ContextError, ContextId, Hol, Policy, ProofError, ProofSession, TermError, TermId,
-    Theorem, TypeError, TypeId,
+    TermInstantiation, Theorem, TypeError, TypeId, TypeInstantiation,
 };
 
 /// Expanded terms shared by the small classical HOL library.
@@ -330,6 +330,138 @@ pub fn prove_infinity_successor_nonzero<P: Policy>(
     })
 }
 
+/// Coordinates produced by the schematic beta-instantiation demonstration.
+///
+/// `alpha` is a free rank-zero schematic type variable, not a first-class universally quantified
+/// type. No opaque polymorphic constant is introduced.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SchematicBetaDemo {
+    /// The shared empty assumption context.
+    pub context: ContextId,
+    /// Free schematic type variable `alpha`.
+    pub alpha: TypeId,
+    /// Primitive Boolean type.
+    pub bool_type: TypeId,
+    /// Function type `alpha -> alpha`.
+    pub alpha_identity_type: TypeId,
+    /// Function type `bool -> bool`.
+    pub bool_identity_type: TypeId,
+    /// Free term `y_alpha : alpha`.
+    pub y_alpha: TermId,
+    /// Identity function `lambda x:alpha. x`.
+    pub identity_alpha: TermId,
+    /// Persisted generic beta conclusion `(lambda x:alpha. x) y_alpha = y_alpha`.
+    pub generic_conclusion: TermId,
+    /// Type-instantiated free term `y_bool : bool`.
+    pub y_bool: TermId,
+    /// Type-instantiated identity function `lambda x:bool. x`.
+    pub identity_bool: TermId,
+    /// Persisted conclusion after `alpha := bool`.
+    pub bool_conclusion: TermId,
+    /// Primitive Boolean truth used for the term instance.
+    pub truth: TermId,
+    /// Persisted conclusion after `y_bool := true`.
+    pub concrete_conclusion: TermId,
+}
+
+/// Proves generic beta, instantiates its schematic type with `bool`, then its free term with true.
+///
+/// This is an above-TCB proof program. It sequences existing checked beta and term-instantiation
+/// operations with Nucleus's checked schematic type-instantiation operation; it adds no rule or
+/// authoritative table.
+///
+/// # Errors
+///
+/// Returns an error if checked syntax construction or any public branded proof operation fails.
+pub fn prove_schematic_beta<P: Policy>(
+    connection: &mut Connection<Hol<P>>,
+    alpha_symbol: i64,
+    y_symbol: i64,
+) -> Result<SchematicBetaDemo, Error> {
+    let context = ContextId::empty();
+    let alpha = connection.insert_free_type(alpha_symbol)?;
+    let bool_type = connection.insert_bool_type()?;
+    let alpha_identity_type = connection.insert_arrow_type(alpha, alpha)?;
+    let bool_identity_type = connection.insert_arrow_type(bool_type, bool_type)?;
+
+    let y_alpha = connection.insert_free_term(y_symbol, alpha)?;
+    let alpha_bound = connection.insert_bound_term(0, alpha)?;
+    let identity_alpha = connection.insert_lambda(alpha, alpha_bound)?;
+    let generic_application = connection.insert_application(identity_alpha, y_alpha)?;
+    let expected_generic = connection.insert_equality(generic_application, y_alpha)?;
+
+    // Pre-interning the expected instances gives the demo stable helper coordinates. The rules
+    // still rebuild and check their outputs independently inside the branded session.
+    let y_bool = connection.insert_free_term(y_symbol, bool_type)?;
+    let bool_bound = connection.insert_bound_term(0, bool_type)?;
+    let identity_bool = connection.insert_lambda(bool_type, bool_bound)?;
+    let bool_application = connection.insert_application(identity_bool, y_bool)?;
+    let expected_bool = connection.insert_equality(bool_application, y_bool)?;
+    let truth = connection.insert_bool_term(true)?;
+    let concrete_application = connection.insert_application(identity_bool, truth)?;
+    let expected_concrete = connection.insert_equality(concrete_application, truth)?;
+
+    let (generic_conclusion, bool_conclusion, concrete_conclusion) = connection
+        .with_proof_session(|mut proof| -> Result<_, ProofError> {
+            let generic = proof.prove_beta(context, identity_alpha, y_alpha)?;
+            proof.persist_theorem(&generic)?;
+            let bool_instance = proof.instantiate_types(
+                &generic,
+                &[TypeInstantiation {
+                    variable: alpha,
+                    replacement: bool_type,
+                }],
+            )?;
+            proof.persist_theorem(&bool_instance)?;
+            let concrete = proof.instantiate_terms(
+                &bool_instance,
+                &[TermInstantiation {
+                    variable: y_bool,
+                    replacement: truth,
+                }],
+            )?;
+            proof.persist_theorem(&concrete)?;
+            Ok((
+                generic.conclusion(),
+                bool_instance.conclusion(),
+                concrete.conclusion(),
+            ))
+        })?;
+
+    // These equalities are consequences of canonical checked interning, not additional proof
+    // authority. Report an implementation mismatch without turning an above-TCB assertion into a
+    // process abort.
+    for (stage, expected, actual) in [
+        ("generic beta", expected_generic, generic_conclusion),
+        ("type instance", expected_bool, bool_conclusion),
+        ("term instance", expected_concrete, concrete_conclusion),
+    ] {
+        if expected != actual {
+            return Err(Error::UnexpectedConclusion {
+                stage,
+                expected,
+                actual,
+            });
+        }
+    }
+
+    Ok(SchematicBetaDemo {
+        context,
+        alpha,
+        bool_type,
+        alpha_identity_type,
+        bool_identity_type,
+        y_alpha,
+        identity_alpha,
+        generic_conclusion,
+        y_bool,
+        identity_bool,
+        bool_conclusion,
+        truth,
+        concrete_conclusion,
+    })
+}
+
 /// Failure in checked library construction or proof replay.
 #[derive(Debug)]
 pub enum Error {
@@ -341,6 +473,15 @@ pub enum Error {
     Context(ContextError),
     /// Public LCF proof replay failed.
     Proof(ProofError),
+    /// A derived proof did not produce its independently constructed canonical endpoint.
+    UnexpectedConclusion {
+        /// Above-TCB construction stage.
+        stage: &'static str,
+        /// Independently interned expected term.
+        expected: TermId,
+        /// Term returned by checked proof replay.
+        actual: TermId,
+    },
 }
 
 impl fmt::Display for Error {
@@ -350,6 +491,16 @@ impl fmt::Display for Error {
             Self::Term(error) => write!(formatter, "HOL term construction failed: {error}"),
             Self::Context(error) => write!(formatter, "HOL context construction failed: {error}"),
             Self::Proof(error) => write!(formatter, "HOL proof replay failed: {error}"),
+            Self::UnexpectedConclusion {
+                stage,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "HOL {stage} produced term {}, expected canonical term {}",
+                actual.get(),
+                expected.get()
+            ),
         }
     }
 }
@@ -361,6 +512,7 @@ impl StdError for Error {
             Self::Term(error) => Some(error),
             Self::Context(error) => Some(error),
             Self::Proof(error) => Some(error),
+            Self::UnexpectedConclusion { .. } => None,
         }
     }
 }
@@ -393,7 +545,7 @@ impl From<ProofError> for Error {
 mod tests {
     use covalence_nucleus::{AllowAll, Connection, TermView, TypeView};
 
-    use super::{Definitions, prove_infinity_successor_nonzero};
+    use super::{Definitions, prove_infinity_successor_nonzero, prove_schematic_beta};
 
     #[test]
     fn expanded_definitions_have_the_promised_shape() {
@@ -507,6 +659,85 @@ mod tests {
                 function,
                 argument
             } if function == demo.successor && argument == demo.zero
+        ));
+    }
+
+    #[test]
+    fn schematic_beta_persists_generic_type_and_term_instances() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let demo = prove_schematic_beta(&mut connection, 700, 701).unwrap();
+
+        assert!(matches!(
+            connection.type_view(demo.alpha).unwrap(),
+            TypeView::Free { symbol: 700 }
+        ));
+        assert!(matches!(
+            connection.type_view(demo.bool_type).unwrap(),
+            TypeView::Bool
+        ));
+        assert!(matches!(
+            connection.type_view(demo.alpha_identity_type).unwrap(),
+            TypeView::Arrow { domain, codomain }
+                if domain == demo.alpha && codomain == demo.alpha
+        ));
+        assert!(matches!(
+            connection.type_view(demo.bool_identity_type).unwrap(),
+            TypeView::Arrow { domain, codomain }
+                if domain == demo.bool_type && codomain == demo.bool_type
+        ));
+
+        for conclusion in [
+            demo.generic_conclusion,
+            demo.bool_conclusion,
+            demo.concrete_conclusion,
+        ] {
+            assert!(
+                connection
+                    .proved_judgement(demo.context, conclusion)
+                    .unwrap()
+            );
+        }
+
+        assert_beta_shape(
+            &mut connection,
+            demo.generic_conclusion,
+            demo.identity_alpha,
+            demo.y_alpha,
+        );
+        assert_beta_shape(
+            &mut connection,
+            demo.bool_conclusion,
+            demo.identity_bool,
+            demo.y_bool,
+        );
+        assert_beta_shape(
+            &mut connection,
+            demo.concrete_conclusion,
+            demo.identity_bool,
+            demo.truth,
+        );
+        assert!(matches!(
+            connection.term(demo.truth).unwrap(),
+            TermView::Bool(true)
+        ));
+    }
+
+    fn assert_beta_shape(
+        connection: &mut Connection<covalence_nucleus::Hol<AllowAll>>,
+        conclusion: covalence_nucleus::TermId,
+        identity: covalence_nucleus::TermId,
+        argument: covalence_nucleus::TermId,
+    ) {
+        let TermView::Equality { left, right } = connection.term(conclusion).unwrap() else {
+            panic!("beta conclusion must be an equality");
+        };
+        assert_eq!(right, argument);
+        assert!(matches!(
+            connection.term(left).unwrap(),
+            TermView::Application {
+                function,
+                argument: actual_argument,
+            } if function == identity && actual_argument == argument
         ));
     }
 }
