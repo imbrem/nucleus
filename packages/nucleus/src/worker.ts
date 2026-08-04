@@ -60,16 +60,42 @@ type Request =
     }
   | {
       id: number;
+      operation: "holBoundTerm";
+      connection: number;
+      index: number;
+      type: number;
+    }
+  | {
+      id: number;
       operation: "holApplication";
       connection: number;
       function: number;
       argument: number;
+    }
+  | {
+      id: number;
+      operation: "holLambda";
+      connection: number;
+      parameterType: number;
+      body: number;
     }
   | { id: number; operation: "holTerm"; connection: number; term: number }
   | { id: number; operation: "holTermType"; connection: number; term: number }
   | {
       id: number;
       operation: "holTermFreeVariables";
+      connection: number;
+      term: number;
+    }
+  | {
+      id: number;
+      operation: "holTermIsLocallyClosed";
+      connection: number;
+      term: number;
+    }
+  | {
+      id: number;
+      operation: "holTermUnboundVariables";
       connection: number;
       term: number;
     }
@@ -218,11 +244,23 @@ async function execute(request: Request): Promise<unknown> {
         request.symbol,
         request.type,
       );
+    case "holBoundTerm":
+      return connection.hol_bound_term(
+        request.connection,
+        request.index,
+        request.type,
+      );
     case "holApplication":
       return connection.hol_application(
         request.connection,
         request.function,
         request.argument,
+      );
+    case "holLambda":
+      return connection.hol_lambda(
+        request.connection,
+        request.parameterType,
+        request.body,
       );
     case "holTerm": {
       const term = connection.hol_term(request.connection, request.term);
@@ -232,11 +270,19 @@ async function execute(request: Request): Promise<unknown> {
             return { kind: "bool", value: term.boolean() };
           case "free":
             return { kind: "free", symbol: term.symbol() };
+          case "bound":
+            return { kind: "bound", index: term.index() };
           case "application":
             return {
               kind: "application",
               function: term.function(),
               argument: term.argument(),
+            };
+          case "lambda":
+            return {
+              kind: "lambda",
+              parameterType: term.parameter_type(),
+              body: term.body(),
             };
           default:
             throw new Error("kernel returned an unknown HOL term tag");
@@ -251,6 +297,21 @@ async function execute(request: Request): Promise<unknown> {
       return Array.from(
         connection.hol_term_free_variables(request.connection, request.term),
       );
+    case "holTermIsLocallyClosed":
+      return connection.hol_term_is_locally_closed(
+        request.connection,
+        request.term,
+      );
+    case "holTermUnboundVariables": {
+      const flattened = Array.from(
+        connection.hol_term_unbound_variables(request.connection, request.term),
+      );
+      const variables = [];
+      for (let index = 0; index < flattened.length; index += 2) {
+        variables.push({ index: flattened[index], type: flattened[index + 1] });
+      }
+      return variables;
+    }
     case "holDefineContext":
       return connection.hol_define_context(
         request.connection,

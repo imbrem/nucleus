@@ -118,6 +118,7 @@
       <button id="hol-rank" type="button">Show rank</button>
       <button id="hol-term-demo" type="button">Build typed application</button>
       <button id="hol-proof-demo" type="button">Prove in context</button>
+      <button id="hol-binding-demo" type="button">Build identity lambda</button>
     </div>
 
     <script type="module">
@@ -368,6 +369,24 @@
             const truth = await hol.proveTruth(0);
             const proved = await hol.proved(context, application);
             output.textContent = `context ${context}; theorem ${context} |- ${theorem}; truth 0 |- ${truth}; proved = ${proved}`;
+          } catch (error) {
+            showError(error);
+          }
+        });
+
+      document
+        .querySelector("#hol-binding-demo")
+        .addEventListener("click", async () => {
+          try {
+            const hol = selectedProtocol("hol");
+            const boolType = await hol.boolType();
+            const variable = await hol.boundTerm(0, boolType);
+            const unbound = await hol.termUnboundVariables(variable);
+            const variableClosed = await hol.termIsLocallyClosed(variable);
+            const identity = await hol.lambda(boolType, variable);
+            const identityType = await hol.termType(identity);
+            const identityClosed = await hol.termIsLocallyClosed(identity);
+            output.textContent = `bound ${variable} unbound=${unbound.map(({ index, type }) => `${index}:${type}`).join(",")} closed=${variableClosed}; lambda ${identity} : ${identityType} closed=${identityClosed}`;
           } catch (error) {
             showError(error);
           }

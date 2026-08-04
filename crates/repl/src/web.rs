@@ -286,6 +286,17 @@ impl WebKernel {
         u32::try_from(id.get()).map_err(js_error)
     }
 
+    /// Canonically interns an explicitly typed de Bruijn occurrence.
+    pub fn hol_bound_term(&mut self, connection: u32, index: u32, ty: u32) -> Result<u32, JsValue> {
+        let id = self
+            .repl
+            .hol_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .insert_bound_term(index, TypeId::from_i64(i64::from(ty)))
+            .map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
     /// Checks and canonically interns a term application.
     ///
     /// # Errors
@@ -305,6 +316,25 @@ impl WebKernel {
             .insert_application(
                 TermId::from_i64(i64::from(function)),
                 TermId::from_i64(i64::from(argument)),
+            )
+            .map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
+    /// Checks and canonically interns a typed term abstraction.
+    pub fn hol_lambda(
+        &mut self,
+        connection: u32,
+        parameter_type: u32,
+        body: u32,
+    ) -> Result<u32, JsValue> {
+        let id = self
+            .repl
+            .hol_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .insert_lambda(
+                TypeId::from_i64(i64::from(parameter_type)),
+                TermId::from_i64(i64::from(body)),
             )
             .map_err(js_error)?;
         u32::try_from(id.get()).map_err(js_error)
@@ -358,6 +388,39 @@ impl WebKernel {
             .into_iter()
             .map(|symbol| u32::try_from(symbol).map_err(js_error))
             .collect()
+    }
+
+    /// Reports whether a term has no external de Bruijn variables.
+    pub fn hol_term_is_locally_closed(
+        &mut self,
+        connection: u32,
+        term: u32,
+    ) -> Result<bool, JsValue> {
+        self.repl
+            .hol_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .term_is_locally_closed(TermId::from_i64(i64::from(term)))
+            .map_err(js_error)
+    }
+
+    /// Returns flattened `(index, type)` pairs for external de Bruijn variables.
+    pub fn hol_term_unbound_variables(
+        &mut self,
+        connection: u32,
+        term: u32,
+    ) -> Result<Vec<u32>, JsValue> {
+        let variables = self
+            .repl
+            .hol_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .term_unbound_variables(TermId::from_i64(i64::from(term)))
+            .map_err(js_error)?;
+        let mut flattened = Vec::with_capacity(variables.len() * 2);
+        for variable in variables {
+            flattened.push(variable.index);
+            flattened.push(u32::try_from(variable.ty.get()).map_err(js_error)?);
+        }
+        Ok(flattened)
     }
 
     /// Defines or finds the immutable context containing exactly `members`.
@@ -528,13 +591,15 @@ impl WebType {
 
 #[wasm_bindgen]
 impl WebTerm {
-    /// Returns `bool`, `free`, or `application`.
+    /// Returns the stable constructor tag.
     #[must_use]
     pub fn tag(&self) -> String {
         match self.term {
             TermView::Bool(_) => "bool",
             TermView::Free { .. } => "free",
+            TermView::Bound { .. } => "bound",
             TermView::Application { .. } => "application",
+            TermView::Lambda { .. } => "lambda",
         }
         .to_owned()
     }
@@ -561,6 +626,14 @@ impl WebTerm {
         match self.term {
             TermView::Free { symbol } => u32::try_from(symbol).map_err(js_error),
             _ => Err(JsValue::from_str("term is not a free symbol")),
+        }
+    }
+
+    /// Returns a bound occurrence's de Bruijn index.
+    pub fn index(&self) -> Result<u32, JsValue> {
+        match self.term {
+            TermView::Bound { index } => Ok(index),
+            _ => Err(JsValue::from_str("term is not a bound occurrence")),
         }
     }
 
@@ -591,6 +664,24 @@ impl WebTerm {
                 u32::try_from(argument.get()).map_err(js_error)
             }
             _ => Err(JsValue::from_str("term is not an application")),
+        }
+    }
+
+    /// Returns a lambda's parameter type ID.
+    pub fn parameter_type(&self) -> Result<u32, JsValue> {
+        match self.term {
+            TermView::Lambda { parameter_type, .. } => {
+                u32::try_from(parameter_type.get()).map_err(js_error)
+            }
+            _ => Err(JsValue::from_str("term is not a lambda")),
+        }
+    }
+
+    /// Returns a lambda's body term ID.
+    pub fn body(&self) -> Result<u32, JsValue> {
+        match self.term {
+            TermView::Lambda { body, .. } => u32::try_from(body.get()).map_err(js_error),
+            _ => Err(JsValue::from_str("term is not a lambda")),
         }
     }
 }

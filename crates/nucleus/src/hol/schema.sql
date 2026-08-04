@@ -11,7 +11,23 @@ CREATE TABLE hol_node (
     tag TEXT NOT NULL,
     lhs INTEGER,
     rhs INTEGER,
-    ty INTEGER
+    ty INTEGER,
+    CHECK (
+        (tag = 'KSTAR' AND lhs IS NULL AND rhs IS NULL AND ty IS NULL)
+        OR (tag = 'KARR' AND lhs IS NOT NULL AND rhs IS NOT NULL AND ty IS NULL)
+        OR (tag = 'TBOOL' AND lhs IS NULL AND rhs IS NULL AND ty = 1)
+        OR (tag = 'TARR' AND lhs IS NOT NULL AND rhs IS NOT NULL AND ty = 1)
+        OR (tag = 'MBOOL' AND lhs IN (0, 1) AND rhs IS NULL AND ty = 2)
+        OR (tag = 'MFV' AND lhs IS NOT NULL AND rhs IS NULL AND ty IS NOT NULL)
+        OR (
+            tag = 'MBV'
+            AND lhs BETWEEN 0 AND 4294967295
+            AND rhs IS NULL
+            AND ty IS NOT NULL
+        )
+        OR (tag = 'MAPP' AND lhs IS NOT NULL AND rhs IS NOT NULL AND ty IS NOT NULL)
+        OR (tag = 'MLAM' AND lhs IS NOT NULL AND rhs IS NOT NULL AND ty IS NOT NULL)
+    )
 ) STRICT;
 
 CREATE TABLE hol_context (
@@ -49,8 +65,14 @@ CREATE UNIQUE INDEX hol_mbool_unique
 CREATE UNIQUE INDEX hol_mfv_unique
     ON hol_node(lhs, ty) WHERE tag = 'MFV';
 
+CREATE UNIQUE INDEX hol_mbv_unique
+    ON hol_node(lhs, ty) WHERE tag = 'MBV';
+
 CREATE UNIQUE INDEX hol_mapp_unique
     ON hol_node(lhs, rhs) WHERE tag = 'MAPP';
+
+CREATE UNIQUE INDEX hol_mlam_unique
+    ON hol_node(lhs, rhs) WHERE tag = 'MLAM';
 
 INSERT INTO hol_schema(version, representation) VALUES (0, 'tagged-node');
 INSERT INTO hol_node(node_id, tag) VALUES (1, 'KSTAR');

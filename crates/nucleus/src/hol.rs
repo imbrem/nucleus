@@ -1,6 +1,6 @@
 //! Minimal HOL-omega protocol, beginning with canonical kinds.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error as StdError;
 use std::fmt;
 use std::marker::PhantomData;
@@ -115,7 +115,16 @@ impl TermId {
     }
 }
 
-/// One admitted term in the settled closed Boolean/application fragment.
+/// One external de Bruijn variable required to type an open term.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UnboundVariable {
+    /// Root-relative external index.
+    pub index: u32,
+    /// Type required for that index.
+    pub ty: TypeId,
+}
+
+/// One admitted term in the settled simply typed binding fragment.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TermView {
     /// A primitive Boolean literal.
@@ -125,12 +134,24 @@ pub enum TermView {
         /// Connection-local symbol identity.
         symbol: i64,
     },
+    /// A de Bruijn occurrence, annotated with its admitted type.
+    Bound {
+        /// Zero-based distance to its binder.
+        index: u32,
+    },
     /// A well-typed application.
     Application {
         /// Function term.
         function: TermId,
         /// Argument term.
         argument: TermId,
+    },
+    /// A typed term abstraction.
+    Lambda {
+        /// Type of the newly bound variable.
+        parameter_type: TypeId,
+        /// Body, which may be open before this binder is applied.
+        body: TermId,
     },
 }
 
@@ -792,6 +813,25 @@ impl<P: Policy> Connection<Hol<P>> {
         Ok(id)
     }
 
+    /// Canonically interns an explicitly typed de Bruijn occurrence.
+    ///
+    /// The resulting term may be locally open. A later lambda validates the
+    /// type of every occurrence it captures.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies admission, the type is invalid, or
+    /// `SQLite` rejects the transaction.
+    pub fn insert_bound_term(&mut self, index: u32, ty: TypeId) -> Result<TermId, TermError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_term(&mut hol.policy, Operation::InsertTerm)?;
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        read_type(&transaction, ty)?;
+        let id = intern_bound_term(&transaction, index, ty)?;
+        transaction.commit()?;
+        Ok(id)
+    }
+
     /// Checks and canonically interns a term application.
     ///
     /// # Errors
@@ -807,8 +847,10 @@ impl<P: Policy> Connection<Hol<P>> {
         let (neutron, hol) = self.parts_mut();
         authorize_term(&mut hol.policy, Operation::InsertTerm)?;
         let transaction = neutron.sqlite().unchecked_transaction()?;
-        let (_, function_type) = read_term(&transaction, function)?;
-        let (_, argument_type) = read_term(&transaction, argument)?;
+        let function_validation = validate_term(&transaction, function)?;
+        let argument_validation = validate_term(&transaction, argument)?;
+        let function_type = function_validation.ty;
+        let argument_type = argument_validation.ty;
         let TypeView::Arrow { domain, codomain } = read_type(&transaction, function_type)? else {
             return Err(TermError::NotFunction(function_type));
         };
@@ -819,6 +861,36 @@ impl<P: Policy> Connection<Hol<P>> {
             });
         }
         let id = intern_application(&transaction, function, argument, codomain)?;
+        validate_term(&transaction, id)?;
+        transaction.commit()?;
+        Ok(id)
+    }
+
+    /// Checks and canonically interns a typed term abstraction.
+    ///
+    /// Every de Bruijn occurrence captured by the new binder must carry the
+    /// binder's type annotation. Occurrences referring outside the new lambda
+    /// remain open and can be captured by a surrounding lambda.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies admission, either child is invalid,
+    /// a captured occurrence has the wrong type, or `SQLite` rejects the
+    /// transaction.
+    pub fn insert_lambda(
+        &mut self,
+        parameter_type: TypeId,
+        body: TermId,
+    ) -> Result<TermId, TermError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_term(&mut hol.policy, Operation::InsertTerm)?;
+        authorize_type(&mut hol.policy, Operation::InsertType).map_err(TermError::Type)?;
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        read_type(&transaction, parameter_type)?;
+        let body_type = validate_term(&transaction, body)?.ty;
+        let function_type = intern_type_arrow(&transaction, parameter_type, body_type)?;
+        let id = intern_lambda(&transaction, parameter_type, body, function_type)?;
+        validate_term(&transaction, id)?;
         transaction.commit()?;
         Ok(id)
     }
@@ -861,33 +933,31 @@ impl<P: Policy> Connection<Hol<P>> {
 
     /// Reports whether a term is locally closed.
     ///
-    /// All admitted terms in this first fragment are closed: free symbols are
-    /// not de Bruijn occurrences, and bound-variable constructors are not yet
-    /// admitted.
-    ///
     /// # Errors
     ///
     /// Returns an error if policy denies the read or the term is invalid.
     pub fn term_is_locally_closed(&mut self, id: TermId) -> Result<bool, TermError> {
         let (neutron, hol) = self.parts_mut();
         authorize_term(&mut hol.policy, Operation::ReadTerm)?;
-        read_term(neutron.sqlite(), id)?;
-        Ok(true)
+        Ok(validate_term(neutron.sqlite(), id)?.boundary.is_empty())
     }
 
     /// Returns unbound de Bruijn variables reachable from this term.
     ///
-    /// The initial closed fragment cannot admit any, so a valid term always
-    /// returns an empty vector.
-    ///
     /// # Errors
     ///
     /// Returns an error if policy denies the read or the term is invalid.
-    pub fn term_unbound_variables(&mut self, id: TermId) -> Result<Vec<u32>, TermError> {
+    pub fn term_unbound_variables(
+        &mut self,
+        id: TermId,
+    ) -> Result<Vec<UnboundVariable>, TermError> {
         let (neutron, hol) = self.parts_mut();
         authorize_term(&mut hol.policy, Operation::ReadTerm)?;
-        read_term(neutron.sqlite(), id)?;
-        Ok(Vec::new())
+        Ok(validate_term(neutron.sqlite(), id)?
+            .boundary
+            .into_iter()
+            .map(|(index, ty)| UnboundVariable { index, ty })
+            .collect())
     }
 
     /// Defines an immutable finite set of closed Boolean assumptions.
@@ -910,9 +980,15 @@ impl<P: Policy> Connection<Hol<P>> {
         members.dedup();
         let transaction = neutron.sqlite().unchecked_transaction()?;
         for member in &members {
-            let (_, ty) = read_term(&transaction, *member)?;
-            if ty != BOOL_TYPE_ID {
-                return Err(ContextError::NonBooleanMember { term: *member, ty });
+            let validation = validate_term(&transaction, *member)?;
+            if validation.ty != BOOL_TYPE_ID {
+                return Err(ContextError::NonBooleanMember {
+                    term: *member,
+                    ty: validation.ty,
+                });
+            }
+            if !validation.boundary.is_empty() {
+                return Err(ContextError::OpenMember(*member));
             }
         }
         if let Some(context) = find_context(&transaction, &members)? {
@@ -1499,6 +1575,30 @@ fn intern_free_term(
     Ok(TermId(connection.last_insert_rowid()))
 }
 
+fn intern_bound_term(
+    connection: &sqlite::Connection,
+    index: u32,
+    ty: TypeId,
+) -> Result<TermId, TermError> {
+    let index = i64::from(index);
+    if let Some(id) = connection
+        .query_row(
+            "SELECT node_id FROM hol_node
+             WHERE tag = 'MBV' AND lhs = ?1 AND rhs IS NULL AND ty = ?2",
+            [index, ty.0],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+    {
+        return Ok(TermId(id));
+    }
+    connection.execute(
+        "INSERT INTO hol_node(tag, lhs, ty) VALUES ('MBV', ?1, ?2)",
+        [index, ty.0],
+    )?;
+    Ok(TermId(connection.last_insert_rowid()))
+}
+
 fn intern_application(
     connection: &sqlite::Connection,
     function: TermId,
@@ -1523,7 +1623,34 @@ fn intern_application(
     Ok(TermId(connection.last_insert_rowid()))
 }
 
-fn read_term(connection: &sqlite::Connection, id: TermId) -> Result<(TermView, TypeId), TermError> {
+fn intern_lambda(
+    connection: &sqlite::Connection,
+    parameter_type: TypeId,
+    body: TermId,
+    ty: TypeId,
+) -> Result<TermId, TermError> {
+    if let Some(id) = connection
+        .query_row(
+            "SELECT node_id FROM hol_node
+             WHERE tag = 'MLAM' AND lhs = ?1 AND rhs = ?2 AND ty = ?3",
+            (parameter_type.0, body.0, ty.0),
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+    {
+        return Ok(TermId(id));
+    }
+    connection.execute(
+        "INSERT INTO hol_node(tag, lhs, rhs, ty) VALUES ('MLAM', ?1, ?2, ?3)",
+        (parameter_type.0, body.0, ty.0),
+    )?;
+    Ok(TermId(connection.last_insert_rowid()))
+}
+
+fn read_term_node(
+    connection: &sqlite::Connection,
+    id: TermId,
+) -> Result<(TermView, TypeId), TermError> {
     let row = connection
         .query_row(
             "SELECT tag, lhs, rhs, ty FROM hol_node WHERE node_id = ?1",
@@ -1546,10 +1673,27 @@ fn read_term(connection: &sqlite::Connection, id: TermId) -> Result<(TermView, T
         (tag, Some(symbol), None, Some(ty)) if tag == "MFV" => {
             (TermView::Free { symbol }, TypeId(ty))
         }
+        (tag, Some(index), None, Some(ty))
+            if tag == "MBV" && (0..=i64::from(u32::MAX)).contains(&index) =>
+        {
+            (
+                TermView::Bound {
+                    index: u32::try_from(index).map_err(|_| TermError::CorruptTerm(id))?,
+                },
+                TypeId(ty),
+            )
+        }
         (tag, Some(function), Some(argument), Some(ty)) if tag == "MAPP" => (
             TermView::Application {
                 function: TermId(function),
                 argument: TermId(argument),
+            },
+            TypeId(ty),
+        ),
+        (tag, Some(parameter_type), Some(body), Some(ty)) if tag == "MLAM" => (
+            TermView::Lambda {
+                parameter_type: TypeId(parameter_type),
+                body: TermId(body),
             },
             TypeId(ty),
         ),
@@ -1562,6 +1706,111 @@ fn read_term(connection: &sqlite::Connection, id: TermId) -> Result<(TermView, T
     Ok((term, ty))
 }
 
+#[derive(Clone)]
+struct ValidatedTerm {
+    view: TermView,
+    ty: TypeId,
+    boundary: BTreeMap<u32, TypeId>,
+}
+
+fn read_term(connection: &sqlite::Connection, id: TermId) -> Result<(TermView, TypeId), TermError> {
+    let validated = validate_term(connection, id)?;
+    Ok((validated.view, validated.ty))
+}
+
+fn validate_term(connection: &sqlite::Connection, id: TermId) -> Result<ValidatedTerm, TermError> {
+    validate_term_inner(connection, id, &mut HashSet::new(), &mut HashMap::new())
+}
+
+fn validate_term_inner(
+    connection: &sqlite::Connection,
+    id: TermId,
+    active: &mut HashSet<TermId>,
+    memo: &mut HashMap<TermId, ValidatedTerm>,
+) -> Result<ValidatedTerm, TermError> {
+    if let Some(validated) = memo.get(&id) {
+        return Ok(validated.clone());
+    }
+    if !active.insert(id) {
+        return Err(TermError::CyclicTerm(id));
+    }
+    let (view, ty) = read_term_node(connection, id)?;
+    let boundary = match view {
+        TermView::Bool(_) | TermView::Free { .. } => BTreeMap::new(),
+        TermView::Bound { index } => BTreeMap::from([(index, ty)]),
+        TermView::Application { function, argument } => {
+            let function = validate_term_inner(connection, function, active, memo)?;
+            let argument = validate_term_inner(connection, argument, active, memo)?;
+            let TypeView::Arrow { domain, codomain } = read_type(connection, function.ty)? else {
+                return Err(TermError::NotFunction(function.ty));
+            };
+            if domain != argument.ty {
+                return Err(TermError::ApplicationTypeMismatch {
+                    expected: domain,
+                    actual: argument.ty,
+                });
+            }
+            if codomain != ty {
+                return Err(TermError::CorruptTerm(id));
+            }
+            merge_term_boundaries(function.boundary, argument.boundary)?
+        }
+        TermView::Lambda {
+            parameter_type,
+            body,
+        } => {
+            read_type(connection, parameter_type)?;
+            let body = validate_term_inner(connection, body, active, memo)?;
+            match read_type(connection, ty)? {
+                TypeView::Arrow { domain, codomain }
+                    if domain == parameter_type && codomain == body.ty => {}
+                _ => return Err(TermError::CorruptTerm(id)),
+            }
+            close_term_boundary(body.boundary, parameter_type)?
+        }
+    };
+    active.remove(&id);
+    let validated = ValidatedTerm { view, ty, boundary };
+    memo.insert(id, validated.clone());
+    Ok(validated)
+}
+
+fn merge_term_boundaries(
+    mut left: BTreeMap<u32, TypeId>,
+    right: BTreeMap<u32, TypeId>,
+) -> Result<BTreeMap<u32, TypeId>, TermError> {
+    for (index, ty) in right {
+        if let Some(first) = left.insert(index, ty)
+            && first != ty
+        {
+            return Err(TermError::InconsistentUnboundVariable {
+                index,
+                first,
+                second: ty,
+            });
+        }
+    }
+    Ok(left)
+}
+
+fn close_term_boundary(
+    mut body: BTreeMap<u32, TypeId>,
+    binder: TypeId,
+) -> Result<BTreeMap<u32, TypeId>, TermError> {
+    if let Some(actual) = body.remove(&0)
+        && actual != binder
+    {
+        return Err(TermError::BoundVariableTypeMismatch {
+            expected: binder,
+            actual,
+        });
+    }
+    Ok(body
+        .into_iter()
+        .map(|(index, ty)| (index - 1, ty))
+        .collect())
+}
+
 fn free_term_symbols(connection: &sqlite::Connection, root: TermId) -> Result<Vec<i64>, TermError> {
     let mut statement = connection.prepare(
         "WITH RECURSIVE
@@ -1569,6 +1818,8 @@ fn free_term_symbols(connection: &sqlite::Connection, root: TermId) -> Result<Ve
              SELECT node_id, lhs FROM hol_node WHERE tag = 'MAPP'
              UNION ALL
              SELECT node_id, rhs FROM hol_node WHERE tag = 'MAPP'
+             UNION ALL
+             SELECT node_id, rhs FROM hol_node WHERE tag = 'MLAM'
          ),
          reachable(node_id) AS (
              SELECT ?1
@@ -1849,6 +2100,24 @@ pub enum TermError {
         /// Actual argument type.
         actual: TypeId,
     },
+    /// One external de Bruijn index has incompatible type annotations.
+    InconsistentUnboundVariable {
+        /// External index.
+        index: u32,
+        /// First observed type.
+        first: TypeId,
+        /// Conflicting type.
+        second: TypeId,
+    },
+    /// A lambda captures an occurrence annotated with a different type.
+    BoundVariableTypeMismatch {
+        /// Binder type.
+        expected: TypeId,
+        /// Captured occurrence type.
+        actual: TypeId,
+    },
+    /// The term graph contains a cycle.
+    CyclicTerm(TermId),
     /// A referenced type is invalid.
     Type(TypeError),
     /// `SQLite` rejected an operation.
@@ -1868,6 +2137,23 @@ impl fmt::Display for TermError {
                 expected.get(),
                 actual.get()
             ),
+            Self::InconsistentUnboundVariable {
+                index,
+                first,
+                second,
+            } => write!(
+                formatter,
+                "unbound index {index} has incompatible types {} and {}",
+                first.get(),
+                second.get()
+            ),
+            Self::BoundVariableTypeMismatch { expected, actual } => write!(
+                formatter,
+                "lambda binder has type {}, but captured occurrence has type {}",
+                expected.get(),
+                actual.get()
+            ),
+            Self::CyclicTerm(id) => write!(formatter, "term {} contains a cycle", id.get()),
             Self::Type(error) => error.fmt(formatter),
             Self::Sqlite(error) => error.fmt(formatter),
         }
@@ -1883,7 +2169,10 @@ impl StdError for TermError {
             | Self::UnknownTerm(_)
             | Self::CorruptTerm(_)
             | Self::NotFunction(_)
-            | Self::ApplicationTypeMismatch { .. } => None,
+            | Self::ApplicationTypeMismatch { .. }
+            | Self::InconsistentUnboundVariable { .. }
+            | Self::BoundVariableTypeMismatch { .. }
+            | Self::CyclicTerm(_) => None,
         }
     }
 }
@@ -1914,6 +2203,8 @@ pub enum ContextError {
         /// Its admitted non-Boolean type.
         ty: TypeId,
     },
+    /// A proposed context member has unbound de Bruijn variables.
+    OpenMember(TermId),
     /// A member term is invalid.
     Term(TermError),
     /// `SQLite` rejected an operation.
@@ -1931,6 +2222,13 @@ impl fmt::Display for ContextError {
                 term.get(),
                 ty.get()
             ),
+            Self::OpenMember(term) => {
+                write!(
+                    formatter,
+                    "context member term {} is not locally closed",
+                    term.get()
+                )
+            }
             Self::Term(error) => error.fmt(formatter),
             Self::Sqlite(error) => error.fmt(formatter),
         }
@@ -1942,7 +2240,10 @@ impl StdError for ContextError {
         match self {
             Self::Term(error) => Some(error),
             Self::Sqlite(error) => Some(error),
-            Self::Denied(_) | Self::UnknownContext(_) | Self::NonBooleanMember { .. } => None,
+            Self::Denied(_)
+            | Self::UnknownContext(_)
+            | Self::NonBooleanMember { .. }
+            | Self::OpenMember(_) => None,
         }
     }
 }
@@ -2283,6 +2584,182 @@ mod tests {
             )
             .unwrap();
         assert_eq!(applications, 0);
+    }
+
+    #[test]
+    fn admits_typed_de_bruijn_variables_and_closed_lambdas() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let variable = connection.insert_bound_term(0, bool_type).unwrap();
+        assert_eq!(
+            connection.term(variable).unwrap(),
+            TermView::Bound { index: 0 }
+        );
+        assert_eq!(
+            connection.term_unbound_variables(variable).unwrap(),
+            [UnboundVariable {
+                index: 0,
+                ty: bool_type
+            }]
+        );
+        assert!(!connection.term_is_locally_closed(variable).unwrap());
+
+        let identity = connection.insert_lambda(bool_type, variable).unwrap();
+        assert_eq!(
+            connection.term(identity).unwrap(),
+            TermView::Lambda {
+                parameter_type: bool_type,
+                body: variable
+            }
+        );
+        let identity_type = connection.term_type(identity).unwrap();
+        assert_eq!(
+            connection.type_view(identity_type).unwrap(),
+            TypeView::Arrow {
+                domain: bool_type,
+                codomain: bool_type
+            }
+        );
+        assert!(connection.term_is_locally_closed(identity).unwrap());
+        assert!(
+            connection
+                .term_unbound_variables(identity)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            identity,
+            connection.insert_lambda(bool_type, variable).unwrap()
+        );
+
+        let outer_variable = connection.insert_bound_term(1, bool_type).unwrap();
+        let inner = connection.insert_lambda(bool_type, outer_variable).unwrap();
+        assert_eq!(
+            connection.term_unbound_variables(inner).unwrap(),
+            [UnboundVariable {
+                index: 0,
+                ty: bool_type
+            }]
+        );
+        let nested = connection.insert_lambda(bool_type, inner).unwrap();
+        assert!(connection.term_is_locally_closed(nested).unwrap());
+    }
+
+    #[test]
+    fn open_application_requires_one_coherent_boundary_environment() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let function_type = connection.insert_arrow_type(bool_type, bool_type).unwrap();
+        let function = connection.insert_bound_term(0, function_type).unwrap();
+        let argument = connection.insert_bound_term(0, bool_type).unwrap();
+
+        assert!(matches!(
+            connection.insert_application(function, argument),
+            Err(TermError::InconsistentUnboundVariable {
+                index: 0,
+                first,
+                second
+            }) if first == function_type && second == bool_type
+        ));
+        let applications = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row(
+                "SELECT count(*) FROM hol_node WHERE tag = 'MAPP'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(applications, 0);
+    }
+
+    #[test]
+    fn lambda_rejects_a_mistyped_capture_atomically() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let function_type = connection.insert_arrow_type(bool_type, bool_type).unwrap();
+        let variable = connection.insert_bound_term(0, bool_type).unwrap();
+
+        assert!(matches!(
+            connection.insert_lambda(function_type, variable),
+            Err(TermError::BoundVariableTypeMismatch { expected, actual })
+                if expected == function_type && actual == bool_type
+        ));
+        let lambdas = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row(
+                "SELECT count(*) FROM hol_node WHERE tag = 'MLAM'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(lambdas, 0);
+    }
+
+    #[test]
+    fn contexts_reject_open_boolean_terms() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let variable = connection.insert_bound_term(0, bool_type).unwrap();
+        assert!(matches!(
+            connection.define_context([variable]),
+            Err(ContextError::OpenMember(term)) if term == variable
+        ));
+    }
+
+    #[test]
+    fn recursive_term_validation_detects_cycles() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let variable = connection.insert_bound_term(0, bool_type).unwrap();
+        let lambda = connection.insert_lambda(bool_type, variable).unwrap();
+        connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .execute(
+                "UPDATE hol_node SET rhs = ?1 WHERE node_id = ?1",
+                [lambda.get()],
+            )
+            .unwrap();
+        assert!(matches!(
+            connection.term(lambda),
+            Err(TermError::CyclicTerm(id)) if id == lambda
+        ));
+    }
+
+    #[test]
+    fn sqlite_rejects_malformed_bound_term_shapes() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let result = connection.parts_mut().0.sqlite().execute(
+            "INSERT INTO hol_node(tag, lhs, ty) VALUES ('MBV', -1, 2)",
+            [],
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn lambda_admission_exposes_both_term_and_derived_type_footprints() {
+        let mut connection = Connection::open_hol_in_memory(RecordingPolicy {
+            allowed: true,
+            operations: Vec::new(),
+        })
+        .unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let variable = connection.insert_bound_term(0, bool_type).unwrap();
+        connection.insert_lambda(bool_type, variable).unwrap();
+        assert_eq!(
+            connection.protocol().policy().operations,
+            [
+                Operation::InsertType,
+                Operation::InsertTerm,
+                Operation::InsertTerm,
+                Operation::InsertType,
+            ]
+        );
     }
 
     #[test]
