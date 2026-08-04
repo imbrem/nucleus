@@ -494,8 +494,13 @@ mod tests {
         assert_eq!(descriptor.encode(), expected);
         assert_eq!(
             descriptor.schema_id().to_string(),
-            "cb5505cd1bad45deec42d065d6cff16ee131056a682c5d93b9b4432dd14ccca7"
+            "11ae67072eb378e902019925a75072fd4deae1b5fee6ed72072906b1bd10d375"
         );
+        // Version six used the identical descriptor bytes with the previous
+        // physical/semantic commitments. Keep its published composite visible.
+        let version_six_composite =
+            "cb5505cd1bad45deec42d065d6cff16ee131056a682c5d93b9b4432dd14ccca7";
+        assert_ne!(descriptor.schema_id().to_string(), version_six_composite);
     }
 
     #[test]

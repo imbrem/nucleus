@@ -1,0 +1,32 @@
+Nucleus hol-common-v2 semantics, version 7
+
+This protocol extends version 6 with rank-zero schematic type variables and the classic HOL
+theorem type-instantiation rule. It is not yet the full HOL-omega calculus: it has no type-bound
+variables, type operators, type abstraction/application, subtypes, or polymorphic constants.
+
+Syntax remains one canonical tagged node graph. TFV(s) is a free schematic type variable of kind
+KSTAR, identified exactly by its connection-local symbol and kind. TFVs are free atoms, not
+de Bruijn occurrences, and are locally closed. TARR may contain TFVs transitively. Every theorem
+judgement is interpreted schematically, universally over all TFVs reachable from its conclusion
+and finite assumption context; every assigned carrier is nonempty. An MFV identity includes its
+exact type, so distinct free terms may become identical after type instantiation.
+
+MCONST declarations remain monomorphic. Their declared types must contain no TFV transitively,
+and a symbol still has exactly one declared type. This restriction is checked both on declaration
+and detached validation. A future polymorphic-constant protocol must separately define principal
+schemes and checked instances; this version does not treat unrelated (symbol,type) pairs as one
+polymorphic declaration.
+
+Type instantiation replaces a finite set of distinct exact TFV node identities by well-formed
+KSTAR types. It acts simultaneously and non-recursively: replacement types are copied unchanged,
+may themselves contain TFVs, and are not subject to the same substitution. There is no occurs
+check. It transforms the conclusion and every context member, including all term type annotations,
+then canonically rebuilds the finite-set context. Term and type de Bruijn capture cannot occur in
+this version because TFVs are free and the syntax has no type binders. Context members which become
+identical are deduplicated.
+
+All version 6 syntax, choice semantics, rules, namespace/export/import behavior, trust behavior,
+and metadata interpretation otherwise remain unchanged. Current validation, descriptors, signing,
+and authenticated import use only this version 7 interpretation and physical schema version 10.
+Earlier semantic identities remain fixed and distinct; multi-version authenticated import is not
+implemented by this prototype.

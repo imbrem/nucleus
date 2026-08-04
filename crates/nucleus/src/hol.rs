@@ -18,7 +18,7 @@ pub use namespace::{
 };
 pub use reader::{
     ImportedContextId, ImportedExport, ImportedHolReader, ImportedKindId, ImportedReaderError,
-    ImportedTermId, ImportedTermView, ImportedTheorem, ImportedTypeId,
+    ImportedTermId, ImportedTermView, ImportedTheorem, ImportedTypeId, ImportedTypeView,
 };
 pub use schema_descriptor::{HolSchemaDescriptor, HolSchemaDescriptorError};
 pub use trust::{
@@ -31,7 +31,8 @@ pub use validate::{
     stlc_bool_eq_v1_semantics, stlc_bool_eq_v2_schema_id, stlc_bool_eq_v2_semantics,
     stlc_bool_eq_v3_schema_id, stlc_bool_eq_v3_semantics, stlc_bool_eq_v4_schema_id,
     stlc_bool_eq_v4_semantics, stlc_bool_eq_v5_schema_id, stlc_bool_eq_v5_semantics,
-    stlc_bool_eq_v6_schema_id, stlc_bool_eq_v6_semantics,
+    stlc_bool_eq_v6_schema_id, stlc_bool_eq_v6_semantics, stlc_bool_eq_v7_schema_id,
+    stlc_bool_eq_v7_semantics,
 };
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -117,7 +118,7 @@ impl TypeId {
     }
 }
 
-/// One admitted type in the settled monomorphic fragment.
+/// One admitted type in the settled rank-zero schematic fragment.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TypeView {
     /// The primitive Boolean type.
@@ -125,6 +126,11 @@ pub enum TypeView {
     /// An opaque, connection-local base-type declaration.
     Base {
         /// Declaration symbol interpreted by the surrounding signature.
+        symbol: i64,
+    },
+    /// A free rank-zero schematic type variable.
+    Free {
+        /// Connection-local symbol identity.
         symbol: i64,
     },
     /// A function type.
@@ -164,6 +170,15 @@ pub struct TermInstantiation {
     pub variable: TermId,
     /// Locally closed, same-typed replacement term.
     pub replacement: TermId,
+}
+
+/// One exact free-type-variable replacement for simultaneous theorem instantiation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TypeInstantiation {
+    /// Exact admitted `TFV` node to replace.
+    pub variable: TypeId,
+    /// Well-formed star-kinded replacement, copied without recursive substitution.
+    pub replacement: TypeId,
 }
 
 /// One external de Bruijn variable required to type an open term.
@@ -313,6 +328,7 @@ enum TheoremOrigin {
     EqualitySubstitution,
     DeductionAntisymmetry,
     TermInstantiation,
+    TypeInstantiation,
     Abstraction,
     Choice,
     ConversionEquality,
@@ -331,6 +347,7 @@ impl TheoremOrigin {
             Self::EqualitySubstitution => "equality_substitution",
             Self::DeductionAntisymmetry => "deduction_antisymmetry",
             Self::TermInstantiation => "term_instantiation",
+            Self::TypeInstantiation => "type_instantiation",
             Self::Abstraction => "abstraction",
             Self::Choice => "choice",
             Self::ConversionEquality => "conversion_equality",
@@ -516,6 +533,8 @@ pub enum Operation {
     ProveDeductionAntisymmetry,
     /// Simultaneously instantiate exact free variables throughout a theorem.
     ProveTermInstantiation,
+    /// Simultaneously instantiate exact free type variables throughout a theorem.
+    ProveTypeInstantiation,
     /// Abstract one exact free variable from both sides of a proved equality.
     ProveAbstraction,
     /// Select a witness for one proved inhabited predicate.
@@ -560,6 +579,8 @@ pub enum Operation {
     OpenTrustedImportReader,
     /// Read namespace/export structure from a scoped imported image.
     ReadImportedImageNamespace,
+    /// Read type structure from a scoped imported image.
+    ReadImportedImageType,
     /// Read term structure from a scoped imported image.
     ReadImportedImageTerm,
     /// Read an exact persisted judgement from a scoped imported image.
@@ -1234,6 +1255,20 @@ impl<P: Policy> Connection<Hol<P>> {
         Ok(id)
     }
 
+    /// Canonically interns a free rank-zero schematic type variable.
+    ///
+    /// This is logical syntax rather than a signature declaration. The variable
+    /// has kind `star` and is locally closed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies type insertion or `SQLite` rejects it.
+    pub fn insert_free_type(&mut self, symbol: i64) -> Result<TypeId, TypeError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_type(&mut hol.policy, Operation::InsertType)?;
+        intern_free_type(neutron.sqlite(), symbol)
+    }
+
     /// Canonically interns a closed function type.
     ///
     /// # Errors
@@ -1282,6 +1317,32 @@ impl<P: Policy> Connection<Hol<P>> {
         Ok(STAR_ID)
     }
 
+    /// Returns exact free-type-variable IDs reachable from a type in ascending order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the read or the type graph is invalid.
+    pub fn type_free_variables(&mut self, id: TypeId) -> Result<Vec<TypeId>, TypeError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_type(&mut hol.policy, Operation::ReadType)?;
+        collect_type_free_variables(neutron.sqlite(), id)
+    }
+
+    /// Reports whether a type is locally closed.
+    ///
+    /// Version seven has no type de Bruijn constructors, so every valid type is
+    /// locally closed. This method still validates the complete graph.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the read or the type graph is invalid.
+    pub fn type_is_locally_closed(&mut self, id: TypeId) -> Result<bool, TypeError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_type(&mut hol.policy, Operation::ReadType)?;
+        validate_type(neutron.sqlite(), id)?;
+        Ok(true)
+    }
+
     /// Canonically interns a Boolean literal term.
     ///
     /// # Errors
@@ -1324,7 +1385,10 @@ impl<P: Policy> Connection<Hol<P>> {
         authorize_term(&mut hol.policy, Operation::DeclareConstant)?;
         authorize_term(&mut hol.policy, Operation::InsertTerm)?;
         let transaction = neutron.sqlite().unchecked_transaction()?;
-        read_type(&transaction, ty)?;
+        validate_type(&transaction, ty)?;
+        if type_contains_free_variable(&transaction, ty)? {
+            return Err(TermError::PolymorphicConstantType { symbol, ty });
+        }
         let id = intern_constant(&transaction, symbol, ty)?;
         transaction.commit()?;
         Ok(id)
@@ -1505,6 +1569,20 @@ impl<P: Policy> Connection<Hol<P>> {
         authorize_term(&mut hol.policy, Operation::ReadTerm)?;
         read_term(neutron.sqlite(), id)?;
         free_term_symbols(neutron.sqlite(), id)
+    }
+
+    /// Returns exact free type variables occurring anywhere in a term graph.
+    ///
+    /// This inspects every reachable term annotation, including lambda parameter
+    /// types and internal types which need not occur in the root result type.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the read or the term/type graph is invalid.
+    pub fn term_free_type_variables(&mut self, id: TermId) -> Result<Vec<TypeId>, TermError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_term(&mut hol.policy, Operation::ReadTerm)?;
+        collect_term_free_type_variables(neutron.sqlite(), id)
     }
 
     /// Reports whether a term is locally closed.
@@ -2691,6 +2769,90 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         })
     }
 
+    /// Simultaneously instantiates exact free type variables throughout a theorem.
+    ///
+    /// Replacements are copied unchanged, so the substitution is simultaneous rather
+    /// than recursively composed. Both the conclusion and every assumption are rebuilt.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies any required insertion/context operation, a
+    /// key is not an exact `TFV`, a key is duplicated, or any source graph is invalid.
+    pub fn instantiate_types(
+        &mut self,
+        theorem: &Theorem<'brand>,
+        instantiations: &[TypeInstantiation],
+    ) -> Result<Theorem<'brand>, ProofError> {
+        let (neutron, hol) = self.connection.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ProveTypeInstantiation)?;
+        authorize_proof(&mut hol.policy, Operation::InsertType)?;
+        authorize_proof(&mut hol.policy, Operation::InsertTerm)?;
+        authorize_context(&mut hol.policy, Operation::DefineContext)?;
+
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        require_context(&transaction, theorem.context)?;
+        let members = read_context_members(&transaction, theorem.context)?;
+        validate_term(&transaction, theorem.conclusion)?;
+        for member in &members {
+            validate_term(&transaction, *member)?;
+        }
+
+        let mut replacements = HashMap::with_capacity(instantiations.len());
+        for instantiation in instantiations {
+            validate_type(&transaction, instantiation.variable).map_err(TermError::Type)?;
+            if !matches!(
+                read_type(&transaction, instantiation.variable).map_err(TermError::Type)?,
+                TypeView::Free { .. }
+            ) {
+                return Err(ProofError::TypeInstantiationKeyNotFree(
+                    instantiation.variable,
+                ));
+            }
+            validate_type(&transaction, instantiation.replacement).map_err(TermError::Type)?;
+            if replacements
+                .insert(instantiation.variable, instantiation.replacement)
+                .is_some()
+            {
+                return Err(ProofError::DuplicateTypeInstantiation(
+                    instantiation.variable,
+                ));
+            }
+        }
+
+        let mut type_memo = HashMap::new();
+        let mut term_memo = HashMap::new();
+        let conclusion = instantiate_term_types_inner(
+            &transaction,
+            theorem.conclusion,
+            &replacements,
+            &mut type_memo,
+            &mut term_memo,
+        )?;
+        let mut transformed_members = members
+            .into_iter()
+            .map(|member| {
+                instantiate_term_types_inner(
+                    &transaction,
+                    member,
+                    &replacements,
+                    &mut type_memo,
+                    &mut term_memo,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        transformed_members.sort_unstable();
+        transformed_members.dedup();
+        validate_term(&transaction, conclusion)?;
+        let context = intern_context(&transaction, &transformed_members)?;
+        transaction.commit()?;
+        Ok(Theorem {
+            context,
+            conclusion,
+            origin: Some(TheoremOrigin::TypeInstantiation),
+            brand: PhantomData,
+        })
+    }
+
     /// Applies the standard HOL abstraction rule to one exact free-variable node.
     ///
     /// From `Γ ⊢ left = right`, this derives `Γ ⊢ (λx. left) = (λx. right)`
@@ -3494,6 +3656,25 @@ fn intern_base_type(connection: &sqlite::Connection, symbol: i64) -> Result<Type
     Ok(TypeId(connection.last_insert_rowid()))
 }
 
+fn intern_free_type(connection: &sqlite::Connection, symbol: i64) -> Result<TypeId, TypeError> {
+    if let Some(id) = connection
+        .query_row(
+            "SELECT node_id FROM hol_node
+             WHERE tag = 'TFV' AND lhs = ?1 AND rhs IS NULL AND ty = ?2",
+            [symbol, STAR_ID.0],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+    {
+        return Ok(TypeId(id));
+    }
+    connection.execute(
+        "INSERT INTO hol_node(tag, lhs, ty) VALUES ('TFV', ?1, ?2)",
+        [symbol, STAR_ID.0],
+    )?;
+    Ok(TypeId(connection.last_insert_rowid()))
+}
+
 fn intern_type_arrow(
     connection: &sqlite::Connection,
     domain: TypeId,
@@ -3538,6 +3719,9 @@ fn read_type(connection: &sqlite::Connection, id: TypeId) -> Result<TypeView, Ty
         (tag, Some(symbol), None, Some(kind)) if tag == "TBASE" && kind == STAR_ID.0 => {
             Ok(TypeView::Base { symbol })
         }
+        (tag, Some(symbol), None, Some(kind)) if tag == "TFV" && kind == STAR_ID.0 => {
+            Ok(TypeView::Free { symbol })
+        }
         (tag, Some(domain), Some(codomain), Some(kind)) if tag == "TARR" && kind == STAR_ID.0 => {
             Ok(TypeView::Arrow {
                 domain: TypeId(domain),
@@ -3546,6 +3730,81 @@ fn read_type(connection: &sqlite::Connection, id: TypeId) -> Result<TypeView, Ty
         }
         _ => Err(TypeError::CorruptType(id)),
     }
+}
+
+fn validate_type(connection: &sqlite::Connection, root: TypeId) -> Result<(), TypeError> {
+    fn walk(
+        connection: &sqlite::Connection,
+        id: TypeId,
+        active: &mut HashSet<TypeId>,
+        complete: &mut HashSet<TypeId>,
+    ) -> Result<(), TypeError> {
+        if complete.contains(&id) {
+            return Ok(());
+        }
+        if !active.insert(id) {
+            return Err(TypeError::CorruptType(id));
+        }
+        if let TypeView::Arrow { domain, codomain } = read_type(connection, id)? {
+            walk(connection, domain, active, complete)?;
+            walk(connection, codomain, active, complete)?;
+        }
+        active.remove(&id);
+        complete.insert(id);
+        Ok(())
+    }
+    walk(connection, root, &mut HashSet::new(), &mut HashSet::new())
+}
+
+fn collect_type_free_variables(
+    connection: &sqlite::Connection,
+    root: TypeId,
+) -> Result<Vec<TypeId>, TypeError> {
+    fn walk(
+        connection: &sqlite::Connection,
+        id: TypeId,
+        active: &mut HashSet<TypeId>,
+        complete: &mut HashSet<TypeId>,
+        variables: &mut HashSet<TypeId>,
+    ) -> Result<(), TypeError> {
+        if complete.contains(&id) {
+            return Ok(());
+        }
+        if !active.insert(id) {
+            return Err(TypeError::CorruptType(id));
+        }
+        match read_type(connection, id)? {
+            TypeView::Free { .. } => {
+                variables.insert(id);
+            }
+            TypeView::Arrow { domain, codomain } => {
+                walk(connection, domain, active, complete, variables)?;
+                walk(connection, codomain, active, complete, variables)?;
+            }
+            TypeView::Bool | TypeView::Base { .. } => {}
+        }
+        active.remove(&id);
+        complete.insert(id);
+        Ok(())
+    }
+    let mut variables = HashSet::new();
+    walk(
+        connection,
+        root,
+        &mut HashSet::new(),
+        &mut HashSet::new(),
+        &mut variables,
+    )?;
+    let mut variables = variables.into_iter().collect::<Vec<_>>();
+    variables.sort_unstable();
+    Ok(variables)
+}
+
+fn type_contains_free_variable(
+    connection: &sqlite::Connection,
+    root: TypeId,
+) -> Result<bool, TypeError> {
+    Ok(!collect_type_free_variables(connection, root)?.is_empty())
 }
 
 fn intern_bool_term(connection: &sqlite::Connection, value: bool) -> Result<TermId, TermError> {
@@ -3807,7 +4066,7 @@ fn read_term_node(
         ),
         _ => return Err(TermError::CorruptTerm(id)),
     };
-    read_type(connection, ty)?;
+    validate_type(connection, ty)?;
     if matches!(term, TermView::Bool(_)) && ty != BOOL_TYPE_ID {
         return Err(TermError::CorruptTerm(id));
     }
@@ -3844,7 +4103,13 @@ fn validate_term_inner(
     }
     let (view, ty) = read_term_node(connection, id)?;
     let boundary = match view {
-        TermView::Bool(_) | TermView::Free { .. } | TermView::Constant { .. } => BTreeMap::new(),
+        TermView::Bool(_) | TermView::Free { .. } => BTreeMap::new(),
+        TermView::Constant { symbol } => {
+            if type_contains_free_variable(connection, ty)? {
+                return Err(TermError::PolymorphicConstantType { symbol, ty });
+            }
+            BTreeMap::new()
+        }
         TermView::Bound { index } => BTreeMap::from([(index, ty)]),
         TermView::Application { function, argument } => {
             let function = validate_term_inner(connection, function, active, memo)?;
@@ -4087,6 +4352,100 @@ fn instantiate_free_terms_inner(
     Ok(result)
 }
 
+fn instantiate_type_inner(
+    connection: &sqlite::Connection,
+    ty: TypeId,
+    replacements: &HashMap<TypeId, TypeId>,
+    memo: &mut HashMap<TypeId, TypeId>,
+) -> Result<TypeId, TypeError> {
+    if let Some(replacement) = replacements.get(&ty) {
+        return Ok(*replacement);
+    }
+    if let Some(result) = memo.get(&ty) {
+        return Ok(*result);
+    }
+    let result = match read_type(connection, ty)? {
+        TypeView::Bool | TypeView::Base { .. } | TypeView::Free { .. } => ty,
+        TypeView::Arrow { domain, codomain } => {
+            let domain = instantiate_type_inner(connection, domain, replacements, memo)?;
+            let codomain = instantiate_type_inner(connection, codomain, replacements, memo)?;
+            intern_type_arrow(connection, domain, codomain)?
+        }
+    };
+    memo.insert(ty, result);
+    Ok(result)
+}
+
+fn instantiate_term_types_inner(
+    connection: &sqlite::Connection,
+    term: TermId,
+    replacements: &HashMap<TypeId, TypeId>,
+    type_memo: &mut HashMap<TypeId, TypeId>,
+    term_memo: &mut HashMap<TermId, TermId>,
+) -> Result<TermId, TermError> {
+    if let Some(result) = term_memo.get(&term) {
+        return Ok(*result);
+    }
+    let (view, ty) = read_term_node(connection, term)?;
+    let transformed_type = instantiate_type_inner(connection, ty, replacements, type_memo)?;
+    let result = match view {
+        TermView::Bool(_) | TermView::Constant { .. } => term,
+        TermView::Free { symbol } => intern_free_term(connection, symbol, transformed_type)?,
+        TermView::Bound { index } => intern_bound_term(connection, index, transformed_type)?,
+        TermView::Application { function, argument } => {
+            let function = instantiate_term_types_inner(
+                connection,
+                function,
+                replacements,
+                type_memo,
+                term_memo,
+            )?;
+            let argument = instantiate_term_types_inner(
+                connection,
+                argument,
+                replacements,
+                type_memo,
+                term_memo,
+            )?;
+            intern_application(connection, function, argument, transformed_type)?
+        }
+        TermView::Lambda {
+            parameter_type,
+            body,
+        } => {
+            let parameter_type =
+                instantiate_type_inner(connection, parameter_type, replacements, type_memo)?;
+            let body =
+                instantiate_term_types_inner(connection, body, replacements, type_memo, term_memo)?;
+            intern_lambda(connection, parameter_type, body, transformed_type)?
+        }
+        TermView::Equality { left, right } => {
+            let left =
+                instantiate_term_types_inner(connection, left, replacements, type_memo, term_memo)?;
+            let right = instantiate_term_types_inner(
+                connection,
+                right,
+                replacements,
+                type_memo,
+                term_memo,
+            )?;
+            intern_equality(connection, left, right)?
+        }
+        TermView::Epsilon { predicate } => {
+            let predicate = instantiate_term_types_inner(
+                connection,
+                predicate,
+                replacements,
+                type_memo,
+                term_memo,
+            )?;
+            intern_epsilon(connection, predicate, transformed_type)?
+        }
+    };
+    term_memo.insert(term, result);
+    Ok(result)
+}
+
 fn term_contains_exact(
     connection: &sqlite::Connection,
     term: TermId,
@@ -4228,6 +4587,48 @@ fn free_term_symbols(connection: &sqlite::Connection, root: TermId) -> Result<Ve
     )?;
     let rows = statement.query_map([root.0], |row| row.get::<_, i64>(0))?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+fn collect_term_free_type_variables(
+    connection: &sqlite::Connection,
+    root: TermId,
+) -> Result<Vec<TypeId>, TermError> {
+    validate_term(connection, root)?;
+    let mut pending = vec![root];
+    let mut seen_terms = HashSet::new();
+    let mut variables = HashSet::new();
+    while let Some(term) = pending.pop() {
+        if !seen_terms.insert(term) {
+            continue;
+        }
+        let (view, ty) = read_term_node(connection, term)?;
+        variables.extend(collect_type_free_variables(connection, ty)?);
+        match view {
+            TermView::Bool(_)
+            | TermView::Free { .. }
+            | TermView::Constant { .. }
+            | TermView::Bound { .. } => {}
+            TermView::Application { function, argument } => {
+                pending.push(function);
+                pending.push(argument);
+            }
+            TermView::Lambda {
+                parameter_type,
+                body,
+            } => {
+                variables.extend(collect_type_free_variables(connection, parameter_type)?);
+                pending.push(body);
+            }
+            TermView::Equality { left, right } => {
+                pending.push(left);
+                pending.push(right);
+            }
+            TermView::Epsilon { predicate } => pending.push(predicate),
+        }
+    }
+    let mut variables = variables.into_iter().collect::<Vec<_>>();
+    variables.sort_unstable();
+    Ok(variables)
 }
 
 fn intern_kind(connection: &sqlite::Connection, kind: &Kind) -> Result<KindId, KindError> {
@@ -4495,6 +4896,13 @@ pub enum TermError {
         /// Newly requested type.
         requested: TypeId,
     },
+    /// A monomorphic constant declaration contains a schematic type variable.
+    PolymorphicConstantType {
+        /// Connection-local declaration symbol.
+        symbol: i64,
+        /// Rejected schematic type.
+        ty: TypeId,
+    },
     /// The function position does not have a function type.
     NotFunction(TypeId),
     /// An application's argument type differs from its function domain.
@@ -4560,6 +4968,11 @@ impl fmt::Display for TermError {
                 existing.get(),
                 requested.get()
             ),
+            Self::PolymorphicConstantType { symbol, ty } => write!(
+                formatter,
+                "constant symbol {symbol} cannot be declared at schematic type {}",
+                ty.get()
+            ),
             Self::NotFunction(ty) => write!(formatter, "type {} is not a function type", ty.get()),
             Self::ApplicationTypeMismatch { expected, actual } => write!(
                 formatter,
@@ -4615,6 +5028,7 @@ impl StdError for TermError {
             | Self::UnknownTerm(_)
             | Self::CorruptTerm(_)
             | Self::ConstantTypeConflict { .. }
+            | Self::PolymorphicConstantType { .. }
             | Self::NotFunction(_)
             | Self::ApplicationTypeMismatch { .. }
             | Self::EpsilonPredicateNonBoolean { .. }
@@ -4856,6 +5270,10 @@ pub enum ProofError {
     },
     /// A theorem-instantiation replacement is not locally closed.
     OpenTermInstantiationReplacement(TermId),
+    /// A theorem type-instantiation key is not an exact `TFV` node.
+    TypeInstantiationKeyNotFree(TypeId),
+    /// The same exact free-type-variable key occurs more than once.
+    DuplicateTypeInstantiation(TypeId),
     /// The abstraction key is not an exact `MFV` node.
     AbstractionKeyNotFree(TermId),
     /// The abstraction key occurs in one undischarged assumption.
@@ -4882,13 +5300,7 @@ pub enum ProofError {
 
 impl fmt::Display for ProofError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(result) = format_substitution_proof_error(self, formatter) {
-            return result;
-        }
-        if let Some(result) = format_relational_proof_error(self, formatter) {
-            return result;
-        }
-        if let Some(result) = format_conversion_proof_error(self, formatter) {
+        if let Some(result) = format_delegated_proof_error(self, formatter) {
             return result;
         }
         match self {
@@ -4973,6 +5385,8 @@ impl fmt::Display for ProofError {
             | Self::DuplicateTermInstantiation(_)
             | Self::TermInstantiationTypeMismatch { .. }
             | Self::OpenTermInstantiationReplacement(_)
+            | Self::TypeInstantiationKeyNotFree(_)
+            | Self::DuplicateTypeInstantiation(_)
             | Self::AbstractionKeyNotFree(_)
             | Self::AbstractionVariableFreeInAssumption { .. }
             | Self::ChoicePremiseNotApplication(_)
@@ -4983,6 +5397,22 @@ impl fmt::Display for ProofError {
             Self::Sqlite(error) => error.fmt(formatter),
         }
     }
+}
+
+fn format_delegated_proof_error(
+    error: &ProofError,
+    formatter: &mut fmt::Formatter<'_>,
+) -> Option<fmt::Result> {
+    if let Some(result) = format_instantiation_proof_error(error, formatter) {
+        return Some(result);
+    }
+    if let Some(result) = format_substitution_proof_error(error, formatter) {
+        return Some(result);
+    }
+    if let Some(result) = format_relational_proof_error(error, formatter) {
+        return Some(result);
+    }
+    format_conversion_proof_error(error, formatter)
 }
 
 fn format_conversion_proof_error(
@@ -5152,6 +5582,34 @@ fn format_substitution_proof_error(
             predicate.get(),
             argument.get()
         )),
+        ProofError::AbstractionKeyNotFree(variable) => Some(write!(
+            formatter,
+            "term {} is not an exact free-variable abstraction key",
+            variable.get()
+        )),
+        ProofError::AbstractionVariableFreeInAssumption {
+            variable,
+            assumption,
+        } => Some(write!(
+            formatter,
+            "free variable {} occurs in assumption {}",
+            variable.get(),
+            assumption.get()
+        )),
+        ProofError::ChoicePremiseNotApplication(conclusion) => Some(write!(
+            formatter,
+            "choice premise {} is not a predicate application",
+            conclusion.get()
+        )),
+        _ => None,
+    }
+}
+
+fn format_instantiation_proof_error(
+    error: &ProofError,
+    formatter: &mut fmt::Formatter<'_>,
+) -> Option<fmt::Result> {
+    match error {
         ProofError::InstantiationKeyNotFree(variable) => Some(write!(
             formatter,
             "term {} is not an exact free-variable instantiation key",
@@ -5180,24 +5638,15 @@ fn format_substitution_proof_error(
             "free-term instantiation replacement {} is not locally closed",
             replacement.get()
         )),
-        ProofError::AbstractionKeyNotFree(variable) => Some(write!(
+        ProofError::TypeInstantiationKeyNotFree(variable) => Some(write!(
             formatter,
-            "term {} is not an exact free-variable abstraction key",
+            "type {} is not an exact free-type-variable instantiation key",
             variable.get()
         )),
-        ProofError::AbstractionVariableFreeInAssumption {
-            variable,
-            assumption,
-        } => Some(write!(
+        ProofError::DuplicateTypeInstantiation(variable) => Some(write!(
             formatter,
-            "free variable {} occurs in assumption {}",
-            variable.get(),
-            assumption.get()
-        )),
-        ProofError::ChoicePremiseNotApplication(conclusion) => Some(write!(
-            formatter,
-            "choice premise {} is not a predicate application",
-            conclusion.get()
+            "free-type-variable instantiation key {} occurs more than once",
+            variable.get()
         )),
         _ => None,
     }
@@ -5274,6 +5723,8 @@ impl StdError for ProofError {
             | Self::DuplicateTermInstantiation(_)
             | Self::TermInstantiationTypeMismatch { .. }
             | Self::OpenTermInstantiationReplacement(_)
+            | Self::TypeInstantiationKeyNotFree(_)
+            | Self::DuplicateTypeInstantiation(_)
             | Self::AbstractionKeyNotFree(_)
             | Self::AbstractionVariableFreeInAssumption { .. }
             | Self::ChoicePremiseNotApplication(_)
@@ -8467,5 +8918,340 @@ mod tests {
             })
             .unwrap();
         assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn schematic_types_are_canonical_rank_zero_and_constants_remain_monomorphic() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let alpha = connection.insert_free_type(-10).unwrap();
+        assert_eq!(connection.insert_free_type(-10).unwrap(), alpha);
+        assert_eq!(
+            connection.type_view(alpha).unwrap(),
+            TypeView::Free { symbol: -10 }
+        );
+        assert_eq!(connection.type_kind(alpha).unwrap(), STAR_ID);
+        assert!(connection.type_is_locally_closed(alpha).unwrap());
+
+        let arrow = connection.insert_arrow_type(alpha, alpha).unwrap();
+        assert_eq!(connection.type_free_variables(arrow).unwrap(), [alpha]);
+        let variable = connection.insert_free_term(900, arrow).unwrap();
+        assert_eq!(
+            connection.term_free_type_variables(variable).unwrap(),
+            [alpha]
+        );
+
+        let node_count = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row("SELECT count(*) FROM hol_node", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert!(matches!(
+            connection.insert_constant(901, arrow),
+            Err(TermError::PolymorphicConstantType { symbol: 901, ty }) if ty == arrow
+        ));
+        assert_eq!(
+            connection
+                .parts_mut()
+                .0
+                .sqlite()
+                .query_row("SELECT count(*) FROM hol_node", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            node_count
+        );
+    }
+
+    #[test]
+    fn type_instantiation_is_simultaneous_and_rebuilds_the_exact_context() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let alpha = connection.insert_free_type(1000).unwrap();
+        let beta = connection.insert_free_type(1001).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+
+        let alpha_predicate_type = connection.insert_arrow_type(alpha, bool_type).unwrap();
+        let predicate = connection
+            .insert_free_term(1002, alpha_predicate_type)
+            .unwrap();
+        let epsilon = connection.insert_epsilon(predicate).unwrap();
+        let selected = connection.insert_application(predicate, epsilon).unwrap();
+
+        let alpha_bound = connection.insert_bound_term(0, alpha).unwrap();
+        let alpha_identity = connection.insert_lambda(alpha, alpha_bound).unwrap();
+        let identity_reflexivity = connection
+            .insert_equality(alpha_identity, alpha_identity)
+            .unwrap();
+        let beta_variable = connection.insert_free_term(1003, beta).unwrap();
+        let beta_reflexivity = connection
+            .insert_equality(beta_variable, beta_variable)
+            .unwrap();
+        let source_context = connection
+            .define_context([selected, identity_reflexivity, beta_reflexivity])
+            .unwrap();
+
+        let beta_predicate_type = connection.insert_arrow_type(beta, bool_type).unwrap();
+        let expected_predicate = connection
+            .insert_free_term(1002, beta_predicate_type)
+            .unwrap();
+        let expected_epsilon = connection.insert_epsilon(expected_predicate).unwrap();
+        let expected_selected = connection
+            .insert_application(expected_predicate, expected_epsilon)
+            .unwrap();
+        let beta_bound = connection.insert_bound_term(0, beta).unwrap();
+        let beta_identity = connection.insert_lambda(beta, beta_bound).unwrap();
+        let expected_identity = connection
+            .insert_equality(beta_identity, beta_identity)
+            .unwrap();
+        let bool_variable = connection.insert_free_term(1003, bool_type).unwrap();
+        let expected_bool_reflexivity = connection
+            .insert_equality(bool_variable, bool_variable)
+            .unwrap();
+        let expected_context = connection
+            .define_context([
+                expected_selected,
+                expected_identity,
+                expected_bool_reflexivity,
+            ])
+            .unwrap();
+
+        let (actual_context, actual_conclusion) = connection
+            .with_proof_session(|mut proof| {
+                let theorem = proof.prove_hypothesis(source_context, selected)?;
+                let instantiated = proof.instantiate_types(
+                    &theorem,
+                    &[
+                        TypeInstantiation {
+                            variable: alpha,
+                            replacement: beta,
+                        },
+                        TypeInstantiation {
+                            variable: beta,
+                            replacement: bool_type,
+                        },
+                    ],
+                )?;
+                proof.persist_theorem(&instantiated)?;
+                Ok::<_, ProofError>((instantiated.context(), instantiated.conclusion()))
+            })
+            .unwrap();
+        assert_eq!(actual_context, expected_context);
+        assert_eq!(actual_conclusion, expected_selected);
+        assert_eq!(
+            connection
+                .term_free_type_variables(actual_conclusion)
+                .unwrap(),
+            [beta]
+        );
+        let rule = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row(
+                "SELECT rule FROM hol_proof_event WHERE ctx_id = ?1 AND term_id = ?2",
+                [actual_context.get(), actual_conclusion.get()],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+        assert_eq!(rule, "type_instantiation");
+    }
+
+    #[test]
+    fn type_instantiation_rejects_invalid_maps_without_writes() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let alpha = connection.insert_free_type(1100).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let x = connection.insert_free_term(1101, alpha).unwrap();
+        let equality = connection.insert_equality(x, x).unwrap();
+        let before = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row("SELECT count(*) FROM hol_node", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        connection
+            .with_proof_session(|mut proof| {
+                let theorem = proof.prove_reflexivity(ContextId::empty(), x)?;
+                assert!(matches!(
+                    proof.instantiate_types(
+                        &theorem,
+                        &[TypeInstantiation { variable: bool_type, replacement: alpha }]
+                    ),
+                    Err(ProofError::TypeInstantiationKeyNotFree(ty)) if ty == bool_type
+                ));
+                assert!(matches!(
+                    proof.instantiate_types(
+                        &theorem,
+                        &[
+                            TypeInstantiation { variable: alpha, replacement: bool_type },
+                            TypeInstantiation { variable: alpha, replacement: bool_type },
+                        ]
+                    ),
+                    Err(ProofError::DuplicateTypeInstantiation(ty)) if ty == alpha
+                ));
+                Ok::<_, ProofError>(())
+            })
+            .unwrap();
+        assert_eq!(connection.term_type(equality).unwrap(), bool_type);
+        assert_eq!(
+            connection
+                .parts_mut()
+                .0
+                .sqlite()
+                .query_row("SELECT count(*) FROM hol_node", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            before
+        );
+    }
+
+    #[test]
+    fn type_instantiation_collapses_exact_free_terms_and_deduplicates_contexts() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let alpha = connection.insert_free_type(1200).unwrap();
+        let beta = connection.insert_free_type(1201).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let x_alpha = connection.insert_free_term(1202, alpha).unwrap();
+        let x_beta = connection.insert_free_term(1202, beta).unwrap();
+        let alpha_eq = connection.insert_equality(x_alpha, x_alpha).unwrap();
+        let beta_eq = connection.insert_equality(x_beta, x_beta).unwrap();
+        let context = connection.define_context([alpha_eq, beta_eq]).unwrap();
+        let x_bool = connection.insert_free_term(1202, bool_type).unwrap();
+        let expected = connection.insert_equality(x_bool, x_bool).unwrap();
+        let expected_context = connection.define_context([expected]).unwrap();
+
+        let (actual_context, conclusion) = connection
+            .with_proof_session(|mut proof| {
+                let theorem = proof.prove_hypothesis(context, alpha_eq)?;
+                let instantiated = proof.instantiate_types(
+                    &theorem,
+                    &[
+                        TypeInstantiation {
+                            variable: alpha,
+                            replacement: bool_type,
+                        },
+                        TypeInstantiation {
+                            variable: beta,
+                            replacement: bool_type,
+                        },
+                    ],
+                )?;
+                Ok::<_, ProofError>((instantiated.context(), instantiated.conclusion()))
+            })
+            .unwrap();
+        assert_eq!(actual_context, expected_context);
+        assert_eq!(conclusion, expected);
+        assert_eq!(
+            connection.context_members(actual_context).unwrap(),
+            [expected]
+        );
+    }
+
+    #[test]
+    fn type_instantiation_checks_all_policy_gates_before_database_work() {
+        for denied in [
+            Operation::ProveTypeInstantiation,
+            Operation::InsertType,
+            Operation::InsertTerm,
+            Operation::DefineContext,
+        ] {
+            let armed = Rc::new(Cell::new(false));
+            let mut connection = Connection::open_hol_in_memory(ArmedDenial {
+                operation: denied,
+                armed: Rc::clone(&armed),
+            })
+            .unwrap();
+            let alpha = connection.insert_free_type(1300).unwrap();
+            let x = connection.insert_free_term(1301, alpha).unwrap();
+            let context = connection.define_context([]).unwrap();
+            let result = connection.with_proof_session(|mut proof| {
+                let theorem = proof.prove_reflexivity(context, x)?;
+                armed.set(true);
+                proof
+                    .instantiate_types(
+                        &theorem,
+                        &[TypeInstantiation {
+                            variable: TypeId::from_i64(999_999),
+                            replacement: TypeId::from_i64(999_998),
+                        }],
+                    )
+                    .map(|_| ())
+            });
+            let expected = match denied {
+                Operation::DefineContext => ProofError::Context(ContextError::Denied(denied)),
+                _ => ProofError::Denied(denied),
+            };
+            assert_eq!(result.unwrap_err().to_string(), expected.to_string());
+        }
+    }
+
+    #[test]
+    fn type_instantiation_rolls_back_partial_syntax_when_context_interning_fails() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let alpha = connection.insert_free_type(1400).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let x = connection.insert_free_term(1401, alpha).unwrap();
+        let proposition = connection.insert_equality(x, x).unwrap();
+        let context = connection.define_context([proposition]).unwrap();
+        let before = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row("SELECT count(*) FROM hol_node", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .execute_batch(
+                "CREATE TEMP TRIGGER reject_type_instantiated_context
+                 BEFORE INSERT ON hol_context
+                 BEGIN
+                   SELECT RAISE(ABORT, 'test type context rejection');
+                 END",
+            )
+            .unwrap();
+
+        let result = connection.with_proof_session(|mut proof| {
+            let theorem = proof.prove_hypothesis(context, proposition)?;
+            proof
+                .instantiate_types(
+                    &theorem,
+                    &[TypeInstantiation {
+                        variable: alpha,
+                        replacement: bool_type,
+                    }],
+                )
+                .map(|_| ())
+        });
+        assert!(matches!(
+            result,
+            Err(ProofError::Context(ContextError::Sqlite(_)))
+        ));
+        let sqlite = connection.parts_mut().0.sqlite();
+        assert_eq!(
+            sqlite
+                .query_row("SELECT count(*) FROM hol_node", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            before
+        );
+        assert!(
+            sqlite
+                .query_row(
+                    "SELECT NOT EXISTS(
+                         SELECT 1 FROM hol_node
+                         WHERE tag = 'MFV' AND lhs = 1401 AND ty = ?1
+                     )",
+                    [bool_type.get()],
+                    |row| row.get::<_, bool>(0),
+                )
+                .unwrap()
+        );
     }
 }
