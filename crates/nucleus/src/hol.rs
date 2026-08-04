@@ -538,13 +538,13 @@ struct MetadataIndex {
     unique: bool,
 }
 
-/// Core HOL table extended by a user metadata column or index.
+/// Logical HOL row family extended by a user metadata column or index.
 ///
 /// These additions are physical annotations only: no metadata column is part
 /// of syntax identity, context membership, or judgement validity.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MetadataTable {
-    /// The universal kind/type/term node table.
+    /// The shared kind/type/term syntax-node metadata anchor.
     Node,
     /// Immutable context headers.
     Context,
@@ -569,7 +569,7 @@ pub enum MetadataTable {
 /// One existing row which may carry user metadata.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MetadataTarget {
-    /// A universal syntax node.
+    /// A kind, type, or term syntax node.
     Node(i64),
     /// An immutable context header.
     Context(ContextId),
@@ -667,21 +667,6 @@ impl MetadataTarget {
     pub const fn trusted_import(trusted_import: TrustedImportId) -> Self {
         Self::TrustedImport(trusted_import)
     }
-
-    const fn table(self) -> MetadataTable {
-        match self {
-            Self::Node(_) => MetadataTable::Node,
-            Self::Context(_) => MetadataTable::Context,
-            Self::ContextMember { .. } => MetadataTable::ContextMember,
-            Self::Judgement { .. } => MetadataTable::Judgement,
-            Self::ContextImplication { .. } => MetadataTable::ContextImplication,
-            Self::ContextUnion { .. } => MetadataTable::ContextUnion,
-            Self::Namespace(_) => MetadataTable::Namespace,
-            Self::NamespaceExport { .. } => MetadataTable::NamespaceExport,
-            Self::Import(_) => MetadataTable::Import,
-            Self::TrustedImport(_) => MetadataTable::TrustedImport,
-        }
-    }
 }
 
 impl From<KindId> for MetadataTarget {
@@ -726,47 +711,66 @@ impl From<TrustedImportId> for MetadataTarget {
     }
 }
 
-impl MetadataTable {
-    const fn sql(self) -> &'static str {
-        match self {
-            Self::Node => "hol_node",
-            Self::Context => "hol_context",
-            Self::ContextMember => "hol_context_member",
-            Self::Judgement => "hol_judgement",
-            Self::ContextImplication => "hol_context_implication",
-            Self::ContextUnion => "hol_context_exact_union",
-            Self::Namespace => "hol_namespace",
-            Self::NamespaceExport => "hol_namespace_export",
-            Self::Import => "hol_import",
-            Self::TrustedImport => "hol_trusted_import",
-        }
-    }
+#[derive(Clone, Copy)]
+struct MetadataBinding {
+    table: &'static str,
+    core_columns: &'static [&'static str],
+}
 
-    fn is_core_column(self, name: &str) -> bool {
-        let columns: &[&str] = match self {
-            Self::Node => &["node_id", "tag", "lhs", "rhs", "ty"],
-            Self::Context => &["ctx_id"],
-            Self::ContextMember | Self::Judgement => &["ctx_id", "term_id"],
-            Self::ContextImplication => &["antecedent_ctx_id", "consequent_ctx_id"],
-            Self::ContextUnion => &["left_ctx_id", "right_ctx_id", "result_ctx_id"],
-            Self::Namespace => &[
+fn metadata_binding(table: MetadataTable) -> MetadataBinding {
+    match table {
+        MetadataTable::Node => MetadataBinding {
+            table: "hol_node",
+            core_columns: &["node_id", "tag", "lhs", "rhs", "ty"],
+        },
+        MetadataTable::Context => MetadataBinding {
+            table: "hol_context",
+            core_columns: &["ctx_id"],
+        },
+        MetadataTable::ContextMember => MetadataBinding {
+            table: "hol_context_member",
+            core_columns: &["ctx_id", "term_id"],
+        },
+        MetadataTable::Judgement => MetadataBinding {
+            table: "hol_judgement",
+            core_columns: &["ctx_id", "term_id"],
+        },
+        MetadataTable::ContextImplication => MetadataBinding {
+            table: "hol_context_implication",
+            core_columns: &["antecedent_ctx_id", "consequent_ctx_id"],
+        },
+        MetadataTable::ContextUnion => MetadataBinding {
+            table: "hol_context_exact_union",
+            core_columns: &["left_ctx_id", "right_ctx_id", "result_ctx_id"],
+        },
+        MetadataTable::Namespace => MetadataBinding {
+            table: "hol_namespace",
+            core_columns: &[
                 "namespace_id",
                 "parent_namespace_id",
                 "name",
                 "source_import_id",
                 "source_namespace_id",
             ],
-            Self::NamespaceExport => &["namespace_id", "export_id", "sort", "local_id", "name"],
-            Self::Import => &["import_id", "schema_hash", "image_hash"],
-            Self::TrustedImport => &[
+        },
+        MetadataTable::NamespaceExport => MetadataBinding {
+            table: "hol_namespace_export",
+            core_columns: &["namespace_id", "export_id", "sort", "local_id", "name"],
+        },
+        MetadataTable::Import => MetadataBinding {
+            table: "hol_import",
+            core_columns: &["import_id", "schema_hash", "image_hash"],
+        },
+        MetadataTable::TrustedImport => MetadataBinding {
+            table: "hol_trusted_import",
+            core_columns: &[
                 "trusted_import_id",
                 "import_id",
                 "signer_hash",
                 "public_key",
                 "signature",
             ],
-        };
-        columns.iter().any(|core| core.eq_ignore_ascii_case(name))
+        },
     }
 }
 
@@ -789,7 +793,7 @@ impl HolSchema {
         }
     }
 
-    /// Adds a nullable user metadata column to `hol_node`.
+    /// Adds a nullable user metadata column to the syntax-node metadata anchor.
     ///
     /// # Errors
     ///
@@ -817,7 +821,10 @@ impl HolSchema {
     ) -> Result<(), MetadataSchemaError> {
         let name = name.into();
         validate_identifier(&name)?;
-        if table.is_core_column(&name)
+        if metadata_binding(table)
+            .core_columns
+            .iter()
+            .any(|core| core.eq_ignore_ascii_case(&name))
             || self
                 .columns
                 .iter()
@@ -1023,7 +1030,8 @@ impl<P: Policy> Connection<Hol<P>> {
         }
         let transaction = neutron.sqlite().unchecked_transaction()?;
         let id = intern_kind(&transaction, kind)?;
-        write_metadata(&transaction, &hol.schema, id.0, metadata)?;
+        write_target_metadata(&transaction, &hol.schema, id.into(), metadata)
+            .map_err(|error| kind_metadata_error(id, error))?;
         transaction.commit()?;
         Ok(id)
     }
@@ -2098,7 +2106,8 @@ impl<P: Policy> Connection<Hol<P>> {
         let (neutron, hol) = self.parts_mut();
         authorize(&mut hol.policy, Operation::ReadMetadata)?;
         read_kind(neutron.sqlite(), id)?;
-        read_metadata(neutron.sqlite(), &hol.schema, id.0, columns)
+        read_target_metadata(neutron.sqlite(), &hol.schema, id.into(), columns)
+            .map_err(|error| kind_metadata_error(id, error))
     }
 
     /// Reads selected user metadata from an existing structural row.
@@ -2149,13 +2158,14 @@ pub(super) fn write_target_metadata(
     if metadata.is_empty() {
         return Ok(());
     }
-    let table = target.table();
+    let key = metadata_target_key(target);
+    let binding = metadata_binding(key.table);
     let mut seen = HashSet::new();
     let mut assignments = Vec::with_capacity(metadata.len());
     let mut values = Vec::with_capacity(metadata.len() + 2);
     for (name, value) in metadata {
         let column = schema
-            .column_on(table, name)
+            .column_on(key.table, name)
             .ok_or_else(|| MetadataError::UnknownColumn((*name).to_owned()))?;
         if !seen.insert(column.name.to_ascii_lowercase()) {
             return Err(MetadataError::DuplicateColumn((*name).to_owned()));
@@ -2163,12 +2173,17 @@ pub(super) fn write_target_metadata(
         assignments.push(format!("{} = ?", quote_identifier(&column.name)));
         values.push(sqlite::types::Value::from(value.clone()));
     }
-    let (predicate, keys) = metadata_target_predicate(target, values.len() + 1);
-    values.extend(keys.into_iter().map(sqlite::types::Value::Integer));
+    let predicate = key.predicate(values.len() + 1);
+    values.extend(
+        key.values
+            .iter()
+            .copied()
+            .map(sqlite::types::Value::Integer),
+    );
     connection.execute(
         &format!(
             "UPDATE {} SET {} WHERE {predicate}",
-            table.sql(),
+            binding.table,
             assignments.join(", ")
         ),
         sqlite::params_from_iter(values.iter()),
@@ -2184,56 +2199,80 @@ fn authorize_metadata(policy: &mut impl Policy, operation: Operation) -> Result<
     }
 }
 
-fn metadata_target_predicate(target: MetadataTarget, first_parameter: usize) -> (String, Vec<i64>) {
-    match target {
-        MetadataTarget::Node(id) => (format!("node_id = ?{first_parameter}"), vec![id]),
+struct MetadataTargetKey {
+    table: MetadataTable,
+    columns: &'static [&'static str],
+    values: Vec<i64>,
+}
+
+impl MetadataTargetKey {
+    fn predicate(&self, first_parameter: usize) -> String {
+        self.columns
+            .iter()
+            .enumerate()
+            .map(|(offset, column)| format!("{column} = ?{}", first_parameter + offset))
+            .collect::<Vec<_>>()
+            .join(" AND ")
+    }
+}
+
+fn metadata_target_key(target: MetadataTarget) -> MetadataTargetKey {
+    let (table, columns, values) = match target {
+        MetadataTarget::Node(id) => (MetadataTable::Node, &["node_id"][..], vec![id]),
         MetadataTarget::Context(context) => {
-            (format!("ctx_id = ?{first_parameter}"), vec![context.get()])
+            (MetadataTable::Context, &["ctx_id"][..], vec![context.get()])
         }
         MetadataTarget::ContextMember { context, term }
-        | MetadataTarget::Judgement { context, term } => (
-            format!(
-                "ctx_id = ?{first_parameter} AND term_id = ?{}",
-                first_parameter + 1
-            ),
-            vec![context.get(), term.get()],
-        ),
+        | MetadataTarget::Judgement { context, term } => {
+            let table = if matches!(target, MetadataTarget::ContextMember { .. }) {
+                MetadataTable::ContextMember
+            } else {
+                MetadataTable::Judgement
+            };
+            (
+                table,
+                &["ctx_id", "term_id"][..],
+                vec![context.get(), term.get()],
+            )
+        }
         MetadataTarget::ContextImplication {
             antecedent,
             consequent,
         } => (
-            format!(
-                "antecedent_ctx_id = ?{first_parameter} AND consequent_ctx_id = ?{}",
-                first_parameter + 1
-            ),
+            MetadataTable::ContextImplication,
+            &["antecedent_ctx_id", "consequent_ctx_id"][..],
             vec![antecedent.get(), consequent.get()],
         ),
         MetadataTarget::ContextUnion { left, right } => (
-            format!(
-                "left_ctx_id = ?{first_parameter} AND right_ctx_id = ?{}",
-                first_parameter + 1
-            ),
+            MetadataTable::ContextUnion,
+            &["left_ctx_id", "right_ctx_id"][..],
             vec![left.get(), right.get()],
         ),
         MetadataTarget::Namespace(namespace) => (
-            format!("namespace_id = ?{first_parameter}"),
+            MetadataTable::Namespace,
+            &["namespace_id"][..],
             vec![namespace.get()],
         ),
         MetadataTarget::NamespaceExport { namespace, export } => (
-            format!(
-                "namespace_id = ?{first_parameter} AND export_id = ?{}",
-                first_parameter + 1
-            ),
+            MetadataTable::NamespaceExport,
+            &["namespace_id", "export_id"][..],
             vec![namespace.get(), export.get()],
         ),
         MetadataTarget::Import(import) => (
-            format!("import_id = ?{first_parameter}"),
+            MetadataTable::Import,
+            &["import_id"][..],
             vec![import.get()],
         ),
         MetadataTarget::TrustedImport(trusted_import) => (
-            format!("trusted_import_id = ?{first_parameter}"),
+            MetadataTable::TrustedImport,
+            &["trusted_import_id"][..],
             vec![trusted_import.get()],
         ),
+    };
+    MetadataTargetKey {
+        table,
+        columns,
+        values,
     }
 }
 
@@ -2241,13 +2280,14 @@ fn require_metadata_target(
     connection: &sqlite::Connection,
     target: MetadataTarget,
 ) -> Result<(), MetadataError> {
-    let (predicate, keys) = metadata_target_predicate(target, 1);
+    let key = metadata_target_key(target);
+    let predicate = key.predicate(1);
     let exists = connection.query_row(
         &format!(
             "SELECT EXISTS(SELECT 1 FROM {} WHERE {predicate})",
-            target.table().sql()
+            metadata_binding(key.table).table
         ),
-        sqlite::params_from_iter(keys.iter()),
+        sqlite::params_from_iter(key.values.iter()),
         |row| row.get::<_, bool>(0),
     )?;
     if exists {
@@ -2267,25 +2307,26 @@ fn read_target_metadata(
     if columns.is_empty() {
         return Ok(Vec::new());
     }
-    let table = target.table();
+    let key = metadata_target_key(target);
+    let binding = metadata_binding(key.table);
     let columns = columns
         .iter()
         .map(|name| {
             schema
-                .column_on(table, name)
+                .column_on(key.table, name)
                 .map(|column| quote_identifier(&column.name))
                 .ok_or_else(|| MetadataError::UnknownColumn((*name).to_owned()))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let (predicate, keys) = metadata_target_predicate(target, 1);
+    let predicate = key.predicate(1);
     connection
         .query_row(
             &format!(
                 "SELECT {} FROM {} WHERE {predicate}",
                 columns.join(", "),
-                table.sql()
+                binding.table
             ),
-            sqlite::params_from_iter(keys.iter()),
+            sqlite::params_from_iter(key.values.iter()),
             |row| {
                 (0..columns.len())
                     .map(|index| row.get::<_, sqlite::types::Value>(index))
@@ -2302,14 +2343,16 @@ fn install_metadata_schema(
     schema: &HolSchema,
 ) -> Result<(), sqlite::Error> {
     for column in &schema.columns {
+        let binding = metadata_binding(column.table);
         connection.execute_batch(&format!(
             "ALTER TABLE {} ADD COLUMN {} {}",
-            column.table.sql(),
+            binding.table,
             quote_identifier(&column.name),
             column.storage.sql()
         ))?;
     }
     for index in &schema.indexes {
+        let binding = metadata_binding(index.table);
         let columns = index
             .columns
             .iter()
@@ -2320,75 +2363,20 @@ fn install_metadata_schema(
             "CREATE {}INDEX {} ON {}({columns})",
             if index.unique { "UNIQUE " } else { "" },
             quote_identifier(&index.name),
-            index.table.sql(),
+            binding.table,
         ))?;
     }
     Ok(())
 }
 
-fn write_metadata(
-    connection: &sqlite::Connection,
-    schema: &HolSchema,
-    id: i64,
-    metadata: &[(&str, MetadataValue)],
-) -> Result<(), KindError> {
-    if metadata.is_empty() {
-        return Ok(());
+fn kind_metadata_error(id: KindId, error: MetadataError) -> KindError {
+    match error {
+        MetadataError::Denied(operation) => KindError::Denied(operation),
+        MetadataError::UnknownTarget(_) => KindError::UnknownKind(id),
+        MetadataError::UnknownColumn(name) => KindError::UnknownMetadataColumn(name),
+        MetadataError::DuplicateColumn(name) => KindError::DuplicateMetadataColumn(name),
+        MetadataError::Sqlite(error) => KindError::Sqlite(error),
     }
-    let mut seen = HashSet::new();
-    let mut assignments = Vec::with_capacity(metadata.len());
-    let mut values = Vec::with_capacity(metadata.len() + 1);
-    for (name, value) in metadata {
-        let column = schema
-            .column(name)
-            .ok_or_else(|| KindError::UnknownMetadataColumn((*name).to_owned()))?;
-        let folded = column.name.to_ascii_lowercase();
-        if !seen.insert(folded) {
-            return Err(KindError::DuplicateMetadataColumn((*name).to_owned()));
-        }
-        assignments.push(format!("{} = ?", quote_identifier(&column.name)));
-        values.push(sqlite::types::Value::from(value.clone()));
-    }
-    values.push(sqlite::types::Value::Integer(id));
-    let sql = format!(
-        "UPDATE hol_node SET {} WHERE node_id = ?",
-        assignments.join(", ")
-    );
-    connection.execute(&sql, sqlite::params_from_iter(values.iter()))?;
-    Ok(())
-}
-
-fn read_metadata(
-    connection: &sqlite::Connection,
-    schema: &HolSchema,
-    id: i64,
-    columns: &[&str],
-) -> Result<Vec<MetadataValue>, KindError> {
-    if columns.is_empty() {
-        return Ok(Vec::new());
-    }
-    let columns = columns
-        .iter()
-        .map(|name| {
-            schema
-                .column(name)
-                .map(|column| quote_identifier(&column.name))
-                .ok_or_else(|| KindError::UnknownMetadataColumn((*name).to_owned()))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let sql = format!(
-        "SELECT {} FROM hol_node WHERE node_id = ?1",
-        columns.join(", ")
-    );
-    connection
-        .query_row(&sql, [id], |row| {
-            (0..columns.len())
-                .map(|index| row.get::<_, sqlite::types::Value>(index))
-                .collect::<Result<Vec<_>, _>>()
-        })?
-        .into_iter()
-        .map(|value| Ok(MetadataValue::from(value)))
-        .collect()
 }
 
 fn validate_identifier(identifier: &str) -> Result<(), MetadataSchemaError> {
