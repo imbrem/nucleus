@@ -91,4 +91,8 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
   await demo.getByText("rank 3 = 1").waitFor();
   await demo.locator("#hol-term-demo").click();
   await demo.getByText("term 7 : 2; freevars = 100,101").waitFor();
+  await demo.locator("#hol-proof-demo").click();
+  await demo
+    .getByText("context 1; theorem 1 |- 7; truth 0 |- 8; proved = true")
+    .waitFor();
 });

@@ -6,9 +6,9 @@ mod kernel;
 
 pub use connection::Connection;
 pub use hol::{
-    AllowAll, Hol, HolOpenError, HolSchema, Kind, KindError, KindId, KindView, MetadataSchemaError,
-    MetadataType, MetadataValue, Operation, Policy, TermError, TermId, TermView, TypeError, TypeId,
-    TypeView,
+    AllowAll, ContextError, ContextId, Hol, HolOpenError, HolSchema, Kind, KindError, KindId,
+    KindView, MetadataSchemaError, MetadataTable, MetadataType, MetadataValue, Operation, Policy,
+    ProofError, TermError, TermId, TermView, Theorem, TypeError, TypeId, TypeView,
 };
 pub use kernel::Kernel;
 

@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::error::Error as StdError;
 use std::fmt;
+use std::marker::PhantomData;
 
 use covalence_lib_sqlite as sqlite;
 use sqlite::OptionalExtension as _;
@@ -133,6 +134,51 @@ pub enum TermView {
     },
 }
 
+/// Database-local identity of an immutable Boolean assumption context.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ContextId(i64);
+
+impl ContextId {
+    /// Returns the reserved empty context.
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self(0)
+    }
+
+    /// Creates a database-local lookup handle from its stored integer.
+    #[must_use]
+    pub const fn from_i64(id: i64) -> Self {
+        Self(id)
+    }
+
+    /// Returns the integer stored in the HOL database.
+    #[must_use]
+    pub const fn get(self) -> i64 {
+        self.0
+    }
+}
+
+/// A proved judgement branded by the mutably borrowed HOL connection.
+pub struct Theorem<'connection> {
+    context: ContextId,
+    conclusion: TermId,
+    connection: PhantomData<&'connection mut ()>,
+}
+
+impl Theorem<'_> {
+    /// Returns the theorem's immutable assumption context.
+    #[must_use]
+    pub const fn context(&self) -> ContextId {
+        self.context
+    }
+
+    /// Returns the theorem's Boolean conclusion.
+    #[must_use]
+    pub const fn conclusion(&self) -> TermId {
+        self.conclusion
+    }
+}
+
 /// A policy-visible trusted HOL operation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Operation {
@@ -148,6 +194,16 @@ pub enum Operation {
     ReadTerm,
     /// Validate and canonically intern a term.
     InsertTerm,
+    /// Define an immutable finite set of closed Boolean assumptions.
+    DefineContext,
+    /// Read context membership.
+    ReadContext,
+    /// Apply the hypothesis rule.
+    ProveHypothesis,
+    /// Apply the primitive truth rule.
+    ProveTruth,
+    /// Query whether a judgement has already been proved.
+    ReadTheorem,
     /// Read user-declared metadata attached to an admitted node.
     ReadMetadata,
     /// Write user-declared metadata attached to an admitted node.
@@ -222,15 +278,54 @@ impl From<sqlite::types::Value> for MetadataValue {
 
 #[derive(Clone, Debug)]
 struct MetadataColumn {
+    table: MetadataTable,
     name: String,
     storage: MetadataType,
 }
 
 #[derive(Clone, Debug)]
 struct MetadataIndex {
+    table: MetadataTable,
     name: String,
     columns: Vec<String>,
     unique: bool,
+}
+
+/// Core HOL table extended by a user metadata column or index.
+///
+/// These additions are physical annotations only: no metadata column is part
+/// of syntax identity, context membership, or theorem validity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MetadataTable {
+    /// The universal kind/type/term node table.
+    Node,
+    /// Immutable context headers.
+    Context,
+    /// Pairs asserting membership in an immutable context.
+    ContextMember,
+    /// Persisted proved judgements.
+    Theorem,
+}
+
+impl MetadataTable {
+    const fn sql(self) -> &'static str {
+        match self {
+            Self::Node => "hol_node",
+            Self::Context => "hol_context",
+            Self::ContextMember => "hol_context_member",
+            Self::Theorem => "hol_theorem",
+        }
+    }
+
+    fn is_core_column(self, name: &str) -> bool {
+        let columns: &[&str] = match self {
+            Self::Node => &["node_id", "tag", "lhs", "rhs", "ty"],
+            Self::Context => &["ctx_id"],
+            Self::ContextMember => &["ctx_id", "term_id"],
+            Self::Theorem => &["ctx_id", "term_id", "rule"],
+        };
+        columns.iter().any(|core| core.eq_ignore_ascii_case(name))
+    }
 }
 
 /// User-selected physical metadata columns and ordinary `SQLite` indexes.
@@ -263,17 +358,36 @@ impl HolSchema {
         name: impl Into<String>,
         storage: MetadataType,
     ) -> Result<(), MetadataSchemaError> {
+        self.add_column_to(MetadataTable::Node, name, storage)
+    }
+
+    /// Adds a nullable user metadata column to a selected core table.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an empty, reserved, NUL-containing, or duplicate
+    /// identifier on that table.
+    pub fn add_column_to(
+        &mut self,
+        table: MetadataTable,
+        name: impl Into<String>,
+        storage: MetadataType,
+    ) -> Result<(), MetadataSchemaError> {
         let name = name.into();
         validate_identifier(&name)?;
-        if is_core_column(&name)
+        if table.is_core_column(&name)
             || self
                 .columns
                 .iter()
-                .any(|column| column.name.eq_ignore_ascii_case(&name))
+                .any(|column| column.table == table && column.name.eq_ignore_ascii_case(&name))
         {
             return Err(MetadataSchemaError::DuplicateOrReservedColumn(name));
         }
-        self.columns.push(MetadataColumn { name, storage });
+        self.columns.push(MetadataColumn {
+            table,
+            name,
+            storage,
+        });
         Ok(())
     }
 
@@ -285,6 +399,26 @@ impl HolSchema {
     /// list, or a column which has not been declared on this schema.
     pub fn add_index<I, S>(
         &mut self,
+        name: impl Into<String>,
+        columns: I,
+        unique: bool,
+    ) -> Result<(), MetadataSchemaError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.add_index_on(MetadataTable::Node, name, columns, unique)
+    }
+
+    /// Adds an index over declared metadata columns on a selected core table.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid/duplicate index name, an empty column
+    /// list, or a column not declared as metadata on `table`.
+    pub fn add_index_on<I, S>(
+        &mut self,
+        table: MetadataTable,
         name: impl Into<String>,
         columns: I,
         unique: bool,
@@ -307,15 +441,14 @@ impl HolSchema {
             return Err(MetadataSchemaError::EmptyIndex(name));
         }
         for column in &columns {
-            if !self
-                .columns
-                .iter()
-                .any(|declared| declared.name.eq_ignore_ascii_case(column))
-            {
+            if !self.columns.iter().any(|declared| {
+                declared.table == table && declared.name.eq_ignore_ascii_case(column)
+            }) {
                 return Err(MetadataSchemaError::UnknownColumn(column.clone()));
             }
         }
         self.indexes.push(MetadataIndex {
+            table,
             name,
             columns,
             unique,
@@ -324,15 +457,25 @@ impl HolSchema {
     }
 
     fn column(&self, name: &str) -> Option<&MetadataColumn> {
+        self.column_on(MetadataTable::Node, name)
+    }
+
+    fn column_on(&self, table: MetadataTable, name: &str) -> Option<&MetadataColumn> {
         self.columns
             .iter()
-            .find(|column| column.name.eq_ignore_ascii_case(name))
+            .find(|column| column.table == table && column.name.eq_ignore_ascii_case(name))
     }
 
     /// Returns the declared storage class of a metadata column.
     #[must_use]
     pub fn metadata_type(&self, name: &str) -> Option<MetadataType> {
         self.column(name).map(|column| column.storage)
+    }
+
+    /// Returns the storage class of metadata declared on `table`.
+    #[must_use]
+    pub fn metadata_type_on(&self, table: MetadataTable, name: &str) -> Option<MetadataType> {
+        self.column_on(table, name).map(|column| column.storage)
     }
 }
 
@@ -677,6 +820,145 @@ impl<P: Policy> Connection<Hol<P>> {
         Ok(Vec::new())
     }
 
+    /// Defines an immutable finite set of closed Boolean assumptions.
+    ///
+    /// Members are sorted and deduplicated. Repeating the same set returns the
+    /// same context ID, independent of input order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies definition, a member is invalid or
+    /// non-Boolean, or `SQLite` rejects the transaction.
+    pub fn define_context(
+        &mut self,
+        members: impl IntoIterator<Item = TermId>,
+    ) -> Result<ContextId, ContextError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_context(&mut hol.policy, Operation::DefineContext)?;
+        let mut members: Vec<TermId> = members.into_iter().collect();
+        members.sort_unstable();
+        members.dedup();
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        for member in &members {
+            let (_, ty) = read_term(&transaction, *member)?;
+            if ty != BOOL_TYPE_ID {
+                return Err(ContextError::NonBooleanMember { term: *member, ty });
+            }
+        }
+        if let Some(context) = find_context(&transaction, &members)? {
+            transaction.commit()?;
+            return Ok(context);
+        }
+        transaction.execute("INSERT INTO hol_context DEFAULT VALUES", [])?;
+        let context = ContextId(transaction.last_insert_rowid());
+        for member in members {
+            transaction.execute(
+                "INSERT INTO hol_context_member(ctx_id, term_id) VALUES (?1, ?2)",
+                [context.0, member.0],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(context)
+    }
+
+    /// Returns an immutable context's members in ascending term-ID order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the read, the context is unknown, or
+    /// `SQLite` rejects the query.
+    pub fn context_members(&mut self, id: ContextId) -> Result<Vec<TermId>, ContextError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_context(&mut hol.policy, Operation::ReadContext)?;
+        require_context(neutron.sqlite(), id)?;
+        read_context_members(neutron.sqlite(), id)
+    }
+
+    /// Applies the hypothesis rule and persists the resulting judgement.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the rule, the context is unknown, the
+    /// term is not a member, or persistence fails.
+    pub fn prove_hypothesis(
+        &mut self,
+        context: ContextId,
+        term: TermId,
+    ) -> Result<Theorem<'_>, ProofError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ProveHypothesis)?;
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        require_context(&transaction, context)?;
+        let member = transaction.query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM hol_context_member WHERE ctx_id = ?1 AND term_id = ?2
+             )",
+            [context.0, term.0],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !member {
+            return Err(ProofError::NotMember { context, term });
+        }
+        persist_theorem(&transaction, context, term, "hypothesis")?;
+        transaction.commit()?;
+        Ok(Theorem {
+            context,
+            conclusion: term,
+            connection: PhantomData,
+        })
+    }
+
+    /// Applies primitive truth in an existing context and persists it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the rule, the context is unknown, or
+    /// persistence fails.
+    pub fn prove_truth(&mut self, context: ContextId) -> Result<Theorem<'_>, ProofError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ProveTruth)?;
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        require_context(&transaction, context)?;
+        let truth = intern_bool_term(&transaction, true)?;
+        persist_theorem(&transaction, context, truth, "truth")?;
+        transaction.commit()?;
+        Ok(Theorem {
+            context,
+            conclusion: truth,
+            connection: PhantomData,
+        })
+    }
+
+    /// Reports whether a Boolean judgement is in the append-only proof table.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the read, the context/term is invalid,
+    /// the term is not Boolean, or `SQLite` rejects the query.
+    pub fn proved_judgement(
+        &mut self,
+        context: ContextId,
+        term: TermId,
+    ) -> Result<bool, ProofError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ReadTheorem)?;
+        require_context(neutron.sqlite(), context)?;
+        let (_, ty) = read_term(neutron.sqlite(), term)?;
+        if ty != BOOL_TYPE_ID {
+            return Err(ProofError::NonBooleanConclusion { term, ty });
+        }
+        neutron
+            .sqlite()
+            .query_row(
+                "SELECT EXISTS(
+                     SELECT 1 FROM hol_theorem WHERE ctx_id = ?1 AND term_id = ?2
+                 )",
+                [context.0, term.0],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+    }
+
     /// Reads selected user metadata columns from an admitted kind.
     ///
     /// Values are returned in the requested order.
@@ -703,7 +985,8 @@ fn install_metadata_schema(
 ) -> Result<(), sqlite::Error> {
     for column in &schema.columns {
         connection.execute_batch(&format!(
-            "ALTER TABLE hol_node ADD COLUMN {} {}",
+            "ALTER TABLE {} ADD COLUMN {} {}",
+            column.table.sql(),
             quote_identifier(&column.name),
             column.storage.sql()
         ))?;
@@ -716,9 +999,10 @@ fn install_metadata_schema(
             .collect::<Vec<_>>()
             .join(", ");
         connection.execute_batch(&format!(
-            "CREATE {}INDEX {} ON hol_node({columns})",
+            "CREATE {}INDEX {} ON {}({columns})",
             if index.unique { "UNIQUE " } else { "" },
             quote_identifier(&index.name),
+            index.table.sql(),
         ))?;
     }
     Ok(())
@@ -799,12 +1083,6 @@ fn validate_identifier(identifier: &str) -> Result<(), MetadataSchemaError> {
     }
 }
 
-fn is_core_column(name: &str) -> bool {
-    ["node_id", "tag", "lhs", "rhs", "ty"]
-        .iter()
-        .any(|core| core.eq_ignore_ascii_case(name))
-}
-
 fn quote_identifier(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
 }
@@ -831,6 +1109,81 @@ fn authorize_term(policy: &mut impl Policy, operation: Operation) -> Result<(), 
     } else {
         Err(TermError::Denied(operation))
     }
+}
+
+fn authorize_context(policy: &mut impl Policy, operation: Operation) -> Result<(), ContextError> {
+    if policy.allows(operation) {
+        Ok(())
+    } else {
+        Err(ContextError::Denied(operation))
+    }
+}
+
+fn authorize_proof(policy: &mut impl Policy, operation: Operation) -> Result<(), ProofError> {
+    if policy.allows(operation) {
+        Ok(())
+    } else {
+        Err(ProofError::Denied(operation))
+    }
+}
+
+fn require_context(connection: &sqlite::Connection, id: ContextId) -> Result<(), ContextError> {
+    let exists = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM hol_context WHERE ctx_id = ?1)",
+        [id.0],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if exists {
+        Ok(())
+    } else {
+        Err(ContextError::UnknownContext(id))
+    }
+}
+
+fn read_context_members(
+    connection: &sqlite::Connection,
+    id: ContextId,
+) -> Result<Vec<TermId>, ContextError> {
+    let mut statement = connection
+        .prepare("SELECT term_id FROM hol_context_member WHERE ctx_id = ?1 ORDER BY term_id")?;
+    let rows = statement.query_map([id.0], |row| row.get::<_, i64>(0).map(TermId))?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+fn find_context(
+    connection: &sqlite::Connection,
+    members: &[TermId],
+) -> Result<Option<ContextId>, ContextError> {
+    let mut statement = connection.prepare(
+        "SELECT ctx_id FROM hol_context
+         WHERE (SELECT count(*) FROM hol_context_member
+                WHERE hol_context_member.ctx_id = hol_context.ctx_id) = ?1
+         ORDER BY ctx_id",
+    )?;
+    let candidates = statement
+        .query_map([i64::try_from(members.len()).unwrap_or(i64::MAX)], |row| {
+            row.get::<_, i64>(0).map(ContextId)
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    for candidate in candidates {
+        if read_context_members(connection, candidate)? == members {
+            return Ok(Some(candidate));
+        }
+    }
+    Ok(None)
+}
+
+fn persist_theorem(
+    connection: &sqlite::Connection,
+    context: ContextId,
+    term: TermId,
+    rule: &str,
+) -> Result<(), sqlite::Error> {
+    connection.execute(
+        "INSERT OR IGNORE INTO hol_theorem(ctx_id, term_id, rule) VALUES (?1, ?2, ?3)",
+        (context.0, term.0, rule),
+    )?;
+    Ok(())
 }
 
 fn intern_type_arrow(
@@ -1281,6 +1634,144 @@ impl From<sqlite::Error> for TermError {
     }
 }
 
+/// Failure to define or inspect an immutable assumption context.
+#[derive(Debug)]
+pub enum ContextError {
+    /// Policy denied the operation.
+    Denied(Operation),
+    /// No context has the requested ID.
+    UnknownContext(ContextId),
+    /// A proposed context member is not Boolean.
+    NonBooleanMember {
+        /// Proposed member.
+        term: TermId,
+        /// Its admitted non-Boolean type.
+        ty: TypeId,
+    },
+    /// A member term is invalid.
+    Term(TermError),
+    /// `SQLite` rejected an operation.
+    Sqlite(sqlite::Error),
+}
+
+impl fmt::Display for ContextError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Denied(operation) => write!(formatter, "HOL policy denied {operation:?}"),
+            Self::UnknownContext(id) => write!(formatter, "unknown context {}", id.get()),
+            Self::NonBooleanMember { term, ty } => write!(
+                formatter,
+                "context member term {} has non-Boolean type {}",
+                term.get(),
+                ty.get()
+            ),
+            Self::Term(error) => error.fmt(formatter),
+            Self::Sqlite(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl StdError for ContextError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            Self::Term(error) => Some(error),
+            Self::Sqlite(error) => Some(error),
+            Self::Denied(_) | Self::UnknownContext(_) | Self::NonBooleanMember { .. } => None,
+        }
+    }
+}
+
+impl From<TermError> for ContextError {
+    fn from(error: TermError) -> Self {
+        Self::Term(error)
+    }
+}
+
+impl From<sqlite::Error> for ContextError {
+    fn from(error: sqlite::Error) -> Self {
+        Self::Sqlite(error)
+    }
+}
+
+/// Failure to apply or inspect a trusted HOL proof rule.
+#[derive(Debug)]
+pub enum ProofError {
+    /// Policy denied the operation/rule.
+    Denied(Operation),
+    /// The context is invalid.
+    Context(ContextError),
+    /// The conclusion/member term is invalid.
+    Term(TermError),
+    /// The hypothesis rule was requested for a non-member.
+    NotMember {
+        /// Assumption context.
+        context: ContextId,
+        /// Proposed hypothesis.
+        term: TermId,
+    },
+    /// A proposed conclusion is not Boolean.
+    NonBooleanConclusion {
+        /// Proposed conclusion.
+        term: TermId,
+        /// Its admitted type.
+        ty: TypeId,
+    },
+    /// `SQLite` rejected an operation.
+    Sqlite(sqlite::Error),
+}
+
+impl fmt::Display for ProofError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Denied(operation) => write!(formatter, "HOL policy denied {operation:?}"),
+            Self::Context(error) => error.fmt(formatter),
+            Self::Term(error) => error.fmt(formatter),
+            Self::NotMember { context, term } => write!(
+                formatter,
+                "term {} is not a member of context {}",
+                term.get(),
+                context.get()
+            ),
+            Self::NonBooleanConclusion { term, ty } => write!(
+                formatter,
+                "conclusion term {} has non-Boolean type {}",
+                term.get(),
+                ty.get()
+            ),
+            Self::Sqlite(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl StdError for ProofError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            Self::Context(error) => Some(error),
+            Self::Term(error) => Some(error),
+            Self::Sqlite(error) => Some(error),
+            Self::Denied(_) | Self::NotMember { .. } | Self::NonBooleanConclusion { .. } => None,
+        }
+    }
+}
+
+impl From<ContextError> for ProofError {
+    fn from(error: ContextError) -> Self {
+        Self::Context(error)
+    }
+}
+
+impl From<TermError> for ProofError {
+    fn from(error: TermError) -> Self {
+        Self::Term(error)
+    }
+}
+
+impl From<sqlite::Error> for ProofError {
+    fn from(error: sqlite::Error) -> Self {
+        Self::Sqlite(error)
+    }
+}
+
 /// Failure to insert or inspect an admitted kind.
 #[derive(Debug)]
 pub enum KindError {
@@ -1551,6 +2042,88 @@ mod tests {
     }
 
     #[test]
+    fn contexts_are_immutable_canonical_boolean_sets() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let truth = connection.insert_bool_term(true).unwrap();
+        let falsehood = connection.insert_bool_term(false).unwrap();
+        let context = connection
+            .define_context([truth, falsehood, truth])
+            .unwrap();
+        let reordered = connection.define_context([falsehood, truth]).unwrap();
+
+        assert_eq!(context, reordered);
+        assert_eq!(
+            connection.context_members(context).unwrap(),
+            [truth.min(falsehood), truth.max(falsehood)]
+        );
+        assert_eq!(connection.context_members(ContextId::empty()).unwrap(), []);
+
+        let bool_type = connection.insert_bool_type().unwrap();
+        let function_type = connection.insert_arrow_type(bool_type, bool_type).unwrap();
+        let function = connection.insert_free_term(44, function_type).unwrap();
+        assert!(matches!(
+            connection.define_context([function]),
+            Err(ContextError::NonBooleanMember { term, ty })
+                if term == function && ty == function_type
+        ));
+    }
+
+    #[test]
+    fn hypothesis_and_truth_are_the_only_judgement_insertion_paths() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let assumption = connection.insert_bool_term(false).unwrap();
+        let context = connection.define_context([assumption]).unwrap();
+
+        let hypothesis = connection.prove_hypothesis(context, assumption).unwrap();
+        assert_eq!(hypothesis.context(), context);
+        assert_eq!(hypothesis.conclusion(), assumption);
+        assert!(connection.proved_judgement(context, assumption).unwrap());
+
+        let truth = connection.prove_truth(ContextId::empty()).unwrap();
+        let truth_id = truth.conclusion();
+        assert_eq!(truth.context(), ContextId::empty());
+        assert_eq!(connection.term(truth_id).unwrap(), TermView::Bool(true));
+        assert!(
+            connection
+                .proved_judgement(ContextId::empty(), truth_id)
+                .unwrap()
+        );
+        assert!(
+            !connection
+                .proved_judgement(ContextId::empty(), assumption)
+                .unwrap()
+        );
+
+        let rules = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .prepare("SELECT rule FROM hol_theorem ORDER BY ctx_id, term_id")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(rules, ["truth", "hypothesis"]);
+    }
+
+    #[test]
+    fn hypothesis_rejects_nonmembers_without_persisting() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let term = connection.insert_bool_term(false).unwrap();
+        assert!(matches!(
+            connection.prove_hypothesis(ContextId::empty(), term),
+            Err(ProofError::NotMember { context, term: rejected })
+                if context == ContextId::empty() && rejected == term
+        ));
+        assert!(
+            !connection
+                .proved_judgement(ContextId::empty(), term)
+                .unwrap()
+        );
+    }
+
+    #[test]
     fn user_metadata_columns_are_typed_indexed_and_not_canonical_identity() {
         let mut schema = HolSchema::new();
         schema
@@ -1644,6 +2217,69 @@ mod tests {
             schema.add_index("bad", ["missing"], false),
             Err(MetadataSchemaError::UnknownColumn("missing".to_owned()))
         );
+    }
+
+    #[test]
+    fn metadata_columns_and_indexes_can_target_context_relations() {
+        let mut schema = HolSchema::new();
+        schema
+            .add_column_to(MetadataTable::Context, "label", MetadataType::Text)
+            .unwrap();
+        schema
+            .add_column_to(MetadataTable::ContextMember, "label", MetadataType::Text)
+            .unwrap();
+        schema
+            .add_column_to(MetadataTable::Theorem, "cost", MetadataType::Integer)
+            .unwrap();
+        schema
+            .add_index_on(
+                MetadataTable::ContextMember,
+                "context member label",
+                ["label"],
+                false,
+            )
+            .unwrap();
+        schema
+            .add_index_on(MetadataTable::Theorem, "theorem cost", ["cost"], false)
+            .unwrap();
+        let mut connection = Connection::open_hol_in_memory_with_schema(AllowAll, schema).unwrap();
+
+        assert_eq!(
+            connection
+                .protocol()
+                .schema()
+                .metadata_type_on(MetadataTable::Context, "LABEL"),
+            Some(MetadataType::Text)
+        );
+        let (neutron, _) = connection.parts_mut();
+        for (table, column) in [
+            ("hol_context", "label"),
+            ("hol_context_member", "label"),
+            ("hol_theorem", "cost"),
+        ] {
+            let exists = neutron
+                .sqlite()
+                .query_row(
+                    &format!(
+                        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1)"
+                    ),
+                    [column],
+                    |row| row.get::<_, bool>(0),
+                )
+                .unwrap();
+            assert!(exists);
+        }
+        for index in ["context member label", "theorem cost"] {
+            let exists = neutron
+                .sqlite()
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'index' AND name = ?1)",
+                    [index],
+                    |row| row.get::<_, bool>(0),
+                )
+                .unwrap();
+            assert!(exists);
+        }
     }
 
     #[test]

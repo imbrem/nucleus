@@ -72,6 +72,38 @@ type Request =
       operation: "holTermFreeVariables";
       connection: number;
       term: number;
+    }
+  | {
+      id: number;
+      operation: "holDefineContext";
+      connection: number;
+      members: number[];
+    }
+  | {
+      id: number;
+      operation: "holContextMembers";
+      connection: number;
+      context: number;
+    }
+  | {
+      id: number;
+      operation: "holProveHypothesis";
+      connection: number;
+      context: number;
+      term: number;
+    }
+  | {
+      id: number;
+      operation: "holProveTruth";
+      connection: number;
+      context: number;
+    }
+  | {
+      id: number;
+      operation: "holProved";
+      connection: number;
+      context: number;
+      term: number;
     };
 
 type SqlValue =
@@ -218,6 +250,29 @@ async function execute(request: Request): Promise<unknown> {
     case "holTermFreeVariables":
       return Array.from(
         connection.hol_term_free_variables(request.connection, request.term),
+      );
+    case "holDefineContext":
+      return connection.hol_define_context(
+        request.connection,
+        new Uint32Array(request.members),
+      );
+    case "holContextMembers":
+      return Array.from(
+        connection.hol_context_members(request.connection, request.context),
+      );
+    case "holProveHypothesis":
+      return connection.hol_prove_hypothesis(
+        request.connection,
+        request.context,
+        request.term,
+      );
+    case "holProveTruth":
+      return connection.hol_prove_truth(request.connection, request.context);
+    case "holProved":
+      return connection.hol_proved(
+        request.connection,
+        request.context,
+        request.term,
       );
   }
 }

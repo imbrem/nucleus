@@ -2,8 +2,8 @@ use covalence_lib_hash::O256;
 use wasm_bindgen::prelude::*;
 
 use super::{
-    ConnectionId, Kind, KindId, KindView, LocalRepl, Outcome, QueryResult, TermId, TermView,
-    TypeId, TypeView, Value,
+    ConnectionId, ContextId, Kind, KindId, KindView, LocalRepl, Outcome, QueryResult, TermId,
+    TermView, TypeId, TypeView, Value,
 };
 
 /// Browser adapter for the shared REPL connection directory.
@@ -358,6 +358,88 @@ impl WebKernel {
             .into_iter()
             .map(|symbol| u32::try_from(symbol).map_err(js_error))
             .collect()
+    }
+
+    /// Defines or finds the immutable context containing exactly `members`.
+    pub fn hol_define_context(
+        &mut self,
+        connection: u32,
+        members: Vec<u32>,
+    ) -> Result<u32, JsValue> {
+        let members = members
+            .into_iter()
+            .map(|term| TermId::from_i64(i64::from(term)))
+            .collect::<Vec<_>>();
+        let id = self
+            .repl
+            .hol_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .define_context(members)
+            .map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
+    /// Returns the sorted members of an immutable context.
+    pub fn hol_context_members(
+        &mut self,
+        connection: u32,
+        context: u32,
+    ) -> Result<Vec<u32>, JsValue> {
+        self.repl
+            .hol_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .context_members(ContextId::from_i64(i64::from(context)))
+            .map_err(js_error)?
+            .into_iter()
+            .map(|term| u32::try_from(term.get()).map_err(js_error))
+            .collect()
+    }
+
+    /// Proves a context member using the HOL hypothesis rule.
+    pub fn hol_prove_hypothesis(
+        &mut self,
+        connection: u32,
+        context: u32,
+        term: u32,
+    ) -> Result<u32, JsValue> {
+        let theorem = self
+            .repl
+            .hol_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .prove_hypothesis(
+                ContextId::from_i64(i64::from(context)),
+                TermId::from_i64(i64::from(term)),
+            )
+            .map_err(js_error)?;
+        u32::try_from(theorem.conclusion().get()).map_err(js_error)
+    }
+
+    /// Proves Boolean truth in the selected context.
+    pub fn hol_prove_truth(&mut self, connection: u32, context: u32) -> Result<u32, JsValue> {
+        let theorem = self
+            .repl
+            .hol_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .prove_truth(ContextId::from_i64(i64::from(context)))
+            .map_err(js_error)?;
+        u32::try_from(theorem.conclusion().get()).map_err(js_error)
+    }
+
+    /// Queries whether the judgement has already been proved.
+    pub fn hol_proved(
+        &mut self,
+        connection: u32,
+        context: u32,
+        term: u32,
+    ) -> Result<bool, JsValue> {
+        self.repl
+            .hol_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .proved_judgement(
+                ContextId::from_i64(i64::from(context)),
+                TermId::from_i64(i64::from(term)),
+            )
+            .map_err(js_error)
     }
 
     fn connection_mut(
