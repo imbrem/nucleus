@@ -2,10 +2,13 @@ use std::{error::Error, io, sync::Arc, sync::mpsc, thread};
 
 use covalence_lib_hash::O256;
 use covalence_nucleus::{
-    AllowAll, AuthenticatedValidatedHolImage, ContextId, ExportId, HolDatabaseRef,
-    HolSchemaDescriptor, ImportedExport, ImportedTermView, Kernel, NamespaceExport, NamespaceId,
-    SignedSnapshotAttestation, SignedSnapshotEnvelope, SnapshotTrustError,
+    AllowAll, AuthenticatedValidatedHolImage, HolDatabaseRef, HolSchemaDescriptor, ImportedExport,
+    ImportedTermView, Kernel, NamespaceId, SignedSnapshotAttestation, SignedSnapshotEnvelope,
+    SnapshotTrustError,
 };
+
+#[path = "support/closed_beta.rs"]
+mod closed_beta;
 
 type AnyError = Box<dyn Error>;
 
@@ -130,29 +133,14 @@ fn main() -> Result<(), AnyError> {
 fn build_source() -> Result<WireSnapshot, AnyError> {
     let kernel = Kernel::ephemeral();
     let mut database = kernel.open_hol(AllowAll)?;
-    let bool_type = database.insert_bool_type()?;
-    let bound = database.insert_bound_term(0, bool_type)?;
-    let identity = database.insert_lambda(bool_type, bound)?;
-    let truth = database.insert_bool_term(true)?;
-    let theorem = database.with_proof_session(|mut proof| {
-        let theorem = proof.prove_beta(ContextId::empty(), identity, truth)?;
-        let conclusion = theorem.conclusion();
-        proof.persist_theorem(&theorem)?;
-        Ok::<_, covalence_nucleus::ProofError>(conclusion)
-    })?;
-    let namespace = database.create_namespace(Some(NamespaceId::root()), Some("demo"))?;
-    database.export_value(
-        namespace,
-        ExportId::from_i64(0),
-        NamespaceExport::Term(theorem),
-        Some("identity_true_beta"),
-    )?;
-    database.export_value(
-        namespace,
-        ExportId::from_i64(1),
-        NamespaceExport::Context(ContextId::empty()),
-        Some("empty_context"),
-    )?;
+    let proof = closed_beta::build(&mut database)?;
+    assert!(database.with_proof_session(|mut session| {
+        Ok::<_, covalence_nucleus::ProofError>(
+            session
+                .load_theorem(proof.context, proof.conclusion)?
+                .is_some(),
+        )
+    })?);
     let snapshot = kernel.export_hol(&mut database)?;
     let attestation = snapshot.attestation();
     Ok(WireSnapshot {
@@ -163,6 +151,6 @@ fn build_source() -> Result<WireSnapshot, AnyError> {
         signer: attestation.signer(),
         public_key: *attestation.public_key(),
         signature: attestation.signature().to_vec(),
-        namespace: namespace.get(),
+        namespace: proof.namespace.get(),
     })
 }
