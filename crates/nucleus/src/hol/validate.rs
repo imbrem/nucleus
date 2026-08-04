@@ -531,7 +531,11 @@ mod tests {
         let identity = connection.insert_lambda(bool_type, variable).unwrap();
         let truth = connection.insert_bool_term(true).unwrap();
         connection
-            .prove_beta(ContextId::empty(), identity, truth)
+            .with_proof_session(|mut proof| {
+                proof
+                    .prove_beta(ContextId::empty(), identity, truth)
+                    .map(|_| ())
+            })
             .unwrap();
         connection.parts_mut().0.serialize().unwrap()
     }

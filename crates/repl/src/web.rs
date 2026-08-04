@@ -479,27 +479,35 @@ impl WebKernel {
         context: u32,
         term: u32,
     ) -> Result<u32, JsValue> {
-        let theorem = self
+        let conclusion = self
             .repl
             .hol_mut(ConnectionId::from_u32(connection))
             .map_err(js_error)?
-            .prove_hypothesis(
-                ContextId::from_i64(i64::from(context)),
-                TermId::from_i64(i64::from(term)),
-            )
+            .with_proof_session(|mut proof| {
+                proof
+                    .prove_hypothesis(
+                        ContextId::from_i64(i64::from(context)),
+                        TermId::from_i64(i64::from(term)),
+                    )
+                    .map(|theorem| theorem.conclusion())
+            })
             .map_err(js_error)?;
-        u32::try_from(theorem.conclusion().get()).map_err(js_error)
+        u32::try_from(conclusion.get()).map_err(js_error)
     }
 
     /// Proves Boolean truth in the selected context.
     pub fn hol_prove_truth(&mut self, connection: u32, context: u32) -> Result<u32, JsValue> {
-        let theorem = self
+        let conclusion = self
             .repl
             .hol_mut(ConnectionId::from_u32(connection))
             .map_err(js_error)?
-            .prove_truth(ContextId::from_i64(i64::from(context)))
+            .with_proof_session(|mut proof| {
+                proof
+                    .prove_truth(ContextId::from_i64(i64::from(context)))
+                    .map(|theorem| theorem.conclusion())
+            })
             .map_err(js_error)?;
-        u32::try_from(theorem.conclusion().get()).map_err(js_error)
+        u32::try_from(conclusion.get()).map_err(js_error)
     }
 
     /// Proves a closed term equal to itself in the selected context.
@@ -509,16 +517,20 @@ impl WebKernel {
         context: u32,
         term: u32,
     ) -> Result<u32, JsValue> {
-        let theorem = self
+        let conclusion = self
             .repl
             .hol_mut(ConnectionId::from_u32(connection))
             .map_err(js_error)?
-            .prove_reflexivity(
-                ContextId::from_i64(i64::from(context)),
-                TermId::from_i64(i64::from(term)),
-            )
+            .with_proof_session(|mut proof| {
+                proof
+                    .prove_reflexivity(
+                        ContextId::from_i64(i64::from(context)),
+                        TermId::from_i64(i64::from(term)),
+                    )
+                    .map(|theorem| theorem.conclusion())
+            })
             .map_err(js_error)?;
-        u32::try_from(theorem.conclusion().get()).map_err(js_error)
+        u32::try_from(conclusion.get()).map_err(js_error)
     }
 
     /// Proves one closed beta reduction in the selected context.
@@ -529,17 +541,21 @@ impl WebKernel {
         abstraction: u32,
         argument: u32,
     ) -> Result<u32, JsValue> {
-        let theorem = self
+        let conclusion = self
             .repl
             .hol_mut(ConnectionId::from_u32(connection))
             .map_err(js_error)?
-            .prove_beta(
-                ContextId::from_i64(i64::from(context)),
-                TermId::from_i64(i64::from(abstraction)),
-                TermId::from_i64(i64::from(argument)),
-            )
+            .with_proof_session(|mut proof| {
+                proof
+                    .prove_beta(
+                        ContextId::from_i64(i64::from(context)),
+                        TermId::from_i64(i64::from(abstraction)),
+                        TermId::from_i64(i64::from(argument)),
+                    )
+                    .map(|theorem| theorem.conclusion())
+            })
             .map_err(js_error)?;
-        u32::try_from(theorem.conclusion().get()).map_err(js_error)
+        u32::try_from(conclusion.get()).map_err(js_error)
     }
 
     /// Queries whether the judgement has already been proved.

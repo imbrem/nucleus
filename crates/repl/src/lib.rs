@@ -13,8 +13,8 @@ use covalence_lib_sqlite as sqlite;
 pub use covalence_nucleus::sql::{ImageError, Outcome, QueryResult, Statement, Value};
 pub use covalence_nucleus::{
     AllowAll, Connection, ContextError, ContextId, Hol, HolOpenError, Kernel, Kind, KindError,
-    KindId, KindView, ProofError, Sql, TermError, TermId, TermView, Theorem, TypeError, TypeId,
-    TypeView,
+    KindId, KindView, ProofError, ProofSession, Sql, TermError, TermId, TermView, Theorem,
+    TypeError, TypeId, TypeView,
 };
 
 const SCHEMA: &str = "

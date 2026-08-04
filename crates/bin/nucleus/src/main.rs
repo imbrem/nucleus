@@ -5,8 +5,8 @@ use std::io;
 use std::process::ExitCode;
 
 use covalence_repl::{
-    ConnectionId, ContextId, KindId, KindView, LocalRepl, Outcome, TermId, TermView, TypeId,
-    TypeView, Value,
+    ConnectionId, ContextId, KindId, KindView, LocalRepl, Outcome, ProofError, TermId, TermView,
+    TypeId, TypeView, Value,
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
@@ -293,21 +293,27 @@ fn run_hol_proof<'a>(
     connection: ConnectionId,
     mut arguments: impl Iterator<Item = &'a str>,
 ) -> Result<()> {
-    let theorem = match arguments.next() {
+    let (theorem_context, theorem_conclusion) = match arguments.next() {
         Some("hyp") => {
             let context = parse_context_id(arguments.next(), "context")?;
             let term = parse_term_id(arguments.next(), "term")?;
             if arguments.next().is_some() {
                 return Err("usage: .hol prove hyp CONTEXT TERM".into());
             }
-            repl.hol_mut(connection)?.prove_hypothesis(context, term)?
+            repl.hol_mut(connection)?.with_proof_session(|mut proof| {
+                let theorem = proof.prove_hypothesis(context, term)?;
+                Ok::<_, ProofError>((theorem.context(), theorem.conclusion()))
+            })?
         }
         Some("truth") => {
             let context = parse_context_id(arguments.next(), "context")?;
             if arguments.next().is_some() {
                 return Err("usage: .hol prove truth CONTEXT".into());
             }
-            repl.hol_mut(connection)?.prove_truth(context)?
+            repl.hol_mut(connection)?.with_proof_session(|mut proof| {
+                let theorem = proof.prove_truth(context)?;
+                Ok::<_, ProofError>((theorem.context(), theorem.conclusion()))
+            })?
         }
         Some("refl") => {
             let context = parse_context_id(arguments.next(), "context")?;
@@ -315,7 +321,10 @@ fn run_hol_proof<'a>(
             if arguments.next().is_some() {
                 return Err("usage: .hol prove refl CONTEXT TERM".into());
             }
-            repl.hol_mut(connection)?.prove_reflexivity(context, term)?
+            repl.hol_mut(connection)?.with_proof_session(|mut proof| {
+                let theorem = proof.prove_reflexivity(context, term)?;
+                Ok::<_, ProofError>((theorem.context(), theorem.conclusion()))
+            })?
         }
         Some("beta") => {
             let context = parse_context_id(arguments.next(), "context")?;
@@ -324,8 +333,10 @@ fn run_hol_proof<'a>(
             if arguments.next().is_some() {
                 return Err("usage: .hol prove beta CONTEXT ABSTRACTION ARGUMENT".into());
             }
-            repl.hol_mut(connection)?
-                .prove_beta(context, abstraction, argument)?
+            repl.hol_mut(connection)?.with_proof_session(|mut proof| {
+                let theorem = proof.prove_beta(context, abstraction, argument)?;
+                Ok::<_, ProofError>((theorem.context(), theorem.conclusion()))
+            })?
         }
         _ => {
             return Err(
@@ -336,8 +347,8 @@ fn run_hol_proof<'a>(
     writeln!(
         output,
         "theorem {} |- {}",
-        theorem.context().get(),
-        theorem.conclusion().get()
+        theorem_context.get(),
+        theorem_conclusion.get()
     )?;
     Ok(())
 }
