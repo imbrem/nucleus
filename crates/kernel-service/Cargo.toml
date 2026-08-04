@@ -8,6 +8,7 @@ description = "Transport-neutral control-plane contract for Covalence kernels"
 publish = false
 
 [dependencies]
+covalence-lib-crypto = { path = "../lib/crypto" }
 covalence-lib-hash = { path = "../lib/hash", default-features = false, features = ["blake3"] }
 
 [lints]

@@ -25,6 +25,7 @@ rust_library(
     srcs = _RUST_SOURCES,
     tests = [":covalence_kernel_service-unit-test"],
     named_deps = {
+        "covalence_lib_crypto": "nucleus//crates/lib/crypto:covalence_lib_crypto",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
     },
     env = {
@@ -53,6 +54,7 @@ rust_test(
     edition = "2024",
     srcs = _RUST_SOURCES,
     named_deps = {
+        "covalence_lib_crypto": "nucleus//crates/lib/crypto:covalence_lib_crypto",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
     },
     env = {

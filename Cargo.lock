@@ -131,6 +131,7 @@ version = "0.0.0"
 name = "covalence-kernel-service"
 version = "0.0.0"
 dependencies = [
+ "covalence-lib-crypto",
  "covalence-lib-hash",
 ]
 

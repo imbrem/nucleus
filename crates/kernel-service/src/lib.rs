@@ -10,6 +10,8 @@ use std::{error::Error as StdError, fmt};
 
 use covalence_lib_hash::O256;
 
+pub mod wire;
+
 /// Checked-in WIT source which normatively describes the typed service surface.
 pub const CONTRACT_WIT: &str = include_str!("../wit/kernel-service.wit");
 
