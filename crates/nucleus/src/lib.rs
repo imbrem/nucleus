@@ -4,6 +4,9 @@ mod connection;
 
 pub use connection::Connection;
 
+pub mod repl;
+pub use repl::Repl;
+
 mod snapshot;
 
 pub use snapshot::{
