@@ -338,7 +338,7 @@ struct MetadataIndex {
 /// Core HOL table extended by a user metadata column or index.
 ///
 /// These additions are physical annotations only: no metadata column is part
-/// of syntax identity, context membership, or theorem validity.
+/// of syntax identity, context membership, or judgement validity.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MetadataTable {
     /// The universal kind/type/term node table.
@@ -348,7 +348,7 @@ pub enum MetadataTable {
     /// Pairs asserting membership in an immutable context.
     ContextMember,
     /// Persisted proved judgements.
-    Theorem,
+    Judgement,
 }
 
 /// One existing row which may carry user metadata.
@@ -365,8 +365,8 @@ pub enum MetadataTarget {
         /// Boolean member.
         term: TermId,
     },
-    /// A persisted proved judgement.
-    Theorem {
+    /// An authoritative persisted judgement.
+    Judgement {
         /// Assumption context.
         context: ContextId,
         /// Boolean conclusion.
@@ -381,10 +381,10 @@ impl MetadataTarget {
         Self::ContextMember { context, term }
     }
 
-    /// Selects a persisted proved judgement.
+    /// Selects an authoritative persisted judgement.
     #[must_use]
-    pub const fn theorem(context: ContextId, term: TermId) -> Self {
-        Self::Theorem { context, term }
+    pub const fn judgement(context: ContextId, term: TermId) -> Self {
+        Self::Judgement { context, term }
     }
 
     const fn table(self) -> MetadataTable {
@@ -392,7 +392,7 @@ impl MetadataTarget {
             Self::Node(_) => MetadataTable::Node,
             Self::Context(_) => MetadataTable::Context,
             Self::ContextMember { .. } => MetadataTable::ContextMember,
-            Self::Theorem { .. } => MetadataTable::Theorem,
+            Self::Judgement { .. } => MetadataTable::Judgement,
         }
     }
 }
@@ -427,7 +427,7 @@ impl MetadataTable {
             Self::Node => "hol_node",
             Self::Context => "hol_context",
             Self::ContextMember => "hol_context_member",
-            Self::Theorem => "hol_theorem",
+            Self::Judgement => "hol_judgement",
         }
     }
 
@@ -435,8 +435,7 @@ impl MetadataTable {
         let columns: &[&str] = match self {
             Self::Node => &["node_id", "tag", "lhs", "rhs", "ty"],
             Self::Context => &["ctx_id"],
-            Self::ContextMember => &["ctx_id", "term_id"],
-            Self::Theorem => &["ctx_id", "term_id", "rule"],
+            Self::ContextMember | Self::Judgement => &["ctx_id", "term_id"],
         };
         columns.iter().any(|core| core.eq_ignore_ascii_case(name))
     }
@@ -1121,7 +1120,7 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         if !member {
             return Err(ProofError::NotMember { context, term });
         }
-        persist_theorem(&transaction, context, term, "hypothesis")?;
+        persist_judgement(&transaction, context, term, "hypothesis")?;
         transaction.commit()?;
         Ok(Theorem {
             context,
@@ -1142,7 +1141,7 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         let transaction = neutron.sqlite().unchecked_transaction()?;
         require_context(&transaction, context)?;
         let truth = intern_bool_term(&transaction, true)?;
-        persist_theorem(&transaction, context, truth, "truth")?;
+        persist_judgement(&transaction, context, truth, "truth")?;
         transaction.commit()?;
         Ok(Theorem {
             context,
@@ -1172,7 +1171,7 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         }
         let equality = intern_equality(&transaction, term, term)?;
         validate_term(&transaction, equality)?;
-        persist_theorem(&transaction, context, equality, "reflexivity")?;
+        persist_judgement(&transaction, context, equality, "reflexivity")?;
         transaction.commit()?;
         Ok(Theorem {
             context,
@@ -1232,7 +1231,7 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         validate_term(&transaction, application)?;
         let equality = intern_equality(&transaction, application, reduct)?;
         validate_term(&transaction, equality)?;
-        persist_theorem(&transaction, context, equality, "beta")?;
+        persist_judgement(&transaction, context, equality, "beta")?;
         transaction.commit()?;
         Ok(Theorem {
             context,
@@ -1267,7 +1266,7 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         }
         let exists = neutron.sqlite().query_row(
             "SELECT EXISTS(
-                 SELECT 1 FROM hol_theorem WHERE ctx_id = ?1 AND term_id = ?2
+                 SELECT 1 FROM hol_judgement WHERE ctx_id = ?1 AND term_id = ?2
              )",
             [context.0, conclusion.0],
             |row| row.get::<_, bool>(0),
@@ -1309,7 +1308,7 @@ impl<P: Policy> Connection<Hol<P>> {
             .sqlite()
             .query_row(
                 "SELECT EXISTS(
-                     SELECT 1 FROM hol_theorem WHERE ctx_id = ?1 AND term_id = ?2
+                     SELECT 1 FROM hol_judgement WHERE ctx_id = ?1 AND term_id = ?2
                  )",
                 [context.0, term.0],
                 |row| row.get(0),
@@ -1416,7 +1415,7 @@ fn metadata_target_predicate(target: MetadataTarget, first_parameter: usize) -> 
             (format!("ctx_id = ?{first_parameter}"), vec![context.get()])
         }
         MetadataTarget::ContextMember { context, term }
-        | MetadataTarget::Theorem { context, term } => (
+        | MetadataTarget::Judgement { context, term } => (
             format!(
                 "ctx_id = ?{first_parameter} AND term_id = ?{}",
                 first_parameter + 1
@@ -1680,14 +1679,18 @@ fn find_context(
     Ok(None)
 }
 
-fn persist_theorem(
+fn persist_judgement(
     connection: &sqlite::Connection,
     context: ContextId,
     term: TermId,
     rule: &str,
 ) -> Result<(), sqlite::Error> {
     connection.execute(
-        "INSERT OR IGNORE INTO hol_theorem(ctx_id, term_id, rule) VALUES (?1, ?2, ?3)",
+        "INSERT OR IGNORE INTO hol_judgement(ctx_id, term_id) VALUES (?1, ?2)",
+        (context.0, term.0),
+    )?;
+    connection.execute(
+        "INSERT INTO hol_proof_event(ctx_id, term_id, rule) VALUES (?1, ?2, ?3)",
         (context.0, term.0, rule),
     )?;
     Ok(())
@@ -3190,12 +3193,32 @@ mod tests {
                 .proved_judgement(ContextId::empty(), conclusion)
                 .unwrap()
         );
+        connection
+            .with_proof_session(|mut proof| {
+                proof
+                    .prove_reflexivity(ContextId::empty(), identity)
+                    .map(|_| ())
+            })
+            .unwrap();
+        let counts = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row(
+                "SELECT
+                     (SELECT count(*) FROM hol_judgement),
+                     (SELECT count(*) FROM hol_proof_event)",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .unwrap();
+        assert_eq!(counts, (1, 2));
         let rule = connection
             .parts_mut()
             .0
             .sqlite()
             .query_row(
-                "SELECT rule FROM hol_theorem WHERE ctx_id = 0 AND term_id = ?1",
+                "SELECT rule FROM hol_proof_event WHERE ctx_id = 0 AND term_id = ?1",
                 [conclusion.get()],
                 |row| row.get::<_, String>(0),
             )
@@ -3220,7 +3243,7 @@ mod tests {
             .parts_mut()
             .0
             .sqlite()
-            .query_row("SELECT count(*) FROM hol_theorem", [], |row| {
+            .query_row("SELECT count(*) FROM hol_judgement", [], |row| {
                 row.get::<_, i64>(0)
             })
             .unwrap();
@@ -3419,13 +3442,13 @@ mod tests {
             .parts_mut()
             .0
             .sqlite()
-            .prepare("SELECT rule FROM hol_theorem ORDER BY ctx_id, term_id")
+            .prepare("SELECT rule FROM hol_proof_event ORDER BY event_id")
             .unwrap()
             .query_map([], |row| row.get::<_, String>(0))
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert_eq!(rules, ["truth", "hypothesis"]);
+        assert_eq!(rules, ["hypothesis", "truth"]);
     }
 
     #[test]
@@ -3554,7 +3577,7 @@ mod tests {
             .add_column_to(MetadataTable::ContextMember, "label", MetadataType::Text)
             .unwrap();
         schema
-            .add_column_to(MetadataTable::Theorem, "cost", MetadataType::Integer)
+            .add_column_to(MetadataTable::Judgement, "cost", MetadataType::Integer)
             .unwrap();
         schema
             .add_index_on(
@@ -3565,7 +3588,7 @@ mod tests {
             )
             .unwrap();
         schema
-            .add_index_on(MetadataTable::Theorem, "theorem cost", ["cost"], false)
+            .add_index_on(MetadataTable::Judgement, "judgement cost", ["cost"], false)
             .unwrap();
         let mut connection = Connection::open_hol_in_memory_with_schema(AllowAll, schema).unwrap();
 
@@ -3590,7 +3613,7 @@ mod tests {
             .unwrap();
         connection
             .set_metadata(
-                MetadataTarget::theorem(context, conclusion),
+                MetadataTarget::judgement(context, conclusion),
                 &[("cost", MetadataValue::Integer(1))],
             )
             .unwrap();
@@ -3606,7 +3629,7 @@ mod tests {
         );
         assert_eq!(
             connection
-                .metadata(MetadataTarget::theorem(context, conclusion), &["cost"])
+                .metadata(MetadataTarget::judgement(context, conclusion), &["cost"])
                 .unwrap(),
             [MetadataValue::Integer(1)]
         );
@@ -3622,7 +3645,7 @@ mod tests {
         for (table, column) in [
             ("hol_context", "label"),
             ("hol_context_member", "label"),
-            ("hol_theorem", "cost"),
+            ("hol_judgement", "cost"),
         ] {
             let exists = neutron
                 .sqlite()
@@ -3636,7 +3659,7 @@ mod tests {
                 .unwrap();
             assert!(exists);
         }
-        for index in ["context member label", "theorem cost"] {
+        for index in ["context member label", "judgement cost"] {
             let exists = neutron
                 .sqlite()
                 .query_row(

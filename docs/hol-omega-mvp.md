@@ -309,19 +309,31 @@ CREATE TABLE hol_context_member (
     PRIMARY KEY(context_id, term_id)
 ) STRICT, WITHOUT ROWID;
 
-CREATE TABLE hol_theorem (
+CREATE TABLE hol_judgement (
     context_id INTEGER NOT NULL REFERENCES hol_context,
     term_id INTEGER NOT NULL REFERENCES hol_term,
     PRIMARY KEY(context_id, term_id)
 ) STRICT, WITHOUT ROWID;
+
+CREATE TABLE hol_proof_event (
+    event_id INTEGER PRIMARY KEY,
+    context_id INTEGER NOT NULL,
+    term_id INTEGER NOT NULL,
+    rule TEXT NOT NULL
+) STRICT;
 ```
 
-Reserve context zero for the empty set. Once a theorem mentions a context ID,
-changing its members would change the theorem's meaning. Therefore context
-construction is atomic and there is no member mutation API.
+Reserve context zero for the empty set. Once a judgement mentions a context
+ID, changing its members would change the judgement's meaning. Therefore
+context construction is atomic and there is no member mutation API.
 
-Duplicate IDs for extensionally equal sets are sound. Canonicalization is an
-optimization.
+The v1 store assigns one canonical ID to each extensional member set. This is
+an identity convention and optimization, not an additional logical rule.
+
+`hol_judgement` is the sole authoritative proposition set. Proof-event rows
+are optional observational provenance: rule strings are not proof evidence,
+multiple events may name one judgement, and deleting events does not change
+the logical state.
 
 The proposed directed union relation is valuable but is not the same thing as
 the extensional member table. It can represent an opaque compositional context
