@@ -223,6 +223,30 @@ pub struct ContextUnion<'brand> {
     brand: Invariant<'brand>,
 }
 
+/// Two oppositely directed context implications in one proof session.
+///
+/// This is a derived capability only. It has no authoritative table of its
+/// own and carries no union-find or search result.
+pub struct ContextEquivalence<'brand> {
+    left: ContextId,
+    right: ContextId,
+    brand: Invariant<'brand>,
+}
+
+impl ContextEquivalence<'_> {
+    /// Returns the left endpoint.
+    #[must_use]
+    pub const fn left(&self) -> ContextId {
+        self.left
+    }
+
+    /// Returns the right endpoint.
+    #[must_use]
+    pub const fn right(&self) -> ContextId {
+        self.right
+    }
+}
+
 impl ContextUnion<'_> {
     /// Returns the left input context.
     #[must_use]
@@ -312,6 +336,8 @@ pub enum Operation {
     ProveContextUnion,
     /// Load and recheck one exact structural context union.
     ReadContextUnion,
+    /// Package two opposite implication witnesses as context equivalence.
+    ProveContextEquivalence,
     /// Read user-declared metadata attached to an admitted node.
     ReadMetadata,
     /// Write user-declared metadata attached to an admitted node.
@@ -1622,6 +1648,37 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
             result,
             brand: PhantomData,
         }))
+    }
+
+    /// Packages implication witnesses in both directions as equivalence.
+    ///
+    /// This checks only that the endpoints are exact opposites. Candidate path
+    /// search and path checking happen before this method produces a pair.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the operation or the two implications
+    /// do not have reversed endpoints.
+    pub fn prove_context_equivalence(
+        &mut self,
+        forward: &ContextImplication<'brand>,
+        backward: &ContextImplication<'brand>,
+    ) -> Result<ContextEquivalence<'brand>, ProofError> {
+        let (_, hol) = self.connection.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ProveContextEquivalence)?;
+        if forward.antecedent != backward.consequent || forward.consequent != backward.antecedent {
+            return Err(ProofError::ContextEquivalenceMismatch {
+                forward_antecedent: forward.antecedent,
+                forward_consequent: forward.consequent,
+                backward_antecedent: backward.antecedent,
+                backward_consequent: backward.consequent,
+            });
+        }
+        Ok(ContextEquivalence {
+            left: forward.antecedent,
+            right: forward.consequent,
+            brand: PhantomData,
+        })
     }
 
     /// Transports a theorem from an implied context to its antecedent.
@@ -3212,6 +3269,13 @@ pub enum ProofError {
         stored_result: ContextId,
         requested_result: ContextId,
     },
+    /// Two implication witnesses do not have exactly reversed endpoints.
+    ContextEquivalenceMismatch {
+        forward_antecedent: ContextId,
+        forward_consequent: ContextId,
+        backward_antecedent: ContextId,
+        backward_consequent: ContextId,
+    },
     /// Weakening was given a theorem under the wrong context.
     WeakeningContextMismatch {
         /// Implication consequent required by the rule.
@@ -3296,7 +3360,8 @@ impl fmt::Display for ProofError {
             ),
             Self::ContextUnionMissingMember { .. }
             | Self::ContextUnionUnexpectedMember { .. }
-            | Self::ContextUnionConflict { .. } => unreachable!("handled above"),
+            | Self::ContextUnionConflict { .. }
+            | Self::ContextEquivalenceMismatch { .. } => unreachable!("handled above"),
             Self::WeakeningContextMismatch { expected, actual } => write!(
                 formatter,
                 "weakening theorem has context {}, expected {}",
@@ -3345,6 +3410,19 @@ fn format_context_union_error(
             *right,
             *stored_result,
             *requested_result,
+        )),
+        ProofError::ContextEquivalenceMismatch {
+            forward_antecedent,
+            forward_consequent,
+            backward_antecedent,
+            backward_consequent,
+        } => Some(write!(
+            formatter,
+            "context implications {} => {} and {} => {} are not opposites",
+            forward_antecedent.get(),
+            forward_consequent.get(),
+            backward_antecedent.get(),
+            backward_consequent.get()
         )),
         _ => None,
     }
@@ -3406,6 +3484,7 @@ impl StdError for ProofError {
             | Self::ContextUnionMissingMember { .. }
             | Self::ContextUnionUnexpectedMember { .. }
             | Self::ContextUnionConflict { .. }
+            | Self::ContextEquivalenceMismatch { .. }
             | Self::WeakeningContextMismatch { .. } => None,
         }
     }
@@ -4598,6 +4677,43 @@ mod tests {
                 .unwrap(),
             0
         );
+    }
+
+    #[test]
+    fn context_equivalence_is_only_two_opposite_implications() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let p = connection.insert_free_term(60, BOOL_TYPE_ID).unwrap();
+        let equality = connection.insert_equality(p, p).unwrap();
+        let truth = connection.insert_bool_term(true).unwrap();
+        let left = connection.define_context([equality]).unwrap();
+        let right = connection.define_context([truth]).unwrap();
+
+        connection
+            .with_proof_session(|mut proof| {
+                let truth_witness = proof.prove_truth(left)?;
+                let forward = proof.prove_context_implication(left, right, &[truth_witness])?;
+                let equality_witness = proof.prove_reflexivity(right, p)?;
+                let backward = proof.prove_context_implication(right, left, &[equality_witness])?;
+                assert!(matches!(
+                    proof.prove_context_equivalence(&forward, &forward),
+                    Err(ProofError::ContextEquivalenceMismatch { .. })
+                ));
+                let equivalence = proof.prove_context_equivalence(&forward, &backward)?;
+                assert_eq!(equivalence.left(), left);
+                assert_eq!(equivalence.right(), right);
+                Ok::<_, ProofError>(())
+            })
+            .unwrap();
+
+        let rows = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row("SELECT count(*) FROM hol_context_implication", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(rows, 2);
     }
 
     #[test]
