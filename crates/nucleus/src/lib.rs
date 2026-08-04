@@ -35,6 +35,22 @@ pub use snapshot::{
     ed25519_key_id, schema_valid_snapshot_statement, valid_snapshot_statement,
 };
 
+/// Checked-in component contract for an untrusted, opaque-resource HOL proof recipe guest.
+///
+/// This contract is part of the Nucleus protocol surface, but its recipe nodes grant no logical
+/// authority. A host must replay them through a fresh [`Connection<Hol<_>>`] and keep all signing
+/// capabilities outside the guest.
+pub const HOL_PROOF_GUEST_WIT: &str = include_str!("../protocol/hol-proof-guest.wit");
+
+/// O256 identifier of the exact checked-in [`HOL_PROOF_GUEST_WIT`] bytes.
+///
+/// This identifies only the component contract. It is not a logical schema, a proof result, or
+/// authority to sign a resulting database.
+#[must_use]
+pub fn hol_proof_guest_contract_id() -> covalence_lib_hash::O256 {
+    covalence_lib_hash::O256::from_bytes(HOL_PROOF_GUEST_WIT.as_bytes())
+}
+
 #[cfg(target_os = "wasi")]
 #[allow(unsafe_code)]
 #[rustfmt::skip]
@@ -80,5 +96,15 @@ mod tests {
     #[test]
     fn smoke_value_is_stable() {
         assert_eq!(super::smoke(), 42);
+    }
+
+    #[test]
+    fn hol_proof_guest_contract_has_a_stable_identity() {
+        assert_eq!(
+            super::hol_proof_guest_contract_id(),
+            covalence_lib_hash::o256!(
+                "4eef42e0122d8c9840d200dfe76f5d0a29a1aeb85206959b0c5bedf7ed8e9081"
+            )
+        );
     }
 }
