@@ -274,6 +274,8 @@ pub enum Operation {
     ReadTheorem,
     /// Introduce a context implication from theorem witnesses.
     ProveContextImplication,
+    /// Compose an explicit path of proved context implications.
+    ProveContextImplicationPath,
     /// Weaken a theorem along a context implication.
     ProveWeakening,
     /// Load or inspect a persisted context implication.
@@ -1423,6 +1425,64 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         }))
     }
 
+    /// Composes one explicit path of authoritative implication edges.
+    ///
+    /// A singleton path establishes context reflexivity. Longer paths are
+    /// checked edge-by-edge with exact primary-key lookups; this method never
+    /// searches for a path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies composition, the path is empty, a
+    /// context is unknown, an adjacent edge is absent, or persistence fails.
+    pub fn prove_context_implication_path(
+        &mut self,
+        path: &[ContextId],
+    ) -> Result<ContextImplication<'brand>, ProofError> {
+        let (neutron, hol) = self.connection.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ProveContextImplicationPath)?;
+        let Some(antecedent) = path.first().copied() else {
+            return Err(ProofError::EmptyImplicationPath);
+        };
+        let consequent = path.last().copied().unwrap_or(antecedent);
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        for context in path {
+            require_context(&transaction, *context)?;
+        }
+        for edge in path.windows(2) {
+            let exists = transaction.query_row(
+                "SELECT EXISTS(
+                     SELECT 1 FROM hol_context_implication
+                     WHERE antecedent_ctx_id = ?1 AND consequent_ctx_id = ?2
+                 )",
+                [edge[0].0, edge[1].0],
+                |row| row.get::<_, bool>(0),
+            )?;
+            if !exists {
+                return Err(ProofError::MissingContextImplicationEdge {
+                    antecedent: edge[0],
+                    consequent: edge[1],
+                });
+            }
+        }
+        persist_context_implication(
+            &transaction,
+            antecedent,
+            consequent,
+            if path.len() == 1 {
+                "reflexivity"
+            } else {
+                "transitivity"
+            },
+        )?;
+        transaction.commit()?;
+        Ok(ContextImplication {
+            antecedent,
+            consequent,
+            brand: PhantomData,
+        })
+    }
+
     /// Transports a theorem from an implied context to its antecedent.
     ///
     /// # Errors
@@ -1459,6 +1519,30 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
 }
 
 impl<P: Policy> Connection<Hol<P>> {
+    /// Returns every direct authoritative implication edge in key order.
+    ///
+    /// This ordinary read API is intended for untrusted candidate generators;
+    /// the returned IDs are not proof capabilities.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the read or `SQLite` rejects it.
+    pub fn context_implication_edges(&mut self) -> Result<Vec<(ContextId, ContextId)>, ProofError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ReadContextImplication)?;
+        let mut statement = neutron.sqlite().prepare(
+            "SELECT antecedent_ctx_id, consequent_ctx_id
+             FROM hol_context_implication
+             ORDER BY antecedent_ctx_id, consequent_ctx_id",
+        )?;
+        statement
+            .query_map([], |row| {
+                Ok((ContextId(row.get(0)?), ContextId(row.get(1)?)))
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+
     /// Reports whether one exact context implication has been proved locally.
     ///
     /// # Errors
@@ -2895,6 +2979,13 @@ pub enum ProofError {
     },
     /// The same witness conclusion occurs more than once.
     DuplicateImplicationWitness(TermId),
+    /// An implication path contains no context.
+    EmptyImplicationPath,
+    /// One adjacent edge in an explicit implication path is absent.
+    MissingContextImplicationEdge {
+        antecedent: ContextId,
+        consequent: ContextId,
+    },
     /// Weakening was given a theorem under the wrong context.
     WeakeningContextMismatch {
         /// Implication consequent required by the rule.
@@ -2964,6 +3055,16 @@ impl fmt::Display for ProofError {
             Self::DuplicateImplicationWitness(term) => {
                 write!(formatter, "duplicate implication witness {}", term.get())
             }
+            Self::EmptyImplicationPath => formatter.write_str("context implication path is empty"),
+            Self::MissingContextImplicationEdge {
+                antecedent,
+                consequent,
+            } => write!(
+                formatter,
+                "context implication edge {} => {} is absent",
+                antecedent.get(),
+                consequent.get()
+            ),
             Self::WeakeningContextMismatch { expected, actual } => write!(
                 formatter,
                 "weakening theorem has context {}, expected {}",
@@ -2991,6 +3092,8 @@ impl StdError for ProofError {
             | Self::MissingImplicationWitness { .. }
             | Self::UnexpectedImplicationWitness { .. }
             | Self::DuplicateImplicationWitness(_)
+            | Self::EmptyImplicationPath
+            | Self::MissingContextImplicationEdge { .. }
             | Self::WeakeningContextMismatch { .. } => None,
         }
     }
@@ -3972,6 +4075,58 @@ mod tests {
             })
             .unwrap();
         assert_eq!(rows, 0);
+    }
+
+    #[test]
+    fn explicit_implication_paths_are_checked_edge_by_edge() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let p = connection.insert_bool_term(false).unwrap();
+        let truth = connection.insert_bool_term(true).unwrap();
+        let first = connection.define_context([p, truth]).unwrap();
+        let second = connection.define_context([p]).unwrap();
+        let third = connection.define_context([truth]).unwrap();
+
+        connection
+            .with_proof_session(|mut proof| {
+                let first_to_second = proof.prove_hypothesis(first, p)?;
+                proof
+                    .prove_context_implication(first, second, &[first_to_second])
+                    .map(|_| ())?;
+                let second_to_third = proof.prove_truth(second)?;
+                proof
+                    .prove_context_implication(second, third, &[second_to_third])
+                    .map(|_| ())?;
+                let composed = proof.prove_context_implication_path(&[first, second, third])?;
+                assert_eq!(composed.antecedent(), first);
+                assert_eq!(composed.consequent(), third);
+                let reflexive = proof.prove_context_implication_path(&[first])?;
+                assert_eq!(reflexive.antecedent(), first);
+                assert_eq!(reflexive.consequent(), first);
+                assert!(matches!(
+                    proof.prove_context_implication_path(&[]),
+                    Err(ProofError::EmptyImplicationPath)
+                ));
+                assert!(matches!(
+                    proof.prove_context_implication_path(&[third, second]),
+                    Err(ProofError::MissingContextImplicationEdge {
+                        antecedent,
+                        consequent,
+                    }) if antecedent == third && consequent == second
+                ));
+                Ok::<_, ProofError>(())
+            })
+            .unwrap();
+
+        assert!(connection.proved_context_implication(first, third).unwrap());
+        assert_eq!(
+            connection.context_implication_edges().unwrap(),
+            [
+                (first, first),
+                (first, second),
+                (first, third),
+                (second, third)
+            ]
+        );
     }
 
     #[test]
