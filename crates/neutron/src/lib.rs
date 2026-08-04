@@ -7,7 +7,9 @@
 
 mod connection;
 mod image;
+mod vfs;
 
 pub use bytes::Bytes;
 pub use connection::{Connection, ConnectionError};
 pub use image::ImageError;
+pub use vfs::DatabaseVfsError;
