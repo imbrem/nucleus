@@ -410,6 +410,7 @@ mod tests {
     };
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn scoped_reader_uses_verified_immutable_vfs_and_exposes_only_structure() {
         let source_kernel = Kernel::ephemeral();
         let mut source = source_kernel.open_hol(AllowAll).unwrap();
