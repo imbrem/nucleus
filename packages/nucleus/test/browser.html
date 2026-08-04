@@ -166,6 +166,28 @@
             { op: "persist_theorem", theorem: 0 },
           ],
         });
+        const freeType = await hol.freeType(900);
+        const freeTypeView = await hol.type(freeType);
+        const boolType = await hol.boolType();
+        const schematicTerm = await hol.freeTerm(901, freeType);
+        const booleanTerm = await hol.freeTerm(901, boolType);
+        const expectedInstantiatedEquality = await hol.equality(
+          booleanTerm,
+          booleanTerm,
+        );
+        const typeInstantiationRecipe = await hol.runProofScript({
+          version: 1,
+          steps: [
+            { op: "reflexivity", context: 0, term: schematicTerm },
+            {
+              op: "instantiate_types",
+              theorem: 0,
+              instantiations: [
+                { variable: freeType, replacement: boolType },
+              ],
+            },
+          ],
+        });
         let unknownProofFieldRejected = false;
         try {
           await hol.runProofScript({
@@ -326,6 +348,9 @@
           attestationHasBytes: "bytes" in attestation,
           snapshotRows,
           proofRecipe,
+          freeTypeView,
+          expectedInstantiatedEquality,
+          typeInstantiationRecipe,
           unknownProofFieldRejected,
           trustedImport,
           inspectedImport,

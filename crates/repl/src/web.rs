@@ -692,6 +692,15 @@ impl WebKernel {
         u32::try_from(id.get()).map_err(js_error)
     }
 
+    /// Canonically interns a rank-zero schematic type variable.
+    pub fn hol_free_type(&mut self, connection: u32, symbol: u32) -> Result<u32, JsValue> {
+        let id = self
+            .repl
+            .hol_free_type(ConnectionId::from_u32(connection), i64::from(symbol))
+            .map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
     /// Canonically interns a closed function type.
     ///
     /// # Errors
@@ -722,9 +731,10 @@ impl WebKernel {
     /// Returns a JavaScript error for invalid IDs or a denied/corrupt read.
     pub fn hol_type(&mut self, connection: u32, ty: u32) -> Result<WebType, JsValue> {
         self.repl
-            .hol_mut(ConnectionId::from_u32(connection))
-            .map_err(js_error)?
-            .type_view(TypeId::from_i64(i64::from(ty)))
+            .hol_type_view(
+                ConnectionId::from_u32(connection),
+                TypeId::from_i64(i64::from(ty)),
+            )
             .map(|ty| WebType { ty })
             .map_err(js_error)
     }
@@ -2006,11 +2016,13 @@ impl WebType {
         }
     }
 
-    /// Returns a primitive base type's symbol ID.
+    /// Returns a primitive base or free type's symbol ID.
     pub fn symbol(&self) -> Result<u32, JsValue> {
         match self.ty {
-            TypeView::Base { symbol } => u32::try_from(symbol).map_err(js_error),
-            _ => Err(JsValue::from_str("type is not a primitive base type")),
+            TypeView::Base { symbol } | TypeView::Free { symbol } => {
+                u32::try_from(symbol).map_err(js_error)
+            }
+            _ => Err(JsValue::from_str("type has no symbol")),
         }
     }
 }

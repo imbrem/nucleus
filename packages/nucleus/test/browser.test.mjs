@@ -104,6 +104,15 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
     version: 1,
     outputs: [{ kind: "theorem", context: 0, conclusion: 3 }, { kind: "unit" }],
   });
+  assert.deepEqual(result.freeTypeView, { kind: "free", symbol: 900 });
+  assert.equal(
+    result.typeInstantiationRecipe.outputs[1].conclusion,
+    result.expectedInstantiatedEquality,
+  );
+  assert.deepEqual(
+    result.typeInstantiationRecipe.outputs.map((output) => output.kind),
+    ["theorem", "theorem"],
+  );
   assert.equal(result.unknownProofFieldRejected, true);
   assert.equal(result.malformedDescriptorRejected, true);
   assert.equal(result.ambiguousSchemaSourceRejected, true);

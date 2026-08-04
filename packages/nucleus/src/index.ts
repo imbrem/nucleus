@@ -28,6 +28,8 @@ export type HolKind =
 
 export type HolType =
   | { kind: "bool" }
+  | { kind: "base"; symbol: number }
+  | { kind: "free"; symbol: number }
   | { kind: "arrow"; domain: number; codomain: number };
 
 export type HolTerm =
@@ -79,6 +81,11 @@ export type HolProofStepV1 =
   | { op: "deduction_antisymmetry"; first: number; second: number }
   | {
       op: "instantiate_terms";
+      theorem: number;
+      instantiations: { variable: number; replacement: number }[];
+    }
+  | {
+      op: "instantiate_types";
       theorem: number;
       instantiations: { variable: number; replacement: number }[];
     }
@@ -296,6 +303,7 @@ export interface BrowserHolConnection {
   kind(id: number): Promise<HolKind>;
   rank(id: number): Promise<number>;
   boolType(): Promise<number>;
+  freeType(symbol: number): Promise<number>;
   arrowType(domain: number, codomain: number): Promise<number>;
   type(id: number): Promise<HolType>;
   boolTerm(value: boolean): Promise<number>;
@@ -454,6 +462,7 @@ type RequestBody =
   | { operation: "holKind"; connection: number; kind: number }
   | { operation: "holRank"; connection: number; kind: number }
   | { operation: "holBoolType"; connection: number }
+  | { operation: "holFreeType"; connection: number; symbol: number }
   | {
       operation: "holArrowType";
       connection: number;
@@ -935,6 +944,14 @@ class WorkerHolConnection implements BrowserHolConnection {
     return this.#request({
       operation: "holBoolType",
       connection: this.connection,
+    });
+  }
+
+  freeType(symbol: number): Promise<number> {
+    return this.#request({
+      operation: "holFreeType",
+      connection: this.connection,
+      symbol,
     });
   }
 
