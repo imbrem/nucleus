@@ -178,6 +178,22 @@ pub enum LocalHolProofStep {
         /// Earlier left-premise theorem slot.
         premise: LocalHolProofRef,
     },
+    /// Apply typed Leibniz substitution to two theorem capabilities.
+    EqualitySubstitution {
+        /// Earlier equality theorem slot.
+        equality: LocalHolProofRef,
+        /// Closed predicate term.
+        predicate: TermId,
+        /// Earlier theorem proving the predicate at the equality's left side.
+        premise: LocalHolProofRef,
+    },
+    /// Apply deduction antisymmetry to two theorem capabilities.
+    DeductionAntisymmetry {
+        /// First earlier theorem slot.
+        first: LocalHolProofRef,
+        /// Second earlier theorem slot.
+        second: LocalHolProofRef,
+    },
     /// Check and persist an exact structural context union.
     ContextUnion {
         /// Left input context.
@@ -507,7 +523,9 @@ fn declared_sort(step: &LocalHolProofStep) -> LocalHolProofSort {
         | LocalHolProofStep::ConversionEquality { .. }
         | LocalHolProofStep::ConvertTheorem { .. }
         | LocalHolProofStep::Weaken { .. }
-        | LocalHolProofStep::EqualityModusPonens { .. } => LocalHolProofSort::Theorem,
+        | LocalHolProofStep::EqualityModusPonens { .. }
+        | LocalHolProofStep::EqualitySubstitution { .. }
+        | LocalHolProofStep::DeductionAntisymmetry { .. } => LocalHolProofSort::Theorem,
         LocalHolProofStep::ConversionReflexivity { .. }
         | LocalHolProofStep::ConversionSymmetry { .. }
         | LocalHolProofStep::ConversionTransitivity { .. }
@@ -639,9 +657,16 @@ fn preflight(steps: &[LocalHolProofStep]) -> Result<(), LocalHolProofScriptError
                 check(*implication_ref, LocalHolProofSort::ContextImplication)?;
                 check(*theorem_ref, LocalHolProofSort::Theorem)?;
             }
-            LocalHolProofStep::EqualityModusPonens { equality, premise } => {
+            LocalHolProofStep::EqualityModusPonens { equality, premise }
+            | LocalHolProofStep::EqualitySubstitution {
+                equality, premise, ..
+            } => {
                 check(*equality, LocalHolProofSort::Theorem)?;
                 check(*premise, LocalHolProofSort::Theorem)?;
+            }
+            LocalHolProofStep::DeductionAntisymmetry { first, second } => {
+                check(*first, LocalHolProofSort::Theorem)?;
+                check(*second, LocalHolProofSort::Theorem)?;
             }
             LocalHolProofStep::ContextEquivalence { forward, backward } => {
                 check(*forward, LocalHolProofSort::ContextImplication)?;
@@ -843,6 +868,21 @@ pub fn run_local_hol_proof_script<P: Policy>(
                         theorem(&slots, index, *premise)?,
                     )?)
                 }
+                LocalHolProofStep::EqualitySubstitution {
+                    equality,
+                    predicate,
+                    premise,
+                } => Capability::Theorem(proof.equality_substitution(
+                    theorem(&slots, index, *equality)?,
+                    *predicate,
+                    theorem(&slots, index, *premise)?,
+                )?),
+                LocalHolProofStep::DeductionAntisymmetry { first, second } => {
+                    Capability::Theorem(proof.deduction_antisymmetry(
+                        theorem(&slots, index, *first)?,
+                        theorem(&slots, index, *second)?,
+                    )?)
+                }
                 LocalHolProofStep::ContextUnion {
                     left,
                     right,
@@ -891,8 +931,10 @@ mod tests {
         let truth = connection.insert_bool_term(true).unwrap();
         let bound = connection.insert_bound_term(0, bool_type).unwrap();
         let identity = connection.insert_lambda(bool_type, bound).unwrap();
+        let identity_truth = connection.insert_application(identity, truth).unwrap();
         let empty = ContextId::empty();
         let truth_context = connection.define_context([truth]).unwrap();
+        let identity_truth_context = connection.define_context([identity_truth]).unwrap();
 
         let steps = vec![
             LocalHolProofStep::Truth { context: empty }, // 0 theorem
@@ -990,6 +1032,23 @@ mod tests {
                 left: empty,
                 right: truth_context,
             }, // 28 union
+            LocalHolProofStep::Reflexivity {
+                context: identity_truth_context,
+                term: truth,
+            }, // 29 theorem true = true
+            LocalHolProofStep::Hypothesis {
+                context: identity_truth_context,
+                term: identity_truth,
+            }, // 30 theorem (lambda x. x) true
+            LocalHolProofStep::EqualitySubstitution {
+                equality: reference(29),
+                predicate: identity,
+                premise: reference(30),
+            }, // 31 theorem (lambda x. x) true
+            LocalHolProofStep::DeductionAntisymmetry {
+                first: reference(0),
+                second: reference(0),
+            }, // 32 theorem true = true under empty
         ];
 
         let outputs = run_local_hol_proof_script(&mut connection, &steps).unwrap();
@@ -1020,6 +1079,53 @@ mod tests {
                 result: truth_context,
             }
         );
+        assert_eq!(
+            outputs[31],
+            LocalHolProofOutput::Theorem {
+                context: identity_truth_context,
+                conclusion: identity_truth,
+            }
+        );
+        assert!(matches!(
+            outputs[32],
+            LocalHolProofOutput::Theorem { context, .. } if context == empty
+        ));
+    }
+
+    #[test]
+    fn new_binary_theorem_rules_are_preflighted_by_sort() {
+        let operations = Rc::new(RefCell::new(Vec::new()));
+        let policy = RecordingPolicy {
+            operations: Rc::clone(&operations),
+            denied: None,
+        };
+        let mut connection = Connection::open_hol_in_memory(policy).unwrap();
+        let error = run_local_hol_proof_script(
+            &mut connection,
+            &[
+                LocalHolProofStep::ConversionReflexivity {
+                    term: TermId::from_i64(i64::MAX),
+                },
+                LocalHolProofStep::Truth {
+                    context: ContextId::empty(),
+                },
+                LocalHolProofStep::DeductionAntisymmetry {
+                    first: reference(0),
+                    second: reference(1),
+                },
+            ],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            LocalHolProofScriptError::WrongSort {
+                step: 2,
+                reference: bad_reference,
+                expected: LocalHolProofSort::Theorem,
+                actual: LocalHolProofSort::Conversion,
+            } if bad_reference == reference(0)
+        ));
+        assert!(operations.borrow().is_empty());
     }
 
     #[derive(Clone)]
