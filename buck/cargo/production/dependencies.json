@@ -2,6 +2,48 @@
   "generatedBy": "glu 0.0.0",
   "packages": [
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#addr2line@0.26.1",
+      "name": "addr2line",
+      "version": "0.26.1",
+      "checksum": "59317f77929f0e679d39364702289274de2f0f0b22cbf50b2b8cff2169a0b27a",
+      "edition": "2018",
+      "features": [
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "A cross-platform symbolication library written in Rust, using `gimli`",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/gimli-rs/addr2line"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "gimli": ":gimli-0.33.0"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#allocator-api2@0.2.21",
+      "name": "allocator-api2",
+      "version": "0.2.21",
+      "checksum": "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923",
+      "edition": "2018",
+      "features": [
+        "alloc"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Zakarum <zaq.dev@icloud.com>",
+        "CARGO_PKG_DESCRIPTION": "Mirror of Rust's allocator API",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/zakarumych/allocator-api2",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/zakarumych/allocator-api2"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
       "name": "anyhow",
       "version": "1.0.104",
@@ -21,6 +63,22 @@
         {}
       ],
       "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#arbitrary@1.4.2",
+      "name": "arbitrary",
+      "version": "1.4.2",
+      "checksum": "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Rust-Fuzz Project Developers:Nick Fitzgerald <fitzgen@gmail.com>:Manish Goregaokar <manishsmail@gmail.com>:Simonas Kazlauskas <arbitrary@kazlauskas.me>:Brian L. Troutwine <brian@troutwine.us>:Corey Farwell <coreyf@rwell.org>",
+        "CARGO_PKG_DESCRIPTION": "The trait for generating structured data from unstructured data",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-fuzz/arbitrary/"
+      },
+      "targets": [
+        {}
+      ]
     },
     {
       "id": "registry+https://github.com/rust-lang/crates.io-index#arrayref@0.3.9",
@@ -55,6 +113,29 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#async-trait@0.1.91",
+      "name": "async-trait",
+      "version": "0.1.91",
+      "checksum": "ae36dc4177970ef04fde5178d3e2429882def40e57a451f919c098f72baa6cec",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "David Tolnay <dtolnay@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Type erasure for async trait methods",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/dtolnay/async-trait"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "proc_macro2": ":proc-macro2-1.0.107",
+            "quote": ":quote-1.0.47",
+            "syn": ":syn-3.0.3"
+          },
+          "proc_macro": true
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#base64ct@1.8.3",
       "name": "base64ct",
       "version": "1.8.3",
@@ -80,6 +161,9 @@
       "version": "2.13.1",
       "checksum": "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da",
       "edition": "2021",
+      "features": [
+        "std"
+      ],
       "env": {
         "CARGO_PKG_AUTHORS": "The Rust Project Developers",
         "CARGO_PKG_DESCRIPTION": "A macro to generate structures which behave like bitflags.\n",
@@ -145,6 +229,30 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#bumpalo@3.20.3",
+      "name": "bumpalo",
+      "version": "3.20.3",
+      "checksum": "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649",
+      "edition": "2021",
+      "features": [
+        "allocator-api2",
+        "default"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Nick Fitzgerald <fitzgen@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "A fast bump allocation arena for Rust.",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/fitzgen/bumpalo"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "allocator_api2": ":allocator-api2-0.2.21"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
       "name": "bytes",
       "version": "1.12.1",
@@ -203,6 +311,26 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#cobs@0.3.0",
+      "name": "cobs",
+      "version": "0.3.0",
+      "checksum": "0fa961b519f0b462e3a3b4a34b64d119eeaca1d59af726fe450bbba07a9fc0a1",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Allen Welkie <>:James Munns <james@onevariable.com>",
+        "CARGO_PKG_DESCRIPTION": "    This is an implementation of the Consistent Overhead Byte Stuffing (COBS) algorithm.\n    COBS is an algorithm for transforming a message into an encoding where a specific value\n    (the \"sentinel\" value) is not used. This value can then be used to mark frame boundaries\n    in a serial communication channel. ",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/jamesmunns/cobs.rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "thiserror": ":thiserror-2.0.19"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#const-oid@0.9.6",
       "name": "const-oid",
       "version": "0.9.6",
@@ -238,6 +366,31 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#cpp_demangle@0.4.5",
+      "name": "cpp_demangle",
+      "version": "0.4.5",
+      "checksum": "f2bb79cb74d735044c972aae58ed0aaa9a837e85b01106a54c39e42e97f62253",
+      "edition": "2018",
+      "features": [
+        "alloc",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Nick Fitzgerald <fitzgen@gmail.com>:Jim Blandy <jimb@red-bean.com>:Kyle Huey <khuey@kylehuey.com>",
+        "CARGO_PKG_DESCRIPTION": "A crate for demangling C++ symbols",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/gimli-rs/cpp_demangle"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "cfg_if": ":cfg-if-1.0.4"
+          }
+        }
+      ],
+      "buildscript": {}
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#cpufeatures@0.2.17",
       "name": "cpufeatures",
       "version": "0.2.17",
@@ -268,6 +421,356 @@
       "targets": [
         {}
       ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#cranelift-assembler-x64@0.133.2",
+      "name": "cranelift-assembler-x64",
+      "version": "0.133.2",
+      "checksum": "47ca6361f42d0c945fadc1103501e1c07438e034fd5a86896a3074eff3e860bd",
+      "edition": "2024",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "A Cranelift-specific x64 assembler",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception"
+      },
+      "targets": [
+        {}
+      ],
+      "buildscript": {
+        "named_deps": {
+          "cranelift_assembler_x64_meta": ":cranelift-assembler-x64-meta-0.133.2"
+        }
+      }
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#cranelift-assembler-x64-meta@0.133.2",
+      "name": "cranelift-assembler-x64-meta",
+      "version": "0.133.2",
+      "checksum": "2c1dbc96db7cebf747bd5722d482338a5acff91d6be43b6bec145f9471327ffa",
+      "edition": "2024",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Generate a Cranelift-specific assembler for x64 instructions",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "cranelift_srcgen": ":cranelift-srcgen-0.133.2"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#cranelift-bforest@0.133.1",
+      "name": "cranelift-bforest",
+      "version": "0.133.1",
+      "checksum": "03b4982ef9fa54ec9eee841e891e7ddc5434be1250e88de31572e000c888f30b",
+      "edition": "2024",
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Cranelift Project Developers",
+        "CARGO_PKG_DESCRIPTION": "A forest of B+-trees",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasmtime"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "cranelift_entity": ":cranelift-entity-0.133.1",
+            "wasmtime_core": ":wasmtime-internal-core-46.0.1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#cranelift-bitset@0.133.1",
+      "name": "cranelift-bitset",
+      "version": "0.133.1",
+      "checksum": "529143118c4eeb58c39ecb02319557d512be6c61348486422974ab8e3906b8a8",
+      "edition": "2024",
+      "features": [
+        "enable-serde"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Cranelift Project Developers",
+        "CARGO_PKG_DESCRIPTION": "Various bitset stuff for use inside Cranelift",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasmtime"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "serde": ":serde-1.0.229",
+            "serde_derive": ":serde_derive-1.0.229",
+            "wasmtime_core": ":wasmtime-internal-core-46.0.1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen@0.133.1",
+      "name": "cranelift-codegen",
+      "version": "0.133.1",
+      "checksum": "b7780677247ad3577e3a6a3ebf43f39b325a11d6393db72b2c9968a910d4d13d",
+      "edition": "2024",
+      "features": [
+        "enable-serde",
+        "gimli",
+        "host-arch",
+        "incremental-cache",
+        "postcard",
+        "pulley",
+        "serde",
+        "serde_derive",
+        "sha2",
+        "std",
+        "timing",
+        "unwind"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Cranelift Project Developers",
+        "CARGO_PKG_DESCRIPTION": "Low-level code generator library",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasmtime"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "bumpalo": ":bumpalo-3.20.3",
+            "cranelift_assembler_x64": ":cranelift-assembler-x64-0.133.2",
+            "cranelift_bforest": ":cranelift-bforest-0.133.1",
+            "cranelift_bitset": ":cranelift-bitset-0.133.1",
+            "cranelift_codegen_shared": ":cranelift-codegen-shared-0.133.2",
+            "cranelift_control": ":cranelift-control-0.133.2",
+            "cranelift_entity": ":cranelift-entity-0.133.1",
+            "gimli": ":gimli-0.33.0",
+            "hashbrown": ":hashbrown-0.17.1",
+            "libm": ":libm-0.2.16",
+            "log": ":log-0.4.33",
+            "postcard": ":postcard-1.1.3",
+            "pulley_interpreter": ":pulley-interpreter-46.0.1",
+            "regalloc2": ":regalloc2-0.15.2",
+            "rustc_hash": ":rustc-hash-2.1.3",
+            "serde": ":serde-1.0.229",
+            "serde_derive": ":serde_derive-1.0.229",
+            "sha2": ":sha2-0.10.9",
+            "smallvec": ":smallvec-1.15.2",
+            "target_lexicon": ":target-lexicon-0.13.5",
+            "wasmtime_core": ":wasmtime-internal-core-46.0.1"
+          }
+        }
+      ],
+      "buildscript": {
+        "named_deps": {
+          "cranelift_codegen_meta": ":cranelift-codegen-meta-0.133.1",
+          "cranelift_isle": ":cranelift-isle-0.133.1"
+        }
+      }
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen-meta@0.133.1",
+      "name": "cranelift-codegen-meta",
+      "version": "0.133.1",
+      "checksum": "ac9645250416cbf92454fe61160e17e026e0ce405906a54500b114f923ddffc9",
+      "edition": "2024",
+      "features": [
+        "pulley"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Cranelift Project Developers",
+        "CARGO_PKG_DESCRIPTION": "Metaprogram for cranelift-codegen code generator library",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasmtime"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "cranelift_assembler_x64_meta": ":cranelift-assembler-x64-meta-0.133.2",
+            "cranelift_codegen_shared": ":cranelift-codegen-shared-0.133.2",
+            "cranelift_srcgen": ":cranelift-srcgen-0.133.2",
+            "heck": ":heck-0.5.0",
+            "pulley_interpreter": ":pulley-interpreter-46.0.1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen-shared@0.133.2",
+      "name": "cranelift-codegen-shared",
+      "version": "0.133.2",
+      "checksum": "584bd91987927dfe35e79c5d6dd52a117cb64c4fce26df881d02dcc17bd59a8f",
+      "edition": "2024",
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Cranelift Project Developers",
+        "CARGO_PKG_DESCRIPTION": "For code shared between cranelift-codegen-meta and cranelift-codegen",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasmtime"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#cranelift-control@0.133.2",
+      "name": "cranelift-control",
+      "version": "0.133.2",
+      "checksum": "af277352af76db01bb42fa4978b672a44406715798edb693cc02e363e12dc505",
+      "edition": "2024",
+      "features": [
+        "fuzz"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Cranelift Project Developers",
+        "CARGO_PKG_DESCRIPTION": "White-box fuzz testing framework",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasmtime"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "arbitrary": ":arbitrary-1.4.2"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#cranelift-entity@0.133.1",
+      "name": "cranelift-entity",
+      "version": "0.133.1",
+      "checksum": "a5300c49cf940526fe771517b3b3eabd5d0ff164ee61698579cf403fe8d3af3c",
+      "edition": "2024",
+      "features": [
+        "enable-serde",
+        "serde",
+        "serde_derive"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Cranelift Project Developers",
+        "CARGO_PKG_DESCRIPTION": "Data structures using entity references as mapping keys",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasmtime"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "cranelift_bitset": ":cranelift-bitset-0.133.1",
+            "serde": ":serde-1.0.229",
+            "serde_derive": ":serde_derive-1.0.229",
+            "wasmtime_core": ":wasmtime-internal-core-46.0.1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#cranelift-frontend@0.133.1",
+      "name": "cranelift-frontend",
+      "version": "0.133.1",
+      "checksum": "da4adbf760207fdbbe130f1191cce01cdef66831a9f648b1f39ff2800d126d45",
+      "edition": "2024",
+      "features": [
+        "default",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Cranelift Project Developers",
+        "CARGO_PKG_DESCRIPTION": "Cranelift IR builder helper",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasmtime"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "cranelift_codegen": ":cranelift-codegen-0.133.1",
+            "hashbrown": ":hashbrown-0.17.1",
+            "log": ":log-0.4.33",
+            "smallvec": ":smallvec-1.15.2",
+            "target_lexicon": ":target-lexicon-0.13.5"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#cranelift-isle@0.133.1",
+      "name": "cranelift-isle",
+      "version": "0.133.1",
+      "checksum": "8315b21ff018226a42a60a4702c2dd75f6447cac26e9bca622e14c22088c2ff5",
+      "edition": "2024",
+      "features": [
+        "default"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Cranelift Project Developers",
+        "CARGO_PKG_DESCRIPTION": "ISLE: Instruction Selection and Lowering Expressions. A domain-specific language for instruction selection in Cranelift.",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasmtime/tree/main/cranelift/isle"
+      },
+      "targets": [
+        {}
+      ],
+      "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#cranelift-native@0.133.1",
+      "name": "cranelift-native",
+      "version": "0.133.1",
+      "checksum": "d506ef23a60715bde451b06620b14402166ded3b648454fccbf04f3e46a4aa70",
+      "edition": "2024",
+      "features": [
+        "default",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Cranelift Project Developers",
+        "CARGO_PKG_DESCRIPTION": "Support for targeting the host with Cranelift",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasmtime"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "cranelift_codegen": ":cranelift-codegen-0.133.1",
+            "target_lexicon": ":target-lexicon-0.13.5"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#cranelift-srcgen@0.133.2",
+      "name": "cranelift-srcgen",
+      "version": "0.133.2",
+      "checksum": "6bd75e1e2719808c80af27ebe168d2220ec10e519e1d5a52bdbed9bd5cac1a32",
+      "edition": "2024",
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Wasmtime Project Developers",
+        "CARGO_PKG_DESCRIPTION": "Helper functions for generating Rust and ISLE files",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasmtime"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#crc32fast@1.5.0",
+      "name": "crc32fast",
+      "version": "1.5.0",
+      "checksum": "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511",
+      "edition": "2021",
+      "features": [
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Sam Rijs <srijs@airpost.net>:Alex Crichton <alex@alexcrichton.com>",
+        "CARGO_PKG_DESCRIPTION": "Fast, SIMD-accelerated CRC32 (IEEE) checksum computation",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/srijs/rust-crc32fast"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "cfg_if": ":cfg-if-1.0.4"
+          }
+        }
+      ],
+      "buildscript": {}
     },
     {
       "id": "registry+https://github.com/rust-lang/crates.io-index#crypto-common@0.1.7",
@@ -467,6 +970,86 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#either@1.17.0",
+      "name": "either",
+      "version": "1.17.0",
+      "checksum": "9e5e8f6c15a24b9a3ee5efec809ccd006d3b30e8b3bb63c39af737c7f87daa1d",
+      "edition": "2021",
+      "features": [
+        "std",
+        "use_std"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "The enum `Either` with variants `Left` and `Right` is a general purpose sum type with two cases.\n",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rayon-rs/either"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#embedded-io@0.4.0",
+      "name": "embedded-io",
+      "version": "0.4.0",
+      "checksum": "ef1a6892d9eef45c8fa6b9e0086428a2cca8491aca8f787c534a3d6d0bcb3ced",
+      "edition": "2021",
+      "features": [
+        "alloc"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Embedded IO traits",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/embassy-rs/embedded-io"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#embedded-io@0.6.1",
+      "name": "embedded-io",
+      "version": "0.6.1",
+      "checksum": "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d",
+      "edition": "2021",
+      "features": [
+        "alloc"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Embedded IO traits",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-embedded/embedded-hal"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#encoding_rs@0.8.35",
+      "name": "encoding_rs",
+      "version": "0.8.35",
+      "checksum": "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3",
+      "edition": "2018",
+      "features": [
+        "alloc",
+        "default"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Henri Sivonen <hsivonen@hsivonen.fi>",
+        "CARGO_PKG_DESCRIPTION": "A Gecko-oriented implementation of the Encoding Standard",
+        "CARGO_PKG_HOMEPAGE": "https://docs.rs/encoding_rs/",
+        "CARGO_PKG_LICENSE": "(Apache-2.0 OR MIT) AND BSD-3-Clause",
+        "CARGO_PKG_REPOSITORY": "https://github.com/hsivonen/encoding_rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "cfg_if": ":cfg-if-1.0.4"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#equivalent@1.0.2",
       "name": "equivalent",
       "version": "1.0.2",
@@ -479,6 +1062,29 @@
       },
       "targets": [
         {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#errno@0.3.14",
+      "name": "errno",
+      "version": "0.3.14",
+      "checksum": "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb",
+      "edition": "2018",
+      "features": [
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Chris Wong <lambda.fairy@gmail.com>:Dan Gohman <dev@sunfishcode.online>",
+        "CARGO_PKG_DESCRIPTION": "Cross-platform interface to the `errno` variable.",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/lambda-fairy/rust-errno"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "libc": ":libc-0.2.189"
+          }
+        }
       ]
     },
     {
@@ -533,6 +1139,24 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#fnv@1.0.7",
+      "name": "fnv",
+      "version": "1.0.7",
+      "checksum": "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1",
+      "edition": "2015",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Alex Crichton <alex@alexcrichton.com>",
+        "CARGO_PKG_DESCRIPTION": "Fowler–Noll–Vo hash function",
+        "CARGO_PKG_LICENSE": "Apache-2.0 / MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/servo/rust-fnv"
+      },
+      "targets": [
+        {
+          "crate_root": "lib.rs"
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#foldhash@0.2.0",
       "name": "foldhash",
       "version": "0.2.0",
@@ -546,6 +1170,180 @@
       },
       "targets": [
         {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#futures@0.3.33",
+      "name": "futures",
+      "version": "0.3.33",
+      "checksum": "a88cf1f829d945f548cf8fec32c61b1f202b6d93b45848602fc02af4b12ad218",
+      "edition": "2018",
+      "features": [
+        "alloc",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "An implementation of futures and streams featuring zero allocations,\ncomposability, and iterator-like interfaces.\n",
+        "CARGO_PKG_HOMEPAGE": "https://rust-lang.github.io/futures-rs",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/futures-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "futures_channel": ":futures-channel-0.3.33",
+            "futures_core": ":futures-core-0.3.33",
+            "futures_io": ":futures-io-0.3.33",
+            "futures_sink": ":futures-sink-0.3.33",
+            "futures_task": ":futures-task-0.3.33",
+            "futures_util": ":futures-util-0.3.33"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#futures-channel@0.3.33",
+      "name": "futures-channel",
+      "version": "0.3.33",
+      "checksum": "262590f4fe6afeb0bc83be1daa64e52657fe185690a958af7f3ad0e92085c5ae",
+      "edition": "2018",
+      "features": [
+        "alloc",
+        "futures-sink",
+        "sink",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Channels for asynchronous communication using futures-rs.\n",
+        "CARGO_PKG_HOMEPAGE": "https://rust-lang.github.io/futures-rs",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/futures-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "futures_core": ":futures-core-0.3.33",
+            "futures_sink": ":futures-sink-0.3.33"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#futures-core@0.3.33",
+      "name": "futures-core",
+      "version": "0.3.33",
+      "checksum": "2cd50c473c80f6d7c3670a752354b8e569b1a7cbfdc0419ec88e5edad85e0dc7",
+      "edition": "2018",
+      "features": [
+        "alloc",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "The core traits and types in for the `futures` library.\n",
+        "CARGO_PKG_HOMEPAGE": "https://rust-lang.github.io/futures-rs",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/futures-rs"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#futures-io@0.3.33",
+      "name": "futures-io",
+      "version": "0.3.33",
+      "checksum": "4577ecaa3c4f96589d473f679a71b596316f6641bc350038b962a5daf0085d7a",
+      "edition": "2018",
+      "features": [
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "The `AsyncRead`, `AsyncWrite`, `AsyncSeek`, and `AsyncBufRead` traits for the futures-rs library.\n",
+        "CARGO_PKG_HOMEPAGE": "https://rust-lang.github.io/futures-rs",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/futures-rs"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#futures-sink@0.3.33",
+      "name": "futures-sink",
+      "version": "0.3.33",
+      "checksum": "e34418ac499d6305c2fb5ad0ed2f6ac998c5f8ca209b4510f7f94242c647e307",
+      "edition": "2018",
+      "features": [
+        "alloc",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "The asynchronous `Sink` trait for the futures-rs library.\n",
+        "CARGO_PKG_HOMEPAGE": "https://rust-lang.github.io/futures-rs",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/futures-rs"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#futures-task@0.3.33",
+      "name": "futures-task",
+      "version": "0.3.33",
+      "checksum": "b231ed28831efb4a61a08580c4bc233ec56bc009f4cd8f52da2c3cb97df0c109",
+      "edition": "2018",
+      "features": [
+        "alloc",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Tools for working with tasks.\n",
+        "CARGO_PKG_HOMEPAGE": "https://rust-lang.github.io/futures-rs",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/futures-rs"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#futures-util@0.3.33",
+      "name": "futures-util",
+      "version": "0.3.33",
+      "checksum": "a77a90a256fce34da66415271e30f94ee91c57b04b8a2c042d9cf3220179deaa",
+      "edition": "2018",
+      "features": [
+        "alloc",
+        "channel",
+        "futures-channel",
+        "futures-io",
+        "futures-sink",
+        "io",
+        "memchr",
+        "sink",
+        "slab",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Common utilities and extension traits for the futures-rs library.\n",
+        "CARGO_PKG_HOMEPAGE": "https://rust-lang.github.io/futures-rs",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/futures-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "futures_channel": ":futures-channel-0.3.33",
+            "futures_core": ":futures-core-0.3.33",
+            "futures_io": ":futures-io-0.3.33",
+            "futures_sink": ":futures-sink-0.3.33",
+            "futures_task": ":futures-task-0.3.33",
+            "memchr": ":memchr-2.8.3",
+            "pin_project_lite": ":pin-project-lite-0.2.17",
+            "slab": ":slab-0.4.12"
+          }
+        }
       ]
     },
     {
@@ -627,13 +1425,65 @@
       "buildscript": {}
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#gimli@0.33.0",
+      "name": "gimli",
+      "version": "0.33.0",
+      "checksum": "0bf7f043f89559805f8c7cacc432749b2fa0d0a0a9ee46ce47164ed5ba7f126c",
+      "edition": "2024",
+      "features": [
+        "read",
+        "read-core",
+        "std",
+        "write"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "A library for reading and writing the DWARF debugging format.",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/gimli-rs/gimli"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "fnv": ":fnv-1.0.7",
+            "hashbrown": ":hashbrown-0.16.1",
+            "indexmap": ":indexmap-2.14.0",
+            "stable_deref_trait": ":stable_deref_trait-1.2.1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.16.1",
+      "name": "hashbrown",
+      "version": "0.16.1",
+      "checksum": "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100",
+      "edition": "2021",
+      "features": [
+        "default-hasher"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Amanieu d'Antras <amanieu@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "A Rust port of Google's SwissTable hash map",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/hashbrown"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "foldhash": ":foldhash-0.2.0"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
       "name": "hashbrown",
       "version": "0.17.1",
       "checksum": "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a",
       "edition": "2024",
       "features": [
-        "default-hasher"
+        "default-hasher",
+        "serde"
       ],
       "env": {
         "CARGO_PKG_DESCRIPTION": "A Rust port of Google's SwissTable hash map",
@@ -643,7 +1493,8 @@
       "targets": [
         {
           "named_deps": {
-            "foldhash": ":foldhash-0.2.0"
+            "foldhash": ":foldhash-0.2.0",
+            "serde_core": ":serde_core-1.0.229"
           }
         }
       ]
@@ -725,6 +1576,31 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#itertools@0.14.0",
+      "name": "itertools",
+      "version": "0.14.0",
+      "checksum": "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285",
+      "edition": "2018",
+      "features": [
+        "default",
+        "use_alloc",
+        "use_std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "bluss",
+        "CARGO_PKG_DESCRIPTION": "Extra iterator adaptors, iterator methods, free functions, and macros.",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-itertools/itertools"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "either": ":either-1.17.0"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#itoa@1.0.18",
       "name": "itoa",
       "version": "1.0.18",
@@ -762,10 +1638,35 @@
       "version": "0.2.189",
       "checksum": "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2",
       "edition": "2021",
+      "features": [
+        "default",
+        "std"
+      ],
       "env": {
         "CARGO_PKG_DESCRIPTION": "Raw FFI bindings to platform libraries like libc.",
         "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
         "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/libc"
+      },
+      "targets": [
+        {}
+      ],
+      "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#libm@0.2.16",
+      "name": "libm",
+      "version": "0.2.16",
+      "checksum": "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981",
+      "edition": "2021",
+      "features": [
+        "arch",
+        "default"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Alex Crichton <alex@alexcrichton.com>:Amanieu d'Antras <amanieu@gmail.com>:Jorge Aparicio <japaricious@gmail.com>:Trevor Gross <tg@trevorgross.com>",
+        "CARGO_PKG_DESCRIPTION": "libm in pure Rust",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/compiler-builtins"
       },
       "targets": [
         {}
@@ -803,6 +1704,30 @@
           "vcpkg": ":vcpkg-0.2.15"
         }
       }
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#linux-raw-sys@0.12.1",
+      "name": "linux-raw-sys",
+      "version": "0.12.1",
+      "checksum": "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53",
+      "edition": "2021",
+      "features": [
+        "auxvec",
+        "elf",
+        "errno",
+        "general",
+        "ioctl",
+        "no_std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Dan Gohman <dev@sunfishcode.online>",
+        "CARGO_PKG_DESCRIPTION": "Generated bindings for Linux's userspace API",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/sunfishcode/linux-raw-sys"
+      },
+      "targets": [
+        {}
+      ]
     },
     {
       "id": "registry+https://github.com/rust-lang/crates.io-index#log@0.4.33",
@@ -850,6 +1775,7 @@
       "edition": "2021",
       "features": [
         "alloc",
+        "default",
         "std"
       ],
       "env": {
@@ -861,6 +1787,26 @@
       },
       "targets": [
         {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#memfd@0.6.5",
+      "name": "memfd",
+      "version": "0.6.5",
+      "checksum": "ad38eb12aea514a0466ea40a80fd8cc83637065948eb4a426e4aa46261175227",
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Luca Bruno <lucab@lucabruno.net>:Simonas Kazlauskas <memfd@kazlauskas.me>",
+        "CARGO_PKG_DESCRIPTION": "A pure-Rust library to work with Linux memfd and sealing",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/lucab/memfd-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "rustix": ":rustix-1.1.4"
+          }
+        }
       ]
     },
     {
@@ -913,6 +1859,79 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#object@0.39.1",
+      "name": "object",
+      "version": "0.39.1",
+      "checksum": "2e5a6c098c7a3b6547378093f5cc30bc54fd361ce711e05293a5cc589562739b",
+      "edition": "2018",
+      "features": [
+        "coff",
+        "elf",
+        "macho",
+        "pe",
+        "read_core",
+        "std",
+        "unaligned",
+        "write",
+        "write_core",
+        "write_std",
+        "xcoff"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "A unified interface for reading and writing object file formats.",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/gimli-rs/object"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "crc32fast": ":crc32fast-1.5.0",
+            "hashbrown": ":hashbrown-0.17.1",
+            "indexmap": ":indexmap-2.14.0",
+            "memchr": ":memchr-2.8.3"
+          }
+        }
+      ],
+      "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#once_cell@1.21.4",
+      "name": "once_cell",
+      "version": "1.21.4",
+      "checksum": "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50",
+      "edition": "2021",
+      "features": [
+        "alloc",
+        "default",
+        "race",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Aleksey Kladov <aleksey.kladov@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Single assignment cells and lazy values.",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/matklad/once_cell"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#pin-project-lite@0.2.17",
+      "name": "pin-project-lite",
+      "version": "0.2.17",
+      "checksum": "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd",
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "A lightweight version of pin-project written with declarative macros.\n",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/taiki-e/pin-project-lite"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#pkcs8@0.10.2",
       "name": "pkcs8",
       "version": "0.10.2",
@@ -951,6 +1970,33 @@
       },
       "targets": [
         {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#postcard@1.1.3",
+      "name": "postcard",
+      "version": "1.1.3",
+      "checksum": "6764c3b5dd454e283a30e6dfe78e9b31096d9e32036b5d1eaac7a6119ccb9a24",
+      "edition": "2021",
+      "features": [
+        "alloc",
+        "use-std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "James Munns <james@onevariable.com>",
+        "CARGO_PKG_DESCRIPTION": "A no_std + serde compatible message library for Rust",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/jamesmunns/postcard"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "cobs": ":cobs-0.3.0",
+            "embedded_io_04": ":embedded-io-0.4.0",
+            "embedded_io_06": ":embedded-io-0.6.1",
+            "serde": ":serde-1.0.229"
+          }
+        }
       ]
     },
     {
@@ -1023,6 +2069,58 @@
         }
       ],
       "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#pulley-interpreter@46.0.1",
+      "name": "pulley-interpreter",
+      "version": "46.0.1",
+      "checksum": "38b92604caae1a1899b6a5b54967289dd538177c626004c91accf9d0ec7e4a12",
+      "edition": "2024",
+      "features": [
+        "decode",
+        "disas",
+        "encode",
+        "interp",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Pulley Project Developers",
+        "CARGO_PKG_DESCRIPTION": "The Pulley interpreter, its bytecode definition, encoder, decoder, and etc...",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasmtime/tree/main/pulley"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "cranelift_bitset": ":cranelift-bitset-0.133.1",
+            "log": ":log-0.4.33",
+            "pulley_macros": ":pulley-macros-46.0.1",
+            "wasmtime_core": ":wasmtime-internal-core-46.0.1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#pulley-macros@46.0.1",
+      "name": "pulley-macros",
+      "version": "46.0.1",
+      "checksum": "5a7ac85c0bb3fb351f10d531230aaa5e366b46d7c4e5328e5f02801d6dac1165",
+      "edition": "2024",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Internal pulley macros",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasmtime/tree/main/pulley/macros"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "proc_macro2": ":proc-macro2-1.0.107",
+            "quote": ":quote-1.0.47",
+            "syn": ":syn-2.0.119"
+          },
+          "proc_macro": true
+        }
+      ]
     },
     {
       "id": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
@@ -1157,6 +2255,39 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#regalloc2@0.15.2",
+      "name": "regalloc2",
+      "version": "0.15.2",
+      "checksum": "757712e8e61590d6d4f5d563483755538b5aa13467837a3b41cd9832509a7f85",
+      "edition": "2018",
+      "features": [
+        "checker",
+        "default",
+        "enable-serde",
+        "serde",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Chris Fallin <chris@cfallin.org>:Mozilla SpiderMonkey Developers",
+        "CARGO_PKG_DESCRIPTION": "Backtracking register allocator inspired from IonMonkey",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/regalloc2"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "allocator_api2": ":allocator-api2-0.2.21",
+            "bumpalo": ":bumpalo-3.20.3",
+            "hashbrown": ":hashbrown-0.17.1",
+            "log": ":log-0.4.33",
+            "rustc_hash": ":rustc-hash-2.1.3",
+            "serde": ":serde-1.0.229",
+            "smallvec": ":smallvec-1.15.2"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#rusqlite@0.40.1",
       "name": "rusqlite",
       "version": "0.40.1",
@@ -1191,6 +2322,45 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#rustc-demangle@0.1.28",
+      "name": "rustc-demangle",
+      "version": "0.1.28",
+      "checksum": "b74b56ffa8bb2830709a538c2cbcae9aa062db0d2a42563bfb09bdaae44020eb",
+      "edition": "2015",
+      "features": [
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Alex Crichton <alex@alexcrichton.com>",
+        "CARGO_PKG_DESCRIPTION": "Rust compiler symbol demangling.\n",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/rust-lang/rustc-demangle",
+        "CARGO_PKG_LICENSE": "MIT/Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/rustc-demangle"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#rustc-hash@2.1.3",
+      "name": "rustc-hash",
+      "version": "2.1.3",
+      "checksum": "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d",
+      "edition": "2021",
+      "features": [
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Rust Project Developers",
+        "CARGO_PKG_DESCRIPTION": "A speedy, non-cryptographic hashing algorithm used by rustc",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/rustc-hash"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#rustc_version@0.4.1",
       "name": "rustc_version",
       "version": "0.4.1",
@@ -1210,6 +2380,38 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#rustix@1.1.4",
+      "name": "rustix",
+      "version": "1.1.4",
+      "checksum": "b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190",
+      "edition": "2021",
+      "features": [
+        "alloc",
+        "default",
+        "fs",
+        "mm",
+        "param",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Dan Gohman <dev@sunfishcode.online>:Jakub Konka <kubkon@jakubkonka.com>",
+        "CARGO_PKG_DESCRIPTION": "Safe Rust bindings to POSIX/Unix/Linux/Winsock-like syscalls",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/rustix"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "bitflags": ":bitflags-2.13.1",
+            "libc": ":libc-0.2.189",
+            "libc_errno": ":errno-0.3.14",
+            "linux_raw_sys": ":linux-raw-sys-0.12.1"
+          }
+        }
+      ],
+      "buildscript": {}
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#semver@1.0.28",
       "name": "semver",
       "version": "1.0.28",
@@ -1217,6 +2419,7 @@
       "edition": "2021",
       "features": [
         "default",
+        "serde",
         "std"
       ],
       "env": {
@@ -1226,7 +2429,11 @@
         "CARGO_PKG_REPOSITORY": "https://github.com/dtolnay/semver"
       },
       "targets": [
-        {}
+        {
+          "named_deps": {
+            "serde": ":serde_core-1.0.229"
+          }
+        }
       ]
     },
     {
@@ -1435,11 +2642,34 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#slab@0.4.12",
+      "name": "slab",
+      "version": "0.4.12",
+      "checksum": "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5",
+      "edition": "2018",
+      "features": [
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Carl Lerche <me@carllerche.com>",
+        "CARGO_PKG_DESCRIPTION": "Pre-allocated storage for a uniform data type",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/tokio-rs/slab"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#smallvec@1.15.2",
       "name": "smallvec",
       "version": "1.15.2",
       "checksum": "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90",
       "edition": "2018",
+      "features": [
+        "serde",
+        "union"
+      ],
       "env": {
         "CARGO_PKG_AUTHORS": "The Servo Project Developers",
         "CARGO_PKG_DESCRIPTION": "'Small vector' optimization: store up to a small number of items on the stack",
@@ -1447,7 +2677,11 @@
         "CARGO_PKG_REPOSITORY": "https://github.com/servo/rust-smallvec"
       },
       "targets": [
-        {}
+        {
+          "named_deps": {
+            "serde": ":serde-1.0.229"
+          }
+        }
       ]
     },
     {
@@ -1523,6 +2757,26 @@
             "der": ":der-0.7.10"
           }
         }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#stable_deref_trait@1.2.1",
+      "name": "stable_deref_trait",
+      "version": "1.2.1",
+      "checksum": "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596",
+      "edition": "2015",
+      "features": [
+        "alloc",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Robert Grosse <n210241048576@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "An unsafe marker trait for types like Box and Rc that dereference to a stable address even when moved, and hence can be used with libraries such as owning_ref and rental.\n",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/storyyeller/stable_deref_trait"
+      },
+      "targets": [
+        {}
       ]
     },
     {
@@ -1605,6 +2859,91 @@
             "quote": ":quote-1.0.47",
             "unicode_ident": ":unicode-ident-1.0.24"
           }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#target-lexicon@0.13.5",
+      "name": "target-lexicon",
+      "version": "0.13.5",
+      "checksum": "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca",
+      "edition": "2018",
+      "features": [
+        "default"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Dan Gohman <sunfish@mozilla.com>",
+        "CARGO_PKG_DESCRIPTION": "LLVM target triple types",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/target-lexicon"
+      },
+      "targets": [
+        {}
+      ],
+      "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#termcolor@1.4.1",
+      "name": "termcolor",
+      "version": "1.4.1",
+      "checksum": "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755",
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Andrew Gallant <jamslam@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "A simple cross platform library for writing colored text to a terminal.\n",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/BurntSushi/termcolor",
+        "CARGO_PKG_LICENSE": "Unlicense OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/BurntSushi/termcolor"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.19",
+      "name": "thiserror",
+      "version": "2.0.19",
+      "checksum": "09a43598840e33d5b0331f38c5e30d13bb11c11210a4b58f0d9b18a5a5eefcd9",
+      "edition": "2021",
+      "features": [
+        "default",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "David Tolnay <dtolnay@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "derive(Error)",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/dtolnay/thiserror"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "thiserror_impl": ":thiserror-impl-2.0.19"
+          }
+        }
+      ],
+      "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@2.0.19",
+      "name": "thiserror-impl",
+      "version": "2.0.19",
+      "checksum": "43cbfe0cf76104d42a574802844187e84a305e531ed54455f11fbde0f10541cd",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "David Tolnay <dtolnay@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Implementation detail of the `thiserror` crate",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/dtolnay/thiserror"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "proc_macro2": ":proc-macro2-1.0.107",
+            "quote": ":quote-1.0.47",
+            "syn": ":syn-3.0.3"
+          },
+          "proc_macro": true
         }
       ]
     },
@@ -1740,6 +3079,33 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#wasm-encoder@0.251.0",
+      "name": "wasm-encoder",
+      "version": "0.251.0",
+      "checksum": "5a879a421bd17c528b74721b2abf4c62e8f1d1889c2ba8c3c50d02deaf2ce395",
+      "edition": "2024",
+      "features": [
+        "component-model",
+        "default",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Nick Fitzgerald <fitzgen@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "A low-level WebAssembly encoder.\n",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasm-encoder",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasm-encoder"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "leb128fmt": ":leb128fmt-0.1.0",
+            "wasmparser": ":wasmparser-0.251.0"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#wasm-metadata@0.247.0",
       "name": "wasm-metadata",
       "version": "0.247.0",
@@ -1789,6 +3155,456 @@
             "hashbrown": ":hashbrown-0.17.1",
             "indexmap": ":indexmap-2.14.0",
             "semver": ":semver-1.0.28"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#wasmparser@0.251.0",
+      "name": "wasmparser",
+      "version": "0.251.0",
+      "checksum": "437970b35b1a85cfde9c74b2398352d8d653f3bd8e3a3db0c063ea8f5b4b36ff",
+      "edition": "2024",
+      "features": [
+        "component-model",
+        "features",
+        "serde",
+        "simd",
+        "std",
+        "validate"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Yury Delendik <ydelendik@mozilla.com>",
+        "CARGO_PKG_DESCRIPTION": "A simple event-driven library for parsing WebAssembly binary files.\n",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasmparser",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasmparser"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "bitflags": ":bitflags-2.13.1",
+            "hashbrown": ":hashbrown-0.17.1",
+            "indexmap": ":indexmap-2.14.0",
+            "semver": ":semver-1.0.28",
+            "serde": ":serde-1.0.229"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#wasmprinter@0.251.0",
+      "name": "wasmprinter",
+      "version": "0.251.0",
+      "checksum": "8798c1a699bd25648b6708eefe94d97c6f9891febb94b42cca1f7a4b086ea64e",
+      "edition": "2024",
+      "features": [
+        "component-model",
+        "default",
+        "validate"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Alex Crichton <alex@alexcrichton.com>",
+        "CARGO_PKG_DESCRIPTION": "Rust converter from the WebAssembly binary format to the text format.\n",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasmprinter",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasmprinter"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "anyhow": ":anyhow-1.0.104",
+            "termcolor": ":termcolor-1.4.1",
+            "wasmparser": ":wasmparser-0.251.0"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "name": "wasmtime",
+      "version": "46.0.1",
+      "checksum": "c4213d2f019a5e44aa8a61d8826dd33a505bff79f749b14a8bafd67321cb9351",
+      "edition": "2024",
+      "features": [
+        "component-model",
+        "cranelift",
+        "once_cell",
+        "runtime",
+        "std",
+        "wasmtime-jit-icache-coherence"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Wasmtime Project Developers",
+        "CARGO_PKG_DESCRIPTION": "High-level API to expose the Wasmtime runtime",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasmtime"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "addr2line": ":addr2line-0.26.1",
+            "async_trait": ":async-trait-0.1.91",
+            "bitflags": ":bitflags-2.13.1",
+            "bumpalo": ":bumpalo-3.20.3",
+            "cfg_if": ":cfg-if-1.0.4",
+            "encoding_rs": ":encoding_rs-0.8.35",
+            "futures": ":futures-0.3.33",
+            "libc": ":libc-0.2.189",
+            "log": ":log-0.4.33",
+            "memfd": ":memfd-0.6.5",
+            "object": ":object-0.39.1",
+            "once_cell": ":once_cell-1.21.4",
+            "postcard": ":postcard-1.1.3",
+            "pulley_interpreter": ":pulley-interpreter-46.0.1",
+            "rustix": ":rustix-1.1.4",
+            "semver": ":semver-1.0.28",
+            "serde": ":serde-1.0.229",
+            "serde_derive": ":serde_derive-1.0.229",
+            "smallvec": ":smallvec-1.15.2",
+            "target_lexicon": ":target-lexicon-0.13.5",
+            "wasmparser": ":wasmparser-0.251.0",
+            "wasmtime_component_macro": ":wasmtime-internal-component-macro-46.0.1",
+            "wasmtime_component_util": ":wasmtime-internal-component-util-46.0.1",
+            "wasmtime_core": ":wasmtime-internal-core-46.0.1",
+            "wasmtime_cranelift": ":wasmtime-internal-cranelift-46.0.1",
+            "wasmtime_environ": ":wasmtime-environ-46.0.1",
+            "wasmtime_fiber": ":wasmtime-internal-fiber-46.0.1",
+            "wasmtime_jit_debug": ":wasmtime-internal-jit-debug-46.0.1",
+            "wasmtime_jit_icache_coherence": ":wasmtime-internal-jit-icache-coherence-46.0.1",
+            "wasmtime_unwinder": ":wasmtime-internal-unwinder-46.0.1",
+            "wasmtime_versioned_export_macros": ":wasmtime-internal-versioned-export-macros-46.0.1"
+          }
+        }
+      ],
+      "buildscript": {
+        "named_deps": {
+          "cc": ":cc-1.4.0",
+          "wasmtime_versioned_export_macros": ":wasmtime-internal-versioned-export-macros-46.0.1"
+        }
+      }
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-environ@46.0.1",
+      "name": "wasmtime-environ",
+      "version": "46.0.1",
+      "checksum": "d45863de41977ec6453e859cf843d456fa3fcb45a659b66d16e794f90ec4f5b7",
+      "edition": "2024",
+      "features": [
+        "compile",
+        "component-model",
+        "gc",
+        "gc-copying",
+        "gc-drc",
+        "gc-null",
+        "stack-switching",
+        "std",
+        "threads"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Wasmtime Project Developers",
+        "CARGO_PKG_DESCRIPTION": "Standalone environment support for WebAssembly code in Cranelift",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasmtime"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "anyhow": ":anyhow-1.0.104",
+            "cpp_demangle": ":cpp_demangle-0.4.5",
+            "cranelift_bforest": ":cranelift-bforest-0.133.1",
+            "cranelift_bitset": ":cranelift-bitset-0.133.1",
+            "cranelift_entity": ":cranelift-entity-0.133.1",
+            "gimli": ":gimli-0.33.0",
+            "hashbrown": ":hashbrown-0.17.1",
+            "indexmap": ":indexmap-2.14.0",
+            "log": ":log-0.4.33",
+            "object": ":object-0.39.1",
+            "postcard": ":postcard-1.1.3",
+            "rustc_demangle": ":rustc-demangle-0.1.28",
+            "semver": ":semver-1.0.28",
+            "serde": ":serde-1.0.229",
+            "serde_derive": ":serde_derive-1.0.229",
+            "sha2": ":sha2-0.10.9",
+            "smallvec": ":smallvec-1.15.2",
+            "target_lexicon": ":target-lexicon-0.13.5",
+            "wasm_encoder": ":wasm-encoder-0.251.0",
+            "wasmparser": ":wasmparser-0.251.0",
+            "wasmprinter": ":wasmprinter-0.251.0",
+            "wasmtime_component_util": ":wasmtime-internal-component-util-46.0.1",
+            "wasmtime_core": ":wasmtime-internal-core-46.0.1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-component-macro@46.0.1",
+      "name": "wasmtime-internal-component-macro",
+      "version": "46.0.1",
+      "checksum": "f1e48f8d4966d62a10b6d70722bc432c1e163890be2801d3b5784589ad36ffc3",
+      "edition": "2024",
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Wasmtime Project Developers",
+        "CARGO_PKG_DESCRIPTION": "INTERNAL: Macros for deriving component interface types from Rust types",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasmtime"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "anyhow": ":anyhow-1.0.104",
+            "proc_macro2": ":proc-macro2-1.0.107",
+            "quote": ":quote-1.0.47",
+            "syn": ":syn-2.0.119",
+            "wasmtime_component_util": ":wasmtime-internal-component-util-46.0.1",
+            "wasmtime_wit_bindgen": ":wasmtime-internal-wit-bindgen-46.0.1",
+            "wit_parser": ":wit-parser-0.251.0"
+          },
+          "proc_macro": true
+        }
+      ],
+      "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-component-util@46.0.1",
+      "name": "wasmtime-internal-component-util",
+      "version": "46.0.1",
+      "checksum": "819ad5abd5822a22dbf4014475cdfd1fe790707761cd732d74aaa3ba4d5ba489",
+      "edition": "2024",
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Wasmtime Project Developers",
+        "CARGO_PKG_DESCRIPTION": "INTERNAL: Utility types and functions to support the component model in Wasmtime",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasmtime"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-core@46.0.1",
+      "name": "wasmtime-internal-core",
+      "version": "46.0.1",
+      "checksum": "3fc28372e36eaf8cf70faa83b5779137f7e99c8d18569a125d1580e735cc9e4d",
+      "edition": "2024",
+      "features": [
+        "serde",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Wasmtime Project Developers",
+        "CARGO_PKG_DESCRIPTION": "INTERNAL: Wasmtime's core utilities and helpers with minimal dependencies",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "hashbrown": ":hashbrown-0.17.1",
+            "libm": ":libm-0.2.16",
+            "serde": ":serde-1.0.229"
+          }
+        }
+      ],
+      "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-cranelift@46.0.1",
+      "name": "wasmtime-internal-cranelift",
+      "version": "46.0.1",
+      "checksum": "a433efc6e35112a5457e1dc8bc4d8d39820ac7722267e89bc04e5df641f32124",
+      "edition": "2024",
+      "features": [
+        "pulley"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Wasmtime Project Developers",
+        "CARGO_PKG_DESCRIPTION": "INTERNAL: Integration between Cranelift and Wasmtime",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasmtime"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "cfg_if": ":cfg-if-1.0.4",
+            "cranelift_codegen": ":cranelift-codegen-0.133.1",
+            "cranelift_control": ":cranelift-control-0.133.2",
+            "cranelift_entity": ":cranelift-entity-0.133.1",
+            "cranelift_frontend": ":cranelift-frontend-0.133.1",
+            "cranelift_native": ":cranelift-native-0.133.1",
+            "gimli": ":gimli-0.33.0",
+            "itertools": ":itertools-0.14.0",
+            "log": ":log-0.4.33",
+            "object": ":object-0.39.1",
+            "pulley_interpreter": ":pulley-interpreter-46.0.1",
+            "smallvec": ":smallvec-1.15.2",
+            "target_lexicon": ":target-lexicon-0.13.5",
+            "thiserror": ":thiserror-2.0.19",
+            "wasmparser": ":wasmparser-0.251.0",
+            "wasmtime_core": ":wasmtime-internal-core-46.0.1",
+            "wasmtime_environ": ":wasmtime-environ-46.0.1",
+            "wasmtime_unwinder": ":wasmtime-internal-unwinder-46.0.1",
+            "wasmtime_versioned_export_macros": ":wasmtime-internal-versioned-export-macros-46.0.1"
+          }
+        }
+      ],
+      "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-fiber@46.0.1",
+      "name": "wasmtime-internal-fiber",
+      "version": "46.0.1",
+      "checksum": "18a1d3a39d0d210f6b8574ee96a4315e0a14c67f3a1fc3cd5372cb10d2fb4422",
+      "edition": "2024",
+      "features": [
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Wasmtime Project Developers",
+        "CARGO_PKG_DESCRIPTION": "INTERNAL: Fiber support for Wasmtime",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasmtime"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "cfg_if": ":cfg-if-1.0.4",
+            "libc": ":libc-0.2.189",
+            "rustix": ":rustix-1.1.4",
+            "wasmtime_environ": ":wasmtime-environ-46.0.1",
+            "wasmtime_versioned_export_macros": ":wasmtime-internal-versioned-export-macros-46.0.1"
+          }
+        }
+      ],
+      "buildscript": {
+        "named_deps": {
+          "cc": ":cc-1.4.0",
+          "wasmtime_versioned_export_macros": ":wasmtime-internal-versioned-export-macros-46.0.1"
+        }
+      }
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-jit-debug@46.0.1",
+      "name": "wasmtime-internal-jit-debug",
+      "version": "46.0.1",
+      "checksum": "9f667288cb4dfa68a4639ffac4d5628535dda64ebdc2b990526efb12b30ba803",
+      "edition": "2024",
+      "features": [
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Wasmtime Project Developers",
+        "CARGO_PKG_DESCRIPTION": "INTERNAL: JIT debug interfaces support for Wasmtime",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasmtime"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "wasmtime_versioned_export_macros": ":wasmtime-internal-versioned-export-macros-46.0.1"
+          }
+        }
+      ],
+      "buildscript": {
+        "named_deps": {
+          "cc": ":cc-1.4.0",
+          "wasmtime_versioned_export_macros": ":wasmtime-internal-versioned-export-macros-46.0.1"
+        }
+      }
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-jit-icache-coherence@46.0.1",
+      "name": "wasmtime-internal-jit-icache-coherence",
+      "version": "46.0.1",
+      "checksum": "eba651d44ab0faad4c58106b3adb45068189fb65ef50f0c404b6d9e3bf81a357",
+      "edition": "2024",
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Wasmtime Project Developers",
+        "CARGO_PKG_DESCRIPTION": "INTERNAL: Utilities for JIT icache maintenance",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasmtime"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "cfg_if": ":cfg-if-1.0.4",
+            "libc": ":libc-0.2.189",
+            "wasmtime_core": ":wasmtime-internal-core-46.0.1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-unwinder@46.0.1",
+      "name": "wasmtime-internal-unwinder",
+      "version": "46.0.1",
+      "checksum": "2ecc52563b0558af2a7487eb710de07cc4532564b55528876129238e83118cb1",
+      "edition": "2024",
+      "features": [
+        "cranelift",
+        "default"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Wasmtime Project Developers",
+        "CARGO_PKG_DESCRIPTION": "INTERNAL: Wasmtime's unwind format and unwinder",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasmtime"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "cfg_if": ":cfg-if-1.0.4",
+            "cranelift_codegen": ":cranelift-codegen-0.133.1",
+            "log": ":log-0.4.33",
+            "object": ":object-0.39.1",
+            "wasmtime_environ": ":wasmtime-environ-46.0.1"
+          }
+        }
+      ],
+      "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-versioned-export-macros@46.0.1",
+      "name": "wasmtime-internal-versioned-export-macros",
+      "version": "46.0.1",
+      "checksum": "e747f4a074699ba1b4e4d841fb263f9b7df5bd1555181c4752bf5990d21ba676",
+      "edition": "2024",
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Wasmtime Project Developers",
+        "CARGO_PKG_DESCRIPTION": "INTERNAL: Macros for defining versioned exports in Wasmtime",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasmtime"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "proc_macro2": ":proc-macro2-1.0.107",
+            "quote": ":quote-1.0.47",
+            "syn": ":syn-2.0.119"
+          },
+          "proc_macro": true
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-wit-bindgen@46.0.1",
+      "name": "wasmtime-internal-wit-bindgen",
+      "version": "46.0.1",
+      "checksum": "80009f46991622814196d96fac6fc0a938f46b5cba737a8f4e21e24e5a03856f",
+      "edition": "2024",
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Wasmtime Project Developers",
+        "CARGO_PKG_DESCRIPTION": "INTERNAL: `*.wit` support for the `wasmtime` crate's macros",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasmtime"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "anyhow": ":anyhow-1.0.104",
+            "bitflags": ":bitflags-2.13.1",
+            "heck": ":heck-0.5.0",
+            "indexmap": ":indexmap-2.14.0",
+            "wit_parser": ":wit-parser-0.251.0"
           }
         }
       ]
@@ -1980,6 +3796,44 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#wit-parser@0.251.0",
+      "name": "wit-parser",
+      "version": "0.251.0",
+      "checksum": "e960732e824fab95099971a09e638979347c94ca48568d3c854c945729196947",
+      "edition": "2024",
+      "features": [
+        "decoding",
+        "default",
+        "serde",
+        "serde_json",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Alex Crichton <alex@alexcrichton.com>",
+        "CARGO_PKG_DESCRIPTION": "Tooling for parsing `*.wit` files and working with their contents.\n",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wit-parser",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wit-parser"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "anyhow": ":anyhow-1.0.104",
+            "hashbrown": ":hashbrown-0.17.1",
+            "id_arena": ":id-arena-2.3.0",
+            "indexmap": ":indexmap-2.14.0",
+            "log": ":log-0.4.33",
+            "semver": ":semver-1.0.28",
+            "serde": ":serde-1.0.229",
+            "serde_derive": ":serde_derive-1.0.229",
+            "serde_json": ":serde_json-1.0.151",
+            "unicode_xid": ":unicode-xid-0.2.6",
+            "wasmparser": ":wasmparser-0.251.0"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#zerocopy@0.8.55",
       "name": "zerocopy",
       "version": "0.8.55",
@@ -2107,6 +3961,14 @@
       ]
     },
     {
+      "id": "workspace#covalence-proton@0.0.0",
+      "name": "covalence-proton",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1"
+      ]
+    },
+    {
       "id": "workspace#covalence-repl@0.0.0",
       "name": "covalence-repl",
       "category": "tcb",
@@ -2117,6 +3979,34 @@
     }
   ],
   "edges": [
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#addr2line@0.26.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#gimli@0.33.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#async-trait@0.1.91",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#async-trait@0.1.91",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#async-trait@0.1.91",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#syn@3.0.3",
+      "kinds": [
+        "normal"
+      ]
+    },
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#blake3@1.8.5",
       "target": "registry+https://github.com/rust-lang/crates.io-index#arrayref@0.3.9",
@@ -2167,6 +4057,13 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#bumpalo@3.20.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#allocator-api2@0.2.21",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#cc@1.4.0",
       "target": "registry+https://github.com/rust-lang/crates.io-index#find-msvc-tools@0.1.9",
       "kinds": [
@@ -2176,6 +4073,356 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#cc@1.4.0",
       "target": "registry+https://github.com/rust-lang/crates.io-index#shlex@2.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cobs@0.3.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.19",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cpp_demangle@0.4.5",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-assembler-x64-meta@0.133.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cranelift-srcgen@0.133.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-assembler-x64@0.133.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cranelift-assembler-x64-meta@0.133.2",
+      "kinds": [
+        "build"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-bforest@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cranelift-entity@0.133.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-bforest@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-core@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-bitset@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-bitset@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_derive@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-bitset@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-core@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen-meta@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cranelift-assembler-x64-meta@0.133.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen-meta@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen-shared@0.133.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen-meta@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cranelift-srcgen@0.133.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen-meta@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#heck@0.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen-meta@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#pulley-interpreter@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bumpalo@3.20.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cranelift-assembler-x64@0.133.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cranelift-bforest@0.133.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cranelift-bitset@0.133.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen-meta@0.133.1",
+      "kinds": [
+        "build"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen-shared@0.133.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cranelift-control@0.133.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cranelift-entity@0.133.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cranelift-isle@0.133.1",
+      "kinds": [
+        "build"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#gimli@0.33.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#libm@0.2.16",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#log@0.4.33",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#postcard@1.1.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#pulley-interpreter@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#regalloc2@0.15.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustc-hash@2.1.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_derive@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#sha2@0.10.9",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#smallvec@1.15.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#target-lexicon@0.13.5",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-core@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-control@0.133.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#arbitrary@1.4.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-entity@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cranelift-bitset@0.133.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-entity@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-entity@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_derive@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-entity@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-core@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-frontend@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen@0.133.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-frontend@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-frontend@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#log@0.4.33",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-frontend@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#smallvec@1.15.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-frontend@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#target-lexicon@0.13.5",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-native@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen@0.133.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cranelift-native@0.133.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#target-lexicon@0.13.5",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#crc32fast@1.5.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4",
       "kinds": [
         "normal"
       ]
@@ -2349,6 +4596,134 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#encoding_rs@0.8.35",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#errno@0.3.14",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
+      "kinds": [
+        "normal (cfg(target_os = \"hermit\"))",
+        "normal (cfg(target_os = \"wasi\"))",
+        "normal (cfg(unix))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#futures-channel@0.3.33",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-core@0.3.33",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#futures-channel@0.3.33",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-sink@0.3.33",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#futures-util@0.3.33",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-channel@0.3.33",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#futures-util@0.3.33",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-core@0.3.33",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#futures-util@0.3.33",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-io@0.3.33",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#futures-util@0.3.33",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-sink@0.3.33",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#futures-util@0.3.33",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-task@0.3.33",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#futures-util@0.3.33",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#futures-util@0.3.33",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#pin-project-lite@0.2.17",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#futures-util@0.3.33",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#slab@0.4.12",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#futures@0.3.33",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-channel@0.3.33",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#futures@0.3.33",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-core@0.3.33",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#futures@0.3.33",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-io@0.3.33",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#futures@0.3.33",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-sink@0.3.33",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#futures@0.3.33",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-task@0.3.33",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#futures@0.3.33",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures-util@0.3.33",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#generic-array@0.14.7",
       "target": "registry+https://github.com/rust-lang/crates.io-index#typenum@1.20.1",
       "kinds": [
@@ -2398,8 +4773,50 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#gimli@0.33.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#fnv@1.0.7",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#gimli@0.33.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.16.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#gimli@0.33.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#gimli@0.33.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#stable_deref_trait@1.2.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.16.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#foldhash@0.2.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
       "target": "registry+https://github.com/rust-lang/crates.io-index#foldhash@0.2.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_core@1.0.229",
       "kinds": [
         "normal"
       ]
@@ -2428,6 +4845,13 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
       "target": "registry+https://github.com/rust-lang/crates.io-index#serde_core@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#itertools@0.14.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#either@1.17.0",
       "kinds": [
         "normal"
       ]
@@ -2475,6 +4899,13 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#memfd@0.6.5",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustix@1.1.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#miette-derive@7.6.0",
       "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
       "kinds": [
@@ -2517,6 +4948,34 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#object@0.39.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#crc32fast@1.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#object@0.39.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#object@0.39.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#object@0.39.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#pkcs8@0.10.2",
       "target": "registry+https://github.com/rust-lang/crates.io-index#der@0.7.10",
       "kinds": [
@@ -2526,6 +4985,34 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#pkcs8@0.10.2",
       "target": "registry+https://github.com/rust-lang/crates.io-index#spki@0.7.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#postcard@1.1.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cobs@0.3.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#postcard@1.1.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#embedded-io@0.4.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#postcard@1.1.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#embedded-io@0.6.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#postcard@1.1.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
       "kinds": [
         "normal"
       ]
@@ -2554,6 +5041,55 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
       "target": "registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#pulley-interpreter@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cranelift-bitset@0.133.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#pulley-interpreter@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#log@0.4.33",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#pulley-interpreter@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#pulley-macros@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#pulley-interpreter@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-core@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#pulley-macros@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#pulley-macros@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#pulley-macros@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119",
       "kinds": [
         "normal"
       ]
@@ -2608,6 +5144,55 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#regalloc2@0.15.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#allocator-api2@0.2.21",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#regalloc2@0.15.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bumpalo@3.20.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#regalloc2@0.15.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#regalloc2@0.15.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#log@0.4.33",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#regalloc2@0.15.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustc-hash@2.1.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#regalloc2@0.15.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#regalloc2@0.15.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#smallvec@1.15.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#rusqlite@0.40.1",
       "target": "registry+https://github.com/rust-lang/crates.io-index#bitflags@2.13.1",
       "kinds": [
@@ -2653,6 +5238,45 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#rustc_version@0.4.1",
       "target": "registry+https://github.com/rust-lang/crates.io-index#semver@1.0.28",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#rustix@1.1.4",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bitflags@2.13.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#rustix@1.1.4",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#errno@0.3.14",
+      "kinds": [
+        "normal (cfg(all(not(rustix_use_libc), not(miri), target_os = \"linux\", any(target_endian = \"little\", any(target_arch = \"s390x\", target_arch = \"powerpc\")), any(target_arch = \"arm\", all(target_arch = \"aarch64\", target_pointer_width = \"64\"), target_arch = \"riscv64\", all(rustix_use_experimental_asm, target_arch = \"powerpc\"), all(rustix_use_experimental_asm, target_arch = \"powerpc64\"), all(rustix_use_experimental_asm, target_arch = \"s390x\"), all(rustix_use_experimental_asm, target_arch = \"mips\"), all(rustix_use_experimental_asm, target_arch = \"mips32r6\"), all(rustix_use_experimental_asm, target_arch = \"mips64\"), all(rustix_use_experimental_asm, target_arch = \"mips64r6\"), target_arch = \"x86\", all(target_arch = \"x86_64\", target_pointer_width = \"64\")))))",
+        "normal (cfg(all(not(windows), any(rustix_use_libc, miri, not(all(target_os = \"linux\", any(target_endian = \"little\", any(target_arch = \"s390x\", target_arch = \"powerpc\")), any(target_arch = \"arm\", all(target_arch = \"aarch64\", target_pointer_width = \"64\"), target_arch = \"riscv64\", all(rustix_use_experimental_asm, target_arch = \"powerpc\"), all(rustix_use_experimental_asm, target_arch = \"powerpc64\"), all(rustix_use_experimental_asm, target_arch = \"s390x\"), all(rustix_use_experimental_asm, target_arch = \"mips\"), all(rustix_use_experimental_asm, target_arch = \"mips32r6\"), all(rustix_use_experimental_asm, target_arch = \"mips64\"), all(rustix_use_experimental_asm, target_arch = \"mips64r6\"), target_arch = \"x86\", all(target_arch = \"x86_64\", target_pointer_width = \"64\"))))))))",
+        "normal (cfg(windows))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#rustix@1.1.4",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
+      "kinds": [
+        "normal (cfg(all(not(rustix_use_libc), not(miri), target_os = \"linux\", any(target_endian = \"little\", any(target_arch = \"s390x\", target_arch = \"powerpc\")), any(target_arch = \"arm\", all(target_arch = \"aarch64\", target_pointer_width = \"64\"), target_arch = \"riscv64\", all(rustix_use_experimental_asm, target_arch = \"powerpc\"), all(rustix_use_experimental_asm, target_arch = \"powerpc64\"), all(rustix_use_experimental_asm, target_arch = \"s390x\"), all(rustix_use_experimental_asm, target_arch = \"mips\"), all(rustix_use_experimental_asm, target_arch = \"mips32r6\"), all(rustix_use_experimental_asm, target_arch = \"mips64\"), all(rustix_use_experimental_asm, target_arch = \"mips64r6\"), target_arch = \"x86\", all(target_arch = \"x86_64\", target_pointer_width = \"64\")))))",
+        "normal (cfg(all(not(windows), any(rustix_use_libc, miri, not(all(target_os = \"linux\", any(target_endian = \"little\", any(target_arch = \"s390x\", target_arch = \"powerpc\")), any(target_arch = \"arm\", all(target_arch = \"aarch64\", target_pointer_width = \"64\"), target_arch = \"riscv64\", all(rustix_use_experimental_asm, target_arch = \"powerpc\"), all(rustix_use_experimental_asm, target_arch = \"powerpc64\"), all(rustix_use_experimental_asm, target_arch = \"s390x\"), all(rustix_use_experimental_asm, target_arch = \"mips\"), all(rustix_use_experimental_asm, target_arch = \"mips32r6\"), all(rustix_use_experimental_asm, target_arch = \"mips64\"), all(rustix_use_experimental_asm, target_arch = \"mips64r6\"), target_arch = \"x86\", all(target_arch = \"x86_64\", target_pointer_width = \"64\"))))))))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#rustix@1.1.4",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#linux-raw-sys@0.12.1",
+      "kinds": [
+        "normal (cfg(all(any(target_os = \"linux\", target_os = \"android\"), any(rustix_use_libc, miri, not(all(target_os = \"linux\", any(target_endian = \"little\", any(target_arch = \"s390x\", target_arch = \"powerpc\")), any(target_arch = \"arm\", all(target_arch = \"aarch64\", target_pointer_width = \"64\"), target_arch = \"riscv64\", all(rustix_use_experimental_asm, target_arch = \"powerpc\"), all(rustix_use_experimental_asm, target_arch = \"powerpc64\"), all(rustix_use_experimental_asm, target_arch = \"s390x\"), all(rustix_use_experimental_asm, target_arch = \"mips\"), all(rustix_use_experimental_asm, target_arch = \"mips32r6\"), all(rustix_use_experimental_asm, target_arch = \"mips64\"), all(rustix_use_experimental_asm, target_arch = \"mips64r6\"), target_arch = \"x86\", all(target_arch = \"x86_64\", target_pointer_width = \"64\"))))))))",
+        "normal (cfg(all(not(rustix_use_libc), not(miri), target_os = \"linux\", any(target_endian = \"little\", any(target_arch = \"s390x\", target_arch = \"powerpc\")), any(target_arch = \"arm\", all(target_arch = \"aarch64\", target_pointer_width = \"64\"), target_arch = \"riscv64\", all(rustix_use_experimental_asm, target_arch = \"powerpc\"), all(rustix_use_experimental_asm, target_arch = \"powerpc64\"), all(rustix_use_experimental_asm, target_arch = \"s390x\"), all(rustix_use_experimental_asm, target_arch = \"mips\"), all(rustix_use_experimental_asm, target_arch = \"mips32r6\"), all(rustix_use_experimental_asm, target_arch = \"mips64\"), all(rustix_use_experimental_asm, target_arch = \"mips64r6\"), target_arch = \"x86\", all(target_arch = \"x86_64\", target_pointer_width = \"64\")))))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#semver@1.0.28",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_core@1.0.229",
       "kinds": [
         "normal"
       ]
@@ -2770,6 +5394,13 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#smallvec@1.15.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#snafu-derive@0.9.2",
       "target": "registry+https://github.com/rust-lang/crates.io-index#heck@0.5.0",
       "kinds": [
@@ -2861,6 +5492,34 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@2.0.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@2.0.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@2.0.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#syn@3.0.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@2.0.19",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#wasm-encoder@0.247.0",
       "target": "registry+https://github.com/rust-lang/crates.io-index#leb128fmt@0.1.0",
       "kinds": [
@@ -2870,6 +5529,20 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#wasm-encoder@0.247.0",
       "target": "registry+https://github.com/rust-lang/crates.io-index#wasmparser@0.247.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasm-encoder@0.251.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#leb128fmt@0.1.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasm-encoder@0.251.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmparser@0.251.0",
       "kinds": [
         "normal"
       ]
@@ -2927,6 +5600,821 @@
       "source": "registry+https://github.com/rust-lang/crates.io-index#wasmparser@0.247.0",
       "target": "registry+https://github.com/rust-lang/crates.io-index#semver@1.0.28",
       "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmparser@0.251.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bitflags@2.13.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmparser@0.251.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmparser@0.251.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmparser@0.251.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#semver@1.0.28",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmparser@0.251.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmprinter@0.251.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmprinter@0.251.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#termcolor@1.4.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmprinter@0.251.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmparser@0.251.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-environ@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-environ@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cpp_demangle@0.4.5",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-environ@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cranelift-bforest@0.133.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-environ@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cranelift-bitset@0.133.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-environ@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cranelift-entity@0.133.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-environ@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#gimli@0.33.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-environ@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-environ@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-environ@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#log@0.4.33",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-environ@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#object@0.39.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-environ@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#postcard@1.1.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-environ@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustc-demangle@0.1.28",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-environ@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#semver@1.0.28",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-environ@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-environ@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_derive@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-environ@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#sha2@0.10.9",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-environ@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#smallvec@1.15.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-environ@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#target-lexicon@0.13.5",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-environ@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasm-encoder@0.251.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-environ@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmparser@0.251.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-environ@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmprinter@0.251.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-environ@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-component-util@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-environ@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-core@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-component-macro@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-component-macro@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-component-macro@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-component-macro@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-component-macro@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-component-util@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-component-macro@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-wit-bindgen@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-component-macro@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wit-parser@0.251.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-core@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-core@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#libm@0.2.16",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-core@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-cranelift@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-cranelift@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen@0.133.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-cranelift@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cranelift-control@0.133.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-cranelift@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cranelift-entity@0.133.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-cranelift@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cranelift-frontend@0.133.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-cranelift@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cranelift-native@0.133.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-cranelift@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#gimli@0.33.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-cranelift@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#itertools@0.14.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-cranelift@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#log@0.4.33",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-cranelift@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#object@0.39.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-cranelift@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#pulley-interpreter@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-cranelift@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#smallvec@1.15.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-cranelift@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#target-lexicon@0.13.5",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-cranelift@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.19",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-cranelift@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmparser@0.251.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-cranelift@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-environ@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-cranelift@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-core@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-cranelift@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-unwinder@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-cranelift@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-versioned-export-macros@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-fiber@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cc@1.4.0",
+      "kinds": [
+        "build"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-fiber@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-fiber@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
+      "kinds": [
+        "normal (cfg(unix))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-fiber@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustix@1.1.4",
+      "kinds": [
+        "normal (cfg(unix))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-fiber@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-environ@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-fiber@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-versioned-export-macros@46.0.1",
+      "kinds": [
+        "build",
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-jit-debug@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cc@1.4.0",
+      "kinds": [
+        "build"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-jit-debug@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-versioned-export-macros@46.0.1",
+      "kinds": [
+        "build",
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-jit-icache-coherence@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-jit-icache-coherence@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
+      "kinds": [
+        "normal (cfg(any(target_os = \"linux\", target_vendor = \"apple\", target_os = \"freebsd\", target_os = \"android\")))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-jit-icache-coherence@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-core@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-unwinder@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-unwinder@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cranelift-codegen@0.133.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-unwinder@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#log@0.4.33",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-unwinder@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#object@0.39.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-unwinder@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-environ@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-versioned-export-macros@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-versioned-export-macros@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-versioned-export-macros@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-wit-bindgen@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-wit-bindgen@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bitflags@2.13.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-wit-bindgen@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#heck@0.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-wit-bindgen@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-wit-bindgen@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wit-parser@0.251.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#addr2line@0.26.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#async-trait@0.1.91",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bitflags@2.13.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bumpalo@3.20.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cc@1.4.0",
+      "kinds": [
+        "build"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#encoding_rs@0.8.35",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#futures@0.3.33",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#log@0.4.33",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#memfd@0.6.5",
+      "kinds": [
+        "normal (cfg(target_os = \"linux\"))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#object@0.39.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#once_cell@1.21.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#postcard@1.1.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#pulley-interpreter@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustix@1.1.4",
+      "kinds": [
+        "normal (cfg(unix))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#semver@1.0.28",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_derive@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#smallvec@1.15.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#target-lexicon@0.13.5",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmparser@0.251.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-environ@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-component-macro@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-component-util@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-core@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-cranelift@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-fiber@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-jit-debug@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-jit-icache-coherence@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-unwinder@46.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasmtime@46.0.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmtime-internal-versioned-export-macros@46.0.1",
+      "kinds": [
+        "build",
         "normal"
       ]
     },
@@ -3227,6 +6715,83 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#wit-parser@0.247.0",
       "target": "registry+https://github.com/rust-lang/crates.io-index#wasmparser@0.247.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wit-parser@0.251.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wit-parser@0.251.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wit-parser@0.251.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#id-arena@2.3.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wit-parser@0.251.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wit-parser@0.251.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#log@0.4.33",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wit-parser@0.251.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#semver@1.0.28",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wit-parser@0.251.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wit-parser@0.251.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_derive@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wit-parser@0.251.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wit-parser@0.251.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#unicode-xid@0.2.6",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wit-parser@0.251.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasmparser@0.251.0",
       "kinds": [
         "normal"
       ]

@@ -366,6 +366,13 @@
       "kinds": [
         "normal"
       ]
+    },
+    {
+      "source": "workspace#covalence-repl@0.0.0",
+      "target": "workspace#covalence-proton@0.0.0",
+      "kinds": [
+        "normal"
+      ]
     }
   ]
 }
