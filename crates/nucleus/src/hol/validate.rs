@@ -26,6 +26,8 @@ pub struct HolImageCounts {
     pub untrusted_judgement_rows: u64,
     /// Structurally well-formed untrusted context-implication rows.
     pub untrusted_context_implication_rows: u64,
+    /// Independently rechecked exact structural context unions.
+    pub context_exact_unions: u64,
 }
 
 /// Exact bytes admitted as one expected tagged-node HOL physical schema.
@@ -154,7 +156,7 @@ fn validate_schema(
         [],
         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
     )?;
-    if identity == (2, "tagged-node".to_owned()) {
+    if identity == (3, "tagged-node".to_owned()) {
         Ok(schema_manifest_id(&expected_manifest))
     } else {
         Err(HolImageValidationError::SchemaMismatch)
@@ -265,6 +267,7 @@ fn validate_contents(
     }
 
     let implication_count = validate_context_implications(connection, &contexts)?;
+    let context_union_count = validate_context_unions(connection, &contexts)?;
 
     Ok(HolImageCounts {
         nodes: u64::try_from(nodes.len()).map_err(|_| HolImageValidationError::CountOverflow)?,
@@ -274,6 +277,8 @@ fn validate_contents(
         untrusted_judgement_rows: u64::try_from(judgements.len())
             .map_err(|_| HolImageValidationError::CountOverflow)?,
         untrusted_context_implication_rows: u64::try_from(implication_count)
+            .map_err(|_| HolImageValidationError::CountOverflow)?,
+        context_exact_unions: u64::try_from(context_union_count)
             .map_err(|_| HolImageValidationError::CountOverflow)?,
     })
 }
@@ -313,6 +318,47 @@ fn validate_context_implications(
         }
     }
     Ok(implications.len())
+}
+
+fn validate_context_unions(
+    connection: &sqlite::Connection,
+    contexts: &[ContextId],
+) -> Result<usize, HolImageValidationError> {
+    let unions = connection
+        .prepare(
+            "SELECT left_ctx_id, right_ctx_id, result_ctx_id
+             FROM hol_context_exact_union
+             ORDER BY left_ctx_id, right_ctx_id",
+        )?
+        .query_map([], |row| {
+            Ok((
+                ContextId(row.get(0)?),
+                ContextId(row.get(1)?),
+                ContextId(row.get(2)?),
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    for (left, right, result) in &unions {
+        if !contexts.contains(left) || !contexts.contains(right) || !contexts.contains(result) {
+            return Err(HolImageValidationError::OrphanContextUnion {
+                left: *left,
+                right: *right,
+                result: *result,
+            });
+        }
+        let mut expected = read_context_members(connection, *left)?;
+        expected.extend(read_context_members(connection, *right)?);
+        expected.sort_unstable();
+        expected.dedup();
+        if read_context_members(connection, *result)? != expected {
+            return Err(HolImageValidationError::InvalidContextUnion {
+                left: *left,
+                right: *right,
+                result: *result,
+            });
+        }
+    }
+    Ok(unions.len())
 }
 
 type NodeRow = (i64, String, Option<i64>, Option<i64>, Option<i64>);
@@ -452,6 +498,18 @@ pub enum HolImageValidationError {
         antecedent: ContextId,
         consequent: ContextId,
     },
+    /// An exact context union names an absent context.
+    OrphanContextUnion {
+        left: ContextId,
+        right: ContextId,
+        result: ContextId,
+    },
+    /// An exact context union's result has the wrong member set.
+    InvalidContextUnion {
+        left: ContextId,
+        right: ContextId,
+        result: ContextId,
+    },
     /// A diagnostic count exceeded its representation.
     CountOverflow,
 }
@@ -520,6 +578,28 @@ impl fmt::Display for HolImageValidationError {
                 "context implication ({} => {}) names an absent context",
                 antecedent.get(),
                 consequent.get()
+            ),
+            Self::OrphanContextUnion {
+                left,
+                right,
+                result,
+            } => write!(
+                formatter,
+                "context union ({}, {}) -> {} names an absent context",
+                left.get(),
+                right.get(),
+                result.get()
+            ),
+            Self::InvalidContextUnion {
+                left,
+                right,
+                result,
+            } => write!(
+                formatter,
+                "context union ({}, {}) -> {} has the wrong member set",
+                left.get(),
+                right.get(),
+                result.get()
             ),
             Self::CountOverflow => formatter.write_str("HOL validation count overflow"),
         }
@@ -613,6 +693,7 @@ mod tests {
                 members: 0,
                 untrusted_judgement_rows: 1,
                 untrusted_context_implication_rows: 0,
+                context_exact_unions: 0,
             }
         );
 
@@ -659,10 +740,20 @@ mod tests {
                 [],
             )
             .unwrap();
+        untrusted
+            .sqlite()
+            .execute(
+                "INSERT INTO hol_context_exact_union(
+                     left_ctx_id, right_ctx_id, result_ctx_id
+                 ) VALUES (0, 0, 0)",
+                [],
+            )
+            .unwrap();
         let untrusted = untrusted.serialize().unwrap();
         let counts = ValidatedHolImage::validate(&untrusted).unwrap().counts();
         assert_eq!(counts.untrusted_judgement_rows, 2);
         assert_eq!(counts.untrusted_context_implication_rows, 1);
+        assert_eq!(counts.context_exact_unions, 1);
     }
 
     #[test]
@@ -787,6 +878,61 @@ mod tests {
         assert!(matches!(
             ValidatedHolImage::validate(&orphan),
             Err(HolImageValidationError::OrphanContextImplication { .. })
+        ));
+    }
+
+    #[test]
+    fn detached_validation_rechecks_exact_context_unions() {
+        let bytes = sample_image();
+        let orphan = covalence_neutron::Connection::deserialize(&bytes).unwrap();
+        orphan
+            .sqlite()
+            .execute(
+                "INSERT INTO hol_context_exact_union(
+                     left_ctx_id, right_ctx_id, result_ctx_id
+                 ) VALUES (0, 0, 999)",
+                [],
+            )
+            .unwrap();
+        let orphan = orphan.serialize().unwrap();
+        assert!(matches!(
+            ValidatedHolImage::validate(&orphan),
+            Err(HolImageValidationError::OrphanContextUnion { .. })
+        ));
+
+        let invalid = covalence_neutron::Connection::deserialize(&bytes).unwrap();
+        invalid
+            .sqlite()
+            .execute(
+                "INSERT INTO hol_node(tag, lhs, ty) VALUES ('MBOOL', 0, 2)",
+                [],
+            )
+            .unwrap();
+        let falsehood = invalid.sqlite().last_insert_rowid();
+        invalid
+            .sqlite()
+            .execute("INSERT INTO hol_context(ctx_id) VALUES (1)", [])
+            .unwrap();
+        invalid
+            .sqlite()
+            .execute(
+                "INSERT INTO hol_context_member(ctx_id, term_id) VALUES (1, ?1)",
+                [falsehood],
+            )
+            .unwrap();
+        invalid
+            .sqlite()
+            .execute(
+                "INSERT INTO hol_context_exact_union(
+                     left_ctx_id, right_ctx_id, result_ctx_id
+                 ) VALUES (1, 0, 0)",
+                [],
+            )
+            .unwrap();
+        let invalid = invalid.serialize().unwrap();
+        assert!(matches!(
+            ValidatedHolImage::validate(&invalid),
+            Err(HolImageValidationError::InvalidContextUnion { .. })
         ));
     }
 }
