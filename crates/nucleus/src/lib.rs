@@ -4,7 +4,10 @@ mod connection;
 pub mod hol;
 
 pub use connection::Connection;
-pub use hol::{AllowAll, Hol, Kind, KindError, KindId, KindView, Operation, Policy};
+pub use hol::{
+    AllowAll, Hol, HolSchema, Kind, KindError, KindId, KindView, MetadataSchemaError, MetadataType,
+    MetadataValue, Operation, Policy,
+};
 
 mod snapshot;
 
