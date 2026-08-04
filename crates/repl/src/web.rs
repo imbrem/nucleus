@@ -1,22 +1,16 @@
-use std::collections::HashMap;
-
 use covalence_lib_hash::O256;
 use wasm_bindgen::prelude::*;
 
-use crate::sql::{Outcome, QueryResult, Value};
-use crate::{Connection, Sql};
+use super::{Connection, ConnectionId, Kernel, Outcome, QueryResult, Repl, Sql, Value};
 
-/// Browser-hosted REPL kernel managing independent in-memory SQL connections.
+/// Browser adapter for the shared REPL connection directory.
 #[wasm_bindgen]
 pub struct WebKernel {
-    connections: HashMap<u32, Connection<Sql>>,
-    next_connection: u32,
+    kernel: Kernel,
+    repl: Repl<Connection<Sql>>,
 }
 
 /// Owned result of one statement executed by [`WebKernel`].
-///
-/// JavaScript reads this value through typed accessors. Transport and JSON
-/// encoding remain outside the Nucleus protocol boundary.
 #[wasm_bindgen]
 pub struct WebOutcome {
     outcome: Outcome,
@@ -24,35 +18,43 @@ pub struct WebOutcome {
 
 #[wasm_bindgen]
 impl WebKernel {
-    /// Creates an empty browser REPL connection manager.
+    /// Creates a browser REPL with its own raw `SQLite` state database.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error if the state database cannot be opened.
     #[wasm_bindgen(constructor)]
-    #[must_use]
-    pub fn new() -> WebKernel {
-        Self {
-            connections: HashMap::new(),
-            next_connection: 0,
-        }
+    pub fn new() -> Result<WebKernel, JsValue> {
+        let kernel = Kernel::ephemeral();
+        let repl = Repl::new(kernel.verifying_key().as_bytes()).map_err(js_error)?;
+        Ok(Self { kernel, repl })
     }
 
     /// Opens a writable in-memory SQL connection and returns its local ID.
     ///
     /// # Errors
     ///
-    /// Returns a JavaScript error when the connection cannot be opened or the
-    /// process-local ID space is exhausted.
+    /// Returns a JavaScript error when the connection or directory row cannot
+    /// be opened.
     pub fn open_connection(&mut self) -> Result<u32, JsValue> {
-        let id = self.next_connection;
-        self.next_connection = id
-            .checked_add(1)
-            .ok_or_else(|| JsValue::from_str("browser connection ID space exhausted"))?;
-        let connection = Connection::<Sql>::open_in_memory().map_err(js_error)?;
-        self.connections.insert(id, connection);
-        Ok(id)
+        let connection = self.kernel.open_sql().map_err(js_error)?;
+        let id = self
+            .repl
+            .insert("nucleus/sql", connection)
+            .map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
     }
 
-    /// Closes a connection, returning whether it existed.
-    pub fn close_connection(&mut self, connection: u32) -> bool {
-        self.connections.remove(&connection).is_some()
+    /// Closes a connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for an unknown ID or state update failure.
+    pub fn close_connection(&mut self, connection: u32) -> Result<(), JsValue> {
+        self.repl
+            .remove(ConnectionId::from_u32(connection))
+            .map(drop)
+            .map_err(js_error)
     }
 
     /// Runs one parameterless SQL statement.
@@ -104,7 +106,7 @@ impl WebKernel {
         reason = "the image bound is far below 2^53, so the conversion is exact"
     )]
     pub fn max_image_bytes() -> f64 {
-        crate::sql::MAX_IMAGE_BYTES as f64
+        super::MAX_IMAGE_BYTES as f64
     }
 
     /// Serializes the writable in-memory `main` database.
@@ -122,15 +124,15 @@ impl WebKernel {
 
 impl WebKernel {
     fn connection_mut(&mut self, id: u32) -> Result<&mut Connection<Sql>, JsValue> {
-        self.connections
-            .get_mut(&id)
-            .ok_or_else(|| JsValue::from_str("unknown or closed browser connection"))
+        self.repl
+            .get_mut(ConnectionId::from_u32(id))
+            .map_err(js_error)
     }
 }
 
 #[wasm_bindgen]
 impl WebOutcome {
-    /// Returns `"rows"` or `"changed"`.
+    /// Returns `rows` or `changed`.
     #[must_use]
     pub fn kind(&self) -> String {
         match self.outcome {
@@ -177,7 +179,7 @@ impl WebOutcome {
         self.rows().map_or(0, |result| result.rows.len())
     }
 
-    /// Returns `null`, `integer`, `real`, `text`, or `blob` for one value.
+    /// Returns the `SQLite` storage class for one value.
     ///
     /// # Errors
     ///
