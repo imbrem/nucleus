@@ -949,7 +949,8 @@ mod web;
 
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 pub use web::{
-    WebExport, WebKernel, WebKind, WebNamespace, WebOutcome, WebSignedHolSnapshot, WebTerm, WebType,
+    WebExport, WebKernel, WebKind, WebNamespace, WebOutcome, WebSignedHolSnapshot, WebTerm,
+    WebTrustedHolImport, WebType,
 };
 
 /// Returns the cross-target `SQLite` smoke-test value.

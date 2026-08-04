@@ -47,13 +47,24 @@ export interface HolNamespaceExport {
   name: string | null;
 }
 
-export interface SignedHolSnapshot {
-  bytes: Uint8Array;
+export interface SignedHolAttestation {
   schema: string;
   image: string;
   signer: string;
   publicKey: Uint8Array;
   signature: Uint8Array;
+}
+
+export interface SignedHolSnapshot extends SignedHolAttestation {
+  bytes: Uint8Array;
+}
+
+export interface TrustedHolImport {
+  importId: number;
+  trustedImportId: number;
+  schema: string;
+  image: string;
+  signer: string;
 }
 
 export interface BrowserSqlConnection {
@@ -129,6 +140,8 @@ export interface BrowserHolConnection {
   ): Promise<HolNamespaceExport>;
   resolveExportName(namespace: number, name: string): Promise<number | null>;
   exportSnapshot(): Promise<SignedHolSnapshot>;
+  trustImport(attestation: SignedHolAttestation): Promise<TrustedHolImport>;
+  trustedImport(id: number): Promise<TrustedHolImport>;
   close(): Promise<void>;
 }
 
@@ -293,7 +306,21 @@ type RequestBody =
       namespace: number;
       name: string;
     }
-  | { operation: "holExportSnapshot"; connection: number };
+  | { operation: "holExportSnapshot"; connection: number }
+  | {
+      operation: "holTrustImport";
+      connection: number;
+      schema: string;
+      image: string;
+      signer: string;
+      publicKey: Uint8Array;
+      signature: Uint8Array;
+    }
+  | {
+      operation: "holTrustedImport";
+      connection: number;
+      trustedImportId: number;
+    };
 
 type WorkerResponse =
   | { id: number; ok: true; value: unknown }
@@ -763,6 +790,31 @@ class WorkerHolConnection implements BrowserHolConnection {
     });
   }
 
+  trustImport(attestation: SignedHolAttestation): Promise<TrustedHolImport> {
+    const publicKey = attestation.publicKey.slice();
+    const signature = attestation.signature.slice();
+    return this.#request(
+      {
+        operation: "holTrustImport",
+        connection: this.connection,
+        schema: attestation.schema,
+        image: attestation.image,
+        signer: attestation.signer,
+        publicKey,
+        signature,
+      },
+      [publicKey.buffer, signature.buffer],
+    );
+  }
+
+  trustedImport(id: number): Promise<TrustedHolImport> {
+    return this.#request({
+      operation: "holTrustedImport",
+      connection: this.connection,
+      trustedImportId: id,
+    });
+  }
+
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
@@ -772,10 +824,10 @@ class WorkerHolConnection implements BrowserHolConnection {
     });
   }
 
-  #request<T>(body: RequestBody): Promise<T> {
+  #request<T>(body: RequestBody, transfer: Transferable[] = []): Promise<T> {
     if (this.#closed)
       return Promise.reject(new Error("HOL connection is closed"));
-    return this.repl.request(body);
+    return this.repl.request(body, transfer);
   }
 }
 

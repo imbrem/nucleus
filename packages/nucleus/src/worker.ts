@@ -221,7 +221,23 @@ type Request =
       namespace: number;
       name: string;
     }
-  | { id: number; operation: "holExportSnapshot"; connection: number };
+  | { id: number; operation: "holExportSnapshot"; connection: number }
+  | {
+      id: number;
+      operation: "holTrustImport";
+      connection: number;
+      schema: string;
+      image: string;
+      signer: string;
+      publicKey: Uint8Array;
+      signature: Uint8Array;
+    }
+  | {
+      id: number;
+      operation: "holTrustedImport";
+      connection: number;
+      trustedImportId: number;
+    };
 
 type SqlValue =
   | { kind: "null" }
@@ -570,6 +586,45 @@ async function execute(request: Request): Promise<unknown> {
         snapshot.free();
       }
     }
+    case "holTrustImport": {
+      const trusted = connection.hol_trust_import(
+        request.connection,
+        request.schema,
+        request.image,
+        request.signer,
+        request.publicKey,
+        request.signature,
+      );
+      return readTrustedImport(trusted);
+    }
+    case "holTrustedImport": {
+      const trusted = connection.hol_trusted_import(
+        request.connection,
+        request.trustedImportId,
+      );
+      return readTrustedImport(trusted);
+    }
+  }
+}
+
+function readTrustedImport(trusted: {
+  import_id(): number;
+  trusted_import_id(): number;
+  schema(): string;
+  image(): string;
+  signer(): string;
+  free(): void;
+}): unknown {
+  try {
+    return {
+      importId: trusted.import_id(),
+      trustedImportId: trusted.trusted_import_id(),
+      schema: trusted.schema(),
+      image: trusted.image(),
+      signer: trusted.signer(),
+    };
+  } finally {
+    trusted.free();
   }
 }
 

@@ -12,6 +12,8 @@
       let source;
       let target;
       let hol;
+      let trustedHol;
+      let observerHol;
       let url;
       try {
         source = await repl.open();
@@ -42,10 +44,70 @@
         const exportView = await hol.namespaceExport(namespace, 7);
         const resolved = await hol.resolveExportName(namespace, "truth");
         const snapshot = await hol.exportSnapshot();
+        const attestation = {
+          schema: snapshot.schema,
+          image: snapshot.image,
+          signer: snapshot.signer,
+          publicKey: snapshot.publicKey,
+          signature: snapshot.signature,
+        };
+        await hol.close();
+        hol = undefined;
+
+        trustedHol = await repl.openHol();
+        const callerPublicKey = attestation.publicKey.slice();
+        const callerSignature = attestation.signature.slice();
+        const trustPromise = trustedHol.trustImport({
+          ...attestation,
+          publicKey: callerPublicKey,
+          signature: callerSignature,
+        });
+        callerPublicKey.fill(0);
+        callerSignature.fill(0);
+        const trustedImport = await trustPromise;
+        const inspectedImport = await trustedHol.trustedImport(
+          trustedImport.trustedImportId,
+        );
+
+        observerHol = await repl.openHol();
+        let observerReadRejected = false;
+        try {
+          await observerHol.trustedImport(trustedImport.trustedImportId);
+        } catch {
+          observerReadRejected = true;
+        }
+        const tamperedSignature = snapshot.signature.slice();
+        tamperedSignature[0] ^= 1;
+        let tamperedRejected = false;
+        try {
+          await observerHol.trustImport({
+            ...attestation,
+            signature: tamperedSignature,
+          });
+        } catch {
+          tamperedRejected = true;
+        }
+
+        const trustedSnapshot = await trustedHol.exportSnapshot();
+        const observerSnapshot = await observerHol.exportSnapshot();
         const snapshotHash = await target.putImage(snapshot.bytes);
         await target.attachImage(snapshotHash, "hol_snapshot");
+        const trustedSnapshotHash = await target.putImage(
+          trustedSnapshot.bytes,
+        );
+        await target.attachImage(trustedSnapshotHash, "trusted_snapshot");
+        const observerSnapshotHash = await target.putImage(
+          observerSnapshot.bytes,
+        );
+        await target.attachImage(observerSnapshotHash, "observer_snapshot");
         const snapshotRows = await target.run(
           "SELECT namespace_id, export_id, sort, local_id, name FROM hol_snapshot.hol_namespace_export",
+        );
+        const trustedRows = await target.run(
+          "SELECT i.import_id, hex(i.schema_hash), hex(i.image_hash), t.trusted_import_id, hex(t.signer_hash), length(t.public_key), length(t.signature) FROM trusted_snapshot.hol_import AS i JOIN trusted_snapshot.hol_trusted_import AS t USING (import_id)",
+        );
+        const observerRows = await target.run(
+          "SELECT (SELECT count(*) FROM observer_snapshot.hol_import), (SELECT count(*) FROM observer_snapshot.hol_trusted_import)",
         );
 
         document.body.dataset.result = JSON.stringify({
@@ -62,7 +124,14 @@
           snapshotSigner: snapshot.signer,
           publicKeyLength: snapshot.publicKey.length,
           signatureLength: snapshot.signature.length,
+          attestationHasBytes: "bytes" in attestation,
           snapshotRows,
+          trustedImport,
+          inspectedImport,
+          tamperedRejected,
+          observerReadRejected,
+          trustedRows,
+          observerRows,
         });
       } catch (error) {
         document.body.dataset.error = String(error);
@@ -71,6 +140,8 @@
         await source?.close();
         await target?.close();
         await hol?.close();
+        await trustedHol?.close();
+        await observerHol?.close();
         repl.close();
       }
     </script>
