@@ -26,7 +26,8 @@ export type HolTerm =
   | { kind: "free"; symbol: number }
   | { kind: "bound"; index: number }
   | { kind: "application"; function: number; argument: number }
-  | { kind: "lambda"; parameterType: number; body: number };
+  | { kind: "lambda"; parameterType: number; body: number }
+  | { kind: "equality"; left: number; right: number };
 
 export interface HolUnboundVariable {
   index: number;
@@ -55,6 +56,7 @@ export interface BrowserHolConnection {
   boundTerm(index: number, type: number): Promise<number>;
   application(function_: number, argument: number): Promise<number>;
   lambda(parameterType: number, body: number): Promise<number>;
+  equality(left: number, right: number): Promise<number>;
   term(id: number): Promise<HolTerm>;
   termType(id: number): Promise<number>;
   termFreeVariables(id: number): Promise<number[]>;
@@ -64,6 +66,7 @@ export interface BrowserHolConnection {
   contextMembers(id: number): Promise<number[]>;
   proveHypothesis(context: number, term: number): Promise<number>;
   proveTruth(context: number): Promise<number>;
+  proveReflexivity(context: number, term: number): Promise<number>;
   proved(context: number, term: number): Promise<boolean>;
   close(): Promise<void>;
 }
@@ -135,6 +138,12 @@ type RequestBody =
       parameterType: number;
       body: number;
     }
+  | {
+      operation: "holEquality";
+      connection: number;
+      left: number;
+      right: number;
+    }
   | { operation: "holTerm"; connection: number; term: number }
   | { operation: "holTermType"; connection: number; term: number }
   | { operation: "holTermFreeVariables"; connection: number; term: number }
@@ -149,6 +158,12 @@ type RequestBody =
       term: number;
     }
   | { operation: "holProveTruth"; connection: number; context: number }
+  | {
+      operation: "holProveReflexivity";
+      connection: number;
+      context: number;
+      term: number;
+    }
   | {
       operation: "holProved";
       connection: number;
@@ -393,6 +408,15 @@ class WorkerHolConnection implements BrowserHolConnection {
     });
   }
 
+  equality(left: number, right: number): Promise<number> {
+    return this.#request({
+      operation: "holEquality",
+      connection: this.connection,
+      left,
+      right,
+    });
+  }
+
   term(id: number): Promise<HolTerm> {
     return this.#request({
       operation: "holTerm",
@@ -463,6 +487,15 @@ class WorkerHolConnection implements BrowserHolConnection {
       operation: "holProveTruth",
       connection: this.connection,
       context,
+    });
+  }
+
+  proveReflexivity(context: number, term: number): Promise<number> {
+    return this.#request({
+      operation: "holProveReflexivity",
+      connection: this.connection,
+      context,
+      term,
     });
   }
 

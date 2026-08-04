@@ -340,6 +340,20 @@ impl WebKernel {
         u32::try_from(id.get()).map_err(js_error)
     }
 
+    /// Checks and canonically interns propositional equality.
+    pub fn hol_equality(&mut self, connection: u32, left: u32, right: u32) -> Result<u32, JsValue> {
+        let id = self
+            .repl
+            .hol_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .insert_equality(
+                TermId::from_i64(i64::from(left)),
+                TermId::from_i64(i64::from(right)),
+            )
+            .map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
     /// Reads one admitted HOL term.
     ///
     /// # Errors
@@ -488,6 +502,25 @@ impl WebKernel {
         u32::try_from(theorem.conclusion().get()).map_err(js_error)
     }
 
+    /// Proves a closed term equal to itself in the selected context.
+    pub fn hol_prove_reflexivity(
+        &mut self,
+        connection: u32,
+        context: u32,
+        term: u32,
+    ) -> Result<u32, JsValue> {
+        let theorem = self
+            .repl
+            .hol_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .prove_reflexivity(
+                ContextId::from_i64(i64::from(context)),
+                TermId::from_i64(i64::from(term)),
+            )
+            .map_err(js_error)?;
+        u32::try_from(theorem.conclusion().get()).map_err(js_error)
+    }
+
     /// Queries whether the judgement has already been proved.
     pub fn hol_proved(
         &mut self,
@@ -600,6 +633,7 @@ impl WebTerm {
             TermView::Bound { .. } => "bound",
             TermView::Application { .. } => "application",
             TermView::Lambda { .. } => "lambda",
+            TermView::Equality { .. } => "equality",
         }
         .to_owned()
     }
@@ -682,6 +716,22 @@ impl WebTerm {
         match self.term {
             TermView::Lambda { body, .. } => u32::try_from(body.get()).map_err(js_error),
             _ => Err(JsValue::from_str("term is not a lambda")),
+        }
+    }
+
+    /// Returns an equality's left operand.
+    pub fn left(&self) -> Result<u32, JsValue> {
+        match self.term {
+            TermView::Equality { left, .. } => u32::try_from(left.get()).map_err(js_error),
+            _ => Err(JsValue::from_str("term is not an equality")),
+        }
+    }
+
+    /// Returns an equality's right operand.
+    pub fn right(&self) -> Result<u32, JsValue> {
+        match self.term {
+            TermView::Equality { right, .. } => u32::try_from(right.get()).map_err(js_error),
+            _ => Err(JsValue::from_str("term is not an equality")),
         }
     }
 }

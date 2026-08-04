@@ -153,6 +153,13 @@ pub enum TermView {
         /// Body, which may be open before this binder is applied.
         body: TermId,
     },
+    /// Propositional equality between terms of one type.
+    Equality {
+        /// Left operand.
+        left: TermId,
+        /// Right operand.
+        right: TermId,
+    },
 }
 
 /// Database-local identity of an immutable Boolean assumption context.
@@ -223,6 +230,8 @@ pub enum Operation {
     ProveHypothesis,
     /// Apply the primitive truth rule.
     ProveTruth,
+    /// Apply equality reflexivity.
+    ProveReflexivity,
     /// Query whether a judgement has already been proved.
     ReadTheorem,
     /// Read user-declared metadata attached to an admitted node.
@@ -895,6 +904,32 @@ impl<P: Policy> Connection<Hol<P>> {
         Ok(id)
     }
 
+    /// Checks and canonically interns propositional equality.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies admission, either operand is invalid,
+    /// their types differ, their external environments conflict, or `SQLite`
+    /// rejects the transaction.
+    pub fn insert_equality(&mut self, left: TermId, right: TermId) -> Result<TermId, TermError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_term(&mut hol.policy, Operation::InsertTerm)?;
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        let left_validation = validate_term(&transaction, left)?;
+        let right_validation = validate_term(&transaction, right)?;
+        if left_validation.ty != right_validation.ty {
+            return Err(TermError::EqualityTypeMismatch {
+                left: left_validation.ty,
+                right: right_validation.ty,
+            });
+        }
+        merge_term_boundaries(left_validation.boundary, right_validation.boundary)?;
+        let equality = intern_equality(&transaction, left, right)?;
+        validate_term(&transaction, equality)?;
+        transaction.commit()?;
+        Ok(equality)
+    }
+
     /// Reads an admitted term constructor.
     ///
     /// # Errors
@@ -1075,6 +1110,36 @@ impl<P: Policy> Connection<Hol<P>> {
         })
     }
 
+    /// Applies equality reflexivity in an existing context and persists it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the rule, the context or term is
+    /// invalid, the term is locally open, or persistence fails.
+    pub fn prove_reflexivity(
+        &mut self,
+        context: ContextId,
+        term: TermId,
+    ) -> Result<Theorem<'_>, ProofError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ProveReflexivity)?;
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        require_context(&transaction, context)?;
+        let validation = validate_term(&transaction, term)?;
+        if !validation.boundary.is_empty() {
+            return Err(ProofError::OpenConclusion(term));
+        }
+        let equality = intern_equality(&transaction, term, term)?;
+        validate_term(&transaction, equality)?;
+        persist_theorem(&transaction, context, equality, "reflexivity")?;
+        transaction.commit()?;
+        Ok(Theorem {
+            context,
+            conclusion: equality,
+            connection: PhantomData,
+        })
+    }
+
     /// Reports whether a Boolean judgement is in the append-only proof table.
     ///
     /// # Errors
@@ -1089,9 +1154,15 @@ impl<P: Policy> Connection<Hol<P>> {
         let (neutron, hol) = self.parts_mut();
         authorize_proof(&mut hol.policy, Operation::ReadTheorem)?;
         require_context(neutron.sqlite(), context)?;
-        let (_, ty) = read_term(neutron.sqlite(), term)?;
-        if ty != BOOL_TYPE_ID {
-            return Err(ProofError::NonBooleanConclusion { term, ty });
+        let validation = validate_term(neutron.sqlite(), term)?;
+        if validation.ty != BOOL_TYPE_ID {
+            return Err(ProofError::NonBooleanConclusion {
+                term,
+                ty: validation.ty,
+            });
+        }
+        if !validation.boundary.is_empty() {
+            return Err(ProofError::OpenConclusion(term));
         }
         neutron
             .sqlite()
@@ -1647,6 +1718,29 @@ fn intern_lambda(
     Ok(TermId(connection.last_insert_rowid()))
 }
 
+fn intern_equality(
+    connection: &sqlite::Connection,
+    left: TermId,
+    right: TermId,
+) -> Result<TermId, TermError> {
+    if let Some(id) = connection
+        .query_row(
+            "SELECT node_id FROM hol_node
+             WHERE tag = 'MEQ' AND lhs = ?1 AND rhs = ?2 AND ty = ?3",
+            (left.0, right.0, BOOL_TYPE_ID.0),
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+    {
+        return Ok(TermId(id));
+    }
+    connection.execute(
+        "INSERT INTO hol_node(tag, lhs, rhs, ty) VALUES ('MEQ', ?1, ?2, ?3)",
+        (left.0, right.0, BOOL_TYPE_ID.0),
+    )?;
+    Ok(TermId(connection.last_insert_rowid()))
+}
+
 fn read_term_node(
     connection: &sqlite::Connection,
     id: TermId,
@@ -1694,6 +1788,13 @@ fn read_term_node(
             TermView::Lambda {
                 parameter_type: TypeId(parameter_type),
                 body: TermId(body),
+            },
+            TypeId(ty),
+        ),
+        (tag, Some(left), Some(right), Some(ty)) if tag == "MEQ" => (
+            TermView::Equality {
+                left: TermId(left),
+                right: TermId(right),
             },
             TypeId(ty),
         ),
@@ -1768,6 +1869,20 @@ fn validate_term_inner(
             }
             close_term_boundary(body.boundary, parameter_type)?
         }
+        TermView::Equality { left, right } => {
+            if ty != BOOL_TYPE_ID {
+                return Err(TermError::CorruptTerm(id));
+            }
+            let left = validate_term_inner(connection, left, active, memo)?;
+            let right = validate_term_inner(connection, right, active, memo)?;
+            if left.ty != right.ty {
+                return Err(TermError::EqualityTypeMismatch {
+                    left: left.ty,
+                    right: right.ty,
+                });
+            }
+            merge_term_boundaries(left.boundary, right.boundary)?
+        }
     };
     active.remove(&id);
     let validated = ValidatedTerm { view, ty, boundary };
@@ -1820,6 +1935,10 @@ fn free_term_symbols(connection: &sqlite::Connection, root: TermId) -> Result<Ve
              SELECT node_id, rhs FROM hol_node WHERE tag = 'MAPP'
              UNION ALL
              SELECT node_id, rhs FROM hol_node WHERE tag = 'MLAM'
+             UNION ALL
+             SELECT node_id, lhs FROM hol_node WHERE tag = 'MEQ'
+             UNION ALL
+             SELECT node_id, rhs FROM hol_node WHERE tag = 'MEQ'
          ),
          reachable(node_id) AS (
              SELECT ?1
@@ -2100,6 +2219,13 @@ pub enum TermError {
         /// Actual argument type.
         actual: TypeId,
     },
+    /// Equality operands have different types.
+    EqualityTypeMismatch {
+        /// Left operand type.
+        left: TypeId,
+        /// Right operand type.
+        right: TypeId,
+    },
     /// One external de Bruijn index has incompatible type annotations.
     InconsistentUnboundVariable {
         /// External index.
@@ -2137,6 +2263,12 @@ impl fmt::Display for TermError {
                 expected.get(),
                 actual.get()
             ),
+            Self::EqualityTypeMismatch { left, right } => write!(
+                formatter,
+                "equality operands have different types {} and {}",
+                left.get(),
+                right.get()
+            ),
             Self::InconsistentUnboundVariable {
                 index,
                 first,
@@ -2170,6 +2302,7 @@ impl StdError for TermError {
             | Self::CorruptTerm(_)
             | Self::NotFunction(_)
             | Self::ApplicationTypeMismatch { .. }
+            | Self::EqualityTypeMismatch { .. }
             | Self::InconsistentUnboundVariable { .. }
             | Self::BoundVariableTypeMismatch { .. }
             | Self::CyclicTerm(_) => None,
@@ -2283,6 +2416,8 @@ pub enum ProofError {
         /// Its admitted type.
         ty: TypeId,
     },
+    /// A proposed theorem conclusion has external de Bruijn variables.
+    OpenConclusion(TermId),
     /// `SQLite` rejected an operation.
     Sqlite(sqlite::Error),
 }
@@ -2305,6 +2440,13 @@ impl fmt::Display for ProofError {
                 term.get(),
                 ty.get()
             ),
+            Self::OpenConclusion(term) => {
+                write!(
+                    formatter,
+                    "conclusion term {} is not locally closed",
+                    term.get()
+                )
+            }
             Self::Sqlite(error) => error.fmt(formatter),
         }
     }
@@ -2316,7 +2458,10 @@ impl StdError for ProofError {
             Self::Context(error) => Some(error),
             Self::Term(error) => Some(error),
             Self::Sqlite(error) => Some(error),
-            Self::Denied(_) | Self::NotMember { .. } | Self::NonBooleanConclusion { .. } => None,
+            Self::Denied(_)
+            | Self::NotMember { .. }
+            | Self::NonBooleanConclusion { .. }
+            | Self::OpenConclusion(_) => None,
         }
     }
 }
@@ -2760,6 +2905,95 @@ mod tests {
                 Operation::InsertType,
             ]
         );
+    }
+
+    #[test]
+    fn equality_is_typed_canonical_and_preserves_boundaries() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let variable = connection.insert_bound_term(0, bool_type).unwrap();
+        let equality = connection.insert_equality(variable, variable).unwrap();
+        assert_eq!(
+            connection.term(equality).unwrap(),
+            TermView::Equality {
+                left: variable,
+                right: variable
+            }
+        );
+        assert_eq!(connection.term_type(equality).unwrap(), bool_type);
+        assert_eq!(
+            connection.term_unbound_variables(equality).unwrap(),
+            [UnboundVariable {
+                index: 0,
+                ty: bool_type
+            }]
+        );
+        assert_eq!(
+            equality,
+            connection.insert_equality(variable, variable).unwrap()
+        );
+
+        let identity = connection.insert_lambda(bool_type, variable).unwrap();
+        assert!(matches!(
+            connection.insert_equality(variable, identity),
+            Err(TermError::EqualityTypeMismatch { left, right })
+                if left == bool_type && right != bool_type
+        ));
+    }
+
+    #[test]
+    fn reflexivity_proves_a_closed_identity_lambda() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let variable = connection.insert_bound_term(0, bool_type).unwrap();
+        let identity = connection.insert_lambda(bool_type, variable).unwrap();
+        let conclusion = connection
+            .prove_reflexivity(ContextId::empty(), identity)
+            .unwrap()
+            .conclusion();
+        assert_eq!(
+            connection.term(conclusion).unwrap(),
+            TermView::Equality {
+                left: identity,
+                right: identity
+            }
+        );
+        assert!(
+            connection
+                .proved_judgement(ContextId::empty(), conclusion)
+                .unwrap()
+        );
+        let rule = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row(
+                "SELECT rule FROM hol_theorem WHERE ctx_id = 0 AND term_id = ?1",
+                [conclusion.get()],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+        assert_eq!(rule, "reflexivity");
+    }
+
+    #[test]
+    fn reflexivity_rejects_open_terms_without_persisting() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let variable = connection.insert_bound_term(0, bool_type).unwrap();
+        assert!(matches!(
+            connection.prove_reflexivity(ContextId::empty(), variable),
+            Err(ProofError::OpenConclusion(term)) if term == variable
+        ));
+        let rows = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row("SELECT count(*) FROM hol_theorem", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(rows, 0);
     }
 
     #[test]

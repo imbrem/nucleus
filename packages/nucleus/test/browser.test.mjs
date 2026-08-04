@@ -99,4 +99,8 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
   await demo
     .getByText("bound 9 unbound=0:2 closed=false; lambda 10 : 4 closed=true")
     .waitFor();
+  await demo.locator("#hol-reflexivity-demo").click();
+  await demo
+    .getByText("theorem 0 |- 11; equality 10 = 10; proved = true")
+    .waitFor();
 });
