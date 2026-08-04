@@ -311,6 +311,15 @@ impl Runner {
     pub(crate) fn check(&self) -> Result<()> {
         self.fmt(true)?;
         self.lint()?;
+        self.run(
+            "validate kernel-service WIT",
+            "wasm-tools",
+            [
+                "component",
+                "wit",
+                "crates/kernel-service/wit/kernel-service.wit",
+            ],
+        )?;
         self.deps_check()?;
         self.loc()?;
         self.test(false, true)?;
