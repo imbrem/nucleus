@@ -12,8 +12,13 @@ use std::sync::Arc;
 use covalence_lib_sqlite as sqlite;
 use sqlite::OptionalExtension as _;
 
+mod metadata_spec;
 mod schema_spec;
 
+pub use metadata_spec::MetadataSpecError;
+use metadata_spec::{
+    encode_metadata_values_json, parse_metadata_read_json, parse_metadata_write_json,
+};
 pub use schema_spec::{
     HolMetadataColumnSpec, HolMetadataIndexSpec, HolMetadataSchemaSpec, HolMetadataStorageSpec,
     HolMetadataTableSpec, HolSchemaSpecError, compile_hol_schema_json,
@@ -27,7 +32,7 @@ pub use covalence_nucleus::{
     Hol, HolDatabaseRef, HolExportError, HolOpenError, HolSchema, HolSchemaDescriptor,
     HolSchemaDescriptorError, ImportError, ImportId, ImportedExport, ImportedReaderError,
     ImportedTermView, Kernel, Kind, KindError, KindId, KindView, MatchedTrustedHolImage,
-    MetadataSchemaError, MetadataTable, MetadataTarget, MetadataType, MetadataValue,
+    MetadataError, MetadataSchemaError, MetadataTable, MetadataTarget, MetadataType, MetadataValue,
     NamespaceError, NamespaceExport, NamespaceId, NamespaceView, ProofError, ProofSession,
     SignedSnapshotAttestation, SignedSnapshotEnvelope, SnapshotAuthenticationError,
     SnapshotTrustError, Sql, TermError, TermId, TermView, Theorem, TrustedImportError,
@@ -1146,6 +1151,79 @@ impl LocalRepl {
         }
     }
 
+    /// Reads user-declared metadata from one existing HOL structural row.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a wrong connection protocol, denied read, unknown target or column,
+    /// or failed database access.
+    pub fn hol_metadata(
+        &mut self,
+        id: ConnectionId,
+        target: MetadataTarget,
+        columns: &[&str],
+    ) -> Result<Vec<MetadataValue>, LocalReplError> {
+        self.hol_mut(id)?
+            .metadata(target, columns)
+            .map_err(Into::into)
+    }
+
+    /// Replaces user-declared metadata on one existing HOL structural row.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a wrong connection protocol, denied write, unknown target or column,
+    /// invalid value, repeated column, or failed database access.
+    pub fn set_hol_metadata(
+        &mut self,
+        id: ConnectionId,
+        target: MetadataTarget,
+        metadata: &[(&str, MetadataValue)],
+    ) -> Result<(), LocalReplError> {
+        self.hol_mut(id)?
+            .set_metadata(target, metadata)
+            .map_err(Into::into)
+    }
+
+    /// Reads HOL metadata through the strict transport-neutral JSON request format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed/bounded JSON or any rejected metadata read.
+    pub fn hol_metadata_json(
+        &mut self,
+        id: ConnectionId,
+        json: &str,
+    ) -> Result<String, LocalReplError> {
+        let request = parse_metadata_read_json(json)?;
+        let columns = request
+            .columns
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        let values = self.hol_metadata(id, request.target, &columns)?;
+        encode_metadata_values_json(values).map_err(Into::into)
+    }
+
+    /// Writes HOL metadata through the strict transport-neutral JSON request format.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed/bounded JSON or any rejected metadata write.
+    pub fn set_hol_metadata_json(
+        &mut self,
+        id: ConnectionId,
+        json: &str,
+    ) -> Result<(), LocalReplError> {
+        let request = parse_metadata_write_json(json)?;
+        let metadata = request
+            .metadata
+            .iter()
+            .map(|(column, value)| (column.as_str(), value.clone()))
+            .collect::<Vec<_>>();
+        self.set_hol_metadata(id, request.target, &metadata)
+    }
+
     /// Defines a local hierarchical namespace in one HOL connection.
     ///
     /// # Errors
@@ -1787,6 +1865,10 @@ pub enum LocalReplError {
     HolSchemaDescriptor(HolSchemaDescriptorError),
     /// A declarative REPL HOL metadata schema was invalid.
     HolSchemaSpec(HolSchemaSpecError),
+    /// A transport-neutral HOL metadata value request was invalid.
+    MetadataSpec(MetadataSpecError),
+    /// A HOL metadata read or write failed.
+    Metadata(MetadataError),
     /// The shared immutable image cache failed.
     Image(ReplImageError),
     /// A namespace operation failed.
@@ -1828,6 +1910,8 @@ impl fmt::Display for LocalReplError {
             Self::HolOpen(error) => error.fmt(formatter),
             Self::HolSchemaDescriptor(error) => error.fmt(formatter),
             Self::HolSchemaSpec(error) => error.fmt(formatter),
+            Self::MetadataSpec(error) => error.fmt(formatter),
+            Self::Metadata(error) => error.fmt(formatter),
             Self::Image(error) => error.fmt(formatter),
             Self::Namespace(error) => error.fmt(formatter),
             Self::Export(error) => error.fmt(formatter),
@@ -1859,6 +1943,8 @@ impl StdError for LocalReplError {
             Self::HolOpen(error) => Some(error),
             Self::HolSchemaDescriptor(error) => Some(error),
             Self::HolSchemaSpec(error) => Some(error),
+            Self::MetadataSpec(error) => Some(error),
+            Self::Metadata(error) => Some(error),
             Self::Image(error) => Some(error),
             Self::Namespace(error) => Some(error),
             Self::Export(error) => Some(error),
@@ -1890,6 +1976,18 @@ impl From<HolSchemaDescriptorError> for LocalReplError {
 impl From<HolSchemaSpecError> for LocalReplError {
     fn from(error: HolSchemaSpecError) -> Self {
         Self::HolSchemaSpec(error)
+    }
+}
+
+impl From<MetadataSpecError> for LocalReplError {
+    fn from(error: MetadataSpecError) -> Self {
+        Self::MetadataSpec(error)
+    }
+}
+
+impl From<MetadataError> for LocalReplError {
+    fn from(error: MetadataError) -> Self {
+        Self::Metadata(error)
     }
 }
 
@@ -2502,6 +2600,53 @@ mod tests {
         assert_ne!(target_snapshot.signer(), snapshot.signer());
         let target_image = ValidatedHolImage::validate(target_snapshot.bytes()).unwrap();
         assert_eq!(target_image.counts().untrusted_trusted_import_rows, 1);
+    }
+
+    #[test]
+    fn shared_json_metadata_api_preserves_typed_values_on_any_local_kernel() {
+        let schema = r#"{
+            "version": 1,
+            "columns": [
+                {"table":"node","name":"source label","storage":"text"},
+                {"table":"node","name":"priority","storage":"integer"},
+                {"table":"node","name":"ratio","storage":"real"},
+                {"table":"node","name":"payload","storage":"blob"}
+            ],
+            "indexes": [
+                {"table":"node","name":"by source","columns":["source label"]}
+            ]
+        }"#;
+        let mut repl = LocalRepl::new().unwrap();
+        let kernel = repl.create_local_kernel().unwrap();
+        let hol = repl.open_hol_with_schema_json_on(kernel, schema).unwrap();
+        let star = repl.hol_mut(hol).unwrap().insert_kind(&Kind::Star).unwrap();
+        let set = format!(
+            r#"{{"target":{{"kind":"node","id":{}}},"assignments":[
+                {{"column":"source label","value":{{"kind":"text","value":"demo value"}}}},
+                {{"column":"priority","value":{{"kind":"integer","value":"9223372036854775807"}}}},
+                {{"column":"ratio","value":{{"kind":"real","value":"1.5"}}}},
+                {{"column":"payload","value":{{"kind":"blob","hex":"00ff80"}}}}
+            ]}}"#,
+            star.get()
+        );
+        repl.set_hol_metadata_json(hol, &set).unwrap();
+        let get = format!(
+            r#"{{"target":{{"kind":"node","id":{}}},"columns":["payload","priority","source label","ratio"]}}"#,
+            star.get()
+        );
+        assert_eq!(
+            repl.hol_metadata_json(hol, &get).unwrap(),
+            r#"[{"kind":"blob","hex":"00ff80"},{"kind":"integer","value":"9223372036854775807"},{"kind":"text","value":"demo value"},{"kind":"real","value":"1.5"}]"#
+        );
+        let clear = format!(
+            r#"{{"target":{{"kind":"node","id":{}}},"assignments":[{{"column":"payload","value":{{"kind":"null"}}}}]}}"#,
+            star.get()
+        );
+        repl.set_hol_metadata_json(hol, &clear).unwrap();
+        assert_eq!(
+            repl.hol_metadata_json(hol, &get).unwrap(),
+            r#"[{"kind":"null"},{"kind":"integer","value":"9223372036854775807"},{"kind":"text","value":"demo value"},{"kind":"real","value":"1.5"}]"#
+        );
     }
 
     #[test]

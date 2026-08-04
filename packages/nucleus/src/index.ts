@@ -66,6 +66,30 @@ export interface BrowserKernelInfo {
   publicKey: Uint8Array;
 }
 
+export type HolMetadataTarget =
+  | { kind: "node"; id: number }
+  | { kind: "context"; id: number }
+  | { kind: "contextMember"; context: number; term: number }
+  | { kind: "judgement"; context: number; term: number }
+  | { kind: "contextImplication"; antecedent: number; consequent: number }
+  | { kind: "contextUnion"; left: number; right: number }
+  | { kind: "namespace"; id: number }
+  | { kind: "namespaceExport"; namespace: number; export: number }
+  | { kind: "import"; id: number }
+  | { kind: "trustedImport"; id: number };
+
+export type HolMetadataValue =
+  | { kind: "null" }
+  | { kind: "integer"; value: string }
+  | { kind: "real"; value: string }
+  | { kind: "text"; value: string }
+  | { kind: "blob"; value: Uint8Array };
+
+export interface HolMetadataAssignment {
+  column: string;
+  value: HolMetadataValue;
+}
+
 export interface SignedHolSnapshot extends ResidentHolSnapshot {
   bytes: Uint8Array;
 }
@@ -167,6 +191,14 @@ export interface BrowserSqlConnection {
 }
 
 export interface BrowserHolConnection {
+  metadata(
+    target: HolMetadataTarget,
+    columns: readonly string[],
+  ): Promise<HolMetadataValue[]>;
+  setMetadata(
+    target: HolMetadataTarget,
+    assignments: readonly HolMetadataAssignment[],
+  ): Promise<void>;
   star(): Promise<number>;
   arrow(domain: number, codomain: number): Promise<number>;
   kind(id: number): Promise<HolKind>;
@@ -295,6 +327,18 @@ type RequestBody =
       schema: string;
     }
   | { operation: "serializeMain"; connection: number }
+  | {
+      operation: "holMetadata";
+      connection: number;
+      target: HolMetadataTarget;
+      columns: string[];
+    }
+  | {
+      operation: "holSetMetadata";
+      connection: number;
+      target: HolMetadataTarget;
+      assignments: HolMetadataAssignment[];
+    }
   | { operation: "holStar"; connection: number }
   | {
       operation: "holArrow";
@@ -681,6 +725,38 @@ class WorkerHolConnection implements BrowserHolConnection {
     private readonly repl: WorkerRepl,
     private readonly connection: number,
   ) {}
+
+  metadata(
+    target: HolMetadataTarget,
+    columns: readonly string[],
+  ): Promise<HolMetadataValue[]> {
+    validateMetadataRead(columns);
+    return this.#request({
+      operation: "holMetadata",
+      connection: this.connection,
+      target: { ...target },
+      columns: [...columns],
+    });
+  }
+
+  setMetadata(
+    target: HolMetadataTarget,
+    assignments: readonly HolMetadataAssignment[],
+  ): Promise<void> {
+    validateMetadataAssignments(assignments);
+    return this.#request({
+      operation: "holSetMetadata",
+      connection: this.connection,
+      target: { ...target },
+      assignments: assignments.map(({ column, value }) => ({
+        column,
+        value:
+          value.kind === "blob"
+            ? { kind: "blob", value: value.value.slice() }
+            : { ...value },
+      })),
+    });
+  }
 
   star(): Promise<number> {
     return this.#request({ operation: "holStar", connection: this.connection });
@@ -1112,6 +1188,77 @@ class WorkerHolConnection implements BrowserHolConnection {
       return Promise.reject(new Error("HOL connection is closed"));
     return this.repl.request(body, transfer);
   }
+}
+
+const MAX_METADATA_JSON_BYTES = 1 << 20;
+const MAX_METADATA_COLUMNS = 128;
+
+function validateMetadataRead(columns: readonly string[]): void {
+  if (columns.length > MAX_METADATA_COLUMNS)
+    throw new RangeError("metadata request has too many columns");
+  let bytes = 128;
+  for (const column of columns) {
+    if (typeof column !== "string")
+      throw new TypeError("metadata column names must be strings");
+    bytes += jsonStringLength(column) + 8;
+    checkMetadataRequestBytes(bytes);
+  }
+}
+
+function validateMetadataAssignments(
+  assignments: readonly HolMetadataAssignment[],
+): void {
+  if (assignments.length > MAX_METADATA_COLUMNS)
+    throw new RangeError("metadata request has too many assignments");
+  let bytes = 128;
+  for (const assignment of assignments) {
+    if (typeof assignment.column !== "string")
+      throw new TypeError("metadata column names must be strings");
+    bytes += jsonStringLength(assignment.column) + 64;
+    const value = assignment.value;
+    switch (value.kind) {
+      case "null":
+        break;
+      case "integer":
+      case "real":
+      case "text":
+        if (typeof value.value !== "string")
+          throw new TypeError(`metadata ${value.kind} value must be a string`);
+        bytes += jsonStringLength(value.value) + 8;
+        break;
+      case "blob":
+        if (!(value.value instanceof Uint8Array))
+          throw new TypeError("metadata blob value must be a Uint8Array");
+        bytes += value.value.byteLength * 2 + 8;
+        break;
+      default:
+        throw new TypeError("unknown metadata value kind");
+    }
+    checkMetadataRequestBytes(bytes);
+  }
+}
+
+function checkMetadataRequestBytes(bytes: number): void {
+  if (!Number.isSafeInteger(bytes) || bytes > MAX_METADATA_JSON_BYTES)
+    throw new RangeError("encoded metadata request exceeds 1 MiB");
+}
+
+function jsonStringLength(value: string): number {
+  let bytes = 2;
+  for (let index = 0; index < value.length; index += 1) {
+    const codePoint = value.codePointAt(index)!;
+    if (codePoint <= 0x1f) bytes += 6;
+    else if (codePoint === 0x22 || codePoint === 0x5c) bytes += 2;
+    else if (codePoint >= 0xd800 && codePoint <= 0xdfff) bytes += 6;
+    else if (codePoint <= 0x7f) bytes += 1;
+    else if (codePoint <= 0x7ff) bytes += 2;
+    else if (codePoint <= 0xffff) bytes += 3;
+    else {
+      bytes += 4;
+      index += 1;
+    }
+  }
+  return bytes;
 }
 
 /** Starts a browser REPL whose independently opened connections live in one Worker. */

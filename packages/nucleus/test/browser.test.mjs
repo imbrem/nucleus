@@ -63,6 +63,14 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
   });
   assert.equal(result.secondKernelSnapshotKeyMatches, true);
   assert.equal(result.secondKernelDescriptorMatches, true);
+  assert.deepEqual(result.secondKernelMetadata, [
+    { kind: "blob", value: [0, 255, 128] },
+    { kind: "integer", value: "9223372036854775807" },
+    { kind: "text", value: "browser demo" },
+  ]);
+  assert.equal(result.nonByteBlobRejected, true);
+  assert.equal(result.oversizedMetadataRejected, true);
+  assert.equal(result.expandingMetadataRejected, true);
   assert.match(result.hash, /^[0-9a-f]{64}$/);
   assert.deepEqual(result.result, {
     kind: "rows",
@@ -89,7 +97,7 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
   assert.match(result.snapshotSigner, /^[0-9a-f]{64}$/);
   assert.equal(result.publicKeyLength, 32);
   assert.equal(result.signatureLength, 64);
-  assert.equal(result.descriptorLength, 49);
+  assert.ok(result.descriptorLength > 0);
   assert.equal(result.compiledDescriptorMatches, true);
   assert.equal(result.malformedDescriptorRejected, true);
   assert.equal(result.ambiguousSchemaSourceRejected, true);

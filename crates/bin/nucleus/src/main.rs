@@ -269,6 +269,10 @@ fn print_help(output: &mut impl io::Write) -> io::Result<()> {
     writeln!(output, ".hol ctx ...       define/inspect Boolean contexts")?;
     writeln!(
         output,
+        ".hol metadata get|set JSON  read/write declared metadata columns"
+    )?;
+    writeln!(
+        output,
         ".hol namespace ... define/inspect export namespaces"
     )?;
     writeln!(output, ".hol export ...    bind/inspect namespace exports")?;
@@ -359,6 +363,9 @@ fn put_hol_snapshot(
 
 fn run_hol(repl: &mut LocalRepl, output: &mut impl io::Write, arguments: &str) -> Result<()> {
     let connection = repl.active()?.ok_or("no active connection")?;
+    if let Some(arguments) = arguments.strip_prefix("metadata ") {
+        return run_hol_metadata(repl, output, connection, arguments);
+    }
     let mut arguments = arguments.split_whitespace();
     match arguments.next() {
         Some("star") if arguments.next().is_none() => {
@@ -427,12 +434,31 @@ fn run_hol(repl: &mut LocalRepl, output: &mut impl io::Write, arguments: &str) -
         }
         _ => {
             return Err(
-                "usage: .hol star|arrow|show|rank|type|term|ctx|namespace|export|snapshot|import|prove|proved ..."
+                "usage: .hol star|arrow|show|rank|type|term|ctx|namespace|export|snapshot|import|metadata|prove|proved ..."
                     .into(),
             );
         }
     }
     Ok(())
+}
+
+fn run_hol_metadata(
+    repl: &mut LocalRepl,
+    output: &mut impl io::Write,
+    connection: ConnectionId,
+    arguments: &str,
+) -> Result<()> {
+    if let Some(request) = arguments.strip_prefix("get ") {
+        let values = repl.hol_metadata_json(connection, request)?;
+        writeln!(output, "metadata {values}")?;
+        return Ok(());
+    }
+    if let Some(request) = arguments.strip_prefix("set ") {
+        repl.set_hol_metadata_json(connection, request)?;
+        writeln!(output, "metadata updated")?;
+        return Ok(());
+    }
+    Err("usage: .hol metadata get|set JSON".into())
 }
 
 fn run_hol_import<'a>(
@@ -1538,7 +1564,7 @@ mod tests {
         .unwrap();
         let descriptor_path = format!("{}.hol-schema", path.display());
         let script = format!(
-            ".kernel new\n.hol-schema compile {} {}\n.open @1 hol --schema-json {}\n.hol star\n.hol namespace create 0 demo\n.hol namespace show 1\n.hol export bind 1 7 kind 1 star\n.hol export show 1 7\n.hol export resolve 1 star\n.hol snapshot export {}\n.open @1 hol --descriptor {}\n.quit\n",
+            ".kernel new\n.hol-schema compile {} {}\n.open @1 hol --schema-json {}\n.hol star\n.hol metadata set {{\"target\":{{\"kind\":\"node\",\"id\":1}},\"assignments\":[{{\"column\":\"origin\",\"value\":{{\"kind\":\"text\",\"value\":\"terminal demo\"}}}}]}}\n.hol metadata get {{\"target\":{{\"kind\":\"node\",\"id\":1}},\"columns\":[\"origin\"]}}\n.hol namespace create 0 demo\n.hol namespace show 1\n.hol export bind 1 7 kind 1 star\n.hol export show 1 7\n.hol export resolve 1 star\n.hol snapshot export {}\n.open @1 hol --descriptor {}\n.quit\n",
             json_path.display(),
             compiled_path.display(),
             json_path.display(),
@@ -1561,6 +1587,8 @@ mod tests {
         assert!(output.contains("namespace 1 defined\n"));
         assert!(output.contains("opened hol connection 2 on kernel 1\n"));
         assert!(output.contains("opened hol connection 3 on kernel 1\n"));
+        assert!(output.contains("metadata updated\n"));
+        assert!(output.contains("metadata [{\"kind\":\"text\",\"value\":\"terminal demo\"}]\n"));
         assert!(output.contains("namespace 1 parent=0 name=demo\n"));
         assert!(output.contains("export 1:7 = kind 1 name=star\n"));
         assert!(output.contains("schema "));

@@ -346,6 +346,30 @@ impl WebKernel {
             .map_err(js_error)
     }
 
+    /// Reads user-declared HOL metadata using the strict shared JSON request format.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for malformed JSON, a wrong connection protocol, or a rejected
+    /// metadata read.
+    pub fn hol_metadata(&mut self, connection: u32, request: &str) -> Result<String, JsValue> {
+        self.repl
+            .hol_metadata_json(ConnectionId::from_u32(connection), request)
+            .map_err(js_error)
+    }
+
+    /// Replaces user-declared HOL metadata using the strict shared JSON request format.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for malformed JSON, a wrong connection protocol, or a rejected
+    /// metadata write.
+    pub fn set_hol_metadata(&mut self, connection: u32, request: &str) -> Result<(), JsValue> {
+        self.repl
+            .set_hol_metadata_json(ConnectionId::from_u32(connection), request)
+            .map_err(js_error)
+    }
+
     /// Returns the canonical `star` kind ID in a HOL connection.
     ///
     /// # Errors
