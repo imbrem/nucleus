@@ -1,0 +1,89 @@
+package covalence:kernel-service@0.1.0;
+
+/// A transport-neutral control plane for one independently keyed kernel.
+///
+/// This interface grants no logical authority. Public keys are observed identities,
+/// connection handles are opaque and kernel-local, and callers must apply their own
+/// protocol trust rules to every returned artifact.
+interface service {
+  /// Exactly 32 bytes when used as an O256 digest.
+  type digest = list<u8>;
+
+  enum operation {
+    identity,
+    has-image,
+    list-images,
+    put-image,
+    open-sql,
+    run-sql,
+    attach-image,
+    close-sql,
+  }
+
+  record operation-contract {
+    operation: operation,
+    /// O256 identifier derived from the exact WIT contract and operation tag.
+    /// This is not a signed semantic input/output schema.
+    contract: digest,
+  }
+
+  record kernel-identity {
+    /// Exactly 32 bytes: the kernel's ephemeral Ed25519 verification key.
+    public-key: list<u8>,
+    operations: list<operation-contract>,
+  }
+
+  enum error-code {
+    invalid-request,
+    not-found,
+    resource-limit,
+    protocol,
+    internal,
+  }
+
+  variant sql-value {
+    null,
+    integer(s64),
+    real(f64),
+    text(string),
+    blob(list<u8>),
+  }
+
+  record sql-query {
+    columns: list<string>,
+    rows: list<list<sql-value>>,
+  }
+
+  variant sql-outcome {
+    changed(u64),
+    rows(sql-query),
+  }
+
+  /// Returns observed identity and operation-contract claims. It does not establish trust.
+  identity: func() -> result<kernel-identity, error-code>;
+
+  /// Tests operational residence only; the digest does not imply validation or trust.
+  has-image: func(image: digest) -> result<bool, error-code>;
+
+  /// Returns at most 1024 resident image digests.
+  list-images: func() -> result<list<digest>, error-code>;
+
+  /// Admits at most 64 MiB of uninterpreted complete-image bytes and returns their O256.
+  put-image: func(bytes: list<u8>) -> result<digest, error-code>;
+
+  /// Opens one unrestricted in-memory SQLite connection and returns an opaque local handle.
+  open-sql: func() -> result<u64, error-code>;
+
+  /// Executes one SQLite statement of at most 1 MiB and returns at most 16 MiB of owned output.
+  run-sql: func(connection: u64, statement: string) -> result<sql-outcome, error-code>;
+
+  /// Attaches one resident complete image immutably under an exact SQLite schema identifier.
+  attach-image: func(connection: u64, image: digest, schema: string) -> result<_, error-code>;
+
+  /// Closes one caller-owned SQL handle.
+  close-sql: func(connection: u64) -> result<_, error-code>;
+}
+
+world kernel-service {
+  export service;
+}
