@@ -157,10 +157,11 @@ not logical authority.
 
 ## Physical representation
 
-Use separate object tables for kinds, types, and terms, plus one narrow table
-per constructor. This is more verbose than a wide tagged row, but each table
-has one meaning, imports are easier to diagnose, and future constructor changes
-do not add more nullable columns to every node.
+Two executable kind-slice PRs now test this decision behind the same API:
+normalized constructor tables in #162 and one compact tagged node table in
+#165. [The comparison](hol-representation-comparison.md) recommends continuing
+the next slice with the compact `(node_id, tag, lhs, rhs, ty)` representation
+while retaining the normalized version as a benchmark and audit control.
 
 ### Kinds
 
@@ -229,12 +230,13 @@ tag-dependent checks make malformed imports less obvious, however, and a new
 constructor changes the shared table. For a first auditable TCB, constructor
 tables win narrowly.
 
-### Why not one universal syntax table?
+### Why one compact syntax table remains credible
 
-A universal table simplifies generic DAG traversal and future base-logic
-namespaces, but SQLite cannot express child-sort constraints cleanly. It would
-prematurely merge kind, type, and term identity spaces. Keep it as a possible
-interchange or base-logic representation.
+The #165 experiment accepts that SQLite cannot express child-sort constraints
+cleanly and checks them in the trusted Nucleus admission path instead. Distinct
+Rust ID newtypes preserve the public sort boundary over a shared physical ID
+space. This is an internal representation choice, not a foreign interchange
+format; see the comparison for the resulting tradeoffs.
 
 ### Why not canonical blobs?
 
@@ -268,8 +270,15 @@ raw SQL.
 
 ## Metadata
 
-User metadata does not participate in canonical syntax identity. Protocols own
-satellite tables with real typed columns and indexes:
+User metadata does not participate in canonical syntax identity. A database
+may declare extra typed metadata columns on the object/node table and create
+ordinary SQLite indexes over them. Nucleus names core columns explicitly and
+routes metadata reads and writes through policy checks, so these extensions do
+not change logical decoding. Imported-schema validation checks the declared
+extension separately from the core schema.
+
+Protocols may also own satellite tables with real typed columns and indexes,
+especially for many-valued metadata or independently versioned provenance:
 
 ```sql
 CREATE TABLE my_term_metadata (
