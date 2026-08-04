@@ -3,6 +3,7 @@
 mod export;
 mod import;
 mod namespace;
+mod trust;
 mod validate;
 
 pub use export::{HolExportError, HolSnapshotAttestation, SignedHolSnapshot};
@@ -13,6 +14,7 @@ pub use namespace::{
     ExportError, ExportId, ExportSort, ExportView, NamespaceError, NamespaceExport, NamespaceId,
     NamespaceView,
 };
+pub use trust::SnapshotTrustError;
 pub use validate::{HolImageCounts, HolImageValidationError, ValidatedHolImage};
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -409,6 +411,14 @@ pub enum Operation {
     DefineImportedNamespace,
     /// Read an external namespace alias.
     ReadImportedNamespace,
+    /// Trust one authenticated signer for schema-qualified snapshot assertions on this connection.
+    TrustSnapshotSigner,
+    /// Read connection-local snapshot-signer trust.
+    ReadTrustedSnapshotSigner,
+    /// Explicitly accept one authenticated snapshot assertion from a trusted signer.
+    AcceptAuthenticatedSnapshot,
+    /// Read connection-local acceptance of an exact authenticated snapshot assertion.
+    ReadAcceptedSnapshot,
     /// Check and persist one exact structural context union.
     ProveContextUnion,
     /// Load and recheck one exact structural context union.
@@ -923,6 +933,7 @@ impl<P: Policy> Connection<Hol<P>> {
         let transaction = neutron.sqlite().unchecked_transaction()?;
         transaction.execute_batch(SCHEMA)?;
         install_metadata_schema(&transaction, &schema)?;
+        trust::install_connection_trust_schema(&transaction)?;
         transaction.commit()?;
         Ok(Self::from_neutron(neutron, Hol { policy, schema }))
     }

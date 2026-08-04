@@ -14,6 +14,13 @@ use super::{
 /// The constructor deliberately performs no cryptographic, database, schema, or trust checks.
 pub struct SignedSnapshotEnvelope {
     bytes: covalence_neutron::Bytes,
+    attestation: SignedSnapshotAttestation,
+}
+
+/// Untrusted hash-first schema-qualified snapshot attestation.
+///
+/// This can be authenticated without fetching the database bytes.
+pub struct SignedSnapshotAttestation {
     schema: O256,
     image: O256,
     signer: O256,
@@ -34,11 +41,9 @@ impl SignedSnapshotEnvelope {
     ) -> Self {
         Self {
             bytes: covalence_neutron::Bytes::copy_from_slice(bytes),
-            schema,
-            image,
-            signer,
-            public_key,
-            signature: covalence_neutron::Bytes::copy_from_slice(signature),
+            attestation: SignedSnapshotAttestation::new(
+                schema, image, signer, public_key, signature,
+            ),
         }
     }
 
@@ -54,12 +59,49 @@ impl SignedSnapshotEnvelope {
     /// signature, or failed signature verification.
     pub fn authenticate(self) -> Result<AuthenticatedSnapshot, SnapshotAuthenticationError> {
         let actual_image = O256::from_bytes(&self.bytes);
-        if actual_image != self.image {
+        if actual_image != self.attestation.image {
             return Err(SnapshotAuthenticationError::ImageMismatch {
-                claimed: self.image,
+                claimed: self.attestation.image,
                 actual: actual_image,
             });
         }
+        let claim = self.attestation.authenticate()?;
+        Ok(AuthenticatedSnapshot {
+            bytes: self.bytes,
+            claim,
+        })
+    }
+}
+
+impl SignedSnapshotAttestation {
+    /// Copies one untrusted schema-qualified attestation into owned storage.
+    #[must_use]
+    pub fn new(
+        schema: O256,
+        image: O256,
+        signer: O256,
+        public_key: [u8; 32],
+        signature: &[u8],
+    ) -> Self {
+        Self {
+            schema,
+            image,
+            signer,
+            public_key,
+            signature: covalence_neutron::Bytes::copy_from_slice(signature),
+        }
+    }
+
+    /// Authenticates this hash-first claim without fetching the snapshot bytes.
+    ///
+    /// Success identifies the signer and verifies its signature over the exact schema/image pair.
+    /// It does not establish key trust, byte availability, database validity, or logical truth.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a key-identity mismatch, invalid key encoding, malformed signature, or
+    /// failed signature verification.
+    pub fn authenticate(self) -> Result<AuthenticatedSnapshotClaim, SnapshotAuthenticationError> {
         let actual_signer = ed25519_key_id(&self.public_key);
         if actual_signer != self.signer {
             return Err(SnapshotAuthenticationError::SignerMismatch {
@@ -76,7 +118,46 @@ impl SignedSnapshotEnvelope {
                 &self.signature,
             )
             .map_err(SnapshotAuthenticationError::Signature)?;
-        Ok(AuthenticatedSnapshot { envelope: self })
+        Ok(AuthenticatedSnapshotClaim { attestation: self })
+    }
+}
+
+/// Evidence that one key authenticated an exact schema-qualified image claim.
+///
+/// The image need not have been fetched. This is authentication, not trust or validation.
+pub struct AuthenticatedSnapshotClaim {
+    attestation: SignedSnapshotAttestation,
+}
+
+impl AuthenticatedSnapshotClaim {
+    /// Returns the authenticated claimed schema.
+    #[must_use]
+    pub const fn schema(&self) -> O256 {
+        self.attestation.schema
+    }
+
+    /// Returns the authenticated claimed image identity.
+    #[must_use]
+    pub const fn image(&self) -> O256 {
+        self.attestation.image
+    }
+
+    /// Returns the authenticated signing-key identity.
+    #[must_use]
+    pub const fn signer(&self) -> O256 {
+        self.attestation.signer
+    }
+
+    /// Returns the public key which authenticated the claim.
+    #[must_use]
+    pub const fn public_key(&self) -> &[u8; 32] {
+        &self.attestation.public_key
+    }
+
+    /// Returns the exact authenticated signature.
+    #[must_use]
+    pub fn signature(&self) -> &[u8] {
+        &self.attestation.signature
     }
 }
 
@@ -84,44 +165,57 @@ impl SignedSnapshotEnvelope {
 ///
 /// This is cryptographic evidence, not database validation or a trust decision.
 pub struct AuthenticatedSnapshot {
-    envelope: SignedSnapshotEnvelope,
+    bytes: covalence_neutron::Bytes,
+    claim: AuthenticatedSnapshotClaim,
 }
 
 impl AuthenticatedSnapshot {
     /// Returns the exact authenticated bytes.
     #[must_use]
     pub fn bytes(&self) -> &[u8] {
-        &self.envelope.bytes
+        &self.bytes
+    }
+
+    /// Returns the independently authenticated hash-first claim.
+    #[must_use]
+    pub const fn claim(&self) -> &AuthenticatedSnapshotClaim {
+        &self.claim
+    }
+
+    /// Discards the fetched bytes and retains only the authenticated hash-first claim.
+    #[must_use]
+    pub fn into_claim(self) -> AuthenticatedSnapshotClaim {
+        self.claim
     }
 
     /// Returns the authenticated claimed schema.
     #[must_use]
     pub const fn schema(&self) -> O256 {
-        self.envelope.schema
+        self.claim.schema()
     }
 
     /// Returns the authenticated exact image hash.
     #[must_use]
     pub const fn image(&self) -> O256 {
-        self.envelope.image
+        self.claim.image()
     }
 
     /// Returns the authenticated signing-key identity.
     #[must_use]
     pub const fn signer(&self) -> O256 {
-        self.envelope.signer
+        self.claim.signer()
     }
 
     /// Returns the public key which authenticated the claim.
     #[must_use]
     pub const fn public_key(&self) -> &[u8; 32] {
-        &self.envelope.public_key
+        self.claim.public_key()
     }
 
     /// Returns the exact authenticated signature.
     #[must_use]
     pub fn signature(&self) -> &[u8] {
-        &self.envelope.signature
+        self.claim.signature()
     }
 }
 
@@ -205,6 +299,23 @@ mod tests {
             authenticated.signer()
         );
         assert_eq!(authenticated.signature().len(), 64);
+    }
+
+    #[test]
+    fn authenticates_a_hash_first_claim_without_snapshot_bytes() {
+        let valid = envelope().authenticate().unwrap();
+        let claim = SignedSnapshotAttestation::new(
+            valid.schema(),
+            valid.image(),
+            valid.signer(),
+            *valid.public_key(),
+            valid.signature(),
+        )
+        .authenticate()
+        .unwrap();
+        assert_eq!(claim.schema(), valid.schema());
+        assert_eq!(claim.image(), valid.image());
+        assert_eq!(claim.signer(), valid.signer());
     }
 
     #[test]
