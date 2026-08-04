@@ -165,7 +165,7 @@ impl Verifier for Ed25519Verifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::valid_snapshot_statement;
+    use crate::{schema_valid_snapshot_statement, valid_snapshot_statement};
 
     fn signing_key() -> SigningKey {
         SigningKey::from_bytes(&[7; 32])
@@ -212,6 +212,26 @@ mod tests {
         assert!(matches!(
             verifier.verify(verifier.key_id(), statement, &[0; 63]),
             Err(VerificationError::MalformedSignature { .. })
+        ));
+    }
+
+    #[test]
+    fn schema_qualification_is_part_of_the_signed_statement() {
+        let key = signing_key();
+        let signer = Ed25519Signer::new(key.clone());
+        let verifier = Ed25519Verifier::new(key.verifying_key());
+        let image = O256::from_bytes(b"same database image");
+        let schema = O256::from_bytes(b"HOL schema v3");
+        let statement = schema_valid_snapshot_statement(schema, image);
+        let signature = signer.sign(signer.key_id(), statement).unwrap();
+        verifier
+            .verify(verifier.key_id(), statement, &signature)
+            .unwrap();
+        let wrong_schema =
+            schema_valid_snapshot_statement(O256::from_bytes(b"other schema"), image);
+        assert!(matches!(
+            verifier.verify(verifier.key_id(), wrong_schema, &signature),
+            Err(VerificationError::InvalidSignature { .. })
         ));
     }
 }
