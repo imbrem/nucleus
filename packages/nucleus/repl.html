@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nucleus SQL connections</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: ui-monospace, "Cascadia Code", monospace;
+      }
+      body {
+        box-sizing: border-box;
+        margin: 0 auto;
+        max-width: 70rem;
+        padding: 2rem;
+      }
+      h1 {
+        font: inherit;
+        font-size: 1.4rem;
+      }
+      .bar {
+        align-items: center;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin: 1rem 0;
+      }
+      input,
+      select,
+      button,
+      textarea {
+        font: inherit;
+      }
+      input[type="url"] {
+        flex: 1 1 24rem;
+      }
+      textarea {
+        box-sizing: border-box;
+        min-height: 12rem;
+        padding: 0.75rem;
+        resize: vertical;
+        width: 100%;
+      }
+      table {
+        border-collapse: collapse;
+        margin-top: 1rem;
+        width: 100%;
+      }
+      th,
+      td {
+        border: 1px solid currentColor;
+        padding: 0.4rem;
+        text-align: left;
+      }
+      #status,
+      #output {
+        white-space: pre-wrap;
+      }
+      .error {
+        color: #d33;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Nucleus SQL connections</h1>
+    <p>
+      Each connection has a writable in-memory main database. URL loads fetch a
+      complete SQLite image into the Worker, then attach it immutably.
+    </p>
+
+    <div class="bar">
+      <label for="connection">Connection</label>
+      <select id="connection"></select>
+      <button id="new" type="button">New connection</button>
+      <button id="close" type="button">Close connection</button>
+      <button id="export" type="button">Export main snapshot</button>
+    </div>
+
+    <div class="bar">
+      <input
+        id="url"
+        type="url"
+        placeholder="https://example.test/database.sqlite"
+      />
+      <input id="schema" value="library" aria-label="Schema name" />
+      <button id="load" type="button">Load immutable image</button>
+    </div>
+
+    <label for="sql">One SQLite statement</label>
+    <textarea id="sql">SELECT sqlite_version() AS sqlite_version</textarea>
+    <div class="bar">
+      <button id="run" type="button">Run</button>
+      <span id="status" role="status">Starting Worker…</span>
+    </div>
+    <div id="output" aria-live="polite"></div>
+
+    <script type="module">
+      import { createBrowserRepl } from "./dist/index.js";
+
+      const repl = createBrowserRepl();
+      const connections = new Map();
+      let nextConnection = 1;
+
+      const connectionSelect = document.querySelector("#connection");
+      const status = document.querySelector("#status");
+      const output = document.querySelector("#output");
+
+      function selected() {
+        const connection = connections.get(connectionSelect.value);
+        if (connection === undefined) throw new Error("no open connection");
+        return connection;
+      }
+
+      async function addConnection() {
+        const id = String(nextConnection++);
+        const connection = await repl.open();
+        connections.set(id, connection);
+        const option = document.createElement("option");
+        option.value = id;
+        option.textContent = `connection ${id}`;
+        connectionSelect.append(option);
+        connectionSelect.value = id;
+        status.textContent = `${option.textContent} ready`;
+      }
+
+      function showError(error) {
+        output.replaceChildren();
+        output.className = "error";
+        output.textContent =
+          error instanceof Error ? error.message : String(error);
+        status.textContent = "Failed";
+      }
+
+      function formatValue(value) {
+        switch (value.kind) {
+          case "null":
+            return "NULL";
+          case "blob":
+            return `x'${Array.from(value.value, (byte) =>
+              byte.toString(16).padStart(2, "0"),
+            ).join("")}'`;
+          default:
+            return String(value.value);
+        }
+      }
+
+      function showOutcome(outcome) {
+        output.replaceChildren();
+        output.className = "";
+        if (outcome.kind === "changed") {
+          output.textContent = `changed ${outcome.changed}`;
+          return;
+        }
+        const table = document.createElement("table");
+        const head = table.createTHead().insertRow();
+        for (const column of outcome.columns) {
+          const cell = document.createElement("th");
+          cell.textContent = column;
+          head.append(cell);
+        }
+        const body = table.createTBody();
+        for (const row of outcome.rows) {
+          const tableRow = body.insertRow();
+          for (const value of row)
+            tableRow.insertCell().textContent = formatValue(value);
+        }
+        output.append(table);
+      }
+
+      document.querySelector("#new").addEventListener("click", async () => {
+        try {
+          await addConnection();
+        } catch (error) {
+          showError(error);
+        }
+      });
+
+      document.querySelector("#close").addEventListener("click", async () => {
+        try {
+          const id = connectionSelect.value;
+          await selected().close();
+          connections.delete(id);
+          connectionSelect.selectedOptions[0]?.remove();
+          status.textContent =
+            connections.size === 0 ? "No open connection" : "Ready";
+        } catch (error) {
+          showError(error);
+        }
+      });
+
+      document.querySelector("#run").addEventListener("click", async () => {
+        status.textContent = "Running…";
+        try {
+          showOutcome(
+            await selected().run(document.querySelector("#sql").value),
+          );
+          status.textContent = "Ready";
+        } catch (error) {
+          showError(error);
+        }
+      });
+
+      document.querySelector("#load").addEventListener("click", async () => {
+        status.textContent = "Downloading complete image…";
+        try {
+          const hash = await selected().loadUrl(
+            document.querySelector("#url").value,
+            document.querySelector("#schema").value,
+          );
+          output.className = "";
+          output.textContent = `attached ${hash}`;
+          status.textContent = "Ready";
+        } catch (error) {
+          showError(error);
+        }
+      });
+
+      document.querySelector("#export").addEventListener("click", async () => {
+        try {
+          const image = await selected().serializeMain();
+          const url = URL.createObjectURL(new Blob([image]));
+          const anchor = document.createElement("a");
+          anchor.href = url;
+          anchor.download = "nucleus.sqlite";
+          anchor.click();
+          URL.revokeObjectURL(url);
+        } catch (error) {
+          showError(error);
+        }
+      });
+
+      addEventListener("beforeunload", () => repl.close());
+      try {
+        await addConnection();
+      } catch (error) {
+        showError(error);
+      }
+    </script>
+  </body>
+</html>
