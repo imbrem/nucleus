@@ -75,6 +75,13 @@ export interface BrowserKernelInfo {
   publicKey: Uint8Array;
 }
 
+export interface BrowserKernelFetchConnection {
+  endpoint: string | URL;
+  publicKey: Uint8Array;
+  bootstrapToken?: Uint8Array;
+  timeoutMs?: number;
+}
+
 export type HolMetadataTarget =
   | { kind: "node"; id: number }
   | { kind: "context"; id: number }
@@ -295,6 +302,10 @@ export interface BrowserHolConnection {
 }
 
 export interface BrowserRepl {
+  controllerKey(): Promise<Uint8Array>;
+  connectFetch(
+    connection: BrowserKernelFetchConnection,
+  ): Promise<BrowserKernelInfo>;
   open(): Promise<BrowserSqlConnection>;
   openAt(kernel: number): Promise<BrowserSqlConnection>;
   openHol(source?: HolSchemaSource): Promise<BrowserHolConnection>;
@@ -311,6 +322,14 @@ export interface BrowserRepl {
 }
 
 type RequestBody =
+  | { operation: "controllerKey" }
+  | {
+      operation: "connectFetch";
+      endpoint: string;
+      publicKey: Uint8Array;
+      bootstrapToken?: Uint8Array;
+      timeoutMs?: number;
+    }
   | { operation: "open" }
   | { operation: "openAt"; kernel: number }
   | { operation: "openHol"; source?: HolSchemaSource }
@@ -553,6 +572,40 @@ class WorkerRepl implements BrowserRepl {
     this.#worker.addEventListener("error", (event) => {
       this.#fail(new Error(event.message || "browser REPL worker failed"));
     });
+  }
+
+  controllerKey(): Promise<Uint8Array> {
+    return this.request({ operation: "controllerKey" });
+  }
+
+  async connectFetch(
+    connection: BrowserKernelFetchConnection,
+  ): Promise<BrowserKernelInfo> {
+    if (
+      !(connection.publicKey instanceof Uint8Array) ||
+      connection.publicKey.byteLength !== 32
+    )
+      throw new TypeError("kernel public key must contain exactly 32 bytes");
+    if (
+      connection.bootstrapToken !== undefined &&
+      (!(connection.bootstrapToken instanceof Uint8Array) ||
+        connection.bootstrapToken.byteLength !== 32)
+    )
+      throw new TypeError("bootstrap token must contain exactly 32 bytes");
+    const publicKey = connection.publicKey.slice();
+    const bootstrapToken = connection.bootstrapToken?.slice();
+    const transfer: Transferable[] = [publicKey.buffer];
+    if (bootstrapToken !== undefined) transfer.push(bootstrapToken.buffer);
+    return this.request(
+      {
+        operation: "connectFetch",
+        endpoint: String(connection.endpoint),
+        publicKey,
+        bootstrapToken,
+        timeoutMs: connection.timeoutMs,
+      },
+      transfer,
+    );
   }
 
   async open(): Promise<BrowserSqlConnection> {

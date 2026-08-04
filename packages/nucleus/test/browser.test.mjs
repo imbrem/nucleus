@@ -55,6 +55,7 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
     await page.locator("body").getAttribute("data-result"),
   );
   assert.equal(result.kernelKeysDiffer, true);
+  assert.equal(result.malformedRemoteKeyRejected, true);
   assert.equal(result.kernelDirectoryMatches, true);
   assert.deepEqual(result.secondKernelSqlResult, {
     kind: "rows",

@@ -47,6 +47,15 @@
         const kernelKeysDiffer = secondKernel.publicKey.some(
           (byte, index) => byte !== initialKernel.publicKey[index],
         );
+        let malformedRemoteKeyRejected = false;
+        try {
+          await repl.connectFetch({
+            endpoint: `${location.origin}/unused-kernel/`,
+            publicKey: new Uint8Array(31),
+          });
+        } catch {
+          malformedRemoteKeyRejected = true;
+        }
         const compiledDescriptor = await repl.compileHolSchema(customSchema);
         secondKernelSql = await repl.openAt(secondKernel.id);
         const secondKernelSqlResult = await secondKernelSql.run(
@@ -267,6 +276,7 @@
 
         document.body.dataset.result = JSON.stringify({
           kernelKeysDiffer,
+          malformedRemoteKeyRejected,
           kernelDirectoryMatches,
           secondKernelSqlResult,
           secondKernelSnapshotKeyMatches,
