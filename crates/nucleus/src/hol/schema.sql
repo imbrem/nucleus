@@ -1,5 +1,5 @@
 CREATE TABLE hol_schema (
-    version INTEGER PRIMARY KEY CHECK (version = 2),
+    version INTEGER PRIMARY KEY CHECK (version = 3),
     representation TEXT NOT NULL CHECK (representation = 'tagged-node')
 ) STRICT;
 
@@ -83,6 +83,29 @@ CREATE TABLE hol_context_implication_event (
 CREATE INDEX hol_context_implication_event_edge
     ON hol_context_implication_event(antecedent_ctx_id, consequent_ctx_id, event_id);
 
+-- A decidable structural fact: result is exactly the finite member-set union.
+-- This is deliberately distinct from future opaque/equivalence-backed unions.
+CREATE TABLE hol_context_exact_union (
+    left_ctx_id INTEGER NOT NULL,
+    right_ctx_id INTEGER NOT NULL,
+    result_ctx_id INTEGER NOT NULL,
+    PRIMARY KEY (left_ctx_id, right_ctx_id)
+) STRICT, WITHOUT ROWID;
+
+-- Optional observational provenance for exact-union checks.
+CREATE TABLE hol_context_exact_union_event (
+    event_id INTEGER PRIMARY KEY,
+    left_ctx_id INTEGER NOT NULL,
+    right_ctx_id INTEGER NOT NULL,
+    result_ctx_id INTEGER NOT NULL,
+    rule TEXT NOT NULL
+) STRICT;
+
+CREATE INDEX hol_context_exact_union_event_key
+    ON hol_context_exact_union_event(
+        left_ctx_id, right_ctx_id, result_ctx_id, event_id
+    );
+
 CREATE UNIQUE INDEX hol_kstar_unique
     ON hol_node((1)) WHERE tag = 'KSTAR';
 
@@ -113,7 +136,7 @@ CREATE UNIQUE INDEX hol_mlam_unique
 CREATE UNIQUE INDEX hol_meq_unique
     ON hol_node(lhs, rhs) WHERE tag = 'MEQ';
 
-INSERT INTO hol_schema(version, representation) VALUES (2, 'tagged-node');
+INSERT INTO hol_schema(version, representation) VALUES (3, 'tagged-node');
 INSERT INTO hol_node(node_id, tag) VALUES (1, 'KSTAR');
 INSERT INTO hol_node(node_id, tag, ty) VALUES (2, 'TBOOL', 1);
 INSERT INTO hol_context(ctx_id) VALUES (0);

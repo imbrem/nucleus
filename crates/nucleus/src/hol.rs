@@ -215,6 +215,34 @@ pub struct ContextImplication<'brand> {
     brand: Invariant<'brand>,
 }
 
+/// A checked exact structural union of immutable context member sets.
+pub struct ContextUnion<'brand> {
+    left: ContextId,
+    right: ContextId,
+    result: ContextId,
+    brand: Invariant<'brand>,
+}
+
+impl ContextUnion<'_> {
+    /// Returns the left input context.
+    #[must_use]
+    pub const fn left(&self) -> ContextId {
+        self.left
+    }
+
+    /// Returns the right input context.
+    #[must_use]
+    pub const fn right(&self) -> ContextId {
+        self.right
+    }
+
+    /// Returns the context whose members are exactly the input union.
+    #[must_use]
+    pub const fn result(&self) -> ContextId {
+        self.result
+    }
+}
+
 impl ContextImplication<'_> {
     /// Returns the context under which all target assumptions were proved.
     #[must_use]
@@ -280,6 +308,10 @@ pub enum Operation {
     ProveWeakening,
     /// Load or inspect a persisted context implication.
     ReadContextImplication,
+    /// Check and persist one exact structural context union.
+    ProveContextUnion,
+    /// Load and recheck one exact structural context union.
+    ReadContextUnion,
     /// Read user-declared metadata attached to an admitted node.
     ReadMetadata,
     /// Write user-declared metadata attached to an admitted node.
@@ -383,6 +415,8 @@ pub enum MetadataTable {
     Judgement,
     /// Persisted proved implications between contexts.
     ContextImplication,
+    /// Checked exact structural unions of context member sets.
+    ContextUnion,
 }
 
 /// One existing row which may carry user metadata.
@@ -413,6 +447,13 @@ pub enum MetadataTarget {
         /// Context whose assumptions are discharged.
         consequent: ContextId,
     },
+    /// An exact structural union keyed by its ordered input pair.
+    ContextUnion {
+        /// Left input context.
+        left: ContextId,
+        /// Right input context.
+        right: ContextId,
+    },
 }
 
 impl MetadataTarget {
@@ -437,6 +478,12 @@ impl MetadataTarget {
         }
     }
 
+    /// Selects an exact structural context-union row.
+    #[must_use]
+    pub const fn context_union(left: ContextId, right: ContextId) -> Self {
+        Self::ContextUnion { left, right }
+    }
+
     const fn table(self) -> MetadataTable {
         match self {
             Self::Node(_) => MetadataTable::Node,
@@ -444,6 +491,7 @@ impl MetadataTarget {
             Self::ContextMember { .. } => MetadataTable::ContextMember,
             Self::Judgement { .. } => MetadataTable::Judgement,
             Self::ContextImplication { .. } => MetadataTable::ContextImplication,
+            Self::ContextUnion { .. } => MetadataTable::ContextUnion,
         }
     }
 }
@@ -480,6 +528,7 @@ impl MetadataTable {
             Self::ContextMember => "hol_context_member",
             Self::Judgement => "hol_judgement",
             Self::ContextImplication => "hol_context_implication",
+            Self::ContextUnion => "hol_context_exact_union",
         }
     }
 
@@ -489,6 +538,7 @@ impl MetadataTable {
             Self::Context => &["ctx_id"],
             Self::ContextMember | Self::Judgement => &["ctx_id", "term_id"],
             Self::ContextImplication => &["antecedent_ctx_id", "consequent_ctx_id"],
+            Self::ContextUnion => &["left_ctx_id", "right_ctx_id", "result_ctx_id"],
         };
         columns.iter().any(|core| core.eq_ignore_ascii_case(name))
     }
@@ -1483,6 +1533,97 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         })
     }
 
+    /// Checks and records that `result` has exactly the members of `left ∪ right`.
+    ///
+    /// This is a decidable structural relation over concrete immutable
+    /// contexts, not the future logical notion of an opaque context merely
+    /// equivalent to a union.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the check, a context is unknown, the
+    /// result member set differs, an existing ordered pair names another
+    /// result, or persistence fails.
+    pub fn prove_context_union(
+        &mut self,
+        left: ContextId,
+        right: ContextId,
+        result: ContextId,
+    ) -> Result<ContextUnion<'brand>, ProofError> {
+        let (neutron, hol) = self.connection.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ProveContextUnion)?;
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        require_context(&transaction, left)?;
+        require_context(&transaction, right)?;
+        require_context(&transaction, result)?;
+        check_context_union_members(&transaction, left, right, result)?;
+        if let Some(stored_result) = transaction
+            .query_row(
+                "SELECT result_ctx_id FROM hol_context_exact_union
+                 WHERE left_ctx_id = ?1 AND right_ctx_id = ?2",
+                (left.0, right.0),
+                |row| row.get::<_, i64>(0).map(ContextId),
+            )
+            .optional()?
+            && stored_result != result
+        {
+            return Err(ProofError::ContextUnionConflict {
+                left,
+                right,
+                stored_result,
+                requested_result: result,
+            });
+        }
+        persist_context_union(&transaction, left, right, result)?;
+        transaction.commit()?;
+        Ok(ContextUnion {
+            left,
+            right,
+            result,
+            brand: PhantomData,
+        })
+    }
+
+    /// Loads and structurally rechecks one exact ordered context union.
+    ///
+    /// This performs one primary-key lookup and never searches for a matching
+    /// result context.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the read, an input or stored result is
+    /// unknown, the stored structural fact is false, or `SQLite` rejects it.
+    pub fn load_context_union(
+        &mut self,
+        left: ContextId,
+        right: ContextId,
+    ) -> Result<Option<ContextUnion<'brand>>, ProofError> {
+        let (neutron, hol) = self.connection.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ReadContextUnion)?;
+        require_context(neutron.sqlite(), left)?;
+        require_context(neutron.sqlite(), right)?;
+        let Some(result) = neutron
+            .sqlite()
+            .query_row(
+                "SELECT result_ctx_id FROM hol_context_exact_union
+                 WHERE left_ctx_id = ?1 AND right_ctx_id = ?2",
+                (left.0, right.0),
+                |row| row.get::<_, i64>(0).map(ContextId),
+            )
+            .optional()?
+        else {
+            return Ok(None);
+        };
+        require_context(neutron.sqlite(), result)?;
+        check_context_union_members(neutron.sqlite(), left, right, result)?;
+        Ok(Some(ContextUnion {
+            left,
+            right,
+            result,
+            brand: PhantomData,
+        }))
+    }
+
     /// Transports a theorem from an implied context to its antecedent.
     ///
     /// # Errors
@@ -1723,6 +1864,13 @@ fn metadata_target_predicate(target: MetadataTarget, first_parameter: usize) -> 
             ),
             vec![antecedent.get(), consequent.get()],
         ),
+        MetadataTarget::ContextUnion { left, right } => (
+            format!(
+                "left_ctx_id = ?{first_parameter} AND right_ctx_id = ?{}",
+                first_parameter + 1
+            ),
+            vec![left.get(), right.get()],
+        ),
     }
 }
 
@@ -1957,6 +2105,42 @@ fn read_context_members(
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
 
+fn check_context_union_members(
+    connection: &sqlite::Connection,
+    left: ContextId,
+    right: ContextId,
+    result: ContextId,
+) -> Result<(), ProofError> {
+    let mut expected = read_context_members(connection, left)?;
+    expected.extend(read_context_members(connection, right)?);
+    expected.sort_unstable();
+    expected.dedup();
+    let actual = read_context_members(connection, result)?;
+    if let Some(term) = expected
+        .iter()
+        .find(|term| actual.binary_search(term).is_err())
+    {
+        return Err(ProofError::ContextUnionMissingMember {
+            left,
+            right,
+            result,
+            term: *term,
+        });
+    }
+    if let Some(term) = actual
+        .iter()
+        .find(|term| expected.binary_search(term).is_err())
+    {
+        return Err(ProofError::ContextUnionUnexpectedMember {
+            left,
+            right,
+            result,
+            term: *term,
+        });
+    }
+    Ok(())
+}
+
 fn find_context(
     connection: &sqlite::Connection,
     members: &[TermId],
@@ -2014,6 +2198,27 @@ fn persist_context_implication(
              antecedent_ctx_id, consequent_ctx_id, rule
          ) VALUES (?1, ?2, ?3)",
         (antecedent.0, consequent.0, rule),
+    )?;
+    Ok(())
+}
+
+fn persist_context_union(
+    connection: &sqlite::Connection,
+    left: ContextId,
+    right: ContextId,
+    result: ContextId,
+) -> Result<(), sqlite::Error> {
+    connection.execute(
+        "INSERT OR IGNORE INTO hol_context_exact_union(
+             left_ctx_id, right_ctx_id, result_ctx_id
+         ) VALUES (?1, ?2, ?3)",
+        (left.0, right.0, result.0),
+    )?;
+    connection.execute(
+        "INSERT INTO hol_context_exact_union_event(
+             left_ctx_id, right_ctx_id, result_ctx_id, rule
+         ) VALUES (?1, ?2, ?3, 'exact-membership')",
+        (left.0, right.0, result.0),
     )?;
     Ok(())
 }
@@ -2986,6 +3191,27 @@ pub enum ProofError {
         antecedent: ContextId,
         consequent: ContextId,
     },
+    /// The proposed exact-union result omits an input member.
+    ContextUnionMissingMember {
+        left: ContextId,
+        right: ContextId,
+        result: ContextId,
+        term: TermId,
+    },
+    /// The proposed exact-union result contains a non-input member.
+    ContextUnionUnexpectedMember {
+        left: ContextId,
+        right: ContextId,
+        result: ContextId,
+        term: TermId,
+    },
+    /// One ordered input pair was already recorded with another result.
+    ContextUnionConflict {
+        left: ContextId,
+        right: ContextId,
+        stored_result: ContextId,
+        requested_result: ContextId,
+    },
     /// Weakening was given a theorem under the wrong context.
     WeakeningContextMismatch {
         /// Implication consequent required by the rule.
@@ -2999,6 +3225,9 @@ pub enum ProofError {
 
 impl fmt::Display for ProofError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(result) = format_context_union_error(self, formatter) {
+            return result;
+        }
         match self {
             Self::Denied(operation) => write!(formatter, "HOL policy denied {operation:?}"),
             Self::Context(error) => error.fmt(formatter),
@@ -3065,6 +3294,9 @@ impl fmt::Display for ProofError {
                 antecedent.get(),
                 consequent.get()
             ),
+            Self::ContextUnionMissingMember { .. }
+            | Self::ContextUnionUnexpectedMember { .. }
+            | Self::ContextUnionConflict { .. } => unreachable!("handled above"),
             Self::WeakeningContextMismatch { expected, actual } => write!(
                 formatter,
                 "weakening theorem has context {}, expected {}",
@@ -3074,6 +3306,83 @@ impl fmt::Display for ProofError {
             Self::Sqlite(error) => error.fmt(formatter),
         }
     }
+}
+
+fn format_context_union_error(
+    error: &ProofError,
+    formatter: &mut fmt::Formatter<'_>,
+) -> Option<fmt::Result> {
+    match error {
+        ProofError::ContextUnionMissingMember {
+            left,
+            right,
+            result,
+            term,
+        } => Some(format_context_union_member_error(
+            formatter, *left, *right, *result, *term, "omits",
+        )),
+        ProofError::ContextUnionUnexpectedMember {
+            left,
+            right,
+            result,
+            term,
+        } => Some(format_context_union_member_error(
+            formatter,
+            *left,
+            *right,
+            *result,
+            *term,
+            "has unexpected",
+        )),
+        ProofError::ContextUnionConflict {
+            left,
+            right,
+            stored_result,
+            requested_result,
+        } => Some(format_context_union_conflict_error(
+            formatter,
+            *left,
+            *right,
+            *stored_result,
+            *requested_result,
+        )),
+        _ => None,
+    }
+}
+
+fn format_context_union_member_error(
+    formatter: &mut fmt::Formatter<'_>,
+    left: ContextId,
+    right: ContextId,
+    result: ContextId,
+    term: TermId,
+    relation: &str,
+) -> fmt::Result {
+    write!(
+        formatter,
+        "context union ({}, {}) result {} {relation} member {}",
+        left.get(),
+        right.get(),
+        result.get(),
+        term.get()
+    )
+}
+
+fn format_context_union_conflict_error(
+    formatter: &mut fmt::Formatter<'_>,
+    left: ContextId,
+    right: ContextId,
+    stored_result: ContextId,
+    requested_result: ContextId,
+) -> fmt::Result {
+    write!(
+        formatter,
+        "context union ({}, {}) is stored as {}, not {}",
+        left.get(),
+        right.get(),
+        stored_result.get(),
+        requested_result.get()
+    )
 }
 
 impl StdError for ProofError {
@@ -3094,6 +3403,9 @@ impl StdError for ProofError {
             | Self::DuplicateImplicationWitness(_)
             | Self::EmptyImplicationPath
             | Self::MissingContextImplicationEdge { .. }
+            | Self::ContextUnionMissingMember { .. }
+            | Self::ContextUnionUnexpectedMember { .. }
+            | Self::ContextUnionConflict { .. }
             | Self::WeakeningContextMismatch { .. } => None,
         }
     }
@@ -4126,6 +4438,165 @@ mod tests {
                 (first, third),
                 (second, third)
             ]
+        );
+    }
+
+    #[test]
+    fn exact_context_unions_are_checked_ordered_and_reloaded() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let p = connection.insert_free_term(40, BOOL_TYPE_ID).unwrap();
+        let q = connection.insert_free_term(41, BOOL_TYPE_ID).unwrap();
+        let r = connection.insert_free_term(42, BOOL_TYPE_ID).unwrap();
+        let left = connection.define_context([p, q]).unwrap();
+        let right = connection.define_context([q, r]).unwrap();
+        let result = connection.define_context([p, q, r]).unwrap();
+
+        connection
+            .with_proof_session(|mut proof| {
+                let union = proof.prove_context_union(left, right, result)?;
+                assert_eq!(union.left(), left);
+                assert_eq!(union.right(), right);
+                assert_eq!(union.result(), result);
+                let loaded = proof.load_context_union(left, right)?.unwrap();
+                assert_eq!(loaded.result(), result);
+                assert!(proof.load_context_union(right, left)?.is_none());
+                proof.prove_context_union(left, right, result).map(|_| ())
+            })
+            .unwrap();
+
+        let counts = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row(
+                "SELECT
+                     (SELECT count(*) FROM hol_context_exact_union),
+                     (SELECT count(*) FROM hol_context_exact_union_event),
+                     (SELECT count(*) FROM hol_context_implication)",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(counts, (1, 2, 0));
+    }
+
+    #[test]
+    fn exact_context_union_rejects_wrong_members_and_supports_metadata() {
+        let mut schema = HolSchema::new();
+        schema
+            .add_column_to(MetadataTable::ContextUnion, "source", MetadataType::Text)
+            .unwrap();
+        schema
+            .add_index_on(
+                MetadataTable::ContextUnion,
+                "union source",
+                ["source"],
+                false,
+            )
+            .unwrap();
+        let mut connection = Connection::open_hol_in_memory_with_schema(AllowAll, schema).unwrap();
+        let p = connection.insert_free_term(50, BOOL_TYPE_ID).unwrap();
+        let q = connection.insert_free_term(51, BOOL_TYPE_ID).unwrap();
+        let r = connection.insert_free_term(52, BOOL_TYPE_ID).unwrap();
+        let left = connection.define_context([p]).unwrap();
+        let right = connection.define_context([q]).unwrap();
+        let missing = left;
+        let exact = connection.define_context([p, q]).unwrap();
+        let unexpected = connection.define_context([p, q, r]).unwrap();
+        connection
+            .with_proof_session(|mut proof| {
+                assert!(matches!(
+                    proof.prove_context_union(left, right, missing),
+                    Err(ProofError::ContextUnionMissingMember { term, .. }) if term == q
+                ));
+                assert!(matches!(
+                    proof.prove_context_union(left, right, unexpected),
+                    Err(ProofError::ContextUnionUnexpectedMember { term, .. }) if term == r
+                ));
+                Ok::<_, ProofError>(())
+            })
+            .unwrap();
+        connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .execute(
+                "INSERT INTO hol_context_exact_union(
+                     left_ctx_id, right_ctx_id, result_ctx_id
+                 ) VALUES (?1, ?2, ?3)",
+                (left.get(), right.get(), missing.get()),
+            )
+            .unwrap();
+        connection
+            .with_proof_session(|mut proof| {
+                assert!(matches!(
+                    proof.load_context_union(left, right),
+                    Err(ProofError::ContextUnionMissingMember { term, .. }) if term == q
+                ));
+                assert!(matches!(
+                    proof.prove_context_union(left, right, exact),
+                    Err(ProofError::ContextUnionConflict {
+                        stored_result,
+                        requested_result,
+                        ..
+                    }) if stored_result == missing && requested_result == exact
+                ));
+                Ok::<_, ProofError>(())
+            })
+            .unwrap();
+        connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .execute(
+                "DELETE FROM hol_context_exact_union
+                 WHERE left_ctx_id = ?1 AND right_ctx_id = ?2",
+                (left.get(), right.get()),
+            )
+            .unwrap();
+        connection
+            .with_proof_session(|mut proof| {
+                proof.prove_context_union(left, right, exact).map(|_| ())
+            })
+            .unwrap();
+        let target = MetadataTarget::context_union(left, right);
+        connection
+            .set_metadata(
+                target,
+                &[("source", MetadataValue::Text("structural".to_owned()))],
+            )
+            .unwrap();
+        assert_eq!(
+            connection.metadata(target, &["source"]).unwrap(),
+            [MetadataValue::Text("structural".to_owned())]
+        );
+    }
+
+    #[test]
+    fn exact_context_union_policy_denial_is_atomic() {
+        let mut denied = Connection::open_hol_in_memory(RecordingPolicy::default()).unwrap();
+        assert!(matches!(
+            denied.with_proof_session(|mut proof| proof
+                .prove_context_union(ContextId::empty(), ContextId::empty(), ContextId::empty())
+                .map(|_| ())),
+            Err(ProofError::Denied(Operation::ProveContextUnion))
+        ));
+        let (neutron, hol) = denied.parts_mut();
+        assert_eq!(hol.policy.operations, [Operation::ProveContextUnion]);
+        assert_eq!(
+            neutron
+                .sqlite()
+                .query_row("SELECT count(*) FROM hol_context_exact_union", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            0
         );
     }
 
