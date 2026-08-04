@@ -486,7 +486,10 @@ fn decode_outcome(cursor: &mut Cursor<'_>) -> Result<SqlOutcome, RpcCodecError> 
             let column_prefix_bytes = column_count
                 .checked_mul(size_of::<u32>())
                 .ok_or(RpcCodecError::ResourceLimit)?;
-            if cursor.remaining_len() < column_prefix_bytes + size_of::<u32>() {
+            let minimum_prefix_bytes = column_prefix_bytes
+                .checked_add(size_of::<u32>())
+                .ok_or(RpcCodecError::ResourceLimit)?;
+            if cursor.remaining_len() < minimum_prefix_bytes {
                 return Err(RpcCodecError::Truncated);
             }
             budget.charge(
@@ -820,11 +823,11 @@ mod tests {
         let mut impossible_columns = Vec::new();
         header(&mut impossible_columns, RESPONSE_MAGIC, Operation::RunSql);
         impossible_columns.extend_from_slice(&[0, 1]);
-        impossible_columns.extend_from_slice(&u32::MAX.to_be_bytes());
-        assert_eq!(
+        impossible_columns.extend_from_slice(&0x3fff_ffff_u32.to_be_bytes());
+        assert!(matches!(
             ServiceResponse::decode(&impossible_columns),
-            Err(RpcCodecError::Truncated)
-        );
+            Err(RpcCodecError::Truncated | RpcCodecError::ResourceLimit)
+        ));
     }
 
     #[test]
