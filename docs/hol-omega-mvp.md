@@ -327,13 +327,25 @@ Reserve context zero for the empty set. Once a judgement mentions a context
 ID, changing its members would change the judgement's meaning. Therefore
 context construction is atomic and there is no member mutation API.
 
-The v1 store assigns one canonical ID to each extensional member set. This is
+The v2 store assigns one canonical ID to each extensional member set. This is
 an identity convention and optimization, not an additional logical rule.
 
 `hol_judgement` is the sole authoritative proposition set. Proof-event rows
 are optional observational provenance: rule strings are not proof evidence,
 multiple events may name one judgement, and deleting events does not change
 the logical state.
+
+The first authoritative context relation is implication:
+
+```text
+Γ ⇒ Δ  iff  every p in Δ has a checked theorem Γ ⊢ p
+```
+
+Introduction consumes an exact set of same-session theorem capabilities, one
+for each member of `Δ`. Weakening consumes `Γ ⇒ Δ` and `Δ ⊢ p` to produce
+`Γ ⊢ p`. Neither rule searches persisted judgements or computes transitive
+closure. Optional implication-event rows are observational in the same sense
+as proof events.
 
 The proposed directed union relation is valuable but is not the same thing as
 the extensional member table. It can represent an opaque compositional context

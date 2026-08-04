@@ -24,6 +24,8 @@ pub struct HolImageCounts {
     pub members: u64,
     /// Structurally well-formed untrusted judgement rows.
     pub untrusted_judgement_rows: u64,
+    /// Structurally well-formed untrusted context-implication rows.
+    pub untrusted_context_implication_rows: u64,
 }
 
 /// Exact bytes admitted as one expected tagged-node HOL physical schema.
@@ -152,7 +154,7 @@ fn validate_schema(
         [],
         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
     )?;
-    if identity == (1, "tagged-node".to_owned()) {
+    if identity == (2, "tagged-node".to_owned()) {
         Ok(schema_manifest_id(&expected_manifest))
     } else {
         Err(HolImageValidationError::SchemaMismatch)
@@ -186,11 +188,7 @@ fn validate_contents(
         })?
         .collect::<Result<Vec<_>, _>>()?;
     validate_graph_depth(&nodes)?;
-    if !matches!(read_kind(connection, STAR_ID), Ok(KindView::Star))
-        || !matches!(read_type(connection, BOOL_TYPE_ID), Ok(TypeView::Bool))
-    {
-        return Err(HolImageValidationError::MissingReservedPrimitive);
-    }
+    validate_reserved_primitives(connection)?;
     let mut kind_memo = HashMap::new();
     let mut type_memo = HashSet::new();
     let mut term_memo = HashMap::new();
@@ -266,6 +264,8 @@ fn validate_contents(
         }
     }
 
+    let implication_count = validate_context_implications(connection, &contexts)?;
+
     Ok(HolImageCounts {
         nodes: u64::try_from(nodes.len()).map_err(|_| HolImageValidationError::CountOverflow)?,
         contexts: u64::try_from(contexts.len())
@@ -273,7 +273,46 @@ fn validate_contents(
         members: member_count,
         untrusted_judgement_rows: u64::try_from(judgements.len())
             .map_err(|_| HolImageValidationError::CountOverflow)?,
+        untrusted_context_implication_rows: u64::try_from(implication_count)
+            .map_err(|_| HolImageValidationError::CountOverflow)?,
     })
+}
+
+fn validate_reserved_primitives(
+    connection: &sqlite::Connection,
+) -> Result<(), HolImageValidationError> {
+    if matches!(read_kind(connection, STAR_ID), Ok(KindView::Star))
+        && matches!(read_type(connection, BOOL_TYPE_ID), Ok(TypeView::Bool))
+    {
+        Ok(())
+    } else {
+        Err(HolImageValidationError::MissingReservedPrimitive)
+    }
+}
+
+fn validate_context_implications(
+    connection: &sqlite::Connection,
+    contexts: &[ContextId],
+) -> Result<usize, HolImageValidationError> {
+    let implications = connection
+        .prepare(
+            "SELECT antecedent_ctx_id, consequent_ctx_id
+             FROM hol_context_implication
+             ORDER BY antecedent_ctx_id, consequent_ctx_id",
+        )?
+        .query_map([], |row| {
+            Ok((ContextId(row.get(0)?), ContextId(row.get(1)?)))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    for (antecedent, consequent) in &implications {
+        if !contexts.contains(antecedent) || !contexts.contains(consequent) {
+            return Err(HolImageValidationError::OrphanContextImplication {
+                antecedent: *antecedent,
+                consequent: *consequent,
+            });
+        }
+    }
+    Ok(implications.len())
 }
 
 type NodeRow = (i64, String, Option<i64>, Option<i64>, Option<i64>);
@@ -408,6 +447,11 @@ pub enum HolImageValidationError {
     OrphanJudgement(ContextId, TermId),
     /// A judgement conclusion is non-Boolean or locally open.
     InvalidJudgement(ContextId, TermId),
+    /// A context implication names an absent context.
+    OrphanContextImplication {
+        antecedent: ContextId,
+        consequent: ContextId,
+    },
     /// A diagnostic count exceeded its representation.
     CountOverflow,
 }
@@ -467,6 +511,15 @@ impl fmt::Display for HolImageValidationError {
                 "judgement ({}, {}) has an invalid conclusion",
                 context.get(),
                 term.get()
+            ),
+            Self::OrphanContextImplication {
+                antecedent,
+                consequent,
+            } => write!(
+                formatter,
+                "context implication ({} => {}) names an absent context",
+                antecedent.get(),
+                consequent.get()
             ),
             Self::CountOverflow => formatter.write_str("HOL validation count overflow"),
         }
@@ -558,7 +611,8 @@ mod tests {
                 nodes: 8,
                 contexts: 1,
                 members: 0,
-                untrusted_judgement_rows: 1
+                untrusted_judgement_rows: 1,
+                untrusted_context_implication_rows: 0,
             }
         );
 
@@ -596,14 +650,19 @@ mod tests {
                 [],
             )
             .unwrap();
+        untrusted
+            .sqlite()
+            .execute(
+                "INSERT INTO hol_context_implication(
+                     antecedent_ctx_id, consequent_ctx_id
+                 ) VALUES (0, 0)",
+                [],
+            )
+            .unwrap();
         let untrusted = untrusted.serialize().unwrap();
-        assert_eq!(
-            ValidatedHolImage::validate(&untrusted)
-                .unwrap()
-                .counts()
-                .untrusted_judgement_rows,
-            2
-        );
+        let counts = ValidatedHolImage::validate(&untrusted).unwrap().counts();
+        assert_eq!(counts.untrusted_judgement_rows, 2);
+        assert_eq!(counts.untrusted_context_implication_rows, 1);
     }
 
     #[test]
@@ -712,6 +771,22 @@ mod tests {
         assert!(matches!(
             ValidatedHolImage::validate(&duplicate),
             Err(HolImageValidationError::DuplicateContext { .. })
+        ));
+
+        let orphan = covalence_neutron::Connection::deserialize(&bytes).unwrap();
+        orphan
+            .sqlite()
+            .execute(
+                "INSERT INTO hol_context_implication(
+                     antecedent_ctx_id, consequent_ctx_id
+                 ) VALUES (0, 999)",
+                [],
+            )
+            .unwrap();
+        let orphan = orphan.serialize().unwrap();
+        assert!(matches!(
+            ValidatedHolImage::validate(&orphan),
+            Err(HolImageValidationError::OrphanContextImplication { .. })
         ));
     }
 }
