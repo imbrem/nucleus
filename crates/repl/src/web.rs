@@ -562,6 +562,26 @@ impl WebKernel {
         u32::try_from(conclusion.get()).map_err(js_error)
     }
 
+    /// Applies `EqMp` to two exact persisted theorem keys.
+    pub fn hol_equality_modus_ponens(
+        &mut self,
+        connection: u32,
+        context: u32,
+        equality: u32,
+        premise: u32,
+    ) -> Result<u32, JsValue> {
+        let conclusion = self
+            .repl
+            .equality_modus_ponens(
+                ConnectionId::from_u32(connection),
+                ContextId::from_i64(i64::from(context)),
+                TermId::from_i64(i64::from(equality)),
+                TermId::from_i64(i64::from(premise)),
+            )
+            .map_err(js_error)?;
+        u32::try_from(conclusion.get()).map_err(js_error)
+    }
+
     /// Introduces one exact context implication from persisted witness terms.
     pub fn hol_prove_context_implication(
         &mut self,

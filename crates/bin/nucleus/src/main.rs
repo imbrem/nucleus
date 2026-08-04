@@ -346,6 +346,7 @@ fn run_hol_proof<'a>(
                 Ok::<_, ProofError>(result)
             })?
         }
+        Some("eqmp") => run_hol_eqmp(repl, connection, &mut arguments)?,
         Some("implies") => {
             let antecedent = parse_context_id(arguments.next(), "antecedent")?;
             let consequent = parse_context_id(arguments.next(), "consequent")?;
@@ -373,7 +374,7 @@ fn run_hol_proof<'a>(
         }
         _ => {
             return Err(
-                "usage: .hol prove hyp CONTEXT TERM|truth CONTEXT|refl CONTEXT TERM|beta CONTEXT ABSTRACTION ARGUMENT|implies ANTECEDENT CONSEQUENT WITNESS_TERM...|weaken ANTECEDENT CONSEQUENT CONCLUSION".into(),
+                "usage: .hol prove hyp CONTEXT TERM|truth CONTEXT|refl CONTEXT TERM|beta CONTEXT ABSTRACTION ARGUMENT|eqmp CONTEXT EQUALITY PREMISE|implies ANTECEDENT CONSEQUENT WITNESS_TERM...|weaken ANTECEDENT CONSEQUENT CONCLUSION".into(),
             );
         }
     };
@@ -384,6 +385,23 @@ fn run_hol_proof<'a>(
         theorem_conclusion.get()
     )?;
     Ok(())
+}
+
+fn run_hol_eqmp<'a>(
+    repl: &mut LocalRepl,
+    connection: ConnectionId,
+    arguments: &mut impl Iterator<Item = &'a str>,
+) -> Result<(ContextId, TermId)> {
+    let context = parse_context_id(arguments.next(), "context")?;
+    let equality = parse_term_id(arguments.next(), "equality")?;
+    let premise = parse_term_id(arguments.next(), "premise")?;
+    if arguments.next().is_some() {
+        return Err("usage: .hol prove eqmp CONTEXT EQUALITY PREMISE".into());
+    }
+    Ok((
+        context,
+        repl.equality_modus_ponens(connection, context, equality, premise)?,
+    ))
 }
 
 fn run_hol_type<'a>(

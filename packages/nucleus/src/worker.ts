@@ -148,6 +148,14 @@ type Request =
     }
   | {
       id: number;
+      operation: "holEqualityModusPonens";
+      connection: number;
+      context: number;
+      equality: number;
+      premise: number;
+    }
+  | {
+      id: number;
       operation: "holProveContextImplication";
       connection: number;
       antecedent: number;
@@ -398,6 +406,13 @@ async function execute(request: Request): Promise<unknown> {
         request.context,
         request.abstraction,
         request.argument,
+      );
+    case "holEqualityModusPonens":
+      return connection.hol_equality_modus_ponens(
+        request.connection,
+        request.context,
+        request.equality,
+        request.premise,
       );
     case "holProveContextImplication":
       connection.hol_prove_context_implication(
