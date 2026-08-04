@@ -113,7 +113,7 @@ fn run_line(repl: &mut LocalRepl, output: &mut impl io::Write, line: &str) -> Re
         )?;
         writeln!(
             output,
-            ".hol term ...      admit/inspect Bool, free, and app terms"
+            ".hol term ...      admit/inspect simply typed terms and binders"
         )?;
         writeln!(output, ".hol ctx ...       define/inspect Boolean contexts")?;
         writeln!(output, ".hol prove ...     apply hypothesis or truth")?;
@@ -397,6 +397,15 @@ fn run_hol_term<'a>(
             let term = repl.hol_mut(connection)?.insert_free_term(symbol, ty)?;
             writeln!(output, "term {} = free {symbol} : {}", term.get(), ty.get())?;
         }
+        Some("bound") => {
+            let index: u32 = arguments.next().ok_or("missing de Bruijn index")?.parse()?;
+            let ty = parse_type_id(arguments.next(), "type")?;
+            if arguments.next().is_some() {
+                return Err("usage: .hol term bound INDEX TYPE".into());
+            }
+            let term = repl.hol_mut(connection)?.insert_bound_term(index, ty)?;
+            writeln!(output, "term {} = bound {index} : {}", term.get(), ty.get())?;
+        }
         Some("app") => {
             let function = parse_term_id(arguments.next(), "function")?;
             let argument = parse_term_id(arguments.next(), "argument")?;
@@ -414,38 +423,75 @@ fn run_hol_term<'a>(
                 argument.get()
             )?;
         }
-        Some("show") => {
-            let term = parse_term_id(arguments.next(), "term")?;
+        Some("lam") => {
+            let parameter_type = parse_type_id(arguments.next(), "parameter")?;
+            let body = parse_term_id(arguments.next(), "body")?;
             if arguments.next().is_some() {
-                return Err("usage: .hol term show ID".into());
+                return Err("usage: .hol term lam TYPE BODY".into());
             }
-            match repl.hol_mut(connection)?.term(term)? {
-                TermView::Bool(value) => writeln!(output, "term {} = {value}", term.get())?,
-                TermView::Free { symbol } => {
-                    writeln!(output, "term {} = free {symbol}", term.get())?;
-                }
-                TermView::Application { function, argument } => writeln!(
-                    output,
-                    "term {} = app {} {}",
-                    term.get(),
-                    function.get(),
-                    argument.get()
-                )?,
-            }
+            let term = repl
+                .hol_mut(connection)?
+                .insert_lambda(parameter_type, body)?;
+            writeln!(
+                output,
+                "term {} = lam {} {}",
+                term.get(),
+                parameter_type.get(),
+                body.get()
+            )?;
         }
-        Some("type") => {
-            let term = parse_term_id(arguments.next(), "term")?;
-            if arguments.next().is_some() {
-                return Err("usage: .hol term type ID".into());
-            }
+        Some(operation @ ("show" | "type" | "freevars" | "closed" | "unbound")) => {
+            run_hol_term_query(repl, output, connection, operation, arguments)?;
+        }
+        _ => {
+            return Err(
+                "usage: .hol term bool|free|bound|app|lam|show|type|freevars|closed|unbound ..."
+                    .into(),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn run_hol_term_query<'a>(
+    repl: &mut LocalRepl,
+    output: &mut impl io::Write,
+    connection: ConnectionId,
+    operation: &str,
+    mut arguments: impl Iterator<Item = &'a str>,
+) -> Result<()> {
+    let term = parse_term_id(arguments.next(), "term")?;
+    if arguments.next().is_some() {
+        return Err(format!("usage: .hol term {operation} ID").into());
+    }
+    match operation {
+        "show" => match repl.hol_mut(connection)?.term(term)? {
+            TermView::Bool(value) => writeln!(output, "term {} = {value}", term.get())?,
+            TermView::Free { symbol } => writeln!(output, "term {} = free {symbol}", term.get())?,
+            TermView::Bound { index } => writeln!(output, "term {} = bound {index}", term.get())?,
+            TermView::Application { function, argument } => writeln!(
+                output,
+                "term {} = app {} {}",
+                term.get(),
+                function.get(),
+                argument.get()
+            )?,
+            TermView::Lambda {
+                parameter_type,
+                body,
+            } => writeln!(
+                output,
+                "term {} = lam {} {}",
+                term.get(),
+                parameter_type.get(),
+                body.get()
+            )?,
+        },
+        "type" => {
             let ty = repl.hol_mut(connection)?.term_type(term)?;
             writeln!(output, "term {} : {}", term.get(), ty.get())?;
         }
-        Some("freevars") => {
-            let term = parse_term_id(arguments.next(), "term")?;
-            if arguments.next().is_some() {
-                return Err("usage: .hol term freevars ID".into());
-            }
+        "freevars" => {
             let variables = repl.hol_mut(connection)?.term_free_variables(term)?;
             writeln!(
                 output,
@@ -458,7 +504,24 @@ fn run_hol_term<'a>(
                     .join(",")
             )?;
         }
-        _ => return Err("usage: .hol term bool|free|app|show|type|freevars ...".into()),
+        "closed" => {
+            let closed = repl.hol_mut(connection)?.term_is_locally_closed(term)?;
+            writeln!(output, "closed {} = {closed}", term.get())?;
+        }
+        "unbound" => {
+            let variables = repl.hol_mut(connection)?.term_unbound_variables(term)?;
+            writeln!(
+                output,
+                "unbound {} = {}",
+                term.get(),
+                variables
+                    .iter()
+                    .map(|variable| format!("{}:{}", variable.index, variable.ty.get()))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )?;
+        }
+        _ => unreachable!("caller filters term query operations"),
     }
     Ok(())
 }
@@ -604,7 +667,7 @@ mod tests {
     #[test]
     fn manages_sql_and_hol_connections_in_one_repl() {
         let mut input = Cursor::new(
-            ".open hol\n.hol star\n.hol arrow 1 1\n.hol show 3\n.hol rank 3\n.hol type bool\n.hol type arrow 2 2\n.hol term free 100 4\n.hol term free 101 2\n.hol term app 5 6\n.hol term type 7\n.hol term freevars 7\n.hol ctx define 7\n.hol ctx show 1\n.hol prove hyp 1 7\n.hol prove truth 0\n.hol proved 1 7\n.hol proved 0 8\n.connections\n.use 1\nSELECT 42 AS sql_still_live\n.quit\n",
+            ".open hol\n.hol star\n.hol arrow 1 1\n.hol show 3\n.hol rank 3\n.hol type bool\n.hol type arrow 2 2\n.hol term free 100 4\n.hol term free 101 2\n.hol term app 5 6\n.hol term type 7\n.hol term freevars 7\n.hol ctx define 7\n.hol ctx show 1\n.hol prove hyp 1 7\n.hol prove truth 0\n.hol proved 1 7\n.hol proved 0 8\n.hol term bound 0 2\n.hol term unbound 9\n.hol term closed 9\n.hol term lam 2 9\n.hol term show 10\n.hol term closed 10\n.connections\n.use 1\nSELECT 42 AS sql_still_live\n.quit\n",
         );
         let mut output = Vec::new();
         let mut errors = Vec::new();
@@ -627,6 +690,11 @@ mod tests {
         assert!(output.contains("theorem 0 |- 8\n"));
         assert!(output.contains("proved 1 7 = true\n"));
         assert!(output.contains("proved 0 8 = true\n"));
+        assert!(output.contains("term 9 = bound 0 : 2\n"));
+        assert!(output.contains("unbound 9 = 0:2\n"));
+        assert!(output.contains("closed 9 = false\n"));
+        assert!(output.contains("term 10 = lam 2 9\n"));
+        assert!(output.contains("closed 10 = true\n"));
         assert!(output.contains("  1\tnucleus/sql\n"));
         assert!(output.contains("* 2\tnucleus/hol-omega-v0\n"));
         assert!(output.contains("sql_still_live\n42\n"));

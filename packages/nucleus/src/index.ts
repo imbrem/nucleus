@@ -24,7 +24,14 @@ export type HolType =
 export type HolTerm =
   | { kind: "bool"; value: boolean }
   | { kind: "free"; symbol: number }
-  | { kind: "application"; function: number; argument: number };
+  | { kind: "bound"; index: number }
+  | { kind: "application"; function: number; argument: number }
+  | { kind: "lambda"; parameterType: number; body: number };
+
+export interface HolUnboundVariable {
+  index: number;
+  type: number;
+}
 
 export interface BrowserSqlConnection {
   run(sql: string): Promise<SqlOutcome>;
@@ -45,10 +52,14 @@ export interface BrowserHolConnection {
   type(id: number): Promise<HolType>;
   boolTerm(value: boolean): Promise<number>;
   freeTerm(symbol: number, type: number): Promise<number>;
+  boundTerm(index: number, type: number): Promise<number>;
   application(function_: number, argument: number): Promise<number>;
+  lambda(parameterType: number, body: number): Promise<number>;
   term(id: number): Promise<HolTerm>;
   termType(id: number): Promise<number>;
   termFreeVariables(id: number): Promise<number[]>;
+  termIsLocallyClosed(id: number): Promise<boolean>;
+  termUnboundVariables(id: number): Promise<HolUnboundVariable[]>;
   defineContext(members: number[]): Promise<number>;
   contextMembers(id: number): Promise<number[]>;
   proveHypothesis(context: number, term: number): Promise<number>;
@@ -107,14 +118,28 @@ type RequestBody =
       type: number;
     }
   | {
+      operation: "holBoundTerm";
+      connection: number;
+      index: number;
+      type: number;
+    }
+  | {
       operation: "holApplication";
       connection: number;
       function: number;
       argument: number;
     }
+  | {
+      operation: "holLambda";
+      connection: number;
+      parameterType: number;
+      body: number;
+    }
   | { operation: "holTerm"; connection: number; term: number }
   | { operation: "holTermType"; connection: number; term: number }
   | { operation: "holTermFreeVariables"; connection: number; term: number }
+  | { operation: "holTermIsLocallyClosed"; connection: number; term: number }
+  | { operation: "holTermUnboundVariables"; connection: number; term: number }
   | { operation: "holDefineContext"; connection: number; members: number[] }
   | { operation: "holContextMembers"; connection: number; context: number }
   | {
@@ -341,12 +366,30 @@ class WorkerHolConnection implements BrowserHolConnection {
     });
   }
 
+  boundTerm(index: number, type: number): Promise<number> {
+    return this.#request({
+      operation: "holBoundTerm",
+      connection: this.connection,
+      index,
+      type,
+    });
+  }
+
   application(function_: number, argument: number): Promise<number> {
     return this.#request({
       operation: "holApplication",
       connection: this.connection,
       function: function_,
       argument,
+    });
+  }
+
+  lambda(parameterType: number, body: number): Promise<number> {
+    return this.#request({
+      operation: "holLambda",
+      connection: this.connection,
+      parameterType,
+      body,
     });
   }
 
@@ -369,6 +412,22 @@ class WorkerHolConnection implements BrowserHolConnection {
   termFreeVariables(id: number): Promise<number[]> {
     return this.#request({
       operation: "holTermFreeVariables",
+      connection: this.connection,
+      term: id,
+    });
+  }
+
+  termIsLocallyClosed(id: number): Promise<boolean> {
+    return this.#request({
+      operation: "holTermIsLocallyClosed",
+      connection: this.connection,
+      term: id,
+    });
+  }
+
+  termUnboundVariables(id: number): Promise<HolUnboundVariable[]> {
+    return this.#request({
+      operation: "holTermUnboundVariables",
       connection: this.connection,
       term: id,
     });

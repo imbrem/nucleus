@@ -9,7 +9,7 @@ pub use hol::{
     AllowAll, ContextError, ContextId, Hol, HolOpenError, HolSchema, Kind, KindError, KindId,
     KindView, MetadataError, MetadataSchemaError, MetadataTable, MetadataTarget, MetadataType,
     MetadataValue, Operation, Policy, ProofError, TermError, TermId, TermView, Theorem, TypeError,
-    TypeId, TypeView,
+    TypeId, TypeView, UnboundVariable,
 };
 pub use kernel::Kernel;
 
