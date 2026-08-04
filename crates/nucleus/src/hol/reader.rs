@@ -1,9 +1,8 @@
-use std::{collections::HashMap, error::Error as StdError, fmt, marker::PhantomData, sync::Arc};
+use std::{error::Error as StdError, fmt, marker::PhantomData, sync::Arc};
 
 use covalence_lib_hash::O256;
 use covalence_lib_sqlite as sqlite;
 use sqlite::OptionalExtension as _;
-use sqlite::vfs::{ReadOnlyVfs, RegisterError, RegisteredVfs, register_unique};
 
 use super::{
     Hol, ImportError, ImportId, MatchedTrustedHolImage, NamespaceId, NamespaceSource, Operation,
@@ -91,7 +90,7 @@ pub enum ImportedTermView<'reader> {
 pub struct ImportedHolReader<'reader, 'connection, P> {
     owner: &'connection mut Connection<Hol<P>>,
     sqlite: covalence_neutron::Connection,
-    registered: RegisteredVfs,
+    mounted: covalence_neutron::ImmutableImage,
     trusted_import: TrustedImportId,
     import: ImportId,
     namespace: NamespaceId,
@@ -113,6 +112,27 @@ impl<'connection, P: Policy> MatchedTrustedHolImage<'connection, P> {
     pub fn with_reader<R>(
         self,
         namespace: NamespaceId,
+        run: impl for<'reader> FnOnce(ImportedHolReader<'reader, 'connection, P>) -> R,
+    ) -> Result<R, ImportedReaderError> {
+        let mounted = covalence_neutron::ImmutableImage::register(Arc::from(self.image().bytes()))?;
+        self.with_mounted_reader(namespace, &mounted, run)
+    }
+
+    /// Opens a scoped reader through one previously registered immutable image handle.
+    ///
+    /// The handle must serve bytes exactly equal to the independently authenticated and validated
+    /// image. Matching trust, policy, and namespace provenance remain connection-local and are
+    /// rechecked on every call. The actual post-attach VFS pointer is checked before `run` and
+    /// before every structural read.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for policy denial, a local/wrong-import namespace, a byte mismatch,
+    /// connection/attach failure, or an unexpected actual VFS pointer.
+    pub fn with_mounted_reader<R>(
+        self,
+        namespace: NamespaceId,
+        mounted: &covalence_neutron::ImmutableImage,
         run: impl for<'reader> FnOnce(ImportedHolReader<'reader, 'connection, P>) -> R,
     ) -> Result<R, ImportedReaderError> {
         let (owner, trusted_import, import, evidence) = self.into_parts();
@@ -147,25 +167,15 @@ impl<'connection, P: Policy> MatchedTrustedHolImage<'connection, P> {
         if actual != expected {
             return Err(ImportedReaderError::ImageMismatch { expected, actual });
         }
-        let logical_path = format!("{expected}.sqlite");
-        let bytes: Arc<[u8]> = Arc::from(evidence.image().bytes());
-        let registered = register_unique(ReadOnlyVfs::new(HashMap::from([(
-            logical_path.clone(),
-            bytes,
-        )])))?;
+        if mounted.bytes() != evidence.image().bytes() {
+            return Err(ImportedReaderError::MountedBytesMismatch { image: expected });
+        }
         let sqlite = covalence_neutron::Connection::open_in_memory()?;
-        let uri = format!(
-            "file:{logical_path}?mode=ro&immutable=1&vfs={}",
-            registered.name()
-        );
-        sqlite
-            .sqlite()
-            .execute("ATTACH DATABASE ?1 AS imported", [&uri])?;
-        sqlite.verify_database_vfs(IMPORTED_SCHEMA, &registered)?;
+        mounted.attach(&sqlite, IMPORTED_SCHEMA)?;
         Ok(run(ImportedHolReader {
             owner,
             sqlite,
-            registered,
+            mounted: mounted.clone(),
             trusted_import,
             import,
             namespace,
@@ -261,8 +271,8 @@ impl<'reader, P: Policy> ImportedHolReader<'reader, '_, P> {
     }
 
     fn verify_vfs(&self) -> Result<(), ImportedReaderError> {
-        self.sqlite
-            .verify_database_vfs(IMPORTED_SCHEMA, &self.registered)
+        self.mounted
+            .verify(&self.sqlite, IMPORTED_SCHEMA)
             .map_err(Into::into)
     }
 }
@@ -318,8 +328,11 @@ pub enum ImportedReaderError {
         expected: O256,
         actual: O256,
     },
+    MountedBytesMismatch {
+        image: O256,
+    },
     Connection(covalence_neutron::ConnectionError),
-    Register(RegisterError),
+    ImmutableImage(covalence_neutron::ImmutableImageError),
     Sqlite(sqlite::Error),
     Vfs(covalence_neutron::DatabaseVfsError),
     CorruptExport {
@@ -349,8 +362,14 @@ impl fmt::Display for ImportedReaderError {
             Self::ImageMismatch { expected, actual } => {
                 write!(f, "imported image {actual} differs from {expected}")
             }
+            Self::MountedBytesMismatch { image } => {
+                write!(
+                    f,
+                    "mounted bytes differ from validated imported image {image}"
+                )
+            }
             Self::Connection(e) => e.fmt(f),
-            Self::Register(e) => e.fmt(f),
+            Self::ImmutableImage(e) => e.fmt(f),
             Self::Sqlite(e) => e.fmt(f),
             Self::Vfs(e) => e.fmt(f),
             Self::CorruptExport { namespace, export } => {
@@ -367,7 +386,7 @@ impl StdError for ImportedReaderError {
         match self {
             Self::Connection(e) => Some(e),
             Self::Import(e) => Some(e),
-            Self::Register(e) => Some(e),
+            Self::ImmutableImage(e) => Some(e),
             Self::Sqlite(e) => Some(e),
             Self::Vfs(e) => Some(e),
             _ => None,
@@ -385,9 +404,9 @@ impl From<covalence_neutron::ConnectionError> for ImportedReaderError {
         Self::Connection(e)
     }
 }
-impl From<RegisterError> for ImportedReaderError {
-    fn from(e: RegisterError) -> Self {
-        Self::Register(e)
+impl From<covalence_neutron::ImmutableImageError> for ImportedReaderError {
+    fn from(e: covalence_neutron::ImmutableImageError) -> Self {
+        Self::ImmutableImage(e)
     }
 }
 impl From<sqlite::Error> for ImportedReaderError {
@@ -485,6 +504,17 @@ mod tests {
                 .with_reader(wrong_namespace, |_| ()),
             Err(ImportedReaderError::NamespaceImportMismatch { .. })
         ));
+        let wrong_mount = covalence_neutron::ImmutableImage::register(Arc::from(
+            b"different resident bytes".as_slice(),
+        ))
+        .unwrap();
+        assert!(matches!(
+            target
+                .match_trusted_import_image(trusted, authenticated_image())
+                .unwrap()
+                .with_mounted_reader(imported_namespace, &wrong_mount, |_| ()),
+            Err(ImportedReaderError::MountedBytesMismatch { .. })
+        ));
         let before = target.parts_mut().0.serialize().unwrap();
         let matched = target
             .match_trusted_import_image(trusted, evidence)
@@ -502,8 +532,8 @@ mod tests {
                 assert_eq!(term.get(), truth.get());
                 assert_eq!(reader.term(term).unwrap(), ImportedTermView::Bool(true));
                 reader
-                    .sqlite
-                    .verify_database_vfs(IMPORTED_SCHEMA, &reader.registered)
+                    .mounted
+                    .verify(&reader.sqlite, IMPORTED_SCHEMA)
                     .unwrap();
                 assert!(
                     reader

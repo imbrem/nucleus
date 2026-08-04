@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::error::Error as StdError;
 use std::fmt;
+use std::sync::Arc;
 
 use covalence_lib_sqlite as sqlite;
 
@@ -46,12 +47,29 @@ CREATE TABLE repl_connection (
     protocol TEXT NOT NULL,
     remote_connection_id TEXT
 ) STRICT;
+CREATE TABLE repl_image (
+    image_hash BLOB PRIMARY KEY CHECK (length(image_hash) = 32),
+    byte_length INTEGER NOT NULL CHECK (byte_length >= 0)
+) STRICT, WITHOUT ROWID;
 CREATE TABLE repl_state (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 0),
     active_connection_id INTEGER REFERENCES repl_connection
 ) STRICT;
 INSERT INTO repl_state(singleton) VALUES (0);
 ";
+
+#[derive(Clone, Copy)]
+struct ImageCacheLimits {
+    image_bytes: usize,
+    images: usize,
+    total_bytes: usize,
+}
+
+const IMAGE_CACHE_LIMITS: ImageCacheLimits = ImageCacheLimits {
+    image_bytes: 64 << 20,
+    images: 16,
+    total_bytes: 256 << 20,
+};
 
 /// Process-local identifier for a managed connection.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -244,6 +262,8 @@ impl LocalConnection {
 pub struct LocalRepl {
     kernel: Kernel,
     directory: Repl<LocalConnection>,
+    images: HashMap<O256, covalence_neutron::ImmutableImage>,
+    resident_image_bytes: usize,
 }
 
 /// Transport-neutral owned signed HOL snapshot returned by the shared REPL.
@@ -324,6 +344,82 @@ pub enum LocalImportedHolTerm {
     },
     /// Same-typed equality.
     Equality { left: i64, right: i64, ty: i64 },
+}
+
+fn cache_verified_image(
+    state: &covalence_neutron::Connection,
+    images: &mut HashMap<O256, covalence_neutron::ImmutableImage>,
+    resident_bytes: &mut usize,
+    expected: O256,
+    bytes: &[u8],
+) -> Result<(), LocalReplError> {
+    let actual = O256::from_bytes(bytes);
+    if actual != expected {
+        return Err(ReplImageError::AddressMismatch { expected, actual }.into());
+    }
+    if let Some(existing) = images.get(&expected) {
+        return if existing.bytes() == bytes {
+            Ok(())
+        } else {
+            Err(ReplImageError::HashCollision { image: expected }.into())
+        };
+    }
+    let new_total = check_image_cache_capacity(
+        images.len(),
+        *resident_bytes,
+        bytes.len(),
+        IMAGE_CACHE_LIMITS,
+    )?;
+    let byte_length = i64::try_from(bytes.len()).map_err(|_| ReplImageError::ImageTooLarge {
+        length: bytes.len(),
+        maximum: IMAGE_CACHE_LIMITS.image_bytes,
+    })?;
+    state
+        .sqlite()
+        .execute(
+            "INSERT INTO repl_image(image_hash, byte_length) VALUES (?1, ?2)
+             ON CONFLICT(image_hash) DO UPDATE SET byte_length = excluded.byte_length",
+            sqlite::params![expected.as_ref(), byte_length],
+        )
+        .map_err(ReplError::from)?;
+    let mounted = match covalence_neutron::ImmutableImage::register(Arc::from(bytes)) {
+        Ok(mounted) => mounted,
+        Err(error) => {
+            let _ = state.sqlite().execute(
+                "DELETE FROM repl_image WHERE image_hash = ?1",
+                [expected.as_ref()],
+            );
+            return Err(ReplImageError::Register(error).into());
+        }
+    };
+    images.insert(expected, mounted);
+    *resident_bytes = new_total;
+    Ok(())
+}
+
+fn check_image_cache_capacity(
+    count: usize,
+    total_bytes: usize,
+    image_bytes: usize,
+    limits: ImageCacheLimits,
+) -> Result<usize, ReplImageError> {
+    if image_bytes > limits.image_bytes {
+        return Err(ReplImageError::ImageTooLarge {
+            length: image_bytes,
+            maximum: limits.image_bytes,
+        });
+    }
+    if count >= limits.images {
+        return Err(ReplImageError::ImageCountLimit {
+            maximum: limits.images,
+        });
+    }
+    total_bytes
+        .checked_add(image_bytes)
+        .filter(|total| *total <= limits.total_bytes)
+        .ok_or(ReplImageError::TotalBytesLimit {
+            maximum: limits.total_bytes,
+        })
 }
 
 fn copy_imported_term(term: ImportedTermView<'_>) -> LocalImportedHolTerm {
@@ -442,7 +538,66 @@ impl LocalRepl {
     pub fn new() -> Result<Self, LocalReplError> {
         let kernel = Kernel::ephemeral();
         let directory = Repl::new(kernel.verifying_key().as_bytes())?;
-        Ok(Self { kernel, directory })
+        Ok(Self {
+            kernel,
+            directory,
+            images: HashMap::new(),
+            resident_image_bytes: 0,
+        })
+    }
+
+    /// Stores one uninterpreted complete database image in the shared process-local REPL cache.
+    ///
+    /// The returned content address is an operational lookup key only. This does not validate a
+    /// `SQLite` schema, authenticate a signer, or grant any protocol authority. Matching bytes reuse
+    /// one fixed immutable VFS across every managed connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an address collision, an image too large to record, VFS registration,
+    /// or REPL state database failure.
+    pub fn put_image(&mut self, bytes: &[u8]) -> Result<O256, LocalReplError> {
+        let image = O256::from_bytes(bytes);
+        self.put_verified_image(image, bytes)?;
+        Ok(image)
+    }
+
+    /// Stores one complete database image after checking its expected operational address.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the bytes do not match `expected`, collide with a resident entry, are
+    /// too large to record, or cannot be registered/persisted.
+    pub fn put_verified_image(
+        &mut self,
+        expected: O256,
+        bytes: &[u8],
+    ) -> Result<(), LocalReplError> {
+        cache_verified_image(
+            self.directory.state(),
+            &mut self.images,
+            &mut self.resident_image_bytes,
+            expected,
+            bytes,
+        )
+    }
+
+    /// Reports whether a complete image is resident in this REPL process.
+    #[must_use]
+    pub fn has_image(&self, image: O256) -> bool {
+        self.images.contains_key(&image)
+    }
+
+    /// Returns the number of deduplicated resident immutable images.
+    #[must_use]
+    pub fn resident_image_count(&self) -> usize {
+        self.images.len()
+    }
+
+    /// Returns the total exact byte length of deduplicated resident images.
+    #[must_use]
+    pub const fn resident_image_bytes(&self) -> usize {
+        self.resident_image_bytes
     }
 
     /// Returns the inspectable raw REPL state database.
@@ -673,7 +828,9 @@ impl LocalRepl {
         &mut self,
         id: ConnectionId,
     ) -> Result<LocalSignedHolSnapshot, LocalReplError> {
-        let Self { kernel, directory } = self;
+        let Self {
+            kernel, directory, ..
+        } = self;
         let managed = directory.get_mut(id)?;
         let connection = match managed {
             LocalConnection::Hol(connection) => connection,
@@ -842,12 +999,42 @@ impl LocalRepl {
         let descriptor = HolSchemaDescriptor::decode(descriptor)?;
         let validated =
             AuthenticatedValidatedHolImage::validate_with_descriptor(authenticated, &descriptor)?;
-        let matched = self
-            .hol_mut(id)?
-            .match_trusted_import_image(trusted_import, validated)?;
+        let Self {
+            directory,
+            images,
+            resident_image_bytes,
+            ..
+        } = self;
+        let Repl { state, connections } = directory;
+        let managed = connections
+            .get_mut(&id)
+            .ok_or(ReplError::UnknownConnection(id))?;
+        let connection = match managed {
+            LocalConnection::Hol(connection) => connection,
+            other @ LocalConnection::Sql(_) => {
+                return Err(LocalReplError::WrongProtocol {
+                    id,
+                    expected: "nucleus/hol-common-v2",
+                    actual: other.protocol(),
+                });
+            }
+        };
+        let matched = connection.match_trusted_import_image(trusted_import, validated)?;
+        cache_verified_image(
+            state,
+            images,
+            resident_image_bytes,
+            image,
+            matched.image().bytes(),
+        )?;
+        let mounted = images
+            .get(&image)
+            .cloned()
+            .ok_or(ReplImageError::Missing { image })?;
         let import = matched.import();
-        let result = matched.with_reader(
+        let result = matched.with_mounted_reader(
             namespace,
+            &mounted,
             |mut reader| -> Result<Option<LocalImportedHolExport>, ImportedReaderError> {
                 let Some(value) = reader.namespace_export(export.get())? else {
                     return Ok(None);
@@ -1047,6 +1234,66 @@ impl From<ProofError> for LocalProofError {
     }
 }
 
+/// Failure to cache one uninterpreted immutable database image in the REPL.
+#[derive(Debug)]
+pub enum ReplImageError {
+    /// Supplied bytes did not have the expected operational address.
+    AddressMismatch { expected: O256, actual: O256 },
+    /// Different resident bytes claimed the same operational address.
+    HashCollision { image: O256 },
+    /// The requested complete image is not resident.
+    Missing { image: O256 },
+    /// One image exceeds the fixed resident byte limit.
+    ImageTooLarge { length: usize, maximum: usize },
+    /// The fixed number of distinct resident images has been reached.
+    ImageCountLimit { maximum: usize },
+    /// Adding the image would exceed the fixed total resident byte limit.
+    TotalBytesLimit { maximum: usize },
+    /// The fixed immutable VFS could not be registered.
+    Register(covalence_neutron::ImmutableImageError),
+}
+
+impl fmt::Display for ReplImageError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AddressMismatch { expected, actual } => {
+                write!(
+                    formatter,
+                    "database image has address {actual}, expected {expected}"
+                )
+            }
+            Self::HashCollision { image } => {
+                write!(
+                    formatter,
+                    "different resident bytes share image address {image}"
+                )
+            }
+            Self::Missing { image } => write!(formatter, "database image {image} is not resident"),
+            Self::ImageTooLarge { length, maximum } => write!(
+                formatter,
+                "database image contains {length} bytes; resident limit is {maximum}"
+            ),
+            Self::ImageCountLimit { maximum } => {
+                write!(formatter, "resident image count limit {maximum} reached")
+            }
+            Self::TotalBytesLimit { maximum } => write!(
+                formatter,
+                "resident images would exceed total byte limit {maximum}"
+            ),
+            Self::Register(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl StdError for ReplImageError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            Self::Register(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
 /// Failure in the shared local-kernel REPL layer.
 #[derive(Debug)]
 pub enum LocalReplError {
@@ -1060,6 +1307,8 @@ pub enum LocalReplError {
     HolSchemaDescriptor(HolSchemaDescriptorError),
     /// A declarative REPL HOL metadata schema was invalid.
     HolSchemaSpec(HolSchemaSpecError),
+    /// The shared immutable image cache failed.
+    Image(ReplImageError),
     /// A namespace operation failed.
     Namespace(NamespaceError),
     /// A namespace export operation failed.
@@ -1099,6 +1348,7 @@ impl fmt::Display for LocalReplError {
             Self::HolOpen(error) => error.fmt(formatter),
             Self::HolSchemaDescriptor(error) => error.fmt(formatter),
             Self::HolSchemaSpec(error) => error.fmt(formatter),
+            Self::Image(error) => error.fmt(formatter),
             Self::Namespace(error) => error.fmt(formatter),
             Self::Export(error) => error.fmt(formatter),
             Self::HolExport(error) => error.fmt(formatter),
@@ -1129,6 +1379,7 @@ impl StdError for LocalReplError {
             Self::HolOpen(error) => Some(error),
             Self::HolSchemaDescriptor(error) => Some(error),
             Self::HolSchemaSpec(error) => Some(error),
+            Self::Image(error) => Some(error),
             Self::Namespace(error) => Some(error),
             Self::Export(error) => Some(error),
             Self::HolExport(error) => Some(error),
@@ -1159,6 +1410,18 @@ impl From<HolSchemaDescriptorError> for LocalReplError {
 impl From<HolSchemaSpecError> for LocalReplError {
     fn from(error: HolSchemaSpecError) -> Self {
         Self::HolSchemaSpec(error)
+    }
+}
+
+impl From<ReplImageError> for LocalReplError {
+    fn from(error: ReplImageError) -> Self {
+        Self::Image(error)
+    }
+}
+
+impl From<covalence_neutron::ImmutableImageError> for LocalReplError {
+    fn from(error: covalence_neutron::ImmutableImageError) -> Self {
+        Self::Image(ReplImageError::Register(error))
     }
 }
 
@@ -1322,6 +1585,56 @@ mod tests {
             )
             .unwrap();
         assert_eq!(public_key, vec![7; 32]);
+    }
+
+    #[test]
+    fn shared_image_cache_is_uninterpreted_deduplicated_and_inspectable() {
+        let mut repl = LocalRepl::new().unwrap();
+        let bytes = b"untrusted bytes need not be SQLite";
+        let image = repl.put_image(bytes).unwrap();
+        assert!(repl.has_image(image));
+        assert_eq!(repl.resident_image_count(), 1);
+        assert_eq!(repl.put_image(bytes).unwrap(), image);
+        assert_eq!(repl.resident_image_count(), 1);
+        assert!(matches!(
+            repl.put_verified_image(O256::from_bytes(b"different"), bytes),
+            Err(LocalReplError::Image(
+                ReplImageError::AddressMismatch { .. }
+            ))
+        ));
+        let recorded = repl
+            .state()
+            .sqlite()
+            .query_row(
+                "SELECT byte_length FROM repl_image WHERE image_hash = ?1",
+                [image.as_ref()],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(recorded, i64::try_from(bytes.len()).unwrap());
+    }
+
+    #[test]
+    fn shared_image_cache_capacity_checks_exact_boundaries() {
+        let limits = ImageCacheLimits {
+            image_bytes: 10,
+            images: 2,
+            total_bytes: 15,
+        };
+        assert_eq!(check_image_cache_capacity(0, 0, 10, limits).unwrap(), 10);
+        assert!(matches!(
+            check_image_cache_capacity(0, 0, 11, limits),
+            Err(ReplImageError::ImageTooLarge { .. })
+        ));
+        assert!(matches!(
+            check_image_cache_capacity(2, 0, 1, limits),
+            Err(ReplImageError::ImageCountLimit { .. })
+        ));
+        assert_eq!(check_image_cache_capacity(1, 5, 10, limits).unwrap(), 15);
+        assert!(matches!(
+            check_image_cache_capacity(1, 6, 10, limits),
+            Err(ReplImageError::TotalBytesLimit { .. })
+        ));
     }
 
     #[test]
@@ -1646,12 +1959,72 @@ mod tests {
                 TrustedImportError::UnknownTrustedImport(_)
             ))
         ));
+        assert!(matches!(
+            repl.inspect_trusted_hol_export_with_descriptor(
+                observer,
+                trusted.trusted_import(),
+                snapshot.bytes(),
+                snapshot.descriptor(),
+                snapshot.schema(),
+                snapshot.image(),
+                snapshot.signer(),
+                *snapshot.public_key(),
+                snapshot.signature(),
+                imported_namespace,
+                ExportId::from_i64(7),
+            ),
+            Err(LocalReplError::TrustedImportImage(
+                TrustedImportImageError::Unknown(_)
+            ))
+        ));
+        assert_eq!(repl.resident_image_count(), 1);
 
         let exported_target = repl.export_hol_snapshot(target).unwrap();
         let validated =
             covalence_nucleus::ValidatedHolImage::validate(exported_target.bytes()).unwrap();
         assert_eq!(validated.counts().import_references, 1);
         assert_eq!(validated.counts().untrusted_trusted_import_rows, 1);
+
+        let observer_trusted = repl
+            .trust_hol_import(
+                observer,
+                snapshot.schema(),
+                snapshot.image(),
+                snapshot.signer(),
+                *snapshot.public_key(),
+                snapshot.signature(),
+            )
+            .unwrap();
+        let observer_namespace = repl
+            .create_hol_imported_namespace(
+                observer,
+                None,
+                Some("downloaded"),
+                observer_trusted.import(),
+                namespace.get(),
+            )
+            .unwrap();
+        repl.close(target).unwrap();
+        assert_eq!(
+            repl.inspect_trusted_hol_export_with_descriptor(
+                observer,
+                observer_trusted.trusted_import(),
+                snapshot.bytes(),
+                snapshot.descriptor(),
+                snapshot.schema(),
+                snapshot.image(),
+                snapshot.signer(),
+                *snapshot.public_key(),
+                snapshot.signature(),
+                observer_namespace,
+                ExportId::from_i64(7),
+            )
+            .unwrap()
+            .unwrap()
+            .connection,
+            observer
+        );
+        assert_eq!(repl.resident_image_count(), 1);
     }
 
     #[test]
@@ -1679,6 +2052,35 @@ mod tests {
             covalence_nucleus::ValidatedHolImage::validate(exported_target.bytes()).unwrap();
         assert_eq!(validated.counts().import_references, 0);
         assert_eq!(validated.counts().untrusted_trusted_import_rows, 0);
+    }
+
+    #[test]
+    fn valid_but_untrusted_image_is_not_admitted_to_the_shared_cache() {
+        let mut repl = LocalRepl::new().unwrap();
+        let source = repl.open_hol().unwrap();
+        let observer = repl.open_hol().unwrap();
+        let snapshot = repl.export_hol_snapshot(source).unwrap();
+
+        assert!(matches!(
+            repl.inspect_trusted_hol_export_with_descriptor(
+                observer,
+                TrustedImportId::from_i64(0),
+                snapshot.bytes(),
+                snapshot.descriptor(),
+                snapshot.schema(),
+                snapshot.image(),
+                snapshot.signer(),
+                *snapshot.public_key(),
+                snapshot.signature(),
+                NamespaceId::root(),
+                ExportId::from_i64(0),
+            ),
+            Err(LocalReplError::TrustedImportImage(
+                TrustedImportImageError::Unknown(_)
+            ))
+        ));
+        assert_eq!(repl.resident_image_count(), 0);
+        assert_eq!(repl.resident_image_bytes(), 0);
     }
 
     #[test]
