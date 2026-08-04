@@ -483,7 +483,8 @@ class WorkerRepl implements BrowserRepl {
     ) {
       throw new TypeError("invalid or ambiguous HOL schema source");
     }
-    const transferred = source?.kind === "descriptor" ? source.descriptor.slice() : undefined;
+    const transferred =
+      source?.kind === "descriptor" ? source.descriptor.slice() : undefined;
     const requestSource =
       source?.kind === "descriptor"
         ? { kind: "descriptor" as const, descriptor: transferred! }
