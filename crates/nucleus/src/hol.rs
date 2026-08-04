@@ -11,6 +11,7 @@ use crate::Connection;
 
 const SCHEMA: &str = include_str!("hol/schema.sql");
 const STAR_ID: KindId = KindId(1);
+const BOOL_TYPE_ID: TypeId = TypeId(2);
 
 /// A HOL-omega kind expression accepted by the representation-independent API.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -63,6 +64,75 @@ pub enum KindView {
     },
 }
 
+/// Database-local identity of an admitted HOL type.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct TypeId(i64);
+
+impl TypeId {
+    /// Creates a database-local lookup handle from its stored integer.
+    #[must_use]
+    pub const fn from_i64(id: i64) -> Self {
+        Self(id)
+    }
+
+    /// Returns the integer stored in the HOL database.
+    #[must_use]
+    pub const fn get(self) -> i64 {
+        self.0
+    }
+}
+
+/// One admitted type in the settled closed Boolean/function fragment.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TypeView {
+    /// The primitive Boolean type.
+    Bool,
+    /// A function type.
+    Arrow {
+        /// Argument type.
+        domain: TypeId,
+        /// Result type.
+        codomain: TypeId,
+    },
+}
+
+/// Database-local identity of an admitted HOL term.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct TermId(i64);
+
+impl TermId {
+    /// Creates a database-local lookup handle from its stored integer.
+    #[must_use]
+    pub const fn from_i64(id: i64) -> Self {
+        Self(id)
+    }
+
+    /// Returns the integer stored in the HOL database.
+    #[must_use]
+    pub const fn get(self) -> i64 {
+        self.0
+    }
+}
+
+/// One admitted term in the settled closed Boolean/application fragment.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TermView {
+    /// A primitive Boolean literal.
+    Bool(bool),
+    /// A closed free symbol with a declared type.
+    Free {
+        /// Connection-local symbol identity.
+        symbol: i64,
+    },
+    /// A well-typed application.
+    Application {
+        /// Function term.
+        function: TermId,
+        /// Argument term.
+        argument: TermId,
+    },
+}
+
 /// A policy-visible trusted HOL operation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Operation {
@@ -70,6 +140,14 @@ pub enum Operation {
     ReadKind,
     /// Validate and canonically intern a kind.
     InsertKind,
+    /// Read an admitted type or its kind.
+    ReadType,
+    /// Validate and canonically intern a type.
+    InsertType,
+    /// Read an admitted term or its type.
+    ReadTerm,
+    /// Validate and canonically intern a term.
+    InsertTerm,
     /// Read user-declared metadata attached to an admitted node.
     ReadMetadata,
     /// Write user-declared metadata attached to an admitted node.
@@ -359,7 +437,7 @@ impl<P: Policy> Connection<Hol<P>> {
         }
         let transaction = neutron.sqlite().unchecked_transaction()?;
         let id = intern_kind(&transaction, kind)?;
-        write_metadata(&transaction, &hol.schema, id, metadata)?;
+        write_metadata(&transaction, &hol.schema, id.0, metadata)?;
         transaction.commit()?;
         Ok(id)
     }
@@ -414,6 +492,191 @@ impl<P: Policy> Connection<Hol<P>> {
         )
     }
 
+    /// Returns the canonical Boolean type.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies type admission.
+    pub fn insert_bool_type(&mut self) -> Result<TypeId, TypeError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_type(&mut hol.policy, Operation::InsertType)?;
+        read_type(neutron.sqlite(), BOOL_TYPE_ID)?;
+        Ok(BOOL_TYPE_ID)
+    }
+
+    /// Canonically interns a closed function type.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies admission, either child is not an
+    /// admitted star-kinded type, or `SQLite` rejects the transaction.
+    pub fn insert_arrow_type(
+        &mut self,
+        domain: TypeId,
+        codomain: TypeId,
+    ) -> Result<TypeId, TypeError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_type(&mut hol.policy, Operation::InsertType)?;
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        read_type(&transaction, domain)?;
+        read_type(&transaction, codomain)?;
+        let id = intern_type_arrow(&transaction, domain, codomain)?;
+        transaction.commit()?;
+        Ok(id)
+    }
+
+    /// Reads an admitted type constructor.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the read or the node is unknown or
+    /// malformed.
+    pub fn type_view(&mut self, id: TypeId) -> Result<TypeView, TypeError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_type(&mut hol.policy, Operation::ReadType)?;
+        read_type(neutron.sqlite(), id)
+    }
+
+    /// Returns the admitted kind of a type.
+    ///
+    /// Every type in this initial closed fragment has kind `star`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the read or the type is unknown or
+    /// malformed.
+    pub fn type_kind(&mut self, id: TypeId) -> Result<KindId, TypeError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_type(&mut hol.policy, Operation::ReadType)?;
+        read_type(neutron.sqlite(), id)?;
+        Ok(STAR_ID)
+    }
+
+    /// Canonically interns a Boolean literal term.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies admission or `SQLite` rejects it.
+    pub fn insert_bool_term(&mut self, value: bool) -> Result<TermId, TermError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_term(&mut hol.policy, Operation::InsertTerm)?;
+        intern_bool_term(neutron.sqlite(), value)
+    }
+
+    /// Canonically interns a closed free symbol at an admitted type.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies admission, the type is invalid, or
+    /// `SQLite` rejects the transaction.
+    pub fn insert_free_term(&mut self, symbol: i64, ty: TypeId) -> Result<TermId, TermError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_term(&mut hol.policy, Operation::InsertTerm)?;
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        read_type(&transaction, ty)?;
+        let id = intern_free_term(&transaction, symbol, ty)?;
+        transaction.commit()?;
+        Ok(id)
+    }
+
+    /// Checks and canonically interns a term application.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies admission, either term is invalid,
+    /// the function does not have an arrow type, the argument type differs, or
+    /// `SQLite` rejects the transaction.
+    pub fn insert_application(
+        &mut self,
+        function: TermId,
+        argument: TermId,
+    ) -> Result<TermId, TermError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_term(&mut hol.policy, Operation::InsertTerm)?;
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        let (_, function_type) = read_term(&transaction, function)?;
+        let (_, argument_type) = read_term(&transaction, argument)?;
+        let TypeView::Arrow { domain, codomain } = read_type(&transaction, function_type)? else {
+            return Err(TermError::NotFunction(function_type));
+        };
+        if domain != argument_type {
+            return Err(TermError::ApplicationTypeMismatch {
+                expected: domain,
+                actual: argument_type,
+            });
+        }
+        let id = intern_application(&transaction, function, argument, codomain)?;
+        transaction.commit()?;
+        Ok(id)
+    }
+
+    /// Reads an admitted term constructor.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the read or the term is unknown or
+    /// malformed.
+    pub fn term(&mut self, id: TermId) -> Result<TermView, TermError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_term(&mut hol.policy, Operation::ReadTerm)?;
+        read_term(neutron.sqlite(), id).map(|(term, _)| term)
+    }
+
+    /// Returns the admitted type of a term.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the read or the term/type is invalid.
+    pub fn term_type(&mut self, id: TermId) -> Result<TypeId, TermError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_term(&mut hol.policy, Operation::ReadTerm)?;
+        read_term(neutron.sqlite(), id).map(|(_, ty)| ty)
+    }
+
+    /// Returns the free symbol IDs reachable from a term in ascending order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the read, the root is invalid, or the
+    /// recursive query fails.
+    pub fn term_free_variables(&mut self, id: TermId) -> Result<Vec<i64>, TermError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_term(&mut hol.policy, Operation::ReadTerm)?;
+        read_term(neutron.sqlite(), id)?;
+        free_term_symbols(neutron.sqlite(), id)
+    }
+
+    /// Reports whether a term is locally closed.
+    ///
+    /// All admitted terms in this first fragment are closed: free symbols are
+    /// not de Bruijn occurrences, and bound-variable constructors are not yet
+    /// admitted.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the read or the term is invalid.
+    pub fn term_is_locally_closed(&mut self, id: TermId) -> Result<bool, TermError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_term(&mut hol.policy, Operation::ReadTerm)?;
+        read_term(neutron.sqlite(), id)?;
+        Ok(true)
+    }
+
+    /// Returns unbound de Bruijn variables reachable from this term.
+    ///
+    /// The initial closed fragment cannot admit any, so a valid term always
+    /// returns an empty vector.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the read or the term is invalid.
+    pub fn term_unbound_variables(&mut self, id: TermId) -> Result<Vec<u32>, TermError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_term(&mut hol.policy, Operation::ReadTerm)?;
+        read_term(neutron.sqlite(), id)?;
+        Ok(Vec::new())
+    }
+
     /// Reads selected user metadata columns from an admitted kind.
     ///
     /// Values are returned in the requested order.
@@ -430,7 +693,7 @@ impl<P: Policy> Connection<Hol<P>> {
         let (neutron, hol) = self.parts_mut();
         authorize(&mut hol.policy, Operation::ReadMetadata)?;
         read_kind(neutron.sqlite(), id)?;
-        read_metadata(neutron.sqlite(), &hol.schema, id, columns)
+        read_metadata(neutron.sqlite(), &hol.schema, id.0, columns)
     }
 }
 
@@ -464,7 +727,7 @@ fn install_metadata_schema(
 fn write_metadata(
     connection: &sqlite::Connection,
     schema: &HolSchema,
-    id: KindId,
+    id: i64,
     metadata: &[(&str, MetadataValue)],
 ) -> Result<(), KindError> {
     if metadata.is_empty() {
@@ -484,7 +747,7 @@ fn write_metadata(
         assignments.push(format!("{} = ?", quote_identifier(&column.name)));
         values.push(sqlite::types::Value::from(value.clone()));
     }
-    values.push(sqlite::types::Value::Integer(id.0));
+    values.push(sqlite::types::Value::Integer(id));
     let sql = format!(
         "UPDATE hol_node SET {} WHERE node_id = ?",
         assignments.join(", ")
@@ -496,7 +759,7 @@ fn write_metadata(
 fn read_metadata(
     connection: &sqlite::Connection,
     schema: &HolSchema,
-    id: KindId,
+    id: i64,
     columns: &[&str],
 ) -> Result<Vec<MetadataValue>, KindError> {
     if columns.is_empty() {
@@ -516,7 +779,7 @@ fn read_metadata(
         columns.join(", ")
     );
     connection
-        .query_row(&sql, [id.0], |row| {
+        .query_row(&sql, [id], |row| {
             (0..columns.len())
                 .map(|index| row.get::<_, sqlite::types::Value>(index))
                 .collect::<Result<Vec<_>, _>>()
@@ -552,6 +815,201 @@ fn authorize(policy: &mut impl Policy, operation: Operation) -> Result<(), KindE
     } else {
         Err(KindError::Denied(operation))
     }
+}
+
+fn authorize_type(policy: &mut impl Policy, operation: Operation) -> Result<(), TypeError> {
+    if policy.allows(operation) {
+        Ok(())
+    } else {
+        Err(TypeError::Denied(operation))
+    }
+}
+
+fn authorize_term(policy: &mut impl Policy, operation: Operation) -> Result<(), TermError> {
+    if policy.allows(operation) {
+        Ok(())
+    } else {
+        Err(TermError::Denied(operation))
+    }
+}
+
+fn intern_type_arrow(
+    connection: &sqlite::Connection,
+    domain: TypeId,
+    codomain: TypeId,
+) -> Result<TypeId, TypeError> {
+    if let Some(id) = connection
+        .query_row(
+            "SELECT node_id FROM hol_node
+             WHERE tag = 'TARR' AND lhs = ?1 AND rhs = ?2 AND ty = ?3",
+            (domain.0, codomain.0, STAR_ID.0),
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+    {
+        return Ok(TypeId(id));
+    }
+    connection.execute(
+        "INSERT INTO hol_node(tag, lhs, rhs, ty) VALUES ('TARR', ?1, ?2, ?3)",
+        (domain.0, codomain.0, STAR_ID.0),
+    )?;
+    Ok(TypeId(connection.last_insert_rowid()))
+}
+
+fn read_type(connection: &sqlite::Connection, id: TypeId) -> Result<TypeView, TypeError> {
+    let row = connection
+        .query_row(
+            "SELECT tag, lhs, rhs, ty FROM hol_node WHERE node_id = ?1",
+            [id.0],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<i64>>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or(TypeError::UnknownType(id))?;
+    match row {
+        (tag, None, None, Some(kind)) if tag == "TBOOL" && kind == STAR_ID.0 => Ok(TypeView::Bool),
+        (tag, Some(domain), Some(codomain), Some(kind)) if tag == "TARR" && kind == STAR_ID.0 => {
+            Ok(TypeView::Arrow {
+                domain: TypeId(domain),
+                codomain: TypeId(codomain),
+            })
+        }
+        _ => Err(TypeError::CorruptType(id)),
+    }
+}
+
+fn intern_bool_term(connection: &sqlite::Connection, value: bool) -> Result<TermId, TermError> {
+    let immediate = i64::from(value);
+    if let Some(id) = connection
+        .query_row(
+            "SELECT node_id FROM hol_node
+             WHERE tag = 'MBOOL' AND lhs = ?1 AND rhs IS NULL AND ty = ?2",
+            [immediate, BOOL_TYPE_ID.0],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+    {
+        return Ok(TermId(id));
+    }
+    connection.execute(
+        "INSERT INTO hol_node(tag, lhs, ty) VALUES ('MBOOL', ?1, ?2)",
+        [immediate, BOOL_TYPE_ID.0],
+    )?;
+    Ok(TermId(connection.last_insert_rowid()))
+}
+
+fn intern_free_term(
+    connection: &sqlite::Connection,
+    symbol: i64,
+    ty: TypeId,
+) -> Result<TermId, TermError> {
+    if let Some(id) = connection
+        .query_row(
+            "SELECT node_id FROM hol_node
+             WHERE tag = 'MFV' AND lhs = ?1 AND rhs IS NULL AND ty = ?2",
+            [symbol, ty.0],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+    {
+        return Ok(TermId(id));
+    }
+    connection.execute(
+        "INSERT INTO hol_node(tag, lhs, ty) VALUES ('MFV', ?1, ?2)",
+        [symbol, ty.0],
+    )?;
+    Ok(TermId(connection.last_insert_rowid()))
+}
+
+fn intern_application(
+    connection: &sqlite::Connection,
+    function: TermId,
+    argument: TermId,
+    ty: TypeId,
+) -> Result<TermId, TermError> {
+    if let Some(id) = connection
+        .query_row(
+            "SELECT node_id FROM hol_node
+             WHERE tag = 'MAPP' AND lhs = ?1 AND rhs = ?2 AND ty = ?3",
+            (function.0, argument.0, ty.0),
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+    {
+        return Ok(TermId(id));
+    }
+    connection.execute(
+        "INSERT INTO hol_node(tag, lhs, rhs, ty) VALUES ('MAPP', ?1, ?2, ?3)",
+        (function.0, argument.0, ty.0),
+    )?;
+    Ok(TermId(connection.last_insert_rowid()))
+}
+
+fn read_term(connection: &sqlite::Connection, id: TermId) -> Result<(TermView, TypeId), TermError> {
+    let row = connection
+        .query_row(
+            "SELECT tag, lhs, rhs, ty FROM hol_node WHERE node_id = ?1",
+            [id.0],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<i64>>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or(TermError::UnknownTerm(id))?;
+    let (term, ty) = match row {
+        (tag, Some(value @ 0..=1), None, Some(ty)) if tag == "MBOOL" => {
+            (TermView::Bool(value == 1), TypeId(ty))
+        }
+        (tag, Some(symbol), None, Some(ty)) if tag == "MFV" => {
+            (TermView::Free { symbol }, TypeId(ty))
+        }
+        (tag, Some(function), Some(argument), Some(ty)) if tag == "MAPP" => (
+            TermView::Application {
+                function: TermId(function),
+                argument: TermId(argument),
+            },
+            TypeId(ty),
+        ),
+        _ => return Err(TermError::CorruptTerm(id)),
+    };
+    read_type(connection, ty)?;
+    if matches!(term, TermView::Bool(_)) && ty != BOOL_TYPE_ID {
+        return Err(TermError::CorruptTerm(id));
+    }
+    Ok((term, ty))
+}
+
+fn free_term_symbols(connection: &sqlite::Connection, root: TermId) -> Result<Vec<i64>, TermError> {
+    let mut statement = connection.prepare(
+        "WITH RECURSIVE
+         edge(parent, child) AS (
+             SELECT node_id, lhs FROM hol_node WHERE tag = 'MAPP'
+             UNION ALL
+             SELECT node_id, rhs FROM hol_node WHERE tag = 'MAPP'
+         ),
+         reachable(node_id) AS (
+             SELECT ?1
+             UNION
+             SELECT edge.child FROM edge JOIN reachable ON edge.parent = reachable.node_id
+         )
+         SELECT DISTINCT node.lhs
+         FROM hol_node AS node JOIN reachable USING (node_id)
+         WHERE node.tag = 'MFV'
+         ORDER BY node.lhs",
+    )?;
+    let rows = statement.query_map([root.0], |row| row.get::<_, i64>(0))?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
 
 fn intern_kind(connection: &sqlite::Connection, kind: &Kind) -> Result<KindId, KindError> {
@@ -714,6 +1172,114 @@ impl fmt::Display for MetadataSchemaError {
 }
 
 impl StdError for MetadataSchemaError {}
+
+/// Failure to insert or inspect an admitted type.
+#[derive(Debug)]
+pub enum TypeError {
+    /// Policy denied the operation.
+    Denied(Operation),
+    /// No type has the requested ID.
+    UnknownType(TypeId),
+    /// A tagged node has an invalid type shape or classifier.
+    CorruptType(TypeId),
+    /// `SQLite` rejected an operation.
+    Sqlite(sqlite::Error),
+}
+
+impl fmt::Display for TypeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Denied(operation) => write!(formatter, "HOL policy denied {operation:?}"),
+            Self::UnknownType(id) => write!(formatter, "unknown type {}", id.get()),
+            Self::CorruptType(id) => write!(formatter, "type {} is structurally corrupt", id.get()),
+            Self::Sqlite(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl StdError for TypeError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            Self::Sqlite(error) => Some(error),
+            Self::Denied(_) | Self::UnknownType(_) | Self::CorruptType(_) => None,
+        }
+    }
+}
+
+impl From<sqlite::Error> for TypeError {
+    fn from(error: sqlite::Error) -> Self {
+        Self::Sqlite(error)
+    }
+}
+
+/// Failure to insert or inspect an admitted term.
+#[derive(Debug)]
+pub enum TermError {
+    /// Policy denied the operation.
+    Denied(Operation),
+    /// No term has the requested ID.
+    UnknownTerm(TermId),
+    /// A tagged node has an invalid term shape or classifier.
+    CorruptTerm(TermId),
+    /// The function position does not have a function type.
+    NotFunction(TypeId),
+    /// An application's argument type differs from its function domain.
+    ApplicationTypeMismatch {
+        /// Required argument type.
+        expected: TypeId,
+        /// Actual argument type.
+        actual: TypeId,
+    },
+    /// A referenced type is invalid.
+    Type(TypeError),
+    /// `SQLite` rejected an operation.
+    Sqlite(sqlite::Error),
+}
+
+impl fmt::Display for TermError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Denied(operation) => write!(formatter, "HOL policy denied {operation:?}"),
+            Self::UnknownTerm(id) => write!(formatter, "unknown term {}", id.get()),
+            Self::CorruptTerm(id) => write!(formatter, "term {} is structurally corrupt", id.get()),
+            Self::NotFunction(ty) => write!(formatter, "type {} is not a function type", ty.get()),
+            Self::ApplicationTypeMismatch { expected, actual } => write!(
+                formatter,
+                "application expected type {}, got {}",
+                expected.get(),
+                actual.get()
+            ),
+            Self::Type(error) => error.fmt(formatter),
+            Self::Sqlite(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl StdError for TermError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            Self::Type(error) => Some(error),
+            Self::Sqlite(error) => Some(error),
+            Self::Denied(_)
+            | Self::UnknownTerm(_)
+            | Self::CorruptTerm(_)
+            | Self::NotFunction(_)
+            | Self::ApplicationTypeMismatch { .. } => None,
+        }
+    }
+}
+
+impl From<TypeError> for TermError {
+    fn from(error: TypeError) -> Self {
+        Self::Type(error)
+    }
+}
+
+impl From<sqlite::Error> for TermError {
+    fn from(error: sqlite::Error) -> Self {
+        Self::Sqlite(error)
+    }
+}
 
 /// Failure to insert or inspect an admitted kind.
 #[derive(Debug)]
@@ -878,7 +1444,8 @@ mod tests {
             .0
             .sqlite()
             .query_row(
-                "SELECT count(*), count(DISTINCT node_id), count(DISTINCT tag) FROM hol_node",
+                "SELECT count(*), count(DISTINCT node_id), count(DISTINCT tag)
+                 FROM hol_node WHERE tag LIKE 'K%'",
                 [],
                 |row| {
                     Ok((
@@ -890,6 +1457,97 @@ mod tests {
             )
             .unwrap();
         assert_eq!(rows, (2, 2, 2));
+    }
+
+    #[test]
+    fn admits_closed_boolean_function_types_and_typed_applications() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let function_type = connection.insert_arrow_type(bool_type, bool_type).unwrap();
+        let function = connection.insert_free_term(10, function_type).unwrap();
+        let argument = connection.insert_free_term(11, bool_type).unwrap();
+        let application = connection.insert_application(function, argument).unwrap();
+        let literal = connection.insert_bool_term(true).unwrap();
+
+        assert_eq!(bool_type, BOOL_TYPE_ID);
+        assert_eq!(connection.type_view(bool_type).unwrap(), TypeView::Bool);
+        assert_eq!(
+            connection.type_view(function_type).unwrap(),
+            TypeView::Arrow {
+                domain: bool_type,
+                codomain: bool_type,
+            }
+        );
+        assert_eq!(connection.type_kind(function_type).unwrap(), STAR_ID);
+        assert_eq!(
+            connection.term(application).unwrap(),
+            TermView::Application { function, argument }
+        );
+        assert_eq!(connection.term(literal).unwrap(), TermView::Bool(true));
+        assert_eq!(connection.term_type(application).unwrap(), bool_type);
+        assert_eq!(
+            connection.term_free_variables(application).unwrap(),
+            [10, 11]
+        );
+        assert!(connection.term_is_locally_closed(application).unwrap());
+        assert!(
+            connection
+                .term_unbound_variables(application)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            application,
+            connection.insert_application(function, argument).unwrap()
+        );
+    }
+
+    #[test]
+    fn rejects_ill_typed_applications_atomically() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let function_type = connection.insert_arrow_type(bool_type, bool_type).unwrap();
+        let function = connection.insert_free_term(20, function_type).unwrap();
+        let wrong_argument = connection.insert_free_term(21, function_type).unwrap();
+
+        assert!(matches!(
+            connection.insert_application(function, wrong_argument),
+            Err(TermError::ApplicationTypeMismatch { expected, actual })
+                if expected == bool_type && actual == function_type
+        ));
+        let applications = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row(
+                "SELECT count(*) FROM hol_node WHERE tag = 'MAPP'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(applications, 0);
+    }
+
+    #[test]
+    fn policy_observes_type_and_term_operations() {
+        let mut connection = Connection::open_hol_in_memory(RecordingPolicy {
+            allowed: true,
+            operations: Vec::new(),
+        })
+        .unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let literal = connection.insert_bool_term(false).unwrap();
+        connection.type_view(bool_type).unwrap();
+        connection.term_type(literal).unwrap();
+        assert_eq!(
+            connection.protocol().policy().operations,
+            [
+                Operation::InsertType,
+                Operation::InsertTerm,
+                Operation::ReadType,
+                Operation::ReadTerm,
+            ]
+        );
     }
 
     #[test]
@@ -1006,6 +1664,6 @@ mod tests {
                 row.get::<_, i64>(0)
             })
             .unwrap();
-        assert_eq!(count, 1);
+        assert_eq!(count, 2);
     }
 }

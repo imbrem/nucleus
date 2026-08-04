@@ -13,6 +13,7 @@ use covalence_lib_sqlite as sqlite;
 pub use covalence_nucleus::sql::{ImageError, Outcome, QueryResult, Statement, Value};
 pub use covalence_nucleus::{
     AllowAll, Connection, Hol, HolOpenError, Kernel, Kind, KindError, KindId, KindView, Sql,
+    TermError, TermId, TermView, TypeError, TypeId, TypeView,
 };
 
 const SCHEMA: &str = "
@@ -451,7 +452,7 @@ impl From<sqlite::Error> for ReplError {
 mod web;
 
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-pub use web::{WebKernel, WebKind, WebOutcome};
+pub use web::{WebKernel, WebKind, WebOutcome, WebTerm, WebType};
 
 /// Returns the cross-target `SQLite` smoke-test value.
 #[must_use]

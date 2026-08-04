@@ -35,7 +35,44 @@ type Request =
       codomain: number;
     }
   | { id: number; operation: "holKind"; connection: number; kind: number }
-  | { id: number; operation: "holRank"; connection: number; kind: number };
+  | { id: number; operation: "holRank"; connection: number; kind: number }
+  | { id: number; operation: "holBoolType"; connection: number }
+  | {
+      id: number;
+      operation: "holArrowType";
+      connection: number;
+      domain: number;
+      codomain: number;
+    }
+  | { id: number; operation: "holType"; connection: number; type: number }
+  | {
+      id: number;
+      operation: "holBoolTerm";
+      connection: number;
+      value: boolean;
+    }
+  | {
+      id: number;
+      operation: "holFreeTerm";
+      connection: number;
+      symbol: number;
+      type: number;
+    }
+  | {
+      id: number;
+      operation: "holApplication";
+      connection: number;
+      function: number;
+      argument: number;
+    }
+  | { id: number; operation: "holTerm"; connection: number; term: number }
+  | { id: number; operation: "holTermType"; connection: number; term: number }
+  | {
+      id: number;
+      operation: "holTermFreeVariables";
+      connection: number;
+      term: number;
+    };
 
 type SqlValue =
   | { kind: "null" }
@@ -119,6 +156,69 @@ async function execute(request: Request): Promise<unknown> {
     }
     case "holRank":
       return connection.hol_rank(request.connection, request.kind);
+    case "holBoolType":
+      return connection.hol_bool_type(request.connection);
+    case "holArrowType":
+      return connection.hol_arrow_type(
+        request.connection,
+        request.domain,
+        request.codomain,
+      );
+    case "holType": {
+      const type = connection.hol_type(request.connection, request.type);
+      try {
+        return type.tag() === "bool"
+          ? { kind: "bool" }
+          : {
+              kind: "arrow",
+              domain: type.domain(),
+              codomain: type.codomain(),
+            };
+      } finally {
+        type.free();
+      }
+    }
+    case "holBoolTerm":
+      return connection.hol_bool_term(request.connection, request.value);
+    case "holFreeTerm":
+      return connection.hol_free_term(
+        request.connection,
+        request.symbol,
+        request.type,
+      );
+    case "holApplication":
+      return connection.hol_application(
+        request.connection,
+        request.function,
+        request.argument,
+      );
+    case "holTerm": {
+      const term = connection.hol_term(request.connection, request.term);
+      try {
+        switch (term.tag()) {
+          case "bool":
+            return { kind: "bool", value: term.boolean() };
+          case "free":
+            return { kind: "free", symbol: term.symbol() };
+          case "application":
+            return {
+              kind: "application",
+              function: term.function(),
+              argument: term.argument(),
+            };
+          default:
+            throw new Error("kernel returned an unknown HOL term tag");
+        }
+      } finally {
+        term.free();
+      }
+    }
+    case "holTermType":
+      return connection.hol_term_type(request.connection, request.term);
+    case "holTermFreeVariables":
+      return Array.from(
+        connection.hol_term_free_variables(request.connection, request.term),
+      );
   }
 }
 

@@ -7,7 +7,8 @@ mod kernel;
 pub use connection::Connection;
 pub use hol::{
     AllowAll, Hol, HolOpenError, HolSchema, Kind, KindError, KindId, KindView, MetadataSchemaError,
-    MetadataType, MetadataValue, Operation, Policy,
+    MetadataType, MetadataValue, Operation, Policy, TermError, TermId, TermView, TypeError, TypeId,
+    TypeView,
 };
 pub use kernel::Kernel;
 

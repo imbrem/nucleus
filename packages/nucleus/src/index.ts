@@ -17,6 +17,15 @@ export type HolKind =
   | { kind: "star" }
   | { kind: "arrow"; domain: number; codomain: number };
 
+export type HolType =
+  | { kind: "bool" }
+  | { kind: "arrow"; domain: number; codomain: number };
+
+export type HolTerm =
+  | { kind: "bool"; value: boolean }
+  | { kind: "free"; symbol: number }
+  | { kind: "application"; function: number; argument: number };
+
 export interface BrowserSqlConnection {
   run(sql: string): Promise<SqlOutcome>;
   putImage(bytes: Uint8Array): Promise<string>;
@@ -31,6 +40,15 @@ export interface BrowserHolConnection {
   arrow(domain: number, codomain: number): Promise<number>;
   kind(id: number): Promise<HolKind>;
   rank(id: number): Promise<number>;
+  boolType(): Promise<number>;
+  arrowType(domain: number, codomain: number): Promise<number>;
+  type(id: number): Promise<HolType>;
+  boolTerm(value: boolean): Promise<number>;
+  freeTerm(symbol: number, type: number): Promise<number>;
+  application(function_: number, argument: number): Promise<number>;
+  term(id: number): Promise<HolTerm>;
+  termType(id: number): Promise<number>;
+  termFreeVariables(id: number): Promise<number[]>;
   close(): Promise<void>;
 }
 
@@ -67,7 +85,31 @@ type RequestBody =
       codomain: number;
     }
   | { operation: "holKind"; connection: number; kind: number }
-  | { operation: "holRank"; connection: number; kind: number };
+  | { operation: "holRank"; connection: number; kind: number }
+  | { operation: "holBoolType"; connection: number }
+  | {
+      operation: "holArrowType";
+      connection: number;
+      domain: number;
+      codomain: number;
+    }
+  | { operation: "holType"; connection: number; type: number }
+  | { operation: "holBoolTerm"; connection: number; value: boolean }
+  | {
+      operation: "holFreeTerm";
+      connection: number;
+      symbol: number;
+      type: number;
+    }
+  | {
+      operation: "holApplication";
+      connection: number;
+      function: number;
+      argument: number;
+    }
+  | { operation: "holTerm"; connection: number; term: number }
+  | { operation: "holTermType"; connection: number; term: number }
+  | { operation: "holTermFreeVariables"; connection: number; term: number };
 
 type WorkerResponse =
   | { id: number; ok: true; value: unknown }
@@ -235,6 +277,80 @@ class WorkerHolConnection implements BrowserHolConnection {
       operation: "holRank",
       connection: this.connection,
       kind: id,
+    });
+  }
+
+  boolType(): Promise<number> {
+    return this.#request({
+      operation: "holBoolType",
+      connection: this.connection,
+    });
+  }
+
+  arrowType(domain: number, codomain: number): Promise<number> {
+    return this.#request({
+      operation: "holArrowType",
+      connection: this.connection,
+      domain,
+      codomain,
+    });
+  }
+
+  type(id: number): Promise<HolType> {
+    return this.#request({
+      operation: "holType",
+      connection: this.connection,
+      type: id,
+    });
+  }
+
+  boolTerm(value: boolean): Promise<number> {
+    return this.#request({
+      operation: "holBoolTerm",
+      connection: this.connection,
+      value,
+    });
+  }
+
+  freeTerm(symbol: number, type: number): Promise<number> {
+    return this.#request({
+      operation: "holFreeTerm",
+      connection: this.connection,
+      symbol,
+      type,
+    });
+  }
+
+  application(function_: number, argument: number): Promise<number> {
+    return this.#request({
+      operation: "holApplication",
+      connection: this.connection,
+      function: function_,
+      argument,
+    });
+  }
+
+  term(id: number): Promise<HolTerm> {
+    return this.#request({
+      operation: "holTerm",
+      connection: this.connection,
+      term: id,
+    });
+  }
+
+  termType(id: number): Promise<number> {
+    return this.#request({
+      operation: "holTermType",
+      connection: this.connection,
+      term: id,
+    });
+  }
+
+  termFreeVariables(id: number): Promise<number[]> {
+    return this.#request({
+      operation: "holTermFreeVariables",
+      connection: this.connection,
+      term: id,
     });
   }
 
