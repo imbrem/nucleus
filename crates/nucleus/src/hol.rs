@@ -14,7 +14,7 @@ pub use namespace::{
     ExportError, ExportId, ExportSort, ExportView, NamespaceError, NamespaceExport, NamespaceId,
     NamespaceView,
 };
-pub use trust::SnapshotTrustError;
+pub use trust::{SnapshotTrustError, TrustedImportError, TrustedImportId, TrustedImportView};
 pub use validate::{HolImageCounts, HolImageValidationError, ValidatedHolImage};
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -419,6 +419,10 @@ pub enum Operation {
     AcceptAuthenticatedSnapshot,
     /// Read connection-local acceptance of an exact authenticated snapshot assertion.
     ReadAcceptedSnapshot,
+    /// Persist an auditable accepted assumption for one exact registered import.
+    AcceptTrustedImport,
+    /// Read a persistent accepted-import assumption.
+    ReadTrustedImport,
     /// Check and persist one exact structural context union.
     ProveContextUnion,
     /// Load and recheck one exact structural context union.
@@ -536,6 +540,8 @@ pub enum MetadataTable {
     NamespaceExport,
     /// Schema-qualified unfetched database references.
     Import,
+    /// Persisted accepted attestations for exact import references.
+    TrustedImport,
 }
 
 /// One existing row which may carry user metadata.
@@ -584,6 +590,8 @@ pub enum MetadataTarget {
     },
     /// An unfetched schema-qualified database reference.
     Import(ImportId),
+    /// A persisted accepted import attestation.
+    TrustedImport(TrustedImportId),
 }
 
 impl MetadataTarget {
@@ -632,6 +640,12 @@ impl MetadataTarget {
         Self::Import(import)
     }
 
+    /// Selects a persisted accepted import attestation.
+    #[must_use]
+    pub const fn trusted_import(trusted_import: TrustedImportId) -> Self {
+        Self::TrustedImport(trusted_import)
+    }
+
     const fn table(self) -> MetadataTable {
         match self {
             Self::Node(_) => MetadataTable::Node,
@@ -643,6 +657,7 @@ impl MetadataTarget {
             Self::Namespace(_) => MetadataTable::Namespace,
             Self::NamespaceExport { .. } => MetadataTable::NamespaceExport,
             Self::Import(_) => MetadataTable::Import,
+            Self::TrustedImport(_) => MetadataTable::TrustedImport,
         }
     }
 }
@@ -683,6 +698,12 @@ impl From<ImportId> for MetadataTarget {
     }
 }
 
+impl From<TrustedImportId> for MetadataTarget {
+    fn from(id: TrustedImportId) -> Self {
+        Self::TrustedImport(id)
+    }
+}
+
 impl MetadataTable {
     const fn sql(self) -> &'static str {
         match self {
@@ -695,6 +716,7 @@ impl MetadataTable {
             Self::Namespace => "hol_namespace",
             Self::NamespaceExport => "hol_namespace_export",
             Self::Import => "hol_import",
+            Self::TrustedImport => "hol_trusted_import",
         }
     }
 
@@ -714,6 +736,13 @@ impl MetadataTable {
             ],
             Self::NamespaceExport => &["namespace_id", "export_id", "sort", "local_id", "name"],
             Self::Import => &["import_id", "schema_hash", "image_hash"],
+            Self::TrustedImport => &[
+                "trusted_import_id",
+                "import_id",
+                "signer_hash",
+                "public_key",
+                "signature",
+            ],
         };
         columns.iter().any(|core| core.eq_ignore_ascii_case(name))
     }
@@ -2082,37 +2111,47 @@ impl<P: Policy> Connection<Hol<P>> {
         let (neutron, hol) = self.parts_mut();
         authorize_metadata(&mut hol.policy, Operation::WriteMetadata)?;
         let transaction = neutron.sqlite().unchecked_transaction()?;
-        require_metadata_target(&transaction, target)?;
-        if !metadata.is_empty() {
-            let table = target.table();
-            let mut seen = HashSet::new();
-            let mut assignments = Vec::with_capacity(metadata.len());
-            let mut values = Vec::with_capacity(metadata.len() + 2);
-            for (name, value) in metadata {
-                let column = hol
-                    .schema
-                    .column_on(table, name)
-                    .ok_or_else(|| MetadataError::UnknownColumn((*name).to_owned()))?;
-                if !seen.insert(column.name.to_ascii_lowercase()) {
-                    return Err(MetadataError::DuplicateColumn((*name).to_owned()));
-                }
-                assignments.push(format!("{} = ?", quote_identifier(&column.name)));
-                values.push(sqlite::types::Value::from(value.clone()));
-            }
-            let (predicate, keys) = metadata_target_predicate(target, values.len() + 1);
-            values.extend(keys.into_iter().map(sqlite::types::Value::Integer));
-            transaction.execute(
-                &format!(
-                    "UPDATE {} SET {} WHERE {predicate}",
-                    table.sql(),
-                    assignments.join(", ")
-                ),
-                sqlite::params_from_iter(values.iter()),
-            )?;
-        }
+        write_target_metadata(&transaction, &hol.schema, target, metadata)?;
         transaction.commit()?;
         Ok(())
     }
+}
+
+pub(super) fn write_target_metadata(
+    connection: &sqlite::Connection,
+    schema: &HolSchema,
+    target: MetadataTarget,
+    metadata: &[(&str, MetadataValue)],
+) -> Result<(), MetadataError> {
+    require_metadata_target(connection, target)?;
+    if metadata.is_empty() {
+        return Ok(());
+    }
+    let table = target.table();
+    let mut seen = HashSet::new();
+    let mut assignments = Vec::with_capacity(metadata.len());
+    let mut values = Vec::with_capacity(metadata.len() + 2);
+    for (name, value) in metadata {
+        let column = schema
+            .column_on(table, name)
+            .ok_or_else(|| MetadataError::UnknownColumn((*name).to_owned()))?;
+        if !seen.insert(column.name.to_ascii_lowercase()) {
+            return Err(MetadataError::DuplicateColumn((*name).to_owned()));
+        }
+        assignments.push(format!("{} = ?", quote_identifier(&column.name)));
+        values.push(sqlite::types::Value::from(value.clone()));
+    }
+    let (predicate, keys) = metadata_target_predicate(target, values.len() + 1);
+    values.extend(keys.into_iter().map(sqlite::types::Value::Integer));
+    connection.execute(
+        &format!(
+            "UPDATE {} SET {} WHERE {predicate}",
+            table.sql(),
+            assignments.join(", ")
+        ),
+        sqlite::params_from_iter(values.iter()),
+    )?;
+    Ok(())
 }
 
 fn authorize_metadata(policy: &mut impl Policy, operation: Operation) -> Result<(), MetadataError> {
@@ -2168,6 +2207,10 @@ fn metadata_target_predicate(target: MetadataTarget, first_parameter: usize) -> 
         MetadataTarget::Import(import) => (
             format!("import_id = ?{first_parameter}"),
             vec![import.get()],
+        ),
+        MetadataTarget::TrustedImport(trusted_import) => (
+            format!("trusted_import_id = ?{first_parameter}"),
+            vec![trusted_import.get()],
         ),
     }
 }
