@@ -26,7 +26,7 @@ pub struct HolImageCounts {
     pub untrusted_judgement_rows: u64,
 }
 
-/// Exact bytes admitted as the default tagged-node HOL schema.
+/// Exact bytes admitted as one expected tagged-node HOL physical schema.
 ///
 /// This evidence establishes `SQLite` integrity, exact physical schema, syntax
 /// typing, binder closure invariants, context well-formedness, and judgement
@@ -152,7 +152,7 @@ fn validate_schema(
         [],
         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
     )?;
-    if identity == (0, "tagged-node".to_owned()) {
+    if identity == (1, "tagged-node".to_owned()) {
         Ok(schema_manifest_id(&expected_manifest))
     } else {
         Err(HolImageValidationError::SchemaMismatch)
@@ -253,7 +253,7 @@ fn validate_contents(
     }
 
     let judgements = connection
-        .prepare("SELECT ctx_id, term_id FROM hol_theorem ORDER BY ctx_id, term_id")?
+        .prepare("SELECT ctx_id, term_id FROM hol_judgement ORDER BY ctx_id, term_id")?
         .query_map([], |row| Ok((ContextId(row.get(0)?), TermId(row.get(1)?))))?
         .collect::<Result<Vec<_>, _>>()?;
     for (context, term) in &judgements {
@@ -565,12 +565,45 @@ mod tests {
         let restored = covalence_neutron::Connection::deserialize(&validated.into_bytes()).unwrap();
         let conclusion = restored
             .sqlite()
-            .query_row("SELECT term_id FROM hol_theorem", [], |row| {
+            .query_row("SELECT term_id FROM hol_judgement", [], |row| {
                 row.get::<_, i64>(0)
             })
             .unwrap();
         let (view, _) = super::super::read_term(restored.sqlite(), TermId(conclusion)).unwrap();
         assert!(matches!(view, TermView::Equality { .. }));
+
+        let untrusted = covalence_neutron::Connection::deserialize(&bytes).unwrap();
+        untrusted
+            .sqlite()
+            .execute(
+                "INSERT INTO hol_node(tag, lhs, ty) VALUES ('MBOOL', 0, 2)",
+                [],
+            )
+            .unwrap();
+        let falsehood = untrusted.sqlite().last_insert_rowid();
+        untrusted
+            .sqlite()
+            .execute(
+                "INSERT INTO hol_judgement(ctx_id, term_id) VALUES (0, ?1)",
+                [falsehood],
+            )
+            .unwrap();
+        untrusted
+            .sqlite()
+            .execute(
+                "INSERT INTO hol_proof_event(ctx_id, term_id, rule)
+                 VALUES (999, 999, 'forged diagnostics')",
+                [],
+            )
+            .unwrap();
+        let untrusted = untrusted.serialize().unwrap();
+        assert_eq!(
+            ValidatedHolImage::validate(&untrusted)
+                .unwrap()
+                .counts()
+                .untrusted_judgement_rows,
+            2
+        );
     }
 
     #[test]
