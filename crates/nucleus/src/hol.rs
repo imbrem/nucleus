@@ -307,6 +307,76 @@ pub enum MetadataTable {
     Theorem,
 }
 
+/// One existing row which may carry user metadata.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MetadataTarget {
+    /// A universal syntax node.
+    Node(i64),
+    /// An immutable context header.
+    Context(ContextId),
+    /// A context-membership pair.
+    ContextMember {
+        /// Immutable context.
+        context: ContextId,
+        /// Boolean member.
+        term: TermId,
+    },
+    /// A persisted proved judgement.
+    Theorem {
+        /// Assumption context.
+        context: ContextId,
+        /// Boolean conclusion.
+        term: TermId,
+    },
+}
+
+impl MetadataTarget {
+    /// Selects a context-membership row.
+    #[must_use]
+    pub const fn context_member(context: ContextId, term: TermId) -> Self {
+        Self::ContextMember { context, term }
+    }
+
+    /// Selects a persisted proved judgement.
+    #[must_use]
+    pub const fn theorem(context: ContextId, term: TermId) -> Self {
+        Self::Theorem { context, term }
+    }
+
+    const fn table(self) -> MetadataTable {
+        match self {
+            Self::Node(_) => MetadataTable::Node,
+            Self::Context(_) => MetadataTable::Context,
+            Self::ContextMember { .. } => MetadataTable::ContextMember,
+            Self::Theorem { .. } => MetadataTable::Theorem,
+        }
+    }
+}
+
+impl From<KindId> for MetadataTarget {
+    fn from(id: KindId) -> Self {
+        Self::Node(id.get())
+    }
+}
+
+impl From<TypeId> for MetadataTarget {
+    fn from(id: TypeId) -> Self {
+        Self::Node(id.get())
+    }
+}
+
+impl From<TermId> for MetadataTarget {
+    fn from(id: TermId) -> Self {
+        Self::Node(id.get())
+    }
+}
+
+impl From<ContextId> for MetadataTarget {
+    fn from(id: ContextId) -> Self {
+        Self::Context(id)
+    }
+}
+
 impl MetadataTable {
     const fn sql(self) -> &'static str {
         match self {
@@ -977,6 +1047,155 @@ impl<P: Policy> Connection<Hol<P>> {
         read_kind(neutron.sqlite(), id)?;
         read_metadata(neutron.sqlite(), &hol.schema, id.0, columns)
     }
+
+    /// Reads selected user metadata from an existing structural row.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the read, the target or a column is
+    /// unknown, or `SQLite` rejects the query.
+    pub fn metadata(
+        &mut self,
+        target: MetadataTarget,
+        columns: &[&str],
+    ) -> Result<Vec<MetadataValue>, MetadataError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_metadata(&mut hol.policy, Operation::ReadMetadata)?;
+        read_target_metadata(neutron.sqlite(), &hol.schema, target, columns)
+    }
+
+    /// Replaces selected user metadata on an existing structural row.
+    ///
+    /// Metadata is never consulted by syntax admission or proof rules.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the write, the target or a column is
+    /// unknown, a column is repeated, or `SQLite` rejects the atomic update.
+    pub fn set_metadata(
+        &mut self,
+        target: MetadataTarget,
+        metadata: &[(&str, MetadataValue)],
+    ) -> Result<(), MetadataError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_metadata(&mut hol.policy, Operation::WriteMetadata)?;
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        require_metadata_target(&transaction, target)?;
+        if !metadata.is_empty() {
+            let table = target.table();
+            let mut seen = HashSet::new();
+            let mut assignments = Vec::with_capacity(metadata.len());
+            let mut values = Vec::with_capacity(metadata.len() + 2);
+            for (name, value) in metadata {
+                let column = hol
+                    .schema
+                    .column_on(table, name)
+                    .ok_or_else(|| MetadataError::UnknownColumn((*name).to_owned()))?;
+                if !seen.insert(column.name.to_ascii_lowercase()) {
+                    return Err(MetadataError::DuplicateColumn((*name).to_owned()));
+                }
+                assignments.push(format!("{} = ?", quote_identifier(&column.name)));
+                values.push(sqlite::types::Value::from(value.clone()));
+            }
+            let (predicate, keys) = metadata_target_predicate(target, values.len() + 1);
+            values.extend(keys.into_iter().map(sqlite::types::Value::Integer));
+            transaction.execute(
+                &format!(
+                    "UPDATE {} SET {} WHERE {predicate}",
+                    table.sql(),
+                    assignments.join(", ")
+                ),
+                sqlite::params_from_iter(values.iter()),
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+}
+
+fn authorize_metadata(policy: &mut impl Policy, operation: Operation) -> Result<(), MetadataError> {
+    if policy.allows(operation) {
+        Ok(())
+    } else {
+        Err(MetadataError::Denied(operation))
+    }
+}
+
+fn metadata_target_predicate(target: MetadataTarget, first_parameter: usize) -> (String, Vec<i64>) {
+    match target {
+        MetadataTarget::Node(id) => (format!("node_id = ?{first_parameter}"), vec![id]),
+        MetadataTarget::Context(context) => {
+            (format!("ctx_id = ?{first_parameter}"), vec![context.get()])
+        }
+        MetadataTarget::ContextMember { context, term }
+        | MetadataTarget::Theorem { context, term } => (
+            format!(
+                "ctx_id = ?{first_parameter} AND term_id = ?{}",
+                first_parameter + 1
+            ),
+            vec![context.get(), term.get()],
+        ),
+    }
+}
+
+fn require_metadata_target(
+    connection: &sqlite::Connection,
+    target: MetadataTarget,
+) -> Result<(), MetadataError> {
+    let (predicate, keys) = metadata_target_predicate(target, 1);
+    let exists = connection.query_row(
+        &format!(
+            "SELECT EXISTS(SELECT 1 FROM {} WHERE {predicate})",
+            target.table().sql()
+        ),
+        sqlite::params_from_iter(keys.iter()),
+        |row| row.get::<_, bool>(0),
+    )?;
+    if exists {
+        Ok(())
+    } else {
+        Err(MetadataError::UnknownTarget(target))
+    }
+}
+
+fn read_target_metadata(
+    connection: &sqlite::Connection,
+    schema: &HolSchema,
+    target: MetadataTarget,
+    columns: &[&str],
+) -> Result<Vec<MetadataValue>, MetadataError> {
+    require_metadata_target(connection, target)?;
+    if columns.is_empty() {
+        return Ok(Vec::new());
+    }
+    let table = target.table();
+    let columns = columns
+        .iter()
+        .map(|name| {
+            schema
+                .column_on(table, name)
+                .map(|column| quote_identifier(&column.name))
+                .ok_or_else(|| MetadataError::UnknownColumn((*name).to_owned()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let (predicate, keys) = metadata_target_predicate(target, 1);
+    connection
+        .query_row(
+            &format!(
+                "SELECT {} FROM {} WHERE {predicate}",
+                columns.join(", "),
+                table.sql()
+            ),
+            sqlite::params_from_iter(keys.iter()),
+            |row| {
+                (0..columns.len())
+                    .map(|index| row.get::<_, sqlite::types::Value>(index))
+                    .collect::<Result<Vec<_>, _>>()
+            },
+        )?
+        .into_iter()
+        .map(|value| Ok(MetadataValue::from(value)))
+        .collect()
 }
 
 fn install_metadata_schema(
@@ -1525,6 +1744,53 @@ impl fmt::Display for MetadataSchemaError {
 }
 
 impl StdError for MetadataSchemaError {}
+
+/// Failure to read or update user metadata.
+#[derive(Debug)]
+pub enum MetadataError {
+    /// Policy denied the metadata operation.
+    Denied(Operation),
+    /// The selected structural row does not exist.
+    UnknownTarget(MetadataTarget),
+    /// The selected table has no declared metadata column with this name.
+    UnknownColumn(String),
+    /// One update names a metadata column more than once.
+    DuplicateColumn(String),
+    /// `SQLite` rejected the operation.
+    Sqlite(sqlite::Error),
+}
+
+impl fmt::Display for MetadataError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Denied(operation) => write!(formatter, "HOL policy denied {operation:?}"),
+            Self::UnknownTarget(target) => write!(formatter, "unknown metadata target {target:?}"),
+            Self::UnknownColumn(name) => write!(formatter, "unknown HOL metadata column {name:?}"),
+            Self::DuplicateColumn(name) => {
+                write!(formatter, "duplicate HOL metadata column {name:?}")
+            }
+            Self::Sqlite(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl StdError for MetadataError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            Self::Sqlite(error) => Some(error),
+            Self::Denied(_)
+            | Self::UnknownTarget(_)
+            | Self::UnknownColumn(_)
+            | Self::DuplicateColumn(_) => None,
+        }
+    }
+}
+
+impl From<sqlite::Error> for MetadataError {
+    fn from(error: sqlite::Error) -> Self {
+        Self::Sqlite(error)
+    }
+}
 
 /// Failure to insert or inspect an admitted type.
 #[derive(Debug)]
@@ -2243,6 +2509,47 @@ mod tests {
             .add_index_on(MetadataTable::Theorem, "theorem cost", ["cost"], false)
             .unwrap();
         let mut connection = Connection::open_hol_in_memory_with_schema(AllowAll, schema).unwrap();
+
+        let term = connection.insert_bool_term(false).unwrap();
+        let context = connection.define_context([term]).unwrap();
+        let conclusion = connection
+            .prove_hypothesis(context, term)
+            .unwrap()
+            .conclusion();
+        connection
+            .set_metadata(
+                context.into(),
+                &[("label", MetadataValue::Text("assumptions".to_owned()))],
+            )
+            .unwrap();
+        connection
+            .set_metadata(
+                MetadataTarget::context_member(context, term),
+                &[("label", MetadataValue::Text("given".to_owned()))],
+            )
+            .unwrap();
+        connection
+            .set_metadata(
+                MetadataTarget::theorem(context, conclusion),
+                &[("cost", MetadataValue::Integer(1))],
+            )
+            .unwrap();
+        assert_eq!(
+            connection.metadata(context.into(), &["label"]).unwrap(),
+            [MetadataValue::Text("assumptions".to_owned())]
+        );
+        assert_eq!(
+            connection
+                .metadata(MetadataTarget::context_member(context, term), &["label"])
+                .unwrap(),
+            [MetadataValue::Text("given".to_owned())]
+        );
+        assert_eq!(
+            connection
+                .metadata(MetadataTarget::theorem(context, conclusion), &["cost"])
+                .unwrap(),
+            [MetadataValue::Integer(1)]
+        );
 
         assert_eq!(
             connection
