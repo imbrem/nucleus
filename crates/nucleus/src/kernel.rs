@@ -61,7 +61,10 @@ impl Kernel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AllowAll, ContextId, Verifier as _, schema_valid_snapshot_statement};
+    use crate::{
+        AllowAll, AuthenticatedValidatedHolImage, ContextId, HolSchema, MetadataType,
+        SignedSnapshotEnvelope, Verifier as _, schema_valid_snapshot_statement,
+    };
 
     struct DenyExport;
 
@@ -138,12 +141,55 @@ mod tests {
     #[test]
     fn signed_hol_export_is_policy_gated() {
         let kernel = Kernel::ephemeral();
-        let mut connection = kernel.open_hol(DenyExport).unwrap();
+        let mut schema = HolSchema::new();
+        for index in 0..129 {
+            schema
+                .add_column(format!("metadata_{index}"), MetadataType::Integer)
+                .unwrap();
+        }
+        let mut connection =
+            Connection::open_hol_in_memory_with_schema(DenyExport, schema).unwrap();
         assert!(matches!(
             kernel.export_hol(&mut connection),
             Err(crate::HolExportError::Denied(
                 crate::Operation::ExportSignedSnapshot
             ))
         ));
+    }
+
+    #[test]
+    fn signed_hol_export_carries_its_checked_custom_schema_recipe() {
+        let kernel = Kernel::ephemeral();
+        let mut schema = HolSchema::new();
+        schema
+            .add_column("source label", MetadataType::Text)
+            .unwrap();
+        schema
+            .add_index("by source", ["source label"], false)
+            .unwrap();
+        let mut connection = Connection::open_hol_in_memory_with_schema(AllowAll, schema).unwrap();
+        connection.insert_bool_term(true).unwrap();
+
+        let snapshot = kernel.export_hol(&mut connection).unwrap();
+        assert_eq!(
+            snapshot.descriptor().schema_id(),
+            snapshot.attestation().schema()
+        );
+        let attestation = snapshot.attestation();
+        let authenticated = SignedSnapshotEnvelope::new(
+            snapshot.image().bytes(),
+            attestation.schema(),
+            attestation.image(),
+            attestation.signer(),
+            *attestation.public_key(),
+            attestation.signature(),
+        )
+        .authenticate()
+        .unwrap();
+        AuthenticatedValidatedHolImage::validate_with_descriptor(
+            authenticated,
+            snapshot.descriptor(),
+        )
+        .unwrap();
     }
 }

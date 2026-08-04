@@ -15,12 +15,14 @@ pub use covalence_nucleus::sql::{ImageError, Outcome, QueryResult, Statement, Va
 pub use covalence_nucleus::{
     AllowAll, AuthenticatedHolImageValidationError, AuthenticatedValidatedHolImage, Connection,
     ContextError, ContextId, ContextImplication, ExportError, ExportId, ExportSort, ExportView,
-    Hol, HolDatabaseRef, HolExportError, HolOpenError, ImportError, ImportId, ImportedExport,
-    ImportedReaderError, ImportedTermView, Kernel, Kind, KindError, KindId, KindView,
-    NamespaceError, NamespaceExport, NamespaceId, NamespaceView, ProofError, ProofSession,
-    SignedSnapshotAttestation, SignedSnapshotEnvelope, SnapshotAuthenticationError,
-    SnapshotTrustError, Sql, TermError, TermId, TermView, Theorem, TrustedImportError,
-    TrustedImportId, TrustedImportImageError, TypeError, TypeId, TypeView, ValidatedHolImage,
+    Hol, HolDatabaseRef, HolExportError, HolOpenError, HolSchema, HolSchemaDescriptor,
+    HolSchemaDescriptorError, ImportError, ImportId, ImportedExport, ImportedReaderError,
+    ImportedTermView, Kernel, Kind, KindError, KindId, KindView, MetadataTable, MetadataTarget,
+    MetadataType, MetadataValue, NamespaceError, NamespaceExport, NamespaceId, NamespaceView,
+    ProofError, ProofSession, SignedSnapshotAttestation, SignedSnapshotEnvelope,
+    SnapshotAuthenticationError, SnapshotTrustError, Sql, TermError, TermId, TermView, Theorem,
+    TrustedImportError, TrustedImportId, TrustedImportImageError, TypeError, TypeId, TypeView,
+    ValidatedHolImage,
 };
 
 const SCHEMA: &str = "
@@ -240,6 +242,7 @@ pub struct LocalRepl {
 /// Transport-neutral owned signed HOL snapshot returned by the shared REPL.
 pub struct LocalSignedHolSnapshot {
     bytes: Vec<u8>,
+    descriptor: Vec<u8>,
     schema: covalence_lib_hash::O256,
     image: covalence_lib_hash::O256,
     signer: covalence_lib_hash::O256,
@@ -386,6 +389,12 @@ impl LocalSignedHolSnapshot {
         &self.bytes
     }
 
+    /// Returns the canonical checked metadata schema descriptor.
+    #[must_use]
+    pub fn descriptor(&self) -> &[u8] {
+        &self.descriptor
+    }
+
     /// Returns the interpretation-qualified HOL schema identity.
     #[must_use]
     pub const fn schema(&self) -> covalence_lib_hash::O256 {
@@ -480,6 +489,27 @@ impl LocalRepl {
             .kernel
             .open_hol(AllowAll)
             .map_err(LocalReplError::HolOpen)?;
+        let id = self
+            .directory
+            .insert("nucleus/hol-common-v2", LocalConnection::Hol(connection))?;
+        self.directory.select(id)?;
+        Ok(id)
+    }
+
+    /// Opens and selects a HOL-omega connection with one checked portable metadata schema.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the descriptor is malformed/noncanonical or the connection/schema or
+    /// directory row cannot open.
+    pub fn open_hol_with_descriptor(
+        &mut self,
+        descriptor: &[u8],
+    ) -> Result<ConnectionId, LocalReplError> {
+        let descriptor = HolSchemaDescriptor::decode(descriptor)?;
+        let connection =
+            Connection::open_hol_in_memory_with_schema(AllowAll, descriptor.into_schema())
+                .map_err(LocalReplError::HolOpen)?;
         let id = self
             .directory
             .insert("nucleus/hol-common-v2", LocalConnection::Hol(connection))?;
@@ -638,6 +668,7 @@ impl LocalRepl {
         let attestation = snapshot.attestation();
         Ok(LocalSignedHolSnapshot {
             bytes: snapshot.image().bytes().to_vec(),
+            descriptor: snapshot.descriptor().encode().to_vec(),
             schema: attestation.schema(),
             image: attestation.image(),
             signer: attestation.signer(),
@@ -720,8 +751,8 @@ impl LocalRepl {
             .map_err(Into::into)
     }
 
-    /// Authenticates and validates complete bytes, matches one exact persistent trust record, and
-    /// reads a structural namespace export through a scoped immutable reader.
+    /// Authenticates and validates complete zero-metadata HOL bytes, matches one exact persistent
+    /// trust record, and reads a structural namespace export through a scoped immutable reader.
     ///
     /// The returned integers are inert coordinates in the imported database. This operation does
     /// not import values into the local node table or grant authority to imported judgements.
@@ -746,10 +777,50 @@ impl LocalRepl {
         namespace: NamespaceId,
         export: ExportId,
     ) -> Result<Option<LocalImportedHolExport>, LocalReplError> {
+        let descriptor = HolSchemaDescriptor::from_schema(&HolSchema::new())?;
+        self.inspect_trusted_hol_export_with_descriptor(
+            id,
+            trusted_import,
+            bytes,
+            descriptor.encode(),
+            schema,
+            image,
+            signer,
+            public_key,
+            signature,
+            namespace,
+            export,
+        )
+    }
+
+    /// Authenticates and validates complete bytes against their supplied portable metadata schema,
+    /// then reads one exact trusted namespace export through a scoped immutable reader.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if authentication, descriptor decoding, exact detached validation,
+    /// persistent trust matching, immutable VFS verification, or structural reading fails.
+    #[allow(clippy::too_many_arguments)]
+    pub fn inspect_trusted_hol_export_with_descriptor(
+        &mut self,
+        id: ConnectionId,
+        trusted_import: TrustedImportId,
+        bytes: &[u8],
+        descriptor: &[u8],
+        schema: O256,
+        image: O256,
+        signer: O256,
+        public_key: [u8; 32],
+        signature: &[u8],
+        namespace: NamespaceId,
+        export: ExportId,
+    ) -> Result<Option<LocalImportedHolExport>, LocalReplError> {
         let authenticated =
             SignedSnapshotEnvelope::new(bytes, schema, image, signer, public_key, signature)
                 .authenticate()?;
-        let validated = AuthenticatedValidatedHolImage::validate_default(authenticated)?;
+        let descriptor = HolSchemaDescriptor::decode(descriptor)?;
+        let validated =
+            AuthenticatedValidatedHolImage::validate_with_descriptor(authenticated, &descriptor)?;
         let matched = self
             .hol_mut(id)?
             .match_trusted_import_image(trusted_import, validated)?;
@@ -964,6 +1035,8 @@ pub enum LocalReplError {
     SqlOpen(covalence_neutron::ConnectionError),
     /// A HOL connection or its schema could not open.
     HolOpen(HolOpenError),
+    /// A portable HOL metadata schema descriptor was invalid.
+    HolSchemaDescriptor(HolSchemaDescriptorError),
     /// A namespace operation failed.
     Namespace(NamespaceError),
     /// A namespace export operation failed.
@@ -1001,6 +1074,7 @@ impl fmt::Display for LocalReplError {
             Self::Directory(error) => error.fmt(formatter),
             Self::SqlOpen(error) => write!(formatter, "could not open SQL connection: {error}"),
             Self::HolOpen(error) => error.fmt(formatter),
+            Self::HolSchemaDescriptor(error) => error.fmt(formatter),
             Self::Namespace(error) => error.fmt(formatter),
             Self::Export(error) => error.fmt(formatter),
             Self::HolExport(error) => error.fmt(formatter),
@@ -1029,6 +1103,7 @@ impl StdError for LocalReplError {
             Self::Directory(error) => Some(error),
             Self::SqlOpen(error) => Some(error),
             Self::HolOpen(error) => Some(error),
+            Self::HolSchemaDescriptor(error) => Some(error),
             Self::Namespace(error) => Some(error),
             Self::Export(error) => Some(error),
             Self::HolExport(error) => Some(error),
@@ -1047,6 +1122,12 @@ impl StdError for LocalReplError {
 impl From<ReplError> for LocalReplError {
     fn from(error: ReplError) -> Self {
         Self::Directory(error)
+    }
+}
+
+impl From<HolSchemaDescriptorError> for LocalReplError {
+    fn from(error: HolSchemaDescriptorError) -> Self {
+        Self::HolSchemaDescriptor(error)
     }
 }
 
@@ -1289,6 +1370,147 @@ mod tests {
 
     #[test]
     #[allow(clippy::too_many_lines)]
+    fn shared_repl_transports_and_checks_custom_metadata_schemas() {
+        let mut schema = HolSchema::new();
+        schema
+            .add_column("source label", MetadataType::Text)
+            .unwrap();
+        schema
+            .add_index("by source", ["source label"], false)
+            .unwrap();
+        let descriptor = HolSchemaDescriptor::from_schema(&schema).unwrap();
+        let mut repl = LocalRepl::new().unwrap();
+        let source = repl.open_hol_with_descriptor(descriptor.encode()).unwrap();
+        let target = repl.open_hol().unwrap();
+        let star = repl
+            .hol_mut(source)
+            .unwrap()
+            .insert_kind_with_metadata(
+                &Kind::Star,
+                &[("source label", MetadataValue::Text("demo".to_owned()))],
+            )
+            .unwrap();
+        let source_namespace = repl
+            .create_hol_namespace(source, None, Some("custom"))
+            .unwrap();
+        repl.bind_hol_export(
+            source,
+            source_namespace,
+            ExportId::from_i64(9),
+            NamespaceExport::Kind(star),
+            Some("star"),
+        )
+        .unwrap();
+        let snapshot = repl.export_hol_snapshot(source).unwrap();
+        assert_eq!(snapshot.descriptor(), descriptor.encode());
+        assert_eq!(
+            HolSchemaDescriptor::decode(snapshot.descriptor())
+                .unwrap()
+                .schema_id(),
+            snapshot.schema()
+        );
+
+        let trusted = repl
+            .trust_hol_import(
+                target,
+                snapshot.schema(),
+                snapshot.image(),
+                snapshot.signer(),
+                *snapshot.public_key(),
+                snapshot.signature(),
+            )
+            .unwrap();
+        let imported_namespace = repl
+            .create_hol_imported_namespace(
+                target,
+                None,
+                Some("custom"),
+                trusted.import(),
+                source_namespace.get(),
+            )
+            .unwrap();
+        assert_eq!(
+            repl.inspect_trusted_hol_export_with_descriptor(
+                target,
+                trusted.trusted_import(),
+                snapshot.bytes(),
+                snapshot.descriptor(),
+                snapshot.schema(),
+                snapshot.image(),
+                snapshot.signer(),
+                *snapshot.public_key(),
+                snapshot.signature(),
+                imported_namespace,
+                ExportId::from_i64(9),
+            )
+            .unwrap(),
+            Some(LocalImportedHolExport {
+                connection: target,
+                trusted_import: trusted.trusted_import(),
+                import: trusted.import(),
+                namespace: imported_namespace,
+                export: ExportId::from_i64(9),
+                value: LocalImportedHolValue::Kind(star.get()),
+            })
+        );
+
+        let empty = HolSchemaDescriptor::from_schema(&HolSchema::new()).unwrap();
+        assert!(matches!(
+            repl.inspect_trusted_hol_export_with_descriptor(
+                target,
+                trusted.trusted_import(),
+                snapshot.bytes(),
+                empty.encode(),
+                snapshot.schema(),
+                snapshot.image(),
+                snapshot.signer(),
+                *snapshot.public_key(),
+                snapshot.signature(),
+                imported_namespace,
+                ExportId::from_i64(9),
+            ),
+            Err(LocalReplError::HolImageValidation(
+                AuthenticatedHolImageValidationError::SchemaMismatch { .. }
+            ))
+        ));
+        assert!(matches!(
+            repl.inspect_trusted_hol_export_with_descriptor(
+                target,
+                trusted.trusted_import(),
+                snapshot.bytes(),
+                b"malformed",
+                snapshot.schema(),
+                snapshot.image(),
+                snapshot.signer(),
+                *snapshot.public_key(),
+                snapshot.signature(),
+                imported_namespace,
+                ExportId::from_i64(9),
+            ),
+            Err(LocalReplError::HolSchemaDescriptor(_))
+        ));
+        let mut bad_signature = snapshot.signature().to_vec();
+        bad_signature[0] ^= 1;
+        assert!(matches!(
+            repl.inspect_trusted_hol_export_with_descriptor(
+                target,
+                trusted.trusted_import(),
+                snapshot.bytes(),
+                b"malformed",
+                snapshot.schema(),
+                snapshot.image(),
+                snapshot.signer(),
+                *snapshot.public_key(),
+                &bad_signature,
+                imported_namespace,
+                ExportId::from_i64(9),
+            ),
+            Err(LocalReplError::SnapshotAuthentication(_))
+        ));
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
     fn shared_repl_trusts_one_hash_first_snapshot_across_connections() {
         let mut repl = LocalRepl::new().unwrap();
         let source = repl.open_hol().unwrap();
@@ -1354,10 +1576,11 @@ mod tests {
             .unwrap();
         let before_inspection = repl.export_hol_snapshot(target).unwrap();
         assert_eq!(
-            repl.inspect_trusted_hol_export(
+            repl.inspect_trusted_hol_export_with_descriptor(
                 target,
                 trusted.trusted_import(),
                 snapshot.bytes(),
+                snapshot.descriptor(),
                 snapshot.schema(),
                 snapshot.image(),
                 snapshot.signer(),

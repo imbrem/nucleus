@@ -3,7 +3,9 @@ use std::fmt;
 
 use covalence_lib_hash::O256;
 
-use super::{Hol, Operation, Policy, ValidatedHolImage};
+use super::{
+    Hol, HolSchemaDescriptor, HolSchemaDescriptorError, Operation, Policy, ValidatedHolImage,
+};
 use crate::{Connection, Kernel, SignError, Signer as _, schema_valid_snapshot_statement};
 
 /// Out-of-band authentication of exact HOL database bytes under one schema.
@@ -54,6 +56,7 @@ impl HolSnapshotAttestation {
 /// Complete in-memory bytes plus their kernel attestation.
 pub struct SignedHolSnapshot {
     image: ValidatedHolImage,
+    descriptor: HolSchemaDescriptor,
     attestation: HolSnapshotAttestation,
 }
 
@@ -62,6 +65,12 @@ impl SignedHolSnapshot {
     #[must_use]
     pub const fn image(&self) -> &ValidatedHolImage {
         &self.image
+    }
+
+    /// Returns the checked canonical metadata schema recipe for the image.
+    #[must_use]
+    pub const fn descriptor(&self) -> &HolSchemaDescriptor {
+        &self.descriptor
     }
 
     /// Returns the schema-qualified kernel signature.
@@ -76,6 +85,10 @@ impl SignedHolSnapshot {
 pub enum HolExportError {
     /// The connection policy denied export.
     Denied(Operation),
+    /// The connection metadata schema exceeded the portable descriptor format.
+    Descriptor(HolSchemaDescriptorError),
+    /// The exported image and its descriptor derived inconsistent schema identities.
+    DescriptorSchemaMismatch { descriptor: O256, image: O256 },
     /// The main database could not be serialized.
     Image(covalence_neutron::ImageError),
     /// The serialized bytes failed self-validation under their exact schema.
@@ -88,6 +101,11 @@ impl fmt::Display for HolExportError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Denied(operation) => write!(formatter, "HOL policy denied {operation:?}"),
+            Self::Descriptor(error) => error.fmt(formatter),
+            Self::DescriptorSchemaMismatch { descriptor, image } => write!(
+                formatter,
+                "HOL descriptor schema {descriptor} differs from exported image schema {image}"
+            ),
             Self::Image(error) => error.fmt(formatter),
             Self::Validation(error) => error.fmt(formatter),
             Self::Sign(error) => error.fmt(formatter),
@@ -98,7 +116,8 @@ impl fmt::Display for HolExportError {
 impl StdError for HolExportError {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match self {
-            Self::Denied(_) => None,
+            Self::Denied(_) | Self::DescriptorSchemaMismatch { .. } => None,
+            Self::Descriptor(error) => Some(error),
             Self::Image(error) => Some(error),
             Self::Validation(error) => Some(error),
             Self::Sign(error) => Some(error),
@@ -107,14 +126,26 @@ impl StdError for HolExportError {
 }
 
 impl<P: Policy> Connection<Hol<P>> {
-    fn validated_export_image(&mut self) -> Result<ValidatedHolImage, HolExportError> {
+    fn validated_export_image(
+        &mut self,
+    ) -> Result<(ValidatedHolImage, HolSchemaDescriptor), HolExportError> {
         let (neutron, hol) = self.parts_mut();
         if !hol.policy.allows(Operation::ExportSignedSnapshot) {
             return Err(HolExportError::Denied(Operation::ExportSignedSnapshot));
         }
         let schema = hol.schema.clone();
+        let descriptor =
+            HolSchemaDescriptor::from_schema(&schema).map_err(HolExportError::Descriptor)?;
         let bytes = neutron.serialize().map_err(HolExportError::Image)?;
-        ValidatedHolImage::validate_with_schema(&bytes, &schema).map_err(HolExportError::Validation)
+        let image = ValidatedHolImage::validate_with_schema(&bytes, &schema)
+            .map_err(HolExportError::Validation)?;
+        if descriptor.schema_id() != image.schema() {
+            return Err(HolExportError::DescriptorSchemaMismatch {
+                descriptor: descriptor.schema_id(),
+                image: image.schema(),
+            });
+        }
+        Ok((image, descriptor))
     }
 }
 
@@ -133,7 +164,7 @@ impl Kernel {
         &self,
         connection: &mut Connection<Hol<P>>,
     ) -> Result<SignedHolSnapshot, HolExportError> {
-        let image = connection.validated_export_image()?;
+        let (image, descriptor) = connection.validated_export_image()?;
         let schema = image.schema();
         let image_hash = image.hash();
         let signer = self.key_id();
@@ -143,6 +174,7 @@ impl Kernel {
             .map_err(HolExportError::Sign)?;
         Ok(SignedHolSnapshot {
             image,
+            descriptor,
             attestation: HolSnapshotAttestation {
                 schema,
                 image: image_hash,

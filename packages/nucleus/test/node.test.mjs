@@ -46,6 +46,19 @@ test("runs the REPL kernel through the Wasm binding in Node", async () => {
   const holSource = kernel.open_hol_connection();
   const holTarget = kernel.open_hol_connection();
   const holSnapshot = kernel.hol_export_snapshot(holSource);
+  const descriptor = holSnapshot.descriptor();
+  assert.deepEqual(
+    Array.from(descriptor.slice(0, 8)),
+    Array.from(new TextEncoder().encode("COVHSD01")),
+  );
+  const descriptorConnection =
+    kernel.open_hol_connection_with_descriptor(descriptor);
+  kernel.close_connection(descriptorConnection);
+  const malformedDescriptor = descriptor.slice();
+  malformedDescriptor[0] ^= 1;
+  assert.throws(() =>
+    kernel.open_hol_connection_with_descriptor(malformedDescriptor),
+  );
   const schema = holSnapshot.schema();
   const holImage = holSnapshot.image();
   const signer = holSnapshot.signer();

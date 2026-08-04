@@ -79,6 +79,8 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
   assert.match(result.snapshotSigner, /^[0-9a-f]{64}$/);
   assert.equal(result.publicKeyLength, 32);
   assert.equal(result.signatureLength, 64);
+  assert.equal(result.descriptorLength, 49);
+  assert.equal(result.malformedDescriptorRejected, true);
   assert.equal(result.attestationHasBytes, false);
   assert.deepEqual(result.snapshotRows, {
     kind: "rows",

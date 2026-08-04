@@ -104,6 +104,22 @@ impl WebKernel {
         u32::try_from(id.get()).map_err(js_error)
     }
 
+    /// Opens a policy-enclosed HOL-omega connection from a canonical metadata descriptor.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error when the descriptor or connection/schema cannot be opened.
+    pub fn open_hol_connection_with_descriptor(
+        &mut self,
+        descriptor: &[u8],
+    ) -> Result<u32, JsValue> {
+        let id = self
+            .repl
+            .open_hol_with_descriptor(descriptor)
+            .map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
     /// Closes a connection.
     ///
     /// # Errors
@@ -887,6 +903,7 @@ impl WebKernel {
         connection: u32,
         trusted_import: u32,
         bytes: &[u8],
+        descriptor: &[u8],
         schema: &str,
         image: &str,
         signer: &str,
@@ -899,10 +916,11 @@ impl WebKernel {
             .try_into()
             .map_err(|_| JsValue::from_str("Ed25519 public key must contain exactly 32 bytes"))?;
         self.repl
-            .inspect_trusted_hol_export(
+            .inspect_trusted_hol_export_with_descriptor(
                 ConnectionId::from_u32(connection),
                 TrustedImportId::from_i64(i64::from(trusted_import)),
                 bytes,
+                descriptor,
                 O256::from_hex(schema).map_err(js_error)?,
                 O256::from_hex(image).map_err(js_error)?,
                 O256::from_hex(signer).map_err(js_error)?,
@@ -1105,6 +1123,12 @@ impl WebSignedHolSnapshot {
     #[must_use]
     pub fn bytes(&self) -> Vec<u8> {
         self.snapshot.bytes().to_vec()
+    }
+
+    /// Returns the canonical checked metadata schema descriptor.
+    #[must_use]
+    pub fn descriptor(&self) -> Vec<u8> {
+        self.snapshot.descriptor().to_vec()
     }
 
     /// Returns the exact schema hash in hexadecimal.

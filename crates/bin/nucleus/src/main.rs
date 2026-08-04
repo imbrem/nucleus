@@ -99,9 +99,19 @@ fn run_line(repl: &mut LocalRepl, output: &mut impl io::Write, line: &str) -> Re
         return Ok(true);
     }
     if line == ".open" || line.starts_with(".open ") {
-        let protocol = line.strip_prefix(".open").expect("matched prefix").trim();
-        let protocol = if protocol.is_empty() { "sql" } else { protocol };
-        let id = open_connection(repl, protocol)?;
+        let mut arguments = line
+            .strip_prefix(".open")
+            .expect("matched prefix")
+            .split_whitespace();
+        let protocol = arguments.next().unwrap_or("sql");
+        let descriptor = arguments.next();
+        if arguments.next().is_some() || (descriptor.is_some() && protocol != "hol") {
+            return Err("usage: .open [sql|hol [DESCRIPTOR_PATH]]".into());
+        }
+        let id = match descriptor {
+            Some(path) => repl.open_hol_with_descriptor(&fs::read(path)?)?,
+            None => open_connection(repl, protocol)?,
+        };
         writeln!(output, "opened {protocol} connection {id}")?;
         return Ok(true);
     }
@@ -163,7 +173,10 @@ fn print_help(output: &mut impl io::Write) -> io::Result<()> {
         output,
         ".load SCHEMA PATH  attach a complete immutable SQLite image"
     )?;
-    writeln!(output, ".open [sql|hol]    open and select a connection")?;
+    writeln!(
+        output,
+        ".open [sql|hol [DESCRIPTOR_PATH]]  open and select a connection"
+    )?;
     writeln!(output, ".use ID            select a connection")?;
     writeln!(output, ".close [ID]        close a connection")?;
     writeln!(output, ".connections       list open connections")?;
@@ -187,7 +200,7 @@ fn print_help(output: &mut impl io::Write) -> io::Result<()> {
     writeln!(output, ".hol export ...    bind/inspect namespace exports")?;
     writeln!(
         output,
-        ".hol snapshot export PATH  write a signed HOL image"
+        ".hol snapshot export PATH  write a signed HOL image and descriptor sidecar"
     )?;
     writeln!(
         output,
@@ -392,17 +405,28 @@ fn run_hol_import_inspect<'a>(
     );
     let export = ExportId::from_i64(arguments.next().ok_or("missing export ID")?.parse()?);
     let path = arguments.next().ok_or("missing snapshot path")?;
+    let descriptor_path = arguments.next().ok_or("missing descriptor path")?;
     let schema = parse_o256(arguments.next(), "schema")?;
     let image = parse_o256(arguments.next(), "image")?;
     let signer = parse_o256(arguments.next(), "signer")?;
     let public_key = parse_fixed_hex::<32>(arguments.next(), "public key")?;
     let signature = parse_hex(arguments.next(), "signature")?;
     if arguments.next().is_some() {
-        return Err("usage: .hol import inspect TRUSTED_IMPORT NAMESPACE EXPORT PATH SCHEMA IMAGE SIGNER PUBLIC_KEY SIGNATURE".into());
+        return Err("usage: .hol import inspect TRUSTED_IMPORT NAMESPACE EXPORT PATH DESCRIPTOR_PATH SCHEMA IMAGE SIGNER PUBLIC_KEY SIGNATURE".into());
     }
     let bytes = fs::read(path)?;
-    let value = repl.inspect_trusted_hol_export(
-        connection, trusted, &bytes, schema, image, signer, public_key, &signature, namespace,
+    let descriptor = fs::read(descriptor_path)?;
+    let value = repl.inspect_trusted_hol_export_with_descriptor(
+        connection,
+        trusted,
+        &bytes,
+        &descriptor,
+        schema,
+        image,
+        signer,
+        public_key,
+        &signature,
+        namespace,
         export,
     )?;
     writeln!(output, "imported-export {value:?}")?;
@@ -553,6 +577,9 @@ fn run_hol_snapshot<'a>(
     }
     let snapshot = repl.export_hol_snapshot(connection)?;
     fs::write(path, snapshot.bytes())?;
+    let descriptor_path = format!("{path}.hol-schema");
+    fs::write(&descriptor_path, snapshot.descriptor())?;
+    writeln!(output, "descriptor {descriptor_path}")?;
     writeln!(output, "schema {}", snapshot.schema())?;
     writeln!(output, "image {}", snapshot.image())?;
     writeln!(output, "signer {}", snapshot.signer())?;
@@ -1206,7 +1233,9 @@ mod tests {
             "nucleus-hol-import-{}.sqlite",
             NEXT_FILE.fetch_add(1, Ordering::Relaxed)
         ));
+        let descriptor_path = path.with_extension("hol-schema");
         fs::write(&path, snapshot.bytes()).unwrap();
+        fs::write(&descriptor_path, snapshot.descriptor()).unwrap();
         repl.select(target).unwrap();
         let command = format!(
             ".hol import trust {} {} {} {} {}",
@@ -1229,8 +1258,9 @@ mod tests {
             .unwrap()
         );
         let inspect = format!(
-            ".hol import inspect 0 1 7 {} {} {} {} {} {}",
+            ".hol import inspect 0 1 7 {} {} {} {} {} {} {}",
             path.display(),
+            descriptor_path.display(),
             snapshot.schema(),
             snapshot.image(),
             snapshot.signer(),
@@ -1239,6 +1269,7 @@ mod tests {
         );
         assert!(run_line(&mut repl, &mut output, &inspect).unwrap());
         fs::remove_file(path).unwrap();
+        fs::remove_file(descriptor_path).unwrap();
 
         let output = String::from_utf8(output).unwrap();
         let expected = format!(
@@ -1296,16 +1327,20 @@ mod tests {
             "nucleus-hol-export-{}.sqlite",
             NEXT_FILE.fetch_add(1, Ordering::Relaxed)
         ));
+        let descriptor_path = format!("{}.hol-schema", path.display());
         let script = format!(
-            ".open hol\n.hol star\n.hol namespace create 0 demo\n.hol namespace show 1\n.hol export bind 1 7 kind 1 star\n.hol export show 1 7\n.hol export resolve 1 star\n.hol snapshot export {}\n.quit\n",
-            path.display()
+            ".open hol\n.hol star\n.hol namespace create 0 demo\n.hol namespace show 1\n.hol export bind 1 7 kind 1 star\n.hol export show 1 7\n.hol export resolve 1 star\n.hol snapshot export {}\n.open hol {}\n.quit\n",
+            path.display(),
+            descriptor_path
         );
         let mut input = Cursor::new(script);
         let mut output = Vec::new();
         let mut errors = Vec::new();
         run_repl(&mut input, &mut output, &mut errors, false).expect("run REPL");
         let bytes = fs::read(&path).expect("read signed snapshot");
+        let descriptor = fs::read(&descriptor_path).expect("read schema descriptor");
         fs::remove_file(path).expect("remove signed snapshot");
+        fs::remove_file(descriptor_path).expect("remove schema descriptor");
 
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("namespace 1 defined\n"));
@@ -1316,6 +1351,7 @@ mod tests {
         assert!(output.contains("public-key "));
         assert!(output.contains("signature "));
         assert!(bytes.starts_with(b"SQLite format 3"));
+        covalence_repl::HolSchemaDescriptor::decode(&descriptor).unwrap();
         assert!(errors.is_empty(), "{}", String::from_utf8(errors).unwrap());
     }
 }
