@@ -13,12 +13,14 @@ use covalence_lib_sqlite as sqlite;
 pub use covalence_lib_hash::O256;
 pub use covalence_nucleus::sql::{ImageError, Outcome, QueryResult, Statement, Value};
 pub use covalence_nucleus::{
-    AllowAll, Connection, ContextError, ContextId, ContextImplication, ExportError, ExportId,
-    ExportSort, ExportView, Hol, HolDatabaseRef, HolExportError, HolOpenError, ImportError,
-    ImportId, Kernel, Kind, KindError, KindId, KindView, NamespaceError, NamespaceExport,
-    NamespaceId, NamespaceView, ProofError, ProofSession, SignedSnapshotAttestation,
-    SnapshotAuthenticationError, SnapshotTrustError, Sql, TermError, TermId, TermView, Theorem,
-    TrustedImportError, TrustedImportId, TypeError, TypeId, TypeView, ValidatedHolImage,
+    AllowAll, AuthenticatedHolImageValidationError, AuthenticatedValidatedHolImage, Connection,
+    ContextError, ContextId, ContextImplication, ExportError, ExportId, ExportSort, ExportView,
+    Hol, HolDatabaseRef, HolExportError, HolOpenError, ImportError, ImportId, ImportedExport,
+    ImportedReaderError, ImportedTermView, Kernel, Kind, KindError, KindId, KindView,
+    NamespaceError, NamespaceExport, NamespaceId, NamespaceView, ProofError, ProofSession,
+    SignedSnapshotAttestation, SignedSnapshotEnvelope, SnapshotAuthenticationError,
+    SnapshotTrustError, Sql, TermError, TermId, TermView, Theorem, TrustedImportError,
+    TrustedImportId, TrustedImportImageError, TypeError, TypeId, TypeView, ValidatedHolImage,
 };
 
 const SCHEMA: &str = "
@@ -252,6 +254,103 @@ pub struct LocalTrustedHolImport {
     trusted_import: TrustedImportId,
     database: HolDatabaseRef,
     signer: O256,
+}
+
+/// Owned structural result copied out of one scoped immutable imported-image reader.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LocalImportedHolExport {
+    /// Destination connection whose trust and namespace rows authorized the read.
+    pub connection: ConnectionId,
+    /// Exact persistent trust assumption used for the bytes.
+    pub trusted_import: TrustedImportId,
+    /// Exact inert import-directory row named by the namespace alias.
+    pub import: ImportId,
+    /// Destination-local imported namespace alias.
+    pub namespace: NamespaceId,
+    /// Requested source namespace export coordinate.
+    pub export: ExportId,
+    /// Structural source value, carrying only inert source-database IDs.
+    pub value: LocalImportedHolValue,
+}
+
+/// Structural source value copied out of an imported image.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LocalImportedHolValue {
+    /// Imported kind coordinate.
+    Kind(i64),
+    /// Imported type coordinate.
+    Type(i64),
+    /// Imported term coordinate and its checked structural row.
+    Term {
+        /// Source-database term ID.
+        id: i64,
+        /// Source-database structural term representation.
+        term: LocalImportedHolTerm,
+    },
+    /// Imported context coordinate.
+    Context(i64),
+}
+
+/// Owned structural imported term. All IDs remain coordinates in the source image.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LocalImportedHolTerm {
+    /// Boolean literal.
+    Bool(bool),
+    /// Typed free symbol.
+    Free { symbol: u64, ty: i64 },
+    /// Typed de Bruijn occurrence.
+    Bound { index: u64, ty: i64 },
+    /// Typed application.
+    Application {
+        function: i64,
+        argument: i64,
+        ty: i64,
+    },
+    /// Typed lambda.
+    Lambda {
+        parameter_type: i64,
+        body: i64,
+        ty: i64,
+    },
+    /// Same-typed equality.
+    Equality { left: i64, right: i64, ty: i64 },
+}
+
+fn copy_imported_term(term: ImportedTermView<'_>) -> LocalImportedHolTerm {
+    match term {
+        ImportedTermView::Bool(value) => LocalImportedHolTerm::Bool(value),
+        ImportedTermView::Free { symbol, ty } => LocalImportedHolTerm::Free {
+            symbol,
+            ty: ty.get(),
+        },
+        ImportedTermView::Bound { index, ty } => LocalImportedHolTerm::Bound {
+            index,
+            ty: ty.get(),
+        },
+        ImportedTermView::Application {
+            function,
+            argument,
+            ty,
+        } => LocalImportedHolTerm::Application {
+            function: function.get(),
+            argument: argument.get(),
+            ty: ty.get(),
+        },
+        ImportedTermView::Lambda {
+            parameter_type,
+            body,
+            ty,
+        } => LocalImportedHolTerm::Lambda {
+            parameter_type: parameter_type.get(),
+            body: body.get(),
+            ty: ty.get(),
+        },
+        ImportedTermView::Equality { left, right, ty } => LocalImportedHolTerm::Equality {
+            left: left.get(),
+            right: right.get(),
+            ty: ty.get(),
+        },
+    }
 }
 
 impl LocalTrustedHolImport {
@@ -602,6 +701,89 @@ impl LocalRepl {
         })
     }
 
+    /// Defines a destination-local alias for one complete namespace in an unfetched import.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a wrong protocol, rejected operation, invalid source coordinates, or
+    /// failed persistence.
+    pub fn create_hol_imported_namespace(
+        &mut self,
+        id: ConnectionId,
+        parent: Option<NamespaceId>,
+        name: Option<&str>,
+        import: ImportId,
+        source_namespace: i64,
+    ) -> Result<NamespaceId, LocalReplError> {
+        self.hol_mut(id)?
+            .create_imported_namespace(parent, name, import, source_namespace)
+            .map_err(Into::into)
+    }
+
+    /// Authenticates and validates complete bytes, matches one exact persistent trust record, and
+    /// reads a structural namespace export through a scoped immutable reader.
+    ///
+    /// The returned integers are inert coordinates in the imported database. This operation does
+    /// not import values into the local node table or grant authority to imported judgements.
+    /// This first whole-image demo copies the received bytes and registers a process-lifetime
+    /// immutable VFS for the one-shot read; repeated reads are not yet a cached mount API.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if authentication, detached validation, namespace provenance, exact trust
+    /// matching, immutable VFS verification, or structural reading fails.
+    #[allow(clippy::too_many_arguments)]
+    pub fn inspect_trusted_hol_export(
+        &mut self,
+        id: ConnectionId,
+        trusted_import: TrustedImportId,
+        bytes: &[u8],
+        schema: O256,
+        image: O256,
+        signer: O256,
+        public_key: [u8; 32],
+        signature: &[u8],
+        namespace: NamespaceId,
+        export: ExportId,
+    ) -> Result<Option<LocalImportedHolExport>, LocalReplError> {
+        let authenticated =
+            SignedSnapshotEnvelope::new(bytes, schema, image, signer, public_key, signature)
+                .authenticate()?;
+        let validated = AuthenticatedValidatedHolImage::validate_default(authenticated)?;
+        let matched = self
+            .hol_mut(id)?
+            .match_trusted_import_image(trusted_import, validated)?;
+        let import = matched.import();
+        let result = matched.with_reader(
+            namespace,
+            |mut reader| -> Result<Option<LocalImportedHolExport>, ImportedReaderError> {
+                let Some(value) = reader.namespace_export(export.get())? else {
+                    return Ok(None);
+                };
+                let value = match value {
+                    ImportedExport::Kind(source_id) => LocalImportedHolValue::Kind(source_id.get()),
+                    ImportedExport::Type(source_id) => LocalImportedHolValue::Type(source_id.get()),
+                    ImportedExport::Context(source_id) => {
+                        LocalImportedHolValue::Context(source_id.get())
+                    }
+                    ImportedExport::Term(source_id) => LocalImportedHolValue::Term {
+                        id: source_id.get(),
+                        term: copy_imported_term(reader.term(source_id)?),
+                    },
+                };
+                Ok(Some(LocalImportedHolExport {
+                    connection: id,
+                    trusted_import,
+                    import,
+                    namespace,
+                    export,
+                    value,
+                }))
+            },
+        )?;
+        Ok(result?)
+    }
+
     /// Introduces one exact implication from persisted witness keys.
     ///
     /// This shared orchestration performs no search: every supplied term must
@@ -796,6 +978,12 @@ pub enum LocalReplError {
     Import(ImportError),
     /// Persistent trusted-import operation failed.
     TrustedImport(TrustedImportError),
+    /// Authenticated bytes failed detached default HOL validation.
+    HolImageValidation(AuthenticatedHolImageValidationError),
+    /// Validated bytes did not match the exact persistent trusted import.
+    TrustedImportImage(TrustedImportImageError),
+    /// The scoped immutable imported-image reader failed.
+    ImportedReader(ImportedReaderError),
     /// A command was sent to a connection of another protocol.
     WrongProtocol {
         /// Requested connection.
@@ -820,6 +1008,9 @@ impl fmt::Display for LocalReplError {
             Self::SnapshotTrust(error) => error.fmt(formatter),
             Self::Import(error) => error.fmt(formatter),
             Self::TrustedImport(error) => error.fmt(formatter),
+            Self::HolImageValidation(error) => error.fmt(formatter),
+            Self::TrustedImportImage(error) => error.fmt(formatter),
+            Self::ImportedReader(error) => error.fmt(formatter),
             Self::WrongProtocol {
                 id,
                 expected,
@@ -845,6 +1036,9 @@ impl StdError for LocalReplError {
             Self::SnapshotTrust(error) => Some(error),
             Self::Import(error) => Some(error),
             Self::TrustedImport(error) => Some(error),
+            Self::HolImageValidation(error) => Some(error),
+            Self::TrustedImportImage(error) => Some(error),
+            Self::ImportedReader(error) => Some(error),
             Self::WrongProtocol { .. } => None,
         }
     }
@@ -895,6 +1089,24 @@ impl From<ImportError> for LocalReplError {
 impl From<TrustedImportError> for LocalReplError {
     fn from(error: TrustedImportError) -> Self {
         Self::TrustedImport(error)
+    }
+}
+
+impl From<AuthenticatedHolImageValidationError> for LocalReplError {
+    fn from(error: AuthenticatedHolImageValidationError) -> Self {
+        Self::HolImageValidation(error)
+    }
+}
+
+impl From<TrustedImportImageError> for LocalReplError {
+    fn from(error: TrustedImportImageError) -> Self {
+        Self::TrustedImportImage(error)
+    }
+}
+
+impl From<ImportedReaderError> for LocalReplError {
+    fn from(error: ImportedReaderError) -> Self {
+        Self::ImportedReader(error)
     }
 }
 
@@ -949,8 +1161,8 @@ mod web;
 
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 pub use web::{
-    WebExport, WebKernel, WebKind, WebNamespace, WebOutcome, WebSignedHolSnapshot, WebTerm,
-    WebTrustedHolImport, WebType,
+    WebExport, WebImportedHolExport, WebKernel, WebKind, WebNamespace, WebOutcome,
+    WebSignedHolSnapshot, WebTerm, WebTrustedHolImport, WebType,
 };
 
 /// Returns the cross-target `SQLite` smoke-test value.
@@ -1076,11 +1288,28 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn shared_repl_trusts_one_hash_first_snapshot_across_connections() {
         let mut repl = LocalRepl::new().unwrap();
         let source = repl.open_hol().unwrap();
         let target = repl.open_hol().unwrap();
         let observer = repl.open_hol().unwrap();
+        let truth = repl
+            .hol_mut(source)
+            .unwrap()
+            .insert_bool_term(true)
+            .unwrap();
+        let namespace = repl
+            .create_hol_namespace(source, None, Some("downloaded"))
+            .unwrap();
+        repl.bind_hol_export(
+            source,
+            namespace,
+            ExportId::from_i64(7),
+            NamespaceExport::Term(truth),
+            Some("truth"),
+        )
+        .unwrap();
         let snapshot = repl.export_hol_snapshot(source).unwrap();
         repl.close(source).unwrap();
 
@@ -1097,6 +1326,61 @@ mod tests {
         assert_eq!(trusted.database().schema(), snapshot.schema());
         assert_eq!(trusted.database().image(), snapshot.image());
         assert_eq!(trusted.signer(), snapshot.signer());
+        assert!(matches!(
+            repl.inspect_trusted_hol_export(
+                target,
+                trusted.trusted_import(),
+                snapshot.bytes(),
+                snapshot.schema(),
+                snapshot.image(),
+                snapshot.signer(),
+                *snapshot.public_key(),
+                snapshot.signature(),
+                NamespaceId::root(),
+                ExportId::from_i64(7),
+            ),
+            Err(LocalReplError::ImportedReader(ImportedReaderError::Import(
+                ImportError::LocalNamespace(_)
+            )))
+        ));
+        let imported_namespace = repl
+            .create_hol_imported_namespace(
+                target,
+                None,
+                Some("downloaded"),
+                trusted.import(),
+                namespace.get(),
+            )
+            .unwrap();
+        let before_inspection = repl.export_hol_snapshot(target).unwrap();
+        assert_eq!(
+            repl.inspect_trusted_hol_export(
+                target,
+                trusted.trusted_import(),
+                snapshot.bytes(),
+                snapshot.schema(),
+                snapshot.image(),
+                snapshot.signer(),
+                *snapshot.public_key(),
+                snapshot.signature(),
+                imported_namespace,
+                ExportId::from_i64(7),
+            )
+            .unwrap(),
+            Some(LocalImportedHolExport {
+                connection: target,
+                trusted_import: trusted.trusted_import(),
+                import: trusted.import(),
+                namespace: imported_namespace,
+                export: ExportId::from_i64(7),
+                value: LocalImportedHolValue::Term {
+                    id: truth.get(),
+                    term: LocalImportedHolTerm::Bool(true),
+                },
+            })
+        );
+        let after_inspection = repl.export_hol_snapshot(target).unwrap();
+        assert_eq!(before_inspection.bytes(), after_inspection.bytes());
         assert_eq!(
             repl.hol_trusted_import(target, trusted.trusted_import())
                 .unwrap(),

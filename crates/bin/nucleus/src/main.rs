@@ -197,6 +197,14 @@ fn print_help(output: &mut impl io::Write) -> io::Result<()> {
         output,
         ".hol import show ID        inspect a trusted import"
     )?;
+    writeln!(
+        output,
+        ".hol import namespace ...   alias a complete imported namespace"
+    )?;
+    writeln!(
+        output,
+        ".hol import inspect ...     read a downloaded trusted export"
+    )?;
     writeln!(output, ".hol prove ...     apply an explicit HOL rule")?;
     writeln!(output, ".quit              exit")
 }
@@ -330,12 +338,74 @@ fn run_hol_import<'a>(
                 trusted.signer()
             )?;
         }
+        Some("namespace") => run_hol_import_namespace(repl, output, connection, arguments)?,
+        Some("inspect") => run_hol_import_inspect(repl, output, connection, arguments)?,
         _ => {
-            return Err(
-                "usage: .hol import trust SCHEMA IMAGE SIGNER PUBLIC_KEY SIGNATURE|show ID".into(),
-            );
+            return Err("usage: .hol import trust ...|show ID|namespace ...|inspect ...".into());
         }
     }
+    Ok(())
+}
+
+fn run_hol_import_namespace<'a>(
+    repl: &mut LocalRepl,
+    output: &mut impl io::Write,
+    connection: ConnectionId,
+    mut arguments: impl Iterator<Item = &'a str>,
+) -> Result<()> {
+    let import =
+        covalence_repl::ImportId::from_i64(arguments.next().ok_or("missing import ID")?.parse()?);
+    let source_namespace = arguments
+        .next()
+        .ok_or("missing source namespace ID")?
+        .parse()?;
+    let parent =
+        parse_optional_id(arguments.next(), "parent namespace")?.map(NamespaceId::from_i64);
+    let name = arguments.next().ok_or("missing namespace name")?;
+    let name = (name != "-").then_some(name);
+    if arguments.next().is_some() {
+        return Err("usage: .hol import namespace IMPORT SOURCE_NAMESPACE PARENT|- NAME|-".into());
+    }
+    let namespace =
+        repl.create_hol_imported_namespace(connection, parent, name, import, source_namespace)?;
+    writeln!(output, "imported-namespace {}", namespace.get())?;
+    Ok(())
+}
+
+fn run_hol_import_inspect<'a>(
+    repl: &mut LocalRepl,
+    output: &mut impl io::Write,
+    connection: ConnectionId,
+    mut arguments: impl Iterator<Item = &'a str>,
+) -> Result<()> {
+    let trusted = TrustedImportId::from_i64(
+        arguments
+            .next()
+            .ok_or("missing trusted-import ID")?
+            .parse()?,
+    );
+    let namespace = NamespaceId::from_i64(
+        arguments
+            .next()
+            .ok_or("missing imported namespace ID")?
+            .parse()?,
+    );
+    let export = ExportId::from_i64(arguments.next().ok_or("missing export ID")?.parse()?);
+    let path = arguments.next().ok_or("missing snapshot path")?;
+    let schema = parse_o256(arguments.next(), "schema")?;
+    let image = parse_o256(arguments.next(), "image")?;
+    let signer = parse_o256(arguments.next(), "signer")?;
+    let public_key = parse_fixed_hex::<32>(arguments.next(), "public key")?;
+    let signature = parse_hex(arguments.next(), "signature")?;
+    if arguments.next().is_some() {
+        return Err("usage: .hol import inspect TRUSTED_IMPORT NAMESPACE EXPORT PATH SCHEMA IMAGE SIGNER PUBLIC_KEY SIGNATURE".into());
+    }
+    let bytes = fs::read(path)?;
+    let value = repl.inspect_trusted_hol_export(
+        connection, trusted, &bytes, schema, image, signer, public_key, &signature, namespace,
+        export,
+    )?;
+    writeln!(output, "imported-export {value:?}")?;
     Ok(())
 }
 
@@ -1118,7 +1188,25 @@ mod tests {
         let mut repl = LocalRepl::new().unwrap();
         let source = repl.open_hol().unwrap();
         let target = repl.open_hol().unwrap();
+        let truth = repl
+            .hol_mut(source)
+            .unwrap()
+            .insert_bool_term(true)
+            .unwrap();
+        repl.bind_hol_export(
+            source,
+            NamespaceId::root(),
+            ExportId::from_i64(7),
+            NamespaceExport::Term(truth),
+            Some("truth"),
+        )
+        .unwrap();
         let snapshot = repl.export_hol_snapshot(source).unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "nucleus-hol-import-{}.sqlite",
+            NEXT_FILE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::write(&path, snapshot.bytes()).unwrap();
         repl.select(target).unwrap();
         let command = format!(
             ".hol import trust {} {} {} {} {}",
@@ -1132,6 +1220,25 @@ mod tests {
 
         assert!(run_line(&mut repl, &mut output, &command).unwrap());
         assert!(run_line(&mut repl, &mut output, ".hol import show 0").unwrap());
+        assert!(
+            run_line(
+                &mut repl,
+                &mut output,
+                ".hol import namespace 0 0 - downloaded"
+            )
+            .unwrap()
+        );
+        let inspect = format!(
+            ".hol import inspect 0 1 7 {} {} {} {} {} {}",
+            path.display(),
+            snapshot.schema(),
+            snapshot.image(),
+            snapshot.signer(),
+            hex(snapshot.public_key()),
+            hex(snapshot.signature())
+        );
+        assert!(run_line(&mut repl, &mut output, &inspect).unwrap());
+        fs::remove_file(path).unwrap();
 
         let output = String::from_utf8(output).unwrap();
         let expected = format!(
@@ -1141,6 +1248,8 @@ mod tests {
             snapshot.signer()
         );
         assert_eq!(output.matches(&expected).count(), 2);
+        assert!(output.contains("imported-namespace 1\n"));
+        assert!(output.contains("term: Bool(true)"));
         let exported = repl.export_hol_snapshot(target).unwrap();
         let validated = covalence_repl::ValidatedHolImage::validate(exported.bytes()).unwrap();
         assert_eq!(validated.counts().untrusted_trusted_import_rows, 1);

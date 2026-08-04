@@ -67,6 +67,48 @@ export interface TrustedHolImport {
   signer: string;
 }
 
+export type ImportedHolTerm =
+  | { kind: "bool"; value: boolean }
+  | { kind: "free"; symbol: number; sourceType: number }
+  | { kind: "bound"; index: number; sourceType: number }
+  | {
+      kind: "application";
+      sourceFunction: number;
+      sourceArgument: number;
+      sourceType: number;
+    }
+  | {
+      kind: "lambda";
+      sourceParameterType: number;
+      sourceBody: number;
+      sourceType: number;
+    }
+  | {
+      kind: "equality";
+      sourceLeft: number;
+      sourceRight: number;
+      sourceType: number;
+    };
+
+export interface ImportedHolProvenance {
+  connectionId: number;
+  trustedImportId: number;
+  importId: number;
+  namespaceId: number;
+  exportId: number;
+}
+
+export type ImportedHolNamespaceExport =
+  | (ImportedHolProvenance & {
+      sort: "kind" | "type" | "context";
+      sourceId: number;
+    })
+  | (ImportedHolProvenance & {
+      sort: "term";
+      sourceId: number;
+      term: ImportedHolTerm;
+    });
+
 export interface BrowserSqlConnection {
   run(sql: string): Promise<SqlOutcome>;
   putImage(bytes: Uint8Array): Promise<string>;
@@ -142,6 +184,18 @@ export interface BrowserHolConnection {
   exportSnapshot(): Promise<SignedHolSnapshot>;
   trustImport(attestation: SignedHolAttestation): Promise<TrustedHolImport>;
   trustedImport(id: number): Promise<TrustedHolImport>;
+  importNamespace(
+    importId: number,
+    sourceNamespace: number,
+    parent?: number | null,
+    name?: string | null,
+  ): Promise<number>;
+  inspectTrustedExport(
+    trustedImportId: number,
+    namespace: number,
+    exportId: number,
+    snapshot: SignedHolSnapshot,
+  ): Promise<ImportedHolNamespaceExport | null>;
   close(): Promise<void>;
 }
 
@@ -320,6 +374,22 @@ type RequestBody =
       operation: "holTrustedImport";
       connection: number;
       trustedImportId: number;
+    }
+  | {
+      operation: "holImportNamespace";
+      connection: number;
+      importId: number;
+      sourceNamespace: number;
+      parent: number | null;
+      name: string | null;
+    }
+  | {
+      operation: "holInspectTrustedExport";
+      connection: number;
+      trustedImportId: number;
+      namespace: number;
+      exportId: number;
+      snapshot: SignedHolSnapshot;
     };
 
 type WorkerResponse =
@@ -813,6 +883,51 @@ class WorkerHolConnection implements BrowserHolConnection {
       connection: this.connection,
       trustedImportId: id,
     });
+  }
+
+  importNamespace(
+    importId: number,
+    sourceNamespace: number,
+    parent: number | null = null,
+    name: string | null = null,
+  ): Promise<number> {
+    return this.#request({
+      operation: "holImportNamespace",
+      connection: this.connection,
+      importId,
+      sourceNamespace,
+      parent,
+      name,
+    });
+  }
+
+  inspectTrustedExport(
+    trustedImportId: number,
+    namespace: number,
+    exportId: number,
+    snapshot: SignedHolSnapshot,
+  ): Promise<ImportedHolNamespaceExport | null> {
+    const transferred = {
+      ...snapshot,
+      bytes: snapshot.bytes.slice(),
+      publicKey: snapshot.publicKey.slice(),
+      signature: snapshot.signature.slice(),
+    };
+    return this.#request(
+      {
+        operation: "holInspectTrustedExport",
+        connection: this.connection,
+        trustedImportId,
+        namespace,
+        exportId,
+        snapshot: transferred,
+      },
+      [
+        transferred.bytes.buffer,
+        transferred.publicKey.buffer,
+        transferred.signature.buffer,
+      ],
+    );
   }
 
   async close(): Promise<void> {

@@ -2,7 +2,8 @@ use covalence_lib_hash::O256;
 use wasm_bindgen::prelude::*;
 
 use super::{
-    ConnectionId, ContextId, ExportId, Kind, KindId, KindView, LocalRepl, LocalSignedHolSnapshot,
+    ConnectionId, ContextId, ExportId, Kind, KindId, KindView, LocalImportedHolExport,
+    LocalImportedHolTerm, LocalImportedHolValue, LocalRepl, LocalSignedHolSnapshot,
     LocalTrustedHolImport, NamespaceExport, NamespaceId, NamespaceView, Outcome, ProofError,
     QueryResult, TermId, TermView, TrustedImportId, TypeId, TypeView, Value,
 };
@@ -61,6 +62,12 @@ pub struct WebSignedHolSnapshot {
 #[wasm_bindgen]
 pub struct WebTrustedHolImport {
     trusted: LocalTrustedHolImport,
+}
+
+/// Owned structural export copied from one scoped immutable imported-image reader.
+#[wasm_bindgen]
+pub struct WebImportedHolExport {
+    value: LocalImportedHolExport,
 }
 
 #[wasm_bindgen]
@@ -851,6 +858,63 @@ impl WebKernel {
             .map_err(js_error)
     }
 
+    /// Defines a local alias for one complete namespace in an unfetched import.
+    pub fn hol_import_namespace(
+        &mut self,
+        connection: u32,
+        parent: Option<u32>,
+        name: Option<String>,
+        import: u32,
+        source_namespace: u32,
+    ) -> Result<u32, JsValue> {
+        let namespace = self
+            .repl
+            .create_hol_imported_namespace(
+                ConnectionId::from_u32(connection),
+                parent.map(|id| NamespaceId::from_i64(i64::from(id))),
+                name.as_deref(),
+                super::ImportId::from_i64(i64::from(import)),
+                i64::from(source_namespace),
+            )
+            .map_err(js_error)?;
+        u32::try_from(namespace.get()).map_err(js_error)
+    }
+
+    /// Authenticates downloaded bytes and structurally inspects one exact trusted namespace export.
+    #[allow(clippy::too_many_arguments)]
+    pub fn hol_inspect_trusted_export(
+        &mut self,
+        connection: u32,
+        trusted_import: u32,
+        bytes: &[u8],
+        schema: &str,
+        image: &str,
+        signer: &str,
+        public_key: &[u8],
+        signature: &[u8],
+        namespace: u32,
+        export: u32,
+    ) -> Result<Option<WebImportedHolExport>, JsValue> {
+        let public_key = public_key
+            .try_into()
+            .map_err(|_| JsValue::from_str("Ed25519 public key must contain exactly 32 bytes"))?;
+        self.repl
+            .inspect_trusted_hol_export(
+                ConnectionId::from_u32(connection),
+                TrustedImportId::from_i64(i64::from(trusted_import)),
+                bytes,
+                O256::from_hex(schema).map_err(js_error)?,
+                O256::from_hex(image).map_err(js_error)?,
+                O256::from_hex(signer).map_err(js_error)?,
+                public_key,
+                signature,
+                NamespaceId::from_i64(i64::from(namespace)),
+                ExportId::from_i64(i64::from(export)),
+            )
+            .map(|value| value.map(|value| WebImportedHolExport { value }))
+            .map_err(js_error)
+    }
+
     fn connection_mut(
         &mut self,
         id: u32,
@@ -858,6 +922,131 @@ impl WebKernel {
         self.repl
             .sql_mut(ConnectionId::from_u32(id))
             .map_err(js_error)
+    }
+}
+
+#[wasm_bindgen]
+impl WebImportedHolExport {
+    /// Returns `kind`, `type`, `term`, or `context`.
+    pub fn sort(&self) -> String {
+        match self.value.value {
+            LocalImportedHolValue::Kind(_) => "kind",
+            LocalImportedHolValue::Type(_) => "type",
+            LocalImportedHolValue::Term { .. } => "term",
+            LocalImportedHolValue::Context(_) => "context",
+        }
+        .to_owned()
+    }
+
+    /// Returns the destination connection whose trust state authorized the read.
+    pub fn connection_id(&self) -> Result<u32, JsValue> {
+        u32::try_from(self.value.connection.get()).map_err(js_error)
+    }
+
+    /// Returns the exact persistent trusted-import assumption.
+    pub fn trusted_import_id(&self) -> Result<u32, JsValue> {
+        u32::try_from(self.value.trusted_import.get()).map_err(js_error)
+    }
+
+    /// Returns the exact inert import-directory row.
+    pub fn import_id(&self) -> Result<u32, JsValue> {
+        u32::try_from(self.value.import.get()).map_err(js_error)
+    }
+
+    /// Returns the destination-local imported namespace alias.
+    pub fn namespace_id(&self) -> Result<u32, JsValue> {
+        u32::try_from(self.value.namespace.get()).map_err(js_error)
+    }
+
+    /// Returns the requested export coordinate.
+    pub fn export_id(&self) -> Result<u32, JsValue> {
+        u32::try_from(self.value.export.get()).map_err(js_error)
+    }
+
+    /// Returns the inert source-database value coordinate.
+    pub fn source_id(&self) -> Result<u32, JsValue> {
+        u32::try_from(match self.value.value {
+            LocalImportedHolValue::Kind(id)
+            | LocalImportedHolValue::Type(id)
+            | LocalImportedHolValue::Context(id)
+            | LocalImportedHolValue::Term { id, .. } => id,
+        })
+        .map_err(js_error)
+    }
+
+    /// Returns the structural term tag, or no value for another export sort.
+    pub fn term_tag(&self) -> Option<String> {
+        self.term().map(|term| {
+            match term {
+                LocalImportedHolTerm::Bool(_) => "bool",
+                LocalImportedHolTerm::Free { .. } => "free",
+                LocalImportedHolTerm::Bound { .. } => "bound",
+                LocalImportedHolTerm::Application { .. } => "application",
+                LocalImportedHolTerm::Lambda { .. } => "lambda",
+                LocalImportedHolTerm::Equality { .. } => "equality",
+            }
+            .to_owned()
+        })
+    }
+
+    pub fn boolean(&self) -> Result<bool, JsValue> {
+        match self.term() {
+            Some(LocalImportedHolTerm::Bool(value)) => Ok(value),
+            _ => Err(JsValue::from_str("imported export is not a Boolean term")),
+        }
+    }
+
+    pub fn source_lhs(&self) -> Result<u32, JsValue> {
+        let id = match self.term() {
+            Some(LocalImportedHolTerm::Free { symbol, .. }) => {
+                i64::try_from(symbol).map_err(js_error)?
+            }
+            Some(LocalImportedHolTerm::Bound { index, .. }) => {
+                i64::try_from(index).map_err(js_error)?
+            }
+            Some(LocalImportedHolTerm::Application { function, .. }) => function,
+            Some(LocalImportedHolTerm::Lambda { parameter_type, .. }) => parameter_type,
+            Some(LocalImportedHolTerm::Equality { left, .. }) => left,
+            _ => return Err(JsValue::from_str("imported term has no lhs coordinate")),
+        };
+        u32::try_from(id).map_err(js_error)
+    }
+
+    pub fn source_rhs(&self) -> Result<u32, JsValue> {
+        let id = match self.term() {
+            Some(LocalImportedHolTerm::Application { argument, .. }) => argument,
+            Some(LocalImportedHolTerm::Lambda { body, .. }) => body,
+            Some(LocalImportedHolTerm::Equality { right, .. }) => right,
+            _ => return Err(JsValue::from_str("imported term has no rhs coordinate")),
+        };
+        u32::try_from(id).map_err(js_error)
+    }
+
+    pub fn source_type(&self) -> Result<u32, JsValue> {
+        let ty = match self.term() {
+            Some(
+                LocalImportedHolTerm::Free { ty, .. }
+                | LocalImportedHolTerm::Bound { ty, .. }
+                | LocalImportedHolTerm::Application { ty, .. }
+                | LocalImportedHolTerm::Lambda { ty, .. }
+                | LocalImportedHolTerm::Equality { ty, .. },
+            ) => ty,
+            _ => {
+                return Err(JsValue::from_str(
+                    "imported export has no structural term type",
+                ));
+            }
+        };
+        u32::try_from(ty).map_err(js_error)
+    }
+}
+
+impl WebImportedHolExport {
+    fn term(&self) -> Option<LocalImportedHolTerm> {
+        match self.value.value {
+            LocalImportedHolValue::Term { term, .. } => Some(term),
+            _ => None,
+        }
     }
 }
 
