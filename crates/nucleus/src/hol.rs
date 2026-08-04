@@ -1,10 +1,14 @@
 //! Minimal HOL-omega protocol, beginning with canonical kinds.
 
 mod export;
+mod import;
 mod namespace;
 mod validate;
 
 pub use export::{HolExportError, HolSnapshotAttestation, SignedHolSnapshot};
+pub use import::{
+    ExternalExportRef, HolDatabaseRef, ImportError, ImportId, ImportView, NamespaceSource,
+};
 pub use namespace::{
     ExportError, ExportId, ExportSort, ExportView, NamespaceError, NamespaceExport, NamespaceId,
     NamespaceView,
@@ -397,6 +401,14 @@ pub enum Operation {
     ExportNamespaceValue,
     /// Read one namespace export.
     ReadNamespaceExport,
+    /// Register an unfetched schema-qualified database reference.
+    RegisterImport,
+    /// Read an unfetched database reference.
+    ReadImport,
+    /// Define a full external namespace alias without fetching it.
+    DefineImportedNamespace,
+    /// Read an external namespace alias.
+    ReadImportedNamespace,
     /// Check and persist one exact structural context union.
     ProveContextUnion,
     /// Load and recheck one exact structural context union.
@@ -512,6 +524,8 @@ pub enum MetadataTable {
     Namespace,
     /// Published local values in a namespace-wide export-ID space.
     NamespaceExport,
+    /// Schema-qualified unfetched database references.
+    Import,
 }
 
 /// One existing row which may carry user metadata.
@@ -558,6 +572,8 @@ pub enum MetadataTarget {
         /// Namespace-wide export ID.
         export: ExportId,
     },
+    /// An unfetched schema-qualified database reference.
+    Import(ImportId),
 }
 
 impl MetadataTarget {
@@ -600,6 +616,12 @@ impl MetadataTarget {
         Self::NamespaceExport { namespace, export }
     }
 
+    /// Selects an import-directory row.
+    #[must_use]
+    pub const fn import(import: ImportId) -> Self {
+        Self::Import(import)
+    }
+
     const fn table(self) -> MetadataTable {
         match self {
             Self::Node(_) => MetadataTable::Node,
@@ -610,6 +632,7 @@ impl MetadataTarget {
             Self::ContextUnion { .. } => MetadataTable::ContextUnion,
             Self::Namespace(_) => MetadataTable::Namespace,
             Self::NamespaceExport { .. } => MetadataTable::NamespaceExport,
+            Self::Import(_) => MetadataTable::Import,
         }
     }
 }
@@ -644,6 +667,12 @@ impl From<NamespaceId> for MetadataTarget {
     }
 }
 
+impl From<ImportId> for MetadataTarget {
+    fn from(id: ImportId) -> Self {
+        Self::Import(id)
+    }
+}
+
 impl MetadataTable {
     const fn sql(self) -> &'static str {
         match self {
@@ -655,6 +684,7 @@ impl MetadataTable {
             Self::ContextUnion => "hol_context_exact_union",
             Self::Namespace => "hol_namespace",
             Self::NamespaceExport => "hol_namespace_export",
+            Self::Import => "hol_import",
         }
     }
 
@@ -665,8 +695,15 @@ impl MetadataTable {
             Self::ContextMember | Self::Judgement => &["ctx_id", "term_id"],
             Self::ContextImplication => &["antecedent_ctx_id", "consequent_ctx_id"],
             Self::ContextUnion => &["left_ctx_id", "right_ctx_id", "result_ctx_id"],
-            Self::Namespace => &["namespace_id", "parent_namespace_id", "name"],
+            Self::Namespace => &[
+                "namespace_id",
+                "parent_namespace_id",
+                "name",
+                "source_import_id",
+                "source_namespace_id",
+            ],
             Self::NamespaceExport => &["namespace_id", "export_id", "sort", "local_id", "name"],
+            Self::Import => &["import_id", "schema_hash", "image_hash"],
         };
         columns.iter().any(|core| core.eq_ignore_ascii_case(name))
     }
@@ -2116,6 +2153,10 @@ fn metadata_target_predicate(target: MetadataTarget, first_parameter: usize) -> 
                 first_parameter + 1
             ),
             vec![namespace.get(), export.get()],
+        ),
+        MetadataTarget::Import(import) => (
+            format!("import_id = ?{first_parameter}"),
+            vec![import.get()],
         ),
     }
 }

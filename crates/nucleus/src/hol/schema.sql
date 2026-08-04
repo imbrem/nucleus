@@ -1,5 +1,5 @@
 CREATE TABLE hol_schema (
-    version INTEGER PRIMARY KEY CHECK (version = 4),
+    version INTEGER PRIMARY KEY CHECK (version = 5),
     representation TEXT NOT NULL CHECK (representation = 'tagged-node')
 ) STRICT;
 
@@ -111,11 +111,22 @@ CREATE TABLE hol_namespace (
     namespace_id INTEGER PRIMARY KEY CHECK (namespace_id >= 0),
     parent_namespace_id INTEGER,
     name TEXT,
+    source_import_id INTEGER,
+    source_namespace_id INTEGER,
     CHECK (
         parent_namespace_id IS NULL
         OR (parent_namespace_id >= 0 AND parent_namespace_id != namespace_id)
     ),
-    CHECK (name IS NULL OR length(name) > 0)
+    CHECK (name IS NULL OR length(name) > 0),
+    CHECK (
+        (source_import_id IS NULL AND source_namespace_id IS NULL)
+        OR (
+            source_import_id IS NOT NULL
+            AND source_import_id >= 0
+            AND source_namespace_id IS NOT NULL
+            AND source_namespace_id >= 0
+        )
+    )
 ) STRICT;
 
 CREATE UNIQUE INDEX hol_namespace_named_child
@@ -136,6 +147,17 @@ CREATE TABLE hol_namespace_export (
 CREATE UNIQUE INDEX hol_namespace_export_name
     ON hol_namespace_export(namespace_id, name)
     WHERE name IS NOT NULL;
+
+-- Hash-first references only. Registration does not fetch, validate, attach,
+-- authenticate, or trust the named database.
+CREATE TABLE hol_import (
+    import_id INTEGER PRIMARY KEY CHECK (import_id >= 0),
+    schema_hash BLOB NOT NULL,
+    image_hash BLOB NOT NULL,
+    CHECK (typeof(schema_hash) = 'blob' AND length(schema_hash) = 32),
+    CHECK (typeof(image_hash) = 'blob' AND length(image_hash) = 32),
+    UNIQUE (schema_hash, image_hash)
+) STRICT;
 
 CREATE UNIQUE INDEX hol_kstar_unique
     ON hol_node((1)) WHERE tag = 'KSTAR';
@@ -167,7 +189,7 @@ CREATE UNIQUE INDEX hol_mlam_unique
 CREATE UNIQUE INDEX hol_meq_unique
     ON hol_node(lhs, rhs) WHERE tag = 'MEQ';
 
-INSERT INTO hol_schema(version, representation) VALUES (4, 'tagged-node');
+INSERT INTO hol_schema(version, representation) VALUES (5, 'tagged-node');
 INSERT INTO hol_node(node_id, tag) VALUES (1, 'KSTAR');
 INSERT INTO hol_node(node_id, tag, ty) VALUES (2, 'TBOOL', 1);
 INSERT INTO hol_context(ctx_id) VALUES (0);
