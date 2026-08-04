@@ -4,6 +4,20 @@ Status: historical design notes plus the implemented monomorphic prototype.
 The current store uses the tagged-node representation described below. Full
 HOL-omega type abstraction/application and subtype rules remain future work.
 
+The `signed_succ_congruence` example is the first composed signed theorem demo.
+It derives `x = y |- succ x = succ y` using beta conversion, theorem transport,
+and typed equality substitution; persists and exports the checked judgement;
+then rejects it before signer trust and accepts and reads it through the exact
+immutable-VFS trusted-import path. It intentionally remains a native Rust
+driver: the beta-only proof-guest WIT contract is not widened for this demo.
+Here `ind` is an opaque base type and `succ` is an opaque `ind -> ind`
+constant, so the theorem demonstrates equality congruence rather than a
+natural-number definition or arithmetic fact. Run it with:
+
+```console
+cargo run -p covalence-nucleus --example signed_succ_congruence -- ./succ-artifact
+```
+
 ## Goals
 
 The first HOL-omega implementation should be easy to inspect, hard to misuse,
