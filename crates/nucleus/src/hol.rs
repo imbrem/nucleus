@@ -213,6 +213,7 @@ enum TheoremOrigin {
     Reflexivity,
     Beta,
     Weakening,
+    EqualityModusPonens,
 }
 
 impl TheoremOrigin {
@@ -223,6 +224,7 @@ impl TheoremOrigin {
             Self::Reflexivity => "reflexivity",
             Self::Beta => "beta",
             Self::Weakening => "weakening",
+            Self::EqualityModusPonens => "equality_modus_ponens",
         }
     }
 }
@@ -372,6 +374,8 @@ pub enum Operation {
     ProveContextImplicationPath,
     /// Weaken a theorem along a context implication.
     ProveWeakening,
+    /// Apply equality modus ponens to two branded premises.
+    ProveEqualityModusPonens,
     /// Load or inspect a persisted context implication.
     ReadContextImplication,
     /// Persist a branded context implication as authoritative connection state.
@@ -1793,6 +1797,44 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
             context: implication.antecedent,
             conclusion: theorem.conclusion,
             origin: Some(TheoremOrigin::Weakening),
+            brand: PhantomData,
+        })
+    }
+
+    /// Applies equality modus ponens: `Γ ⊢ p = q` and `Γ ⊢ p` yield `Γ ⊢ q`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the rule, the premises have different
+    /// contexts, the first conclusion is not equality, its left side is not
+    /// the premise conclusion, or its stored term graph is invalid.
+    pub fn equality_modus_ponens(
+        &mut self,
+        equality: &Theorem<'brand>,
+        premise: &Theorem<'brand>,
+    ) -> Result<Theorem<'brand>, ProofError> {
+        let (neutron, hol) = self.connection.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ProveEqualityModusPonens)?;
+        if equality.context != premise.context {
+            return Err(ProofError::MismatchedTheoremContexts {
+                expected: equality.context,
+                actual: premise.context,
+            });
+        }
+        let (view, _) = read_term(neutron.sqlite(), equality.conclusion)?;
+        let TermView::Equality { left, right } = view else {
+            return Err(ProofError::ExpectedEquality(equality.conclusion));
+        };
+        if premise.conclusion != left {
+            return Err(ProofError::EqualityPremiseMismatch {
+                expected: left,
+                actual: premise.conclusion,
+            });
+        }
+        Ok(Theorem {
+            context: equality.context,
+            conclusion: right,
+            origin: Some(TheoremOrigin::EqualityModusPonens),
             brand: PhantomData,
         })
     }
@@ -3369,13 +3411,22 @@ pub enum ProofError {
         /// Actual theorem context.
         actual: ContextId,
     },
+    /// Two theorem premises were derived under different contexts.
+    MismatchedTheoremContexts {
+        expected: ContextId,
+        actual: ContextId,
+    },
+    /// Equality modus ponens received a non-equality first conclusion.
+    ExpectedEquality(TermId),
+    /// Equality modus ponens' premise does not match the equality's left side.
+    EqualityPremiseMismatch { expected: TermId, actual: TermId },
     /// `SQLite` rejected an operation.
     Sqlite(sqlite::Error),
 }
 
 impl fmt::Display for ProofError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(result) = format_context_union_error(self, formatter) {
+        if let Some(result) = format_relational_proof_error(self, formatter) {
             return result;
         }
         match self {
@@ -3447,7 +3498,10 @@ impl fmt::Display for ProofError {
             Self::ContextUnionMissingMember { .. }
             | Self::ContextUnionUnexpectedMember { .. }
             | Self::ContextUnionConflict { .. }
-            | Self::ContextEquivalenceMismatch { .. } => unreachable!("handled above"),
+            | Self::ContextEquivalenceMismatch { .. }
+            | Self::MismatchedTheoremContexts { .. }
+            | Self::ExpectedEquality(_)
+            | Self::EqualityPremiseMismatch { .. } => unreachable!("handled above"),
             Self::WeakeningContextMismatch { expected, actual } => write!(
                 formatter,
                 "weakening theorem has context {}, expected {}",
@@ -3459,7 +3513,7 @@ impl fmt::Display for ProofError {
     }
 }
 
-fn format_context_union_error(
+fn format_relational_proof_error(
     error: &ProofError,
     formatter: &mut fmt::Formatter<'_>,
 ) -> Option<fmt::Result> {
@@ -3509,6 +3563,23 @@ fn format_context_union_error(
             forward_consequent.get(),
             backward_antecedent.get(),
             backward_consequent.get()
+        )),
+        ProofError::MismatchedTheoremContexts { expected, actual } => Some(write!(
+            formatter,
+            "theorem context {} does not match {}",
+            actual.get(),
+            expected.get()
+        )),
+        ProofError::ExpectedEquality(term) => Some(write!(
+            formatter,
+            "term {} is not an equality conclusion",
+            term.get()
+        )),
+        ProofError::EqualityPremiseMismatch { expected, actual } => Some(write!(
+            formatter,
+            "equality premise is {}, expected {}",
+            actual.get(),
+            expected.get()
         )),
         _ => None,
     }
@@ -3571,7 +3642,10 @@ impl StdError for ProofError {
             | Self::ContextUnionUnexpectedMember { .. }
             | Self::ContextUnionConflict { .. }
             | Self::ContextEquivalenceMismatch { .. }
-            | Self::WeakeningContextMismatch { .. } => None,
+            | Self::WeakeningContextMismatch { .. }
+            | Self::MismatchedTheoremContexts { .. }
+            | Self::ExpectedEquality(_)
+            | Self::EqualityPremiseMismatch { .. } => None,
         }
     }
 }
@@ -4179,6 +4253,57 @@ mod tests {
                 .proved_judgement(ContextId::empty(), conclusion)
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn equality_modus_ponens_composes_branded_premises_before_persistence() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let variable = connection.insert_bound_term(0, bool_type).unwrap();
+        let identity = connection.insert_lambda(bool_type, variable).unwrap();
+        let truth = connection.insert_bool_term(true).unwrap();
+        let application = connection.insert_application(identity, truth).unwrap();
+        let context = connection.define_context([application]).unwrap();
+
+        let conclusion = connection
+            .with_proof_session(|mut proof| {
+                let premise = proof.prove_hypothesis(context, application)?;
+                let equality = proof.prove_beta(context, identity, truth)?;
+                let wrong_context = proof.prove_truth(ContextId::empty())?;
+                assert!(matches!(
+                    proof.equality_modus_ponens(&equality, &wrong_context),
+                    Err(ProofError::MismatchedTheoremContexts { .. })
+                ));
+                assert!(matches!(
+                    proof.equality_modus_ponens(&premise, &premise),
+                    Err(ProofError::ExpectedEquality(term)) if term == application
+                ));
+                let wrong_premise = proof.prove_truth(context)?;
+                assert!(matches!(
+                    proof.equality_modus_ponens(&equality, &wrong_premise),
+                    Err(ProofError::EqualityPremiseMismatch { .. })
+                ));
+                let theorem = proof.equality_modus_ponens(&equality, &premise)?;
+                let conclusion = theorem.conclusion();
+                proof.persist_theorem(&theorem)?;
+                Ok::<_, ProofError>(conclusion)
+            })
+            .unwrap();
+        assert_eq!(conclusion, truth);
+        let (judgements, rule) = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row(
+                "SELECT
+                     (SELECT count(*) FROM hol_judgement),
+                     (SELECT rule FROM hol_proof_event LIMIT 1)",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            )
+            .unwrap();
+        assert_eq!(judgements, 1);
+        assert_eq!(rule, "equality_modus_ponens");
     }
 
     #[test]
