@@ -6,7 +6,7 @@ use std::process::ExitCode;
 
 use covalence_repl::{
     ConnectionId, ContextId, ExportId, KindId, KindView, LocalRepl, NamespaceExport, NamespaceId,
-    Outcome, ProofError, TermId, TermView, TypeId, TypeView, Value,
+    O256, Outcome, ProofError, TermId, TermView, TrustedImportId, TypeId, TypeView, Value,
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
@@ -95,38 +95,7 @@ fn run_line(repl: &mut LocalRepl, output: &mut impl io::Write, line: &str) -> Re
         return Ok(false);
     }
     if line == ".help" {
-        writeln!(
-            output,
-            ".load SCHEMA PATH  attach a complete immutable SQLite image"
-        )?;
-        writeln!(output, ".open [sql|hol]    open and select a connection")?;
-        writeln!(output, ".use ID            select a connection")?;
-        writeln!(output, ".close [ID]        close a connection")?;
-        writeln!(output, ".connections       list open connections")?;
-        writeln!(output, ".hol star          intern the star kind")?;
-        writeln!(output, ".hol arrow D C     intern the kind D -> C")?;
-        writeln!(output, ".hol show ID       inspect a kind")?;
-        writeln!(output, ".hol rank ID       derive a kind's order rank")?;
-        writeln!(
-            output,
-            ".hol type ...      admit/inspect Bool and arrow types"
-        )?;
-        writeln!(
-            output,
-            ".hol term ...      admit/inspect simply typed terms and binders"
-        )?;
-        writeln!(output, ".hol ctx ...       define/inspect Boolean contexts")?;
-        writeln!(
-            output,
-            ".hol namespace ... define/inspect export namespaces"
-        )?;
-        writeln!(output, ".hol export ...    bind/inspect namespace exports")?;
-        writeln!(
-            output,
-            ".hol snapshot export PATH  write a signed HOL image"
-        )?;
-        writeln!(output, ".hol prove ...     apply an explicit HOL rule")?;
-        writeln!(output, ".quit              exit")?;
+        print_help(output)?;
         return Ok(true);
     }
     if line == ".open" || line.starts_with(".open ") {
@@ -189,6 +158,49 @@ fn run_line(repl: &mut LocalRepl, output: &mut impl io::Write, line: &str) -> Re
     Ok(true)
 }
 
+fn print_help(output: &mut impl io::Write) -> io::Result<()> {
+    writeln!(
+        output,
+        ".load SCHEMA PATH  attach a complete immutable SQLite image"
+    )?;
+    writeln!(output, ".open [sql|hol]    open and select a connection")?;
+    writeln!(output, ".use ID            select a connection")?;
+    writeln!(output, ".close [ID]        close a connection")?;
+    writeln!(output, ".connections       list open connections")?;
+    writeln!(output, ".hol star          intern the star kind")?;
+    writeln!(output, ".hol arrow D C     intern the kind D -> C")?;
+    writeln!(output, ".hol show ID       inspect a kind")?;
+    writeln!(output, ".hol rank ID       derive a kind's order rank")?;
+    writeln!(
+        output,
+        ".hol type ...      admit/inspect Bool and arrow types"
+    )?;
+    writeln!(
+        output,
+        ".hol term ...      admit/inspect simply typed terms and binders"
+    )?;
+    writeln!(output, ".hol ctx ...       define/inspect Boolean contexts")?;
+    writeln!(
+        output,
+        ".hol namespace ... define/inspect export namespaces"
+    )?;
+    writeln!(output, ".hol export ...    bind/inspect namespace exports")?;
+    writeln!(
+        output,
+        ".hol snapshot export PATH  write a signed HOL image"
+    )?;
+    writeln!(
+        output,
+        ".hol import trust ...      trust and persist a hash-first signed import"
+    )?;
+    writeln!(
+        output,
+        ".hol import show ID        inspect a trusted import"
+    )?;
+    writeln!(output, ".hol prove ...     apply an explicit HOL rule")?;
+    writeln!(output, ".quit              exit")
+}
+
 fn run_hol(repl: &mut LocalRepl, output: &mut impl io::Write, arguments: &str) -> Result<()> {
     let connection = repl.active()?.ok_or("no active connection")?;
     let mut arguments = arguments.split_whitespace();
@@ -246,6 +258,7 @@ fn run_hol(repl: &mut LocalRepl, output: &mut impl io::Write, arguments: &str) -
         Some("namespace") => run_hol_namespace(repl, output, connection, arguments)?,
         Some("export") => run_hol_export(repl, output, connection, arguments)?,
         Some("snapshot") => run_hol_snapshot(repl, output, connection, arguments)?,
+        Some("import") => run_hol_import(repl, output, connection, arguments)?,
         Some("prove") => run_hol_proof(repl, output, connection, arguments)?,
         Some("proved") => {
             let context = parse_context_id(arguments.next(), "context")?;
@@ -258,12 +271,94 @@ fn run_hol(repl: &mut LocalRepl, output: &mut impl io::Write, arguments: &str) -
         }
         _ => {
             return Err(
-                "usage: .hol star|arrow|show|rank|type|term|ctx|namespace|export|snapshot|prove|proved ..."
+                "usage: .hol star|arrow|show|rank|type|term|ctx|namespace|export|snapshot|import|prove|proved ..."
                     .into(),
             );
         }
     }
     Ok(())
+}
+
+fn run_hol_import<'a>(
+    repl: &mut LocalRepl,
+    output: &mut impl io::Write,
+    connection: ConnectionId,
+    mut arguments: impl Iterator<Item = &'a str>,
+) -> Result<()> {
+    match arguments.next() {
+        Some("trust") => {
+            let schema = parse_o256(arguments.next(), "schema")?;
+            let image = parse_o256(arguments.next(), "image")?;
+            let signer = parse_o256(arguments.next(), "signer")?;
+            let public_key = parse_fixed_hex::<32>(arguments.next(), "public key")?;
+            let signature = parse_hex(arguments.next(), "signature")?;
+            if arguments.next().is_some() {
+                return Err(
+                    "usage: .hol import trust SCHEMA IMAGE SIGNER PUBLIC_KEY SIGNATURE".into(),
+                );
+            }
+            let trusted =
+                repl.trust_hol_import(connection, schema, image, signer, public_key, &signature)?;
+            writeln!(
+                output,
+                "trusted-import {} import={} schema={} image={} signer={}",
+                trusted.trusted_import().get(),
+                trusted.import().get(),
+                trusted.database().schema(),
+                trusted.database().image(),
+                trusted.signer()
+            )?;
+        }
+        Some("show") => {
+            let trusted_import = TrustedImportId::from_i64(
+                arguments
+                    .next()
+                    .ok_or("missing trusted-import ID")?
+                    .parse()?,
+            );
+            if arguments.next().is_some() {
+                return Err("usage: .hol import show TRUSTED_IMPORT_ID".into());
+            }
+            let trusted = repl.hol_trusted_import(connection, trusted_import)?;
+            writeln!(
+                output,
+                "trusted-import {} import={} schema={} image={} signer={}",
+                trusted.trusted_import().get(),
+                trusted.import().get(),
+                trusted.database().schema(),
+                trusted.database().image(),
+                trusted.signer()
+            )?;
+        }
+        _ => {
+            return Err(
+                "usage: .hol import trust SCHEMA IMAGE SIGNER PUBLIC_KEY SIGNATURE|show ID".into(),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn parse_o256(value: Option<&str>, label: &str) -> Result<O256> {
+    O256::from_hex(value.ok_or_else(|| format!("missing {label}"))?).map_err(Into::into)
+}
+
+fn parse_hex(value: Option<&str>, label: &str) -> Result<Vec<u8>> {
+    let value = value.ok_or_else(|| format!("missing {label}"))?;
+    if !value.is_ascii() || value.len() % 2 != 0 {
+        return Err(format!("{label} must contain an even number of hex digits").into());
+    }
+    (0..value.len())
+        .step_by(2)
+        .map(|offset| u8::from_str_radix(&value[offset..offset + 2], 16).map_err(Into::into))
+        .collect()
+}
+
+fn parse_fixed_hex<const N: usize>(value: Option<&str>, label: &str) -> Result<[u8; N]> {
+    let decoded = parse_hex(value, label)?;
+    decoded
+        .try_into()
+        .map_err(|_: Vec<u8>| format!("{label} must be exactly {N} bytes").into())
 }
 
 fn run_hol_namespace<'a>(
@@ -1016,6 +1111,39 @@ mod tests {
         assert!(output.contains("* 2\tnucleus/hol-common-v2\n"));
         assert!(output.contains("sql_still_live\n42\n"));
         assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn terminal_trusts_and_inspects_a_hash_first_hol_import() {
+        let mut repl = LocalRepl::new().unwrap();
+        let source = repl.open_hol().unwrap();
+        let target = repl.open_hol().unwrap();
+        let snapshot = repl.export_hol_snapshot(source).unwrap();
+        repl.select(target).unwrap();
+        let command = format!(
+            ".hol import trust {} {} {} {} {}",
+            snapshot.schema(),
+            snapshot.image(),
+            snapshot.signer(),
+            hex(snapshot.public_key()),
+            hex(snapshot.signature())
+        );
+        let mut output = Vec::new();
+
+        assert!(run_line(&mut repl, &mut output, &command).unwrap());
+        assert!(run_line(&mut repl, &mut output, ".hol import show 0").unwrap());
+
+        let output = String::from_utf8(output).unwrap();
+        let expected = format!(
+            "trusted-import 0 import=0 schema={} image={} signer={}",
+            snapshot.schema(),
+            snapshot.image(),
+            snapshot.signer()
+        );
+        assert_eq!(output.matches(&expected).count(), 2);
+        let exported = repl.export_hol_snapshot(target).unwrap();
+        let validated = covalence_repl::ValidatedHolImage::validate(exported.bytes()).unwrap();
+        assert_eq!(validated.counts().untrusted_trusted_import_rows, 1);
     }
 
     #[test]
