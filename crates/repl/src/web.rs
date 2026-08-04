@@ -521,6 +521,27 @@ impl WebKernel {
         u32::try_from(theorem.conclusion().get()).map_err(js_error)
     }
 
+    /// Proves one closed beta reduction in the selected context.
+    pub fn hol_prove_beta(
+        &mut self,
+        connection: u32,
+        context: u32,
+        abstraction: u32,
+        argument: u32,
+    ) -> Result<u32, JsValue> {
+        let theorem = self
+            .repl
+            .hol_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .prove_beta(
+                ContextId::from_i64(i64::from(context)),
+                TermId::from_i64(i64::from(abstraction)),
+                TermId::from_i64(i64::from(argument)),
+            )
+            .map_err(js_error)?;
+        u32::try_from(theorem.conclusion().get()).map_err(js_error)
+    }
+
     /// Queries whether the judgement has already been proved.
     pub fn hol_proved(
         &mut self,

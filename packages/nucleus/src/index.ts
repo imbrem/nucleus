@@ -67,6 +67,11 @@ export interface BrowserHolConnection {
   proveHypothesis(context: number, term: number): Promise<number>;
   proveTruth(context: number): Promise<number>;
   proveReflexivity(context: number, term: number): Promise<number>;
+  proveBeta(
+    context: number,
+    abstraction: number,
+    argument: number,
+  ): Promise<number>;
   proved(context: number, term: number): Promise<boolean>;
   close(): Promise<void>;
 }
@@ -163,6 +168,13 @@ type RequestBody =
       connection: number;
       context: number;
       term: number;
+    }
+  | {
+      operation: "holProveBeta";
+      connection: number;
+      context: number;
+      abstraction: number;
+      argument: number;
     }
   | {
       operation: "holProved";
@@ -496,6 +508,20 @@ class WorkerHolConnection implements BrowserHolConnection {
       connection: this.connection,
       context,
       term,
+    });
+  }
+
+  proveBeta(
+    context: number,
+    abstraction: number,
+    argument: number,
+  ): Promise<number> {
+    return this.#request({
+      operation: "holProveBeta",
+      connection: this.connection,
+      context,
+      abstraction,
+      argument,
     });
   }
 

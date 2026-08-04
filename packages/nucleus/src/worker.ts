@@ -140,6 +140,14 @@ type Request =
     }
   | {
       id: number;
+      operation: "holProveBeta";
+      connection: number;
+      context: number;
+      abstraction: number;
+      argument: number;
+    }
+  | {
+      id: number;
       operation: "holProved";
       connection: number;
       context: number;
@@ -360,6 +368,13 @@ async function execute(request: Request): Promise<unknown> {
         request.connection,
         request.context,
         request.term,
+      );
+    case "holProveBeta":
+      return connection.hol_prove_beta(
+        request.connection,
+        request.context,
+        request.abstraction,
+        request.argument,
       );
     case "holProved":
       return connection.hol_proved(
