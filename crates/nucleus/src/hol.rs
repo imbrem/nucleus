@@ -29,6 +29,7 @@ pub use validate::{
     AuthenticatedHolImageValidationError, AuthenticatedValidatedHolImage, HolImageCounts,
     HolImageValidationError, ValidatedHolImage, stlc_bool_eq_v1_schema_id,
     stlc_bool_eq_v1_semantics, stlc_bool_eq_v2_schema_id, stlc_bool_eq_v2_semantics,
+    stlc_bool_eq_v3_schema_id, stlc_bool_eq_v3_semantics,
 };
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -291,6 +292,7 @@ enum TheoremOrigin {
     Weakening,
     EqualityModusPonens,
     EqualitySubstitution,
+    DeductionAntisymmetry,
     ConversionEquality,
     Conversion,
 }
@@ -305,6 +307,7 @@ impl TheoremOrigin {
             Self::Weakening => "weakening",
             Self::EqualityModusPonens => "equality_modus_ponens",
             Self::EqualitySubstitution => "equality_substitution",
+            Self::DeductionAntisymmetry => "deduction_antisymmetry",
             Self::ConversionEquality => "conversion_equality",
             Self::Conversion => "conversion",
         }
@@ -482,6 +485,8 @@ pub enum Operation {
     ProveEqualityModusPonens,
     /// Substitute equals through one closed typed Boolean predicate.
     ProveEqualitySubstitution,
+    /// Discharge opposite conclusions through deduction antisymmetry.
+    ProveDeductionAntisymmetry,
     /// Load or inspect a persisted context implication.
     ReadContextImplication,
     /// Persist a branded context implication as authoritative connection state.
@@ -1484,30 +1489,7 @@ impl<P: Policy> Connection<Hol<P>> {
         members.sort_unstable();
         members.dedup();
         let transaction = neutron.sqlite().unchecked_transaction()?;
-        for member in &members {
-            let validation = validate_term(&transaction, *member)?;
-            if validation.ty != BOOL_TYPE_ID {
-                return Err(ContextError::NonBooleanMember {
-                    term: *member,
-                    ty: validation.ty,
-                });
-            }
-            if !validation.boundary.is_empty() {
-                return Err(ContextError::OpenMember(*member));
-            }
-        }
-        if let Some(context) = find_context(&transaction, &members)? {
-            transaction.commit()?;
-            return Ok(context);
-        }
-        transaction.execute("INSERT INTO hol_context DEFAULT VALUES", [])?;
-        let context = ContextId(transaction.last_insert_rowid());
-        for member in members {
-            transaction.execute(
-                "INSERT INTO hol_context_member(ctx_id, term_id) VALUES (?1, ?2)",
-                [context.0, member.0],
-            )?;
-        }
+        let context = intern_context(&transaction, &members)?;
         transaction.commit()?;
         Ok(context)
     }
@@ -2449,6 +2431,74 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         })
     }
 
+    /// Applies deduction antisymmetry to two Boolean theorems.
+    ///
+    /// From `Γ ⊢ p` and `Δ ⊢ q`, this derives
+    /// `(Γ ∖ {q}) ∪ (Δ ∖ {p}) ⊢ p = q`. Context subtraction and union
+    /// use the canonical finite-set representation; the equality and exact
+    /// result context are interned atomically.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the rule, term insertion, or context
+    /// construction; either premise or context is corrupt; or `SQLite` rejects
+    /// the atomic construction.
+    pub fn deduction_antisymmetry(
+        &mut self,
+        first: &Theorem<'brand>,
+        second: &Theorem<'brand>,
+    ) -> Result<Theorem<'brand>, ProofError> {
+        let (neutron, hol) = self.connection.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ProveDeductionAntisymmetry)?;
+        authorize_proof(&mut hol.policy, Operation::InsertTerm)?;
+        authorize_context(&mut hol.policy, Operation::DefineContext)?;
+
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        let first_validation = validate_term(&transaction, first.conclusion)?;
+        let second_validation = validate_term(&transaction, second.conclusion)?;
+        if first_validation.ty != BOOL_TYPE_ID {
+            return Err(ProofError::NonBooleanConclusion {
+                term: first.conclusion,
+                ty: first_validation.ty,
+            });
+        }
+        if second_validation.ty != BOOL_TYPE_ID {
+            return Err(ProofError::NonBooleanConclusion {
+                term: second.conclusion,
+                ty: second_validation.ty,
+            });
+        }
+        if !first_validation.boundary.is_empty() {
+            return Err(ProofError::OpenConclusion(first.conclusion));
+        }
+        if !second_validation.boundary.is_empty() {
+            return Err(ProofError::OpenConclusion(second.conclusion));
+        }
+
+        require_context(&transaction, first.context)?;
+        require_context(&transaction, second.context)?;
+        let mut members = read_context_members(&transaction, first.context)?;
+        members.retain(|member| *member != second.conclusion);
+        members.extend(
+            read_context_members(&transaction, second.context)?
+                .into_iter()
+                .filter(|member| *member != first.conclusion),
+        );
+        members.sort_unstable();
+        members.dedup();
+
+        let equality = intern_equality(&transaction, first.conclusion, second.conclusion)?;
+        validate_term(&transaction, equality)?;
+        let context = intern_context(&transaction, &members)?;
+        transaction.commit()?;
+        Ok(Theorem {
+            context,
+            conclusion: equality,
+            origin: Some(TheoremOrigin::DeductionAntisymmetry),
+            brand: PhantomData,
+        })
+    }
+
     /// Applies equality modus ponens: `Γ ⊢ p = q` and `Γ ⊢ p` yield `Γ ⊢ q`.
     ///
     /// # Errors
@@ -3000,6 +3050,36 @@ fn find_context(
         }
     }
     Ok(None)
+}
+
+fn intern_context(
+    connection: &sqlite::Connection,
+    members: &[TermId],
+) -> Result<ContextId, ContextError> {
+    for member in members {
+        let validation = validate_term(connection, *member)?;
+        if validation.ty != BOOL_TYPE_ID {
+            return Err(ContextError::NonBooleanMember {
+                term: *member,
+                ty: validation.ty,
+            });
+        }
+        if !validation.boundary.is_empty() {
+            return Err(ContextError::OpenMember(*member));
+        }
+    }
+    if let Some(context) = find_context(connection, members)? {
+        return Ok(context);
+    }
+    connection.execute("INSERT INTO hol_context DEFAULT VALUES", [])?;
+    let context = ContextId(connection.last_insert_rowid());
+    for member in members {
+        connection.execute(
+            "INSERT INTO hol_context_member(ctx_id, term_id) VALUES (?1, ?2)",
+            [context.0, member.0],
+        )?;
+    }
+    Ok(context)
 }
 
 fn persist_judgement(
@@ -4642,6 +4722,8 @@ impl From<sqlite::Error> for KindError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+    use std::rc::Rc;
 
     #[derive(Default)]
     struct RecordingPolicy {
@@ -4674,6 +4756,29 @@ mod tests {
     #[derive(Default)]
     struct DenyEqualitySubstitution {
         operations: Vec<Operation>,
+    }
+
+    #[derive(Default)]
+    struct DenyDeductionAntisymmetry {
+        operations: Vec<Operation>,
+    }
+
+    impl Policy for DenyDeductionAntisymmetry {
+        fn allows(&mut self, operation: Operation) -> bool {
+            self.operations.push(operation);
+            operation != Operation::ProveDeductionAntisymmetry
+        }
+    }
+
+    struct ArmedDenial {
+        operation: Operation,
+        armed: Rc<Cell<bool>>,
+    }
+
+    impl Policy for ArmedDenial {
+        fn allows(&mut self, operation: Operation) -> bool {
+            !self.armed.get() || operation != self.operation
+        }
     }
 
     impl Policy for DenyEqualitySubstitution {
@@ -5494,6 +5599,171 @@ mod tests {
         assert!(
             !operations.ends_with(&[Operation::ProveEqualitySubstitution, Operation::InsertTerm])
         );
+    }
+
+    #[test]
+    fn deduction_antisymmetry_discharges_opposite_assumptions() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let variable = connection.insert_bound_term(0, bool_type).unwrap();
+        let identity = connection.insert_lambda(bool_type, variable).unwrap();
+        let truth = connection.insert_bool_term(true).unwrap();
+        let application = connection.insert_application(identity, truth).unwrap();
+        let gamma = connection.define_context([application]).unwrap();
+        let delta = connection.define_context([truth]).unwrap();
+        let expected = connection.insert_equality(truth, application).unwrap();
+
+        let (context, conclusion) = connection
+            .with_proof_session(|mut proof| {
+                let first = proof.prove_truth(gamma)?;
+                let truth_in_delta = proof.prove_hypothesis(delta, truth)?;
+                let beta = proof.conversion_beta(identity, truth)?;
+                let reverse = proof.conversion_symmetry(&beta)?;
+                let second = proof.convert_theorem(&truth_in_delta, &reverse)?;
+                let theorem = proof.deduction_antisymmetry(&first, &second)?;
+                assert_eq!(theorem.context(), ContextId::empty());
+                assert_eq!(theorem.conclusion(), expected);
+                proof.persist_theorem(&theorem)?;
+                Ok::<_, ProofError>((theorem.context(), theorem.conclusion()))
+            })
+            .unwrap();
+
+        assert_eq!(context, ContextId::empty());
+        assert_eq!(conclusion, expected);
+        assert!(
+            connection
+                .proved_judgement(ContextId::empty(), expected)
+                .unwrap()
+        );
+        let rule = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row(
+                "SELECT rule FROM hol_proof_event WHERE ctx_id = 0 AND term_id = ?1",
+                [expected.get()],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+        assert_eq!(rule, "deduction_antisymmetry");
+    }
+
+    #[test]
+    fn deduction_antisymmetry_constructs_the_exact_canonical_context() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let p = connection.insert_bool_term(true).unwrap();
+        let q = connection.insert_bool_term(false).unwrap();
+        let r = connection.insert_equality(p, p).unwrap();
+        let s = connection.insert_equality(q, q).unwrap();
+        let gamma = connection.define_context([p, q, r]).unwrap();
+        let delta = connection.define_context([p, q, s]).unwrap();
+
+        let result = connection
+            .with_proof_session(|mut proof| {
+                let first = proof.prove_hypothesis(gamma, p)?;
+                let second = proof.prove_hypothesis(delta, q)?;
+                let theorem = proof.deduction_antisymmetry(&first, &second)?;
+                Ok::<_, ProofError>(theorem.context())
+            })
+            .unwrap();
+
+        // Gamma loses q, Delta loses p, and their remaining members are unioned as a set.
+        assert_eq!(connection.context_members(result).unwrap(), [p, q, r, s]);
+        assert_eq!(result, connection.define_context([s, r, q, p, p]).unwrap());
+    }
+
+    #[test]
+    fn deduction_antisymmetry_has_a_distinct_policy_gate() {
+        let mut connection =
+            Connection::open_hol_in_memory(DenyDeductionAntisymmetry::default()).unwrap();
+        let truth = connection.insert_bool_term(true).unwrap();
+        let context = connection.define_context([truth]).unwrap();
+        let before = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row(
+                "SELECT (SELECT count(*) FROM hol_node), (SELECT count(*) FROM hol_context)",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .unwrap();
+
+        assert!(matches!(
+            connection.with_proof_session(|mut proof| {
+                let first = proof.prove_hypothesis(context, truth)?;
+                let second = proof.prove_hypothesis(context, truth)?;
+                proof.deduction_antisymmetry(&first, &second).map(|_| ())
+            }),
+            Err(ProofError::Denied(Operation::ProveDeductionAntisymmetry))
+        ));
+        assert_eq!(
+            connection.protocol().policy().operations.last(),
+            Some(&Operation::ProveDeductionAntisymmetry)
+        );
+        let after = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row(
+                "SELECT (SELECT count(*) FROM hol_node), (SELECT count(*) FROM hol_context)",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .unwrap();
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    fn deduction_antisymmetry_policy_denials_precede_atomic_construction() {
+        for denied in [Operation::InsertTerm, Operation::DefineContext] {
+            let armed = Rc::new(Cell::new(false));
+            let mut connection = Connection::open_hol_in_memory(ArmedDenial {
+                operation: denied,
+                armed: Rc::clone(&armed),
+            })
+            .unwrap();
+            let truth = connection.insert_bool_term(true).unwrap();
+            let context = connection.define_context([truth]).unwrap();
+            let before = connection
+                .parts_mut()
+                .0
+                .sqlite()
+                .query_row(
+                    "SELECT (SELECT count(*) FROM hol_node), (SELECT count(*) FROM hol_context)",
+                    [],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+                )
+                .unwrap();
+            armed.set(true);
+
+            let error = connection
+                .with_proof_session(|mut proof| {
+                    let first = proof.prove_hypothesis(context, truth)?;
+                    let second = proof.prove_hypothesis(context, truth)?;
+                    proof.deduction_antisymmetry(&first, &second).map(|_| ())
+                })
+                .unwrap_err();
+            match (denied, error) {
+                (Operation::InsertTerm, ProofError::Denied(Operation::InsertTerm))
+                | (
+                    Operation::DefineContext,
+                    ProofError::Context(ContextError::Denied(Operation::DefineContext)),
+                ) => {}
+                (_, other) => panic!("unexpected deduction policy error: {other}"),
+            }
+            let after = connection
+                .parts_mut()
+                .0
+                .sqlite()
+                .query_row(
+                    "SELECT (SELECT count(*) FROM hol_node), (SELECT count(*) FROM hol_context)",
+                    [],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+                )
+                .unwrap();
+            assert_eq!(after, before);
+        }
     }
 
     #[test]
