@@ -6,9 +6,10 @@ use covalence_lib_hash::O256;
 use covalence_lib_sqlite as sqlite;
 
 use super::{
-    BOOL_TYPE_ID, ContextError, ContextId, HolSchema, KindError, KindId, KindView, SCHEMA, STAR_ID,
-    TermError, TermId, TypeError, TypeId, TypeView, ValidatedTerm, install_metadata_schema,
-    kind_rank, read_context_members, read_kind, read_type, validate_term_inner,
+    BOOL_TYPE_ID, ContextError, ContextId, ExportId, HolSchema, KindError, KindId, KindView,
+    NamespaceId, SCHEMA, STAR_ID, TermError, TermId, TypeError, TypeId, TypeView, ValidatedTerm,
+    install_metadata_schema, kind_rank, read_context_members, read_kind, read_type,
+    validate_term_inner,
 };
 
 const MAX_GRAPH_DEPTH: usize = 512;
@@ -28,6 +29,10 @@ pub struct HolImageCounts {
     pub untrusted_context_implication_rows: u64,
     /// Independently rechecked exact structural context unions.
     pub context_exact_unions: u64,
+    /// Validated local namespace headers.
+    pub namespaces: u64,
+    /// Validated local namespace exports.
+    pub namespace_exports: u64,
 }
 
 /// Exact bytes admitted as one expected tagged-node HOL physical schema.
@@ -156,7 +161,7 @@ fn validate_schema(
         [],
         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
     )?;
-    if identity == (3, "tagged-node".to_owned()) {
+    if identity == (4, "tagged-node".to_owned()) {
         Ok(schema_manifest_id(&expected_manifest))
     } else {
         Err(HolImageValidationError::SchemaMismatch)
@@ -174,6 +179,7 @@ fn schema_manifest_id(manifest: &[SchemaObject]) -> O256 {
     O256::from_bytes(&encoded)
 }
 
+#[allow(clippy::too_many_lines)]
 fn validate_contents(
     connection: &sqlite::Connection,
 ) -> Result<HolImageCounts, HolImageValidationError> {
@@ -268,6 +274,8 @@ fn validate_contents(
 
     let implication_count = validate_context_implications(connection, &contexts)?;
     let context_union_count = validate_context_unions(connection, &contexts)?;
+    let (namespace_count, namespace_export_count) =
+        validate_namespaces(connection, &nodes, &contexts.iter().copied().collect())?;
 
     Ok(HolImageCounts {
         nodes: u64::try_from(nodes.len()).map_err(|_| HolImageValidationError::CountOverflow)?,
@@ -280,7 +288,123 @@ fn validate_contents(
             .map_err(|_| HolImageValidationError::CountOverflow)?,
         context_exact_unions: u64::try_from(context_union_count)
             .map_err(|_| HolImageValidationError::CountOverflow)?,
+        namespaces: u64::try_from(namespace_count)
+            .map_err(|_| HolImageValidationError::CountOverflow)?,
+        namespace_exports: u64::try_from(namespace_export_count)
+            .map_err(|_| HolImageValidationError::CountOverflow)?,
     })
+}
+
+#[allow(clippy::too_many_lines)]
+fn validate_namespaces(
+    connection: &sqlite::Connection,
+    nodes: &[NodeRow],
+    contexts: &HashSet<ContextId>,
+) -> Result<(usize, usize), HolImageValidationError> {
+    let namespaces = connection
+        .prepare(
+            "SELECT namespace_id, parent_namespace_id, name
+             FROM hol_namespace ORDER BY namespace_id",
+        )?
+        .query_map([], |row| {
+            Ok((
+                NamespaceId::from_i64(row.get(0)?),
+                row.get::<_, Option<i64>>(1)?.map(NamespaceId::from_i64),
+                row.get::<_, Option<String>>(2)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let parents = namespaces
+        .iter()
+        .map(|(id, parent, _)| (*id, *parent))
+        .collect::<HashMap<_, _>>();
+    if parents.get(&NamespaceId::root()) != Some(&None)
+        || namespaces
+            .iter()
+            .find(|(id, _, _)| *id == NamespaceId::root())
+            .is_none_or(|(_, _, name)| name.is_some())
+    {
+        return Err(HolImageValidationError::InvalidRootNamespace);
+    }
+    for (namespace, parent, _) in &namespaces {
+        if let Some(parent) = parent
+            && !parents.contains_key(parent)
+        {
+            return Err(HolImageValidationError::OrphanNamespaceParent {
+                namespace: *namespace,
+                parent: *parent,
+            });
+        }
+    }
+    let mut complete = HashSet::new();
+    for root in parents.keys().copied() {
+        let mut active = HashSet::new();
+        let mut current = Some(root);
+        while let Some(namespace) = current {
+            if complete.contains(&namespace) {
+                break;
+            }
+            if !active.insert(namespace) {
+                return Err(HolImageValidationError::CyclicNamespace(namespace));
+            }
+            current = parents.get(&namespace).copied().flatten();
+        }
+        complete.extend(active);
+    }
+
+    let kinds = nodes
+        .iter()
+        .filter(|(_, tag, _, _, _)| tag.starts_with('K'))
+        .map(|(id, _, _, _, _)| *id)
+        .collect::<HashSet<_>>();
+    let types = nodes
+        .iter()
+        .filter(|(_, tag, _, _, _)| tag.starts_with('T'))
+        .map(|(id, _, _, _, _)| *id)
+        .collect::<HashSet<_>>();
+    let terms = nodes
+        .iter()
+        .filter(|(_, tag, _, _, _)| tag.starts_with('M'))
+        .map(|(id, _, _, _, _)| *id)
+        .collect::<HashSet<_>>();
+    let exports = connection
+        .prepare(
+            "SELECT namespace_id, export_id, sort, local_id
+             FROM hol_namespace_export ORDER BY namespace_id, export_id",
+        )?
+        .query_map([], |row| {
+            Ok((
+                NamespaceId::from_i64(row.get(0)?),
+                ExportId::from_i64(row.get(1)?),
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    for (namespace, export, sort, local_id) in &exports {
+        if !parents.contains_key(namespace) {
+            return Err(HolImageValidationError::OrphanNamespaceExport {
+                namespace: *namespace,
+                export: *export,
+            });
+        }
+        let valid = match sort.as_str() {
+            "kind" => kinds.contains(local_id),
+            "type" => types.contains(local_id),
+            "term" => terms.contains(local_id),
+            "context" => contexts.contains(&ContextId::from_i64(*local_id)),
+            _ => false,
+        };
+        if !valid {
+            return Err(HolImageValidationError::InvalidNamespaceExport {
+                namespace: *namespace,
+                export: *export,
+                sort: sort.clone(),
+                local_id: *local_id,
+            });
+        }
+    }
+    Ok((namespaces.len(), exports.len()))
 }
 
 fn validate_reserved_primitives(
@@ -510,11 +634,33 @@ pub enum HolImageValidationError {
         right: ContextId,
         result: ContextId,
     },
+    /// Reserved namespace zero is missing or has a non-root shape.
+    InvalidRootNamespace,
+    /// A namespace names an absent parent.
+    OrphanNamespaceParent {
+        namespace: NamespaceId,
+        parent: NamespaceId,
+    },
+    /// The namespace parent relation contains a cycle.
+    CyclicNamespace(NamespaceId),
+    /// An export names an absent namespace.
+    OrphanNamespaceExport {
+        namespace: NamespaceId,
+        export: ExportId,
+    },
+    /// An export's local ID does not inhabit its declared sort.
+    InvalidNamespaceExport {
+        namespace: NamespaceId,
+        export: ExportId,
+        sort: String,
+        local_id: i64,
+    },
     /// A diagnostic count exceeded its representation.
     CountOverflow,
 }
 
 impl fmt::Display for HolImageValidationError {
+    #[allow(clippy::too_many_lines)]
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Image(error) => error.fmt(formatter),
@@ -600,6 +746,35 @@ impl fmt::Display for HolImageValidationError {
                 left.get(),
                 right.get(),
                 result.get()
+            ),
+            Self::InvalidRootNamespace => {
+                formatter.write_str("reserved root namespace is missing or corrupt")
+            }
+            Self::OrphanNamespaceParent { namespace, parent } => write!(
+                formatter,
+                "namespace {} names absent parent {}",
+                namespace.get(),
+                parent.get()
+            ),
+            Self::CyclicNamespace(namespace) => {
+                write!(formatter, "namespace parent cycle at {}", namespace.get())
+            }
+            Self::OrphanNamespaceExport { namespace, export } => write!(
+                formatter,
+                "export {} names absent namespace {}",
+                export.get(),
+                namespace.get()
+            ),
+            Self::InvalidNamespaceExport {
+                namespace,
+                export,
+                sort,
+                local_id,
+            } => write!(
+                formatter,
+                "export {} in namespace {} has invalid {sort} local ID {local_id}",
+                export.get(),
+                namespace.get()
             ),
             Self::CountOverflow => formatter.write_str("HOL validation count overflow"),
         }
@@ -693,6 +868,8 @@ mod tests {
                 untrusted_judgement_rows: 1,
                 untrusted_context_implication_rows: 0,
                 context_exact_unions: 0,
+                namespaces: 1,
+                namespace_exports: 0,
             }
         );
 
