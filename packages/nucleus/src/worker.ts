@@ -1,4 +1,9 @@
-import init, { WebKernel, type WebOutcome } from "../generated/nucleus.js";
+import init, {
+  WebKernel,
+  type WebOutcome,
+  type WebPendingReplOperation,
+  type WebReplOperationOutput,
+} from "../generated/nucleus.js";
 import type {
   BrowserKernelInfo,
   HolMetadataAssignment,
@@ -9,8 +14,18 @@ import type {
   SignedHolSnapshot,
 } from "./index.js";
 import { SerializedCommandQueue } from "./serialized_commands.js";
+import { KernelFetchTransport } from "./fetch_transport.js";
 
 type Request =
+  | { id: number; operation: "controllerKey" }
+  | {
+      id: number;
+      operation: "connectFetch";
+      endpoint: string;
+      publicKey: Uint8Array;
+      bootstrapToken?: Uint8Array;
+      timeoutMs?: number;
+    }
   | { id: number; operation: "open" }
   | { id: number; operation: "openAt"; kernel: number }
   | { id: number; operation: "openHol"; source?: HolSchemaSource }
@@ -319,6 +334,8 @@ type SqlValue =
 
 const kernel = init().then(() => new WebKernel());
 const commands = new SerializedCommandQueue();
+const remoteKernels = new Map<number, KernelFetchTransport>();
+const remoteConnections = new Map<number, number>();
 
 globalThis.addEventListener(
   "message",
@@ -368,10 +385,49 @@ function transferables(value: unknown): Transferable[] {
 async function execute(request: Request): Promise<unknown> {
   const connection = await kernel;
   switch (request.operation) {
+    case "controllerKey":
+      return connection.controller_caller_key();
+    case "connectFetch": {
+      if (
+        !(request.publicKey instanceof Uint8Array) ||
+        request.publicKey.byteLength !== 32
+      )
+        throw new TypeError("kernel public key must contain exactly 32 bytes");
+      const transport = new KernelFetchTransport(request.endpoint, {
+        timeoutMs: request.timeoutMs,
+      });
+      const grant = await transport.requestChannel(
+        connection.controller_caller_key(),
+        request.bootstrapToken,
+      );
+      const id = connection.accept_remote_grant(
+        "fetch",
+        transport.endpoint,
+        request.publicKey,
+        grant,
+      );
+      remoteKernels.set(id, transport);
+      return kernelInfo(connection, id);
+    }
     case "open":
       return connection.open_connection();
-    case "openAt":
-      return connection.open_connection_on(request.kernel);
+    case "openAt": {
+      const transport = remoteKernels.get(request.kernel);
+      if (transport === undefined)
+        return connection.open_connection_on(request.kernel);
+      const output = await dispatchRemote(
+        connection,
+        connection.begin_open_sql(request.kernel),
+      );
+      try {
+        requireOutput(output, "opened");
+        const id = output.connection();
+        remoteConnections.set(id, request.kernel);
+        return id;
+      } finally {
+        output.free();
+      }
+    }
     case "createKernel":
       return connection.create_local_kernel();
     case "kernel":
@@ -431,14 +487,63 @@ async function execute(request: Request): Promise<unknown> {
       );
     }
     case "close":
-      connection.close_connection(request.connection);
+      if (!remoteConnections.has(request.connection)) {
+        connection.close_connection(request.connection);
+        return undefined;
+      }
+      await consumeRemoteOutput(
+        connection,
+        connection.begin_close_sql(request.connection),
+        "closed",
+      );
+      remoteConnections.delete(request.connection);
       return undefined;
-    case "run":
-      return readOutcome(connection.run(request.connection, request.sql));
-    case "putImage":
-      return connection.put_image(request.connection, request.bytes);
+    case "run": {
+      if (!remoteConnections.has(request.connection))
+        return readOutcome(connection.run(request.connection, request.sql));
+      const output = await dispatchRemote(
+        connection,
+        connection.begin_run_sql(request.connection, request.sql),
+      );
+      try {
+        requireOutput(output, "sql");
+        return readOutcome(output.take_sql_outcome());
+      } finally {
+        output.free();
+      }
+    }
+    case "putImage": {
+      if (!remoteConnections.has(request.connection))
+        return connection.put_image(request.connection, request.bytes);
+      const output = await dispatchRemote(
+        connection,
+        connection.begin_put_image(request.connection, request.bytes),
+      );
+      try {
+        requireOutput(output, "image");
+        return output.image();
+      } finally {
+        output.free();
+      }
+    }
     case "attachImage":
-      connection.attach_image(request.connection, request.hash, request.schema);
+      if (!remoteConnections.has(request.connection)) {
+        connection.attach_image(
+          request.connection,
+          request.hash,
+          request.schema,
+        );
+        return undefined;
+      }
+      await consumeRemoteOutput(
+        connection,
+        connection.begin_attach_image(
+          request.connection,
+          request.hash,
+          request.schema,
+        ),
+        "attached",
+      );
       return undefined;
     case "loadUrl": {
       const response = await fetch(request.url);
@@ -448,12 +553,47 @@ async function execute(request: Request): Promise<unknown> {
         );
       }
       const bytes = new Uint8Array(await response.arrayBuffer());
-      const hash = connection.put_image(request.connection, bytes);
-      connection.attach_image(request.connection, hash, request.schema);
+      if (!remoteConnections.has(request.connection)) {
+        const hash = connection.put_image(request.connection, bytes);
+        connection.attach_image(request.connection, hash, request.schema);
+        return hash;
+      }
+      const put = await dispatchRemote(
+        connection,
+        connection.begin_put_image(request.connection, bytes),
+      );
+      let hash: string;
+      try {
+        requireOutput(put, "image");
+        hash = put.image();
+      } finally {
+        put.free();
+      }
+      await consumeRemoteOutput(
+        connection,
+        connection.begin_attach_image(
+          request.connection,
+          hash,
+          request.schema,
+        ),
+        "attached",
+      );
       return hash;
     }
-    case "serializeMain":
-      return connection.serialize_main(request.connection);
+    case "serializeMain": {
+      if (!remoteConnections.has(request.connection))
+        return connection.serialize_main(request.connection);
+      const output = await dispatchRemote(
+        connection,
+        connection.begin_serialize_main(request.connection),
+      );
+      try {
+        requireOutput(output, "serialized");
+        return output.take_serialized();
+      } finally {
+        output.free();
+      }
+    }
     case "holMetadata": {
       validateMetadataTarget(request.target);
       validateMetadataColumns(request.columns);
@@ -1047,6 +1187,87 @@ function decodeBytes(hex: string): Uint8Array {
   return Uint8Array.from({ length: hex.length / 2 }, (_, index) =>
     Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16),
   );
+}
+
+async function dispatchRemote(
+  connection: WebKernel,
+  initial: WebPendingReplOperation,
+): Promise<WebReplOperationOutput> {
+  let pending = initial;
+  while (true) {
+    const kernelId = pending.kernel();
+    const transport = remoteKernels.get(kernelId);
+    if (transport === undefined) {
+      invalidateRemoteKernel(kernelId);
+      try {
+        connection.abandon_operation(pending);
+      } finally {
+        pending.free();
+      }
+      throw new Error("remote kernel has no live fetch transport");
+    }
+
+    let result: Uint8Array;
+    try {
+      result = await transport.invoke(pending.request_bytes());
+    } catch (transportError) {
+      invalidateRemoteKernel(kernelId);
+      try {
+        connection.abandon_operation(pending);
+      } catch (abandonError) {
+        throw new Error("remote operation failed while abandoning its route", {
+          cause: { transportError, abandonError },
+        });
+      } finally {
+        pending.free();
+      }
+      throw transportError;
+    }
+
+    let progress;
+    try {
+      progress = connection.accept_operation_result(pending, result);
+    } catch (error) {
+      invalidateRemoteKernel(kernelId);
+      throw error;
+    } finally {
+      pending.free();
+    }
+    try {
+      if (progress.kind() === "complete") return progress.take_output();
+      if (progress.kind() !== "dispatch")
+        throw new Error("kernel returned invalid operation progress");
+      pending = progress.take_pending();
+    } finally {
+      progress.free();
+    }
+  }
+}
+
+function invalidateRemoteKernel(kernel: number): void {
+  remoteKernels.delete(kernel);
+  for (const [connection, owner] of remoteConnections) {
+    if (owner === kernel) remoteConnections.delete(connection);
+  }
+}
+
+async function consumeRemoteOutput(
+  connection: WebKernel,
+  pending: WebPendingReplOperation,
+  expected: string,
+): Promise<void> {
+  const output = await dispatchRemote(connection, pending);
+  try {
+    requireOutput(output, expected);
+  } finally {
+    output.free();
+  }
+}
+
+function requireOutput(output: WebReplOperationOutput, expected: string): void {
+  const actual = output.kind();
+  if (actual !== expected)
+    throw new Error(`remote operation returned ${actual}; expected ${expected}`);
 }
 
 function kernelInfo(connection: WebKernel, id: number): BrowserKernelInfo {
