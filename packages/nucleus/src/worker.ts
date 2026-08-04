@@ -237,6 +237,31 @@ type Request =
       operation: "holTrustedImport";
       connection: number;
       trustedImportId: number;
+    }
+  | {
+      id: number;
+      operation: "holImportNamespace";
+      connection: number;
+      importId: number;
+      sourceNamespace: number;
+      parent: number | null;
+      name: string | null;
+    }
+  | {
+      id: number;
+      operation: "holInspectTrustedExport";
+      connection: number;
+      trustedImportId: number;
+      namespace: number;
+      exportId: number;
+      snapshot: {
+        bytes: Uint8Array;
+        schema: string;
+        image: string;
+        signer: string;
+        publicKey: Uint8Array;
+        signature: Uint8Array;
+      };
     };
 
 type SqlValue =
@@ -603,6 +628,114 @@ async function execute(request: Request): Promise<unknown> {
         request.trustedImportId,
       );
       return readTrustedImport(trusted);
+    }
+    case "holImportNamespace":
+      return connection.hol_import_namespace(
+        request.connection,
+        request.parent,
+        request.name,
+        request.importId,
+        request.sourceNamespace,
+      );
+    case "holInspectTrustedExport": {
+      const snapshot = request.snapshot;
+      const exported = connection.hol_inspect_trusted_export(
+        request.connection,
+        request.trustedImportId,
+        snapshot.bytes,
+        snapshot.schema,
+        snapshot.image,
+        snapshot.signer,
+        snapshot.publicKey,
+        snapshot.signature,
+        request.namespace,
+        request.exportId,
+      );
+      if (exported === undefined) return null;
+      try {
+        const sort = exported.sort();
+        const provenance = {
+          connectionId: exported.connection_id(),
+          trustedImportId: exported.trusted_import_id(),
+          importId: exported.import_id(),
+          namespaceId: exported.namespace_id(),
+          exportId: exported.export_id(),
+        };
+        const sourceId = exported.source_id();
+        if (sort !== "term") return { ...provenance, sort, sourceId };
+        const tag = exported.term_tag();
+        switch (tag) {
+          case "bool":
+            return {
+              ...provenance,
+              sort,
+              sourceId,
+              term: { kind: tag, value: exported.boolean() },
+            };
+          case "free":
+            return {
+              ...provenance,
+              sort,
+              sourceId,
+              term: {
+                kind: tag,
+                symbol: exported.source_lhs(),
+                sourceType: exported.source_type(),
+              },
+            };
+          case "bound":
+            return {
+              ...provenance,
+              sort,
+              sourceId,
+              term: {
+                kind: tag,
+                index: exported.source_lhs(),
+                sourceType: exported.source_type(),
+              },
+            };
+          case "application":
+            return {
+              ...provenance,
+              sort,
+              sourceId,
+              term: {
+                kind: tag,
+                sourceFunction: exported.source_lhs(),
+                sourceArgument: exported.source_rhs(),
+                sourceType: exported.source_type(),
+              },
+            };
+          case "lambda":
+            return {
+              ...provenance,
+              sort,
+              sourceId,
+              term: {
+                kind: tag,
+                sourceParameterType: exported.source_lhs(),
+                sourceBody: exported.source_rhs(),
+                sourceType: exported.source_type(),
+              },
+            };
+          case "equality":
+            return {
+              ...provenance,
+              sort,
+              sourceId,
+              term: {
+                kind: tag,
+                sourceLeft: exported.source_lhs(),
+                sourceRight: exported.source_rhs(),
+                sourceType: exported.source_type(),
+              },
+            };
+          default:
+            throw new Error("kernel returned an unknown imported HOL term tag");
+        }
+      } finally {
+        exported.free();
+      }
     }
   }
 }

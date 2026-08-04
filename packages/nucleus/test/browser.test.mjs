@@ -94,6 +94,17 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
     ],
   });
   assert.deepEqual(result.inspectedImport, result.trustedImport);
+  assert.equal(result.importedNamespace, 1);
+  assert.deepEqual(result.importedExport, {
+    connectionId: 3,
+    trustedImportId: 0,
+    importId: 0,
+    namespaceId: 1,
+    exportId: 7,
+    sort: "term",
+    sourceId: 3,
+    term: { kind: "bool", value: true },
+  });
   assert.equal(result.trustedImport.importId, 0);
   assert.equal(result.trustedImport.trustedImportId, 0);
   assert.equal(result.trustedImport.schema, result.snapshotSchema);

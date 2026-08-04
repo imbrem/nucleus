@@ -68,6 +68,18 @@
         const inspectedImport = await trustedHol.trustedImport(
           trustedImport.trustedImportId,
         );
+        const importedNamespace = await trustedHol.importNamespace(
+          trustedImport.importId,
+          namespace,
+          null,
+          "downloaded-demo",
+        );
+        const importedExport = await trustedHol.inspectTrustedExport(
+          trustedImport.trustedImportId,
+          importedNamespace,
+          7,
+          snapshot,
+        );
 
         observerHol = await repl.openHol();
         let observerReadRejected = false;
@@ -128,6 +140,8 @@
           snapshotRows,
           trustedImport,
           inspectedImport,
+          importedNamespace,
+          importedExport,
           tamperedRejected,
           observerReadRejected,
           trustedRows,
