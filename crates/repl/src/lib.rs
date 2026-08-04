@@ -4,7 +4,7 @@
 //! inspectable `SQLite` directory in a raw Neutron connection and associates its
 //! rows with runtime connection handles owned by the current process.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::error::Error as StdError;
 use std::fmt;
 
@@ -413,6 +413,78 @@ impl LocalRepl {
                 .map_err(Into::into)
         })
     }
+
+    /// Finds a context-implication path with an untrusted Rust breadth-first
+    /// search, then checks every edge with the trusted Nucleus proof session.
+    ///
+    /// The in-memory graph and predecessor map carry no logical authority:
+    /// only [`ProofSession::prove_context_implication_path`] can mint the
+    /// resulting branded capability and persist the derived edge.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a protocol mismatch, denied edge read, absent
+    /// route, or rejected trusted path.
+    pub fn prove_context_implication_rust_path(
+        &mut self,
+        id: ConnectionId,
+        antecedent: ContextId,
+        consequent: ContextId,
+    ) -> Result<Vec<ContextId>, LocalProofError> {
+        let edges = self.hol_mut(id)?.context_implication_edges()?;
+        let path = rust_implication_path(&edges, antecedent, consequent).ok_or(
+            LocalProofError::NoImplicationPath {
+                antecedent,
+                consequent,
+            },
+        )?;
+        self.hol_mut(id)?.with_proof_session(|mut proof| {
+            proof.prove_context_implication_path(&path).map(|_| ())
+        })?;
+        Ok(path)
+    }
+}
+
+fn rust_implication_path(
+    edges: &[(ContextId, ContextId)],
+    antecedent: ContextId,
+    consequent: ContextId,
+) -> Option<Vec<ContextId>> {
+    if antecedent == consequent {
+        return Some(vec![antecedent]);
+    }
+    let mut adjacency = HashMap::<ContextId, Vec<ContextId>>::new();
+    for &(source, target) in edges {
+        adjacency.entry(source).or_default().push(target);
+    }
+    for targets in adjacency.values_mut() {
+        targets.sort_unstable();
+        targets.dedup();
+    }
+
+    let mut predecessor = HashMap::from([(antecedent, None)]);
+    let mut queue = VecDeque::from([antecedent]);
+    'search: while let Some(source) = queue.pop_front() {
+        for &target in adjacency.get(&source).map_or(&[][..], Vec::as_slice) {
+            if predecessor.contains_key(&target) {
+                continue;
+            }
+            predecessor.insert(target, Some(source));
+            if target == consequent {
+                break 'search;
+            }
+            queue.push_back(target);
+        }
+    }
+
+    let mut reverse = vec![consequent];
+    let mut current = consequent;
+    while current != antecedent {
+        current = predecessor.get(&current).copied().flatten()?;
+        reverse.push(current);
+    }
+    reverse.reverse();
+    Some(reverse)
 }
 
 /// Failure while reconstructing proof capabilities for a REPL request.
@@ -429,6 +501,11 @@ pub enum LocalProofError {
     },
     /// An exact persisted implication edge is absent.
     MissingImplication {
+        antecedent: ContextId,
+        consequent: ContextId,
+    },
+    /// The untrusted candidate search found no directed route.
+    NoImplicationPath {
         antecedent: ContextId,
         consequent: ContextId,
     },
@@ -457,6 +534,15 @@ impl fmt::Display for LocalProofError {
                 antecedent.get(),
                 consequent.get()
             ),
+            Self::NoImplicationPath {
+                antecedent,
+                consequent,
+            } => write!(
+                formatter,
+                "no context implication path from {} to {}",
+                antecedent.get(),
+                consequent.get()
+            ),
         }
     }
 }
@@ -466,7 +552,9 @@ impl StdError for LocalProofError {
         match self {
             Self::Repl(error) => Some(error),
             Self::Proof(error) => Some(error),
-            Self::MissingTheorem { .. } | Self::MissingImplication { .. } => None,
+            Self::MissingTheorem { .. }
+            | Self::MissingImplication { .. }
+            | Self::NoImplicationPath { .. } => None,
         }
     }
 }
@@ -720,5 +808,68 @@ mod tests {
                 .proved_judgement(antecedent, equality.1)
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn rust_bfs_finds_candidates_but_nucleus_checks_the_path() {
+        let mut repl = LocalRepl::new().unwrap();
+        let id = repl.open_hol().unwrap();
+        let bool_type = repl.hol_mut(id).unwrap().insert_bool_type().unwrap();
+        let terms = [30, 31, 32, 33].map(|name| {
+            repl.hol_mut(id)
+                .unwrap()
+                .insert_free_term(name, bool_type)
+                .unwrap()
+        });
+        let [p, q, r, s] = terms;
+        let bottom = repl.hol_mut(id).unwrap().define_context([p]).unwrap();
+        let left = repl.hol_mut(id).unwrap().define_context([p, q]).unwrap();
+        let right = repl.hol_mut(id).unwrap().define_context([p, r]).unwrap();
+        let top = repl.hol_mut(id).unwrap().define_context([p, q, r]).unwrap();
+        let isolated = repl.hol_mut(id).unwrap().define_context([s]).unwrap();
+
+        repl.hol_mut(id)
+            .unwrap()
+            .with_proof_session(|mut proof| {
+                for (context, members) in [
+                    (top, &[p, q, r][..]),
+                    (left, &[p, q][..]),
+                    (right, &[p, r][..]),
+                ] {
+                    for member in members {
+                        proof.prove_hypothesis(context, *member)?;
+                    }
+                }
+                Ok::<_, ProofError>(())
+            })
+            .unwrap();
+        repl.prove_context_implication(id, top, left, &[p, q])
+            .unwrap();
+        repl.prove_context_implication(id, top, right, &[p, r])
+            .unwrap();
+        repl.prove_context_implication(id, left, bottom, &[p])
+            .unwrap();
+        repl.prove_context_implication(id, right, bottom, &[p])
+            .unwrap();
+
+        let path = repl
+            .prove_context_implication_rust_path(id, top, bottom)
+            .unwrap();
+        assert_eq!(path, [top, left, bottom]);
+        assert!(
+            repl.hol_mut(id)
+                .unwrap()
+                .proved_context_implication(top, bottom)
+                .unwrap()
+        );
+        assert_eq!(
+            repl.prove_context_implication_rust_path(id, isolated, isolated)
+                .unwrap(),
+            [isolated]
+        );
+        assert!(matches!(
+            repl.prove_context_implication_rust_path(id, top, isolated),
+            Err(LocalProofError::NoImplicationPath { .. })
+        ));
     }
 }
