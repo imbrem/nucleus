@@ -10,6 +10,13 @@ use std::fmt;
 
 use covalence_lib_sqlite as sqlite;
 
+mod schema_spec;
+
+pub use schema_spec::{
+    HolMetadataColumnSpec, HolMetadataIndexSpec, HolMetadataSchemaSpec, HolMetadataStorageSpec,
+    HolMetadataTableSpec, HolSchemaSpecError, compile_hol_schema_json,
+};
+
 pub use covalence_lib_hash::O256;
 pub use covalence_nucleus::sql::{ImageError, Outcome, QueryResult, Statement, Value};
 pub use covalence_nucleus::{
@@ -17,12 +24,12 @@ pub use covalence_nucleus::{
     ContextError, ContextId, ContextImplication, ExportError, ExportId, ExportSort, ExportView,
     Hol, HolDatabaseRef, HolExportError, HolOpenError, HolSchema, HolSchemaDescriptor,
     HolSchemaDescriptorError, ImportError, ImportId, ImportedExport, ImportedReaderError,
-    ImportedTermView, Kernel, Kind, KindError, KindId, KindView, MetadataTable, MetadataTarget,
-    MetadataType, MetadataValue, NamespaceError, NamespaceExport, NamespaceId, NamespaceView,
-    ProofError, ProofSession, SignedSnapshotAttestation, SignedSnapshotEnvelope,
-    SnapshotAuthenticationError, SnapshotTrustError, Sql, TermError, TermId, TermView, Theorem,
-    TrustedImportError, TrustedImportId, TrustedImportImageError, TypeError, TypeId, TypeView,
-    ValidatedHolImage,
+    ImportedTermView, Kernel, Kind, KindError, KindId, KindView, MetadataSchemaError,
+    MetadataTable, MetadataTarget, MetadataType, MetadataValue, NamespaceError, NamespaceExport,
+    NamespaceId, NamespaceView, ProofError, ProofSession, SignedSnapshotAttestation,
+    SignedSnapshotEnvelope, SnapshotAuthenticationError, SnapshotTrustError, Sql, TermError,
+    TermId, TermView, Theorem, TrustedImportError, TrustedImportId, TrustedImportImageError,
+    TypeError, TypeId, TypeView, ValidatedHolImage,
 };
 
 const SCHEMA: &str = "
@@ -515,6 +522,20 @@ impl LocalRepl {
             .insert("nucleus/hol-common-v2", LocalConnection::Hol(connection))?;
         self.directory.select(id)?;
         Ok(id)
+    }
+
+    /// Opens and selects a HOL-omega connection from a strict declarative JSON metadata schema.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON parsing, checked schema construction, descriptor construction, or
+    /// connection opening fails.
+    pub fn open_hol_with_schema_json(
+        &mut self,
+        json: &str,
+    ) -> Result<ConnectionId, LocalReplError> {
+        let descriptor = compile_hol_schema_json(json)?;
+        self.open_hol_with_descriptor(descriptor.encode())
     }
 
     /// Closes any managed connection.
@@ -1037,6 +1058,8 @@ pub enum LocalReplError {
     HolOpen(HolOpenError),
     /// A portable HOL metadata schema descriptor was invalid.
     HolSchemaDescriptor(HolSchemaDescriptorError),
+    /// A declarative REPL HOL metadata schema was invalid.
+    HolSchemaSpec(HolSchemaSpecError),
     /// A namespace operation failed.
     Namespace(NamespaceError),
     /// A namespace export operation failed.
@@ -1075,6 +1098,7 @@ impl fmt::Display for LocalReplError {
             Self::SqlOpen(error) => write!(formatter, "could not open SQL connection: {error}"),
             Self::HolOpen(error) => error.fmt(formatter),
             Self::HolSchemaDescriptor(error) => error.fmt(formatter),
+            Self::HolSchemaSpec(error) => error.fmt(formatter),
             Self::Namespace(error) => error.fmt(formatter),
             Self::Export(error) => error.fmt(formatter),
             Self::HolExport(error) => error.fmt(formatter),
@@ -1104,6 +1128,7 @@ impl StdError for LocalReplError {
             Self::SqlOpen(error) => Some(error),
             Self::HolOpen(error) => Some(error),
             Self::HolSchemaDescriptor(error) => Some(error),
+            Self::HolSchemaSpec(error) => Some(error),
             Self::Namespace(error) => Some(error),
             Self::Export(error) => Some(error),
             Self::HolExport(error) => Some(error),
@@ -1128,6 +1153,12 @@ impl From<ReplError> for LocalReplError {
 impl From<HolSchemaDescriptorError> for LocalReplError {
     fn from(error: HolSchemaDescriptorError) -> Self {
         Self::HolSchemaDescriptor(error)
+    }
+}
+
+impl From<HolSchemaSpecError> for LocalReplError {
+    fn from(error: HolSchemaSpecError) -> Self {
+        Self::HolSchemaSpec(error)
     }
 }
 

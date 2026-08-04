@@ -206,6 +206,8 @@ dependencies = [
  "covalence-lib-sqlite",
  "covalence-neutron",
  "covalence-nucleus",
+ "serde",
+ "serde_json",
  "wasm-bindgen",
 ]
 

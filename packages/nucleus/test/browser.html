@@ -9,57 +9,17 @@
       import { createBrowserRepl } from "../dist/index.js";
 
       const repl = createBrowserRepl();
-      const customDescriptor = Uint8Array.of(
-        67,
-        79,
-        86,
-        72,
-        83,
-        68,
-        48,
-        49,
-        1,
-        0,
-        0,
-        0,
-        0,
-        2,
-        6,
-        0,
-        111,
-        114,
-        105,
-        103,
-        105,
-        110,
-        1,
-        0,
-        0,
-        0,
-        0,
-        0,
-        9,
-        0,
-        98,
-        121,
-        95,
-        111,
-        114,
-        105,
-        103,
-        105,
-        110,
-        1,
-        0,
-        6,
-        0,
-        111,
-        114,
-        105,
-        103,
-        105,
-        110,
-      );
+      const customSchema = {
+        version: 1,
+        columns: [{ table: "node", name: "origin", storage: "text" }],
+        indexes: [
+          {
+            table: "node",
+            name: "by_origin",
+            columns: ["origin"],
+          },
+        ],
+      };
       let source;
       let target;
       let hol;
@@ -69,7 +29,8 @@
       try {
         source = await repl.open();
         target = await repl.open();
-        hol = await repl.openHol(customDescriptor);
+        const compiledDescriptor = await repl.compileHolSchema(customSchema);
+        hol = await repl.openHol({ schema: customSchema });
         await source.run("CREATE TABLE facts (name TEXT, value INTEGER)");
         await source.run(
           "INSERT INTO facts VALUES ('exact', 9223372036854775807)",
@@ -95,6 +56,11 @@
         const exportView = await hol.namespaceExport(namespace, 7);
         const resolved = await hol.resolveExportName(namespace, "truth");
         const snapshot = await hol.exportSnapshot();
+        const compiledDescriptorMatches =
+          compiledDescriptor.length === snapshot.descriptor.length &&
+          compiledDescriptor.every(
+            (byte, index) => byte === snapshot.descriptor[index],
+          );
         const attestation = {
           schema: snapshot.schema,
           image: snapshot.image,
@@ -109,12 +75,14 @@
         malformedDescriptor[0] ^= 1;
         let malformedDescriptorRejected = false;
         try {
-          const invalid = await repl.openHol(malformedDescriptor);
+          const invalid = await repl.openHol({
+            descriptor: malformedDescriptor,
+          });
           await invalid.close();
         } catch {
           malformedDescriptorRejected = true;
         }
-        trustedHol = await repl.openHol(snapshot.descriptor);
+        trustedHol = await repl.openHol({ descriptor: snapshot.descriptor });
         const callerPublicKey = attestation.publicKey.slice();
         const callerSignature = attestation.signature.slice();
         const trustPromise = trustedHol.trustImport({
@@ -197,6 +165,7 @@
           publicKeyLength: snapshot.publicKey.length,
           signatureLength: snapshot.signature.length,
           descriptorLength: snapshot.descriptor.length,
+          compiledDescriptorMatches,
           malformedDescriptorRejected,
           attestationHasBytes: "bytes" in attestation,
           snapshotRows,

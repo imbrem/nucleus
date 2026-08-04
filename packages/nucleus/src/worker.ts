@@ -1,8 +1,15 @@
 import init, { WebKernel, type WebOutcome } from "../generated/nucleus.js";
+import type { HolSchemaSpecV1 } from "./index.js";
 
 type Request =
   | { id: number; operation: "open" }
-  | { id: number; operation: "openHol"; descriptor?: Uint8Array }
+  | {
+      id: number;
+      operation: "openHol";
+      descriptor?: Uint8Array;
+      schema?: HolSchemaSpecV1;
+    }
+  | { id: number; operation: "compileHolSchema"; schema: HolSchemaSpecV1 }
   | { id: number; operation: "close"; connection: number }
   | { id: number; operation: "run"; connection: number; sql: string }
   | {
@@ -323,9 +330,17 @@ async function execute(request: Request): Promise<unknown> {
     case "open":
       return connection.open_connection();
     case "openHol":
-      return request.descriptor === undefined
-        ? connection.open_hol_connection()
-        : connection.open_hol_connection_with_descriptor(request.descriptor);
+      if (request.descriptor !== undefined)
+        return connection.open_hol_connection_with_descriptor(
+          request.descriptor,
+        );
+      if (request.schema !== undefined)
+        return connection.open_hol_connection_with_schema_json(
+          JSON.stringify(request.schema),
+        );
+      return connection.open_hol_connection();
+    case "compileHolSchema":
+      return connection.compile_hol_schema_json(JSON.stringify(request.schema));
     case "close":
       connection.close_connection(request.connection);
       return undefined;

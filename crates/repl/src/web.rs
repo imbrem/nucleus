@@ -6,6 +6,7 @@ use super::{
     LocalImportedHolTerm, LocalImportedHolValue, LocalRepl, LocalSignedHolSnapshot,
     LocalTrustedHolImport, NamespaceExport, NamespaceId, NamespaceView, Outcome, ProofError,
     QueryResult, TermId, TermView, TrustedImportId, TypeId, TypeView, Value,
+    compile_hol_schema_json,
 };
 
 /// Browser adapter for the shared REPL connection directory.
@@ -118,6 +119,30 @@ impl WebKernel {
             .open_hol_with_descriptor(descriptor)
             .map_err(js_error)?;
         u32::try_from(id.get()).map_err(js_error)
+    }
+
+    /// Opens a policy-enclosed HOL-omega connection from a strict JSON metadata schema.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error when the JSON declaration or connection/schema is invalid.
+    pub fn open_hol_connection_with_schema_json(&mut self, json: &str) -> Result<u32, JsValue> {
+        let id = self
+            .repl
+            .open_hol_with_schema_json(json)
+            .map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
+    /// Compiles strict user-authored JSON into a canonical portable metadata descriptor.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error when the JSON declaration or checked schema is invalid.
+    pub fn compile_hol_schema_json(&self, json: &str) -> Result<Vec<u8>, JsValue> {
+        compile_hol_schema_json(json)
+            .map(|descriptor| descriptor.encode().to_vec())
+            .map_err(js_error)
     }
 
     /// Closes a connection.
