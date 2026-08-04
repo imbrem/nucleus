@@ -9,8 +9,8 @@ pub use hol::{
     AllowAll, ContextError, ContextId, Hol, HolImageCounts, HolImageValidationError, HolOpenError,
     HolSchema, Kind, KindError, KindId, KindView, MetadataError, MetadataSchemaError,
     MetadataTable, MetadataTarget, MetadataType, MetadataValue, Operation, Policy, ProofError,
-    TermError, TermId, TermView, Theorem, TypeError, TypeId, TypeView, UnboundVariable,
-    ValidatedHolImage,
+    ProofSession, TermError, TermId, TermView, Theorem, TypeError, TypeId, TypeView,
+    UnboundVariable, ValidatedHolImage,
 };
 pub use kernel::Kernel;
 

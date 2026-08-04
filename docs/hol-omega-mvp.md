@@ -107,19 +107,28 @@ The first insertion methods admit closed roots. A later explicitly named API
 may admit open roots under supplied type- and term-binder environments. Never
 make an implicit "possibly open" insertion operation part of the trusted API.
 
-Proof API methods should correspond to individual rules and return private,
-connection-branded values:
+Proof API methods should correspond to individual rules and run inside a
+generative session which borrows one connection. The session can hold several
+theorem capabilities for compositional rules, but its invariant brand cannot
+escape or cross connections:
 
 ```rust
-pub struct Theorem<'connection> {
+pub struct ProofSession<'brand, P> {
+    connection: &'brand mut Connection<Hol<P>>,
+    brand: PhantomData<fn(&'brand ()) -> &'brand ()>,
+}
+
+pub struct Theorem<'brand> {
     context: ContextId,
     conclusion: TermId,
-    connection: PhantomData<&'connection mut ()>,
+    brand: PhantomData<fn(&'brand ()) -> &'brand ()>,
 }
 ```
 
-Only trusted rule methods construct `Theorem`. There is no public
-`insert_theorem(context, term)` escape hatch.
+Only trusted session rule methods construct `Theorem`. Persisted local
+judgements may be loaded only through a session after policy and structural
+checks. There is no public `insert_theorem(context, term)` escape hatch, and
+detached structural validation alone cannot mint theorem capabilities.
 
 The exact AST and rule enums should carry an explicit calculus/schema version
 until the `all/instantiation` issue is reconciled. Constructor additions must

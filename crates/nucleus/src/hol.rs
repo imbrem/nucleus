@@ -190,11 +190,19 @@ impl ContextId {
     }
 }
 
-/// A proved judgement branded by the mutably borrowed HOL connection.
-pub struct Theorem<'connection> {
+type Invariant<'brand> = PhantomData<fn(&'brand ()) -> &'brand ()>;
+
+/// A generative proof scope borrowing one HOL connection.
+pub struct ProofSession<'brand, P> {
+    connection: &'brand mut Connection<Hol<P>>,
+    brand: Invariant<'brand>,
+}
+
+/// A proved judgement branded by one generative proof session.
+pub struct Theorem<'brand> {
     context: ContextId,
     conclusion: TermId,
-    connection: PhantomData<&'connection mut ()>,
+    brand: Invariant<'brand>,
 }
 
 impl Theorem<'_> {
@@ -1061,6 +1069,33 @@ impl<P: Policy> Connection<Hol<P>> {
         read_context_members(neutron.sqlite(), id)
     }
 
+    /// Runs a generative proof session which may hold several theorem handles.
+    ///
+    /// The session brand cannot escape this closure or be shared with another
+    /// connection. Plain context and term IDs may be returned as ordinary
+    /// database-local data.
+    ///
+    /// ```compile_fail
+    /// use covalence_nucleus::{AllowAll, Connection, ContextId};
+    ///
+    /// let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+    /// let theorem = connection.with_proof_session(|mut proof| {
+    ///     proof.prove_truth(ContextId::empty()).unwrap()
+    /// });
+    /// # let _ = theorem;
+    /// ```
+    pub fn with_proof_session<R>(
+        &mut self,
+        run: impl for<'brand> FnOnce(ProofSession<'brand, P>) -> R,
+    ) -> R {
+        run(ProofSession {
+            connection: self,
+            brand: PhantomData,
+        })
+    }
+}
+
+impl<'brand, P: Policy> ProofSession<'brand, P> {
     /// Applies the hypothesis rule and persists the resulting judgement.
     ///
     /// # Errors
@@ -1071,8 +1106,8 @@ impl<P: Policy> Connection<Hol<P>> {
         &mut self,
         context: ContextId,
         term: TermId,
-    ) -> Result<Theorem<'_>, ProofError> {
-        let (neutron, hol) = self.parts_mut();
+    ) -> Result<Theorem<'brand>, ProofError> {
+        let (neutron, hol) = self.connection.parts_mut();
         authorize_proof(&mut hol.policy, Operation::ProveHypothesis)?;
         let transaction = neutron.sqlite().unchecked_transaction()?;
         require_context(&transaction, context)?;
@@ -1091,7 +1126,7 @@ impl<P: Policy> Connection<Hol<P>> {
         Ok(Theorem {
             context,
             conclusion: term,
-            connection: PhantomData,
+            brand: PhantomData,
         })
     }
 
@@ -1101,8 +1136,8 @@ impl<P: Policy> Connection<Hol<P>> {
     ///
     /// Returns an error if policy denies the rule, the context is unknown, or
     /// persistence fails.
-    pub fn prove_truth(&mut self, context: ContextId) -> Result<Theorem<'_>, ProofError> {
-        let (neutron, hol) = self.parts_mut();
+    pub fn prove_truth(&mut self, context: ContextId) -> Result<Theorem<'brand>, ProofError> {
+        let (neutron, hol) = self.connection.parts_mut();
         authorize_proof(&mut hol.policy, Operation::ProveTruth)?;
         let transaction = neutron.sqlite().unchecked_transaction()?;
         require_context(&transaction, context)?;
@@ -1112,7 +1147,7 @@ impl<P: Policy> Connection<Hol<P>> {
         Ok(Theorem {
             context,
             conclusion: truth,
-            connection: PhantomData,
+            brand: PhantomData,
         })
     }
 
@@ -1126,8 +1161,8 @@ impl<P: Policy> Connection<Hol<P>> {
         &mut self,
         context: ContextId,
         term: TermId,
-    ) -> Result<Theorem<'_>, ProofError> {
-        let (neutron, hol) = self.parts_mut();
+    ) -> Result<Theorem<'brand>, ProofError> {
+        let (neutron, hol) = self.connection.parts_mut();
         authorize_proof(&mut hol.policy, Operation::ProveReflexivity)?;
         let transaction = neutron.sqlite().unchecked_transaction()?;
         require_context(&transaction, context)?;
@@ -1142,7 +1177,7 @@ impl<P: Policy> Connection<Hol<P>> {
         Ok(Theorem {
             context,
             conclusion: equality,
-            connection: PhantomData,
+            brand: PhantomData,
         })
     }
 
@@ -1161,8 +1196,8 @@ impl<P: Policy> Connection<Hol<P>> {
         context: ContextId,
         abstraction: TermId,
         argument: TermId,
-    ) -> Result<Theorem<'_>, ProofError> {
-        let (neutron, hol) = self.parts_mut();
+    ) -> Result<Theorem<'brand>, ProofError> {
+        let (neutron, hol) = self.connection.parts_mut();
         authorize_proof(&mut hol.policy, Operation::ProveBeta)?;
         let transaction = neutron.sqlite().unchecked_transaction()?;
         require_context(&transaction, context)?;
@@ -1202,10 +1237,50 @@ impl<P: Policy> Connection<Hol<P>> {
         Ok(Theorem {
             context,
             conclusion: equality,
-            connection: PhantomData,
+            brand: PhantomData,
         })
     }
 
+    /// Loads one already persisted local judgement as a session capability.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the read, the context or conclusion
+    /// is invalid, or `SQLite` rejects the query.
+    pub fn load_theorem(
+        &mut self,
+        context: ContextId,
+        conclusion: TermId,
+    ) -> Result<Option<Theorem<'brand>>, ProofError> {
+        let (neutron, hol) = self.connection.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ReadTheorem)?;
+        require_context(neutron.sqlite(), context)?;
+        let validation = validate_term(neutron.sqlite(), conclusion)?;
+        if validation.ty != BOOL_TYPE_ID {
+            return Err(ProofError::NonBooleanConclusion {
+                term: conclusion,
+                ty: validation.ty,
+            });
+        }
+        if !validation.boundary.is_empty() {
+            return Err(ProofError::OpenConclusion(conclusion));
+        }
+        let exists = neutron.sqlite().query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM hol_theorem WHERE ctx_id = ?1 AND term_id = ?2
+             )",
+            [context.0, conclusion.0],
+            |row| row.get::<_, bool>(0),
+        )?;
+        Ok(exists.then_some(Theorem {
+            context,
+            conclusion,
+            brand: PhantomData,
+        }))
+    }
+}
+
+impl<P: Policy> Connection<Hol<P>> {
     /// Reports whether a Boolean judgement is in the append-only proof table.
     ///
     /// # Errors
@@ -2703,6 +2778,10 @@ mod tests {
         }
     }
 
+    fn theorem_conclusion(theorem: Result<Theorem<'_>, ProofError>) -> Result<TermId, ProofError> {
+        theorem.map(|theorem| theorem.conclusion())
+    }
+
     #[test]
     fn canonically_interns_kinds_and_computes_order_rank() {
         let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
@@ -3093,9 +3172,12 @@ mod tests {
         let variable = connection.insert_bound_term(0, bool_type).unwrap();
         let identity = connection.insert_lambda(bool_type, variable).unwrap();
         let conclusion = connection
-            .prove_reflexivity(ContextId::empty(), identity)
-            .unwrap()
-            .conclusion();
+            .with_proof_session(|mut proof| {
+                proof
+                    .prove_reflexivity(ContextId::empty(), identity)
+                    .map(|theorem| theorem.conclusion())
+            })
+            .unwrap();
         assert_eq!(
             connection.term(conclusion).unwrap(),
             TermView::Equality {
@@ -3127,7 +3209,11 @@ mod tests {
         let bool_type = connection.insert_bool_type().unwrap();
         let variable = connection.insert_bound_term(0, bool_type).unwrap();
         assert!(matches!(
-            connection.prove_reflexivity(ContextId::empty(), variable),
+            connection.with_proof_session(|mut proof| {
+                proof
+                    .prove_reflexivity(ContextId::empty(), variable)
+                    .map(|_| ())
+            }),
             Err(ProofError::OpenConclusion(term)) if term == variable
         ));
         let rows = connection
@@ -3149,9 +3235,12 @@ mod tests {
         let identity = connection.insert_lambda(bool_type, variable).unwrap();
         let truth = connection.insert_bool_term(true).unwrap();
         let conclusion = connection
-            .prove_beta(ContextId::empty(), identity, truth)
-            .unwrap()
-            .conclusion();
+            .with_proof_session(|mut proof| {
+                proof
+                    .prove_beta(ContextId::empty(), identity, truth)
+                    .map(|theorem| theorem.conclusion())
+            })
+            .unwrap();
         let TermView::Equality { left, right } = connection.term(conclusion).unwrap() else {
             panic!("beta conclusion is not equality");
         };
@@ -3179,9 +3268,12 @@ mod tests {
         let abstraction = connection.insert_lambda(bool_type, inner).unwrap();
         let falsehood = connection.insert_bool_term(false).unwrap();
         let conclusion = connection
-            .prove_beta(ContextId::empty(), abstraction, falsehood)
-            .unwrap()
-            .conclusion();
+            .with_proof_session(|mut proof| {
+                proof
+                    .prove_beta(ContextId::empty(), abstraction, falsehood)
+                    .map(|theorem| theorem.conclusion())
+            })
+            .unwrap();
         let TermView::Equality { right, .. } = connection.term(conclusion).unwrap() else {
             panic!("beta conclusion is not equality");
         };
@@ -3203,17 +3295,29 @@ mod tests {
         let variable = connection.insert_bound_term(0, bool_type).unwrap();
         let identity = connection.insert_lambda(bool_type, variable).unwrap();
         assert!(matches!(
-            connection.prove_beta(ContextId::empty(), identity, variable),
+            connection.with_proof_session(|mut proof| {
+                proof
+                    .prove_beta(ContextId::empty(), identity, variable)
+                    .map(|_| ())
+            }),
             Err(ProofError::OpenConclusion(term)) if term == variable
         ));
         let function = connection.insert_free_term(7, function_type).unwrap();
         assert!(matches!(
-            connection.prove_beta(ContextId::empty(), identity, function),
+            connection.with_proof_session(|mut proof| {
+                proof
+                    .prove_beta(ContextId::empty(), identity, function)
+                    .map(|_| ())
+            }),
             Err(ProofError::BetaTypeMismatch { expected, actual })
                 if expected == bool_type && actual == function_type
         ));
         assert!(matches!(
-            connection.prove_beta(ContextId::empty(), function, identity),
+            connection.with_proof_session(|mut proof| {
+                proof
+                    .prove_beta(ContextId::empty(), function, identity)
+                    .map(|_| ())
+            }),
             Err(ProofError::NotLambda(term)) if term == function
         ));
     }
@@ -3273,14 +3377,23 @@ mod tests {
         let assumption = connection.insert_bool_term(false).unwrap();
         let context = connection.define_context([assumption]).unwrap();
 
-        let hypothesis = connection.prove_hypothesis(context, assumption).unwrap();
-        assert_eq!(hypothesis.context(), context);
-        assert_eq!(hypothesis.conclusion(), assumption);
+        let (hypothesis_context, hypothesis_conclusion, truth_context, truth_id) = connection
+            .with_proof_session(|mut proof| {
+                let hypothesis = proof.prove_hypothesis(context, assumption)?;
+                let truth = proof.prove_truth(ContextId::empty())?;
+                Ok::<_, ProofError>((
+                    hypothesis.context(),
+                    hypothesis.conclusion(),
+                    truth.context(),
+                    truth.conclusion(),
+                ))
+            })
+            .unwrap();
+        assert_eq!(hypothesis_context, context);
+        assert_eq!(hypothesis_conclusion, assumption);
         assert!(connection.proved_judgement(context, assumption).unwrap());
 
-        let truth = connection.prove_truth(ContextId::empty()).unwrap();
-        let truth_id = truth.conclusion();
-        assert_eq!(truth.context(), ContextId::empty());
+        assert_eq!(truth_context, ContextId::empty());
         assert_eq!(connection.term(truth_id).unwrap(), TermView::Bool(true));
         assert!(
             connection
@@ -3292,6 +3405,15 @@ mod tests {
                 .proved_judgement(ContextId::empty(), assumption)
                 .unwrap()
         );
+
+        let reloaded = connection
+            .with_proof_session(|mut proof| {
+                let hypothesis = proof.load_theorem(context, assumption)?.unwrap();
+                let truth = proof.load_theorem(ContextId::empty(), truth_id)?.unwrap();
+                Ok::<_, ProofError>((hypothesis.conclusion(), truth.conclusion()))
+            })
+            .unwrap();
+        assert_eq!(reloaded, (assumption, truth_id));
 
         let rules = connection
             .parts_mut()
@@ -3311,7 +3433,11 @@ mod tests {
         let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
         let term = connection.insert_bool_term(false).unwrap();
         assert!(matches!(
-            connection.prove_hypothesis(ContextId::empty(), term),
+            connection.with_proof_session(|mut proof| {
+                proof
+                    .prove_hypothesis(ContextId::empty(), term)
+                    .map(|_| ())
+            }),
             Err(ProofError::NotMember { context, term: rejected })
                 if context == ContextId::empty() && rejected == term
         ));
@@ -3446,9 +3572,10 @@ mod tests {
         let term = connection.insert_bool_term(false).unwrap();
         let context = connection.define_context([term]).unwrap();
         let conclusion = connection
-            .prove_hypothesis(context, term)
-            .unwrap()
-            .conclusion();
+            .with_proof_session(|mut proof| {
+                theorem_conclusion(proof.prove_hypothesis(context, term))
+            })
+            .unwrap();
         connection
             .set_metadata(
                 context.into(),
