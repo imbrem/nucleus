@@ -47,6 +47,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-hol-proof-guest-beta@0.0.0",
+      "name": "covalence-hol-proof-guest-beta",
+      "version": "0.0.0",
+      "path": "crates/hol-proof-guest-beta",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_hol_proof_guest_beta",
+          "kinds": [
+            "cdylib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-kernel-service@0.0.0",
       "name": "covalence-kernel-service",
       "version": "0.0.0",
