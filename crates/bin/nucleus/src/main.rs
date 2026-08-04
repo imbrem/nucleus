@@ -210,7 +210,9 @@ mod tests {
             .execute_batch("CREATE TABLE example(value TEXT); INSERT INTO example VALUES ('ok');")
             .expect("populate source");
         let image = source.serialize_main().expect("serialize source");
-        let path = std::env::temp_dir().join(format!(
+        let temporary = std::env::temp_dir();
+        fs::create_dir_all(&temporary).expect("create temporary directory");
+        let path = temporary.join(format!(
             "nucleus-repl-{}.sqlite",
             NEXT_FILE.fetch_add(1, Ordering::Relaxed)
         ));

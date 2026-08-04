@@ -342,7 +342,9 @@ mod tests {
 
     #[test]
     fn registered_read_only_vfs_opens_database() {
-        let path = std::env::temp_dir().join(format!("{}.sqlite", unique_name()));
+        let temporary = std::env::temp_dir();
+        std::fs::create_dir_all(&temporary).unwrap();
+        let path = temporary.join(format!("{}.sqlite", unique_name()));
         {
             let connection = Connection::open(&path).unwrap();
             connection
@@ -405,7 +407,9 @@ mod tests {
 
     #[test]
     fn uniquely_registered_vfs_supports_immutable_attach() {
-        let path = std::env::temp_dir().join(format!("{}.sqlite", unique_name()));
+        let temporary = std::env::temp_dir();
+        std::fs::create_dir_all(&temporary).unwrap();
+        let path = temporary.join(format!("{}.sqlite", unique_name()));
         {
             let connection = Connection::open(&path).unwrap();
             connection
