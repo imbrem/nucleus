@@ -30,7 +30,7 @@ pub use validate::{
     HolImageValidationError, ValidatedHolImage, stlc_bool_eq_v1_schema_id,
     stlc_bool_eq_v1_semantics, stlc_bool_eq_v2_schema_id, stlc_bool_eq_v2_semantics,
     stlc_bool_eq_v3_schema_id, stlc_bool_eq_v3_semantics, stlc_bool_eq_v4_schema_id,
-    stlc_bool_eq_v4_semantics,
+    stlc_bool_eq_v4_semantics, stlc_bool_eq_v5_schema_id, stlc_bool_eq_v5_semantics,
 };
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -307,6 +307,7 @@ enum TheoremOrigin {
     EqualitySubstitution,
     DeductionAntisymmetry,
     TermInstantiation,
+    Abstraction,
     ConversionEquality,
     Conversion,
 }
@@ -323,6 +324,7 @@ impl TheoremOrigin {
             Self::EqualitySubstitution => "equality_substitution",
             Self::DeductionAntisymmetry => "deduction_antisymmetry",
             Self::TermInstantiation => "term_instantiation",
+            Self::Abstraction => "abstraction",
             Self::ConversionEquality => "conversion_equality",
             Self::Conversion => "conversion",
         }
@@ -504,6 +506,8 @@ pub enum Operation {
     ProveDeductionAntisymmetry,
     /// Simultaneously instantiate exact free variables throughout a theorem.
     ProveTermInstantiation,
+    /// Abstract one exact free variable from both sides of a proved equality.
+    ProveAbstraction,
     /// Load or inspect a persisted context implication.
     ReadContextImplication,
     /// Persist a branded context implication as authoritative connection state.
@@ -2605,6 +2609,84 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         })
     }
 
+    /// Applies the standard HOL abstraction rule to one exact free-variable node.
+    ///
+    /// From `Γ ⊢ left = right`, this derives `Γ ⊢ (λx. left) = (λx. right)`
+    /// when the exact `MFV` node `variable` does not occur in any assumption in
+    /// `Γ`. Occurrences under existing lambdas are replaced by the corresponding
+    /// typed de Bruijn index; existing bound variables are left unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the rule or required syntax insertion,
+    /// the premise is not a closed equality, `variable` is not an exact `MFV`
+    /// node, it occurs in an assumption, or checked atomic interning fails.
+    pub fn abstraction(
+        &mut self,
+        theorem: &Theorem<'brand>,
+        variable: TermId,
+    ) -> Result<Theorem<'brand>, ProofError> {
+        let (neutron, hol) = self.connection.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ProveAbstraction)?;
+        authorize_proof(&mut hol.policy, Operation::InsertTerm)?;
+        authorize_proof(&mut hol.policy, Operation::InsertType)?;
+
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        let variable_validation = validate_term(&transaction, variable)?;
+        if !matches!(variable_validation.view, TermView::Free { .. }) {
+            return Err(ProofError::AbstractionKeyNotFree(variable));
+        }
+        let conclusion_validation = validate_term(&transaction, theorem.conclusion)?;
+        if !conclusion_validation.boundary.is_empty() {
+            return Err(ProofError::OpenConclusion(theorem.conclusion));
+        }
+        let TermView::Equality { left, right } = conclusion_validation.view else {
+            return Err(ProofError::ExpectedEquality(theorem.conclusion));
+        };
+        require_context(&transaction, theorem.context)?;
+        for assumption in read_context_members(&transaction, theorem.context)? {
+            validate_term(&transaction, assumption)?;
+            if term_contains_exact(&transaction, assumption, variable, &mut HashMap::new())? {
+                return Err(ProofError::AbstractionVariableFreeInAssumption {
+                    variable,
+                    assumption,
+                });
+            }
+        }
+
+        let mut memo = HashMap::new();
+        let left = abstract_free_term_inner(
+            &transaction,
+            left,
+            variable,
+            variable_validation.ty,
+            0,
+            &mut memo,
+        )?;
+        let right = abstract_free_term_inner(
+            &transaction,
+            right,
+            variable,
+            variable_validation.ty,
+            0,
+            &mut memo,
+        )?;
+        let endpoint_type = validate_term(&transaction, left)?.ty;
+        let function_type = intern_type_arrow(&transaction, variable_validation.ty, endpoint_type)
+            .map_err(TermError::Type)?;
+        let left = intern_lambda(&transaction, variable_validation.ty, left, function_type)?;
+        let right = intern_lambda(&transaction, variable_validation.ty, right, function_type)?;
+        let conclusion = intern_equality(&transaction, left, right)?;
+        validate_term(&transaction, conclusion)?;
+        transaction.commit()?;
+        Ok(Theorem {
+            context: theorem.context,
+            conclusion,
+            origin: Some(TheoremOrigin::Abstraction),
+            brand: PhantomData,
+        })
+    }
+
     /// Applies equality modus ponens: `Γ ⊢ p = q` and `Γ ⊢ p` yield `Γ ⊢ q`.
     ///
     /// # Errors
@@ -3806,6 +3888,105 @@ fn instantiate_free_terms_inner(
     Ok(result)
 }
 
+fn term_contains_exact(
+    connection: &sqlite::Connection,
+    term: TermId,
+    needle: TermId,
+    memo: &mut HashMap<TermId, bool>,
+) -> Result<bool, TermError> {
+    if term == needle {
+        return Ok(true);
+    }
+    if let Some(result) = memo.get(&term) {
+        return Ok(*result);
+    }
+    let (view, _) = read_term_node(connection, term)?;
+    let result = match view {
+        TermView::Bool(_)
+        | TermView::Free { .. }
+        | TermView::Constant { .. }
+        | TermView::Bound { .. } => false,
+        TermView::Application { function, argument } => {
+            term_contains_exact(connection, function, needle, memo)?
+                || term_contains_exact(connection, argument, needle, memo)?
+        }
+        TermView::Lambda { body, .. } => term_contains_exact(connection, body, needle, memo)?,
+        TermView::Equality { left, right } => {
+            term_contains_exact(connection, left, needle, memo)?
+                || term_contains_exact(connection, right, needle, memo)?
+        }
+    };
+    memo.insert(term, result);
+    Ok(result)
+}
+
+fn abstract_free_term_inner(
+    connection: &sqlite::Connection,
+    term: TermId,
+    variable: TermId,
+    variable_type: TypeId,
+    depth: u32,
+    memo: &mut HashMap<(TermId, u32), TermId>,
+) -> Result<TermId, TermError> {
+    if term == variable {
+        return intern_bound_term(connection, depth, variable_type);
+    }
+    if let Some(result) = memo.get(&(term, depth)) {
+        return Ok(*result);
+    }
+    let (view, ty) = read_term_node(connection, term)?;
+    let result = match view {
+        TermView::Bool(_)
+        | TermView::Free { .. }
+        | TermView::Constant { .. }
+        | TermView::Bound { .. } => term,
+        TermView::Application { function, argument } => {
+            let function = abstract_free_term_inner(
+                connection,
+                function,
+                variable,
+                variable_type,
+                depth,
+                memo,
+            )?;
+            let argument = abstract_free_term_inner(
+                connection,
+                argument,
+                variable,
+                variable_type,
+                depth,
+                memo,
+            )?;
+            intern_application(connection, function, argument, ty)?
+        }
+        TermView::Lambda {
+            parameter_type,
+            body,
+        } => {
+            let body = abstract_free_term_inner(
+                connection,
+                body,
+                variable,
+                variable_type,
+                depth
+                    .checked_add(1)
+                    .ok_or(TermError::SubstitutionDepthOverflow)?,
+                memo,
+            )?;
+            intern_lambda(connection, parameter_type, body, ty)?
+        }
+        TermView::Equality { left, right } => {
+            let left =
+                abstract_free_term_inner(connection, left, variable, variable_type, depth, memo)?;
+            let right =
+                abstract_free_term_inner(connection, right, variable, variable_type, depth, memo)?;
+            intern_equality(connection, left, right)?
+        }
+    };
+    memo.insert((term, depth), result);
+    Ok(result)
+}
+
 fn free_term_symbols(connection: &sqlite::Connection, root: TermId) -> Result<Vec<i64>, TermError> {
     let mut statement = connection.prepare(
         "WITH RECURSIVE
@@ -4443,6 +4624,13 @@ pub enum ProofError {
     },
     /// A theorem-instantiation replacement is not locally closed.
     OpenTermInstantiationReplacement(TermId),
+    /// The abstraction key is not an exact `MFV` node.
+    AbstractionKeyNotFree(TermId),
+    /// The abstraction key occurs in one undischarged assumption.
+    AbstractionVariableFreeInAssumption {
+        variable: TermId,
+        assumption: TermId,
+    },
     /// Two conversions cannot compose because their middle terms differ.
     ConversionChainMismatch {
         first_right: TermId,
@@ -4485,13 +4673,11 @@ impl fmt::Display for ProofError {
                 term.get(),
                 ty.get()
             ),
-            Self::OpenConclusion(term) => {
-                write!(
-                    formatter,
-                    "conclusion term {} is not locally closed",
-                    term.get()
-                )
-            }
+            Self::OpenConclusion(term) => write!(
+                formatter,
+                "conclusion term {} is not locally closed",
+                term.get()
+            ),
             Self::NotLambda(term) => write!(formatter, "term {} is not a lambda", term.get()),
             Self::BetaTypeMismatch { expected, actual } => write!(
                 formatter,
@@ -4553,6 +4739,8 @@ impl fmt::Display for ProofError {
             | Self::DuplicateTermInstantiation(_)
             | Self::TermInstantiationTypeMismatch { .. }
             | Self::OpenTermInstantiationReplacement(_)
+            | Self::AbstractionKeyNotFree(_)
+            | Self::AbstractionVariableFreeInAssumption { .. }
             | Self::ConversionChainMismatch { .. }
             | Self::ConversionBoundaryMismatch { .. }
             | Self::NonBooleanConversion { .. }
@@ -4757,6 +4945,20 @@ fn format_substitution_proof_error(
             "free-term instantiation replacement {} is not locally closed",
             replacement.get()
         )),
+        ProofError::AbstractionKeyNotFree(variable) => Some(write!(
+            formatter,
+            "term {} is not an exact free-variable abstraction key",
+            variable.get()
+        )),
+        ProofError::AbstractionVariableFreeInAssumption {
+            variable,
+            assumption,
+        } => Some(write!(
+            formatter,
+            "free variable {} occurs in assumption {}",
+            variable.get(),
+            assumption.get()
+        )),
         _ => None,
     }
 }
@@ -4832,6 +5034,8 @@ impl StdError for ProofError {
             | Self::DuplicateTermInstantiation(_)
             | Self::TermInstantiationTypeMismatch { .. }
             | Self::OpenTermInstantiationReplacement(_)
+            | Self::AbstractionKeyNotFree(_)
+            | Self::AbstractionVariableFreeInAssumption { .. }
             | Self::ConversionChainMismatch { .. }
             | Self::ConversionBoundaryMismatch { .. }
             | Self::NonBooleanConversion { .. }
@@ -6140,6 +6344,286 @@ mod tests {
                 )
                 .unwrap();
             assert_eq!(counts, (0, 0));
+        }
+    }
+
+    #[test]
+    fn abstraction_closes_an_honest_beta_equality_and_persists_its_origin() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let x = connection.insert_free_term(800, bool_type).unwrap();
+        let bound = connection.insert_bound_term(0, bool_type).unwrap();
+        let identity = connection.insert_lambda(bool_type, bound).unwrap();
+
+        let conclusion = connection
+            .with_proof_session(|mut proof| {
+                let beta = proof.prove_beta(ContextId::empty(), identity, x)?;
+                let abstracted = proof.abstraction(&beta, x)?;
+                assert_eq!(abstracted.context(), ContextId::empty());
+                proof.persist_theorem(&abstracted)?;
+                Ok::<_, ProofError>(abstracted.conclusion())
+            })
+            .unwrap();
+
+        let TermView::Equality { left, right } = connection.term(conclusion).unwrap() else {
+            panic!("abstracted theorem is not equality")
+        };
+        let TermView::Lambda {
+            body: left_body, ..
+        } = connection.term(left).unwrap()
+        else {
+            panic!("left endpoint is not a lambda")
+        };
+        let TermView::Lambda {
+            body: right_body, ..
+        } = connection.term(right).unwrap()
+        else {
+            panic!("right endpoint is not a lambda")
+        };
+        assert!(matches!(
+            connection.term(left_body).unwrap(),
+            TermView::Application { .. }
+        ));
+        assert_eq!(
+            connection.term(right_body).unwrap(),
+            TermView::Bound { index: 0 }
+        );
+        let rule = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row(
+                "SELECT rule FROM hol_proof_event WHERE ctx_id = 0 AND term_id = ?1",
+                [conclusion.get()],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+        assert_eq!(rule, "abstraction");
+    }
+
+    #[test]
+    fn abstraction_tracks_nested_binder_depth_and_interacts_exactly_with_instantiation() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let x = connection.insert_free_term(810, bool_type).unwrap();
+        let y = connection.insert_free_term(811, bool_type).unwrap();
+        let pair_type = connection.insert_arrow_type(bool_type, bool_type).unwrap();
+        let function = connection.insert_free_term(812, pair_type).unwrap();
+        let existing_bound = connection.insert_bound_term(0, bool_type).unwrap();
+        let fx = connection.insert_application(function, x).unwrap();
+        let fy = connection.insert_application(function, y).unwrap();
+        let free_equality = connection.insert_equality(fx, fy).unwrap();
+        let bound_equality = connection
+            .insert_equality(existing_bound, existing_bound)
+            .unwrap();
+        let body = connection
+            .insert_equality(free_equality, bound_equality)
+            .unwrap();
+        let left = connection.insert_lambda(bool_type, body).unwrap();
+        let replacement = connection.insert_bool_term(true).unwrap();
+
+        let final_conclusion = connection
+            .with_proof_session(|mut proof| {
+                let reflexive = proof.prove_reflexivity(ContextId::empty(), left)?;
+                let abstracted = proof.abstraction(&reflexive, x)?;
+                let instantiated = proof.instantiate_terms(
+                    &abstracted,
+                    &[
+                        TermInstantiation {
+                            variable: x,
+                            replacement,
+                        },
+                        TermInstantiation {
+                            variable: y,
+                            replacement,
+                        },
+                    ],
+                )?;
+                Ok::<_, ProofError>(instantiated.conclusion())
+            })
+            .unwrap();
+
+        let TermView::Equality { left, .. } = connection.term(final_conclusion).unwrap() else {
+            panic!("result is not equality")
+        };
+        let TermView::Lambda { body: outer, .. } = connection.term(left).unwrap() else {
+            panic!("missing abstraction lambda")
+        };
+        let TermView::Lambda { body: inner, .. } = connection.term(outer).unwrap() else {
+            panic!("missing existing lambda")
+        };
+        let TermView::Equality {
+            left: free_equality,
+            right: bound_equality,
+        } = connection.term(inner).unwrap()
+        else {
+            panic!("missing inner equality")
+        };
+        let TermView::Equality {
+            left: fx,
+            right: fy,
+        } = connection.term(free_equality).unwrap()
+        else {
+            panic!("missing free equality")
+        };
+        let TermView::Application { argument, .. } = connection.term(fx).unwrap() else {
+            panic!("missing inner application")
+        };
+        assert_eq!(
+            connection.term(argument).unwrap(),
+            TermView::Bound { index: 1 }
+        );
+        let TermView::Application { argument, .. } = connection.term(fy).unwrap() else {
+            panic!("missing instantiated application")
+        };
+        assert_eq!(argument, replacement);
+        let TermView::Equality { left: bv, right } = connection.term(bound_equality).unwrap()
+        else {
+            panic!("missing bound equality")
+        };
+        assert_eq!(bv, right);
+        assert_eq!(connection.term(bv).unwrap(), TermView::Bound { index: 0 });
+    }
+
+    #[test]
+    fn abstraction_freshness_is_exact_typed_identity_and_rejection_is_atomic() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let ind = connection.insert_base_type(820).unwrap();
+        let x = connection.insert_free_term(821, ind).unwrap();
+        let same_symbol_bool = connection.insert_free_term(821, bool_type).unwrap();
+        let wrapped_x = connection.insert_lambda(bool_type, x).unwrap();
+        let nested_assumption = connection.insert_equality(wrapped_x, wrapped_x).unwrap();
+        let clean_context = connection.define_context([same_symbol_bool]).unwrap();
+        let dirty_context = connection
+            .define_context([same_symbol_bool, nested_assumption])
+            .unwrap();
+        connection
+            .with_proof_session(|mut proof| {
+                let clean = proof.prove_reflexivity(clean_context, x)?;
+                proof.abstraction(&clean, x)?;
+                Ok::<_, ProofError>(())
+            })
+            .unwrap();
+        let before_rejection = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row("SELECT count(*) FROM hol_node", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        connection
+            .with_proof_session(|mut proof| {
+                let dirty = proof.prove_reflexivity(dirty_context, x)?;
+                assert!(matches!(
+                    proof.abstraction(&dirty, x),
+                    Err(ProofError::AbstractionVariableFreeInAssumption { variable, assumption })
+                        if variable == x && assumption == nested_assumption
+                ));
+                Ok::<_, ProofError>(())
+            })
+            .unwrap();
+        let after = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row("SELECT count(*) FROM hol_node", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(after, before_rejection);
+    }
+
+    #[test]
+    fn abstraction_rejects_non_free_keys_and_rolls_back_partial_syntax() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let x = connection.insert_free_term(830, bool_type).unwrap();
+        let constant = connection.insert_constant(831, bool_type).unwrap();
+        let bound = connection.insert_bound_term(0, bool_type).unwrap();
+        let before = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row("SELECT count(*) FROM hol_node", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .execute_batch(
+                "CREATE TEMP TRIGGER reject_abstraction_lambda
+             BEFORE INSERT ON hol_node WHEN NEW.tag = 'MLAM'
+             BEGIN SELECT RAISE(ABORT, 'test abstraction rejection'); END",
+            )
+            .unwrap();
+
+        connection.with_proof_session(|mut proof| {
+            let theorem = proof.prove_reflexivity(ContextId::empty(), x)?;
+            assert!(matches!(proof.abstraction(&theorem, constant), Err(ProofError::AbstractionKeyNotFree(term)) if term == constant));
+            assert!(matches!(proof.abstraction(&theorem, bound), Err(ProofError::AbstractionKeyNotFree(term)) if term == bound));
+            assert!(matches!(
+                proof.abstraction(&theorem, TermId::from_i64(i64::MAX)),
+                Err(ProofError::Term(TermError::UnknownTerm(term))) if term == TermId::from_i64(i64::MAX)
+            ));
+            assert!(matches!(proof.abstraction(&theorem, x), Err(ProofError::Term(TermError::Sqlite(_)))));
+            Ok::<_, ProofError>(())
+        }).unwrap();
+        let after = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row("SELECT count(*) FROM hol_node", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(after, before + 1); // reflexivity's equality commits before the ABS transaction.
+        assert!(
+            connection
+                .parts_mut()
+                .0
+                .sqlite()
+                .query_row(
+                    "SELECT NOT EXISTS(
+                 SELECT 1 FROM hol_node
+                 WHERE tag = 'TARR' AND lhs = ?1 AND rhs = ?1
+             )",
+                    [bool_type.get()],
+                    |row| row.get::<_, bool>(0),
+                )
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn abstraction_checks_all_policy_gates_before_database_work() {
+        for denied in [
+            Operation::ProveAbstraction,
+            Operation::InsertTerm,
+            Operation::InsertType,
+        ] {
+            let armed = Rc::new(Cell::new(false));
+            let mut connection = Connection::open_hol_in_memory(ArmedDenial {
+                operation: denied,
+                armed: Rc::clone(&armed),
+            })
+            .unwrap();
+            let bool_type = connection.insert_bool_type().unwrap();
+            let x = connection.insert_free_term(840, bool_type).unwrap();
+            armed.set(true);
+            let result = connection.with_proof_session(|mut proof| {
+                let theorem = Theorem {
+                    context: ContextId::empty(),
+                    conclusion: x,
+                    origin: None,
+                    brand: PhantomData,
+                };
+                proof.abstraction(&theorem, x).map(|_| ())
+            });
+            assert!(matches!(result, Err(ProofError::Denied(operation)) if operation == denied));
         }
     }
 
