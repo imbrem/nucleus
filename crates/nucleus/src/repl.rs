@@ -4,26 +4,15 @@
 //! semantic claim about returned values. A REPL may orchestrate any number of
 //! these connections, but is not itself a connection protocol.
 
-use std::collections::HashMap;
-use std::sync::Arc;
-
-use covalence_lib_hash::O256;
 use covalence_lib_sqlite as sqlite;
 
 use crate::Connection;
-
-#[path = "repl/image.rs"]
-mod image;
-
-pub use image::ImageError;
 
 /// Protocol state for an unrestricted SQL session.
 ///
 /// Construction remains private so only Nucleus can enclose a connection as a
 /// REPL after performing any admission required by future revisions.
-pub struct Sql {
-    images: HashMap<O256, Arc<[u8]>>,
-}
+pub struct Sql;
 
 /// An owned `SQLite` value suitable for transport across kernel boundaries.
 #[derive(Clone, Debug, PartialEq)]
@@ -97,12 +86,7 @@ impl Connection<Sql> {
     /// Returns an error when the underlying `SQLite` connection cannot be opened.
     pub fn open_in_memory() -> Result<Self, covalence_neutron::ConnectionError> {
         let neutron = covalence_neutron::Connection::open_in_memory()?;
-        Ok(Self::from_neutron(
-            neutron,
-            Sql {
-                images: HashMap::new(),
-            },
-        ))
+        Ok(Self::from_neutron(neutron, Sql))
     }
 
     /// Prepares one SQL statement under the REPL protocol.
@@ -140,6 +124,36 @@ impl Connection<Sql> {
     pub fn execute_batch(&mut self, sql: &str) -> sqlite::Result<()> {
         let (neutron, _) = self.parts_mut();
         neutron.sqlite().execute_batch(sql)
+    }
+
+    /// Serializes the writable in-memory `main` database.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `SQLite` cannot serialize the database.
+    pub fn serialize_main(
+        &mut self,
+    ) -> Result<covalence_neutron::Bytes, covalence_neutron::ImageError> {
+        let (neutron, _) = self.parts_mut();
+        neutron.serialize()
+    }
+
+    /// Attaches an externally managed immutable image and verifies its actual VFS pointer.
+    ///
+    /// Nucleus neither stores nor registers image bytes. The supplied Neutron handle owns the
+    /// process-local VFS registration and performs the post-attach `sqlite3_vfs*` identity check.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid or occupied schema name, attachment failure, or actual VFS
+    /// pointer mismatch.
+    pub fn attach_immutable(
+        &mut self,
+        image: &covalence_neutron::ImmutableImage,
+        schema: &str,
+    ) -> Result<(), covalence_neutron::ImmutableImageError> {
+        let (neutron, _) = self.parts_mut();
+        image.attach(neutron, schema)
     }
 }
 
@@ -210,6 +224,40 @@ impl Statement<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn serializes_and_attaches_an_externally_managed_immutable_image() {
+        let mut source = Connection::<Sql>::open_in_memory().expect("open source");
+        source
+            .execute_batch(
+                "CREATE TABLE example(value TEXT NOT NULL);
+                 INSERT INTO example VALUES ('immutable');",
+            )
+            .expect("populate source");
+        let bytes = source.serialize_main().expect("serialize source");
+        let image = covalence_neutron::ImmutableImage::register(Arc::from(bytes.as_ref()))
+            .expect("register outside Nucleus");
+
+        let mut target = Connection::<Sql>::open_in_memory().expect("open target");
+        target
+            .attach_immutable(&image, "library")
+            .expect("attach verified image");
+        assert_eq!(
+            target
+                .run("SELECT value FROM library.example", &[])
+                .expect("query image"),
+            Outcome::Rows(QueryResult {
+                columns: vec!["value".to_owned()],
+                rows: vec![vec![Value::Text("immutable".to_owned())]],
+            })
+        );
+        assert!(
+            target
+                .run("UPDATE library.example SET value = 'changed'", &[])
+                .is_err()
+        );
+    }
 
     #[test]
     fn runs_statements_and_owns_all_sqlite_values() {

@@ -210,6 +210,7 @@ version = "0.0.0"
 name = "covalence-repl"
 version = "0.0.0"
 dependencies = [
+ "covalence-kernel-service",
  "covalence-lib-hash",
  "covalence-lib-sqlite",
  "covalence-neutron",
