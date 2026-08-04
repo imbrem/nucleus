@@ -27,14 +27,32 @@ const MAX_DIAGNOSTIC_BYTES: usize = 4 << 10;
 const MAX_SIGNED_FRAME_BYTES: usize = MAX_WIRE_PAYLOAD_BYTES + 384;
 const CHANNEL_CALLER_BYTES: usize = 32;
 const MAX_CHANNEL_GRANT_BYTES: usize = 512;
+const BOOTSTRAP_TOKEN_BYTES: usize = 32;
+
+/// One-time, high-entropy bootstrap capability for authorizing a caller key.
+pub type BootstrapToken = [u8; BOOTSTRAP_TOKEN_BYTES];
 
 /// Numeric loopback endpoint with an independently supplied recipient-key pin.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct LoopbackHttpEndpoint {
     address: SocketAddr,
     recipient: PublicKeyIdentity,
     connect_timeout: Duration,
     io_timeout: Duration,
+    bootstrap_token: Option<BootstrapToken>,
+}
+
+impl fmt::Debug for LoopbackHttpEndpoint {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LoopbackHttpEndpoint")
+            .field("address", &self.address)
+            .field("recipient", &self.recipient)
+            .field("connect_timeout", &self.connect_timeout)
+            .field("io_timeout", &self.io_timeout)
+            .field("has_bootstrap_token", &self.bootstrap_token.is_some())
+            .finish()
+    }
 }
 
 impl LoopbackHttpEndpoint {
@@ -60,7 +78,15 @@ impl LoopbackHttpEndpoint {
             recipient,
             connect_timeout,
             io_timeout,
+            bootstrap_token: None,
         })
+    }
+
+    /// Adds a one-time bootstrap capability to the next channel request.
+    #[must_use]
+    pub const fn with_bootstrap_token(mut self, token: BootstrapToken) -> Self {
+        self.bootstrap_token = Some(token);
+        self
     }
 
     /// Exact numeric address used for both TCP and the HTTP `Host` field.
@@ -86,7 +112,12 @@ impl LoopbackHttpEndpoint {
         &self,
         caller: PublicKeyIdentity,
     ) -> Result<Vec<u8>, HttpTransportError> {
-        self.post(CHANNEL_PATH, &caller, MAX_CHANNEL_GRANT_BYTES)
+        self.post(
+            CHANNEL_PATH,
+            &caller,
+            MAX_CHANNEL_GRANT_BYTES,
+            self.bootstrap_token.as_ref(),
+        )
     }
 
     /// Exchanges exact canonical invocation bytes for exact signed-result bytes.
@@ -104,7 +135,7 @@ impl LoopbackHttpEndpoint {
                 actual: invocation.len(),
             });
         }
-        self.post(INVOCATION_PATH, invocation, MAX_SIGNED_FRAME_BYTES)
+        self.post(INVOCATION_PATH, invocation, MAX_SIGNED_FRAME_BYTES, None)
     }
 
     fn post(
@@ -112,6 +143,7 @@ impl LoopbackHttpEndpoint {
         path: &'static str,
         body: &[u8],
         response_limit: usize,
+        bootstrap_token: Option<&BootstrapToken>,
     ) -> Result<Vec<u8>, HttpTransportError> {
         let mut stream = TcpStream::connect_timeout(&self.address, self.connect_timeout)
             .map_err(HttpTransportError::Io)?;
@@ -123,8 +155,11 @@ impl LoopbackHttpEndpoint {
             .map_err(HttpTransportError::Io)?;
 
         let host = authority(self.address);
+        let authorization = bootstrap_token.map_or_else(String::new, |token| {
+            format!("Authorization: Nucleus-Bootstrap {}\r\n", encode_hex(token))
+        });
         let head = format!(
-            "POST {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: {BINARY_CONTENT_TYPE}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            "POST {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: {BINARY_CONTENT_TYPE}\r\nContent-Length: {}\r\n{authorization}Connection: close\r\n\r\n",
             body.len()
         );
         stream
@@ -150,12 +185,36 @@ impl LoopbackHttpEndpoint {
 }
 
 /// A strictly framed request accepted by a loopback kernel HTTP server.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Eq, PartialEq)]
 pub enum KernelHttpRequest {
     /// Request a channel for this exact caller verification key.
-    Channel(PublicKeyIdentity),
+    Channel {
+        /// Caller verification key to bind into the recipient-signed grant.
+        caller: PublicKeyIdentity,
+        /// Optional one-time bootstrap capability.
+        bootstrap_token: Option<BootstrapToken>,
+    },
     /// Submit exact canonical signed-invocation bytes.
     Invocation(Vec<u8>),
+}
+
+impl fmt::Debug for KernelHttpRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Channel {
+                caller,
+                bootstrap_token,
+            } => formatter
+                .debug_struct("Channel")
+                .field("caller", caller)
+                .field("has_bootstrap_token", &bootstrap_token.is_some())
+                .finish(),
+            Self::Invocation(bytes) => formatter
+                .debug_tuple("Invocation")
+                .field(&format_args!("{} bytes", bytes.len()))
+                .finish(),
+        }
+    }
 }
 
 /// Reads one request from a connection accepted on `local_address`.
@@ -198,13 +257,21 @@ pub fn read_server_request(
                     actual: body.len(),
                 }
             })?;
-            Ok(KernelHttpRequest::Channel(caller))
+            Ok(KernelHttpRequest::Channel {
+                caller,
+                bootstrap_token: parse_bootstrap_authorization(headers.authorization.as_deref())?,
+            })
         }
-        INVOCATION_PATH => Ok(KernelHttpRequest::Invocation(read_body(
-            stream,
-            &headers,
-            MAX_SIGNED_FRAME_BYTES,
-        )?)),
+        INVOCATION_PATH => {
+            if headers.authorization.is_some() {
+                return Err(HttpTransportError::UnexpectedAuthorization);
+            }
+            Ok(KernelHttpRequest::Invocation(read_body(
+                stream,
+                &headers,
+                MAX_SIGNED_FRAME_BYTES,
+            )?))
+        }
         _ => Err(HttpTransportError::UnknownPath(path.to_owned())),
     }
 }
@@ -276,6 +343,7 @@ struct Headers {
     connection: Option<String>,
     transfer_encoding: bool,
     content_encoding: bool,
+    authorization: Option<String>,
 }
 
 fn read_head(stream: &mut impl Read) -> Result<(String, Headers), HttpTransportError> {
@@ -360,6 +428,8 @@ fn parse_headers(head: &str) -> Result<Headers, HttpTransportError> {
             );
         } else if name.eq_ignore_ascii_case("connection") {
             set_once(&mut headers.connection, value, "Connection")?;
+        } else if name.eq_ignore_ascii_case("authorization") {
+            set_once(&mut headers.authorization, value, "Authorization")?;
         } else if name.eq_ignore_ascii_case("transfer-encoding") {
             headers.transfer_encoding = true;
         } else if name.eq_ignore_ascii_case("content-encoding") {
@@ -467,6 +537,43 @@ fn authority(address: SocketAddr) -> String {
     }
 }
 
+fn parse_bootstrap_authorization(
+    authorization: Option<&str>,
+) -> Result<Option<BootstrapToken>, HttpTransportError> {
+    let Some(value) = authorization else {
+        return Ok(None);
+    };
+    let encoded = value
+        .strip_prefix("Nucleus-Bootstrap ")
+        .ok_or(HttpTransportError::InvalidAuthorization)?;
+    if encoded.len() != BOOTSTRAP_TOKEN_BYTES * 2 {
+        return Err(HttpTransportError::InvalidAuthorization);
+    }
+    let mut token = [0_u8; BOOTSTRAP_TOKEN_BYTES];
+    for (destination, pair) in token.iter_mut().zip(encoded.as_bytes().chunks_exact(2)) {
+        *destination = (decode_hex_digit(pair[0])? << 4) | decode_hex_digit(pair[1])?;
+    }
+    Ok(Some(token))
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
+}
+
+fn decode_hex_digit(byte: u8) -> Result<u8, HttpTransportError> {
+    match byte {
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        _ => Err(HttpTransportError::InvalidAuthorization),
+    }
+}
+
 const fn is_header_name_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric()
         || matches!(
@@ -529,6 +636,10 @@ pub enum HttpTransportError {
     ConnectionNotClose,
     /// Request path was not one of the two closed endpoints.
     UnknownPath(String),
+    /// Authorization was malformed or not canonical.
+    InvalidAuthorization,
+    /// Authorization was supplied to an endpoint which does not accept it.
+    UnexpectedAuthorization,
     /// Peer returned an unsigned HTTP boundary failure.
     HttpStatus { status: u16, diagnostic: String },
     /// Boundary-error helper was given a non-error status.
@@ -572,6 +683,10 @@ impl fmt::Display for HttpTransportError {
             Self::ContentEncodingForbidden => formatter.write_str("Content-Encoding is forbidden"),
             Self::ConnectionNotClose => formatter.write_str("Connection: close is required"),
             Self::UnknownPath(path) => write!(formatter, "unknown kernel HTTP path {path}"),
+            Self::InvalidAuthorization => formatter.write_str("invalid bootstrap Authorization"),
+            Self::UnexpectedAuthorization => {
+                formatter.write_str("Authorization is not accepted on this endpoint")
+            }
             Self::HttpStatus { status, diagnostic } => {
                 write!(
                     formatter,
@@ -657,7 +772,10 @@ mod tests {
             let (mut channel, _) = listener.accept().unwrap();
             assert_eq!(
                 read_server_request(&mut channel, address, Duration::from_secs(1)).unwrap(),
-                KernelHttpRequest::Channel([7; 32])
+                KernelHttpRequest::Channel {
+                    caller: [7; 32],
+                    bootstrap_token: Some([3; 32]),
+                }
             );
             write_server_success(&mut channel, b"grant").unwrap();
 
@@ -674,7 +792,8 @@ mod tests {
             Duration::from_secs(1),
             Duration::from_secs(1),
         )
-        .unwrap();
+        .unwrap()
+        .with_bootstrap_token([3; 32]);
         assert_eq!(endpoint.request_channel([7; 32]).unwrap(), b"grant");
         assert_eq!(
             endpoint.invoke(b"signed invocation").unwrap(),

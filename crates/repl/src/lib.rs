@@ -8,6 +8,8 @@ use std::collections::{HashMap, HashSet};
 use std::error::Error as StdError;
 use std::fmt;
 use std::sync::Arc;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+use std::{net::SocketAddr, time::Duration};
 
 use covalence_kernel_service::{
     ImageBytes, KernelIdentity, KernelService, ServiceError, SqlConnectionId, SqlDiagnostic,
@@ -25,17 +27,24 @@ use sqlite::OptionalExtension as _;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod http_transport;
 mod metadata_spec;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod native_http;
 mod schema_spec;
 mod signed_client;
 
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub use http_transport::{
-    CHANNEL_PATH, HttpTransportError, INVOCATION_PATH, KernelHttpRequest, LoopbackHttpEndpoint,
-    read_server_request, write_server_boundary_error, write_server_success,
+    BootstrapToken, CHANNEL_PATH, HttpTransportError, INVOCATION_PATH, KernelHttpRequest,
+    LoopbackHttpEndpoint, read_server_request, write_server_boundary_error, write_server_success,
 };
 pub use metadata_spec::MetadataSpecError;
 use metadata_spec::{
     encode_metadata_values_json, parse_metadata_read_json, parse_metadata_write_json,
+};
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+pub use native_http::{
+    NativeKernelServerConfig, NativeKernelServerError, NativeKernelServerHandle,
+    spawn_native_kernel_server,
 };
 pub use schema_spec::{
     HolMetadataColumnSpec, HolMetadataIndexSpec, HolMetadataSchemaSpec, HolMetadataStorageSpec,
@@ -450,6 +459,8 @@ impl LocalConnection {
 /// A local kernel and heterogeneous connection directory shared by all UIs.
 pub struct LocalRepl {
     kernels: HashMap<KernelId, LocalKernelService>,
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    remote_http: HashMap<KernelId, LoopbackHttpEndpoint>,
     signed_client: SignedKernelClient,
     directory: Repl<LocalConnection>,
 }
@@ -1374,6 +1385,8 @@ impl LocalRepl {
         let kernels = HashMap::from([(KernelId::local(), LocalKernelService::new(kernel))]);
         Ok(Self {
             kernels,
+            #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+            remote_http: HashMap::new(),
             signed_client: SignedKernelClient::ephemeral(),
             directory,
         })
@@ -1393,21 +1406,80 @@ impl LocalRepl {
         Ok(id)
     }
 
+    /// Connects a numeric loopback HTTP kernel using an out-of-band recipient-key pin.
+    ///
+    /// Registration eagerly requests and verifies a recipient-signed channel grant. The kernel is
+    /// not added to the inspectable directory unless the endpoint proves possession of the pinned
+    /// key. Requests are never retried by this client.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a non-loopback endpoint, invalid key, transport failure, invalid grant,
+    /// or failed directory update.
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    pub fn connect_native_http(
+        &mut self,
+        address: SocketAddr,
+        pinned_recipient: PublicKeyIdentity,
+        bootstrap_token: Option<BootstrapToken>,
+    ) -> Result<KernelId, LocalReplError> {
+        const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+        const IO_TIMEOUT: Duration = Duration::from_secs(30);
+
+        let endpoint =
+            LoopbackHttpEndpoint::new(address, pinned_recipient, CONNECT_TIMEOUT, IO_TIMEOUT)?;
+        let enrollment_endpoint =
+            bootstrap_token.map_or(endpoint, |token| endpoint.with_bootstrap_token(token));
+        let grant = enrollment_endpoint.request_channel(self.signed_client.caller_public_key())?;
+
+        // `insert_kernel` allocates this exact next ID. Installing the verified route first makes
+        // a failed directory transaction locally atomic; the remote may retain only an unused,
+        // bounded channel grant.
+        let candidate = KernelId(self.directory.next_kernel_id);
+        self.signed_client
+            .accept_grant(candidate, pinned_recipient, &grant)?;
+        let id = match self.directory.insert_kernel(
+            "native-http",
+            Some(&address.to_string()),
+            &pinned_recipient,
+        ) {
+            Ok(id) => id,
+            Err(error) => {
+                let _ = self.signed_client.remove_route(candidate);
+                return Err(error.into());
+            }
+        };
+        debug_assert_eq!(id, candidate);
+        let replaced = self.remote_http.insert(id, endpoint);
+        debug_assert!(replaced.is_none());
+        Ok(id)
+    }
+
     /// Reads one kernel's transport and public identity metadata.
     ///
     /// # Errors
     ///
     /// Returns an error for an unknown live local kernel.
     pub fn kernel(&self, id: KernelId) -> Result<KernelView, LocalReplError> {
-        let service = self.kernels.get(&id).ok_or(ReplError::UnknownKernel(id))?;
-        Ok(KernelView {
-            transport: "local".to_owned(),
-            endpoint: None,
-            public_key: service
-                .identity()
-                .map_err(LocalReplError::Service)?
-                .public_key,
-        })
+        if let Some(service) = self.kernels.get(&id) {
+            return Ok(KernelView {
+                transport: "local".to_owned(),
+                endpoint: None,
+                public_key: service
+                    .identity()
+                    .map_err(LocalReplError::Service)?
+                    .public_key,
+            });
+        }
+        #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+        if let Some(endpoint) = self.remote_http.get(&id) {
+            return Ok(KernelView {
+                transport: "native-http".to_owned(),
+                endpoint: Some(endpoint.address().to_string()),
+                public_key: endpoint.pinned_recipient(),
+            });
+        }
+        Err(ReplError::UnknownKernel(id).into())
     }
 
     /// Lists live local kernels using their authoritative runtime identities.
@@ -1429,6 +1501,17 @@ impl LocalRepl {
                     .into()
             })
             .collect::<Vec<_>>();
+        #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+        kernels.extend(self.remote_http.iter().map(|(id, endpoint)| {
+            (
+                *id,
+                KernelView {
+                    transport: "native-http".to_owned(),
+                    endpoint: Some(endpoint.address().to_string()),
+                    public_key: endpoint.pinned_recipient(),
+                },
+            )
+        }));
         kernels.sort_unstable_by_key(|(id, _)| *id);
         kernels
     }
@@ -1511,6 +1594,7 @@ impl LocalRepl {
         public_key: [u8; 32],
         signature: &[u8],
     ) -> Result<O256, LocalReplError> {
+        self.require_local_hol_kernel(kernel)?;
         let service = self
             .kernels
             .get(&kernel)
@@ -1652,29 +1736,26 @@ impl LocalRepl {
             return Ok(());
         }
         let caller_key = self.signed_client.caller_public_key();
-        let grant = self
-            .kernels
-            .get_mut(&recipient)
-            .ok_or(ReplError::UnknownKernel(recipient))?
-            .issue_sql_channel(caller_key)?;
-        let recipient_key = *self
-            .kernels
-            .get(&recipient)
-            .ok_or(ReplError::UnknownKernel(recipient))?
-            .kernel
-            .verifying_key()
-            .as_bytes();
-        if let Err(error) =
-            self.signed_client
-                .accept_grant(recipient, recipient_key, &grant.encode())
-        {
-            self.kernels
-                .get_mut(&recipient)
-                .ok_or(ReplError::UnknownKernel(recipient))?
-                .revoke_sql_channel(caller_key, grant.channel());
-            return Err(error.into());
+        if let Some(service) = self.kernels.get_mut(&recipient) {
+            let grant = service.issue_sql_channel(caller_key)?;
+            let recipient_key = *service.kernel.verifying_key().as_bytes();
+            if let Err(error) =
+                self.signed_client
+                    .accept_grant(recipient, recipient_key, &grant.encode())
+            {
+                service.revoke_sql_channel(caller_key, grant.channel());
+                return Err(error.into());
+            }
+            return Ok(());
         }
-        Ok(())
+        #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+        if let Some(endpoint) = self.remote_http.get(&recipient).copied() {
+            let grant = endpoint.request_channel(caller_key)?;
+            self.signed_client
+                .accept_grant(recipient, endpoint.pinned_recipient(), &grant)?;
+            return Ok(());
+        }
+        Err(ReplError::UnknownKernel(recipient).into())
     }
 
     fn signed_sql_request(
@@ -1685,17 +1766,31 @@ impl LocalRepl {
         self.ensure_sql_client_channel(recipient)?;
         let pending = self.signed_client.prepare(recipient, request)?;
         let coordinates = pending.channel_coordinates();
-        let result_bytes = match self
-            .kernels
-            .get_mut(&recipient)
-            .ok_or(ReplError::UnknownKernel(recipient))?
-            .exchange_sql(&pending.encode())
-        {
+        let invocation = pending.encode();
+        let exchange = if let Some(service) = self.kernels.get_mut(&recipient) {
+            service
+                .exchange_sql(&invocation)
+                .map_err(LocalReplError::from)
+        } else {
+            #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+            {
+                self.remote_http
+                    .get(&recipient)
+                    .copied()
+                    .ok_or(ReplError::UnknownKernel(recipient).into())
+                    .and_then(|endpoint| endpoint.invoke(&invocation).map_err(Into::into))
+            }
+            #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+            {
+                Err(ReplError::UnknownKernel(recipient).into())
+            }
+        };
+        let result_bytes = match exchange {
             Ok(bytes) => bytes,
             Err(error) => {
                 let _ = self.signed_client.abandon_pending(pending);
                 self.revoke_sql_client_channel(recipient, coordinates);
-                return Err(error.into());
+                return Err(error);
             }
         };
         match self.signed_client.accept_result(pending, &result_bytes) {
@@ -1726,6 +1821,20 @@ impl LocalRepl {
                 self.directory.connections.remove(&id);
             }
         }
+    }
+
+    fn require_local_hol_kernel(&self, kernel: KernelId) -> Result<(), LocalReplError> {
+        if self.kernels.contains_key(&kernel) {
+            return Ok(());
+        }
+        #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+        if self.remote_http.contains_key(&kernel) {
+            return Err(LocalReplError::RemoteProtocolUnsupported {
+                kernel,
+                protocol: "nucleus/hol-common-v2",
+            });
+        }
+        Err(ReplError::UnknownKernel(kernel).into())
     }
 
     /// Opens and selects a raw in-memory SQL session.
@@ -1788,6 +1897,7 @@ impl LocalRepl {
     /// Returns an error for an unknown/nonlocal kernel or failed connection/schema/directory
     /// creation.
     pub fn open_hol_on(&mut self, kernel: KernelId) -> Result<ConnectionId, LocalReplError> {
+        self.require_local_hol_kernel(kernel)?;
         let connection = self
             .kernels
             .get(&kernel)
@@ -1830,9 +1940,7 @@ impl LocalRepl {
         kernel: KernelId,
         descriptor: &[u8],
     ) -> Result<ConnectionId, LocalReplError> {
-        if !self.kernels.contains_key(&kernel) {
-            return Err(ReplError::UnknownKernel(kernel).into());
-        }
+        self.require_local_hol_kernel(kernel)?;
         let descriptor = HolSchemaDescriptor::decode(descriptor)?;
         let connection =
             Connection::open_hol_in_memory_with_schema(AllowAll, descriptor.into_schema())
@@ -2767,6 +2875,16 @@ pub enum LocalReplError {
     SignedExchange(LocalSignedExchangeError),
     /// The transport-neutral signed caller rejected a grant, request, or result.
     SignedClient(SignedClientError),
+    /// Native loopback HTTP framing or I/O failed.
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    HttpTransport(HttpTransportError),
+    /// A known remote kernel does not yet expose the requested protocol over its transport.
+    RemoteProtocolUnsupported {
+        /// Exact known remote kernel.
+        kernel: KernelId,
+        /// Requested protocol identifier.
+        protocol: &'static str,
+    },
     /// A HOL connection or its schema could not open.
     HolOpen(HolOpenError),
     /// A portable HOL metadata schema descriptor was invalid.
@@ -2821,6 +2939,12 @@ impl fmt::Display for LocalReplError {
             Self::KernelService(error) => error.fmt(formatter),
             Self::SignedExchange(error) => error.fmt(formatter),
             Self::SignedClient(error) => error.fmt(formatter),
+            #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+            Self::HttpTransport(error) => error.fmt(formatter),
+            Self::RemoteProtocolUnsupported { kernel, protocol } => write!(
+                formatter,
+                "remote kernel {kernel} does not expose {protocol} over its configured transport"
+            ),
             Self::HolOpen(error) => error.fmt(formatter),
             Self::HolSchemaDescriptor(error) => error.fmt(formatter),
             Self::HolSchemaSpec(error) => error.fmt(formatter),
@@ -2860,6 +2984,8 @@ impl StdError for LocalReplError {
             Self::KernelService(error) => Some(error),
             Self::SignedExchange(error) => Some(error),
             Self::SignedClient(error) => Some(error),
+            #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+            Self::HttpTransport(error) => Some(error),
             Self::HolOpen(error) => Some(error),
             Self::HolSchemaDescriptor(error) => Some(error),
             Self::HolSchemaSpec(error) => Some(error),
@@ -2876,7 +3002,7 @@ impl StdError for LocalReplError {
             Self::HolImageValidation(error) => Some(error),
             Self::TrustedImportImage(error) => Some(error),
             Self::ImportedReader(error) => Some(error),
-            Self::WrongProtocol { .. } => None,
+            Self::WrongProtocol { .. } | Self::RemoteProtocolUnsupported { .. } => None,
         }
     }
 }
@@ -2896,6 +3022,13 @@ impl From<LocalSignedExchangeError> for LocalReplError {
 impl From<SignedClientError> for LocalReplError {
     fn from(error: SignedClientError) -> Self {
         Self::SignedClient(error)
+    }
+}
+
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+impl From<HttpTransportError> for LocalReplError {
+    fn from(error: HttpTransportError) -> Self {
+        Self::HttpTransport(error)
     }
 }
 
@@ -3119,6 +3252,111 @@ mod tests {
             )
             .unwrap();
         assert_eq!(public_key, vec![7; 32]);
+    }
+
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    #[test]
+    fn remote_http_directory_and_hol_rejection_are_local_and_atomic() {
+        let mut repl = LocalRepl::new().unwrap();
+        let remote_kernel = Kernel::ephemeral();
+        let public_key = *remote_kernel.verifying_key().as_bytes();
+        let address: SocketAddr = "127.0.0.1:9".parse().unwrap();
+        let endpoint = LoopbackHttpEndpoint::new(
+            address,
+            public_key,
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        let id = repl
+            .directory
+            .insert_kernel("native-http", Some(&address.to_string()), &public_key)
+            .unwrap();
+        assert!(repl.remote_http.insert(id, endpoint).is_none());
+
+        assert_eq!(
+            repl.kernel(id).unwrap(),
+            KernelView {
+                transport: "native-http".to_owned(),
+                endpoint: Some(address.to_string()),
+                public_key,
+            }
+        );
+        assert!(repl.kernels().iter().any(|(kernel, _)| *kernel == id));
+        assert!(matches!(
+            repl.open_hol_on(id),
+            Err(LocalReplError::RemoteProtocolUnsupported {
+                kernel,
+                protocol: "nucleus/hol-common-v2"
+            }) if kernel == id
+        ));
+        assert!(matches!(
+            repl.open_hol_with_descriptor_on(id, b"not examined"),
+            Err(LocalReplError::RemoteProtocolUnsupported { kernel, .. }) if kernel == id
+        ));
+        assert_eq!(repl.active().unwrap(), None);
+        assert!(repl.directory.connections.is_empty());
+
+        let before = repl.kernels().len();
+        let non_loopback: SocketAddr = "192.0.2.1:8000".parse().unwrap();
+        assert!(matches!(
+            repl.connect_native_http(non_loopback, public_key, None),
+            Err(LocalReplError::HttpTransport(
+                HttpTransportError::NonLoopbackAddress(address)
+            )) if address == non_loopback
+        ));
+        assert_eq!(repl.kernels().len(), before);
+    }
+
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    #[test]
+    fn native_http_kernel_runs_the_shared_sql_and_image_workflow() {
+        let bootstrap = [0x5a; 32];
+        let server = spawn_native_kernel_server(
+            NativeKernelServerConfig::new("127.0.0.1:0".parse().unwrap(), [])
+                .with_bootstrap_token(bootstrap),
+        )
+        .unwrap();
+        let address = server.address();
+        let public_key = server.public_key();
+
+        let mut repl = LocalRepl::new().unwrap();
+        let remote = repl
+            .connect_native_http(address, public_key, Some(bootstrap))
+            .unwrap();
+        assert_eq!(repl.kernel(remote).unwrap().public_key, public_key);
+
+        let source = repl.open_sql_on(remote).unwrap();
+        repl.run_sql(source, "CREATE TABLE payload(value INTEGER) STRICT")
+            .unwrap();
+        repl.run_sql(source, "INSERT INTO payload VALUES (42)")
+            .unwrap();
+        assert_eq!(
+            repl.run_sql(source, "SELECT value FROM payload").unwrap(),
+            Outcome::Rows(QueryResult {
+                columns: vec!["value".to_owned()],
+                rows: vec![vec![Value::Integer(42)]],
+            })
+        );
+
+        let snapshot = repl.serialize_main(source).unwrap();
+        let image = repl.put_image_for_connection(source, &snapshot).unwrap();
+        assert!(repl.has_image_on(remote, image).unwrap());
+        let reader = repl.open_sql_on(remote).unwrap();
+        repl.attach_image(reader, image, "snapshot").unwrap();
+        assert_eq!(
+            repl.run_sql(reader, "SELECT value FROM snapshot.payload")
+                .unwrap(),
+            Outcome::Rows(QueryResult {
+                columns: vec!["value".to_owned()],
+                rows: vec![vec![Value::Integer(42)]],
+            })
+        );
+
+        repl.close(reader).unwrap();
+        repl.close(source).unwrap();
+        drop(repl);
+        server.shutdown().unwrap();
     }
 
     #[test]
