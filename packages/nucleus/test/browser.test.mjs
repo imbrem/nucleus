@@ -82,6 +82,7 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
   assert.equal(result.descriptorLength, 49);
   assert.equal(result.compiledDescriptorMatches, true);
   assert.equal(result.malformedDescriptorRejected, true);
+  assert.equal(result.ambiguousSchemaSourceRejected, true);
   assert.equal(result.attestationHasBytes, false);
   assert.deepEqual(result.snapshotRows, {
     kind: "rows",

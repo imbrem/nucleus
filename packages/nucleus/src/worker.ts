@@ -1,14 +1,9 @@
 import init, { WebKernel, type WebOutcome } from "../generated/nucleus.js";
-import type { HolSchemaSpecV1 } from "./index.js";
+import type { HolSchemaSource, HolSchemaSpecV1 } from "./index.js";
 
 type Request =
   | { id: number; operation: "open" }
-  | {
-      id: number;
-      operation: "openHol";
-      descriptor?: Uint8Array;
-      schema?: HolSchemaSpecV1;
-    }
+  | { id: number; operation: "openHol"; source?: HolSchemaSource }
   | { id: number; operation: "compileHolSchema"; schema: HolSchemaSpecV1 }
   | { id: number; operation: "close"; connection: number }
   | { id: number; operation: "run"; connection: number; sql: string }
@@ -330,15 +325,25 @@ async function execute(request: Request): Promise<unknown> {
     case "open":
       return connection.open_connection();
     case "openHol":
-      if (request.descriptor !== undefined)
+      if (request.source === undefined) return connection.open_hol_connection();
+      if (
+        request.source.kind === "descriptor" &&
+        request.source.descriptor instanceof Uint8Array &&
+        !("schema" in request.source)
+      )
         return connection.open_hol_connection_with_descriptor(
-          request.descriptor,
+          request.source.descriptor,
         );
-      if (request.schema !== undefined)
+      if (
+        request.source.kind === "schema" &&
+        typeof request.source.schema === "object" &&
+        request.source.schema !== null &&
+        !("descriptor" in request.source)
+      )
         return connection.open_hol_connection_with_schema_json(
-          JSON.stringify(request.schema),
+          JSON.stringify(request.source.schema),
         );
-      return connection.open_hol_connection();
+      throw new TypeError("invalid or ambiguous HOL schema source");
     case "compileHolSchema":
       return connection.compile_hol_schema_json(JSON.stringify(request.schema));
     case "close":

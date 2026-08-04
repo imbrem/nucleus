@@ -30,7 +30,7 @@
         source = await repl.open();
         target = await repl.open();
         const compiledDescriptor = await repl.compileHolSchema(customSchema);
-        hol = await repl.openHol({ schema: customSchema });
+        hol = await repl.openHol({ kind: "schema", schema: customSchema });
         await source.run("CREATE TABLE facts (name TEXT, value INTEGER)");
         await source.run(
           "INSERT INTO facts VALUES ('exact', 9223372036854775807)",
@@ -76,13 +76,27 @@
         let malformedDescriptorRejected = false;
         try {
           const invalid = await repl.openHol({
+            kind: "descriptor",
             descriptor: malformedDescriptor,
           });
           await invalid.close();
         } catch {
           malformedDescriptorRejected = true;
         }
-        trustedHol = await repl.openHol({ descriptor: snapshot.descriptor });
+        let ambiguousSchemaSourceRejected = false;
+        try {
+          await repl.openHol({
+            kind: "descriptor",
+            descriptor: snapshot.descriptor,
+            schema: customSchema,
+          });
+        } catch {
+          ambiguousSchemaSourceRejected = true;
+        }
+        trustedHol = await repl.openHol({
+          kind: "descriptor",
+          descriptor: snapshot.descriptor,
+        });
         const callerPublicKey = attestation.publicKey.slice();
         const callerSignature = attestation.signature.slice();
         const trustPromise = trustedHol.trustImport({
@@ -167,6 +181,7 @@
           descriptorLength: snapshot.descriptor.length,
           compiledDescriptorMatches,
           malformedDescriptorRejected,
+          ambiguousSchemaSourceRejected,
           attestationHasBytes: "bytes" in attestation,
           snapshotRows,
           trustedImport,

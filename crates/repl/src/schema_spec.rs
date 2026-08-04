@@ -105,6 +105,9 @@ impl HolMetadataSchemaSpec {
     /// Returns an error for duplicate/reserved columns, invalid indexes, or portable descriptor
     /// bounds.
     pub fn descriptor(&self) -> Result<HolSchemaDescriptor, HolSchemaSpecError> {
+        if self.version != 1 {
+            return Err(HolSchemaSpecError::UnsupportedVersion(self.version));
+        }
         if self.columns.len() > MAX_DECLARATIONS || self.indexes.len() > MAX_DECLARATIONS {
             return Err(HolSchemaSpecError::LimitExceeded);
         }
@@ -285,6 +288,15 @@ mod tests {
         ));
         assert!(matches!(
             HolMetadataSchemaSpec::from_json(r#"{"version":2}"#),
+            Err(HolSchemaSpecError::UnsupportedVersion(2))
+        ));
+        assert!(matches!(
+            HolMetadataSchemaSpec {
+                version: 2,
+                columns: Vec::new(),
+                indexes: Vec::new(),
+            }
+            .descriptor(),
             Err(HolSchemaSpecError::UnsupportedVersion(2))
         ));
         assert!(matches!(

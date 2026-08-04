@@ -94,8 +94,8 @@ export interface HolSchemaSpecV1 {
 }
 
 export type HolSchemaSource =
-  | { descriptor: Uint8Array }
-  | { schema: HolSchemaSpecV1 };
+  | { kind: "descriptor"; descriptor: Uint8Array }
+  | { kind: "schema"; schema: HolSchemaSpecV1 };
 
 export interface TrustedHolImport {
   importId: number;
@@ -246,11 +246,7 @@ export interface BrowserRepl {
 
 type RequestBody =
   | { operation: "open" }
-  | {
-      operation: "openHol";
-      descriptor?: Uint8Array;
-      schema?: HolSchemaSpecV1;
-    }
+  | { operation: "openHol"; source?: HolSchemaSource }
   | { operation: "compileHolSchema"; schema: HolSchemaSpecV1 }
   | { operation: "close"; connection: number }
   | { operation: "run"; connection: number; sql: string }
@@ -473,14 +469,27 @@ class WorkerRepl implements BrowserRepl {
   }
 
   async openHol(source?: HolSchemaSource): Promise<BrowserHolConnection> {
-    const transferred =
-      source && "descriptor" in source ? source.descriptor.slice() : undefined;
+    if (
+      source !== undefined &&
+      !(
+        (source.kind === "descriptor" &&
+          source.descriptor instanceof Uint8Array &&
+          !("schema" in source)) ||
+        (source.kind === "schema" &&
+          typeof source.schema === "object" &&
+          source.schema !== null &&
+          !("descriptor" in source))
+      )
+    ) {
+      throw new TypeError("invalid or ambiguous HOL schema source");
+    }
+    const transferred = source?.kind === "descriptor" ? source.descriptor.slice() : undefined;
+    const requestSource =
+      source?.kind === "descriptor"
+        ? { kind: "descriptor" as const, descriptor: transferred! }
+        : source;
     const id = await this.request<number>(
-      {
-        operation: "openHol",
-        descriptor: transferred,
-        schema: source && "schema" in source ? source.schema : undefined,
-      },
+      { operation: "openHol", source: requestSource },
       transferred === undefined ? [] : [transferred.buffer],
     );
     return new WorkerHolConnection(this, id);
