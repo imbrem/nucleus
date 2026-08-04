@@ -122,6 +122,7 @@
       <button id="hol-reflexivity-demo" type="button">
         Prove identity reflexivity
       </button>
+      <button id="hol-beta-demo" type="button">Prove identity beta</button>
     </div>
 
     <script type="module">
@@ -410,6 +411,31 @@
             }
             const proved = await hol.proved(0, equality);
             output.textContent = `theorem 0 |- ${equality}; equality ${view.left} = ${view.right}; proved = ${proved}`;
+          } catch (error) {
+            showError(error);
+          }
+        });
+
+      document
+        .querySelector("#hol-beta-demo")
+        .addEventListener("click", async () => {
+          try {
+            const hol = selectedProtocol("hol");
+            const boolType = await hol.boolType();
+            const variable = await hol.boundTerm(0, boolType);
+            const identity = await hol.lambda(boolType, variable);
+            const truth = await hol.boolTerm(true);
+            const equality = await hol.proveBeta(0, identity, truth);
+            const view = await hol.term(equality);
+            if (view.kind !== "equality") {
+              throw new Error("beta did not return an equality");
+            }
+            const application = await hol.term(view.left);
+            if (application.kind !== "application") {
+              throw new Error("beta equality has no application on the left");
+            }
+            const proved = await hol.proved(0, equality);
+            output.textContent = `theorem 0 |- ${equality}; (${application.function} ${application.argument}) = ${view.right}; proved = ${proved}`;
           } catch (error) {
             showError(error);
           }

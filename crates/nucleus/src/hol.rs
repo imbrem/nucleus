@@ -232,6 +232,8 @@ pub enum Operation {
     ProveTruth,
     /// Apply equality reflexivity.
     ProveReflexivity,
+    /// Apply closed beta reduction.
+    ProveBeta,
     /// Query whether a judgement has already been proved.
     ReadTheorem,
     /// Read user-declared metadata attached to an admitted node.
@@ -1140,6 +1142,66 @@ impl<P: Policy> Connection<Hol<P>> {
         })
     }
 
+    /// Proves one beta reduction with a closed abstraction and argument.
+    ///
+    /// Keeping this primitive rule closed makes capture avoidance explicit and
+    /// small: substitution never needs to shift the replacement term.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the rule, the context or terms are
+    /// invalid, either input is open, the first term is not a lambda, the
+    /// argument type differs, substitution fails, or persistence fails.
+    pub fn prove_beta(
+        &mut self,
+        context: ContextId,
+        abstraction: TermId,
+        argument: TermId,
+    ) -> Result<Theorem<'_>, ProofError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ProveBeta)?;
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        require_context(&transaction, context)?;
+        let abstraction_validation = validate_term(&transaction, abstraction)?;
+        if !abstraction_validation.boundary.is_empty() {
+            return Err(ProofError::OpenConclusion(abstraction));
+        }
+        let TermView::Lambda {
+            parameter_type,
+            body,
+        } = abstraction_validation.view
+        else {
+            return Err(ProofError::NotLambda(abstraction));
+        };
+        let argument_validation = validate_term(&transaction, argument)?;
+        if !argument_validation.boundary.is_empty() {
+            return Err(ProofError::OpenConclusion(argument));
+        }
+        if argument_validation.ty != parameter_type {
+            return Err(ProofError::BetaTypeMismatch {
+                expected: parameter_type,
+                actual: argument_validation.ty,
+            });
+        }
+        let reduct = substitute_closed(&transaction, body, argument, 0)?;
+        let TypeView::Arrow { codomain, .. } =
+            read_type(&transaction, abstraction_validation.ty).map_err(TermError::Type)?
+        else {
+            return Err(ProofError::NotLambda(abstraction));
+        };
+        let application = intern_application(&transaction, abstraction, argument, codomain)?;
+        validate_term(&transaction, application)?;
+        let equality = intern_equality(&transaction, application, reduct)?;
+        validate_term(&transaction, equality)?;
+        persist_theorem(&transaction, context, equality, "beta")?;
+        transaction.commit()?;
+        Ok(Theorem {
+            context,
+            conclusion: equality,
+            connection: PhantomData,
+        })
+    }
+
     /// Reports whether a Boolean judgement is in the append-only proof table.
     ///
     /// # Errors
@@ -1926,6 +1988,63 @@ fn close_term_boundary(
         .collect())
 }
 
+fn substitute_closed(
+    connection: &sqlite::Connection,
+    body: TermId,
+    replacement: TermId,
+    depth: u32,
+) -> Result<TermId, TermError> {
+    let result =
+        substitute_closed_inner(connection, body, replacement, depth, &mut HashMap::new())?;
+    validate_term(connection, result)?;
+    Ok(result)
+}
+
+fn substitute_closed_inner(
+    connection: &sqlite::Connection,
+    term: TermId,
+    replacement: TermId,
+    depth: u32,
+    memo: &mut HashMap<(TermId, u32), TermId>,
+) -> Result<TermId, TermError> {
+    if let Some(result) = memo.get(&(term, depth)) {
+        return Ok(*result);
+    }
+    let (view, ty) = read_term_node(connection, term)?;
+    let result = match view {
+        TermView::Bound { index } if index == depth => replacement,
+        TermView::Bound { index } if index > depth => intern_bound_term(connection, index - 1, ty)?,
+        TermView::Bool(_) | TermView::Free { .. } | TermView::Bound { .. } => term,
+        TermView::Application { function, argument } => {
+            let function = substitute_closed_inner(connection, function, replacement, depth, memo)?;
+            let argument = substitute_closed_inner(connection, argument, replacement, depth, memo)?;
+            intern_application(connection, function, argument, ty)?
+        }
+        TermView::Lambda {
+            parameter_type,
+            body,
+        } => {
+            let body = substitute_closed_inner(
+                connection,
+                body,
+                replacement,
+                depth
+                    .checked_add(1)
+                    .ok_or(TermError::SubstitutionDepthOverflow)?,
+                memo,
+            )?;
+            intern_lambda(connection, parameter_type, body, ty)?
+        }
+        TermView::Equality { left, right } => {
+            let left = substitute_closed_inner(connection, left, replacement, depth, memo)?;
+            let right = substitute_closed_inner(connection, right, replacement, depth, memo)?;
+            intern_equality(connection, left, right)?
+        }
+    };
+    memo.insert((term, depth), result);
+    Ok(result)
+}
+
 fn free_term_symbols(connection: &sqlite::Connection, root: TermId) -> Result<Vec<i64>, TermError> {
     let mut statement = connection.prepare(
         "WITH RECURSIVE
@@ -2244,6 +2363,8 @@ pub enum TermError {
     },
     /// The term graph contains a cycle.
     CyclicTerm(TermId),
+    /// A binder nesting depth exceeds the supported de Bruijn index range.
+    SubstitutionDepthOverflow,
     /// A referenced type is invalid.
     Type(TypeError),
     /// `SQLite` rejected an operation.
@@ -2286,6 +2407,7 @@ impl fmt::Display for TermError {
                 actual.get()
             ),
             Self::CyclicTerm(id) => write!(formatter, "term {} contains a cycle", id.get()),
+            Self::SubstitutionDepthOverflow => formatter.write_str("substitution depth overflow"),
             Self::Type(error) => error.fmt(formatter),
             Self::Sqlite(error) => error.fmt(formatter),
         }
@@ -2305,7 +2427,8 @@ impl StdError for TermError {
             | Self::EqualityTypeMismatch { .. }
             | Self::InconsistentUnboundVariable { .. }
             | Self::BoundVariableTypeMismatch { .. }
-            | Self::CyclicTerm(_) => None,
+            | Self::CyclicTerm(_)
+            | Self::SubstitutionDepthOverflow => None,
         }
     }
 }
@@ -2418,6 +2541,15 @@ pub enum ProofError {
     },
     /// A proposed theorem conclusion has external de Bruijn variables.
     OpenConclusion(TermId),
+    /// Beta reduction was requested for a non-lambda term.
+    NotLambda(TermId),
+    /// A beta argument has the wrong type.
+    BetaTypeMismatch {
+        /// Lambda parameter type.
+        expected: TypeId,
+        /// Argument type.
+        actual: TypeId,
+    },
     /// `SQLite` rejected an operation.
     Sqlite(sqlite::Error),
 }
@@ -2447,6 +2579,13 @@ impl fmt::Display for ProofError {
                     term.get()
                 )
             }
+            Self::NotLambda(term) => write!(formatter, "term {} is not a lambda", term.get()),
+            Self::BetaTypeMismatch { expected, actual } => write!(
+                formatter,
+                "beta argument has type {}, expected {}",
+                actual.get(),
+                expected.get()
+            ),
             Self::Sqlite(error) => error.fmt(formatter),
         }
     }
@@ -2461,7 +2600,9 @@ impl StdError for ProofError {
             Self::Denied(_)
             | Self::NotMember { .. }
             | Self::NonBooleanConclusion { .. }
-            | Self::OpenConclusion(_) => None,
+            | Self::OpenConclusion(_)
+            | Self::NotLambda(_)
+            | Self::BetaTypeMismatch { .. } => None,
         }
     }
 }
@@ -2994,6 +3135,83 @@ mod tests {
             })
             .unwrap();
         assert_eq!(rows, 0);
+    }
+
+    #[test]
+    fn beta_proves_identity_application() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let variable = connection.insert_bound_term(0, bool_type).unwrap();
+        let identity = connection.insert_lambda(bool_type, variable).unwrap();
+        let truth = connection.insert_bool_term(true).unwrap();
+        let conclusion = connection
+            .prove_beta(ContextId::empty(), identity, truth)
+            .unwrap()
+            .conclusion();
+        let TermView::Equality { left, right } = connection.term(conclusion).unwrap() else {
+            panic!("beta conclusion is not equality");
+        };
+        assert_eq!(right, truth);
+        assert_eq!(
+            connection.term(left).unwrap(),
+            TermView::Application {
+                function: identity,
+                argument: truth
+            }
+        );
+        assert!(
+            connection
+                .proved_judgement(ContextId::empty(), conclusion)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn beta_substitution_avoids_nested_binder_capture() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let outer_variable = connection.insert_bound_term(1, bool_type).unwrap();
+        let inner = connection.insert_lambda(bool_type, outer_variable).unwrap();
+        let abstraction = connection.insert_lambda(bool_type, inner).unwrap();
+        let falsehood = connection.insert_bool_term(false).unwrap();
+        let conclusion = connection
+            .prove_beta(ContextId::empty(), abstraction, falsehood)
+            .unwrap()
+            .conclusion();
+        let TermView::Equality { right, .. } = connection.term(conclusion).unwrap() else {
+            panic!("beta conclusion is not equality");
+        };
+        assert_eq!(
+            connection.term(right).unwrap(),
+            TermView::Lambda {
+                parameter_type: bool_type,
+                body: falsehood
+            }
+        );
+        assert!(connection.term_is_locally_closed(right).unwrap());
+    }
+
+    #[test]
+    fn beta_rejects_open_or_mistyped_arguments() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let function_type = connection.insert_arrow_type(bool_type, bool_type).unwrap();
+        let variable = connection.insert_bound_term(0, bool_type).unwrap();
+        let identity = connection.insert_lambda(bool_type, variable).unwrap();
+        assert!(matches!(
+            connection.prove_beta(ContextId::empty(), identity, variable),
+            Err(ProofError::OpenConclusion(term)) if term == variable
+        ));
+        let function = connection.insert_free_term(7, function_type).unwrap();
+        assert!(matches!(
+            connection.prove_beta(ContextId::empty(), identity, function),
+            Err(ProofError::BetaTypeMismatch { expected, actual })
+                if expected == bool_type && actual == function_type
+        ));
+        assert!(matches!(
+            connection.prove_beta(ContextId::empty(), function, identity),
+            Err(ProofError::NotLambda(term)) if term == function
+        ));
     }
 
     #[test]

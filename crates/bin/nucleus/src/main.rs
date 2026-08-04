@@ -317,9 +317,19 @@ fn run_hol_proof<'a>(
             }
             repl.hol_mut(connection)?.prove_reflexivity(context, term)?
         }
+        Some("beta") => {
+            let context = parse_context_id(arguments.next(), "context")?;
+            let abstraction = parse_term_id(arguments.next(), "abstraction")?;
+            let argument = parse_term_id(arguments.next(), "argument")?;
+            if arguments.next().is_some() {
+                return Err("usage: .hol prove beta CONTEXT ABSTRACTION ARGUMENT".into());
+            }
+            repl.hol_mut(connection)?
+                .prove_beta(context, abstraction, argument)?
+        }
         _ => {
             return Err(
-                "usage: .hol prove hyp CONTEXT TERM|truth CONTEXT|refl CONTEXT TERM".into(),
+                "usage: .hol prove hyp CONTEXT TERM|truth CONTEXT|refl CONTEXT TERM|beta CONTEXT ABSTRACTION ARGUMENT".into(),
             );
         }
     };
@@ -701,7 +711,7 @@ mod tests {
     #[test]
     fn manages_sql_and_hol_connections_in_one_repl() {
         let mut input = Cursor::new(
-            ".open hol\n.hol star\n.hol arrow 1 1\n.hol show 3\n.hol rank 3\n.hol type bool\n.hol type arrow 2 2\n.hol term free 100 4\n.hol term free 101 2\n.hol term app 5 6\n.hol term type 7\n.hol term freevars 7\n.hol ctx define 7\n.hol ctx show 1\n.hol prove hyp 1 7\n.hol prove truth 0\n.hol proved 1 7\n.hol proved 0 8\n.hol term bound 0 2\n.hol term unbound 9\n.hol term closed 9\n.hol term lam 2 9\n.hol term show 10\n.hol term closed 10\n.hol prove refl 0 10\n.hol term show 11\n.hol proved 0 11\n.connections\n.use 1\nSELECT 42 AS sql_still_live\n.quit\n",
+            ".open hol\n.hol star\n.hol arrow 1 1\n.hol show 3\n.hol rank 3\n.hol type bool\n.hol type arrow 2 2\n.hol term free 100 4\n.hol term free 101 2\n.hol term app 5 6\n.hol term type 7\n.hol term freevars 7\n.hol ctx define 7\n.hol ctx show 1\n.hol prove hyp 1 7\n.hol prove truth 0\n.hol proved 1 7\n.hol proved 0 8\n.hol term bound 0 2\n.hol term unbound 9\n.hol term closed 9\n.hol term lam 2 9\n.hol term show 10\n.hol term closed 10\n.hol prove refl 0 10\n.hol term show 11\n.hol proved 0 11\n.hol prove beta 0 10 8\n.hol term show 13\n.hol proved 0 13\n.connections\n.use 1\nSELECT 42 AS sql_still_live\n.quit\n",
         );
         let mut output = Vec::new();
         let mut errors = Vec::new();
@@ -732,6 +742,9 @@ mod tests {
         assert!(output.contains("theorem 0 |- 11\n"));
         assert!(output.contains("term 11 = eq 10 10\n"));
         assert!(output.contains("proved 0 11 = true\n"));
+        assert!(output.contains("theorem 0 |- 13\n"));
+        assert!(output.contains("term 13 = eq 12 8\n"));
+        assert!(output.contains("proved 0 13 = true\n"));
         assert!(output.contains("  1\tnucleus/sql\n"));
         assert!(output.contains("* 2\tnucleus/hol-omega-v0\n"));
         assert!(output.contains("sql_still_live\n42\n"));
