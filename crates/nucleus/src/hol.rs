@@ -1,9 +1,14 @@
 //! Minimal HOL-omega protocol, beginning with canonical kinds.
 
 mod export;
+mod namespace;
 mod validate;
 
 pub use export::{HolExportError, HolSnapshotAttestation, SignedHolSnapshot};
+pub use namespace::{
+    ExportError, ExportId, ExportSort, ExportView, NamespaceError, NamespaceExport, NamespaceId,
+    NamespaceView,
+};
 pub use validate::{HolImageCounts, HolImageValidationError, ValidatedHolImage};
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -384,6 +389,14 @@ pub enum Operation {
     PersistContextImplication,
     /// Serialize and sign the complete persistent HOL database state.
     ExportSignedSnapshot,
+    /// Define one local hierarchical namespace.
+    DefineNamespace,
+    /// Read one local namespace.
+    ReadNamespace,
+    /// Publish a local HOL value under a namespace export ID.
+    ExportNamespaceValue,
+    /// Read one namespace export.
+    ReadNamespaceExport,
     /// Check and persist one exact structural context union.
     ProveContextUnion,
     /// Load and recheck one exact structural context union.
@@ -495,6 +508,10 @@ pub enum MetadataTable {
     ContextImplication,
     /// Checked exact structural unions of context member sets.
     ContextUnion,
+    /// Local hierarchical namespace headers.
+    Namespace,
+    /// Published local values in a namespace-wide export-ID space.
+    NamespaceExport,
 }
 
 /// One existing row which may carry user metadata.
@@ -532,6 +549,15 @@ pub enum MetadataTarget {
         /// Right input context.
         right: ContextId,
     },
+    /// A local namespace header.
+    Namespace(NamespaceId),
+    /// One published local value.
+    NamespaceExport {
+        /// Namespace containing the export.
+        namespace: NamespaceId,
+        /// Namespace-wide export ID.
+        export: ExportId,
+    },
 }
 
 impl MetadataTarget {
@@ -562,6 +588,18 @@ impl MetadataTarget {
         Self::ContextUnion { left, right }
     }
 
+    /// Selects a local namespace row.
+    #[must_use]
+    pub const fn namespace(namespace: NamespaceId) -> Self {
+        Self::Namespace(namespace)
+    }
+
+    /// Selects one namespace export row.
+    #[must_use]
+    pub const fn namespace_export(namespace: NamespaceId, export: ExportId) -> Self {
+        Self::NamespaceExport { namespace, export }
+    }
+
     const fn table(self) -> MetadataTable {
         match self {
             Self::Node(_) => MetadataTable::Node,
@@ -570,6 +608,8 @@ impl MetadataTarget {
             Self::Judgement { .. } => MetadataTable::Judgement,
             Self::ContextImplication { .. } => MetadataTable::ContextImplication,
             Self::ContextUnion { .. } => MetadataTable::ContextUnion,
+            Self::Namespace(_) => MetadataTable::Namespace,
+            Self::NamespaceExport { .. } => MetadataTable::NamespaceExport,
         }
     }
 }
@@ -598,6 +638,12 @@ impl From<ContextId> for MetadataTarget {
     }
 }
 
+impl From<NamespaceId> for MetadataTarget {
+    fn from(id: NamespaceId) -> Self {
+        Self::Namespace(id)
+    }
+}
+
 impl MetadataTable {
     const fn sql(self) -> &'static str {
         match self {
@@ -607,6 +653,8 @@ impl MetadataTable {
             Self::Judgement => "hol_judgement",
             Self::ContextImplication => "hol_context_implication",
             Self::ContextUnion => "hol_context_exact_union",
+            Self::Namespace => "hol_namespace",
+            Self::NamespaceExport => "hol_namespace_export",
         }
     }
 
@@ -617,6 +665,8 @@ impl MetadataTable {
             Self::ContextMember | Self::Judgement => &["ctx_id", "term_id"],
             Self::ContextImplication => &["antecedent_ctx_id", "consequent_ctx_id"],
             Self::ContextUnion => &["left_ctx_id", "right_ctx_id", "result_ctx_id"],
+            Self::Namespace => &["namespace_id", "parent_namespace_id", "name"],
+            Self::NamespaceExport => &["namespace_id", "export_id", "sort", "local_id", "name"],
         };
         columns.iter().any(|core| core.eq_ignore_ascii_case(name))
     }
@@ -2055,6 +2105,17 @@ fn metadata_target_predicate(target: MetadataTarget, first_parameter: usize) -> 
                 first_parameter + 1
             ),
             vec![left.get(), right.get()],
+        ),
+        MetadataTarget::Namespace(namespace) => (
+            format!("namespace_id = ?{first_parameter}"),
+            vec![namespace.get()],
+        ),
+        MetadataTarget::NamespaceExport { namespace, export } => (
+            format!(
+                "namespace_id = ?{first_parameter} AND export_id = ?{}",
+                first_parameter + 1
+            ),
+            vec![namespace.get(), export.get()],
         ),
     }
 }

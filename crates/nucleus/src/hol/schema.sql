@@ -1,5 +1,5 @@
 CREATE TABLE hol_schema (
-    version INTEGER PRIMARY KEY CHECK (version = 3),
+    version INTEGER PRIMARY KEY CHECK (version = 4),
     representation TEXT NOT NULL CHECK (representation = 'tagged-node')
 ) STRICT;
 
@@ -106,6 +106,37 @@ CREATE INDEX hol_context_exact_union_event_key
         left_ctx_id, right_ctx_id, result_ctx_id, event_id
     );
 
+-- Hierarchical local names. Namespace zero is the anonymous root.
+CREATE TABLE hol_namespace (
+    namespace_id INTEGER PRIMARY KEY CHECK (namespace_id >= 0),
+    parent_namespace_id INTEGER,
+    name TEXT,
+    CHECK (
+        parent_namespace_id IS NULL
+        OR (parent_namespace_id >= 0 AND parent_namespace_id != namespace_id)
+    ),
+    CHECK (name IS NULL OR length(name) > 0)
+) STRICT;
+
+CREATE UNIQUE INDEX hol_namespace_named_child
+    ON hol_namespace(COALESCE(parent_namespace_id, -1), name)
+    WHERE name IS NOT NULL;
+
+-- One namespace-wide export-ID space shared by all HOL sorts.
+CREATE TABLE hol_namespace_export (
+    namespace_id INTEGER NOT NULL CHECK (namespace_id >= 0),
+    export_id INTEGER NOT NULL CHECK (export_id >= 0),
+    sort TEXT NOT NULL CHECK (sort IN ('kind', 'type', 'term', 'context')),
+    local_id INTEGER NOT NULL CHECK (local_id >= 0),
+    name TEXT,
+    CHECK (name IS NULL OR length(name) > 0),
+    PRIMARY KEY (namespace_id, export_id)
+) STRICT, WITHOUT ROWID;
+
+CREATE UNIQUE INDEX hol_namespace_export_name
+    ON hol_namespace_export(namespace_id, name)
+    WHERE name IS NOT NULL;
+
 CREATE UNIQUE INDEX hol_kstar_unique
     ON hol_node((1)) WHERE tag = 'KSTAR';
 
@@ -136,7 +167,8 @@ CREATE UNIQUE INDEX hol_mlam_unique
 CREATE UNIQUE INDEX hol_meq_unique
     ON hol_node(lhs, rhs) WHERE tag = 'MEQ';
 
-INSERT INTO hol_schema(version, representation) VALUES (3, 'tagged-node');
+INSERT INTO hol_schema(version, representation) VALUES (4, 'tagged-node');
 INSERT INTO hol_node(node_id, tag) VALUES (1, 'KSTAR');
 INSERT INTO hol_node(node_id, tag, ty) VALUES (2, 'TBOOL', 1);
 INSERT INTO hol_context(ctx_id) VALUES (0);
+INSERT INTO hol_namespace(namespace_id) VALUES (0);
