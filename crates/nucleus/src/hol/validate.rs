@@ -12,7 +12,10 @@ use super::{
     TypeError, TypeId, TypeView, ValidatedTerm, install_metadata_schema, kind_rank,
     read_context_members, read_kind, read_type, validate_term_inner,
 };
-use crate::{Ed25519Verifier, Verifier as _, ed25519_key_id, schema_valid_snapshot_statement};
+use crate::{
+    AuthenticatedSnapshot, AuthenticatedSnapshotClaim, Ed25519Verifier, Verifier as _,
+    ed25519_key_id, schema_valid_snapshot_statement,
+};
 
 const MAX_GRAPH_DEPTH: usize = 512;
 const STLC_BOOL_EQ_V0_SPEC: &[u8] = include_bytes!("semantics-v0.txt");
@@ -73,6 +76,66 @@ pub struct ValidatedHolImage {
     physical_schema: O256,
     bytes: covalence_neutron::Bytes,
     counts: HolImageCounts,
+}
+
+/// Conjoined evidence that exact received bytes are authenticated and structurally valid.
+///
+/// This does not establish that the signer is trusted, that imported judgement rows are true, or
+/// that any connection has accepted the snapshot.
+pub struct AuthenticatedValidatedHolImage {
+    image: ValidatedHolImage,
+    claim: AuthenticatedSnapshotClaim,
+}
+
+impl AuthenticatedValidatedHolImage {
+    /// Validates an authenticated snapshot against the exact zero-metadata HOL schema.
+    ///
+    /// Validation uses the existing disposable-connection boundary and additionally requires the
+    /// validated interpretation-qualified schema to equal the signed schema coordinate.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if detached default-schema validation fails or its independently computed
+    /// image/schema coordinates differ from the authenticated claim.
+    pub fn validate_default(
+        snapshot: AuthenticatedSnapshot,
+    ) -> Result<Self, AuthenticatedHolImageValidationError> {
+        let image = ValidatedHolImage::validate(snapshot.bytes())?;
+        if image.hash() != snapshot.image() {
+            return Err(AuthenticatedHolImageValidationError::ImageMismatch {
+                claimed: snapshot.image(),
+                actual: image.hash(),
+            });
+        }
+        if image.schema() != snapshot.schema() {
+            return Err(AuthenticatedHolImageValidationError::SchemaMismatch {
+                claimed: snapshot.schema(),
+                actual: image.schema(),
+            });
+        }
+        Ok(Self {
+            image,
+            claim: snapshot.into_claim(),
+        })
+    }
+
+    /// Returns the detached structural validation evidence and exact owned bytes.
+    #[must_use]
+    pub const fn image(&self) -> &ValidatedHolImage {
+        &self.image
+    }
+
+    /// Returns the independently authenticated exact claim.
+    #[must_use]
+    pub const fn claim(&self) -> &AuthenticatedSnapshotClaim {
+        &self.claim
+    }
+
+    /// Consumes the conjunction and returns its independent evidence components.
+    #[must_use]
+    pub fn into_parts(self) -> (ValidatedHolImage, AuthenticatedSnapshotClaim) {
+        (self.image, self.claim)
+    }
 }
 
 impl ValidatedHolImage {
@@ -757,6 +820,48 @@ fn validate_type_graph(
     Ok(())
 }
 
+/// Failure to conjoin authenticated coordinates with detached default-schema validation.
+#[derive(Debug)]
+pub enum AuthenticatedHolImageValidationError {
+    /// Detached HOL validation rejected the received bytes.
+    Validation(HolImageValidationError),
+    /// The validator independently derived a different image hash.
+    ImageMismatch { claimed: O256, actual: O256 },
+    /// The validator independently derived a different interpretation-qualified schema.
+    SchemaMismatch { claimed: O256, actual: O256 },
+}
+
+impl fmt::Display for AuthenticatedHolImageValidationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Validation(error) => error.fmt(formatter),
+            Self::ImageMismatch { claimed, actual } => write!(
+                formatter,
+                "authenticated HOL image hash {claimed} differs from validated hash {actual}"
+            ),
+            Self::SchemaMismatch { claimed, actual } => write!(
+                formatter,
+                "authenticated HOL schema {claimed} differs from validated schema {actual}"
+            ),
+        }
+    }
+}
+
+impl StdError for AuthenticatedHolImageValidationError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            Self::Validation(error) => Some(error),
+            Self::ImageMismatch { .. } | Self::SchemaMismatch { .. } => None,
+        }
+    }
+}
+
+impl From<HolImageValidationError> for AuthenticatedHolImageValidationError {
+    fn from(error: HolImageValidationError) -> Self {
+        Self::Validation(error)
+    }
+}
+
 /// Failure to validate an untrusted complete HOL `SQLite` image.
 #[derive(Debug)]
 pub enum HolImageValidationError {
@@ -1096,8 +1201,10 @@ impl From<ContextError> for HolImageValidationError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Connection;
     use crate::hol::{AllowAll, MetadataType, TermView};
+    use crate::{
+        Connection, Kernel, SignedSnapshotEnvelope, Signer as _, schema_valid_snapshot_statement,
+    };
 
     fn sample_image() -> covalence_neutron::Bytes {
         let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
@@ -1112,6 +1219,112 @@ mod tests {
             })
             .unwrap();
         connection.parts_mut().0.serialize().unwrap()
+    }
+
+    #[test]
+    fn conjoins_authentication_with_detached_default_schema_validation() {
+        let kernel = Kernel::ephemeral();
+        let mut connection = kernel.open_hol(AllowAll).unwrap();
+        connection.insert_bool_term(true).unwrap();
+        let exported = kernel.export_hol(&mut connection).unwrap();
+        let attestation = exported.attestation();
+        let authenticated = SignedSnapshotEnvelope::new(
+            exported.image().bytes(),
+            attestation.schema(),
+            attestation.image(),
+            attestation.signer(),
+            *attestation.public_key(),
+            attestation.signature(),
+        )
+        .authenticate()
+        .unwrap();
+
+        let admitted = AuthenticatedValidatedHolImage::validate_default(authenticated).unwrap();
+        assert_eq!(admitted.image().hash(), attestation.image());
+        assert_eq!(admitted.image().schema(), attestation.schema());
+        assert_eq!(admitted.claim().signer(), attestation.signer());
+        assert_eq!(admitted.claim().signature(), attestation.signature());
+    }
+
+    #[test]
+    fn authenticated_coordinates_must_match_default_detached_validation() {
+        let kernel = Kernel::ephemeral();
+        let bytes = sample_image();
+        let image = O256::from_bytes(&bytes);
+        let wrong_schema = O256::from_bytes(b"wrong HOL schema");
+        let signature = kernel
+            .signer()
+            .sign(
+                kernel.key_id(),
+                schema_valid_snapshot_statement(wrong_schema, image),
+            )
+            .unwrap();
+        let authenticated = SignedSnapshotEnvelope::new(
+            &bytes,
+            wrong_schema,
+            image,
+            kernel.key_id(),
+            *kernel.verifying_key().as_bytes(),
+            &signature,
+        )
+        .authenticate()
+        .unwrap();
+        assert!(matches!(
+            AuthenticatedValidatedHolImage::validate_default(authenticated),
+            Err(AuthenticatedHolImageValidationError::SchemaMismatch { .. })
+        ));
+
+        let malformed = b"not a SQLite database";
+        let image = O256::from_bytes(malformed);
+        let schema = ValidatedHolImage::validate(&bytes).unwrap().schema();
+        let signature = kernel
+            .signer()
+            .sign(
+                kernel.key_id(),
+                schema_valid_snapshot_statement(schema, image),
+            )
+            .unwrap();
+        let authenticated = SignedSnapshotEnvelope::new(
+            malformed,
+            schema,
+            image,
+            kernel.key_id(),
+            *kernel.verifying_key().as_bytes(),
+            &signature,
+        )
+        .authenticate()
+        .unwrap();
+        assert!(matches!(
+            AuthenticatedValidatedHolImage::validate_default(authenticated),
+            Err(AuthenticatedHolImageValidationError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn default_authenticated_validation_explicitly_rejects_custom_metadata_schema() {
+        let kernel = Kernel::ephemeral();
+        let mut schema = HolSchema::new();
+        schema.add_column("note", MetadataType::Text).unwrap();
+        let mut connection = Connection::open_hol_in_memory_with_schema(AllowAll, schema).unwrap();
+        let exported = kernel.export_hol(&mut connection).unwrap();
+        let attestation = exported.attestation();
+        let authenticated = SignedSnapshotEnvelope::new(
+            exported.image().bytes(),
+            attestation.schema(),
+            attestation.image(),
+            attestation.signer(),
+            *attestation.public_key(),
+            attestation.signature(),
+        )
+        .authenticate()
+        .unwrap();
+
+        assert!(matches!(
+            AuthenticatedValidatedHolImage::validate_default(authenticated),
+            Err(AuthenticatedHolImageValidationError::Validation(
+                HolImageValidationError::SchemaMismatch
+            ))
+        ));
     }
 
     #[test]

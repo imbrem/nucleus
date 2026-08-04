@@ -16,7 +16,8 @@ pub use namespace::{
 };
 pub use trust::{SnapshotTrustError, TrustedImportError, TrustedImportId, TrustedImportView};
 pub use validate::{
-    HolImageCounts, HolImageValidationError, ValidatedHolImage, stlc_bool_eq_v0_schema_id,
+    AuthenticatedHolImageValidationError, AuthenticatedValidatedHolImage, HolImageCounts,
+    HolImageValidationError, ValidatedHolImage, stlc_bool_eq_v0_schema_id,
     stlc_bool_eq_v0_semantics,
 };
 
