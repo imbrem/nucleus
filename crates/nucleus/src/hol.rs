@@ -205,6 +205,30 @@ pub struct Theorem<'brand> {
     brand: Invariant<'brand>,
 }
 
+/// A proved implication between two contexts in one proof session.
+///
+/// `antecedent ⇒ consequent` means every member of `consequent` is proved
+/// under `antecedent`.
+pub struct ContextImplication<'brand> {
+    antecedent: ContextId,
+    consequent: ContextId,
+    brand: Invariant<'brand>,
+}
+
+impl ContextImplication<'_> {
+    /// Returns the context under which all target assumptions were proved.
+    #[must_use]
+    pub const fn antecedent(&self) -> ContextId {
+        self.antecedent
+    }
+
+    /// Returns the context whose assumptions were discharged.
+    #[must_use]
+    pub const fn consequent(&self) -> ContextId {
+        self.consequent
+    }
+}
+
 impl Theorem<'_> {
     /// Returns the theorem's immutable assumption context.
     #[must_use]
@@ -248,6 +272,12 @@ pub enum Operation {
     ProveBeta,
     /// Query whether a judgement has already been proved.
     ReadTheorem,
+    /// Introduce a context implication from theorem witnesses.
+    ProveContextImplication,
+    /// Weaken a theorem along a context implication.
+    ProveWeakening,
+    /// Load or inspect a persisted context implication.
+    ReadContextImplication,
     /// Read user-declared metadata attached to an admitted node.
     ReadMetadata,
     /// Write user-declared metadata attached to an admitted node.
@@ -349,6 +379,8 @@ pub enum MetadataTable {
     ContextMember,
     /// Persisted proved judgements.
     Judgement,
+    /// Persisted proved implications between contexts.
+    ContextImplication,
 }
 
 /// One existing row which may carry user metadata.
@@ -372,6 +404,13 @@ pub enum MetadataTarget {
         /// Boolean conclusion.
         term: TermId,
     },
+    /// An authoritative persisted context implication.
+    ContextImplication {
+        /// Context proving every assumption of `consequent`.
+        antecedent: ContextId,
+        /// Context whose assumptions are discharged.
+        consequent: ContextId,
+    },
 }
 
 impl MetadataTarget {
@@ -387,12 +426,22 @@ impl MetadataTarget {
         Self::Judgement { context, term }
     }
 
+    /// Selects an authoritative persisted context implication.
+    #[must_use]
+    pub const fn context_implication(antecedent: ContextId, consequent: ContextId) -> Self {
+        Self::ContextImplication {
+            antecedent,
+            consequent,
+        }
+    }
+
     const fn table(self) -> MetadataTable {
         match self {
             Self::Node(_) => MetadataTable::Node,
             Self::Context(_) => MetadataTable::Context,
             Self::ContextMember { .. } => MetadataTable::ContextMember,
             Self::Judgement { .. } => MetadataTable::Judgement,
+            Self::ContextImplication { .. } => MetadataTable::ContextImplication,
         }
     }
 }
@@ -428,6 +477,7 @@ impl MetadataTable {
             Self::Context => "hol_context",
             Self::ContextMember => "hol_context_member",
             Self::Judgement => "hol_judgement",
+            Self::ContextImplication => "hol_context_implication",
         }
     }
 
@@ -436,6 +486,7 @@ impl MetadataTable {
             Self::Node => &["node_id", "tag", "lhs", "rhs", "ty"],
             Self::Context => &["ctx_id"],
             Self::ContextMember | Self::Judgement => &["ctx_id", "term_id"],
+            Self::ContextImplication => &["antecedent_ctx_id", "consequent_ctx_id"],
         };
         columns.iter().any(|core| core.eq_ignore_ascii_case(name))
     }
@@ -1277,9 +1328,165 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
             brand: PhantomData,
         }))
     }
+
+    /// Proves `antecedent ⇒ consequent` from an exact set of theorem witnesses.
+    ///
+    /// Each member of `consequent` must occur exactly once as the conclusion of
+    /// a witness proved under `antecedent`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the rule, either context is unknown,
+    /// witnesses have the wrong context, or their conclusions do not exactly
+    /// cover the consequent context.
+    pub fn prove_context_implication(
+        &mut self,
+        antecedent: ContextId,
+        consequent: ContextId,
+        witnesses: &[Theorem<'brand>],
+    ) -> Result<ContextImplication<'brand>, ProofError> {
+        let (neutron, hol) = self.connection.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ProveContextImplication)?;
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        require_context(&transaction, antecedent)?;
+        require_context(&transaction, consequent)?;
+        let expected = read_context_members(&transaction, consequent)?;
+        let mut actual = Vec::with_capacity(witnesses.len());
+        let mut seen = HashSet::new();
+        for witness in witnesses {
+            if witness.context != antecedent {
+                return Err(ProofError::WrongImplicationWitnessContext {
+                    expected: antecedent,
+                    actual: witness.context,
+                    conclusion: witness.conclusion,
+                });
+            }
+            if !seen.insert(witness.conclusion) {
+                return Err(ProofError::DuplicateImplicationWitness(witness.conclusion));
+            }
+            actual.push(witness.conclusion);
+        }
+        actual.sort_unstable();
+        if let Some(term) = expected.iter().find(|term| !seen.contains(term)) {
+            return Err(ProofError::MissingImplicationWitness {
+                consequent,
+                term: *term,
+            });
+        }
+        if let Some(term) = actual
+            .iter()
+            .find(|term| expected.binary_search(term).is_err())
+        {
+            return Err(ProofError::UnexpectedImplicationWitness {
+                consequent,
+                term: *term,
+            });
+        }
+        persist_context_implication(&transaction, antecedent, consequent, "introduction")?;
+        transaction.commit()?;
+        Ok(ContextImplication {
+            antecedent,
+            consequent,
+            brand: PhantomData,
+        })
+    }
+
+    /// Loads one exact persisted context implication as a session capability.
+    ///
+    /// This performs no transitive search.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the read, either context is unknown,
+    /// or `SQLite` rejects the exact lookup.
+    pub fn load_context_implication(
+        &mut self,
+        antecedent: ContextId,
+        consequent: ContextId,
+    ) -> Result<Option<ContextImplication<'brand>>, ProofError> {
+        let (neutron, hol) = self.connection.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ReadContextImplication)?;
+        require_context(neutron.sqlite(), antecedent)?;
+        require_context(neutron.sqlite(), consequent)?;
+        let exists = neutron.sqlite().query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM hol_context_implication
+                 WHERE antecedent_ctx_id = ?1 AND consequent_ctx_id = ?2
+             )",
+            [antecedent.0, consequent.0],
+            |row| row.get::<_, bool>(0),
+        )?;
+        Ok(exists.then_some(ContextImplication {
+            antecedent,
+            consequent,
+            brand: PhantomData,
+        }))
+    }
+
+    /// Transports a theorem from an implied context to its antecedent.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies weakening, the theorem is not proved
+    /// under the implication's consequent, or persistence fails.
+    pub fn weaken(
+        &mut self,
+        implication: &ContextImplication<'brand>,
+        theorem: &Theorem<'brand>,
+    ) -> Result<Theorem<'brand>, ProofError> {
+        let (neutron, hol) = self.connection.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ProveWeakening)?;
+        if theorem.context != implication.consequent {
+            return Err(ProofError::WeakeningContextMismatch {
+                expected: implication.consequent,
+                actual: theorem.context,
+            });
+        }
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        persist_judgement(
+            &transaction,
+            implication.antecedent,
+            theorem.conclusion,
+            "weakening",
+        )?;
+        transaction.commit()?;
+        Ok(Theorem {
+            context: implication.antecedent,
+            conclusion: theorem.conclusion,
+            brand: PhantomData,
+        })
+    }
 }
 
 impl<P: Policy> Connection<Hol<P>> {
+    /// Reports whether one exact context implication has been proved locally.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the read, either context is unknown,
+    /// or `SQLite` rejects the exact lookup.
+    pub fn proved_context_implication(
+        &mut self,
+        antecedent: ContextId,
+        consequent: ContextId,
+    ) -> Result<bool, ProofError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ReadContextImplication)?;
+        require_context(neutron.sqlite(), antecedent)?;
+        require_context(neutron.sqlite(), consequent)?;
+        neutron
+            .sqlite()
+            .query_row(
+                "SELECT EXISTS(
+                     SELECT 1 FROM hol_context_implication
+                     WHERE antecedent_ctx_id = ?1 AND consequent_ctx_id = ?2
+                 )",
+                [antecedent.0, consequent.0],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+    }
+
     /// Reports whether a Boolean judgement is in the append-only proof table.
     ///
     /// # Errors
@@ -1421,6 +1628,16 @@ fn metadata_target_predicate(target: MetadataTarget, first_parameter: usize) -> 
                 first_parameter + 1
             ),
             vec![context.get(), term.get()],
+        ),
+        MetadataTarget::ContextImplication {
+            antecedent,
+            consequent,
+        } => (
+            format!(
+                "antecedent_ctx_id = ?{first_parameter} AND consequent_ctx_id = ?{}",
+                first_parameter + 1
+            ),
+            vec![antecedent.get(), consequent.get()],
         ),
     }
 }
@@ -1692,6 +1909,27 @@ fn persist_judgement(
     connection.execute(
         "INSERT INTO hol_proof_event(ctx_id, term_id, rule) VALUES (?1, ?2, ?3)",
         (context.0, term.0, rule),
+    )?;
+    Ok(())
+}
+
+fn persist_context_implication(
+    connection: &sqlite::Connection,
+    antecedent: ContextId,
+    consequent: ContextId,
+    rule: &str,
+) -> Result<(), sqlite::Error> {
+    connection.execute(
+        "INSERT OR IGNORE INTO hol_context_implication(
+             antecedent_ctx_id, consequent_ctx_id
+         ) VALUES (?1, ?2)",
+        (antecedent.0, consequent.0),
+    )?;
+    connection.execute(
+        "INSERT INTO hol_context_implication_event(
+             antecedent_ctx_id, consequent_ctx_id, rule
+         ) VALUES (?1, ?2, ?3)",
+        (antecedent.0, consequent.0, rule),
     )?;
     Ok(())
 }
@@ -2632,6 +2870,38 @@ pub enum ProofError {
         /// Argument type.
         actual: TypeId,
     },
+    /// An implication witness was proved under the wrong context.
+    WrongImplicationWitnessContext {
+        /// Required witness context.
+        expected: ContextId,
+        /// Actual witness context.
+        actual: ContextId,
+        /// Witness conclusion.
+        conclusion: TermId,
+    },
+    /// A consequent member has no theorem witness.
+    MissingImplicationWitness {
+        /// Context whose members must be covered.
+        consequent: ContextId,
+        /// Missing member.
+        term: TermId,
+    },
+    /// A witness conclusion is not a consequent member.
+    UnexpectedImplicationWitness {
+        /// Context whose members must be covered.
+        consequent: ContextId,
+        /// Unexpected conclusion.
+        term: TermId,
+    },
+    /// The same witness conclusion occurs more than once.
+    DuplicateImplicationWitness(TermId),
+    /// Weakening was given a theorem under the wrong context.
+    WeakeningContextMismatch {
+        /// Implication consequent required by the rule.
+        expected: ContextId,
+        /// Actual theorem context.
+        actual: ContextId,
+    },
     /// `SQLite` rejected an operation.
     Sqlite(sqlite::Error),
 }
@@ -2668,6 +2938,38 @@ impl fmt::Display for ProofError {
                 actual.get(),
                 expected.get()
             ),
+            Self::WrongImplicationWitnessContext {
+                expected,
+                actual,
+                conclusion,
+            } => write!(
+                formatter,
+                "implication witness {} has context {}, expected {}",
+                conclusion.get(),
+                actual.get(),
+                expected.get()
+            ),
+            Self::MissingImplicationWitness { consequent, term } => write!(
+                formatter,
+                "context {} member {} has no implication witness",
+                consequent.get(),
+                term.get()
+            ),
+            Self::UnexpectedImplicationWitness { consequent, term } => write!(
+                formatter,
+                "implication witness {} is not a member of context {}",
+                term.get(),
+                consequent.get()
+            ),
+            Self::DuplicateImplicationWitness(term) => {
+                write!(formatter, "duplicate implication witness {}", term.get())
+            }
+            Self::WeakeningContextMismatch { expected, actual } => write!(
+                formatter,
+                "weakening theorem has context {}, expected {}",
+                actual.get(),
+                expected.get()
+            ),
             Self::Sqlite(error) => error.fmt(formatter),
         }
     }
@@ -2684,7 +2986,12 @@ impl StdError for ProofError {
             | Self::NonBooleanConclusion { .. }
             | Self::OpenConclusion(_)
             | Self::NotLambda(_)
-            | Self::BetaTypeMismatch { .. } => None,
+            | Self::BetaTypeMismatch { .. }
+            | Self::WrongImplicationWitnessContext { .. }
+            | Self::MissingImplicationWitness { .. }
+            | Self::UnexpectedImplicationWitness { .. }
+            | Self::DuplicateImplicationWitness(_)
+            | Self::WeakeningContextMismatch { .. } => None,
         }
     }
 }
@@ -3469,6 +3776,202 @@ mod tests {
                 .proved_judgement(ContextId::empty(), term)
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn context_implication_weakens_a_branded_theorem() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let p = connection.insert_free_term(10, bool_type).unwrap();
+        let q = connection.insert_free_term(11, bool_type).unwrap();
+        let consequent = connection.define_context([p]).unwrap();
+        let antecedent = connection.define_context([p, q]).unwrap();
+
+        let (equality, weakened) = connection
+            .with_proof_session(|mut proof| {
+                let witness = proof.prove_hypothesis(antecedent, p)?;
+                let equality = proof.prove_reflexivity(consequent, p)?;
+                let implication =
+                    proof.prove_context_implication(antecedent, consequent, &[witness])?;
+                assert_eq!(implication.antecedent(), antecedent);
+                assert_eq!(implication.consequent(), consequent);
+                let wrong_context = proof.load_theorem(antecedent, p)?.unwrap();
+                assert!(matches!(
+                    proof.weaken(&implication, &wrong_context),
+                    Err(ProofError::WeakeningContextMismatch { .. })
+                ));
+                let weakened = proof.weaken(&implication, &equality)?;
+                Ok::<_, ProofError>((equality.conclusion(), weakened.conclusion()))
+            })
+            .unwrap();
+
+        assert_eq!(weakened, equality);
+        assert!(
+            connection
+                .proved_context_implication(antecedent, consequent)
+                .unwrap()
+        );
+        assert!(connection.proved_judgement(antecedent, equality).unwrap());
+        connection
+            .with_proof_session(|mut proof| {
+                assert!(
+                    proof
+                        .load_context_implication(antecedent, consequent)?
+                        .is_some()
+                );
+                assert!(
+                    proof
+                        .load_context_implication(consequent, antecedent)?
+                        .is_none()
+                );
+                Ok::<_, ProofError>(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn implication_introduction_requires_exact_witnesses() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let p = connection.insert_bool_term(false).unwrap();
+        let q = connection.insert_bool_term(true).unwrap();
+        let consequent = connection.define_context([p]).unwrap();
+        let antecedent = connection.define_context([p, q]).unwrap();
+
+        connection
+            .with_proof_session(|mut proof| {
+                let p_at_antecedent = proof.prove_hypothesis(antecedent, p)?;
+                let duplicate = proof.load_theorem(antecedent, p)?.unwrap();
+                let q_at_antecedent = proof.prove_hypothesis(antecedent, q)?;
+                let p_at_consequent = proof.prove_hypothesis(consequent, p)?;
+                assert!(matches!(
+                    proof.prove_context_implication(antecedent, consequent, &[]),
+                    Err(ProofError::MissingImplicationWitness { term, .. }) if term == p
+                ));
+                assert!(matches!(
+                    proof.prove_context_implication(
+                        antecedent,
+                        consequent,
+                        &[p_at_antecedent, duplicate]
+                    ),
+                    Err(ProofError::DuplicateImplicationWitness(term)) if term == p
+                ));
+                let p_with_extra = proof.load_theorem(antecedent, p)?.unwrap();
+                assert!(matches!(
+                    proof.prove_context_implication(
+                        antecedent,
+                        consequent,
+                        &[p_with_extra, q_at_antecedent]
+                    ),
+                    Err(ProofError::UnexpectedImplicationWitness { term, .. }) if term == q
+                ));
+                assert!(matches!(
+                    proof.prove_context_implication(antecedent, consequent, &[p_at_consequent]),
+                    Err(ProofError::WrongImplicationWitnessContext { .. })
+                ));
+                Ok::<_, ProofError>(())
+            })
+            .unwrap();
+        assert!(
+            !connection
+                .proved_context_implication(antecedent, consequent)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn context_implication_metadata_is_physical_only() {
+        let mut schema = HolSchema::new();
+        schema
+            .add_column_to(
+                MetadataTable::ContextImplication,
+                "source",
+                MetadataType::Text,
+            )
+            .unwrap();
+        schema
+            .add_index_on(
+                MetadataTable::ContextImplication,
+                "implication source",
+                ["source"],
+                false,
+            )
+            .unwrap();
+        let mut connection = Connection::open_hol_in_memory_with_schema(AllowAll, schema).unwrap();
+        connection
+            .with_proof_session(|mut proof| {
+                proof
+                    .prove_context_implication(ContextId::empty(), ContextId::empty(), &[])
+                    .map(|_| ())
+            })
+            .unwrap();
+        let target = MetadataTarget::context_implication(ContextId::empty(), ContextId::empty());
+        connection
+            .set_metadata(
+                target,
+                &[("source", MetadataValue::Text("checked".to_owned()))],
+            )
+            .unwrap();
+        assert_eq!(
+            connection.metadata(target, &["source"]).unwrap(),
+            [MetadataValue::Text("checked".to_owned())]
+        );
+    }
+
+    #[test]
+    fn implication_events_are_repeatable_and_policy_denial_is_atomic() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        connection
+            .with_proof_session(|mut proof| {
+                proof
+                    .prove_context_implication(ContextId::empty(), ContextId::empty(), &[])
+                    .map(|_| ())?;
+                proof
+                    .prove_context_implication(ContextId::empty(), ContextId::empty(), &[])
+                    .map(|_| ())
+            })
+            .unwrap();
+        let counts = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row(
+                "SELECT
+                     (SELECT count(*) FROM hol_context_implication),
+                     (SELECT count(*) FROM hol_context_implication_event)",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .unwrap();
+        assert_eq!(counts, (1, 2));
+
+        let mut denied = Connection::open_hol_in_memory(RecordingPolicy::default()).unwrap();
+        assert!(matches!(
+            denied.with_proof_session(|mut proof| {
+                proof
+                    .prove_context_implication(ContextId::empty(), ContextId::empty(), &[])
+                    .map(|_| ())
+            }),
+            Err(ProofError::Denied(Operation::ProveContextImplication))
+        ));
+        assert!(matches!(
+            denied.proved_context_implication(ContextId::empty(), ContextId::empty()),
+            Err(ProofError::Denied(Operation::ReadContextImplication))
+        ));
+        let (neutron, hol) = denied.parts_mut();
+        assert_eq!(
+            hol.policy.operations,
+            [
+                Operation::ProveContextImplication,
+                Operation::ReadContextImplication
+            ]
+        );
+        let rows = neutron
+            .sqlite()
+            .query_row("SELECT count(*) FROM hol_context_implication", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(rows, 0);
     }
 
     #[test]
