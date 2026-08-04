@@ -66,4 +66,18 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
     ],
   });
   assert.equal(result.readonly, true);
+
+  const demo = await browser.newPage();
+  await demo.goto(`http://127.0.0.1:${address.port}/repl.html`);
+  await demo.getByText("connection 1 ready").waitFor();
+  await demo.locator("#sql").fill("SELECT 42 AS answer");
+  await demo.locator("#run").click();
+  await demo.getByRole("cell", { name: "42" }).waitFor();
+  assert.equal(await demo.getByRole("columnheader").textContent(), "answer");
+
+  await demo.locator("#new").click();
+  await demo.locator("#connection").selectOption("2");
+  await demo.locator("#sql").fill("SELECT 84 AS independent");
+  await demo.locator("#run").click();
+  await demo.getByRole("cell", { name: "84" }).waitFor();
 });
