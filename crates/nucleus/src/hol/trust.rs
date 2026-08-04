@@ -5,7 +5,10 @@ use covalence_lib_hash::O256;
 use covalence_lib_sqlite as sqlite;
 use sqlite::OptionalExtension as _;
 
-use super::{Hol, HolDatabaseRef, Operation, Policy};
+use super::{
+    Hol, HolDatabaseRef, ImportError, ImportId, MetadataError, MetadataTarget, MetadataValue,
+    Operation, Policy,
+};
 use crate::{AuthenticatedSnapshotClaim, Connection};
 
 const CONNECTION_TRUST_SCHEMA: &str = "
@@ -28,6 +31,37 @@ CREATE TEMP TABLE cov_conn_hol_accepted_snapshot (
     PRIMARY KEY (schema_hash, image_hash, signer_hash)
 ) STRICT, WITHOUT ROWID;
 ";
+
+/// Database-local identity of one persisted accepted-import assumption.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct TrustedImportId(i64);
+
+impl TrustedImportId {
+    /// Constructs a lookup handle from its stored integer.
+    #[must_use]
+    pub const fn from_i64(id: i64) -> Self {
+        Self(id)
+    }
+
+    /// Returns the stored integer.
+    #[must_use]
+    pub const fn get(self) -> i64 {
+        self.0
+    }
+}
+
+/// Read-only view of one persistent accepted-import assumption.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TrustedImportView {
+    /// Exact inert import reference whose attestation was accepted.
+    pub import: ImportId,
+    /// Signing-key identity recorded with the assumption.
+    pub signer: O256,
+    /// Exact Ed25519 public key recorded with the assumption.
+    pub public_key: [u8; 32],
+    /// Exact Ed25519 signature recorded with the assumption.
+    pub signature: Vec<u8>,
+}
 
 pub(super) fn install_connection_trust_schema(
     connection: &sqlite::Connection,
@@ -170,6 +204,182 @@ impl<P: Policy> Connection<Hol<P>> {
             |row| row.get(0),
         )?)
     }
+
+    /// Persists an auditable accepted assumption for one exact registered import.
+    ///
+    /// This requires only the hash-first authenticated claim and a connection-local trusted
+    /// signer. It does not fetch, parse, attach, or expose the imported database.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies persistence, the import coordinates differ from the
+    /// claim, the signer is not trusted on this connection, IDs are exhausted, evidence
+    /// conflicts, or `SQLite` rejects the transaction.
+    pub fn accept_trusted_import(
+        &mut self,
+        import: ImportId,
+        claim: &AuthenticatedSnapshotClaim,
+    ) -> Result<TrustedImportId, TrustedImportError> {
+        self.accept_trusted_import_with_metadata(import, claim, &[])
+    }
+
+    /// Persists an accepted import assumption and user metadata atomically.
+    ///
+    /// Repeating the exact assumption is idempotent; supplied metadata replaces selected columns.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies either required operation, the import/claim/trust
+    /// evidence is invalid, metadata is invalid, IDs are exhausted, or `SQLite` rejects the
+    /// transaction.
+    pub fn accept_trusted_import_with_metadata(
+        &mut self,
+        import: ImportId,
+        claim: &AuthenticatedSnapshotClaim,
+        metadata: &[(&str, MetadataValue)],
+    ) -> Result<TrustedImportId, TrustedImportError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_trusted_import(&mut hol.policy, Operation::AcceptTrustedImport)?;
+        if !metadata.is_empty() && !hol.policy.allows(Operation::WriteMetadata) {
+            return Err(TrustedImportError::Metadata(MetadataError::Denied(
+                Operation::WriteMetadata,
+            )));
+        }
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        let expected = super::import::read_import(&transaction, import)?.database;
+        let actual = HolDatabaseRef::new(claim.schema(), claim.image());
+        if expected != actual {
+            return Err(TrustedImportError::ImportClaimMismatch {
+                import,
+                coordinates: Box::new((expected, actual)),
+            });
+        }
+        require_trusted_signer(&transaction, claim)?;
+        require_matching_acceptance(&transaction, claim)?;
+        let existing = find_trusted_import(&transaction, import, claim.signer())?;
+        let id = if let Some((id, public_key, signature)) = existing {
+            if public_key.as_slice() != claim.public_key() || signature != claim.signature() {
+                return Err(TrustedImportError::ConflictingAttestation {
+                    import,
+                    signer: claim.signer(),
+                });
+            }
+            id
+        } else {
+            let maximum = transaction.query_row(
+                "SELECT max(trusted_import_id) FROM hol_trusted_import",
+                [],
+                |row| row.get::<_, Option<i64>>(0),
+            )?;
+            let id = TrustedImportId(
+                maximum
+                    .unwrap_or(-1)
+                    .checked_add(1)
+                    .ok_or(TrustedImportError::IdOverflow)?,
+            );
+            transaction.execute(
+                "INSERT INTO hol_trusted_import(
+                     trusted_import_id, import_id, signer_hash, public_key, signature
+                 ) VALUES (?1, ?2, ?3, ?4, ?5)",
+                sqlite::params![
+                    id.get(),
+                    import.get(),
+                    claim.signer().as_ref(),
+                    claim.public_key().as_slice(),
+                    claim.signature()
+                ],
+            )?;
+            id
+        };
+        super::write_target_metadata(
+            &transaction,
+            &hol.schema,
+            MetadataTarget::trusted_import(id),
+            metadata,
+        )?;
+        transaction.commit()?;
+        Ok(id)
+    }
+
+    /// Reads one persistent accepted-import assumption by its local ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the read, the ID is absent or malformed, or `SQLite`
+    /// rejects the query.
+    pub fn trusted_import(
+        &mut self,
+        id: TrustedImportId,
+    ) -> Result<TrustedImportView, TrustedImportError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_trusted_import(&mut hol.policy, Operation::ReadTrustedImport)?;
+        read_trusted_import(neutron.sqlite(), id)
+    }
+}
+
+fn authorize_trusted_import(
+    policy: &mut impl Policy,
+    operation: Operation,
+) -> Result<(), TrustedImportError> {
+    if policy.allows(operation) {
+        Ok(())
+    } else {
+        Err(TrustedImportError::Denied(operation))
+    }
+}
+
+type StoredTrustedImport = (TrustedImportId, Vec<u8>, Vec<u8>);
+
+fn find_trusted_import(
+    connection: &sqlite::Connection,
+    import: ImportId,
+    signer: O256,
+) -> sqlite::Result<Option<StoredTrustedImport>> {
+    connection
+        .query_row(
+            "SELECT trusted_import_id, public_key, signature
+             FROM hol_trusted_import
+             WHERE import_id = ?1 AND signer_hash = ?2",
+            sqlite::params![import.get(), signer.as_ref()],
+            |row| Ok((TrustedImportId(row.get(0)?), row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+}
+
+fn read_trusted_import(
+    connection: &sqlite::Connection,
+    id: TrustedImportId,
+) -> Result<TrustedImportView, TrustedImportError> {
+    let row = connection
+        .query_row(
+            "SELECT import_id, signer_hash, public_key, signature
+             FROM hol_trusted_import WHERE trusted_import_id = ?1",
+            [id.get()],
+            |row| {
+                Ok((
+                    ImportId::from_i64(row.get(0)?),
+                    row.get::<_, Vec<u8>>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                    row.get::<_, Vec<u8>>(3)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or(TrustedImportError::UnknownTrustedImport(id))?;
+    let signer = <[u8; 32]>::try_from(row.1)
+        .map(O256::from_array)
+        .map_err(|_| TrustedImportError::CorruptTrustedImport(id))?;
+    let public_key =
+        <[u8; 32]>::try_from(row.2).map_err(|_| TrustedImportError::CorruptTrustedImport(id))?;
+    if row.3.len() != 64 {
+        return Err(TrustedImportError::CorruptTrustedImport(id));
+    }
+    Ok(TrustedImportView {
+        import: row.0,
+        signer,
+        public_key,
+        signature: row.3,
+    })
 }
 
 fn authorize(policy: &mut impl Policy, operation: Operation) -> Result<(), SnapshotTrustError> {
@@ -233,7 +443,12 @@ fn require_matching_acceptance(
 ) -> Result<(), SnapshotTrustError> {
     match accepted_signature(connection, snapshot)? {
         Some(stored) if stored.as_slice() == snapshot.signature() => Ok(()),
-        _ => Err(SnapshotTrustError::ConflictingSnapshot {
+        None => Err(SnapshotTrustError::SnapshotNotAccepted {
+            schema: snapshot.schema(),
+            image: snapshot.image(),
+            signer: snapshot.signer(),
+        }),
+        Some(_) => Err(SnapshotTrustError::ConflictingSnapshot {
             schema: snapshot.schema(),
             image: snapshot.image(),
             signer: snapshot.signer(),
@@ -250,6 +465,12 @@ pub enum SnapshotTrustError {
     UntrustedSigner(O256),
     /// Stored public-key material conflicts with the authenticated signer identity.
     ConflictingSigner(O256),
+    /// The exact authenticated assertion was not explicitly accepted on this connection.
+    SnapshotNotAccepted {
+        schema: O256,
+        image: O256,
+        signer: O256,
+    },
     /// Stored accepted evidence conflicts with the authenticated signature.
     ConflictingSnapshot {
         schema: O256,
@@ -273,6 +494,14 @@ impl fmt::Display for SnapshotTrustError {
                     "snapshot signer {signer} has conflicting key material"
                 )
             }
+            Self::SnapshotNotAccepted {
+                schema,
+                image,
+                signer,
+            } => write!(
+                formatter,
+                "snapshot ({schema}, {image}, {signer}) was not explicitly accepted"
+            ),
             Self::ConflictingSnapshot {
                 schema,
                 image,
@@ -301,10 +530,120 @@ impl From<sqlite::Error> for SnapshotTrustError {
     }
 }
 
+/// Failure to persist or inspect an accepted import assumption.
+#[derive(Debug)]
+pub enum TrustedImportError {
+    /// The connection policy denied the operation before database state was inspected.
+    Denied(Operation),
+    /// The registered import and authenticated claim name different schema/image coordinates.
+    ImportClaimMismatch {
+        import: ImportId,
+        coordinates: Box<(HolDatabaseRef, HolDatabaseRef)>,
+    },
+    /// Existing persistent evidence conflicts with the authenticated claim.
+    ConflictingAttestation { import: ImportId, signer: O256 },
+    /// The local trusted-import ID is absent.
+    UnknownTrustedImport(TrustedImportId),
+    /// The stored trusted-import row has an invalid fixed-width representation.
+    CorruptTrustedImport(TrustedImportId),
+    /// No further non-negative trusted-import ID can be allocated.
+    IdOverflow,
+    /// Import lookup failed.
+    Import(ImportError),
+    /// Connection-local signer trust failed.
+    Trust(SnapshotTrustError),
+    /// User metadata failed.
+    Metadata(MetadataError),
+    /// `SQLite` rejected the operation.
+    Sqlite(sqlite::Error),
+}
+
+impl fmt::Display for TrustedImportError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Denied(operation) => write!(formatter, "HOL policy denied {operation:?}"),
+            Self::ImportClaimMismatch {
+                import,
+                coordinates,
+            } => write!(
+                formatter,
+                "import {} names ({}, {}), not authenticated claim ({}, {})",
+                import.get(),
+                coordinates.0.schema(),
+                coordinates.0.image(),
+                coordinates.1.schema(),
+                coordinates.1.image()
+            ),
+            Self::ConflictingAttestation { import, signer } => write!(
+                formatter,
+                "import {} has conflicting evidence for signer {signer}",
+                import.get()
+            ),
+            Self::UnknownTrustedImport(id) => {
+                write!(formatter, "unknown trusted-import assumption {}", id.get())
+            }
+            Self::CorruptTrustedImport(id) => {
+                write!(
+                    formatter,
+                    "trusted-import assumption {} is corrupt",
+                    id.get()
+                )
+            }
+            Self::IdOverflow => formatter.write_str("trusted-import ID overflow"),
+            Self::Import(error) => error.fmt(formatter),
+            Self::Trust(error) => error.fmt(formatter),
+            Self::Metadata(error) => error.fmt(formatter),
+            Self::Sqlite(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl StdError for TrustedImportError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            Self::Import(error) => Some(error),
+            Self::Trust(error) => Some(error),
+            Self::Metadata(error) => Some(error),
+            Self::Sqlite(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<ImportError> for TrustedImportError {
+    fn from(error: ImportError) -> Self {
+        Self::Import(error)
+    }
+}
+
+impl From<SnapshotTrustError> for TrustedImportError {
+    fn from(error: SnapshotTrustError) -> Self {
+        Self::Trust(error)
+    }
+}
+
+impl From<MetadataError> for TrustedImportError {
+    fn from(error: MetadataError) -> Self {
+        Self::Metadata(error)
+    }
+}
+
+impl From<sqlite::Error> for TrustedImportError {
+    fn from(error: sqlite::Error) -> Self {
+        Self::Sqlite(error)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AllowAll, Kernel, SignedSnapshotEnvelope};
+    use covalence_lib_crypto::ed25519::SigningKey;
+
+    use crate::{
+        AllowAll, Ed25519Signer, HolSchema, Kernel, MetadataTable, MetadataType,
+        SignedSnapshotAttestation, SignedSnapshotEnvelope, Signer as _,
+        schema_valid_snapshot_statement,
+    };
 
     fn authenticated(kernel: &Kernel) -> AuthenticatedSnapshotClaim {
         let mut source = kernel.open_hol(AllowAll).unwrap();
@@ -321,6 +660,27 @@ mod tests {
         .authenticate()
         .unwrap()
         .into_claim()
+    }
+
+    fn hash_first_claim(seed: u8, schema: &[u8], image: &[u8]) -> AuthenticatedSnapshotClaim {
+        let signer = Ed25519Signer::new(SigningKey::from_bytes(&[seed; 32]));
+        let schema = O256::from_bytes(schema);
+        let image = O256::from_bytes(image);
+        let signature = signer
+            .sign(
+                signer.key_id(),
+                schema_valid_snapshot_statement(schema, image),
+            )
+            .unwrap();
+        SignedSnapshotAttestation::new(
+            schema,
+            image,
+            signer.key_id(),
+            *signer.verifying_key().as_bytes(),
+            &signature,
+        )
+        .authenticate()
+        .unwrap()
     }
 
     #[test]
@@ -423,6 +783,178 @@ mod tests {
         assert_eq!(before.image().bytes(), after.image().bytes());
     }
 
+    #[test]
+    fn persistent_import_trust_requires_exact_accepted_hash_first_claim() {
+        let first_claim = hash_first_claim(7, b"schema A", b"unfetched image A");
+        let other_claim = hash_first_claim(8, b"schema B", b"unfetched image B");
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let first = connection
+            .register_import(HolDatabaseRef::new(
+                first_claim.schema(),
+                first_claim.image(),
+            ))
+            .unwrap();
+        let other = connection
+            .register_import(HolDatabaseRef::new(
+                other_claim.schema(),
+                other_claim.image(),
+            ))
+            .unwrap();
+
+        connection.trust_snapshot_signer(&first_claim).unwrap();
+        assert!(matches!(
+            connection.accept_trusted_import(first, &first_claim),
+            Err(TrustedImportError::Trust(
+                SnapshotTrustError::SnapshotNotAccepted { .. }
+            ))
+        ));
+        connection
+            .accept_authenticated_snapshot(&first_claim)
+            .unwrap();
+        connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .execute(
+                "DELETE FROM temp.cov_conn_hol_trusted_snapshot_signer
+                 WHERE signer_hash = ?1",
+                [first_claim.signer().as_ref()],
+            )
+            .unwrap();
+        assert!(matches!(
+            connection.accept_trusted_import(first, &first_claim),
+            Err(TrustedImportError::Trust(
+                SnapshotTrustError::UntrustedSigner(_)
+            ))
+        ));
+        connection.trust_snapshot_signer(&first_claim).unwrap();
+        assert!(matches!(
+            connection.accept_trusted_import(other, &first_claim),
+            Err(TrustedImportError::ImportClaimMismatch { .. })
+        ));
+
+        let id = connection
+            .accept_trusted_import(first, &first_claim)
+            .unwrap();
+        assert_eq!(
+            connection
+                .accept_trusted_import(first, &first_claim)
+                .unwrap(),
+            id
+        );
+        let stored = connection.trusted_import(id).unwrap();
+        assert_eq!(stored.import, first);
+        assert_eq!(stored.signer, first_claim.signer());
+        assert_eq!(stored.public_key, *first_claim.public_key());
+        assert_eq!(stored.signature, first_claim.signature());
+        assert_eq!(
+            connection
+                .parts_mut()
+                .0
+                .sqlite()
+                .query_row("SELECT count(*) FROM hol_trusted_import", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn trusted_import_metadata_and_index_are_user_extensible() {
+        let mut schema = HolSchema::new();
+        schema
+            .add_column_to(MetadataTable::TrustedImport, "reason", MetadataType::Text)
+            .unwrap();
+        schema
+            .add_index_on(
+                MetadataTable::TrustedImport,
+                "hol_trusted_import_reason",
+                ["reason"],
+                false,
+            )
+            .unwrap();
+        let claim = hash_first_claim(9, b"schema", b"never fetched");
+        let mut connection =
+            Connection::open_hol_in_memory_with_schema(AllowAll, schema.clone()).unwrap();
+        let import = connection
+            .register_import(HolDatabaseRef::new(claim.schema(), claim.image()))
+            .unwrap();
+        connection.trust_snapshot_signer(&claim).unwrap();
+        connection.accept_authenticated_snapshot(&claim).unwrap();
+        assert!(matches!(
+            connection.accept_trusted_import_with_metadata(
+                import,
+                &claim,
+                &[("unknown", MetadataValue::Text("no".to_owned()))],
+            ),
+            Err(TrustedImportError::Metadata(MetadataError::UnknownColumn(
+                _
+            )))
+        ));
+        assert_eq!(
+            connection
+                .parts_mut()
+                .0
+                .sqlite()
+                .query_row("SELECT count(*) FROM hol_trusted_import", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            0
+        );
+        let id = connection
+            .accept_trusted_import_with_metadata(
+                import,
+                &claim,
+                &[("reason", MetadataValue::Text("test key".to_owned()))],
+            )
+            .unwrap();
+        assert_eq!(
+            connection
+                .metadata(MetadataTarget::trusted_import(id), &["reason"])
+                .unwrap(),
+            [MetadataValue::Text("test key".to_owned())]
+        );
+        let bytes = connection.parts_mut().0.serialize().unwrap();
+        let validated =
+            super::super::ValidatedHolImage::validate_with_schema(&bytes, &schema).unwrap();
+        assert_eq!(validated.counts().untrusted_trusted_import_rows, 1);
+        assert!(matches!(
+            super::super::ValidatedHolImage::validate(&bytes),
+            Err(super::super::HolImageValidationError::SchemaMismatch)
+        ));
+    }
+
+    #[test]
+    fn detached_validation_rechecks_persistent_import_signature() {
+        let claim = hash_first_claim(10, b"remote schema", b"remote image");
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let import = connection
+            .register_import(HolDatabaseRef::new(claim.schema(), claim.image()))
+            .unwrap();
+        connection.trust_snapshot_signer(&claim).unwrap();
+        connection.accept_authenticated_snapshot(&claim).unwrap();
+        let id = connection.accept_trusted_import(import, &claim).unwrap();
+        connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .execute(
+                "UPDATE hol_trusted_import SET signature = zeroblob(64)
+                 WHERE trusted_import_id = ?1",
+                [id.get()],
+            )
+            .unwrap();
+        let bytes = connection.parts_mut().0.serialize().unwrap();
+        assert!(matches!(
+            super::super::ValidatedHolImage::validate(&bytes),
+            Err(
+                super::super::HolImageValidationError::InvalidTrustedImportSignature(actual)
+            ) if actual == id
+        ));
+    }
+
     #[derive(Default)]
     struct ToggleTrust {
         allow: bool,
@@ -494,6 +1026,37 @@ mod tests {
                 )
                 .unwrap(),
             1
+        );
+    }
+
+    #[test]
+    fn persistent_trust_policy_denial_precedes_idempotent_reads_and_writes() {
+        let claim = hash_first_claim(11, b"schema", b"image");
+        let mut connection = Connection::open_hol_in_memory(ToggleTrust {
+            allow: true,
+            seen: Vec::new(),
+        })
+        .unwrap();
+        let import = connection
+            .register_import(HolDatabaseRef::new(claim.schema(), claim.image()))
+            .unwrap();
+        connection.trust_snapshot_signer(&claim).unwrap();
+        connection.accept_authenticated_snapshot(&claim).unwrap();
+        let id = connection.accept_trusted_import(import, &claim).unwrap();
+        let seen_before = connection.protocol().policy().seen.len();
+        connection.parts_mut().1.policy.allow = false;
+
+        assert!(matches!(
+            connection.accept_trusted_import(import, &claim),
+            Err(TrustedImportError::Denied(Operation::AcceptTrustedImport))
+        ));
+        assert!(matches!(
+            connection.trusted_import(id),
+            Err(TrustedImportError::Denied(Operation::ReadTrustedImport))
+        ));
+        assert_eq!(
+            &connection.protocol().policy().seen[seen_before..],
+            [Operation::AcceptTrustedImport, Operation::ReadTrustedImport]
         );
     }
 }

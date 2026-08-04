@@ -1,5 +1,5 @@
 CREATE TABLE hol_schema (
-    version INTEGER PRIMARY KEY CHECK (version = 5),
+    version INTEGER PRIMARY KEY CHECK (version = 6),
     representation TEXT NOT NULL CHECK (representation = 'tagged-node')
 ) STRICT;
 
@@ -159,6 +159,21 @@ CREATE TABLE hol_import (
     UNIQUE (schema_hash, image_hash)
 ) STRICT;
 
+-- Persistent audit evidence that the creating connection explicitly accepted
+-- one registered import assertion.  Receiving this table does not make its
+-- rows trusted on another connection.
+CREATE TABLE hol_trusted_import (
+    trusted_import_id INTEGER PRIMARY KEY CHECK (trusted_import_id >= 0),
+    import_id INTEGER NOT NULL CHECK (import_id >= 0),
+    signer_hash BLOB NOT NULL,
+    public_key BLOB NOT NULL,
+    signature BLOB NOT NULL,
+    CHECK (typeof(signer_hash) = 'blob' AND length(signer_hash) = 32),
+    CHECK (typeof(public_key) = 'blob' AND length(public_key) = 32),
+    CHECK (typeof(signature) = 'blob' AND length(signature) = 64),
+    UNIQUE (import_id, signer_hash)
+) STRICT;
+
 CREATE UNIQUE INDEX hol_kstar_unique
     ON hol_node((1)) WHERE tag = 'KSTAR';
 
@@ -189,7 +204,7 @@ CREATE UNIQUE INDEX hol_mlam_unique
 CREATE UNIQUE INDEX hol_meq_unique
     ON hol_node(lhs, rhs) WHERE tag = 'MEQ';
 
-INSERT INTO hol_schema(version, representation) VALUES (5, 'tagged-node');
+INSERT INTO hol_schema(version, representation) VALUES (6, 'tagged-node');
 INSERT INTO hol_node(node_id, tag) VALUES (1, 'KSTAR');
 INSERT INTO hol_node(node_id, tag, ty) VALUES (2, 'TBOOL', 1);
 INSERT INTO hol_context(ctx_id) VALUES (0);

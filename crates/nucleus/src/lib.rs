@@ -12,8 +12,9 @@ pub use hol::{
     ImportId, ImportView, Kind, KindError, KindId, KindView, MetadataError, MetadataSchemaError,
     MetadataTable, MetadataTarget, MetadataType, MetadataValue, NamespaceError, NamespaceExport,
     NamespaceId, NamespaceSource, NamespaceView, Operation, Policy, ProofError, ProofSession,
-    SignedHolSnapshot, SnapshotTrustError, TermError, TermId, TermView, Theorem, TypeError, TypeId,
-    TypeView, UnboundVariable, ValidatedHolImage,
+    SignedHolSnapshot, SnapshotTrustError, TermError, TermId, TermView, Theorem,
+    TrustedImportError, TrustedImportId, TrustedImportView, TypeError, TypeId, TypeView,
+    UnboundVariable, ValidatedHolImage,
 };
 pub use kernel::Kernel;
 

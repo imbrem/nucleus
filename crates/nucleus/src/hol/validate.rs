@@ -2,15 +2,17 @@ use std::collections::{HashMap, HashSet};
 use std::error::Error as StdError;
 use std::fmt;
 
+use covalence_lib_crypto::ed25519::VerifyingKey;
 use covalence_lib_hash::O256;
 use covalence_lib_sqlite as sqlite;
 
 use super::{
-    BOOL_TYPE_ID, ContextError, ContextId, ExportId, HolSchema, ImportId, KindError, KindId,
-    KindView, NamespaceId, SCHEMA, STAR_ID, TermError, TermId, TypeError, TypeId, TypeView,
-    ValidatedTerm, install_metadata_schema, kind_rank, read_context_members, read_kind, read_type,
-    validate_term_inner,
+    BOOL_TYPE_ID, ContextError, ContextId, ExportId, HolDatabaseRef, HolSchema, ImportId,
+    KindError, KindId, KindView, NamespaceId, SCHEMA, STAR_ID, TermError, TermId, TrustedImportId,
+    TypeError, TypeId, TypeView, ValidatedTerm, install_metadata_schema, kind_rank,
+    read_context_members, read_kind, read_type, validate_term_inner,
 };
+use crate::{Ed25519Verifier, Verifier as _, ed25519_key_id, schema_valid_snapshot_statement};
 
 const MAX_GRAPH_DEPTH: usize = 512;
 
@@ -37,6 +39,8 @@ pub struct HolImageCounts {
     pub import_references: u64,
     /// Local namespace handles aliasing complete external namespaces.
     pub imported_namespaces: u64,
+    /// Cryptographically coherent but externally untrusted persistent import assumptions.
+    pub untrusted_trusted_import_rows: u64,
 }
 
 /// Exact bytes admitted as one expected tagged-node HOL physical schema.
@@ -167,7 +171,7 @@ fn validate_schema(
         [],
         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
     )?;
-    if identity == (5, "tagged-node".to_owned()) {
+    if identity == (6, "tagged-node".to_owned()) {
         Ok(schema_manifest_id(&expected_manifest))
     } else {
         Err(HolImageValidationError::SchemaMismatch)
@@ -280,8 +284,13 @@ fn validate_contents(
 
     let implication_count = validate_context_implications(connection, &contexts)?;
     let context_union_count = validate_context_unions(connection, &contexts)?;
-    let (namespace_count, namespace_export_count, import_count, imported_namespace_count) =
-        validate_namespaces(connection, &nodes, &contexts.iter().copied().collect())?;
+    let (
+        namespace_count,
+        namespace_export_count,
+        import_count,
+        imported_namespace_count,
+        trusted_import_count,
+    ) = validate_namespaces(connection, &nodes, &contexts.iter().copied().collect())?;
 
     Ok(HolImageCounts {
         nodes: u64::try_from(nodes.len()).map_err(|_| HolImageValidationError::CountOverflow)?,
@@ -302,6 +311,8 @@ fn validate_contents(
             .map_err(|_| HolImageValidationError::CountOverflow)?,
         imported_namespaces: u64::try_from(imported_namespace_count)
             .map_err(|_| HolImageValidationError::CountOverflow)?,
+        untrusted_trusted_import_rows: u64::try_from(trusted_import_count)
+            .map_err(|_| HolImageValidationError::CountOverflow)?,
     })
 }
 
@@ -310,7 +321,7 @@ fn validate_namespaces(
     connection: &sqlite::Connection,
     nodes: &[NodeRow],
     contexts: &HashSet<ContextId>,
-) -> Result<(usize, usize, usize, usize), HolImageValidationError> {
+) -> Result<(usize, usize, usize, usize, usize), HolImageValidationError> {
     let imports = connection
         .prepare("SELECT import_id, schema_hash, image_hash FROM hol_import ORDER BY import_id")?
         .query_map([], |row| {
@@ -321,12 +332,18 @@ fn validate_namespaces(
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
-    let import_ids = imports.iter().map(|(id, _, _)| *id).collect::<HashSet<_>>();
+    let mut import_databases = HashMap::new();
     for (import, schema, image) in &imports {
-        if schema.len() != 32 || image.len() != 32 {
-            return Err(HolImageValidationError::MalformedImportHash(*import));
-        }
+        let schema = <[u8; 32]>::try_from(schema.as_slice())
+            .map(O256::from_array)
+            .map_err(|_| HolImageValidationError::MalformedImportHash(*import))?;
+        let image = <[u8; 32]>::try_from(image.as_slice())
+            .map(O256::from_array)
+            .map_err(|_| HolImageValidationError::MalformedImportHash(*import))?;
+        import_databases.insert(*import, HolDatabaseRef::new(schema, image));
     }
+    let import_ids = import_databases.keys().copied().collect::<HashSet<_>>();
+    let trusted_import_count = validate_trusted_imports(connection, &import_databases)?;
     let namespaces = connection
         .prepare(
             "SELECT namespace_id, parent_namespace_id, name,
@@ -480,7 +497,58 @@ fn validate_namespaces(
         exports.len(),
         imports.len(),
         imported_namespaces.len(),
+        trusted_import_count,
     ))
+}
+
+fn validate_trusted_imports(
+    connection: &sqlite::Connection,
+    imports: &HashMap<ImportId, HolDatabaseRef>,
+) -> Result<usize, HolImageValidationError> {
+    let rows = connection
+        .prepare(
+            "SELECT trusted_import_id, import_id, signer_hash, public_key, signature
+             FROM hol_trusted_import ORDER BY trusted_import_id",
+        )?
+        .query_map([], |row| {
+            Ok((
+                TrustedImportId::from_i64(row.get(0)?),
+                ImportId::from_i64(row.get(1)?),
+                row.get::<_, Vec<u8>>(2)?,
+                row.get::<_, Vec<u8>>(3)?,
+                row.get::<_, Vec<u8>>(4)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    for (id, import, signer, public_key, signature) in &rows {
+        let database = imports
+            .get(import)
+            .ok_or(HolImageValidationError::OrphanTrustedImport {
+                trusted_import: *id,
+                import: *import,
+            })?;
+        let signer = <[u8; 32]>::try_from(signer.as_slice())
+            .map(O256::from_array)
+            .map_err(|_| HolImageValidationError::MalformedTrustedImport(*id))?;
+        let public_key = <[u8; 32]>::try_from(public_key.as_slice())
+            .map_err(|_| HolImageValidationError::MalformedTrustedImport(*id))?;
+        if signature.len() != 64 {
+            return Err(HolImageValidationError::MalformedTrustedImport(*id));
+        }
+        if ed25519_key_id(&public_key) != signer {
+            return Err(HolImageValidationError::TrustedImportSignerMismatch(*id));
+        }
+        let verifying_key = VerifyingKey::from_bytes(&public_key)
+            .map_err(|_| HolImageValidationError::MalformedTrustedImport(*id))?;
+        Ed25519Verifier::new(verifying_key)
+            .verify(
+                signer,
+                schema_valid_snapshot_statement(database.schema(), database.image()),
+                signature,
+            )
+            .map_err(|_| HolImageValidationError::InvalidTrustedImportSignature(*id))?;
+    }
+    Ok(rows.len())
 }
 
 fn validate_reserved_primitives(
@@ -733,6 +801,17 @@ pub enum HolImageValidationError {
     },
     /// An import-directory row has a malformed hash representation.
     MalformedImportHash(ImportId),
+    /// A persistent accepted-import row names no import reference.
+    OrphanTrustedImport {
+        trusted_import: TrustedImportId,
+        import: ImportId,
+    },
+    /// A persistent accepted-import row has malformed key/signature representation.
+    MalformedTrustedImport(TrustedImportId),
+    /// A persistent accepted-import signer hash does not identify its public key.
+    TrustedImportSignerMismatch(TrustedImportId),
+    /// A persistent accepted-import signature does not authenticate the referenced coordinates.
+    InvalidTrustedImportSignature(TrustedImportId),
     /// A namespace source names an absent import-directory row.
     OrphanNamespaceImport {
         namespace: NamespaceId,
@@ -878,6 +957,30 @@ impl fmt::Display for HolImageValidationError {
                     import.get()
                 )
             }
+            Self::OrphanTrustedImport {
+                trusted_import,
+                import,
+            } => write!(
+                formatter,
+                "trusted-import assumption {} names absent import {}",
+                trusted_import.get(),
+                import.get()
+            ),
+            Self::MalformedTrustedImport(id) => write!(
+                formatter,
+                "trusted-import assumption {} has malformed evidence",
+                id.get()
+            ),
+            Self::TrustedImportSignerMismatch(id) => write!(
+                formatter,
+                "trusted-import assumption {} has mismatched signer identity",
+                id.get()
+            ),
+            Self::InvalidTrustedImportSignature(id) => write!(
+                formatter,
+                "trusted-import assumption {} has an invalid signature",
+                id.get()
+            ),
             Self::OrphanNamespaceImport { namespace, import } => write!(
                 formatter,
                 "namespace {} names absent import reference {}",
@@ -997,6 +1100,7 @@ mod tests {
                 namespace_exports: 0,
                 import_references: 0,
                 imported_namespaces: 0,
+                untrusted_trusted_import_rows: 0,
             }
         );
 

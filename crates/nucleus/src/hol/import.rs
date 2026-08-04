@@ -319,7 +319,10 @@ fn find_import(
         .map_err(Into::into)
 }
 
-fn read_import(connection: &sqlite::Connection, id: ImportId) -> Result<ImportView, ImportError> {
+pub(super) fn read_import(
+    connection: &sqlite::Connection,
+    id: ImportId,
+) -> Result<ImportView, ImportError> {
     let row = connection
         .query_row(
             "SELECT schema_hash, image_hash FROM hol_import WHERE import_id = ?1",
