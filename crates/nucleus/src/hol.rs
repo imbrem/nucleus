@@ -28,7 +28,7 @@ pub use trust::{
 pub use validate::{
     AuthenticatedHolImageValidationError, AuthenticatedValidatedHolImage, HolImageCounts,
     HolImageValidationError, ValidatedHolImage, stlc_bool_eq_v1_schema_id,
-    stlc_bool_eq_v1_semantics,
+    stlc_bool_eq_v1_semantics, stlc_bool_eq_v2_schema_id, stlc_bool_eq_v2_semantics,
 };
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -290,6 +290,7 @@ enum TheoremOrigin {
     Beta,
     Weakening,
     EqualityModusPonens,
+    EqualitySubstitution,
     ConversionEquality,
     Conversion,
 }
@@ -303,6 +304,7 @@ impl TheoremOrigin {
             Self::Beta => "beta",
             Self::Weakening => "weakening",
             Self::EqualityModusPonens => "equality_modus_ponens",
+            Self::EqualitySubstitution => "equality_substitution",
             Self::ConversionEquality => "conversion_equality",
             Self::Conversion => "conversion",
         }
@@ -478,6 +480,8 @@ pub enum Operation {
     ProveWeakening,
     /// Apply equality modus ponens to two branded premises.
     ProveEqualityModusPonens,
+    /// Substitute equals through one closed typed Boolean predicate.
+    ProveEqualitySubstitution,
     /// Load or inspect a persisted context implication.
     ReadContextImplication,
     /// Persist a branded context implication as authoritative connection state.
@@ -2361,6 +2365,90 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         })
     }
 
+    /// Applies typed Leibniz substitution.
+    ///
+    /// From `Γ ⊢ left = right` and `Γ ⊢ predicate left`, where `predicate` is
+    /// a closed term of type `type(left) -> bool`, this derives
+    /// `Γ ⊢ predicate right`. The premise application must match exactly;
+    /// this rule performs no conversion, shifting, or binder manipulation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the rule/insertion, the premises have
+    /// different contexts, the first premise is not equality, the predicate is
+    /// open or has the wrong type, the second premise is not the exact expected
+    /// application, or checked term insertion fails.
+    pub fn equality_substitution(
+        &mut self,
+        equality: &Theorem<'brand>,
+        predicate: TermId,
+        premise: &Theorem<'brand>,
+    ) -> Result<Theorem<'brand>, ProofError> {
+        let (neutron, hol) = self.connection.parts_mut();
+        authorize_proof(&mut hol.policy, Operation::ProveEqualitySubstitution)?;
+        authorize_proof(&mut hol.policy, Operation::InsertTerm)?;
+        if equality.context != premise.context {
+            return Err(ProofError::EqualitySubstitutionContextMismatch {
+                equality: equality.context,
+                premise: premise.context,
+            });
+        }
+
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        let (equality_view, _) = read_term(&transaction, equality.conclusion)?;
+        let TermView::Equality { left, right } = equality_view else {
+            return Err(ProofError::ExpectedEquality(equality.conclusion));
+        };
+        let left_validation = validate_term(&transaction, left)?;
+        let predicate_validation = validate_term(&transaction, predicate)?;
+        if !predicate_validation.boundary.is_empty() {
+            return Err(ProofError::OpenEqualityPredicate(predicate));
+        }
+        let TypeView::Arrow { domain, codomain } =
+            read_type(&transaction, predicate_validation.ty).map_err(TermError::Type)?
+        else {
+            return Err(ProofError::EqualityPredicateNotFunction {
+                predicate,
+                ty: predicate_validation.ty,
+            });
+        };
+        if domain != left_validation.ty {
+            return Err(ProofError::EqualityPredicateDomainMismatch {
+                predicate,
+                expected: left_validation.ty,
+                actual: domain,
+            });
+        }
+        if codomain != BOOL_TYPE_ID {
+            return Err(ProofError::EqualityPredicateNonBoolean {
+                predicate,
+                codomain,
+            });
+        }
+        let (premise_view, _) = read_term(&transaction, premise.conclusion)?;
+        if premise_view
+            != (TermView::Application {
+                function: predicate,
+                argument: left,
+            })
+        {
+            return Err(ProofError::EqualitySubstitutionPremiseMismatch {
+                predicate,
+                argument: left,
+                actual: premise.conclusion,
+            });
+        }
+        let conclusion = intern_application(&transaction, predicate, right, BOOL_TYPE_ID)?;
+        validate_term(&transaction, conclusion)?;
+        transaction.commit()?;
+        Ok(Theorem {
+            context: equality.context,
+            conclusion,
+            origin: Some(TheoremOrigin::EqualitySubstitution),
+            brand: PhantomData,
+        })
+    }
+
     /// Applies equality modus ponens: `Γ ⊢ p = q` and `Γ ⊢ p` yield `Γ ⊢ q`.
     ///
     /// # Errors
@@ -4089,10 +4177,33 @@ pub enum ProofError {
         expected: ContextId,
         actual: ContextId,
     },
+    /// Equality substitution received premises from different contexts.
+    EqualitySubstitutionContextMismatch {
+        equality: ContextId,
+        premise: ContextId,
+    },
     /// Equality modus ponens received a non-equality first conclusion.
     ExpectedEquality(TermId),
     /// Equality modus ponens' premise does not match the equality's left side.
     EqualityPremiseMismatch { expected: TermId, actual: TermId },
+    /// Equality substitution's predicate is not locally closed.
+    OpenEqualityPredicate(TermId),
+    /// Equality substitution's predicate does not have a function type.
+    EqualityPredicateNotFunction { predicate: TermId, ty: TypeId },
+    /// Equality substitution's predicate has the wrong domain.
+    EqualityPredicateDomainMismatch {
+        predicate: TermId,
+        expected: TypeId,
+        actual: TypeId,
+    },
+    /// Equality substitution's predicate does not return Boolean propositions.
+    EqualityPredicateNonBoolean { predicate: TermId, codomain: TypeId },
+    /// Equality substitution's premise is not the exact expected application.
+    EqualitySubstitutionPremiseMismatch {
+        predicate: TermId,
+        argument: TermId,
+        actual: TermId,
+    },
     /// Two conversions cannot compose because their middle terms differ.
     ConversionChainMismatch {
         first_right: TermId,
@@ -4110,6 +4221,9 @@ pub enum ProofError {
 
 impl fmt::Display for ProofError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(result) = format_substitution_proof_error(self, formatter) {
+            return result;
+        }
         if let Some(result) = format_relational_proof_error(self, formatter) {
             return result;
         }
@@ -4187,8 +4301,14 @@ impl fmt::Display for ProofError {
             | Self::ContextUnionConflict { .. }
             | Self::ContextEquivalenceMismatch { .. }
             | Self::MismatchedTheoremContexts { .. }
+            | Self::EqualitySubstitutionContextMismatch { .. }
             | Self::ExpectedEquality(_)
             | Self::EqualityPremiseMismatch { .. }
+            | Self::OpenEqualityPredicate(_)
+            | Self::EqualityPredicateNotFunction { .. }
+            | Self::EqualityPredicateDomainMismatch { .. }
+            | Self::EqualityPredicateNonBoolean { .. }
+            | Self::EqualitySubstitutionPremiseMismatch { .. }
             | Self::ConversionChainMismatch { .. }
             | Self::ConversionBoundaryMismatch { .. }
             | Self::NonBooleanConversion { .. }
@@ -4312,6 +4432,63 @@ fn format_relational_proof_error(
     }
 }
 
+fn format_substitution_proof_error(
+    error: &ProofError,
+    formatter: &mut fmt::Formatter<'_>,
+) -> Option<fmt::Result> {
+    match error {
+        ProofError::EqualitySubstitutionContextMismatch { equality, premise } => Some(write!(
+            formatter,
+            "equality substitution premise context {} does not match equality context {}",
+            premise.get(),
+            equality.get()
+        )),
+        ProofError::OpenEqualityPredicate(predicate) => Some(write!(
+            formatter,
+            "equality substitution predicate {} is not locally closed",
+            predicate.get()
+        )),
+        ProofError::EqualityPredicateNotFunction { predicate, ty } => Some(write!(
+            formatter,
+            "equality substitution predicate {} has non-function type {}",
+            predicate.get(),
+            ty.get()
+        )),
+        ProofError::EqualityPredicateDomainMismatch {
+            predicate,
+            expected,
+            actual,
+        } => Some(write!(
+            formatter,
+            "equality substitution predicate {} has domain {}, expected {}",
+            predicate.get(),
+            actual.get(),
+            expected.get()
+        )),
+        ProofError::EqualityPredicateNonBoolean {
+            predicate,
+            codomain,
+        } => Some(write!(
+            formatter,
+            "equality substitution predicate {} has non-Boolean codomain {}",
+            predicate.get(),
+            codomain.get()
+        )),
+        ProofError::EqualitySubstitutionPremiseMismatch {
+            predicate,
+            argument,
+            actual,
+        } => Some(write!(
+            formatter,
+            "equality substitution premise {} is not application {} {}",
+            actual.get(),
+            predicate.get(),
+            argument.get()
+        )),
+        _ => None,
+    }
+}
+
 fn format_context_union_member_error(
     formatter: &mut fmt::Formatter<'_>,
     left: ContextId,
@@ -4371,8 +4548,14 @@ impl StdError for ProofError {
             | Self::ContextEquivalenceMismatch { .. }
             | Self::WeakeningContextMismatch { .. }
             | Self::MismatchedTheoremContexts { .. }
+            | Self::EqualitySubstitutionContextMismatch { .. }
             | Self::ExpectedEquality(_)
             | Self::EqualityPremiseMismatch { .. }
+            | Self::OpenEqualityPredicate(_)
+            | Self::EqualityPredicateNotFunction { .. }
+            | Self::EqualityPredicateDomainMismatch { .. }
+            | Self::EqualityPredicateNonBoolean { .. }
+            | Self::EqualitySubstitutionPremiseMismatch { .. }
             | Self::ConversionChainMismatch { .. }
             | Self::ConversionBoundaryMismatch { .. }
             | Self::NonBooleanConversion { .. }
@@ -4485,6 +4668,18 @@ mod tests {
                 operation,
                 Operation::PersistJudgement | Operation::PersistContextImplication
             )
+        }
+    }
+
+    #[derive(Default)]
+    struct DenyEqualitySubstitution {
+        operations: Vec<Operation>,
+    }
+
+    impl Policy for DenyEqualitySubstitution {
+        fn allows(&mut self, operation: Operation) -> bool {
+            self.operations.push(operation);
+            operation != Operation::ProveEqualitySubstitution
         }
     }
 
@@ -5154,6 +5349,151 @@ mod tests {
             .unwrap();
         assert_eq!(judgements, 1);
         assert_eq!(rule, "equality_modus_ponens");
+    }
+
+    #[test]
+    fn typed_equality_substitution_proves_succ_congruence() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let ind = connection.insert_base_type(100).unwrap();
+        let ind_to_ind = connection.insert_arrow_type(ind, ind).unwrap();
+        let x = connection.insert_constant(200, ind).unwrap();
+        let y = connection.insert_constant(201, ind).unwrap();
+        let succ = connection.insert_constant(202, ind_to_ind).unwrap();
+        let x_equals_y = connection.insert_equality(x, y).unwrap();
+        let context = connection.define_context([x_equals_y]).unwrap();
+
+        let succ_x = connection.insert_application(succ, x).unwrap();
+        let variable = connection.insert_bound_term(0, ind).unwrap();
+        let succ_variable = connection.insert_application(succ, variable).unwrap();
+        let predicate_body = connection.insert_equality(succ_x, succ_variable).unwrap();
+        let predicate = connection.insert_lambda(ind, predicate_body).unwrap();
+        let succ_y = connection.insert_application(succ, y).unwrap();
+        let expected = connection.insert_equality(succ_x, succ_y).unwrap();
+
+        let conclusion = connection
+            .with_proof_session(|mut proof| {
+                let equality = proof.prove_hypothesis(context, x_equals_y)?;
+                let reflexive = proof.prove_reflexivity(context, succ_x)?;
+
+                let beta_x = proof.conversion_beta(predicate, x)?;
+                let reverse_beta_x = proof.conversion_symmetry(&beta_x)?;
+                let predicate_x = proof.convert_theorem(&reflexive, &reverse_beta_x)?;
+
+                let predicate_y =
+                    proof.equality_substitution(&equality, predicate, &predicate_x)?;
+                proof.persist_theorem(&predicate_y)?;
+                let beta_y = proof.conversion_beta(predicate, y)?;
+                let theorem = proof.convert_theorem(&predicate_y, &beta_y)?;
+                assert_eq!(theorem.conclusion(), expected);
+                proof.persist_theorem(&theorem)?;
+                Ok::<_, ProofError>(theorem.conclusion())
+            })
+            .unwrap();
+
+        assert_eq!(conclusion, expected);
+        assert!(connection.proved_judgement(context, expected).unwrap());
+        let mut rules = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .prepare("SELECT rule FROM hol_proof_event WHERE ctx_id = ?1 ORDER BY event_id")
+            .unwrap();
+        let rules = rules
+            .query_map([context.get()], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(rules, ["equality_substitution", "conversion"]);
+    }
+
+    #[test]
+    fn equality_substitution_rejects_inexact_or_ill_typed_predicates() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let truth = connection.insert_bool_term(true).unwrap();
+        let falsehood = connection.insert_bool_term(false).unwrap();
+        let equality_term = connection.insert_equality(truth, falsehood).unwrap();
+        let context = connection.define_context([equality_term, truth]).unwrap();
+        let other_context = connection.define_context([truth]).unwrap();
+        let variable = connection.insert_bound_term(0, bool_type).unwrap();
+        let identity = connection.insert_lambda(bool_type, variable).unwrap();
+        let bool_to_bool = connection.insert_arrow_type(bool_type, bool_type).unwrap();
+        let open_predicate = connection.insert_bound_term(0, bool_to_bool).unwrap();
+        let ind = connection.insert_base_type(300).unwrap();
+        let wrong_domain = connection.insert_lambda(ind, truth).unwrap();
+        let non_boolean = connection.insert_lambda(bool_type, identity).unwrap();
+
+        connection
+            .with_proof_session(|mut proof| {
+                let equality = proof.prove_hypothesis(context, equality_term)?;
+                let premise = proof.prove_hypothesis(context, truth)?;
+                let other = proof.prove_hypothesis(other_context, truth)?;
+                assert!(matches!(
+                    proof.equality_substitution(&premise, identity, &premise),
+                    Err(ProofError::ExpectedEquality(term)) if term == truth
+                ));
+                assert!(matches!(
+                    proof.equality_substitution(&equality, identity, &other),
+                    Err(ProofError::EqualitySubstitutionContextMismatch { .. })
+                ));
+                assert!(matches!(
+                    proof.equality_substitution(&equality, open_predicate, &premise),
+                    Err(ProofError::OpenEqualityPredicate(term)) if term == open_predicate
+                ));
+                assert!(matches!(
+                    proof.equality_substitution(&equality, truth, &premise),
+                    Err(ProofError::EqualityPredicateNotFunction { predicate, .. })
+                        if predicate == truth
+                ));
+                assert!(matches!(
+                    proof.equality_substitution(&equality, wrong_domain, &premise),
+                    Err(ProofError::EqualityPredicateDomainMismatch { predicate, .. })
+                        if predicate == wrong_domain
+                ));
+                assert!(matches!(
+                    proof.equality_substitution(&equality, non_boolean, &premise),
+                    Err(ProofError::EqualityPredicateNonBoolean { predicate, .. })
+                        if predicate == non_boolean
+                ));
+                assert!(matches!(
+                    proof.equality_substitution(&equality, identity, &premise),
+                    Err(ProofError::EqualitySubstitutionPremiseMismatch { actual, .. })
+                        if actual == truth
+                ));
+                Ok::<_, ProofError>(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn equality_substitution_has_a_distinct_policy_gate() {
+        let mut connection =
+            Connection::open_hol_in_memory(DenyEqualitySubstitution::default()).unwrap();
+        let truth = connection.insert_bool_term(true).unwrap();
+        let equality_term = connection.insert_equality(truth, truth).unwrap();
+        let context = connection.define_context([equality_term, truth]).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let variable = connection.insert_bound_term(0, bool_type).unwrap();
+        let identity = connection.insert_lambda(bool_type, variable).unwrap();
+
+        assert!(matches!(
+            connection.with_proof_session(|mut proof| {
+                let equality = proof.prove_hypothesis(context, equality_term)?;
+                let premise = proof.prove_hypothesis(context, truth)?;
+                proof
+                    .equality_substitution(&equality, identity, &premise)
+                    .map(|_| ())
+            }),
+            Err(ProofError::Denied(Operation::ProveEqualitySubstitution))
+        ));
+        let operations = &connection.protocol().policy().operations;
+        assert_eq!(
+            operations.last(),
+            Some(&Operation::ProveEqualitySubstitution)
+        );
+        assert!(
+            !operations.ends_with(&[Operation::ProveEqualitySubstitution, Operation::InsertTerm])
+        );
     }
 
     #[test]

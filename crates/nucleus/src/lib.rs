@@ -19,6 +19,7 @@ pub use hol::{
     SnapshotTrustError, TermError, TermId, TermView, Theorem, TrustedImportError, TrustedImportId,
     TrustedImportImageError, TrustedImportView, TypeError, TypeId, TypeView, UnboundVariable,
     ValidatedHolImage, stlc_bool_eq_v1_schema_id, stlc_bool_eq_v1_semantics,
+    stlc_bool_eq_v2_schema_id, stlc_bool_eq_v2_semantics,
 };
 pub use kernel::Kernel;
 
