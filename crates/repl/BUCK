@@ -26,7 +26,9 @@ rust_library(
     tests = [":covalence_repl-unit-test"],
     named_deps = {
         "covalence_kernel_service": "nucleus//crates/kernel-service:covalence_kernel_service",
+        "covalence_lib_crypto": "nucleus//crates/lib/crypto:covalence_lib_crypto",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
+        "covalence_lib_rand": "nucleus//crates/lib/rand:covalence_lib_rand",
         "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
         "covalence_neutron": "nucleus//crates/neutron:covalence_neutron",
         "covalence_nucleus": "nucleus//crates/nucleus:covalence_nucleus",
@@ -60,7 +62,9 @@ rust_test(
     srcs = _RUST_SOURCES,
     named_deps = {
         "covalence_kernel_service": "nucleus//crates/kernel-service:covalence_kernel_service",
+        "covalence_lib_crypto": "nucleus//crates/lib/crypto:covalence_lib_crypto",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
+        "covalence_lib_rand": "nucleus//crates/lib/rand:covalence_lib_rand",
         "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
         "covalence_neutron": "nucleus//crates/neutron:covalence_neutron",
         "covalence_nucleus": "nucleus//crates/nucleus:covalence_nucleus",
