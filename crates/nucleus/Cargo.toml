@@ -15,7 +15,7 @@ bytes = "1"
 covalence-lib-crypto = { path = "../lib/crypto" }
 covalence-lib-error = { path = "../lib/error" }
 covalence-lib-hash = { path = "../lib/hash", default-features = false, features = ["blake3"] }
-covalence-lib-sqlite = { path = "../lib/sqlite" }
+covalence-lib-sqlite = { path = "../lib/sqlite", features = ["vfs-register"] }
 covalence-neutron = { path = "../neutron" }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]

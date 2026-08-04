@@ -4,16 +4,24 @@
 //! no semantic claim about returned values. The protocol-specific wrappers in
 //! this module own all access to the enclosed `SQLite` connection.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use covalence_lib_hash::O256;
 use covalence_lib_sqlite as sqlite;
 
 use crate::Connection;
+
+mod image;
+
+pub use image::ImageError;
 
 /// Protocol state for an unrestricted SQL session.
 ///
 /// Construction remains private so only Nucleus can enclose a connection as a
 /// REPL after performing any admission required by future revisions.
 pub struct Repl {
-    _private: (),
+    images: HashMap<O256, Arc<[u8]>>,
 }
 
 /// An owned `SQLite` value suitable for transport across kernel boundaries.
@@ -88,7 +96,12 @@ impl Connection<Repl> {
     /// Returns an error when the underlying `SQLite` connection cannot be opened.
     pub fn open_in_memory() -> Result<Self, covalence_neutron::ConnectionError> {
         let neutron = covalence_neutron::Connection::open_in_memory()?;
-        Ok(Self::from_neutron(neutron, Repl { _private: () }))
+        Ok(Self::from_neutron(
+            neutron,
+            Repl {
+                images: HashMap::new(),
+            },
+        ))
     }
 
     /// Prepares one SQL statement under the REPL protocol.
