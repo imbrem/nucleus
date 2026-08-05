@@ -466,7 +466,8 @@ impl SignedHolArtifact {
     #[must_use]
     pub fn attestation_text(&self) -> String {
         format!(
-            "format=covalence-repl-signed-snapshot-demo-v0\nschema={}\nimage={}\nsigner={}\npublic_key={}\nsignature={}\n",
+            "format=covalence-repl-signed-snapshot-demo-v0\nnamespace={}\nschema={}\nimage={}\nsigner={}\npublic_key={}\nsignature={}\n",
+            self.namespace_id,
             self.schema,
             self.image_hash,
             self.signer,
@@ -1363,6 +1364,11 @@ mod tests {
         assert_eq!(result.public_key().len(), 32);
         assert_eq!(result.signature().len(), 64);
         assert!(!result.image().is_empty());
+        assert!(
+            result
+                .attestation_text()
+                .contains(&format!("namespace={}", result.namespace_id()))
+        );
         assert_eq!(result.imported_context_id(), 0);
         assert_eq!(
             result.imported_conclusion_id(),

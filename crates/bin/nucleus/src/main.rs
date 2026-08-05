@@ -518,6 +518,7 @@ mod tests {
         let output = String::from_utf8(output).unwrap();
         assert!(!image.is_empty());
         assert!(sidecar.contains("format=covalence-repl-signed-snapshot-demo-v0"));
+        assert!(sidecar.contains("namespace=1\n"));
         assert!(output.contains("kind\tsigned-hol-round-trip\n"));
         assert!(output.contains("proof-persisted"));
         assert!(output.contains("theorem-read"));

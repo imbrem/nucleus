@@ -50,9 +50,10 @@
             image: signed.image.byteLength,
             publicKey: signed.publicKey.byteLength,
             signature: signed.signature.byteLength,
-            attestation: signed.attestation.startsWith(
-              "format=covalence-repl-signed-snapshot-demo-v0",
-            ),
+            attestation:
+              signed.attestation.startsWith(
+                "format=covalence-repl-signed-snapshot-demo-v0",
+              ) && signed.attestation.includes(`namespace=${signed.namespace}`),
           },
         });
       } catch (error) {
