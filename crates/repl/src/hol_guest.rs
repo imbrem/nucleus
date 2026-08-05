@@ -35,10 +35,13 @@ mod bindings {
 }
 
 use bindings::covalence::hol_proof_guest::host::{
-    AppendError, ContextNode, ConversionNode, Host, HostContextNode, HostConversionNode,
+    AppendError, ContextEquivalenceNode, ContextImplicationNode, ContextNode, ContextPathNode,
+    ContextUnionNode, ConversionNode, Host, HostContextEquivalenceNode, HostContextImplicationNode,
+    HostContextNode, HostContextPathNode, HostContextUnionNode, HostConversionNode,
     HostNamespaceNode, HostProofPlan, HostTermInstantiationMapNode, HostTermNode, HostTheoremNode,
-    HostTypeInstantiationMapNode, HostTypeNode, NamespaceNode, ProofPlan, TermInstantiationMapNode,
-    TermNode, TheoremNode, TypeInstantiationMapNode, TypeNode,
+    HostTheoremWitnessListNode, HostTypeInstantiationMapNode, HostTypeNode, NamespaceNode,
+    ProofPlan, TermInstantiationMapNode, TermNode, TheoremNode, TheoremWitnessListNode,
+    TypeInstantiationMapNode, TypeNode,
 };
 
 const PLAN_REP: u32 = 1;
@@ -153,6 +156,24 @@ impl GuestState {
         while let Some(Recipe::ExtendContext { base, .. }) = self.recipe.get(context) {
             depth += 1;
             context = *base;
+        }
+        depth
+    }
+
+    fn theorem_witness_list_depth(&self, mut list: usize) -> usize {
+        let mut depth = 0;
+        while let Some(Recipe::ExtendTheoremWitnessList { base, .. }) = self.recipe.get(list) {
+            depth += 1;
+            list = *base;
+        }
+        depth
+    }
+
+    fn context_path_depth(&self, mut path: usize) -> usize {
+        let mut depth = 1;
+        while let Some(Recipe::ExtendContextPath { base, .. }) = self.recipe.get(path) {
+            depth += 1;
+            path = *base;
         }
         depth
     }
@@ -392,6 +413,200 @@ impl HostProofPlan for GuestState {
         Self::plan(&plan)
             .and_then(|()| self.node(&premise, Sort::Theorem))
             .and_then(|premise| self.append(Recipe::Choice { premise }, Sort::Theorem))
+    }
+
+    fn empty_theorem_witness_list(
+        &mut self,
+        plan: Resource<ProofPlan>,
+    ) -> Result<Resource<TheoremWitnessListNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.append(Recipe::EmptyTheoremWitnessList, Sort::TheoremWitnessList))
+    }
+
+    fn extend_theorem_witness_list(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        base: Resource<TheoremWitnessListNode>,
+        witness: Resource<TheoremNode>,
+    ) -> Result<Resource<TheoremWitnessListNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&base, Sort::TheoremWitnessList))
+            .and_then(|base| {
+                self.node(&witness, Sort::Theorem)
+                    .map(|witness| (base, witness))
+            })
+            .and_then(|(base, witness)| {
+                if self.theorem_witness_list_depth(base) >= MAX_CONTEXT_MEMBERS {
+                    return Err(AppendError::ResourceLimit);
+                }
+                self.append(
+                    Recipe::ExtendTheoremWitnessList { base, witness },
+                    Sort::TheoremWitnessList,
+                )
+            })
+    }
+
+    fn prove_context_implication(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        antecedent: Resource<ContextNode>,
+        consequent: Resource<ContextNode>,
+        witnesses: Resource<TheoremWitnessListNode>,
+    ) -> Result<Resource<ContextImplicationNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&antecedent, Sort::Context))
+            .and_then(|antecedent| {
+                self.node(&consequent, Sort::Context)
+                    .map(|consequent| (antecedent, consequent))
+            })
+            .and_then(|(antecedent, consequent)| {
+                self.node(&witnesses, Sort::TheoremWitnessList)
+                    .map(|witnesses| (antecedent, consequent, witnesses))
+            })
+            .and_then(|(antecedent, consequent, witnesses)| {
+                self.append(
+                    Recipe::ContextImplication {
+                        antecedent,
+                        consequent,
+                        witnesses,
+                    },
+                    Sort::ContextImplication,
+                )
+            })
+    }
+
+    fn persist_context_implication(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        implication: Resource<ContextImplicationNode>,
+    ) -> Result<(), AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&implication, Sort::ContextImplication))
+            .and_then(|implication| {
+                self.append_unit(
+                    Recipe::PersistContextImplication { implication },
+                    Sort::Unit,
+                )
+            })
+    }
+
+    fn singleton_context_path(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        context: Resource<ContextNode>,
+    ) -> Result<Resource<ContextPathNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&context, Sort::Context))
+            .and_then(|context| {
+                self.append(Recipe::SingletonContextPath { context }, Sort::ContextPath)
+            })
+    }
+
+    fn extend_context_path(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        base: Resource<ContextPathNode>,
+        context: Resource<ContextNode>,
+    ) -> Result<Resource<ContextPathNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&base, Sort::ContextPath))
+            .and_then(|base| {
+                self.node(&context, Sort::Context)
+                    .map(|context| (base, context))
+            })
+            .and_then(|(base, context)| {
+                if self.context_path_depth(base) >= MAX_CONTEXT_MEMBERS {
+                    return Err(AppendError::ResourceLimit);
+                }
+                self.append(
+                    Recipe::ExtendContextPath { base, context },
+                    Sort::ContextPath,
+                )
+            })
+    }
+
+    fn prove_context_implication_path(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        path: Resource<ContextPathNode>,
+    ) -> Result<Resource<ContextImplicationNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&path, Sort::ContextPath))
+            .and_then(|path| {
+                self.append(
+                    Recipe::ContextImplicationPath { path },
+                    Sort::ContextImplication,
+                )
+            })
+    }
+
+    fn prove_weakening(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        implication: Resource<ContextImplicationNode>,
+        theorem: Resource<TheoremNode>,
+    ) -> Result<Resource<TheoremNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&implication, Sort::ContextImplication))
+            .and_then(|implication| {
+                self.node(&theorem, Sort::Theorem)
+                    .map(|theorem| (implication, theorem))
+            })
+            .and_then(|(implication, theorem)| {
+                self.append(
+                    Recipe::Weakening {
+                        implication,
+                        theorem,
+                    },
+                    Sort::Theorem,
+                )
+            })
+    }
+
+    fn prove_context_union(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        left: Resource<ContextNode>,
+        right: Resource<ContextNode>,
+        result_context: Resource<ContextNode>,
+    ) -> Result<Resource<ContextUnionNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&left, Sort::Context))
+            .and_then(|left| self.node(&right, Sort::Context).map(|right| (left, right)))
+            .and_then(|(left, right)| {
+                self.node(&result_context, Sort::Context)
+                    .map(|result| (left, right, result))
+            })
+            .and_then(|(left, right, result)| {
+                self.append(
+                    Recipe::ContextUnion {
+                        left,
+                        right,
+                        result,
+                    },
+                    Sort::ContextUnion,
+                )
+            })
+    }
+
+    fn prove_context_equivalence(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        forward: Resource<ContextImplicationNode>,
+        backward: Resource<ContextImplicationNode>,
+    ) -> Result<Resource<ContextEquivalenceNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&forward, Sort::ContextImplication))
+            .and_then(|forward| {
+                self.node(&backward, Sort::ContextImplication)
+                    .map(|backward| (forward, backward))
+            })
+            .and_then(|(forward, backward)| {
+                self.append(
+                    Recipe::ContextEquivalence { forward, backward },
+                    Sort::ContextEquivalence,
+                )
+            })
     }
 
     fn conversion_reflexivity(
@@ -834,6 +1049,11 @@ drop_resource!(HostTermNode, TermNode);
 drop_resource!(HostContextNode, ContextNode);
 drop_resource!(HostConversionNode, ConversionNode);
 drop_resource!(HostTheoremNode, TheoremNode);
+drop_resource!(HostTheoremWitnessListNode, TheoremWitnessListNode);
+drop_resource!(HostContextImplicationNode, ContextImplicationNode);
+drop_resource!(HostContextPathNode, ContextPathNode);
+drop_resource!(HostContextUnionNode, ContextUnionNode);
+drop_resource!(HostContextEquivalenceNode, ContextEquivalenceNode);
 drop_resource!(HostNamespaceNode, NamespaceNode);
 drop_resource!(HostTermInstantiationMapNode, TermInstantiationMapNode);
 drop_resource!(HostTypeInstantiationMapNode, TypeInstantiationMapNode);
@@ -1208,6 +1428,61 @@ impl StdError for HolGuestError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn guest_builder_rejects_the_65th_witness_and_path_entry() {
+        let plan = || Resource::new_borrow(PLAN_REP);
+        let mut witnesses = GuestState::new();
+        let context = witnesses.empty_context(plan()).unwrap().rep();
+        let theorem = witnesses
+            .prove_truth(plan(), Resource::new_borrow(context))
+            .unwrap()
+            .rep();
+        let mut list = witnesses.empty_theorem_witness_list(plan()).unwrap().rep();
+        for _ in 0..MAX_CONTEXT_MEMBERS {
+            list = witnesses
+                .extend_theorem_witness_list(
+                    plan(),
+                    Resource::new_borrow(list),
+                    Resource::new_borrow(theorem),
+                )
+                .unwrap()
+                .rep();
+        }
+        assert!(matches!(
+            witnesses.extend_theorem_witness_list(
+                plan(),
+                Resource::new_borrow(list),
+                Resource::new_borrow(theorem),
+            ),
+            Err(AppendError::ResourceLimit)
+        ));
+
+        let mut paths = GuestState::new();
+        let context = paths.empty_context(plan()).unwrap().rep();
+        let mut path = paths
+            .singleton_context_path(plan(), Resource::new_borrow(context))
+            .unwrap()
+            .rep();
+        for _ in 1..MAX_CONTEXT_MEMBERS {
+            path = paths
+                .extend_context_path(
+                    plan(),
+                    Resource::new_borrow(path),
+                    Resource::new_borrow(context),
+                )
+                .unwrap()
+                .rep();
+        }
+        assert!(matches!(
+            paths.extend_context_path(
+                plan(),
+                Resource::new_borrow(path),
+                Resource::new_borrow(context),
+            ),
+            Err(AppendError::ResourceLimit)
+        ));
+    }
 
     fn closed_beta_recipe() -> Vec<Recipe> {
         vec![
@@ -1887,6 +2162,51 @@ mod tests {
                 .unwrap(),
             ("TARR".to_owned(), parameter_type, parameter_type, 1)
         );
+        assert_generic_theorem_receive(&producer, &artifact, (context, conclusion));
+    }
+
+    #[test]
+    fn configured_real_context_capabilities_component_matches_fixed_wire_and_receives() {
+        let Some(component) =
+            std::env::var_os("COVALENCE_HOL_CONTEXT_CAPABILITIES_GUEST_COMPONENT")
+        else {
+            return;
+        };
+        let bytes = std::fs::read(component).unwrap();
+        let recipe =
+            collect_hol_proof_component(&bytes, WasmtimeComponentLimits::default()).unwrap();
+        assert_eq!(
+            recipe.as_bytes(),
+            crate::hol_guest_plan::CONTEXT_CAPABILITIES_WIRE
+        );
+        assert_eq!(
+            recipe.as_bytes(),
+            crate::hol_guest_plan::context_capabilities_test_recipe().as_bytes()
+        );
+        let producer = Kernel::ephemeral();
+        let artifact = recipe.replay(&producer).unwrap();
+        let image_bytes = covalence_neutron::Bytes::copy_from_slice(artifact.image());
+        let image = covalence_neutron::Connection::deserialize(&image_bytes).unwrap();
+        let sqlite = image.sqlite();
+        let namespace = artifact.namespace_id();
+        let context = sqlite
+            .query_row(
+                "SELECT local_id FROM hol_namespace_export
+                 WHERE namespace_id = ?1 AND export_id = 0
+                   AND sort = 'context' AND name = 'combined_context'",
+                [namespace],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        let conclusion = sqlite
+            .query_row(
+                "SELECT local_id FROM hol_namespace_export
+                 WHERE namespace_id = ?1 AND export_id = 1
+                   AND sort = 'term' AND name = 'weakened_truth'",
+                [namespace],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
         assert_generic_theorem_receive(&producer, &artifact, (context, conclusion));
     }
 
