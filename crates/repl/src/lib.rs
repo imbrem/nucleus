@@ -22,6 +22,12 @@ pub use hol_infinity::{
     produce_signed_dedekind_infinity_assumption, retain_signed_dedekind_infinity_assumption,
 };
 
+mod hol_natlike;
+pub use hol_natlike::{
+    NatLikeSyntax, SignedNatLikeArtifact, build_natlike_syntax,
+    produce_and_retain_signed_natlike_artifact, produce_signed_natlike_artifact,
+};
+
 mod hol_guest_plan;
 pub use hol_guest_plan::{HolProofRecipeError, MAX_SEALED_HOL_RECIPE_BYTES, SealedHolProofRecipe};
 
@@ -1503,30 +1509,29 @@ pub(crate) fn reread_received_hol_snapshot(
     Ok(retained.received)
 }
 
-/// Reopens one retained signed snapshot as an independent writable managed state.
+/// Prepares one retained signed snapshot as an uninserted writable HOL state.
 ///
 /// This adapter carries no theorem authority of its own. It reauthenticates and
 /// detached-validates the retained bytes, rematches their already accepted
 /// trusted-import row against `owner`, delegates the explicit state assumption
 /// to Nucleus, and finally asks a scoped child proof session to load the exact
-/// dynamic context/conclusion established during receipt. Only a completely
-/// verified child is inserted into the REPL directory.
+/// dynamic context/conclusion established during receipt. The completely
+/// verified child is returned without adding a REPL directory row.
 ///
-/// `retained` is borrowed throughout. Consequently every failure, including a
-/// directory insertion failure, leaves the receipt available for an exact
-/// retry or a read-only reread through its owner.
+/// `retained` is borrowed throughout. Consequently every failure leaves the
+/// receipt available for an exact retry or a read-only reread through its owner.
 ///
 /// # Errors
 ///
 /// Returns the first rejected owner lookup, authentication, validation,
-/// trusted-import match, state-open, theorem-load, or directory-insertion
-/// boundary. No directory row is added on failure.
-pub fn open_retained_trusted_hol_as_managed_state(
+/// trusted-import match, state-open, or theorem-load boundary. This function
+/// never adds a directory row.
+pub(crate) fn prepare_retained_trusted_hol_state(
     directory: &mut Repl<LocalConnection>,
     owner: ConnectionId,
     retained: &RetainedReceivedHolSnapshot,
     child_policy: AllowAll,
-) -> Result<ManagedTrustedHolState, ManagedTrustedHolStateError> {
+) -> Result<Connection<Hol<AllowAll>>, ManagedTrustedHolStateError> {
     if retained.owner != owner {
         return Err(ManagedTrustedHolStateError::invalid(
             "receipt-owner-checked",
@@ -1548,7 +1553,6 @@ pub fn open_retained_trusted_hol_as_managed_state(
         .map_err(|error: TrustedStateOpenError| {
             ManagedTrustedHolStateError::at("trusted-state-opened", error)
         })?;
-
     let theorem_exists = child
         .with_proof_session(|mut proof| {
             proof
@@ -1565,7 +1569,21 @@ pub fn open_retained_trusted_hol_as_managed_state(
             "retained theorem is absent from trusted child state",
         ));
     }
+    Ok(child)
+}
 
+/// Reopens one retained signed snapshot as an independent writable managed state.
+///
+/// # Errors
+///
+/// Returns the first rejected preparation or atomic directory insertion boundary.
+pub fn open_retained_trusted_hol_as_managed_state(
+    directory: &mut Repl<LocalConnection>,
+    owner: ConnectionId,
+    retained: &RetainedReceivedHolSnapshot,
+    child_policy: AllowAll,
+) -> Result<ManagedTrustedHolState, ManagedTrustedHolStateError> {
+    let child = prepare_retained_trusted_hol_state(directory, owner, retained, child_policy)?;
     let connection = LocalConnection::Hol(child);
     let connection = directory
         .insert_selected(connection.protocol(), connection)
