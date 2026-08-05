@@ -15,9 +15,10 @@ use super::{
     SignedMessageRequest, SignedMessageResponse, SignedNatLikeMissingZero, SignedServiceCommand,
     SignedServiceSession, Value, authenticate_pinned_signed_hol_artifact, decode_signed_request,
     decode_signed_response, encode_signed_request, encode_signed_response,
-    open_retained_trusted_hol_as_managed_state, produce_signed_hol_artifact,
-    produce_signed_natlike_missing_zero, reread_received_hol_snapshot,
+    open_retained_trusted_hol_as_managed_state, parse_signed_hol_artifact_sidecar,
+    produce_signed_hol_artifact, produce_signed_natlike_missing_zero, reread_received_hol_snapshot,
     run_managed_signed_hol_round_trip, trust_and_receive_pinned_signed_hol_artifact,
+    trust_receive_and_retain_bounded_selected_managed_hol_artifact,
     trust_receive_and_retain_pinned_signed_hol_artifact,
 };
 
@@ -116,6 +117,15 @@ pub struct WebSignedNatLikeMissingZero {
     theorem: SignedNatLikeMissingZero,
     receiver: u32,
     retained: u32,
+}
+
+/// Authenticated, explicitly trusted signed HOL bytes retained by this kernel.
+#[wasm_bindgen]
+pub struct WebReceivedSignedHolArtifact {
+    received: ReceivedHolSnapshot,
+    receiver: u32,
+    retained: u32,
+    attestation: String,
 }
 
 /// Browser-side authenticated session state for a remote signed kernel service.
@@ -914,6 +924,61 @@ impl WebKernel {
         Ok(id)
     }
 
+    /// Authenticates, validates, explicitly trusts/imports, and retains an artifact.
+    ///
+    /// `expected_public_key` is the independent trust anchor. `image` and
+    /// `sidecar` are untrusted transport data. The strict sidecar parser only
+    /// reconstructs an untrusted artifact; its claimed key grants no authority.
+    ///
+    /// Authentication and detached validation finish before a receiver is
+    /// admitted to the REPL directory. The returned receiver owns the retained
+    /// read-only receipt used by [`WebKernel::open_retained_trusted_hol_state`].
+    ///
+    /// # Errors
+    ///
+    /// Returns before directory mutation for oversized or malformed transport
+    /// fields, a wrong expected key, a bad signature, or invalid SQLite/HOL.
+    pub fn receive_signed_hol_artifact(
+        &mut self,
+        expected_public_key: &[u8],
+        image: &[u8],
+        sidecar: &[u8],
+    ) -> Result<WebReceivedSignedHolArtifact, JsValue> {
+        let retained_id = self.next_received_artifact;
+        let next_retained_id = retained_id
+            .checked_add(1)
+            .ok_or_else(|| JsValue::from_str("received artifact IDs are exhausted"))?;
+        let artifact =
+            parse_signed_hol_artifact_sidecar(image.to_vec(), sidecar).map_err(js_error)?;
+        let attestation = std::str::from_utf8(sidecar).map_err(js_error)?.to_owned();
+        let expected = ExpectedKernelIdentity::from_public_key(
+            KernelId::from_u32(u32::MAX),
+            expected_public_key,
+        )
+        .map_err(js_error)?;
+        let pinned =
+            authenticate_pinned_signed_hol_artifact(&expected, &artifact).map_err(js_error)?;
+        let receiver = self.kernel.open_hol(AllowAll).map_err(js_error)?;
+        let (receiver, retained) = trust_receive_and_retain_bounded_selected_managed_hol_artifact(
+            &mut self.repl,
+            receiver,
+            pinned,
+            i64::from(u32::MAX),
+        )
+        .map_err(js_error)?;
+        let received = retained.received();
+        // Bounded admission establishes this before selecting or inserting.
+        let receiver = receiver.get() as u32;
+        self.next_received_artifact = next_retained_id;
+        self.received_artifacts.insert(retained_id, retained);
+        Ok(WebReceivedSignedHolArtifact {
+            received,
+            receiver,
+            retained: retained_id,
+            attestation,
+        })
+    }
+
     /// Explicitly trusts and imports one previously authenticated pinned artifact.
     ///
     /// # Errors
@@ -1066,6 +1131,12 @@ impl WebKernel {
     )]
     pub fn max_image_bytes() -> f64 {
         super::MAX_IMAGE_BYTES as f64
+    }
+
+    /// Returns the maximum accepted signed-artifact sidecar size in bytes.
+    #[must_use]
+    pub fn max_signed_hol_artifact_sidecar_bytes() -> usize {
+        super::MAX_SIGNED_HOL_ARTIFACT_SIDECAR_BYTES
     }
 
     /// Serializes the writable in-memory `main` database.
@@ -1648,6 +1719,57 @@ impl WebSignedNatLikeMissingZero {
     #[must_use]
     pub fn attestation_text(&self) -> String {
         self.theorem.attestation_text()
+    }
+}
+
+#[wasm_bindgen]
+impl WebReceivedSignedHolArtifact {
+    /// Returns `received-signed-hol-artifact`.
+    #[must_use]
+    pub fn kind(&self) -> String {
+        "received-signed-hol-artifact".to_owned()
+    }
+
+    /// Returns the explicitly trusted receiver connection.
+    #[must_use]
+    pub fn receiver_connection(&self) -> u32 {
+        self.receiver
+    }
+
+    /// Returns the opaque retained-receipt ID used by the Worker.
+    #[must_use]
+    pub fn retained_id(&self) -> u32 {
+        self.retained
+    }
+
+    /// Returns the receiver's inert trusted-import coordinate.
+    #[must_use]
+    pub fn import_id(&self) -> String {
+        self.received.import_id().to_string()
+    }
+
+    /// Returns the receiver-local imported namespace alias.
+    #[must_use]
+    pub fn namespace_id(&self) -> String {
+        self.received.namespace_id().to_string()
+    }
+
+    /// Returns the imported theorem context coordinate.
+    #[must_use]
+    pub fn context_id(&self) -> String {
+        self.received.context_id().to_string()
+    }
+
+    /// Returns the imported theorem conclusion coordinate.
+    #[must_use]
+    pub fn conclusion_id(&self) -> String {
+        self.received.conclusion_id().to_string()
+    }
+
+    /// Returns the bounded opaque sidecar exactly as supplied.
+    #[must_use]
+    pub fn attestation(&self) -> String {
+        self.attestation.clone()
     }
 }
 
