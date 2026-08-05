@@ -24,6 +24,14 @@ use covalence_nucleus::{
     ed25519_key_id,
 };
 
+mod service;
+
+pub use service::{
+    EndpointDescription, ServiceIdentity, ServiceOperation, ServiceProducedHol, ServiceReceivedHol,
+    ServiceResult, SessionAccepted, SessionInitiator, SessionRequest, SignedKernelService,
+    SignedServiceCommand, SignedServiceReply, SignedServiceSession, signed_kernel_service_schema,
+};
+
 const SCHEMA: &str = "
 PRAGMA foreign_keys = ON;
 CREATE TABLE repl_kernel (

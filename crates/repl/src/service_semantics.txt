@@ -1,0 +1,53 @@
+covalence signed kernel service semantics v0
+
+Scope: this schema describes messages above Nucleus; it grants no HOL authority.
+The exact UTF-8 bytes of this file are SPEC and S = BLAKE3-256(SPEC).
+O256(x) is unkeyed BLAKE3-256(x). TAG(k,x) is BLAKE3 keyed_hash with 32-byte key k.
+D(domain, fields...) = TAG(S, U64BE(len(domain)) || domain || each
+U64BE(len(field)) || field). Domains below are literal lowercase ASCII. O256 values
+and Ed25519 public keys are raw 32 bytes; signatures are raw 64 bytes; text is UTF-8;
+u32/u64 are unsigned big-endian and i64 is two's-complement big-endian.
+An identity is (signer, public_key), where signer = TAG(
+6d5b0cc7de272425ce91d2712182758b08fec18eb9c2ce3c37457dfdf9ee5822,
+public_key). Ed25519 signs and verifies the raw 32-byte statement.
+
+Statements, with fields in exact order:
+DESCRIPTION = D("description", endpoint.signer, endpoint.public_key, challenge32).
+SESSION_REQUEST = D("session-request", endpoint.signer, endpoint.public_key,
+requester.signer, requester.public_key, challenge32, nonce32).
+SESSION_ACCEPTED = D("session-accepted", session, endpoint.signer,
+requester.signer, SESSION_REQUEST).
+session = D("session", SESSION_REQUEST, endpoint-local U64BE counter).
+COMMAND = D("command", session, U64BE sequence, request_id, requester.signer,
+OPERATION). REPLY = D("reply", session, U64BE sequence, request_id, COMMAND, RESULT).
+
+OPERATION is exactly one of:
+D("operation-open-hol"); D("operation-close-hol", U64BE connection);
+D("operation-produce-signed-hol", U64BE connection);
+D("operation-receive-signed-hol", U64BE connection, I64BE expected.kernel,
+expected.signer, expected.public_key, ARTIFACT); D("operation-shutdown").
+ARTIFACT = D("signed-hol-artifact", I64BE namespace, O256(image bytes), schema,
+claimed_image_hash, signer, public_key, signature).
+
+RESULT is exactly one of:
+D("result-opened", U64BE connection); D("result-closed");
+D("result-produced", presentation_text, ARTIFACT);
+D("result-received", I64BE import, I64BE namespace, I64BE context, I64BE conclusion);
+D("result-goodbye"); D("result-operation-error", message_text);
+D("result-rejected", message_text). Presentation and diagnostic text has no authority.
+
+DESCRIPTION is signed by endpoint; the challenge is fresh for the service lifetime.
+SESSION_REQUEST is signed by requester and accepted only for the exact challenge, once.
+SESSION_ACCEPTED is signed by endpoint. The caller pins endpoint independently of messages.
+COMMAND is signed by the session requester; REPLY is signed by the pinned endpoint.
+Both signatures use the corresponding statement above under this exact schema S.
+
+Sequence starts at zero. A client has at most one command in flight. Authentication,
+coherence, and exact-next-sequence checks precede dispatch and mutation. An accepted
+command advances once. The endpoint caches its last accepted signed reply; an identical
+authenticated retry returns it without dispatch. Conflicting reuse and gaps reject.
+Pre-dispatch rejection does not advance. Operation errors advance because dispatch occurred.
+Shutdown closes the session after its signed Goodbye; only that exact reply remains retryable.
+
+HOL receipt authenticates against the independently pinned source key, then performs detached
+validation, then explicit trust/import. Transport framing, persistence, and policy are outside S.
