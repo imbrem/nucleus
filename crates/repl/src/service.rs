@@ -198,6 +198,77 @@ pub trait HolProofComponentExecutor: Send {
     fn execute(&mut self, component: O256) -> Result<SealedHolProofRecipe, String>;
 }
 
+impl<T: HolProofComponentExecutor + ?Sized> HolProofComponentExecutor for Box<T> {
+    fn contains(&self, component: O256) -> bool {
+        (**self).contains(component)
+    }
+
+    fn execute(&mut self, component: O256) -> Result<SealedHolProofRecipe, String> {
+        (**self).execute(component)
+    }
+}
+
+/// Frozen recipes collected before a key-holding service starts.
+///
+/// The bytes supplied here remain untrusted: insertion performs the strict
+/// canonical structural decode, and service dispatch still performs checked
+/// replay before producing any signature.
+#[derive(Default)]
+pub struct PrecollectedHolProofComponentExecutor {
+    recipes: HashMap<O256, SealedHolProofRecipe>,
+}
+
+impl PrecollectedHolProofComponentExecutor {
+    /// Creates an empty startup-only recipe catalog.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Decodes and installs one exact component's untrusted recipe bytes.
+    ///
+    /// # Errors
+    ///
+    /// Rejects duplicate component coordinates and every malformed,
+    /// non-canonical, or oversized recipe.
+    pub fn insert_untrusted(&mut self, component: O256, bytes: &[u8]) -> Result<(), String> {
+        if self.recipes.contains_key(&component) {
+            return Err(format!(
+                "HOL proof component {component} is already provisioned"
+            ));
+        }
+        let recipe =
+            SealedHolProofRecipe::from_untrusted_bytes(bytes).map_err(|error| error.to_string())?;
+        self.recipes.insert(component, recipe);
+        Ok(())
+    }
+
+    /// Returns the number of frozen component recipes.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.recipes.len()
+    }
+
+    /// Reports whether this catalog is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.recipes.is_empty()
+    }
+}
+
+impl HolProofComponentExecutor for PrecollectedHolProofComponentExecutor {
+    fn contains(&self, component: O256) -> bool {
+        self.recipes.contains_key(&component)
+    }
+
+    fn execute(&mut self, component: O256) -> Result<SealedHolProofRecipe, String> {
+        self.recipes
+            .get(&component)
+            .cloned()
+            .ok_or_else(|| "HOL proof component is not provisioned".to_owned())
+    }
+}
+
 /// Artifact produced by one locally provisioned proof component.
 #[derive(Clone)]
 pub struct ServiceProducedHolComponent {
@@ -1489,6 +1560,31 @@ mod tests {
         assert_eq!(produced.component(), component);
         assert_eq!(produced.artifact().signer(), endpoint.signer());
         assert_eq!(produced.artifact().public_key(), &endpoint.public_key());
+    }
+
+    #[test]
+    fn precollected_executor_strictly_decodes_untrusted_bytes_before_installation() {
+        let component = O256::from_bytes(b"precollected component");
+        let recipe = crate::hol_guest_plan::closed_beta_test_recipe();
+        let mut executor = PrecollectedHolProofComponentExecutor::new();
+        executor
+            .insert_untrusted(component, recipe.as_bytes())
+            .unwrap();
+        assert_eq!(executor.len(), 1);
+        assert!(executor.contains(component));
+        assert_eq!(executor.execute(component).unwrap(), recipe);
+        assert!(
+            executor
+                .insert_untrusted(component, recipe.as_bytes())
+                .unwrap_err()
+                .contains("already provisioned")
+        );
+
+        let mut malformed = PrecollectedHolProofComponentExecutor::new();
+        let mut trailing = recipe.as_bytes().to_vec();
+        trailing.push(0);
+        assert!(malformed.insert_untrusted(component, &trailing).is_err());
+        assert!(malformed.is_empty());
     }
 
     #[test]

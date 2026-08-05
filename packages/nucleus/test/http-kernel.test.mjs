@@ -56,7 +56,17 @@ async function launchKernel(context, allowedOrigin) {
   return { child, url: metadata.get("url"), key: metadata.get("public_key") };
 }
 
-async function launchHashKernel(context, allowedOrigin, component, digest) {
+async function launchHashKernel(
+  context,
+  allowedOrigin,
+  component,
+  digest,
+  collector,
+) {
+  const mode =
+    collector === undefined
+      ? ["--hash-wasm-hol-http", digest, component]
+      : ["--hash-wasm-hol-subprocess-http", digest, component, collector];
   const child = spawn(
     "cargo",
     [
@@ -66,9 +76,7 @@ async function launchHashKernel(context, allowedOrigin, component, digest) {
       "-p",
       "covalence-bin-nucleus",
       "--",
-      "--hash-wasm-hol-http",
-      digest,
-      component,
+      ...mode,
       "127.0.0.1:0",
       allowedOrigin,
     ],
@@ -89,12 +97,15 @@ async function launchHashKernel(context, allowedOrigin, component, digest) {
     if (
       metadata.has("url") &&
       metadata.has("public_key") &&
-      metadata.has("component")
+      metadata.has("component") &&
+      (collector === undefined || metadata.has("executor"))
     )
       break;
   }
   assert.equal(child.exitCode, null, stderr);
   assert.equal(metadata.get("component"), digest);
+  if (collector !== undefined)
+    assert.equal(metadata.get("executor"), "subprocess-precollected");
   return { child, url: metadata.get("url"), key: metadata.get("public_key") };
 }
 
@@ -264,12 +275,7 @@ test("real Chromium imports a signed beta artifact from native HTTP", async (con
   );
 });
 
-test("real Chromium runs only a provisioned component digest and rereads it", async (context) => {
-  const component = process.env.COVALENCE_HOL_GUEST_COMPONENT;
-  if (component === undefined) {
-    context.skip("COVALENCE_HOL_GUEST_COMPONENT is required");
-    return;
-  }
+async function exerciseHashSelectedComponent(context, component, collector) {
   const digest = execFileSync("b3sum", [component], { encoding: "utf8" })
     .trim()
     .split(/\s+/, 1)[0];
@@ -277,7 +283,7 @@ test("real Chromium runs only a provisioned component digest and rereads it", as
   const componentBytes = (await stat(component)).size;
   const base = await launchStaticServer(context);
   const [kernel, browser] = await Promise.all([
-    launchHashKernel(context, base, component, digest),
+    launchHashKernel(context, base, component, digest, collector),
     launchBrowser(context),
   ]);
   const page = await runPage(
@@ -308,6 +314,27 @@ test("real Chromium runs only a provisioned component digest and rereads it", as
     null,
     "closing the remote session leaves the transport-owner server alive",
   );
+}
+
+test("real Chromium runs only a provisioned component digest and rereads it", async (context) => {
+  const component = process.env.COVALENCE_HOL_GUEST_COMPONENT;
+  if (component === undefined) {
+    context.skip("COVALENCE_HOL_GUEST_COMPONENT is required");
+    return;
+  }
+  await exerciseHashSelectedComponent(context, component, undefined);
+});
+
+test("real Chromium imports a proof precollected outside the signing process", async (context) => {
+  const component = process.env.COVALENCE_HOL_GUEST_COMPONENT;
+  const collector = process.env.COVALENCE_HOL_RECIPE_COLLECTOR;
+  if (component === undefined || collector === undefined) {
+    context.skip(
+      "COVALENCE_HOL_GUEST_COMPONENT and COVALENCE_HOL_RECIPE_COLLECTOR are required",
+    );
+    return;
+  }
+  await exerciseHashSelectedComponent(context, component, collector);
 });
 
 test("real Chromium rejects an out-of-band endpoint key mismatch", async (context) => {
