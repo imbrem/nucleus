@@ -1,9 +1,26 @@
 //! Portable trusted core for Nucleus.
 
 mod connection;
+pub mod hol;
 mod kernel;
 
 pub use connection::Connection;
+pub use hol::{
+    AllowAll, AuthenticatedHolImageValidationError, AuthenticatedValidatedHolImage, ContextError,
+    ContextId, ContextImplication, Conversion, ExportError, ExportId, ExportSort, ExportView,
+    ExternalExportRef, Hol, HolDatabaseRef, HolExportError, HolImageCounts,
+    HolImageValidationError, HolOpenError, HolSchema, HolSchemaDescriptor,
+    HolSchemaDescriptorError, HolSnapshotAttestation, ImportError, ImportId, ImportView,
+    ImportedContextId, ImportedExport, ImportedHolReader, ImportedKindId, ImportedReaderError,
+    ImportedTermId, ImportedTermView, ImportedTheorem, ImportedTypeId, ImportedTypeView, Kind,
+    KindError, KindId, KindView, MatchedTrustedHolImage, MetadataError, MetadataSchemaError,
+    MetadataTable, MetadataTarget, MetadataType, MetadataValue, NamespaceError, NamespaceExport,
+    NamespaceId, NamespaceSource, NamespaceView, Operation, Policy, ProofError, ProofSession,
+    SignedHolSnapshot, SnapshotTrustError, TermError, TermId, TermInstantiation, TermView, Theorem,
+    TrustedImportError, TrustedImportId, TrustedImportImageError, TrustedImportView, TypeError,
+    TypeId, TypeInstantiation, TypeView, UnboundTypeVariable, UnboundVariable, ValidatedHolImage,
+    hol_schema_id, hol_semantics_id,
+};
 pub use kernel::Kernel;
 
 pub mod sql;

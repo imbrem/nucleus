@@ -1,0 +1,86 @@
+Nucleus HOL-omega kinded-type syntax prototype
+
+This protocol is one alternative above the selected rank-zero HOL core. It implements the
+kind-indexed type-operator syntax of ProjectBeth.HOLOmega, but it is not full HOL-omega. Subtypes,
+term-level type abstraction/application, type-operator conversion rules, subtype equations, and a
+machine-checked representation theorem are absent.
+
+Syntax is one canonical tagged node graph. KSTAR has rank 0. KARR(a,b) has rank
+max(rank(a)+1,rank(b)). TBOOL and opaque TBASE declarations have kind KSTAR. TFV(symbol,K) is a
+locally closed free schematic atom of exact kind K. TBV(i,K) is a de Bruijn occurrence requiring K
+at external kind-telescope position i. TLAM(K,A) binds position zero in A and has kind KARR(K,L)
+when A has kind L beneath that binder. TAPP(F,X) has kind L exactly when F has kind KARR(K,L) and X
+has kind K. TARR(A,B) has kind KSTAR exactly when A and B have kind KSTAR. A TLAM need not use its
+new variable; if it does, every occurrence at position zero must carry the declared kind. Outer
+positions are shifted down by one at the boundary. Conflicting annotations for one external
+position are rejected.
+
+The `ty` column is a checked classifier, not trusted cached evidence. Detached validation derives
+the kind and exact external telescope of every type node, including nodes unreachable from terms,
+and compares the result with `ty`. It also checks every referenced kind and rejects cycles and
+over-deep graphs. Earlier TALL, MTYLAM, and MTYAPP tags are not members of this schema.
+
+Kinds have the standard set-theoretic interpretation relative to a universe of codes:
+Val(KSTAR) = Code and Val(KARR(K,L)) = Val(K) -> Val(L). A kind telescope is interpreted as an
+environment assigning each position a value of its declared kind; a free TFV is likewise assigned
+an arbitrary value of its declared kind. TBV is environment lookup, TLAM is function abstraction,
+and TAPP is function application. TBASE and TBOOL denote fixed Code values and TARR uses the
+universe's code-level function-space constructor. Every Code has an inhabited carrier. Thus a
+closed KSTAR TAPP denotes a Code and has an inhabited carrier without treating TLAM/TAPP reduction
+or extensional equality as a primitive proof rule.
+
+The ProjectBeth sources currently expose two different term-polymorphism boundaries. Raw
+`Syntax.HasType` assigns `tyLam K t` the raw type `Ty.lam K A` and gives `tyApp` a premise/result
+shaped as `Ty.app F X`/`Ty.app F A`. The intrinsic `Kernel.Tm` instead assigns `tyLam` an
+impredicative `Ty.all` code and `tyApp` performs `Ty.inst`. There is no established
+constructor-preserving encoding between those APIs; `Bridge.lean` explicitly excludes raw type
+variables and higher-kinded application from its proved common fragment. This schema therefore
+does not guess an encoding and admits neither MTYLAM nor MTYAPP. Resolving that reference mismatch
+is a prerequisite for the next term-polymorphism stage.
+
+The admitted term fragment remains monomorphic HOL. Terms include Boolean literals, typed free
+symbols, typed term de Bruijn occurrences, applications, lambdas, same-typed equality, and Hilbert
+choice. Every term annotation and every ordinary function-type component must have kind KSTAR.
+Application and lambda use the ordinary simply typed rules. MEPS(p) has type A exactly when p has
+type A -> bool and inherits p's external boundaries. A term is locally closed when every term de
+Bruijn occurrence is bound by an enclosing MLAM and every type occurrence in its annotations has
+an empty external kind telescope.
+
+Each base declaration denotes an arbitrary nonempty carrier. Each MCONST declaration denotes an
+arbitrary element of one declared, closed, nonschematic KSTAR type and asserts no equation,
+infinitude, choice property, or other theorem. A symbol has exactly one declared type. Every
+admitted KSTAR object type denotes a nonempty carrier. Hilbert choice denotes a fixed function
+mapping each predicate p : A -> bool to an element satisfying p when one exists and to an arbitrary
+element otherwise. Choice is a function of predicate denotation, so equality of predicates is
+respected. Ordinary MCONST declarations are never interpreted as Hilbert choice operators.
+
+Every theorem judgement is interpreted schematically, universally over every reachable TFV at its
+exact kind in the conclusion and finite assumption context; every resulting KSTAR carrier is
+nonempty. A KSTAR term annotation may contain higher-kinded TFVs through TAPP. Existing simultaneous
+type instantiation therefore requires each replacement to be locally closed and to have the exact
+kind of its TFV key.
+
+The authoritative proof rules are unchanged from the selected core: hypothesis, truth, the
+monomorphic conversion rules including reflexivity, closed beta reduction and congruence beneath
+epsilon, conversion-to-equality, equality modus ponens, typed Leibniz equality substitution through
+a closed predicate, deduction antisymmetry, simultaneous typed free-term instantiation,
+simultaneous exact-kind schematic type instantiation, standard HOL abstraction, Hilbert choice,
+exact context implication introduction, explicit implication-path composition, and weakening.
+No type-operator equality or reduction rule is introduced here. Equality reflexivity and
+theorem-level closed beta remain untrusted recipes above the primitive conversions.
+
+A context is a canonical finite set of locally closed Boolean terms. Exact context union is a
+separately checked structural relation. Context equivalence is an untrusted upper-layer view pairing
+opposite proved implications; it creates no kernel capability or table. The authoritative HOL
+database stores canonical syntax and established judgements, not proof steps or observational
+provenance; traces belong in a separate observer-selected store.
+
+Namespaces and exports name already-admitted local kinds, types, terms, and contexts. Hash-first
+imports and imported namespace aliases are inert coordinates. A persistent trusted-import row is
+an auditable accepted assumption with cryptographically coherent evidence; it does not fetch the
+referenced image, import syntax, create theorem capabilities, or transitively establish truth.
+
+User-declared metadata columns and indexes are physical annotations. They never affect canonical
+syntax identity, kinding, typing, proof rules, or authority except that their exact physical SQLite
+manifest is committed by the composite signed schema identity. Validation, descriptors, signing,
+and authenticated import admit only this single exact semantics and physical schema.
