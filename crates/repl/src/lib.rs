@@ -1490,6 +1490,25 @@ pub fn trust_receive_and_retain_managed_hol_artifact(
     Ok((owner, retained.bind(owner)))
 }
 
+/// Trusts/imports one authenticated artifact into a fresh atomically selected receiver.
+///
+/// # Errors
+///
+/// Returns the first trust, import, immutable-mount, reader, directory, or
+/// selection boundary which rejects the artifact.
+pub fn trust_receive_and_retain_selected_managed_hol_artifact(
+    directory: &mut Repl<LocalConnection>,
+    target: Connection<Hol<AllowAll>>,
+    pinned: PinnedSignedHolArtifact,
+) -> Result<(ConnectionId, RetainedReceivedHolSnapshot), SignedHolRoundTripError> {
+    trust_receive_and_retain_bounded_selected_managed_hol_artifact(
+        directory,
+        target,
+        pinned,
+        i64::MAX,
+    )
+}
+
 pub(crate) fn trust_receive_and_retain_bounded_selected_managed_hol_artifact(
     directory: &mut Repl<LocalConnection>,
     mut target: Connection<Hol<AllowAll>>,
