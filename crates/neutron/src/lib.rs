@@ -1,10 +1,7 @@
-//! Uninterpreted relational machinery over `SQLite`.
+//! Thin mechanical wrappers over `SQLite`.
 //!
-//! [`Connection`] augments a [`covalence_lib_sqlite::Connection`] with
-//! connection-local metadata. It deliberately remains permeable: callers can
-//! access the underlying `SQLite` connection and are responsible for any
-//! semantic invariants they require. Nucleus provides the policy-enforcing
-//! layer above this crate.
+//! Neutron deliberately remains permeable and assigns no interpretation to a
+//! database. Nucleus provides protocol-enforcing enclosures above this crate.
 
 #![deny(unsafe_code)]
 
@@ -12,8 +9,5 @@ mod connection;
 mod image;
 
 pub use bytes::Bytes;
-pub use connection::{
-    ATTACHED_DATABASES, ATTACHED_DATABASES_INTERPRETATION, CONNECTION_CATALOG,
-    CONNECTION_CATALOG_INTERPRETATION, Connection, ConnectionError,
-};
+pub use connection::{Connection, ConnectionError};
 pub use image::ImageError;
