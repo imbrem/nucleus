@@ -1,0 +1,11 @@
+[package]
+name = "covalence-hol-proof-recipe-sdk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Untrusted encoder SDK for canonical Covalence HOL proof recipes"
+publish = false
+
+[lints]
+workspace = true

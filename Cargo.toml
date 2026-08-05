@@ -10,6 +10,8 @@ members = [
   "crates/proton",
   "crates/neutron",
   "crates/nucleus",
+  "crates/hol-proof-recipe-sdk",
+  "crates/hol-proof-core-guest-beta",
   "crates/hol-proof-guest-beta",
   "crates/hol-proof-guest-eta",
   "crates/hol-proof-guest-schematic-binding",

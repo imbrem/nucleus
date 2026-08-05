@@ -47,6 +47,22 @@
       ]
     },
     {
+      "id": "workspace#covalence-hol-proof-core-guest-beta@0.0.0",
+      "name": "covalence-hol-proof-core-guest-beta",
+      "version": "0.0.0",
+      "path": "crates/hol-proof-core-guest-beta",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_hol_proof_core_guest_beta",
+          "kinds": [
+            "cdylib",
+            "rlib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-hol-proof-guest-assumptions@0.0.0",
       "name": "covalence-hol-proof-guest-assumptions",
       "version": "0.0.0",
@@ -147,6 +163,21 @@
           "name": "covalence_hol_proof_guest_schematic_binding",
           "kinds": [
             "cdylib"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-hol-proof-recipe-sdk@0.0.0",
+      "name": "covalence-hol-proof-recipe-sdk",
+      "version": "0.0.0",
+      "path": "crates/hol-proof-recipe-sdk",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_hol_proof_recipe_sdk",
+          "kinds": [
+            "lib"
           ]
         }
       ]
@@ -305,6 +336,13 @@
     {
       "source": "workspace#covalence-bin-nucleus@0.0.0",
       "target": "workspace#covalence-repl@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-hol-proof-core-guest-beta@0.0.0",
+      "target": "workspace#covalence-hol-proof-recipe-sdk@0.0.0",
       "kinds": [
         "normal"
       ]
