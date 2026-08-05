@@ -8,6 +8,7 @@ import init, {
   type WebRetainedReceivedHolSnapshot,
   type WebSignedHolOutcome,
   type WebSignedInfinityAssumption,
+  type WebSignedNatLikeMissingZero,
 } from "../generated/nucleus.js";
 import {
   SignedKernelTransportError,
@@ -22,6 +23,7 @@ type Request =
   | { id: number; operation: "runHol"; connection: number; recipe: string }
   | { id: number; operation: "runSignedHolRoundTrip"; connection: number }
   | { id: number; operation: "assumeDedekindInfinity" }
+  | { id: number; operation: "proveNatLikeMissingZero" }
   | {
       id: number;
       operation: "runNativeHttpHashSelectedHol";
@@ -133,6 +135,11 @@ async function execute(request: Request): Promise<unknown> {
       return readSignedInfinityAssumption(
         connection,
         connection.assume_dedekind_infinity(),
+      );
+    case "proveNatLikeMissingZero":
+      return readSignedNatLikeMissingZero(
+        connection,
+        connection.prove_natlike_missing_zero(),
       );
     case "runNativeHttpHashSelectedHol":
       if (nativeHashRunInFlight) {
@@ -327,27 +334,63 @@ function readSignedInfinityAssumption(
   connection: WebKernel,
   assumption: WebSignedInfinityAssumption,
 ) {
+  return readRetainedSignedArtifact(connection, assumption, () => ({
+    kind: assumption.kind(),
+    authority: "signed-assumption",
+    assumption: "dedekind-infinity",
+    falsehood: "all-bool-identity",
+    namespace: assumption.namespace_id(),
+    image: assumption.image(),
+    schema: assumption.schema(),
+    imageHash: assumption.image_hash(),
+    signer: assumption.signer(),
+    publicKey: assumption.public_key(),
+    signature: assumption.signature(),
+    context: assumption.context_id(),
+    conclusion: assumption.conclusion_id(),
+    attestation: assumption.attestation_text(),
+  }));
+}
+
+function readSignedNatLikeMissingZero(
+  connection: WebKernel,
+  theorem: WebSignedNatLikeMissingZero,
+) {
+  return readRetainedSignedArtifact(connection, theorem, () => ({
+    kind: theorem.kind(),
+    theoremOracle: theorem.theorem_oracle(),
+    namespace: theorem.namespace_id(),
+    image: theorem.image(),
+    schema: theorem.schema(),
+    imageHash: theorem.image_hash(),
+    signer: theorem.signer(),
+    publicKey: theorem.public_key(),
+    signature: theorem.signature(),
+    context: theorem.context_id(),
+    conclusion: theorem.conclusion_id(),
+    attestation: theorem.attestation_text(),
+  }));
+}
+
+interface RetainedSignedArtifact {
+  receiver_connection(): number;
+  retained_id(): number;
+  free(): void;
+}
+
+function readRetainedSignedArtifact<T extends object>(
+  connection: WebKernel,
+  artifact: RetainedSignedArtifact,
+  read: () => T,
+): T & { receiverConnection: number } {
   let receiver: number | undefined;
   try {
-    const receivedConnection = assumption.receiver_connection();
+    const receivedConnection = artifact.receiver_connection();
     receiver = receivedConnection;
-    const retained = assumption.retained_id();
+    const retained = artifact.retained_id();
     const result = {
-      kind: assumption.kind(),
-      authority: "signed-assumption",
-      assumption: "dedekind-infinity",
-      falsehood: "all-bool-identity",
+      ...read(),
       receiverConnection: receivedConnection,
-      namespace: assumption.namespace_id(),
-      image: assumption.image(),
-      schema: assumption.schema(),
-      imageHash: assumption.image_hash(),
-      signer: assumption.signer(),
-      publicKey: assumption.public_key(),
-      signature: assumption.signature(),
-      context: assumption.context_id(),
-      conclusion: assumption.conclusion_id(),
-      attestation: assumption.attestation_text(),
     };
     retainedTrustedArtifacts.set(receivedConnection, retained);
     return result;
@@ -358,13 +401,13 @@ function readSignedInfinityAssumption(
       } catch (cleanupError) {
         throw new AggregateError(
           [error, cleanupError],
-          "signed-assumption presentation and receiver cleanup both failed",
+          "signed artifact presentation and receiver cleanup both failed",
         );
       }
     }
     throw error;
   } finally {
-    assumption.free();
+    artifact.free();
   }
 }
 
@@ -375,7 +418,8 @@ function transferables(value: unknown): ArrayBuffer[] {
     value !== null &&
     "kind" in value &&
     (value.kind === "signed-hol-round-trip" ||
-      value.kind === "signed-assumption")
+      value.kind === "signed-assumption" ||
+      value.kind === "signed-natlike-missing-zero")
   ) {
     const outcome = value as unknown as {
       image: Uint8Array;

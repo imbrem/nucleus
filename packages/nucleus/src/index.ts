@@ -523,6 +523,30 @@ type BrowserSignedInfinityAssumptionWire = Omit<
   "receiver" | "openTrustedState" | "cleanup"
 > & { receiverConnection: number };
 
+/** Exact signed `missing zero` bytes plus an explicitly trusted receiver. */
+export interface BrowserSignedNatLikeMissingZero {
+  kind: "signed-natlike-missing-zero";
+  theoremOracle: "(APP missing zero)";
+  namespace: string;
+  image: Uint8Array;
+  schema: string;
+  imageHash: string;
+  signer: string;
+  publicKey: Uint8Array;
+  signature: Uint8Array;
+  context: string;
+  conclusion: string;
+  attestation: string;
+  receiver: BrowserHolConnection;
+  openTrustedState(): Promise<BrowserManagedTrustedHolState>;
+  cleanup(): Promise<void>;
+}
+
+type BrowserSignedNatLikeMissingZeroWire = Omit<
+  BrowserSignedNatLikeMissingZero,
+  "receiver" | "openTrustedState" | "cleanup"
+> & { receiverConnection: number };
+
 export interface BrowserNativeHttpHashSelectedHolOutcome
   extends BrowserReceivedHolSnapshot {
   kind: "native-http-hash-selected-hol";
@@ -564,6 +588,7 @@ export interface BrowserRepl {
   openSql(): Promise<BrowserSqlConnection>;
   openHol(): Promise<BrowserHolConnection>;
   assumeDedekindInfinity(): Promise<BrowserSignedInfinityAssumption>;
+  proveNatLikeMissingZero(): Promise<BrowserSignedNatLikeMissingZero>;
   runNativeHttpHashSelectedHol(
     options: NativeHttpHashSelectedHolOptions,
   ): Promise<BrowserNativeHttpHashSelectedHolOutcome>;
@@ -578,6 +603,7 @@ type RequestBody =
   | { operation: "runHol"; connection: number; recipe: string }
   | { operation: "runSignedHolRoundTrip"; connection: number }
   | { operation: "assumeDedekindInfinity" }
+  | { operation: "proveNatLikeMissingZero" }
   | {
       operation: "runNativeHttpHashSelectedHol";
       endpoint: string;
@@ -658,6 +684,13 @@ class WorkerRepl implements BrowserRepl {
       operation: "assumeDedekindInfinity",
     });
     return this.#retainSignedInfinityAssumption(wire);
+  }
+
+  async proveNatLikeMissingZero(): Promise<BrowserSignedNatLikeMissingZero> {
+    const wire = await this.request<BrowserSignedNatLikeMissingZeroWire>({
+      operation: "proveNatLikeMissingZero",
+    });
+    return this.#retainSignedNatLikeMissingZero(wire);
   }
 
   runNativeHttpHashSelectedHol(
@@ -769,6 +802,43 @@ class WorkerRepl implements BrowserRepl {
       openTrustedState: async () => {
         if (cleaned)
           throw new Error("signed-assumption receiver was cleaned up");
+        const state = await this.request<BrowserManagedTrustedHolStateWire>({
+          operation: "openRetainedTrustedHolState",
+          connection: receiverConnection,
+        });
+        return {
+          ...state,
+          connection: new WorkerHolConnection(this, state.connection),
+        };
+      },
+      cleanup: async () => {
+        if (cleaned) return;
+        cleanupInFlight ??= receiver
+          .close()
+          .then(() => {
+            cleaned = true;
+          })
+          .finally(() => {
+            cleanupInFlight = undefined;
+          });
+        await cleanupInFlight;
+      },
+    };
+  }
+
+  #retainSignedNatLikeMissingZero(
+    wire: BrowserSignedNatLikeMissingZeroWire,
+  ): BrowserSignedNatLikeMissingZero {
+    const { receiverConnection, ...presentation } = wire;
+    const receiver = new WorkerHolConnection(this, receiverConnection);
+    let cleaned = false;
+    let cleanupInFlight: Promise<void> | undefined;
+    return {
+      ...presentation,
+      receiver,
+      openTrustedState: async () => {
+        if (cleaned)
+          throw new Error("signed missing-zero receiver was cleaned up");
         const state = await this.request<BrowserManagedTrustedHolStateWire>({
           operation: "openRetainedTrustedHolState",
           connection: receiverConnection,
