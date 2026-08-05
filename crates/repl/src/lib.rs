@@ -17,7 +17,8 @@ pub mod hol_recipes;
 
 mod hol_derived_rules;
 pub use hol_derived_rules::{
-    ApTerm, ApThm, DerivedRuleError, DerivedRulePreparationError, EqSym, EqTrans, EqtElim, EqtIntro,
+    AllElim, AllIntroApplied, ApTerm, ApThm, DerivedRuleError, DerivedRulePreparationError, EqSym,
+    EqTrans, EqtElim, EqtIntro, FunExt,
 };
 
 mod hol_infinity;
