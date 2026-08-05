@@ -60,10 +60,11 @@ CREATE TABLE hol_context_member (
 ) STRICT, WITHOUT ROWID;
 
 CREATE TABLE hol_judgement (
+    judgement_id INTEGER PRIMARY KEY CHECK (judgement_id > 0),
     ctx_id INTEGER NOT NULL,
     term_id INTEGER NOT NULL,
-    PRIMARY KEY (ctx_id, term_id)
-) STRICT, WITHOUT ROWID;
+    UNIQUE (ctx_id, term_id)
+) STRICT;
 
 -- Γ implies Δ when every member of Δ has been proved under Γ.
 CREATE TABLE hol_context_implication (

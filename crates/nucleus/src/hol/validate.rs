@@ -8,8 +8,8 @@ use covalence_lib_sqlite as sqlite;
 
 use super::{
     BOOL_TYPE_ID, ContextError, ContextId, ExportId, HolDatabaseRef, HolSchema,
-    HolSchemaDescriptor, ImportId, KindError, KindId, KindView, NamespaceId, SCHEMA, STAR_ID,
-    TermError, TermId, TrustedImportId, TypeError, TypeId, TypeView, ValidatedTerm,
+    HolSchemaDescriptor, ImportId, JudgementId, KindError, KindId, KindView, NamespaceId, SCHEMA,
+    STAR_ID, TermError, TermId, TrustedImportId, TypeError, TypeId, TypeView, ValidatedTerm,
     install_metadata_schema, kind_rank, read_context_members, read_kind, read_type,
     validate_term_inner,
 };
@@ -412,10 +412,19 @@ fn validate_contents(
     }
 
     let judgements = connection
-        .prepare("SELECT ctx_id, term_id FROM hol_judgement ORDER BY ctx_id, term_id")?
-        .query_map([], |row| Ok((ContextId(row.get(0)?), TermId(row.get(1)?))))?
+        .prepare(
+            "SELECT judgement_id, ctx_id, term_id
+             FROM hol_judgement ORDER BY judgement_id",
+        )?
+        .query_map([], |row| {
+            Ok((
+                JudgementId::from_i64(row.get(0)?),
+                ContextId(row.get(1)?),
+                TermId(row.get(2)?),
+            ))
+        })?
         .collect::<Result<Vec<_>, _>>()?;
-    for (context, term) in &judgements {
+    for (_, context, term) in &judgements {
         if !contexts.contains(context) {
             return Err(HolImageValidationError::OrphanJudgement(*context, *term));
         }
@@ -1382,17 +1391,17 @@ mod tests {
         let physical = schema_manifest_id(&schema_manifest(expected.sqlite()).unwrap());
         assert_eq!(
             physical,
-            O256::from_hex("f4e5aa44ba3c580fe9e542d71229e486c277610ddaf0b6953346797e8111a568")
+            O256::from_hex("b6cb96e2c5c916669be295b90af372fa02eff10d38fea74282dcd24e9860de0b")
                 .unwrap()
         );
         assert_eq!(
             hol_semantics_id(),
-            O256::from_hex("cf9697036c552706fff430450de9f6e72f05c82f2e13eb26a074485cba4df6f1")
+            O256::from_hex("96ce6852b3736d499c478a029c175130001d6493274f6dbe6531e4f3140ebbfa")
                 .unwrap()
         );
         assert_eq!(
             hol_schema_id(physical),
-            O256::from_hex("a3e00068462b9bc1602b309f19dea9570f5fc1892c179cf8ec9e8448e59a1719")
+            O256::from_hex("5898f052e1610fa1a74a81f17de46c07449656fb9843c80d469a716128695c7b")
                 .unwrap()
         );
         assert_ne!(hol_schema_id(physical), hol_semantics_id());
