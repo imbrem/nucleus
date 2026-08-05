@@ -1,16 +1,45 @@
+use std::collections::HashMap;
+
 use covalence_lib_hash::O256;
 use wasm_bindgen::prelude::*;
 
 use super::{
-    AllowAll, ConnectionId, HolRecipe, HolRecipeResult, Kernel, LocalConnection, Outcome,
-    QueryResult, Repl, SignedHolRoundTripResult, Value, run_managed_signed_hol_round_trip,
+    AllowAll, ConnectionEntry, ConnectionId, HolRecipe, HolRecipeResult, Kernel, KernelEntry,
+    KernelId, LocalConnection, Outcome, PinnedSignedHolArtifact, ProducedSignedHol, QueryResult,
+    ReceivedHolSnapshot, Repl, SIGNED_HOL_PHASES, SignedHolArtifact, SignedHolRoundTripResult,
+    Value, authenticate_pinned_signed_hol_artifact, produce_signed_hol_artifact,
+    run_managed_signed_hol_round_trip, trust_and_receive_pinned_signed_hol_artifact,
 };
+
+/// Main-thread directory for independently owned browser kernel endpoints.
+///
+/// It owns no logical connection and grants no trust. JavaScript keeps the
+/// actual Worker handles; this object keeps the same raw-SQLite directory model
+/// used by the terminal adapter.
+#[wasm_bindgen]
+pub struct WebReplDirectory {
+    repl: Repl<()>,
+}
+
+/// Inspectable browser kernel-directory row.
+#[wasm_bindgen]
+pub struct WebKernelEntry {
+    entry: KernelEntry,
+}
+
+/// Inspectable browser connection-directory row.
+#[wasm_bindgen]
+pub struct WebConnectionEntry {
+    entry: ConnectionEntry,
+}
 
 /// Browser adapter for the shared REPL connection directory.
 #[wasm_bindgen]
 pub struct WebKernel {
     kernel: Kernel,
     repl: Repl<LocalConnection>,
+    pinned_artifacts: HashMap<u32, PinnedSignedHolArtifact>,
+    next_pinned_artifact: u32,
 }
 
 /// Owned result of one statement executed by [`WebKernel`].
@@ -32,6 +61,22 @@ pub struct WebSignedHolOutcome {
     receiver_connection: u32,
 }
 
+/// Producer-local proof presentation and its transportable signed artifact.
+#[wasm_bindgen]
+pub struct WebProducedSignedHol {
+    produced: ProducedSignedHol,
+}
+
+/// Inert receiver-local coordinates established after a scoped imported-theorem read.
+///
+/// These integers are presentation data, never theorem authority. The receiving
+/// connection remains owned by its caller and can reauthenticate, remount, and
+/// reread the imported theorem after this value is dropped.
+#[wasm_bindgen]
+pub struct WebReceivedHolSnapshot {
+    received: ReceivedHolSnapshot,
+}
+
 #[wasm_bindgen]
 impl WebKernel {
     /// Creates a browser REPL with its own raw `SQLite` state database.
@@ -43,7 +88,24 @@ impl WebKernel {
     pub fn new() -> Result<WebKernel, JsValue> {
         let kernel = Kernel::ephemeral();
         let repl = Repl::new(kernel.verifying_key().as_bytes()).map_err(js_error)?;
-        Ok(Self { kernel, repl })
+        Ok(Self {
+            kernel,
+            repl,
+            pinned_artifacts: HashMap::new(),
+            next_pinned_artifact: 0,
+        })
+    }
+
+    /// Returns this kernel's public-key identity.
+    #[must_use]
+    pub fn signer_id(&self) -> String {
+        self.kernel.key_id().to_string()
+    }
+
+    /// Returns this kernel's exact Ed25519 public key.
+    #[must_use]
+    pub fn public_key(&self) -> Vec<u8> {
+        self.kernel.verifying_key().as_bytes().to_vec()
     }
 
     /// Opens a writable in-memory SQL connection and returns its local ID.
@@ -136,6 +198,148 @@ impl WebKernel {
         })
     }
 
+    /// Proves, persists, exports, and signs one HOL artifact in this kernel.
+    ///
+    /// The returned fields are an above-TCB structured carrier, not a stable
+    /// wire encoding. A different [`WebKernel`] must authenticate and validate
+    /// every field with [`WebKernel::authenticate_pinned_signed_hol_artifact`].
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for a non-HOL connection or the first proof,
+    /// export, or signing boundary rejected.
+    pub fn produce_signed_hol_artifact(
+        &mut self,
+        connection: u32,
+    ) -> Result<WebProducedSignedHol, JsValue> {
+        let produced = {
+            let Self { kernel, repl, .. } = self;
+            let source = repl
+                .get_mut(ConnectionId::from_u32(connection))
+                .map_err(js_error)?
+                .hol_mut()
+                .map_err(js_error)?;
+            produce_signed_hol_artifact(kernel, source).map_err(js_error)?
+        };
+        Ok(WebProducedSignedHol { produced })
+    }
+
+    /// Returns the exact persistent HOL image hash without changing kernel state.
+    ///
+    /// This debugging surface intentionally excludes connection-local temp trust.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for a non-HOL connection or failed validated export.
+    pub fn hol_image_hash(&mut self, connection: u32) -> Result<String, JsValue> {
+        let Self { kernel, repl, .. } = self;
+        let source = repl
+            .get_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .hol_mut()
+            .map_err(js_error)?;
+        kernel
+            .export_hol(source)
+            .map(|snapshot| snapshot.image().hash().to_string())
+            .map_err(js_error)
+    }
+
+    /// Authenticates and detached-validates an artifact against an expected endpoint key.
+    ///
+    /// All arguments are untrusted transport fields. Hash parsing and fixed
+    /// widths do not confer authority. The independently supplied endpoint key
+    /// is compared exactly before this method returns an opaque pending ID. No
+    /// HOL connection is read or mutated by this step.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for malformed fields or a rejected size,
+    /// authentication, endpoint pin, or detached-validation boundary.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the deliberately unencoded transport exposes every signed field"
+    )]
+    pub fn authenticate_pinned_signed_hol_artifact(
+        &mut self,
+        expected_kernel: u32,
+        expected_signer: &str,
+        expected_public_key: &[u8],
+        namespace: &str,
+        image: &[u8],
+        schema: &str,
+        image_hash: &str,
+        signer: &str,
+        public_key: &[u8],
+        signature: &[u8],
+    ) -> Result<u32, JsValue> {
+        if image.len() > super::MAX_IMAGE_BYTES {
+            return Err(JsValue::from_str(&format!(
+                "image-size-checked: image is {} bytes; the limit is {} bytes",
+                image.len(),
+                super::MAX_IMAGE_BYTES,
+            )));
+        }
+        let namespace = namespace.parse::<i64>().map_err(js_error)?;
+        let artifact = SignedHolArtifact::from_untrusted_parts(
+            namespace,
+            image.to_vec(),
+            schema,
+            image_hash,
+            signer,
+            public_key.to_vec(),
+            signature.to_vec(),
+        )
+        .map_err(js_error)?;
+        let expected = super::ExpectedKernelIdentity::from_untrusted_parts(
+            KernelId::from_u32(expected_kernel),
+            expected_signer,
+            expected_public_key,
+        )
+        .map_err(js_error)?;
+        let pinned =
+            authenticate_pinned_signed_hol_artifact(&expected, &artifact).map_err(js_error)?;
+        let id = self.next_pinned_artifact;
+        self.next_pinned_artifact = self
+            .next_pinned_artifact
+            .checked_add(1)
+            .ok_or_else(|| JsValue::from_str("pinned artifact IDs are exhausted"))?;
+        self.pinned_artifacts.insert(id, pinned);
+        Ok(id)
+    }
+
+    /// Explicitly trusts and imports one previously authenticated pinned artifact.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for an unknown pending ID, non-HOL target, or
+    /// rejected trust, import, immutable mount, or reader boundary.
+    pub fn trust_pinned_signed_hol_artifact(
+        &mut self,
+        connection: u32,
+        pinned: u32,
+    ) -> Result<WebReceivedHolSnapshot, JsValue> {
+        let pinned = self
+            .pinned_artifacts
+            .remove(&pinned)
+            .ok_or_else(|| JsValue::from_str("unknown pinned HOL artifact"))?;
+        let received =
+            trust_and_receive_pinned_signed_hol_artifact(self.hol_mut(connection)?, pinned)
+                .map_err(js_error)?;
+        Ok(WebReceivedHolSnapshot { received })
+    }
+
+    /// Discards one authenticated artifact without granting any trust.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for an unknown pending ID.
+    pub fn abandon_pinned_signed_hol_artifact(&mut self, pinned: u32) -> Result<(), JsValue> {
+        self.pinned_artifacts
+            .remove(&pinned)
+            .map(drop)
+            .ok_or_else(|| JsValue::from_str("unknown pinned HOL artifact"))
+    }
+
     /// Stores a complete resident database image and returns its address.
     ///
     /// # Errors
@@ -186,6 +390,160 @@ impl WebKernel {
             .serialize_main()
             .map(|bytes| bytes.to_vec())
             .map_err(js_error)
+    }
+}
+
+#[wasm_bindgen]
+impl WebReplDirectory {
+    /// Opens an empty coordinator directory.
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Result<Self, JsValue> {
+        Repl::empty().map(|repl| Self { repl }).map_err(js_error)
+    }
+
+    /// Registers a keyed Worker endpoint without trusting it.
+    pub fn register_kernel(
+        &self,
+        transport: &str,
+        endpoint: Option<String>,
+        public_key: &[u8],
+    ) -> Result<u32, JsValue> {
+        let id = self
+            .repl
+            .register_kernel(transport, endpoint.as_deref(), public_key)
+            .map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
+    /// Removes a Worker endpoint after all of its connections are closed.
+    pub fn unregister_kernel(&self, kernel: u32) -> Result<(), JsValue> {
+        self.repl
+            .unregister_kernel(KernelId::from_u32(kernel))
+            .map_err(js_error)
+    }
+
+    /// Records an endpoint-owned runtime connection.
+    pub fn insert_connection(
+        &mut self,
+        kernel: u32,
+        protocol: &str,
+        remote_connection_id: &str,
+    ) -> Result<u32, JsValue> {
+        let id = self
+            .repl
+            .insert_at(
+                KernelId::from_u32(kernel),
+                protocol,
+                Some(remote_connection_id),
+                (),
+            )
+            .map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
+    /// Removes one endpoint-owned runtime connection row.
+    pub fn remove_connection(&mut self, connection: u32) -> Result<(), JsValue> {
+        self.repl
+            .remove(ConnectionId::from_u32(connection))
+            .map(drop)
+            .map_err(js_error)
+    }
+
+    /// Selects an existing managed connection in the coordinator directory.
+    pub fn select_connection(&mut self, connection: u32) -> Result<(), JsValue> {
+        self.repl
+            .select(ConnectionId::from_u32(connection))
+            .map_err(js_error)
+    }
+
+    /// Returns the selected managed connection, if any.
+    pub fn active_connection(&self) -> Result<Option<u32>, JsValue> {
+        self.repl
+            .active()
+            .map_err(js_error)?
+            .map(|id| u32::try_from(id.get()).map_err(js_error))
+            .transpose()
+    }
+
+    /// Returns the number of registered endpoints.
+    pub fn kernel_count(&self) -> Result<usize, JsValue> {
+        self.repl.kernels().map(|rows| rows.len()).map_err(js_error)
+    }
+
+    /// Returns one endpoint row in directory order.
+    pub fn kernel(&self, index: u32) -> Result<WebKernelEntry, JsValue> {
+        self.repl
+            .kernels()
+            .map_err(js_error)?
+            .into_iter()
+            .nth(index as usize)
+            .map(|entry| WebKernelEntry { entry })
+            .ok_or_else(|| JsValue::from_str("kernel index out of bounds"))
+    }
+
+    /// Returns the number of managed connection rows.
+    pub fn connection_count(&self) -> Result<usize, JsValue> {
+        self.repl
+            .connections()
+            .map(|rows| rows.len())
+            .map_err(js_error)
+    }
+
+    /// Returns one connection row in directory order.
+    pub fn connection(&self, index: u32) -> Result<WebConnectionEntry, JsValue> {
+        self.repl
+            .connections()
+            .map_err(js_error)?
+            .into_iter()
+            .nth(index as usize)
+            .map(|entry| WebConnectionEntry { entry })
+            .ok_or_else(|| JsValue::from_str("connection index out of bounds"))
+    }
+}
+
+#[wasm_bindgen]
+impl WebKernelEntry {
+    /// Returns the directory-local opaque ID.
+    pub fn id(&self) -> String {
+        self.entry.id.to_string()
+    }
+
+    /// Returns the adapter-defined transport.
+    pub fn transport(&self) -> String {
+        self.entry.transport.clone()
+    }
+
+    /// Returns the optional adapter-defined endpoint locator.
+    pub fn endpoint(&self) -> Option<String> {
+        self.entry.endpoint.clone()
+    }
+
+    /// Returns the exact registered public key.
+    pub fn public_key(&self) -> Vec<u8> {
+        self.entry.public_key.clone()
+    }
+}
+
+#[wasm_bindgen]
+impl WebConnectionEntry {
+    /// Returns the directory-local opaque ID.
+    pub fn id(&self) -> String {
+        self.entry.id.to_string()
+    }
+
+    /// Returns the owning endpoint's opaque ID.
+    pub fn kernel_id(&self) -> String {
+        self.entry.kernel.to_string()
+    }
+
+    /// Returns the recorded protocol label.
+    pub fn protocol(&self) -> String {
+        self.entry.protocol.clone()
+    }
+
+    /// Returns the optional endpoint-local coordinate.
+    pub fn remote_connection_id(&self) -> Option<String> {
+        self.entry.remote_connection_id.clone()
     }
 }
 
@@ -241,6 +599,139 @@ impl WebHolOutcome {
     #[must_use]
     pub fn statement(&self) -> String {
         self.outcome.statement().to_owned()
+    }
+}
+
+#[wasm_bindgen]
+impl WebProducedSignedHol {
+    /// Returns `signed-hol-artifact`.
+    #[must_use]
+    pub fn kind(&self) -> String {
+        "signed-hol-artifact".to_owned()
+    }
+
+    /// Returns the number of completed producer boundary stages.
+    #[must_use]
+    pub fn phase_count(&self) -> usize {
+        3
+    }
+
+    /// Returns one completed producer boundary stage by index.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error when `index` is out of bounds.
+    pub fn phase(&self, index: u32) -> Result<String, JsValue> {
+        SIGNED_HOL_PHASES
+            .get(index as usize)
+            .filter(|_| index < 3)
+            .map(|phase| (*phase).to_owned())
+            .ok_or_else(|| JsValue::from_str("phase index out of bounds"))
+    }
+
+    /// Returns the stable proposition persisted by the producer.
+    #[must_use]
+    pub fn statement(&self) -> String {
+        self.produced.proof().statement().to_owned()
+    }
+
+    /// Returns the producer-local conclusion as an exact decimal string.
+    #[must_use]
+    pub fn conclusion_id(&self) -> String {
+        self.produced.proof().conclusion_id().to_string()
+    }
+
+    /// Returns the source namespace as an exact decimal string.
+    #[must_use]
+    pub fn namespace_id(&self) -> String {
+        self.produced.artifact().namespace_id().to_string()
+    }
+
+    /// Copies the exact signed SQLite bytes into JavaScript-owned memory.
+    #[must_use]
+    pub fn image(&self) -> Vec<u8> {
+        self.produced.artifact().image().to_vec()
+    }
+
+    /// Returns the signed interpretation-qualified schema hash.
+    #[must_use]
+    pub fn schema(&self) -> String {
+        self.produced.artifact().schema().to_string()
+    }
+
+    /// Returns the hash of the exact image bytes.
+    #[must_use]
+    pub fn image_hash(&self) -> String {
+        self.produced.artifact().image_hash().to_string()
+    }
+
+    /// Returns the producer's key identity.
+    #[must_use]
+    pub fn signer(&self) -> String {
+        self.produced.artifact().signer().to_string()
+    }
+
+    /// Copies the producer's Ed25519 public key into JavaScript-owned memory.
+    #[must_use]
+    pub fn public_key(&self) -> Vec<u8> {
+        self.produced.artifact().public_key().to_vec()
+    }
+
+    /// Copies the schema-qualified image signature into JavaScript-owned memory.
+    #[must_use]
+    pub fn signature(&self) -> Vec<u8> {
+        self.produced.artifact().signature().to_vec()
+    }
+}
+
+#[wasm_bindgen]
+impl WebReceivedHolSnapshot {
+    /// Returns `received-hol-snapshot`.
+    #[must_use]
+    pub fn kind(&self) -> String {
+        "received-hol-snapshot".to_owned()
+    }
+
+    /// Returns the number of completed receiver boundary stages.
+    #[must_use]
+    pub fn phase_count(&self) -> usize {
+        SIGNED_HOL_PHASES.len() - 3
+    }
+
+    /// Returns one completed receiver boundary stage by index.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error when `index` is out of bounds.
+    pub fn phase(&self, index: u32) -> Result<String, JsValue> {
+        SIGNED_HOL_PHASES
+            .get(index as usize + 3)
+            .map(|phase| (*phase).to_owned())
+            .ok_or_else(|| JsValue::from_str("phase index out of bounds"))
+    }
+
+    /// Returns the receiver's inert import-directory ID.
+    #[must_use]
+    pub fn import_id(&self) -> String {
+        self.received.import_id().to_string()
+    }
+
+    /// Returns the receiver's imported namespace alias ID.
+    #[must_use]
+    pub fn namespace_id(&self) -> String {
+        self.received.namespace_id().to_string()
+    }
+
+    /// Returns the imported empty-context source coordinate.
+    #[must_use]
+    pub fn context_id(&self) -> String {
+        self.received.context_id().to_string()
+    }
+
+    /// Returns the imported conclusion source coordinate.
+    #[must_use]
+    pub fn conclusion_id(&self) -> String {
+        self.received.conclusion_id().to_string()
     }
 }
 
