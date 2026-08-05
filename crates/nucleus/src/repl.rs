@@ -8,6 +8,10 @@ use covalence_lib_sqlite as sqlite;
 
 use crate::Connection;
 
+mod image;
+
+pub use image::{ImageError, MAX_IMAGE_BYTES};
+
 /// Protocol state for an unrestricted SQL session.
 ///
 /// Construction remains private so only Nucleus can enclose a connection as a
