@@ -1,0 +1,90 @@
+package covalence:hol-proof-guest@0.1.0;
+
+/// A bounded, non-authoritative recipe builder supplied to an untrusted proof guest.
+///
+/// Every resource below is an opaque handle to an append-only recipe node. It is not a
+/// database integer ID, a checked theorem, or logical authority. The host binds every node to
+/// exactly one plan, rejects cross-plan resources and forward references, and replays the
+/// finished plan through one fresh Nucleus proof session.
+///
+/// Replay is isolated at the connection boundary: the host creates a fresh, otherwise
+/// unreachable HOL connection for exactly one sealed plan. A guest failure, structural
+/// rejection, policy denial, or Nucleus error discards that whole connection. Only a completely
+/// successful replay may return the connection to the caller for optional serialization and
+/// signing.
+///
+/// This contract is intentionally just large enough for the closed-beta north star. Extending it
+/// with another HOL rule changes the contract identity and requires an explicit host policy
+/// operation.
+interface host {
+  enum append-error {
+    invalid-resource,
+    invalid-dependency,
+    resource-limit,
+    sealed,
+  }
+
+  resource type-node;
+  resource term-node;
+  resource context-node;
+  resource theorem-node;
+  resource namespace-node;
+
+  resource proof-plan {
+    bool-type: func() -> result<type-node, append-error>;
+    bound-term: func(index: u32, ty: borrow<type-node>) -> result<term-node, append-error>;
+    lambda: func(
+      parameter-type: borrow<type-node>,
+      body: borrow<term-node>,
+    ) -> result<term-node, append-error>;
+    bool-term: func(value: bool) -> result<term-node, append-error>;
+    empty-context: func() -> result<context-node, append-error>;
+
+    /// Appends a request for the derived closed-beta recipe. The result is still only a recipe
+    /// node; authoritative primitive checks occur only during host replay.
+    prove-beta: func(
+      context: borrow<context-node>,
+      abstraction: borrow<term-node>,
+      argument: borrow<term-node>,
+    ) -> result<theorem-node, append-error>;
+
+    persist-theorem: func(theorem: borrow<theorem-node>) -> result<_, append-error>;
+    root-child-namespace: func(name: option<string>) -> result<namespace-node, append-error>;
+
+    /// Requests export of the checked theorem's conclusion after replay proves it. The theorem
+    /// must already have appeared in `persist-theorem`.
+    export-theorem-conclusion: func(
+      namespace: borrow<namespace-node>,
+      export-id: s64,
+      theorem: borrow<theorem-node>,
+      name: option<string>,
+    ) -> result<_, append-error>;
+
+    export-context: func(
+      namespace: borrow<namespace-node>,
+      export-id: s64,
+      context: borrow<context-node>,
+      name: option<string>,
+    ) -> result<_, append-error>;
+  }
+}
+
+/// The tiny surface implemented by an untrusted proof component.
+interface guest {
+  use host.{proof-plan, namespace-node};
+
+  enum guest-error {
+    aborted,
+  }
+
+  /// Appends a recipe to a host-created plan. Success asserts no theorem: after return, the host
+  /// seals and replays the plan through Nucleus and independently decides whether to sign the
+  /// resulting database. No signing key or general signing operation is available to the guest.
+  /// Returns the one exported namespace which the host should name in the signed artifact.
+  build: func(plan: borrow<proof-plan>) -> result<namespace-node, guest-error>;
+}
+
+world hol-proof-guest {
+  import host;
+  export guest;
+}

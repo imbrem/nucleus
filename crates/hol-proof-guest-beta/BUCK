@@ -18,23 +18,23 @@ filegroup(
 )
 
 rust_library(
-    name = "covalence_lib_rand",
-    crate = "covalence_lib_rand",
+    name = "covalence_hol_proof_guest_beta",
+    crate = "covalence_hol_proof_guest_beta",
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
-    tests = [":covalence_lib_rand-unit-test"],
+    tests = [":covalence_hol_proof_guest_beta-unit-test"],
     named_deps = {
-        "rand": "nucleus//buck/cargo/production:rand-0.9.5",
+        "wit_bindgen": "nucleus//buck/cargo/production:wit-bindgen-0.57.1",
     },
     env = {
-        "CARGO_MANIFEST_DIR": "crates/lib/rand",
+        "CARGO_MANIFEST_DIR": "crates/hol-proof-guest-beta",
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "Randomness primitives for Nucleus",
+        "CARGO_PKG_DESCRIPTION": "Untrusted closed-beta proof recipe component for Covalence",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",
-        "CARGO_PKG_NAME": "covalence-lib-rand",
+        "CARGO_PKG_NAME": "covalence-hol-proof-guest-beta",
         "CARGO_PKG_README": "",
         "CARGO_PKG_REPOSITORY": "",
         "CARGO_PKG_RUST_VERSION": "",
@@ -48,22 +48,22 @@ rust_library(
 )
 
 rust_test(
-    name = "covalence_lib_rand-unit-test",
-    crate = "covalence_lib_rand",
+    name = "covalence_hol_proof_guest_beta-unit-test",
+    crate = "covalence_hol_proof_guest_beta",
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
     named_deps = {
-        "rand": "nucleus//buck/cargo/production:rand-0.9.5",
+        "wit_bindgen": "nucleus//buck/cargo/production:wit-bindgen-0.57.1",
     },
     env = {
-        "CARGO_MANIFEST_DIR": "crates/lib/rand",
+        "CARGO_MANIFEST_DIR": "crates/hol-proof-guest-beta",
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "Randomness primitives for Nucleus",
+        "CARGO_PKG_DESCRIPTION": "Untrusted closed-beta proof recipe component for Covalence",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",
-        "CARGO_PKG_NAME": "covalence-lib-rand",
+        "CARGO_PKG_NAME": "covalence-hol-proof-guest-beta",
         "CARGO_PKG_README": "",
         "CARGO_PKG_REPOSITORY": "",
         "CARGO_PKG_RUST_VERSION": "",

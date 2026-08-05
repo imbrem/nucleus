@@ -23,14 +23,20 @@ rust_library(
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
+    mapped_srcs = {
+        "Cargo.toml": "crates/repl/Cargo.toml",
+        "nucleus//crates/nucleus:package_files": "crates/nucleus",
+    },
     tests = [":covalence_repl-unit-test"],
     named_deps = {
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
         "covalence_neutron": "nucleus//crates/neutron:covalence_neutron",
         "covalence_nucleus": "nucleus//crates/nucleus:covalence_nucleus",
+        "covalence_proton": "nucleus//crates/proton:covalence_proton",
     },
     env = {
+        "CARGO_MANIFEST_DIR": "crates/repl",
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Transport-neutral REPL orchestration for Covalence kernels",
         "CARGO_PKG_HOMEPAGE": "",
@@ -55,13 +61,19 @@ rust_test(
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
+    mapped_srcs = {
+        "Cargo.toml": "crates/repl/Cargo.toml",
+        "nucleus//crates/nucleus:package_files": "crates/nucleus",
+    },
     named_deps = {
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
         "covalence_neutron": "nucleus//crates/neutron:covalence_neutron",
         "covalence_nucleus": "nucleus//crates/nucleus:covalence_nucleus",
+        "covalence_proton": "nucleus//crates/proton:covalence_proton",
     },
     env = {
+        "CARGO_MANIFEST_DIR": "crates/repl",
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Transport-neutral REPL orchestration for Covalence kernels",
         "CARGO_PKG_HOMEPAGE": "",
