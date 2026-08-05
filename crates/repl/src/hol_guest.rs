@@ -1,21 +1,26 @@
 //! Native host for the bounded beta-only HOL proof component contract.
 
-use std::{collections::HashSet, error::Error as StdError, fmt};
+use std::{
+    collections::{HashMap, HashSet},
+    error::Error as StdError,
+    fmt,
+};
 
+use covalence_lib_hash::O256;
 use covalence_nucleus::Kernel;
 use covalence_proton::{
     WasmtimeComponentLimits, WasmtimeComponentRuntime, WasmtimeRuntimeError, WasmtimeStore,
     wasmtime,
 };
-use wasmtime::component::{HasSelf, Linker, Resource};
+use wasmtime::component::{Component, HasSelf, Linker, Resource};
 
 use crate::hol_guest_plan::{
     MAX_RECIPE_NAME_BYTES, MAX_RECIPE_NODES, RecipeNode as Recipe, RecipeSort as Sort,
     SealedHolProofRecipe,
 };
 use crate::{
-    ConnectionId, KernelId, LocalConnection, ReceivedHolSnapshot, Repl, SignedHolArtifact,
-    Value as SqlValue, authenticate_pinned_signed_hol_artifact,
+    ConnectionId, HolProofComponentExecutor, KernelId, LocalConnection, ReceivedHolSnapshot, Repl,
+    SignedHolArtifact, Value as SqlValue, authenticate_pinned_signed_hol_artifact,
     trust_and_receive_pinned_signed_hol_artifact,
 };
 
@@ -349,6 +354,119 @@ fn collect_prepared_hol_proof_component(
         .map_err(|error| HolGuestError::Replay(error.to_string()))
 }
 
+/// A locally bounded and compiled HOL proof component.
+///
+/// Preparation is the only operation which accepts component bytes. Repeated
+/// collection instantiates the already compiled component in fresh bounded
+/// stores and yields only authority-free sealed recipes.
+pub struct PreparedHolProofComponent {
+    digest: O256,
+    runtime: WasmtimeComponentRuntime,
+    component: Component,
+}
+
+impl PreparedHolProofComponent {
+    /// Validates and compiles exact component bytes under explicit limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the byte bound, Wasmtime configuration, validation,
+    /// or compilation fails.
+    pub fn prepare(
+        expected: O256,
+        bytes: &[u8],
+        limits: WasmtimeComponentLimits,
+    ) -> Result<Self, HolGuestError> {
+        let actual = O256::from_bytes(bytes);
+        if actual != expected {
+            return Err(HolGuestError::ComponentHashMismatch { expected, actual });
+        }
+        let runtime = WasmtimeComponentRuntime::new(limits).map_err(HolGuestError::Runtime)?;
+        let component = runtime.component(bytes).map_err(HolGuestError::Runtime)?;
+        Ok(Self {
+            digest: actual,
+            runtime,
+            component,
+        })
+    }
+
+    /// Returns the exact content digest remote signed commands may select.
+    #[must_use]
+    pub const fn digest(&self) -> O256 {
+        self.digest
+    }
+
+    /// Runs this precompiled component in a fresh bounded store and returns its
+    /// untrusted sealed recipe without replay or signing authority.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for instantiation, execution, guest, or recipe failure.
+    pub fn collect(&self) -> Result<SealedHolProofRecipe, HolGuestError> {
+        collect_prepared_hol_proof_component(&self.runtime, &self.component)
+    }
+}
+
+/// In-process native prototype mapping exact digests to precompiled guests.
+///
+/// This is deliberately an upper-layer convenience, not an isolation boundary:
+/// Wasmtime and its JIT still share the key-holding process. The executor API
+/// is authority-free so a later subprocess or Worker can replace this type
+/// without changing signed service semantics or checked replay.
+#[derive(Default)]
+pub struct PrecompiledHolProofComponentExecutor {
+    components: HashMap<O256, PreparedHolProofComponent>,
+}
+
+impl PrecompiledHolProofComponentExecutor {
+    /// Creates an empty local allowlist.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Adds one already validated and compiled component before serving.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a duplicate digest instead of silently replacing executable
+    /// configuration.
+    pub fn insert(&mut self, component: PreparedHolProofComponent) -> Result<O256, HolGuestError> {
+        let digest = component.digest();
+        if self.components.contains_key(&digest) {
+            return Err(HolGuestError::DuplicateComponent(digest));
+        }
+        self.components.insert(digest, component);
+        Ok(digest)
+    }
+
+    /// Returns the number of locally provisioned exact components.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.components.len()
+    }
+
+    /// Reports whether no component has been provisioned.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.components.is_empty()
+    }
+}
+
+impl HolProofComponentExecutor for PrecompiledHolProofComponentExecutor {
+    fn contains(&self, component: O256) -> bool {
+        self.components.contains_key(&component)
+    }
+
+    fn execute(&mut self, component: O256) -> Result<SealedHolProofRecipe, String> {
+        self.components
+            .get(&component)
+            .ok_or_else(|| "HOL proof component is not provisioned".to_owned())?
+            .collect()
+            .map_err(|error| error.to_string())
+    }
+}
+
 /// Executes one untrusted component, then replays and signs only its successful sealed plan.
 ///
 /// The guest receives neither a database connection nor signing authority. A failed component,
@@ -518,6 +636,8 @@ pub enum HolGuestError {
     InvalidReturnedNamespace,
     ArtifactTooLarge { size: usize, maximum: usize },
     Replay(String),
+    ComponentHashMismatch { expected: O256, actual: O256 },
+    DuplicateComponent(O256),
 }
 
 impl fmt::Display for HolGuestError {
@@ -536,6 +656,18 @@ impl fmt::Display for HolGuestError {
                 )
             }
             Self::Replay(error) => write!(formatter, "proof replay failed: {error}"),
+            Self::ComponentHashMismatch { expected, actual } => {
+                write!(
+                    formatter,
+                    "component hash {actual} does not match configured {expected}"
+                )
+            }
+            Self::DuplicateComponent(component) => {
+                write!(
+                    formatter,
+                    "HOL proof component {component} is already provisioned"
+                )
+            }
         }
     }
 }
@@ -694,6 +826,43 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn preparation_rejects_hash_mismatch_invalid_and_oversized_before_serving() {
+        let invalid = b"not a component";
+        let actual = O256::from_bytes(invalid);
+        let expected = O256::from_bytes(b"configured component");
+        assert!(matches!(
+            PreparedHolProofComponent::prepare(
+                expected,
+                invalid,
+                WasmtimeComponentLimits::default(),
+            ),
+            Err(HolGuestError::ComponentHashMismatch {
+                expected: rejected_expected,
+                actual: rejected_actual,
+            }) if rejected_expected == expected && rejected_actual == actual
+        ));
+        assert!(matches!(
+            PreparedHolProofComponent::prepare(actual, invalid, WasmtimeComponentLimits::default(),),
+            Err(HolGuestError::Runtime(WasmtimeRuntimeError::Component(_)))
+        ));
+
+        let limits = WasmtimeComponentLimits {
+            component_bytes: 8,
+            ..WasmtimeComponentLimits::default()
+        };
+        let oversized = [0; 9];
+        assert!(matches!(
+            PreparedHolProofComponent::prepare(O256::from_bytes(oversized), &oversized, limits),
+            Err(HolGuestError::Runtime(
+                WasmtimeRuntimeError::ComponentTooLarge {
+                    size: 9,
+                    maximum: 8,
+                }
+            ))
+        ));
     }
 
     #[test]

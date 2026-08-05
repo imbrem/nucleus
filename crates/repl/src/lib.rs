@@ -10,6 +10,7 @@ use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
 
+pub use covalence_lib_hash::O256;
 use covalence_lib_sqlite as sqlite;
 
 pub mod hol_recipes;
@@ -23,8 +24,9 @@ mod hol_guest;
 pub use covalence_proton::WasmtimeComponentLimits;
 #[cfg(not(target_arch = "wasm32"))]
 pub use hol_guest::{
-    HolGuestError, ManagedHolGuestError, ManagedHolGuestResult, retain_signed_hol_guest_artifact,
-    run_hol_proof_component, run_managed_hol_proof_component,
+    HolGuestError, ManagedHolGuestError, ManagedHolGuestResult,
+    PrecompiledHolProofComponentExecutor, PreparedHolProofComponent,
+    retain_signed_hol_guest_artifact, run_hol_proof_component, run_managed_hol_proof_component,
 };
 
 pub use covalence_nucleus::sql::{
