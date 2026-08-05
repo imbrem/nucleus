@@ -2,6 +2,7 @@ use std::env;
 use std::error::Error;
 use std::fs;
 use std::io;
+use std::io::Read as _;
 use std::io::Write as _;
 use std::process::ExitCode;
 
@@ -12,8 +13,9 @@ use covalence_repl::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use covalence_repl::{
-    NativeHttpClientError, NativeHttpKernelClient, NativeHttpKernelServer, RemoteSessionState,
-    SIGNED_KERNEL_HTTP_PATH, ServiceOperation, ServiceProducedHol, ServiceResult,
+    MAX_HOL_PROOF_COMPONENT_BYTES, NativeHttpClientError, NativeHttpKernelClient,
+    NativeHttpKernelServer, PreparedHolProofComponent, RemoteSessionState, SIGNED_KERNEL_HTTP_PATH,
+    ServiceOperation, ServiceProducedHol, ServiceResult,
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
@@ -591,9 +593,60 @@ fn usage(output: &mut impl io::Write) -> io::Result<()> {
     )?;
     writeln!(
         output,
+        "       nucleus --kernel-http-hol-component ADDRESS ALLOWED_ORIGIN COMPONENT"
+    )?;
+    writeln!(
+        output,
         "       nucleus --managed-http-hol ADDRESS PUBLIC_KEY_HEX"
     )?;
     writeln!(output, "       nucleus --help")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn run_hol_component_server_arguments(arguments: &mut impl Iterator<Item = String>) -> Result<()> {
+    let address = arguments
+        .next()
+        .ok_or("--kernel-http-hol-component requires ADDRESS ALLOWED_ORIGIN COMPONENT")?;
+    let allowed_origin = arguments
+        .next()
+        .ok_or("--kernel-http-hol-component requires ADDRESS ALLOWED_ORIGIN COMPONENT")?;
+    let path = arguments
+        .next()
+        .ok_or("--kernel-http-hol-component requires ADDRESS ALLOWED_ORIGIN COMPONENT")?;
+    if arguments.next().is_some() {
+        return Err(
+            "unexpected arguments after --kernel-http-hol-component ADDRESS ALLOWED_ORIGIN COMPONENT"
+                .into(),
+        );
+    }
+    let source = fs::File::open(path)?;
+    let mut bytes = Vec::new();
+    source
+        .take(MAX_HOL_PROOF_COMPONENT_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_HOL_PROOF_COMPONENT_BYTES {
+        return Err(
+            format!("component exceeds the {MAX_HOL_PROOF_COMPONENT_BYTES}-byte limit").into(),
+        );
+    }
+    let component = PreparedHolProofComponent::prepare_default(&bytes)?;
+    let component_digest = component.digest();
+    let server =
+        NativeHttpKernelServer::bind_hol_proof_component(address, allowed_origin, component)?;
+    let address = server.local_addr()?;
+    let mut public_key = String::with_capacity(64);
+    for byte in server.identity().public_key() {
+        use std::fmt::Write as _;
+        write!(public_key, "{byte:02x}")?;
+    }
+    let mut output = io::stdout().lock();
+    writeln!(output, "url\thttp://{address}{SIGNED_KERNEL_HTTP_PATH}")?;
+    writeln!(output, "public_key\t{public_key}")?;
+    writeln!(output, "component\t{component_digest}")?;
+    output.flush()?;
+    drop(output);
+    server.serve()?;
+    Ok(())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -701,6 +754,8 @@ fn run() -> Result<()> {
             server.serve()?;
             Ok(())
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        Some("--kernel-http-hol-component") => run_hol_component_server_arguments(&mut arguments),
         #[cfg(not(target_arch = "wasm32"))]
         Some("--managed-http-hol") => run_managed_http_arguments(&mut arguments),
         Some("-h" | "--help") => {
