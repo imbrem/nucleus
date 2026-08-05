@@ -21,6 +21,13 @@ pub use hol_derived_rules::{
     DerivedRulePreparationError, EqSym, EqTrans, EqtElim, EqtIntro, FunExt, ImpElim, ImpIntro,
 };
 
+mod hol_false_bridge;
+pub use hol_false_bridge::{
+    FalseBridgeSyntax, SignedFalseBridge, build_false_bridge_syntax,
+    produce_and_retain_signed_false_bridge, produce_signed_false_bridge,
+    retain_signed_false_bridge,
+};
+
 mod hol_infinity;
 pub use hol_infinity::{
     DedekindInfinitySyntax, SignedInfinityAssumption, build_dedekind_infinity_syntax,
