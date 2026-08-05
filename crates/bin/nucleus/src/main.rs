@@ -7,20 +7,22 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use covalence_repl::{
-    AllowAll, ConnectionId, HolRecipe, HolRecipeResult, Kernel, LocalConnection, MAX_IMAGE_BYTES,
-    Outcome, Repl, RetainedReceivedHolSnapshot, SignedHolRoundTripResult, Value,
+    AllowAll, ConnectionId, ExpectedKernelIdentity, HolRecipe, HolRecipeResult, Kernel, KernelId,
+    LocalConnection, MAX_IMAGE_BYTES, MAX_SIGNED_HOL_ARTIFACT_SIDECAR_BYTES, Outcome, Repl,
+    RetainedReceivedHolSnapshot, SignedHolRoundTripResult, Value,
     authenticate_pinned_signed_hol_artifact, open_retained_trusted_hol_as_managed_state,
-    produce_signed_dedekind_infinity_assumption, produce_signed_hol_artifact,
-    produce_signed_natlike_missing_zero, retain_signed_dedekind_infinity_assumption,
-    retain_signed_natlike_missing_zero, run_managed_signed_hol_round_trip,
-    trust_and_receive_pinned_signed_hol_artifact,
+    parse_signed_hol_artifact_sidecar, produce_signed_dedekind_infinity_assumption,
+    produce_signed_hol_artifact, produce_signed_natlike_missing_zero,
+    retain_signed_dedekind_infinity_assumption, retain_signed_natlike_missing_zero,
+    run_managed_signed_hol_round_trip, trust_and_receive_pinned_signed_hol_artifact,
+    trust_receive_and_retain_selected_managed_hol_artifact,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use covalence_repl::{
-    ExpectedKernelIdentity, KernelId, ManagedHolGuestResult, O256,
-    PrecompiledHolProofComponentExecutor, PreparedHolProofComponent, ReceivedHolSnapshot,
-    ServiceOperation, ServiceResult, SessionInitiator, SignedHolArtifact, SignedKernelService,
-    WasmtimeComponentLimits, retain_signed_hol_guest_artifact, run_hol_proof_component,
+    ManagedHolGuestResult, O256, PrecompiledHolProofComponentExecutor, PreparedHolProofComponent,
+    ReceivedHolSnapshot, ServiceOperation, ServiceResult, SessionInitiator, SignedHolArtifact,
+    SignedKernelService, WasmtimeComponentLimits, retain_signed_hol_guest_artifact,
+    run_hol_proof_component,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use covalence_repl::{NativeHttpKernelServer, SIGNED_KERNEL_HTTP_PATH};
@@ -552,6 +554,10 @@ fn print_help(output: &mut impl io::Write) -> io::Result<()> {
         output,
         ".hol natlike-missing-zero DIRECTORY  derive, dump, and retain signed missing zero"
     )?;
+    writeln!(
+        output,
+        ".hol receive-signed DIRECTORY EXPECTED_PUBLIC_KEY_HEX  verify and retain signed files"
+    )?;
     writeln!(output, ".use ID            select a connection")?;
     writeln!(output, ".close [ID]        close a connection")?;
     writeln!(output, ".connections       list open connections")?;
@@ -736,6 +742,124 @@ fn run_interactive_natlike_missing_zero_command(
     Ok(true)
 }
 
+fn decode_expected_public_key(value: &str) -> Result<[u8; 32]> {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err("expected public key must be exactly 64 lowercase hex digits".into());
+    }
+    let mut decoded = [0; 32];
+    for (target, pair) in decoded.iter_mut().zip(value.as_bytes().chunks_exact(2)) {
+        let high = if pair[0].is_ascii_digit() {
+            pair[0] - b'0'
+        } else {
+            pair[0] - b'a' + 10
+        };
+        let low = if pair[1].is_ascii_digit() {
+            pair[1] - b'0'
+        } else {
+            pair[1] - b'a' + 10
+        };
+        *target = high * 16 + low;
+    }
+    Ok(decoded)
+}
+
+fn read_bounded_signed_artifact_sidecar(mut input: impl io::Read) -> Result<Vec<u8>> {
+    let sentinel_limit = u64::try_from(MAX_SIGNED_HOL_ARTIFACT_SIDECAR_BYTES)? + 1;
+    let mut bytes = Vec::new();
+    input
+        .by_ref()
+        .take(sentinel_limit)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_SIGNED_HOL_ARTIFACT_SIDECAR_BYTES {
+        return Err(format!(
+            "attestation exceeds the {MAX_SIGNED_HOL_ARTIFACT_SIDECAR_BYTES}-byte limit"
+        )
+        .into());
+    }
+    Ok(bytes)
+}
+
+fn receive_interactive_signed_artifact(
+    kernel: &Kernel,
+    repl: &mut LocalRepl,
+    received_artifacts: &mut HashMap<ConnectionId, RetainedReceivedHolSnapshot>,
+    output: &mut impl io::Write,
+    artifact_directory: &Path,
+    expected_public_key: &str,
+) -> Result<()> {
+    let expected_public_key = decode_expected_public_key(expected_public_key)?;
+    let image = read_bounded_image(File::open(artifact_directory.join("proof.sqlite"))?)?;
+    let sidecar = read_bounded_signed_artifact_sidecar(File::open(
+        artifact_directory.join("attestation.txt"),
+    )?)?;
+    let artifact = parse_signed_hol_artifact_sidecar(image, &sidecar)?;
+    // `LOCAL` is only this adapter's diagnostic routing label. Authority comes
+    // exclusively from the independently supplied public key.
+    let expected = ExpectedKernelIdentity::from_public_key(KernelId::LOCAL, &expected_public_key)?;
+    let pinned = authenticate_pinned_signed_hol_artifact(&expected, &artifact)?;
+    let receiver = kernel.open_hol(AllowAll)?;
+    let (receiver, retained) =
+        trust_receive_and_retain_selected_managed_hol_artifact(repl, receiver, pinned)?;
+    let imported = retained.received();
+    received_artifacts.insert(receiver, retained);
+
+    writeln!(output, "kind\treceived-signed-hol")?;
+    writeln!(output, "connection\t{receiver}")?;
+    writeln!(output, "source_namespace\t{}", artifact.namespace_id())?;
+    writeln!(output, "schema\t{}", artifact.schema())?;
+    writeln!(output, "image\t{}", artifact.image_hash())?;
+    writeln!(output, "signer\t{}", artifact.signer())?;
+    writeln!(output, "import\t{}", imported.import_id())?;
+    writeln!(output, "imported_namespace\t{}", imported.namespace_id())?;
+    writeln!(
+        output,
+        "imported_theorem\t{}\t{}",
+        imported.context_id(),
+        imported.conclusion_id()
+    )?;
+    writeln!(output, "trusted_import_receipt\tretained")?;
+    Ok(())
+}
+
+fn run_interactive_receive_signed_command(
+    kernel: &Kernel,
+    repl: &mut LocalRepl,
+    received_artifacts: &mut HashMap<ConnectionId, RetainedReceivedHolSnapshot>,
+    output: &mut impl io::Write,
+    line: &str,
+) -> Result<bool> {
+    const USAGE: &str = "usage: .hol receive-signed DIRECTORY EXPECTED_PUBLIC_KEY_HEX";
+    if line == ".hol receive-signed" {
+        return Err(USAGE.into());
+    }
+    let Some(arguments) = line.strip_prefix(".hol receive-signed ") else {
+        return Ok(false);
+    };
+    let arguments = arguments.trim();
+    let split = arguments.rfind(char::is_whitespace).ok_or(USAGE)?;
+    let artifact_directory = arguments[..split].trim_end();
+    let expected_public_key = arguments[split..].trim();
+    if artifact_directory.is_empty()
+        || expected_public_key.is_empty()
+        || expected_public_key.contains(char::is_whitespace)
+    {
+        return Err(USAGE.into());
+    }
+    receive_interactive_signed_artifact(
+        kernel,
+        repl,
+        received_artifacts,
+        output,
+        Path::new(artifact_directory),
+        expected_public_key,
+    )?;
+    Ok(true)
+}
+
 fn run_interactive_hol_artifact_command(
     kernel: &Kernel,
     repl: &mut LocalRepl,
@@ -746,7 +870,11 @@ fn run_interactive_hol_artifact_command(
     if run_interactive_infinity_command(kernel, repl, received_artifacts, output, line)? {
         return Ok(true);
     }
-    run_interactive_natlike_missing_zero_command(kernel, repl, received_artifacts, output, line)
+    if run_interactive_natlike_missing_zero_command(kernel, repl, received_artifacts, output, line)?
+    {
+        return Ok(true);
+    }
+    run_interactive_receive_signed_command(kernel, repl, received_artifacts, output, line)
 }
 
 fn close_interactive_connection(
@@ -1230,6 +1358,51 @@ mod tests {
         })
     }
 
+    fn bytes_hex(bytes: &[u8]) -> String {
+        use std::fmt::Write as _;
+        let mut encoded = String::with_capacity(bytes.len() * 2);
+        for byte in bytes {
+            write!(encoded, "{byte:02x}").unwrap();
+        }
+        encoded
+    }
+
+    fn signed_hol_directory(stem: &str) -> (PathBuf, String, Vec<u8>, String) {
+        let producer = Kernel::ephemeral();
+        let mut source = producer.open_hol(AllowAll).unwrap();
+        let bundle = produce_signed_hol_artifact(&producer, &mut source).unwrap();
+        let image = bundle.artifact().image().to_vec();
+        let sidecar = bundle.artifact().attestation_text();
+        let public_key = bytes_hex(producer.verifying_key().as_bytes());
+        let path = temporary_file(stem);
+        fs::create_dir(&path).unwrap();
+        fs::write(path.join("proof.sqlite"), &image).unwrap();
+        fs::write(path.join("attestation.txt"), &sidecar).unwrap();
+        (path, public_key, image, sidecar)
+    }
+
+    fn signed_missing_zero_directory(stem: &str) -> (PathBuf, String, i64, i64) {
+        let producer = Kernel::ephemeral();
+        let theorem = produce_signed_natlike_missing_zero(&producer).unwrap();
+        let public_key = bytes_hex(producer.verifying_key().as_bytes());
+        let path = temporary_file(stem);
+        fs::create_dir(&path).unwrap();
+        fs::write(path.join("proof.sqlite"), theorem.artifact().image()).unwrap();
+        fs::write(path.join("attestation.txt"), theorem.attestation_text()).unwrap();
+        (
+            path,
+            public_key,
+            theorem.context().get(),
+            theorem.conclusion().get(),
+        )
+    }
+
+    fn remove_signed_hol_directory(path: &Path) {
+        fs::remove_file(path.join("proof.sqlite")).unwrap();
+        fs::remove_file(path.join("attestation.txt")).unwrap();
+        fs::remove_dir(path).unwrap();
+    }
+
     struct GrowingImage {
         remaining: usize,
     }
@@ -1346,6 +1519,124 @@ mod tests {
         fs::remove_file(path.join("proof.sqlite")).unwrap();
         fs::remove_file(path.join("attestation.txt")).unwrap();
         fs::remove_dir(path).unwrap();
+    }
+
+    #[test]
+    fn receive_signed_command_pins_retains_selects_and_opens_state() {
+        let (path, expected_public_key, context, conclusion) =
+            signed_missing_zero_directory("receive-signed-missing-zero");
+        let script = format!(
+            ".hol receive-signed {} {}\n.hol open-state\n.hol truth\n.quit\n",
+            path.display(),
+            expected_public_key
+        );
+        let mut input = Cursor::new(script);
+        let mut output = Vec::new();
+        let mut errors = Vec::new();
+
+        run_repl(&mut input, &mut output, &mut errors, false).expect("run REPL");
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("kind\treceived-signed-hol\n"));
+        assert!(output.contains("trusted_import_receipt\tretained\n"));
+        assert!(output.contains(&format!("imported_theorem\t{context}\t{conclusion}\n")));
+        assert!(output.contains("kind\ttrusted-hol-state\n"));
+        assert!(output.contains(&format!("trusted_theorem\t{context}\t{conclusion}\n")));
+        assert!(output.contains("statement\ttrue\n"));
+        assert!(errors.is_empty());
+        remove_signed_hol_directory(&path);
+    }
+
+    #[test]
+    fn receive_signed_rejections_leave_directory_state_unchanged() {
+        let (path, expected_public_key, image, sidecar) =
+            signed_hol_directory("receive-signed-rejections");
+        let receiver = Kernel::ephemeral();
+        let wrong_public_key = bytes_hex(receiver.verifying_key().as_bytes());
+        let mut repl = Repl::new(receiver.verifying_key().as_bytes()).unwrap();
+        let original = open_sql_connection(&receiver, &mut repl).unwrap();
+        let mut retained = HashMap::new();
+        let mut output = Vec::new();
+        let command = |key: &str| format!(".hol receive-signed {} {key}", path.display());
+
+        assert!(
+            run_line(
+                &receiver,
+                &mut repl,
+                &mut retained,
+                &mut output,
+                &command(&wrong_public_key),
+            )
+            .is_err()
+        );
+
+        let mut tampered = image.clone();
+        tampered[0] ^= 1;
+        fs::write(path.join("proof.sqlite"), tampered).unwrap();
+        assert!(
+            run_line(
+                &receiver,
+                &mut repl,
+                &mut retained,
+                &mut output,
+                &command(&expected_public_key),
+            )
+            .is_err()
+        );
+        fs::write(path.join("proof.sqlite"), &image).unwrap();
+
+        let duplicate = format!("schema={}\n{sidecar}", "00".repeat(32));
+        fs::write(path.join("attestation.txt"), duplicate).unwrap();
+        assert!(
+            run_line(
+                &receiver,
+                &mut repl,
+                &mut retained,
+                &mut output,
+                &command(&expected_public_key),
+            )
+            .is_err()
+        );
+
+        fs::write(path.join("attestation.txt"), sidecar.trim_end_matches('\n')).unwrap();
+        assert!(
+            run_line(
+                &receiver,
+                &mut repl,
+                &mut retained,
+                &mut output,
+                &command(&expected_public_key),
+            )
+            .is_err()
+        );
+
+        let untrusted_key = sidecar.replace(
+            &format!("public_key={expected_public_key}"),
+            &format!("public_key={wrong_public_key}"),
+        );
+        fs::write(path.join("attestation.txt"), untrusted_key).unwrap();
+        assert!(
+            run_line(
+                &receiver,
+                &mut repl,
+                &mut retained,
+                &mut output,
+                &command(&expected_public_key),
+            )
+            .is_err()
+        );
+
+        assert_eq!(repl.active().unwrap(), Some(original));
+        assert_eq!(
+            repl.inspect_state("SELECT count(*) FROM repl_connection")
+                .unwrap()
+                .rows,
+            [[Value::Integer(1)]]
+        );
+        assert!(retained.is_empty());
+        assert!(output.is_empty());
+        fs::write(path.join("attestation.txt"), sidecar).unwrap();
+        remove_signed_hol_directory(&path);
     }
 
     #[test]
