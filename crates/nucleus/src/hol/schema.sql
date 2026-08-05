@@ -1,6 +1,5 @@
 CREATE TABLE hol_schema (
-    version INTEGER PRIMARY KEY CHECK (version = 10),
-    representation TEXT NOT NULL CHECK (representation = 'tagged-node')
+    representation TEXT PRIMARY KEY CHECK (representation = 'tagged-node')
 ) STRICT;
 
 -- One algebraic node stream for kinds, types, and terms.  The tag determines
@@ -220,7 +219,7 @@ CREATE UNIQUE INDEX hol_meq_unique
 CREATE UNIQUE INDEX hol_meps_unique
     ON hol_node(lhs) WHERE tag = 'MEPS';
 
-INSERT INTO hol_schema(version, representation) VALUES (10, 'tagged-node');
+INSERT INTO hol_schema(representation) VALUES ('tagged-node');
 INSERT INTO hol_node(node_id, tag) VALUES (1, 'KSTAR');
 INSERT INTO hol_node(node_id, tag, ty) VALUES (2, 'TBOOL', 1);
 INSERT INTO hol_context(ctx_id) VALUES (0);

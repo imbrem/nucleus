@@ -27,12 +27,7 @@ pub use trust::{
 };
 pub use validate::{
     AuthenticatedHolImageValidationError, AuthenticatedValidatedHolImage, HolImageCounts,
-    HolImageValidationError, ValidatedHolImage, stlc_bool_eq_v1_schema_id,
-    stlc_bool_eq_v1_semantics, stlc_bool_eq_v2_schema_id, stlc_bool_eq_v2_semantics,
-    stlc_bool_eq_v3_schema_id, stlc_bool_eq_v3_semantics, stlc_bool_eq_v4_schema_id,
-    stlc_bool_eq_v4_semantics, stlc_bool_eq_v5_schema_id, stlc_bool_eq_v5_semantics,
-    stlc_bool_eq_v6_schema_id, stlc_bool_eq_v6_semantics, stlc_bool_eq_v7_schema_id,
-    stlc_bool_eq_v7_semantics,
+    HolImageValidationError, ValidatedHolImage, hol_schema_id, hol_semantics_id,
 };
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -1107,7 +1102,7 @@ impl<P> Hol<P> {
 }
 
 impl<P: Policy> Connection<Hol<P>> {
-    /// Opens a new in-memory HOL-omega store and installs schema version zero.
+    /// Opens a new in-memory HOL-omega store with the sole current schema.
     ///
     /// # Errors
     ///

@@ -144,9 +144,10 @@ judgements may be loaded only through a session after policy and structural
 checks. There is no public `insert_theorem(context, term)` escape hatch, and
 detached structural validation alone cannot mint theorem capabilities.
 
-The exact AST and rule enums should carry an explicit calculus/schema version
-until the `all/instantiation` issue is reconciled. Constructor additions must
-not silently change the meaning of an existing database.
+The exact AST and rule enums are committed by the semantic and physical schema
+identities. Constructor additions must change those current identities rather
+than silently changing the meaning of an existing database; the prototype does
+not carry concurrent compatibility implementations.
 
 ## Binding representation
 
@@ -423,6 +424,6 @@ Before the type/term slice, settle:
 - the exact Boolean theorem calculus versus typed equality judgement;
 - whether subtype constructors remain in the first executable kernel.
 
-These decisions version constructors and rules. They do not change the stable
-outer API of typed insertion, structural queries, immutable contexts, and
-connection-branded theorems.
+These decisions determine the current constructor and rule identities. They do
+not change the stable outer API of typed insertion, structural queries,
+immutable contexts, and connection-branded theorems.

@@ -1,0 +1,71 @@
+Nucleus HOL semantics
+
+This protocol is the implemented HOL fragment. It is not a claim of compatibility with the future
+full HOL-omega calculus; in particular it has no type-bound variables, type operators, type
+abstraction/application, subtypes, or polymorphic constants.
+
+Syntax is one canonical tagged node graph. KSTAR has rank 0. KARR(a,b) has rank
+max(rank(a)+1,rank(b)). TBOOL, opaque TBASE declarations, and schematic TFV atoms have kind KSTAR.
+TARR(a,b) has kind KSTAR when a and b do. Each base declaration denotes an arbitrary nonempty
+carrier. TFV(s) is identified exactly by its connection-local symbol and kind. TFVs are free atoms,
+not de Bruijn occurrences, and are locally closed. TARR may contain TFVs transitively.
+
+Each MCONST declaration denotes an arbitrary element of its one declared type and asserts no
+equation, infinitude, choice property, or other theorem. Its declared type must contain no TFV
+transitively and must be locally closed. A symbol has exactly one declared type. This is one object
+at one monomorphic type, not a principal polymorphic scheme.
+
+Terms also include Boolean literals, typed free symbols, typed de Bruijn occurrences, applications,
+lambdas, same-typed equality, and Hilbert choice. Application and lambda typing are the ordinary
+simply typed rules. MEPS(p) has type A exactly when p has type A -> bool, and has exactly p's
+external de Bruijn boundary. A term is locally closed exactly when every de Bruijn occurrence is
+bound by an enclosing lambda. An MFV identity includes its exact type, so distinct free terms may
+become identical after type instantiation.
+
+Every admitted type denotes a nonempty carrier. Hilbert choice denotes a fixed function which maps
+each predicate p : A -> bool to an element satisfying p when one exists, and to an arbitrary
+element of A otherwise. Choice is a function of the predicate denotation, so equality of predicates
+is respected. Ordinary MCONST declarations are never interpreted as Hilbert choice operators.
+
+Every theorem judgement is interpreted schematically, universally over all TFVs reachable from its
+conclusion and finite assumption context; every assigned carrier is nonempty. A context is a
+canonical finite set of locally closed Boolean terms. The authoritative judgement relation contains
+only conclusions introduced through the implemented LCF rules and explicit persistence.
+
+The rules are hypothesis, truth, equality reflexivity, closed beta reduction, the monomorphic
+conversion rules including congruence beneath epsilon, equality modus ponens, typed Leibniz
+equality substitution through a closed predicate, deduction antisymmetry, simultaneous typed
+free-term instantiation, simultaneous rank-zero schematic type instantiation, standard HOL
+abstraction, Hilbert choice, exact context implication introduction, explicit implication-path
+composition, and weakening. Choice derives Gamma |- p (epsilon p) from Gamma |- p x.
+
+Free-term instantiation replaces exact MFV node identities simultaneously in both the conclusion
+and every context member. Keys are distinct; each replacement has the key's type and is locally
+closed. Replacement terms are not recursively instantiated and pass unchanged beneath lambdas.
+
+Type instantiation replaces a finite set of distinct exact TFV node identities by well-formed
+KSTAR types. It acts simultaneously and non-recursively: replacement types are copied unchanged,
+may themselves contain TFVs, and are not subject to the same substitution. There is no occurs
+check. It transforms the conclusion and every context member, including all term type annotations,
+then canonically rebuilds the finite-set context. Term and type de Bruijn capture cannot occur
+because TFVs are free and the syntax has no type binders. Context members which become identical
+are deduplicated.
+
+Deduction antisymmetry derives (Gamma - {q}) union (Delta - {p}) |- p = q from Gamma |- p and
+Delta |- q. Abstraction derives Gamma |- (lambda x. l) = (lambda x. r) from Gamma |- l = r when
+the exact free-variable node x does not occur in any member of Gamma. Occurrences beneath existing
+lambdas become the correctly typed de Bruijn index, while existing bound occurrences remain
+unchanged. Exact context union is a separately checked structural relation. Context equivalence is
+a pair of opposite proved implications. Proof-event tables are diagnostic metadata and carry no
+authority.
+
+Namespaces and exports name already-admitted local kinds, types, terms, and contexts. Hash-first
+imports and imported namespace aliases are inert coordinates. A persistent trusted-import row is
+an auditable accepted assumption with cryptographically coherent evidence; it does not fetch the
+referenced image, import syntax, create theorem capabilities, or transitively establish truth.
+
+User-declared metadata columns and indexes are physical annotations. They never affect canonical
+syntax identity, typing, proof rules, or authority except that their exact physical SQLite manifest
+is independently committed by the composite signed schema identity. Validation, descriptors,
+signing, and authenticated import admit only the single exact current semantics and physical
+schema.
