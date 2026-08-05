@@ -12,7 +12,10 @@ use covalence_proton::{
 };
 use wasmtime::component::{HasSelf, Linker, Resource};
 
-use crate::SignedHolArtifact;
+use crate::{
+    ConnectionId, LocalConnection, ReceivedHolSnapshot, Repl, SignedHolArtifact, Value as SqlValue,
+    receive_signed_hol_artifact,
+};
 
 mod bindings {
     use covalence_proton::wasmtime;
@@ -600,6 +603,142 @@ pub fn run_hol_proof_component(
     replay(kernel, &store.data().data.recipe, selected_namespace)
 }
 
+/// Signed guest output plus the receiver connection retained by a caller-owned REPL.
+pub struct ManagedHolGuestResult {
+    artifact: SignedHolArtifact,
+    received: ReceivedHolSnapshot,
+    connection: ConnectionId,
+}
+
+impl ManagedHolGuestResult {
+    /// Returns the exact independently transportable signed snapshot.
+    #[must_use]
+    pub const fn artifact(&self) -> &SignedHolArtifact {
+        &self.artifact
+    }
+
+    /// Returns receiver-local coordinates for the imported snapshot.
+    #[must_use]
+    pub const fn received(&self) -> ReceivedHolSnapshot {
+        self.received
+    }
+
+    /// Returns the live HOL connection retained in the caller's directory.
+    #[must_use]
+    pub const fn connection(&self) -> ConnectionId {
+        self.connection
+    }
+}
+
+/// Executes a guest and retains its authenticated import in caller-owned REPL state.
+///
+/// Component execution occurs in a fresh disposable producer connection. Only after checked
+/// replay, signing, key matching, detached validation, trust, and import succeed is the fresh
+/// receiver inserted into `directory`. The directory's existing selection is preserved unless
+/// it was empty, in which case ordinary [`Repl::insert`] behavior selects the receiver.
+///
+/// # Errors
+///
+/// Returns the first high-level boundary which failed. The caller's directory is not mutated
+/// before the complete receive path succeeds.
+pub fn run_managed_hol_proof_component(
+    kernel: &Kernel,
+    directory: &mut Repl<LocalConnection>,
+    bytes: &[u8],
+    limits: WasmtimeComponentLimits,
+) -> Result<ManagedHolGuestResult, ManagedHolGuestError> {
+    let artifact = run_hol_proof_component(kernel, bytes, limits)
+        .map_err(|error| ManagedHolGuestError::at("component-executed", error))?;
+    retain_signed_hol_guest_artifact(kernel, directory, artifact)
+}
+
+/// Authenticates a completed guest artifact and retains its imported receiver.
+///
+/// This split form lets a caller durably present the signed bytes before mutating its REPL
+/// directory. Both the caller-provided kernel key and the independently recorded local endpoint
+/// key must match the signed artifact before the ordinary authenticate/validate/trust/import
+/// path runs against a disposable receiver.
+///
+/// # Errors
+///
+/// Returns the first high-level boundary which failed. No receiver is inserted until the full
+/// receive path succeeds.
+pub fn retain_signed_hol_guest_artifact(
+    kernel: &Kernel,
+    directory: &mut Repl<LocalConnection>,
+    artifact: SignedHolArtifact,
+) -> Result<ManagedHolGuestResult, ManagedHolGuestError> {
+    let verifying_key = kernel.verifying_key();
+    let expected = verifying_key.as_bytes();
+    if artifact.public_key() != expected {
+        return Err(ManagedHolGuestError::invalid(
+            "artifact-authenticated",
+            "artifact signer does not match the caller-provided kernel",
+        ));
+    }
+    let recorded = directory
+        .inspect_state("SELECT public_key FROM repl_kernel WHERE kernel_id = 0")
+        .map_err(|error| ManagedHolGuestError::at("local-key-loaded", error))?;
+    if recorded.rows.as_slice() != [vec![SqlValue::Blob(expected.to_vec())]] {
+        return Err(ManagedHolGuestError::invalid(
+            "local-key-loaded",
+            "REPL local endpoint key does not match the caller-provided kernel",
+        ));
+    }
+
+    let mut target = kernel
+        .open_hol(covalence_nucleus::AllowAll)
+        .map_err(|error| ManagedHolGuestError::at("receiver-opened", error))?;
+    let received = receive_signed_hol_artifact(&mut target, &artifact)
+        .map_err(|error| ManagedHolGuestError::at("artifact-imported", error))?;
+    let retained = LocalConnection::Hol(target);
+    let connection = directory
+        .insert(retained.protocol(), retained)
+        .map_err(|error| ManagedHolGuestError::at("receiver-retained", error))?;
+    Ok(ManagedHolGuestResult {
+        artifact,
+        received,
+        connection,
+    })
+}
+
+/// Failure of one explicit managed guest boundary.
+#[derive(Debug)]
+pub struct ManagedHolGuestError {
+    phase: &'static str,
+    message: String,
+}
+
+impl ManagedHolGuestError {
+    fn at(phase: &'static str, error: impl fmt::Display) -> Self {
+        Self {
+            phase,
+            message: error.to_string(),
+        }
+    }
+
+    fn invalid(phase: &'static str, message: &'static str) -> Self {
+        Self {
+            phase,
+            message: message.to_owned(),
+        }
+    }
+
+    /// Returns the first boundary which rejected the operation.
+    #[must_use]
+    pub const fn phase(&self) -> &'static str {
+        self.phase
+    }
+}
+
+impl fmt::Display for ManagedHolGuestError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}: {}", self.phase, self.message)
+    }
+}
+
+impl StdError for ManagedHolGuestError {}
+
 /// Failure before a signed HOL snapshot exists.
 #[derive(Debug)]
 pub enum HolGuestError {
@@ -636,6 +775,40 @@ impl StdError for HolGuestError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn closed_beta_recipe() -> Vec<Recipe> {
+        vec![
+            Recipe::BoolType,
+            Recipe::Bound { index: 0, ty: 0 },
+            Recipe::Lambda {
+                parameter_type: 0,
+                body: 1,
+            },
+            Recipe::Bool(true),
+            Recipe::EmptyContext,
+            Recipe::Beta {
+                context: 4,
+                abstraction: 2,
+                argument: 3,
+            },
+            Recipe::Persist { theorem: 5 },
+            Recipe::Namespace {
+                name: Some("demo".into()),
+            },
+            Recipe::ExportContext {
+                namespace: 7,
+                export: 0,
+                context: 4,
+                name: Some("empty_context".into()),
+            },
+            Recipe::ExportTheorem {
+                namespace: 7,
+                export: 1,
+                theorem: 5,
+                name: Some("identity_true_beta".into()),
+            },
+        ]
+    }
 
     #[test]
     fn forged_or_wrong_sort_resource_representations_are_rejected() {
@@ -677,37 +850,7 @@ mod tests {
 
     #[test]
     fn replayed_guest_artifact_uses_the_selected_receiver_contract() {
-        let recipe = vec![
-            Recipe::BoolType,
-            Recipe::Bound { index: 0, ty: 0 },
-            Recipe::Lambda {
-                parameter_type: 0,
-                body: 1,
-            },
-            Recipe::Bool(true),
-            Recipe::EmptyContext,
-            Recipe::Beta {
-                context: 4,
-                abstraction: 2,
-                argument: 3,
-            },
-            Recipe::Persist { theorem: 5 },
-            Recipe::Namespace {
-                name: Some("demo".into()),
-            },
-            Recipe::ExportContext {
-                namespace: 7,
-                export: 0,
-                context: 4,
-                name: Some("empty_context".into()),
-            },
-            Recipe::ExportTheorem {
-                namespace: 7,
-                export: 1,
-                theorem: 5,
-                name: Some("identity_true_beta".into()),
-            },
-        ];
+        let recipe = closed_beta_recipe();
         let producer = Kernel::ephemeral();
         let artifact = replay(&producer, &recipe, 7).unwrap();
         assert_eq!(artifact.namespace_id(), 1);
@@ -770,6 +913,89 @@ mod tests {
                 WasmtimeComponentLimits::default(),
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn managed_success_retains_a_live_receiver_for_post_return_reread() {
+        let recipe = closed_beta_recipe();
+        let kernel = Kernel::ephemeral();
+        let artifact = replay(&kernel, &recipe, 7).unwrap();
+        let mut directory = Repl::new(kernel.verifying_key().as_bytes()).unwrap();
+        let managed = retain_signed_hol_guest_artifact(&kernel, &mut directory, artifact).unwrap();
+
+        assert_eq!(directory.active().unwrap(), Some(managed.connection()));
+        let validated = crate::authenticate_and_validate_artifact(managed.artifact()).unwrap();
+        let target = directory
+            .get_mut(managed.connection())
+            .unwrap()
+            .hol_mut()
+            .unwrap();
+        let import = target
+            .register_import(covalence_nucleus::HolDatabaseRef::new(
+                validated.claim().schema(),
+                validated.claim().image(),
+            ))
+            .unwrap();
+        assert_eq!(import.get(), managed.received().import_id());
+        let trusted = target
+            .accept_trusted_import(import, validated.claim())
+            .unwrap();
+        let namespace = NamespaceId::from_i64(managed.received().namespace_id());
+        let mounted = covalence_neutron::ImmutableImage::register(std::sync::Arc::from(
+            managed.artifact().image(),
+        ))
+        .unwrap();
+        let reread = target
+            .match_trusted_import_image(trusted, validated)
+            .unwrap()
+            .with_mounted_reader(namespace, &mounted, crate::read_imported_beta)
+            .unwrap()
+            .unwrap();
+        assert_eq!(reread.0, managed.received().context_id());
+        assert_eq!(reread.1, managed.received().conclusion_id());
+    }
+
+    #[test]
+    fn managed_failure_does_not_mutate_the_caller_directory() {
+        let kernel = Kernel::ephemeral();
+        let mut directory = Repl::new(kernel.verifying_key().as_bytes()).unwrap();
+        let error = run_managed_hol_proof_component(
+            &kernel,
+            &mut directory,
+            b"not a component",
+            WasmtimeComponentLimits::default(),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error.phase(), "component-executed");
+        assert!(
+            directory
+                .inspect_state("SELECT connection_id FROM repl_connection")
+                .unwrap()
+                .rows
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn managed_receive_requires_the_directory_local_key() {
+        let recipe = closed_beta_recipe();
+        let kernel = Kernel::ephemeral();
+        let artifact = replay(&kernel, &recipe, 7).unwrap();
+        let other = Kernel::ephemeral();
+        let mut directory = Repl::new(other.verifying_key().as_bytes()).unwrap();
+
+        let error = retain_signed_hol_guest_artifact(&kernel, &mut directory, artifact)
+            .err()
+            .unwrap();
+        assert_eq!(error.phase(), "local-key-loaded");
+        assert!(
+            directory
+                .inspect_state("SELECT connection_id FROM repl_connection")
+                .unwrap()
+                .rows
+                .is_empty()
         );
     }
 }

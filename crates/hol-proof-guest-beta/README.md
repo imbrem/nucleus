@@ -15,3 +15,12 @@ cargo component build --locked -p covalence-hol-proof-guest-beta \
 `covalence_repl::run_hol_proof_component` runs the component with explicit Wasmtime limits,
 replays its opaque recipe through a fresh checked HOL connection, and returns a signed artifact.
 The caller owns any persistence or import policy; this layer never writes an artifact path.
+
+Run it through the caller-owned terminal REPL integration. The output directory must not already
+exist, and the command never replaces either artifact file:
+
+```sh
+cargo run -p covalence-bin-nucleus -- --wasm-hol \
+  target/wasm32-unknown-unknown/debug/covalence_hol_proof_guest_beta.wasm \
+  signed-beta-artifact
+```
