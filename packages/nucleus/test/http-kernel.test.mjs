@@ -16,20 +16,23 @@ const contentTypes = {
   ".wasm": "application/wasm",
 };
 
-async function launchKernel(context, allowedOrigin) {
+async function launchKernel(context, allowedOrigin, componentPath) {
+  const mode = componentPath === undefined ? "--kernel-http" : "--kernel-http-hol-component";
+  const kernelArguments = [
+    "run",
+    "--quiet",
+    "--locked",
+    "-p",
+    "covalence-bin-nucleus",
+    "--",
+    mode,
+    "127.0.0.1:0",
+    allowedOrigin,
+  ];
+  if (componentPath !== undefined) kernelArguments.push(componentPath);
   const child = spawn(
     "cargo",
-    [
-      "run",
-      "--quiet",
-      "--locked",
-      "-p",
-      "covalence-bin-nucleus",
-      "--",
-      "--kernel-http",
-      "127.0.0.1:0",
-      allowedOrigin,
-    ],
+    kernelArguments,
     { cwd: repositoryRoot, stdio: ["ignore", "pipe", "pipe"] },
   );
   let stderr = "";
@@ -44,7 +47,12 @@ async function launchKernel(context, allowedOrigin) {
   for await (const line of createInterface({ input: child.stdout })) {
     const split = line.indexOf("\t");
     if (split !== -1) metadata.set(line.slice(0, split), line.slice(split + 1));
-    if (metadata.has("url") && metadata.has("public_key")) break;
+    if (
+      metadata.has("url") &&
+      metadata.has("public_key") &&
+      (componentPath === undefined || metadata.has("component"))
+    )
+      break;
   }
   assert.equal(child.exitCode, null, stderr);
   assert.match(
@@ -52,7 +60,12 @@ async function launchKernel(context, allowedOrigin) {
     /^http:\/\/127\.0\.0\.1:\d+\/v0\/signed-message$/,
   );
   assert.match(metadata.get("public_key"), /^[0-9a-f]{64}$/);
-  return { child, url: metadata.get("url"), key: metadata.get("public_key") };
+  return {
+    child,
+    url: metadata.get("url"),
+    key: metadata.get("public_key"),
+    component: metadata.get("component"),
+  };
 }
 
 async function launchBrowser(context) {
@@ -91,9 +104,17 @@ async function launchStaticServer(context) {
   return `http://127.0.0.1:${address.port}`;
 }
 
-async function runPage(browser, base, endpoint, key, mode = "round-trip") {
+async function runPage(
+  browser,
+  base,
+  endpoint,
+  key,
+  mode = "round-trip",
+  component,
+) {
   const page = await browser.newPage();
   const query = new URLSearchParams({ endpoint, key, mode });
+  if (component !== undefined) query.set("component", component);
   await page.goto(`${base}/test/http-kernel.html?${query}`);
   await page.waitForFunction(
     () =>
@@ -108,6 +129,129 @@ async function runPage(browser, base, endpoint, key, mode = "round-trip") {
     result: await page.locator("body").getAttribute("data-result"),
   };
 }
+
+const holComponentPath = process.env.HOL_PROOF_COMPONENT_PATH;
+
+test(
+  "real Chromium imports and re-inspects a native allowlisted component artifact",
+  { skip: holComponentPath === undefined },
+  async (context) => {
+    const base = await launchStaticServer(context);
+    const [kernel, browser] = await Promise.all([
+      launchKernel(context, base, holComponentPath),
+      launchBrowser(context),
+    ]);
+    const page = await runPage(
+      browser,
+      base,
+      kernel.url,
+      kernel.key,
+      "component-round-trip",
+      kernel.component,
+    );
+    assert.equal(page.error, null);
+    assert.equal(page.outcomeUnknown, false);
+    const result = JSON.parse(page.result);
+    assert.equal(result.kind, "signed-hol-component-artifact");
+    assert.equal(result.component, kernel.component);
+    assert.match(result.schema, /^[0-9a-f]{64}$/);
+    assert.match(result.imageHash, /^[0-9a-f]{64}$/);
+    assert.match(result.signer, /^[0-9a-f]{64}$/);
+    assert.ok(result.imageBytes > 0);
+    assert.deepEqual(result.received, {
+      kind: "received-hol-snapshot",
+      phases: result.received.phases,
+      importId: "0",
+      namespace: "1",
+      context: "0",
+      conclusion: "8",
+    });
+    assert.deepEqual(result.inspectedAfterReturn, result.received);
+    assert.match(result.receiverState, /^[0-9a-f]{64}$/);
+    assert.deepEqual(result.beforeCleanup, { kernels: 2, connections: 1 });
+    assert.deepEqual(result.lifecycle, [
+      "opening",
+      "established",
+      "closing",
+      "closed",
+    ]);
+    const code =
+      kernel.child.exitCode ??
+      (await new Promise((resolve) =>
+        kernel.child.once("exit", (exitCode) => resolve(exitCode)),
+      ));
+    assert.equal(code, 0);
+  },
+);
+
+test(
+  "real Chromium treats a wrong allowlisted hash as an authenticated definite error",
+  { skip: holComponentPath === undefined },
+  async (context) => {
+    const base = await launchStaticServer(context);
+    const [kernel, browser] = await Promise.all([
+      launchKernel(context, base, holComponentPath),
+      launchBrowser(context),
+    ]);
+    const page = await runPage(
+      browser,
+      base,
+      kernel.url,
+      kernel.key,
+      "component-wrong-hash",
+      kernel.component,
+    );
+    assert.equal(page.error, null);
+    const result = JSON.parse(page.result);
+    assert.match(result.operationError, /not allowlisted/i);
+    assert.equal(result.outcomeUnknown, false);
+    assert.deepEqual(result.lifecycle, [
+      "opening",
+      "established",
+      "closing",
+      "closed",
+    ]);
+  },
+);
+
+test(
+  "real Chromium exactly retries an ambiguous allowlisted component command",
+  { skip: holComponentPath === undefined },
+  async (context) => {
+    const base = await launchStaticServer(context);
+    const [kernel, browser] = await Promise.all([
+      launchKernel(context, base, holComponentPath),
+      launchBrowser(context),
+    ]);
+    const proxy = await launchFailureProxy(
+      context,
+      kernel.url,
+      "truncate-command",
+    );
+    const page = await runPage(
+      browser,
+      base,
+      proxy.url,
+      kernel.key,
+      "component-recover",
+      kernel.component,
+    );
+    assert.equal(page.error, null);
+    const result = JSON.parse(page.result);
+    assert.equal(result.outcomeUnknown, true);
+    assert.equal(result.component, kernel.component);
+    assert.deepEqual(result.lifecycle, [
+      "opening",
+      "established",
+      "command-unknown",
+      "established",
+      "closing",
+      "closed",
+    ]);
+    assert.deepEqual(proxy.requestAt(2), proxy.requestAt(3));
+    assert.deepEqual(proxy.responseAt(2), proxy.responseAt(3));
+  },
+);
 
 async function launchFailureProxy(context, target, failure) {
   let posts = 0;

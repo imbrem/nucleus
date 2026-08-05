@@ -8,11 +8,11 @@ use super::{
     Kernel, KernelEntry, KernelId, LocalConnection, MAX_SIGNED_MESSAGE_BYTES, Outcome,
     PinnedSignedHolArtifact, ProducedSignedHol, QueryResult, ReceivedHolSnapshot,
     RemoteSessionEntry, RemoteSessionId, RemoteSessionState, Repl, SIGNED_HOL_PHASES,
-    ServiceIdentity, ServiceOperation, ServiceProducedHol, ServiceResult, SessionInitiator,
-    SignedHolArtifact, SignedHolRoundTripResult, SignedMessageRequest, SignedMessageResponse,
-    SignedServiceCommand, SignedServiceSession, Value, authenticate_pinned_signed_hol_artifact,
-    decode_signed_response, encode_signed_request, produce_signed_hol_artifact,
-    trust_and_receive_pinned_signed_hol_artifact,
+    ServiceIdentity, ServiceOperation, ServiceProducedHol, ServiceProducedHolComponent,
+    ServiceResult, SessionInitiator, SignedHolArtifact, SignedHolRoundTripResult,
+    SignedMessageRequest, SignedMessageResponse, SignedServiceCommand, SignedServiceSession, Value,
+    authenticate_pinned_signed_hol_artifact, decode_signed_response, encode_signed_request,
+    produce_signed_hol_artifact, trust_and_receive_pinned_signed_hol_artifact,
 };
 
 /// Main-thread directory for independently owned browser kernel endpoints.
@@ -97,6 +97,19 @@ pub struct WebSignedKernelSession {
 #[wasm_bindgen]
 pub struct WebRemoteProducedHol {
     produced: ServiceProducedHol,
+}
+
+/// A verified signed-service result for one component request.
+#[wasm_bindgen]
+pub struct WebRemoteHolComponentReply {
+    produced: Option<ServiceProducedHolComponent>,
+    error: Option<String>,
+}
+
+/// A signed HOL artifact produced by an endpoint-allowlisted component.
+#[wasm_bindgen]
+pub struct WebRemoteProducedHolComponent {
+    produced: ServiceProducedHolComponent,
 }
 
 #[wasm_bindgen]
@@ -220,6 +233,42 @@ impl WebSignedKernelSession {
         self.command(ServiceOperation::ProduceSignedHol(parse_remote_connection(
             connection,
         )?))
+    }
+
+    /// Encodes a signed request for one independently selected allowlisted component digest.
+    pub fn run_hol_proof_component_command(&mut self, component: &str) -> Result<Vec<u8>, JsValue> {
+        let encoded = component;
+        let component = O256::from_hex(encoded).map_err(js_error)?;
+        if component.to_string() != encoded {
+            return Err(JsValue::from_str("component O256 is not canonical"));
+        }
+        self.command(ServiceOperation::RunHolProofComponent(component))
+    }
+
+    /// Verifies a component reply without confusing a signed operation error
+    /// with an ambiguous transport or signature failure.
+    pub fn accept_hol_proof_component_reply(
+        &mut self,
+        response: &[u8],
+    ) -> Result<WebRemoteHolComponentReply, JsValue> {
+        match self.accept_result(response)? {
+            ServiceResult::ProducedByComponent(produced) => Ok(WebRemoteHolComponentReply {
+                produced: Some(*produced),
+                error: None,
+            }),
+            ServiceResult::OperationError(error) => Ok(WebRemoteHolComponentReply {
+                produced: None,
+                error: Some(error),
+            }),
+            ServiceResult::Rejected(error) => Ok(WebRemoteHolComponentReply {
+                produced: None,
+                error: Some(format!("request rejected before dispatch: {error}")),
+            }),
+            _ => Ok(WebRemoteHolComponentReply {
+                produced: None,
+                error: Some("remote kernel returned the wrong component result".to_owned()),
+            }),
+        }
     }
 
     /// Verifies a producer reply before exposing its signed artifact.
@@ -361,6 +410,78 @@ impl WebRemoteProducedHol {
     }
 
     /// Copies the schema-qualified artifact signature.
+    #[must_use]
+    pub fn signature(&self) -> Vec<u8> {
+        self.produced.artifact().signature().to_vec()
+    }
+}
+
+#[wasm_bindgen]
+impl WebRemoteHolComponentReply {
+    /// Returns a bounded authenticated error, if the operation did not produce an artifact.
+    #[must_use]
+    pub fn operation_error(&self) -> Option<String> {
+        self.error.clone()
+    }
+
+    /// Takes the produced artifact from a successful reply.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for an operation-error reply or a second take.
+    pub fn take_produced(&mut self) -> Result<WebRemoteProducedHolComponent, JsValue> {
+        self.produced
+            .take()
+            .map(|produced| WebRemoteProducedHolComponent { produced })
+            .ok_or_else(|| JsValue::from_str("component reply has no produced artifact"))
+    }
+}
+
+#[wasm_bindgen]
+impl WebRemoteProducedHolComponent {
+    /// Returns the exact allowlisted component selected by the signed request and result.
+    #[must_use]
+    pub fn component(&self) -> String {
+        self.produced.component().to_string()
+    }
+
+    /// Returns the source namespace as an exact decimal string.
+    #[must_use]
+    pub fn namespace_id(&self) -> String {
+        self.produced.artifact().namespace_id().to_string()
+    }
+
+    /// Copies the exact SQLite image bytes.
+    #[must_use]
+    pub fn image(&self) -> Vec<u8> {
+        self.produced.artifact().image().to_vec()
+    }
+
+    /// Returns the signed HOL schema coordinate.
+    #[must_use]
+    pub fn schema(&self) -> String {
+        self.produced.artifact().schema().to_string()
+    }
+
+    /// Returns the claimed exact image hash.
+    #[must_use]
+    pub fn image_hash(&self) -> String {
+        self.produced.artifact().image_hash().to_string()
+    }
+
+    /// Returns the producer key identity.
+    #[must_use]
+    pub fn signer(&self) -> String {
+        self.produced.artifact().signer().to_string()
+    }
+
+    /// Copies the producer public key.
+    #[must_use]
+    pub fn public_key(&self) -> Vec<u8> {
+        self.produced.artifact().public_key().to_vec()
+    }
+
+    /// Copies the snapshot signature.
     #[must_use]
     pub fn signature(&self) -> Vec<u8> {
         self.produced.artifact().signature().to_vec()

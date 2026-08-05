@@ -3,6 +3,7 @@
 <title>Native HTTP signed kernel test</title>
 <script type="module">
   import {
+    createBrowserReplDirectory,
     init,
     runManagedNativeHttpSignedHol,
     WebReplDirectory,
@@ -12,6 +13,7 @@
   const parameters = new URLSearchParams(location.search);
   const endpoint = parameters.get("endpoint");
   const key = parameters.get("key");
+  const component = parameters.get("component");
   const mode = parameters.get("mode") ?? "round-trip";
 
   async function post(body) {
@@ -48,7 +50,97 @@
       );
     }
     let result;
-    if (mode === "round-trip") {
+    if (
+      mode === "component-round-trip" ||
+      mode === "component-wrong-hash" ||
+      mode === "component-recover"
+    ) {
+      if (component === null || !/^[0-9a-f]{64}$/.test(component)) {
+        throw new Error("missing canonical component O256");
+      }
+      const directory = createBrowserReplDirectory();
+      let receiverKernel;
+      let receiver;
+      let native;
+      try {
+        receiverKernel = await directory.spawnWorker("component-receiver");
+        receiver = await receiverKernel.openHol();
+        native = await directory.connectNativeHttpHolComponent({
+          endpoint,
+          expectedPublicKey: publicKey,
+          expectedComponent:
+            mode === "component-wrong-hash"
+              ? `${component.startsWith("00") ? "01" : "00"}${component.slice(2)}`
+              : component,
+          timeoutMs: 10_000,
+        });
+        if (mode === "component-wrong-hash") {
+          let operationError;
+          let outcomeUnknown;
+          try {
+            await native.run();
+          } catch (error) {
+            operationError = String(error);
+            outcomeUnknown = error?.outcomeUnknown === true;
+          }
+          await native.shutdown();
+          const lifecycle = await native.lifecycle();
+          await native.forget();
+          result = { operationError, outcomeUnknown, lifecycle };
+        } else {
+          let outcomeUnknown = false;
+          let produced;
+          if (mode === "component-recover") {
+            try {
+              await native.run();
+            } catch (error) {
+              outcomeUnknown = error?.outcomeUnknown === true;
+            }
+            produced = await native.retryPendingRun();
+          } else {
+            produced = await native.run();
+          }
+          const receive = async () => {
+            const pinned = await receiver.authenticateSignedArtifact(
+              native.id,
+              produced.artifact,
+            );
+            return pinned.trustAndReceive();
+          };
+          const received = await receive();
+          // Re-open the immutable reader after the request helper has returned.
+          // This rechecks the persisted theorem and proves the caller-owned
+          // receiver, import, namespace, and coordinates remain live.
+          const inspectedAfterReturn = await receive();
+          const receiverState = await receiver.stateImageHash();
+          const beforeCleanup = {
+            kernels: (await directory.kernels()).length,
+            connections: (await directory.connections()).length,
+          };
+          await native.shutdown();
+          const lifecycle = await native.lifecycle();
+          await native.forget();
+          result = {
+            kind: produced.kind,
+            component: produced.component,
+            schema: produced.artifact.schema,
+            imageHash: produced.artifact.imageHash,
+            signer: produced.artifact.signer,
+            imageBytes: produced.artifact.image.byteLength,
+            received,
+            inspectedAfterReturn,
+            receiverState,
+            beforeCleanup,
+            lifecycle,
+            outcomeUnknown,
+          };
+        }
+      } finally {
+        if (receiver !== undefined) await receiver.close();
+        if (receiverKernel !== undefined) await receiverKernel.close();
+        await directory.close();
+      }
+    } else if (mode === "round-trip") {
       await init();
       const directory = new WebReplDirectory();
       try {
