@@ -859,6 +859,20 @@ pub fn produce_and_retain_signed_natlike_artifact(
     SignedHolRoundTripError,
 > {
     let artifact = produce_signed_natlike_artifact(producer)?;
+    let (owner, retained) = retain_signed_natlike_artifact(producer, directory, &artifact)?;
+    Ok((artifact, owner, retained))
+}
+
+/// Authenticates and retains one already-produced signed `NatLike` extension.
+///
+/// # Errors
+///
+/// Returns the first authentication, trust, import, receiver, or directory error.
+pub fn retain_signed_natlike_artifact(
+    producer: &Kernel,
+    directory: &mut Repl<LocalConnection>,
+    artifact: &SignedNatLikeArtifact,
+) -> Result<(ConnectionId, RetainedReceivedHolSnapshot), SignedHolRoundTripError> {
     let expected = directory
         .expected_kernel_identity(KernelId::LOCAL)
         .map_err(|error| SignedHolRoundTripError::at("natlike-signer-selected", error))?;
@@ -883,7 +897,7 @@ pub fn produce_and_retain_signed_natlike_artifact(
         pinned,
         i64::MAX,
     )?;
-    Ok((artifact, owner, retained))
+    Ok((owner, retained))
 }
 
 #[cfg(test)]
