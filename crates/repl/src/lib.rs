@@ -35,7 +35,8 @@ pub use covalence_nucleus::sql::{
 pub use covalence_nucleus::{AllowAll, Connection, ContextId, Hol, Kernel, Sql, TermId};
 use covalence_nucleus::{
     AuthenticatedValidatedHolImage, ExportId, HolDatabaseRef, ImportedExport, ImportedTermView,
-    NamespaceExport, ProofError, SignedSnapshotEnvelope, TermError, TypeError, ed25519_key_id,
+    NamespaceExport, NamespaceId, ProofError, SignedSnapshotEnvelope, TermError, TrustedImportId,
+    TypeError, ed25519_key_id,
 };
 
 mod service;
@@ -734,6 +735,7 @@ pub struct PinnedSignedHolArtifact {
     expected: ExpectedKernelIdentity,
     namespace_id: i64,
     image: AuthenticatedValidatedHolImage,
+    artifact: SignedHolArtifact,
 }
 
 impl PinnedSignedHolArtifact {
@@ -769,6 +771,40 @@ pub struct ReceivedHolSnapshot {
     namespace: i64,
     context: i64,
     conclusion: i64,
+}
+
+/// REPL-owned receipt for rereading one already accepted trusted import.
+///
+/// This is above-TCB runtime state. It retains no permission to repeat the
+/// original trust/import writes: [`reread_received_hol_snapshot`] only
+/// reauthenticates, matches the existing trusted-import row, reuses its initial
+/// immutable-image capability, and reads.
+pub(crate) struct RetainedReceivedHolSnapshot {
+    received: ReceivedHolSnapshot,
+    #[cfg_attr(
+        all(not(all(target_arch = "wasm32", target_os = "unknown")), not(test)),
+        expect(
+            dead_code,
+            reason = "the retained reread capability is owned by WebKernel"
+        )
+    )]
+    trusted_import: TrustedImportId,
+    #[cfg_attr(
+        all(not(all(target_arch = "wasm32", target_os = "unknown")), not(test)),
+        expect(
+            dead_code,
+            reason = "the retained reread capability is owned by WebKernel"
+        )
+    )]
+    artifact: SignedHolArtifact,
+    #[cfg_attr(
+        all(not(all(target_arch = "wasm32", target_os = "unknown")), not(test)),
+        expect(
+            dead_code,
+            reason = "the retained reread capability is owned by WebKernel"
+        )
+    )]
+    mounted: covalence_neutron::ImmutableImage,
 }
 
 /// Result shared by the terminal and browser signed-snapshot demonstrations.
@@ -1183,6 +1219,7 @@ pub fn authenticate_pinned_signed_hol_artifact(
         expected: expected.clone(),
         namespace_id: artifact.namespace_id,
         image,
+        artifact: artifact.clone(),
     })
 }
 
@@ -1200,9 +1237,23 @@ pub fn trust_and_receive_pinned_signed_hol_artifact(
     target: &mut Connection<Hol<AllowAll>>,
     pinned: PinnedSignedHolArtifact,
 ) -> Result<ReceivedHolSnapshot, SignedHolRoundTripError> {
+    trust_receive_and_retain_pinned_signed_hol_artifact(target, pinned)
+        .map(|retained| retained.received)
+}
+
+/// Trusts/imports once and retains only the receipt needed for read-only rereads.
+///
+/// # Errors
+///
+/// Returns the first rejected trust, import, immutable mount, or reader stage.
+pub(crate) fn trust_receive_and_retain_pinned_signed_hol_artifact(
+    target: &mut Connection<Hol<AllowAll>>,
+    pinned: PinnedSignedHolArtifact,
+) -> Result<RetainedReceivedHolSnapshot, SignedHolRoundTripError> {
     let PinnedSignedHolArtifact {
         namespace_id,
         image: validated,
+        artifact,
         ..
     } = pinned;
     let claim = validated.claim();
@@ -1230,12 +1281,56 @@ pub fn trust_and_receive_pinned_signed_hol_artifact(
         .with_mounted_reader(namespace, &mounted, read_imported_beta)
         .map_err(|error| SignedHolRoundTripError::at("theorem-read", error))??;
 
-    Ok(ReceivedHolSnapshot {
+    let received = ReceivedHolSnapshot {
         import: import.get(),
         namespace: namespace.get(),
         context: context_id,
         conclusion: conclusion_id,
+    };
+    Ok(RetainedReceivedHolSnapshot {
+        received,
+        trusted_import: trusted,
+        artifact,
+        mounted,
     })
+}
+
+/// Rereads one previously accepted receipt without repeating trust/import writes.
+///
+/// # Errors
+///
+/// Returns the first rejected authentication, validation, existing-import
+/// match, or reader stage.
+#[cfg_attr(
+    all(not(all(target_arch = "wasm32", target_os = "unknown")), not(test)),
+    expect(
+        dead_code,
+        reason = "the retained reread capability is owned by WebKernel"
+    )
+)]
+pub(crate) fn reread_received_hol_snapshot(
+    target: &mut Connection<Hol<AllowAll>>,
+    retained: &RetainedReceivedHolSnapshot,
+) -> Result<ReceivedHolSnapshot, SignedHolRoundTripError> {
+    let authenticated = authenticate_artifact(&retained.artifact)?;
+    let validated = AuthenticatedValidatedHolImage::validate_default(authenticated)
+        .map_err(|error| SignedHolRoundTripError::at("image-detached-validated", error))?;
+    let (context, conclusion) = target
+        .match_trusted_import_image(retained.trusted_import, validated)
+        .map_err(|error| SignedHolRoundTripError::at("theorem-read", error))?
+        .with_mounted_reader(
+            NamespaceId::from_i64(retained.received.namespace),
+            &retained.mounted,
+            read_imported_beta,
+        )
+        .map_err(|error| SignedHolRoundTripError::at("theorem-read", error))??;
+    if (context, conclusion) != (retained.received.context, retained.received.conclusion) {
+        return Err(SignedHolRoundTripError::invalid(
+            "theorem-read",
+            "reread theorem coordinates changed",
+        ));
+    }
+    Ok(retained.received)
 }
 
 fn authenticate_artifact(
@@ -2038,6 +2133,34 @@ mod tests {
         assert_eq!(reread.0, result.imported_context_id());
         assert_eq!(reread.1, result.imported_conclusion_id());
         assert_eq!(directory.connections.len(), 2);
+    }
+
+    #[test]
+    fn retained_receiver_reread_does_not_change_persistent_rows_or_hash() {
+        let producer = Kernel::ephemeral();
+        let mut source = producer.open_hol(AllowAll).unwrap();
+        let output = produce_signed_hol_artifact(&producer, &mut source).unwrap();
+        let expected = ExpectedKernelIdentity::from_public_key(
+            KernelId::from_u32(7),
+            producer.verifying_key().as_bytes(),
+        )
+        .unwrap();
+        let pinned = authenticate_pinned_signed_hol_artifact(&expected, output.artifact()).unwrap();
+        let receiver = Kernel::ephemeral();
+        let mut target = receiver.open_hol(AllowAll).unwrap();
+        let retained =
+            trust_receive_and_retain_pinned_signed_hol_artifact(&mut target, pinned).unwrap();
+        let before = receiver.export_hol(&mut target).unwrap();
+
+        let mut reread = None;
+        for _ in 0..3 {
+            reread = Some(reread_received_hol_snapshot(&mut target, &retained).unwrap());
+        }
+        let after = receiver.export_hol(&mut target).unwrap();
+
+        assert_eq!(reread, Some(retained.received));
+        assert_eq!(before.image().hash(), after.image().hash());
+        assert_eq!(before.image().bytes(), after.image().bytes());
     }
 
     #[test]

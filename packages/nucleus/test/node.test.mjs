@@ -64,7 +64,50 @@ test("runs the REPL kernel through the Wasm binding in Node", async () => {
   assert.throws(() => kernel.run_hol(connection, "truth"));
   assert.throws(() => kernel.run(holConnection, "SELECT 1"));
 
+  const produced = kernel.produce_signed_hol_artifact(holConnection);
+  const receiver = kernel.open_hol_connection();
+  const wrongReceiver = kernel.open_hol_connection();
+  const pinned = kernel.authenticate_pinned_signed_hol_artifact(
+    7,
+    produced.signer(),
+    produced.public_key(),
+    produced.namespace_id(),
+    produced.image(),
+    produced.schema(),
+    produced.image_hash(),
+    produced.signer(),
+    produced.public_key(),
+    produced.signature(),
+  );
+  const retained = kernel.trust_pinned_signed_hol_artifact_retained(
+    receiver,
+    pinned,
+  );
+  const beforeRereads = kernel.hol_image_hash(receiver);
+  assert.throws(
+    () =>
+      kernel.reread_received_hol_artifact(
+        wrongReceiver,
+        retained.retained_id(),
+      ),
+    /belongs to another connection/,
+  );
+  for (let rereadIndex = 0; rereadIndex < 3; rereadIndex += 1) {
+    const reread = kernel.reread_received_hol_artifact(
+      receiver,
+      retained.retained_id(),
+    );
+    assert.equal(reread.context_id(), retained.context_id());
+    assert.equal(reread.conclusion_id(), retained.conclusion_id());
+    reread.free();
+  }
+  assert.equal(kernel.hol_image_hash(receiver), beforeRereads);
+
   kernel.close_connection(signed.receiver_connection());
+  kernel.close_connection(wrongReceiver);
+  kernel.close_connection(receiver);
+  retained.free();
+  produced.free();
   signed.free();
   theorem.free();
   result.free();
