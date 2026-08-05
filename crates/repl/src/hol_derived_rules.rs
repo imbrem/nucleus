@@ -4,11 +4,13 @@
 //! a plan consumes branded premises from one [`ProofSession`] and returns a
 //! theorem carrying that same generative brand. No derived result is persisted.
 
+use std::collections::HashSet;
 use std::error::Error as StdError;
 use std::fmt;
 
 use covalence_nucleus::{
-    Connection, ContextId, Hol, Policy, ProofError, ProofSession, TermError, TermId, Theorem,
+    Connection, ContextId, Hol, Policy, ProofError, ProofSession, TermError, TermId, TermView,
+    Theorem, TypeId,
 };
 
 /// A rejected derived-rule syntax plan.
@@ -16,6 +18,15 @@ use covalence_nucleus::{
 pub enum DerivedRulePreparationError {
     /// One advertised closed input has an external de Bruijn boundary.
     OpenInput(TermId),
+    /// A generalization variable is not an exact free-variable node.
+    ExpectedFreeVariable(TermId),
+    /// A generalization variable occurs in a supposedly fixed predicate or function.
+    VariableOccursInFixedTerm {
+        /// Exact free variable.
+        variable: TermId,
+        /// Fixed term containing it.
+        term: TermId,
+    },
     /// A checked term constructor rejected the plan.
     Term(TermError),
 }
@@ -28,6 +39,19 @@ impl fmt::Display for DerivedRulePreparationError {
                 "derived rule input term {} is not locally closed",
                 term.get()
             ),
+            Self::ExpectedFreeVariable(term) => {
+                write!(
+                    formatter,
+                    "term {} is not an exact free variable",
+                    term.get()
+                )
+            }
+            Self::VariableOccursInFixedTerm { variable, term } => write!(
+                formatter,
+                "free variable {} occurs in fixed term {}",
+                variable.get(),
+                term.get()
+            ),
             Self::Term(error) => error.fmt(formatter),
         }
     }
@@ -37,7 +61,9 @@ impl StdError for DerivedRulePreparationError {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match self {
             Self::Term(error) => Some(error),
-            Self::OpenInput(_) => None,
+            Self::OpenInput(_)
+            | Self::ExpectedFreeVariable(_)
+            | Self::VariableOccursInFixedTerm { .. } => None,
         }
     }
 }
@@ -157,6 +183,60 @@ fn require_result(
         });
     }
     Ok(())
+}
+
+fn contains_exact<P: Policy>(
+    connection: &mut Connection<Hol<P>>,
+    root: TermId,
+    needle: TermId,
+    visited: &mut HashSet<TermId>,
+) -> Result<bool, TermError> {
+    if root == needle {
+        return Ok(true);
+    }
+    if !visited.insert(root) {
+        return Ok(false);
+    }
+    match connection.term(root)? {
+        TermView::Application { function, argument } => {
+            Ok(contains_exact(connection, function, needle, visited)?
+                || contains_exact(connection, argument, needle, visited)?)
+        }
+        TermView::Lambda { body, .. } | TermView::TypeLambda { body } => {
+            contains_exact(connection, body, needle, visited)
+        }
+        TermView::TypeApplication { function, .. } => {
+            contains_exact(connection, function, needle, visited)
+        }
+        TermView::Equality { left, right } => {
+            Ok(contains_exact(connection, left, needle, visited)?
+                || contains_exact(connection, right, needle, visited)?)
+        }
+        TermView::Epsilon { predicate } => contains_exact(connection, predicate, needle, visited),
+        TermView::Bool(_)
+        | TermView::Free { .. }
+        | TermView::Bound { .. }
+        | TermView::Constant { .. } => Ok(false),
+    }
+}
+
+fn require_fresh_variable<P: Policy>(
+    connection: &mut Connection<Hol<P>>,
+    variable: TermId,
+    fixed_terms: &[TermId],
+) -> Result<TypeId, DerivedRulePreparationError> {
+    if !matches!(connection.term(variable)?, TermView::Free { .. }) {
+        return Err(DerivedRulePreparationError::ExpectedFreeVariable(variable));
+    }
+    for term in fixed_terms {
+        if contains_exact(connection, *term, variable, &mut HashSet::new())? {
+            return Err(DerivedRulePreparationError::VariableOccursInFixedTerm {
+                variable,
+                term: *term,
+            });
+        }
+    }
+    Ok(connection.term_type(variable)?)
 }
 
 fn equality_predicate<P: Policy>(
@@ -530,6 +610,237 @@ impl EqtElim {
     }
 }
 
+/// Prepared `FUN_EXT`: from `Γ ⊢ f x = g x`, derive `Γ ⊢ f = g`.
+pub struct FunExt {
+    premise: TermId,
+    variable: TermId,
+    abstracted_result: TermId,
+    left: TermId,
+    right: TermId,
+    left_eta_symmetry: EqSym,
+    first_transitivity: EqTrans,
+    second_transitivity: EqTrans,
+    result: TermId,
+}
+
+impl FunExt {
+    /// Prepares function extensionality for exact closed functions and a fresh `MFV`.
+    ///
+    /// # Errors
+    ///
+    /// Returns if either function is open/non-functional, the variable is not an
+    /// exact fresh free variable, or the pointwise equality is ill typed.
+    pub fn prepare<P: Policy>(
+        connection: &mut Connection<Hol<P>>,
+        left: TermId,
+        right: TermId,
+        variable: TermId,
+    ) -> Result<Self, DerivedRulePreparationError> {
+        require_closed(connection, left)?;
+        require_closed(connection, right)?;
+        let variable_type = require_fresh_variable(connection, variable, &[left, right])?;
+        let applied_left = connection.insert_application(left, variable)?;
+        let applied_right = connection.insert_application(right, variable)?;
+        let premise = connection.insert_equality(applied_left, applied_right)?;
+        let bound = connection.insert_bound_term(0, variable_type)?;
+        let bound_left = connection.insert_application(left, bound)?;
+        let bound_right = connection.insert_application(right, bound)?;
+        let lambda_left = connection.insert_lambda(variable_type, bound_left)?;
+        let lambda_right = connection.insert_lambda(variable_type, bound_right)?;
+        let abstracted_result = connection.insert_equality(lambda_left, lambda_right)?;
+        let result = connection.insert_equality(left, right)?;
+        let left_eta_symmetry = EqSym::prepare(connection, lambda_left, left)?;
+        let first_transitivity = EqTrans::prepare(connection, left, lambda_left, lambda_right)?;
+        let second_transitivity = EqTrans::prepare(connection, left, lambda_right, right)?;
+        Ok(Self {
+            premise,
+            variable,
+            abstracted_result,
+            left,
+            right,
+            left_eta_symmetry,
+            first_transitivity,
+            second_transitivity,
+            result,
+        })
+    }
+
+    /// Applies `FUN_EXT`; primitive abstraction enforces freshness in `Γ`.
+    ///
+    /// # Errors
+    ///
+    /// Returns for a wrong premise, failed freshness check, or rejected constituent rule.
+    pub fn apply<'brand, P: Policy>(
+        &self,
+        proof: &mut ProofSession<'brand, P>,
+        pointwise: &Theorem<'brand>,
+    ) -> Result<Theorem<'brand>, DerivedRuleError> {
+        require_conclusion(pointwise, self.premise)?;
+        let abstracted = proof.abstraction(pointwise, self.variable)?;
+        require_result(&abstracted, pointwise.context(), self.abstracted_result)?;
+        let left_eta = proof.conversion_eta(self.left)?;
+        let right_eta = proof.conversion_eta(self.right)?;
+        let left_eta = proof.prove_conversion_equality(pointwise.context(), &left_eta)?;
+        let right_eta = proof.prove_conversion_equality(pointwise.context(), &right_eta)?;
+        let left_to_lambda = self.left_eta_symmetry.apply(proof, &left_eta)?;
+        let left_to_right_lambda =
+            self.first_transitivity
+                .apply(proof, &left_to_lambda, &abstracted)?;
+        let result = self
+            .second_transitivity
+            .apply(proof, &left_to_right_lambda, &right_eta)?;
+        require_result(&result, pointwise.context(), self.result)?;
+        Ok(result)
+    }
+}
+
+/// Prepared `ALL_ELIM`: from `Γ ⊢ P = (λ_. true)`, derive `Γ ⊢ P t`.
+pub struct AllElim {
+    premise: TermId,
+    application: TermId,
+    application_rule: ApThm,
+    constant_truth: TermId,
+    argument: TermId,
+    beta_transitivity: EqTrans,
+    truth_elimination: EqtElim,
+}
+
+impl AllElim {
+    /// Prepares universal elimination for an exact predicate and closed argument.
+    ///
+    /// # Errors
+    ///
+    /// Returns if the predicate/argument is open or the application is ill typed.
+    pub fn prepare<P: Policy>(
+        connection: &mut Connection<Hol<P>>,
+        predicate: TermId,
+        argument: TermId,
+    ) -> Result<Self, DerivedRulePreparationError> {
+        require_closed(connection, predicate)?;
+        require_closed(connection, argument)?;
+        let argument_type = connection.term_type(argument)?;
+        let truth = connection.insert_bool_term(true)?;
+        let constant_truth = connection.insert_lambda(argument_type, truth)?;
+        let premise = connection.insert_equality(predicate, constant_truth)?;
+        let application = connection.insert_application(predicate, argument)?;
+        let applied_truth = connection.insert_application(constant_truth, argument)?;
+        let application_rule = ApThm::prepare(connection, predicate, constant_truth, argument)?;
+        let beta_transitivity = EqTrans::prepare(connection, application, applied_truth, truth)?;
+        let truth_elimination = EqtElim::prepare(connection, application)?;
+        Ok(Self {
+            premise,
+            application,
+            application_rule,
+            constant_truth,
+            argument,
+            beta_transitivity,
+            truth_elimination,
+        })
+    }
+
+    /// Applies `ALL_ELIM` to its exact branded universal premise.
+    ///
+    /// # Errors
+    ///
+    /// Returns for a wrong premise or rejected constituent rule.
+    pub fn apply<'brand, P: Policy>(
+        &self,
+        proof: &mut ProofSession<'brand, P>,
+        universal: &Theorem<'brand>,
+    ) -> Result<Theorem<'brand>, DerivedRuleError> {
+        require_conclusion(universal, self.premise)?;
+        let application_equals_applied_truth = self.application_rule.apply(proof, universal)?;
+        let beta = proof.conversion_beta(self.constant_truth, self.argument)?;
+        let applied_truth_equals_truth =
+            proof.prove_conversion_equality(universal.context(), &beta)?;
+        let application_equals_truth = self.beta_transitivity.apply(
+            proof,
+            &application_equals_applied_truth,
+            &applied_truth_equals_truth,
+        )?;
+        let result = self
+            .truth_elimination
+            .apply(proof, &application_equals_truth)?;
+        require_result(&result, universal.context(), self.application)?;
+        Ok(result)
+    }
+}
+
+/// Prepared applied-form `ALL_INTRO`: from `Γ ⊢ P x`, derive `Γ ⊢ P = (λ_. true)`.
+pub struct AllIntroApplied {
+    premise: TermId,
+    variable: TermId,
+    abstracted_result: TermId,
+    predicate: TermId,
+    truth_introduction: EqtIntro,
+    eta_symmetry: EqSym,
+    transitivity: EqTrans,
+    result: TermId,
+}
+
+impl AllIntroApplied {
+    /// Prepares applied-form universal introduction for a closed predicate and fresh exact `MFV`.
+    ///
+    /// # Errors
+    ///
+    /// Returns if the predicate is open/non-functional, the variable is not
+    /// exact and fresh, or the application is ill typed.
+    pub fn prepare<P: Policy>(
+        connection: &mut Connection<Hol<P>>,
+        predicate: TermId,
+        variable: TermId,
+    ) -> Result<Self, DerivedRulePreparationError> {
+        require_closed(connection, predicate)?;
+        let variable_type = require_fresh_variable(connection, variable, &[predicate])?;
+        let premise = connection.insert_application(predicate, variable)?;
+        let truth = connection.insert_bool_term(true)?;
+        let constant_truth = connection.insert_lambda(variable_type, truth)?;
+        let bound = connection.insert_bound_term(0, variable_type)?;
+        let bound_application = connection.insert_application(predicate, bound)?;
+        let lambda_application = connection.insert_lambda(variable_type, bound_application)?;
+        let abstracted_result = connection.insert_equality(lambda_application, constant_truth)?;
+        let result = connection.insert_equality(predicate, constant_truth)?;
+        let truth_introduction = EqtIntro::prepare(connection, premise)?;
+        let eta_symmetry = EqSym::prepare(connection, lambda_application, predicate)?;
+        let transitivity =
+            EqTrans::prepare(connection, predicate, lambda_application, constant_truth)?;
+        Ok(Self {
+            premise,
+            variable,
+            abstracted_result,
+            predicate,
+            truth_introduction,
+            eta_symmetry,
+            transitivity,
+            result,
+        })
+    }
+
+    /// Applies the applied-form `ALL_INTRO`; abstraction enforces freshness in `Γ`.
+    ///
+    /// # Errors
+    ///
+    /// Returns for a wrong premise, failed freshness check, or rejected constituent rule.
+    pub fn apply<'brand, P: Policy>(
+        &self,
+        proof: &mut ProofSession<'brand, P>,
+        instance: &Theorem<'brand>,
+    ) -> Result<Theorem<'brand>, DerivedRuleError> {
+        require_conclusion(instance, self.premise)?;
+        let instance_equals_truth = self.truth_introduction.apply(proof, instance)?;
+        let abstracted = proof.abstraction(&instance_equals_truth, self.variable)?;
+        require_result(&abstracted, instance.context(), self.abstracted_result)?;
+        let eta = proof.conversion_eta(self.predicate)?;
+        let eta = proof.prove_conversion_equality(instance.context(), &eta)?;
+        let predicate_to_lambda = self.eta_symmetry.apply(proof, &eta)?;
+        let result = self
+            .transitivity
+            .apply(proof, &predicate_to_lambda, &abstracted)?;
+        require_result(&result, instance.context(), self.result)?;
+        Ok(result)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -813,6 +1124,217 @@ mod tests {
         assert!(matches!(
             denied_reflexive_eqt_intro(),
             DerivedRuleError::Proof(ProofError::Denied(Operation::ProveReflexivity))
+        ));
+    }
+
+    #[test]
+    fn quantifier_rules_have_exact_shapes_freshness_and_no_implicit_persistence() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let truth = connection.insert_bool_term(true).unwrap();
+        let falsehood = connection.insert_bool_term(false).unwrap();
+        let variable = connection.insert_free_term(100, bool_type).unwrap();
+        let other = connection.insert_free_term(101, bool_type).unwrap();
+        let marker = connection.insert_equality(other, other).unwrap();
+        let context = connection.define_context([marker]).unwrap();
+
+        let bound = connection.insert_bound_term(0, bool_type).unwrap();
+        let identity = connection.insert_lambda(bool_type, bound).unwrap();
+        let identity_bound = connection.insert_application(identity, bound).unwrap();
+        let expanded_identity = connection.insert_lambda(bool_type, identity_bound).unwrap();
+        let pointwise_left = connection.insert_application(identity, variable).unwrap();
+        let pointwise_right = connection
+            .insert_application(expanded_identity, variable)
+            .unwrap();
+        let pointwise = connection
+            .insert_equality(pointwise_left, pointwise_right)
+            .unwrap();
+        let functions_equal = connection
+            .insert_equality(identity, expanded_identity)
+            .unwrap();
+        let fun_ext =
+            FunExt::prepare(&mut connection, identity, expanded_identity, variable).unwrap();
+
+        let p = connection.insert_application(identity, truth).unwrap();
+        let predicate = connection.insert_lambda(bool_type, p).unwrap();
+        let predicate_variable = connection.insert_application(predicate, variable).unwrap();
+        let constant_truth = connection.insert_lambda(bool_type, truth).unwrap();
+        let universal = connection
+            .insert_equality(predicate, constant_truth)
+            .unwrap();
+        let predicate_false = connection.insert_application(predicate, falsehood).unwrap();
+        let all_intro = AllIntroApplied::prepare(&mut connection, predicate, variable).unwrap();
+        let all_elim = AllElim::prepare(&mut connection, predicate, falsehood).unwrap();
+
+        let other_equality = connection.insert_equality(other, other).unwrap();
+        let predicate_with_other = connection.insert_lambda(bool_type, other_equality).unwrap();
+        assert!(AllIntroApplied::prepare(&mut connection, predicate_with_other, variable).is_ok());
+
+        connection
+            .with_proof_session(|mut proof| {
+                let pointwise_beta = proof.conversion_beta(expanded_identity, variable)?;
+                let pointwise_conversion = proof.conversion_symmetry(&pointwise_beta)?;
+                assert_eq!(pointwise_conversion.left(), pointwise_left);
+                assert_eq!(pointwise_conversion.right(), pointwise_right);
+                let pointwise_theorem =
+                    proof.prove_conversion_equality(context, &pointwise_conversion)?;
+                assert_eq!(pointwise_theorem.conclusion(), pointwise);
+                let extensional = fun_ext.apply(&mut proof, &pointwise_theorem).unwrap();
+                assert_eq!(extensional.context(), context);
+                assert_eq!(extensional.conclusion(), functions_equal);
+
+                let predicate_beta = proof.conversion_beta(predicate, variable)?;
+                let p_beta = proof.conversion_beta(identity, truth)?;
+                let predicate_to_truth = proof.conversion_transitivity(&predicate_beta, &p_beta)?;
+                let truth_to_predicate = proof.conversion_symmetry(&predicate_to_truth)?;
+                let truth_theorem = proof.prove_truth(context)?;
+                let predicate_instance =
+                    proof.convert_theorem(&truth_theorem, &truth_to_predicate)?;
+                assert_eq!(predicate_instance.conclusion(), predicate_variable);
+                let introduced = all_intro.apply(&mut proof, &predicate_instance).unwrap();
+                assert_eq!(introduced.context(), context);
+                assert_eq!(introduced.conclusion(), universal);
+                let eliminated = all_elim.apply(&mut proof, &introduced).unwrap();
+                assert_eq!(eliminated.context(), context);
+                assert_eq!(eliminated.conclusion(), predicate_false);
+                assert!(proof.load_theorem(context, predicate_false)?.is_none());
+                proof.persist_theorem(&eliminated)?;
+                Ok::<_, ProofError>(())
+            })
+            .unwrap();
+
+        let snapshot = Kernel::ephemeral().export_hol(&mut connection).unwrap();
+        assert_eq!(snapshot.image().counts().untrusted_judgement_rows, 1);
+        assert!(
+            connection
+                .proved_judgement(context, predicate_false)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn quantifier_plans_reject_bad_variables_and_abstraction_checks_context() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let truth = connection.insert_bool_term(true).unwrap();
+        let variable = connection.insert_free_term(200, bool_type).unwrap();
+        let bound = connection.insert_bound_term(0, bool_type).unwrap();
+        let constant = connection.insert_constant(201, bool_type).unwrap();
+        let identity = connection.insert_lambda(bool_type, bound).unwrap();
+        assert!(matches!(
+            FunExt::prepare(&mut connection, identity, identity, bound),
+            Err(DerivedRulePreparationError::ExpectedFreeVariable(term)) if term == bound
+        ));
+        assert!(matches!(
+            AllIntroApplied::prepare(&mut connection, identity, constant),
+            Err(DerivedRulePreparationError::ExpectedFreeVariable(term)) if term == constant
+        ));
+
+        let function_with_variable = connection.insert_lambda(bool_type, variable).unwrap();
+        assert!(matches!(
+            FunExt::prepare(
+                &mut connection,
+                function_with_variable,
+                function_with_variable,
+                variable,
+            ),
+            Err(DerivedRulePreparationError::VariableOccursInFixedTerm { variable: found, .. })
+                if found == variable
+        ));
+        let variable_equality = connection.insert_equality(variable, variable).unwrap();
+        let predicate_with_variable = connection
+            .insert_lambda(bool_type, variable_equality)
+            .unwrap();
+        assert!(matches!(
+            AllIntroApplied::prepare(&mut connection, predicate_with_variable, variable),
+            Err(DerivedRulePreparationError::VariableOccursInFixedTerm { variable: found, .. })
+                if found == variable
+        ));
+
+        let predicate = connection.insert_lambda(bool_type, truth).unwrap();
+        let instance = connection.insert_application(predicate, variable).unwrap();
+        let context = connection.define_context([variable_equality]).unwrap();
+        let plan = AllIntroApplied::prepare(&mut connection, predicate, variable).unwrap();
+        let pointwise = connection.insert_application(identity, variable).unwrap();
+        let pointwise_equality = connection.insert_equality(pointwise, pointwise).unwrap();
+        let fun_ext = FunExt::prepare(&mut connection, identity, identity, variable).unwrap();
+        let all_elim = AllElim::prepare(&mut connection, predicate, truth).unwrap();
+        connection
+            .with_proof_session(|mut proof| {
+                let beta = proof.conversion_beta(predicate, variable)?;
+                let reverse = proof.conversion_symmetry(&beta)?;
+                let truth_theorem = proof.prove_truth(context)?;
+                let instance_theorem = proof.convert_theorem(&truth_theorem, &reverse)?;
+                assert_eq!(instance_theorem.conclusion(), instance);
+                assert!(matches!(
+                    plan.apply(&mut proof, &instance_theorem),
+                    Err(DerivedRuleError::Proof(
+                        ProofError::AbstractionVariableFreeInAssumption { variable: found, .. }
+                    )) if found == variable
+                ));
+                let pointwise_theorem = proof.prove_reflexivity(context, pointwise)?;
+                assert_eq!(pointwise_theorem.conclusion(), pointwise_equality);
+                assert!(matches!(
+                    fun_ext.apply(&mut proof, &pointwise_theorem),
+                    Err(DerivedRuleError::Proof(
+                        ProofError::AbstractionVariableFreeInAssumption { variable: found, .. }
+                    )) if found == variable
+                ));
+                assert!(matches!(
+                    all_elim.apply(&mut proof, &truth_theorem),
+                    Err(DerivedRuleError::PremiseConclusion { .. })
+                ));
+                Ok::<_, ProofError>(())
+            })
+            .unwrap();
+    }
+
+    fn denied_all_intro(operation: Operation) -> DerivedRuleError {
+        let mut connection = Connection::open_hol_in_memory(DenyOperation(operation)).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let truth = connection.insert_bool_term(true).unwrap();
+        let variable = connection.insert_free_term(300, bool_type).unwrap();
+        let predicate = connection.insert_lambda(bool_type, truth).unwrap();
+        let plan = AllIntroApplied::prepare(&mut connection, predicate, variable).unwrap();
+        connection.with_proof_session(|mut proof| {
+            let beta = proof.conversion_beta(predicate, variable).unwrap();
+            let reverse = proof.conversion_symmetry(&beta).unwrap();
+            let truth_theorem = proof.prove_truth(ContextId::empty()).unwrap();
+            let premise = proof.convert_theorem(&truth_theorem, &reverse).unwrap();
+            match plan.apply(&mut proof, &premise) {
+                Err(error) => error,
+                Ok(_) => panic!("denied ALL_INTRO unexpectedly succeeded"),
+            }
+        })
+    }
+
+    #[test]
+    fn quantifier_constituent_policy_denials_are_visible() {
+        for operation in [Operation::ProveAbstraction, Operation::ProveConversionEta] {
+            assert!(matches!(
+                denied_all_intro(operation),
+                DerivedRuleError::Proof(ProofError::Denied(actual)) if actual == operation
+            ));
+        }
+
+        let mut connection =
+            Connection::open_hol_in_memory(DenyOperation(Operation::ProveConversionBeta)).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let truth = connection.insert_bool_term(true).unwrap();
+        let predicate = connection.insert_lambda(bool_type, truth).unwrap();
+        let plan = AllElim::prepare(&mut connection, predicate, truth).unwrap();
+        let error = connection.with_proof_session(|mut proof| {
+            let universal = proof
+                .prove_reflexivity(ContextId::empty(), predicate)
+                .unwrap();
+            match plan.apply(&mut proof, &universal) {
+                Err(error) => error,
+                Ok(_) => panic!("denied ALL_ELIM unexpectedly succeeded"),
+            }
+        });
+        assert!(matches!(
+            error,
+            DerivedRuleError::Proof(ProofError::Denied(Operation::ProveConversionBeta))
         ));
     }
 }
