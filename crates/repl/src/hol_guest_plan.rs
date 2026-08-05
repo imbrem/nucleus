@@ -22,7 +22,7 @@ pub(crate) const MAX_CONTEXT_MEMBERS: usize = 64;
 /// Maximum canonical bytes accepted from an untrusted guest executor.
 pub const MAX_SEALED_HOL_RECIPE_BYTES: usize = 64 * 1024;
 
-const RECIPE_VERSION: u8 = 4;
+const RECIPE_VERSION: u8 = 5;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RecipeSort {
@@ -89,6 +89,9 @@ pub(crate) enum RecipeNode {
     EqualitySubstitution {
         equality: usize,
         predicate: usize,
+        premise: usize,
+    },
+    Choice {
         premise: usize,
     },
     ConversionReflexivity {
@@ -390,6 +393,10 @@ fn validate_structure(
             } => {
                 require(*equality, RecipeSort::Theorem)?;
                 require(*predicate, RecipeSort::Term)?;
+                require(*premise, RecipeSort::Theorem)?;
+                RecipeSort::Theorem
+            }
+            RecipeNode::Choice { premise } => {
                 require(*premise, RecipeSort::Theorem)?;
                 RecipeSort::Theorem
             }
@@ -704,6 +711,10 @@ fn encode_node(bytes: &mut Vec<u8>, node: &RecipeNode) -> Result<(), HolProofRec
             bytes.push(0x46);
             encode_index(bytes, *equality)?;
             encode_index(bytes, *predicate)?;
+            encode_index(bytes, *premise)?;
+        }
+        RecipeNode::Choice { premise } => {
+            bytes.push(0x47);
             encode_index(bytes, *premise)?;
         }
         RecipeNode::ConversionReflexivity { term } => {
@@ -1055,6 +1066,9 @@ impl<'a> Decoder<'a> {
                 predicate: self.index()?,
                 premise: self.index()?,
             }),
+            0x47 => Ok(RecipeNode::Choice {
+                premise: self.index()?,
+            }),
             _ => Err(HolProofRecipeError::Invalid(
                 "unknown sealed recipe node tag",
             )),
@@ -1090,6 +1104,7 @@ impl Policy for ProofGuestPolicy {
                 | Operation::ProveDeductionAntisymmetry
                 | Operation::ProveEqualityModusPonens
                 | Operation::ProveEqualitySubstitution
+                | Operation::ProveChoice
                 | Operation::DefineContext
                 | Operation::PersistJudgement
                 | Operation::DefineNamespace
@@ -1218,6 +1233,7 @@ fn replay(
             | RecipeNode::DeductionAntisymmetry { .. }
             | RecipeNode::EqualityModusPonens { .. }
             | RecipeNode::EqualitySubstitution { .. }
+            | RecipeNode::Choice { .. }
             | RecipeNode::TermInstantiation { .. }
             | RecipeNode::TypeInstantiation { .. }
             | RecipeNode::Abstraction { .. }
@@ -1343,6 +1359,16 @@ fn replay_theorems<P: Policy>(
                             term_at(values, *predicate)?,
                             theorem_at_index(&theorems, *premise)?,
                         )
+                        .map_err(replay_error)?;
+                    values[index] = Value::Theorem {
+                        context: theorem.context(),
+                        conclusion: theorem.conclusion(),
+                    };
+                    theorems[index] = Some(theorem);
+                }
+                RecipeNode::Choice { premise } => {
+                    let theorem = proof
+                        .choice(theorem_at_index(&theorems, *premise)?)
                         .map_err(replay_error)?;
                     values[index] = Value::Theorem {
                         context: theorem.context(),
@@ -1868,8 +1894,73 @@ pub(crate) fn assumptions_equality_test_recipe() -> SealedHolProofRecipe {
 }
 
 #[cfg(test)]
+pub(crate) fn choice_test_recipe() -> SealedHolProofRecipe {
+    SealedHolProofRecipe::seal(
+        vec![
+            RecipeNode::BoolType,
+            RecipeNode::Bound { index: 0, ty: 0 },
+            RecipeNode::Lambda {
+                parameter_type: 0,
+                body: 1,
+            },
+            RecipeNode::Bool(true),
+            RecipeNode::EmptyContext,
+            RecipeNode::Truth { context: 4 },
+            RecipeNode::ConversionBeta {
+                abstraction: 2,
+                argument: 3,
+            },
+            RecipeNode::ConversionSymmetry { conversion: 6 },
+            RecipeNode::ConvertTheorem {
+                theorem: 5,
+                conversion: 7,
+            },
+            RecipeNode::Choice { premise: 8 },
+            RecipeNode::Persist { theorem: 9 },
+            RecipeNode::Namespace {
+                name: Some("choice-demo".into()),
+            },
+            RecipeNode::ExportContext {
+                namespace: 11,
+                export: 0,
+                context: 4,
+                name: Some("empty_context".into()),
+            },
+            RecipeNode::ExportTheorem {
+                namespace: 11,
+                export: 1,
+                theorem: 9,
+                name: Some("identity_epsilon".into()),
+            },
+        ],
+        11,
+    )
+    .expect("canonical Hilbert-choice recipe")
+}
+
+#[cfg(test)]
+pub(crate) const CHOICE_WIRE: &[u8] = &[
+    5, 0, 14, 0, 11, // version, node count, selected namespace
+    0,  // bool type
+    1, 0, 0, 0, 0, 0, 0, // bound 0 : bool
+    2, 0, 0, 0, 1, // identity lambda
+    3, 1, // true
+    4, // empty context
+    0x42, 0, 4, // empty |- true
+    0x35, 0, 2, 0, 3, // id true ~ true
+    0x31, 0, 6, // true ~ id true
+    0x39, 0, 5, 0, 7, // empty |- id true
+    0x47, 0, 8, // empty |- id (epsilon id)
+    6, 0, 9, // persist choice theorem
+    7, 1, 0, 11, b'c', b'h', b'o', b'i', b'c', b'e', b'-', b'd', b'e', b'm', b'o', 9, 0, 11, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 4, 1, 0, 13, b'e', b'm', b'p', b't', b'y', b'_', b'c', b'o', b'n', b't',
+    b'e', b'x', b't', 8, 0, 11, 0, 0, 0, 0, 0, 0, 0, 1, 0, 9, 1, 0, 16, b'i', b'd', b'e', b'n',
+    b't', b'i', b't', b'y', b'_', b'e', b'p', b's', b'i', b'l', b'o', b'n',
+];
+
+#[cfg(test)]
 pub(crate) const SCHEMATIC_BINDING_WIRE: &[u8] = &[
-    4, 0, 20, 0, 17, 11, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 12, 0, 0, 0,
+    5, 0, 20, 0, 17, 11, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 12, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 4, 53, 0, 2, 0, 3, 56, 0, 5, 0, 6, 13,
     14, 0, 8, 0, 3, 0, 4, 15, 0, 7, 0, 9, 19, 0, 10, 0, 4, 0, 16, 17, 0, 13, 0, 0, 0, 12, 18, 0,
     11, 0, 14, 6, 0, 15, 7, 1, 0, 22, 115, 99, 104, 101, 109, 97, 116, 105, 99, 45, 98, 105, 110,
@@ -1881,7 +1972,7 @@ pub(crate) const SCHEMATIC_BINDING_WIRE: &[u8] = &[
 
 #[cfg(test)]
 pub(crate) const ASSUMPTIONS_EQUALITY_WIRE: &[u8] = &[
-    4, 0, 12, 0, 9, // version, node count, selected namespace
+    5, 0, 12, 0, 9, // version, node count, selected namespace
     0, // bool type
     12, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // free term symbol 0 : bool
     4, // empty context
@@ -1921,8 +2012,8 @@ mod tests {
 
     #[test]
     fn canonical_eta_recipe_round_trips_and_replays() {
-        const VERSION_4_ETA_RECIPE: &[u8] = &[
-            4, 0, 10, 0, 7, // version, node count, selected namespace
+        const VERSION_5_ETA_RECIPE: &[u8] = &[
+            5, 0, 10, 0, 7, // version, node count, selected namespace
             0, // bool type
             1, 0, 0, 0, 0, 0, 0, // bound 0 : node 0
             2, 0, 0, 0, 1, // lambda node 0, node 1
@@ -1936,9 +2027,9 @@ mod tests {
             b't', b'i', b't', b'y', b'_', b'e', b't', b'a',
         ];
         let recipe = closed_eta_test_recipe();
-        assert_eq!(recipe.as_bytes(), VERSION_4_ETA_RECIPE);
+        assert_eq!(recipe.as_bytes(), VERSION_5_ETA_RECIPE);
         assert_eq!(
-            SealedHolProofRecipe::from_untrusted_bytes(VERSION_4_ETA_RECIPE).unwrap(),
+            SealedHolProofRecipe::from_untrusted_bytes(VERSION_5_ETA_RECIPE).unwrap(),
             recipe
         );
         let kernel = Kernel::ephemeral();
@@ -1948,8 +2039,8 @@ mod tests {
 
     #[test]
     fn canonical_nested_identity_conversion_has_fixed_wire_and_replays() {
-        const VERSION_4_NESTED_IDENTITY: &[u8] = &[
-            4, 0, 14, 0, 11, 0, 1, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 3, 1, 4, 0x30, 0, 2, 0x35, 0,
+        const VERSION_5_NESTED_IDENTITY: &[u8] = &[
+            5, 0, 14, 0, 11, 0, 1, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 3, 1, 4, 0x30, 0, 2, 0x35, 0,
             2, 0, 3, 0x33, 0, 5, 0, 6, 0x32, 0, 7, 0, 6, 0x38, 0, 4, 0, 8, 6, 0, 9, 7, 1, 0, 15,
             b'c', b'o', b'n', b'v', b'e', b'r', b's', b'i', b'o', b'n', b'-', b'd', b'e', b'm',
             b'o', 9, 0, 11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 1, 0, 13, b'e', b'm', b'p', b't', b'y',
@@ -1958,9 +2049,9 @@ mod tests {
             b't', b'y', b'_', b'b', b'e', b't', b'a',
         ];
         let recipe = nested_identity_conversion_test_recipe();
-        assert_eq!(recipe.as_bytes(), VERSION_4_NESTED_IDENTITY);
+        assert_eq!(recipe.as_bytes(), VERSION_5_NESTED_IDENTITY);
         assert_eq!(
-            SealedHolProofRecipe::from_untrusted_bytes(VERSION_4_NESTED_IDENTITY).unwrap(),
+            SealedHolProofRecipe::from_untrusted_bytes(VERSION_5_NESTED_IDENTITY).unwrap(),
             recipe
         );
         let kernel = Kernel::ephemeral();
@@ -1987,6 +2078,19 @@ mod tests {
         assert_eq!(recipe.as_bytes(), ASSUMPTIONS_EQUALITY_WIRE);
         assert_eq!(
             SealedHolProofRecipe::from_untrusted_bytes(ASSUMPTIONS_EQUALITY_WIRE).unwrap(),
+            recipe
+        );
+        let kernel = Kernel::ephemeral();
+        let artifact = recipe.replay(&kernel).unwrap();
+        assert_eq!(artifact.signer(), kernel.key_id());
+    }
+
+    #[test]
+    fn choice_recipe_has_fixed_wire_and_replays() {
+        let recipe = choice_test_recipe();
+        assert_eq!(recipe.as_bytes(), CHOICE_WIRE);
+        assert_eq!(
+            SealedHolProofRecipe::from_untrusted_bytes(CHOICE_WIRE).unwrap(),
             recipe
         );
         let kernel = Kernel::ephemeral();
@@ -2169,6 +2273,23 @@ mod tests {
             nonmember_hypothesis.replay(&Kernel::ephemeral()),
             Err(HolProofRecipeError::Replay(message)) if message.contains("not a member")
         ));
+
+        let nonapplication_choice = SealedHolProofRecipe::seal(
+            vec![
+                RecipeNode::EmptyContext,
+                RecipeNode::Truth { context: 0 },
+                RecipeNode::Choice { premise: 1 },
+                RecipeNode::Namespace { name: None },
+            ],
+            3,
+        )
+        .unwrap();
+        assert!(matches!(
+            nonapplication_choice.replay(&Kernel::ephemeral()),
+            Err(HolProofRecipeError::Replay(message))
+                if message.contains("choice premise")
+                    && message.contains("not a predicate application")
+        ));
     }
 
     #[test]
@@ -2184,6 +2305,17 @@ mod tests {
                     RecipeNode::ConversionEta { function: 1 }
                 ],
                 1
+            )
+            .is_err()
+        );
+        assert!(
+            SealedHolProofRecipe::seal(
+                vec![
+                    RecipeNode::Bool(true),
+                    RecipeNode::Choice { premise: 0 },
+                    RecipeNode::Namespace { name: None },
+                ],
+                2,
             )
             .is_err()
         );
@@ -2219,7 +2351,7 @@ mod tests {
         let mut bytes = closed_beta().as_bytes().to_vec();
         bytes.push(0);
         assert!(SealedHolProofRecipe::from_untrusted_bytes(&bytes).is_err());
-        for version in [1, 2, 3] {
+        for version in [1, 2, 3, 4] {
             let mut old_version = closed_beta().as_bytes().to_vec();
             old_version[0] = version;
             assert!(matches!(
@@ -2388,7 +2520,7 @@ mod tests {
         ));
         for retired_tag in [5, 10] {
             assert!(matches!(
-                SealedHolProofRecipe::from_untrusted_bytes(&[4, 0, 1, 0, 0, retired_tag]),
+                SealedHolProofRecipe::from_untrusted_bytes(&[5, 0, 1, 0, 0, retired_tag]),
                 Err(HolProofRecipeError::Invalid(
                     "unknown sealed recipe node tag"
                 ))
@@ -2410,9 +2542,10 @@ mod tests {
             (0x44, 4),
             (0x45, 4),
             (0x46, 6),
+            (0x47, 2),
         ] {
             for available in 0..operand_bytes {
-                let mut bytes = vec![4, 0, 1, 0, 0, tag];
+                let mut bytes = vec![5, 0, 1, 0, 0, tag];
                 bytes.resize(bytes.len() + available, 0);
                 assert!(matches!(
                     SealedHolProofRecipe::from_untrusted_bytes(&bytes),
