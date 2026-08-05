@@ -2,7 +2,7 @@ use std::{error::Error, fmt};
 
 use bytes::Bytes;
 use covalence_lib_crypto::ed25519::{
-    Signature as Ed25519Signature, Signer as _, SigningKey, Verifier as _, VerifyingKey,
+    Signature as Ed25519Signature, Signer as _, SigningKey, VerifyingKey,
 };
 use covalence_lib_error::snafu::Snafu;
 use covalence_lib_hash::O256;
@@ -157,7 +157,7 @@ impl Verifier for Ed25519Verifier {
         let signature = Ed25519Signature::try_from(signature)
             .map_err(|_| VerificationError::MalformedSignature { key })?;
         self.verifying_key
-            .verify(statement.as_ref(), &signature)
+            .verify_strict(statement.as_ref(), &signature)
             .map_err(|_| VerificationError::InvalidSignature { key })
     }
 }
@@ -165,7 +165,7 @@ impl Verifier for Ed25519Verifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::valid_snapshot_statement;
+    use crate::schema_valid_snapshot_statement;
 
     fn signing_key() -> SigningKey {
         SigningKey::from_bytes(&[7; 32])
@@ -177,7 +177,9 @@ mod tests {
         let key_id = ed25519_key_id(key.verifying_key().as_bytes());
         let signer: Box<dyn Signer> = Box::new(Ed25519Signer::new(key.clone()));
         let verifier: Box<dyn Verifier> = Box::new(Ed25519Verifier::new(key.verifying_key()));
-        let statement = valid_snapshot_statement(O256::from_bytes(b"database image"));
+        let schema = O256::from_bytes(b"example schema");
+        let statement =
+            schema_valid_snapshot_statement(schema, O256::from_bytes(b"database image"));
 
         let signature = signer.sign(key_id, statement).expect("sign");
         verifier
@@ -186,7 +188,7 @@ mod tests {
         assert!(matches!(
             verifier.verify(
                 key_id,
-                valid_snapshot_statement(O256::default()),
+                schema_valid_snapshot_statement(schema, O256::default()),
                 &signature
             ),
             Err(VerificationError::InvalidSignature { .. })
@@ -212,6 +214,26 @@ mod tests {
         assert!(matches!(
             verifier.verify(verifier.key_id(), statement, &[0; 63]),
             Err(VerificationError::MalformedSignature { .. })
+        ));
+    }
+
+    #[test]
+    fn schema_qualification_is_part_of_the_signed_statement() {
+        let key = signing_key();
+        let signer = Ed25519Signer::new(key.clone());
+        let verifier = Ed25519Verifier::new(key.verifying_key());
+        let image = O256::from_bytes(b"same database image");
+        let schema = O256::from_bytes(b"example schema v3");
+        let statement = schema_valid_snapshot_statement(schema, image);
+        let signature = signer.sign(signer.key_id(), statement).unwrap();
+        verifier
+            .verify(verifier.key_id(), statement, &signature)
+            .unwrap();
+        let wrong_schema =
+            schema_valid_snapshot_statement(O256::from_bytes(b"other schema"), image);
+        assert!(matches!(
+            verifier.verify(verifier.key_id(), wrong_schema, &signature),
+            Err(VerificationError::InvalidSignature { .. })
         ));
     }
 }
