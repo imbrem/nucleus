@@ -524,7 +524,7 @@ fn print_help(output: &mut impl io::Write) -> io::Result<()> {
     #[cfg(not(target_arch = "wasm32"))]
     writeln!(
         output,
-        ".hol hash-wasm O256 COMPONENT DIRECTORY  run a provisioned component and retain its receiver"
+        ".hol hash-wasm O256 COMPONENT DIRECTORY  pin and run a component, then select its receiver"
     )?;
     writeln!(output, ".use ID            select a connection")?;
     writeln!(output, ".close [ID]        close a connection")?;
@@ -692,7 +692,19 @@ fn usage(output: &mut impl io::Write) -> io::Result<()> {
         output,
         "       nucleus --hash-wasm-hol-http O256 COMPONENT ADDRESS ALLOWED_ORIGIN"
     )?;
-    writeln!(output, "       nucleus --help")
+    writeln!(output, "       nucleus --help")?;
+    writeln!(
+        output,
+        "O256 is: b3sum --no-names COMPONENT (64 lowercase hex characters)."
+    )?;
+    writeln!(
+        output,
+        "Hash-selected output directories must not exist; HTTP mode prints URL, key, and component coordinates."
+    )?;
+    writeln!(
+        output,
+        "ALLOWED_ORIGIN must exactly match the browser page origin; native HTTP binds loopback only."
+    )
 }
 
 #[cfg(not(target_arch = "wasm32"))]

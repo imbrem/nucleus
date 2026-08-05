@@ -38,6 +38,10 @@
       .coordinate {
         flex: 1 1 32rem;
       }
+      pre {
+        overflow-x: auto;
+        padding: 0.75rem;
+      }
       textarea {
         box-sizing: border-box;
         min-height: 12rem;
@@ -109,9 +113,22 @@
 
     <h2>Hash-selected native HOL guest</h2>
     <p>
-      Start a native kernel with <code>--hash-wasm-hol-http</code>, then paste
-      the three coordinates it prints. The component stays provisioned at the
-      native kernel; this page sends only its hash.
+      Build this package with
+      <code>pnpm --filter @nucleus/nucleus build</code> and serve it from
+      <code>http://127.0.0.1:4173</code> with
+      <code>pnpm --filter @nucleus/nucleus serve-repl</code>. Then start a
+      native kernel from the repository root:
+    </p>
+    <pre>
+cargo run -p covalence-bin-nucleus -- \
+  --hash-wasm-hol-http O256 COMPONENT \
+  127.0.0.1:0 http://127.0.0.1:4173</pre
+    >
+    <p>
+      Compute <code>O256</code> with <code>b3sum --no-names COMPONENT</code>,
+      then paste the three coordinates printed by the native kernel below. The
+      allowed origin must exactly match this page's origin. Component bytes
+      remain provisioned at the native kernel; this page sends only their hash.
     </p>
     <div class="bar">
       <input
@@ -260,6 +277,12 @@
         connectionSelect
           .querySelector(`option[value="${state.receiverId}"]`)
           ?.remove();
+        if (retainedNative === state) {
+          retainedNative = undefined;
+          nativeReread.disabled = true;
+          nativeCleanup.disabled = true;
+          nativeRun.disabled = false;
+        }
       }
 
       nativeRun.addEventListener("click", async () => {
@@ -336,9 +359,6 @@
         nativeCleanup.disabled = true;
         try {
           await disposeNative(state);
-          retainedNative = undefined;
-          nativeReread.disabled = true;
-          nativeRun.disabled = false;
           if (connectionSelect.options.length > 0)
             connectionSelect.selectedIndex = 0;
           nativeStatus.textContent = "Receiver and artifact cleaned up";
@@ -371,9 +391,23 @@
       document.querySelector("#close").addEventListener("click", async () => {
         try {
           const id = connectionSelect.value;
-          await selected().close();
-          connections.delete(id);
-          connectionSelect.selectedOptions[0]?.remove();
+          const managed = retainedNative;
+          if (managed !== undefined && managed.receiverId === id) {
+            nativeCleanup.disabled = true;
+            try {
+              await disposeNative(managed);
+              nativeStatus.textContent = "Receiver and artifact cleaned up";
+            } catch (error) {
+              nativeCleanup.disabled = false;
+              nativeStatus.textContent =
+                "Cleanup failed; receiver retained for retry";
+              throw error;
+            }
+          } else {
+            await selected().close();
+            connections.delete(id);
+            connectionSelect.selectedOptions[0]?.remove();
+          }
           status.textContent =
             connections.size === 0 ? "No open connection" : "Ready";
         } catch (error) {
