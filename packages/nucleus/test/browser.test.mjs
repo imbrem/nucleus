@@ -75,6 +75,16 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
     conclusion: "8",
     statement: "(lambda x:bool. x) true = true",
   });
+  assert.equal(result.signed.kind, "signed-hol-round-trip");
+  assert.equal(result.signed.phases[0], "proof-persisted");
+  assert.equal(result.signed.phases.at(-1), "theorem-read");
+  assert.equal(result.signed.statement, "(lambda x:bool. x) true = true");
+  assert.ok(result.signed.image > 0);
+  assert.equal(result.signed.publicKey, 32);
+  assert.equal(result.signed.signature, 64);
+  assert.equal(result.signed.attestation, true);
+  assert.equal(result.signed.importedContext, "0");
+  assert.equal(result.signed.importedConclusion, result.signed.conclusion);
 
   const demo = await browser.newPage();
   await demo.goto(`http://127.0.0.1:${address.port}/repl.html`);
@@ -95,4 +105,28 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
   await demo.locator("#recipe").fill("reflexivity false");
   await demo.locator("#run-hol").click();
   await demo.getByText("statement\tfalse = false").waitFor();
+
+  const downloads = [];
+  const bothDownloads = new Promise((resolve) => {
+    demo.on("download", (download) => {
+      downloads.push(download);
+      if (downloads.length === 2) resolve();
+    });
+  });
+  await demo.locator("#run-signed-hol").click();
+  await demo.getByText("kind\tsigned-hol-round-trip").waitFor();
+  await demo.getByText(/phases\tproof-persisted,.*theorem-read/).waitFor();
+  await demo.getByText("statement\t(lambda x:bool. x) true = true").waitFor();
+  await demo.getByText("receiver\thol receiver 4").waitFor();
+  await bothDownloads;
+  assert.deepEqual(
+    downloads.map((download) => download.suggestedFilename()).sort(),
+    ["beta.attestation.txt", "beta.sqlite3"],
+  );
+  assert.equal(
+    await demo
+      .locator("#connection option", { hasText: "hol receiver 4" })
+      .count(),
+    1,
+  );
 });

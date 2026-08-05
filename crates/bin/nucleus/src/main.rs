@@ -2,11 +2,13 @@ use std::env;
 use std::error::Error;
 use std::fs;
 use std::io;
+use std::io::Write as _;
 use std::process::ExitCode;
 
 use covalence_repl::{
     AllowAll, ConnectionId, HolRecipe, HolRecipeResult, Kernel, LocalConnection, MAX_IMAGE_BYTES,
-    Outcome, Repl, Value,
+    Outcome, Repl, SignedHolRoundTripResult, Value, produce_signed_hol_artifact,
+    receive_signed_hol_artifact,
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
@@ -79,6 +81,60 @@ fn print_hol_outcome(output: &mut impl io::Write, outcome: &HolRecipeResult) -> 
     writeln!(output, "statement\t{}", outcome.statement())
 }
 
+fn print_signed_hol_outcome(
+    output: &mut impl io::Write,
+    outcome: &SignedHolRoundTripResult,
+) -> io::Result<()> {
+    writeln!(output, "kind\t{}", outcome.kind())?;
+    writeln!(output, "phases\t{}", outcome.phases().join(","))?;
+    writeln!(output, "statement\t{}", outcome.proof().statement())?;
+    writeln!(output, "conclusion\t{}", outcome.proof().conclusion_id())?;
+    writeln!(output, "namespace\t{}", outcome.namespace_id())?;
+    writeln!(output, "schema\t{}", outcome.schema())?;
+    writeln!(output, "image\t{}", outcome.image_hash())?;
+    writeln!(output, "signer\t{}", outcome.signer())?;
+    writeln!(output, "import\t{}", outcome.import_id())?;
+    writeln!(
+        output,
+        "imported_namespace\t{}",
+        outcome.imported_namespace_id()
+    )?;
+    writeln!(
+        output,
+        "imported_theorem\t{}\t{}",
+        outcome.imported_context_id(),
+        outcome.imported_conclusion_id()
+    )
+}
+
+fn write_signed_hol_artifacts(
+    output: &mut impl io::Write,
+    path: &str,
+    outcome: &SignedHolRoundTripResult,
+) -> Result<()> {
+    fs::write(path, outcome.image())?;
+    let attestation_path = format!("{path}.attestation.txt");
+    fs::write(&attestation_path, outcome.attestation_text())?;
+    writeln!(output, "database\t{path}")?;
+    writeln!(output, "attestation\t{attestation_path}")?;
+    Ok(())
+}
+
+fn run_managed_signed_hol_round_trip(
+    kernel: &Kernel,
+    repl: &mut LocalRepl,
+) -> Result<(SignedHolRoundTripResult, ConnectionId)> {
+    let produced = produce_signed_hol_artifact(kernel, repl.active_mut()?.hol_mut()?)?;
+    let receiver = LocalConnection::Hol(kernel.open_hol(AllowAll)?);
+    let receiver_id = repl.insert(receiver.protocol(), receiver)?;
+    let imported =
+        receive_signed_hol_artifact(repl.get_mut(receiver_id)?.hol_mut()?, produced.artifact())?;
+    Ok((
+        SignedHolRoundTripResult::from_parts(produced, imported),
+        receiver_id,
+    ))
+}
+
 fn load_image(
     repl: &mut LocalRepl,
     output: &mut impl io::Write,
@@ -114,6 +170,10 @@ fn print_help(output: &mut impl io::Write) -> io::Result<()> {
     writeln!(
         output,
         ".hol RECIPE        run truth, reflexivity BOOL, or beta BOOL"
+    )?;
+    writeln!(
+        output,
+        ".hol signed-roundtrip PATH  prove, sign, import, verify, and export artifacts"
     )?;
     writeln!(output, ".use ID            select a connection")?;
     writeln!(output, ".close [ID]        close a connection")?;
@@ -210,6 +270,17 @@ fn run_line(
         load_image(repl, output, schema, path)?;
         return Ok(true);
     }
+    if let Some(path) = line.strip_prefix(".hol signed-roundtrip ") {
+        let path = path.trim();
+        if path.is_empty() {
+            return Err("usage: .hol signed-roundtrip PATH".into());
+        }
+        let (outcome, receiver) = run_managed_signed_hol_round_trip(kernel, repl)?;
+        print_signed_hol_outcome(output, &outcome)?;
+        writeln!(output, "receiver_connection\t{receiver}")?;
+        write_signed_hol_artifacts(output, path, &outcome)?;
+        return Ok(true);
+    }
     if let Some(source) = line.strip_prefix(".hol ") {
         let recipe = source.parse::<HolRecipe>()?;
         let outcome = recipe.execute(repl.active_mut()?.hol_mut()?)?;
@@ -256,6 +327,7 @@ fn run_repl(
 fn usage(output: &mut impl io::Write) -> io::Result<()> {
     writeln!(output, "usage: nucleus [-c SQL]")?;
     writeln!(output, "       nucleus --hol RECIPE")?;
+    writeln!(output, "       nucleus --signed-hol PATH")?;
     writeln!(output, "       nucleus --help")
 }
 
@@ -293,6 +365,19 @@ fn run() -> Result<()> {
                 .execute(repl.active_mut()?.hol_mut()?)?;
             print_hol_outcome(&mut io::stdout().lock(), &outcome)?;
             Ok(())
+        }
+        Some("--signed-hol") => {
+            let path = arguments.next().ok_or("--signed-hol requires PATH")?;
+            if arguments.next().is_some() {
+                return Err("unexpected arguments after signed HOL path".into());
+            }
+            let kernel = Kernel::ephemeral();
+            let mut repl = Repl::new(kernel.verifying_key().as_bytes())?;
+            open_hol_connection(&kernel, &mut repl)?;
+            let (outcome, receiver) = run_managed_signed_hol_round_trip(&kernel, &mut repl)?;
+            print_signed_hol_outcome(&mut io::stdout().lock(), &outcome)?;
+            writeln!(io::stdout().lock(), "receiver_connection\t{receiver}")?;
+            write_signed_hol_artifacts(&mut io::stdout().lock(), &path, &outcome)
         }
         Some("-h" | "--help") => {
             usage(&mut io::stdout().lock())?;
@@ -407,6 +492,37 @@ mod tests {
         assert!(output.contains("  1\tnucleus/sql\n"));
         assert!(output.contains("* 2\tnucleus/hol\n"));
         assert!(output.contains("  3\tnucleus/sql\n"));
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn exports_the_same_signed_round_trip_available_to_the_browser() {
+        let path = std::env::temp_dir().join(format!(
+            "nucleus-signed-hol-{}.sqlite",
+            NEXT_FILE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let attestation = format!("{}.attestation.txt", path.display());
+        let mut input = Cursor::new(format!(
+            ".open hol\n.hol signed-roundtrip {}\n.quit\n",
+            path.display()
+        ));
+        let mut output = Vec::new();
+        let mut errors = Vec::new();
+
+        run_repl(&mut input, &mut output, &mut errors, false).expect("run REPL");
+
+        let image = fs::read(&path).expect("read signed image");
+        let sidecar = fs::read_to_string(&attestation).expect("read attestation");
+        fs::remove_file(&path).expect("remove signed image");
+        fs::remove_file(&attestation).expect("remove attestation");
+        let output = String::from_utf8(output).unwrap();
+        assert!(!image.is_empty());
+        assert!(sidecar.contains("format=covalence-repl-signed-snapshot-demo-v0"));
+        assert!(sidecar.contains("namespace=1\n"));
+        assert!(output.contains("kind\tsigned-hol-round-trip\n"));
+        assert!(output.contains("proof-persisted"));
+        assert!(output.contains("theorem-read"));
+        assert!(output.contains("statement\t(lambda x:bool. x) true = true\n"));
         assert!(errors.is_empty());
     }
 

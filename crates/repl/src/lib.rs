@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::error::Error as StdError;
 use std::fmt;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use covalence_lib_sqlite as sqlite;
 
@@ -17,7 +18,10 @@ pub use covalence_nucleus::sql::{
     ImageError, MAX_IMAGE_BYTES, Outcome, QueryResult, Statement, Value,
 };
 pub use covalence_nucleus::{AllowAll, Connection, Hol, Kernel, Sql};
-use covalence_nucleus::{ContextId, ProofError, TermError, TypeError};
+use covalence_nucleus::{
+    AuthenticatedValidatedHolImage, ContextId, ExportId, HolDatabaseRef, ImportedExport,
+    ImportedTermView, NamespaceExport, ProofError, SignedSnapshotEnvelope, TermError, TypeError,
+};
 
 const SCHEMA: &str = "
 PRAGMA foreign_keys = ON;
@@ -317,6 +321,570 @@ impl fmt::Display for ConnectionKindError {
 
 impl StdError for ConnectionKindError {}
 
+/// Completed stages of the signed HOL round trip.
+///
+/// The list is stable presentation data for terminal and browser adapters. It
+/// is not a proof trace: each stage reports a boundary crossed by the shared
+/// orchestration code, while the database persists only canonical kernel
+/// state.
+pub const SIGNED_HOL_PHASES: &[&str] = &[
+    "proof-persisted",
+    "namespace-exported",
+    "snapshot-signed",
+    "signature-authenticated",
+    "image-detached-validated",
+    "signer-trusted",
+    "snapshot-accepted",
+    "namespace-imported",
+    "theorem-read",
+];
+
+/// Exact producer artifact transported between independent HOL connections.
+///
+/// This is an above-TCB demo carrier, not a stabilized wire format. The
+/// receiver treats every field as untrusted and establishes authentication,
+/// structural validity, and connection-local trust independently.
+#[derive(Clone)]
+pub struct SignedHolArtifact {
+    namespace_id: i64,
+    image: Vec<u8>,
+    schema: covalence_lib_hash::O256,
+    image_hash: covalence_lib_hash::O256,
+    signer: covalence_lib_hash::O256,
+    public_key: Vec<u8>,
+    signature: Vec<u8>,
+}
+
+/// Producer-local presentation paired with an independently transportable artifact.
+pub struct ProducedSignedHol {
+    proof: HolRecipeResult,
+    artifact: SignedHolArtifact,
+}
+
+/// Receiver-local coordinates established from one [`SignedHolArtifact`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReceivedHolSnapshot {
+    import: i64,
+    namespace: i64,
+    context: i64,
+    conclusion: i64,
+}
+
+/// Result shared by the terminal and browser signed-snapshot demonstrations.
+pub struct SignedHolRoundTripResult {
+    produced: ProducedSignedHol,
+    received: ReceivedHolSnapshot,
+}
+
+impl SignedHolArtifact {
+    /// Reconstructs untrusted transport fields without authenticating them.
+    ///
+    /// This parses hash coordinates and checks fixed-width fields only.
+    /// [`receive_signed_hol_artifact`] performs every semantic check.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a negative namespace, malformed hash, or wrong
+    /// public-key/signature width.
+    pub fn from_untrusted_parts(
+        namespace_id: i64,
+        image: Vec<u8>,
+        schema: &str,
+        image_hash: &str,
+        signer: &str,
+        public_key: Vec<u8>,
+        signature: Vec<u8>,
+    ) -> Result<Self, SignedHolArtifactError> {
+        if namespace_id < 0 {
+            return Err(SignedHolArtifactError("namespace ID must be non-negative"));
+        }
+        if public_key.len() != 32 {
+            return Err(SignedHolArtifactError("public key must be 32 bytes"));
+        }
+        if signature.len() != 64 {
+            return Err(SignedHolArtifactError("signature must be 64 bytes"));
+        }
+        Ok(Self {
+            namespace_id,
+            image,
+            schema: covalence_lib_hash::O256::from_hex(schema)
+                .map_err(|_| SignedHolArtifactError("schema must be an O256 hex string"))?,
+            image_hash: covalence_lib_hash::O256::from_hex(image_hash)
+                .map_err(|_| SignedHolArtifactError("image must be an O256 hex string"))?,
+            signer: covalence_lib_hash::O256::from_hex(signer)
+                .map_err(|_| SignedHolArtifactError("signer must be an O256 hex string"))?,
+            public_key,
+            signature,
+        })
+    }
+
+    /// Returns the source namespace exported by this demonstration.
+    #[must_use]
+    pub const fn namespace_id(&self) -> i64 {
+        self.namespace_id
+    }
+
+    /// Returns the exact signed `SQLite` bytes.
+    #[must_use]
+    pub fn image(&self) -> &[u8] {
+        &self.image
+    }
+
+    /// Returns the signed HOL schema coordinate.
+    #[must_use]
+    pub const fn schema(&self) -> covalence_lib_hash::O256 {
+        self.schema
+    }
+
+    /// Returns the claimed exact image coordinate.
+    #[must_use]
+    pub const fn image_hash(&self) -> covalence_lib_hash::O256 {
+        self.image_hash
+    }
+
+    /// Returns the claimed signer identity.
+    #[must_use]
+    pub const fn signer(&self) -> covalence_lib_hash::O256 {
+        self.signer
+    }
+
+    /// Returns the claimed Ed25519 public key.
+    #[must_use]
+    pub fn public_key(&self) -> &[u8] {
+        &self.public_key
+    }
+
+    /// Returns the claimed schema-qualified snapshot signature.
+    #[must_use]
+    pub fn signature(&self) -> &[u8] {
+        &self.signature
+    }
+
+    /// Renders a deliberately demo-local text sidecar for downloading artifacts.
+    ///
+    /// This is presentation output rather than a stable inter-kernel codec.
+    #[must_use]
+    pub fn attestation_text(&self) -> String {
+        format!(
+            "format=covalence-repl-signed-snapshot-demo-v0\nnamespace={}\nschema={}\nimage={}\nsigner={}\npublic_key={}\nsignature={}\n",
+            self.namespace_id,
+            self.schema,
+            self.image_hash,
+            self.signer,
+            hex(&self.public_key),
+            hex(&self.signature),
+        )
+    }
+}
+
+/// Malformed above-TCB signed-HOL transport fields.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SignedHolArtifactError(&'static str);
+
+impl fmt::Display for SignedHolArtifactError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.0)
+    }
+}
+
+impl StdError for SignedHolArtifactError {}
+
+impl ProducedSignedHol {
+    /// Returns the producer-local persisted proof presentation.
+    #[must_use]
+    pub const fn proof(&self) -> &HolRecipeResult {
+        &self.proof
+    }
+
+    /// Returns the independently transportable signed artifact.
+    #[must_use]
+    pub const fn artifact(&self) -> &SignedHolArtifact {
+        &self.artifact
+    }
+
+    /// Separates producer-local presentation from transport ownership.
+    #[must_use]
+    pub fn into_parts(self) -> (HolRecipeResult, SignedHolArtifact) {
+        (self.proof, self.artifact)
+    }
+}
+
+impl ReceivedHolSnapshot {
+    /// Returns the receiver's inert import-directory ID.
+    #[must_use]
+    pub const fn import_id(self) -> i64 {
+        self.import
+    }
+
+    /// Returns the receiver's imported namespace alias ID.
+    #[must_use]
+    pub const fn namespace_id(self) -> i64 {
+        self.namespace
+    }
+
+    /// Returns the imported empty-context source coordinate.
+    #[must_use]
+    pub const fn context_id(self) -> i64 {
+        self.context
+    }
+
+    /// Returns the imported conclusion source coordinate.
+    #[must_use]
+    pub const fn conclusion_id(self) -> i64 {
+        self.conclusion
+    }
+}
+
+impl SignedHolRoundTripResult {
+    /// Combines completed producer and receiver halves for presentation.
+    #[must_use]
+    pub const fn from_parts(produced: ProducedSignedHol, received: ReceivedHolSnapshot) -> Self {
+        Self { produced, received }
+    }
+
+    /// Returns `signed-hol-round-trip`, the shared frontend discriminant.
+    #[must_use]
+    pub const fn kind(&self) -> &'static str {
+        "signed-hol-round-trip"
+    }
+
+    /// Returns each successfully completed trust-boundary stage in order.
+    #[must_use]
+    pub const fn phases(&self) -> &'static [&'static str] {
+        SIGNED_HOL_PHASES
+    }
+
+    /// Returns the local proof result persisted before serialization.
+    #[must_use]
+    pub const fn proof(&self) -> &HolRecipeResult {
+        self.produced.proof()
+    }
+
+    /// Returns the source database's exported namespace ID.
+    #[must_use]
+    pub const fn namespace_id(&self) -> i64 {
+        self.produced.artifact().namespace_id()
+    }
+
+    /// Returns the exact signed `SQLite` database image.
+    #[must_use]
+    pub fn image(&self) -> &[u8] {
+        self.produced.artifact().image()
+    }
+
+    /// Returns the signed interpretation-qualified HOL schema hash.
+    #[must_use]
+    pub const fn schema(&self) -> covalence_lib_hash::O256 {
+        self.produced.artifact().schema()
+    }
+
+    /// Returns the hash of the exact exported database bytes.
+    #[must_use]
+    pub const fn image_hash(&self) -> covalence_lib_hash::O256 {
+        self.produced.artifact().image_hash()
+    }
+
+    /// Returns the producer key identity.
+    #[must_use]
+    pub const fn signer(&self) -> covalence_lib_hash::O256 {
+        self.produced.artifact().signer()
+    }
+
+    /// Returns the producer's Ed25519 public key.
+    #[must_use]
+    pub fn public_key(&self) -> &[u8] {
+        self.produced.artifact().public_key()
+    }
+
+    /// Returns the signature over the schema-qualified image statement.
+    #[must_use]
+    pub fn signature(&self) -> &[u8] {
+        self.produced.artifact().signature()
+    }
+
+    /// Returns the receiver's inert import-directory ID.
+    #[must_use]
+    pub const fn import_id(&self) -> i64 {
+        self.received.import_id()
+    }
+
+    /// Returns the receiver's imported namespace alias ID.
+    #[must_use]
+    pub const fn imported_namespace_id(&self) -> i64 {
+        self.received.namespace_id()
+    }
+
+    /// Returns the source coordinate of the imported empty context.
+    #[must_use]
+    pub const fn imported_context_id(&self) -> i64 {
+        self.received.context_id()
+    }
+
+    /// Returns the source coordinate of the imported beta conclusion.
+    #[must_use]
+    pub const fn imported_conclusion_id(&self) -> i64 {
+        self.received.conclusion_id()
+    }
+
+    /// Renders a deliberately demo-local text sidecar for downloading artifacts.
+    ///
+    /// This is presentation output rather than a stable inter-kernel codec.
+    #[must_use]
+    pub fn attestation_text(&self) -> String {
+        self.produced.artifact().attestation_text()
+    }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    use fmt::Write as _;
+
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(encoded, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    encoded
+}
+
+/// Failure of one explicitly named signed-snapshot demonstration phase.
+#[derive(Debug)]
+pub struct SignedHolRoundTripError {
+    phase: &'static str,
+    message: String,
+}
+
+impl SignedHolRoundTripError {
+    fn at<E: fmt::Display>(phase: &'static str, error: E) -> Self {
+        Self {
+            phase,
+            message: error.to_string(),
+        }
+    }
+
+    fn invalid(phase: &'static str, message: &'static str) -> Self {
+        Self {
+            phase,
+            message: message.to_owned(),
+        }
+    }
+
+    /// Returns the stage which rejected the operation.
+    #[must_use]
+    pub const fn phase(&self) -> &'static str {
+        self.phase
+    }
+}
+
+impl fmt::Display for SignedHolRoundTripError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}: {}", self.phase, self.message)
+    }
+}
+
+impl StdError for SignedHolRoundTripError {}
+
+/// Proves and persists beta, exports a namespace, and signs the exact database.
+///
+/// # Errors
+///
+/// Returns the name and message of the first rejected producer stage.
+pub fn produce_signed_hol_artifact(
+    producer: &Kernel,
+    source: &mut Connection<Hol<AllowAll>>,
+) -> Result<ProducedSignedHol, SignedHolRoundTripError> {
+    let proof = HolRecipe::Beta(true)
+        .execute(source)
+        .map_err(|error| SignedHolRoundTripError::at("proof-persisted", error))?;
+
+    let namespace = source
+        .create_namespace(None, Some("beta-demo"))
+        .map_err(|error| SignedHolRoundTripError::at("namespace-exported", error))?;
+    source
+        .export_value(
+            namespace,
+            ExportId::from_i64(0),
+            NamespaceExport::Context(ContextId::empty()),
+            Some("empty-context"),
+        )
+        .map_err(|error| SignedHolRoundTripError::at("namespace-exported", error))?;
+    source
+        .export_value(
+            namespace,
+            ExportId::from_i64(1),
+            NamespaceExport::Term(covalence_nucleus::TermId::from_i64(proof.conclusion_id())),
+            Some("beta-conclusion"),
+        )
+        .map_err(|error| SignedHolRoundTripError::at("namespace-exported", error))?;
+
+    let signed_snapshot = producer
+        .export_hol(source)
+        .map_err(|error| SignedHolRoundTripError::at("snapshot-signed", error))?;
+    let attestation = signed_snapshot.attestation();
+    let image = signed_snapshot.image().bytes().to_vec();
+    let schema = attestation.schema();
+    let image_hash = attestation.image();
+    let signer_id = attestation.signer();
+    let public_key = *attestation.public_key();
+    let signature = attestation.signature().to_vec();
+
+    Ok(ProducedSignedHol {
+        proof,
+        artifact: SignedHolArtifact {
+            namespace_id: namespace.get(),
+            image,
+            schema,
+            image_hash,
+            signer: signer_id,
+            public_key: public_key.to_vec(),
+            signature,
+        },
+    })
+}
+
+/// Authenticates, validates, trusts, imports, and reads one transported artifact.
+///
+/// The caller supplies the receiver connection explicitly, so it remains in
+/// the REPL and its connection-local trust and persistent import state can be
+/// inspected after this operation. Imported theorem authority remains scoped
+/// to the immutable reader and is never promoted to a local LCF theorem.
+///
+/// # Errors
+///
+/// Returns the name and message of the first rejected receiver stage.
+pub fn receive_signed_hol_artifact(
+    target: &mut Connection<Hol<AllowAll>>,
+    artifact: &SignedHolArtifact,
+) -> Result<ReceivedHolSnapshot, SignedHolRoundTripError> {
+    let validated = authenticate_and_validate_artifact(artifact)?;
+    let claim = validated.claim();
+    target
+        .trust_snapshot_signer(claim)
+        .map_err(|error| SignedHolRoundTripError::at("signer-trusted", error))?;
+    target
+        .accept_authenticated_snapshot(claim)
+        .map_err(|error| SignedHolRoundTripError::at("snapshot-accepted", error))?;
+    let import = target
+        .register_import(HolDatabaseRef::new(claim.schema(), claim.image()))
+        .map_err(|error| SignedHolRoundTripError::at("namespace-imported", error))?;
+    let trusted = target
+        .accept_trusted_import(import, claim)
+        .map_err(|error| SignedHolRoundTripError::at("namespace-imported", error))?;
+    let namespace = target
+        .create_imported_namespace(
+            None,
+            Some("received-beta-demo"),
+            import,
+            artifact.namespace_id,
+        )
+        .map_err(|error| SignedHolRoundTripError::at("namespace-imported", error))?;
+
+    let mounted = covalence_neutron::ImmutableImage::register(Arc::from(artifact.image.as_slice()))
+        .map_err(|error| SignedHolRoundTripError::at("theorem-read", error))?;
+    let (context_id, conclusion_id) = target
+        .match_trusted_import_image(trusted, validated)
+        .map_err(|error| SignedHolRoundTripError::at("theorem-read", error))?
+        .with_mounted_reader(namespace, &mounted, read_imported_beta)
+        .map_err(|error| SignedHolRoundTripError::at("theorem-read", error))??;
+
+    Ok(ReceivedHolSnapshot {
+        import: import.get(),
+        namespace: namespace.get(),
+        context: context_id,
+        conclusion: conclusion_id,
+    })
+}
+
+fn authenticate_and_validate_artifact(
+    artifact: &SignedHolArtifact,
+) -> Result<AuthenticatedValidatedHolImage, SignedHolRoundTripError> {
+    let public_key: [u8; 32] = artifact.public_key.as_slice().try_into().map_err(|_| {
+        SignedHolRoundTripError::invalid("signature-authenticated", "public key is not 32 bytes")
+    })?;
+    let authenticated = SignedSnapshotEnvelope::new(
+        &artifact.image,
+        artifact.schema,
+        artifact.image_hash,
+        artifact.signer,
+        public_key,
+        &artifact.signature,
+    )
+    .authenticate()
+    .map_err(|error| SignedHolRoundTripError::at("signature-authenticated", error))?;
+    AuthenticatedValidatedHolImage::validate_default(authenticated)
+        .map_err(|error| SignedHolRoundTripError::at("image-detached-validated", error))
+}
+
+fn read_imported_beta(
+    mut reader: covalence_nucleus::ImportedHolReader<'_, '_, AllowAll>,
+) -> Result<(i64, i64), SignedHolRoundTripError> {
+    let Some(context_export) = reader
+        .namespace_export(0)
+        .map_err(|error| SignedHolRoundTripError::at("theorem-read", error))?
+    else {
+        return Err(SignedHolRoundTripError::invalid(
+            "theorem-read",
+            "missing context export",
+        ));
+    };
+    let ImportedExport::Context(context) = context_export else {
+        return Err(SignedHolRoundTripError::invalid(
+            "theorem-read",
+            "export 0 is not a context",
+        ));
+    };
+    let Some(conclusion_export) = reader
+        .namespace_export(1)
+        .map_err(|error| SignedHolRoundTripError::at("theorem-read", error))?
+    else {
+        return Err(SignedHolRoundTripError::invalid(
+            "theorem-read",
+            "missing term export",
+        ));
+    };
+    let ImportedExport::Term(conclusion) = conclusion_export else {
+        return Err(SignedHolRoundTripError::invalid(
+            "theorem-read",
+            "export 1 is not a term",
+        ));
+    };
+    if reader
+        .theorem(context, conclusion)
+        .map_err(|error| SignedHolRoundTripError::at("theorem-read", error))?
+        .is_none()
+    {
+        return Err(SignedHolRoundTripError::invalid(
+            "theorem-read",
+            "persisted beta theorem is absent",
+        ));
+    }
+    if !matches!(
+        reader
+            .term(conclusion)
+            .map_err(|error| SignedHolRoundTripError::at("theorem-read", error))?,
+        ImportedTermView::Equality { .. }
+    ) {
+        return Err(SignedHolRoundTripError::invalid(
+            "theorem-read",
+            "imported conclusion is not an equality",
+        ));
+    }
+    Ok((context.get(), conclusion.get()))
+}
+
+/// Runs the split producer and receiver operations as one convenience demo.
+///
+/// # Errors
+///
+/// Returns the name and message of the first rejected boundary stage.
+pub fn run_signed_hol_round_trip(
+    producer_kernel: &Kernel,
+    source: &mut Connection<Hol<AllowAll>>,
+    target: &mut Connection<Hol<AllowAll>>,
+) -> Result<SignedHolRoundTripResult, SignedHolRoundTripError> {
+    let output = produce_signed_hol_artifact(producer_kernel, source)?;
+    let received = receive_signed_hol_artifact(target, output.artifact())?;
+    Ok(SignedHolRoundTripResult::from_parts(output, received))
+}
+
 /// A deliberately tiny, transport-neutral HOL demo recipe.
 ///
 /// Recipe interpretation is an untrusted convenience layer. Soundness comes
@@ -587,7 +1155,7 @@ impl From<sqlite::Error> for ReplError {
 mod web;
 
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-pub use web::{WebHolOutcome, WebKernel, WebOutcome};
+pub use web::{WebHolOutcome, WebKernel, WebOutcome, WebSignedHolOutcome};
 
 /// Returns the cross-target `SQLite` smoke-test value.
 #[must_use]
@@ -777,5 +1345,113 @@ mod tests {
             "anything".parse::<HolRecipe>(),
             Err(HolRecipeError::InvalidRecipe)
         ));
+    }
+
+    #[test]
+    fn signed_round_trip_crosses_every_explicit_boundary() {
+        let producer = Kernel::ephemeral();
+        let mut source = producer.open_hol(AllowAll).unwrap();
+        let receiver = Kernel::ephemeral();
+        let mut target = receiver.open_hol(AllowAll).unwrap();
+
+        let result = run_signed_hol_round_trip(&producer, &mut source, &mut target).unwrap();
+
+        assert_eq!(result.kind(), "signed-hol-round-trip");
+        assert_eq!(result.phases(), SIGNED_HOL_PHASES);
+        assert_eq!(result.proof().recipe(), "beta");
+        assert_eq!(result.proof().context_id(), 0);
+        assert_eq!(result.proof().statement(), "(lambda x:bool. x) true = true");
+        assert_eq!(result.public_key().len(), 32);
+        assert_eq!(result.signature().len(), 64);
+        assert!(!result.image().is_empty());
+        assert!(
+            result
+                .attestation_text()
+                .contains(&format!("namespace={}", result.namespace_id()))
+        );
+        assert_eq!(result.imported_context_id(), 0);
+        assert_eq!(
+            result.imported_conclusion_id(),
+            result.proof().conclusion_id()
+        );
+    }
+
+    #[test]
+    fn receiver_rejects_tampered_transport_before_trust_or_import() {
+        let producer = Kernel::ephemeral();
+        let mut source = producer.open_hol(AllowAll).unwrap();
+        let output = produce_signed_hol_artifact(&producer, &mut source).unwrap();
+        let artifact = output.artifact();
+
+        let reconstructed = SignedHolArtifact::from_untrusted_parts(
+            artifact.namespace_id(),
+            artifact.image().to_vec(),
+            &artifact.schema().to_string(),
+            &artifact.image_hash().to_string(),
+            &artifact.signer().to_string(),
+            artifact.public_key().to_vec(),
+            artifact.signature().to_vec(),
+        )
+        .unwrap();
+        let mut target = Kernel::ephemeral().open_hol(AllowAll).unwrap();
+        receive_signed_hol_artifact(&mut target, &reconstructed).unwrap();
+
+        let mut bytes = artifact.image().to_vec();
+        bytes[0] ^= 1;
+        let wrong_bytes = SignedHolArtifact::from_untrusted_parts(
+            artifact.namespace_id(),
+            bytes,
+            &artifact.schema().to_string(),
+            &artifact.image_hash().to_string(),
+            &artifact.signer().to_string(),
+            artifact.public_key().to_vec(),
+            artifact.signature().to_vec(),
+        )
+        .unwrap();
+        let mut target = Kernel::ephemeral().open_hol(AllowAll).unwrap();
+        assert_eq!(
+            receive_signed_hol_artifact(&mut target, &wrong_bytes)
+                .unwrap_err()
+                .phase(),
+            "signature-authenticated"
+        );
+
+        let wrong_schema = SignedHolArtifact::from_untrusted_parts(
+            artifact.namespace_id(),
+            artifact.image().to_vec(),
+            &covalence_lib_hash::O256::from_bytes(b"wrong schema").to_string(),
+            &artifact.image_hash().to_string(),
+            &artifact.signer().to_string(),
+            artifact.public_key().to_vec(),
+            artifact.signature().to_vec(),
+        )
+        .unwrap();
+        let mut target = Kernel::ephemeral().open_hol(AllowAll).unwrap();
+        assert_eq!(
+            receive_signed_hol_artifact(&mut target, &wrong_schema)
+                .unwrap_err()
+                .phase(),
+            "signature-authenticated"
+        );
+
+        let mut signature = artifact.signature().to_vec();
+        signature[0] ^= 1;
+        let wrong_signature = SignedHolArtifact::from_untrusted_parts(
+            artifact.namespace_id(),
+            artifact.image().to_vec(),
+            &artifact.schema().to_string(),
+            &artifact.image_hash().to_string(),
+            &artifact.signer().to_string(),
+            artifact.public_key().to_vec(),
+            signature,
+        )
+        .unwrap();
+        let mut target = Kernel::ephemeral().open_hol(AllowAll).unwrap();
+        assert_eq!(
+            receive_signed_hol_artifact(&mut target, &wrong_signature)
+                .unwrap_err()
+                .phase(),
+            "signature-authenticated"
+        );
     }
 }
