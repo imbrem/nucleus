@@ -11,10 +11,12 @@
       const repl = createBrowserRepl();
       let source;
       let target;
+      let hol;
       let url;
       try {
         source = await repl.open();
         target = await repl.open();
+        hol = await repl.openHol();
         await source.run("CREATE TABLE facts (name TEXT, value INTEGER)");
         await source.run(
           "INSERT INTO facts VALUES ('exact', 9223372036854775807)",
@@ -25,6 +27,8 @@
         const result = await target.run(
           "SELECT name, value FROM library.facts",
         );
+        const theorem = await hol.run("beta true");
+        const persistent = await hol.run("truth");
 
         let readonly = false;
         try {
@@ -37,6 +41,8 @@
           hash,
           result,
           readonly,
+          theorem,
+          persistent,
         });
       } catch (error) {
         document.body.dataset.error = String(error);
@@ -44,6 +50,7 @@
         if (url !== undefined) URL.revokeObjectURL(url);
         await source?.close();
         await target?.close();
+        await hol?.close();
         repl.close();
       }
     </script>

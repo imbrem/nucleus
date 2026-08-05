@@ -7,13 +7,15 @@
 use std::collections::HashMap;
 use std::error::Error as StdError;
 use std::fmt;
+use std::str::FromStr;
 
 use covalence_lib_sqlite as sqlite;
 
 pub use covalence_nucleus::sql::{
     ImageError, MAX_IMAGE_BYTES, Outcome, QueryResult, Statement, Value,
 };
-pub use covalence_nucleus::{Connection, Kernel, Sql};
+pub use covalence_nucleus::{AllowAll, Connection, Hol, Kernel, Sql};
+use covalence_nucleus::{ContextId, ProofError, ReflexivityStep, TermError, TruthStep, TypeError};
 
 const SCHEMA: &str = "
 PRAGMA foreign_keys = ON;
@@ -246,6 +248,297 @@ impl<C> Repl<C> {
     }
 }
 
+/// A process-local connection managed by the terminal or browser adapter.
+///
+/// This sum belongs above Nucleus's protocol boundary. It lets one REPL
+/// directory select heterogeneous connections without making `Repl` itself a
+/// protocol or weakening either connection's type.
+pub enum LocalConnection {
+    /// An unrestricted raw `SQLite` connection.
+    Sql(Connection<Sql>),
+    /// A rank-zero HOL connection using the demo's permissive policy.
+    Hol(Connection<Hol<AllowAll>>),
+}
+
+impl LocalConnection {
+    /// Returns the stable protocol name recorded in the REPL state database.
+    #[must_use]
+    pub const fn protocol(&self) -> &'static str {
+        match self {
+            Self::Sql(_) => "nucleus/sql",
+            Self::Hol(_) => "nucleus/hol",
+        }
+    }
+
+    /// Borrows this connection as SQL.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the selected connection is HOL.
+    pub const fn sql_mut(&mut self) -> Result<&mut Connection<Sql>, ConnectionKindError> {
+        match self {
+            Self::Sql(connection) => Ok(connection),
+            Self::Hol(_) => Err(ConnectionKindError::ExpectedSql),
+        }
+    }
+
+    /// Borrows this connection as HOL.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the selected connection is SQL.
+    pub const fn hol_mut(&mut self) -> Result<&mut Connection<Hol<AllowAll>>, ConnectionKindError> {
+        match self {
+            Self::Hol(connection) => Ok(connection),
+            Self::Sql(_) => Err(ConnectionKindError::ExpectedHol),
+        }
+    }
+}
+
+/// A selected local connection has the wrong protocol for an operation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConnectionKindError {
+    /// A SQL operation selected a HOL connection.
+    ExpectedSql,
+    /// A HOL operation selected a SQL connection.
+    ExpectedHol,
+}
+
+impl fmt::Display for ConnectionKindError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ExpectedSql => formatter.write_str("selected connection is not SQL"),
+            Self::ExpectedHol => formatter.write_str("selected connection is not HOL"),
+        }
+    }
+}
+
+impl StdError for ConnectionKindError {}
+
+/// A deliberately tiny, transport-neutral HOL demo recipe.
+///
+/// Recipe interpretation is an untrusted convenience layer. Soundness comes
+/// from the Nucleus operations called by [`HolRecipe::execute`], not from
+/// parsing or from this enum.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HolRecipe {
+    /// Prove primitive truth in the empty context.
+    Truth,
+    /// Prove reflexivity of one Boolean literal.
+    Reflexivity(bool),
+    /// Prove closed beta reduction of Boolean identity at one literal.
+    Beta(bool),
+}
+
+impl HolRecipe {
+    /// Runs the recipe and persists its syntax and resulting judgement.
+    ///
+    /// Rules represented by Nucleus' persistent step API return their stable
+    /// database-local judgement ID. Beta is deliberately not added to that
+    /// four-rule API by this adapter: it uses the existing branded LCF session
+    /// and therefore returns no persistent ID, although its conclusion is
+    /// still persisted as canonical kernel state. Recording a recipe or trace
+    /// is left to an optional metadata database above this adapter.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if Nucleus rejects a syntax constructor or proof rule.
+    pub fn execute<P: covalence_nucleus::Policy>(
+        self,
+        connection: &mut Connection<Hol<P>>,
+    ) -> Result<HolRecipeResult, HolRecipeError> {
+        let context = ContextId::empty();
+        let (recipe, statement, conclusion, judgement_id) = match self {
+            Self::Truth => {
+                let judgement = connection.proof_step(TruthStep::new(context))?;
+                (
+                    "truth",
+                    "true",
+                    judgement.conclusion(),
+                    Some(judgement.id().get()),
+                )
+            }
+            Self::Reflexivity(value) => {
+                let literal = connection.insert_bool_term(value)?;
+                let judgement = connection.proof_step(ReflexivityStep::new(context, literal))?;
+                (
+                    "reflexivity",
+                    if value {
+                        "true = true"
+                    } else {
+                        "false = false"
+                    },
+                    judgement.conclusion(),
+                    Some(judgement.id().get()),
+                )
+            }
+            Self::Beta(value) => {
+                let bool_type = connection.insert_bool_type()?;
+                let variable = connection.insert_bound_term(0, bool_type)?;
+                let identity = connection.insert_lambda(bool_type, variable)?;
+                let literal = connection.insert_bool_term(value)?;
+                let conclusion = connection.with_proof_session(|mut proof| {
+                    let theorem = proof.prove_beta(context, identity, literal)?;
+                    let conclusion = theorem.conclusion();
+                    proof.persist_theorem(&theorem)?;
+                    Ok::<_, ProofError>(conclusion)
+                })?;
+                (
+                    "beta",
+                    if value {
+                        "(lambda x:bool. x) true = true"
+                    } else {
+                        "(lambda x:bool. x) false = false"
+                    },
+                    conclusion,
+                    None,
+                )
+            }
+        };
+        Ok(HolRecipeResult {
+            recipe,
+            context_id: context.get(),
+            conclusion_id: conclusion.get(),
+            judgement_id,
+            statement,
+        })
+    }
+}
+
+impl FromStr for HolRecipe {
+    type Err = HolRecipeError;
+
+    fn from_str(source: &str) -> Result<Self, Self::Err> {
+        let mut words = source.split_whitespace();
+        let recipe = match (words.next(), words.next(), words.next()) {
+            (Some("truth"), None, None) => Self::Truth,
+            (Some("reflexivity" | "refl"), Some(value), None) => {
+                Self::Reflexivity(parse_bool(value)?)
+            }
+            (Some("beta"), Some(value), None) => Self::Beta(parse_bool(value)?),
+            _ => return Err(HolRecipeError::InvalidRecipe),
+        };
+        Ok(recipe)
+    }
+}
+
+fn parse_bool(value: &str) -> Result<bool, HolRecipeError> {
+    match value {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(HolRecipeError::InvalidBoolean),
+    }
+}
+
+/// Common result returned by native and browser recipe adapters.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HolRecipeResult {
+    recipe: &'static str,
+    context_id: i64,
+    conclusion_id: i64,
+    judgement_id: Option<i64>,
+    statement: &'static str,
+}
+
+impl HolRecipeResult {
+    /// Returns `hol-theorem`, the discriminant shared by every frontend.
+    #[must_use]
+    pub const fn kind(&self) -> &'static str {
+        "hol-theorem"
+    }
+
+    /// Returns the recipe constructor name.
+    #[must_use]
+    pub const fn recipe(&self) -> &'static str {
+        self.recipe
+    }
+
+    /// Returns the database-local context ID.
+    #[must_use]
+    pub const fn context_id(&self) -> i64 {
+        self.context_id
+    }
+
+    /// Returns the database-local conclusion term ID.
+    #[must_use]
+    pub const fn conclusion_id(&self) -> i64 {
+        self.conclusion_id
+    }
+
+    /// Returns the stable ID produced directly by the persistent-step API.
+    ///
+    /// Beta currently returns `None` because it is intentionally proved by
+    /// the branded LCF API instead of expanding the persistent four-rule TCB.
+    #[must_use]
+    pub const fn judgement_id(&self) -> Option<i64> {
+        self.judgement_id
+    }
+
+    /// Returns a human-readable statement fixed by the recipe.
+    #[must_use]
+    pub const fn statement(&self) -> &'static str {
+        self.statement
+    }
+}
+
+/// Failure to parse or execute a demo recipe.
+#[derive(Debug)]
+pub enum HolRecipeError {
+    /// The recipe does not match the deliberately small grammar.
+    InvalidRecipe,
+    /// A recipe Boolean must be exactly `true` or `false`.
+    InvalidBoolean,
+    /// A type constructor was rejected by Nucleus.
+    Type(TypeError),
+    /// A term constructor was rejected by Nucleus.
+    Term(TermError),
+    /// A proof operation was rejected by Nucleus.
+    Proof(ProofError),
+}
+
+impl fmt::Display for HolRecipeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidRecipe => {
+                formatter.write_str("expected `truth`, `reflexivity BOOL`, or `beta BOOL`")
+            }
+            Self::InvalidBoolean => formatter.write_str("BOOL must be `true` or `false`"),
+            Self::Type(error) => error.fmt(formatter),
+            Self::Term(error) => error.fmt(formatter),
+            Self::Proof(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl StdError for HolRecipeError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            Self::Type(error) => Some(error),
+            Self::Term(error) => Some(error),
+            Self::Proof(error) => Some(error),
+            Self::InvalidRecipe | Self::InvalidBoolean => None,
+        }
+    }
+}
+
+impl From<TypeError> for HolRecipeError {
+    fn from(error: TypeError) -> Self {
+        Self::Type(error)
+    }
+}
+
+impl From<TermError> for HolRecipeError {
+    fn from(error: TermError) -> Self {
+        Self::Term(error)
+    }
+}
+
+impl From<ProofError> for HolRecipeError {
+    fn from(error: ProofError) -> Self {
+        Self::Proof(error)
+    }
+}
+
 /// Failure to operate the REPL directory.
 #[derive(Debug)]
 pub enum ReplError {
@@ -303,7 +596,7 @@ impl From<sqlite::Error> for ReplError {
 mod web;
 
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-pub use web::{WebKernel, WebOutcome};
+pub use web::{WebHolOutcome, WebKernel, WebOutcome};
 
 /// Returns the cross-target `SQLite` smoke-test value.
 #[must_use]
@@ -427,5 +720,81 @@ mod tests {
             )
             .unwrap();
         assert_eq!(public_key, vec![7; 32]);
+    }
+
+    #[test]
+    fn manages_independent_sql_and_hol_connections() {
+        let kernel = Kernel::ephemeral();
+        let mut repl = Repl::new(kernel.verifying_key().as_bytes()).unwrap();
+        let sql = LocalConnection::Sql(kernel.open_sql().unwrap());
+        let hol = LocalConnection::Hol(kernel.open_hol(AllowAll).unwrap());
+        let sql_id = repl.insert(sql.protocol(), sql).unwrap();
+        let hol_id = repl.insert(hol.protocol(), hol).unwrap();
+
+        repl.get_mut(sql_id)
+            .unwrap()
+            .sql_mut()
+            .unwrap()
+            .execute_batch("CREATE TABLE only_sql(value INTEGER)")
+            .unwrap();
+        let result = HolRecipe::Beta(true)
+            .execute(repl.get_mut(hol_id).unwrap().hol_mut().unwrap())
+            .unwrap();
+
+        assert_eq!(result.kind(), "hol-theorem");
+        assert_eq!(result.recipe(), "beta");
+        assert_eq!(result.context_id(), 0);
+        assert_eq!(result.statement(), "(lambda x:bool. x) true = true");
+        assert!(result.conclusion_id() > 0);
+        assert_eq!(result.judgement_id(), None);
+
+        let first = HolRecipe::Truth
+            .execute(repl.get_mut(hol_id).unwrap().hol_mut().unwrap())
+            .unwrap();
+        let replay = HolRecipe::Truth
+            .execute(repl.get_mut(hol_id).unwrap().hol_mut().unwrap())
+            .unwrap();
+        assert_eq!(first.judgement_id(), replay.judgement_id());
+        assert!(first.judgement_id().is_some_and(|id| id > 0));
+        assert!(matches!(
+            repl.get_mut(sql_id).unwrap().hol_mut(),
+            Err(ConnectionKindError::ExpectedHol)
+        ));
+        assert!(matches!(
+            repl.get_mut(hol_id).unwrap().sql_mut(),
+            Err(ConnectionKindError::ExpectedSql)
+        ));
+
+        let protocols = repl
+            .state()
+            .sqlite()
+            .prepare("SELECT protocol FROM repl_connection ORDER BY connection_id")
+            .unwrap()
+            .query_map((), |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(protocols, ["nucleus/sql", "nucleus/hol"]);
+    }
+
+    #[test]
+    fn recipe_parser_is_intentionally_small() {
+        assert_eq!("truth".parse::<HolRecipe>().unwrap(), HolRecipe::Truth);
+        assert_eq!(
+            "refl false".parse::<HolRecipe>().unwrap(),
+            HolRecipe::Reflexivity(false)
+        );
+        assert_eq!(
+            "beta true".parse::<HolRecipe>().unwrap(),
+            HolRecipe::Beta(true)
+        );
+        assert!(matches!(
+            "beta maybe".parse::<HolRecipe>(),
+            Err(HolRecipeError::InvalidBoolean)
+        ));
+        assert!(matches!(
+            "anything".parse::<HolRecipe>(),
+            Err(HolRecipeError::InvalidRecipe)
+        ));
     }
 }

@@ -1,9 +1,15 @@
-import init, { WebKernel, type WebOutcome } from "../generated/nucleus.js";
+import init, {
+  WebKernel,
+  type WebHolOutcome,
+  type WebOutcome,
+} from "../generated/nucleus.js";
 
 type Request =
   | { id: number; operation: "open" }
+  | { id: number; operation: "openHol" }
   | { id: number; operation: "close"; connection: number }
   | { id: number; operation: "run"; connection: number; sql: string }
+  | { id: number; operation: "runHol"; connection: number; recipe: string }
   | {
       id: number;
       operation: "putImage";
@@ -58,11 +64,17 @@ async function execute(request: Request): Promise<unknown> {
   switch (request.operation) {
     case "open":
       return connection.open_connection();
+    case "openHol":
+      return connection.open_hol_connection();
     case "close":
       connection.close_connection(request.connection);
       return undefined;
     case "run":
       return readOutcome(connection.run(request.connection, request.sql));
+    case "runHol":
+      return readHolOutcome(
+        connection.run_hol(request.connection, request.recipe),
+      );
     case "putImage":
       return connection.put_image(request.connection, request.bytes);
     case "attachImage":
@@ -123,6 +135,21 @@ async function readBounded(
     offset += chunk.byteLength;
   }
   return bytes;
+}
+
+function readHolOutcome(outcome: WebHolOutcome): unknown {
+  try {
+    return {
+      kind: outcome.kind(),
+      recipe: outcome.recipe(),
+      context: outcome.context_id(),
+      conclusion: outcome.conclusion_id(),
+      judgement: outcome.judgement_id() ?? null,
+      statement: outcome.statement(),
+    };
+  } finally {
+    outcome.free();
+  }
 }
 
 function readOutcome(outcome: WebOutcome): unknown {
