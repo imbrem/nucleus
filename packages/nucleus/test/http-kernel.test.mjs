@@ -351,10 +351,25 @@ test("REPL page cleans a hash-selected result through either close control", asy
   await page.getByText(`component\t${digest}`).waitFor();
   await page.getByText(/imported_theorem\t[0-9]+\t[1-9][0-9]*/).waitFor();
   assert.equal(await page.locator("#reread-native-hash").isDisabled(), false);
+  assert.equal(await page.locator("#open-native-state").isDisabled(), false);
   assert.equal(await page.locator("#cleanup-native-hash").isDisabled(), false);
 
   await page.locator("#reread-native-hash").click();
   await page.getByText(/Reread imported theorem [0-9]+\t[1-9][0-9]*/).waitFor();
+  await page.locator("#open-native-state").click();
+  await page
+    .getByText(/Opened trusted state [0-9]+\t[0-9]+\t[1-9][0-9]*/)
+    .waitFor();
+  assert.equal(await page.locator("#connection option").count(), 3);
+  await page.locator("#recipe").fill("truth");
+  await page.locator("#run-hol").click();
+  await page.getByText("statement\ttrue").waitFor();
+  await page.locator("#close").click();
+  await page.waitForFunction(
+    () => document.querySelectorAll("#connection option").length === 2,
+  );
+  assert.equal(await page.locator("#connection option").count(), 2);
+  await page.locator("#connection").selectOption({ label: "hol imported 2" });
   await page.locator("#recipe").fill("reflexivity false");
   await page.locator("#run-hol").click();
   await page.getByText("statement\tfalse = false").waitFor();
@@ -363,6 +378,7 @@ test("REPL page cleans a hash-selected result through either close control", asy
     .getByText("Receiver and artifact cleaned up", { exact: true })
     .waitFor();
   assert.equal(await page.locator("#reread-native-hash").isDisabled(), true);
+  assert.equal(await page.locator("#open-native-state").isDisabled(), true);
   assert.equal(await page.locator("#cleanup-native-hash").isDisabled(), true);
   assert.equal(await page.locator("#run-native-hash").isDisabled(), false);
   assert.equal(await page.locator("#connection option").count(), 1);

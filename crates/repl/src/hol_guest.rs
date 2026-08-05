@@ -20,8 +20,8 @@ use crate::hol_guest_plan::{
 };
 use crate::{
     ConnectionId, HolProofComponentExecutor, KernelId, LocalConnection, ReceivedHolSnapshot, Repl,
-    SignedHolArtifact, Value as SqlValue, authenticate_pinned_signed_hol_artifact,
-    trust_and_receive_pinned_signed_hol_artifact,
+    RetainedReceivedHolSnapshot, SignedHolArtifact, Value as SqlValue,
+    authenticate_pinned_signed_hol_artifact, trust_receive_and_retain_managed_hol_artifact,
 };
 
 mod bindings {
@@ -1240,7 +1240,7 @@ pub fn run_hol_proof_component(
 /// Signed guest output plus the receiver connection retained by a caller-owned REPL.
 pub struct ManagedHolGuestResult {
     artifact: SignedHolArtifact,
-    received: ReceivedHolSnapshot,
+    retained: RetainedReceivedHolSnapshot,
     connection: ConnectionId,
 }
 
@@ -1254,13 +1254,19 @@ impl ManagedHolGuestResult {
     /// Returns receiver-local coordinates for the imported snapshot.
     #[must_use]
     pub const fn received(&self) -> ReceivedHolSnapshot {
-        self.received
+        self.retained.received
     }
 
     /// Returns the live HOL connection retained in the caller's directory.
     #[must_use]
     pub const fn connection(&self) -> ConnectionId {
         self.connection
+    }
+
+    /// Separates transport bytes, the owner connection, and its retryable receipt.
+    #[must_use]
+    pub fn into_parts(self) -> (SignedHolArtifact, ConnectionId, RetainedReceivedHolSnapshot) {
+        (self.artifact, self.connection, self.retained)
     }
 }
 
@@ -1325,18 +1331,15 @@ pub fn retain_signed_hol_guest_artifact(
         .map_err(|error| ManagedHolGuestError::at("local-key-loaded", error))?;
     let pinned = authenticate_pinned_signed_hol_artifact(&expected_identity, &artifact)
         .map_err(|error| ManagedHolGuestError::at("artifact-authenticated", error))?;
-    let mut target = kernel
+    let target = kernel
         .open_hol(covalence_nucleus::AllowAll)
         .map_err(|error| ManagedHolGuestError::at("receiver-opened", error))?;
-    let received = trust_and_receive_pinned_signed_hol_artifact(&mut target, pinned)
-        .map_err(|error| ManagedHolGuestError::at("artifact-imported", error))?;
-    let retained = LocalConnection::Hol(target);
-    let connection = directory
-        .insert(retained.protocol(), retained)
-        .map_err(|error| ManagedHolGuestError::at("receiver-retained", error))?;
+    let (connection, retained) =
+        trust_receive_and_retain_managed_hol_artifact(directory, target, pinned)
+            .map_err(|error| ManagedHolGuestError::at("artifact-imported", error))?;
     Ok(ManagedHolGuestResult {
         artifact,
-        received,
+        retained,
         connection,
     })
 }

@@ -158,6 +158,9 @@ cargo run -p covalence-bin-nucleus -- \
       <button id="reread-native-hash" type="button" disabled>
         Reread imported theorem
       </button>
+      <button id="open-native-state" type="button" disabled>
+        Open trusted state
+      </button>
       <button id="cleanup-native-hash" type="button" disabled>
         Clean up receiver
       </button>
@@ -182,6 +185,7 @@ cargo run -p covalence-bin-nucleus -- \
       const nativeOutput = document.querySelector("#native-output");
       const nativeRun = document.querySelector("#run-native-hash");
       const nativeReread = document.querySelector("#reread-native-hash");
+      const nativeOpenState = document.querySelector("#open-native-state");
       const nativeCleanup = document.querySelector("#cleanup-native-hash");
       let retainedNative;
 
@@ -280,6 +284,7 @@ cargo run -p covalence-bin-nucleus -- \
         if (retainedNative === state) {
           retainedNative = undefined;
           nativeReread.disabled = true;
+          nativeOpenState.disabled = true;
           nativeCleanup.disabled = true;
           nativeRun.disabled = false;
         }
@@ -313,6 +318,7 @@ cargo run -p covalence-bin-nucleus -- \
           connectionSelect.value = receiverId;
           retainedNative = { result, receiverId };
           nativeReread.disabled = false;
+          nativeOpenState.disabled = false;
           nativeCleanup.disabled = false;
           nativeOutput.textContent = [
             `kind\t${result.kind}`,
@@ -349,6 +355,27 @@ cargo run -p covalence-bin-nucleus -- \
           nativeOutput.textContent =
             error instanceof Error ? error.message : String(error);
           nativeStatus.textContent = "Reread failed";
+        }
+      });
+
+      nativeOpenState.addEventListener("click", async () => {
+        try {
+          if (retainedNative === undefined)
+            throw new Error("no native result is retained");
+          const state = await retainedNative.result.openTrustedState();
+          const childId = String(nextConnection++);
+          connections.set(childId, state.connection);
+          const option = document.createElement("option");
+          option.value = childId;
+          option.textContent = `hol trusted state ${childId}`;
+          connectionSelect.append(option);
+          connectionSelect.value = childId;
+          nativeStatus.textContent = `Opened trusted state ${state.sourceNamespace}\t${state.context}\t${state.conclusion}`;
+        } catch (error) {
+          nativeOutput.className = "error";
+          nativeOutput.textContent =
+            error instanceof Error ? error.message : String(error);
+          nativeStatus.textContent = "Trusted-state open failed";
         }
       });
 

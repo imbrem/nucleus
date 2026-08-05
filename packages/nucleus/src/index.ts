@@ -507,14 +507,28 @@ export interface BrowserNativeHttpHashSelectedHolOutcome
   receiver: BrowserHolConnection;
   /** Reauthenticates the Worker-retained artifact and rereads the theorem. */
   rereadImportedTheorem(): Promise<BrowserReceivedHolSnapshot>;
+  /** Reopens the signed database as independent writable trusted HOL state. */
+  openTrustedState(): Promise<BrowserManagedTrustedHolState>;
   /** Releases the retained artifact and removes the receiver directory row. */
   cleanup(): Promise<void>;
 }
 
 type BrowserNativeHttpHashSelectedHolWire = Omit<
   BrowserNativeHttpHashSelectedHolOutcome,
-  "receiver" | "rereadImportedTheorem" | "cleanup"
+  "receiver" | "rereadImportedTheorem" | "openTrustedState" | "cleanup"
 > & { receiverConnection: number };
+
+export interface BrowserManagedTrustedHolState {
+  connection: BrowserHolConnection;
+  sourceNamespace: string;
+  context: string;
+  conclusion: string;
+}
+
+type BrowserManagedTrustedHolStateWire = Omit<
+  BrowserManagedTrustedHolState,
+  "connection"
+> & { connection: number };
 
 export type BrowserConnection = BrowserSqlConnection | BrowserHolConnection;
 
@@ -544,6 +558,7 @@ type RequestBody =
       timeoutMs: number;
     }
   | { operation: "rereadNativeHttpHashSelectedHol"; connection: number }
+  | { operation: "openNativeHttpHashSelectedHolState"; connection: number }
   | { operation: "putImage"; connection: number; bytes: Uint8Array }
   | {
       operation: "attachImage";
@@ -679,6 +694,17 @@ class WorkerRepl implements BrowserRepl {
           operation: "rereadNativeHttpHashSelectedHol",
           connection: receiverConnection,
         });
+      },
+      openTrustedState: async () => {
+        if (cleaned) throw new Error("managed receiver was cleaned up");
+        const state = await this.request<BrowserManagedTrustedHolStateWire>({
+          operation: "openNativeHttpHashSelectedHolState",
+          connection: receiverConnection,
+        });
+        return {
+          ...state,
+          connection: new WorkerHolConnection(this, state.connection),
+        };
       },
       cleanup: async () => {
         if (cleaned) return;
