@@ -65,9 +65,13 @@ mod hol_guest_plan;
 pub use hol_guest_plan::{HolProofRecipeError, MAX_SEALED_HOL_RECIPE_BYTES, SealedHolProofRecipe};
 
 #[cfg(not(target_arch = "wasm32"))]
+mod hol_core_wasm;
+#[cfg(not(target_arch = "wasm32"))]
 mod hol_guest;
 #[cfg(not(target_arch = "wasm32"))]
 pub use covalence_proton::WasmtimeComponentLimits;
+#[cfg(not(target_arch = "wasm32"))]
+pub use hol_core_wasm::{CoreWasmHolRecipeError, execute_core_wasm_hol_recipe};
 #[cfg(not(target_arch = "wasm32"))]
 pub use hol_guest::{
     HolGuestError, ManagedHolGuestError, PrecompiledHolProofComponentExecutor,

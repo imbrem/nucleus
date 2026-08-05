@@ -1,0 +1,17 @@
+[package]
+name = "covalence-hol-proof-core-guest-beta"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Untrusted core-Wasm closed-beta recipe producer for Covalence"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+covalence-hol-proof-recipe-sdk = { path = "../hol-proof-recipe-sdk" }
+
+[lints]
+workspace = true

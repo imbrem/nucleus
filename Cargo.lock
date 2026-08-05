@@ -167,6 +167,13 @@ name = "covalence-data-container"
 version = "0.0.0"
 
 [[package]]
+name = "covalence-hol-proof-core-guest-beta"
+version = "0.0.0"
+dependencies = [
+ "covalence-hol-proof-recipe-sdk",
+]
+
+[[package]]
 name = "covalence-hol-proof-guest-assumptions"
 version = "0.0.0"
 dependencies = [
@@ -214,6 +221,10 @@ version = "0.0.0"
 dependencies = [
  "wit-bindgen",
 ]
+
+[[package]]
+name = "covalence-hol-proof-recipe-sdk"
+version = "0.0.0"
 
 [[package]]
 name = "covalence-lib-crypto"
