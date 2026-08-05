@@ -1314,6 +1314,14 @@ pub enum LocalImportedHolTerm {
     Equality { left: i64, right: i64, ty: i64 },
     /// Hilbert choice applied to a Boolean-valued predicate.
     Epsilon { predicate: i64, ty: i64 },
+    /// Rank-zero type abstraction.
+    TypeLambda { body: i64, ty: i64 },
+    /// Rank-zero type application.
+    TypeApplication {
+        function: i64,
+        argument: i64,
+        ty: i64,
+    },
 }
 
 fn record_resident_image(
@@ -1427,6 +1435,19 @@ fn copy_imported_term(term: ImportedTermView<'_>) -> LocalImportedHolTerm {
         },
         ImportedTermView::Epsilon { predicate, ty } => LocalImportedHolTerm::Epsilon {
             predicate: predicate.get(),
+            ty: ty.get(),
+        },
+        ImportedTermView::TypeLambda { body, ty } => LocalImportedHolTerm::TypeLambda {
+            body: body.get(),
+            ty: ty.get(),
+        },
+        ImportedTermView::TypeApplication {
+            function,
+            argument,
+            ty,
+        } => LocalImportedHolTerm::TypeApplication {
+            function: function.get(),
+            argument: argument.get(),
             ty: ty.get(),
         },
     }

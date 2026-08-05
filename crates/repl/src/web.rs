@@ -1731,6 +1731,8 @@ impl WebImportedHolExport {
                 LocalImportedHolTerm::Lambda { .. } => "lambda",
                 LocalImportedHolTerm::Equality { .. } => "equality",
                 LocalImportedHolTerm::Epsilon { .. } => "epsilon",
+                LocalImportedHolTerm::TypeLambda { .. } => "type_lambda",
+                LocalImportedHolTerm::TypeApplication { .. } => "type_application",
             }
             .to_owned()
         })
@@ -1756,6 +1758,8 @@ impl WebImportedHolExport {
             Some(LocalImportedHolTerm::Lambda { parameter_type, .. }) => parameter_type,
             Some(LocalImportedHolTerm::Equality { left, .. }) => left,
             Some(LocalImportedHolTerm::Epsilon { predicate, .. }) => predicate,
+            Some(LocalImportedHolTerm::TypeLambda { body, .. }) => body,
+            Some(LocalImportedHolTerm::TypeApplication { function, .. }) => function,
             _ => return Err(JsValue::from_str("imported term has no lhs coordinate")),
         };
         u32::try_from(id).map_err(js_error)
@@ -1766,6 +1770,7 @@ impl WebImportedHolExport {
             Some(LocalImportedHolTerm::Application { argument, .. }) => argument,
             Some(LocalImportedHolTerm::Lambda { body, .. }) => body,
             Some(LocalImportedHolTerm::Equality { right, .. }) => right,
+            Some(LocalImportedHolTerm::TypeApplication { argument, .. }) => argument,
             Some(LocalImportedHolTerm::Epsilon { .. }) => {
                 return Err(JsValue::from_str("epsilon terms have no rhs"));
             }
@@ -1783,7 +1788,9 @@ impl WebImportedHolExport {
                 | LocalImportedHolTerm::Application { ty, .. }
                 | LocalImportedHolTerm::Lambda { ty, .. }
                 | LocalImportedHolTerm::Equality { ty, .. }
-                | LocalImportedHolTerm::Epsilon { ty, .. },
+                | LocalImportedHolTerm::Epsilon { ty, .. }
+                | LocalImportedHolTerm::TypeLambda { ty, .. }
+                | LocalImportedHolTerm::TypeApplication { ty, .. },
             ) => ty,
             _ => {
                 return Err(JsValue::from_str(
@@ -1976,13 +1983,15 @@ impl WebKind {
 
 #[wasm_bindgen]
 impl WebType {
-    /// Returns `bool`, `base`, `free`, or `arrow`.
+    /// Returns the stable type-constructor tag.
     #[must_use]
     pub fn tag(&self) -> String {
         match self.ty {
             TypeView::Bool => "bool",
             TypeView::Base { .. } => "base",
             TypeView::Free { .. } => "free",
+            TypeView::Bound { .. } => "bound",
+            TypeView::Forall { .. } => "forall",
             TypeView::Arrow { .. } => "arrow",
         }
         .to_owned()
@@ -1996,9 +2005,11 @@ impl WebType {
     pub fn domain(&self) -> Result<u32, JsValue> {
         match self.ty {
             TypeView::Arrow { domain, .. } => u32::try_from(domain.get()).map_err(js_error),
-            TypeView::Bool | TypeView::Base { .. } | TypeView::Free { .. } => {
-                Err(JsValue::from_str("non-arrow type has no domain"))
-            }
+            TypeView::Bool
+            | TypeView::Base { .. }
+            | TypeView::Free { .. }
+            | TypeView::Bound { .. }
+            | TypeView::Forall { .. } => Err(JsValue::from_str("non-arrow type has no domain")),
         }
     }
 
@@ -2010,9 +2021,11 @@ impl WebType {
     pub fn codomain(&self) -> Result<u32, JsValue> {
         match self.ty {
             TypeView::Arrow { codomain, .. } => u32::try_from(codomain.get()).map_err(js_error),
-            TypeView::Bool | TypeView::Base { .. } | TypeView::Free { .. } => {
-                Err(JsValue::from_str("non-arrow type has no codomain"))
-            }
+            TypeView::Bool
+            | TypeView::Base { .. }
+            | TypeView::Free { .. }
+            | TypeView::Bound { .. }
+            | TypeView::Forall { .. } => Err(JsValue::from_str("non-arrow type has no codomain")),
         }
     }
 
@@ -2041,6 +2054,8 @@ impl WebTerm {
             TermView::Lambda { .. } => "lambda",
             TermView::Equality { .. } => "equality",
             TermView::Epsilon { .. } => "epsilon",
+            TermView::TypeLambda { .. } => "type_lambda",
+            TermView::TypeApplication { .. } => "type_application",
         }
         .to_owned()
     }
