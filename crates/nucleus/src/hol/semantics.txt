@@ -50,13 +50,14 @@ canonical finite set of locally closed Boolean terms. The authoritative judgemen
 only conclusions introduced through implemented LCF rules and explicit persistence.
 
 The rules are hypothesis, truth, the monomorphic conversion rules including reflexivity, closed
-beta reduction and congruence beneath epsilon, conversion-to-equality, equality modus ponens, typed Leibniz
-equality substitution through a closed predicate, deduction antisymmetry, simultaneous typed
+beta reduction and congruence beneath epsilon, conversion-to-equality, equality modus ponens,
+typed Leibniz equality substitution through a closed predicate, deduction antisymmetry, simultaneous typed
 free-term instantiation, simultaneous rank-zero schematic type instantiation, standard HOL
 abstraction, Hilbert choice, exact context implication introduction, explicit implication-path
 composition, and weakening. Equality reflexivity and theorem-level closed beta are untrusted
-recipes: each composes its corresponding branded conversion with conversion-to-equality. Choice
-derives Gamma |- p (epsilon p) from Gamma |- p x.
+recipes: each composes its corresponding branded conversion with conversion-to-equality. Theorem
+transport along a conversion is conversion-to-equality followed by equality modus ponens. Choice derives
+Gamma |- p (epsilon p) from Gamma |- p x.
 
 Free-term instantiation replaces exact MFV node identities simultaneously in the conclusion and
 every context member. Keys are distinct; each replacement has the key's type and is locally closed.
@@ -72,7 +73,8 @@ Deduction antisymmetry derives (Gamma - {q}) union (Delta - {p}) |- p = q from G
 Delta |- q. Abstraction derives Gamma |- (lambda x. l) = (lambda x. r) from Gamma |- l = r when
 the exact free-variable node x does not occur in Gamma. Existing bound occurrences remain
 unchanged. Exact context union is a separately checked structural relation. Context equivalence is
-a pair of opposite proved implications. The authoritative HOL database stores kernel state, not
+an untrusted upper-layer view pairing opposite proved implications; it creates no new kernel
+capability or table. The authoritative HOL database stores kernel state, not
 proof steps or observational provenance; traces belong to a separate observer-selected store.
 
 Namespaces and exports name already-admitted local kinds, types, terms, and contexts. Hash-first

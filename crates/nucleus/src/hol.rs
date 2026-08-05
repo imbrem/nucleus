@@ -361,30 +361,6 @@ pub struct ContextUnion<'brand> {
     brand: Invariant<'brand>,
 }
 
-/// Two oppositely directed context implications in one proof session.
-///
-/// This is a derived capability only. It has no authoritative table of its
-/// own and carries no union-find or search result.
-pub struct ContextEquivalence<'brand> {
-    left: ContextId,
-    right: ContextId,
-    brand: Invariant<'brand>,
-}
-
-impl ContextEquivalence<'_> {
-    /// Returns the left endpoint.
-    #[must_use]
-    pub const fn left(&self) -> ContextId {
-        self.left
-    }
-
-    /// Returns the right endpoint.
-    #[must_use]
-    pub const fn right(&self) -> ContextId {
-        self.right
-    }
-}
-
 impl ContextUnion<'_> {
     /// Returns the left input context.
     #[must_use]
@@ -478,8 +454,6 @@ pub enum Operation {
     ProveConversionEpsilon,
     /// Turn a closed conversion into a theorem of equality.
     ProveConversionEquality,
-    /// Transport a Boolean theorem along a conversion.
-    ProveTheoremConversion,
     /// Query whether a judgement has already been proved.
     ReadTheorem,
     /// Persist a branded theorem as authoritative connection state.
@@ -554,8 +528,6 @@ pub enum Operation {
     ProveContextUnion,
     /// Load and recheck one exact structural context union.
     ReadContextUnion,
-    /// Package two opposite implication witnesses as context equivalence.
-    ProveContextEquivalence,
     /// Read user-declared metadata attached to an admitted node.
     ReadMetadata,
     /// Write user-declared metadata attached to an admitted node.
@@ -2106,41 +2078,6 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         })
     }
 
-    /// Transports `Γ ⊢ left` along a closed Boolean conversion `left ≡ right`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if policy denies the rule, the conversion is open or
-    /// non-Boolean, or the premise conclusion is not its left endpoint.
-    pub fn convert_theorem(
-        &mut self,
-        theorem: &Theorem<'brand>,
-        conversion: &Conversion<'brand>,
-    ) -> Result<Theorem<'brand>, ProofError> {
-        let (_, hol) = self.connection.parts_mut();
-        authorize_proof(&mut hol.policy, Operation::ProveTheoremConversion)?;
-        if !conversion.is_closed() {
-            return Err(ProofError::OpenConclusion(conversion.left));
-        }
-        if conversion.ty != BOOL_TYPE_ID {
-            return Err(ProofError::NonBooleanConversion {
-                term: conversion.left,
-                ty: conversion.ty,
-            });
-        }
-        if theorem.conclusion != conversion.left {
-            return Err(ProofError::ConversionPremiseMismatch {
-                expected: conversion.left,
-                actual: theorem.conclusion,
-            });
-        }
-        Ok(Theorem {
-            context: theorem.context,
-            conclusion: conversion.right,
-            brand: PhantomData,
-        })
-    }
-
     /// Persists one branded theorem as an authoritative judgement row.
     ///
     /// Re-persisting a capability is an idempotent row insertion.
@@ -2440,37 +2377,6 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
             result,
             brand: PhantomData,
         }))
-    }
-
-    /// Packages implication witnesses in both directions as equivalence.
-    ///
-    /// This checks only that the endpoints are exact opposites. Candidate path
-    /// search and path checking happen before this method produces a pair.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if policy denies the operation or the two implications
-    /// do not have reversed endpoints.
-    pub fn prove_context_equivalence(
-        &mut self,
-        forward: &ContextImplication<'brand>,
-        backward: &ContextImplication<'brand>,
-    ) -> Result<ContextEquivalence<'brand>, ProofError> {
-        let (_, hol) = self.connection.parts_mut();
-        authorize_proof(&mut hol.policy, Operation::ProveContextEquivalence)?;
-        if forward.antecedent != backward.consequent || forward.consequent != backward.antecedent {
-            return Err(ProofError::ContextEquivalenceMismatch {
-                forward_antecedent: forward.antecedent,
-                forward_consequent: forward.consequent,
-                backward_antecedent: backward.antecedent,
-                backward_consequent: backward.consequent,
-            });
-        }
-        Ok(ContextEquivalence {
-            left: forward.antecedent,
-            right: forward.consequent,
-            brand: PhantomData,
-        })
     }
 
     /// Transports a theorem from an implied context to its antecedent.
@@ -5639,13 +5545,6 @@ pub enum ProofError {
         stored_result: ContextId,
         requested_result: ContextId,
     },
-    /// Two implication witnesses do not have exactly reversed endpoints.
-    ContextEquivalenceMismatch {
-        forward_antecedent: ContextId,
-        forward_consequent: ContextId,
-        backward_antecedent: ContextId,
-        backward_consequent: ContextId,
-    },
     /// Weakening was given a theorem under the wrong context.
     WeakeningContextMismatch {
         /// Implication consequent required by the rule.
@@ -5720,10 +5619,6 @@ pub enum ProofError {
     },
     /// Constructed conversion endpoints do not have one common open boundary.
     ConversionBoundaryMismatch { left: TermId, right: TermId },
-    /// Boolean theorem conversion was requested at a non-Boolean type.
-    NonBooleanConversion { term: TermId, ty: TypeId },
-    /// The theorem conclusion is not the conversion's left endpoint.
-    ConversionPremiseMismatch { expected: TermId, actual: TermId },
     /// `SQLite` rejected an operation.
     Sqlite(sqlite::Error),
 }
@@ -5800,7 +5695,6 @@ impl fmt::Display for ProofError {
             Self::ContextUnionMissingMember { .. }
             | Self::ContextUnionUnexpectedMember { .. }
             | Self::ContextUnionConflict { .. }
-            | Self::ContextEquivalenceMismatch { .. }
             | Self::WeakeningContextMismatch { .. }
             | Self::MismatchedTheoremContexts { .. }
             | Self::EqualitySubstitutionContextMismatch { .. }
@@ -5822,9 +5716,7 @@ impl fmt::Display for ProofError {
             | Self::AbstractionVariableFreeInAssumption { .. }
             | Self::ChoicePremiseNotApplication(_)
             | Self::ConversionChainMismatch { .. }
-            | Self::ConversionBoundaryMismatch { .. }
-            | Self::NonBooleanConversion { .. }
-            | Self::ConversionPremiseMismatch { .. } => unreachable!("handled above"),
+            | Self::ConversionBoundaryMismatch { .. } => unreachable!("handled above"),
             Self::Sqlite(error) => error.fmt(formatter),
         }
     }
@@ -5865,18 +5757,6 @@ fn format_conversion_proof_error(
             "conversion endpoints {} and {} have different open boundaries",
             left.get(),
             right.get()
-        )),
-        ProofError::NonBooleanConversion { term, ty } => Some(write!(
-            formatter,
-            "conversion endpoint {} has non-Boolean type {}",
-            term.get(),
-            ty.get()
-        )),
-        ProofError::ConversionPremiseMismatch { expected, actual } => Some(write!(
-            formatter,
-            "theorem conclusion {} does not match conversion endpoint {}",
-            actual.get(),
-            expected.get()
         )),
         _ => None,
     }
@@ -5919,19 +5799,6 @@ fn format_relational_proof_error(
             *right,
             *stored_result,
             *requested_result,
-        )),
-        ProofError::ContextEquivalenceMismatch {
-            forward_antecedent,
-            forward_consequent,
-            backward_antecedent,
-            backward_consequent,
-        } => Some(write!(
-            formatter,
-            "context implications {} => {} and {} => {} are not opposites",
-            forward_antecedent.get(),
-            forward_consequent.get(),
-            backward_antecedent.get(),
-            backward_consequent.get()
         )),
         ProofError::WeakeningContextMismatch { expected, actual } => Some(write!(
             formatter,
@@ -6144,7 +6011,6 @@ impl StdError for ProofError {
             | Self::ContextUnionMissingMember { .. }
             | Self::ContextUnionUnexpectedMember { .. }
             | Self::ContextUnionConflict { .. }
-            | Self::ContextEquivalenceMismatch { .. }
             | Self::WeakeningContextMismatch { .. }
             | Self::MismatchedTheoremContexts { .. }
             | Self::EqualitySubstitutionContextMismatch { .. }
@@ -6166,9 +6032,7 @@ impl StdError for ProofError {
             | Self::AbstractionVariableFreeInAssumption { .. }
             | Self::ChoicePremiseNotApplication(_)
             | Self::ConversionChainMismatch { .. }
-            | Self::ConversionBoundaryMismatch { .. }
-            | Self::NonBooleanConversion { .. }
-            | Self::ConversionPremiseMismatch { .. } => None,
+            | Self::ConversionBoundaryMismatch { .. } => None,
         }
     }
 }
@@ -6272,6 +6136,12 @@ mod tests {
             abstraction: TermId,
             argument: TermId,
         ) -> Result<Theorem<'brand>, ProofError>;
+
+        fn convert_theorem(
+            &mut self,
+            theorem: &Theorem<'brand>,
+            conversion: &Conversion<'brand>,
+        ) -> Result<Theorem<'brand>, ProofError>;
     }
 
     impl<'brand, P: Policy> DerivedProofRecipes<'brand> for ProofSession<'brand, P> {
@@ -6292,6 +6162,15 @@ mod tests {
         ) -> Result<Theorem<'brand>, ProofError> {
             let conversion = self.conversion_beta(abstraction, argument)?;
             self.prove_conversion_equality(context, &conversion)
+        }
+
+        fn convert_theorem(
+            &mut self,
+            theorem: &Theorem<'brand>,
+            conversion: &Conversion<'brand>,
+        ) -> Result<Theorem<'brand>, ProofError> {
+            let equality = self.prove_conversion_equality(theorem.context(), conversion)?;
+            self.equality_modus_ponens(&equality, theorem)
         }
     }
 
@@ -9062,7 +8941,7 @@ mod tests {
     }
 
     #[test]
-    fn context_equivalence_is_only_two_opposite_implications() {
+    fn opposite_context_implications_are_independently_persisted() {
         let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
         let p = connection.insert_free_term(60, BOOL_TYPE_ID).unwrap();
         let equality = connection.insert_equality(p, p).unwrap();
@@ -9076,13 +8955,6 @@ mod tests {
                 let forward = proof.prove_context_implication(left, right, &[truth_witness])?;
                 let equality_witness = proof.prove_reflexivity(right, p)?;
                 let backward = proof.prove_context_implication(right, left, &[equality_witness])?;
-                assert!(matches!(
-                    proof.prove_context_equivalence(&forward, &forward),
-                    Err(ProofError::ContextEquivalenceMismatch { .. })
-                ));
-                let equivalence = proof.prove_context_equivalence(&forward, &backward)?;
-                assert_eq!(equivalence.left(), left);
-                assert_eq!(equivalence.right(), right);
                 proof.persist_context_implication(&forward)?;
                 proof.persist_context_implication(&backward)?;
                 Ok::<_, ProofError>(())
