@@ -30,6 +30,21 @@ impl<P> Connection<P> {
     pub(crate) const fn parts_mut(&mut self) -> (&mut neutron::Connection, &mut P) {
         (&mut self.neutron, &mut self.protocol)
     }
+
+    /// Shared access to the enclosed connection and protocol state.
+    ///
+    /// Protocol modules use this to build borrowing views whose operations
+    /// take `&self` (for example, a proof view holding cached prepared
+    /// statements). Exclusive operations such as garbage collection stay on
+    /// `parts_mut`, so they are statically impossible while any borrowing
+    /// view is alive.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "first borrowing-view protocol lands next")
+    )]
+    pub(crate) const fn parts(&self) -> (&neutron::Connection, &P) {
+        (&self.neutron, &self.protocol)
+    }
 }
 
 #[cfg(test)]
@@ -62,5 +77,30 @@ mod tests {
         );
         protocol.admitted_generation += 1;
         assert_eq!(connection.protocol().admitted_generation, 8);
+    }
+
+    #[test]
+    fn shares_connection_and_protocol_with_borrowing_views() {
+        let neutron = covalence_neutron::Connection::open_in_memory().expect("open Neutron");
+        let connection = Connection::from_neutron(
+            neutron,
+            TestProtocol {
+                admitted_generation: 3,
+            },
+        );
+
+        let (first_neutron, first_protocol) = connection.parts();
+        let (second_neutron, second_protocol) = connection.parts();
+        assert_eq!(first_protocol.admitted_generation, 3);
+        assert_eq!(second_protocol.admitted_generation, 3);
+        for neutron in [first_neutron, second_neutron] {
+            assert_eq!(
+                neutron
+                    .sqlite()
+                    .query_row("SELECT 42", (), |row| row.get::<_, i64>(0))
+                    .expect("query enclosed connection"),
+                42
+            );
+        }
     }
 }
