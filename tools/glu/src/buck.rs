@@ -39,6 +39,13 @@ filegroup(
     crate_root = {{ target.crate_root|tojson }},
     edition = {{ target.edition|tojson }},
     srcs = _RUST_SOURCES,
+{%- if target.mapped_srcs %}
+    mapped_srcs = {
+{%- for source, destination in target.mapped_srcs %}
+        {{ source|tojson }}: {{ destination|tojson }},
+{%- endfor %}
+    },
+{%- endif %}
 {%- if target.features %}
     features = [
 {%- for feature in target.features %}
@@ -76,6 +83,13 @@ rust_test(
     crate_root = {{ target.crate_root|tojson }},
     edition = {{ target.edition|tojson }},
     srcs = _RUST_SOURCES,
+{%- if target.mapped_srcs %}
+    mapped_srcs = {
+{%- for source, destination in target.mapped_srcs %}
+        {{ source|tojson }}: {{ destination|tojson }},
+{%- endfor %}
+    },
+{%- endif %}
 {%- if target.features %}
     features = [
 {%- for feature in target.features %}
@@ -129,6 +143,7 @@ struct RustTarget {
     name: String,
     crate_name: String,
     crate_root: String,
+    mapped_srcs: Vec<(String, String)>,
     edition: String,
     features: Vec<String>,
     named_deps: Vec<(String, String)>,
@@ -468,17 +483,37 @@ impl<'a> Graph<'a> {
             .map(|node| node.features.iter().map(ToString::to_string).collect())
             .unwrap_or_default();
         features.sort();
+        let mut mapped_srcs: Vec<(String, String)> = package
+            .metadata
+            .get("glu")
+            .and_then(|metadata| metadata.get("buck-mapped-srcs"))
+            .and_then(serde_json::Value::as_object)
+            .into_iter()
+            .flatten()
+            .filter_map(|(source, destination)| {
+                destination
+                    .as_str()
+                    .map(|destination| (source.clone(), destination.to_owned()))
+            })
+            .collect();
+        mapped_srcs.sort();
+        let manifest_dir = package_directory(self.metadata.workspace_root.as_std_path(), package)?
+            .to_string_lossy()
+            .into_owned();
+        let mut env = cargo_package_env(package);
+        env.insert(0, ("CARGO_MANIFEST_DIR".to_owned(), manifest_dir));
         Ok(Some(RustTarget {
             rule,
             name: target.name.clone(),
             crate_name: target.name.replace('-', "_"),
             crate_root,
+            mapped_srcs,
             edition: package.edition.to_string(),
             features,
             named_deps,
             proc_macro: target.kind.contains(&TargetKind::ProcMacro),
             buildscript: None,
-            env: cargo_package_env(package),
+            env,
             unit_test: is_library(target) || target.kind.contains(&TargetKind::Bin),
         }))
     }
