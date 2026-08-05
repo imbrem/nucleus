@@ -497,6 +497,32 @@ export interface BrowserReceivedHolSnapshot {
   persistentStateHash: string;
 }
 
+/** Authenticated assumption bytes plus an explicitly trusted inert receiver. */
+export interface BrowserSignedInfinityAssumption {
+  kind: "signed-assumption";
+  authority: "signed-assumption";
+  assumption: "dedekind-infinity";
+  falsehood: "all-bool-identity";
+  namespace: string;
+  image: Uint8Array;
+  schema: string;
+  imageHash: string;
+  signer: string;
+  publicKey: Uint8Array;
+  signature: Uint8Array;
+  context: string;
+  conclusion: string;
+  attestation: string;
+  receiver: BrowserHolConnection;
+  openTrustedState(): Promise<BrowserManagedTrustedHolState>;
+  cleanup(): Promise<void>;
+}
+
+type BrowserSignedInfinityAssumptionWire = Omit<
+  BrowserSignedInfinityAssumption,
+  "receiver" | "openTrustedState" | "cleanup"
+> & { receiverConnection: number };
+
 export interface BrowserNativeHttpHashSelectedHolOutcome
   extends BrowserReceivedHolSnapshot {
   kind: "native-http-hash-selected-hol";
@@ -537,6 +563,7 @@ export interface BrowserRepl {
   open(): Promise<BrowserSqlConnection>;
   openSql(): Promise<BrowserSqlConnection>;
   openHol(): Promise<BrowserHolConnection>;
+  assumeDedekindInfinity(): Promise<BrowserSignedInfinityAssumption>;
   runNativeHttpHashSelectedHol(
     options: NativeHttpHashSelectedHolOptions,
   ): Promise<BrowserNativeHttpHashSelectedHolOutcome>;
@@ -550,6 +577,7 @@ type RequestBody =
   | { operation: "run"; connection: number; sql: string }
   | { operation: "runHol"; connection: number; recipe: string }
   | { operation: "runSignedHolRoundTrip"; connection: number }
+  | { operation: "assumeDedekindInfinity" }
   | {
       operation: "runNativeHttpHashSelectedHol";
       endpoint: string;
@@ -558,7 +586,7 @@ type RequestBody =
       timeoutMs: number;
     }
   | { operation: "rereadNativeHttpHashSelectedHol"; connection: number }
-  | { operation: "openNativeHttpHashSelectedHolState"; connection: number }
+  | { operation: "openRetainedTrustedHolState"; connection: number }
   | { operation: "putImage"; connection: number; bytes: Uint8Array }
   | {
       operation: "attachImage";
@@ -623,6 +651,13 @@ class WorkerRepl implements BrowserRepl {
   async openHol(): Promise<BrowserHolConnection> {
     const id = await this.request<number>({ operation: "openHol" });
     return new WorkerHolConnection(this, id);
+  }
+
+  async assumeDedekindInfinity(): Promise<BrowserSignedInfinityAssumption> {
+    const wire = await this.request<BrowserSignedInfinityAssumptionWire>({
+      operation: "assumeDedekindInfinity",
+    });
+    return this.#retainSignedInfinityAssumption(wire);
   }
 
   runNativeHttpHashSelectedHol(
@@ -698,7 +733,44 @@ class WorkerRepl implements BrowserRepl {
       openTrustedState: async () => {
         if (cleaned) throw new Error("managed receiver was cleaned up");
         const state = await this.request<BrowserManagedTrustedHolStateWire>({
-          operation: "openNativeHttpHashSelectedHolState",
+          operation: "openRetainedTrustedHolState",
+          connection: receiverConnection,
+        });
+        return {
+          ...state,
+          connection: new WorkerHolConnection(this, state.connection),
+        };
+      },
+      cleanup: async () => {
+        if (cleaned) return;
+        cleanupInFlight ??= receiver
+          .close()
+          .then(() => {
+            cleaned = true;
+          })
+          .finally(() => {
+            cleanupInFlight = undefined;
+          });
+        await cleanupInFlight;
+      },
+    };
+  }
+
+  #retainSignedInfinityAssumption(
+    wire: BrowserSignedInfinityAssumptionWire,
+  ): BrowserSignedInfinityAssumption {
+    const { receiverConnection, ...presentation } = wire;
+    const receiver = new WorkerHolConnection(this, receiverConnection);
+    let cleaned = false;
+    let cleanupInFlight: Promise<void> | undefined;
+    return {
+      ...presentation,
+      receiver,
+      openTrustedState: async () => {
+        if (cleaned)
+          throw new Error("signed-assumption receiver was cleaned up");
+        const state = await this.request<BrowserManagedTrustedHolStateWire>({
+          operation: "openRetainedTrustedHolState",
           connection: receiverConnection,
         });
         return {

@@ -15,6 +15,13 @@ use covalence_lib_sqlite as sqlite;
 
 pub mod hol_recipes;
 
+mod hol_infinity;
+pub use hol_infinity::{
+    DedekindInfinitySyntax, SignedInfinityAssumption, build_canonical_false,
+    build_dedekind_infinity_syntax, produce_and_retain_signed_dedekind_infinity_assumption,
+    produce_signed_dedekind_infinity_assumption, retain_signed_dedekind_infinity_assumption,
+};
+
 mod hol_guest_plan;
 pub use hol_guest_plan::{HolProofRecipeError, MAX_SEALED_HOL_RECIPE_BYTES, SealedHolProofRecipe};
 
@@ -349,6 +356,15 @@ impl<C> Repl<C> {
         protocol: &str,
         connection: C,
     ) -> Result<ConnectionId, ReplError> {
+        self.insert_selected_bounded(protocol, connection, i64::MAX)
+    }
+
+    pub(crate) fn insert_selected_bounded(
+        &mut self,
+        protocol: &str,
+        connection: C,
+        maximum_id: i64,
+    ) -> Result<ConnectionId, ReplError> {
         self.require_kernel(KernelId::LOCAL)?;
         let transaction = self.state.sqlite().unchecked_transaction()?;
         transaction.execute(
@@ -357,6 +373,9 @@ impl<C> Repl<C> {
             [protocol],
         )?;
         let id = ConnectionId(transaction.last_insert_rowid());
+        if id.get() > maximum_id {
+            return Err(ReplError::ConnectionIdOutOfRange(id));
+        }
         let selected = transaction.execute(
             "UPDATE repl_state SET active_connection_id = ?1 WHERE singleton = 0",
             [id.0],
@@ -1432,6 +1451,20 @@ pub fn trust_receive_and_retain_managed_hol_artifact(
     Ok((owner, retained.bind(owner)))
 }
 
+pub(crate) fn trust_receive_and_retain_bounded_selected_managed_hol_artifact(
+    directory: &mut Repl<LocalConnection>,
+    mut target: Connection<Hol<AllowAll>>,
+    pinned: PinnedSignedHolArtifact,
+    maximum_connection_id: i64,
+) -> Result<(ConnectionId, RetainedReceivedHolSnapshot), SignedHolRoundTripError> {
+    let retained = trust_receive_and_retain_pinned_signed_hol_artifact(&mut target, pinned)?;
+    let target = LocalConnection::Hol(target);
+    let owner = directory
+        .insert_selected_bounded(target.protocol(), target, maximum_connection_id)
+        .map_err(|error| SignedHolRoundTripError::at("receiver-retained", error))?;
+    Ok((owner, retained.bind(owner)))
+}
+
 /// Rereads one previously accepted receipt without repeating trust/import writes.
 ///
 /// # Errors
@@ -1922,6 +1955,8 @@ pub enum ReplError {
     NoActiveConnection,
     /// The directory's required singleton state row is absent.
     MissingStateSingleton,
+    /// A frontend-specific bounded connection-ID ABI cannot represent a new row.
+    ConnectionIdOutOfRange(ConnectionId),
 }
 
 impl fmt::Display for ReplError {
@@ -1942,6 +1977,9 @@ impl fmt::Display for ReplError {
             }
             Self::NoActiveConnection => formatter.write_str("no active connection"),
             Self::MissingStateSingleton => formatter.write_str("REPL state singleton is missing"),
+            Self::ConnectionIdOutOfRange(id) => {
+                write!(formatter, "connection ID {id} exceeds the frontend ABI")
+            }
         }
     }
 }
@@ -1957,6 +1995,7 @@ impl StdError for ReplError {
             | Self::CannotUnregisterLocalKernel
             | Self::NoActiveConnection
             | Self::MissingStateSingleton
+            | Self::ConnectionIdOutOfRange(_)
             | Self::StateQueryReturnsNoRows => None,
         }
     }
@@ -1981,7 +2020,7 @@ mod web;
 pub use web::{
     WebConnectionEntry, WebHolOutcome, WebKernel, WebKernelEntry, WebManagedTrustedHolState,
     WebOutcome, WebProducedSignedHol, WebReceivedHolSnapshot, WebReplDirectory,
-    WebSignedHolOutcome,
+    WebSignedHolOutcome, WebSignedInfinityAssumption,
 };
 
 /// Returns the cross-target `SQLite` smoke-test value.

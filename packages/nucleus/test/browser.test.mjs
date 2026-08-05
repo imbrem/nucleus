@@ -129,4 +129,57 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
       .count(),
     1,
   );
+
+  await demo.locator("#assume-infinity").click();
+  await demo.getByText("kind\tsigned-assumption").waitFor();
+  await demo.getByText("authority\tsigned-assumption").waitFor();
+  await demo.getByText("assumption\tdedekind-infinity").waitFor();
+  await demo.getByText("falsehood\tall-bool-identity").waitFor();
+  await demo.getByText("receiver\thol assumption receiver 5").waitFor();
+
+  const infinityDownloads = [];
+  const bothInfinityDownloads = new Promise((resolve) => {
+    demo.on("download", (download) => {
+      infinityDownloads.push(download);
+      if (infinityDownloads.length === 2) resolve();
+    });
+  });
+  await demo.locator("#download-infinity").click();
+  await bothInfinityDownloads;
+  assert.deepEqual(
+    infinityDownloads.map((download) => download.suggestedFilename()).sort(),
+    ["attestation.txt", "proof.sqlite"],
+  );
+
+  await demo.locator("#open-infinity-state").click();
+  await demo.getByText(/Opened trusted state/).waitFor();
+  await demo.locator("#recipe").fill("truth");
+  await demo.locator("#run-hol").click();
+  await demo.getByText("statement\ttrue").waitFor();
+
+  const laterDownloads = [];
+  const bothLaterDownloads = new Promise((resolve) => {
+    demo.on("download", (download) => {
+      laterDownloads.push(download);
+      if (laterDownloads.length === 2) resolve();
+    });
+  });
+  await demo.locator("#download-infinity").click();
+  await bothLaterDownloads;
+  assert.deepEqual(
+    laterDownloads.map((download) => download.suggestedFilename()).sort(),
+    ["attestation.txt", "proof.sqlite"],
+  );
+
+  await demo.locator("#connection").selectOption("5");
+  await demo.locator("#close").click();
+  await demo.getByText("Assumption receiver cleaned up").waitFor();
+  assert.equal(await demo.locator('#connection option[value="5"]').count(), 0);
+  assert.equal(await demo.locator("#download-infinity").isDisabled(), true);
+  assert.equal(await demo.locator("#open-infinity-state").isDisabled(), true);
+
+  await demo.locator("#connection").selectOption("6");
+  await demo.locator("#recipe").fill("truth");
+  await demo.locator("#run-hol").click();
+  await demo.getByText("statement\ttrue").waitFor();
 });

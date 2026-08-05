@@ -10,7 +10,8 @@ use covalence_repl::{
     AllowAll, ConnectionId, HolRecipe, HolRecipeResult, Kernel, LocalConnection, MAX_IMAGE_BYTES,
     Outcome, Repl, RetainedReceivedHolSnapshot, SignedHolRoundTripResult, Value,
     authenticate_pinned_signed_hol_artifact, open_retained_trusted_hol_as_managed_state,
-    produce_signed_hol_artifact, run_managed_signed_hol_round_trip,
+    produce_signed_dedekind_infinity_assumption, produce_signed_hol_artifact,
+    retain_signed_dedekind_infinity_assumption, run_managed_signed_hol_round_trip,
     trust_and_receive_pinned_signed_hol_artifact,
 };
 #[cfg(not(target_arch = "wasm32"))]
@@ -494,7 +495,7 @@ fn run_interactive_hash_selected_wasm_hol(
     received_artifacts.insert(receiver, retained);
     repl.select(receiver)?;
     writeln!(output, "using receiver connection {receiver}")?;
-    writeln!(output, "trusted_state_receipt\tretained")?;
+    writeln!(output, "trusted_import_receipt\tretained")?;
     Ok(())
 }
 
@@ -540,7 +541,11 @@ fn print_help(output: &mut impl io::Write) -> io::Result<()> {
     )?;
     writeln!(
         output,
-        ".hol open-state [RECEIVER_ID]  reopen a hash-wasm receiver as writable HOL state"
+        ".hol open-state [RECEIVER_ID]  reopen a retained trusted receiver as writable HOL state"
+    )?;
+    writeln!(
+        output,
+        ".hol assume-infinity DIRECTORY  create, dump, and retain the signed Dedekind-infinity assumption"
     )?;
     writeln!(output, ".use ID            select a connection")?;
     writeln!(output, ".close [ID]        close a connection")?;
@@ -580,6 +585,72 @@ fn open_interactive_trusted_state(
         opened.conclusion_id()
     )?;
     Ok(())
+}
+
+fn assume_interactive_infinity(
+    kernel: &Kernel,
+    repl: &mut LocalRepl,
+    received_artifacts: &mut HashMap<ConnectionId, RetainedReceivedHolSnapshot>,
+    output: &mut impl io::Write,
+    artifact_directory: &Path,
+) -> Result<()> {
+    let mut fresh = FreshArtifactDirectory::create(artifact_directory)?;
+    let assumption = produce_signed_dedekind_infinity_assumption(kernel)?;
+    let attestation = assumption.attestation_text();
+    fresh.write_pair(assumption.artifact().image(), attestation.as_bytes())?;
+    let (receiver, retained) =
+        retain_signed_dedekind_infinity_assumption(kernel, repl, &assumption)?;
+    received_artifacts.insert(receiver, retained);
+    let path = fresh.path().to_owned();
+    fresh.commit();
+    writeln!(output, "kind\t{}", assumption.kind())?;
+    writeln!(output, "authority\tsigned-assumption")?;
+    writeln!(output, "assumption\tdedekind-infinity")?;
+    writeln!(output, "falsehood\tall-bool-identity")?;
+    writeln!(output, "connection\t{receiver}")?;
+    writeln!(
+        output,
+        "source_namespace\t{}",
+        assumption.artifact().namespace_id()
+    )?;
+    writeln!(output, "schema\t{}", assumption.artifact().schema())?;
+    writeln!(output, "image\t{}", assumption.artifact().image_hash())?;
+    writeln!(output, "signer\t{}", assumption.artifact().signer())?;
+    writeln!(
+        output,
+        "assumed_judgement\t{}\t{}",
+        assumption.context().get(),
+        assumption.conclusion().get()
+    )?;
+    writeln!(output, "trusted_import_receipt\tretained")?;
+    writeln!(output, "database\t{}", path.join("proof.sqlite").display())?;
+    writeln!(
+        output,
+        "attestation\t{}",
+        path.join("attestation.txt").display()
+    )?;
+    Ok(())
+}
+
+fn run_interactive_infinity_command(
+    kernel: &Kernel,
+    repl: &mut LocalRepl,
+    received_artifacts: &mut HashMap<ConnectionId, RetainedReceivedHolSnapshot>,
+    output: &mut impl io::Write,
+    line: &str,
+) -> Result<bool> {
+    if line == ".hol assume-infinity" {
+        return Err("usage: .hol assume-infinity DIRECTORY".into());
+    }
+    let Some(path) = line.strip_prefix(".hol assume-infinity ") else {
+        return Ok(false);
+    };
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("usage: .hol assume-infinity DIRECTORY".into());
+    }
+    assume_interactive_infinity(kernel, repl, received_artifacts, output, Path::new(path))?;
+    Ok(true)
 }
 
 fn close_interactive_connection(
@@ -705,6 +776,9 @@ fn run_line(
             output,
             line.strip_prefix(".hol open-state "),
         )?;
+        return Ok(true);
+    }
+    if run_interactive_infinity_command(kernel, repl, received_artifacts, output, line)? {
         return Ok(true);
     }
     if let Some(source) = line.strip_prefix(".hol ") {
@@ -1109,6 +1183,39 @@ mod tests {
         assert!(output.contains("  2\tnucleus/sql\n"));
         assert!(output.contains("closed connection 2\n"));
         assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn signed_infinity_command_dumps_then_opens_assumed_state() {
+        let path = temporary_file("signed-infinity");
+        let script = format!(
+            ".hol assume-infinity {}\n.hol open-state\n.hol assume-infinity {}\n.hol truth\n.quit\n",
+            path.display(),
+            path.display()
+        );
+        let mut input = Cursor::new(script);
+        let mut output = Vec::new();
+        let mut errors = Vec::new();
+
+        run_repl(&mut input, &mut output, &mut errors, false).expect("run REPL");
+
+        let image = fs::read(path.join("proof.sqlite")).unwrap();
+        assert!(!image.is_empty());
+        let attestation = fs::read_to_string(path.join("attestation.txt")).unwrap();
+        assert!(attestation.starts_with("authority=signed-assumption\n"));
+        assert!(attestation.contains("assumption=dedekind-infinity\n"));
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("kind\tsigned-assumption\n"));
+        assert!(output.contains("authority\tsigned-assumption\n"));
+        assert!(output.contains("falsehood\tall-bool-identity\n"));
+        assert!(output.contains("kind\ttrusted-hol-state\n"));
+        assert!(output.contains("statement\ttrue\n"));
+        let errors = String::from_utf8(errors).unwrap();
+        assert!(errors.contains("File exists"));
+
+        fs::remove_file(path.join("proof.sqlite")).unwrap();
+        fs::remove_file(path.join("attestation.txt")).unwrap();
+        fs::remove_dir(path).unwrap();
     }
 
     #[test]

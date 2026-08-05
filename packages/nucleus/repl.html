@@ -111,6 +111,29 @@
       Run signed HOL round trip + download
     </button>
 
+    <h2>Signed Dedekind-infinity assumption</h2>
+    <p>
+      The signature authenticates the exact database and schema; it is not a
+      proof. Receiving it records trusted import evidence. Opening trusted state
+      is the separate explicit logical-origin assumption. In this alternative,
+      logical false is defined as <code>ALL_B (lambda p:bool. p)</code>; the
+      fixture contains no primitive Boolean-false node.
+    </p>
+    <div class="bar">
+      <button id="assume-infinity" type="button">Assume infinity</button>
+      <button id="download-infinity" type="button" disabled>
+        Download database + attestation
+      </button>
+      <button id="open-infinity-state" type="button" disabled>
+        Open trusted state
+      </button>
+      <button id="cleanup-infinity" type="button" disabled>
+        Clean up receiver
+      </button>
+    </div>
+    <div id="infinity-status" role="status">No assumption retained</div>
+    <div id="infinity-output" aria-live="polite"></div>
+
     <h2>Hash-selected native HOL guest</h2>
     <p>
       Build this package with
@@ -187,7 +210,14 @@ cargo run -p covalence-bin-nucleus -- \
       const nativeReread = document.querySelector("#reread-native-hash");
       const nativeOpenState = document.querySelector("#open-native-state");
       const nativeCleanup = document.querySelector("#cleanup-native-hash");
+      const infinityRun = document.querySelector("#assume-infinity");
+      const infinityDownload = document.querySelector("#download-infinity");
+      const infinityOpenState = document.querySelector("#open-infinity-state");
+      const infinityCleanup = document.querySelector("#cleanup-infinity");
+      const infinityStatus = document.querySelector("#infinity-status");
+      const infinityOutput = document.querySelector("#infinity-output");
       let retainedNative;
+      let retainedInfinity;
 
       function selected() {
         const connection = connections.get(connectionSelect.value);
@@ -274,6 +304,116 @@ cargo run -p covalence-bin-nucleus -- \
           );
         return bytes;
       }
+
+      async function disposeInfinity(state) {
+        await state.result.cleanup();
+        connections.delete(state.receiverId);
+        connectionSelect
+          .querySelector(`option[value="${state.receiverId}"]`)
+          ?.remove();
+        if (retainedInfinity === state) {
+          retainedInfinity = undefined;
+          infinityDownload.disabled = true;
+          infinityOpenState.disabled = true;
+          infinityCleanup.disabled = true;
+          infinityRun.disabled = false;
+        }
+      }
+
+      infinityRun.addEventListener("click", async () => {
+        if (infinityRun.disabled) return;
+        infinityRun.disabled = true;
+        infinityStatus.textContent =
+          "Building, signing, and importing assumption…";
+        infinityOutput.className = "";
+        try {
+          const result = await repl.assumeDedekindInfinity();
+          const receiverId = String(nextConnection++);
+          connections.set(receiverId, result.receiver);
+          const option = document.createElement("option");
+          option.value = receiverId;
+          option.textContent = `hol assumption receiver ${receiverId}`;
+          connectionSelect.append(option);
+          connectionSelect.value = receiverId;
+          retainedInfinity = { result, receiverId };
+          infinityDownload.disabled = false;
+          infinityOpenState.disabled = false;
+          infinityCleanup.disabled = false;
+          infinityOutput.textContent = [
+            `kind\t${result.kind}`,
+            `authority\t${result.authority}`,
+            `assumption\t${result.assumption}`,
+            `falsehood\t${result.falsehood}`,
+            `namespace\t${result.namespace}`,
+            `schema\t${result.schema}`,
+            `image\t${result.imageHash}`,
+            `signer\t${result.signer}`,
+            `assumed_judgement\t${result.context}\t${result.conclusion}`,
+            `receiver\t${option.textContent}`,
+          ].join("\n");
+          infinityStatus.textContent =
+            "Signed assumption and receiver retained";
+        } catch (error) {
+          infinityOutput.className = "error";
+          infinityOutput.textContent =
+            error instanceof Error ? error.message : String(error);
+          infinityStatus.textContent = "Assumption failed";
+          infinityRun.disabled = false;
+        }
+      });
+
+      infinityDownload.addEventListener("click", () => {
+        if (retainedInfinity === undefined) return;
+        download(
+          "proof.sqlite",
+          retainedInfinity.result.image,
+          "application/vnd.sqlite3",
+        );
+        download(
+          "attestation.txt",
+          retainedInfinity.result.attestation,
+          "text/plain",
+        );
+        infinityStatus.textContent = "Exact signed assumption files downloaded";
+      });
+
+      infinityOpenState.addEventListener("click", async () => {
+        try {
+          if (retainedInfinity === undefined)
+            throw new Error("no signed assumption is retained");
+          const state = await retainedInfinity.result.openTrustedState();
+          const childId = String(nextConnection++);
+          connections.set(childId, state.connection);
+          const option = document.createElement("option");
+          option.value = childId;
+          option.textContent = `hol assumed state ${childId}`;
+          connectionSelect.append(option);
+          connectionSelect.value = childId;
+          infinityStatus.textContent = `Opened trusted state ${state.sourceNamespace}\t${state.context}\t${state.conclusion}`;
+        } catch (error) {
+          infinityOutput.className = "error";
+          infinityOutput.textContent =
+            error instanceof Error ? error.message : String(error);
+          infinityStatus.textContent = "Trusted-state open failed";
+        }
+      });
+
+      infinityCleanup.addEventListener("click", async () => {
+        const state = retainedInfinity;
+        if (state === undefined) return;
+        infinityCleanup.disabled = true;
+        try {
+          await disposeInfinity(state);
+          infinityStatus.textContent = "Assumption receiver cleaned up";
+        } catch (error) {
+          infinityOutput.className = "error";
+          infinityOutput.textContent =
+            error instanceof Error ? error.message : String(error);
+          infinityStatus.textContent =
+            "Cleanup failed; receiver retained for retry";
+          infinityCleanup.disabled = false;
+        }
+      });
 
       async function disposeNative(state) {
         await state.result.cleanup();
@@ -419,7 +559,19 @@ cargo run -p covalence-bin-nucleus -- \
         try {
           const id = connectionSelect.value;
           const managed = retainedNative;
-          if (managed !== undefined && managed.receiverId === id) {
+          const assumed = retainedInfinity;
+          if (assumed !== undefined && assumed.receiverId === id) {
+            infinityCleanup.disabled = true;
+            try {
+              await disposeInfinity(assumed);
+              infinityStatus.textContent = "Assumption receiver cleaned up";
+            } catch (error) {
+              infinityCleanup.disabled = false;
+              infinityStatus.textContent =
+                "Cleanup failed; receiver retained for retry";
+              throw error;
+            }
+          } else if (managed !== undefined && managed.receiverId === id) {
             nativeCleanup.disabled = true;
             try {
               await disposeNative(managed);
