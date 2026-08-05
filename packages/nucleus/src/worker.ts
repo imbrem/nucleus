@@ -5,6 +5,7 @@ import init, {
   type WebOutcome,
   type WebRemoteProducedHolComponent,
   type WebReceivedHolSnapshot,
+  type WebReceivedSignedHolArtifact,
   type WebRetainedReceivedHolSnapshot,
   type WebSignedHolOutcome,
   type WebSignedInfinityAssumption,
@@ -24,6 +25,13 @@ type Request =
   | { id: number; operation: "runSignedHolRoundTrip"; connection: number }
   | { id: number; operation: "assumeDedekindInfinity" }
   | { id: number; operation: "proveNatLikeMissingZero" }
+  | {
+      id: number;
+      operation: "receiveSignedHolArtifact";
+      expectedPublicKey: Uint8Array;
+      image: Uint8Array;
+      sidecar: Uint8Array;
+    }
   | {
       id: number;
       operation: "runNativeHttpHashSelectedHol";
@@ -140,6 +148,15 @@ async function execute(request: Request): Promise<unknown> {
       return readSignedNatLikeMissingZero(
         connection,
         connection.prove_natlike_missing_zero(),
+      );
+    case "receiveSignedHolArtifact":
+      return readReceivedSignedHolArtifact(
+        connection,
+        connection.receive_signed_hol_artifact(
+          request.expectedPublicKey,
+          request.image,
+          request.sidecar,
+        ),
       );
     case "runNativeHttpHashSelectedHol":
       if (nativeHashRunInFlight) {
@@ -369,6 +386,23 @@ function readSignedNatLikeMissingZero(
     context: theorem.context_id(),
     conclusion: theorem.conclusion_id(),
     attestation: theorem.attestation_text(),
+  }));
+}
+
+function readReceivedSignedHolArtifact(
+  connection: WebKernel,
+  artifact: WebReceivedSignedHolArtifact,
+) {
+  return readRetainedSignedArtifact(connection, artifact, () => ({
+    kind: artifact.kind(),
+    importId: artifact.import_id(),
+    namespace: artifact.namespace_id(),
+    context: artifact.context_id(),
+    conclusion: artifact.conclusion_id(),
+    attestation: artifact.attestation(),
+    persistentStateHash: connection.hol_image_hash(
+      artifact.receiver_connection(),
+    ),
   }));
 }
 

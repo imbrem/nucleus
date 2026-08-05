@@ -103,6 +103,19 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
     result.missingZero.conclusion,
   );
   assert.equal(result.missingZero.reopened.truth, "true");
+  assert.equal(result.receivedHandoff.kind, "received-signed-hol-artifact");
+  assert.equal(result.receivedHandoff.wrongKeyRejected, true);
+  assert.equal(result.receivedHandoff.distinctReceiverAfterSourceCleanup, true);
+  assert.equal(result.receivedHandoff.attestationExact, true);
+  assert.equal(
+    result.receivedHandoff.reopened.context,
+    result.receivedHandoff.context,
+  );
+  assert.equal(
+    result.receivedHandoff.reopened.conclusion,
+    result.receivedHandoff.conclusion,
+  );
+  assert.equal(result.receivedHandoff.reopened.truth, "true");
 
   const demo = await browser.newPage();
   await demo.goto(`http://127.0.0.1:${address.port}/repl.html`);
