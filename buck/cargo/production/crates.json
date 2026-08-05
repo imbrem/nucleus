@@ -62,6 +62,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-hol-proof-recipe-collector@0.0.0",
+      "name": "covalence-hol-proof-recipe-collector",
+      "version": "0.0.0",
+      "path": "crates/bin/hol-proof-recipe-collector",
+      "category": "product",
+      "targets": [
+        {
+          "name": "covalence-hol-proof-recipe-collector",
+          "kinds": [
+            "bin"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-lib-crypto@0.0.0",
       "name": "covalence-lib-crypto",
       "version": "0.0.0",
@@ -215,6 +230,20 @@
     {
       "source": "workspace#covalence-bin-nucleus@0.0.0",
       "target": "workspace#covalence-repl@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-hol-proof-recipe-collector@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-hol-proof-recipe-collector@0.0.0",
+      "target": "workspace#covalence-proton@0.0.0",
       "kinds": [
         "normal"
       ]
