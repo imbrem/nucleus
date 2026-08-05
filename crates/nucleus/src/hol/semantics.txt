@@ -1,0 +1,86 @@
+Nucleus HOL rank-zero semantics
+
+This protocol is the implemented HOL fragment. It is not full HOL-omega: object types have
+rank-zero System F polymorphism, but there are no kind-level TLAM/TAPP type operators, subtypes,
+polymorphic constant declarations, or type-beta proof rule.
+
+Syntax is one canonical tagged node graph. KSTAR has rank 0. KARR(a,b) has rank
+max(rank(a)+1,rank(b)). TBOOL, opaque TBASE declarations, and free schematic TFV atoms have kind
+KSTAR. TARR(a,b) has kind KSTAR when a and b do. TBV(i) is a KSTAR de Bruijn occurrence and
+TALL(A) binds TBV(0) in A. TFV identities are connection-local free atoms and are never captured.
+Types have an external type-variable boundary independent of the term-variable boundary.
+
+Each base declaration denotes an arbitrary nonempty carrier. The semantic universe is the
+one-sort impredicative rank-zero System F model used by the ProjectBeth shallow kernel: Code is
+closed under allCode : (Code -> Code) -> Code, with an equivalence between El(allCode F) and the
+dependent function (X : Code) -> El(F X). Every code has an inhabited carrier. TALL denotes
+allCode, MTYLAM semantic abstraction, and MTYAPP semantic application. These universe closure and
+equivalence operations are explicit model assumptions.
+
+Each MCONST declaration denotes an arbitrary element of one declared type and asserts no equation,
+infinitude, choice property, or other theorem. Its type must contain no TFV and must be locally
+type-closed, but may contain closed TALL nodes. A symbol has exactly one declared type. It is one
+object at one universal type, not a principal polymorphic scheme.
+
+Terms include Boolean literals, typed free symbols, typed term de Bruijn occurrences,
+applications, lambdas, same-typed equality, Hilbert choice, term type abstraction MTYLAM, and term
+type application MTYAPP. Application and lambda use the ordinary simply typed rules. MEPS(p) has
+type A exactly when p has type A -> bool and has p's external boundaries. A term is locally closed
+when every term de Bruijn occurrence is bound by an enclosing MLAM and every type occurrence is
+bound by an enclosing TALL or MTYLAM as appropriate.
+
+MTYLAM(t) has type TALL(type(t)). It is admitted only when t has no external term de Bruijn
+variables and contains no reachable MFV node; variables bound by MLAM inside t are permitted. This
+is the empty-term-environment fragment of the standard type-abstraction rule. MTYAPP(f,X) is
+well-typed when f has type TALL(A) and has the capture-avoiding substitution A[X/0].
+
+Bound-type substitution lifts X once for each crossed TALL or MTYLAM binder, replaces the selected
+TBV, decrements higher indices, and traverses every type annotation in a term. Term and type
+boundaries are checked separately. This syntax and substitution machinery adds no new
+authoritative proof or conversion rule.
+
+Every admitted type denotes a nonempty carrier. Hilbert choice denotes a fixed function mapping
+each predicate p : A -> bool to an element satisfying p when one exists, and to an arbitrary
+element otherwise. Choice is a function of the predicate denotation, so equality of predicates is
+respected. Ordinary MCONST declarations are never interpreted as Hilbert choice operators.
+
+Every theorem judgement is interpreted schematically, universally over all TFVs reachable from
+its conclusion and finite assumption context; every assigned carrier is nonempty. A context is a
+canonical finite set of locally closed Boolean terms. The authoritative judgement relation contains
+only conclusions introduced through implemented LCF rules and explicit persistence.
+
+The rules are hypothesis, truth, the monomorphic conversion rules including reflexivity, closed
+beta reduction and congruence beneath epsilon, conversion-to-equality, equality modus ponens, typed Leibniz
+equality substitution through a closed predicate, deduction antisymmetry, simultaneous typed
+free-term instantiation, simultaneous rank-zero schematic type instantiation, standard HOL
+abstraction, Hilbert choice, exact context implication introduction, explicit implication-path
+composition, and weakening. Equality reflexivity and theorem-level closed beta are untrusted
+recipes: each composes its corresponding branded conversion with conversion-to-equality. Choice
+derives Gamma |- p (epsilon p) from Gamma |- p x.
+
+Free-term instantiation replaces exact MFV node identities simultaneously in the conclusion and
+every context member. Keys are distinct; each replacement has the key's type and is locally closed.
+Replacement terms are not recursively instantiated and pass unchanged beneath lambdas.
+
+Type instantiation replaces distinct exact TFV identities simultaneously with well-formed,
+locally type-closed KSTAR types. Replacements are copied unchanged, may contain TFVs, and are not
+recursively substituted. It transforms the conclusion and all context members, including every
+term type annotation, then canonically rebuilds the finite-set context. Context members which
+become identical are deduplicated.
+
+Deduction antisymmetry derives (Gamma - {q}) union (Delta - {p}) |- p = q from Gamma |- p and
+Delta |- q. Abstraction derives Gamma |- (lambda x. l) = (lambda x. r) from Gamma |- l = r when
+the exact free-variable node x does not occur in Gamma. Existing bound occurrences remain
+unchanged. Exact context union is a separately checked structural relation. Context equivalence is
+a pair of opposite proved implications. The authoritative HOL database stores kernel state, not
+proof steps or observational provenance; traces belong to a separate observer-selected store.
+
+Namespaces and exports name already-admitted local kinds, types, terms, and contexts. Hash-first
+imports and imported namespace aliases are inert coordinates. A persistent trusted-import row is
+an auditable accepted assumption with cryptographically coherent evidence; it does not fetch the
+referenced image, import syntax, create theorem capabilities, or transitively establish truth.
+
+User-declared metadata columns and indexes are physical annotations. They never affect canonical
+syntax identity, typing, proof rules, or authority except that their exact physical SQLite manifest
+is committed by the composite signed schema identity. Validation, descriptors, signing, and
+authenticated import admit only this single exact semantics and physical schema.

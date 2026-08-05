@@ -10,6 +10,8 @@ use std::fmt;
 
 use covalence_lib_sqlite as sqlite;
 
+pub mod hol_recipes;
+
 pub use covalence_nucleus::sql::{
     ImageError, MAX_IMAGE_BYTES, Outcome, QueryResult, Statement, Value,
 };
