@@ -30,8 +30,11 @@ mod component {
                 .lambda(&bool_type, &bound)
                 .map_err(|_| GuestError::Aborted)?;
             let context = plan.empty_context().map_err(|_| GuestError::Aborted)?;
+            let conversion = plan
+                .conversion_eta(&identity)
+                .map_err(|_| GuestError::Aborted)?;
             let theorem = plan
-                .prove_eta(&context, &identity)
+                .prove_conversion_equality(&context, &conversion)
                 .map_err(|_| GuestError::Aborted)?;
 
             plan.persist_theorem(&theorem)

@@ -1,4 +1,4 @@
-package covalence:hol-proof-guest@0.3.0;
+package covalence:hol-proof-guest@0.4.0;
 
 /// A bounded, non-authoritative recipe builder supplied to an untrusted proof guest.
 ///
@@ -13,9 +13,8 @@ package covalence:hol-proof-guest@0.3.0;
 /// successful replay may return the connection to the caller for optional serialization and
 /// signing.
 ///
-/// This contract is intentionally just large enough for the closed-beta, closed-eta, and
-/// schematic-binding north stars. Extending it with another HOL rule changes the contract
-/// identity and requires an explicit host policy operation.
+/// This contract exposes schematic binding and first-class conversions. Extending it with another
+/// HOL rule changes the contract identity and requires an explicit host policy operation.
 interface host {
   enum append-error {
     invalid-resource,
@@ -27,6 +26,7 @@ interface host {
   resource type-node;
   resource term-node;
   resource context-node;
+  resource conversion-node;
   resource theorem-node;
   resource namespace-node;
   resource term-instantiation-map-node;
@@ -42,21 +42,48 @@ interface host {
       body: borrow<term-node>,
     ) -> result<term-node, append-error>;
     bool-term: func(value: bool) -> result<term-node, append-error>;
+    application: func(
+      function: borrow<term-node>,
+      argument: borrow<term-node>,
+    ) -> result<term-node, append-error>;
+    epsilon: func(predicate: borrow<term-node>) -> result<term-node, append-error>;
     empty-context: func() -> result<context-node, append-error>;
 
-    /// Appends a request for the derived closed-beta recipe. The result is still only a recipe
-    /// node; authoritative primitive checks occur only during host replay.
-    prove-beta: func(
-      context: borrow<context-node>,
+    conversion-reflexivity: func(
+      term: borrow<term-node>,
+    ) -> result<conversion-node, append-error>;
+    conversion-symmetry: func(
+      conversion: borrow<conversion-node>,
+    ) -> result<conversion-node, append-error>;
+    conversion-transitivity: func(
+      first: borrow<conversion-node>,
+      second: borrow<conversion-node>,
+    ) -> result<conversion-node, append-error>;
+    conversion-application: func(
+      function: borrow<conversion-node>,
+      argument: borrow<conversion-node>,
+    ) -> result<conversion-node, append-error>;
+    conversion-lambda: func(
+      parameter-type: borrow<type-node>,
+      body: borrow<conversion-node>,
+    ) -> result<conversion-node, append-error>;
+    conversion-beta: func(
       abstraction: borrow<term-node>,
       argument: borrow<term-node>,
-    ) -> result<theorem-node, append-error>;
-
-    /// Appends a request for the derived closed-eta recipe. Authoritative conversion and
-    /// equality checks occur only during host replay.
-    prove-eta: func(
-      context: borrow<context-node>,
+    ) -> result<conversion-node, append-error>;
+    conversion-eta: func(
       function: borrow<term-node>,
+    ) -> result<conversion-node, append-error>;
+    conversion-epsilon: func(
+      predicate: borrow<conversion-node>,
+    ) -> result<conversion-node, append-error>;
+    prove-conversion-equality: func(
+      context: borrow<context-node>,
+      conversion: borrow<conversion-node>,
+    ) -> result<theorem-node, append-error>;
+    convert-theorem: func(
+      theorem: borrow<theorem-node>,
+      conversion: borrow<conversion-node>,
     ) -> result<theorem-node, append-error>;
 
     empty-term-instantiation-map: func() -> result<term-instantiation-map-node, append-error>;

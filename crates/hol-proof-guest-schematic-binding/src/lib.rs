@@ -32,8 +32,11 @@ mod component {
             let x = plan.free_term(0, &alpha).map_err(|_| GuestError::Aborted)?;
             let y = plan.free_term(1, &alpha).map_err(|_| GuestError::Aborted)?;
             let context = plan.empty_context().map_err(|_| GuestError::Aborted)?;
+            let conversion = plan
+                .conversion_beta(&identity, &x)
+                .map_err(|_| GuestError::Aborted)?;
             let schematic = plan
-                .prove_beta(&context, &identity, &x)
+                .prove_conversion_equality(&context, &conversion)
                 .map_err(|_| GuestError::Aborted)?;
 
             let empty_terms = plan

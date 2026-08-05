@@ -9,8 +9,9 @@ use std::error::Error as StdError;
 use std::fmt;
 
 use covalence_nucleus::{
-    Connection, ContextId, ExportId, Hol, Kernel, NamespaceExport, NamespaceId, Operation, Policy,
-    SignedHolSnapshot, TermId, TermInstantiation, Theorem, TypeId, TypeInstantiation,
+    Connection, ContextId, Conversion, ExportId, Hol, Kernel, NamespaceExport, NamespaceId,
+    Operation, Policy, SignedHolSnapshot, TermId, TermInstantiation, Theorem, TypeId,
+    TypeInstantiation,
 };
 
 use crate::SignedHolArtifact;
@@ -20,7 +21,7 @@ pub(crate) const MAX_RECIPE_NAME_BYTES: usize = 256;
 /// Maximum canonical bytes accepted from an untrusted guest executor.
 pub const MAX_SEALED_HOL_RECIPE_BYTES: usize = 64 * 1024;
 
-const RECIPE_VERSION: u8 = 2;
+const RECIPE_VERSION: u8 = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RecipeSort {
@@ -31,6 +32,7 @@ pub(crate) enum RecipeSort {
     Namespace,
     TermInstantiationMap,
     TypeInstantiationMap,
+    Conversion,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -52,15 +54,49 @@ pub(crate) enum RecipeNode {
         body: usize,
     },
     Bool(bool),
+    Application {
+        function: usize,
+        argument: usize,
+    },
+    Epsilon {
+        predicate: usize,
+    },
     EmptyContext,
-    Beta {
-        context: usize,
+    ConversionReflexivity {
+        term: usize,
+    },
+    ConversionSymmetry {
+        conversion: usize,
+    },
+    ConversionTransitivity {
+        first: usize,
+        second: usize,
+    },
+    ConversionApplication {
+        function: usize,
+        argument: usize,
+    },
+    ConversionLambda {
+        parameter_type: usize,
+        body: usize,
+    },
+    ConversionBeta {
         abstraction: usize,
         argument: usize,
     },
-    Eta {
-        context: usize,
+    ConversionEta {
         function: usize,
+    },
+    ConversionEpsilon {
+        predicate: usize,
+    },
+    ConversionEquality {
+        context: usize,
+        conversion: usize,
+    },
+    ConvertTheorem {
+        theorem: usize,
+        conversion: usize,
     },
     EmptyTermInstantiationMap,
     ExtendTermInstantiationMap {
@@ -262,20 +298,71 @@ fn validate_structure(
                 RecipeSort::Term
             }
             RecipeNode::Bool(_) => RecipeSort::Term,
+            RecipeNode::Application { function, argument } => {
+                require(*function, RecipeSort::Term)?;
+                require(*argument, RecipeSort::Term)?;
+                RecipeSort::Term
+            }
+            RecipeNode::Epsilon { predicate } => {
+                require(*predicate, RecipeSort::Term)?;
+                RecipeSort::Term
+            }
             RecipeNode::EmptyContext => RecipeSort::Context,
-            RecipeNode::Beta {
-                context,
+            RecipeNode::ConversionReflexivity { term } => {
+                require(*term, RecipeSort::Term)?;
+                RecipeSort::Conversion
+            }
+            RecipeNode::ConversionSymmetry { conversion } => {
+                require(*conversion, RecipeSort::Conversion)?;
+                RecipeSort::Conversion
+            }
+            RecipeNode::ConversionTransitivity { first, second }
+            | RecipeNode::ConversionApplication {
+                function: first,
+                argument: second,
+            } => {
+                require(*first, RecipeSort::Conversion)?;
+                require(*second, RecipeSort::Conversion)?;
+                RecipeSort::Conversion
+            }
+            RecipeNode::ConversionLambda {
+                parameter_type,
+                body,
+            } => {
+                require(*parameter_type, RecipeSort::Type)?;
+                require(*body, RecipeSort::Conversion)?;
+                RecipeSort::Conversion
+            }
+            RecipeNode::ConversionBeta {
                 abstraction,
                 argument,
             } => {
-                require(*context, RecipeSort::Context)?;
                 require(*abstraction, RecipeSort::Term)?;
                 require(*argument, RecipeSort::Term)?;
+                RecipeSort::Conversion
+            }
+            RecipeNode::ConversionEta { function } => {
+                require(*function, RecipeSort::Term)?;
+                RecipeSort::Conversion
+            }
+            RecipeNode::ConversionEpsilon { predicate } => {
+                require(*predicate, RecipeSort::Conversion)?;
+                RecipeSort::Conversion
+            }
+            RecipeNode::ConversionEquality {
+                context,
+                conversion,
+            } => {
+                require(*context, RecipeSort::Context)?;
+                require(*conversion, RecipeSort::Conversion)?;
                 RecipeSort::Theorem
             }
-            RecipeNode::Eta { context, function } => {
-                require(*context, RecipeSort::Context)?;
-                require(*function, RecipeSort::Term)?;
+            RecipeNode::ConvertTheorem {
+                theorem,
+                conversion,
+            } => {
+                require(*theorem, RecipeSort::Theorem)?;
+                require(*conversion, RecipeSort::Conversion)?;
                 RecipeSort::Theorem
             }
             RecipeNode::EmptyTermInstantiationMap => {
@@ -484,21 +571,73 @@ fn encode_node(bytes: &mut Vec<u8>, node: &RecipeNode) -> Result<(), HolProofRec
             bytes.push(3);
             bytes.push(u8::from(*value));
         }
+        RecipeNode::Application { function, argument } => {
+            bytes.push(0x20);
+            encode_index(bytes, *function)?;
+            encode_index(bytes, *argument)?;
+        }
+        RecipeNode::Epsilon { predicate } => {
+            bytes.push(0x21);
+            encode_index(bytes, *predicate)?;
+        }
         RecipeNode::EmptyContext => bytes.push(4),
-        RecipeNode::Beta {
-            context,
+        RecipeNode::ConversionReflexivity { term } => {
+            bytes.push(0x30);
+            encode_index(bytes, *term)?;
+        }
+        RecipeNode::ConversionSymmetry { conversion } => {
+            bytes.push(0x31);
+            encode_index(bytes, *conversion)?;
+        }
+        RecipeNode::ConversionTransitivity { first, second } => {
+            bytes.push(0x32);
+            encode_index(bytes, *first)?;
+            encode_index(bytes, *second)?;
+        }
+        RecipeNode::ConversionApplication { function, argument } => {
+            bytes.push(0x33);
+            encode_index(bytes, *function)?;
+            encode_index(bytes, *argument)?;
+        }
+        RecipeNode::ConversionLambda {
+            parameter_type,
+            body,
+        } => {
+            bytes.push(0x34);
+            encode_index(bytes, *parameter_type)?;
+            encode_index(bytes, *body)?;
+        }
+        RecipeNode::ConversionBeta {
             abstraction,
             argument,
         } => {
-            bytes.push(5);
-            encode_index(bytes, *context)?;
+            bytes.push(0x35);
             encode_index(bytes, *abstraction)?;
             encode_index(bytes, *argument)?;
         }
-        RecipeNode::Eta { context, function } => {
-            bytes.push(10);
-            encode_index(bytes, *context)?;
+        RecipeNode::ConversionEta { function } => {
+            bytes.push(0x36);
             encode_index(bytes, *function)?;
+        }
+        RecipeNode::ConversionEpsilon { predicate } => {
+            bytes.push(0x37);
+            encode_index(bytes, *predicate)?;
+        }
+        RecipeNode::ConversionEquality {
+            context,
+            conversion,
+        } => {
+            bytes.push(0x38);
+            encode_index(bytes, *context)?;
+            encode_index(bytes, *conversion)?;
+        }
+        RecipeNode::ConvertTheorem {
+            theorem,
+            conversion,
+        } => {
+            bytes.push(0x39);
+            encode_index(bytes, *theorem)?;
+            encode_index(bytes, *conversion)?;
         }
         RecipeNode::EmptyTermInstantiationMap => bytes.push(13),
         RecipeNode::ExtendTermInstantiationMap {
@@ -655,6 +794,7 @@ impl<'a> Decoder<'a> {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn node(&mut self) -> Result<RecipeNode, HolProofRecipeError> {
         match self.byte()? {
             0 => Ok(RecipeNode::BoolType),
@@ -672,11 +812,6 @@ impl<'a> Decoder<'a> {
                 _ => Err(HolProofRecipeError::Invalid("invalid Boolean recipe value")),
             },
             4 => Ok(RecipeNode::EmptyContext),
-            5 => Ok(RecipeNode::Beta {
-                context: self.index()?,
-                abstraction: self.index()?,
-                argument: self.index()?,
-            }),
             6 => Ok(RecipeNode::Persist {
                 theorem: self.index()?,
             }),
@@ -692,10 +827,6 @@ impl<'a> Decoder<'a> {
                 export: self.i64()?,
                 context: self.index()?,
                 name: self.name()?,
-            }),
-            10 => Ok(RecipeNode::Eta {
-                context: self.index()?,
-                function: self.index()?,
             }),
             11 => Ok(RecipeNode::FreeType {
                 symbol: self.i64()?,
@@ -728,6 +859,49 @@ impl<'a> Decoder<'a> {
                 theorem: self.index()?,
                 variable: self.index()?,
             }),
+            0x20 => Ok(RecipeNode::Application {
+                function: self.index()?,
+                argument: self.index()?,
+            }),
+            0x21 => Ok(RecipeNode::Epsilon {
+                predicate: self.index()?,
+            }),
+            0x30 => Ok(RecipeNode::ConversionReflexivity {
+                term: self.index()?,
+            }),
+            0x31 => Ok(RecipeNode::ConversionSymmetry {
+                conversion: self.index()?,
+            }),
+            0x32 => Ok(RecipeNode::ConversionTransitivity {
+                first: self.index()?,
+                second: self.index()?,
+            }),
+            0x33 => Ok(RecipeNode::ConversionApplication {
+                function: self.index()?,
+                argument: self.index()?,
+            }),
+            0x34 => Ok(RecipeNode::ConversionLambda {
+                parameter_type: self.index()?,
+                body: self.index()?,
+            }),
+            0x35 => Ok(RecipeNode::ConversionBeta {
+                abstraction: self.index()?,
+                argument: self.index()?,
+            }),
+            0x36 => Ok(RecipeNode::ConversionEta {
+                function: self.index()?,
+            }),
+            0x37 => Ok(RecipeNode::ConversionEpsilon {
+                predicate: self.index()?,
+            }),
+            0x38 => Ok(RecipeNode::ConversionEquality {
+                context: self.index()?,
+                conversion: self.index()?,
+            }),
+            0x39 => Ok(RecipeNode::ConvertTheorem {
+                theorem: self.index()?,
+                conversion: self.index()?,
+            }),
             _ => Err(HolProofRecipeError::Invalid(
                 "unknown sealed recipe node tag",
             )),
@@ -744,9 +918,16 @@ impl Policy for ProofGuestPolicy {
             operation,
             Operation::InsertType
                 | Operation::InsertTerm
+                | Operation::ProveConversionReflexivity
+                | Operation::ProveConversionSymmetry
+                | Operation::ProveConversionTransitivity
+                | Operation::ProveConversionApplication
+                | Operation::ProveConversionLambda
                 | Operation::ProveConversionBeta
                 | Operation::ProveConversionEta
+                | Operation::ProveConversionEpsilon
                 | Operation::ProveConversionEquality
+                | Operation::ProveTheoremConversion
                 | Operation::ProveTermInstantiation
                 | Operation::ProveTypeInstantiation
                 | Operation::ProveAbstraction
@@ -806,6 +987,14 @@ fn replay(
             RecipeNode::Bool(value) => {
                 Value::Term(db.insert_bool_term(*value).map_err(replay_error)?)
             }
+            RecipeNode::Application { function, argument } => Value::Term(
+                db.insert_application(term_at(&values, *function)?, term_at(&values, *argument)?)
+                    .map_err(replay_error)?,
+            ),
+            RecipeNode::Epsilon { predicate } => Value::Term(
+                db.insert_epsilon(term_at(&values, *predicate)?)
+                    .map_err(replay_error)?,
+            ),
             RecipeNode::EmptyContext => Value::Context(ContextId::empty()),
             RecipeNode::Namespace { name } => Value::Namespace(
                 db.create_namespace(Some(NamespaceId::root()), name.as_deref())
@@ -837,8 +1026,16 @@ fn replay(
                 });
                 Value::TypeInstantiationMap(map)
             }
-            RecipeNode::Beta { .. }
-            | RecipeNode::Eta { .. }
+            RecipeNode::ConversionReflexivity { .. }
+            | RecipeNode::ConversionSymmetry { .. }
+            | RecipeNode::ConversionTransitivity { .. }
+            | RecipeNode::ConversionApplication { .. }
+            | RecipeNode::ConversionLambda { .. }
+            | RecipeNode::ConversionBeta { .. }
+            | RecipeNode::ConversionEta { .. }
+            | RecipeNode::ConversionEpsilon { .. }
+            | RecipeNode::ConversionEquality { .. }
+            | RecipeNode::ConvertTheorem { .. }
             | RecipeNode::TermInstantiation { .. }
             | RecipeNode::TypeInstantiation { .. }
             | RecipeNode::Abstraction { .. }
@@ -885,40 +1082,118 @@ fn replay(
     snapshot_artifact(namespace, &snapshot)
 }
 
+#[allow(clippy::too_many_lines)]
 fn replay_theorems<P: Policy>(
     db: &mut Connection<Hol<P>>,
     recipe: &[RecipeNode],
     values: &mut [Value],
 ) -> Result<(), HolProofRecipeError> {
     db.with_proof_session(|mut proof| {
+        let mut conversions: Vec<Option<Conversion<'_>>> =
+            (0..recipe.len()).map(|_| None).collect();
         let mut theorems: Vec<Option<Theorem<'_>>> = (0..recipe.len()).map(|_| None).collect();
         for (index, node) in recipe.iter().enumerate() {
             match node {
-                RecipeNode::Beta {
-                    context,
+                RecipeNode::ConversionReflexivity { term } => {
+                    conversions[index] = Some(
+                        proof
+                            .conversion_reflexivity(term_at(values, *term)?)
+                            .map_err(replay_error)?,
+                    );
+                }
+                RecipeNode::ConversionSymmetry { conversion } => {
+                    conversions[index] = Some(
+                        proof
+                            .conversion_symmetry(conversion_at_index(&conversions, *conversion)?)
+                            .map_err(replay_error)?,
+                    );
+                }
+                RecipeNode::ConversionTransitivity { first, second } => {
+                    conversions[index] = Some(
+                        proof
+                            .conversion_transitivity(
+                                conversion_at_index(&conversions, *first)?,
+                                conversion_at_index(&conversions, *second)?,
+                            )
+                            .map_err(replay_error)?,
+                    );
+                }
+                RecipeNode::ConversionApplication { function, argument } => {
+                    conversions[index] = Some(
+                        proof
+                            .conversion_application(
+                                conversion_at_index(&conversions, *function)?,
+                                conversion_at_index(&conversions, *argument)?,
+                            )
+                            .map_err(replay_error)?,
+                    );
+                }
+                RecipeNode::ConversionLambda {
+                    parameter_type,
+                    body,
+                } => {
+                    conversions[index] = Some(
+                        proof
+                            .conversion_lambda(
+                                type_at(values, *parameter_type)?,
+                                conversion_at_index(&conversions, *body)?,
+                            )
+                            .map_err(replay_error)?,
+                    );
+                }
+                RecipeNode::ConversionBeta {
                     abstraction,
                     argument,
                 } => {
-                    let theorem = crate::hol_recipes::beta(
-                        &mut proof,
-                        context_at(values, *context)?,
-                        term_at(values, *abstraction)?,
-                        term_at(values, *argument)?,
-                    )
-                    .map_err(replay_error)?;
+                    conversions[index] = Some(
+                        proof
+                            .conversion_beta(
+                                term_at(values, *abstraction)?,
+                                term_at(values, *argument)?,
+                            )
+                            .map_err(replay_error)?,
+                    );
+                }
+                RecipeNode::ConversionEta { function } => {
+                    conversions[index] = Some(
+                        proof
+                            .conversion_eta(term_at(values, *function)?)
+                            .map_err(replay_error)?,
+                    );
+                }
+                RecipeNode::ConversionEpsilon { predicate } => {
+                    conversions[index] = Some(
+                        proof
+                            .conversion_epsilon(conversion_at_index(&conversions, *predicate)?)
+                            .map_err(replay_error)?,
+                    );
+                }
+                RecipeNode::ConversionEquality {
+                    context,
+                    conversion,
+                } => {
+                    let theorem = proof
+                        .prove_conversion_equality(
+                            context_at(values, *context)?,
+                            conversion_at_index(&conversions, *conversion)?,
+                        )
+                        .map_err(replay_error)?;
                     values[index] = Value::Theorem {
                         context: theorem.context(),
                         conclusion: theorem.conclusion(),
                     };
                     theorems[index] = Some(theorem);
                 }
-                RecipeNode::Eta { context, function } => {
-                    let theorem = crate::hol_recipes::eta(
-                        &mut proof,
-                        context_at(values, *context)?,
-                        term_at(values, *function)?,
-                    )
-                    .map_err(replay_error)?;
+                RecipeNode::ConvertTheorem {
+                    theorem,
+                    conversion,
+                } => {
+                    let theorem = proof
+                        .convert_theorem(
+                            theorem_at_index(&theorems, *theorem)?,
+                            conversion_at_index(&conversions, *conversion)?,
+                        )
+                        .map_err(replay_error)?;
                     values[index] = Value::Theorem {
                         context: theorem.context(),
                         conclusion: theorem.conclusion(),
@@ -982,6 +1257,16 @@ fn replay_theorems<P: Policy>(
         }
         Ok::<_, HolProofRecipeError>(())
     })
+}
+
+fn conversion_at_index<'a, 'brand>(
+    conversions: &'a [Option<Conversion<'brand>>],
+    index: usize,
+) -> Result<&'a Conversion<'brand>, HolProofRecipeError> {
+    conversions
+        .get(index)
+        .and_then(Option::as_ref)
+        .ok_or_else(value_error)
 }
 
 fn snapshot_artifact(
@@ -1089,29 +1374,32 @@ pub(crate) fn closed_beta_test_recipe() -> SealedHolProofRecipe {
             },
             RecipeNode::Bool(true),
             RecipeNode::EmptyContext,
-            RecipeNode::Beta {
-                context: 4,
+            RecipeNode::ConversionBeta {
                 abstraction: 2,
                 argument: 3,
             },
-            RecipeNode::Persist { theorem: 5 },
+            RecipeNode::ConversionEquality {
+                context: 4,
+                conversion: 5,
+            },
+            RecipeNode::Persist { theorem: 6 },
             RecipeNode::Namespace {
                 name: Some("demo".into()),
             },
             RecipeNode::ExportContext {
-                namespace: 7,
+                namespace: 8,
                 export: 0,
                 context: 4,
                 name: None,
             },
             RecipeNode::ExportTheorem {
-                namespace: 7,
+                namespace: 8,
                 export: 1,
-                theorem: 5,
+                theorem: 6,
                 name: None,
             },
         ],
-        7,
+        8,
     )
     .expect("canonical beta test recipe")
 }
@@ -1127,28 +1415,29 @@ fn closed_eta_test_recipe() -> SealedHolProofRecipe {
                 body: 1,
             },
             RecipeNode::EmptyContext,
-            RecipeNode::Eta {
+            RecipeNode::ConversionEta { function: 2 },
+            RecipeNode::ConversionEquality {
                 context: 3,
-                function: 2,
+                conversion: 4,
             },
-            RecipeNode::Persist { theorem: 4 },
+            RecipeNode::Persist { theorem: 5 },
             RecipeNode::Namespace {
                 name: Some("eta-demo".into()),
             },
             RecipeNode::ExportContext {
-                namespace: 6,
+                namespace: 7,
                 export: 0,
                 context: 3,
                 name: Some("empty_context".into()),
             },
             RecipeNode::ExportTheorem {
-                namespace: 6,
+                namespace: 7,
                 export: 1,
-                theorem: 4,
+                theorem: 5,
                 name: Some("identity_eta".into()),
             },
         ],
-        6,
+        7,
     )
     .expect("canonical eta test recipe")
 }
@@ -1166,68 +1455,122 @@ pub(crate) fn schematic_binding_test_recipe() -> SealedHolProofRecipe {
             RecipeNode::FreeTerm { symbol: 0, ty: 0 },
             RecipeNode::FreeTerm { symbol: 1, ty: 0 },
             RecipeNode::EmptyContext,
-            RecipeNode::Beta {
-                context: 5,
+            RecipeNode::ConversionBeta {
                 abstraction: 2,
                 argument: 3,
             },
+            RecipeNode::ConversionEquality {
+                context: 5,
+                conversion: 6,
+            },
             RecipeNode::EmptyTermInstantiationMap,
             RecipeNode::ExtendTermInstantiationMap {
-                base: 7,
+                base: 8,
                 variable: 3,
                 replacement: 4,
             },
             RecipeNode::TermInstantiation {
-                theorem: 6,
-                instantiations: 8,
+                theorem: 7,
+                instantiations: 9,
             },
             RecipeNode::Abstraction {
-                theorem: 9,
+                theorem: 10,
                 variable: 4,
             },
             RecipeNode::BoolType,
             RecipeNode::EmptyTypeInstantiationMap,
             RecipeNode::ExtendTypeInstantiationMap {
-                base: 12,
+                base: 13,
                 variable: 0,
-                replacement: 11,
+                replacement: 12,
             },
             RecipeNode::TypeInstantiation {
-                theorem: 10,
-                instantiations: 13,
+                theorem: 11,
+                instantiations: 14,
             },
-            RecipeNode::Persist { theorem: 14 },
+            RecipeNode::Persist { theorem: 15 },
             RecipeNode::Namespace {
                 name: Some("schematic-binding-demo".into()),
             },
             RecipeNode::ExportContext {
-                namespace: 16,
+                namespace: 17,
                 export: 0,
                 context: 5,
                 name: Some("empty_context".into()),
             },
             RecipeNode::ExportTheorem {
-                namespace: 16,
+                namespace: 17,
                 export: 1,
-                theorem: 14,
+                theorem: 15,
                 name: Some("schematic_identity_binding".into()),
             },
         ],
-        16,
+        17,
     )
     .expect("canonical schematic-binding test recipe")
 }
 
 #[cfg(test)]
+pub(crate) fn nested_identity_conversion_test_recipe() -> SealedHolProofRecipe {
+    SealedHolProofRecipe::seal(
+        vec![
+            RecipeNode::BoolType,
+            RecipeNode::Bound { index: 0, ty: 0 },
+            RecipeNode::Lambda {
+                parameter_type: 0,
+                body: 1,
+            },
+            RecipeNode::Bool(true),
+            RecipeNode::EmptyContext,
+            RecipeNode::ConversionReflexivity { term: 2 },
+            RecipeNode::ConversionBeta {
+                abstraction: 2,
+                argument: 3,
+            },
+            RecipeNode::ConversionApplication {
+                function: 5,
+                argument: 6,
+            },
+            RecipeNode::ConversionTransitivity {
+                first: 7,
+                second: 6,
+            },
+            RecipeNode::ConversionEquality {
+                context: 4,
+                conversion: 8,
+            },
+            RecipeNode::Persist { theorem: 9 },
+            RecipeNode::Namespace {
+                name: Some("conversion-demo".into()),
+            },
+            RecipeNode::ExportContext {
+                namespace: 11,
+                export: 0,
+                context: 4,
+                name: Some("empty_context".into()),
+            },
+            RecipeNode::ExportTheorem {
+                namespace: 11,
+                export: 1,
+                theorem: 9,
+                name: Some("nested_identity_beta".into()),
+            },
+        ],
+        11,
+    )
+    .expect("canonical nested-identity conversion recipe")
+}
+
+#[cfg(test)]
 pub(crate) const SCHEMATIC_BINDING_WIRE: &[u8] = &[
-    2, 0, 19, 0, 16, 11, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 12, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 4, 5, 0, 5, 0, 2, 0, 3, 13, 14, 0, 7, 0,
-    3, 0, 4, 15, 0, 6, 0, 8, 19, 0, 9, 0, 4, 0, 16, 17, 0, 12, 0, 0, 0, 11, 18, 0, 10, 0, 13, 6, 0,
-    14, 7, 1, 0, 22, 115, 99, 104, 101, 109, 97, 116, 105, 99, 45, 98, 105, 110, 100, 105, 110,
-    103, 45, 100, 101, 109, 111, 9, 0, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 1, 0, 13, 101, 109, 112,
-    116, 121, 95, 99, 111, 110, 116, 101, 120, 116, 8, 0, 16, 0, 0, 0, 0, 0, 0, 0, 1, 0, 14, 1, 0,
-    26, 115, 99, 104, 101, 109, 97, 116, 105, 99, 95, 105, 100, 101, 110, 116, 105, 116, 121, 95,
-    98, 105, 110, 100, 105, 110, 103,
+    3, 0, 20, 0, 17, 11, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 12, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 4, 53, 0, 2, 0, 3, 56, 0, 5, 0, 6, 13,
+    14, 0, 8, 0, 3, 0, 4, 15, 0, 7, 0, 9, 19, 0, 10, 0, 4, 0, 16, 17, 0, 13, 0, 0, 0, 12, 18, 0,
+    11, 0, 14, 6, 0, 15, 7, 1, 0, 22, 115, 99, 104, 101, 109, 97, 116, 105, 99, 45, 98, 105, 110,
+    100, 105, 110, 103, 45, 100, 101, 109, 111, 9, 0, 17, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 1, 0, 13,
+    101, 109, 112, 116, 121, 95, 99, 111, 110, 116, 101, 120, 116, 8, 0, 17, 0, 0, 0, 0, 0, 0, 0,
+    1, 0, 15, 1, 0, 26, 115, 99, 104, 101, 109, 97, 116, 105, 99, 95, 105, 100, 101, 110, 116, 105,
+    116, 121, 95, 98, 105, 110, 100, 105, 110, 103,
 ];
 
 #[cfg(test)]
@@ -1252,23 +1595,46 @@ mod tests {
 
     #[test]
     fn canonical_eta_recipe_round_trips_and_replays() {
-        const VERSION_2_ETA_RECIPE: &[u8] = &[
-            2, 0, 9, 0, 6, // version, node count, selected namespace
+        const VERSION_3_ETA_RECIPE: &[u8] = &[
+            3, 0, 10, 0, 7, // version, node count, selected namespace
             0, // bool type
             1, 0, 0, 0, 0, 0, 0, // bound 0 : node 0
             2, 0, 0, 0, 1, // lambda node 0, node 1
             4, // empty context
-            10, 0, 3, 0, 2, // eta node 3, node 2
-            6, 0, 4, // persist node 4
-            7, 1, 0, 8, b'e', b't', b'a', b'-', b'd', b'e', b'm', b'o', 9, 0, 6, 0, 0, 0, 0, 0, 0,
+            0x36, 0, 2, // eta conversion of node 2
+            0x38, 0, 3, 0, 4, // conversion equality in node 3
+            6, 0, 5, // persist node 5
+            7, 1, 0, 8, b'e', b't', b'a', b'-', b'd', b'e', b'm', b'o', 9, 0, 7, 0, 0, 0, 0, 0, 0,
             0, 0, 0, 3, 1, 0, 13, b'e', b'm', b'p', b't', b'y', b'_', b'c', b'o', b'n', b't', b'e',
-            b'x', b't', 8, 0, 6, 0, 0, 0, 0, 0, 0, 0, 1, 0, 4, 1, 0, 12, b'i', b'd', b'e', b'n',
+            b'x', b't', 8, 0, 7, 0, 0, 0, 0, 0, 0, 0, 1, 0, 5, 1, 0, 12, b'i', b'd', b'e', b'n',
             b't', b'i', b't', b'y', b'_', b'e', b't', b'a',
         ];
         let recipe = closed_eta_test_recipe();
-        assert_eq!(recipe.as_bytes(), VERSION_2_ETA_RECIPE);
+        assert_eq!(recipe.as_bytes(), VERSION_3_ETA_RECIPE);
         assert_eq!(
-            SealedHolProofRecipe::from_untrusted_bytes(VERSION_2_ETA_RECIPE).unwrap(),
+            SealedHolProofRecipe::from_untrusted_bytes(VERSION_3_ETA_RECIPE).unwrap(),
+            recipe
+        );
+        let kernel = Kernel::ephemeral();
+        let artifact = recipe.replay(&kernel).unwrap();
+        assert_eq!(artifact.signer(), kernel.key_id());
+    }
+
+    #[test]
+    fn canonical_nested_identity_conversion_has_fixed_wire_and_replays() {
+        const VERSION_3_NESTED_IDENTITY: &[u8] = &[
+            3, 0, 14, 0, 11, 0, 1, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 3, 1, 4, 0x30, 0, 2, 0x35, 0,
+            2, 0, 3, 0x33, 0, 5, 0, 6, 0x32, 0, 7, 0, 6, 0x38, 0, 4, 0, 8, 6, 0, 9, 7, 1, 0, 15,
+            b'c', b'o', b'n', b'v', b'e', b'r', b's', b'i', b'o', b'n', b'-', b'd', b'e', b'm',
+            b'o', 9, 0, 11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 1, 0, 13, b'e', b'm', b'p', b't', b'y',
+            b'_', b'c', b'o', b'n', b't', b'e', b'x', b't', 8, 0, 11, 0, 0, 0, 0, 0, 0, 0, 1, 0, 9,
+            1, 0, 20, b'n', b'e', b's', b't', b'e', b'd', b'_', b'i', b'd', b'e', b'n', b't', b'i',
+            b't', b'y', b'_', b'b', b'e', b't', b'a',
+        ];
+        let recipe = nested_identity_conversion_test_recipe();
+        assert_eq!(recipe.as_bytes(), VERSION_3_NESTED_IDENTITY);
+        assert_eq!(
+            SealedHolProofRecipe::from_untrusted_bytes(VERSION_3_NESTED_IDENTITY).unwrap(),
             recipe
         );
         let kernel = Kernel::ephemeral();
@@ -1299,10 +1665,7 @@ mod tests {
                 vec![
                     RecipeNode::BoolType,
                     RecipeNode::EmptyContext,
-                    RecipeNode::Eta {
-                        context: 1,
-                        function: 1,
-                    }
+                    RecipeNode::ConversionEta { function: 1 }
                 ],
                 1
             )
@@ -1340,14 +1703,16 @@ mod tests {
         let mut bytes = closed_beta().as_bytes().to_vec();
         bytes.push(0);
         assert!(SealedHolProofRecipe::from_untrusted_bytes(&bytes).is_err());
-        let mut old_version = closed_beta().as_bytes().to_vec();
-        old_version[0] = 1;
-        assert!(matches!(
-            SealedHolProofRecipe::from_untrusted_bytes(&old_version),
-            Err(HolProofRecipeError::Invalid(
-                "unsupported sealed recipe version"
-            ))
-        ));
+        for version in [1, 2] {
+            let mut old_version = closed_beta().as_bytes().to_vec();
+            old_version[0] = version;
+            assert!(matches!(
+                SealedHolProofRecipe::from_untrusted_bytes(&old_version),
+                Err(HolProofRecipeError::Invalid(
+                    "unsupported sealed recipe version"
+                ))
+            ));
+        }
 
         assert!(
             SealedHolProofRecipe::seal(
@@ -1365,6 +1730,124 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn conversion_structure_rejects_forward_and_wrong_sort_dependencies() {
+        let invalid = [
+            vec![
+                RecipeNode::Bool(true),
+                RecipeNode::ConversionSymmetry { conversion: 0 },
+                RecipeNode::Namespace { name: None },
+            ],
+            vec![
+                RecipeNode::BoolType,
+                RecipeNode::Bool(true),
+                RecipeNode::ConversionLambda {
+                    parameter_type: 1,
+                    body: 0,
+                },
+                RecipeNode::Namespace { name: None },
+            ],
+            vec![
+                RecipeNode::Bool(true),
+                RecipeNode::ConversionReflexivity { term: 0 },
+                RecipeNode::ConversionTransitivity {
+                    first: 1,
+                    second: 3,
+                },
+                RecipeNode::Namespace { name: None },
+            ],
+        ];
+        for nodes in invalid {
+            let selected = nodes.len() - 1;
+            assert!(SealedHolProofRecipe::seal(nodes, selected).is_err());
+        }
+    }
+
+    #[test]
+    fn remaining_conversion_forms_replay_checked_positive_cases() {
+        let recipe = SealedHolProofRecipe::seal(
+            vec![
+                RecipeNode::BoolType,
+                RecipeNode::Bound { index: 0, ty: 0 },
+                RecipeNode::Lambda {
+                    parameter_type: 0,
+                    body: 1,
+                },
+                RecipeNode::Bool(true),
+                RecipeNode::Application {
+                    function: 2,
+                    argument: 3,
+                },
+                RecipeNode::Epsilon { predicate: 2 },
+                RecipeNode::ConversionBeta {
+                    abstraction: 2,
+                    argument: 3,
+                },
+                RecipeNode::ConversionSymmetry { conversion: 6 },
+                RecipeNode::ConversionSymmetry { conversion: 7 },
+                RecipeNode::ConversionLambda {
+                    parameter_type: 0,
+                    body: 8,
+                },
+                RecipeNode::ConversionEta { function: 2 },
+                RecipeNode::ConversionEpsilon { predicate: 10 },
+                RecipeNode::EmptyContext,
+                RecipeNode::ConversionEquality {
+                    context: 12,
+                    conversion: 9,
+                },
+                RecipeNode::Persist { theorem: 13 },
+                RecipeNode::Namespace { name: None },
+                RecipeNode::ExportContext {
+                    namespace: 15,
+                    export: 0,
+                    context: 12,
+                    name: None,
+                },
+                RecipeNode::ExportTheorem {
+                    namespace: 15,
+                    export: 1,
+                    theorem: 13,
+                    name: None,
+                },
+            ],
+            15,
+        )
+        .unwrap();
+        assert_eq!(
+            SealedHolProofRecipe::from_untrusted_bytes(recipe.as_bytes()).unwrap(),
+            recipe
+        );
+        recipe.replay(&Kernel::ephemeral()).unwrap();
+    }
+
+    #[test]
+    fn theorem_transport_rechecks_the_conversion_endpoint_during_replay() {
+        let recipe = SealedHolProofRecipe::seal(
+            vec![
+                RecipeNode::Bool(true),
+                RecipeNode::EmptyContext,
+                RecipeNode::ConversionReflexivity { term: 0 },
+                RecipeNode::ConversionEquality {
+                    context: 1,
+                    conversion: 2,
+                },
+                RecipeNode::ConvertTheorem {
+                    theorem: 3,
+                    conversion: 2,
+                },
+                RecipeNode::Namespace { name: None },
+            ],
+            5,
+        )
+        .unwrap();
+        assert!(matches!(
+            recipe.replay(&Kernel::ephemeral()),
+            Err(HolProofRecipeError::Replay(message))
+                if message.contains("does not match conversion endpoint")
+        ));
     }
 
     #[test]
@@ -1387,6 +1870,14 @@ mod tests {
                 "unknown sealed recipe node tag"
             ))
         ));
+        for retired_tag in [5, 10] {
+            assert!(matches!(
+                SealedHolProofRecipe::from_untrusted_bytes(&[3, 0, 1, 0, 0, retired_tag]),
+                Err(HolProofRecipeError::Invalid(
+                    "unknown sealed recipe node tag"
+                ))
+            ));
+        }
 
         let mut truncated = schematic_binding_test_recipe().as_bytes().to_vec();
         truncated.pop();
@@ -1461,29 +1952,32 @@ mod tests {
                 RecipeNode::FreeTerm { symbol: 0, ty: 0 },
                 RecipeNode::FreeTerm { symbol: 1, ty: 0 },
                 RecipeNode::EmptyContext,
-                RecipeNode::Beta {
-                    context: 6,
+                RecipeNode::ConversionBeta {
                     abstraction: 2,
                     argument: 3,
                 },
+                RecipeNode::ConversionEquality {
+                    context: 6,
+                    conversion: 7,
+                },
                 RecipeNode::EmptyTermInstantiationMap,
                 RecipeNode::ExtendTermInstantiationMap {
-                    base: 8,
+                    base: 9,
                     variable: 3,
                     replacement: 5,
                 },
                 RecipeNode::ExtendTermInstantiationMap {
-                    base: 9,
+                    base: 10,
                     variable: 4,
                     replacement: 5,
                 },
                 RecipeNode::TermInstantiation {
-                    theorem: 7,
-                    instantiations: 10,
+                    theorem: 8,
+                    instantiations: 11,
                 },
                 RecipeNode::Namespace { name: None },
             ],
-            12,
+            13,
         )
         .unwrap();
         assert!(matches!(
