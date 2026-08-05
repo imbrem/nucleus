@@ -638,6 +638,11 @@ fn usage(output: &mut impl io::Write) -> io::Result<()> {
         output,
         "       nucleus --kernel-http ADDRESS ALLOWED_ORIGIN"
     )?;
+    #[cfg(not(target_arch = "wasm32"))]
+    writeln!(
+        output,
+        "       nucleus --hash-wasm-hol-http O256 COMPONENT ADDRESS ALLOWED_ORIGIN"
+    )?;
     writeln!(output, "       nucleus --help")
 }
 
@@ -730,6 +735,61 @@ fn run_kernel_http_arguments(
     server.serve().map_err(Into::into)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn run_hash_selected_wasm_http_arguments(
+    arguments: &mut impl Iterator<Item = std::ffi::OsString>,
+) -> Result<()> {
+    let expected = arguments
+        .next()
+        .ok_or("--hash-wasm-hol-http requires O256 COMPONENT ADDRESS ALLOWED_ORIGIN")?
+        .into_string()
+        .map_err(|_| "component O256 must be valid UTF-8")?;
+    let component = arguments
+        .next()
+        .ok_or("--hash-wasm-hol-http requires O256 COMPONENT ADDRESS ALLOWED_ORIGIN")?;
+    let address = arguments
+        .next()
+        .ok_or("--hash-wasm-hol-http requires O256 COMPONENT ADDRESS ALLOWED_ORIGIN")?
+        .into_string()
+        .map_err(|_| "native HTTP address must be valid UTF-8")?;
+    let allowed_origin = arguments
+        .next()
+        .ok_or("--hash-wasm-hol-http requires O256 COMPONENT ADDRESS ALLOWED_ORIGIN")?
+        .into_string()
+        .map_err(|_| "allowed origin must be valid UTF-8")?;
+    if arguments.next().is_some() {
+        return Err(
+            "unexpected arguments after --hash-wasm-hol-http O256 COMPONENT ADDRESS ALLOWED_ORIGIN"
+                .into(),
+        );
+    }
+
+    // The allowlist is fully bounded, hash-checked, validated, and compiled
+    // before the signed service or any session exists. This remains the
+    // same-process Wasmtime/JIT prototype tracked in #320.
+    let expected = O256::from_hex(&expected)?;
+    let limits = WasmtimeComponentLimits::default();
+    let bytes = read_bounded_component(Path::new(&component), limits.component_bytes)?;
+    let prepared = PreparedHolProofComponent::prepare(expected, &bytes, limits)?;
+    let mut executor = PrecompiledHolProofComponentExecutor::new();
+    executor.insert(prepared)?;
+    let server =
+        NativeHttpKernelServer::bind_with_hol_proof_components(address, allowed_origin, executor)?;
+    let address = server.local_addr()?;
+    let mut public_key = String::with_capacity(64);
+    for byte in server.identity().public_key() {
+        use std::fmt::Write as _;
+        write!(public_key, "{byte:02x}")?;
+    }
+    let mut output = io::stdout().lock();
+    writeln!(output, "url\thttp://{address}{SIGNED_KERNEL_HTTP_PATH}")?;
+    writeln!(output, "public_key\t{public_key}")?;
+    writeln!(output, "component\t{expected}")?;
+    output.flush()?;
+    drop(output);
+    server.serve().map_err(Into::into)
+}
+
 fn run() -> Result<()> {
     let mut arguments = env::args_os().skip(1);
     match arguments.next() {
@@ -803,6 +863,10 @@ fn run() -> Result<()> {
         }
         #[cfg(not(target_arch = "wasm32"))]
         Some(flag) if flag == "--kernel-http" => run_kernel_http_arguments(&mut arguments),
+        #[cfg(not(target_arch = "wasm32"))]
+        Some(flag) if flag == "--hash-wasm-hol-http" => {
+            run_hash_selected_wasm_http_arguments(&mut arguments)
+        }
         Some(flag) if flag == "-h" || flag == "--help" => {
             usage(&mut io::stdout().lock())?;
             Ok(())
@@ -1085,6 +1149,22 @@ mod tests {
         assert!(!output_path.exists());
         assert!(output.is_empty());
         fs::remove_file(component).unwrap();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn hash_selected_http_rejects_wrong_bytes_before_service_or_socket() {
+        let Some(component) = std::env::var_os("COVALENCE_HOL_GUEST_COMPONENT") else {
+            return;
+        };
+        let arguments = [
+            std::ffi::OsString::from(O256::from_bytes(b"wrong component").to_string()),
+            component,
+            std::ffi::OsString::from("127.0.0.1:0"),
+            std::ffi::OsString::from("https://repl.example"),
+        ];
+        let error = run_hash_selected_wasm_http_arguments(&mut arguments.into_iter()).unwrap_err();
+        assert!(error.to_string().contains("hash"));
     }
 
     #[test]

@@ -3,6 +3,7 @@ import { createReadStream } from "node:fs";
 import { createServer } from "node:http";
 import { extname, join } from "node:path";
 import { spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { createInterface } from "node:readline";
 import { stat } from "node:fs/promises";
 import test from "node:test";
@@ -55,6 +56,48 @@ async function launchKernel(context, allowedOrigin) {
   return { child, url: metadata.get("url"), key: metadata.get("public_key") };
 }
 
+async function launchHashKernel(context, allowedOrigin, component, digest) {
+  const child = spawn(
+    "cargo",
+    [
+      "run",
+      "--quiet",
+      "--locked",
+      "-p",
+      "covalence-bin-nucleus",
+      "--",
+      "--hash-wasm-hol-http",
+      digest,
+      component,
+      "127.0.0.1:0",
+      allowedOrigin,
+    ],
+    { cwd: repositoryRoot, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  let stderr = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+  context.after(() => {
+    if (child.exitCode === null) child.kill();
+  });
+  const metadata = new Map();
+  for await (const line of createInterface({ input: child.stdout })) {
+    const split = line.indexOf("\t");
+    if (split !== -1) metadata.set(line.slice(0, split), line.slice(split + 1));
+    if (
+      metadata.has("url") &&
+      metadata.has("public_key") &&
+      metadata.has("component")
+    )
+      break;
+  }
+  assert.equal(child.exitCode, null, stderr);
+  assert.equal(metadata.get("component"), digest);
+  return { child, url: metadata.get("url"), key: metadata.get("public_key") };
+}
+
 async function launchBrowser(context) {
   const executablePath = process.env.CHROMIUM_PATH;
   assert.ok(executablePath, "CHROMIUM_PATH is set by the Nix shell");
@@ -91,9 +134,16 @@ async function launchStaticServer(context) {
   return `http://127.0.0.1:${address.port}`;
 }
 
-async function runPage(browser, base, endpoint, key, mode = "round-trip") {
+async function runPage(
+  browser,
+  base,
+  endpoint,
+  key,
+  mode = "round-trip",
+  extra = {},
+) {
   const page = await browser.newPage();
-  const query = new URLSearchParams({ endpoint, key, mode });
+  const query = new URLSearchParams({ endpoint, key, mode, ...extra });
   await page.goto(`${base}/test/http-kernel.html?${query}`);
   try {
     await page.waitForFunction(
@@ -211,6 +261,52 @@ test("real Chromium imports a signed beta artifact from native HTTP", async (con
     kernel.child.exitCode,
     null,
     "CloseSession does not control the transport-owner server lifetime",
+  );
+});
+
+test("real Chromium runs only a provisioned component digest and rereads it", async (context) => {
+  const component = process.env.COVALENCE_HOL_GUEST_COMPONENT;
+  if (component === undefined) {
+    context.skip("COVALENCE_HOL_GUEST_COMPONENT is required");
+    return;
+  }
+  const digest = execFileSync("b3sum", [component], { encoding: "utf8" })
+    .trim()
+    .split(/\s+/, 1)[0];
+  assert.match(digest, /^[0-9a-f]{64}$/);
+  const componentBytes = (await stat(component)).size;
+  const base = await launchStaticServer(context);
+  const [kernel, browser] = await Promise.all([
+    launchHashKernel(context, base, component, digest),
+    launchBrowser(context),
+  ]);
+  const page = await runPage(
+    browser,
+    base,
+    kernel.url,
+    kernel.key,
+    "hash-component",
+    { component: digest, componentBytes: String(componentBytes) },
+  );
+  assert.equal(page.error, null);
+  assert.equal(page.outcomeUnknown, false);
+  const result = JSON.parse(page.result);
+  assert.equal(result.kind, "native-http-hash-selected-hol");
+  assert.equal(result.component, digest);
+  assert.equal(result.context, "0");
+  assert.equal(result.conclusion, "8");
+  assert.equal(result.independentInspection.importedTheoremReread, true);
+  assert.equal(result.independentInspection.unknownRejected, true);
+  assert.equal(result.independentInspection.componentBytesUploaded, false);
+  assert.ok(
+    Math.max(...result.independentInspection.requestByteLengths) <
+      componentBytes,
+    "HTTP requests contain bounded signed coordinates, never component bytes",
+  );
+  assert.equal(
+    kernel.child.exitCode,
+    null,
+    "closing the remote session leaves the transport-owner server alive",
   );
 });
 
