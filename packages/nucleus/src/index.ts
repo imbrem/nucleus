@@ -6,6 +6,7 @@ import initWasm, {
   WebRemoteProducedHol,
   WebRemoteReceivedHol,
   WebSignedKernelSession,
+  WebSignedKernelService,
 } from "../generated/nucleus.js";
 
 export { smoke, WebHolOutcome, WebKernel, WebOutcome, WebSignedKernelSession };
@@ -75,6 +76,7 @@ export class SignedKernelSessionClient {
     );
   }
 
+  /** Retries only the exact signed bytes retained after an ambiguous exchange. */
   async retryPending(): Promise<unknown> {
     const pending = this.#pending;
     if (pending === undefined) throw new Error("no signed command is pending");
@@ -112,6 +114,292 @@ export async function connectSignedKernel(
   const accepted = await transport.exchange(session.session_request());
   session.accept_session(accepted);
   return new SignedKernelSessionClient(transport, publicKey.slice(), session);
+}
+
+/** Caller-owned in-process endpoint driven through the same signed byte API. */
+export class InProcessSignedKernel implements SignedByteTransport {
+  readonly #service = new WebSignedKernelService();
+
+  private constructor() {}
+
+  static async create(): Promise<InProcessSignedKernel> {
+    await init();
+    return new InProcessSignedKernel();
+  }
+
+  publicKey(): Uint8Array {
+    return this.#service.public_key();
+  }
+
+  async exchange(bytes: Uint8Array): Promise<Uint8Array> {
+    if (bytes.byteLength > WebSignedKernelSession.max_message_bytes()) {
+      throw new Error(
+        "signed in-process message exceeds the shared codec bound",
+      );
+    }
+    const reply = this.#service.handle(bytes);
+    if (reply.byteLength > WebSignedKernelSession.max_message_bytes()) {
+      throw new Error("signed in-process reply exceeds the shared codec bound");
+    }
+    return reply;
+  }
+
+  connect(): Promise<SignedKernelSessionClient> {
+    return connectSignedKernel(this, this.publicKey());
+  }
+
+  close(): void {
+    this.#service.free();
+  }
+}
+
+export async function createInProcessSignedKernel(): Promise<InProcessSignedKernel> {
+  return InProcessSignedKernel.create();
+}
+
+export interface NativeHttpHolOptions {
+  endpoint: string;
+  expectedPublicKey: Uint8Array;
+  timeoutMs?: number;
+}
+
+export interface ManagedNativeHttpHolOutcome {
+  kind: "native-http-signed-hol-round-trip";
+  statement: string;
+  signer: string;
+  remoteConnection: string;
+  imageBytes: number;
+  importId: string;
+  namespace: string;
+  context: string;
+  conclusion: string;
+  /** Revalidates the retained artifact until `cleanup()` releases it. */
+  rereadImportedTheorem(): Promise<WebRemoteReceivedHol>;
+  cleanup(): Promise<void>;
+}
+
+export class SignedKernelTransportError extends Error {
+  constructor(
+    message: string,
+    readonly outcomeUnknown: boolean,
+    cause?: unknown,
+  ) {
+    super(message, { cause });
+    this.name = "SignedKernelTransportError";
+  }
+}
+
+/**
+ * Drives a pinned native producer and caller-owned signed receiver.
+ *
+ * This convenience flow abandons its session after any ambiguous failure.
+ * Callers which need recovery must use `SignedKernelSessionClient` and its
+ * exact-byte `retryPending()` operation instead.
+ */
+export async function runManagedNativeHttpSignedHol(
+  receiver: SignedKernelSessionClient,
+  receiverConnection: string,
+  options: NativeHttpHolOptions,
+): Promise<ManagedNativeHttpHolOutcome> {
+  await init();
+  const timeoutMs = options.timeoutMs ?? 10_000;
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs <= 0 ||
+    options.expectedPublicKey.byteLength !== 32
+  ) {
+    throw new Error(
+      "HTTP timeout must be positive and endpoint key must be 32 bytes",
+    );
+  }
+  const description = await signedFetch(
+    options.endpoint,
+    WebSignedKernelSession.describe_request(),
+    timeoutMs,
+    false,
+  );
+  const session = WebSignedKernelSession.begin(
+    options.expectedPublicKey,
+    description,
+  );
+  let produced: WebRemoteProducedHol | undefined;
+  let cleaned = false;
+  try {
+    const accepted = await signedFetch(
+      options.endpoint,
+      session.session_request(),
+      timeoutMs,
+      true,
+    );
+    acceptStatefulReply(() => session.accept_session(accepted));
+    const openReply = await signedFetch(
+      options.endpoint,
+      session.open_hol_command(),
+      timeoutMs,
+      true,
+    );
+    const remoteConnection = acceptStatefulReply(() =>
+      session.accept_open_hol(openReply),
+    );
+    const producedReply = await signedFetch(
+      options.endpoint,
+      session.produce_signed_hol_command(remoteConnection),
+      timeoutMs,
+      true,
+    );
+    produced = acceptStatefulReply(() =>
+      session.accept_produced_hol(producedReply),
+    );
+    const received = await receiver.receiveExternalHol(
+      receiverConnection,
+      0xffff_fffe,
+      options.expectedPublicKey,
+      produced,
+    );
+    const closeReply = await signedFetch(
+      options.endpoint,
+      session.close_hol_command(remoteConnection),
+      timeoutMs,
+      true,
+    );
+    acceptStatefulReply(() => session.accept_closed(closeReply));
+    const sessionClosed = await signedFetch(
+      options.endpoint,
+      session.close_session_command(),
+      timeoutMs,
+      true,
+    );
+    acceptStatefulReply(() => session.accept_session_closed(sessionClosed));
+    const artifact = produced;
+    return {
+      kind: "native-http-signed-hol-round-trip",
+      statement: artifact.statement(),
+      signer: artifact.signer(),
+      remoteConnection,
+      imageBytes: artifact.image().byteLength,
+      importId: received.import_id(),
+      namespace: received.namespace_id(),
+      context: received.context_id(),
+      conclusion: received.conclusion_id(),
+      rereadImportedTheorem: () => {
+        if (cleaned) {
+          return Promise.reject(
+            new Error("managed artifact was released by cleanup"),
+          );
+        }
+        return receiver.receiveExternalHol(
+          receiverConnection,
+          0xffff_fffe,
+          options.expectedPublicKey,
+          artifact,
+        );
+      },
+      async cleanup(): Promise<void> {
+        if (cleaned) return;
+        artifact.free();
+        session.free();
+        cleaned = true;
+      },
+    };
+  } catch (error) {
+    produced?.free();
+    session.free();
+    throw error;
+  }
+}
+
+function acceptStatefulReply<T>(accept: () => T): T {
+  try {
+    return accept();
+  } catch (error) {
+    throw new SignedKernelTransportError(
+      `native signed-kernel reply could not be accepted: ${String(error)}`,
+      true,
+      error,
+    );
+  }
+}
+
+async function signedFetch(
+  endpoint: string,
+  body: Uint8Array,
+  timeoutMs: number,
+  outcomeUnknown: boolean,
+): Promise<Uint8Array> {
+  if (body.byteLength > WebSignedKernelSession.max_message_bytes()) {
+    throw new SignedKernelTransportError("signed request exceeds bound", false);
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      mode: "cors",
+      body: body.slice().buffer as ArrayBuffer,
+      redirect: "error",
+      credentials: "omit",
+      cache: "no-store",
+      referrerPolicy: "no-referrer",
+      signal: controller.signal,
+      headers: { "content-type": "application/octet-stream" },
+    });
+    if (!response.ok)
+      throw new Error(`native kernel HTTP status ${response.status}`);
+    return await readBoundedResponse(
+      response,
+      WebSignedKernelSession.max_message_bytes(),
+    );
+  } catch (error) {
+    throw new SignedKernelTransportError(
+      `native signed-kernel request failed: ${String(error)}`,
+      outcomeUnknown,
+      error,
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function readBoundedResponse(
+  response: Response,
+  limit: number,
+): Promise<Uint8Array> {
+  const contentType = response.headers.get("content-type");
+  const mediaType = contentType?.split(";", 1)[0]?.trim().toLowerCase();
+  if (mediaType !== "application/octet-stream") {
+    throw new Error("signed response is not application/octet-stream");
+  }
+  const length = response.headers.get("content-length");
+  if (length !== null) {
+    const parsed = Number(length);
+    if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > limit) {
+      throw new Error(`signed response length exceeds ${limit} bytes`);
+    }
+  }
+  if (response.body === null) throw new Error("signed response has no body");
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > limit) {
+      await reader.cancel();
+      throw new Error(`signed response exceeds ${limit} bytes`);
+    }
+    chunks.push(value);
+  }
+  if (length !== null && total !== Number(length)) {
+    throw new Error("signed response body is truncated");
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
 export type SqlValue =
