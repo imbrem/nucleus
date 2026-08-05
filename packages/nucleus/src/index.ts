@@ -3,9 +3,10 @@ import init, {
   WebHolOutcome,
   WebKernel,
   WebOutcome,
+  WebReplDirectory,
 } from "../generated/nucleus.js";
 
-export { init, smoke, WebHolOutcome, WebKernel, WebOutcome };
+export { init, smoke, WebHolOutcome, WebKernel, WebOutcome, WebReplDirectory };
 
 export type SqlValue =
   | { kind: "null" }
@@ -102,6 +103,61 @@ export interface BrowserHolConnection {
 
 export type BrowserConnection = BrowserSqlConnection | BrowserHolConnection;
 
+declare const kernelIdBrand: unique symbol;
+declare const managedConnectionIdBrand: unique symbol;
+
+/** Directory-local opaque kernel endpoint ID. */
+export type KernelId = number & { readonly [kernelIdBrand]: true };
+
+/** Directory-local opaque connection ID. */
+export type ManagedConnectionId = number & {
+  readonly [managedConnectionIdBrand]: true;
+};
+
+export interface BrowserKernelEntry {
+  id: KernelId;
+  transport: string;
+  endpoint?: string;
+  publicKey: Uint8Array;
+}
+
+export interface BrowserConnectionEntry {
+  id: ManagedConnectionId;
+  kernelId: KernelId;
+  protocol: string;
+  remoteConnectionId?: string;
+}
+
+export interface ManagedBrowserSqlConnection extends BrowserSqlConnection {
+  readonly id: ManagedConnectionId;
+  readonly kernelId: KernelId;
+}
+
+export interface ManagedBrowserHolConnection extends BrowserHolConnection {
+  readonly id: ManagedConnectionId;
+  readonly kernelId: KernelId;
+}
+
+/** One independently keyed Worker endpoint owned by a top-level directory. */
+export interface BrowserKernelEndpoint {
+  readonly id: KernelId;
+  readonly signer: string;
+  readonly publicKey: Uint8Array;
+  openSql(): Promise<ManagedBrowserSqlConnection>;
+  openHol(): Promise<ManagedBrowserHolConnection>;
+  close(): Promise<void>;
+}
+
+/** Above-TCB coordinator for multiple independently keyed browser Workers. */
+export interface BrowserReplDirectory {
+  spawnWorker(endpoint?: string): Promise<BrowserKernelEndpoint>;
+  kernels(): Promise<BrowserKernelEntry[]>;
+  connections(): Promise<BrowserConnectionEntry[]>;
+  select(connection: ManagedConnectionId): Promise<void>;
+  active(): Promise<ManagedConnectionId | undefined>;
+  close(): Promise<void>;
+}
+
 export interface BrowserRepl {
   /** Opens a SQL connection. Retained as the original concise API. */
   open(): Promise<BrowserSqlConnection>;
@@ -111,6 +167,7 @@ export interface BrowserRepl {
 }
 
 type RequestBody =
+  | { operation: "identity" }
   | { operation: "open" }
   | { operation: "openHol" }
   | { operation: "close"; connection: number }
@@ -170,16 +227,20 @@ class WorkerRepl implements BrowserRepl {
     });
   }
 
-  async open(): Promise<BrowserSqlConnection> {
+  async open(): Promise<WorkerConnection> {
     return this.openSql();
   }
 
-  async openSql(): Promise<BrowserSqlConnection> {
+  identity(): Promise<{ signer: string; publicKey: Uint8Array }> {
+    return this.request({ operation: "identity" });
+  }
+
+  async openSql(): Promise<WorkerConnection> {
     const id = await this.request<number>({ operation: "open" });
     return new WorkerConnection(this, id);
   }
 
-  async openHol(): Promise<BrowserHolConnection> {
+  async openHol(): Promise<WorkerHolConnection> {
     const id = await this.request<number>({ operation: "openHol" });
     return new WorkerHolConnection(this, id);
   }
@@ -210,19 +271,209 @@ class WorkerRepl implements BrowserRepl {
   }
 }
 
+class WorkerDirectory implements BrowserReplDirectory {
+  readonly #state = init().then(() => new WebReplDirectory());
+  readonly #kernels = new Map<KernelId, DirectoryKernelEndpoint>();
+  #closed = false;
+
+  async spawnWorker(endpoint?: string): Promise<BrowserKernelEndpoint> {
+    if (this.#closed) throw new Error("browser REPL directory is closed");
+    const worker = new WorkerRepl();
+    try {
+      const identity = await worker.identity();
+      const state = await this.#state;
+      const id = state.register_kernel(
+        "worker",
+        endpoint,
+        identity.publicKey,
+      ) as KernelId;
+      const kernel = new DirectoryKernelEndpoint(
+        this,
+        worker,
+        id,
+        identity.signer,
+        identity.publicKey,
+      );
+      this.#kernels.set(id, kernel);
+      return kernel;
+    } catch (error) {
+      worker.close();
+      throw error;
+    }
+  }
+
+  async kernels(): Promise<BrowserKernelEntry[]> {
+    const state = await this.#state;
+    const rows: BrowserKernelEntry[] = [];
+    for (let index = 0; index < state.kernel_count(); index++) {
+      const row = state.kernel(index);
+      try {
+        rows.push({
+          id: Number(row.id()) as KernelId,
+          transport: row.transport(),
+          endpoint: row.endpoint(),
+          publicKey: row.public_key(),
+        });
+      } finally {
+        row.free();
+      }
+    }
+    return rows;
+  }
+
+  async connections(): Promise<BrowserConnectionEntry[]> {
+    const state = await this.#state;
+    const rows: BrowserConnectionEntry[] = [];
+    for (let index = 0; index < state.connection_count(); index++) {
+      const row = state.connection(index);
+      try {
+        rows.push({
+          id: Number(row.id()) as ManagedConnectionId,
+          kernelId: Number(row.kernel_id()) as KernelId,
+          protocol: row.protocol(),
+          remoteConnectionId: row.remote_connection_id(),
+        });
+      } finally {
+        row.free();
+      }
+    }
+    return rows;
+  }
+
+  async select(connection: ManagedConnectionId): Promise<void> {
+    (await this.#state).select_connection(connection);
+  }
+
+  async active(): Promise<ManagedConnectionId | undefined> {
+    return (await this.#state).active_connection() as
+      | ManagedConnectionId
+      | undefined;
+  }
+
+  async close(): Promise<void> {
+    if (this.#closed) return;
+    const kernels = [...this.#kernels.values()];
+    for (const kernel of kernels) await kernel.closeAll();
+    this.#closed = true;
+    (await this.#state).free();
+  }
+
+  async insertConnection(
+    kernelId: KernelId,
+    protocol: string,
+    remoteConnectionId: number,
+  ): Promise<ManagedConnectionId> {
+    const state = await this.#state;
+    return state.insert_connection(
+      kernelId,
+      protocol,
+      String(remoteConnectionId),
+    ) as ManagedConnectionId;
+  }
+
+  async removeConnection(id: ManagedConnectionId): Promise<void> {
+    (await this.#state).remove_connection(id);
+  }
+
+  async unregisterKernel(id: KernelId): Promise<void> {
+    (await this.#state).unregister_kernel(id);
+    this.#kernels.delete(id);
+  }
+}
+
+class DirectoryKernelEndpoint implements BrowserKernelEndpoint {
+  readonly #connections = new Set<DirectoryConnection>();
+  #closed = false;
+
+  constructor(
+    private readonly directory: WorkerDirectory,
+    private readonly worker: WorkerRepl,
+    readonly id: KernelId,
+    readonly signer: string,
+    readonly publicKey: Uint8Array,
+  ) {}
+
+  async openSql(): Promise<ManagedBrowserSqlConnection> {
+    this.#requireOpen();
+    const remote = await this.worker.openSql();
+    try {
+      const id = await this.directory.insertConnection(
+        this.id,
+        "nucleus/sql",
+        remote.connectionId,
+      );
+      const connection = new DirectorySqlConnection(this, remote, id);
+      this.#connections.add(connection);
+      return connection;
+    } catch (error) {
+      await remote.close();
+      throw error;
+    }
+  }
+
+  async openHol(): Promise<ManagedBrowserHolConnection> {
+    this.#requireOpen();
+    const remote = await this.worker.openHol();
+    return this.adoptHol(remote);
+  }
+
+  async adoptHol(
+    remote: WorkerHolConnection,
+  ): Promise<ManagedBrowserHolConnection> {
+    try {
+      const id = await this.directory.insertConnection(
+        this.id,
+        "nucleus/hol",
+        remote.connectionId,
+      );
+      const connection = new DirectoryHolConnection(this, remote, id);
+      this.#connections.add(connection);
+      return connection;
+    } catch (error) {
+      await remote.close();
+      throw error;
+    }
+  }
+
+  async close(): Promise<void> {
+    this.#requireOpen();
+    if (this.#connections.size !== 0) {
+      throw new Error("kernel still has open connections");
+    }
+    await this.directory.unregisterKernel(this.id);
+    this.#closed = true;
+    this.worker.close();
+  }
+
+  async closedConnection(connection: DirectoryConnection): Promise<void> {
+    this.#connections.delete(connection);
+    await this.directory.removeConnection(connection.id);
+  }
+
+  async closeAll(): Promise<void> {
+    if (this.#closed) return;
+    for (const connection of [...this.#connections]) await connection.close();
+    await this.close();
+  }
+
+  #requireOpen(): void {
+    if (this.#closed) throw new Error("kernel endpoint is closed");
+  }
+}
+
 class WorkerConnection implements BrowserSqlConnection {
   readonly kind = "sql" as const;
   #closed = false;
 
   constructor(
     private readonly repl: WorkerRepl,
-    private readonly connection: number,
+    readonly connectionId: number,
   ) {}
 
   run(sql: string): Promise<SqlOutcome> {
     return this.#request({
       operation: "run",
-      connection: this.connection,
+      connection: this.connectionId,
       sql,
     });
   }
@@ -230,7 +481,7 @@ class WorkerConnection implements BrowserSqlConnection {
   putImage(bytes: Uint8Array): Promise<string> {
     const copy = bytes.slice();
     return this.#request(
-      { operation: "putImage", connection: this.connection, bytes: copy },
+      { operation: "putImage", connection: this.connectionId, bytes: copy },
       [copy.buffer],
     );
   }
@@ -238,7 +489,7 @@ class WorkerConnection implements BrowserSqlConnection {
   attachImage(hash: string, schema: string): Promise<void> {
     return this.#request({
       operation: "attachImage",
-      connection: this.connection,
+      connection: this.connectionId,
       hash,
       schema,
     });
@@ -247,7 +498,7 @@ class WorkerConnection implements BrowserSqlConnection {
   loadUrl(url: string, schema: string): Promise<string> {
     return this.#request({
       operation: "loadUrl",
-      connection: this.connection,
+      connection: this.connectionId,
       url,
       schema,
     });
@@ -256,7 +507,7 @@ class WorkerConnection implements BrowserSqlConnection {
   serializeMain(): Promise<Uint8Array> {
     return this.#request({
       operation: "serializeMain",
-      connection: this.connection,
+      connection: this.connectionId,
     });
   }
 
@@ -265,7 +516,7 @@ class WorkerConnection implements BrowserSqlConnection {
     this.#closed = true;
     await this.repl.request({
       operation: "close",
-      connection: this.connection,
+      connection: this.connectionId,
     });
   }
 
@@ -282,13 +533,13 @@ class WorkerHolConnection implements BrowserHolConnection {
 
   constructor(
     private readonly repl: WorkerRepl,
-    private readonly connection: number,
+    readonly connectionId: number,
   ) {}
 
   run(recipe: string): Promise<HolOutcome> {
     return this.#request({
       operation: "runHol",
-      connection: this.connection,
+      connection: this.connectionId,
       recipe,
     });
   }
@@ -296,7 +547,7 @@ class WorkerHolConnection implements BrowserHolConnection {
   async runSignedRoundTrip(): Promise<SignedHolOutcome> {
     const wire = await this.#request<SignedHolWireOutcome>({
       operation: "runSignedHolRoundTrip",
-      connection: this.connection,
+      connection: this.connectionId,
     });
     const { receiverConnection, ...outcome } = wire;
     return {
@@ -308,7 +559,7 @@ class WorkerHolConnection implements BrowserHolConnection {
   produceSignedArtifact(): Promise<ProducedSignedHol> {
     return this.#request({
       operation: "produceSignedHolArtifact",
-      connection: this.connection,
+      connection: this.connectionId,
     });
   }
 
@@ -335,7 +586,7 @@ class WorkerHolConnection implements BrowserHolConnection {
     return this.#request(
       {
         operation: "receiveSignedHolArtifact",
-        connection: this.connection,
+        connection: this.connectionId,
         artifact: transported,
       },
       [
@@ -351,7 +602,7 @@ class WorkerHolConnection implements BrowserHolConnection {
     this.#closed = true;
     await this.repl.request({
       operation: "close",
-      connection: this.connection,
+      connection: this.connectionId,
     });
   }
 
@@ -362,7 +613,103 @@ class WorkerHolConnection implements BrowserHolConnection {
   }
 }
 
+type DirectoryConnection = DirectorySqlConnection | DirectoryHolConnection;
+
+class DirectorySqlConnection implements ManagedBrowserSqlConnection {
+  readonly kind = "sql" as const;
+  readonly kernelId: KernelId;
+  #closed = false;
+
+  constructor(
+    private readonly kernel: DirectoryKernelEndpoint,
+    private readonly remote: WorkerConnection,
+    readonly id: ManagedConnectionId,
+  ) {
+    this.kernelId = kernel.id;
+  }
+
+  run(sql: string): Promise<SqlOutcome> {
+    return this.remote.run(sql);
+  }
+
+  putImage(bytes: Uint8Array): Promise<string> {
+    return this.remote.putImage(bytes);
+  }
+
+  attachImage(hash: string, schema: string): Promise<void> {
+    return this.remote.attachImage(hash, schema);
+  }
+
+  loadUrl(url: string, schema: string): Promise<string> {
+    return this.remote.loadUrl(url, schema);
+  }
+
+  serializeMain(): Promise<Uint8Array> {
+    return this.remote.serializeMain();
+  }
+
+  async close(): Promise<void> {
+    if (this.#closed) return;
+    await this.remote.close();
+    this.#closed = true;
+    await this.kernel.closedConnection(this);
+  }
+}
+
+class DirectoryHolConnection implements ManagedBrowserHolConnection {
+  readonly kind = "hol" as const;
+  readonly kernelId: KernelId;
+  #closed = false;
+
+  constructor(
+    private readonly kernel: DirectoryKernelEndpoint,
+    private readonly remote: WorkerHolConnection,
+    readonly id: ManagedConnectionId,
+  ) {
+    this.kernelId = kernel.id;
+  }
+
+  run(recipe: string): Promise<HolOutcome> {
+    return this.remote.run(recipe);
+  }
+
+  async runSignedRoundTrip(): Promise<SignedHolOutcome> {
+    // The legacy convenience still creates its receiver in the same Worker,
+    // but the coordinator adopts that connection so lifecycle inspection stays
+    // complete. Inter-kernel transfer uses the explicit produce/receive pair.
+    const outcome = await this.remote.runSignedRoundTrip();
+    const receiver = await this.kernel.adoptHol(
+      outcome.receiver as WorkerHolConnection,
+    );
+    return { ...outcome, receiver };
+  }
+
+  produceSignedArtifact(): Promise<ProducedSignedHol> {
+    return this.remote.produceSignedArtifact();
+  }
+
+  receiveSignedArtifact(
+    artifact: SignedHolArtifact,
+  ): Promise<ReceivedHolSnapshot> {
+    // This call is the explicit trust action. Registering or opening an
+    // endpoint never imports its key into a Nucleus connection.
+    return this.remote.receiveSignedArtifact(artifact);
+  }
+
+  async close(): Promise<void> {
+    if (this.#closed) return;
+    await this.remote.close();
+    this.#closed = true;
+    await this.kernel.closedConnection(this);
+  }
+}
+
 /** Starts a browser REPL whose independently opened connections live in one Worker. */
 export function createBrowserRepl(): BrowserRepl {
   return new WorkerRepl();
+}
+
+/** Starts an empty coordinator which can own multiple keyed Worker kernels. */
+export function createBrowserReplDirectory(): BrowserReplDirectory {
+  return new WorkerDirectory();
 }

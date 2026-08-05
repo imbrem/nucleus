@@ -10,6 +10,7 @@ import init, {
 import type { SignedHolArtifact } from "./index.js";
 
 type Request =
+  | { id: number; operation: "identity" }
   | { id: number; operation: "open" }
   | { id: number; operation: "openHol" }
   | { id: number; operation: "close"; connection: number }
@@ -75,6 +76,11 @@ globalThis.addEventListener(
 async function execute(request: Request): Promise<unknown> {
   const connection = await kernel;
   switch (request.operation) {
+    case "identity":
+      return {
+        signer: connection.signer_id(),
+        publicKey: connection.public_key(),
+      };
     case "open":
       return connection.open_connection();
     case "openHol":
@@ -137,6 +143,16 @@ async function execute(request: Request): Promise<unknown> {
 
 function transferables(value: unknown): ArrayBuffer[] {
   if (value instanceof Uint8Array) return [value.buffer as ArrayBuffer];
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "signer" in value &&
+    "publicKey" in value
+  ) {
+    return [
+      (value as { publicKey: Uint8Array }).publicKey.buffer as ArrayBuffer,
+    ];
+  }
   if (
     typeof value === "object" &&
     value !== null &&
