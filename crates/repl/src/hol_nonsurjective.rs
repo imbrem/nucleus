@@ -621,6 +621,7 @@ fn derive_right_conjunct(
 /// Signed extension containing the branded right-conjunct derivation.
 pub struct SignedNonsurjectiveConjunct {
     artifact: SignedHolArtifact,
+    natlike_namespace: covalence_nucleus::NamespaceId,
     context: ContextId,
     inherited_infinity: TermId,
     conclusion: TermId,
@@ -631,6 +632,12 @@ impl SignedNonsurjectiveConjunct {
     #[must_use]
     pub const fn artifact(&self) -> &SignedHolArtifact {
         &self.artifact
+    }
+
+    /// Returns the exact inherited namespace containing the `NatLike` syntax.
+    #[must_use]
+    pub const fn natlike_namespace(&self) -> covalence_nucleus::NamespaceId {
+        self.natlike_namespace
     }
 
     /// Returns the empty theorem context.
@@ -898,6 +905,7 @@ pub fn produce_signed_nonsurjective_conjunct(
             public_key: attestation.public_key().to_vec(),
             signature: attestation.signature().to_vec(),
         },
+        natlike_namespace: source_namespace,
         context: source_artifact.context(),
         inherited_infinity: source_artifact.infinity(),
         conclusion: plan.right_conjunct,
@@ -921,6 +929,20 @@ pub fn produce_and_retain_signed_nonsurjective_conjunct(
     SignedHolRoundTripError,
 > {
     let artifact = produce_signed_nonsurjective_conjunct(producer)?;
+    let (owner, retained) = retain_signed_nonsurjective_conjunct(producer, directory, &artifact)?;
+    Ok((artifact, owner, retained))
+}
+
+/// Authenticates and retains one already-produced signed conjunct derivation.
+///
+/// # Errors
+///
+/// Returns the first authentication, trust, import, receiver, or directory error.
+pub fn retain_signed_nonsurjective_conjunct(
+    producer: &Kernel,
+    directory: &mut Repl<LocalConnection>,
+    artifact: &SignedNonsurjectiveConjunct,
+) -> Result<(ConnectionId, RetainedReceivedHolSnapshot), SignedHolRoundTripError> {
     let expected = directory
         .expected_kernel_identity(KernelId::LOCAL)
         .map_err(|error| SignedHolRoundTripError::at("nonsurjective-signer-selected", error))?;
@@ -945,7 +967,7 @@ pub fn produce_and_retain_signed_nonsurjective_conjunct(
         pinned,
         i64::MAX,
     )?;
-    Ok((artifact, owner, retained))
+    Ok((owner, retained))
 }
 
 #[cfg(test)]
