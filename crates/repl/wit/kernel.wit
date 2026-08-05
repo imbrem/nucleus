@@ -1,0 +1,67 @@
+package covalence:kernel@0.1.0;
+
+/// The smallest kernel surface needed by the signed HOL demonstration.
+interface hol {
+    record kernel-identity {
+        /// Opaque identifier interpreted only by the host directory.
+        directory-id: u32,
+        signer: string,
+        public-key: list<u8>,
+    }
+
+    /// An untrusted transport value. It conveys no authority by itself.
+    record signed-artifact {
+        namespace: string,
+        image: list<u8>,
+        schema: string,
+        image-hash: string,
+        signer: string,
+        public-key: list<u8>,
+        signature: list<u8>,
+    }
+
+    record produced {
+        phases: list<string>,
+        statement: string,
+        conclusion: string,
+        artifact: signed-artifact,
+    }
+
+    record received {
+        phases: list<string>,
+        import-id: string,
+        namespace: string,
+        context: string,
+        conclusion: string,
+    }
+
+    /// Authenticated transport state. Creating this resource does not trust,
+    /// attach, import, or otherwise mutate the receiving connection.
+    resource pinned-artifact {
+        expected-directory-id: func() -> u32;
+        signer: func() -> string;
+        trust-import: func() -> result<received, string>;
+        abandon: func();
+    }
+
+    resource connection {
+        /// Prove beta, persist the theorem, export, snapshot, and sign.
+        beta-sign-export: func() -> result<produced, string>;
+
+        /// Authenticate against a directory-selected producer without trust.
+        authenticate: func(
+            expected-directory-id: u32,
+            artifact: signed-artifact,
+        ) -> result<pinned-artifact, string>;
+
+        /// Diagnostic state fingerprint used to verify authentication purity.
+        state-image-hash: func() -> result<string, string>;
+    }
+
+    identity: func() -> kernel-identity;
+    open: func() -> result<connection, string>;
+}
+
+world kernel {
+    export hol;
+}
