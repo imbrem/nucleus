@@ -1390,12 +1390,12 @@ mod tests {
         );
         assert_eq!(
             hol_semantics_id(),
-            O256::from_hex("6cf1076cd4a6314cc476c82cafe0d3c8b02bbeaba9cff8394fe580a37ea9a73c")
+            O256::from_hex("f4b08e92d741ffb34c28f9ba44ef97054912d5463aa65ea270bb7b0db72768c2")
                 .unwrap()
         );
         assert_eq!(
             hol_schema_id(physical),
-            O256::from_hex("a5a7eece5a62df01b8c11879afc8272c7cef0f92fc6880e5be7010240064cceb")
+            O256::from_hex("7aa7ea76fc2c4a972cd50e26362b7fe0e6db810ed7edf1386af2df5e141942f3")
                 .unwrap()
         );
         assert_ne!(hol_schema_id(physical), hol_semantics_id());

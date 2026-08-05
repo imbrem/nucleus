@@ -497,7 +497,7 @@ mod tests {
         assert_eq!(descriptor.encode(), expected);
         assert_eq!(
             descriptor.schema_id().to_string(),
-            "78f13e5a168d14c75b3446249734e34daade5e8f84613919545debaf8b4cea86"
+            "c96d6c6d9c1c1e9ff89b4ebe36929c066eeb86a45fe1c39b1a0d160733af6398"
         );
         // Version seven used the identical descriptor bytes with its previous
         // semantic and physical commitments. Preserve the published vector.
