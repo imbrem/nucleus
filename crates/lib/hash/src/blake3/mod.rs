@@ -2,9 +2,17 @@
 
 #[cfg(feature = "blake3")]
 mod cv;
+#[cfg(feature = "blake3")]
+mod partial;
 
 #[cfg(feature = "blake3")]
 pub use cv::{Blake3Cv, Blake3Merkle};
+#[cfg(feature = "blake3")]
+pub use partial::{
+    Blake3LeafMask, Blake3LeafMaskHash, Blake3PartialRoot, Blake3PartialRootNamespace,
+    Blake3RangeError, Blake3RangeSource, Blake3Snapshot, Blake3SnapshotError, Blake3SnapshotRoot,
+    CachedBlake3Source, Fill,
+};
 
 use crate::{Namespace, O256, Obj, Opaque, RootedNamespace};
 
