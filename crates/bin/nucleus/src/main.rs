@@ -135,6 +135,55 @@ fn run_managed_signed_hol_round_trip(
     ))
 }
 
+fn run_interkernel_hol(output: &mut impl io::Write) -> Result<()> {
+    let producer_kernel = Kernel::ephemeral();
+    let receiver_kernel = Kernel::ephemeral();
+    let mut directory = Repl::empty()?;
+    let producer_endpoint = directory.register_kernel(
+        "local",
+        Some("producer"),
+        producer_kernel.verifying_key().as_bytes(),
+    )?;
+    let receiver_endpoint = directory.register_kernel(
+        "local",
+        Some("receiver"),
+        receiver_kernel.verifying_key().as_bytes(),
+    )?;
+    let source = LocalConnection::Hol(producer_kernel.open_hol(AllowAll)?);
+    let source_id = directory.insert_at(producer_endpoint, source.protocol(), Some("1"), source)?;
+    let target = LocalConnection::Hol(receiver_kernel.open_hol(AllowAll)?);
+    let target_id = directory.insert_at(receiver_endpoint, target.protocol(), Some("1"), target)?;
+
+    let artifact_bundle =
+        produce_signed_hol_artifact(&producer_kernel, directory.get_mut(source_id)?.hol_mut()?)?;
+    let imported = receive_signed_hol_artifact(
+        directory.get_mut(target_id)?.hol_mut()?,
+        artifact_bundle.artifact(),
+    )?;
+
+    writeln!(output, "producer_kernel\t{producer_endpoint}")?;
+    writeln!(output, "receiver_kernel\t{receiver_endpoint}")?;
+    writeln!(
+        output,
+        "producer_signer\t{}",
+        artifact_bundle.artifact().signer()
+    )?;
+    writeln!(output, "receiver_signer\t{}", receiver_kernel.key_id())?;
+    writeln!(output, "connections\t{}", directory.connections()?.len())?;
+    writeln!(
+        output,
+        "receiver_phases\t{}",
+        covalence_repl::SIGNED_HOL_PHASES[3..].join(",")
+    )?;
+    writeln!(
+        output,
+        "imported_theorem\t{}\t{}",
+        imported.context_id(),
+        imported.conclusion_id()
+    )?;
+    Ok(())
+}
+
 fn load_image(
     repl: &mut LocalRepl,
     output: &mut impl io::Write,
@@ -328,6 +377,7 @@ fn usage(output: &mut impl io::Write) -> io::Result<()> {
     writeln!(output, "usage: nucleus [-c SQL]")?;
     writeln!(output, "       nucleus --hol RECIPE")?;
     writeln!(output, "       nucleus --signed-hol PATH")?;
+    writeln!(output, "       nucleus --interkernel-hol")?;
     writeln!(output, "       nucleus --help")
 }
 
@@ -378,6 +428,12 @@ fn run() -> Result<()> {
             print_signed_hol_outcome(&mut io::stdout().lock(), &outcome)?;
             writeln!(io::stdout().lock(), "receiver_connection\t{receiver}")?;
             write_signed_hol_artifacts(&mut io::stdout().lock(), &path, &outcome)
+        }
+        Some("--interkernel-hol") => {
+            if arguments.next().is_some() {
+                return Err("unexpected arguments after --interkernel-hol".into());
+            }
+            run_interkernel_hol(&mut io::stdout().lock())
         }
         Some("-h" | "--help") => {
             usage(&mut io::stdout().lock())?;
@@ -524,6 +580,20 @@ mod tests {
         assert!(output.contains("theorem-read"));
         assert!(output.contains("statement\t(lambda x:bool. x) true = true\n"));
         assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn transfers_a_signed_theorem_between_registered_local_kernels() {
+        let mut output = Vec::new();
+        run_interkernel_hol(&mut output).expect("run inter-kernel demo");
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("producer_kernel\t1\n"));
+        assert!(output.contains("receiver_kernel\t2\n"));
+        assert!(output.contains("connections\t2\n"));
+        assert!(output.contains(
+            "receiver_phases\timage-size-checked,signature-authenticated,image-detached-validated,signer-trusted,snapshot-accepted,namespace-imported,theorem-read\n"
+        ));
+        assert!(output.contains("imported_theorem\t0\t8\n"));
     }
 
     #[test]

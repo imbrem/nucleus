@@ -165,6 +165,23 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
     "namespace-imported",
     "theorem-read",
   ]);
+  assert.equal(interkernelResult.registeredWithoutTrust, true);
+  assert.equal(interkernelResult.selectedIndependently, true);
+  assert.equal(new Set(interkernelResult.kernelIds).size, 2);
+  assert.deepEqual(
+    new Set(interkernelResult.connectionKernels),
+    new Set(interkernelResult.kernelIds),
+  );
+  assert.match(interkernelResult.liveKernelCloseError, /open connections/);
+  assert.deepEqual(interkernelResult.afterProducerClose, {
+    kernels: 1,
+    connections: 3,
+  });
+  assert.equal(interkernelResult.receiverSurvivedProducerClose, true);
+  assert.deepEqual(interkernelResult.afterIndependentClose, {
+    kernels: 0,
+    connections: 0,
+  });
   assert.match(interkernelResult.wrongBytesError, /signature-authenticated/);
   assert.match(
     interkernelResult.wrongSignatureError,

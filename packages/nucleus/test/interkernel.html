@@ -6,24 +6,42 @@
   </head>
   <body>
     <script type="module">
-      import { createBrowserRepl } from "../dist/index.js";
+      import { createBrowserReplDirectory } from "../dist/index.js";
 
-      const producerRepl = createBrowserRepl();
-      const receiverRepl = createBrowserRepl();
+      const directory = createBrowserReplDirectory();
+      let producerKernel;
+      let receiverKernel;
       let producer;
       let receiver;
       let receiverProbe;
       let wrongNamespaceReceiver;
       try {
-        producer = await producerRepl.openHol();
-        receiver = await receiverRepl.openHol();
-        receiverProbe = await receiverRepl.openHol();
-        wrongNamespaceReceiver = await receiverRepl.openHol();
+        producerKernel = await directory.spawnWorker("worker:producer");
+        receiverKernel = await directory.spawnWorker("worker:receiver");
+        producer = await producerKernel.openHol();
+        receiver = await receiverKernel.openHol();
+        receiverProbe = await receiverKernel.openHol();
+        wrongNamespaceReceiver = await receiverKernel.openHol();
+
+        const registeredKernels = await directory.kernels();
+        const registeredConnections = await directory.connections();
+        await directory.select(producer.id);
+        const selectedProducer = (await directory.active()) === producer.id;
+        await directory.select(receiver.id);
+        const selectedReceiver = (await directory.active()) === receiver.id;
+        let liveKernelCloseError = "";
+        try {
+          await producerKernel.close();
+        } catch (error) {
+          liveKernelCloseError = String(error);
+        }
 
         const produced = await producer.produceSignedArtifact();
         const receiverProduced = await receiverProbe.produceSignedArtifact();
         const distinctKernels =
-          produced.artifact.signer !== receiverProduced.artifact.signer;
+          produced.artifact.signer !== receiverProduced.artifact.signer &&
+          produced.artifact.signer === producerKernel.signer &&
+          receiverProduced.artifact.signer === receiverKernel.signer;
 
         const originalImageLength = produced.artifact.image.byteLength;
         const originalPublicKeyLength = produced.artifact.publicKey.byteLength;
@@ -67,12 +85,42 @@
           wrongNamespaceError = String(error);
         }
 
+        await producer.close();
+        await producerKernel.close();
+        const afterProducerClose = {
+          kernels: (await directory.kernels()).length,
+          connections: (await directory.connections()).length,
+        };
+        const receiverAfterProducerClose = await receiver.run("truth");
+        await receiver.close();
+        await receiverProbe.close();
+        await wrongNamespaceReceiver.close();
+        await receiverKernel.close();
+        const afterIndependentClose = {
+          kernels: (await directory.kernels()).length,
+          connections: (await directory.connections()).length,
+        };
+
         document.body.dataset.result = JSON.stringify({
           distinctKernels,
           producerSigner: produced.artifact.signer,
           receiverSigner: receiverProduced.artifact.signer,
           producerPhases: produced.phases,
           receiverPhases: received.phases,
+          registeredWithoutTrust:
+            registeredKernels.length === 2 &&
+            registeredConnections.length === 4 &&
+            !produced.phases.includes("signer-trusted"),
+          selectedIndependently: selectedProducer && selectedReceiver,
+          kernelIds: registeredKernels.map(({ id }) => id),
+          connectionKernels: registeredConnections.map(
+            ({ kernelId }) => kernelId,
+          ),
+          liveKernelCloseError,
+          afterProducerClose,
+          receiverSurvivedProducerClose:
+            receiverAfterProducerClose.kind === "hol-theorem",
+          afterIndependentClose,
           wrongBytesError,
           wrongSignatureError,
           wrongNamespaceError,
@@ -92,8 +140,7 @@
         await receiver?.close();
         await receiverProbe?.close();
         await wrongNamespaceReceiver?.close();
-        producerRepl.close();
-        receiverRepl.close();
+        await directory.close();
       }
     </script>
   </body>

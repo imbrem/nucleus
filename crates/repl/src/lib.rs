@@ -62,6 +62,63 @@ impl ConnectionId {
     }
 }
 
+/// Opaque process-local identifier for a kernel endpoint in a REPL directory.
+///
+/// It is deliberately unrelated to a kernel's public-key identity: the same
+/// process may expose several keyed endpoints, and transports may reconnect an
+/// endpoint without changing the rows which describe it.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct KernelId(i64);
+
+impl KernelId {
+    /// The kernel installed by [`Repl::new`].
+    pub const LOCAL: Self = Self(0);
+
+    /// Creates an ID from the browser ABI's unsigned representation.
+    #[must_use]
+    pub const fn from_u32(id: u32) -> Self {
+        Self(id as i64)
+    }
+
+    /// Returns the integer stored in the REPL state database.
+    #[must_use]
+    pub const fn get(self) -> i64 {
+        self.0
+    }
+}
+
+impl fmt::Display for KernelId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+/// Inspectable metadata for one registered kernel endpoint.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct KernelEntry {
+    /// Directory-local opaque ID.
+    pub id: KernelId,
+    /// Adapter-defined transport name such as `local` or `worker`.
+    pub transport: String,
+    /// Optional adapter-defined endpoint locator.
+    pub endpoint: Option<String>,
+    /// Exact Ed25519 public key advertised by the endpoint.
+    pub public_key: Vec<u8>,
+}
+
+/// Inspectable metadata for one managed connection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConnectionEntry {
+    /// Directory-local opaque ID.
+    pub id: ConnectionId,
+    /// Kernel endpoint which owns the runtime connection.
+    pub kernel: KernelId,
+    /// Protocol label interpreted by the adapter.
+    pub protocol: String,
+    /// Optional endpoint-local connection coordinate.
+    pub remote_connection_id: Option<String>,
+}
+
 impl fmt::Display for ConnectionId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(formatter)
@@ -75,6 +132,24 @@ pub struct Repl<C> {
 }
 
 impl<C> Repl<C> {
+    /// Opens an empty, in-memory REPL directory with no implied kernel.
+    ///
+    /// This is useful for a coordinator which owns endpoints rather than being
+    /// a kernel itself.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the raw Neutron connection or directory schema
+    /// cannot be opened.
+    pub fn empty() -> Result<Self, ReplError> {
+        let state = covalence_neutron::Connection::open_in_memory()?;
+        state.sqlite().execute_batch(SCHEMA)?;
+        Ok(Self {
+            state,
+            connections: HashMap::new(),
+        })
+    }
+
     /// Opens an empty, in-memory REPL state database.
     ///
     /// # Errors
@@ -82,18 +157,14 @@ impl<C> Repl<C> {
     /// Returns an error if the raw Neutron connection or state schema cannot
     /// be opened.
     pub fn new(local_public_key: &[u8]) -> Result<Self, ReplError> {
-        let state = covalence_neutron::Connection::open_in_memory()?;
-        let transaction = state.sqlite().unchecked_transaction()?;
-        transaction.execute_batch(SCHEMA)?;
+        let repl = Self::empty()?;
+        let transaction = repl.state.sqlite().unchecked_transaction()?;
         transaction.execute(
             "INSERT INTO repl_kernel(kernel_id, transport, public_key) VALUES (0, 'local', ?1)",
             [local_public_key],
         )?;
         transaction.commit()?;
-        Ok(Self {
-            state,
-            connections: HashMap::new(),
-        })
+        Ok(repl)
     }
 
     /// Returns the raw state connection for inspection and debugging.
@@ -108,10 +179,51 @@ impl<C> Repl<C> {
     ///
     /// Returns an error if the directory cannot be updated.
     pub fn insert(&mut self, protocol: &str, connection: C) -> Result<ConnectionId, ReplError> {
+        self.insert_at(KernelId::LOCAL, protocol, None, connection)
+    }
+
+    /// Registers a keyed kernel endpoint without granting it logical trust.
+    ///
+    /// Registration is directory bookkeeping only. In particular, the public
+    /// key is not inserted into any Nucleus connection's trust relation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the endpoint metadata is rejected by the directory.
+    pub fn register_kernel(
+        &self,
+        transport: &str,
+        endpoint: Option<&str>,
+        public_key: &[u8],
+    ) -> Result<KernelId, ReplError> {
         let transaction = self.state.sqlite().unchecked_transaction()?;
         transaction.execute(
-            "INSERT INTO repl_connection(kernel_id, protocol) VALUES (0, ?1)",
-            [protocol],
+            "INSERT INTO repl_kernel(transport, endpoint, public_key) VALUES (?1, ?2, ?3)",
+            sqlite::params![transport, endpoint, public_key],
+        )?;
+        let id = KernelId(transaction.last_insert_rowid());
+        transaction.commit()?;
+        Ok(id)
+    }
+
+    /// Adds a runtime connection owned by a registered kernel endpoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown kernel or failed directory update.
+    pub fn insert_at(
+        &mut self,
+        kernel: KernelId,
+        protocol: &str,
+        remote_connection_id: Option<&str>,
+        connection: C,
+    ) -> Result<ConnectionId, ReplError> {
+        self.require_kernel(kernel)?;
+        let transaction = self.state.sqlite().unchecked_transaction()?;
+        transaction.execute(
+            "INSERT INTO repl_connection(kernel_id, protocol, remote_connection_id)
+             VALUES (?1, ?2, ?3)",
+            sqlite::params![kernel.0, protocol, remote_connection_id],
         )?;
         let id = ConnectionId(transaction.last_insert_rowid());
         transaction.execute(
@@ -123,6 +235,65 @@ impl<C> Repl<C> {
         transaction.commit()?;
         self.connections.insert(id, connection);
         Ok(id)
+    }
+
+    /// Lists registered kernel endpoints in directory order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the directory cannot be read.
+    pub fn kernels(&self) -> Result<Vec<KernelEntry>, ReplError> {
+        let mut statement = self.state.sqlite().prepare(
+            "SELECT kernel_id, transport, endpoint, public_key
+             FROM repl_kernel ORDER BY kernel_id",
+        )?;
+        let rows = statement.query_map((), |row| {
+            Ok(KernelEntry {
+                id: KernelId(row.get(0)?),
+                transport: row.get(1)?,
+                endpoint: row.get(2)?,
+                public_key: row.get(3)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(ReplError::from)
+    }
+
+    /// Lists managed connections in directory order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the directory cannot be read.
+    pub fn connections(&self) -> Result<Vec<ConnectionEntry>, ReplError> {
+        let mut statement = self.state.sqlite().prepare(
+            "SELECT connection_id, kernel_id, protocol, remote_connection_id
+             FROM repl_connection ORDER BY connection_id",
+        )?;
+        let rows = statement.query_map((), |row| {
+            Ok(ConnectionEntry {
+                id: ConnectionId(row.get(0)?),
+                kernel: KernelId(row.get(1)?),
+                protocol: row.get(2)?,
+                remote_connection_id: row.get(3)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(ReplError::from)
+    }
+
+    /// Removes a registered endpoint after all of its connections are closed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown or implicit local kernel, an endpoint
+    /// with live connections, or a failed directory update.
+    pub fn unregister_kernel(&self, kernel: KernelId) -> Result<(), ReplError> {
+        self.require_kernel(kernel)?;
+        if kernel == KernelId::LOCAL {
+            return Err(ReplError::CannotUnregisterLocalKernel);
+        }
+        self.state
+            .sqlite()
+            .execute("DELETE FROM repl_kernel WHERE kernel_id = ?1", [kernel.0])?;
+        Ok(())
     }
 
     /// Returns the active connection ID, if any.
@@ -250,6 +421,19 @@ impl<C> Repl<C> {
             Ok(())
         } else {
             Err(ReplError::UnknownConnection(id))
+        }
+    }
+
+    fn require_kernel(&self, id: KernelId) -> Result<(), ReplError> {
+        let exists = self.state.sqlite().query_row(
+            "SELECT EXISTS(SELECT 1 FROM repl_kernel WHERE kernel_id = ?1)",
+            [id.0],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if exists {
+            Ok(())
+        } else {
+            Err(ReplError::UnknownKernel(id))
         }
     }
 }
@@ -1117,6 +1301,10 @@ pub enum ReplError {
     State(sqlite::Error),
     /// A requested runtime connection does not exist.
     UnknownConnection(ConnectionId),
+    /// A kernel endpoint is not registered in this directory.
+    UnknownKernel(KernelId),
+    /// The implicit local kernel row lives for the directory's lifetime.
+    CannotUnregisterLocalKernel,
     /// A state inspection statement returned no columns.
     StateQueryReturnsNoRows,
     /// No runtime connection is currently selected.
@@ -1129,6 +1317,10 @@ impl fmt::Display for ReplError {
             Self::Open(error) => write!(formatter, "could not open REPL state: {error}"),
             Self::State(error) => write!(formatter, "could not access REPL state: {error}"),
             Self::UnknownConnection(id) => write!(formatter, "unknown connection {id}"),
+            Self::UnknownKernel(id) => write!(formatter, "unknown kernel {id}"),
+            Self::CannotUnregisterLocalKernel => {
+                formatter.write_str("cannot unregister the local kernel")
+            }
             Self::StateQueryReturnsNoRows => {
                 formatter.write_str("state inspection statements must return rows")
             }
@@ -1143,6 +1335,8 @@ impl StdError for ReplError {
             Self::Open(error) => Some(error),
             Self::State(error) => Some(error),
             Self::UnknownConnection(_)
+            | Self::UnknownKernel(_)
+            | Self::CannotUnregisterLocalKernel
             | Self::NoActiveConnection
             | Self::StateQueryReturnsNoRows => None,
         }
@@ -1166,8 +1360,8 @@ mod web;
 
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 pub use web::{
-    WebHolOutcome, WebKernel, WebOutcome, WebProducedSignedHol, WebReceivedHolSnapshot,
-    WebSignedHolOutcome,
+    WebConnectionEntry, WebHolOutcome, WebKernel, WebKernelEntry, WebOutcome, WebProducedSignedHol,
+    WebReceivedHolSnapshot, WebReplDirectory, WebSignedHolOutcome,
 };
 
 /// Returns the cross-target `SQLite` smoke-test value.
@@ -1292,6 +1486,68 @@ mod tests {
             )
             .unwrap();
         assert_eq!(public_key, vec![7; 32]);
+    }
+
+    #[test]
+    fn registers_keyed_endpoints_without_conflating_them_with_trust() {
+        let mut repl = Repl::empty().unwrap();
+        let first = repl
+            .register_kernel("worker", Some("worker:alpha"), &[1; 32])
+            .unwrap();
+        let second = repl
+            .register_kernel("worker", Some("worker:beta"), &[2; 32])
+            .unwrap();
+        assert_ne!(first, second);
+
+        let first_connection = repl
+            .insert_at(first, "nucleus/hol", Some("7"), "alpha")
+            .unwrap();
+        let second_connection = repl
+            .insert_at(second, "nucleus/hol", Some("3"), "beta")
+            .unwrap();
+        assert_eq!(
+            repl.kernels().unwrap(),
+            [
+                KernelEntry {
+                    id: first,
+                    transport: "worker".to_owned(),
+                    endpoint: Some("worker:alpha".to_owned()),
+                    public_key: vec![1; 32],
+                },
+                KernelEntry {
+                    id: second,
+                    transport: "worker".to_owned(),
+                    endpoint: Some("worker:beta".to_owned()),
+                    public_key: vec![2; 32],
+                },
+            ]
+        );
+        assert_eq!(
+            repl.connections().unwrap(),
+            [
+                ConnectionEntry {
+                    id: first_connection,
+                    kernel: first,
+                    protocol: "nucleus/hol".to_owned(),
+                    remote_connection_id: Some("7".to_owned()),
+                },
+                ConnectionEntry {
+                    id: second_connection,
+                    kernel: second,
+                    protocol: "nucleus/hol".to_owned(),
+                    remote_connection_id: Some("3".to_owned()),
+                },
+            ]
+        );
+
+        assert!(repl.unregister_kernel(first).is_err());
+        assert_eq!(repl.remove(first_connection).unwrap(), "alpha");
+        repl.unregister_kernel(first).unwrap();
+        assert_eq!(repl.kernels().unwrap().len(), 1);
+        assert!(matches!(
+            repl.insert_at(first, "nucleus/sql", None, "closed"),
+            Err(ReplError::UnknownKernel(id)) if id == first
+        ));
     }
 
     #[test]

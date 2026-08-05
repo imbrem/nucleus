@@ -2,11 +2,33 @@ use covalence_lib_hash::O256;
 use wasm_bindgen::prelude::*;
 
 use super::{
-    AllowAll, ConnectionId, HolRecipe, HolRecipeResult, Kernel, LocalConnection, Outcome,
-    ProducedSignedHol, QueryResult, ReceivedHolSnapshot, Repl, SIGNED_HOL_PHASES,
-    SignedHolArtifact, SignedHolRoundTripResult, Value, produce_signed_hol_artifact,
-    receive_signed_hol_artifact,
+    AllowAll, ConnectionEntry, ConnectionId, HolRecipe, HolRecipeResult, Kernel, KernelEntry,
+    KernelId, LocalConnection, Outcome, ProducedSignedHol, QueryResult, ReceivedHolSnapshot, Repl,
+    SIGNED_HOL_PHASES, SignedHolArtifact, SignedHolRoundTripResult, Value,
+    produce_signed_hol_artifact, receive_signed_hol_artifact,
 };
+
+/// Main-thread directory for independently owned browser kernel endpoints.
+///
+/// It owns no logical connection and grants no trust. JavaScript keeps the
+/// actual Worker handles; this object keeps the same raw-SQLite directory model
+/// used by the terminal adapter.
+#[wasm_bindgen]
+pub struct WebReplDirectory {
+    repl: Repl<()>,
+}
+
+/// Inspectable browser kernel-directory row.
+#[wasm_bindgen]
+pub struct WebKernelEntry {
+    entry: KernelEntry,
+}
+
+/// Inspectable browser connection-directory row.
+#[wasm_bindgen]
+pub struct WebConnectionEntry {
+    entry: ConnectionEntry,
+}
 
 /// Browser adapter for the shared REPL connection directory.
 #[wasm_bindgen]
@@ -58,6 +80,18 @@ impl WebKernel {
         let kernel = Kernel::ephemeral();
         let repl = Repl::new(kernel.verifying_key().as_bytes()).map_err(js_error)?;
         Ok(Self { kernel, repl })
+    }
+
+    /// Returns this kernel's public-key identity.
+    #[must_use]
+    pub fn signer_id(&self) -> String {
+        self.kernel.key_id().to_string()
+    }
+
+    /// Returns this kernel's exact Ed25519 public key.
+    #[must_use]
+    pub fn public_key(&self) -> Vec<u8> {
+        self.kernel.verifying_key().as_bytes().to_vec()
     }
 
     /// Opens a writable in-memory SQL connection and returns its local ID.
@@ -293,6 +327,160 @@ impl WebKernel {
             .serialize_main()
             .map(|bytes| bytes.to_vec())
             .map_err(js_error)
+    }
+}
+
+#[wasm_bindgen]
+impl WebReplDirectory {
+    /// Opens an empty coordinator directory.
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Result<Self, JsValue> {
+        Repl::empty().map(|repl| Self { repl }).map_err(js_error)
+    }
+
+    /// Registers a keyed Worker endpoint without trusting it.
+    pub fn register_kernel(
+        &self,
+        transport: &str,
+        endpoint: Option<String>,
+        public_key: &[u8],
+    ) -> Result<u32, JsValue> {
+        let id = self
+            .repl
+            .register_kernel(transport, endpoint.as_deref(), public_key)
+            .map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
+    /// Removes a Worker endpoint after all of its connections are closed.
+    pub fn unregister_kernel(&self, kernel: u32) -> Result<(), JsValue> {
+        self.repl
+            .unregister_kernel(KernelId::from_u32(kernel))
+            .map_err(js_error)
+    }
+
+    /// Records an endpoint-owned runtime connection.
+    pub fn insert_connection(
+        &mut self,
+        kernel: u32,
+        protocol: &str,
+        remote_connection_id: &str,
+    ) -> Result<u32, JsValue> {
+        let id = self
+            .repl
+            .insert_at(
+                KernelId::from_u32(kernel),
+                protocol,
+                Some(remote_connection_id),
+                (),
+            )
+            .map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
+    /// Removes one endpoint-owned runtime connection row.
+    pub fn remove_connection(&mut self, connection: u32) -> Result<(), JsValue> {
+        self.repl
+            .remove(ConnectionId::from_u32(connection))
+            .map(drop)
+            .map_err(js_error)
+    }
+
+    /// Selects an existing managed connection in the coordinator directory.
+    pub fn select_connection(&mut self, connection: u32) -> Result<(), JsValue> {
+        self.repl
+            .select(ConnectionId::from_u32(connection))
+            .map_err(js_error)
+    }
+
+    /// Returns the selected managed connection, if any.
+    pub fn active_connection(&self) -> Result<Option<u32>, JsValue> {
+        self.repl
+            .active()
+            .map_err(js_error)?
+            .map(|id| u32::try_from(id.get()).map_err(js_error))
+            .transpose()
+    }
+
+    /// Returns the number of registered endpoints.
+    pub fn kernel_count(&self) -> Result<usize, JsValue> {
+        self.repl.kernels().map(|rows| rows.len()).map_err(js_error)
+    }
+
+    /// Returns one endpoint row in directory order.
+    pub fn kernel(&self, index: u32) -> Result<WebKernelEntry, JsValue> {
+        self.repl
+            .kernels()
+            .map_err(js_error)?
+            .into_iter()
+            .nth(index as usize)
+            .map(|entry| WebKernelEntry { entry })
+            .ok_or_else(|| JsValue::from_str("kernel index out of bounds"))
+    }
+
+    /// Returns the number of managed connection rows.
+    pub fn connection_count(&self) -> Result<usize, JsValue> {
+        self.repl
+            .connections()
+            .map(|rows| rows.len())
+            .map_err(js_error)
+    }
+
+    /// Returns one connection row in directory order.
+    pub fn connection(&self, index: u32) -> Result<WebConnectionEntry, JsValue> {
+        self.repl
+            .connections()
+            .map_err(js_error)?
+            .into_iter()
+            .nth(index as usize)
+            .map(|entry| WebConnectionEntry { entry })
+            .ok_or_else(|| JsValue::from_str("connection index out of bounds"))
+    }
+}
+
+#[wasm_bindgen]
+impl WebKernelEntry {
+    /// Returns the directory-local opaque ID.
+    pub fn id(&self) -> String {
+        self.entry.id.to_string()
+    }
+
+    /// Returns the adapter-defined transport.
+    pub fn transport(&self) -> String {
+        self.entry.transport.clone()
+    }
+
+    /// Returns the optional adapter-defined endpoint locator.
+    pub fn endpoint(&self) -> Option<String> {
+        self.entry.endpoint.clone()
+    }
+
+    /// Returns the exact registered public key.
+    pub fn public_key(&self) -> Vec<u8> {
+        self.entry.public_key.clone()
+    }
+}
+
+#[wasm_bindgen]
+impl WebConnectionEntry {
+    /// Returns the directory-local opaque ID.
+    pub fn id(&self) -> String {
+        self.entry.id.to_string()
+    }
+
+    /// Returns the owning endpoint's opaque ID.
+    pub fn kernel_id(&self) -> String {
+        self.entry.kernel.to_string()
+    }
+
+    /// Returns the recorded protocol label.
+    pub fn protocol(&self) -> String {
+        self.entry.protocol.clone()
+    }
+
+    /// Returns the optional endpoint-local coordinate.
+    pub fn remote_connection_id(&self) -> Option<String> {
+        self.entry.remote_connection_id.clone()
     }
 }
 

@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import init, { smoke, WebKernel } from "../generated/nucleus.js";
+import init, {
+  smoke,
+  WebKernel,
+  WebReplDirectory,
+} from "../generated/nucleus.js";
 
 test("runs the REPL kernel through the Wasm binding in Node", async () => {
   const bytes = await readFile(
@@ -9,6 +13,47 @@ test("runs the REPL kernel through the Wasm binding in Node", async () => {
   );
   await init({ module_or_path: bytes });
   assert.equal(smoke(), 42);
+
+  const directory = new WebReplDirectory();
+  const firstKernel = directory.register_kernel(
+    "worker",
+    "worker:first",
+    new Uint8Array(32).fill(1),
+  );
+  const secondKernel = directory.register_kernel(
+    "worker",
+    "worker:second",
+    new Uint8Array(32).fill(2),
+  );
+  const managed = directory.insert_connection(firstKernel, "nucleus/hol", "17");
+  const secondManaged = directory.insert_connection(
+    secondKernel,
+    "nucleus/sql",
+    "4",
+  );
+  assert.equal(directory.kernel_count(), 2);
+  assert.equal(directory.connection_count(), 2);
+  directory.select_connection(managed);
+  assert.equal(directory.active_connection(), managed);
+  directory.select_connection(secondManaged);
+  assert.equal(directory.active_connection(), secondManaged);
+  const firstKernelRow = directory.kernel(0);
+  assert.equal(firstKernelRow.transport(), "worker");
+  assert.equal(firstKernelRow.endpoint(), "worker:first");
+  assert.deepEqual(firstKernelRow.public_key(), new Uint8Array(32).fill(1));
+  const connectionRow = directory.connection(0);
+  assert.equal(connectionRow.kernel_id(), String(firstKernel));
+  assert.equal(connectionRow.protocol(), "nucleus/hol");
+  assert.equal(connectionRow.remote_connection_id(), "17");
+  assert.throws(() => directory.unregister_kernel(firstKernel));
+  directory.remove_connection(managed);
+  directory.remove_connection(secondManaged);
+  directory.unregister_kernel(firstKernel);
+  directory.unregister_kernel(secondKernel);
+  assert.equal(directory.kernel_count(), 0);
+  firstKernelRow.free();
+  connectionRow.free();
+  directory.free();
 
   const source = new WebKernel();
   const sourceConnection = source.open_connection();
