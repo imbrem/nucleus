@@ -14,6 +14,9 @@ use covalence_lib_sqlite as sqlite;
 
 pub mod hol_recipes;
 
+mod hol_guest_plan;
+pub use hol_guest_plan::{HolProofRecipeError, MAX_SEALED_HOL_RECIPE_BYTES, SealedHolProofRecipe};
+
 #[cfg(not(target_arch = "wasm32"))]
 mod hol_guest;
 #[cfg(not(target_arch = "wasm32"))]
@@ -49,9 +52,10 @@ pub use service::signed_message::{
     decode_signed_request, decode_signed_response, encode_signed_request, encode_signed_response,
 };
 pub use service::{
-    EndpointDescription, MAX_SERVICE_CONNECTIONS_PER_SESSION, MAX_SERVICE_SESSIONS,
-    ServiceIdentity, ServiceOperation, ServiceProducedHol, ServiceReceivedHol, ServiceResult,
-    SessionAccepted, SessionInitiator, SessionRequest, SignedKernelService, SignedServiceCommand,
+    EndpointDescription, HolProofComponentExecutor, MAX_SERVICE_CONNECTIONS_PER_SESSION,
+    MAX_SERVICE_SESSIONS, ServiceIdentity, ServiceOperation, ServiceProducedHol,
+    ServiceProducedHolComponent, ServiceReceivedHol, ServiceResult, SessionAccepted,
+    SessionInitiator, SessionRequest, SignedKernelService, SignedServiceCommand,
     SignedServiceReply, SignedServiceSession, signed_kernel_service_schema,
 };
 

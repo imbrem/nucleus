@@ -2,16 +2,17 @@
 
 use std::{collections::HashSet, error::Error as StdError, fmt};
 
-use covalence_nucleus::{
-    Connection, ContextId, ExportId, Hol, Kernel, NamespaceExport, NamespaceId, Operation, Policy,
-    SignedHolSnapshot, TermId, Theorem, TypeId,
-};
+use covalence_nucleus::Kernel;
 use covalence_proton::{
     WasmtimeComponentLimits, WasmtimeComponentRuntime, WasmtimeRuntimeError, WasmtimeStore,
     wasmtime,
 };
 use wasmtime::component::{HasSelf, Linker, Resource};
 
+use crate::hol_guest_plan::{
+    MAX_RECIPE_NAME_BYTES, MAX_RECIPE_NODES, RecipeNode as Recipe, RecipeSort as Sort,
+    SealedHolProofRecipe,
+};
 use crate::{
     ConnectionId, KernelId, LocalConnection, ReceivedHolSnapshot, Repl, SignedHolArtifact,
     Value as SqlValue, authenticate_pinned_signed_hol_artifact,
@@ -35,56 +36,6 @@ use bindings::covalence::hol_proof_guest::host::{
 };
 
 const PLAN_REP: u32 = 1;
-const MAX_NODES: usize = 128;
-const MAX_NAME_BYTES: usize = 256;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Sort {
-    Type,
-    Term,
-    Context,
-    Theorem,
-    Namespace,
-}
-
-#[derive(Debug)]
-enum Recipe {
-    BoolType,
-    Bound {
-        index: u32,
-        ty: usize,
-    },
-    Lambda {
-        parameter_type: usize,
-        body: usize,
-    },
-    Bool(bool),
-    EmptyContext,
-    Beta {
-        context: usize,
-        abstraction: usize,
-        argument: usize,
-    },
-    Persist {
-        theorem: usize,
-    },
-    Namespace {
-        name: Option<String>,
-    },
-    ExportTheorem {
-        namespace: usize,
-        export: i64,
-        theorem: usize,
-        name: Option<String>,
-    },
-    ExportContext {
-        namespace: usize,
-        export: i64,
-        context: usize,
-        name: Option<String>,
-    },
-}
-
 struct GuestState {
     recipe: Vec<Recipe>,
     sorts: Vec<Sort>,
@@ -123,7 +74,7 @@ impl GuestState {
         if self.sealed {
             return Err(AppendError::Sealed);
         }
-        if self.recipe.len() >= MAX_NODES {
+        if self.recipe.len() >= MAX_RECIPE_NODES {
             return Err(AppendError::ResourceLimit);
         }
         let rep = u32::try_from(self.recipe.len() + 2).map_err(|_| AppendError::ResourceLimit)?;
@@ -136,7 +87,7 @@ impl GuestState {
         if self.sealed {
             return Err(AppendError::Sealed);
         }
-        if self.recipe.len() >= MAX_NODES {
+        if self.recipe.len() >= MAX_RECIPE_NODES {
             return Err(AppendError::ResourceLimit);
         }
         self.recipe.push(recipe);
@@ -147,7 +98,7 @@ impl GuestState {
     fn name(name: Option<String>) -> Result<Option<String>, AppendError> {
         if name
             .as_ref()
-            .is_some_and(|name| name.len() > MAX_NAME_BYTES)
+            .is_some_and(|name| name.len() > MAX_RECIPE_NAME_BYTES)
         {
             Err(AppendError::ResourceLimit)
         } else {
@@ -351,217 +302,51 @@ drop_resource!(HostContextNode, ContextNode);
 drop_resource!(HostTheoremNode, TheoremNode);
 drop_resource!(HostNamespaceNode, NamespaceNode);
 
-#[derive(Clone, Copy, Debug)]
-struct BetaGuestPolicy;
-
-impl Policy for BetaGuestPolicy {
-    fn allows(&mut self, operation: Operation) -> bool {
-        matches!(
-            operation,
-            Operation::InsertType
-                | Operation::InsertTerm
-                | Operation::ProveConversionBeta
-                | Operation::ProveConversionEquality
-                | Operation::PersistJudgement
-                | Operation::DefineNamespace
-                | Operation::ExportNamespaceValue
-                | Operation::ExportSignedSnapshot
-        )
-    }
+/// Executes one untrusted component and returns only its bounded sealed plan.
+///
+/// The returned value contains no theorem, database, signer, or kernel
+/// capability and can be transported through an untrusted executor boundary.
+///
+/// # Errors
+///
+/// Returns an error if component validation or execution fails, the guest
+/// aborts, a resource bound is exceeded, or its returned namespace is invalid.
+fn collect_hol_proof_component(
+    bytes: &[u8],
+    limits: WasmtimeComponentLimits,
+) -> Result<SealedHolProofRecipe, HolGuestError> {
+    let runtime = WasmtimeComponentRuntime::new(limits).map_err(HolGuestError::Runtime)?;
+    let component = runtime.component(bytes).map_err(HolGuestError::Runtime)?;
+    collect_prepared_hol_proof_component(&runtime, &component)
 }
 
-enum Value {
-    Type(TypeId),
-    Term(TermId),
-    Context(ContextId),
-    Theorem {
-        context: ContextId,
-        conclusion: TermId,
-    },
-    Namespace(NamespaceId),
-    Unit,
-}
-
-fn replay(
-    kernel: &Kernel,
-    recipe: &[Recipe],
-    selected_namespace: usize,
-) -> Result<SignedHolArtifact, HolGuestError> {
-    let mut db: Connection<Hol<BetaGuestPolicy>> =
-        kernel.open_hol(BetaGuestPolicy).map_err(replay_error)?;
-    let mut values = Vec::with_capacity(recipe.len());
-
-    for node in recipe {
-        let value = match node {
-            Recipe::BoolType => Value::Type(db.insert_bool_type().map_err(replay_error)?),
-            Recipe::Bound { index, ty } => Value::Term(
-                db.insert_bound_term(*index, type_at(&values, *ty)?)
-                    .map_err(replay_error)?,
-            ),
-            Recipe::Lambda {
-                parameter_type,
-                body,
-            } => Value::Term(
-                db.insert_lambda(type_at(&values, *parameter_type)?, term_at(&values, *body)?)
-                    .map_err(replay_error)?,
-            ),
-            Recipe::Bool(value) => Value::Term(db.insert_bool_term(*value).map_err(replay_error)?),
-            Recipe::EmptyContext => Value::Context(ContextId::empty()),
-            Recipe::Namespace { name } => Value::Namespace(
-                db.create_namespace(Some(NamespaceId::root()), name.as_deref())
-                    .map_err(replay_error)?,
-            ),
-            Recipe::Beta { .. }
-            | Recipe::Persist { .. }
-            | Recipe::ExportTheorem { .. }
-            | Recipe::ExportContext { .. } => Value::Unit,
-        };
-        values.push(value);
-    }
-
-    db.with_proof_session(|mut proof| {
-        let mut theorems: Vec<Option<Theorem<'_>>> = (0..recipe.len()).map(|_| None).collect();
-        for (index, node) in recipe.iter().enumerate() {
-            match node {
-                Recipe::Beta {
-                    context,
-                    abstraction,
-                    argument,
-                } => {
-                    let theorem = crate::hol_recipes::beta(
-                        &mut proof,
-                        context_at(&values, *context)?,
-                        term_at(&values, *abstraction)?,
-                        term_at(&values, *argument)?,
-                    )
-                    .map_err(replay_error)?;
-                    values[index] = Value::Theorem {
-                        context: theorem.context(),
-                        conclusion: theorem.conclusion(),
-                    };
-                    theorems[index] = Some(theorem);
-                }
-                Recipe::Persist { theorem } => {
-                    let theorem = theorems
-                        .get(*theorem)
-                        .and_then(Option::as_ref)
-                        .ok_or_else(value_error)?;
-                    proof.persist_theorem(theorem).map_err(replay_error)?;
-                }
-                _ => {}
-            }
-        }
-        Ok::<_, HolGuestError>(())
-    })?;
-
-    for node in recipe {
-        match node {
-            Recipe::ExportTheorem {
-                namespace,
-                export,
-                theorem,
-                name,
-            } => db
-                .export_value(
-                    namespace_at(&values, *namespace)?,
-                    ExportId::from_i64(*export),
-                    NamespaceExport::Term(theorem_at(&values, *theorem)?.1),
-                    name.as_deref(),
-                )
-                .map_err(replay_error)?,
-            Recipe::ExportContext {
-                namespace,
-                export,
-                context,
-                name,
-            } => db
-                .export_value(
-                    namespace_at(&values, *namespace)?,
-                    ExportId::from_i64(*export),
-                    NamespaceExport::Context(context_at(&values, *context)?),
-                    name.as_deref(),
-                )
-                .map_err(replay_error)?,
-            _ => {}
-        }
-    }
-    let namespace = namespace_at(&values, selected_namespace)?;
-    let snapshot = kernel.export_hol(&mut db).map_err(replay_error)?;
-    snapshot_artifact(namespace, &snapshot)
-}
-
-fn snapshot_artifact(
-    namespace: NamespaceId,
-    snapshot: &SignedHolSnapshot,
-) -> Result<SignedHolArtifact, HolGuestError> {
-    let image = snapshot.image().bytes();
-    if image.len() > crate::MAX_IMAGE_BYTES {
-        return Err(HolGuestError::ArtifactTooLarge {
-            size: image.len(),
-            maximum: crate::MAX_IMAGE_BYTES,
-        });
-    }
-    let attestation = snapshot.attestation();
-    let schema = attestation.schema();
-    let image_hash = attestation.image();
-    let signer = attestation.signer();
-    let public_key = attestation.public_key().to_vec();
-    let signature = attestation.signature().to_vec();
-    Ok(SignedHolArtifact {
-        namespace_id: namespace.get(),
-        image: image.to_vec(),
-        schema,
-        image_hash,
-        signer,
-        public_key,
-        signature,
+fn collect_prepared_hol_proof_component(
+    runtime: &WasmtimeComponentRuntime,
+    component: &wasmtime::component::Component,
+) -> Result<SealedHolProofRecipe, HolGuestError> {
+    let mut linker: Linker<WasmtimeStore<GuestState>> = Linker::new(runtime.engine());
+    bindings::HolProofGuest::add_to_linker::<_, HasSelf<GuestState>>(&mut linker, |state| {
+        &mut state.data
     })
-}
-
-fn value_error() -> HolGuestError {
-    HolGuestError::Replay("internally inconsistent recipe value".into())
-}
-
-fn replay_error(error: impl fmt::Display) -> HolGuestError {
-    HolGuestError::Replay(error.to_string())
-}
-
-fn type_at(values: &[Value], index: usize) -> Result<TypeId, HolGuestError> {
-    match values.get(index) {
-        Some(Value::Type(value)) => Ok(*value),
-        _ => Err(value_error()),
-    }
-}
-
-fn term_at(values: &[Value], index: usize) -> Result<TermId, HolGuestError> {
-    match values.get(index) {
-        Some(Value::Term(value)) => Ok(*value),
-        _ => Err(value_error()),
-    }
-}
-
-fn context_at(values: &[Value], index: usize) -> Result<ContextId, HolGuestError> {
-    match values.get(index) {
-        Some(Value::Context(value)) => Ok(*value),
-        _ => Err(value_error()),
-    }
-}
-
-fn theorem_at(values: &[Value], index: usize) -> Result<(ContextId, TermId), HolGuestError> {
-    match values.get(index) {
-        Some(Value::Theorem {
-            context,
-            conclusion,
-        }) => Ok((*context, *conclusion)),
-        _ => Err(value_error()),
-    }
-}
-
-fn namespace_at(values: &[Value], index: usize) -> Result<NamespaceId, HolGuestError> {
-    match values.get(index) {
-        Some(Value::Namespace(value)) => Ok(*value),
-        _ => Err(value_error()),
-    }
+    .map_err(HolGuestError::Wasmtime)?;
+    let mut store = runtime
+        .store(GuestState::new())
+        .map_err(HolGuestError::Runtime)?;
+    let guest = bindings::HolProofGuest::instantiate(&mut store, component, &linker)
+        .map_err(HolGuestError::Wasmtime)?;
+    let selected_namespace = guest
+        .covalence_hol_proof_guest_guest()
+        .call_build(&mut store, Resource::new_borrow(PLAN_REP))
+        .map_err(HolGuestError::Wasmtime)?
+        .map_err(|_| HolGuestError::GuestAborted)?;
+    let selected_namespace = store
+        .data()
+        .data
+        .node(&selected_namespace, Sort::Namespace)
+        .map_err(|_| HolGuestError::InvalidReturnedNamespace)?;
+    store.data_mut().data.sealed = true;
+    SealedHolProofRecipe::seal(store.data().data.recipe.clone(), selected_namespace)
+        .map_err(|error| HolGuestError::Replay(error.to_string()))
 }
 
 /// Executes one untrusted component, then replays and signs only its successful sealed plan.
@@ -578,30 +363,9 @@ pub fn run_hol_proof_component(
     bytes: &[u8],
     limits: WasmtimeComponentLimits,
 ) -> Result<SignedHolArtifact, HolGuestError> {
-    let runtime = WasmtimeComponentRuntime::new(limits).map_err(HolGuestError::Runtime)?;
-    let component = runtime.component(bytes).map_err(HolGuestError::Runtime)?;
-    let mut linker: Linker<WasmtimeStore<GuestState>> = Linker::new(runtime.engine());
-    bindings::HolProofGuest::add_to_linker::<_, HasSelf<GuestState>>(&mut linker, |state| {
-        &mut state.data
-    })
-    .map_err(HolGuestError::Wasmtime)?;
-    let mut store = runtime
-        .store(GuestState::new())
-        .map_err(HolGuestError::Runtime)?;
-    let guest = bindings::HolProofGuest::instantiate(&mut store, &component, &linker)
-        .map_err(HolGuestError::Wasmtime)?;
-    let selected_namespace = guest
-        .covalence_hol_proof_guest_guest()
-        .call_build(&mut store, Resource::new_borrow(PLAN_REP))
-        .map_err(HolGuestError::Wasmtime)?
-        .map_err(|_| HolGuestError::GuestAborted)?;
-    let selected_namespace = store
-        .data()
-        .data
-        .node(&selected_namespace, Sort::Namespace)
-        .map_err(|_| HolGuestError::InvalidReturnedNamespace)?;
-    store.data_mut().data.sealed = true;
-    replay(kernel, &store.data().data.recipe, selected_namespace)
+    collect_hol_proof_component(bytes, limits)?
+        .replay(kernel)
+        .map_err(|error| HolGuestError::Replay(error.to_string()))
 }
 
 /// Signed guest output plus the receiver connection retained by a caller-owned REPL.
@@ -837,11 +601,11 @@ mod tests {
     #[test]
     fn recipe_and_name_bounds_are_enforced_before_append() {
         assert_eq!(
-            GuestState::name(Some("x".repeat(MAX_NAME_BYTES + 1))),
+            GuestState::name(Some("x".repeat(MAX_RECIPE_NAME_BYTES + 1))),
             Err(AppendError::ResourceLimit)
         );
         let mut state = GuestState::new();
-        for _ in 0..MAX_NODES {
+        for _ in 0..MAX_RECIPE_NODES {
             state
                 .append::<TypeNode>(Recipe::BoolType, Sort::Type)
                 .unwrap();
@@ -858,7 +622,10 @@ mod tests {
     fn replayed_guest_artifact_uses_the_selected_receiver_contract() {
         let recipe = closed_beta_recipe();
         let producer = Kernel::ephemeral();
-        let artifact = replay(&producer, &recipe, 7).unwrap();
+        let artifact = SealedHolProofRecipe::seal(recipe, 7)
+            .unwrap()
+            .replay(&producer)
+            .unwrap();
         assert_eq!(artifact.namespace_id(), 1);
         assert!(artifact.image().len() <= crate::MAX_IMAGE_BYTES);
 
@@ -933,7 +700,10 @@ mod tests {
     fn managed_success_retains_a_live_receiver_for_post_return_reread() {
         let recipe = closed_beta_recipe();
         let kernel = Kernel::ephemeral();
-        let artifact = replay(&kernel, &recipe, 7).unwrap();
+        let artifact = SealedHolProofRecipe::seal(recipe, 7)
+            .unwrap()
+            .replay(&kernel)
+            .unwrap();
         let mut directory = Repl::new(kernel.verifying_key().as_bytes()).unwrap();
         let managed = retain_signed_hol_guest_artifact(&kernel, &mut directory, artifact).unwrap();
 
@@ -979,7 +749,10 @@ mod tests {
     fn managed_receive_requires_the_directory_local_key() {
         let recipe = closed_beta_recipe();
         let kernel = Kernel::ephemeral();
-        let artifact = replay(&kernel, &recipe, 7).unwrap();
+        let artifact = SealedHolProofRecipe::seal(recipe, 7)
+            .unwrap()
+            .replay(&kernel)
+            .unwrap();
         let other = Kernel::ephemeral();
         let mut directory = Repl::new(other.verifying_key().as_bytes()).unwrap();
 

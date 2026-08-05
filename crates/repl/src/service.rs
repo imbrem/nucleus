@@ -12,9 +12,9 @@ use covalence_lib_hash::O256;
 use covalence_nucleus::{Ed25519Verifier, Signer as _, Verifier as _, ed25519_key_id};
 
 use super::{
-    AllowAll, Connection, ExpectedKernelIdentity, Hol, Kernel, ReceivedHolSnapshot,
-    SignedHolArtifact, authenticate_pinned_signed_hol_artifact, produce_signed_hol_artifact,
-    trust_and_receive_pinned_signed_hol_artifact,
+    AllowAll, Connection, ExpectedKernelIdentity, Hol, Kernel, KernelId, ReceivedHolSnapshot,
+    SealedHolProofRecipe, SignedHolArtifact, authenticate_pinned_signed_hol_artifact,
+    produce_signed_hol_artifact, trust_and_receive_pinned_signed_hol_artifact,
 };
 
 /// Finite service-lifetime session budget, also bounding replay tombstones.
@@ -170,8 +170,59 @@ pub enum ServiceOperation {
         /// Untrusted artifact transported from the source.
         artifact: Box<SignedHolArtifact>,
     },
-    /// Gracefully ends a stateful transport after its signed reply.
+    /// Runs a locally provisioned HOL proof component selected by its exact
+    /// content digest. The request never carries component bytes.
+    RunHolProofComponent(O256),
+    /// Closes only this authenticated session after its signed reply.
+    /// The owner independently controls any shared transport or process lifetime.
     CloseSession,
+}
+
+/// Locally configured execution boundary for hash-selected HOL proof guests.
+///
+/// Implementations own the mapping from exact component digests to executable
+/// instances. [`Self::contains`] must be side-effect free: the service calls it
+/// before [`Self::execute`] so an unknown remote coordinate cannot run or
+/// mutate an executor. Neither method receives remote component bytes.
+pub trait HolProofComponentExecutor: Send {
+    /// Reports whether one exact digest was provisioned before serving.
+    fn contains(&self, component: O256) -> bool;
+
+    /// Collects one digest which [`Self::contains`] accepted into a bounded,
+    /// authority-free sealed recipe.
+    ///
+    /// # Errors
+    ///
+    /// Returns a presentation-only diagnostic when execution or checked replay
+    /// fails before a sealed recipe is produced.
+    fn execute(&mut self, component: O256) -> Result<SealedHolProofRecipe, String>;
+}
+
+/// Artifact produced by one locally provisioned proof component.
+#[derive(Clone)]
+pub struct ServiceProducedHolComponent {
+    component: O256,
+    artifact: SignedHolArtifact,
+}
+
+impl ServiceProducedHolComponent {
+    /// Returns the exact digest selected by the signed command.
+    #[must_use]
+    pub const fn component(&self) -> O256 {
+        self.component
+    }
+
+    /// Returns the endpoint-signed HOL artifact.
+    #[must_use]
+    pub const fn artifact(&self) -> &SignedHolArtifact {
+        &self.artifact
+    }
+
+    /// Takes ownership of the endpoint-signed HOL artifact.
+    #[must_use]
+    pub fn into_artifact(self) -> SignedHolArtifact {
+        self.artifact
+    }
 }
 
 /// Above-TCB producer presentation returned by a service.
@@ -258,6 +309,8 @@ pub enum ServiceResult {
     Produced(Box<ServiceProducedHol>),
     /// A pinned artifact was trusted, imported, and read.
     Received(ServiceReceivedHol),
+    /// A locally provisioned component produced a signed HOL artifact.
+    ProducedByComponent(Box<ServiceProducedHolComponent>),
     /// The authenticated session was closed and released its connections.
     SessionClosed,
     /// A request was authenticated but its operation failed.
@@ -366,6 +419,7 @@ pub struct SignedKernelService {
     used_session_requests: HashSet<O256>,
     sessions: HashMap<O256, ServerSession>,
     next_session: u64,
+    hol_proof_executor: Option<Box<dyn HolProofComponentExecutor>>,
 }
 
 impl SignedKernelService {
@@ -394,7 +448,35 @@ impl SignedKernelService {
             used_session_requests: HashSet::new(),
             sessions: HashMap::new(),
             next_session: 0,
+            hol_proof_executor: None,
         })
+    }
+
+    /// Installs the local hash-to-executor mapping before any session exists.
+    ///
+    /// A service with no installed executor remains valid on targets which
+    /// cannot run native components. Installation is frozen once a handshake
+    /// has been accepted, so remote traffic cannot change executable policy.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a second executor or configuration after session state exists.
+    pub fn install_hol_proof_component_executor(
+        &mut self,
+        executor: impl HolProofComponentExecutor + 'static,
+    ) -> Result<(), ServiceError> {
+        if !self.sessions.is_empty() || !self.used_session_requests.is_empty() {
+            return Err(ServiceError::Invalid(
+                "HOL proof executor must be configured before sessions",
+            ));
+        }
+        if self.hol_proof_executor.is_some() {
+            return Err(ServiceError::Invalid(
+                "HOL proof executor is already configured",
+            ));
+        }
+        self.hol_proof_executor = Some(Box::new(executor));
+        Ok(())
     }
 
     /// Returns self-signed endpoint metadata for an out-of-band pinned peer.
@@ -607,12 +689,54 @@ impl SignedKernelService {
                     Err(error) => ServiceResult::OperationError(error.to_string()),
                 }
             }
+            ServiceOperation::RunHolProofComponent(component) => {
+                self.dispatch_hol_proof_component(component)
+            }
             ServiceOperation::CloseSession => {
                 session.connections.clear();
                 session.closed = true;
                 ServiceResult::SessionClosed
             }
         }
+    }
+
+    fn dispatch_hol_proof_component(&mut self, component: O256) -> ServiceResult {
+        let Some(executor) = self.hol_proof_executor.as_mut() else {
+            return ServiceResult::OperationError(
+                "HOL proof component execution is unavailable".to_owned(),
+            );
+        };
+        if !executor.contains(component) {
+            return ServiceResult::OperationError(
+                "HOL proof component is not provisioned".to_owned(),
+            );
+        }
+        let recipe = match executor.execute(component) {
+            Ok(recipe) => recipe,
+            Err(error) => return ServiceResult::OperationError(error),
+        };
+        // The key-holding service, never the executor, owns checked replay,
+        // database construction, and snapshot signing.
+        let artifact = match recipe.replay(&self.kernel) {
+            Ok(artifact) => artifact,
+            Err(error) => return ServiceResult::OperationError(error.to_string()),
+        };
+        let expected = match ExpectedKernelIdentity::from_public_key(
+            KernelId::LOCAL,
+            self.kernel.verifying_key().as_bytes(),
+        ) {
+            Ok(expected) => expected,
+            Err(error) => return ServiceResult::OperationError(error.to_string()),
+        };
+        if let Err(error) = authenticate_pinned_signed_hol_artifact(&expected, &artifact) {
+            return ServiceResult::OperationError(format!(
+                "checked replay returned an invalid endpoint artifact: {error}"
+            ));
+        }
+        ServiceResult::ProducedByComponent(Box::new(ServiceProducedHolComponent {
+            component,
+            artifact,
+        }))
     }
 
     fn reply(
@@ -993,6 +1117,9 @@ fn operation_digest(operation: &ServiceOperation) -> O256 {
             )
         }
         ServiceOperation::CloseSession => digest(b"operation-close-session", &[]),
+        ServiceOperation::RunHolProofComponent(component) => {
+            digest(b"operation-run-hol-proof-component", &[component.as_ref()])
+        }
     }
 }
 
@@ -1016,6 +1143,13 @@ fn service_result_digest(result: &ServiceResult) -> O256 {
                 &received.conclusion.to_be_bytes(),
             ],
         ),
+        ServiceResult::ProducedByComponent(produced) => {
+            let artifact = artifact_digest(produced.artifact());
+            digest(
+                b"result-produced-by-hol-proof-component",
+                &[produced.component.as_ref(), artifact.as_ref()],
+            )
+        }
         ServiceResult::SessionClosed => digest(b"result-session-closed", &[]),
         ServiceResult::OperationError(message) => {
             digest(b"result-operation-error", &[message.as_bytes()])
@@ -1057,12 +1191,35 @@ fn digest(domain: &[u8], fields: &[&[u8]]) -> O256 {
 mod tests {
     use super::*;
     use crate::KernelId;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    struct TestExecutor {
+        component: O256,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl HolProofComponentExecutor for TestExecutor {
+        fn contains(&self, component: O256) -> bool {
+            component == self.component
+        }
+
+        fn execute(&mut self, component: O256) -> Result<SealedHolProofRecipe, String> {
+            if component != self.component {
+                return Err("executor received an unknown component".to_owned());
+            }
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(crate::hol_guest_plan::closed_beta_test_recipe())
+        }
+    }
 
     #[test]
     fn service_schema_is_the_exact_normative_spec() {
         assert_eq!(
             signed_kernel_service_schema(),
-            O256::from_hex("816cec371bc3e50a0f870ee6828ba2edb8207721b6a8f3c16861da9ec909492a")
+            O256::from_hex("4413f24e7f3edac8a4aa478d24e32b81ace699d0b2a9d1089bcc94e8faa2489e")
                 .unwrap()
         );
         assert_ne!(
@@ -1120,56 +1277,89 @@ mod tests {
         let vectors = [
             (
                 description,
-                "4783ecd468c755aeb1e318053a3e8c597518dd5a0fc7df5c9d37e0d046fba490",
+                "62c8e5100e981ba3c0452177c3e1f88643c7d0cf6f9cc6aa72b75dbd7df50169",
             ),
             (
                 request,
-                "d7baa4761f43616ce39b1708f1ad2cc990b1c5a0e75ae1e21ead874926339c9d",
+                "ca57e3aad1aca4113f46e98783517ee3ceea9d175b6350a08c5758dcf1509fc8",
             ),
             (
                 session,
-                "14600f473f2f997cf6b3701ee4bdd06e04260572eb067b8b246c188381622bdc",
+                "f2dfcd3a9682806761cdcce229d933ee4ab32edfb8c5912cdb97a8149f6c8ed2",
             ),
             (
                 acceptance,
-                "3039151019a64f546e62788f83c2099b9568c31d8e7166b817d71c85e1a21a67",
+                "73401c1d9d542f239b3d6c5a5e717a144cf40e57833fd67fb0491f967f3c9cf1",
             ),
             (
                 operation_digest(&operation),
-                "fc04603339f5c9ee5a8ca05fdcc7c2f3d4344285ed7cba3b578ae9cdd77355d7",
+                "70130b23296cc8d3472c5a68331b416d825c289c298c75435a223042dd6d71d6",
             ),
             (
                 command,
-                "054cbf4692f5bddbec3fe79d7a3850b5175cb9a9a88827491a375ecded7c8e3a",
+                "31d9797c413bf0fddacdf5946aa4d765860ae7a4e8e06092bf96370083c19e5f",
             ),
             (
                 produced,
-                "c7ac5193399bafe6d8ee589f106858e77da3a614734816f401d20e15b91fb613",
+                "c5622dccbcca28b3e8c6afde9619742b0ecd29b0a877d26ce0d7d064922c88bd",
             ),
             (
                 received,
-                "75eca37a4496e269543729fb56504339189f308ae6376d2e21c94c52edb5225c",
+                "7be2822bcdc6e42a453d5340f415e45692498cd27e0873c76a316d2a3a44cc51",
             ),
             (
                 error,
-                "09d88302ddb4f9c017c04c6e55e8660363a2bf16041ea3d92154da95cd9b1ce4",
+                "5d6ed4fc4159f82277b2fe0635a2fe3d00469301fc61ad0994cb41ef13ff3051",
             ),
             (
                 reply_statement(session, 13, request_id, command, produced),
-                "bc9c02d514c665bf39f244ac1c35c72f9fe0809d7886b4255e8a1cc91916bb2b",
+                "b0ca00db1af110283a9b993dcbe30ddd8a69bfa7e82acba926f4a413cd5c0375",
             ),
             (
                 reply_statement(session, 13, request_id, command, received),
-                "4e3c82c38925ed5f5d45d406cea9e1f79dbf11416e7d9865817c884c2cf110cf",
+                "8e7fc504acba7c5dcb7f97a2919bba11ee61a4560071fd4c618be5993732c8cc",
             ),
             (
                 reply_statement(session, 13, request_id, command, error),
-                "1f83333f751291506fa5f02cc82f0fbb59bf70743589fbb3b77f3e7e6f40d682",
+                "ba973d3a9da083ab796c9631e6ec37e5af1c860c7d4755c9be7b237b692c4466",
             ),
         ];
         for (actual, expected) in vectors {
             assert_eq!(actual, O256::from_hex(expected).unwrap());
         }
+    }
+
+    #[test]
+    fn component_statement_vectors_are_stable() {
+        let endpoint_key = [1; 32];
+        let endpoint = ServiceIdentity::new(ed25519_key_id(&endpoint_key), endpoint_key).unwrap();
+        let schema = O256::from_bytes(b"artifact-schema");
+        let image_hash = O256::from_bytes(b"image");
+        let artifact = SignedHolArtifact::from_untrusted_parts(
+            3,
+            b"image".to_vec(),
+            &schema.to_string(),
+            &image_hash.to_string(),
+            &endpoint.signer.to_string(),
+            endpoint_key.to_vec(),
+            vec![5; 64],
+        )
+        .unwrap();
+        let component = O256::from_bytes(b"component");
+        assert_eq!(
+            operation_digest(&ServiceOperation::RunHolProofComponent(component)),
+            O256::from_hex("2b74c07219f038673a1c7f15713e47dfd62fbe0b387a5c09f047a45e05f84a27")
+                .unwrap()
+        );
+        let result = ServiceResult::ProducedByComponent(Box::new(ServiceProducedHolComponent {
+            component,
+            artifact,
+        }));
+        assert_eq!(
+            service_result_digest(&result),
+            O256::from_hex("64f6abc5755bd4e0c750e91f9bf6d4d07ac4d153036e25eec0912e156eefdbf1")
+                .unwrap()
+        );
     }
 
     fn establish_session(
@@ -1259,6 +1449,73 @@ mod tests {
         assert!(matches!(
             accepted(&mut service, &mut session, ServiceOperation::CloseSession),
             ServiceResult::SessionClosed
+        ));
+    }
+
+    #[test]
+    fn hash_selected_executor_returns_only_a_recipe_for_service_owned_replay() {
+        let component = O256::from_bytes(b"locally provisioned component bytes");
+        let other = O256::from_bytes(b"unknown remote component bytes");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut service = SignedKernelService::new().unwrap();
+        service
+            .install_hol_proof_component_executor(TestExecutor {
+                component,
+                calls: Arc::clone(&calls),
+            })
+            .unwrap();
+        let endpoint = service.description().identity();
+        let (mut session, _) = establish_session(&mut service);
+
+        assert!(matches!(
+            accepted(
+                &mut service,
+                &mut session,
+                ServiceOperation::RunHolProofComponent(other),
+            ),
+            ServiceResult::OperationError(message)
+                if message == "HOL proof component is not provisioned"
+        ));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        let ServiceResult::ProducedByComponent(produced) = accepted(
+            &mut service,
+            &mut session,
+            ServiceOperation::RunHolProofComponent(component),
+        ) else {
+            panic!("expected component-produced artifact");
+        };
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(produced.component(), component);
+        assert_eq!(produced.artifact().signer(), endpoint.signer());
+        assert_eq!(produced.artifact().public_key(), &endpoint.public_key());
+    }
+
+    #[test]
+    fn executor_configuration_is_frozen_before_sessions() {
+        let component = O256::from_bytes(b"component");
+        let executor = || TestExecutor {
+            component,
+            calls: Arc::new(AtomicUsize::new(0)),
+        };
+        let mut service = SignedKernelService::new().unwrap();
+        service
+            .install_hol_proof_component_executor(executor())
+            .unwrap();
+        assert!(matches!(
+            service.install_hol_proof_component_executor(executor()),
+            Err(ServiceError::Invalid(
+                "HOL proof executor is already configured"
+            ))
+        ));
+
+        let mut service = SignedKernelService::new().unwrap();
+        establish_session(&mut service);
+        assert!(matches!(
+            service.install_hol_proof_component_executor(executor()),
+            Err(ServiceError::Invalid(
+                "HOL proof executor must be configured before sessions"
+            ))
         ));
     }
 
