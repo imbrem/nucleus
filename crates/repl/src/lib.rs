@@ -17,7 +17,12 @@ pub mod hol_recipes;
 #[cfg(not(target_arch = "wasm32"))]
 mod hol_guest;
 #[cfg(not(target_arch = "wasm32"))]
-pub use hol_guest::{HolGuestError, run_hol_proof_component};
+pub use covalence_proton::WasmtimeComponentLimits;
+#[cfg(not(target_arch = "wasm32"))]
+pub use hol_guest::{
+    HolGuestError, ManagedHolGuestError, ManagedHolGuestResult, retain_signed_hol_guest_artifact,
+    run_hol_proof_component, run_managed_hol_proof_component,
+};
 
 pub use covalence_nucleus::sql::{
     ImageError, MAX_IMAGE_BYTES, Outcome, QueryResult, Statement, Value,
