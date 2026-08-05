@@ -104,7 +104,7 @@ derivable by the rules below (or admitted through an explicit trusted
 import). The invariant is preserved by arbitrary row deletion; theorem_id
 is a handle, never authority.
 
-Rules (21)
+Rules (23)
 ----------
 Theta = (Delta; Gamma; H). "H,p" is canonical insertion; union is canonical
 spine union and requires equal Delta; Gamma. All premises are revalidated
@@ -120,6 +120,9 @@ INST_TY (thm, Delta', Xs)    |Xs| = |Delta|, kind_of Xs_j = Delta_j in Delta'
                                                        => Delta'; Gamma[s]; H[s] |- p[s]
 TRUTH   (Delta,Gamma)                                  => |- TM_BOOL 1
 REFL    (Delta,Gamma,t)      t well-typed              => |- EQ t t
+SYM     (prem)               prem: |- EQ x y           => Theta |- EQ y x
+TRANS   (l, r)               l: |- EQ x y ; r: |- EQ y z
+                                                       => H1 u H2 |- EQ x z
 EQ_MP   (eq, prem)           eq: |- EQ p q ; prem: |- p => H1 u H2 |- q
 MK_COMB (feq, aeq)           |- EQ f g at TY_ARR(A,B); |- EQ x y at A
                                                        => H1 u H2 |- EQ (APP f x) (APP g y)
@@ -158,9 +161,14 @@ Primes mark the de Bruijn lifts required by binder depth; "lift" is liftTm
 by one.
 The exact interned tree is pinned by the fixed vector in the test suite.
 
-Derived above the kernel (not primitive; standard derivations): SYM, TRANS,
-Leibniz eq-mp, type-application congruence, hypothesis alignment, and all
-propositional connectives and quantifiers.
+SYM and TRANS are primitive: with equality as a node former rather than
+a term constant, the HOL Light derivations of symmetry/transitivity from
+MK_COMB do not apply (the reference EqTm likewise carries symm/trans as
+constructors). Derived above the kernel (standard derivations recorded in
+the design appendix): Leibniz eq-mp; congruence for the EQ, EPS, ABS, and
+type-application formers via the lambda-wrapper trick over MK_COMB, BETA,
+SYM, and TRANS; hypothesis alignment; and all propositional connectives
+and quantifiers.
 
 Rule failures leave no rows. Repeating a derivation whose conclusion row
 exists returns the existing theorem_id where the local uniqueness index is

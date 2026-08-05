@@ -129,6 +129,10 @@ impl<'v, P: Policy> HolView<'v, P> {
         self.connection.parts().0.sqlite()
     }
 
+    pub(crate) fn raw_sqlite(&self) -> &sqlite::Connection {
+        self.sqlite()
+    }
+
     pub(crate) fn authorize(&self, operation: Operation) -> Result<(), HolError> {
         if self.connection.parts().1.policy.allows(operation) {
             Ok(())
