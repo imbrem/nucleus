@@ -226,6 +226,22 @@ impl Runner {
 
         if cargo {
             self.cargo_streaming("test Cargo compatibility", &["test", "--workspace"])?;
+            self.run_with_env(
+                "test JavaScript-hosted Wasm randomness",
+                "cargo",
+                [
+                    "test",
+                    "--locked",
+                    "-p",
+                    "covalence-lib-rand",
+                    "--target",
+                    "wasm32-unknown-unknown",
+                ],
+                &[(
+                    "CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER",
+                    OsStr::new("wasm-bindgen-test-runner"),
+                )],
+            )?;
         }
         self.exec("test Buck Rust targets", "buck2", ["test", "//crates/..."])?;
         self.build(BuildTarget::Wasm)?;

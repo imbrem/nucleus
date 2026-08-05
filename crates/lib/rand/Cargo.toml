@@ -10,5 +10,12 @@ publish = false
 [dependencies]
 rand = "0.9"
 
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+# The repository's `wasm32-unknown-unknown` artifact targets JavaScript hosts.
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+
 [lints]
 workspace = true

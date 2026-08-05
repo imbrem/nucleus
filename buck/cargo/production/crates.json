@@ -32,6 +32,42 @@
       ]
     },
     {
+      "id": "workspace#covalence-data-container@0.0.0",
+      "name": "covalence-data-container",
+      "version": "0.0.0",
+      "path": "crates/data/container",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_data_container",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-lib-crypto@0.0.0",
+      "name": "covalence-lib-crypto",
+      "version": "0.0.0",
+      "path": "crates/lib/crypto",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_lib_crypto",
+          "kinds": [
+            "lib"
+          ]
+        },
+        {
+          "name": "ed25519",
+          "kinds": [
+            "test"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-lib-error@0.0.0",
       "name": "covalence-lib-error",
       "version": "0.0.0",
@@ -167,8 +203,57 @@
       ]
     },
     {
+      "source": "workspace#covalence-neutron@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-neutron@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-neutron@0.0.0",
+      "target": "workspace#covalence-lib-sqlite@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus@0.0.0",
+      "target": "workspace#covalence-lib-crypto@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "workspace#covalence-nucleus@0.0.0",
       "target": "workspace#covalence-lib-sqlite@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus@0.0.0",
+      "target": "workspace#covalence-neutron@0.0.0",
       "kinds": [
         "normal"
       ]

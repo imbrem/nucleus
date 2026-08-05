@@ -18,22 +18,19 @@ filegroup(
 )
 
 rust_library(
-    name = "covalence_lib_rand",
-    crate = "covalence_lib_rand",
+    name = "covalence_data_container",
+    crate = "covalence_data_container",
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
-    tests = [":covalence_lib_rand-unit-test"],
-    named_deps = {
-        "rand": "nucleus//buck/cargo/production:rand-0.9.5",
-    },
+    tests = [":covalence_data_container-unit-test"],
     env = {
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "Randomness primitives for Nucleus",
+        "CARGO_PKG_DESCRIPTION": "Const-indexed tuple projections",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",
-        "CARGO_PKG_NAME": "covalence-lib-rand",
+        "CARGO_PKG_NAME": "covalence-data-container",
         "CARGO_PKG_README": "",
         "CARGO_PKG_REPOSITORY": "",
         "CARGO_PKG_RUST_VERSION": "",
@@ -47,21 +44,18 @@ rust_library(
 )
 
 rust_test(
-    name = "covalence_lib_rand-unit-test",
-    crate = "covalence_lib_rand",
+    name = "covalence_data_container-unit-test",
+    crate = "covalence_data_container",
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
-    named_deps = {
-        "rand": "nucleus//buck/cargo/production:rand-0.9.5",
-    },
     env = {
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "Randomness primitives for Nucleus",
+        "CARGO_PKG_DESCRIPTION": "Const-indexed tuple projections",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",
-        "CARGO_PKG_NAME": "covalence-lib-rand",
+        "CARGO_PKG_NAME": "covalence-data-container",
         "CARGO_PKG_README": "",
         "CARGO_PKG_REPOSITORY": "",
         "CARGO_PKG_RUST_VERSION": "",

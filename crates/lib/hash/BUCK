@@ -7,7 +7,7 @@ _PACKAGE_FILES = glob(
 )
 
 _RUST_SOURCES = glob(
-    ["**/*.rs"],
+    ["**/*.rs", "**/*.sql"],
     exclude = ["target/**"],
 )
 
@@ -23,6 +23,13 @@ rust_library(
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
+    features = [
+        "blake3",
+        "default",
+        "git-sha1",
+        "random",
+        "sha256",
+    ],
     tests = [":covalence_lib_hash-unit-test"],
     named_deps = {
         "blake3": "nucleus//buck/cargo/production:blake3-1.8.5",
@@ -56,6 +63,13 @@ rust_test(
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
+    features = [
+        "blake3",
+        "default",
+        "git-sha1",
+        "random",
+        "sha256",
+    ],
     named_deps = {
         "blake3": "nucleus//buck/cargo/production:blake3-1.8.5",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",

@@ -22,7 +22,7 @@ _PACKAGE_FILES = glob(
 )
 
 _RUST_SOURCES = glob(
-    ["**/*.rs"],
+    ["**/*.rs", "**/*.sql"],
     exclude = ["target/**"],
 )
 
@@ -39,6 +39,13 @@ filegroup(
     crate_root = {{ target.crate_root|tojson }},
     edition = {{ target.edition|tojson }},
     srcs = _RUST_SOURCES,
+{%- if target.features %}
+    features = [
+{%- for feature in target.features %}
+        {{ feature|tojson }},
+{%- endfor %}
+    ],
+{%- endif %}
 {%- if target.unit_test %}
     tests = [":{{ target.name }}-unit-test"],
 {%- endif %}
@@ -69,6 +76,13 @@ rust_test(
     crate_root = {{ target.crate_root|tojson }},
     edition = {{ target.edition|tojson }},
     srcs = _RUST_SOURCES,
+{%- if target.features %}
+    features = [
+{%- for feature in target.features %}
+        {{ feature|tojson }},
+{%- endfor %}
+    ],
+{%- endif %}
 {%- if target.named_deps %}
     named_deps = {
 {%- for name, dependency in target.named_deps %}
@@ -448,13 +462,19 @@ impl<'a> Graph<'a> {
             named_deps.push((library.name.replace('-', "_"), format!(":{}", library.name)));
             named_deps.sort();
         }
+        let mut features: Vec<String> = self
+            .nodes
+            .get(&package.id)
+            .map(|node| node.features.iter().map(ToString::to_string).collect())
+            .unwrap_or_default();
+        features.sort();
         Ok(Some(RustTarget {
             rule,
             name: target.name.clone(),
             crate_name: target.name.replace('-', "_"),
             crate_root,
             edition: package.edition.to_string(),
-            features: Vec::new(),
+            features,
             named_deps,
             proc_macro: target.kind.contains(&TargetKind::ProcMacro),
             buildscript: None,
