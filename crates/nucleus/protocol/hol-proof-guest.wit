@@ -1,4 +1,4 @@
-package covalence:hol-proof-guest@0.4.0;
+package covalence:hol-proof-guest@0.5.0;
 
 /// A bounded, non-authoritative recipe builder supplied to an untrusted proof guest.
 ///
@@ -13,8 +13,9 @@ package covalence:hol-proof-guest@0.4.0;
 /// successful replay may return the connection to the caller for optional serialization and
 /// signing.
 ///
-/// This contract exposes schematic binding and first-class conversions. Extending it with another
-/// HOL rule changes the contract identity and requires an explicit host policy operation.
+/// This contract exposes schematic binding, first-class conversions, immutable contexts, and the
+/// first rules for assumptions and equality composition. Extending it with another HOL rule
+/// changes the contract identity and requires an explicit host policy operation.
 interface host {
   enum append-error {
     invalid-resource,
@@ -48,6 +49,35 @@ interface host {
     ) -> result<term-node, append-error>;
     epsilon: func(predicate: borrow<term-node>) -> result<term-node, append-error>;
     empty-context: func() -> result<context-node, append-error>;
+    extend-context: func(
+      base: borrow<context-node>,
+      member: borrow<term-node>,
+    ) -> result<context-node, append-error>;
+
+    prove-hypothesis: func(
+      context: borrow<context-node>,
+      term: borrow<term-node>,
+    ) -> result<theorem-node, append-error>;
+    prove-truth: func(
+      context: borrow<context-node>,
+    ) -> result<theorem-node, append-error>;
+    prove-reflexivity: func(
+      context: borrow<context-node>,
+      term: borrow<term-node>,
+    ) -> result<theorem-node, append-error>;
+    prove-deduction-antisymmetry: func(
+      first: borrow<theorem-node>,
+      second: borrow<theorem-node>,
+    ) -> result<theorem-node, append-error>;
+    prove-equality-modus-ponens: func(
+      equality: borrow<theorem-node>,
+      premise: borrow<theorem-node>,
+    ) -> result<theorem-node, append-error>;
+    prove-equality-substitution: func(
+      equality: borrow<theorem-node>,
+      predicate: borrow<term-node>,
+      premise: borrow<theorem-node>,
+    ) -> result<theorem-node, append-error>;
 
     conversion-reflexivity: func(
       term: borrow<term-node>,

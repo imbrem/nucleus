@@ -47,6 +47,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-hol-proof-guest-assumptions@0.0.0",
+      "name": "covalence-hol-proof-guest-assumptions",
+      "version": "0.0.0",
+      "path": "crates/hol-proof-guest-assumptions",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_hol_proof_guest_assumptions",
+          "kinds": [
+            "cdylib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-hol-proof-guest-beta@0.0.0",
       "name": "covalence-hol-proof-guest-beta",
       "version": "0.0.0",

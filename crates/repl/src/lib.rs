@@ -34,9 +34,9 @@ pub use covalence_nucleus::sql::{
 };
 pub use covalence_nucleus::{AllowAll, Connection, ContextId, Hol, Kernel, Sql, TermId};
 use covalence_nucleus::{
-    AuthenticatedValidatedHolImage, ExportId, HolDatabaseRef, ImportedExport, ImportedTermView,
-    NamespaceExport, NamespaceId, ProofError, SignedSnapshotEnvelope, TermError, TrustedImportId,
-    TypeError, ed25519_key_id,
+    AuthenticatedValidatedHolImage, ExportId, HolDatabaseRef, ImportedExport, NamespaceExport,
+    NamespaceId, ProofError, SignedSnapshotEnvelope, TermError, TrustedImportId, TypeError,
+    ed25519_key_id,
 };
 
 mod service;
@@ -959,7 +959,7 @@ impl ReceivedHolSnapshot {
         self.namespace
     }
 
-    /// Returns the imported empty-context source coordinate.
+    /// Returns the source coordinate of the imported exported theorem's context.
     #[must_use]
     pub const fn context_id(self) -> i64 {
         self.context
@@ -1051,13 +1051,13 @@ impl SignedHolRoundTripResult {
         self.received.namespace_id()
     }
 
-    /// Returns the source coordinate of the imported empty context.
+    /// Returns the source coordinate of the imported exported theorem's context.
     #[must_use]
     pub const fn imported_context_id(&self) -> i64 {
         self.received.context_id()
     }
 
-    /// Returns the source coordinate of the imported beta conclusion.
+    /// Returns the source coordinate of the imported exported theorem's conclusion.
     #[must_use]
     pub const fn imported_conclusion_id(&self) -> i64 {
         self.received.conclusion_id()
@@ -1278,7 +1278,7 @@ pub(crate) fn trust_receive_and_retain_pinned_signed_hol_artifact(
     let (context_id, conclusion_id) = target
         .match_trusted_import_image(trusted, validated)
         .map_err(|error| SignedHolRoundTripError::at("theorem-read", error))?
-        .with_mounted_reader(namespace, &mounted, read_imported_exported_equality)
+        .with_mounted_reader(namespace, &mounted, read_imported_exported_theorem)
         .map_err(|error| SignedHolRoundTripError::at("theorem-read", error))??;
 
     let received = ReceivedHolSnapshot {
@@ -1321,7 +1321,7 @@ pub(crate) fn reread_received_hol_snapshot(
         .with_mounted_reader(
             NamespaceId::from_i64(retained.received.namespace),
             &retained.mounted,
-            read_imported_exported_equality,
+            read_imported_exported_theorem,
         )
         .map_err(|error| SignedHolRoundTripError::at("theorem-read", error))??;
     if (context, conclusion) != (retained.received.context, retained.received.conclusion) {
@@ -1351,7 +1351,7 @@ fn authenticate_artifact(
     .map_err(|error| SignedHolRoundTripError::at("signature-authenticated", error))
 }
 
-fn read_imported_exported_equality(
+fn read_imported_exported_theorem(
     mut reader: covalence_nucleus::ImportedHolReader<'_, '_, AllowAll>,
 ) -> Result<(i64, i64), SignedHolRoundTripError> {
     let Some(context_export) = reader
@@ -1392,17 +1392,6 @@ fn read_imported_exported_equality(
         return Err(SignedHolRoundTripError::invalid(
             "theorem-read",
             "persisted exported theorem is absent",
-        ));
-    }
-    if !matches!(
-        reader
-            .term(conclusion)
-            .map_err(|error| SignedHolRoundTripError::at("theorem-read", error))?,
-        ImportedTermView::Equality { .. }
-    ) {
-        return Err(SignedHolRoundTripError::invalid(
-            "theorem-read",
-            "imported conclusion is not an equality",
         ));
     }
     Ok((context.get(), conclusion.get()))
@@ -2127,7 +2116,7 @@ mod tests {
         let reread = target
             .match_trusted_import_image(trusted, validated)
             .unwrap()
-            .with_mounted_reader(namespace, &mounted, read_imported_exported_equality)
+            .with_mounted_reader(namespace, &mounted, read_imported_exported_theorem)
             .unwrap()
             .unwrap();
         assert_eq!(reread.0, result.imported_context_id());

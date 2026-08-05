@@ -3891,6 +3891,14 @@
   ],
   "roots": [
     {
+      "id": "workspace#covalence-hol-proof-guest-assumptions@0.0.0",
+      "name": "covalence-hol-proof-guest-assumptions",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#wit-bindgen@0.57.1"
+      ]
+    },
+    {
       "id": "workspace#covalence-hol-proof-guest-beta@0.0.0",
       "name": "covalence-hol-proof-guest-beta",
       "category": "tcb",

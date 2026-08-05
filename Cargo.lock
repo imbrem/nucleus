@@ -167,6 +167,13 @@ name = "covalence-data-container"
 version = "0.0.0"
 
 [[package]]
+name = "covalence-hol-proof-guest-assumptions"
+version = "0.0.0"
+dependencies = [
+ "wit-bindgen",
+]
+
+[[package]]
 name = "covalence-hol-proof-guest-beta"
 version = "0.0.0"
 dependencies = [

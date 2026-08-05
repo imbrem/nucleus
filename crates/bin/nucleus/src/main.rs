@@ -965,6 +965,17 @@ mod tests {
         ))
     }
 
+    fn contains_imported_theorem(output: &str) -> bool {
+        output.lines().any(|line| {
+            line.strip_prefix("imported_theorem\t")
+                .and_then(|coordinates| coordinates.split_once('\t'))
+                .is_some_and(|(context, conclusion)| {
+                    context.parse::<i64>().is_ok_and(|id| id >= 0)
+                        && conclusion.parse::<i64>().is_ok_and(|id| id > 0)
+                })
+        })
+    }
+
     struct GrowingImage {
         remaining: usize,
     }
@@ -1123,10 +1134,7 @@ mod tests {
 
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("kind\tmanaged-wasm-hol\n"));
-        assert!(output.lines().any(|line| {
-            line.strip_prefix("imported_theorem\t0\t")
-                .is_some_and(|conclusion| conclusion.parse::<i64>().is_ok_and(|id| id > 0))
-        }));
+        assert!(contains_imported_theorem(&output));
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1169,10 +1177,7 @@ mod tests {
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("kind\thash-selected-wasm-hol\n"));
         assert!(output.contains(&format!("component\t{digest}\n")));
-        assert!(output.lines().any(|line| {
-            line.strip_prefix("imported_theorem\t0\t")
-                .is_some_and(|conclusion| conclusion.parse::<i64>().is_ok_and(|id| id > 0))
-        }));
+        assert!(contains_imported_theorem(&output));
         fs::remove_file(output_path.join("proof.sqlite")).unwrap();
         fs::remove_file(output_path.join("attestation.txt")).unwrap();
         fs::remove_dir(output_path).unwrap();
@@ -1212,10 +1217,7 @@ mod tests {
         );
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains(&format!("component\t{digest}\n")));
-        assert!(output.lines().any(|line| {
-            line.strip_prefix("imported_theorem\t0\t")
-                .is_some_and(|conclusion| conclusion.parse::<i64>().is_ok_and(|id| id > 0))
-        }));
+        assert!(contains_imported_theorem(&output));
         assert!(output.contains(&format!("using receiver connection {receiver}\n")));
 
         fs::remove_file(output_path.join("proof.sqlite")).unwrap();
