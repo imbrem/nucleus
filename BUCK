@@ -26,6 +26,7 @@ _NUCLEUS_PACKAGE_SOURCES = glob(
 _REPOSITORY_SOURCES = glob([
     ".devcontainer/**",
     "buck/**",
+    "docs/**",
     "*.json",
     "*.nix",
     "*.toml",
@@ -75,6 +76,7 @@ genrule(
         {
             "lib-sqlite": "//crates/lib/sqlite:package_files",
             "nucleus": "//crates/nucleus:package_files",
+            "repl": "//crates/repl:package_files",
         },
         _NUCLEUS_PACKAGE_SOURCES +
         [

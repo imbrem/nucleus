@@ -1,0 +1,23 @@
+[package]
+name = "covalence-repl"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Transport-neutral REPL orchestration for Covalence kernels"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+covalence-lib-hash = { path = "../lib/hash", default-features = false, features = ["blake3"] }
+covalence-lib-sqlite = { path = "../lib/sqlite" }
+covalence-neutron = { path = "../neutron" }
+covalence-nucleus = { path = "../nucleus" }
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+wasm-bindgen = "=0.2.121"
+
+[lints]
+workspace = true

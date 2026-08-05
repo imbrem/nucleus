@@ -12,10 +12,6 @@ use covalence_neutron as neutron;
 /// protocol, such as a SQL shell, must make that authority explicit in its own
 /// API.
 pub struct Connection<P> {
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used by protocol modules in stacked changes")
-    )]
     neutron: neutron::Connection,
     protocol: P,
 }
@@ -27,18 +23,10 @@ impl<P> Connection<P> {
         &self.protocol
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used by protocol modules in stacked changes")
-    )]
     pub(crate) const fn from_neutron(neutron: neutron::Connection, protocol: P) -> Self {
         Self { neutron, protocol }
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used by protocol modules in stacked changes")
-    )]
     pub(crate) const fn parts_mut(&mut self) -> (&mut neutron::Connection, &mut P) {
         (&mut self.neutron, &mut self.protocol)
     }

@@ -13,7 +13,7 @@ const contentTypes = {
   ".wasm": "application/wasm",
 };
 
-test("loads the Wasm binding in a browser", async (context) => {
+test("downloads and attaches an immutable SQLite image in a Worker", async (context) => {
   const server = createServer(async (request, response) => {
     const relative = new URL(request.url ?? "/", "http://localhost").pathname;
     const path = join(root, relative);
@@ -37,7 +37,9 @@ test("loads the Wasm binding in a browser", async (context) => {
   const browser = await chromium.launch({
     executablePath,
     headless: true,
-    args: ["--no-sandbox"],
+    // --disable-dev-shm-usage keeps Chromium alive in containers whose
+    // /dev/shm is too small for a second page plus the Wasm kernel.
+    args: ["--no-sandbox", "--disable-dev-shm-usage"],
   });
   context.after(() => browser.close());
   const page = await browser.newPage();
@@ -45,6 +47,39 @@ test("loads the Wasm binding in a browser", async (context) => {
   assert.notEqual(address, null);
   assert.equal(typeof address, "object");
   await page.goto(`http://127.0.0.1:${address.port}/test/browser.html`);
-  await page.waitForFunction(() => document.body.dataset.result !== undefined);
-  assert.equal(await page.locator("body").getAttribute("data-result"), "42");
+  await page.waitForFunction(
+    () =>
+      document.body.dataset.result !== undefined ||
+      document.body.dataset.error !== undefined,
+  );
+  assert.equal(await page.locator("body").getAttribute("data-error"), null);
+  const result = JSON.parse(
+    await page.locator("body").getAttribute("data-result"),
+  );
+  assert.match(result.hash, /^[0-9a-f]{64}$/);
+  assert.deepEqual(result.result, {
+    kind: "rows",
+    columns: ["name", "value"],
+    rows: [
+      [
+        { kind: "text", value: "exact" },
+        { kind: "integer", value: "9223372036854775807" },
+      ],
+    ],
+  });
+  assert.equal(result.readonly, true);
+
+  const demo = await browser.newPage();
+  await demo.goto(`http://127.0.0.1:${address.port}/repl.html`);
+  await demo.getByText("connection 1 ready").waitFor();
+  await demo.locator("#sql").fill("SELECT 42 AS answer");
+  await demo.locator("#run").click();
+  await demo.getByRole("cell", { name: "42" }).waitFor();
+  assert.equal(await demo.getByRole("columnheader").textContent(), "answer");
+
+  await demo.locator("#new").click();
+  await demo.locator("#connection").selectOption("2");
+  await demo.locator("#sql").fill("SELECT 84 AS independent");
+  await demo.locator("#run").click();
+  await demo.getByRole("cell", { name: "84" }).waitFor();
 });

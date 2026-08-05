@@ -54,7 +54,7 @@ impl Runner {
                 "--target-dir",
                 as_utf8(&target, "temporary target")?,
                 "-p",
-                "covalence-nucleus",
+                "covalence-repl",
                 "--target",
                 "wasm32-unknown-unknown",
             ],
@@ -66,7 +66,7 @@ impl Runner {
             "wasm-bindgen",
             [
                 as_utf8(
-                    &target.join("wasm32-unknown-unknown/debug/covalence_nucleus.wasm"),
+                    &target.join("wasm32-unknown-unknown/debug/covalence_repl.wasm"),
                     "Wasm",
                 )?,
                 "--out-dir",
@@ -77,13 +77,11 @@ impl Runner {
                 "web",
             ],
         )?;
-        fs::create_dir_all(staged.join("src"))
-            .wrap_err("could not create staged TypeScript source directory")?;
-        fs::copy(
-            self.root().join("packages/nucleus/src/index.ts"),
-            staged.join("src/index.ts"),
+        copy_dir(
+            &self.root().join("packages/nucleus/src"),
+            &staged.join("src"),
         )
-        .wrap_err("could not stage TypeScript wrapper")?;
+        .wrap_err("could not stage TypeScript wrappers")?;
         let dist = out.join("dist");
         fs::create_dir_all(&dist).wrap_err("could not create TypeScript output directory")?;
         self.run(
@@ -95,19 +93,28 @@ impl Runner {
                 "exec",
                 "tsc",
                 as_utf8(&staged.join("src/index.ts"), "TypeScript source")?,
+                as_utf8(&staged.join("src/worker.ts"), "Worker TypeScript source")?,
                 "--declaration",
                 "--module",
-                "NodeNext",
+                "ESNext",
                 "--moduleResolution",
-                "NodeNext",
+                "bundler",
                 "--outDir",
                 as_utf8(&dist, "TypeScript output")?,
                 "--strict",
                 "--target",
                 "ES2022",
+                "--lib",
+                "ES2022,DOM,ESNext.Disposable",
             ],
         )?;
-        copy_dir(&generated, &out.join("generated"))
+        copy_dir(&generated, &out.join("generated"))?;
+        fs::copy(
+            self.root().join("packages/nucleus/repl.html"),
+            out.join("repl.html"),
+        )
+        .wrap_err("could not stage browser REPL demo")?;
+        Ok(())
     }
 
     pub(crate) fn artifact_docs(

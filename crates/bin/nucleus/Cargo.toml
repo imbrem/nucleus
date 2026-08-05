@@ -12,7 +12,7 @@ name = "nucleus"
 path = "src/main.rs"
 
 [dependencies]
-covalence-nucleus = { path = "../../nucleus" }
+covalence-repl = { path = "../../repl" }
 
 [lints]
 workspace = true
