@@ -108,4 +108,28 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
   await demo.locator("#recipe").fill("reflexivity false");
   await demo.locator("#run-hol").click();
   await demo.getByText("statement\tfalse = false").waitFor();
+
+  const downloads = [];
+  const bothDownloads = new Promise((resolve) => {
+    demo.on("download", (download) => {
+      downloads.push(download);
+      if (downloads.length === 2) resolve();
+    });
+  });
+  await demo.locator("#run-signed-hol").click();
+  await demo.getByText("kind\tsigned-hol-round-trip").waitFor();
+  await demo.getByText(/phases\tproof-persisted,.*theorem-read/).waitFor();
+  await demo
+    .getByText("statement\t(lambda x:bool. x) true = true")
+    .waitFor();
+  await demo.getByText("receiver\thol receiver 4").waitFor();
+  await bothDownloads;
+  assert.deepEqual(
+    downloads.map((download) => download.suggestedFilename()).sort(),
+    ["beta.attestation.txt", "beta.sqlite3"],
+  );
+  assert.equal(
+    await demo.locator("#connection option", { hasText: "hol receiver 4" }).count(),
+    1,
+  );
 });
