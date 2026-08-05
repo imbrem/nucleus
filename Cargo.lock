@@ -116,7 +116,7 @@ checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 name = "covalence-bin-nucleus"
 version = "0.0.0"
 dependencies = [
- "covalence-nucleus",
+ "covalence-repl",
 ]
 
 [[package]]
@@ -188,15 +188,26 @@ dependencies = [
  "covalence-lib-crypto",
  "covalence-lib-error",
  "covalence-lib-hash",
+ "covalence-lib-rand",
  "covalence-lib-sqlite",
  "covalence-neutron",
- "wasm-bindgen",
  "wit-bindgen-rt",
 ]
 
 [[package]]
 name = "covalence-proton"
 version = "0.0.0"
+
+[[package]]
+name = "covalence-repl"
+version = "0.0.0"
+dependencies = [
+ "covalence-lib-hash",
+ "covalence-lib-sqlite",
+ "covalence-neutron",
+ "covalence-nucleus",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "cpufeatures"

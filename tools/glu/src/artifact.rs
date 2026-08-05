@@ -54,7 +54,7 @@ impl Runner {
                 "--target-dir",
                 as_utf8(&target, "temporary target")?,
                 "-p",
-                "covalence-nucleus",
+                "covalence-repl",
                 "--target",
                 "wasm32-unknown-unknown",
             ],
@@ -66,7 +66,7 @@ impl Runner {
             "wasm-bindgen",
             [
                 as_utf8(
-                    &target.join("wasm32-unknown-unknown/debug/covalence_nucleus.wasm"),
+                    &target.join("wasm32-unknown-unknown/debug/covalence_repl.wasm"),
                     "Wasm",
                 )?,
                 "--out-dir",
