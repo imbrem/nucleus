@@ -25,6 +25,7 @@ rust_library(
     srcs = _RUST_SOURCES,
     tests = [":covalence_data_basic-unit-test"],
     env = {
+        "CARGO_MANIFEST_DIR": "crates/data/basic",
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Basic data representation for Nucleus",
         "CARGO_PKG_HOMEPAGE": "",
@@ -50,6 +51,7 @@ rust_test(
     edition = "2024",
     srcs = _RUST_SOURCES,
     env = {
+        "CARGO_MANIFEST_DIR": "crates/data/basic",
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Basic data representation for Nucleus",
         "CARGO_PKG_HOMEPAGE": "",

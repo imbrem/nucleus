@@ -34,6 +34,7 @@ rust_binary(
         "serde_json": "nucleus//buck/cargo/glu:serde_json-1.0.151",
     },
     env = {
+        "CARGO_MANIFEST_DIR": "",
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Repository tooling for Nucleus",
         "CARGO_PKG_HOMEPAGE": "",
@@ -68,6 +69,7 @@ rust_test(
         "serde_json": "nucleus//buck/cargo/glu:serde_json-1.0.151",
     },
     env = {
+        "CARGO_MANIFEST_DIR": "",
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Repository tooling for Nucleus",
         "CARGO_PKG_HOMEPAGE": "",

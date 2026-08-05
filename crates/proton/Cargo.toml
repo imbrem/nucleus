@@ -9,3 +9,6 @@ publish = false
 
 [lints]
 workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+wasmtime = { version = "=46.0.1", default-features = false, features = ["component-model", "cranelift", "runtime", "std"] }

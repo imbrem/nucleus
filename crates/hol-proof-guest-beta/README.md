@@ -11,3 +11,11 @@ Build the no-WASI component explicitly:
 cargo component build --locked -p covalence-hol-proof-guest-beta \
   --target wasm32-unknown-unknown
 ```
+
+Run it through the bounded native host and write the signed snapshot:
+
+```sh
+cargo run -p covalence-repl --example wasm_signed_beta -- \
+  target/wasm32-unknown-unknown/debug/covalence_hol_proof_guest_beta.wasm \
+  signed-beta-artifact
+```
