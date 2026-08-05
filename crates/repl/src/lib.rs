@@ -1088,6 +1088,178 @@ impl SignedHolArtifact {
     }
 }
 
+/// Maximum accepted size of the demo-local signed-artifact sidecar.
+pub const MAX_SIGNED_HOL_ARTIFACT_SIDECAR_BYTES: usize = 8 * 1024;
+const SIGNED_HOL_ARTIFACT_MANIFEST_KEYS: [&str; 7] = [
+    "format",
+    "namespace",
+    "schema",
+    "image",
+    "signer",
+    "public_key",
+    "signature",
+];
+
+/// Malformed demo-local signed-artifact sidecar.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SignedHolArtifactSidecarError(&'static str);
+
+impl fmt::Display for SignedHolArtifactSidecarError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.0)
+    }
+}
+
+impl StdError for SignedHolArtifactSidecarError {}
+
+fn is_canonical_lower_hex(value: &str, bytes: usize) -> bool {
+    value.len() == bytes * 2
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn is_signed_artifact_sidecar_key(key: &str) -> bool {
+    let mut bytes = key.bytes();
+    bytes.next().is_some_and(|byte| byte.is_ascii_lowercase())
+        && bytes.all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
+        })
+}
+
+fn decode_canonical_lower_hex(value: &str) -> Vec<u8> {
+    value
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let high = if pair[0].is_ascii_digit() {
+                pair[0] - b'0'
+            } else {
+                pair[0] - b'a' + 10
+            };
+            let low = if pair[1].is_ascii_digit() {
+                pair[1] - b'0'
+            } else {
+                pair[1] - b'a' + 10
+            };
+            high * 16 + low
+        })
+        .collect()
+}
+
+/// Parses the bounded demo-local sidecar into an untrusted signed artifact.
+///
+/// Unique opaque metadata lines may precede the exact seven-line transport
+/// manifest. This operation grants no trust: callers must independently pin
+/// an expected key and call [`authenticate_pinned_signed_hol_artifact`].
+///
+/// # Errors
+///
+/// Returns an error for oversized input, non-canonical text or coordinates,
+/// duplicate fields, or a missing or reordered final manifest.
+pub fn parse_signed_hol_artifact_sidecar(
+    image: Vec<u8>,
+    sidecar: &[u8],
+) -> Result<SignedHolArtifact, SignedHolArtifactSidecarError> {
+    if image.is_empty() {
+        return Err(SignedHolArtifactSidecarError(
+            "signed artifact image must not be empty",
+        ));
+    }
+    if image.len() > MAX_IMAGE_BYTES {
+        return Err(SignedHolArtifactSidecarError(
+            "signed artifact image exceeds its byte limit",
+        ));
+    }
+    if sidecar.len() > MAX_SIGNED_HOL_ARTIFACT_SIDECAR_BYTES {
+        return Err(SignedHolArtifactSidecarError(
+            "signed artifact sidecar exceeds its byte limit",
+        ));
+    }
+    if sidecar
+        .iter()
+        .any(|byte| (*byte < b' ' && *byte != b'\n') || *byte == 0x7f)
+    {
+        return Err(SignedHolArtifactSidecarError(
+            "signed artifact sidecar contains a forbidden control byte",
+        ));
+    }
+    let text = std::str::from_utf8(sidecar).map_err(|_| {
+        SignedHolArtifactSidecarError("signed artifact sidecar must be strict UTF-8")
+    })?;
+    let body = text
+        .strip_suffix('\n')
+        .ok_or(SignedHolArtifactSidecarError(
+            "signed artifact sidecar must end with LF",
+        ))?;
+    let lines = body.split('\n').collect::<Vec<_>>();
+    if lines.len() < SIGNED_HOL_ARTIFACT_MANIFEST_KEYS.len() {
+        return Err(SignedHolArtifactSidecarError(
+            "signed artifact sidecar is missing its final manifest",
+        ));
+    }
+    let mut fields = Vec::with_capacity(lines.len());
+    let mut keys = std::collections::HashSet::with_capacity(lines.len());
+    for line in lines {
+        let (key, value) = line.split_once('=').ok_or(SignedHolArtifactSidecarError(
+            "signed artifact sidecar line must contain '='",
+        ))?;
+        if !is_signed_artifact_sidecar_key(key) || !keys.insert(key) {
+            return Err(SignedHolArtifactSidecarError(
+                "signed artifact sidecar has an invalid or duplicate key",
+            ));
+        }
+        fields.push((key, value));
+    }
+    let manifest_start = fields.len() - SIGNED_HOL_ARTIFACT_MANIFEST_KEYS.len();
+    let manifest = &fields[manifest_start..];
+    if manifest
+        .iter()
+        .zip(SIGNED_HOL_ARTIFACT_MANIFEST_KEYS)
+        .any(|((actual, _), expected)| *actual != expected)
+    {
+        return Err(SignedHolArtifactSidecarError(
+            "signed artifact sidecar final manifest is missing or reordered",
+        ));
+    }
+    if manifest[0].1 != "covalence-repl-signed-snapshot-demo-v0" {
+        return Err(SignedHolArtifactSidecarError(
+            "signed artifact sidecar has an unknown format",
+        ));
+    }
+    let namespace = manifest[1]
+        .1
+        .parse::<i64>()
+        .map_err(|_| SignedHolArtifactSidecarError("namespace must be a canonical integer"))?;
+    if namespace < 0 || namespace.to_string() != manifest[1].1 {
+        return Err(SignedHolArtifactSidecarError(
+            "namespace must be a canonical non-negative integer",
+        ));
+    }
+    if !is_canonical_lower_hex(manifest[2].1, 32)
+        || !is_canonical_lower_hex(manifest[3].1, 32)
+        || !is_canonical_lower_hex(manifest[4].1, 32)
+        || !is_canonical_lower_hex(manifest[5].1, 32)
+        || !is_canonical_lower_hex(manifest[6].1, 64)
+    {
+        return Err(SignedHolArtifactSidecarError(
+            "signed artifact manifest uses a non-canonical hex coordinate",
+        ));
+    }
+    SignedHolArtifact::from_untrusted_parts(
+        namespace,
+        image,
+        manifest[2].1,
+        manifest[3].1,
+        manifest[4].1,
+        decode_canonical_lower_hex(manifest[5].1),
+        decode_canonical_lower_hex(manifest[6].1),
+    )
+    .map_err(|_| {
+        SignedHolArtifactSidecarError("signed artifact manifest fields are structurally invalid")
+    })
+}
+
 /// Malformed above-TCB signed-HOL transport fields.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SignedHolArtifactError(&'static str);
@@ -2107,6 +2279,50 @@ pub fn smoke() -> u32 {
 mod tests {
     use super::*;
     use covalence_nucleus::{ImportId, NamespaceId, TrustedImportId};
+
+    fn signed_artifact_sidecar(metadata: &str) -> String {
+        format!(
+            "{metadata}format=covalence-repl-signed-snapshot-demo-v0\nnamespace=0\nschema={zero}\nimage={zero}\nsigner={zero}\npublic_key={zero}\nsignature={signature}\n",
+            zero = "00".repeat(32),
+            signature = "00".repeat(64),
+        )
+    }
+
+    #[test]
+    fn signed_artifact_sidecar_parser_accepts_only_untrusted_canonical_manifest_fields() {
+        let sidecar = signed_artifact_sidecar("theorem=opaque metadata\n");
+        let artifact = parse_signed_hol_artifact_sidecar(vec![1, 2, 3], sidecar.as_bytes())
+            .expect("parse canonical sidecar");
+        assert_eq!(artifact.namespace_id(), 0);
+        assert_eq!(artifact.image(), [1, 2, 3]);
+        assert_eq!(artifact.public_key(), [0; 32]);
+        assert_eq!(artifact.signature(), [0; 64]);
+    }
+
+    #[test]
+    fn signed_artifact_sidecar_parser_rejects_duplicates_and_noncanonical_text() {
+        let canonical = signed_artifact_sidecar("");
+        let cases = [
+            canonical.trim_end_matches('\n').as_bytes().to_vec(),
+            canonical.replace('\n', "\r\n").into_bytes(),
+            signed_artifact_sidecar("note=one\nnote=two\n").into_bytes(),
+            signed_artifact_sidecar(&format!("schema={}\n", "00".repeat(32))).into_bytes(),
+            canonical
+                .replacen("namespace=0", "namespace=00", 1)
+                .into_bytes(),
+            canonical.replacen("schema=00", "schema=0A", 1).into_bytes(),
+            [canonical.as_bytes(), b"note=after-manifest\n"].concat(),
+            [b"\xef\xbb\xbfnote=value\n", canonical.as_bytes()].concat(),
+            [b"Note=value\n", canonical.as_bytes()].concat(),
+            [b"bad key=value\n", canonical.as_bytes()].concat(),
+            [b"bad.key=value\n", canonical.as_bytes()].concat(),
+            vec![b'x'; MAX_SIGNED_HOL_ARTIFACT_SIDECAR_BYTES + 1],
+        ];
+        for sidecar in cases {
+            assert!(parse_signed_hol_artifact_sidecar(vec![1], &sidecar).is_err());
+        }
+        assert!(parse_signed_hol_artifact_sidecar(Vec::new(), canonical.as_bytes()).is_err());
+    }
 
     fn retained_managed_fixture() -> (
         Kernel,
