@@ -30,7 +30,10 @@ mod service;
 mod native_http;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use native_http::{MAX_NATIVE_HTTP_REQUESTS, NativeHttpKernelServer, SIGNED_KERNEL_HTTP_PATH};
+pub use native_http::{
+    MAX_NATIVE_HTTP_REQUESTS, NativeHttpClientError, NativeHttpKernelClient,
+    NativeHttpKernelServer, SIGNED_KERNEL_HTTP_PATH,
+};
 
 pub use service::signed_message::{
     MAX_SIGNED_MESSAGE_BYTES, SignedMessageError, SignedMessageRequest, SignedMessageResponse,
