@@ -11,9 +11,6 @@ const MAX_INDEX_COLUMNS: usize = 16;
 const MAX_IDENTIFIER_BYTES: usize = u16::MAX as usize;
 const MAX_INDEX_REFERENCES: usize = 512;
 const CORE_INDEX_NAMES: &[&str] = &[
-    "hol_proof_event_judgement",
-    "hol_context_implication_event_edge",
-    "hol_context_exact_union_event_key",
     "hol_namespace_named_child",
     "hol_namespace_export_name",
     "hol_kstar_unique",
@@ -494,13 +491,13 @@ mod tests {
         assert_eq!(descriptor.encode(), expected);
         assert_eq!(
             descriptor.schema_id().to_string(),
-            "11ae67072eb378e902019925a75072fd4deae1b5fee6ed72072906b1bd10d375"
+            "4c65812342b8a47d38e26517e64eb269042a4f66a05814bf74925a0b7c1c07f3"
         );
-        // Version six used the identical descriptor bytes with the previous
+        // Version seven used the identical descriptor bytes with the previous
         // physical/semantic commitments. Keep its published composite visible.
-        let version_six_composite =
-            "cb5505cd1bad45deec42d065d6cff16ee131056a682c5d93b9b4432dd14ccca7";
-        assert_ne!(descriptor.schema_id().to_string(), version_six_composite);
+        let version_seven_composite =
+            "11ae67072eb378e902019925a75072fd4deae1b5fee6ed72072906b1bd10d375";
+        assert_ne!(descriptor.schema_id().to_string(), version_seven_composite);
     }
 
     #[test]

@@ -1,0 +1,22 @@
+Nucleus hol-common-v2 semantics, version 8
+
+This protocol retains version 7 syntax, typing, proof rules, namespaces, imports, trust, and
+metadata interpretation unchanged. It changes the authenticated physical database to serialize
+only canonical kernel state. The authoritative state consists of admitted syntax, immutable
+contexts and their members, established judgements and context relations, namespaces and exports,
+and explicit import/trust assumptions.
+
+Proof steps, rule names, premise lists, tactic logs, recipes, and other observational provenance
+are not part of the HOL database. A caller may record them in a separate observer-selected store,
+such as the REPL's raw SQLite state database. Losing, duplicating, or changing such observer rows
+does not change HOL authority. Two executions which reach the same canonical kernel state therefore
+have the same logical database contents regardless of their derivation histories.
+
+The database remains a serialization of kernel state rather than a replayable proof certificate or
+a serialized Rust/ML runtime. Detached structural validation does not establish the truth of
+judgement rows; logical authority still comes from a live checked kernel transition or an explicit
+schema-qualified trusted import.
+
+Current validation, descriptors, signing, and authenticated import use only this version 8
+interpretation and physical schema version 11. Earlier semantic identities remain fixed and
+distinct; multi-version authenticated import is not implemented by this prototype.

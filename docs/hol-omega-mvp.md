@@ -302,13 +302,6 @@ CREATE TABLE hol_judgement (
     term_id INTEGER NOT NULL REFERENCES hol_term,
     PRIMARY KEY(context_id, term_id)
 ) STRICT, WITHOUT ROWID;
-
-CREATE TABLE hol_proof_event (
-    event_id INTEGER PRIMARY KEY,
-    context_id INTEGER NOT NULL,
-    term_id INTEGER NOT NULL,
-    rule TEXT NOT NULL
-) STRICT;
 ```
 
 Reserve context zero for the empty set. Once a judgement mentions a context
@@ -318,10 +311,9 @@ context construction is atomic and there is no member mutation API.
 The v2 store assigns one canonical ID to each extensional member set. This is
 an identity convention and optimization, not an additional logical rule.
 
-`hol_judgement` is the sole authoritative proposition set. Proof-event rows
-are optional observational provenance: rule strings are not proof evidence,
-multiple events may name one judgement, and deleting events does not change
-the logical state.
+`hol_judgement` is the sole authoritative proposition set. Proof steps and
+observational provenance are not part of the HOL database; a REPL or another
+selected observer may record them in a separate store.
 
 The first authoritative context relation is implication:
 
@@ -332,8 +324,7 @@ The first authoritative context relation is implication:
 Introduction consumes an exact set of same-session theorem capabilities, one
 for each member of `Δ`. Weakening consumes `Γ ⇒ Δ` and `Δ ⊢ p` to produce
 `Γ ⊢ p`. Neither rule searches persisted judgements or computes transitive
-closure. Optional implication-event rows are observational in the same sense
-as proof events.
+closure.
 
 The proposed directed union relation is valuable but is not the same thing as
 the extensional member table. It can represent an opaque compositional context
@@ -343,10 +334,10 @@ rules are fixed.
 ## Additional judgement tables
 
 Context implication, equivalence, union, and typed term equality should begin
-as append-only proved edges with provenance. Do not make a destructive
-union-find the authoritative database:
+as append-only authoritative relations. Do not make a destructive union-find
+the authoritative database:
 
-- union-find discards which accepted rule established an edge;
+- union-find discards accepted edges;
 - term equality depends on context and type;
 - context equivalence is two implication directions;
 - signed snapshots should retain their accepted claims.

@@ -26,6 +26,7 @@ const STLC_BOOL_EQ_V4_SPEC: &[u8] = include_bytes!("semantics-v4.txt");
 const STLC_BOOL_EQ_V5_SPEC: &[u8] = include_bytes!("semantics-v5.txt");
 const STLC_BOOL_EQ_V6_SPEC: &[u8] = include_bytes!("semantics-v6.txt");
 const STLC_BOOL_EQ_V7_SPEC: &[u8] = include_bytes!("semantics-v7.txt");
+const STLC_BOOL_EQ_V8_SPEC: &[u8] = include_bytes!("semantics-v8.txt");
 
 /// Returns the content hash of version one of the normative `hol-common-v2` semantics.
 #[must_use]
@@ -130,6 +131,21 @@ pub fn stlc_bool_eq_v7_schema_id(physical_schema: O256) -> O256 {
     commitments[..32].copy_from_slice(stlc_bool_eq_v7_semantics().as_ref());
     commitments[32..].copy_from_slice(physical_schema.as_ref());
     o256_path!(::nucleus.hol.protocol.stlc_bool_eq.sqlite_schema.v7).tag(commitments)
+}
+
+/// Returns the content hash of version eight of the normative `hol-common-v2` semantics.
+#[must_use]
+pub fn stlc_bool_eq_v8_semantics() -> O256 {
+    o256_path!(::nucleus.hol.protocol.stlc_bool_eq.v8).tag(STLC_BOOL_EQ_V8_SPEC)
+}
+
+/// Derives the current signed schema identity from version-eight semantics and physical bytes.
+#[must_use]
+pub fn stlc_bool_eq_v8_schema_id(physical_schema: O256) -> O256 {
+    let mut commitments = [0_u8; 64];
+    commitments[..32].copy_from_slice(stlc_bool_eq_v8_semantics().as_ref());
+    commitments[32..].copy_from_slice(physical_schema.as_ref());
+    o256_path!(::nucleus.hol.protocol.stlc_bool_eq.sqlite_schema.v8).tag(commitments)
 }
 
 /// Counts established while validating one complete HOL database image.
@@ -292,7 +308,7 @@ impl ValidatedHolImage {
             .map_err(HolImageValidationError::Image)?;
         validate_integrity(disposable.sqlite())?;
         let physical_schema = validate_schema(disposable.sqlite(), expected_schema)?;
-        let schema = stlc_bool_eq_v7_schema_id(physical_schema);
+        let schema = stlc_bool_eq_v8_schema_id(physical_schema);
         let counts = validate_contents(disposable.sqlite())?;
         Ok(Self {
             hash,
@@ -398,7 +414,7 @@ fn validate_schema(
         [],
         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
     )?;
-    if identity == (10, "tagged-node".to_owned()) {
+    if identity == (11, "tagged-node".to_owned()) {
         Ok(schema_manifest_id(&expected_manifest))
     } else {
         Err(HolImageValidationError::SchemaMismatch)
@@ -412,7 +428,7 @@ pub(super) fn expected_composite_schema_id(
         .map_err(HolImageValidationError::Connection)?;
     expected.sqlite().execute_batch(SCHEMA)?;
     install_metadata_schema(expected.sqlite(), schema)?;
-    Ok(stlc_bool_eq_v7_schema_id(schema_manifest_id(
+    Ok(stlc_bool_eq_v8_schema_id(schema_manifest_id(
         &schema_manifest(expected.sqlite())?,
     )))
 }
@@ -1475,7 +1491,7 @@ mod tests {
         let physical = schema_manifest_id(&schema_manifest(expected.sqlite()).unwrap());
         assert_eq!(
             physical,
-            O256::from_hex("a534744bf70be24bae2945f5e339f649dc01a3653401dc618b77cd4681201246")
+            O256::from_hex("613d245456acf49a5f8aa8081e35d8096e7cc19d18b897f4598ef67f1c21492e")
                 .unwrap()
         );
         let version_six_physical =
@@ -1551,12 +1567,22 @@ mod tests {
         );
         assert_eq!(
             stlc_bool_eq_v7_schema_id(physical),
-            O256::from_hex("b547051acd2b072235e9cd261c2ea6eab1a6e57049699dde614e2f6ea1df9593")
+            O256::from_hex("70724e6b8fd113f87f83d70f342e50a9e0cf61e56165364ef46b9e4d715481b4")
+                .unwrap()
+        );
+        assert_eq!(
+            stlc_bool_eq_v8_semantics(),
+            O256::from_hex("38d36538509012c0c5e3c50cb975103c394b92ef797d352031768fe4059c483f")
+                .unwrap()
+        );
+        assert_eq!(
+            stlc_bool_eq_v8_schema_id(physical),
+            O256::from_hex("b2d44da2d035d9f42c71fa9580da0f6bd8a24590efeb4f14b5ffd639bd933a83")
                 .unwrap()
         );
         assert_ne!(
-            stlc_bool_eq_v6_schema_id(physical),
-            stlc_bool_eq_v7_schema_id(physical)
+            stlc_bool_eq_v7_schema_id(physical),
+            stlc_bool_eq_v8_schema_id(physical)
         );
     }
 
@@ -1569,7 +1595,7 @@ mod tests {
         expected.sqlite().execute_batch(SCHEMA).unwrap();
         let physical = schema_manifest_id(&schema_manifest(expected.sqlite()).unwrap());
         assert_eq!(validated.physical_schema(), physical);
-        assert_eq!(validated.schema(), stlc_bool_eq_v7_schema_id(physical));
+        assert_eq!(validated.schema(), stlc_bool_eq_v8_schema_id(physical));
         assert_ne!(validated.schema(), stlc_bool_eq_v6_schema_id(physical));
         assert_ne!(validated.schema(), validated.physical_schema());
         assert_ne!(validated.schema(), stlc_bool_eq_v7_semantics());
@@ -1615,14 +1641,6 @@ mod tests {
             .execute(
                 "INSERT INTO hol_judgement(ctx_id, term_id) VALUES (0, ?1)",
                 [falsehood],
-            )
-            .unwrap();
-        untrusted
-            .sqlite()
-            .execute(
-                "INSERT INTO hol_proof_event(ctx_id, term_id, rule)
-                 VALUES (999, 999, 'forged diagnostics')",
-                [],
             )
             .unwrap();
         untrusted
@@ -1863,7 +1881,7 @@ mod tests {
         assert_eq!(validated.bytes(), bytes.as_ref());
         assert_eq!(
             validated.semantic_schema(),
-            stlc_bool_eq_v7_schema_id(validated.physical_schema_manifest())
+            stlc_bool_eq_v8_schema_id(validated.physical_schema_manifest())
         );
         let default = ValidatedHolImage::validate(&sample_image()).unwrap();
         assert_ne!(

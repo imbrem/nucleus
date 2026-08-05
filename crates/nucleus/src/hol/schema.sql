@@ -1,5 +1,5 @@
 CREATE TABLE hol_schema (
-    version INTEGER PRIMARY KEY CHECK (version = 10),
+    version INTEGER PRIMARY KEY CHECK (version = 11),
     representation TEXT NOT NULL CHECK (representation = 'tagged-node')
 ) STRICT;
 
@@ -57,35 +57,12 @@ CREATE TABLE hol_judgement (
     PRIMARY KEY (ctx_id, term_id)
 ) STRICT, WITHOUT ROWID;
 
--- Optional observational provenance.  These rows are neither theorem
--- capabilities nor replayable proof evidence.
-CREATE TABLE hol_proof_event (
-    event_id INTEGER PRIMARY KEY,
-    ctx_id INTEGER NOT NULL,
-    term_id INTEGER NOT NULL,
-    rule TEXT NOT NULL
-) STRICT;
-
-CREATE INDEX hol_proof_event_judgement
-    ON hol_proof_event(ctx_id, term_id, event_id);
-
 -- Γ implies Δ when every member of Δ has been proved under Γ.
 CREATE TABLE hol_context_implication (
     antecedent_ctx_id INTEGER NOT NULL,
     consequent_ctx_id INTEGER NOT NULL,
     PRIMARY KEY (antecedent_ctx_id, consequent_ctx_id)
 ) STRICT, WITHOUT ROWID;
-
--- Optional observational provenance for implication rules.
-CREATE TABLE hol_context_implication_event (
-    event_id INTEGER PRIMARY KEY,
-    antecedent_ctx_id INTEGER NOT NULL,
-    consequent_ctx_id INTEGER NOT NULL,
-    rule TEXT NOT NULL
-) STRICT;
-
-CREATE INDEX hol_context_implication_event_edge
-    ON hol_context_implication_event(antecedent_ctx_id, consequent_ctx_id, event_id);
 
 -- A decidable structural fact: result is exactly the finite member-set union.
 -- This is deliberately distinct from future opaque/equivalence-backed unions.
@@ -95,20 +72,6 @@ CREATE TABLE hol_context_exact_union (
     result_ctx_id INTEGER NOT NULL,
     PRIMARY KEY (left_ctx_id, right_ctx_id)
 ) STRICT, WITHOUT ROWID;
-
--- Optional observational provenance for exact-union checks.
-CREATE TABLE hol_context_exact_union_event (
-    event_id INTEGER PRIMARY KEY,
-    left_ctx_id INTEGER NOT NULL,
-    right_ctx_id INTEGER NOT NULL,
-    result_ctx_id INTEGER NOT NULL,
-    rule TEXT NOT NULL
-) STRICT;
-
-CREATE INDEX hol_context_exact_union_event_key
-    ON hol_context_exact_union_event(
-        left_ctx_id, right_ctx_id, result_ctx_id, event_id
-    );
 
 -- Hierarchical local names. Namespace zero is the anonymous root.
 CREATE TABLE hol_namespace (
@@ -220,7 +183,7 @@ CREATE UNIQUE INDEX hol_meq_unique
 CREATE UNIQUE INDEX hol_meps_unique
     ON hol_node(lhs) WHERE tag = 'MEPS';
 
-INSERT INTO hol_schema(version, representation) VALUES (10, 'tagged-node');
+INSERT INTO hol_schema(version, representation) VALUES (11, 'tagged-node');
 INSERT INTO hol_node(node_id, tag) VALUES (1, 'KSTAR');
 INSERT INTO hol_node(node_id, tag, ty) VALUES (2, 'TBOOL', 1);
 INSERT INTO hol_context(ctx_id) VALUES (0);
