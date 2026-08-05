@@ -3907,6 +3907,14 @@
       ]
     },
     {
+      "id": "workspace#covalence-hol-proof-guest-schematic-binding@0.0.0",
+      "name": "covalence-hol-proof-guest-schematic-binding",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#wit-bindgen@0.57.1"
+      ]
+    },
+    {
       "id": "workspace#covalence-lib-crypto@0.0.0",
       "name": "covalence-lib-crypto",
       "category": "tcb",

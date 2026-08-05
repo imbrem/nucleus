@@ -77,6 +77,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-hol-proof-guest-schematic-binding@0.0.0",
+      "name": "covalence-hol-proof-guest-schematic-binding",
+      "version": "0.0.0",
+      "path": "crates/hol-proof-guest-schematic-binding",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_hol_proof_guest_schematic_binding",
+          "kinds": [
+            "cdylib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-lib-crypto@0.0.0",
       "name": "covalence-lib-crypto",
       "version": "0.0.0",

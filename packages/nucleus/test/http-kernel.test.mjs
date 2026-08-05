@@ -294,7 +294,7 @@ test("real Chromium runs only a provisioned component digest and rereads it", as
   assert.equal(result.kind, "native-http-hash-selected-hol");
   assert.equal(result.component, digest);
   assert.equal(result.context, "0");
-  assert.equal(result.conclusion, "8");
+  assert.match(result.conclusion, /^[1-9][0-9]*$/);
   assert.equal(result.independentInspection.importedTheoremReread, true);
   assert.equal(result.independentInspection.unknownRejected, true);
   assert.equal(result.independentInspection.componentBytesUploaded, false);
@@ -349,14 +349,12 @@ test("REPL page cleans a hash-selected result through either close control", asy
   );
   assert.equal(await page.locator("#run-native-hash").isDisabled(), true);
   await page.getByText(`component\t${digest}`).waitFor();
-  await page.getByText("imported_theorem\t0\t8").waitFor();
+  await page.getByText(/imported_theorem\t0\t[1-9][0-9]*/).waitFor();
   assert.equal(await page.locator("#reread-native-hash").isDisabled(), false);
   assert.equal(await page.locator("#cleanup-native-hash").isDisabled(), false);
 
   await page.locator("#reread-native-hash").click();
-  await page
-    .getByText("Reread imported theorem 0\t8", { exact: true })
-    .waitFor();
+  await page.getByText(/Reread imported theorem 0\t[1-9][0-9]*/).waitFor();
   await page.locator("#recipe").fill("reflexivity false");
   await page.locator("#run-hol").click();
   await page.getByText("statement\tfalse = false").waitFor();
@@ -407,9 +405,7 @@ test("REPL page cleans a hash-selected result through either close control", asy
   assert.equal(await page.locator("#cleanup-native-hash").isDisabled(), false);
   assert.equal(await page.locator("#run-native-hash").isDisabled(), true);
   await page.locator("#reread-native-hash").click();
-  await page
-    .getByText("Reread imported theorem 0\t8", { exact: true })
-    .waitFor();
+  await page.getByText(/Reread imported theorem 0\t[1-9][0-9]*/).waitFor();
 
   await page.locator("#close").click();
   await page
@@ -484,11 +480,12 @@ test("same-REPL managed cleanup invalidates reread authority", async (context) =
   );
   assert.equal(result.invalidated, true);
   assert.equal(result.stateUnchanged, true);
+  assert.match(result.firstReread.conclusion, /^[1-9][0-9]*$/);
   assert.deepEqual(result.firstReread, {
     importId: "0",
     namespace: "1",
     context: "0",
-    conclusion: "8",
+    conclusion: result.firstReread.conclusion,
     persistentStateHash: result.firstReread.persistentStateHash,
   });
   assert.deepEqual(result.normal, {

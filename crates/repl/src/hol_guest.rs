@@ -36,8 +36,9 @@ mod bindings {
 
 use bindings::covalence::hol_proof_guest::host::{
     AppendError, ContextNode, Host, HostContextNode, HostNamespaceNode, HostProofPlan,
-    HostTermNode, HostTheoremNode, HostTypeNode, NamespaceNode, ProofPlan, TermNode, TheoremNode,
-    TypeNode,
+    HostTermInstantiationMapNode, HostTermNode, HostTheoremNode, HostTypeInstantiationMapNode,
+    HostTypeNode, NamespaceNode, ProofPlan, TermInstantiationMapNode, TermNode, TheoremNode,
+    TypeInstantiationMapNode, TypeNode,
 };
 
 const PLAN_REP: u32 = 1;
@@ -110,6 +111,42 @@ impl GuestState {
             Ok(name)
         }
     }
+
+    fn term_map_contains(&self, mut map: usize, variable: usize) -> bool {
+        loop {
+            match self.recipe.get(map) {
+                Some(Recipe::ExtendTermInstantiationMap {
+                    base,
+                    variable: key,
+                    ..
+                }) => {
+                    if *key == variable {
+                        return true;
+                    }
+                    map = *base;
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    fn type_map_contains(&self, mut map: usize, variable: usize) -> bool {
+        loop {
+            match self.recipe.get(map) {
+                Some(Recipe::ExtendTypeInstantiationMap {
+                    base,
+                    variable: key,
+                    ..
+                }) => {
+                    if *key == variable {
+                        return true;
+                    }
+                    map = *base;
+                }
+                _ => return false,
+            }
+        }
+    }
 }
 
 impl Host for GuestState {}
@@ -117,6 +154,14 @@ impl Host for GuestState {}
 impl HostProofPlan for GuestState {
     fn bool_type(&mut self, plan: Resource<ProofPlan>) -> Result<Resource<TypeNode>, AppendError> {
         Self::plan(&plan).and_then(|()| self.append(Recipe::BoolType, Sort::Type))
+    }
+
+    fn free_type(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        symbol: i64,
+    ) -> Result<Resource<TypeNode>, AppendError> {
+        Self::plan(&plan).and_then(|()| self.append(Recipe::FreeType { symbol }, Sort::Type))
     }
 
     fn bound_term(
@@ -128,6 +173,17 @@ impl HostProofPlan for GuestState {
         Self::plan(&plan)
             .and_then(|()| self.node(&ty, Sort::Type))
             .and_then(|ty| self.append(Recipe::Bound { index, ty }, Sort::Term))
+    }
+
+    fn free_term(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        symbol: i64,
+        ty: Resource<TypeNode>,
+    ) -> Result<Resource<TermNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&ty, Sort::Type))
+            .and_then(|ty| self.append(Recipe::FreeTerm { symbol, ty }, Sort::Term))
     }
 
     fn lambda(
@@ -211,6 +267,161 @@ impl HostProofPlan for GuestState {
             })
             .and_then(|(context, function)| {
                 self.append(Recipe::Eta { context, function }, Sort::Theorem)
+            })
+    }
+
+    fn empty_term_instantiation_map(
+        &mut self,
+        plan: Resource<ProofPlan>,
+    ) -> Result<Resource<TermInstantiationMapNode>, AppendError> {
+        Self::plan(&plan).and_then(|()| {
+            self.append(
+                Recipe::EmptyTermInstantiationMap,
+                Sort::TermInstantiationMap,
+            )
+        })
+    }
+
+    fn extend_term_instantiation_map(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        base: Resource<TermInstantiationMapNode>,
+        variable: Resource<TermNode>,
+        replacement: Resource<TermNode>,
+    ) -> Result<Resource<TermInstantiationMapNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&base, Sort::TermInstantiationMap))
+            .and_then(|base| {
+                self.node(&variable, Sort::Term)
+                    .map(|variable| (base, variable))
+            })
+            .and_then(|(base, variable)| {
+                self.node(&replacement, Sort::Term)
+                    .map(|replacement| (base, variable, replacement))
+            })
+            .and_then(|(base, variable, replacement)| {
+                (!self.term_map_contains(base, variable))
+                    .then_some((base, variable, replacement))
+                    .ok_or(AppendError::InvalidDependency)
+            })
+            .and_then(|(base, variable, replacement)| {
+                self.append(
+                    Recipe::ExtendTermInstantiationMap {
+                        base,
+                        variable,
+                        replacement,
+                    },
+                    Sort::TermInstantiationMap,
+                )
+            })
+    }
+
+    fn prove_term_instantiation(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        theorem: Resource<TheoremNode>,
+        instantiations: Resource<TermInstantiationMapNode>,
+    ) -> Result<Resource<TheoremNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&theorem, Sort::Theorem))
+            .and_then(|theorem| {
+                self.node(&instantiations, Sort::TermInstantiationMap)
+                    .map(|instantiations| (theorem, instantiations))
+            })
+            .and_then(|(theorem, instantiations)| {
+                self.append(
+                    Recipe::TermInstantiation {
+                        theorem,
+                        instantiations,
+                    },
+                    Sort::Theorem,
+                )
+            })
+    }
+
+    fn empty_type_instantiation_map(
+        &mut self,
+        plan: Resource<ProofPlan>,
+    ) -> Result<Resource<TypeInstantiationMapNode>, AppendError> {
+        Self::plan(&plan).and_then(|()| {
+            self.append(
+                Recipe::EmptyTypeInstantiationMap,
+                Sort::TypeInstantiationMap,
+            )
+        })
+    }
+
+    fn extend_type_instantiation_map(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        base: Resource<TypeInstantiationMapNode>,
+        variable: Resource<TypeNode>,
+        replacement: Resource<TypeNode>,
+    ) -> Result<Resource<TypeInstantiationMapNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&base, Sort::TypeInstantiationMap))
+            .and_then(|base| {
+                self.node(&variable, Sort::Type)
+                    .map(|variable| (base, variable))
+            })
+            .and_then(|(base, variable)| {
+                self.node(&replacement, Sort::Type)
+                    .map(|replacement| (base, variable, replacement))
+            })
+            .and_then(|(base, variable, replacement)| {
+                (!self.type_map_contains(base, variable))
+                    .then_some((base, variable, replacement))
+                    .ok_or(AppendError::InvalidDependency)
+            })
+            .and_then(|(base, variable, replacement)| {
+                self.append(
+                    Recipe::ExtendTypeInstantiationMap {
+                        base,
+                        variable,
+                        replacement,
+                    },
+                    Sort::TypeInstantiationMap,
+                )
+            })
+    }
+
+    fn prove_type_instantiation(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        theorem: Resource<TheoremNode>,
+        instantiations: Resource<TypeInstantiationMapNode>,
+    ) -> Result<Resource<TheoremNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&theorem, Sort::Theorem))
+            .and_then(|theorem| {
+                self.node(&instantiations, Sort::TypeInstantiationMap)
+                    .map(|instantiations| (theorem, instantiations))
+            })
+            .and_then(|(theorem, instantiations)| {
+                self.append(
+                    Recipe::TypeInstantiation {
+                        theorem,
+                        instantiations,
+                    },
+                    Sort::Theorem,
+                )
+            })
+    }
+
+    fn prove_abstraction(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        theorem: Resource<TheoremNode>,
+        variable: Resource<TermNode>,
+    ) -> Result<Resource<TheoremNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&theorem, Sort::Theorem))
+            .and_then(|theorem| {
+                self.node(&variable, Sort::Term)
+                    .map(|variable| (theorem, variable))
+            })
+            .and_then(|(theorem, variable)| {
+                self.append(Recipe::Abstraction { theorem, variable }, Sort::Theorem)
             })
     }
 
@@ -323,6 +534,8 @@ drop_resource!(HostTermNode, TermNode);
 drop_resource!(HostContextNode, ContextNode);
 drop_resource!(HostTheoremNode, TheoremNode);
 drop_resource!(HostNamespaceNode, NamespaceNode);
+drop_resource!(HostTermInstantiationMapNode, TermInstantiationMapNode);
+drop_resource!(HostTypeInstantiationMapNode, TypeInstantiationMapNode);
 
 /// Executes one untrusted component and returns only its bounded sealed plan.
 ///
@@ -777,6 +990,45 @@ mod tests {
     }
 
     #[test]
+    fn instantiation_maps_are_immutable_typed_and_reject_duplicate_recipe_keys() {
+        let mut state = GuestState::new();
+        let plan = || Resource::new_borrow(PLAN_REP);
+        let alpha = state.free_type(plan(), 0).unwrap();
+        let x = state
+            .free_term(plan(), 0, Resource::new_borrow(alpha.rep()))
+            .unwrap();
+        let y = state
+            .free_term(plan(), 1, Resource::new_borrow(alpha.rep()))
+            .unwrap();
+        let empty = state.empty_term_instantiation_map(plan()).unwrap();
+        let one = state
+            .extend_term_instantiation_map(
+                plan(),
+                Resource::new_borrow(empty.rep()),
+                Resource::new_borrow(x.rep()),
+                Resource::new_borrow(y.rep()),
+            )
+            .unwrap();
+        assert!(matches!(
+            state.extend_term_instantiation_map(
+                plan(),
+                Resource::new_borrow(one.rep()),
+                Resource::new_borrow(x.rep()),
+                Resource::new_borrow(y.rep()),
+            ),
+            Err(AppendError::InvalidDependency)
+        ));
+        assert_eq!(
+            state.node(&one, Sort::TypeInstantiationMap),
+            Err(AppendError::InvalidDependency)
+        );
+        assert!(matches!(
+            state.recipe[usize::try_from(empty.rep()).unwrap() - 2],
+            Recipe::EmptyTermInstantiationMap
+        ));
+    }
+
+    #[test]
     fn replayed_guest_artifact_uses_the_selected_receiver_contract() {
         let recipe = closed_beta_recipe();
         let producer = Kernel::ephemeral();
@@ -855,18 +1107,42 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
     fn configured_real_eta_component_exports_the_named_eta_graph() {
-        let Some(component) = std::env::var_os("COVALENCE_HOL_ETA_GUEST_COMPONENT") else {
+        assert_configured_binding_component(
+            "COVALENCE_HOL_ETA_GUEST_COMPONENT",
+            "eta-demo",
+            "identity_eta",
+            None,
+        );
+    }
+
+    #[test]
+    fn configured_real_schematic_component_exports_the_named_binding_graph() {
+        assert_configured_binding_component(
+            "COVALENCE_HOL_SCHEMATIC_GUEST_COMPONENT",
+            "schematic-binding-demo",
+            "schematic_identity_binding",
+            Some(crate::hol_guest_plan::SCHEMATIC_BINDING_WIRE),
+        );
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn assert_configured_binding_component(
+        environment: &str,
+        namespace_name: &str,
+        conclusion_export_name: &str,
+        expected_recipe: Option<&[u8]>,
+    ) {
+        let Some(component) = std::env::var_os(environment) else {
             return;
         };
         let bytes = std::fs::read(component).unwrap();
-        let artifact = run_hol_proof_component(
-            &Kernel::ephemeral(),
-            &bytes,
-            WasmtimeComponentLimits::default(),
-        )
-        .unwrap();
+        let limits = WasmtimeComponentLimits::default();
+        let recipe = collect_hol_proof_component(&bytes, limits).unwrap();
+        if let Some(expected_recipe) = expected_recipe {
+            assert_eq!(recipe.as_bytes(), expected_recipe);
+        }
+        let artifact = recipe.replay(&Kernel::ephemeral()).unwrap();
         let image_bytes = covalence_neutron::Bytes::copy_from_slice(artifact.image());
         let image = covalence_neutron::Connection::deserialize(&image_bytes).unwrap();
         let sqlite = image.sqlite();
@@ -880,7 +1156,7 @@ mod tests {
                     |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
                 )
                 .unwrap(),
-            (0, "eta-demo".to_owned())
+            (0, namespace_name.to_owned())
         );
         let (context, context_sort, context_name) = sqlite
             .query_row(
@@ -916,7 +1192,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             (conclusion_sort.as_str(), conclusion_name.as_str()),
-            ("term", "identity_eta")
+            ("term", conclusion_export_name)
         );
         assert!(
             sqlite
@@ -957,6 +1233,32 @@ mod tests {
             )
             .unwrap();
         assert_eq!(eta_tag, "MLAM");
+        assert_eq!(
+            sqlite
+                .query_row(
+                    "SELECT tag FROM hol_node WHERE node_id = ?1",
+                    [parameter_type],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "TBOOL"
+        );
+        assert_eq!(
+            sqlite
+                .query_row(
+                    "SELECT tag, lhs, rhs FROM hol_node WHERE node_id = ?1",
+                    [eta_type],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, i64>(1)?,
+                            row.get::<_, i64>(2)?,
+                        ))
+                    },
+                )
+                .unwrap(),
+            ("TARR".to_owned(), parameter_type, parameter_type)
+        );
         let (application_tag, application_function, application_argument) = sqlite
             .query_row(
                 "SELECT tag, lhs, rhs FROM hol_node WHERE node_id = ?1",

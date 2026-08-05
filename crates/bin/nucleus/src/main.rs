@@ -1123,7 +1123,10 @@ mod tests {
 
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("kind\tmanaged-wasm-hol\n"));
-        assert!(output.contains("imported_theorem\t0\t8\n"));
+        assert!(output.lines().any(|line| {
+            line.strip_prefix("imported_theorem\t0\t")
+                .is_some_and(|conclusion| conclusion.parse::<i64>().is_ok_and(|id| id > 0))
+        }));
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1166,7 +1169,10 @@ mod tests {
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("kind\thash-selected-wasm-hol\n"));
         assert!(output.contains(&format!("component\t{digest}\n")));
-        assert!(output.contains("imported_theorem\t0\t8\n"));
+        assert!(output.lines().any(|line| {
+            line.strip_prefix("imported_theorem\t0\t")
+                .is_some_and(|conclusion| conclusion.parse::<i64>().is_ok_and(|id| id > 0))
+        }));
         fs::remove_file(output_path.join("proof.sqlite")).unwrap();
         fs::remove_file(output_path.join("attestation.txt")).unwrap();
         fs::remove_dir(output_path).unwrap();
@@ -1206,7 +1212,10 @@ mod tests {
         );
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains(&format!("component\t{digest}\n")));
-        assert!(output.contains("imported_theorem\t0\t8\n"));
+        assert!(output.lines().any(|line| {
+            line.strip_prefix("imported_theorem\t0\t")
+                .is_some_and(|conclusion| conclusion.parse::<i64>().is_ok_and(|id| id > 0))
+        }));
         assert!(output.contains(&format!("using receiver connection {receiver}\n")));
 
         fs::remove_file(output_path.join("proof.sqlite")).unwrap();

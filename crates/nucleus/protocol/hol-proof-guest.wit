@@ -1,4 +1,4 @@
-package covalence:hol-proof-guest@0.2.0;
+package covalence:hol-proof-guest@0.3.0;
 
 /// A bounded, non-authoritative recipe builder supplied to an untrusted proof guest.
 ///
@@ -13,9 +13,9 @@ package covalence:hol-proof-guest@0.2.0;
 /// successful replay may return the connection to the caller for optional serialization and
 /// signing.
 ///
-/// This contract is intentionally just large enough for the closed-beta and closed-eta north
-/// stars. Extending it with another HOL rule changes the contract identity and requires an
-/// explicit host policy operation.
+/// This contract is intentionally just large enough for the closed-beta, closed-eta, and
+/// schematic-binding north stars. Extending it with another HOL rule changes the contract
+/// identity and requires an explicit host policy operation.
 interface host {
   enum append-error {
     invalid-resource,
@@ -29,10 +29,14 @@ interface host {
   resource context-node;
   resource theorem-node;
   resource namespace-node;
+  resource term-instantiation-map-node;
+  resource type-instantiation-map-node;
 
   resource proof-plan {
     bool-type: func() -> result<type-node, append-error>;
+    free-type: func(symbol: s64) -> result<type-node, append-error>;
     bound-term: func(index: u32, ty: borrow<type-node>) -> result<term-node, append-error>;
+    free-term: func(symbol: s64, ty: borrow<type-node>) -> result<term-node, append-error>;
     lambda: func(
       parameter-type: borrow<type-node>,
       body: borrow<term-node>,
@@ -53,6 +57,33 @@ interface host {
     prove-eta: func(
       context: borrow<context-node>,
       function: borrow<term-node>,
+    ) -> result<theorem-node, append-error>;
+
+    empty-term-instantiation-map: func() -> result<term-instantiation-map-node, append-error>;
+    extend-term-instantiation-map: func(
+      base: borrow<term-instantiation-map-node>,
+      variable: borrow<term-node>,
+      replacement: borrow<term-node>,
+    ) -> result<term-instantiation-map-node, append-error>;
+    prove-term-instantiation: func(
+      theorem: borrow<theorem-node>,
+      instantiations: borrow<term-instantiation-map-node>,
+    ) -> result<theorem-node, append-error>;
+
+    empty-type-instantiation-map: func() -> result<type-instantiation-map-node, append-error>;
+    extend-type-instantiation-map: func(
+      base: borrow<type-instantiation-map-node>,
+      variable: borrow<type-node>,
+      replacement: borrow<type-node>,
+    ) -> result<type-instantiation-map-node, append-error>;
+    prove-type-instantiation: func(
+      theorem: borrow<theorem-node>,
+      instantiations: borrow<type-instantiation-map-node>,
+    ) -> result<theorem-node, append-error>;
+
+    prove-abstraction: func(
+      theorem: borrow<theorem-node>,
+      variable: borrow<term-node>,
     ) -> result<theorem-node, append-error>;
 
     persist-theorem: func(theorem: borrow<theorem-node>) -> result<_, append-error>;

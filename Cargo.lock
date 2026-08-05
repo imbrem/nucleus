@@ -181,6 +181,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "covalence-hol-proof-guest-schematic-binding"
+version = "0.0.0"
+dependencies = [
+ "wit-bindgen",
+]
+
+[[package]]
 name = "covalence-lib-crypto"
 version = "0.0.0"
 dependencies = [
