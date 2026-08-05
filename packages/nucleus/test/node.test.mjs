@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import init, { smoke, WebKernel } from "../generated/nucleus.js";
+import { CLOSED_BETA_RECIPE } from "./closed-beta-recipe.mjs";
 
 test("runs the REPL kernel through the Wasm binding in Node", async () => {
   const bytes = await readFile(
@@ -209,6 +210,72 @@ test("runs the REPL kernel through the Wasm binding in Node", async () => {
   receivedHandoff.free();
   handoffReceiver.free();
   missingZero.free();
+
+  const recipeKernel = new WebKernel();
+  const recipeOriginal = recipeKernel.open_connection();
+  const recipeActive = recipeKernel.active_connection();
+  assert.equal(recipeActive, recipeOriginal);
+  assert.throws(
+    () => recipeKernel.replay_hol_proof_recipe(new Uint8Array([0xff])),
+    /recipe-decoded|invalid sealed HOL recipe/,
+  );
+  const trailingRecipe = new Uint8Array(CLOSED_BETA_RECIPE.length + 1);
+  trailingRecipe.set(CLOSED_BETA_RECIPE);
+  assert.throws(
+    () => recipeKernel.replay_hol_proof_recipe(trailingRecipe),
+    /trailing sealed recipe bytes/,
+  );
+  const deniedVersion = CLOSED_BETA_RECIPE.slice();
+  deniedVersion[0] -= 1;
+  assert.throws(
+    () => recipeKernel.replay_hol_proof_recipe(deniedVersion),
+    /unsupported sealed recipe version/,
+  );
+  assert.throws(
+    () =>
+      recipeKernel.replay_hol_proof_recipe(
+        new Uint8Array(WebKernel.max_hol_proof_recipe_bytes() + 1),
+      ),
+    /exceeds byte limit/,
+  );
+  assert.equal(recipeKernel.active_connection(), recipeActive);
+
+  const replayed = recipeKernel.replay_hol_proof_recipe(CLOSED_BETA_RECIPE);
+  assert.equal(replayed.kind(), "signed-hol-proof-recipe");
+  assert.equal(replayed.retained_id(), 0);
+  assert.match(replayed.source_namespace_id(), /^\d+$/);
+  assert.match(replayed.schema(), /^[0-9a-f]{64}$/);
+  assert.match(replayed.image_hash(), /^[0-9a-f]{64}$/);
+  assert.match(replayed.signer(), /^[0-9a-f]{64}$/);
+  assert.ok(replayed.image().byteLength > 0);
+  assert.equal(replayed.public_key().byteLength, 32);
+  assert.equal(replayed.signature().byteLength, 64);
+  assert.match(
+    replayed.attestation_text(),
+    /^format=covalence-repl-signed-snapshot-demo-v0\n/,
+  );
+  assert.equal(
+    recipeKernel.active_connection(),
+    replayed.receiver_connection(),
+  );
+  const replayedState = recipeKernel.open_retained_trusted_hol_state(
+    replayed.receiver_connection(),
+    replayed.retained_id(),
+  );
+  assert.equal(replayedState.context_id(), replayed.context_id());
+  assert.equal(replayedState.conclusion_id(), replayed.conclusion_id());
+  const replayedTruth = recipeKernel.run_hol(
+    replayedState.connection(),
+    "truth",
+  );
+  assert.equal(replayedTruth.statement(), "true");
+  replayedTruth.free();
+  recipeKernel.close_connection(replayed.receiver_connection());
+  recipeKernel.close_connection(replayedState.connection());
+  recipeKernel.close_connection(recipeOriginal);
+  replayedState.free();
+  replayed.free();
+  recipeKernel.free();
 
   const produced = kernel.produce_signed_hol_artifact(holConnection);
   const receiver = kernel.open_hol_connection();
