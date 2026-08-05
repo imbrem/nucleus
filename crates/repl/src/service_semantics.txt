@@ -25,7 +25,8 @@ OPERATION is exactly one of:
 D("operation-open-hol"); D("operation-close-hol", U64BE connection);
 D("operation-produce-signed-hol", U64BE connection);
 D("operation-receive-signed-hol", U64BE connection, I64BE expected.kernel,
-expected.signer, expected.public_key, ARTIFACT); D("operation-shutdown").
+expected.signer, expected.public_key, ARTIFACT);
+D("operation-run-hol-proof-component", component); D("operation-shutdown").
 ARTIFACT = D("signed-hol-artifact", I64BE namespace, O256(image bytes), schema,
 claimed_image_hash, signer, public_key, signature).
 
@@ -33,6 +34,7 @@ RESULT is exactly one of:
 D("result-opened", U64BE connection); D("result-closed");
 D("result-produced", presentation_text, ARTIFACT);
 D("result-received", I64BE import, I64BE namespace, I64BE context, I64BE conclusion);
+D("result-produced-by-hol-proof-component", component, ARTIFACT);
 D("result-goodbye"); D("result-operation-error", message_text);
 D("result-rejected", message_text). Presentation and diagnostic text has no authority.
 
@@ -48,6 +50,12 @@ command advances once. The endpoint caches its last accepted signed reply; an id
 authenticated retry returns it without dispatch. Conflicting reuse and gaps reject.
 Pre-dispatch rejection does not advance. Operation errors advance because dispatch occurred.
 Shutdown closes the session after its signed Goodbye; only that exact reply remains retryable.
+
+RunHolProofComponent carries only an O256 component digest. The endpoint may run it only when
+that exact digest was configured locally before serving sessions; the request never supplies
+component bytes or triggers compilation. A successful result repeats the requested digest and
+contains an artifact signed by this endpoint. Unavailable and non-allowlisted digests are
+authenticated operation errors.
 
 HOL receipt authenticates against the independently pinned source key, then performs detached
 validation, then explicit trust/import. Transport framing, persistence, and policy are outside S.
