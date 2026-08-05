@@ -152,6 +152,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-hol-proof-guest-web-beta@0.0.0",
+      "name": "covalence-hol-proof-guest-web-beta",
+      "version": "0.0.0",
+      "path": "crates/hol-proof-guest-web-beta",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_hol_proof_guest_web_beta",
+          "kinds": [
+            "cdylib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-lib-crypto@0.0.0",
       "name": "covalence-lib-crypto",
       "version": "0.0.0",

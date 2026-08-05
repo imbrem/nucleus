@@ -216,6 +216,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "covalence-hol-proof-guest-web-beta"
+version = "0.0.0"
+dependencies = [
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "covalence-lib-crypto"
 version = "0.0.0"
 dependencies = [

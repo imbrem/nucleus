@@ -1,0 +1,57 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Direct wasm-bindgen HOL proof guest spike</title>
+<body>
+  <script type="module">
+    import initHost, {
+      WebHolProofPlan,
+      WebKernel,
+    } from "../generated/nucleus.js";
+
+    try {
+      await initHost();
+
+      const kernel = new WebKernel();
+      const guest = new Worker("./web-beta-spike-worker.js", {
+        type: "module",
+      });
+      const recipe = await new Promise((resolve, reject) => {
+        guest.onmessage = ({ data }) =>
+          data.error === undefined
+            ? resolve(new Uint8Array(data.recipe))
+            : reject(new Error(data.error));
+        guest.onerror = reject;
+      });
+      guest.terminate();
+      const artifact = kernel.run_hol_proof_plan(recipe);
+
+      const malformed = new WebHolProofPlan();
+      malformed.bound_term(0, 0);
+      let malformedRejected = false;
+      try {
+        malformed.finish(0);
+      } catch {
+        malformedRejected = true;
+      }
+
+      document.body.dataset.result = JSON.stringify({
+        namespace: artifact.namespace_id(),
+        schema: artifact.schema(),
+        imageHash: artifact.image_hash(),
+        signer: artifact.signer(),
+        signerMatchesKernel: artifact.signer() === kernel.signer_id(),
+        imageBytes: artifact.image().byteLength,
+        publicKeyBytes: artifact.public_key().byteLength,
+        signatureBytes: artifact.signature().byteLength,
+        recipeBytes: recipe.byteLength,
+        guestWasDisposableWorker: true,
+        guestStillHadAmbientBrowserCapabilities: true,
+        malformedRejected,
+      });
+      artifact.free();
+      kernel.free();
+    } catch (error) {
+      document.body.dataset.error = String(error?.stack ?? error);
+    }
+  </script>
+</body>

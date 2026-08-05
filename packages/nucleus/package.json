@@ -18,10 +18,12 @@
   },
   "scripts": {
     "generate": "cargo build --locked -p covalence-repl --target wasm32-unknown-unknown && wasm-bindgen ../../target/wasm32-unknown-unknown/debug/covalence_repl.wasm --out-dir generated --out-name nucleus --target web",
+    "generate:web-beta-spike": "cargo build --locked --release -p covalence-hol-proof-guest-web-beta --target wasm32-unknown-unknown && wasm-bindgen ../../target/wasm32-unknown-unknown/release/covalence_hol_proof_guest_web_beta.wasm --out-dir generated/web-beta --out-name guest --target web",
     "build": "pnpm run generate && tsc",
     "check": "tsc --noEmit",
     "serve-repl": "caddy file-server --root . --listen 127.0.0.1:4173",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "test:web-beta-spike": "pnpm run generate && pnpm run generate:web-beta-spike && node --test test/web-beta-spike.mjs"
   },
   "devDependencies": {
     "playwright-core": "1.61.1",

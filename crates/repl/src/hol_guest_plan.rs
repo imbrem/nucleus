@@ -280,7 +280,6 @@ impl SealedHolProofRecipe {
         &self.bytes
     }
 
-    #[cfg(any(not(target_arch = "wasm32"), test))]
     pub(crate) fn seal(
         nodes: Vec<RecipeNode>,
         selected_namespace: usize,
