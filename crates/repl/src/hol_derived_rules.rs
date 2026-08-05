@@ -1354,6 +1354,134 @@ impl ImpIntro {
     }
 }
 
+fn canonical_false<P: Policy>(
+    connection: &mut Connection<Hol<P>>,
+) -> Result<(TermId, TermId), TermError> {
+    let bool_type = connection.insert_bool_type()?;
+    let truth = connection.insert_bool_term(true)?;
+    let proposition = connection.insert_bound_term(0, bool_type)?;
+    let identity = connection.insert_lambda(bool_type, proposition)?;
+    let constant_truth = connection.insert_lambda(bool_type, truth)?;
+    let falsehood = connection.insert_equality(identity, constant_truth)?;
+    Ok((identity, falsehood))
+}
+
+/// Prepared elimination for canonical logical false
+/// `F := ALL_B (lambda p:bool. p)`.
+///
+/// This is an ordinary universal-elimination derivation. It introduces no
+/// primitive false rule and does not use `MBOOL(false)`.
+pub struct FalseElim {
+    falsehood: TermId,
+    identity: TermId,
+    proposition: TermId,
+    elimination: AllElim,
+}
+
+impl FalseElim {
+    /// Prepares `FALSITY`: from `Gamma |- F`, derive `Gamma |- proposition`.
+    ///
+    /// # Errors
+    ///
+    /// Returns if `proposition` is not a closed checked Boolean term.
+    pub fn prepare<P: Policy>(
+        connection: &mut Connection<Hol<P>>,
+        proposition: TermId,
+    ) -> Result<Self, DerivedRulePreparationError> {
+        require_closed(connection, proposition)?;
+        let (identity, falsehood) = canonical_false(connection)?;
+        Ok(Self {
+            falsehood,
+            identity,
+            proposition,
+            elimination: AllElim::prepare(connection, identity, proposition)?,
+        })
+    }
+
+    /// Eliminates an exact canonical-false theorem without persistence.
+    ///
+    /// # Errors
+    ///
+    /// Returns for a wrong premise or rejected constituent LCF rule.
+    pub fn apply<'brand, P: Policy>(
+        &self,
+        proof: &mut ProofSession<'brand, P>,
+        falsehood: &Theorem<'brand>,
+    ) -> Result<Theorem<'brand>, DerivedRuleError> {
+        require_conclusion(falsehood, self.falsehood)?;
+        let applied = self.elimination.apply(proof, falsehood)?;
+        let beta = proof.conversion_beta(self.identity, self.proposition)?;
+        let result = proof.convert_theorem(&applied, &beta)?;
+        require_result(&result, falsehood.context(), self.proposition)?;
+        Ok(result)
+    }
+}
+
+/// Prepared congruence beneath Hilbert choice.
+///
+/// From `Gamma |- P = Q`, derives `Gamma |- epsilon P = epsilon Q` by
+/// Leibniz substitution through the closed predicate
+/// `lambda R. epsilon P = epsilon R`. This deliberately does not add a kernel
+/// epsilon-congruence rule.
+pub struct EpsCongr {
+    premise: TermId,
+    left_epsilon: TermId,
+    result: TermId,
+    transport: LeibnizTransport,
+}
+
+impl EpsCongr {
+    /// Prepares epsilon congruence for exact closed predicate endpoints.
+    ///
+    /// # Errors
+    ///
+    /// Returns if either endpoint is open, not a Boolean predicate, or has an
+    /// incompatible type.
+    pub fn prepare<P: Policy>(
+        connection: &mut Connection<Hol<P>>,
+        left: TermId,
+        right: TermId,
+    ) -> Result<Self, DerivedRulePreparationError> {
+        require_closed(connection, left)?;
+        require_closed(connection, right)?;
+        let premise = connection.insert_equality(left, right)?;
+        let left_epsilon = connection.insert_epsilon(left)?;
+        let right_epsilon = connection.insert_epsilon(right)?;
+        let result = connection.insert_equality(left_epsilon, right_epsilon)?;
+        let predicate_type = connection.term_type(left)?;
+        let variable = connection.insert_bound_term(0, predicate_type)?;
+        let variable_epsilon = connection.insert_epsilon(variable)?;
+        let body = connection.insert_equality(left_epsilon, variable_epsilon)?;
+        let predicate = connection.insert_lambda(predicate_type, body)?;
+        let reflexive = connection.insert_equality(left_epsilon, left_epsilon)?;
+        let transport =
+            LeibnizTransport::prepare(connection, left, right, predicate, reflexive, result)?;
+        Ok(Self {
+            premise,
+            left_epsilon,
+            result,
+            transport,
+        })
+    }
+
+    /// Applies epsilon congruence without persistence.
+    ///
+    /// # Errors
+    ///
+    /// Returns for a wrong premise or rejected constituent LCF rule.
+    pub fn apply<'brand, P: Policy>(
+        &self,
+        proof: &mut ProofSession<'brand, P>,
+        equality: &Theorem<'brand>,
+    ) -> Result<Theorem<'brand>, DerivedRuleError> {
+        require_conclusion(equality, self.premise)?;
+        let reflexive = proof.prove_reflexivity(equality.context(), self.left_epsilon)?;
+        let result = self.transport.apply(proof, equality, &reflexive)?;
+        require_result(&result, equality.context(), self.result)?;
+        Ok(result)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2101,6 +2229,52 @@ mod tests {
                 Ok::<_, ProofError>(())
             })
             .unwrap();
+    }
+
+    #[test]
+    fn canonical_false_elimination_and_epsilon_congruence_stay_above_lcf() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let truth = connection.insert_bool_term(true).unwrap();
+        let (identity, falsehood) = canonical_false(&mut connection).unwrap();
+        let arbitrary = connection.insert_equality(truth, falsehood).unwrap();
+        let false_context = connection.define_context([falsehood]).unwrap();
+        let false_elim = FalseElim::prepare(&mut connection, arbitrary).unwrap();
+
+        let bound = connection.insert_bound_term(0, bool_type).unwrap();
+        let identity_applied = connection.insert_application(identity, bound).unwrap();
+        let expanded_identity = connection
+            .insert_lambda(bool_type, identity_applied)
+            .unwrap();
+        let expanded_epsilon = connection.insert_epsilon(expanded_identity).unwrap();
+        let identity_epsilon = connection.insert_epsilon(identity).unwrap();
+        let epsilon_equality = connection
+            .insert_equality(expanded_epsilon, identity_epsilon)
+            .unwrap();
+        let epsilon_congruence =
+            EpsCongr::prepare(&mut connection, expanded_identity, identity).unwrap();
+
+        connection
+            .with_proof_session(|mut proof| {
+                let falsehood = proof.prove_hypothesis(false_context, falsehood)?;
+                let eliminated = false_elim.apply(&mut proof, &falsehood).unwrap();
+                assert_eq!(eliminated.context(), false_context);
+                assert_eq!(eliminated.conclusion(), arbitrary);
+
+                let eta = proof.conversion_eta(identity)?;
+                assert_eq!(eta.left(), expanded_identity);
+                let predicates_equal = proof.prove_conversion_equality(ContextId::empty(), &eta)?;
+                let epsilons_equal = epsilon_congruence
+                    .apply(&mut proof, &predicates_equal)
+                    .unwrap();
+                assert_eq!(epsilons_equal.context(), ContextId::empty());
+                assert_eq!(epsilons_equal.conclusion(), epsilon_equality);
+                Ok::<_, ProofError>(())
+            })
+            .unwrap();
+
+        let snapshot = Kernel::ephemeral().export_hol(&mut connection).unwrap();
+        assert_eq!(snapshot.image().counts().untrusted_judgement_rows, 0);
     }
 
     fn denied_and_intro() -> DerivedRuleError {
