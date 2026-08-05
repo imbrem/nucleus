@@ -61,6 +61,57 @@ CREATE TABLE repl_state (
     active_connection_id INTEGER REFERENCES repl_connection
 ) STRICT;
 INSERT INTO repl_state(singleton) VALUES (0);
+CREATE TABLE repl_remote_session (
+    session_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kernel_id INTEGER NOT NULL REFERENCES repl_kernel ON DELETE CASCADE,
+    state TEXT NOT NULL CHECK (
+        state IN (
+            'opening', 'opening-unknown', 'established', 'command-unknown',
+            'closing', 'closing-unknown', 'closed', 'failed'
+        )
+    )
+) STRICT;
+CREATE TABLE repl_lifecycle_event (
+    event_id INTEGER PRIMARY KEY,
+    resource TEXT NOT NULL CHECK (resource IN ('kernel', 'connection', 'session')),
+    resource_id INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    detail TEXT CHECK (detail IS NULL OR length(CAST(detail AS BLOB)) <= 1024)
+) STRICT;
+CREATE TRIGGER repl_lifecycle_event_bound
+AFTER INSERT ON repl_lifecycle_event BEGIN
+    DELETE FROM repl_lifecycle_event WHERE event_id <= new.event_id - 1024;
+END;
+CREATE TRIGGER repl_kernel_registered
+AFTER INSERT ON repl_kernel BEGIN
+    INSERT INTO repl_lifecycle_event(resource, resource_id, state, detail)
+    VALUES ('kernel', new.kernel_id, 'registered', new.transport);
+END;
+CREATE TRIGGER repl_kernel_unregistered
+AFTER DELETE ON repl_kernel BEGIN
+    INSERT INTO repl_lifecycle_event(resource, resource_id, state, detail)
+    VALUES ('kernel', old.kernel_id, 'unregistered', old.transport);
+END;
+CREATE TRIGGER repl_connection_opened
+AFTER INSERT ON repl_connection BEGIN
+    INSERT INTO repl_lifecycle_event(resource, resource_id, state, detail)
+    VALUES ('connection', new.connection_id, 'opened', new.protocol);
+END;
+CREATE TRIGGER repl_connection_closed
+AFTER DELETE ON repl_connection BEGIN
+    INSERT INTO repl_lifecycle_event(resource, resource_id, state, detail)
+    VALUES ('connection', old.connection_id, 'closed', old.protocol);
+END;
+CREATE TRIGGER repl_remote_session_started
+AFTER INSERT ON repl_remote_session BEGIN
+    INSERT INTO repl_lifecycle_event(resource, resource_id, state, detail)
+    VALUES ('session', new.session_id, new.state, NULL);
+END;
+CREATE TRIGGER repl_remote_session_transitioned
+AFTER UPDATE OF state ON repl_remote_session BEGIN
+    INSERT INTO repl_lifecycle_event(resource, resource_id, state, detail)
+    VALUES ('session', new.session_id, new.state, NULL);
+END;
 ";
 
 /// Process-local identifier for a managed connection.
@@ -250,6 +301,96 @@ pub struct ConnectionEntry {
     pub protocol: String,
     /// Optional endpoint-local connection coordinate.
     pub remote_connection_id: Option<String>,
+}
+
+/// Non-authoritative REPL coordinate for an in-memory signed session.
+///
+/// The corresponding requester key, signed session identifier, sequence
+/// number, and pending request remain exclusively in the adapter's memory.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct RemoteSessionId(i64);
+
+impl RemoteSessionId {
+    /// Returns the integer stored in the REPL state database.
+    #[must_use]
+    pub const fn get(self) -> i64 {
+        self.0
+    }
+}
+
+impl FromStr for RemoteSessionId {
+    type Err = std::num::ParseIntError;
+
+    fn from_str(source: &str) -> Result<Self, Self::Err> {
+        source.parse().map(Self)
+    }
+}
+
+impl fmt::Display for RemoteSessionId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+/// Inspectable lifecycle state for an in-memory signed remote session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RemoteSessionState {
+    /// A requester-signed handshake may be in flight.
+    Opening,
+    /// The endpoint acceptance was authenticated.
+    Established,
+    /// `OpenSession` may have run, but its acceptance was not authenticated.
+    OpeningUnknown,
+    /// A normal command may have run, but its reply was not authenticated.
+    CommandUnknown,
+    /// An authenticated shutdown is in flight.
+    Closing,
+    /// Shutdown may have run, but its goodbye was not authenticated.
+    ClosingUnknown,
+    /// The authenticated shutdown reply was accepted.
+    Closed,
+    /// The adapter abandoned the in-memory authority after a definite error.
+    Failed,
+}
+
+impl RemoteSessionState {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Opening => "opening",
+            Self::OpeningUnknown => "opening-unknown",
+            Self::Established => "established",
+            Self::CommandUnknown => "command-unknown",
+            Self::Closing => "closing",
+            Self::ClosingUnknown => "closing-unknown",
+            Self::Closed => "closed",
+            Self::Failed => "failed",
+        }
+    }
+
+    fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "opening" => Some(Self::Opening),
+            "opening-unknown" => Some(Self::OpeningUnknown),
+            "established" => Some(Self::Established),
+            "command-unknown" => Some(Self::CommandUnknown),
+            "closing" => Some(Self::Closing),
+            "closing-unknown" => Some(Self::ClosingUnknown),
+            "closed" => Some(Self::Closed),
+            "failed" => Some(Self::Failed),
+            _ => None,
+        }
+    }
+}
+
+/// One inspectable session row containing no cryptographic authority.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemoteSessionEntry {
+    /// REPL-local coordinate.
+    pub id: RemoteSessionId,
+    /// Registered endpoint selected for this session.
+    pub kernel: KernelId,
+    /// Current explicit lifecycle state.
+    pub state: RemoteSessionState,
 }
 
 impl fmt::Display for ConnectionId {
@@ -455,9 +596,122 @@ impl<C> Repl<C> {
         if kernel == KernelId::LOCAL {
             return Err(ReplError::CannotUnregisterLocalKernel);
         }
+        let live_session = self.state.sqlite().query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM repl_remote_session
+                WHERE kernel_id = ?1 AND state NOT IN ('closed', 'failed')
+            )",
+            [kernel.0],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if live_session {
+            return Err(ReplError::KernelHasLiveSession(kernel));
+        }
         self.state
             .sqlite()
             .execute("DELETE FROM repl_kernel WHERE kernel_id = ?1", [kernel.0])?;
+        Ok(())
+    }
+
+    /// Records a fresh adapter-owned signed session attempt.
+    ///
+    /// Only its REPL-local coordinate is stored. The caller must retain every
+    /// cryptographic and sequencing value in its process-local runtime handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown kernel or failed directory update.
+    pub fn begin_remote_session(&self, kernel: KernelId) -> Result<RemoteSessionId, ReplError> {
+        self.require_kernel(kernel)?;
+        self.state.sqlite().execute(
+            "INSERT INTO repl_remote_session(kernel_id, state) VALUES (?1, 'opening')",
+            [kernel.0],
+        )?;
+        Ok(RemoteSessionId(self.state.sqlite().last_insert_rowid()))
+    }
+
+    /// Advances one non-authoritative session lifecycle row.
+    ///
+    /// This records adapter observations only. It neither authenticates a
+    /// reply nor reconstructs a discarded in-memory session capability.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown session, an invalid transition, or a
+    /// failed directory update.
+    pub fn transition_remote_session(
+        &self,
+        session: RemoteSessionId,
+        next: RemoteSessionState,
+    ) -> Result<(), ReplError> {
+        let current = self.remote_session(session)?.state;
+        if !valid_remote_session_transition(current, next) {
+            return Err(ReplError::InvalidRemoteSessionTransition {
+                session,
+                current,
+                next,
+            });
+        }
+        self.state.sqlite().execute(
+            "UPDATE repl_remote_session SET state = ?1 WHERE session_id = ?2",
+            sqlite::params![next.as_str(), session.0],
+        )?;
+        Ok(())
+    }
+
+    /// Reads one non-authoritative session lifecycle row.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown/corrupt row or failed state inspection.
+    pub fn remote_session(
+        &self,
+        session: RemoteSessionId,
+    ) -> Result<RemoteSessionEntry, ReplError> {
+        self.state
+            .sqlite()
+            .query_row(
+                "SELECT kernel_id, state FROM repl_remote_session WHERE session_id = ?1",
+                [session.0],
+                |row| {
+                    let state = row.get::<_, String>(1)?;
+                    Ok((row.get::<_, i64>(0)?, state))
+                },
+            )
+            .map_err(|error| match error {
+                sqlite::Error::QueryReturnedNoRows => ReplError::UnknownRemoteSession(session),
+                other => ReplError::State(other),
+            })
+            .and_then(|(kernel, state)| {
+                let state = RemoteSessionState::from_str(&state)
+                    .ok_or(ReplError::CorruptRemoteSession(session))?;
+                Ok(RemoteSessionEntry {
+                    id: session,
+                    kernel: KernelId(kernel),
+                    state,
+                })
+            })
+    }
+
+    /// Forgets a terminal session row after its bounded event history has been
+    /// inspected or exported.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown or still-live session, or a failed
+    /// directory update.
+    pub fn forget_remote_session(&self, session: RemoteSessionId) -> Result<(), ReplError> {
+        let current = self.remote_session(session)?.state;
+        if !matches!(
+            current,
+            RemoteSessionState::Closed | RemoteSessionState::Failed
+        ) {
+            return Err(ReplError::RemoteSessionStillLive(session));
+        }
+        self.state.sqlite().execute(
+            "DELETE FROM repl_remote_session WHERE session_id = ?1",
+            [session.0],
+        )?;
         Ok(())
     }
 
@@ -601,6 +855,25 @@ impl<C> Repl<C> {
             Err(ReplError::UnknownKernel(id))
         }
     }
+}
+
+const fn valid_remote_session_transition(
+    current: RemoteSessionState,
+    next: RemoteSessionState,
+) -> bool {
+    use RemoteSessionState::{
+        Closed, Closing, ClosingUnknown, CommandUnknown, Established, Failed, Opening,
+        OpeningUnknown,
+    };
+    matches!(
+        (current, next),
+        (Opening, Established | OpeningUnknown | Failed)
+            | (OpeningUnknown, Failed)
+            | (Established, CommandUnknown | Closing | Failed)
+            | (CommandUnknown, Established | Failed)
+            | (Closing, ClosingUnknown | Closed | Failed)
+            | (ClosingUnknown, Closed | Failed)
+    )
 }
 
 /// A process-local connection managed by the terminal or browser adapter.
@@ -1541,6 +1814,23 @@ pub enum ReplError {
     UnknownKernel(KernelId),
     /// A directory row contains a malformed endpoint public key.
     CorruptKernelPublicKey(KernelId),
+    /// A non-authoritative remote-session coordinate is unknown.
+    UnknownRemoteSession(RemoteSessionId),
+    /// A remote-session row contains an unknown lifecycle label.
+    CorruptRemoteSession(RemoteSessionId),
+    /// A current session row cannot be collected before terminal state.
+    RemoteSessionStillLive(RemoteSessionId),
+    /// An endpoint still owns an in-progress remote session.
+    KernelHasLiveSession(KernelId),
+    /// The adapter attempted an impossible lifecycle transition.
+    InvalidRemoteSessionTransition {
+        /// Session being updated.
+        session: RemoteSessionId,
+        /// State observed in the directory.
+        current: RemoteSessionState,
+        /// Requested next state.
+        next: RemoteSessionState,
+    },
     /// The implicit local kernel row lives for the directory's lifetime.
     CannotUnregisterLocalKernel,
     /// A state inspection statement returned no columns.
@@ -1559,6 +1849,24 @@ impl fmt::Display for ReplError {
             Self::CorruptKernelPublicKey(id) => {
                 write!(formatter, "kernel {id} has a malformed public key")
             }
+            Self::UnknownRemoteSession(id) => write!(formatter, "unknown remote session {id}"),
+            Self::CorruptRemoteSession(id) => {
+                write!(formatter, "remote session {id} has a malformed state")
+            }
+            Self::RemoteSessionStillLive(id) => {
+                write!(formatter, "remote session {id} is still live")
+            }
+            Self::KernelHasLiveSession(id) => {
+                write!(formatter, "kernel {id} still has a live remote session")
+            }
+            Self::InvalidRemoteSessionTransition {
+                session,
+                current,
+                next,
+            } => write!(
+                formatter,
+                "remote session {session} cannot transition from {current:?} to {next:?}"
+            ),
             Self::CannotUnregisterLocalKernel => {
                 formatter.write_str("cannot unregister the local kernel")
             }
@@ -1578,6 +1886,11 @@ impl StdError for ReplError {
             Self::UnknownConnection(_)
             | Self::UnknownKernel(_)
             | Self::CorruptKernelPublicKey(_)
+            | Self::UnknownRemoteSession(_)
+            | Self::CorruptRemoteSession(_)
+            | Self::RemoteSessionStillLive(_)
+            | Self::KernelHasLiveSession(_)
+            | Self::InvalidRemoteSessionTransition { .. }
             | Self::CannotUnregisterLocalKernel
             | Self::NoActiveConnection
             | Self::StateQueryReturnsNoRows => None,
@@ -1603,7 +1916,7 @@ mod web;
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 pub use web::{
     WebConnectionEntry, WebHolOutcome, WebKernel, WebKernelEntry, WebOutcome, WebProducedSignedHol,
-    WebReceivedHolSnapshot, WebReplDirectory, WebSignedHolOutcome,
+    WebReceivedHolSnapshot, WebRemoteSessionEntry, WebReplDirectory, WebSignedHolOutcome,
 };
 
 /// Returns the cross-target `SQLite` smoke-test value.
@@ -1812,6 +2125,184 @@ mod tests {
             repl.insert_at(first, "nucleus/sql", None, "closed"),
             Err(ReplError::UnknownKernel(id)) if id == first
         ));
+    }
+
+    #[test]
+    fn records_only_non_authoritative_remote_lifecycle_state() {
+        let repl = Repl::<()>::empty().unwrap();
+        let kernel = repl
+            .register_kernel(
+                "native-http",
+                Some("http://127.0.0.1:8000/v0/signed-message"),
+                &[3; 32],
+            )
+            .unwrap();
+        let session = repl.begin_remote_session(kernel).unwrap();
+        assert!(matches!(
+            repl.unregister_kernel(kernel),
+            Err(ReplError::KernelHasLiveSession(id)) if id == kernel
+        ));
+        repl.transition_remote_session(session, RemoteSessionState::OpeningUnknown)
+            .unwrap();
+        assert!(matches!(
+            repl.transition_remote_session(session, RemoteSessionState::Closing),
+            Err(ReplError::InvalidRemoteSessionTransition { .. })
+        ));
+        repl.transition_remote_session(session, RemoteSessionState::Failed)
+            .unwrap();
+
+        assert_eq!(
+            repl.remote_session(session).unwrap(),
+            RemoteSessionEntry {
+                id: session,
+                kernel,
+                state: RemoteSessionState::Failed,
+            }
+        );
+        let schema = repl
+            .inspect_state("SELECT name FROM pragma_table_info('repl_remote_session') ORDER BY cid")
+            .unwrap();
+        assert_eq!(
+            schema.rows,
+            [
+                [Value::Text("session_id".to_owned())],
+                [Value::Text("kernel_id".to_owned())],
+                [Value::Text("state".to_owned())],
+            ]
+        );
+        repl.unregister_kernel(kernel).unwrap();
+        assert!(matches!(
+            repl.remote_session(session),
+            Err(ReplError::UnknownRemoteSession(id)) if id == session
+        ));
+        let events = repl
+            .inspect_state(
+                "SELECT resource, resource_id, state FROM repl_lifecycle_event ORDER BY event_id",
+            )
+            .unwrap();
+        assert_eq!(
+            events.rows,
+            [
+                [
+                    Value::Text("kernel".to_owned()),
+                    Value::Integer(kernel.get()),
+                    Value::Text("registered".to_owned()),
+                ],
+                [
+                    Value::Text("session".to_owned()),
+                    Value::Integer(session.get()),
+                    Value::Text("opening".to_owned()),
+                ],
+                [
+                    Value::Text("session".to_owned()),
+                    Value::Integer(session.get()),
+                    Value::Text("opening-unknown".to_owned()),
+                ],
+                [
+                    Value::Text("session".to_owned()),
+                    Value::Integer(session.get()),
+                    Value::Text("failed".to_owned()),
+                ],
+                [
+                    Value::Text("kernel".to_owned()),
+                    Value::Integer(kernel.get()),
+                    Value::Text("unregistered".to_owned()),
+                ],
+            ]
+        );
+        for forbidden in ["requester_key", "sequence", "pending_command", "signature"] {
+            assert!(!SCHEMA.contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn preserves_ambiguous_phase_and_never_starts_a_different_command() {
+        let repl = Repl::<()>::empty().unwrap();
+        let kernel = repl.register_kernel("native-http", None, &[5; 32]).unwrap();
+        let session = repl.begin_remote_session(kernel).unwrap();
+        repl.transition_remote_session(session, RemoteSessionState::Established)
+            .unwrap();
+        repl.transition_remote_session(session, RemoteSessionState::CommandUnknown)
+            .unwrap();
+        assert!(matches!(
+            repl.transition_remote_session(session, RemoteSessionState::Closing),
+            Err(ReplError::InvalidRemoteSessionTransition { .. })
+        ));
+        repl.transition_remote_session(session, RemoteSessionState::Established)
+            .unwrap();
+        repl.transition_remote_session(session, RemoteSessionState::Closing)
+            .unwrap();
+        repl.transition_remote_session(session, RemoteSessionState::ClosingUnknown)
+            .unwrap();
+        assert!(matches!(
+            repl.transition_remote_session(session, RemoteSessionState::Established),
+            Err(ReplError::InvalidRemoteSessionTransition { .. })
+        ));
+        repl.transition_remote_session(session, RemoteSessionState::Closed)
+            .unwrap();
+        repl.forget_remote_session(session).unwrap();
+
+        let replacement = repl.begin_remote_session(kernel).unwrap();
+        assert!(replacement.get() > session.get());
+        assert_eq!(
+            replacement.to_string().parse::<RemoteSessionId>().unwrap(),
+            replacement
+        );
+    }
+
+    #[test]
+    fn remote_session_transition_relation_is_exact() {
+        use RemoteSessionState::{
+            Closed, Closing, ClosingUnknown, CommandUnknown, Established, Failed, Opening,
+            OpeningUnknown,
+        };
+        let states = [
+            Opening,
+            OpeningUnknown,
+            Established,
+            CommandUnknown,
+            Closing,
+            ClosingUnknown,
+            Closed,
+            Failed,
+        ];
+        for current in states {
+            for next in states {
+                let expected = matches!(
+                    (current, next),
+                    (Opening, Established | OpeningUnknown | Failed)
+                        | (OpeningUnknown, Failed)
+                        | (Established, CommandUnknown | Closing | Failed)
+                        | (CommandUnknown, Established | Failed)
+                        | (Closing, ClosingUnknown | Closed | Failed)
+                        | (ClosingUnknown, Closed | Failed)
+                );
+                assert_eq!(
+                    valid_remote_session_transition(current, next),
+                    expected,
+                    "unexpected {current:?} -> {next:?} transition"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn bounds_remote_lifecycle_debug_history() {
+        let repl = Repl::<()>::empty().unwrap();
+        for index in 0..1_100 {
+            let kernel = repl
+                .register_kernel("test", Some(&index.to_string()), &[4; 32])
+                .unwrap();
+            repl.unregister_kernel(kernel).unwrap();
+        }
+        let count = repl
+            .state()
+            .sqlite()
+            .query_row("SELECT count(*) FROM repl_lifecycle_event", (), |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(count, 1_024);
     }
 
     #[test]
