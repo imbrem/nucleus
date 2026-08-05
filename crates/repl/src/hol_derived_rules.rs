@@ -38,6 +38,8 @@ pub enum DerivedRulePreparationError {
     Term(TermError),
     /// A checked context constructor rejected the plan.
     Context(ContextError),
+    /// A checked conversion needed to discover an exact beta endpoint failed.
+    Proof(ProofError),
 }
 
 impl fmt::Display for DerivedRulePreparationError {
@@ -69,6 +71,7 @@ impl fmt::Display for DerivedRulePreparationError {
             ),
             Self::Term(error) => error.fmt(formatter),
             Self::Context(error) => error.fmt(formatter),
+            Self::Proof(error) => error.fmt(formatter),
         }
     }
 }
@@ -78,6 +81,7 @@ impl StdError for DerivedRulePreparationError {
         match self {
             Self::Term(error) => Some(error),
             Self::Context(error) => Some(error),
+            Self::Proof(error) => Some(error),
             Self::OpenInput(_)
             | Self::ExpectedFreeVariable(_)
             | Self::VariableOccursInFixedTerm { .. }
@@ -95,6 +99,12 @@ impl From<TermError> for DerivedRulePreparationError {
 impl From<ContextError> for DerivedRulePreparationError {
     fn from(error: ContextError) -> Self {
         Self::Context(error)
+    }
+}
+
+impl From<ProofError> for DerivedRulePreparationError {
+    fn from(error: ProofError) -> Self {
+        Self::Proof(error)
     }
 }
 
@@ -2646,6 +2656,253 @@ impl NotAllToExistsNot {
     }
 }
 
+/// Prepared exact specialization from a non-surjectivity theorem to an
+/// epsilon-selected missing point.
+///
+/// This bridges the beta-expanded predicate produced by
+/// [`NotAllToExistsNot`] back to an existing canonical `missing` lambda, so
+/// the advertised result is exactly `missing zero`, not a convertible
+/// lookalike. Preparation persists nothing.
+pub struct MissingZeroPlan {
+    nonsurjective: TermId,
+    target: TermId,
+    predicate: TermId,
+    q: TermId,
+    missing: TermId,
+    negation: TermId,
+    q_to_missing: TermId,
+    duality: NotAllToExistsNot,
+    duality_elim: ImpElim,
+    negation_congruence: ApTerm,
+    predicate_not_beta_symmetry: EqSym,
+    negation_left_transitivity: EqTrans,
+    negation_right_transitivity: EqTrans,
+    q_point_left_transitivity: EqTrans,
+    missing_point_symmetry: EqSym,
+    q_point_right_transitivity: EqTrans,
+    predicate_extensionality: FunExt,
+    epsilon_congruence: EpsCongr,
+    predicate_application: ApThm,
+    witness_application: ApTerm,
+    target_transitivity: EqTrans,
+    predicate_point: TermId,
+    predicate_point_reduct: TermId,
+}
+
+impl MissingZeroPlan {
+    /// Prepares the exact route to `missing zero`.
+    ///
+    /// # Errors
+    ///
+    /// Returns if `missing`, `zero`, or the supplied surjectivity predicate do
+    /// not have the required exact checked shapes, or a constituent plan
+    /// cannot be prepared.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the plan records every exact beta bridge to the pre-existing missing syntax"
+    )]
+    pub fn prepare<P: Policy>(
+        connection: &mut Connection<Hol<P>>,
+        predicate: TermId,
+        missing: TermId,
+        zero: TermId,
+        witness_variable: TermId,
+        classical_variables: [TermId; 3],
+    ) -> Result<Self, DerivedRulePreparationError> {
+        require_closed(connection, predicate)?;
+        require_closed(connection, missing)?;
+        require_closed(connection, zero)?;
+        let TermView::Epsilon {
+            predicate: zero_predicate,
+        } = connection.term(zero)?
+        else {
+            return Err(TermError::CorruptTerm(zero).into());
+        };
+        if zero_predicate != missing {
+            return Err(TermError::CorruptTerm(zero).into());
+        }
+        let duality = NotAllToExistsNot::prepare(
+            connection,
+            predicate,
+            witness_variable,
+            classical_variables,
+        )?;
+        let nonsurjective = duality.negated_universal;
+        let TermView::Application {
+            function: q,
+            argument: epsilon_q,
+        } = connection.term(duality.existential)?
+        else {
+            return Err(TermError::CorruptTerm(duality.existential).into());
+        };
+        let TermView::Epsilon { predicate: q_again } = connection.term(epsilon_q)? else {
+            return Err(TermError::CorruptTerm(epsilon_q).into());
+        };
+        if q_again != q {
+            return Err(TermError::CorruptTerm(epsilon_q).into());
+        }
+        let target = connection.insert_application(missing, zero)?;
+        let predicate_point = connection.insert_application(predicate, witness_variable)?;
+        let q_point = connection.insert_application(q, witness_variable)?;
+        let missing_point = connection.insert_application(missing, witness_variable)?;
+        let (predicate_point_reduct, q_point_reduct, missing_point_reduct) = connection
+            .with_proof_session(|mut proof| {
+                Ok::<_, ProofError>((
+                    proof.conversion_beta(predicate, witness_variable)?.right(),
+                    proof.conversion_beta(q, witness_variable)?.right(),
+                    proof.conversion_beta(missing, witness_variable)?.right(),
+                ))
+            })?;
+        let bool_type = connection.insert_bool_type().map_err(TermError::from)?;
+        let (_, falsehood) = canonical_false(connection)?;
+        let bound = connection.insert_bound_term(0, bool_type)?;
+        let bound_not = connection.insert_equality(bound, falsehood)?;
+        let negation = connection.insert_lambda(bool_type, bound_not)?;
+        let predicate_not = connection.insert_equality(predicate_point, falsehood)?;
+        let reduct_not = connection.insert_equality(predicate_point_reduct, falsehood)?;
+        if q_point_reduct != predicate_not || missing_point_reduct != reduct_not {
+            return Err(TermError::CorruptTerm(missing).into());
+        }
+        let negated_predicate_application =
+            connection.insert_application(negation, predicate_point)?;
+        let negated_reduct_application =
+            connection.insert_application(negation, predicate_point_reduct)?;
+        let q_to_missing = connection.insert_equality(q, missing)?;
+        let epsilon_missing = connection.insert_epsilon(missing)?;
+        if epsilon_missing != zero {
+            return Err(TermError::CorruptTerm(zero).into());
+        }
+        let missing_epsilon_q = connection.insert_application(missing, epsilon_q)?;
+        let q_epsilon_q = duality.existential;
+        Ok(Self {
+            nonsurjective,
+            target,
+            predicate,
+            q,
+            missing,
+            negation,
+            q_to_missing,
+            duality_elim: ImpElim::prepare(connection, nonsurjective, duality.existential)?,
+            negation_congruence: ApTerm::prepare(
+                connection,
+                negation,
+                predicate_point,
+                predicate_point_reduct,
+            )?,
+            predicate_not_beta_symmetry: EqSym::prepare(
+                connection,
+                negated_predicate_application,
+                predicate_not,
+            )?,
+            negation_left_transitivity: EqTrans::prepare(
+                connection,
+                predicate_not,
+                negated_predicate_application,
+                negated_reduct_application,
+            )?,
+            negation_right_transitivity: EqTrans::prepare(
+                connection,
+                predicate_not,
+                negated_reduct_application,
+                reduct_not,
+            )?,
+            q_point_left_transitivity: EqTrans::prepare(
+                connection,
+                q_point,
+                predicate_not,
+                reduct_not,
+            )?,
+            missing_point_symmetry: EqSym::prepare(connection, missing_point, reduct_not)?,
+            q_point_right_transitivity: EqTrans::prepare(
+                connection,
+                q_point,
+                reduct_not,
+                missing_point,
+            )?,
+            predicate_extensionality: FunExt::prepare(connection, q, missing, witness_variable)?,
+            epsilon_congruence: EpsCongr::prepare(connection, q, missing)?,
+            predicate_application: ApThm::prepare(connection, q, missing, epsilon_q)?,
+            witness_application: ApTerm::prepare(connection, missing, epsilon_q, zero)?,
+            target_transitivity: EqTrans::prepare(
+                connection,
+                q_epsilon_q,
+                missing_epsilon_q,
+                target,
+            )?,
+            predicate_point,
+            predicate_point_reduct,
+            duality,
+        })
+    }
+
+    /// Exact final `missing zero` node.
+    #[must_use]
+    pub const fn conclusion(&self) -> TermId {
+        self.target
+    }
+
+    /// Applies the exact specialization to an empty-context non-surjectivity theorem.
+    ///
+    /// # Errors
+    ///
+    /// Returns for a wrong premise or rejected constituent LCF rule.
+    pub fn apply<'brand, P: Policy>(
+        &self,
+        proof: &mut ProofSession<'brand, P>,
+        nonsurjective: &Theorem<'brand>,
+    ) -> Result<Theorem<'brand>, DerivedRuleError> {
+        require_result(nonsurjective, ContextId::empty(), self.nonsurjective)?;
+        let duality = self.duality.prove(proof)?;
+        let existential = self.duality_elim.apply(proof, &duality, nonsurjective)?;
+
+        let predicate_beta =
+            proof.conversion_beta(self.predicate, self.duality.witness_variable)?;
+        let predicate_beta =
+            proof.prove_conversion_equality(ContextId::empty(), &predicate_beta)?;
+        let negation_congruence = self.negation_congruence.apply(proof, &predicate_beta)?;
+        let predicate_not_beta = proof.conversion_beta(self.negation, self.predicate_point)?;
+        let predicate_not_beta =
+            proof.prove_conversion_equality(ContextId::empty(), &predicate_not_beta)?;
+        let predicate_not_to_application = self
+            .predicate_not_beta_symmetry
+            .apply(proof, &predicate_not_beta)?;
+        let left = self.negation_left_transitivity.apply(
+            proof,
+            &predicate_not_to_application,
+            &negation_congruence,
+        )?;
+        let reduct_not_beta = proof.conversion_beta(self.negation, self.predicate_point_reduct)?;
+        let reduct_not_beta =
+            proof.prove_conversion_equality(ContextId::empty(), &reduct_not_beta)?;
+        let not_points_equal =
+            self.negation_right_transitivity
+                .apply(proof, &left, &reduct_not_beta)?;
+
+        let q_beta = proof.conversion_beta(self.q, self.duality.witness_variable)?;
+        let q_beta = proof.prove_conversion_equality(ContextId::empty(), &q_beta)?;
+        let q_to_reduct =
+            self.q_point_left_transitivity
+                .apply(proof, &q_beta, &not_points_equal)?;
+        let missing_beta = proof.conversion_beta(self.missing, self.duality.witness_variable)?;
+        let missing_beta = proof.prove_conversion_equality(ContextId::empty(), &missing_beta)?;
+        let reduct_to_missing = self.missing_point_symmetry.apply(proof, &missing_beta)?;
+        let pointwise =
+            self.q_point_right_transitivity
+                .apply(proof, &q_to_reduct, &reduct_to_missing)?;
+        let predicates_equal = self.predicate_extensionality.apply(proof, &pointwise)?;
+        require_conclusion(&predicates_equal, self.q_to_missing)?;
+        let epsilons_equal = self.epsilon_congruence.apply(proof, &predicates_equal)?;
+        let applied_predicates = self.predicate_application.apply(proof, &predicates_equal)?;
+        let applied_witnesses = self.witness_application.apply(proof, &epsilons_equal)?;
+        let exact_equality =
+            self.target_transitivity
+                .apply(proof, &applied_predicates, &applied_witnesses)?;
+        let result = proof.equality_modus_ponens(&exact_equality, &existential)?;
+        require_result(&result, ContextId::empty(), self.target)?;
+        Ok(result)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3569,6 +3826,48 @@ mod tests {
             assert_eq!(theorem.context(), ContextId::empty());
             assert_eq!(theorem.conclusion(), duality.conclusion());
         });
+        let snapshot = Kernel::ephemeral().export_hol(&mut connection).unwrap();
+        assert_eq!(snapshot.image().counts().untrusted_judgement_rows, 0);
+    }
+
+    #[test]
+    fn specialized_missing_zero_reaches_the_exact_existing_predicate_application() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let (_, falsehood) = canonical_false(&mut connection).unwrap();
+        let bound = connection.insert_bound_term(0, bool_type).unwrap();
+        let predicate = connection.insert_lambda(bool_type, bound).unwrap();
+        let bound = connection.insert_bound_term(0, bool_type).unwrap();
+        let absent = connection.insert_equality(bound, falsehood).unwrap();
+        let missing = connection.insert_lambda(bool_type, absent).unwrap();
+        let zero = connection.insert_epsilon(missing).unwrap();
+        let target = connection.insert_application(missing, zero).unwrap();
+        let witness = connection.insert_free_term(8830, bool_type).unwrap();
+        let classical_variables = [
+            connection.insert_free_term(8831, bool_type).unwrap(),
+            connection.insert_free_term(8832, bool_type).unwrap(),
+            connection.insert_free_term(8833, bool_type).unwrap(),
+        ];
+        let plan = MissingZeroPlan::prepare(
+            &mut connection,
+            predicate,
+            missing,
+            zero,
+            witness,
+            classical_variables,
+        )
+        .unwrap();
+        assert_eq!(plan.conclusion(), target);
+
+        connection
+            .with_proof_session(|mut proof| {
+                let nonsurjective = proof.prove_reflexivity(ContextId::empty(), falsehood)?;
+                let theorem = plan.apply(&mut proof, &nonsurjective).unwrap();
+                assert_eq!(theorem.context(), ContextId::empty());
+                assert_eq!(theorem.conclusion(), target);
+                Ok::<_, ProofError>(())
+            })
+            .unwrap();
         let snapshot = Kernel::ephemeral().export_hol(&mut connection).unwrap();
         assert_eq!(snapshot.image().counts().untrusted_judgement_rows, 0);
     }
