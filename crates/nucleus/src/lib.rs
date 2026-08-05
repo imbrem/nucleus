@@ -17,9 +17,9 @@ pub use hol::{
     MetadataTable, MetadataTarget, MetadataType, MetadataValue, NamespaceError, NamespaceExport,
     NamespaceId, NamespaceSource, NamespaceView, Operation, Policy, ProofError, ProofSession,
     SignedHolSnapshot, SnapshotTrustError, TermError, TermId, TermInstantiation, TermView, Theorem,
-    TrustedImportError, TrustedImportId, TrustedImportImageError, TrustedImportView, TypeError,
-    TypeId, TypeInstantiation, TypeView, UnboundTypeVariable, UnboundVariable, ValidatedHolImage,
-    hol_schema_id, hol_semantics_id,
+    TrustedImportError, TrustedImportId, TrustedImportImageError, TrustedImportView,
+    TrustedStateOpenError, TypeError, TypeId, TypeInstantiation, TypeView, UnboundTypeVariable,
+    UnboundVariable, ValidatedHolImage, hol_schema_id, hol_semantics_id,
 };
 pub use kernel::Kernel;
 

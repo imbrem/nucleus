@@ -5,6 +5,7 @@ mod import;
 mod namespace;
 mod reader;
 mod schema_descriptor;
+mod state;
 mod trust;
 mod validate;
 
@@ -21,6 +22,7 @@ pub use reader::{
     ImportedTermId, ImportedTermView, ImportedTheorem, ImportedTypeId, ImportedTypeView,
 };
 pub use schema_descriptor::{HolSchemaDescriptor, HolSchemaDescriptorError};
+pub use state::TrustedStateOpenError;
 pub use trust::{
     MatchedTrustedHolImage, SnapshotTrustError, TrustedImportError, TrustedImportId,
     TrustedImportImageError, TrustedImportView,
@@ -544,6 +546,8 @@ pub enum Operation {
     ReadTrustedImport,
     /// Match authenticated, structurally validated bytes to one persistent accepted import.
     MatchTrustedImportImage,
+    /// Assume exact signed bytes are authoritative serialized state in an independent connection.
+    OpenTrustedSnapshotAsState,
     /// Open a matched image through an internally verified immutable VFS.
     OpenTrustedImportReader,
     /// Read namespace/export structure from a scoped imported image.
