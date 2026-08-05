@@ -20,7 +20,7 @@ pub(crate) const MAX_RECIPE_NAME_BYTES: usize = 256;
 /// Maximum canonical bytes accepted from an untrusted guest executor.
 pub const MAX_SEALED_HOL_RECIPE_BYTES: usize = 64 * 1024;
 
-const RECIPE_VERSION: u8 = 0;
+const RECIPE_VERSION: u8 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RecipeSort {
@@ -48,6 +48,10 @@ pub(crate) enum RecipeNode {
         context: usize,
         abstraction: usize,
         argument: usize,
+    },
+    Eta {
+        context: usize,
+        function: usize,
     },
     Persist {
         theorem: usize,
@@ -231,6 +235,11 @@ fn validate_structure(
                 require(*argument, RecipeSort::Term)?;
                 RecipeSort::Theorem
             }
+            RecipeNode::Eta { context, function } => {
+                require(*context, RecipeSort::Context)?;
+                require(*function, RecipeSort::Term)?;
+                RecipeSort::Theorem
+            }
             RecipeNode::Persist { theorem } => {
                 require(*theorem, RecipeSort::Theorem)?;
                 persisted.insert(*theorem);
@@ -360,6 +369,11 @@ fn encode_node(bytes: &mut Vec<u8>, node: &RecipeNode) -> Result<(), HolProofRec
             encode_index(bytes, *context)?;
             encode_index(bytes, *abstraction)?;
             encode_index(bytes, *argument)?;
+        }
+        RecipeNode::Eta { context, function } => {
+            bytes.push(10);
+            encode_index(bytes, *context)?;
+            encode_index(bytes, *function)?;
         }
         RecipeNode::Persist { theorem } => {
             bytes.push(6);
@@ -511,6 +525,10 @@ impl<'a> Decoder<'a> {
                 context: self.index()?,
                 name: self.name()?,
             }),
+            10 => Ok(RecipeNode::Eta {
+                context: self.index()?,
+                function: self.index()?,
+            }),
             _ => Err(HolProofRecipeError::Invalid(
                 "unknown sealed recipe node tag",
             )),
@@ -519,15 +537,16 @@ impl<'a> Decoder<'a> {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct BetaGuestPolicy;
+struct ProofGuestPolicy;
 
-impl Policy for BetaGuestPolicy {
+impl Policy for ProofGuestPolicy {
     fn allows(&mut self, operation: Operation) -> bool {
         matches!(
             operation,
             Operation::InsertType
                 | Operation::InsertTerm
                 | Operation::ProveConversionBeta
+                | Operation::ProveConversionEta
                 | Operation::ProveConversionEquality
                 | Operation::PersistJudgement
                 | Operation::DefineNamespace
@@ -554,8 +573,8 @@ fn replay(
     recipe: &[RecipeNode],
     selected_namespace: usize,
 ) -> Result<SignedHolArtifact, HolProofRecipeError> {
-    let mut db: Connection<Hol<BetaGuestPolicy>> =
-        kernel.open_hol(BetaGuestPolicy).map_err(replay_error)?;
+    let mut db: Connection<Hol<ProofGuestPolicy>> =
+        kernel.open_hol(ProofGuestPolicy).map_err(replay_error)?;
     let mut values = Vec::with_capacity(recipe.len());
     for node in recipe {
         let value = match node {
@@ -580,46 +599,14 @@ fn replay(
                     .map_err(replay_error)?,
             ),
             RecipeNode::Beta { .. }
+            | RecipeNode::Eta { .. }
             | RecipeNode::Persist { .. }
             | RecipeNode::ExportTheorem { .. }
             | RecipeNode::ExportContext { .. } => Value::Unit,
         };
         values.push(value);
     }
-    db.with_proof_session(|mut proof| {
-        let mut theorems: Vec<Option<Theorem<'_>>> = (0..recipe.len()).map(|_| None).collect();
-        for (index, node) in recipe.iter().enumerate() {
-            match node {
-                RecipeNode::Beta {
-                    context,
-                    abstraction,
-                    argument,
-                } => {
-                    let theorem = crate::hol_recipes::beta(
-                        &mut proof,
-                        context_at(&values, *context)?,
-                        term_at(&values, *abstraction)?,
-                        term_at(&values, *argument)?,
-                    )
-                    .map_err(replay_error)?;
-                    values[index] = Value::Theorem {
-                        context: theorem.context(),
-                        conclusion: theorem.conclusion(),
-                    };
-                    theorems[index] = Some(theorem);
-                }
-                RecipeNode::Persist { theorem } => {
-                    let theorem = theorems
-                        .get(*theorem)
-                        .and_then(Option::as_ref)
-                        .ok_or_else(value_error)?;
-                    proof.persist_theorem(theorem).map_err(replay_error)?;
-                }
-                _ => {}
-            }
-        }
-        Ok::<_, HolProofRecipeError>(())
-    })?;
+    replay_theorems(&mut db, recipe, &mut values)?;
     for node in recipe {
         match node {
             RecipeNode::ExportTheorem {
@@ -654,6 +641,60 @@ fn replay(
     let namespace = namespace_at(&values, selected_namespace)?;
     let snapshot = kernel.export_hol(&mut db).map_err(replay_error)?;
     snapshot_artifact(namespace, &snapshot)
+}
+
+fn replay_theorems<P: Policy>(
+    db: &mut Connection<Hol<P>>,
+    recipe: &[RecipeNode],
+    values: &mut [Value],
+) -> Result<(), HolProofRecipeError> {
+    db.with_proof_session(|mut proof| {
+        let mut theorems: Vec<Option<Theorem<'_>>> = (0..recipe.len()).map(|_| None).collect();
+        for (index, node) in recipe.iter().enumerate() {
+            match node {
+                RecipeNode::Beta {
+                    context,
+                    abstraction,
+                    argument,
+                } => {
+                    let theorem = crate::hol_recipes::beta(
+                        &mut proof,
+                        context_at(values, *context)?,
+                        term_at(values, *abstraction)?,
+                        term_at(values, *argument)?,
+                    )
+                    .map_err(replay_error)?;
+                    values[index] = Value::Theorem {
+                        context: theorem.context(),
+                        conclusion: theorem.conclusion(),
+                    };
+                    theorems[index] = Some(theorem);
+                }
+                RecipeNode::Eta { context, function } => {
+                    let theorem = crate::hol_recipes::eta(
+                        &mut proof,
+                        context_at(values, *context)?,
+                        term_at(values, *function)?,
+                    )
+                    .map_err(replay_error)?;
+                    values[index] = Value::Theorem {
+                        context: theorem.context(),
+                        conclusion: theorem.conclusion(),
+                    };
+                    theorems[index] = Some(theorem);
+                }
+                RecipeNode::Persist { theorem } => {
+                    let theorem = theorems
+                        .get(*theorem)
+                        .and_then(Option::as_ref)
+                        .ok_or_else(value_error)?;
+                    proof.persist_theorem(theorem).map_err(replay_error)?;
+                }
+                _ => {}
+            }
+        }
+        Ok::<_, HolProofRecipeError>(())
+    })
 }
 
 fn snapshot_artifact(
@@ -759,6 +800,43 @@ pub(crate) fn closed_beta_test_recipe() -> SealedHolProofRecipe {
 }
 
 #[cfg(test)]
+fn closed_eta_test_recipe() -> SealedHolProofRecipe {
+    SealedHolProofRecipe::seal(
+        vec![
+            RecipeNode::BoolType,
+            RecipeNode::Bound { index: 0, ty: 0 },
+            RecipeNode::Lambda {
+                parameter_type: 0,
+                body: 1,
+            },
+            RecipeNode::EmptyContext,
+            RecipeNode::Eta {
+                context: 3,
+                function: 2,
+            },
+            RecipeNode::Persist { theorem: 4 },
+            RecipeNode::Namespace {
+                name: Some("eta-demo".into()),
+            },
+            RecipeNode::ExportContext {
+                namespace: 6,
+                export: 0,
+                context: 3,
+                name: Some("empty_context".into()),
+            },
+            RecipeNode::ExportTheorem {
+                namespace: 6,
+                export: 1,
+                theorem: 4,
+                name: Some("identity_eta".into()),
+            },
+        ],
+        6,
+    )
+    .expect("canonical eta test recipe")
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -779,9 +857,49 @@ mod tests {
     }
 
     #[test]
+    fn canonical_eta_recipe_round_trips_and_replays() {
+        const VERSION_1_ETA_RECIPE: &[u8] = &[
+            1, 0, 9, 0, 6, // version, node count, selected namespace
+            0, // bool type
+            1, 0, 0, 0, 0, 0, 0, // bound 0 : node 0
+            2, 0, 0, 0, 1, // lambda node 0, node 1
+            4, // empty context
+            10, 0, 3, 0, 2, // eta node 3, node 2
+            6, 0, 4, // persist node 4
+            7, 1, 0, 8, b'e', b't', b'a', b'-', b'd', b'e', b'm', b'o', 9, 0, 6, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 3, 1, 0, 13, b'e', b'm', b'p', b't', b'y', b'_', b'c', b'o', b'n', b't', b'e',
+            b'x', b't', 8, 0, 6, 0, 0, 0, 0, 0, 0, 0, 1, 0, 4, 1, 0, 12, b'i', b'd', b'e', b'n',
+            b't', b'i', b't', b'y', b'_', b'e', b't', b'a',
+        ];
+        let recipe = closed_eta_test_recipe();
+        assert_eq!(recipe.as_bytes(), VERSION_1_ETA_RECIPE);
+        assert_eq!(
+            SealedHolProofRecipe::from_untrusted_bytes(VERSION_1_ETA_RECIPE).unwrap(),
+            recipe
+        );
+        let kernel = Kernel::ephemeral();
+        let artifact = recipe.replay(&kernel).unwrap();
+        assert_eq!(artifact.signer(), kernel.key_id());
+    }
+
+    #[test]
     fn rejects_forward_wrong_sort_unpersisted_and_trailing_recipes() {
         assert!(
             SealedHolProofRecipe::seal(vec![RecipeNode::Bound { index: 0, ty: 0 }], 0).is_err()
+        );
+        assert!(
+            SealedHolProofRecipe::seal(
+                vec![
+                    RecipeNode::BoolType,
+                    RecipeNode::EmptyContext,
+                    RecipeNode::Eta {
+                        context: 1,
+                        function: 1,
+                    }
+                ],
+                1
+            )
+            .is_err()
         );
         assert!(
             SealedHolProofRecipe::seal(
@@ -815,6 +933,14 @@ mod tests {
         let mut bytes = closed_beta().as_bytes().to_vec();
         bytes.push(0);
         assert!(SealedHolProofRecipe::from_untrusted_bytes(&bytes).is_err());
+        let mut old_version = closed_beta().as_bytes().to_vec();
+        old_version[0] = 0;
+        assert!(matches!(
+            SealedHolProofRecipe::from_untrusted_bytes(&old_version),
+            Err(HolProofRecipeError::Invalid(
+                "unsupported sealed recipe version"
+            ))
+        ));
     }
 
     #[test]

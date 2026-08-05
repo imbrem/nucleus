@@ -1,0 +1,26 @@
+[package]
+name = "covalence-hol-proof-guest-eta"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Untrusted closed-eta proof recipe component for Covalence"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "=0.57.1"
+
+[package.metadata.component]
+package = "covalence:hol-proof-guest-eta"
+
+[package.metadata.component.target]
+path = "../nucleus/protocol/hol-proof-guest.wit"
+world = "hol-proof-guest"
+
+[package.metadata.component.dependencies]
+
+[lints]
+workspace = true

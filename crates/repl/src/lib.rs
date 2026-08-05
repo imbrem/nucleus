@@ -1270,7 +1270,7 @@ pub(crate) fn trust_receive_and_retain_pinned_signed_hol_artifact(
         .accept_trusted_import(import, claim)
         .map_err(|error| SignedHolRoundTripError::at("namespace-imported", error))?;
     let namespace = target
-        .create_imported_namespace(None, Some("received-beta-demo"), import, namespace_id)
+        .create_imported_namespace(None, Some("received-hol-demo"), import, namespace_id)
         .map_err(|error| SignedHolRoundTripError::at("namespace-imported", error))?;
 
     let mounted = covalence_neutron::ImmutableImage::register(Arc::from(validated.image().bytes()))
@@ -1278,7 +1278,7 @@ pub(crate) fn trust_receive_and_retain_pinned_signed_hol_artifact(
     let (context_id, conclusion_id) = target
         .match_trusted_import_image(trusted, validated)
         .map_err(|error| SignedHolRoundTripError::at("theorem-read", error))?
-        .with_mounted_reader(namespace, &mounted, read_imported_beta)
+        .with_mounted_reader(namespace, &mounted, read_imported_exported_equality)
         .map_err(|error| SignedHolRoundTripError::at("theorem-read", error))??;
 
     let received = ReceivedHolSnapshot {
@@ -1321,7 +1321,7 @@ pub(crate) fn reread_received_hol_snapshot(
         .with_mounted_reader(
             NamespaceId::from_i64(retained.received.namespace),
             &retained.mounted,
-            read_imported_beta,
+            read_imported_exported_equality,
         )
         .map_err(|error| SignedHolRoundTripError::at("theorem-read", error))??;
     if (context, conclusion) != (retained.received.context, retained.received.conclusion) {
@@ -1351,7 +1351,7 @@ fn authenticate_artifact(
     .map_err(|error| SignedHolRoundTripError::at("signature-authenticated", error))
 }
 
-fn read_imported_beta(
+fn read_imported_exported_equality(
     mut reader: covalence_nucleus::ImportedHolReader<'_, '_, AllowAll>,
 ) -> Result<(i64, i64), SignedHolRoundTripError> {
     let Some(context_export) = reader
@@ -1391,7 +1391,7 @@ fn read_imported_beta(
     {
         return Err(SignedHolRoundTripError::invalid(
             "theorem-read",
-            "persisted beta theorem is absent",
+            "persisted exported theorem is absent",
         ));
     }
     if !matches!(
@@ -2127,7 +2127,7 @@ mod tests {
         let reread = target
             .match_trusted_import_image(trusted, validated)
             .unwrap()
-            .with_mounted_reader(namespace, &mounted, read_imported_beta)
+            .with_mounted_reader(namespace, &mounted, read_imported_exported_equality)
             .unwrap()
             .unwrap();
         assert_eq!(reread.0, result.imported_context_id());
