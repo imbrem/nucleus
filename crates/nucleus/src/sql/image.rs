@@ -122,6 +122,45 @@ impl Connection<Sql> {
         neutron.serialize()
     }
 
+    /// Serializes `main` or one verified immutable attachment as owned bytes.
+    ///
+    /// Arbitrary attached databases are rejected. For a non-`main` schema,
+    /// success depends on checking its actual post-attach VFS pointer against
+    /// the process-local immutable image-store VFS.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid schema, an attachment not backed by the
+    /// verified immutable VFS, an oversized snapshot, or a database that
+    /// `SQLite` cannot serialize.
+    pub fn serialize_snapshot(
+        &mut self,
+        schema: &str,
+    ) -> Result<covalence_neutron::Bytes, ImageError> {
+        if schema.is_empty() || schema.contains('\0') {
+            return Err(ImageError::InvalidSchemaName);
+        }
+        let (neutron, _) = self.parts_mut();
+        if schema != "main" {
+            let cas = image_cas().context(RegisterSnafu)?;
+            neutron
+                .verify_database_vfs(schema, &cas.registered)
+                .context(VerifySnafu {
+                    schema: schema.to_owned(),
+                })?;
+        }
+        let bytes = neutron.serialize_database(schema).context(SerializeSnafu {
+            schema: schema.to_owned(),
+        })?;
+        if bytes.len() > MAX_IMAGE_BYTES {
+            return Err(ImageError::TooLarge {
+                size: bytes.len(),
+                limit: MAX_IMAGE_BYTES,
+            });
+        }
+        Ok(bytes)
+    }
+
     /// Attaches a resident image immutably under `schema`.
     ///
     /// The image is served by content address through the process-local
@@ -193,6 +232,15 @@ fn quote_identifier(identifier: &str) -> String {
 #[derive(Debug, Snafu)]
 #[snafu(crate_root(covalence_lib_error::snafu))]
 pub enum ImageError {
+    /// `SQLite` could not serialize the selected snapshot.
+    #[snafu(display("could not serialize SQLite schema {schema:?}: {source}"))]
+    Serialize {
+        /// Selected database schema.
+        schema: String,
+        /// Mechanical `SQLite` serialization failure.
+        source: covalence_neutron::ImageError,
+    },
+
     /// The supplied image exceeds the admission bound.
     #[snafu(display("database image of {size} bytes exceeds the {limit}-byte limit"))]
     TooLarge {
@@ -339,6 +387,33 @@ mod tests {
                 .run("INSERT INTO library.example VALUES ('changed')", &[])
                 .is_err()
         );
+    }
+
+    #[test]
+    fn snapshots_only_main_or_verified_immutable_attachments() {
+        let bytes = image();
+        let mut connection = Connection::<Sql>::open_in_memory().expect("open destination");
+        connection
+            .execute_batch("CREATE TABLE local(value INTEGER); INSERT INTO local VALUES (42);")
+            .expect("populate main");
+        let hash = connection.put_image(&bytes).expect("store image");
+        connection
+            .attach_immutable_image(hash, "library")
+            .expect("attach immutable image");
+        connection
+            .execute_batch("ATTACH DATABASE ':memory:' AS arbitrary")
+            .expect("attach arbitrary database");
+
+        for schema in ["main", "library"] {
+            let snapshot = connection
+                .serialize_snapshot(schema)
+                .expect("serialize allowed snapshot");
+            assert!(snapshot.starts_with(b"SQLite format 3\0"));
+        }
+        assert!(matches!(
+            connection.serialize_snapshot("arbitrary"),
+            Err(ImageError::Verify { schema, .. }) if schema == "arbitrary"
+        ));
     }
 
     #[test]

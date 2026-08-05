@@ -9,6 +9,10 @@ use covalence_repl::{
     Connection, ConnectionId, Kernel, MAX_IMAGE_BYTES, Outcome, Repl, Sql, Value,
 };
 
+mod sqlite_shell;
+
+use sqlite_shell::{SqliteShellLauncher, SystemSqliteShell, launch_snapshot};
+
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 type LocalRepl = Repl<Connection<Sql>>;
 
@@ -123,10 +127,44 @@ fn parse_load(command: &str) -> Option<(&str, &str)> {
     (!schema.is_empty() && !path.is_empty()).then_some((schema, path))
 }
 
+fn open_snapshot_shell(
+    repl: &mut LocalRepl,
+    output: &mut impl io::Write,
+    shell: &mut dyn SqliteShellLauncher,
+    schema: &str,
+) -> Result<()> {
+    let bytes = repl.active_mut()?.serialize_snapshot(schema)?;
+    launch_snapshot(&bytes, shell)?;
+    writeln!(output, "closed sqlite3 snapshot shell for {schema}")?;
+    Ok(())
+}
+
+fn print_help(output: &mut impl io::Write) -> io::Result<()> {
+    writeln!(
+        output,
+        ".load SCHEMA PATH  attach a complete immutable SQLite image"
+    )?;
+    writeln!(output, ".open              open and select a connection")?;
+    writeln!(output, ".use ID            select a connection")?;
+    writeln!(output, ".close [ID]        close a connection")?;
+    writeln!(output, ".connections       list open connections")?;
+    writeln!(output, ".shell [SCHEMA]    inspect a snapshot with sqlite3")?;
+    writeln!(
+        output,
+        ".export PATH       write the active main snapshot to a file"
+    )?;
+    writeln!(
+        output,
+        ".state SQL         query the REPL state database read-only"
+    )?;
+    writeln!(output, ".quit              exit")
+}
+
 fn run_line(
     kernel: &Kernel,
     repl: &mut LocalRepl,
     output: &mut impl io::Write,
+    shell: &mut dyn SqliteShellLauncher,
     line: &str,
 ) -> Result<bool> {
     let line = line.trim();
@@ -137,23 +175,7 @@ fn run_line(
         return Ok(false);
     }
     if line == ".help" {
-        writeln!(
-            output,
-            ".load SCHEMA PATH  attach a complete immutable SQLite image"
-        )?;
-        writeln!(output, ".open              open and select a connection")?;
-        writeln!(output, ".use ID            select a connection")?;
-        writeln!(output, ".close [ID]        close a connection")?;
-        writeln!(output, ".connections       list open connections")?;
-        writeln!(
-            output,
-            ".export PATH       write the active main snapshot to a file"
-        )?;
-        writeln!(
-            output,
-            ".state SQL         query the REPL state database read-only"
-        )?;
-        writeln!(output, ".quit              exit")?;
+        print_help(output)?;
         return Ok(true);
     }
     if line == ".open" {
@@ -205,6 +227,14 @@ fn run_line(
         writeln!(output, "exported {} bytes to {path}", bytes.len())?;
         return Ok(true);
     }
+    if line == ".shell" || line.starts_with(".shell ") {
+        let schema = line.strip_prefix(".shell ").map_or("main", str::trim);
+        if schema.is_empty() {
+            return Err("usage: .shell [SCHEMA]".into());
+        }
+        open_snapshot_shell(repl, output, shell, schema)?;
+        return Ok(true);
+    }
     if let Some(sql) = line.strip_prefix(".state ") {
         let result = repl.inspect_state(sql.trim())?;
         print_outcome(output, &Outcome::Rows(result))?;
@@ -230,6 +260,16 @@ fn run_repl(
     errors: &mut impl io::Write,
     prompt: bool,
 ) -> Result<()> {
+    run_repl_with_launcher(input, output, errors, prompt, &mut SystemSqliteShell)
+}
+
+fn run_repl_with_launcher(
+    input: &mut impl io::BufRead,
+    output: &mut impl io::Write,
+    errors: &mut impl io::Write,
+    prompt: bool,
+    shell: &mut dyn SqliteShellLauncher,
+) -> Result<()> {
     let kernel = Kernel::ephemeral();
     let mut repl = Repl::new(kernel.verifying_key().as_bytes())?;
     open_connection(&kernel, &mut repl)?;
@@ -243,7 +283,7 @@ fn run_repl(
         if input.read_line(&mut line)? == 0 {
             break;
         }
-        match run_line(&kernel, &mut repl, output, &line) {
+        match run_line(&kernel, &mut repl, output, shell, &line) {
             Ok(true) => {}
             Ok(false) => break,
             Err(error) => writeln!(errors, "error: {error}")?,
@@ -299,6 +339,7 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use std::io::{Cursor, ErrorKind};
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
@@ -322,6 +363,20 @@ mod tests {
             buffer[..count].fill(0);
             self.remaining -= count;
             Ok(count)
+        }
+    }
+
+    #[derive(Default)]
+    struct CapturingShell {
+        images: Vec<Vec<u8>>,
+        paths: Vec<PathBuf>,
+    }
+
+    impl SqliteShellLauncher for CapturingShell {
+        fn launch(&mut self, invocation: &sqlite_shell::SqliteShellInvocation) -> io::Result<()> {
+            self.images.push(fs::read(invocation.snapshot_path())?);
+            self.paths.push(invocation.snapshot_path().to_owned());
+            Ok(())
         }
     }
 
@@ -465,6 +520,47 @@ mod tests {
             String::from_utf8(errors)
                 .unwrap()
                 .contains("attempt to write a readonly database")
+        );
+    }
+
+    #[test]
+    fn shells_main_and_verified_immutable_snapshots_without_live_connections() {
+        let path = std::env::temp_dir().join(format!(
+            "nucleus-shell-source-{}.sqlite",
+            NEXT_FILE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let script = format!(
+            "CREATE TABLE example(value TEXT)\nINSERT INTO example VALUES ('snapshot')\n.export {path}\n.shell\n.load library {path}\n.shell library\nATTACH DATABASE ':memory:' AS arbitrary\n.shell arbitrary\n.quit\n",
+            path = path.display()
+        );
+        let mut input = Cursor::new(script);
+        let mut output = Vec::new();
+        let mut errors = Vec::new();
+        let mut shell = CapturingShell::default();
+
+        run_repl_with_launcher(&mut input, &mut output, &mut errors, false, &mut shell)
+            .expect("run REPL");
+        fs::remove_file(path).expect("remove exported source");
+
+        assert_eq!(shell.images.len(), 2);
+        assert!(
+            shell
+                .images
+                .iter()
+                .all(|image| image.starts_with(b"SQLite format 3\0"))
+        );
+        assert!(shell.paths.iter().all(|path| !path.exists()));
+        assert_eq!(
+            String::from_utf8(output)
+                .unwrap()
+                .matches("closed sqlite3 snapshot shell")
+                .count(),
+            2
+        );
+        assert!(
+            String::from_utf8(errors)
+                .unwrap()
+                .contains("could not verify the VFS used by SQLite schema \"arbitrary\"")
         );
     }
 }
