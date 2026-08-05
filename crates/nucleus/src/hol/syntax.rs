@@ -125,14 +125,17 @@ branded_id!(
 /// Index family for syntax nodes: what a child reference is.
 pub trait Substrate {
     /// Kind children.
-    type Kind: Clone + std::fmt::Debug + Eq;
+    type Kind;
     /// Type children.
-    type Ty: Clone + std::fmt::Debug + Eq;
+    type Ty;
     /// Term children.
-    type Tm: Clone + std::fmt::Debug + Eq;
+    type Tm;
     /// Source references.
-    type Src: Clone + std::fmt::Debug + Eq;
+    type Src;
 }
+// Node impls carry their bounds on the associated types rather than the
+// trait, so recursive substrates (whose children mention the substrate's
+// own node types) do not send trait-bound checking into a cycle.
 
 /// The in-store substrate: children are interned branded ids.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -146,7 +149,6 @@ impl<'v> Substrate for Ids<'v> {
 }
 
 /// A kind node.
-#[derive(Debug, Eq, PartialEq)]
 #[expect(missing_docs, reason = "constructors are specified in semantics.txt")]
 pub enum Kind<S: Substrate> {
     Star,
@@ -154,7 +156,6 @@ pub enum Kind<S: Substrate> {
 }
 
 /// A type node.
-#[derive(Debug, Eq, PartialEq)]
 #[expect(missing_docs, reason = "constructors are specified in semantics.txt")]
 pub enum Ty<S: Substrate> {
     Bv(u32),
@@ -168,73 +169,157 @@ pub enum Ty<S: Substrate> {
     Ext(S::Src, u32),
 }
 
-impl<S: Substrate> Clone for Kind<S> {
-    fn clone(&self) -> Self {
-        match self {
-            Self::Star => Self::Star,
-            Self::Arr(domain, codomain) => Self::Arr(domain.clone(), codomain.clone()),
-        }
-    }
-}
-
-impl<S: Substrate> Clone for Ty<S> {
-    fn clone(&self) -> Self {
-        match self {
-            Self::Bv(index) => Self::Bv(*index),
-            Self::Lam(kind, body) => Self::Lam(kind.clone(), body.clone()),
-            Self::App(function, argument) => Self::App(function.clone(), argument.clone()),
-            Self::All(kind, body) => Self::All(kind.clone(), body.clone()),
-            Self::Bool => Self::Bool,
-            Self::Arr(domain, codomain) => Self::Arr(domain.clone(), codomain.clone()),
-            Self::Sub(carrier, predicate) => Self::Sub(carrier.clone(), predicate.clone()),
-            Self::Ind => Self::Ind,
-            Self::Ext(source, position) => Self::Ext(source.clone(), *position),
-        }
-    }
-}
-
-impl<S: Substrate> Clone for Tm<S> {
-    fn clone(&self) -> Self {
-        match self {
-            Self::Bv(index) => Self::Bv(*index),
-            Self::App(function, argument) => Self::App(function.clone(), argument.clone()),
-            Self::Lam(domain, body) => Self::Lam(domain.clone(), body.clone()),
-            Self::TyApp(function, argument) => Self::TyApp(function.clone(), argument.clone()),
-            Self::TyLam(kind, body) => Self::TyLam(kind.clone(), body.clone()),
-            Self::Bool(value) => Self::Bool(*value),
-            Self::Eq(left, right) => Self::Eq(left.clone(), right.clone()),
-            Self::Eps(predicate) => Self::Eps(predicate.clone()),
-            Self::Abs(predicate, value) => Self::Abs(predicate.clone(), value.clone()),
-            Self::Rep(predicate, value) => Self::Rep(predicate.clone(), value.clone()),
-            Self::Ext(source, position, claim) => {
-                Self::Ext(source.clone(), *position, claim.clone())
+/// Implements the standard node traits for one concrete substrate.
+///
+/// Generic impls with `where S::Kind: Clone`-style bounds send trait
+/// resolution into a projection cycle for recursive substrates, so each
+/// substrate instantiates these concretely instead.
+/// Implements node traits for substrates whose children are all `Copy`.
+macro_rules! impl_copy_node_traits {
+    (impl($($generics:tt)*) $substrate:ty) => {
+        #[expect(
+            clippy::expl_impl_clone_on_copy,
+            reason = "derive would demand bounds on the substrate marker"
+        )]
+        impl<$($generics)*> Clone for Kind<$substrate> {
+            fn clone(&self) -> Self {
+                *self
             }
         }
-    }
+        #[expect(
+            clippy::expl_impl_clone_on_copy,
+            reason = "derive would demand bounds on the substrate marker"
+        )]
+        impl<$($generics)*> Clone for Ty<$substrate> {
+            fn clone(&self) -> Self {
+                *self
+            }
+        }
+        #[expect(
+            clippy::expl_impl_clone_on_copy,
+            reason = "derive would demand bounds on the substrate marker"
+        )]
+        impl<$($generics)*> Clone for Tm<$substrate> {
+            fn clone(&self) -> Self {
+                *self
+            }
+        }
+        impl<$($generics)*> Copy for Kind<$substrate> {}
+        impl<$($generics)*> Copy for Ty<$substrate> {}
+        impl<$($generics)*> Copy for Tm<$substrate> {}
+        $crate::hol::syntax::impl_node_traits!(shared impl($($generics)*) $substrate);
+    };
 }
+macro_rules! impl_node_traits {
+    (shared impl($($generics:tt)*) $substrate:ty) => {
+        impl<$($generics)*> PartialEq for Kind<$substrate> {
+            fn eq(&self, other: &Self) -> bool {
+                match (self, other) {
+                    (Self::Star, Self::Star) => true,
+                    (Self::Arr(a, b), Self::Arr(c, d)) => a == c && b == d,
+                    _ => false,
+                }
+            }
+        }
 
-impl<S: Substrate> Copy for Kind<S> where S::Kind: Copy {}
+        impl<$($generics)*> Eq for Kind<$substrate> {}
 
-impl<S: Substrate> Copy for Ty<S>
-where
-    S::Kind: Copy,
-    S::Ty: Copy,
-    S::Tm: Copy,
-    S::Src: Copy,
-{
+        impl<$($generics)*> PartialEq for Ty<$substrate> {
+            fn eq(&self, other: &Self) -> bool {
+                match (self, other) {
+                    (Self::Bv(a), Self::Bv(b)) => a == b,
+                    (Self::Lam(k, b), Self::Lam(l, c))
+                    | (Self::All(k, b), Self::All(l, c)) => k == l && b == c,
+                    (Self::App(f, x), Self::App(g, y))
+                    | (Self::Arr(f, x), Self::Arr(g, y)) => f == g && x == y,
+                    (Self::Bool, Self::Bool) | (Self::Ind, Self::Ind) => true,
+                    (Self::Sub(a, p), Self::Sub(b, q)) => a == b && p == q,
+                    (Self::Ext(s, i), Self::Ext(t, j)) => s == t && i == j,
+                    _ => false,
+                }
+            }
+        }
+
+        impl<$($generics)*> Eq for Ty<$substrate> {}
+
+        impl<$($generics)*> PartialEq for Tm<$substrate> {
+            fn eq(&self, other: &Self) -> bool {
+                match (self, other) {
+                    (Self::Bv(a), Self::Bv(b)) => a == b,
+                    (Self::App(f, x), Self::App(g, y))
+                    | (Self::Eq(f, x), Self::Eq(g, y))
+                    | (Self::Abs(f, x), Self::Abs(g, y))
+                    | (Self::Rep(f, x), Self::Rep(g, y)) => f == g && x == y,
+                    (Self::Lam(a, t), Self::Lam(b, u)) => a == b && t == u,
+                    (Self::TyApp(f, x), Self::TyApp(g, y)) => f == g && x == y,
+                    (Self::TyLam(k, t), Self::TyLam(l, u)) => k == l && t == u,
+                    (Self::Bool(a), Self::Bool(b)) => a == b,
+                    (Self::Eps(p), Self::Eps(q)) => p == q,
+                    (Self::Ext(s, i, c), Self::Ext(t, j, d)) => {
+                        s == t && i == j && c == d
+                    }
+                    _ => false,
+                }
+            }
+        }
+
+        impl<$($generics)*> Eq for Tm<$substrate> {}
+
+        impl<$($generics)*> std::fmt::Debug for Kind<$substrate> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                match self {
+                    Self::Star => f.write_str("Star"),
+                    Self::Arr(a, b) => f.debug_tuple("Arr").field(a).field(b).finish(),
+                }
+            }
+        }
+
+        impl<$($generics)*> std::fmt::Debug for Ty<$substrate> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                match self {
+                    Self::Bv(n) => f.debug_tuple("Bv").field(n).finish(),
+                    Self::Lam(k, b) => f.debug_tuple("Lam").field(k).field(b).finish(),
+                    Self::App(g, x) => f.debug_tuple("App").field(g).field(x).finish(),
+                    Self::All(k, b) => f.debug_tuple("All").field(k).field(b).finish(),
+                    Self::Bool => f.write_str("Bool"),
+                    Self::Arr(a, b) => f.debug_tuple("Arr").field(a).field(b).finish(),
+                    Self::Sub(a, p) => f.debug_tuple("Sub").field(a).field(p).finish(),
+                    Self::Ind => f.write_str("Ind"),
+                    Self::Ext(s, i) => f.debug_tuple("Ext").field(s).field(i).finish(),
+                }
+            }
+        }
+
+        impl<$($generics)*> std::fmt::Debug for Tm<$substrate> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                match self {
+                    Self::Bv(n) => f.debug_tuple("Bv").field(n).finish(),
+                    Self::App(g, x) => f.debug_tuple("App").field(g).field(x).finish(),
+                    Self::Lam(a, t) => f.debug_tuple("Lam").field(a).field(t).finish(),
+                    Self::TyApp(g, x) => {
+                        f.debug_tuple("TyApp").field(g).field(x).finish()
+                    }
+                    Self::TyLam(k, t) => {
+                        f.debug_tuple("TyLam").field(k).field(t).finish()
+                    }
+                    Self::Bool(b) => f.debug_tuple("Bool").field(b).finish(),
+                    Self::Eq(l, r) => f.debug_tuple("Eq").field(l).field(r).finish(),
+                    Self::Eps(p) => f.debug_tuple("Eps").field(p).finish(),
+                    Self::Abs(p, x) => f.debug_tuple("Abs").field(p).field(x).finish(),
+                    Self::Rep(p, x) => f.debug_tuple("Rep").field(p).field(x).finish(),
+                    Self::Ext(s, i, c) => {
+                        f.debug_tuple("Ext").field(s).field(i).field(c).finish()
+                    }
+                }
+            }
+        }
+    };
 }
+pub(crate) use impl_node_traits;
 
-impl<S: Substrate> Copy for Tm<S>
-where
-    S::Kind: Copy,
-    S::Ty: Copy,
-    S::Tm: Copy,
-    S::Src: Copy,
-{
-}
+impl_copy_node_traits!(impl('v) Ids<'v>);
 
 /// A term node.
-#[derive(Debug, Eq, PartialEq)]
 #[expect(missing_docs, reason = "constructors are specified in semantics.txt")]
 pub enum Tm<S: Substrate> {
     Bv(u32),

@@ -16,11 +16,13 @@ use covalence_lib_sqlite as sqlite;
 use crate::Connection;
 
 pub mod syntax;
+pub mod typing;
 mod view;
 
 pub use syntax::{
     HypsId, Ids, Kind, KindId, KindsId, Sort, SourceId, Substrate, TermId, Tm, Ty, TypeId, VarsId,
 };
+pub use typing::{Deep, DeepKind, DeepTm, DeepTy, MAX_DEPTH};
 pub use view::{HolError, HolView};
 
 /// The normative semantic commitment, byte for byte.
