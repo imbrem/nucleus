@@ -563,6 +563,10 @@ fn print_help(output: &mut impl io::Write) -> io::Result<()> {
     writeln!(output, ".connections       list open connections")?;
     writeln!(
         output,
+        ".kernel identity   print this kernel's public identity"
+    )?;
+    writeln!(
+        output,
         ".export PATH       write the active main snapshot to a file"
     )?;
     writeln!(
@@ -596,6 +600,31 @@ fn open_interactive_trusted_state(
         opened.conclusion_id()
     )?;
     Ok(())
+}
+
+fn run_info_command(
+    kernel: &Kernel,
+    repl: &mut LocalRepl,
+    output: &mut impl io::Write,
+    line: &str,
+) -> Result<bool> {
+    if line == ".connections" {
+        print_connections(repl, output)?;
+        return Ok(true);
+    }
+    if line != ".kernel identity" {
+        return Ok(false);
+    }
+    let public_key = kernel.verifying_key();
+    let mut public_key_hex = String::with_capacity(64);
+    for byte in public_key.as_bytes() {
+        use std::fmt::Write as _;
+        write!(public_key_hex, "{byte:02x}")?;
+    }
+    writeln!(output, "kind\tkernel-identity")?;
+    writeln!(output, "signer\t{}", kernel.key_id())?;
+    writeln!(output, "public_key\t{public_key_hex}")?;
+    Ok(true)
 }
 
 fn assume_interactive_infinity(
@@ -945,8 +974,7 @@ fn run_line(
         writeln!(output, "using connection {id}")?;
         return Ok(true);
     }
-    if line == ".connections" {
-        print_connections(repl, output)?;
+    if run_info_command(kernel, repl, output, line)? {
         return Ok(true);
     }
     if line == ".close" || line.starts_with(".close ") {
@@ -1514,6 +1542,49 @@ mod tests {
         assert!(output.contains("trusted_import_receipt\tretained\n"));
         assert!(output.contains("kind\ttrusted-hol-state\n"));
         assert!(output.contains("statement\ttrue\n"));
+        assert!(errors.is_empty());
+
+        fs::remove_file(path.join("proof.sqlite")).unwrap();
+        fs::remove_file(path.join("attestation.txt")).unwrap();
+        fs::remove_dir(path).unwrap();
+    }
+
+    #[test]
+    fn kernel_identity_is_the_public_key_which_signs_same_session_export() {
+        let path = temporary_file("kernel-identity-signed-natlike-missing-zero");
+        let script = format!(
+            ".kernel identity\n.hol natlike-missing-zero {}\n.quit\n",
+            path.display()
+        );
+        let mut input = Cursor::new(script);
+        let mut output = Vec::new();
+        let mut errors = Vec::new();
+
+        run_repl(&mut input, &mut output, &mut errors, false).expect("run REPL");
+
+        let output = String::from_utf8(output).unwrap();
+        let mut identity_record = output
+            .lines()
+            .skip_while(|line| *line != "kind\tkernel-identity");
+        assert_eq!(identity_record.next(), Some("kind\tkernel-identity"));
+        let signer_line = identity_record.next().expect("public identity signer");
+        let public_key_hex = identity_record
+            .next()
+            .and_then(|line| line.strip_prefix("public_key\t"))
+            .expect("public identity key");
+        let public_key = decode_expected_public_key(public_key_hex).unwrap();
+        let expected =
+            ExpectedKernelIdentity::from_public_key(KernelId::LOCAL, &public_key).unwrap();
+        assert_eq!(signer_line, format!("signer\t{}", expected.signer()));
+        assert!(!output.contains("secret"));
+        assert!(!output.contains("private_key"));
+
+        let image = fs::read(path.join("proof.sqlite")).unwrap();
+        let sidecar = fs::read(path.join("attestation.txt")).unwrap();
+        let artifact = parse_signed_hol_artifact_sidecar(image, &sidecar).unwrap();
+        assert_eq!(artifact.public_key(), public_key);
+        authenticate_pinned_signed_hol_artifact(&expected, &artifact)
+            .expect("same-session identity authenticates export");
         assert!(errors.is_empty());
 
         fs::remove_file(path.join("proof.sqlite")).unwrap();
