@@ -15,6 +15,11 @@ use covalence_lib_sqlite as sqlite;
 
 pub mod hol_recipes;
 
+mod hol_derived_rules;
+pub use hol_derived_rules::{
+    ApTerm, ApThm, DerivedRuleError, DerivedRulePreparationError, EqSym, EqTrans, EqtElim, EqtIntro,
+};
+
 mod hol_infinity;
 pub use hol_infinity::{
     DedekindInfinitySyntax, SignedInfinityAssumption, build_canonical_false,
