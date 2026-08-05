@@ -54,7 +54,10 @@
         wrongBytes.image[0] ^= 1;
         let wrongBytesError = "";
         try {
-          await receiver.receiveSignedArtifact(wrongBytes);
+          await receiver.authenticateSignedArtifact(
+            producerKernel.id,
+            wrongBytes,
+          );
         } catch (error) {
           wrongBytesError = String(error);
         }
@@ -66,21 +69,43 @@
         wrongSignature.signature[0] ^= 1;
         let wrongSignatureError = "";
         try {
-          await receiver.receiveSignedArtifact(wrongSignature);
+          await receiver.authenticateSignedArtifact(
+            producerKernel.id,
+            wrongSignature,
+          );
         } catch (error) {
           wrongSignatureError = String(error);
         }
 
-        const received = await receiver.receiveSignedArtifact(
+        const beforePin = await receiver.stateImageHash();
+        let validAttackerKeyError = "";
+        try {
+          await receiver.authenticateSignedArtifact(
+            producerKernel.id,
+            receiverProduced.artifact,
+          );
+        } catch (error) {
+          validAttackerKeyError = String(error);
+        }
+        const afterAttacker = await receiver.stateImageHash();
+        const pinned = await receiver.authenticateSignedArtifact(
+          producerKernel.id,
           produced.artifact,
         );
+        const afterPin = await receiver.stateImageHash();
+        const received = await pinned.trustAndReceive();
 
         let wrongNamespaceError = "";
         try {
-          await wrongNamespaceReceiver.receiveSignedArtifact({
-            ...produced.artifact,
-            namespace: String(BigInt(produced.artifact.namespace) + 1n),
-          });
+          const wrongNamespace =
+            await wrongNamespaceReceiver.authenticateSignedArtifact(
+              producerKernel.id,
+              {
+                ...produced.artifact,
+                namespace: String(BigInt(produced.artifact.namespace) + 1n),
+              },
+            );
+          await wrongNamespace.trustAndReceive();
         } catch (error) {
           wrongNamespaceError = String(error);
         }
@@ -123,6 +148,9 @@
           afterIndependentClose,
           wrongBytesError,
           wrongSignatureError,
+          validAttackerKeyError,
+          receiverStateUnchangedBeforeTrust:
+            beforePin === afterAttacker && beforePin === afterPin,
           wrongNamespaceError,
           ownershipPreserved:
             produced.artifact.image.byteLength === originalImageLength &&

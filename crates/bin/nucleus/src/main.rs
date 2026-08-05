@@ -7,8 +7,8 @@ use std::process::ExitCode;
 
 use covalence_repl::{
     AllowAll, ConnectionId, HolRecipe, HolRecipeResult, Kernel, LocalConnection, MAX_IMAGE_BYTES,
-    Outcome, Repl, SignedHolRoundTripResult, Value, produce_signed_hol_artifact,
-    receive_signed_hol_artifact,
+    Outcome, Repl, SignedHolRoundTripResult, Value, authenticate_pinned_signed_hol_artifact,
+    produce_signed_hol_artifact, trust_and_receive_pinned_signed_hol_artifact,
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
@@ -127,8 +127,12 @@ fn run_managed_signed_hol_round_trip(
     let produced = produce_signed_hol_artifact(kernel, repl.active_mut()?.hol_mut()?)?;
     let receiver = LocalConnection::Hol(kernel.open_hol(AllowAll)?);
     let receiver_id = repl.insert(receiver.protocol(), receiver)?;
-    let imported =
-        receive_signed_hol_artifact(repl.get_mut(receiver_id)?.hol_mut()?, produced.artifact())?;
+    let expected = repl.expected_kernel_identity(covalence_repl::KernelId::LOCAL)?;
+    let pinned = authenticate_pinned_signed_hol_artifact(&expected, produced.artifact())?;
+    let imported = trust_and_receive_pinned_signed_hol_artifact(
+        repl.get_mut(receiver_id)?.hol_mut()?,
+        pinned,
+    )?;
     Ok((
         SignedHolRoundTripResult::from_parts(produced, imported),
         receiver_id,
@@ -156,9 +160,11 @@ fn run_interkernel_hol(output: &mut impl io::Write) -> Result<()> {
 
     let artifact_bundle =
         produce_signed_hol_artifact(&producer_kernel, directory.get_mut(source_id)?.hol_mut()?)?;
-    let imported = receive_signed_hol_artifact(
+    let expected = directory.expected_kernel_identity(producer_endpoint)?;
+    let pinned = authenticate_pinned_signed_hol_artifact(&expected, artifact_bundle.artifact())?;
+    let imported = trust_and_receive_pinned_signed_hol_artifact(
         directory.get_mut(target_id)?.hol_mut()?,
-        artifact_bundle.artifact(),
+        pinned,
     )?;
 
     writeln!(output, "producer_kernel\t{producer_endpoint}")?;
@@ -591,7 +597,7 @@ mod tests {
         assert!(output.contains("receiver_kernel\t2\n"));
         assert!(output.contains("connections\t2\n"));
         assert!(output.contains(
-            "receiver_phases\timage-size-checked,signature-authenticated,image-detached-validated,signer-trusted,snapshot-accepted,namespace-imported,theorem-read\n"
+            "receiver_phases\timage-size-checked,signature-authenticated,signer-pinned,image-detached-validated,signer-trusted,snapshot-accepted,namespace-imported,theorem-read\n"
         ));
         assert!(output.contains("imported_theorem\t0\t8\n"));
     }
