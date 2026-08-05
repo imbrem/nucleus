@@ -47,7 +47,10 @@ respected. Ordinary MCONST declarations are never interpreted as Hilbert choice 
 Every theorem judgement is interpreted schematically, universally over all TFVs reachable from
 its conclusion and finite assumption context; every assigned carrier is nonempty. A context is a
 canonical finite set of locally closed Boolean terms. The authoritative judgement relation contains
-only conclusions introduced through implemented LCF rules and explicit persistence.
+only conclusions introduced through the implemented LCF rules and explicit persistence.
+Each persisted judgement has a positive database-local integer identity, while its context and
+conclusion pair is unique. A live persistent proof step revalidates any premise identities, applies
+its rule, and atomically interns and persists only the canonical conclusion.
 
 The rules are hypothesis, truth, equality reflexivity, closed beta reduction, the monomorphic
 conversion rules including congruence beneath epsilon, equality modus ponens, typed Leibniz
