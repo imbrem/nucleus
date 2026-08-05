@@ -35,10 +35,16 @@ pub use hol_natlike::{
     retain_signed_natlike_artifact,
 };
 
+mod hol_natlike_zero;
+pub use hol_natlike_zero::{
+    SignedNatLikeZero, produce_and_retain_signed_natlike_zero, produce_signed_natlike_zero,
+    retain_signed_natlike_zero,
+};
+
 mod hol_nonsurjective;
 pub use hol_nonsurjective::{
     SignedNonsurjectiveConjunct, produce_and_retain_signed_nonsurjective_conjunct,
-    produce_signed_nonsurjective_conjunct,
+    produce_signed_nonsurjective_conjunct, retain_signed_nonsurjective_conjunct,
 };
 
 mod hol_guest_plan;
