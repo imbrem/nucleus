@@ -4,6 +4,9 @@
 mod cv;
 
 #[cfg(feature = "blake3")]
+pub mod lazy;
+
+#[cfg(feature = "blake3")]
 pub use cv::{Blake3Cv, Blake3Merkle};
 
 use crate::{Namespace, O256, Obj, Opaque, RootedNamespace};
