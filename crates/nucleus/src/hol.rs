@@ -15,6 +15,14 @@ use covalence_lib_sqlite as sqlite;
 
 use crate::Connection;
 
+pub mod syntax;
+mod view;
+
+pub use syntax::{
+    HypsId, Ids, Kind, KindId, KindsId, Sort, SourceId, Substrate, TermId, Tm, Ty, TypeId, VarsId,
+};
+pub use view::{HolError, HolView};
+
 /// The normative semantic commitment, byte for byte.
 pub const SEMANTICS: &str = include_str!("hol/semantics.txt");
 
@@ -80,7 +88,6 @@ impl Policy for AllowAll {
 
 /// Protocol state for a HOL kernel-state connection.
 pub struct Hol<P: Policy> {
-    #[expect(dead_code, reason = "the borrowing proof view lands next")]
     pub(crate) policy: P,
 }
 
