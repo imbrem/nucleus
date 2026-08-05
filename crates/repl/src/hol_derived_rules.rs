@@ -2426,6 +2426,7 @@ impl ExcludedMiddle {
 /// uses only positive quantifier rules, canonical negation, and false
 /// elimination.
 pub struct NotAllToExistsNot {
+    schematic_proposition: TermId,
     witness_variable: TermId,
     universal: TermId,
     negated_universal: TermId,
@@ -2436,10 +2437,9 @@ pub struct NotAllToExistsNot {
     negated_instance: TermId,
     conclusion: TermId,
     implication_intro: ImpIntro,
-    existential_lem: ExcludedMiddle,
+    classical_lem: ExcludedMiddle,
     existential_lem_weakening: WeakenPlan,
     existential_cases: ChurchOrElim,
-    instance_lem: ExcludedMiddle,
     instance_lem_weakening: WeakenPlan,
     instance_cases: ChurchOrElim,
     existential_negation_elim: NotElim,
@@ -2453,8 +2453,9 @@ impl NotAllToExistsNot {
     /// Prepares the exact duality theorem for a closed predicate.
     ///
     /// `witness_variable` is a fresh exact `MFV` of the predicate domain.
-    /// `classical_variables` supplies four distinct fresh Boolean `MFV`s: two
-    /// for the existential LEM and two for the instance LEM.
+    /// `classical_variables` supplies three distinct fresh Boolean `MFV`s: a
+    /// schematic proposition plus the result and point variables for one
+    /// reusable excluded-middle derivation.
     ///
     /// # Errors
     ///
@@ -2464,7 +2465,7 @@ impl NotAllToExistsNot {
         connection: &mut Connection<Hol<P>>,
         predicate: TermId,
         witness_variable: TermId,
-        classical_variables: [TermId; 4],
+        classical_variables: [TermId; 3],
     ) -> Result<Self, DerivedRulePreparationError> {
         require_closed(connection, predicate)?;
         require_fresh_variable(connection, witness_variable, &[predicate])?;
@@ -2492,11 +2493,17 @@ impl NotAllToExistsNot {
             existential,
         )?;
         let negated_universal_context = implication_intro.premise_context();
-        let existential_lem = ExcludedMiddle::prepare(
+        let schematic_proposition = classical_variables[0];
+        require_fresh_variable(
             connection,
-            existential,
-            classical_variables[0],
+            schematic_proposition,
+            &[predicate, witness_variable],
+        )?;
+        let classical_lem = ExcludedMiddle::prepare(
+            connection,
+            schematic_proposition,
             classical_variables[1],
+            classical_variables[2],
         )?;
         let existential_lem_weakening =
             WeakenPlan::prepare(connection, ContextId::empty(), negated_universal_context)?;
@@ -2508,12 +2515,6 @@ impl NotAllToExistsNot {
             existential,
         )?;
         let instance_base = existential_cases.right_context();
-        let instance_lem = ExcludedMiddle::prepare(
-            connection,
-            instance,
-            classical_variables[2],
-            classical_variables[3],
-        )?;
         let instance_lem_weakening =
             WeakenPlan::prepare(connection, ContextId::empty(), instance_base)?;
         let instance_cases = ChurchOrElim::prepare(
@@ -2529,6 +2530,7 @@ impl NotAllToExistsNot {
         let universal_negation_elim = NotElim::prepare(connection, universal)?;
         let existential_false_elim = FalseElim::prepare(connection, existential)?;
         Ok(Self {
+            schematic_proposition,
             witness_variable,
             universal,
             negated_universal,
@@ -2539,10 +2541,9 @@ impl NotAllToExistsNot {
             negated_instance,
             conclusion,
             implication_intro,
-            existential_lem,
+            classical_lem,
             existential_lem_weakening,
             existential_cases,
-            instance_lem,
             instance_lem_weakening,
             instance_cases,
             existential_negation_elim,
@@ -2575,14 +2576,27 @@ impl NotAllToExistsNot {
         &self,
         proof: &mut ProofSession<'brand, P>,
     ) -> Result<Theorem<'brand>, DerivedRuleError> {
-        let existential_lem = self.existential_lem.prove(proof)?;
+        let classical_lem = self.classical_lem.prove(proof)?;
+        let existential_lem = proof.instantiate_terms(
+            &classical_lem,
+            &[covalence_nucleus::TermInstantiation {
+                variable: self.schematic_proposition,
+                replacement: self.existential,
+            }],
+        )?;
         let existential_lem = self
             .existential_lem_weakening
             .apply(proof, &existential_lem)?;
         let existential_branch =
             proof.prove_hypothesis(self.existential_cases.left_context(), self.existential)?;
 
-        let instance_lem = self.instance_lem.prove(proof)?;
+        let instance_lem = proof.instantiate_terms(
+            &classical_lem,
+            &[covalence_nucleus::TermInstantiation {
+                variable: self.schematic_proposition,
+                replacement: self.instance,
+            }],
+        )?;
         let instance_lem = self.instance_lem_weakening.apply(proof, &instance_lem)?;
         let instance_branch =
             proof.prove_hypothesis(self.instance_cases.left_context(), self.instance)?;
@@ -3545,7 +3559,6 @@ mod tests {
             connection.insert_free_term(8821, bool_type).unwrap(),
             connection.insert_free_term(8822, bool_type).unwrap(),
             connection.insert_free_term(8823, bool_type).unwrap(),
-            connection.insert_free_term(8824, bool_type).unwrap(),
         ];
         let duality =
             NotAllToExistsNot::prepare(&mut connection, predicate, witness, classical_variables)
