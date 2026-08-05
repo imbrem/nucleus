@@ -36,6 +36,12 @@ pub use service::{
     SignedServiceCommand, SignedServiceReply, SignedServiceSession, signed_kernel_service_schema,
 };
 
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod native;
+
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+pub use native::{NativeKernelProcess, NativeTransportError, serve_kernel_stdio};
+
 const SCHEMA: &str = "
 PRAGMA foreign_keys = ON;
 CREATE TABLE repl_kernel (

@@ -10,6 +10,11 @@ use covalence_repl::{
     Outcome, Repl, SignedHolRoundTripResult, Value, authenticate_pinned_signed_hol_artifact,
     produce_signed_hol_artifact, trust_and_receive_pinned_signed_hol_artifact,
 };
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+use covalence_repl::{
+    NativeKernelProcess, SIGNED_HOL_PHASES, ServiceIdentity, ServiceOperation, ServiceResult,
+    SessionInitiator, SignedServiceSession, serve_kernel_stdio,
+};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 type LocalRepl = Repl<LocalConnection>;
@@ -190,6 +195,101 @@ fn run_interkernel_hol(output: &mut impl io::Write) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+fn native_command(
+    remote: &mut NativeKernelProcess,
+    session: &mut SignedServiceSession,
+    operation: ServiceOperation,
+) -> Result<ServiceResult> {
+    let command = session.command(operation)?;
+    let reply = remote.execute(&command)?;
+    Ok(session.accept_reply(&command, reply)?)
+}
+
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+fn run_native_hol(
+    program: &std::path::Path,
+    repl: &mut LocalRepl,
+    output: &mut impl io::Write,
+) -> Result<()> {
+    let mut remote = NativeKernelProcess::spawn(program)?;
+    let description = remote.describe()?;
+    let identity = description.identity();
+    let endpoint = repl.register_kernel(
+        "stdio",
+        Some(&program.display().to_string()),
+        &identity.public_key(),
+    )?;
+    let result: Result<()> = (|| {
+        let expected = repl.expected_kernel_identity(endpoint)?;
+        let pinned_identity = ServiceIdentity::new(expected.signer(), *expected.public_key())?;
+        let initiator = SessionInitiator::begin(pinned_identity, &description)?;
+        let accepted = remote.open_session(initiator.request())?;
+        let mut session = initiator.accept(&accepted)?;
+        let ServiceResult::Opened(remote_connection) =
+            native_command(&mut remote, &mut session, ServiceOperation::OpenHol)?
+        else {
+            return Err("native kernel did not open a HOL connection".into());
+        };
+        let ServiceResult::Produced(produced) = native_command(
+            &mut remote,
+            &mut session,
+            ServiceOperation::ProduceSignedHol(remote_connection),
+        )?
+        else {
+            return Err("native kernel did not produce a signed HOL artifact".into());
+        };
+        let pinned = authenticate_pinned_signed_hol_artifact(&expected, produced.artifact())?;
+        let received =
+            trust_and_receive_pinned_signed_hol_artifact(repl.active_mut()?.hol_mut()?, pinned)?;
+        if !matches!(
+            native_command(
+                &mut remote,
+                &mut session,
+                ServiceOperation::CloseHol(remote_connection)
+            )?,
+            ServiceResult::Closed
+        ) {
+            return Err("native kernel did not close its HOL connection".into());
+        }
+        if !matches!(
+            native_command(&mut remote, &mut session, ServiceOperation::Shutdown)?,
+            ServiceResult::Goodbye
+        ) {
+            return Err("native kernel did not accept signed shutdown".into());
+        }
+        remote.wait_for_exit()?;
+
+        writeln!(output, "kind\tnative-signed-hol-round-trip")?;
+        writeln!(output, "native_kernel\t{endpoint}")?;
+        writeln!(output, "native_signer\t{}", identity.signer())?;
+        writeln!(output, "native_connection\t{remote_connection}")?;
+        writeln!(output, "statement\t{}", produced.statement())?;
+        writeln!(output, "phases\t{}", SIGNED_HOL_PHASES.join(","))?;
+        writeln!(output, "import\t{}", received.import_id())?;
+        writeln!(
+            output,
+            "imported_theorem\t{}\t{}",
+            received.context_id(),
+            received.conclusion_id()
+        )?;
+        writeln!(output, "native_exit\tsuccess")?;
+        Ok(())
+    })();
+    let cleanup = repl.unregister_kernel(endpoint);
+    match (result, cleanup) {
+        (Ok(()), Ok(())) => {
+            writeln!(output, "native_endpoint_cleanup\tremoved")?;
+            Ok(())
+        }
+        (Err(error), Ok(())) => Err(error),
+        (Ok(()), Err(error)) => Err(error.into()),
+        (Err(error), Err(cleanup)) => {
+            Err(format!("{error}; failed to unregister native endpoint: {cleanup}").into())
+        }
+    }
+}
+
 fn load_image(
     repl: &mut LocalRepl,
     output: &mut impl io::Write,
@@ -230,6 +330,10 @@ fn print_help(output: &mut impl io::Write) -> io::Result<()> {
         output,
         ".hol signed-roundtrip PATH  prove, sign, import, verify, and export artifacts"
     )?;
+    writeln!(
+        output,
+        ".hol native-roundtrip  drive a separate native kernel over stdio"
+    )?;
     writeln!(output, ".use ID            select a connection")?;
     writeln!(output, ".close [ID]        close a connection")?;
     writeln!(output, ".connections       list open connections")?;
@@ -245,6 +349,19 @@ fn print_help(output: &mut impl io::Write) -> io::Result<()> {
 }
 
 fn run_line(
+    kernel: &Kernel,
+    repl: &mut LocalRepl,
+    output: &mut impl io::Write,
+    line: &str,
+) -> Result<bool> {
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    if line.trim() == ".hol native-roundtrip" {
+        return run_native_hol(&env::current_exe()?, repl, output).map(|()| true);
+    }
+    run_local_line(kernel, repl, output, line)
+}
+
+fn run_local_line(
     kernel: &Kernel,
     repl: &mut LocalRepl,
     output: &mut impl io::Write,
@@ -384,12 +501,20 @@ fn usage(output: &mut impl io::Write) -> io::Result<()> {
     writeln!(output, "       nucleus --hol RECIPE")?;
     writeln!(output, "       nucleus --signed-hol PATH")?;
     writeln!(output, "       nucleus --interkernel-hol")?;
+    writeln!(output, "       nucleus --native-hol [PROGRAM]")?;
     writeln!(output, "       nucleus --help")
 }
 
 fn run() -> Result<()> {
     let mut arguments = env::args().skip(1);
     match arguments.next().as_deref() {
+        #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+        Some("--kernel-stdio") => {
+            if arguments.next().is_some() {
+                return Err("unexpected arguments after --kernel-stdio".into());
+            }
+            serve_kernel_stdio(io::stdin().lock(), io::stdout().lock()).map_err(Into::into)
+        }
         None => run_repl(
             &mut io::stdin().lock(),
             &mut io::stdout().lock(),
@@ -440,6 +565,20 @@ fn run() -> Result<()> {
                 return Err("unexpected arguments after --interkernel-hol".into());
             }
             run_interkernel_hol(&mut io::stdout().lock())
+        }
+        #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+        Some("--native-hol") => {
+            let program = match arguments.next() {
+                Some(program) => program.into(),
+                None => env::current_exe()?,
+            };
+            if arguments.next().is_some() {
+                return Err("unexpected arguments after native kernel program".into());
+            }
+            let kernel = Kernel::ephemeral();
+            let mut repl = Repl::new(kernel.verifying_key().as_bytes())?;
+            open_hol_connection(&kernel, &mut repl)?;
+            run_native_hol(&program, &mut repl, &mut io::stdout().lock())
         }
         Some("-h" | "--help") => {
             usage(&mut io::stdout().lock())?;

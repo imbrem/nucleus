@@ -9,6 +9,12 @@
       "category": "product",
       "targets": [
         {
+          "name": "native_stdio",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "nucleus",
           "kinds": [
             "bin"
