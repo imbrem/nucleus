@@ -249,12 +249,12 @@ impl Runner {
         self.test_components()?;
         let cli = self.buck_output("//crates/bin/nucleus:nucleus")?;
         let cli = cli.to_string_lossy();
-        let output = self.command("test nucleus CLI", cli.as_ref(), std::iter::empty::<&str>())?;
-        expect_output(
-            "nucleus CLI smoke test",
-            &output,
-            "hello from nucleus: SQLite returned 42",
+        let output = self.command(
+            "test nucleus CLI",
+            cli.as_ref(),
+            ["-c", "SELECT 42 AS answer"],
         )?;
+        expect_output("nucleus CLI smoke test", &output, "answer\n42")?;
         eprintln!("• test nucleus CLI… done");
         Ok(())
     }
@@ -513,12 +513,17 @@ impl Runner {
         expect_output("nucleus component smoke test", &output, "42")?;
 
         let cli = self.buck_output("//:cli-component")?;
-        let output = self.command("test CLI component", "wasmtime", [cli.as_os_str()])?;
-        expect_output(
-            "CLI component smoke test",
-            &output,
-            "hello from nucleus: SQLite returned 42",
+        let output = self.command(
+            "test CLI component",
+            "wasmtime",
+            [
+                OsStr::new("run"),
+                cli.as_os_str(),
+                OsStr::new("-c"),
+                OsStr::new("SELECT 42 AS answer"),
+            ],
         )?;
+        expect_output("CLI component smoke test", &output, "answer\n42")?;
         eprintln!("• test Wasm components… done");
         Ok(())
     }
