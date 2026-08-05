@@ -3,6 +3,9 @@ use std::collections::HashMap;
 use covalence_lib_hash::O256;
 use wasm_bindgen::prelude::*;
 
+use super::hol_guest_plan::{
+    MAX_RECIPE_NAME_BYTES, MAX_RECIPE_NODES, RecipeNode, SealedHolProofRecipe,
+};
 use super::hol_infinity::produce_and_retain_signed_dedekind_infinity_assumption_bounded;
 use super::hol_natlike_missing_zero::retain_signed_natlike_missing_zero_bounded;
 use super::{
@@ -65,6 +68,25 @@ pub struct WebOutcome {
 #[wasm_bindgen]
 pub struct WebHolOutcome {
     outcome: HolRecipeResult,
+}
+
+/// Authority-free, bounded recipe collector for direct core-Wasm guests.
+///
+/// Returned integers are forgeable recipe offsets, never database IDs or proof
+/// authority. [`WebHolProofPlan::finish`] structurally validates the complete
+/// graph, and [`WebKernel::run_hol_proof_plan`] decodes it again before Nucleus
+/// checks and signs anything. This spike intentionally exposes only the closed
+/// beta path needed to compare a direct wasm-bindgen guest with the Component
+/// Model contract.
+#[wasm_bindgen]
+pub struct WebHolProofPlan {
+    nodes: Vec<RecipeNode>,
+}
+
+/// Signed result of replaying one authority-free browser guest plan.
+#[wasm_bindgen]
+pub struct WebHolProofPlanArtifact {
+    artifact: SignedHolArtifact,
 }
 
 /// Complete signed HOL producer-to-receiver demonstration exposed through Wasm.
@@ -465,6 +487,152 @@ impl WebSignedKernelSession {
     }
 }
 
+#[wasm_bindgen]
+impl WebHolProofPlan {
+    /// Starts an empty, authority-free recipe graph.
+    #[wasm_bindgen(constructor)]
+    #[must_use]
+    pub fn new() -> Self {
+        Self { nodes: Vec::new() }
+    }
+
+    /// Appends the primitive Boolean type and returns its recipe offset.
+    pub fn bool_type(&mut self) -> Result<u32, JsValue> {
+        self.append(RecipeNode::BoolType)
+    }
+
+    /// Appends a bound term. Dependency validity is checked when sealed.
+    pub fn bound_term(&mut self, index: u32, ty: u32) -> Result<u32, JsValue> {
+        self.append(RecipeNode::Bound {
+            index,
+            ty: ty as usize,
+        })
+    }
+
+    /// Appends a lambda term. Dependency validity is checked when sealed.
+    pub fn lambda(&mut self, parameter_type: u32, body: u32) -> Result<u32, JsValue> {
+        self.append(RecipeNode::Lambda {
+            parameter_type: parameter_type as usize,
+            body: body as usize,
+        })
+    }
+
+    /// Appends a primitive Boolean term.
+    pub fn bool_term(&mut self, value: bool) -> Result<u32, JsValue> {
+        self.append(RecipeNode::Bool(value))
+    }
+
+    /// Appends the empty context.
+    pub fn empty_context(&mut self) -> Result<u32, JsValue> {
+        self.append(RecipeNode::EmptyContext)
+    }
+
+    /// Appends beta conversion evidence.
+    pub fn conversion_beta(&mut self, abstraction: u32, argument: u32) -> Result<u32, JsValue> {
+        self.append(RecipeNode::ConversionBeta {
+            abstraction: abstraction as usize,
+            argument: argument as usize,
+        })
+    }
+
+    /// Appends conversion-to-equality theorem construction.
+    pub fn prove_conversion_equality(
+        &mut self,
+        context: u32,
+        conversion: u32,
+    ) -> Result<u32, JsValue> {
+        self.append(RecipeNode::ConversionEquality {
+            context: context as usize,
+            conversion: conversion as usize,
+        })
+    }
+
+    /// Requests persistence of a theorem after checked replay.
+    pub fn persist_theorem(&mut self, theorem: u32) -> Result<(), JsValue> {
+        self.append(RecipeNode::Persist {
+            theorem: theorem as usize,
+        })
+        .map(drop)
+    }
+
+    /// Appends one root namespace.
+    pub fn root_child_namespace(&mut self, name: Option<String>) -> Result<u32, JsValue> {
+        Self::check_name(name.as_ref())?;
+        self.append(RecipeNode::Namespace { name })
+    }
+
+    /// Requests export of a checked context.
+    pub fn export_context(
+        &mut self,
+        namespace: u32,
+        export_id: i64,
+        context: u32,
+        name: Option<String>,
+    ) -> Result<(), JsValue> {
+        Self::check_name(name.as_ref())?;
+        self.append(RecipeNode::ExportContext {
+            namespace: namespace as usize,
+            export: export_id,
+            context: context as usize,
+            name,
+        })
+        .map(drop)
+    }
+
+    /// Requests export of a checked theorem conclusion.
+    pub fn export_theorem_conclusion(
+        &mut self,
+        namespace: u32,
+        export_id: i64,
+        theorem: u32,
+        name: Option<String>,
+    ) -> Result<(), JsValue> {
+        Self::check_name(name.as_ref())?;
+        self.append(RecipeNode::ExportTheorem {
+            namespace: namespace as usize,
+            export: export_id,
+            theorem: theorem as usize,
+            name,
+        })
+        .map(drop)
+    }
+
+    /// Seals this collector into canonical untrusted transport bytes.
+    ///
+    /// This grants no proof or signing authority. The selected namespace and
+    /// every dependency are checked against the complete graph here.
+    pub fn finish(self, selected_namespace: u32) -> Result<Vec<u8>, JsValue> {
+        SealedHolProofRecipe::seal(self.nodes, selected_namespace as usize)
+            .map(|recipe| recipe.as_bytes().to_vec())
+            .map_err(js_error)
+    }
+}
+
+impl WebHolProofPlan {
+    fn append(&mut self, node: RecipeNode) -> Result<u32, JsValue> {
+        if self.nodes.len() >= MAX_RECIPE_NODES {
+            return Err(JsValue::from_str("HOL proof plan exceeds node limit"));
+        }
+        let index = u32::try_from(self.nodes.len()).map_err(js_error)?;
+        self.nodes.push(node);
+        Ok(index)
+    }
+
+    fn check_name(name: Option<&String>) -> Result<(), JsValue> {
+        if name.is_some_and(|value| value.len() > MAX_RECIPE_NAME_BYTES) {
+            Err(JsValue::from_str("HOL proof plan name exceeds byte limit"))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl Default for WebHolProofPlan {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WebSignedKernelSession {
     fn command(&mut self, operation: ServiceOperation) -> Result<Vec<u8>, JsValue> {
         if self.pending.is_some() {
@@ -743,6 +911,23 @@ impl WebKernel {
             .execute(self.hol_mut(connection)?)
             .map(|outcome| WebHolOutcome { outcome })
             .map_err(js_error)
+    }
+
+    /// Decodes, checks, replays, and signs an authority-free browser guest plan.
+    ///
+    /// The bytes are always treated as untrusted, even when they came directly
+    /// from [`WebHolProofPlan::finish`]. No existing managed connection is read
+    /// or mutated; replay owns a fresh connection and this kernel's signing key
+    /// remains unreachable from the guest.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error when the bytes are malformed or noncanonical,
+    /// or when checked replay, export, or signing fails.
+    pub fn run_hol_proof_plan(&self, bytes: &[u8]) -> Result<WebHolProofPlanArtifact, JsValue> {
+        let recipe = SealedHolProofRecipe::from_untrusted_bytes(bytes).map_err(js_error)?;
+        let artifact = recipe.replay(&self.kernel).map_err(js_error)?;
+        Ok(WebHolProofPlanArtifact { artifact })
     }
 
     /// Runs the shared signed HOL snapshot round trip on one HOL connection.
@@ -1358,6 +1543,51 @@ impl WebHolOutcome {
     #[must_use]
     pub fn statement(&self) -> String {
         self.outcome.statement().to_owned()
+    }
+}
+
+#[wasm_bindgen]
+impl WebHolProofPlanArtifact {
+    /// Returns the selected source namespace as an exact decimal string.
+    #[must_use]
+    pub fn namespace_id(&self) -> String {
+        self.artifact.namespace_id().to_string()
+    }
+
+    /// Copies the exact signed `SQLite` image into JavaScript-owned memory.
+    #[must_use]
+    pub fn image(&self) -> Vec<u8> {
+        self.artifact.image().to_vec()
+    }
+
+    /// Returns the signed HOL schema identity.
+    #[must_use]
+    pub fn schema(&self) -> String {
+        self.artifact.schema().to_string()
+    }
+
+    /// Returns the hash of the exact `SQLite` image bytes.
+    #[must_use]
+    pub fn image_hash(&self) -> String {
+        self.artifact.image_hash().to_string()
+    }
+
+    /// Returns this kernel's signer identity.
+    #[must_use]
+    pub fn signer(&self) -> String {
+        self.artifact.signer().to_string()
+    }
+
+    /// Copies the exact Ed25519 public key into JavaScript-owned memory.
+    #[must_use]
+    pub fn public_key(&self) -> Vec<u8> {
+        self.artifact.public_key().to_vec()
+    }
+
+    /// Copies the schema-qualified image signature into JavaScript-owned memory.
+    #[must_use]
+    pub fn signature(&self) -> Vec<u8> {
+        self.artifact.signature().to_vec()
     }
 }
 

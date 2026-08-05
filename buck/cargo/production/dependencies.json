@@ -2412,6 +2412,27 @@
       "buildscript": {}
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#rustversion@1.0.23",
+      "name": "rustversion",
+      "version": "1.0.23",
+      "checksum": "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f",
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_AUTHORS": "David Tolnay <dtolnay@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Conditional compilation according to rustc compiler version",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/dtolnay/rustversion"
+      },
+      "targets": [
+        {
+          "proc_macro": true
+        }
+      ],
+      "buildscript": {
+        "crate_root": "build/build.rs"
+      }
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#semver@1.0.28",
       "name": "semver",
       "version": "1.0.28",
@@ -3049,6 +3070,109 @@
       "targets": [
         {}
       ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen@0.2.121",
+      "name": "wasm-bindgen",
+      "version": "0.2.121",
+      "checksum": "49ace1d07c165b0864824eee619580c4689389afa9dc9ed3a4c75040d82e6790",
+      "edition": "2021",
+      "features": [
+        "default",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The wasm-bindgen Developers",
+        "CARGO_PKG_DESCRIPTION": "Easy support for interacting between JS and Rust.\n",
+        "CARGO_PKG_HOMEPAGE": "https://wasm-bindgen.github.io/wasm-bindgen",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/wasm-bindgen/wasm-bindgen"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "cfg_if": ":cfg-if-1.0.4",
+            "once_cell": ":once_cell-1.21.4",
+            "wasm_bindgen_macro": ":wasm-bindgen-macro-0.2.121",
+            "wasm_bindgen_shared": ":wasm-bindgen-shared-0.2.121"
+          }
+        }
+      ],
+      "buildscript": {
+        "named_deps": {
+          "rustversion_compat": ":rustversion-1.0.23"
+        }
+      }
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen-macro@0.2.121",
+      "name": "wasm-bindgen-macro",
+      "version": "0.2.121",
+      "checksum": "8e68e6f4afd367a562002c05637acb8578ff2dea1943df76afb9e83d177c8578",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "The wasm-bindgen Developers",
+        "CARGO_PKG_DESCRIPTION": "Definition of the `#[wasm_bindgen]` attribute, an internal dependency\n",
+        "CARGO_PKG_HOMEPAGE": "https://wasm-bindgen.github.io/wasm-bindgen/",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "quote": ":quote-1.0.47",
+            "wasm_bindgen_macro_support": ":wasm-bindgen-macro-support-0.2.121"
+          },
+          "proc_macro": true
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen-macro-support@0.2.121",
+      "name": "wasm-bindgen-macro-support",
+      "version": "0.2.121",
+      "checksum": "d95a9ec35c64b2a7cb35d3fead40c4238d0940c86d107136999567a4703259f2",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "The wasm-bindgen Developers",
+        "CARGO_PKG_DESCRIPTION": "Implementation APIs for the `#[wasm_bindgen]` attribute",
+        "CARGO_PKG_HOMEPAGE": "https://wasm-bindgen.github.io/wasm-bindgen/",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro-support"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "bumpalo": ":bumpalo-3.20.3",
+            "proc_macro2": ":proc-macro2-1.0.107",
+            "quote": ":quote-1.0.47",
+            "syn": ":syn-2.0.119",
+            "wasm_bindgen_shared": ":wasm-bindgen-shared-0.2.121"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen-shared@0.2.121",
+      "name": "wasm-bindgen-shared",
+      "version": "0.2.121",
+      "checksum": "c4e0100b01e9f0d03189a92b96772a1fb998639d981193d7dbab487302513441",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "The wasm-bindgen Developers",
+        "CARGO_PKG_DESCRIPTION": "Shared support between wasm-bindgen and wasm-bindgen cli, an internal\ndependency.\n",
+        "CARGO_PKG_HOMEPAGE": "https://wasm-bindgen.github.io/wasm-bindgen/",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "unicode_ident": ":unicode-ident-1.0.24"
+          }
+        }
+      ],
+      "buildscript": {}
     },
     {
       "id": "registry+https://github.com/rust-lang/crates.io-index#wasm-encoder@0.247.0",
@@ -3944,6 +4068,14 @@
       "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#wit-bindgen@0.57.1"
+      ]
+    },
+    {
+      "id": "workspace#covalence-hol-proof-guest-web-beta@0.0.0",
+      "name": "covalence-hol-proof-guest-web-beta",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen@0.2.121"
       ]
     },
     {
@@ -5553,6 +5685,97 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.19",
       "target": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@2.0.19",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen-macro-support@0.2.121",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bumpalo@3.20.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen-macro-support@0.2.121",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen-macro-support@0.2.121",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen-macro-support@0.2.121",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen-macro-support@0.2.121",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen-shared@0.2.121",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen-macro@0.2.121",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen-macro@0.2.121",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen-macro-support@0.2.121",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen-shared@0.2.121",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen@0.2.121",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen@0.2.121",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#once_cell@1.21.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen@0.2.121",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustversion@1.0.23",
+      "kinds": [
+        "build"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen@0.2.121",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen-macro@0.2.121",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen@0.2.121",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen-shared@0.2.121",
       "kinds": [
         "normal"
       ]
