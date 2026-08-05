@@ -2,9 +2,13 @@
 
 mod connection;
 mod kernel;
+pub mod manifest;
 
 pub use connection::Connection;
 pub use kernel::Kernel;
+
+pub mod prop;
+pub use prop::Prop;
 
 pub mod sql;
 pub use sql::Sql;

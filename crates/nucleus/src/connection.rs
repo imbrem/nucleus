@@ -38,10 +38,6 @@ impl<P> Connection<P> {
     /// statements). Exclusive operations such as garbage collection stay on
     /// `parts_mut`, so they are statically impossible while any borrowing
     /// view is alive.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "first borrowing-view protocol lands next")
-    )]
     pub(crate) const fn parts(&self) -> (&neutron::Connection, &P) {
         (&self.neutron, &self.protocol)
     }
