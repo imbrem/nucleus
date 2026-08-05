@@ -47,6 +47,27 @@
       ]
     },
     {
+      "id": "workspace#covalence-data-segment@0.0.0",
+      "name": "covalence-data-segment",
+      "version": "0.0.0",
+      "path": "crates/data/segment",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_data_segment",
+          "kinds": [
+            "lib"
+          ]
+        },
+        {
+          "name": "segment_map",
+          "kinds": [
+            "test"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-lib-crypto@0.0.0",
       "name": "covalence-lib-crypto",
       "version": "0.0.0",
