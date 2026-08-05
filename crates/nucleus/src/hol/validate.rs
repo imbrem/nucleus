@@ -1262,7 +1262,10 @@ mod tests {
         let truth = connection.insert_bool_term(true).unwrap();
         connection
             .with_proof_session(|mut proof| {
-                let theorem = proof.prove_beta(ContextId::empty(), identity, truth)?;
+                // Beta equality is an untrusted recipe over two branded
+                // primitive capabilities, not a separate kernel rule.
+                let conversion = proof.conversion_beta(identity, truth)?;
+                let theorem = proof.prove_conversion_equality(ContextId::empty(), &conversion)?;
                 proof.persist_theorem(&theorem)
             })
             .unwrap();
@@ -1387,12 +1390,12 @@ mod tests {
         );
         assert_eq!(
             hol_semantics_id(),
-            O256::from_hex("cf9697036c552706fff430450de9f6e72f05c82f2e13eb26a074485cba4df6f1")
+            O256::from_hex("6cf1076cd4a6314cc476c82cafe0d3c8b02bbeaba9cff8394fe580a37ea9a73c")
                 .unwrap()
         );
         assert_eq!(
             hol_schema_id(physical),
-            O256::from_hex("a3e00068462b9bc1602b309f19dea9570f5fc1892c179cf8ec9e8448e59a1719")
+            O256::from_hex("a5a7eece5a62df01b8c11879afc8272c7cef0f92fc6880e5be7010240064cceb")
                 .unwrap()
         );
         assert_ne!(hol_schema_id(physical), hol_semantics_id());

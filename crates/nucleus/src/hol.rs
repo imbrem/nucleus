@@ -460,10 +460,6 @@ pub enum Operation {
     ProveHypothesis,
     /// Apply the primitive truth rule.
     ProveTruth,
-    /// Apply equality reflexivity.
-    ProveReflexivity,
-    /// Apply closed beta reduction.
-    ProveBeta,
     /// Introduce conversion reflexivity.
     ProveConversionReflexivity,
     /// Reverse a conversion.
@@ -2141,96 +2137,6 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         Ok(Theorem {
             context: theorem.context,
             conclusion: conversion.right,
-            brand: PhantomData,
-        })
-    }
-
-    /// Applies equality reflexivity in an existing context.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if policy denies the rule, the context or term is
-    /// invalid, the term is locally open, or syntax interning fails.
-    pub fn prove_reflexivity(
-        &mut self,
-        context: ContextId,
-        term: TermId,
-    ) -> Result<Theorem<'brand>, ProofError> {
-        let (neutron, hol) = self.connection.parts_mut();
-        authorize_proof(&mut hol.policy, Operation::ProveReflexivity)?;
-        authorize_proof(&mut hol.policy, Operation::InsertTerm)?;
-        let transaction = neutron.sqlite().unchecked_transaction()?;
-        require_context(&transaction, context)?;
-        let validation = validate_term(&transaction, term)?;
-        if !validation.is_closed() {
-            return Err(ProofError::OpenConclusion(term));
-        }
-        let equality = intern_equality(&transaction, term, term)?;
-        validate_term(&transaction, equality)?;
-        transaction.commit()?;
-        Ok(Theorem {
-            context,
-            conclusion: equality,
-            brand: PhantomData,
-        })
-    }
-
-    /// Proves one beta reduction with a closed abstraction and argument.
-    ///
-    /// Keeping this primitive rule closed makes capture avoidance explicit and
-    /// small: substitution never needs to shift the replacement term.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if policy denies the rule, the context or terms are
-    /// invalid, either input is open, the first term is not a lambda, the
-    /// argument type differs, substitution or syntax interning fails.
-    pub fn prove_beta(
-        &mut self,
-        context: ContextId,
-        abstraction: TermId,
-        argument: TermId,
-    ) -> Result<Theorem<'brand>, ProofError> {
-        let (neutron, hol) = self.connection.parts_mut();
-        authorize_proof(&mut hol.policy, Operation::ProveBeta)?;
-        authorize_proof(&mut hol.policy, Operation::InsertTerm)?;
-        let transaction = neutron.sqlite().unchecked_transaction()?;
-        require_context(&transaction, context)?;
-        let abstraction_validation = validate_term(&transaction, abstraction)?;
-        if !abstraction_validation.is_closed() {
-            return Err(ProofError::OpenConclusion(abstraction));
-        }
-        let TermView::Lambda {
-            parameter_type,
-            body,
-        } = abstraction_validation.view
-        else {
-            return Err(ProofError::NotLambda(abstraction));
-        };
-        let argument_validation = validate_term(&transaction, argument)?;
-        if !argument_validation.is_closed() {
-            return Err(ProofError::OpenConclusion(argument));
-        }
-        if argument_validation.ty != parameter_type {
-            return Err(ProofError::BetaTypeMismatch {
-                expected: parameter_type,
-                actual: argument_validation.ty,
-            });
-        }
-        let reduct = substitute_closed(&transaction, body, argument, 0)?;
-        let TypeView::Arrow { codomain, .. } =
-            read_type(&transaction, abstraction_validation.ty).map_err(TermError::Type)?
-        else {
-            return Err(ProofError::NotLambda(abstraction));
-        };
-        let application = intern_application(&transaction, abstraction, argument, codomain)?;
-        validate_term(&transaction, application)?;
-        let equality = intern_equality(&transaction, application, reduct)?;
-        validate_term(&transaction, equality)?;
-        transaction.commit()?;
-        Ok(Theorem {
-            context,
-            conclusion: equality,
             brand: PhantomData,
         })
     }
@@ -6347,6 +6253,47 @@ mod tests {
     use super::*;
     use std::cell::Cell;
     use std::rc::Rc;
+
+    /// Untrusted proof recipes used by the test suite.
+    ///
+    /// Keeping these compositions outside the production module demonstrates
+    /// that the branded conversion API is sufficient: neither recipe needs a
+    /// distinct trusted operation or access to the underlying connection.
+    trait DerivedProofRecipes<'brand> {
+        fn prove_reflexivity(
+            &mut self,
+            context: ContextId,
+            term: TermId,
+        ) -> Result<Theorem<'brand>, ProofError>;
+
+        fn prove_beta(
+            &mut self,
+            context: ContextId,
+            abstraction: TermId,
+            argument: TermId,
+        ) -> Result<Theorem<'brand>, ProofError>;
+    }
+
+    impl<'brand, P: Policy> DerivedProofRecipes<'brand> for ProofSession<'brand, P> {
+        fn prove_reflexivity(
+            &mut self,
+            context: ContextId,
+            term: TermId,
+        ) -> Result<Theorem<'brand>, ProofError> {
+            let conversion = self.conversion_reflexivity(term)?;
+            self.prove_conversion_equality(context, &conversion)
+        }
+
+        fn prove_beta(
+            &mut self,
+            context: ContextId,
+            abstraction: TermId,
+            argument: TermId,
+        ) -> Result<Theorem<'brand>, ProofError> {
+            let conversion = self.conversion_beta(abstraction, argument)?;
+            self.prove_conversion_equality(context, &conversion)
+        }
+    }
 
     #[derive(Default)]
     struct RecordingPolicy {

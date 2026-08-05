@@ -49,12 +49,14 @@ its conclusion and finite assumption context; every assigned carrier is nonempty
 canonical finite set of locally closed Boolean terms. The authoritative judgement relation contains
 only conclusions introduced through implemented LCF rules and explicit persistence.
 
-The rules are hypothesis, truth, equality reflexivity, closed beta reduction, the monomorphic
-conversion rules including congruence beneath epsilon, equality modus ponens, typed Leibniz
+The rules are hypothesis, truth, the monomorphic conversion rules including reflexivity, closed
+beta reduction and congruence beneath epsilon, conversion-to-equality, equality modus ponens, typed Leibniz
 equality substitution through a closed predicate, deduction antisymmetry, simultaneous typed
 free-term instantiation, simultaneous rank-zero schematic type instantiation, standard HOL
 abstraction, Hilbert choice, exact context implication introduction, explicit implication-path
-composition, and weakening. Choice derives Gamma |- p (epsilon p) from Gamma |- p x.
+composition, and weakening. Equality reflexivity and theorem-level closed beta are untrusted
+recipes: each composes its corresponding branded conversion with conversion-to-equality. Choice
+derives Gamma |- p (epsilon p) from Gamma |- p x.
 
 Free-term instantiation replaces exact MFV node identities simultaneously in the conclusion and
 every context member. Keys are distinct; each replacement has the key's type and is locally closed.
