@@ -15,9 +15,21 @@ impl Connection {
     ///
     /// Returns an error when `SQLite` cannot serialize the database.
     pub fn serialize(&self) -> Result<Bytes, ImageError> {
+        self.serialize_database("main")
+    }
+
+    /// Serializes one named database as an owned `SQLite` database image.
+    ///
+    /// This is a mechanical image operation. It assigns no trust or logical
+    /// interpretation to either the schema name or returned bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `SQLite` cannot serialize `schema_name`.
+    pub fn serialize_database(&self, schema_name: &str) -> Result<Bytes, ImageError> {
         let data = self
             .sqlite()
-            .serialize(sqlite::MAIN_DB)
+            .serialize(schema_name)
             .context(SerializeSnafu)?;
         Ok(Bytes::copy_from_slice(&data))
     }
@@ -168,6 +180,33 @@ mod tests {
             .collect::<sqlite::Result<Vec<_>>>()
             .expect("read restored data");
         assert_eq!(values, ["hello", "world"]);
+    }
+
+    #[test]
+    fn serializes_a_named_attached_database() {
+        let source = Connection::open_in_memory().expect("open source");
+        source
+            .sqlite()
+            .execute_batch("CREATE TABLE example(value TEXT); INSERT INTO example VALUES ('ok');")
+            .expect("populate source");
+        let image = source.serialize().expect("serialize source");
+
+        let mut connection = Connection::open_in_memory().expect("open connection");
+        connection
+            .attach_deserialized("library", &image)
+            .expect("attach library");
+        let copy = connection
+            .serialize_database("library")
+            .expect("serialize library");
+        let restored = Connection::deserialize(&copy).expect("restore library");
+        assert_eq!(
+            restored
+                .sqlite()
+                .query_row("SELECT value FROM example", (), |row| row
+                    .get::<_, String>(0))
+                .expect("read copy"),
+            "ok"
+        );
     }
 
     #[test]
