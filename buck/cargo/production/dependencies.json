@@ -1717,7 +1717,8 @@
         "errno",
         "general",
         "ioctl",
-        "no_std"
+        "no_std",
+        "prctl"
       ],
       "env": {
         "CARGO_PKG_AUTHORS": "Dan Gohman <dev@sunfishcode.online>",
@@ -2391,6 +2392,7 @@
         "fs",
         "mm",
         "param",
+        "process",
         "std"
       ],
       "env": {
@@ -3890,6 +3892,14 @@
     }
   ],
   "roots": [
+    {
+      "id": "workspace#covalence-bin-nucleus@0.0.0",
+      "name": "covalence-bin-nucleus",
+      "category": "product",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#rustix@1.1.4"
+      ]
+    },
     {
       "id": "workspace#covalence-hol-proof-guest-beta@0.0.0",
       "name": "covalence-hol-proof-guest-beta",

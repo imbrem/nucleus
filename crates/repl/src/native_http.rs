@@ -11,10 +11,10 @@ use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
 use crate::{
-    MAX_SIGNED_MESSAGE_BYTES, PrecompiledHolProofComponentExecutor, ServiceIdentity,
-    ServiceOperation, ServiceResult, SessionInitiator, SignedKernelService, SignedMessageRequest,
-    SignedMessageResponse, SignedServiceCommand, SignedServiceSession, decode_signed_request,
-    decode_signed_response, encode_signed_request, encode_signed_response,
+    HolProofComponentExecutor, MAX_SIGNED_MESSAGE_BYTES, PrecompiledHolProofComponentExecutor,
+    ServiceIdentity, ServiceOperation, ServiceResult, SessionInitiator, SignedKernelService,
+    SignedMessageRequest, SignedMessageResponse, SignedServiceCommand, SignedServiceSession,
+    decode_signed_request, decode_signed_response, encode_signed_request, encode_signed_response,
 };
 
 /// The only application endpoint exposed by the native HTTP carrier.
@@ -77,7 +77,32 @@ impl NativeHttpKernelServer {
             address,
             cors_origin,
             MAX_NATIVE_HTTP_REQUESTS,
-            Some(executor),
+            Some(Box::new(executor)),
+        )
+    }
+
+    /// Binds a service with an executor fully configured before the endpoint
+    /// key, listening socket, or any signed session exists.
+    ///
+    /// This is the transport-neutral constructor used by isolated startup
+    /// collectors. Executor output remains untrusted and is replayed by the
+    /// service exactly as for the in-process reference implementation.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same binding/configuration errors as [`Self::bind`], or an
+    /// error if the fresh service rejects executor installation.
+    #[cfg(unix)]
+    pub fn bind_with_hol_proof_executor(
+        address: impl ToSocketAddrs,
+        cors_origin: impl Into<String>,
+        executor: impl HolProofComponentExecutor + 'static,
+    ) -> Result<Self, NativeHttpError> {
+        Self::bind_with_request_limit(
+            address,
+            cors_origin,
+            MAX_NATIVE_HTTP_REQUESTS,
+            Some(Box::new(executor)),
         )
     }
 
@@ -85,7 +110,7 @@ impl NativeHttpKernelServer {
         address: impl ToSocketAddrs,
         cors_origin: impl Into<String>,
         request_limit: usize,
-        executor: Option<PrecompiledHolProofComponentExecutor>,
+        executor: Option<Box<dyn HolProofComponentExecutor>>,
     ) -> Result<Self, NativeHttpError> {
         let cors_origin = cors_origin.into();
         if !is_exact_http_origin(&cors_origin) {

@@ -14,5 +14,8 @@ path = "src/main.rs"
 [dependencies]
 covalence-repl = { path = "../../repl" }
 
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.4", features = ["process"] }
+
 [lints]
 workspace = true

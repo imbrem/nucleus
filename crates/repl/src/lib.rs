@@ -55,9 +55,9 @@ pub use service::signed_message::{
 };
 pub use service::{
     EndpointDescription, HolProofComponentExecutor, MAX_SERVICE_CONNECTIONS_PER_SESSION,
-    MAX_SERVICE_SESSIONS, ServiceIdentity, ServiceOperation, ServiceProducedHol,
-    ServiceProducedHolComponent, ServiceReceivedHol, ServiceResult, SessionAccepted,
-    SessionInitiator, SessionRequest, SignedKernelService, SignedServiceCommand,
+    MAX_SERVICE_SESSIONS, PrecollectedHolProofComponentExecutor, ServiceIdentity, ServiceOperation,
+    ServiceProducedHol, ServiceProducedHolComponent, ServiceReceivedHol, ServiceResult,
+    SessionAccepted, SessionInitiator, SessionRequest, SignedKernelService, SignedServiceCommand,
     SignedServiceReply, SignedServiceSession, signed_kernel_service_schema,
 };
 

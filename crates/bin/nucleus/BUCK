@@ -26,6 +26,7 @@ rust_binary(
     tests = [":nucleus-unit-test"],
     named_deps = {
         "covalence_repl": "nucleus//crates/repl:covalence_repl",
+        "rustix": "nucleus//buck/cargo/production:rustix-1.1.4",
     },
     env = {
         "CARGO_MANIFEST_DIR": "crates/bin/nucleus",
@@ -55,6 +56,7 @@ rust_test(
     srcs = _RUST_SOURCES,
     named_deps = {
         "covalence_repl": "nucleus//crates/repl:covalence_repl",
+        "rustix": "nucleus//buck/cargo/production:rustix-1.1.4",
     },
     env = {
         "CARGO_MANIFEST_DIR": "crates/bin/nucleus",

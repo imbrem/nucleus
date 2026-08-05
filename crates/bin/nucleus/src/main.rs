@@ -2,8 +2,18 @@ use std::env;
 use std::error::Error;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read as _, Write as _};
+#[cfg(unix)]
+use std::os::unix::{fs::DirBuilderExt as _, process::CommandExt as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+#[cfg(unix)]
+use std::process::{Child, Command, Stdio};
+#[cfg(unix)]
+use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(unix)]
+use std::thread;
+#[cfg(unix)]
+use std::time::{Duration, Instant};
 
 use covalence_repl::{
     AllowAll, ConnectionId, HolRecipe, HolRecipeResult, Kernel, LocalConnection, MAX_IMAGE_BYTES,
@@ -18,11 +28,24 @@ use covalence_repl::{
     ServiceOperation, ServiceResult, SessionInitiator, SignedHolArtifact, SignedKernelService,
     WasmtimeComponentLimits, retain_signed_hol_guest_artifact, run_hol_proof_component,
 };
+#[cfg(unix)]
+use covalence_repl::{MAX_SEALED_HOL_RECIPE_BYTES, PrecollectedHolProofComponentExecutor};
 #[cfg(not(target_arch = "wasm32"))]
 use covalence_repl::{NativeHttpKernelServer, SIGNED_KERNEL_HTTP_PATH};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 type LocalRepl = Repl<LocalConnection>;
+
+#[cfg(unix)]
+const COLLECTOR_INPUT_MAGIC: &[u8; 8] = b"CVHPIN01";
+#[cfg(unix)]
+const COLLECTOR_OUTPUT_MAGIC: &[u8; 8] = b"CVHPOU01";
+#[cfg(unix)]
+const MAX_COLLECTOR_DIAGNOSTIC_BYTES: usize = 1024;
+#[cfg(unix)]
+const COLLECTOR_TIMEOUT: Duration = Duration::from_secs(30);
+#[cfg(unix)]
+static NEXT_COLLECTOR_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
 fn open_sql_connection(kernel: &Kernel, repl: &mut LocalRepl) -> Result<ConnectionId> {
     let connection = LocalConnection::Sql(kernel.open_sql()?);
@@ -307,6 +330,237 @@ fn read_bounded_component_from(mut input: impl io::Read, maximum: usize) -> Resu
         return Err(format!("component exceeds the {maximum}-byte pre-compilation limit").into());
     }
     Ok(bytes)
+}
+
+#[cfg(unix)]
+struct EmptyCollectorDirectory {
+    path: PathBuf,
+}
+
+#[cfg(unix)]
+struct CollectorChild {
+    child: Child,
+}
+
+#[cfg(unix)]
+impl CollectorChild {
+    fn new(child: Child) -> Self {
+        Self { child }
+    }
+
+    fn try_wait(&mut self) -> io::Result<Option<std::process::ExitStatus>> {
+        self.child.try_wait()
+    }
+
+    fn terminate_and_wait(&mut self) {
+        if let Some(group) = i32::try_from(self.child.id())
+            .ok()
+            .and_then(rustix::process::Pid::from_raw)
+        {
+            // The child is placed in a fresh process group before spawn. Kill
+            // the whole group even after the leader exits so descendants in
+            // that same group cannot retain either pipe and strand a join.
+            // A hostile process which calls setsid can escape: this is process
+            // separation, not an OS sandbox.
+            let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+        }
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+#[cfg(unix)]
+impl Drop for CollectorChild {
+    fn drop(&mut self) {
+        self.terminate_and_wait();
+    }
+}
+
+#[cfg(unix)]
+impl EmptyCollectorDirectory {
+    fn create() -> Result<Self> {
+        let parent = env::temp_dir();
+        for _ in 0..128 {
+            let nonce = NEXT_COLLECTOR_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+            let path = parent.join(format!(
+                "covalence-proof-collector-{}-{nonce}",
+                std::process::id()
+            ));
+            let mut builder = fs::DirBuilder::new();
+            builder.mode(0o700);
+            match builder.create(&path) {
+                Ok(()) => return Ok(Self { path }),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Err("could not reserve an empty proof-collector directory".into())
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+#[cfg(unix)]
+impl Drop for EmptyCollectorDirectory {
+    fn drop(&mut self) {
+        // Deliberately avoid recursive deletion of attacker-controlled names.
+        // If a hostile collector leaves contents, this private directory is
+        // retained for inspection instead of following/removing those names.
+        let _ = fs::remove_dir(&self.path);
+    }
+}
+
+#[cfg(unix)]
+fn collector_input(expected: O256, component: &[u8]) -> Result<Vec<u8>> {
+    let mut input = Vec::with_capacity(44 + component.len());
+    input.extend_from_slice(COLLECTOR_INPUT_MAGIC);
+    input.extend_from_slice(expected.as_ref());
+    input.extend_from_slice(&u32::try_from(component.len())?.to_be_bytes());
+    input.extend_from_slice(component);
+    Ok(input)
+}
+
+#[cfg(unix)]
+fn decode_collector_output(status: std::process::ExitStatus, bytes: &[u8]) -> Result<Vec<u8>> {
+    if bytes.get(..8) != Some(COLLECTOR_OUTPUT_MAGIC) {
+        return Err("proof collector returned invalid output magic".into());
+    }
+    let kind = *bytes.get(8).ok_or("proof collector output is truncated")?;
+    let length = usize::try_from(u32::from_be_bytes(
+        bytes
+            .get(9..13)
+            .ok_or("proof collector output is truncated")?
+            .try_into()
+            .expect("exact length width"),
+    ))?;
+    let payload = bytes
+        .get(13..)
+        .ok_or("proof collector output is truncated")?;
+    if payload.len() != length {
+        return Err("proof collector output length is not exact".into());
+    }
+    match kind {
+        0 => {
+            if !status.success() {
+                return Err("proof collector failed after claiming success".into());
+            }
+            if payload.len() > MAX_SEALED_HOL_RECIPE_BYTES {
+                return Err("proof collector recipe exceeds byte limit".into());
+            }
+            Ok(payload.to_vec())
+        }
+        1 => {
+            if status.success() {
+                return Err("proof collector claimed failure with a successful exit".into());
+            }
+            if payload.len() > MAX_COLLECTOR_DIAGNOSTIC_BYTES {
+                return Err("proof collector diagnostic exceeds byte limit".into());
+            }
+            let message = std::str::from_utf8(payload)
+                .map_err(|_| "proof collector diagnostic is not UTF-8")?;
+            Err(format!("proof collector rejected the component: {message}").into())
+        }
+        _ => Err("proof collector returned an unknown output kind".into()),
+    }
+}
+
+#[cfg(unix)]
+fn collect_recipe_in_subprocess_with_timeout(
+    collector: &Path,
+    collector_arguments: &[&str],
+    expected: O256,
+    component: &[u8],
+    timeout: Duration,
+) -> Result<Vec<u8>> {
+    let actual = O256::from_bytes(component);
+    if actual != expected {
+        return Err(format!("component hash {actual} does not match configured {expected}").into());
+    }
+    let input = collector_input(expected, component)?;
+    let collector = if collector.is_absolute() {
+        collector.to_owned()
+    } else {
+        env::current_dir()?.join(collector)
+    };
+    if !fs::metadata(&collector)?.is_file() {
+        return Err("proof collector executable is not a file".into());
+    }
+    let directory = EmptyCollectorDirectory::create()?;
+    let mut command = Command::new(&collector);
+    command
+        .args(collector_arguments)
+        .env_clear()
+        .current_dir(directory.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    command.process_group(0);
+    let mut child = CollectorChild::new(command.spawn()?);
+    let mut stdin = child
+        .child
+        .stdin
+        .take()
+        .ok_or("proof collector has no stdin")?;
+    let mut stdout = child
+        .child
+        .stdout
+        .take()
+        .ok_or("proof collector has no stdout")?;
+    let writer = thread::spawn(move || -> io::Result<()> {
+        stdin.write_all(&input)?;
+        stdin.flush()
+    });
+    let reader = thread::spawn(move || -> io::Result<Vec<u8>> {
+        let maximum = 13 + MAX_SEALED_HOL_RECIPE_BYTES.max(MAX_COLLECTOR_DIAGNOSTIC_BYTES);
+        let mut bytes = Vec::new();
+        stdout
+            .by_ref()
+            .take(u64::try_from(maximum + 1).expect("small collector bound"))
+            .read_to_end(&mut bytes)?;
+        Ok(bytes)
+    });
+
+    let deadline = Instant::now() + timeout;
+    let status: Result<std::process::ExitStatus> = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(5)),
+            Ok(None) => break Err("proof collector exceeded its startup deadline".into()),
+            Err(error) => break Err(error.into()),
+        }
+    };
+    child.terminate_and_wait();
+    let writer = writer
+        .join()
+        .map_err(|_| "proof collector input thread panicked")?;
+    let output = reader
+        .join()
+        .map_err(|_| "proof collector output thread panicked")?;
+    let status = status?;
+    writer?;
+    let output = output?;
+    let maximum = 13 + MAX_SEALED_HOL_RECIPE_BYTES.max(MAX_COLLECTOR_DIAGNOSTIC_BYTES);
+    if output.len() > maximum {
+        return Err("proof collector output exceeds byte limit".into());
+    }
+    decode_collector_output(status, &output)
+}
+
+#[cfg(unix)]
+fn collect_recipe_in_subprocess(
+    collector: &Path,
+    expected: O256,
+    component: &[u8],
+) -> Result<Vec<u8>> {
+    collect_recipe_in_subprocess_with_timeout(
+        collector,
+        &[],
+        expected,
+        component,
+        COLLECTOR_TIMEOUT,
+    )
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -643,6 +897,11 @@ fn usage(output: &mut impl io::Write) -> io::Result<()> {
         output,
         "       nucleus --hash-wasm-hol-http O256 COMPONENT ADDRESS ALLOWED_ORIGIN"
     )?;
+    #[cfg(unix)]
+    writeln!(
+        output,
+        "       nucleus --hash-wasm-hol-subprocess-http O256 COMPONENT COLLECTOR ADDRESS ALLOWED_ORIGIN"
+    )?;
     writeln!(output, "       nucleus --help")
 }
 
@@ -790,6 +1049,72 @@ fn run_hash_selected_wasm_http_arguments(
     server.serve().map_err(Into::into)
 }
 
+#[cfg(unix)]
+fn run_hash_selected_wasm_subprocess_http_arguments(
+    arguments: &mut impl Iterator<Item = std::ffi::OsString>,
+) -> Result<()> {
+    let expected = arguments
+        .next()
+        .ok_or(
+            "--hash-wasm-hol-subprocess-http requires O256 COMPONENT COLLECTOR ADDRESS ALLOWED_ORIGIN",
+        )?
+        .into_string()
+        .map_err(|_| "component O256 must be valid UTF-8")?;
+    let component = arguments.next().ok_or(
+        "--hash-wasm-hol-subprocess-http requires O256 COMPONENT COLLECTOR ADDRESS ALLOWED_ORIGIN",
+    )?;
+    let collector = arguments.next().ok_or(
+        "--hash-wasm-hol-subprocess-http requires O256 COMPONENT COLLECTOR ADDRESS ALLOWED_ORIGIN",
+    )?;
+    let address = arguments
+        .next()
+        .ok_or(
+            "--hash-wasm-hol-subprocess-http requires O256 COMPONENT COLLECTOR ADDRESS ALLOWED_ORIGIN",
+        )?
+        .into_string()
+        .map_err(|_| "native HTTP address must be valid UTF-8")?;
+    let allowed_origin = arguments
+        .next()
+        .ok_or(
+            "--hash-wasm-hol-subprocess-http requires O256 COMPONENT COLLECTOR ADDRESS ALLOWED_ORIGIN",
+        )?
+        .into_string()
+        .map_err(|_| "allowed origin must be valid UTF-8")?;
+    if arguments.next().is_some() {
+        return Err(
+            "unexpected arguments after --hash-wasm-hol-subprocess-http O256 COMPONENT COLLECTOR ADDRESS ALLOWED_ORIGIN"
+                .into(),
+        );
+    }
+
+    // No key, service, socket, or session exists while Wasmtime parses,
+    // compiles, and executes in the collector process. Only after that process
+    // exits do we structurally decode its untrusted recipe and construct the
+    // signing endpoint.
+    let expected = O256::from_hex(&expected)?;
+    let limits = WasmtimeComponentLimits::default();
+    let bytes = read_bounded_component(Path::new(&component), limits.component_bytes)?;
+    let recipe = collect_recipe_in_subprocess(Path::new(&collector), expected, &bytes)?;
+    let mut executor = PrecollectedHolProofComponentExecutor::new();
+    executor.insert_untrusted(expected, &recipe)?;
+    let server =
+        NativeHttpKernelServer::bind_with_hol_proof_executor(address, allowed_origin, executor)?;
+    let address = server.local_addr()?;
+    let mut public_key = String::with_capacity(64);
+    for byte in server.identity().public_key() {
+        use std::fmt::Write as _;
+        write!(public_key, "{byte:02x}")?;
+    }
+    let mut output = io::stdout().lock();
+    writeln!(output, "url\thttp://{address}{SIGNED_KERNEL_HTTP_PATH}")?;
+    writeln!(output, "public_key\t{public_key}")?;
+    writeln!(output, "component\t{expected}")?;
+    writeln!(output, "executor\tsubprocess-precollected")?;
+    output.flush()?;
+    drop(output);
+    server.serve().map_err(Into::into)
+}
+
 fn run() -> Result<()> {
     let mut arguments = env::args_os().skip(1);
     match arguments.next() {
@@ -867,6 +1192,10 @@ fn run() -> Result<()> {
         Some(flag) if flag == "--hash-wasm-hol-http" => {
             run_hash_selected_wasm_http_arguments(&mut arguments)
         }
+        #[cfg(unix)]
+        Some(flag) if flag == "--hash-wasm-hol-subprocess-http" => {
+            run_hash_selected_wasm_subprocess_http_arguments(&mut arguments)
+        }
         Some(flag) if flag == "-h" || flag == "--help" => {
             usage(&mut io::stdout().lock())?;
             Ok(())
@@ -902,6 +1231,14 @@ mod tests {
             "nucleus-{stem}-{}",
             NEXT_FILE.fetch_add(1, Ordering::Relaxed)
         ))
+    }
+
+    #[cfg(unix)]
+    fn executable(name: &str) -> PathBuf {
+        env::split_paths(&env::var_os("PATH").expect("test PATH"))
+            .map(|directory| directory.join(name))
+            .find(|candidate| candidate.is_file())
+            .unwrap_or_else(|| panic!("{name} executable"))
     }
 
     struct GrowingImage {
@@ -991,6 +1328,179 @@ mod tests {
         let error = read_bounded_component_from(GrowingImage { remaining: 17 }, 16)
             .expect_err("reject sentinel byte");
         assert!(error.to_string().contains("16-byte pre-compilation limit"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn collector_output_requires_a_bounded_exact_frame() {
+        let success = Command::new("sh").args(["-c", "exit 0"]).status().unwrap();
+        let mut frame = Vec::new();
+        frame.extend_from_slice(COLLECTOR_OUTPUT_MAGIC);
+        frame.push(0);
+        frame.extend_from_slice(&3_u32.to_be_bytes());
+        frame.extend_from_slice(b"abc");
+        assert_eq!(decode_collector_output(success, &frame).unwrap(), b"abc");
+
+        let mut trailing = frame.clone();
+        trailing.push(0);
+        assert!(decode_collector_output(success, &trailing).is_err());
+        assert!(decode_collector_output(success, &frame[..12]).is_err());
+
+        let mut oversized = Vec::new();
+        oversized.extend_from_slice(COLLECTOR_OUTPUT_MAGIC);
+        oversized.push(0);
+        oversized.extend_from_slice(
+            &u32::try_from(MAX_SEALED_HOL_RECIPE_BYTES + 1)
+                .unwrap()
+                .to_be_bytes(),
+        );
+        oversized.resize(13 + MAX_SEALED_HOL_RECIPE_BYTES + 1, 0);
+        assert!(decode_collector_output(success, &oversized).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wrong_hash_is_rejected_before_spawning_a_collector() {
+        let error = collect_recipe_in_subprocess(
+            Path::new("collector-which-does-not-exist"),
+            O256::from_bytes(b"expected"),
+            b"different",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("hash"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn missing_and_early_closing_collectors_fail_without_stranding_pipes() {
+        let component = b"component";
+        let digest = O256::from_bytes(component);
+        assert!(
+            collect_recipe_in_subprocess(
+                Path::new("collector-which-does-not-exist"),
+                digest,
+                component,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("No such file")
+        );
+        let started = Instant::now();
+        assert!(
+            collect_recipe_in_subprocess_with_timeout(
+                &executable("true"),
+                &[],
+                digest,
+                component,
+                Duration::from_secs(1),
+            )
+            .is_err()
+        );
+        assert!(started.elapsed() < Duration::from_secs(2));
+
+        let current = env::current_dir().unwrap();
+        let absolute = executable("true");
+        let mut relative = PathBuf::new();
+        for _ in current
+            .components()
+            .filter(|component| matches!(component, std::path::Component::Normal(_)))
+        {
+            relative.push("..");
+        }
+        relative.push(absolute.strip_prefix("/").unwrap());
+        assert!(!relative.is_absolute());
+        let error = collect_recipe_in_subprocess_with_timeout(
+            &relative,
+            &[],
+            digest,
+            component,
+            Duration::from_secs(1),
+        )
+        .unwrap_err();
+        assert!(
+            !error.to_string().contains("No such file"),
+            "relative executable was resolved after changing cwd: {error}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hanging_collector_is_killed_at_the_startup_deadline() {
+        let sleep = executable("sleep");
+        let component = b"component";
+        let started = Instant::now();
+        let error = collect_recipe_in_subprocess_with_timeout(
+            &sleep,
+            &["10"],
+            O256::from_bytes(component),
+            component,
+            Duration::from_millis(50),
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("deadline"),
+            "unexpected collector error: {error}"
+        );
+        assert!(started.elapsed() < Duration::from_secs(2));
+
+        let shell = executable("sh");
+        let background = format!("{} 10 & exit 0", sleep.display());
+        let started = Instant::now();
+        assert!(
+            collect_recipe_in_subprocess_with_timeout(
+                &shell,
+                &["-c", &background],
+                O256::from_bytes(component),
+                component,
+                Duration::from_secs(1),
+            )
+            .is_err()
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "the exited group leader's descendant retained a collector pipe"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn configured_real_component_is_collected_before_service_replay() {
+        let Some(component) = env::var_os("COVALENCE_HOL_GUEST_COMPONENT") else {
+            return;
+        };
+        let Some(collector) = env::var_os("COVALENCE_HOL_RECIPE_COLLECTOR") else {
+            return;
+        };
+        let bytes = fs::read(component).unwrap();
+        let digest = O256::from_bytes(&bytes);
+        let recipe = collect_recipe_in_subprocess(Path::new(&collector), digest, &bytes).unwrap();
+        let mut executor = PrecollectedHolProofComponentExecutor::new();
+        executor.insert_untrusted(digest, &recipe).unwrap();
+
+        let mut service = SignedKernelService::new().unwrap();
+        service
+            .install_hol_proof_component_executor(executor)
+            .unwrap();
+        let description = service.description().clone();
+        let initiator = SessionInitiator::begin(description.identity(), &description).unwrap();
+        let accepted = service.open_session(initiator.request()).unwrap();
+        let mut session = initiator.accept(&accepted).unwrap();
+        let command = session
+            .command(ServiceOperation::RunHolProofComponent(digest))
+            .unwrap();
+        let reply = service.execute(&command).unwrap();
+        let ServiceResult::ProducedByComponent(produced) =
+            session.accept_reply(&command, reply).unwrap()
+        else {
+            panic!("expected component-produced artifact");
+        };
+        assert_eq!(produced.component(), digest);
+        let expected = ExpectedKernelIdentity::from_public_key(
+            KernelId::LOCAL,
+            &description.identity().public_key(),
+        )
+        .unwrap();
+        authenticate_pinned_signed_hol_artifact(&expected, produced.artifact()).unwrap();
     }
 
     #[cfg(not(target_arch = "wasm32"))]
