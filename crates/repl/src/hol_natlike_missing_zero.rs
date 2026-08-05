@@ -675,6 +675,30 @@ pub fn produce_and_retain_signed_natlike_missing_zero(
     SignedHolRoundTripError,
 > {
     let artifact = produce_signed_natlike_missing_zero(producer)?;
+    let (owner, retained) = retain_signed_natlike_missing_zero(producer, directory, &artifact)?;
+    Ok((artifact, owner, retained))
+}
+
+/// Authenticates and retains one already-produced signed missing-zero theorem.
+///
+/// # Errors
+///
+/// Returns the first endpoint-pin, authentication, receiver, trust, import, or
+/// directory boundary which rejects the artifact.
+pub fn retain_signed_natlike_missing_zero(
+    producer: &Kernel,
+    directory: &mut Repl<LocalConnection>,
+    artifact: &SignedNatLikeMissingZero,
+) -> Result<(ConnectionId, RetainedReceivedHolSnapshot), SignedHolRoundTripError> {
+    retain_signed_natlike_missing_zero_bounded(producer, directory, artifact, i64::MAX)
+}
+
+pub(crate) fn retain_signed_natlike_missing_zero_bounded(
+    producer: &Kernel,
+    directory: &mut Repl<LocalConnection>,
+    artifact: &SignedNatLikeMissingZero,
+    maximum_connection_id: i64,
+) -> Result<(ConnectionId, RetainedReceivedHolSnapshot), SignedHolRoundTripError> {
     let expected = directory
         .expected_kernel_identity(KernelId::LOCAL)
         .map_err(|error| SignedHolRoundTripError::at("missing-zero-signer-selected", error))?;
@@ -697,9 +721,9 @@ pub fn produce_and_retain_signed_natlike_missing_zero(
         directory,
         receiver,
         pinned,
-        i64::MAX,
+        maximum_connection_id,
     )?;
-    Ok((artifact, owner, retained))
+    Ok((owner, retained))
 }
 
 #[cfg(test)]

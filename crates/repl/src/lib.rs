@@ -58,7 +58,7 @@ pub use hol_nonsurjective::{
 mod hol_natlike_missing_zero;
 pub use hol_natlike_missing_zero::{
     SignedNatLikeMissingZero, produce_and_retain_signed_natlike_missing_zero,
-    produce_signed_natlike_missing_zero,
+    produce_signed_natlike_missing_zero, retain_signed_natlike_missing_zero,
 };
 
 mod hol_guest_plan;
