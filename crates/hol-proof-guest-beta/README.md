@@ -16,11 +16,15 @@ cargo component build --locked -p covalence-hol-proof-guest-beta \
 replays its opaque recipe through a fresh checked HOL connection, and returns a signed artifact.
 The caller owns any persistence or import policy; this layer never writes an artifact path.
 
-Run it through the caller-owned terminal REPL integration. The output directory must not already
-exist, and the command never replaces either artifact file:
+Run it directly through the caller-owned terminal integration. The output directory must not
+already exist, and the command never replaces either artifact file:
 
 ```sh
 cargo run -p covalence-bin-nucleus -- --wasm-hol \
   target/wasm32-unknown-unknown/debug/covalence_hol_proof_guest_beta.wasm \
   signed-beta-artifact
 ```
+
+The hash-selected terminal and browser demos additionally pin these exact component bytes before
+compilation and exercise signed import into a retained receiver. Follow the
+[end-to-end quickstart](../../docs/hash-selected-hol-quickstart.md) for those preferred flows.

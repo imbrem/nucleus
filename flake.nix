@@ -49,6 +49,7 @@
           installPhase = "mkdir -p $out";
         };
         tools = with pkgs; [
+          b3sum
           buck2
           cargo-component
           caddy
@@ -62,6 +63,7 @@
           python3
           rust
           scc
+          sqlite
           wasm-bindgen-cli
           wasm-tools
           wasmtime

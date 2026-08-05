@@ -310,7 +310,7 @@ test("real Chromium runs only a provisioned component digest and rereads it", as
   );
 });
 
-test("REPL page retains, rereads, and explicitly cleans a hash-selected result", async (context) => {
+test("REPL page cleans a hash-selected result through either close control", async (context) => {
   const component = process.env.COVALENCE_HOL_GUEST_COMPONENT;
   if (component === undefined) {
     context.skip("COVALENCE_HOL_GUEST_COMPONENT is required");
@@ -375,10 +375,50 @@ test("REPL page retains, rereads, and explicitly cleans a hash-selected result",
     .waitFor();
   assert.equal(proxy.postCount(), 8, "a second run executes after cleanup");
   assert.equal(await page.locator("#connection option").count(), 2);
-  await page.locator("#cleanup-native-hash").click();
+
+  await page.evaluate(() => {
+    const original = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function (message, ...rest) {
+      if (message?.operation === "close") {
+        Worker.prototype.postMessage = original;
+        queueMicrotask(() =>
+          this.dispatchEvent(
+            new MessageEvent("message", {
+              data: {
+                id: message.id,
+                ok: false,
+                error: "injected pre-dispatch close failure",
+                outcomeUnknown: false,
+              },
+            }),
+          ),
+        );
+        return;
+      }
+      return original.call(this, message, ...rest);
+    };
+  });
+  await page.locator("#close").click();
+  await page
+    .getByText("Cleanup failed; receiver retained for retry", { exact: true })
+    .waitFor();
+  assert.equal(await page.locator("#connection option").count(), 2);
+  assert.equal(await page.locator("#reread-native-hash").isDisabled(), false);
+  assert.equal(await page.locator("#cleanup-native-hash").isDisabled(), false);
+  assert.equal(await page.locator("#run-native-hash").isDisabled(), true);
+  await page.locator("#reread-native-hash").click();
+  await page
+    .getByText("Reread imported theorem 0\t8", { exact: true })
+    .waitFor();
+
+  await page.locator("#close").click();
   await page
     .getByText("Receiver and artifact cleaned up", { exact: true })
     .waitFor();
+  assert.equal(await page.locator("#reread-native-hash").isDisabled(), true);
+  assert.equal(await page.locator("#cleanup-native-hash").isDisabled(), true);
+  assert.equal(await page.locator("#run-native-hash").isDisabled(), false);
+  assert.equal(await page.locator("#connection option").count(), 1);
   assert.equal(
     kernel.child.exitCode,
     null,
