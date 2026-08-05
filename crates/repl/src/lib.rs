@@ -26,6 +26,13 @@ mod hol_natlike;
 pub use hol_natlike::{
     NatLikeSyntax, SignedNatLikeArtifact, build_natlike_syntax,
     produce_and_retain_signed_natlike_artifact, produce_signed_natlike_artifact,
+    retain_signed_natlike_artifact,
+};
+
+mod hol_nonsurjective;
+pub use hol_nonsurjective::{
+    SignedNonsurjectiveConjunct, produce_and_retain_signed_nonsurjective_conjunct,
+    produce_signed_nonsurjective_conjunct,
 };
 
 mod hol_guest_plan;
