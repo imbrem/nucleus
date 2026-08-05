@@ -27,6 +27,13 @@ pub enum DerivedRulePreparationError {
         /// Fixed term containing it.
         term: TermId,
     },
+    /// A requested weakening target does not contain every source assumption.
+    ContextNotSubset {
+        /// Context whose members must be preserved.
+        source: ContextId,
+        /// Proposed weakening target.
+        target: ContextId,
+    },
     /// A checked term constructor rejected the plan.
     Term(TermError),
     /// A checked context constructor rejected the plan.
@@ -54,6 +61,12 @@ impl fmt::Display for DerivedRulePreparationError {
                 variable.get(),
                 term.get()
             ),
+            Self::ContextNotSubset { source, target } => write!(
+                formatter,
+                "context {} is not a subset of context {}",
+                source.get(),
+                target.get()
+            ),
             Self::Term(error) => error.fmt(formatter),
             Self::Context(error) => error.fmt(formatter),
         }
@@ -67,7 +80,8 @@ impl StdError for DerivedRulePreparationError {
             Self::Context(error) => Some(error),
             Self::OpenInput(_)
             | Self::ExpectedFreeVariable(_)
-            | Self::VariableOccursInFixedTerm { .. } => None,
+            | Self::VariableOccursInFixedTerm { .. }
+            | Self::ContextNotSubset { .. } => None,
         }
     }
 }
@@ -1482,6 +1496,313 @@ impl EpsCongr {
     }
 }
 
+struct WeakenPlan {
+    source: ContextId,
+    target: ContextId,
+    members: Vec<TermId>,
+}
+
+impl WeakenPlan {
+    fn prepare<P: Policy>(
+        connection: &mut Connection<Hol<P>>,
+        source: ContextId,
+        target: ContextId,
+    ) -> Result<Self, DerivedRulePreparationError> {
+        let members = connection.context_members(source)?;
+        let target_members = connection.context_members(target)?;
+        if members
+            .iter()
+            .any(|member| target_members.binary_search(member).is_err())
+        {
+            return Err(DerivedRulePreparationError::ContextNotSubset { source, target });
+        }
+        Ok(Self {
+            source,
+            target,
+            members,
+        })
+    }
+
+    fn apply<'brand, P: Policy>(
+        &self,
+        proof: &mut ProofSession<'brand, P>,
+        theorem: &Theorem<'brand>,
+    ) -> Result<Theorem<'brand>, DerivedRuleError> {
+        if theorem.context() != self.source {
+            return Err(DerivedRuleError::UnexpectedContext {
+                expected: self.source,
+                actual: theorem.context(),
+            });
+        }
+        let witnesses = self
+            .members
+            .iter()
+            .map(|member| proof.prove_hypothesis(self.target, *member))
+            .collect::<Result<Vec<_>, _>>()?;
+        let implication = proof.prove_context_implication(self.target, self.source, &witnesses)?;
+        let result = proof.weaken(&implication, theorem)?;
+        require_result(&result, self.target, theorem.conclusion())?;
+        Ok(result)
+    }
+}
+
+struct ChurchOrSyntax {
+    predicate: TermId,
+    proposition: TermId,
+    left_to_result: TermId,
+    right_to_result: TermId,
+    right_continuation: TermId,
+    body: TermId,
+}
+
+fn canonical_imp_open<P: Policy>(
+    connection: &mut Connection<Hol<P>>,
+    antecedent: TermId,
+    consequent: TermId,
+) -> Result<TermId, TermError> {
+    let truth = connection.insert_bool_term(true)?;
+    let conjunction = canonical_and(connection, truth, truth)?.0;
+    let applied = apply2(connection, conjunction, antecedent, consequent)?;
+    connection.insert_equality(applied, antecedent)
+}
+
+fn church_or<P: Policy>(
+    connection: &mut Connection<Hol<P>>,
+    left: TermId,
+    right: TermId,
+    result: TermId,
+) -> Result<ChurchOrSyntax, TermError> {
+    let bool_type = connection.insert_bool_type()?;
+    let left_to_result = canonical_imp(connection, left, result)?.1;
+    let right_to_result = canonical_imp(connection, right, result)?.1;
+    let right_continuation = canonical_imp(connection, right_to_result, result)?.1;
+    let body = canonical_imp(connection, left_to_result, right_continuation)?.1;
+
+    let bound_result = connection.insert_bound_term(0, bool_type)?;
+    let bound_left_to_result = canonical_imp_open(connection, left, bound_result)?;
+    let bound_right_to_result = canonical_imp_open(connection, right, bound_result)?;
+    let bound_right_continuation =
+        canonical_imp_open(connection, bound_right_to_result, bound_result)?;
+    let bound_body =
+        canonical_imp_open(connection, bound_left_to_result, bound_right_continuation)?;
+    let predicate = connection.insert_lambda(bool_type, bound_body)?;
+    let truth = connection.insert_bool_term(true)?;
+    let constant_truth = connection.insert_lambda(bool_type, truth)?;
+    let proposition = connection.insert_equality(predicate, constant_truth)?;
+    Ok(ChurchOrSyntax {
+        predicate,
+        proposition,
+        left_to_result,
+        right_to_result,
+        right_continuation,
+        body,
+    })
+}
+
+/// Prepared introduction for the Church encoding
+/// `p OR q := ALL r. (p IMP r) IMP (q IMP r) IMP r`.
+pub struct ChurchOrIntro {
+    base: ContextId,
+    selected: TermId,
+    result_variable: TermId,
+    syntax: ChurchOrSyntax,
+    first_intro: ImpIntro,
+    second_intro: ImpIntro,
+    selected_elim: ImpElim,
+    selected_weakening: WeakenPlan,
+    all_intro: AllIntroApplied,
+    choose_right: bool,
+}
+
+impl ChurchOrIntro {
+    fn prepare<P: Policy>(
+        connection: &mut Connection<Hol<P>>,
+        base: ContextId,
+        left: TermId,
+        right: TermId,
+        result_variable: TermId,
+        choose_right: bool,
+    ) -> Result<Self, DerivedRulePreparationError> {
+        require_fresh_variable(connection, result_variable, &[left, right])?;
+        let syntax = church_or(connection, left, right, result_variable)?;
+        let first_intro = ImpIntro::prepare(
+            connection,
+            base,
+            syntax.left_to_result,
+            syntax.right_continuation,
+        )?;
+        let second_intro = ImpIntro::prepare(
+            connection,
+            first_intro.premise_context(),
+            syntax.right_to_result,
+            result_variable,
+        )?;
+        let selected = if choose_right { right } else { left };
+        let selected_elim = ImpElim::prepare(connection, selected, result_variable)?;
+        let selected_weakening =
+            WeakenPlan::prepare(connection, base, second_intro.premise_context())?;
+        let all_intro = AllIntroApplied::prepare(connection, syntax.predicate, result_variable)?;
+        Ok(Self {
+            base,
+            selected,
+            result_variable,
+            syntax,
+            first_intro,
+            second_intro,
+            selected_elim,
+            selected_weakening,
+            all_intro,
+            choose_right,
+        })
+    }
+
+    /// Prepares left introduction from `Gamma |- p`.
+    ///
+    /// # Errors
+    ///
+    /// Returns if the inputs are not exact closed Booleans, the result
+    /// variable is not fresh, or an intermediate context cannot be defined.
+    pub fn left<P: Policy>(
+        connection: &mut Connection<Hol<P>>,
+        base: ContextId,
+        left: TermId,
+        right: TermId,
+        result_variable: TermId,
+    ) -> Result<Self, DerivedRulePreparationError> {
+        Self::prepare(connection, base, left, right, result_variable, false)
+    }
+
+    /// Prepares right introduction from `Gamma |- q`.
+    ///
+    /// # Errors
+    ///
+    /// Returns if the inputs are not exact closed Booleans, the result
+    /// variable is not fresh, or an intermediate context cannot be defined.
+    pub fn right<P: Policy>(
+        connection: &mut Connection<Hol<P>>,
+        base: ContextId,
+        left: TermId,
+        right: TermId,
+        result_variable: TermId,
+    ) -> Result<Self, DerivedRulePreparationError> {
+        Self::prepare(connection, base, left, right, result_variable, true)
+    }
+
+    /// Introduces the exact Church disjunction without persistence.
+    ///
+    /// # Errors
+    ///
+    /// Returns for a wrong premise/context or rejected constituent LCF rule.
+    pub fn apply<'brand, P: Policy>(
+        &self,
+        proof: &mut ProofSession<'brand, P>,
+        selected: &Theorem<'brand>,
+    ) -> Result<Theorem<'brand>, DerivedRuleError> {
+        require_result(selected, self.base, self.selected)?;
+        let target = self.second_intro.premise_context();
+        let selected = self.selected_weakening.apply(proof, selected)?;
+        let selected_implication = if self.choose_right {
+            self.syntax.right_to_result
+        } else {
+            self.syntax.left_to_result
+        };
+        let implication = proof.prove_hypothesis(target, selected_implication)?;
+        let result = self.selected_elim.apply(proof, &implication, &selected)?;
+        let right_continuation = self.second_intro.apply(proof, &result)?;
+        let body = self.first_intro.apply(proof, &right_continuation)?;
+        require_result(&body, self.base, self.syntax.body)?;
+        let beta = proof.conversion_beta(self.syntax.predicate, self.result_variable)?;
+        let reverse = proof.conversion_symmetry(&beta)?;
+        let application = proof.convert_theorem(&body, &reverse)?;
+        let universal = self.all_intro.apply(proof, &application)?;
+        require_result(&universal, self.base, self.syntax.proposition)?;
+        Ok(universal)
+    }
+}
+
+/// Prepared elimination for the exact Church disjunction.
+pub struct ChurchOrElim {
+    base: ContextId,
+    result: TermId,
+    syntax: ChurchOrSyntax,
+    left_intro: ImpIntro,
+    right_intro: ImpIntro,
+    outer_elim: ImpElim,
+    inner_elim: ImpElim,
+    all_elim: AllElim,
+}
+
+impl ChurchOrElim {
+    /// Prepares elimination into a closed Boolean result.
+    ///
+    /// # Errors
+    ///
+    /// Returns if an input is not a checked closed Boolean or an exact branch
+    /// context cannot be defined.
+    pub fn prepare<P: Policy>(
+        connection: &mut Connection<Hol<P>>,
+        base: ContextId,
+        left: TermId,
+        right: TermId,
+        result: TermId,
+    ) -> Result<Self, DerivedRulePreparationError> {
+        let syntax = church_or(connection, left, right, result)?;
+        Ok(Self {
+            base,
+            result,
+            left_intro: ImpIntro::prepare(connection, base, left, result)?,
+            right_intro: ImpIntro::prepare(connection, base, right, result)?,
+            outer_elim: ImpElim::prepare(
+                connection,
+                syntax.left_to_result,
+                syntax.right_continuation,
+            )?,
+            inner_elim: ImpElim::prepare(connection, syntax.right_to_result, result)?,
+            all_elim: AllElim::prepare(connection, syntax.predicate, result)?,
+            syntax,
+        })
+    }
+
+    /// Exact context required for the left branch.
+    #[must_use]
+    pub const fn left_context(&self) -> ContextId {
+        self.left_intro.premise_context()
+    }
+
+    /// Exact context required for the right branch.
+    #[must_use]
+    pub const fn right_context(&self) -> ContextId {
+        self.right_intro.premise_context()
+    }
+
+    /// Eliminates a Church disjunction using exact branch theorems.
+    ///
+    /// # Errors
+    ///
+    /// Returns for a wrong disjunction/branch shape or rejected constituent
+    /// LCF rule.
+    pub fn apply<'brand, P: Policy>(
+        &self,
+        proof: &mut ProofSession<'brand, P>,
+        disjunction: &Theorem<'brand>,
+        left: &Theorem<'brand>,
+        right: &Theorem<'brand>,
+    ) -> Result<Theorem<'brand>, DerivedRuleError> {
+        require_result(disjunction, self.base, self.syntax.proposition)?;
+        require_result(left, self.left_context(), self.result)?;
+        require_result(right, self.right_context(), self.result)?;
+        let left = self.left_intro.apply(proof, left)?;
+        let right = self.right_intro.apply(proof, right)?;
+        let application = self.all_elim.apply(proof, disjunction)?;
+        let beta = proof.conversion_beta(self.syntax.predicate, self.result)?;
+        let body = proof.convert_theorem(&application, &beta)?;
+        let continuation = self.outer_elim.apply(proof, &body, &left)?;
+        let result = self.inner_elim.apply(proof, &continuation, &right)?;
+        require_result(&result, self.base, self.result)?;
+        Ok(result)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2275,6 +2596,52 @@ mod tests {
 
         let snapshot = Kernel::ephemeral().export_hol(&mut connection).unwrap();
         assert_eq!(snapshot.image().counts().untrusted_judgement_rows, 0);
+    }
+
+    #[test]
+    fn church_or_introduction_and_elimination_preserve_exact_contexts() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let truth = connection.insert_bool_term(true).unwrap();
+        let bound = connection.insert_bound_term(0, bool_type).unwrap();
+        let identity = connection.insert_lambda(bool_type, bound).unwrap();
+        let p = connection.insert_application(identity, truth).unwrap();
+        let q = connection.insert_equality(truth, truth).unwrap();
+        let result_variable = connection.insert_free_term(8801, bool_type).unwrap();
+        let syntax = church_or(&mut connection, p, q, truth).unwrap();
+        let left_intro =
+            ChurchOrIntro::left(&mut connection, ContextId::empty(), p, q, result_variable)
+                .unwrap();
+        let right_intro =
+            ChurchOrIntro::right(&mut connection, ContextId::empty(), p, q, result_variable)
+                .unwrap();
+        let elimination =
+            ChurchOrElim::prepare(&mut connection, ContextId::empty(), p, q, truth).unwrap();
+
+        connection
+            .with_proof_session(|mut proof| {
+                let beta = proof.conversion_beta(identity, truth)?;
+                let reverse = proof.conversion_symmetry(&beta)?;
+                let truth_empty = proof.prove_truth(ContextId::empty())?;
+                let p_empty = proof.convert_theorem(&truth_empty, &reverse)?;
+                let left_or = left_intro.apply(&mut proof, &p_empty).unwrap();
+                assert_eq!(left_or.context(), ContextId::empty());
+                assert_eq!(left_or.conclusion(), syntax.proposition);
+
+                let q_empty = proof.prove_reflexivity(ContextId::empty(), truth)?;
+                let right_or = right_intro.apply(&mut proof, &q_empty).unwrap();
+                assert_eq!(right_or.conclusion(), syntax.proposition);
+
+                let left_branch = proof.prove_truth(elimination.left_context())?;
+                let right_branch = proof.prove_truth(elimination.right_context())?;
+                let eliminated = elimination
+                    .apply(&mut proof, &left_or, &left_branch, &right_branch)
+                    .unwrap();
+                assert_eq!(eliminated.context(), ContextId::empty());
+                assert_eq!(eliminated.conclusion(), truth);
+                Ok::<_, ProofError>(())
+            })
+            .unwrap();
     }
 
     fn denied_and_intro() -> DerivedRuleError {
