@@ -35,6 +35,9 @@
       input[type="url"] {
         flex: 1 1 24rem;
       }
+      .coordinate {
+        flex: 1 1 32rem;
+      }
       textarea {
         box-sizing: border-box;
         min-height: 12rem;
@@ -104,8 +107,52 @@
       Run signed HOL round trip + download
     </button>
 
+    <h2>Hash-selected native HOL guest</h2>
+    <p>
+      Start a native kernel with <code>--hash-wasm-hol-http</code>, then paste
+      the three coordinates it prints. The component stays provisioned at the
+      native kernel; this page sends only its hash.
+    </p>
+    <div class="bar">
+      <input
+        id="native-endpoint"
+        class="coordinate"
+        type="url"
+        placeholder="http://127.0.0.1:PORT/v0/signed-message"
+        aria-label="Native signed-kernel endpoint"
+      />
+    </div>
+    <div class="bar">
+      <input
+        id="native-key"
+        class="coordinate"
+        placeholder="64-hex-character endpoint public key"
+        aria-label="Pinned endpoint public key"
+      />
+    </div>
+    <div class="bar">
+      <input
+        id="component-hash"
+        class="coordinate"
+        placeholder="64-hex-character component hash"
+        aria-label="Component hash"
+      />
+      <button id="run-native-hash" type="button">Run and import</button>
+      <button id="reread-native-hash" type="button" disabled>
+        Reread imported theorem
+      </button>
+      <button id="cleanup-native-hash" type="button" disabled>
+        Clean up receiver
+      </button>
+    </div>
+    <div id="native-status" role="status">No native result retained</div>
+    <div id="native-output" aria-live="polite"></div>
+
     <script type="module">
-      import { createBrowserRepl } from "./dist/index.js";
+      import {
+        createBrowserRepl,
+        SignedKernelTransportError,
+      } from "./dist/index.js";
 
       const repl = createBrowserRepl();
       const connections = new Map();
@@ -114,6 +161,12 @@
       const connectionSelect = document.querySelector("#connection");
       const status = document.querySelector("#status");
       const output = document.querySelector("#output");
+      const nativeStatus = document.querySelector("#native-status");
+      const nativeOutput = document.querySelector("#native-output");
+      const nativeRun = document.querySelector("#run-native-hash");
+      const nativeReread = document.querySelector("#reread-native-hash");
+      const nativeCleanup = document.querySelector("#cleanup-native-hash");
+      let retainedNative;
 
       function selected() {
         const connection = connections.get(connectionSelect.value);
@@ -186,6 +239,118 @@
         anchor.click();
         URL.revokeObjectURL(url);
       }
+
+      function parseCoordinate(name, value) {
+        if (!/^[0-9a-f]{64}$/.test(value))
+          throw new Error(
+            `${name} must be exactly 64 lowercase hex characters`,
+          );
+        const bytes = new Uint8Array(32);
+        for (let index = 0; index < bytes.length; index += 1)
+          bytes[index] = Number.parseInt(
+            value.slice(index * 2, index * 2 + 2),
+            16,
+          );
+        return bytes;
+      }
+
+      async function disposeNative(state) {
+        await state.result.cleanup();
+        connections.delete(state.receiverId);
+        connectionSelect
+          .querySelector(`option[value="${state.receiverId}"]`)
+          ?.remove();
+      }
+
+      nativeRun.addEventListener("click", async () => {
+        if (nativeRun.disabled) return;
+        nativeRun.disabled = true;
+        nativeStatus.textContent = "Authenticating, running, and importing…";
+        nativeOutput.className = "";
+        nativeOutput.textContent = "";
+        try {
+          const endpoint = document.querySelector("#native-endpoint").value;
+          const component = document.querySelector("#component-hash").value;
+          const expectedPublicKey = parseCoordinate(
+            "endpoint public key",
+            document.querySelector("#native-key").value,
+          );
+          parseCoordinate("component hash", component);
+          const result = await repl.runNativeHttpHashSelectedHol({
+            endpoint,
+            expectedPublicKey,
+            component,
+          });
+          const receiverId = String(nextConnection++);
+          connections.set(receiverId, result.receiver);
+          const receiverOption = document.createElement("option");
+          receiverOption.value = receiverId;
+          receiverOption.textContent = `hol imported ${receiverId}`;
+          connectionSelect.append(receiverOption);
+          connectionSelect.value = receiverId;
+          retainedNative = { result, receiverId };
+          nativeReread.disabled = false;
+          nativeCleanup.disabled = false;
+          nativeOutput.textContent = [
+            `kind\t${result.kind}`,
+            `component\t${result.component}`,
+            `signer\t${result.signer}`,
+            `image_bytes\t${result.imageBytes}`,
+            `import\t${result.importId}`,
+            `namespace\t${result.namespace}`,
+            `imported_theorem\t${result.context}\t${result.conclusion}`,
+            `receiver\t${receiverOption.textContent}`,
+          ].join("\n");
+          nativeStatus.textContent = "Verified; receiver and artifact retained";
+        } catch (error) {
+          nativeOutput.className = "error";
+          nativeOutput.textContent =
+            error instanceof Error ? error.message : String(error);
+          nativeStatus.textContent =
+            error instanceof SignedKernelTransportError && error.outcomeUnknown
+              ? "Abandoned: native execution may have completed; no receiver was imported"
+              : "Failed before a receiver was imported";
+        } finally {
+          if (retainedNative === undefined) nativeRun.disabled = false;
+        }
+      });
+
+      nativeReread.addEventListener("click", async () => {
+        try {
+          if (retainedNative === undefined)
+            throw new Error("no native result is retained");
+          const reread = await retainedNative.result.rereadImportedTheorem();
+          nativeStatus.textContent = `Reread imported theorem ${reread.context}\t${reread.conclusion}`;
+        } catch (error) {
+          nativeOutput.className = "error";
+          nativeOutput.textContent =
+            error instanceof Error ? error.message : String(error);
+          nativeStatus.textContent = "Reread failed";
+        }
+      });
+
+      nativeCleanup.addEventListener("click", async () => {
+        if (nativeCleanup.disabled) return;
+        const state = retainedNative;
+        if (state === undefined) return;
+        nativeCleanup.disabled = true;
+        try {
+          await disposeNative(state);
+          retainedNative = undefined;
+          nativeReread.disabled = true;
+          nativeRun.disabled = false;
+          if (connectionSelect.options.length > 0)
+            connectionSelect.selectedIndex = 0;
+          nativeStatus.textContent = "Receiver and artifact cleaned up";
+        } catch (error) {
+          nativeOutput.className = "error";
+          nativeOutput.textContent =
+            error instanceof Error ? error.message : String(error);
+          nativeStatus.textContent =
+            "Cleanup failed; receiver retained for retry";
+          nativeCleanup.disabled = false;
+        }
+      });
 
       document.querySelector("#new").addEventListener("click", async () => {
         try {

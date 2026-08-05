@@ -488,6 +488,34 @@ export interface BrowserHolConnection {
   close(): Promise<void>;
 }
 
+export interface BrowserReceivedHolSnapshot {
+  importId: string;
+  namespace: string;
+  context: string;
+  conclusion: string;
+  /** Exact hash of persistent receiver state after this read. */
+  persistentStateHash: string;
+}
+
+export interface BrowserNativeHttpHashSelectedHolOutcome
+  extends BrowserReceivedHolSnapshot {
+  kind: "native-http-hash-selected-hol";
+  component: string;
+  signer: string;
+  imageBytes: number;
+  /** Normal HOL connection retained in this BrowserRepl's Worker directory. */
+  receiver: BrowserHolConnection;
+  /** Reauthenticates the Worker-retained artifact and rereads the theorem. */
+  rereadImportedTheorem(): Promise<BrowserReceivedHolSnapshot>;
+  /** Releases the retained artifact and removes the receiver directory row. */
+  cleanup(): Promise<void>;
+}
+
+type BrowserNativeHttpHashSelectedHolWire = Omit<
+  BrowserNativeHttpHashSelectedHolOutcome,
+  "receiver" | "rereadImportedTheorem" | "cleanup"
+> & { receiverConnection: number };
+
 export type BrowserConnection = BrowserSqlConnection | BrowserHolConnection;
 
 export interface BrowserRepl {
@@ -495,6 +523,9 @@ export interface BrowserRepl {
   open(): Promise<BrowserSqlConnection>;
   openSql(): Promise<BrowserSqlConnection>;
   openHol(): Promise<BrowserHolConnection>;
+  runNativeHttpHashSelectedHol(
+    options: NativeHttpHashSelectedHolOptions,
+  ): Promise<BrowserNativeHttpHashSelectedHolOutcome>;
   close(): void;
 }
 
@@ -505,6 +536,14 @@ type RequestBody =
   | { operation: "run"; connection: number; sql: string }
   | { operation: "runHol"; connection: number; recipe: string }
   | { operation: "runSignedHolRoundTrip"; connection: number }
+  | {
+      operation: "runNativeHttpHashSelectedHol";
+      endpoint: string;
+      expectedPublicKey: Uint8Array;
+      component: string;
+      timeoutMs: number;
+    }
+  | { operation: "rereadNativeHttpHashSelectedHol"; connection: number }
   | { operation: "putImage"; connection: number; bytes: Uint8Array }
   | {
       operation: "attachImage";
@@ -522,7 +561,7 @@ type RequestBody =
 
 type WorkerResponse =
   | { id: number; ok: true; value: unknown }
-  | { id: number; ok: false; error: string };
+  | { id: number; ok: false; error: string; outcomeUnknown: boolean };
 
 class WorkerRepl implements BrowserRepl {
   readonly #worker = new Worker(new URL("./worker.js", import.meta.url), {
@@ -534,6 +573,7 @@ class WorkerRepl implements BrowserRepl {
   >();
   #nextId = 0;
   #closed = false;
+  #nativeHashRunInFlight = false;
 
   constructor() {
     this.#worker.addEventListener(
@@ -543,7 +583,12 @@ class WorkerRepl implements BrowserRepl {
         if (pending === undefined) return;
         this.#pending.delete(data.id);
         if (data.ok) pending.resolve(data.value);
-        else pending.reject(new Error(data.error));
+        else
+          pending.reject(
+            data.outcomeUnknown
+              ? new SignedKernelTransportError(data.error, true)
+              : new Error(data.error),
+          );
       },
     );
     this.#worker.addEventListener("error", (event) => {
@@ -563,6 +608,33 @@ class WorkerRepl implements BrowserRepl {
   async openHol(): Promise<BrowserHolConnection> {
     const id = await this.request<number>({ operation: "openHol" });
     return new WorkerHolConnection(this, id);
+  }
+
+  runNativeHttpHashSelectedHol(
+    options: NativeHttpHashSelectedHolOptions,
+  ): Promise<BrowserNativeHttpHashSelectedHolOutcome> {
+    if (this.#nativeHashRunInFlight) {
+      return Promise.reject(
+        new Error("a native hash-selected HOL run is already in flight"),
+      );
+    }
+    const timeoutMs = options.timeoutMs ?? 10_000;
+    const expectedPublicKey = options.expectedPublicKey.slice();
+    this.#nativeHashRunInFlight = true;
+    return this.request<BrowserNativeHttpHashSelectedHolWire>(
+      {
+        operation: "runNativeHttpHashSelectedHol",
+        endpoint: options.endpoint,
+        expectedPublicKey,
+        component: options.component,
+        timeoutMs,
+      },
+      [expectedPublicKey.buffer],
+    )
+      .then((wire) => this.#retainNativeHashSelectedOutcome(wire))
+      .finally(() => {
+        this.#nativeHashRunInFlight = false;
+      });
   }
 
   close(): void {
@@ -589,11 +661,45 @@ class WorkerRepl implements BrowserRepl {
     for (const pending of this.#pending.values()) pending.reject(error);
     this.#pending.clear();
   }
+
+  #retainNativeHashSelectedOutcome(
+    wire: BrowserNativeHttpHashSelectedHolWire,
+  ): BrowserNativeHttpHashSelectedHolOutcome {
+    const { receiverConnection, ...presentation } = wire;
+    const receiver = new WorkerHolConnection(this, receiverConnection);
+    let cleaned = false;
+    let cleanupInFlight: Promise<void> | undefined;
+    return {
+      ...presentation,
+      receiver,
+      rereadImportedTheorem: () => {
+        if (cleaned)
+          return Promise.reject(new Error("managed receiver was cleaned up"));
+        return this.request<BrowserReceivedHolSnapshot>({
+          operation: "rereadNativeHttpHashSelectedHol",
+          connection: receiverConnection,
+        });
+      },
+      cleanup: async () => {
+        if (cleaned) return;
+        cleanupInFlight ??= receiver
+          .close()
+          .then(() => {
+            cleaned = true;
+          })
+          .finally(() => {
+            cleanupInFlight = undefined;
+          });
+        await cleanupInFlight;
+      },
+    };
+  }
 }
 
 class WorkerConnection implements BrowserSqlConnection {
   readonly kind = "sql" as const;
   #closed = false;
+  #closing: Promise<void> | undefined;
 
   constructor(
     private readonly repl: WorkerRepl,
@@ -643,11 +749,15 @@ class WorkerConnection implements BrowserSqlConnection {
 
   async close(): Promise<void> {
     if (this.#closed) return;
-    this.#closed = true;
-    await this.repl.request({
-      operation: "close",
-      connection: this.connection,
-    });
+    this.#closing ??= this.repl
+      .request({ operation: "close", connection: this.connection })
+      .then(() => {
+        this.#closed = true;
+      })
+      .finally(() => {
+        this.#closing = undefined;
+      });
+    await this.#closing;
   }
 
   #request<T>(body: RequestBody, transfer: Transferable[] = []): Promise<T> {
@@ -660,6 +770,7 @@ class WorkerConnection implements BrowserSqlConnection {
 class WorkerHolConnection implements BrowserHolConnection {
   readonly kind = "hol" as const;
   #closed = false;
+  #closing: Promise<void> | undefined;
 
   constructor(
     private readonly repl: WorkerRepl,
@@ -688,11 +799,15 @@ class WorkerHolConnection implements BrowserHolConnection {
 
   async close(): Promise<void> {
     if (this.#closed) return;
-    this.#closed = true;
-    await this.repl.request({
-      operation: "close",
-      connection: this.connection,
-    });
+    this.#closing ??= this.repl
+      .request({ operation: "close", connection: this.connection })
+      .then(() => {
+        this.#closed = true;
+      })
+      .finally(() => {
+        this.#closing = undefined;
+      });
+    await this.#closing;
   }
 
   #request<T>(body: RequestBody): Promise<T> {

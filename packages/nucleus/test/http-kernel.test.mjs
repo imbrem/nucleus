@@ -310,6 +310,193 @@ test("real Chromium runs only a provisioned component digest and rereads it", as
   );
 });
 
+test("REPL page retains, rereads, and explicitly cleans a hash-selected result", async (context) => {
+  const component = process.env.COVALENCE_HOL_GUEST_COMPONENT;
+  if (component === undefined) {
+    context.skip("COVALENCE_HOL_GUEST_COMPONENT is required");
+    return;
+  }
+  const digest = execFileSync("b3sum", [component], { encoding: "utf8" })
+    .trim()
+    .split(/\s+/, 1)[0];
+  const base = await launchStaticServer(context);
+  const [kernel, browser] = await Promise.all([
+    launchHashKernel(context, base, component, digest),
+    launchBrowser(context),
+  ]);
+  const proxy = await launchFailureProxy(context, kernel.url, "none");
+  const page = await browser.newPage();
+  await page.goto(`${base}/repl.html`);
+  await page.getByText("sql connection 1 ready").waitFor();
+  await page.locator("#native-endpoint").fill(proxy.url);
+  await page.locator("#native-key").fill(kernel.key);
+  await page.locator("#component-hash").fill(digest);
+
+  await page.locator("#run-native-hash").evaluate((button) => {
+    button.click();
+    button.click();
+  });
+  await page
+    .getByText("Verified; receiver and artifact retained", { exact: true })
+    .waitFor();
+  assert.equal(proxy.postCount(), 4, "double click starts exactly one run");
+  assert.equal(await page.locator("#connection option").count(), 2);
+  assert.equal(
+    await page
+      .locator("#connection option", { hasText: "hol imported" })
+      .count(),
+    1,
+  );
+  assert.equal(await page.locator("#run-native-hash").isDisabled(), true);
+  await page.getByText(`component\t${digest}`).waitFor();
+  await page.getByText("imported_theorem\t0\t8").waitFor();
+  assert.equal(await page.locator("#reread-native-hash").isDisabled(), false);
+  assert.equal(await page.locator("#cleanup-native-hash").isDisabled(), false);
+
+  await page.locator("#reread-native-hash").click();
+  await page
+    .getByText("Reread imported theorem 0\t8", { exact: true })
+    .waitFor();
+  await page.locator("#recipe").fill("reflexivity false");
+  await page.locator("#run-hol").click();
+  await page.getByText("statement\tfalse = false").waitFor();
+  await page.locator("#cleanup-native-hash").click();
+  await page
+    .getByText("Receiver and artifact cleaned up", { exact: true })
+    .waitFor();
+  assert.equal(await page.locator("#reread-native-hash").isDisabled(), true);
+  assert.equal(await page.locator("#cleanup-native-hash").isDisabled(), true);
+  assert.equal(await page.locator("#run-native-hash").isDisabled(), false);
+  assert.equal(await page.locator("#connection option").count(), 1);
+
+  await page.locator("#run-native-hash").click();
+  await page
+    .getByText("Verified; receiver and artifact retained", { exact: true })
+    .waitFor();
+  assert.equal(proxy.postCount(), 8, "a second run executes after cleanup");
+  assert.equal(await page.locator("#connection option").count(), 2);
+  await page.locator("#cleanup-native-hash").click();
+  await page
+    .getByText("Receiver and artifact cleaned up", { exact: true })
+    .waitFor();
+  assert.equal(
+    kernel.child.exitCode,
+    null,
+    "receiver cleanup does not control the native transport-owner server",
+  );
+});
+
+test("same-REPL managed cleanup invalidates reread authority", async (context) => {
+  const component = process.env.COVALENCE_HOL_GUEST_COMPONENT;
+  if (component === undefined) {
+    context.skip("COVALENCE_HOL_GUEST_COMPONENT is required");
+    return;
+  }
+  const digest = execFileSync("b3sum", [component], { encoding: "utf8" })
+    .trim()
+    .split(/\s+/, 1)[0];
+  const base = await launchStaticServer(context);
+  const [kernel, browser] = await Promise.all([
+    launchHashKernel(context, base, component, digest),
+    launchBrowser(context),
+  ]);
+  const page = await browser.newPage();
+  await page.goto(`${base}/repl.html`);
+  const result = await page.evaluate(
+    async ({ endpoint, key, component }) => {
+      const { createBrowserRepl } = await import("../dist/index.js");
+      const expectedPublicKey = new Uint8Array(32);
+      for (let index = 0; index < expectedPublicKey.length; index += 1) {
+        expectedPublicKey[index] = Number.parseInt(
+          key.slice(index * 2, index * 2 + 2),
+          16,
+        );
+      }
+      const repl = createBrowserRepl();
+      try {
+        const managed = await repl.runNativeHttpHashSelectedHol({
+          endpoint,
+          expectedPublicKey,
+          component,
+        });
+        const firstReread = await managed.rereadImportedTheorem();
+        const stateUnchanged =
+          firstReread.persistentStateHash === managed.persistentStateHash;
+        const normal = await managed.receiver.run("reflexivity false");
+        await managed.cleanup();
+        let invalidated = false;
+        try {
+          await managed.rereadImportedTheorem();
+        } catch {
+          invalidated = true;
+        }
+        return {
+          invalidated,
+          normal,
+          firstReread,
+          stateUnchanged,
+        };
+      } finally {
+        repl.close();
+      }
+    },
+    { endpoint: kernel.url, key: kernel.key, component: digest },
+  );
+  assert.equal(result.invalidated, true);
+  assert.equal(result.stateUnchanged, true);
+  assert.deepEqual(result.firstReread, {
+    importId: "0",
+    namespace: "1",
+    context: "0",
+    conclusion: "8",
+    persistentStateHash: result.firstReread.persistentStateHash,
+  });
+  assert.deepEqual(result.normal, {
+    kind: "hol-theorem",
+    recipe: "reflexivity",
+    context: "0",
+    conclusion: "4",
+    statement: "false = false",
+  });
+});
+
+test("REPL page reports ambiguous execution as abandoned without importing", async (context) => {
+  const component = process.env.COVALENCE_HOL_GUEST_COMPONENT;
+  if (component === undefined) {
+    context.skip("COVALENCE_HOL_GUEST_COMPONENT is required");
+    return;
+  }
+  const digest = execFileSync("b3sum", [component], { encoding: "utf8" })
+    .trim()
+    .split(/\s+/, 1)[0];
+  const base = await launchStaticServer(context);
+  const [kernel, browser] = await Promise.all([
+    launchHashKernel(context, base, component, digest),
+    launchBrowser(context),
+  ]);
+  const proxy = await launchFailureProxy(
+    context,
+    kernel.url,
+    "truncate-command",
+  );
+  const page = await browser.newPage();
+  await page.goto(`${base}/repl.html`);
+  await page.getByText("sql connection 1 ready").waitFor();
+  await page.locator("#native-endpoint").fill(proxy.url);
+  await page.locator("#native-key").fill(kernel.key);
+  await page.locator("#component-hash").fill(digest);
+  await page.locator("#run-native-hash").click();
+  await page
+    .getByText(
+      "Abandoned: native execution may have completed; no receiver was imported",
+      { exact: true },
+    )
+    .waitFor();
+  assert.equal(proxy.postCount(), 3);
+  assert.equal(await page.locator("#connection option").count(), 1);
+  assert.equal(await page.locator("#run-native-hash").isDisabled(), false);
+});
+
 test("real Chromium rejects an out-of-band endpoint key mismatch", async (context) => {
   const base = await launchStaticServer(context);
   const [kernel, browser] = await Promise.all([
