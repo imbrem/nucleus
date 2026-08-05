@@ -92,6 +92,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-hol-proof-guest-context-capabilities@0.0.0",
+      "name": "covalence-hol-proof-guest-context-capabilities",
+      "version": "0.0.0",
+      "path": "crates/hol-proof-guest-context-capabilities",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_hol_proof_guest_context_capabilities",
+          "kinds": [
+            "cdylib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-hol-proof-guest-conversions@0.0.0",
       "name": "covalence-hol-proof-guest-conversions",
       "version": "0.0.0",

@@ -405,7 +405,7 @@ test("REPL page cleans a hash-selected result through either close control", asy
   assert.equal(await page.locator("#cleanup-native-hash").isDisabled(), false);
   assert.equal(await page.locator("#run-native-hash").isDisabled(), true);
   await page.locator("#reread-native-hash").click();
-  await page.getByText(/Reread imported theorem 0\t[1-9][0-9]*/).waitFor();
+  await page.getByText(/Reread imported theorem [0-9]+\t[1-9][0-9]*/).waitFor();
 
   await page.locator("#close").click();
   await page

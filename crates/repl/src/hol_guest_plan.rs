@@ -9,8 +9,8 @@ use std::error::Error as StdError;
 use std::fmt;
 
 use covalence_nucleus::{
-    Connection, ContextId, Conversion, ExportId, Hol, Kernel, NamespaceExport, NamespaceId,
-    Operation, Policy, SignedHolSnapshot, TermId, TermInstantiation, Theorem, TypeId,
+    Connection, ContextId, ContextImplication, Conversion, ExportId, Hol, Kernel, NamespaceExport,
+    NamespaceId, Operation, Policy, SignedHolSnapshot, TermId, TermInstantiation, Theorem, TypeId,
     TypeInstantiation,
 };
 
@@ -22,7 +22,7 @@ pub(crate) const MAX_CONTEXT_MEMBERS: usize = 64;
 /// Maximum canonical bytes accepted from an untrusted guest executor.
 pub const MAX_SEALED_HOL_RECIPE_BYTES: usize = 64 * 1024;
 
-const RECIPE_VERSION: u8 = 5;
+const RECIPE_VERSION: u8 = 6;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RecipeSort {
@@ -34,6 +34,12 @@ pub(crate) enum RecipeSort {
     TermInstantiationMap,
     TypeInstantiationMap,
     Conversion,
+    TheoremWitnessList,
+    ContextImplication,
+    ContextPath,
+    ContextUnion,
+    ContextEquivalence,
+    Unit,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -93,6 +99,42 @@ pub(crate) enum RecipeNode {
     },
     Choice {
         premise: usize,
+    },
+    EmptyTheoremWitnessList,
+    ExtendTheoremWitnessList {
+        base: usize,
+        witness: usize,
+    },
+    ContextImplication {
+        antecedent: usize,
+        consequent: usize,
+        witnesses: usize,
+    },
+    PersistContextImplication {
+        implication: usize,
+    },
+    SingletonContextPath {
+        context: usize,
+    },
+    ExtendContextPath {
+        base: usize,
+        context: usize,
+    },
+    ContextImplicationPath {
+        path: usize,
+    },
+    Weakening {
+        implication: usize,
+        theorem: usize,
+    },
+    ContextUnion {
+        left: usize,
+        right: usize,
+        result: usize,
+    },
+    ContextEquivalence {
+        forward: usize,
+        backward: usize,
     },
     ConversionReflexivity {
         term: usize,
@@ -299,6 +341,8 @@ fn validate_structure(
     let mut term_map_keys: Vec<Option<HashSet<usize>>> = Vec::with_capacity(nodes.len());
     let mut type_map_keys: Vec<Option<HashSet<usize>>> = Vec::with_capacity(nodes.len());
     let mut context_depths: Vec<Option<usize>> = Vec::with_capacity(nodes.len());
+    let mut witness_list_depths: Vec<Option<usize>> = Vec::with_capacity(nodes.len());
+    let mut context_path_depths: Vec<Option<usize>> = Vec::with_capacity(nodes.len());
     let mut persisted = HashSet::new();
     for (current, node) in nodes.iter().enumerate() {
         let require = |index: usize, expected: RecipeSort| {
@@ -317,6 +361,8 @@ fn validate_structure(
         let mut term_keys = None;
         let mut type_keys = None;
         let mut context_depth = None;
+        let mut witness_list_depth = None;
+        let mut context_path_depth = None;
         let sort = match node {
             RecipeNode::BoolType | RecipeNode::FreeType { .. } => RecipeSort::Type,
             RecipeNode::Bound { ty, .. } | RecipeNode::FreeTerm { ty, .. } => {
@@ -399,6 +445,94 @@ fn validate_structure(
             RecipeNode::Choice { premise } => {
                 require(*premise, RecipeSort::Theorem)?;
                 RecipeSort::Theorem
+            }
+            RecipeNode::EmptyTheoremWitnessList => {
+                witness_list_depth = Some(0);
+                RecipeSort::TheoremWitnessList
+            }
+            RecipeNode::ExtendTheoremWitnessList { base, witness } => {
+                require(*base, RecipeSort::TheoremWitnessList)?;
+                require(*witness, RecipeSort::Theorem)?;
+                let depth = witness_list_depths
+                    .get(*base)
+                    .and_then(|depth| *depth)
+                    .ok_or(HolProofRecipeError::Invalid(
+                        "theorem witness list base is invalid",
+                    ))?
+                    .checked_add(1)
+                    .ok_or(HolProofRecipeError::Invalid(
+                        "theorem witness list length overflow",
+                    ))?;
+                if depth > MAX_CONTEXT_MEMBERS {
+                    return Err(HolProofRecipeError::Invalid(
+                        "theorem witness list exceeds member limit",
+                    ));
+                }
+                witness_list_depth = Some(depth);
+                RecipeSort::TheoremWitnessList
+            }
+            RecipeNode::ContextImplication {
+                antecedent,
+                consequent,
+                witnesses,
+            } => {
+                require(*antecedent, RecipeSort::Context)?;
+                require(*consequent, RecipeSort::Context)?;
+                require(*witnesses, RecipeSort::TheoremWitnessList)?;
+                RecipeSort::ContextImplication
+            }
+            RecipeNode::PersistContextImplication { implication } => {
+                require(*implication, RecipeSort::ContextImplication)?;
+                RecipeSort::Unit
+            }
+            RecipeNode::SingletonContextPath { context } => {
+                require(*context, RecipeSort::Context)?;
+                context_path_depth = Some(1);
+                RecipeSort::ContextPath
+            }
+            RecipeNode::ExtendContextPath { base, context } => {
+                require(*base, RecipeSort::ContextPath)?;
+                require(*context, RecipeSort::Context)?;
+                let depth = context_path_depths
+                    .get(*base)
+                    .and_then(|depth| *depth)
+                    .ok_or(HolProofRecipeError::Invalid("context path base is invalid"))?
+                    .checked_add(1)
+                    .ok_or(HolProofRecipeError::Invalid("context path length overflow"))?;
+                if depth > MAX_CONTEXT_MEMBERS {
+                    return Err(HolProofRecipeError::Invalid(
+                        "context path exceeds member limit",
+                    ));
+                }
+                context_path_depth = Some(depth);
+                RecipeSort::ContextPath
+            }
+            RecipeNode::ContextImplicationPath { path } => {
+                require(*path, RecipeSort::ContextPath)?;
+                RecipeSort::ContextImplication
+            }
+            RecipeNode::Weakening {
+                implication,
+                theorem,
+            } => {
+                require(*implication, RecipeSort::ContextImplication)?;
+                require(*theorem, RecipeSort::Theorem)?;
+                RecipeSort::Theorem
+            }
+            RecipeNode::ContextUnion {
+                left,
+                right,
+                result,
+            } => {
+                require(*left, RecipeSort::Context)?;
+                require(*right, RecipeSort::Context)?;
+                require(*result, RecipeSort::Context)?;
+                RecipeSort::ContextUnion
+            }
+            RecipeNode::ContextEquivalence { forward, backward } => {
+                require(*forward, RecipeSort::ContextImplication)?;
+                require(*backward, RecipeSort::ContextImplication)?;
+                RecipeSort::ContextEquivalence
             }
             RecipeNode::ConversionReflexivity { term } => {
                 require(*term, RecipeSort::Term)?;
@@ -573,6 +707,8 @@ fn validate_structure(
         term_map_keys.push(term_keys);
         type_map_keys.push(type_keys);
         context_depths.push(context_depth);
+        witness_list_depths.push(witness_list_depth);
+        context_path_depths.push(context_path_depth);
     }
     if sorts.get(selected_namespace) != Some(&RecipeSort::Namespace) {
         return Err(HolProofRecipeError::Invalid(
@@ -716,6 +852,62 @@ fn encode_node(bytes: &mut Vec<u8>, node: &RecipeNode) -> Result<(), HolProofRec
         RecipeNode::Choice { premise } => {
             bytes.push(0x47);
             encode_index(bytes, *premise)?;
+        }
+        RecipeNode::EmptyTheoremWitnessList => bytes.push(0x50),
+        RecipeNode::ExtendTheoremWitnessList { base, witness } => {
+            bytes.push(0x51);
+            encode_index(bytes, *base)?;
+            encode_index(bytes, *witness)?;
+        }
+        RecipeNode::ContextImplication {
+            antecedent,
+            consequent,
+            witnesses,
+        } => {
+            bytes.push(0x52);
+            encode_index(bytes, *antecedent)?;
+            encode_index(bytes, *consequent)?;
+            encode_index(bytes, *witnesses)?;
+        }
+        RecipeNode::PersistContextImplication { implication } => {
+            bytes.push(0x53);
+            encode_index(bytes, *implication)?;
+        }
+        RecipeNode::SingletonContextPath { context } => {
+            bytes.push(0x54);
+            encode_index(bytes, *context)?;
+        }
+        RecipeNode::ExtendContextPath { base, context } => {
+            bytes.push(0x55);
+            encode_index(bytes, *base)?;
+            encode_index(bytes, *context)?;
+        }
+        RecipeNode::ContextImplicationPath { path } => {
+            bytes.push(0x56);
+            encode_index(bytes, *path)?;
+        }
+        RecipeNode::Weakening {
+            implication,
+            theorem,
+        } => {
+            bytes.push(0x57);
+            encode_index(bytes, *implication)?;
+            encode_index(bytes, *theorem)?;
+        }
+        RecipeNode::ContextUnion {
+            left,
+            right,
+            result,
+        } => {
+            bytes.push(0x58);
+            encode_index(bytes, *left)?;
+            encode_index(bytes, *right)?;
+            encode_index(bytes, *result)?;
+        }
+        RecipeNode::ContextEquivalence { forward, backward } => {
+            bytes.push(0x59);
+            encode_index(bytes, *forward)?;
+            encode_index(bytes, *backward)?;
         }
         RecipeNode::ConversionReflexivity { term } => {
             bytes.push(0x30);
@@ -1069,6 +1261,42 @@ impl<'a> Decoder<'a> {
             0x47 => Ok(RecipeNode::Choice {
                 premise: self.index()?,
             }),
+            0x50 => Ok(RecipeNode::EmptyTheoremWitnessList),
+            0x51 => Ok(RecipeNode::ExtendTheoremWitnessList {
+                base: self.index()?,
+                witness: self.index()?,
+            }),
+            0x52 => Ok(RecipeNode::ContextImplication {
+                antecedent: self.index()?,
+                consequent: self.index()?,
+                witnesses: self.index()?,
+            }),
+            0x53 => Ok(RecipeNode::PersistContextImplication {
+                implication: self.index()?,
+            }),
+            0x54 => Ok(RecipeNode::SingletonContextPath {
+                context: self.index()?,
+            }),
+            0x55 => Ok(RecipeNode::ExtendContextPath {
+                base: self.index()?,
+                context: self.index()?,
+            }),
+            0x56 => Ok(RecipeNode::ContextImplicationPath {
+                path: self.index()?,
+            }),
+            0x57 => Ok(RecipeNode::Weakening {
+                implication: self.index()?,
+                theorem: self.index()?,
+            }),
+            0x58 => Ok(RecipeNode::ContextUnion {
+                left: self.index()?,
+                right: self.index()?,
+                result: self.index()?,
+            }),
+            0x59 => Ok(RecipeNode::ContextEquivalence {
+                forward: self.index()?,
+                backward: self.index()?,
+            }),
             _ => Err(HolProofRecipeError::Invalid(
                 "unknown sealed recipe node tag",
             )),
@@ -1105,6 +1333,12 @@ impl Policy for ProofGuestPolicy {
                 | Operation::ProveEqualityModusPonens
                 | Operation::ProveEqualitySubstitution
                 | Operation::ProveChoice
+                | Operation::ProveContextImplication
+                | Operation::PersistContextImplication
+                | Operation::ProveContextImplicationPath
+                | Operation::ProveWeakening
+                | Operation::ProveContextUnion
+                | Operation::ProveContextEquivalence
                 | Operation::DefineContext
                 | Operation::PersistJudgement
                 | Operation::DefineNamespace
@@ -1128,6 +1362,8 @@ enum Value {
     Namespace(NamespaceId),
     TermInstantiationMap(Vec<TermInstantiation>),
     TypeInstantiationMap(Vec<TypeInstantiation>),
+    TheoremWitnessList(Vec<usize>),
+    ContextPath(Vec<ContextId>),
     Unit,
 }
 
@@ -1217,6 +1453,20 @@ fn replay(
                 });
                 Value::TypeInstantiationMap(map)
             }
+            RecipeNode::EmptyTheoremWitnessList => Value::TheoremWitnessList(Vec::new()),
+            RecipeNode::ExtendTheoremWitnessList { base, witness } => {
+                let mut witnesses = theorem_witness_list_at(&values, *base)?.to_vec();
+                witnesses.push(*witness);
+                Value::TheoremWitnessList(witnesses)
+            }
+            RecipeNode::SingletonContextPath { context } => {
+                Value::ContextPath(vec![context_at(&values, *context)?])
+            }
+            RecipeNode::ExtendContextPath { base, context } => {
+                let mut path = context_path_at(&values, *base)?.to_vec();
+                path.push(context_at(&values, *context)?);
+                Value::ContextPath(path)
+            }
             RecipeNode::ConversionReflexivity { .. }
             | RecipeNode::ConversionSymmetry { .. }
             | RecipeNode::ConversionTransitivity { .. }
@@ -1234,6 +1484,12 @@ fn replay(
             | RecipeNode::EqualityModusPonens { .. }
             | RecipeNode::EqualitySubstitution { .. }
             | RecipeNode::Choice { .. }
+            | RecipeNode::ContextImplication { .. }
+            | RecipeNode::PersistContextImplication { .. }
+            | RecipeNode::ContextImplicationPath { .. }
+            | RecipeNode::Weakening { .. }
+            | RecipeNode::ContextUnion { .. }
+            | RecipeNode::ContextEquivalence { .. }
             | RecipeNode::TermInstantiation { .. }
             | RecipeNode::TypeInstantiation { .. }
             | RecipeNode::Abstraction { .. }
@@ -1290,6 +1546,8 @@ fn replay_theorems<P: Policy>(
         let mut conversions: Vec<Option<Conversion<'_>>> =
             (0..recipe.len()).map(|_| None).collect();
         let mut theorems: Vec<Option<Theorem<'_>>> = (0..recipe.len()).map(|_| None).collect();
+        let mut implications: Vec<Option<ContextImplication<'_>>> =
+            (0..recipe.len()).map(|_| None).collect();
         for (index, node) in recipe.iter().enumerate() {
             match node {
                 RecipeNode::Hypothesis { context, term } => {
@@ -1375,6 +1633,85 @@ fn replay_theorems<P: Policy>(
                         conclusion: theorem.conclusion(),
                     };
                     theorems[index] = Some(theorem);
+                }
+                RecipeNode::ContextImplication {
+                    antecedent,
+                    consequent,
+                    witnesses,
+                } => {
+                    let witness_indices = theorem_witness_list_at(values, *witnesses)?.to_vec();
+                    let mut branded_witnesses = Vec::with_capacity(witness_indices.len());
+                    for witness in &witness_indices {
+                        branded_witnesses.push(
+                            theorems
+                                .get_mut(*witness)
+                                .and_then(Option::take)
+                                .ok_or_else(value_error)?,
+                        );
+                    }
+                    let implication = proof
+                        .prove_context_implication(
+                            context_at(values, *antecedent)?,
+                            context_at(values, *consequent)?,
+                            &branded_witnesses,
+                        )
+                        .map_err(replay_error)?;
+                    for (witness, theorem) in witness_indices.into_iter().zip(branded_witnesses) {
+                        theorems[witness] = Some(theorem);
+                    }
+                    implications[index] = Some(implication);
+                }
+                RecipeNode::PersistContextImplication { implication } => {
+                    proof
+                        .persist_context_implication(implication_at_index(
+                            &implications,
+                            *implication,
+                        )?)
+                        .map_err(replay_error)?;
+                }
+                RecipeNode::ContextImplicationPath { path } => {
+                    implications[index] = Some(
+                        proof
+                            .prove_context_implication_path(context_path_at(values, *path)?)
+                            .map_err(replay_error)?,
+                    );
+                }
+                RecipeNode::Weakening {
+                    implication,
+                    theorem,
+                } => {
+                    let result = proof
+                        .weaken(
+                            implication_at_index(&implications, *implication)?,
+                            theorem_at_index(&theorems, *theorem)?,
+                        )
+                        .map_err(replay_error)?;
+                    values[index] = Value::Theorem {
+                        context: result.context(),
+                        conclusion: result.conclusion(),
+                    };
+                    theorems[index] = Some(result);
+                }
+                RecipeNode::ContextUnion {
+                    left,
+                    right,
+                    result,
+                } => {
+                    let _union = proof
+                        .prove_context_union(
+                            context_at(values, *left)?,
+                            context_at(values, *right)?,
+                            context_at(values, *result)?,
+                        )
+                        .map_err(replay_error)?;
+                }
+                RecipeNode::ContextEquivalence { forward, backward } => {
+                    let _equivalence = proof
+                        .prove_context_equivalence(
+                            implication_at_index(&implications, *forward)?,
+                            implication_at_index(&implications, *backward)?,
+                        )
+                        .map_err(replay_error)?;
                 }
                 RecipeNode::ConversionReflexivity { term } => {
                     conversions[index] = Some(
@@ -1605,6 +1942,21 @@ fn context_members_at(values: &[Value], index: usize) -> Result<&[TermId], HolPr
         _ => Err(value_error()),
     }
 }
+fn theorem_witness_list_at(
+    values: &[Value],
+    index: usize,
+) -> Result<&[usize], HolProofRecipeError> {
+    match values.get(index) {
+        Some(Value::TheoremWitnessList(value)) => Ok(value),
+        _ => Err(value_error()),
+    }
+}
+fn context_path_at(values: &[Value], index: usize) -> Result<&[ContextId], HolProofRecipeError> {
+    match values.get(index) {
+        Some(Value::ContextPath(value)) => Ok(value),
+        _ => Err(value_error()),
+    }
+}
 fn theorem_at(values: &[Value], index: usize) -> Result<(ContextId, TermId), HolProofRecipeError> {
     match values.get(index) {
         Some(Value::Theorem {
@@ -1626,6 +1978,16 @@ fn theorem_at_index<'a, 'brand>(
     index: usize,
 ) -> Result<&'a Theorem<'brand>, HolProofRecipeError> {
     theorems
+        .get(index)
+        .and_then(Option::as_ref)
+        .ok_or_else(value_error)
+}
+
+fn implication_at_index<'a, 'brand>(
+    implications: &'a [Option<ContextImplication<'brand>>],
+    index: usize,
+) -> Result<&'a ContextImplication<'brand>, HolProofRecipeError> {
+    implications
         .get(index)
         .and_then(Option::as_ref)
         .ok_or_else(value_error)
@@ -1940,7 +2302,7 @@ pub(crate) fn choice_test_recipe() -> SealedHolProofRecipe {
 
 #[cfg(test)]
 pub(crate) const CHOICE_WIRE: &[u8] = &[
-    5, 0, 14, 0, 11, // version, node count, selected namespace
+    6, 0, 14, 0, 11, // version, node count, selected namespace
     0,  // bool type
     1, 0, 0, 0, 0, 0, 0, // bound 0 : bool
     2, 0, 0, 0, 1, // identity lambda
@@ -1959,8 +2321,126 @@ pub(crate) const CHOICE_WIRE: &[u8] = &[
 ];
 
 #[cfg(test)]
+pub(crate) fn context_capabilities_test_recipe() -> SealedHolProofRecipe {
+    SealedHolProofRecipe::seal(
+        vec![
+            RecipeNode::BoolType,
+            RecipeNode::FreeTerm { symbol: 0, ty: 0 },
+            RecipeNode::Bool(true),
+            RecipeNode::EmptyContext,
+            RecipeNode::ExtendContext { base: 3, member: 1 },
+            RecipeNode::ExtendContext { base: 3, member: 2 },
+            RecipeNode::ExtendContext { base: 4, member: 2 },
+            RecipeNode::Hypothesis {
+                context: 4,
+                term: 1,
+            },
+            RecipeNode::Truth { context: 4 },
+            RecipeNode::EmptyTheoremWitnessList,
+            RecipeNode::ExtendTheoremWitnessList {
+                base: 9,
+                witness: 7,
+            },
+            RecipeNode::ExtendTheoremWitnessList {
+                base: 10,
+                witness: 8,
+            },
+            RecipeNode::ContextImplication {
+                antecedent: 4,
+                consequent: 6,
+                witnesses: 11,
+            },
+            RecipeNode::PersistContextImplication { implication: 12 },
+            RecipeNode::Hypothesis {
+                context: 6,
+                term: 1,
+            },
+            RecipeNode::EmptyTheoremWitnessList,
+            RecipeNode::ExtendTheoremWitnessList {
+                base: 15,
+                witness: 14,
+            },
+            RecipeNode::ContextImplication {
+                antecedent: 6,
+                consequent: 4,
+                witnesses: 16,
+            },
+            RecipeNode::PersistContextImplication { implication: 17 },
+            RecipeNode::ContextEquivalence {
+                forward: 12,
+                backward: 17,
+            },
+            RecipeNode::ContextUnion {
+                left: 4,
+                right: 5,
+                result: 6,
+            },
+            RecipeNode::EmptyTheoremWitnessList,
+            RecipeNode::ExtendTheoremWitnessList {
+                base: 21,
+                witness: 8,
+            },
+            RecipeNode::ContextImplication {
+                antecedent: 4,
+                consequent: 5,
+                witnesses: 22,
+            },
+            RecipeNode::PersistContextImplication { implication: 23 },
+            RecipeNode::SingletonContextPath { context: 6 },
+            RecipeNode::ExtendContextPath {
+                base: 25,
+                context: 4,
+            },
+            RecipeNode::ExtendContextPath {
+                base: 26,
+                context: 5,
+            },
+            RecipeNode::ContextImplicationPath { path: 27 },
+            RecipeNode::PersistContextImplication { implication: 28 },
+            RecipeNode::Truth { context: 5 },
+            RecipeNode::Weakening {
+                implication: 28,
+                theorem: 30,
+            },
+            RecipeNode::Persist { theorem: 31 },
+            RecipeNode::Namespace {
+                name: Some("context-capabilities-demo".into()),
+            },
+            RecipeNode::ExportContext {
+                namespace: 33,
+                export: 0,
+                context: 6,
+                name: Some("combined_context".into()),
+            },
+            RecipeNode::ExportTheorem {
+                namespace: 33,
+                export: 1,
+                theorem: 31,
+                name: Some("weakened_truth".into()),
+            },
+        ],
+        33,
+    )
+    .unwrap()
+}
+
+#[cfg(test)]
+pub(crate) const CONTEXT_CAPABILITIES_WIRE: &[u8] = &[
+    6, 0, 36, 0, 33, 0, 12, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 1, 4, 64, 0, 3, 0, 1, 64, 0, 3, 0, 2,
+    64, 0, 4, 0, 2, 65, 0, 4, 0, 1, 66, 0, 4, 80, 81, 0, 9, 0, 7, 81, 0, 10, 0, 8, 82, 0, 4, 0, 6,
+    0, 11, 83, 0, 12, 65, 0, 6, 0, 1, 80, 81, 0, 15, 0, 14, 82, 0, 6, 0, 4, 0, 16, 83, 0, 17, 89,
+    0, 12, 0, 17, 88, 0, 4, 0, 5, 0, 6, 80, 81, 0, 21, 0, 8, 82, 0, 4, 0, 5, 0, 22, 83, 0, 23, 84,
+    0, 6, 85, 0, 25, 0, 4, 85, 0, 26, 0, 5, 86, 0, 27, 83, 0, 28, 66, 0, 5, 87, 0, 28, 0, 30, 6, 0,
+    31, 7, 1, 0, 25, 99, 111, 110, 116, 101, 120, 116, 45, 99, 97, 112, 97, 98, 105, 108, 105, 116,
+    105, 101, 115, 45, 100, 101, 109, 111, 9, 0, 33, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 1, 0, 16, 99,
+    111, 109, 98, 105, 110, 101, 100, 95, 99, 111, 110, 116, 101, 120, 116, 8, 0, 33, 0, 0, 0, 0,
+    0, 0, 0, 1, 0, 31, 1, 0, 14, 119, 101, 97, 107, 101, 110, 101, 100, 95, 116, 114, 117, 116,
+    104,
+];
+
+#[cfg(test)]
 pub(crate) const SCHEMATIC_BINDING_WIRE: &[u8] = &[
-    5, 0, 20, 0, 17, 11, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 12, 0, 0, 0,
+    6, 0, 20, 0, 17, 11, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 12, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 4, 53, 0, 2, 0, 3, 56, 0, 5, 0, 6, 13,
     14, 0, 8, 0, 3, 0, 4, 15, 0, 7, 0, 9, 19, 0, 10, 0, 4, 0, 16, 17, 0, 13, 0, 0, 0, 12, 18, 0,
     11, 0, 14, 6, 0, 15, 7, 1, 0, 22, 115, 99, 104, 101, 109, 97, 116, 105, 99, 45, 98, 105, 110,
@@ -1972,7 +2452,7 @@ pub(crate) const SCHEMATIC_BINDING_WIRE: &[u8] = &[
 
 #[cfg(test)]
 pub(crate) const ASSUMPTIONS_EQUALITY_WIRE: &[u8] = &[
-    5, 0, 12, 0, 9, // version, node count, selected namespace
+    6, 0, 12, 0, 9, // version, node count, selected namespace
     0, // bool type
     12, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // free term symbol 0 : bool
     4, // empty context
@@ -2012,8 +2492,8 @@ mod tests {
 
     #[test]
     fn canonical_eta_recipe_round_trips_and_replays() {
-        const VERSION_5_ETA_RECIPE: &[u8] = &[
-            5, 0, 10, 0, 7, // version, node count, selected namespace
+        const VERSION_6_ETA_RECIPE: &[u8] = &[
+            6, 0, 10, 0, 7, // version, node count, selected namespace
             0, // bool type
             1, 0, 0, 0, 0, 0, 0, // bound 0 : node 0
             2, 0, 0, 0, 1, // lambda node 0, node 1
@@ -2027,9 +2507,9 @@ mod tests {
             b't', b'i', b't', b'y', b'_', b'e', b't', b'a',
         ];
         let recipe = closed_eta_test_recipe();
-        assert_eq!(recipe.as_bytes(), VERSION_5_ETA_RECIPE);
+        assert_eq!(recipe.as_bytes(), VERSION_6_ETA_RECIPE);
         assert_eq!(
-            SealedHolProofRecipe::from_untrusted_bytes(VERSION_5_ETA_RECIPE).unwrap(),
+            SealedHolProofRecipe::from_untrusted_bytes(VERSION_6_ETA_RECIPE).unwrap(),
             recipe
         );
         let kernel = Kernel::ephemeral();
@@ -2039,8 +2519,8 @@ mod tests {
 
     #[test]
     fn canonical_nested_identity_conversion_has_fixed_wire_and_replays() {
-        const VERSION_5_NESTED_IDENTITY: &[u8] = &[
-            5, 0, 14, 0, 11, 0, 1, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 3, 1, 4, 0x30, 0, 2, 0x35, 0,
+        const VERSION_6_NESTED_IDENTITY: &[u8] = &[
+            6, 0, 14, 0, 11, 0, 1, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 3, 1, 4, 0x30, 0, 2, 0x35, 0,
             2, 0, 3, 0x33, 0, 5, 0, 6, 0x32, 0, 7, 0, 6, 0x38, 0, 4, 0, 8, 6, 0, 9, 7, 1, 0, 15,
             b'c', b'o', b'n', b'v', b'e', b'r', b's', b'i', b'o', b'n', b'-', b'd', b'e', b'm',
             b'o', 9, 0, 11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 1, 0, 13, b'e', b'm', b'p', b't', b'y',
@@ -2049,9 +2529,9 @@ mod tests {
             b't', b'y', b'_', b'b', b'e', b't', b'a',
         ];
         let recipe = nested_identity_conversion_test_recipe();
-        assert_eq!(recipe.as_bytes(), VERSION_5_NESTED_IDENTITY);
+        assert_eq!(recipe.as_bytes(), VERSION_6_NESTED_IDENTITY);
         assert_eq!(
-            SealedHolProofRecipe::from_untrusted_bytes(VERSION_5_NESTED_IDENTITY).unwrap(),
+            SealedHolProofRecipe::from_untrusted_bytes(VERSION_6_NESTED_IDENTITY).unwrap(),
             recipe
         );
         let kernel = Kernel::ephemeral();
@@ -2096,6 +2576,321 @@ mod tests {
         let kernel = Kernel::ephemeral();
         let artifact = recipe.replay(&kernel).unwrap();
         assert_eq!(artifact.signer(), kernel.key_id());
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn context_capabilities_have_fixed_wire_and_exact_kernel_state() {
+        let recipe = context_capabilities_test_recipe();
+        assert_eq!(recipe.as_bytes(), CONTEXT_CAPABILITIES_WIRE);
+        assert_eq!(
+            SealedHolProofRecipe::from_untrusted_bytes(CONTEXT_CAPABILITIES_WIRE).unwrap(),
+            recipe
+        );
+        let artifact = recipe.replay(&Kernel::ephemeral()).unwrap();
+        let bytes = covalence_neutron::Bytes::copy_from_slice(artifact.image());
+        let image = covalence_neutron::Connection::deserialize(&bytes).unwrap();
+        let sqlite = image.sqlite();
+        let (combined, conclusion) = {
+            let mut statement = sqlite
+                .prepare(
+                    "SELECT export_id, local_id, sort, name FROM hol_namespace_export
+                     WHERE namespace_id = ?1 ORDER BY export_id",
+                )
+                .unwrap();
+            let rows = statement
+                .query_map([artifact.namespace_id()], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                })
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            assert_eq!(
+                rows,
+                vec![
+                    (0, rows[0].1, "context".into(), "combined_context".into()),
+                    (1, rows[1].1, "term".into(), "weakened_truth".into()),
+                ]
+            );
+            (rows[0].1, rows[1].1)
+        };
+        let members = {
+            let mut statement = sqlite
+                .prepare(
+                    "SELECT term_id FROM hol_context_member WHERE ctx_id = ?1 ORDER BY term_id",
+                )
+                .unwrap();
+            statement
+                .query_map([combined], |row| row.get::<_, i64>(0))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        assert_eq!(members.len(), 2);
+        assert!(members.contains(&conclusion));
+        let p = *members
+            .iter()
+            .find(|member| **member != conclusion)
+            .unwrap();
+        let singleton_context = |member| {
+            sqlite
+                .query_row(
+                    "SELECT ctx_id FROM hol_context_member
+                     WHERE term_id = ?1 AND ctx_id IN (
+                         SELECT ctx_id FROM hol_context_member GROUP BY ctx_id HAVING count(*) = 1
+                     )",
+                    [member],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap()
+        };
+        let a = singleton_context(p);
+        let b = singleton_context(conclusion);
+        let mut implication_statement = sqlite
+            .prepare(
+                "SELECT antecedent_ctx_id, consequent_ctx_id
+                 FROM hol_context_implication ORDER BY antecedent_ctx_id, consequent_ctx_id",
+            )
+            .unwrap();
+        let implications = implication_statement
+            .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let mut expected = vec![(a, combined), (combined, a), (a, b), (combined, b)];
+        expected.sort_unstable();
+        assert_eq!(implications, expected);
+        assert_eq!(
+            sqlite
+                .query_row(
+                    "SELECT left_ctx_id, right_ctx_id, result_ctx_id
+                     FROM hol_context_exact_union",
+                    [],
+                    |row| Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?
+                    )),
+                )
+                .unwrap(),
+            (a, b, combined)
+        );
+        assert_eq!(
+            sqlite
+                .query_row("SELECT count(*) FROM hol_context_exact_union", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            sqlite
+                .query_row("SELECT ctx_id, term_id FROM hol_judgement", [], |row| {
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+                })
+                .unwrap(),
+            (combined, conclusion)
+        );
+        assert_eq!(
+            sqlite
+                .query_row("SELECT count(*) FROM hol_judgement", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn context_capability_replay_rejects_unproved_authority_and_bad_relations() {
+        let replay_fails = |mut nodes: Vec<RecipeNode>| {
+            let namespace = nodes.len();
+            nodes.push(RecipeNode::Namespace { name: None });
+            assert!(
+                SealedHolProofRecipe::seal(nodes, namespace)
+                    .unwrap()
+                    .replay(&Kernel::ephemeral())
+                    .is_err()
+            );
+        };
+
+        // A theorem-sorted persistence node is metadata, not a branded theorem capability.
+        replay_fails(vec![
+            RecipeNode::Bool(true),
+            RecipeNode::EmptyContext,
+            RecipeNode::ExtendContext { base: 1, member: 0 },
+            RecipeNode::Truth { context: 1 },
+            RecipeNode::Persist { theorem: 3 },
+            RecipeNode::EmptyTheoremWitnessList,
+            RecipeNode::ExtendTheoremWitnessList {
+                base: 5,
+                witness: 4,
+            },
+            RecipeNode::ContextImplication {
+                antecedent: 1,
+                consequent: 2,
+                witnesses: 6,
+            },
+        ]);
+        // Missing, duplicate, and wrong-context theorem witnesses reach Nucleus and fail there.
+        replay_fails(vec![
+            RecipeNode::Bool(true),
+            RecipeNode::EmptyContext,
+            RecipeNode::ExtendContext { base: 1, member: 0 },
+            RecipeNode::EmptyTheoremWitnessList,
+            RecipeNode::ContextImplication {
+                antecedent: 1,
+                consequent: 2,
+                witnesses: 3,
+            },
+        ]);
+        replay_fails(vec![
+            RecipeNode::Bool(true),
+            RecipeNode::EmptyContext,
+            RecipeNode::ExtendContext { base: 1, member: 0 },
+            RecipeNode::Truth { context: 1 },
+            RecipeNode::EmptyTheoremWitnessList,
+            RecipeNode::ExtendTheoremWitnessList {
+                base: 4,
+                witness: 3,
+            },
+            RecipeNode::ExtendTheoremWitnessList {
+                base: 5,
+                witness: 3,
+            },
+            RecipeNode::ContextImplication {
+                antecedent: 1,
+                consequent: 2,
+                witnesses: 6,
+            },
+        ]);
+        replay_fails(vec![
+            RecipeNode::Bool(true),
+            RecipeNode::EmptyContext,
+            RecipeNode::ExtendContext { base: 1, member: 0 },
+            RecipeNode::Truth { context: 2 },
+            RecipeNode::EmptyTheoremWitnessList,
+            RecipeNode::ExtendTheoremWitnessList {
+                base: 4,
+                witness: 3,
+            },
+            RecipeNode::ContextImplication {
+                antecedent: 1,
+                consequent: 2,
+                witnesses: 5,
+            },
+        ]);
+
+        // Paths do not search, weakening checks orientation, and structural relations recheck.
+        replay_fails(vec![
+            RecipeNode::Bool(true),
+            RecipeNode::EmptyContext,
+            RecipeNode::ExtendContext { base: 1, member: 0 },
+            RecipeNode::SingletonContextPath { context: 1 },
+            RecipeNode::ExtendContextPath {
+                base: 3,
+                context: 2,
+            },
+            RecipeNode::ContextImplicationPath { path: 4 },
+        ]);
+        replay_fails(vec![
+            RecipeNode::Bool(true),
+            RecipeNode::EmptyContext,
+            RecipeNode::ExtendContext { base: 1, member: 0 },
+            RecipeNode::SingletonContextPath { context: 2 },
+            RecipeNode::ContextImplicationPath { path: 3 },
+            RecipeNode::Truth { context: 1 },
+            RecipeNode::Weakening {
+                implication: 4,
+                theorem: 5,
+            },
+        ]);
+        replay_fails(vec![
+            RecipeNode::Bool(true),
+            RecipeNode::EmptyContext,
+            RecipeNode::ExtendContext { base: 1, member: 0 },
+            RecipeNode::ContextUnion {
+                left: 1,
+                right: 1,
+                result: 2,
+            },
+        ]);
+        replay_fails(vec![
+            RecipeNode::Bool(true),
+            RecipeNode::EmptyContext,
+            RecipeNode::ExtendContext { base: 1, member: 0 },
+            RecipeNode::EmptyTheoremWitnessList,
+            RecipeNode::ContextImplication {
+                antecedent: 2,
+                consequent: 1,
+                witnesses: 3,
+            },
+            RecipeNode::EmptyTheoremWitnessList,
+            RecipeNode::ContextImplication {
+                antecedent: 2,
+                consequent: 1,
+                witnesses: 5,
+            },
+            RecipeNode::ContextEquivalence {
+                forward: 4,
+                backward: 6,
+            },
+        ]);
+    }
+
+    #[test]
+    fn theorem_witness_lists_and_context_paths_are_bounded_at_64() {
+        let mut witness_nodes = vec![
+            RecipeNode::EmptyContext,
+            RecipeNode::Truth { context: 0 },
+            RecipeNode::EmptyTheoremWitnessList,
+        ];
+        let mut list = 2;
+        for _ in 0..MAX_CONTEXT_MEMBERS {
+            witness_nodes.push(RecipeNode::ExtendTheoremWitnessList {
+                base: list,
+                witness: 1,
+            });
+            list = witness_nodes.len() - 1;
+        }
+        witness_nodes.push(RecipeNode::Namespace { name: None });
+        assert!(SealedHolProofRecipe::seal(witness_nodes.clone(), list + 1).is_ok());
+        witness_nodes.insert(
+            list + 1,
+            RecipeNode::ExtendTheoremWitnessList {
+                base: list,
+                witness: 1,
+            },
+        );
+        assert!(SealedHolProofRecipe::seal(witness_nodes, list + 2).is_err());
+
+        let mut path_nodes = vec![
+            RecipeNode::EmptyContext,
+            RecipeNode::SingletonContextPath { context: 0 },
+        ];
+        let mut path = 1;
+        for _ in 1..MAX_CONTEXT_MEMBERS {
+            path_nodes.push(RecipeNode::ExtendContextPath {
+                base: path,
+                context: 0,
+            });
+            path = path_nodes.len() - 1;
+        }
+        path_nodes.push(RecipeNode::Namespace { name: None });
+        assert!(SealedHolProofRecipe::seal(path_nodes.clone(), path + 1).is_ok());
+        path_nodes.insert(
+            path + 1,
+            RecipeNode::ExtendContextPath {
+                base: path,
+                context: 0,
+            },
+        );
+        assert!(SealedHolProofRecipe::seal(path_nodes, path + 2).is_err());
     }
 
     #[test]
@@ -2351,7 +3146,7 @@ mod tests {
         let mut bytes = closed_beta().as_bytes().to_vec();
         bytes.push(0);
         assert!(SealedHolProofRecipe::from_untrusted_bytes(&bytes).is_err());
-        for version in [1, 2, 3, 4] {
+        for version in [1, 2, 3, 4, 5] {
             let mut old_version = closed_beta().as_bytes().to_vec();
             old_version[0] = version;
             assert!(matches!(
@@ -2520,7 +3315,7 @@ mod tests {
         ));
         for retired_tag in [5, 10] {
             assert!(matches!(
-                SealedHolProofRecipe::from_untrusted_bytes(&[5, 0, 1, 0, 0, retired_tag]),
+                SealedHolProofRecipe::from_untrusted_bytes(&[6, 0, 1, 0, 0, retired_tag]),
                 Err(HolProofRecipeError::Invalid(
                     "unknown sealed recipe node tag"
                 ))
@@ -2543,9 +3338,18 @@ mod tests {
             (0x45, 4),
             (0x46, 6),
             (0x47, 2),
+            (0x51, 4),
+            (0x52, 6),
+            (0x53, 2),
+            (0x54, 2),
+            (0x55, 4),
+            (0x56, 2),
+            (0x57, 4),
+            (0x58, 6),
+            (0x59, 4),
         ] {
             for available in 0..operand_bytes {
-                let mut bytes = vec![5, 0, 1, 0, 0, tag];
+                let mut bytes = vec![6, 0, 1, 0, 0, tag];
                 bytes.resize(bytes.len() + available, 0);
                 assert!(matches!(
                     SealedHolProofRecipe::from_untrusted_bytes(&bytes),

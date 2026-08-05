@@ -3915,6 +3915,14 @@
       ]
     },
     {
+      "id": "workspace#covalence-hol-proof-guest-context-capabilities@0.0.0",
+      "name": "covalence-hol-proof-guest-context-capabilities",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#wit-bindgen@0.57.1"
+      ]
+    },
+    {
       "id": "workspace#covalence-hol-proof-guest-conversions@0.0.0",
       "name": "covalence-hol-proof-guest-conversions",
       "category": "tcb",

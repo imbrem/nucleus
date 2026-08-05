@@ -16,6 +16,7 @@ members = [
   "crates/hol-proof-guest-conversions",
   "crates/hol-proof-guest-assumptions",
   "crates/hol-proof-guest-choice",
+  "crates/hol-proof-guest-context-capabilities",
   "crates/repl",
   "crates/bin/nucleus",
 ]

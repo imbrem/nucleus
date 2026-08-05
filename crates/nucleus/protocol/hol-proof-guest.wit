@@ -1,4 +1,4 @@
-package covalence:hol-proof-guest@0.6.0;
+package covalence:hol-proof-guest@0.7.0;
 
 /// A bounded, non-authoritative recipe builder supplied to an untrusted proof guest.
 ///
@@ -14,8 +14,9 @@ package covalence:hol-proof-guest@0.6.0;
 /// signing.
 ///
 /// This contract exposes schematic binding, first-class conversions, immutable contexts, and the
-/// first rules for assumptions, equality composition, and Hilbert choice. Extending it with
-/// another HOL rule changes the contract identity and requires an explicit host policy operation.
+/// rules for assumptions, equality composition, Hilbert choice, and context capabilities.
+/// Extending it with another HOL rule changes the contract identity and requires an explicit host
+/// policy operation.
 interface host {
   enum append-error {
     invalid-resource,
@@ -29,6 +30,11 @@ interface host {
   resource context-node;
   resource conversion-node;
   resource theorem-node;
+  resource theorem-witness-list-node;
+  resource context-implication-node;
+  resource context-path-node;
+  resource context-union-node;
+  resource context-equivalence-node;
   resource namespace-node;
   resource term-instantiation-map-node;
   resource type-instantiation-map-node;
@@ -81,6 +87,49 @@ interface host {
     prove-choice: func(
       premise: borrow<theorem-node>,
     ) -> result<theorem-node, append-error>;
+
+    empty-theorem-witness-list: func() -> result<theorem-witness-list-node, append-error>;
+    extend-theorem-witness-list: func(
+      base: borrow<theorem-witness-list-node>,
+      witness: borrow<theorem-node>,
+    ) -> result<theorem-witness-list-node, append-error>;
+    /// `antecedent => consequent` means that every consequent member has a theorem under the
+    /// antecedent; the witness list must cover that member set exactly.
+    prove-context-implication: func(
+      antecedent: borrow<context-node>,
+      consequent: borrow<context-node>,
+      witnesses: borrow<theorem-witness-list-node>,
+    ) -> result<context-implication-node, append-error>;
+    persist-context-implication: func(
+      implication: borrow<context-implication-node>,
+    ) -> result<_, append-error>;
+    singleton-context-path: func(
+      context: borrow<context-node>,
+    ) -> result<context-path-node, append-error>;
+    extend-context-path: func(
+      base: borrow<context-path-node>,
+      context: borrow<context-node>,
+    ) -> result<context-path-node, append-error>;
+    /// Composes persisted implication edges in the path's listed order.
+    prove-context-implication-path: func(
+      path: borrow<context-path-node>,
+    ) -> result<context-implication-node, append-error>;
+    /// Transports a theorem at the implication's consequent to its antecedent.
+    prove-weakening: func(
+      implication: borrow<context-implication-node>,
+      theorem: borrow<theorem-node>,
+    ) -> result<theorem-node, append-error>;
+    /// Checks and persists the exact ordered structural union. Equivalence below is instead a
+    /// derived, nonpersistent capability formed from opposite implications.
+    prove-context-union: func(
+      left: borrow<context-node>,
+      right: borrow<context-node>,
+      result-context: borrow<context-node>,
+    ) -> result<context-union-node, append-error>;
+    prove-context-equivalence: func(
+      forward: borrow<context-implication-node>,
+      backward: borrow<context-implication-node>,
+    ) -> result<context-equivalence-node, append-error>;
 
     conversion-reflexivity: func(
       term: borrow<term-node>,
