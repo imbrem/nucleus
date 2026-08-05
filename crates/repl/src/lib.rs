@@ -55,6 +55,12 @@ pub use hol_nonsurjective::{
     produce_signed_nonsurjective_conjunct, retain_signed_nonsurjective_conjunct,
 };
 
+mod hol_natlike_missing_zero;
+pub use hol_natlike_missing_zero::{
+    SignedNatLikeMissingZero, produce_and_retain_signed_natlike_missing_zero,
+    produce_signed_natlike_missing_zero,
+};
+
 mod hol_guest_plan;
 pub use hol_guest_plan::{HolProofRecipeError, MAX_SEALED_HOL_RECIPE_BYTES, SealedHolProofRecipe};
 
