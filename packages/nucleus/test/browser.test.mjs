@@ -159,6 +159,7 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
   assert.deepEqual(interkernelResult.receiverPhases, [
     "image-size-checked",
     "signature-authenticated",
+    "signer-pinned",
     "image-detached-validated",
     "signer-trusted",
     "snapshot-accepted",
@@ -187,6 +188,8 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
     interkernelResult.wrongSignatureError,
     /signature-authenticated/,
   );
+  assert.match(interkernelResult.validAttackerKeyError, /signer-pinned/);
+  assert.equal(interkernelResult.receiverStateUnchangedBeforeTrust, true);
   // The exact 64 MiB boundary is covered in Rust and Node/Wasm. Allocating it
   // here would turn this Worker/PKI test into a Chromium container memory test.
   assert.match(interkernelResult.wrongNamespaceError, /theorem-read/);

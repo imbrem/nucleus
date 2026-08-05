@@ -19,12 +19,22 @@ type Request =
   | { id: number; operation: "runSignedHolRoundTrip"; connection: number }
   | { id: number; operation: "maxImageBytes" }
   | { id: number; operation: "produceSignedHolArtifact"; connection: number }
+  | { id: number; operation: "holImageHash"; connection: number }
   | {
       id: number;
-      operation: "receiveSignedHolArtifact";
-      connection: number;
+      operation: "authenticatePinnedSignedHolArtifact";
+      expectedKernel: number;
+      expectedSigner: string;
+      expectedPublicKey: Uint8Array;
       artifact: SignedHolArtifact;
     }
+  | {
+      id: number;
+      operation: "trustPinnedSignedHolArtifact";
+      connection: number;
+      pinned: number;
+    }
+  | { id: number; operation: "abandonPinnedSignedHolArtifact"; pinned: number }
   | {
       id: number;
       operation: "putImage";
@@ -104,21 +114,33 @@ async function execute(request: Request): Promise<unknown> {
       return readProducedSignedHol(
         connection.produce_signed_hol_artifact(request.connection),
       );
-    case "receiveSignedHolArtifact": {
+    case "holImageHash":
+      return connection.hol_image_hash(request.connection);
+    case "authenticatePinnedSignedHolArtifact": {
       const artifact = request.artifact;
-      return readReceivedHolSnapshot(
-        connection.receive_signed_hol_artifact(
-          request.connection,
-          artifact.namespace,
-          artifact.image,
-          artifact.schema,
-          artifact.imageHash,
-          artifact.signer,
-          artifact.publicKey,
-          artifact.signature,
-        ),
+      return connection.authenticate_pinned_signed_hol_artifact(
+        request.expectedKernel,
+        request.expectedSigner,
+        request.expectedPublicKey,
+        artifact.namespace,
+        artifact.image,
+        artifact.schema,
+        artifact.imageHash,
+        artifact.signer,
+        artifact.publicKey,
+        artifact.signature,
       );
     }
+    case "trustPinnedSignedHolArtifact":
+      return readReceivedHolSnapshot(
+        connection.trust_pinned_signed_hol_artifact(
+          request.connection,
+          request.pinned,
+        ),
+      );
+    case "abandonPinnedSignedHolArtifact":
+      connection.abandon_pinned_signed_hol_artifact(request.pinned);
+      return undefined;
     case "putImage":
       return connection.put_image(request.connection, request.bytes);
     case "attachImage":

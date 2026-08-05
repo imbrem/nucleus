@@ -21,6 +21,7 @@ pub use covalence_nucleus::{AllowAll, Connection, Hol, Kernel, Sql};
 use covalence_nucleus::{
     AuthenticatedValidatedHolImage, ContextId, ExportId, HolDatabaseRef, ImportedExport,
     ImportedTermView, NamespaceExport, ProofError, SignedSnapshotEnvelope, TermError, TypeError,
+    ed25519_key_id,
 };
 
 const SCHEMA: &str = "
@@ -92,6 +93,115 @@ impl fmt::Display for KernelId {
         self.0.fmt(formatter)
     }
 }
+
+/// One independently supplied endpoint identity selected by the REPL caller.
+///
+/// This is routing policy, not HOL trust. Its signer is derived from and
+/// checked against the exact Ed25519 public key before it may pin an artifact.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExpectedKernelIdentity {
+    kernel: KernelId,
+    signer: covalence_lib_hash::O256,
+    public_key: [u8; 32],
+}
+
+impl ExpectedKernelIdentity {
+    /// Derives the signer for one independently supplied exact public key.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `public_key` is exactly 32 bytes.
+    pub fn from_public_key(
+        kernel: KernelId,
+        public_key: &[u8],
+    ) -> Result<Self, ExpectedKernelIdentityError> {
+        let public_key = <[u8; 32]>::try_from(public_key)
+            .map_err(|_| ExpectedKernelIdentityError::InvalidPublicKeyWidth)?;
+        Ok(Self {
+            kernel,
+            signer: ed25519_key_id(&public_key),
+            public_key,
+        })
+    }
+
+    /// Reconstructs an independently transported endpoint identity.
+    ///
+    /// The caller must choose these fields independently of the artifact being
+    /// checked. This function establishes only key/signer coherence.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed fields or a signer which is not derived
+    /// from the exact public key.
+    pub fn from_untrusted_parts(
+        kernel: KernelId,
+        signer: &str,
+        public_key: &[u8],
+    ) -> Result<Self, ExpectedKernelIdentityError> {
+        let expected = Self::from_public_key(kernel, public_key)?;
+        let signer = covalence_lib_hash::O256::from_hex(signer)
+            .map_err(|_| ExpectedKernelIdentityError::InvalidSigner)?;
+        let derived = expected.signer;
+        if signer != derived {
+            return Err(ExpectedKernelIdentityError::SignerMismatch {
+                claimed: signer,
+                derived,
+            });
+        }
+        Ok(expected)
+    }
+
+    /// Returns the directory-local endpoint selected by the caller.
+    #[must_use]
+    pub const fn kernel(&self) -> KernelId {
+        self.kernel
+    }
+
+    /// Returns the checked public-key identity.
+    #[must_use]
+    pub const fn signer(&self) -> covalence_lib_hash::O256 {
+        self.signer
+    }
+
+    /// Returns the exact expected Ed25519 public key.
+    #[must_use]
+    pub const fn public_key(&self) -> &[u8; 32] {
+        &self.public_key
+    }
+}
+
+/// Malformed independently supplied kernel identity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExpectedKernelIdentityError {
+    /// The Ed25519 public key is not exactly 32 bytes.
+    InvalidPublicKeyWidth,
+    /// The signer coordinate is not an O256 hexadecimal string.
+    InvalidSigner,
+    /// The claimed signer is not derived from the supplied public key.
+    SignerMismatch {
+        /// Claimed identity.
+        claimed: covalence_lib_hash::O256,
+        /// Identity derived from the exact public key.
+        derived: covalence_lib_hash::O256,
+    },
+}
+
+impl fmt::Display for ExpectedKernelIdentityError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidPublicKeyWidth => {
+                formatter.write_str("kernel public key must be exactly 32 bytes")
+            }
+            Self::InvalidSigner => formatter.write_str("kernel signer must be an O256 hex string"),
+            Self::SignerMismatch { claimed, derived } => write!(
+                formatter,
+                "kernel signer {claimed} differs from public-key identity {derived}"
+            ),
+        }
+    }
+}
+
+impl StdError for ExpectedKernelIdentityError {}
 
 /// Inspectable metadata for one registered kernel endpoint.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -256,6 +366,38 @@ impl<C> Repl<C> {
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(ReplError::from)
+    }
+
+    /// Loads one endpoint's exact directory key as an expected identity.
+    ///
+    /// This does not grant Nucleus trust. It creates an immutable routing
+    /// capability which a later artifact-authentication step may compare
+    /// against before the caller separately elects to trust the result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown endpoint, malformed directory key, or
+    /// failed state inspection.
+    pub fn expected_kernel_identity(
+        &self,
+        kernel: KernelId,
+    ) -> Result<ExpectedKernelIdentity, ReplError> {
+        let public_key = self
+            .state
+            .sqlite()
+            .query_row(
+                "SELECT public_key FROM repl_kernel WHERE kernel_id = ?1",
+                [kernel.0],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .map_err(|error| match error {
+                sqlite::Error::QueryReturnedNoRows => ReplError::UnknownKernel(kernel),
+                other => ReplError::State(other),
+            })?;
+        let public_key = <[u8; 32]>::try_from(public_key.as_slice())
+            .map_err(|_| ReplError::CorruptKernelPublicKey(kernel))?;
+        ExpectedKernelIdentity::from_public_key(kernel, &public_key)
+            .map_err(|_| ReplError::CorruptKernelPublicKey(kernel))
     }
 
     /// Lists managed connections in directory order.
@@ -517,6 +659,7 @@ pub const SIGNED_HOL_PHASES: &[&str] = &[
     "snapshot-signed",
     "image-size-checked",
     "signature-authenticated",
+    "signer-pinned",
     "image-detached-validated",
     "signer-trusted",
     "snapshot-accepted",
@@ -538,6 +681,37 @@ pub struct SignedHolArtifact {
     signer: covalence_lib_hash::O256,
     public_key: Vec<u8>,
     signature: Vec<u8>,
+}
+
+/// Authenticated and detached-validated artifact pinned to an independent endpoint key.
+///
+/// Constructing this capability never borrows or mutates a receiver connection. The
+/// caller must separately pass it to [`trust_and_receive_pinned_signed_hol_artifact`]
+/// to make an explicit trust/import decision.
+pub struct PinnedSignedHolArtifact {
+    expected: ExpectedKernelIdentity,
+    namespace_id: i64,
+    image: AuthenticatedValidatedHolImage,
+}
+
+impl PinnedSignedHolArtifact {
+    /// Returns the independently selected source endpoint.
+    #[must_use]
+    pub const fn expected_kernel(&self) -> KernelId {
+        self.expected.kernel()
+    }
+
+    /// Returns the exact authenticated signer pinned to that endpoint.
+    #[must_use]
+    pub const fn signer(&self) -> covalence_lib_hash::O256 {
+        self.expected.signer()
+    }
+
+    /// Returns the untrusted selector into the authenticated complete database.
+    #[must_use]
+    pub const fn namespace_id(&self) -> i64 {
+        self.namespace_id
+    }
 }
 
 /// Producer-local presentation paired with an independently transportable artifact.
@@ -565,7 +739,7 @@ impl SignedHolArtifact {
     /// Reconstructs untrusted transport fields without authenticating them.
     ///
     /// This parses hash coordinates and checks fixed-width fields only.
-    /// [`receive_signed_hol_artifact`] performs every semantic check.
+    /// [`authenticate_pinned_signed_hol_artifact`] performs every semantic check.
     ///
     /// # Errors
     ///
@@ -925,20 +1099,20 @@ pub fn produce_signed_hol_artifact(
     })
 }
 
-/// Authenticates, validates, trusts, imports, and reads one transported artifact.
+/// Authenticates and validates one artifact against an independently selected endpoint.
 ///
-/// The caller supplies the receiver connection explicitly, so it remains in
-/// the REPL and its connection-local trust and persistent import state can be
-/// inspected after this operation. Imported theorem authority remains scoped
-/// to the immutable reader and is never promoted to a local LCF theorem.
+/// This phase has no receiver connection and therefore cannot mutate trust,
+/// imports, namespaces, judgements, or VFS state. Internal signature coherence
+/// is followed by an exact expected signer/key comparison before `SQLite` bytes
+/// are detached-validated.
 ///
 /// # Errors
 ///
-/// Returns the name and message of the first rejected receiver stage.
-pub fn receive_signed_hol_artifact(
-    target: &mut Connection<Hol<AllowAll>>,
+/// Returns the name and message of the first rejected pre-trust stage.
+pub fn authenticate_pinned_signed_hol_artifact(
+    expected: &ExpectedKernelIdentity,
     artifact: &SignedHolArtifact,
-) -> Result<ReceivedHolSnapshot, SignedHolRoundTripError> {
+) -> Result<PinnedSignedHolArtifact, SignedHolRoundTripError> {
     if artifact.image.len() > MAX_IMAGE_BYTES {
         return Err(SignedHolRoundTripError::at(
             "image-size-checked",
@@ -948,7 +1122,47 @@ pub fn receive_signed_hol_artifact(
             ),
         ));
     }
-    let validated = authenticate_and_validate_artifact(artifact)?;
+    let authenticated = authenticate_artifact(artifact)?;
+    let claim = authenticated.claim();
+    if claim.signer() != expected.signer || claim.public_key() != &expected.public_key {
+        return Err(SignedHolRoundTripError::at(
+            "signer-pinned",
+            format_args!(
+                "artifact signer {} is not the selected kernel {} signer {}",
+                claim.signer(),
+                expected.kernel,
+                expected.signer,
+            ),
+        ));
+    }
+    let image = AuthenticatedValidatedHolImage::validate_default(authenticated)
+        .map_err(|error| SignedHolRoundTripError::at("image-detached-validated", error))?;
+    Ok(PinnedSignedHolArtifact {
+        expected: expected.clone(),
+        namespace_id: artifact.namespace_id,
+        image,
+    })
+}
+
+/// Explicitly trusts, imports, and reads one already pinned artifact.
+///
+/// Authentication, expected-key pinning, and detached validation have already
+/// completed without a receiver. Calling this function is the distinct policy
+/// decision which mutates connection-local trust and persistent import state.
+/// Imported theorem authority remains scoped to the immutable reader.
+///
+/// # Errors
+///
+/// Returns the first rejected trust, import, immutable mount, or reader stage.
+pub fn trust_and_receive_pinned_signed_hol_artifact(
+    target: &mut Connection<Hol<AllowAll>>,
+    pinned: PinnedSignedHolArtifact,
+) -> Result<ReceivedHolSnapshot, SignedHolRoundTripError> {
+    let PinnedSignedHolArtifact {
+        namespace_id,
+        image: validated,
+        ..
+    } = pinned;
     let claim = validated.claim();
     target
         .trust_snapshot_signer(claim)
@@ -963,15 +1177,10 @@ pub fn receive_signed_hol_artifact(
         .accept_trusted_import(import, claim)
         .map_err(|error| SignedHolRoundTripError::at("namespace-imported", error))?;
     let namespace = target
-        .create_imported_namespace(
-            None,
-            Some("received-beta-demo"),
-            import,
-            artifact.namespace_id,
-        )
+        .create_imported_namespace(None, Some("received-beta-demo"), import, namespace_id)
         .map_err(|error| SignedHolRoundTripError::at("namespace-imported", error))?;
 
-    let mounted = covalence_neutron::ImmutableImage::register(Arc::from(artifact.image.as_slice()))
+    let mounted = covalence_neutron::ImmutableImage::register(Arc::from(validated.image().bytes()))
         .map_err(|error| SignedHolRoundTripError::at("theorem-read", error))?;
     let (context_id, conclusion_id) = target
         .match_trusted_import_image(trusted, validated)
@@ -987,13 +1196,13 @@ pub fn receive_signed_hol_artifact(
     })
 }
 
-fn authenticate_and_validate_artifact(
+fn authenticate_artifact(
     artifact: &SignedHolArtifact,
-) -> Result<AuthenticatedValidatedHolImage, SignedHolRoundTripError> {
+) -> Result<covalence_nucleus::AuthenticatedSnapshot, SignedHolRoundTripError> {
     let public_key: [u8; 32] = artifact.public_key.as_slice().try_into().map_err(|_| {
         SignedHolRoundTripError::invalid("signature-authenticated", "public key is not 32 bytes")
     })?;
-    let authenticated = SignedSnapshotEnvelope::new(
+    SignedSnapshotEnvelope::new(
         &artifact.image,
         artifact.schema,
         artifact.image_hash,
@@ -1002,9 +1211,7 @@ fn authenticate_and_validate_artifact(
         &artifact.signature,
     )
     .authenticate()
-    .map_err(|error| SignedHolRoundTripError::at("signature-authenticated", error))?;
-    AuthenticatedValidatedHolImage::validate_default(authenticated)
-        .map_err(|error| SignedHolRoundTripError::at("image-detached-validated", error))
+    .map_err(|error| SignedHolRoundTripError::at("signature-authenticated", error))
 }
 
 fn read_imported_beta(
@@ -1075,7 +1282,13 @@ pub fn run_signed_hol_round_trip(
     target: &mut Connection<Hol<AllowAll>>,
 ) -> Result<SignedHolRoundTripResult, SignedHolRoundTripError> {
     let output = produce_signed_hol_artifact(producer_kernel, source)?;
-    let received = receive_signed_hol_artifact(target, output.artifact())?;
+    let expected = ExpectedKernelIdentity {
+        kernel: KernelId::LOCAL,
+        signer: producer_kernel.key_id(),
+        public_key: producer_kernel.verifying_key().to_bytes(),
+    };
+    let pinned = authenticate_pinned_signed_hol_artifact(&expected, output.artifact())?;
+    let received = trust_and_receive_pinned_signed_hol_artifact(target, pinned)?;
     Ok(SignedHolRoundTripResult::from_parts(output, received))
 }
 
@@ -1303,6 +1516,8 @@ pub enum ReplError {
     UnknownConnection(ConnectionId),
     /// A kernel endpoint is not registered in this directory.
     UnknownKernel(KernelId),
+    /// A directory row contains a malformed endpoint public key.
+    CorruptKernelPublicKey(KernelId),
     /// The implicit local kernel row lives for the directory's lifetime.
     CannotUnregisterLocalKernel,
     /// A state inspection statement returned no columns.
@@ -1318,6 +1533,9 @@ impl fmt::Display for ReplError {
             Self::State(error) => write!(formatter, "could not access REPL state: {error}"),
             Self::UnknownConnection(id) => write!(formatter, "unknown connection {id}"),
             Self::UnknownKernel(id) => write!(formatter, "unknown kernel {id}"),
+            Self::CorruptKernelPublicKey(id) => {
+                write!(formatter, "kernel {id} has a malformed public key")
+            }
             Self::CannotUnregisterLocalKernel => {
                 formatter.write_str("cannot unregister the local kernel")
             }
@@ -1336,6 +1554,7 @@ impl StdError for ReplError {
             Self::State(error) => Some(error),
             Self::UnknownConnection(_)
             | Self::UnknownKernel(_)
+            | Self::CorruptKernelPublicKey(_)
             | Self::CannotUnregisterLocalKernel
             | Self::NoActiveConnection
             | Self::StateQueryReturnsNoRows => None,
@@ -1377,6 +1596,7 @@ pub fn smoke() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use covalence_nucleus::{ImportId, NamespaceId, TrustedImportId};
 
     #[test]
     fn orchestrates_two_simultaneous_sql_connections() {
@@ -1498,6 +1718,27 @@ mod tests {
             .register_kernel("worker", Some("worker:beta"), &[2; 32])
             .unwrap();
         assert_ne!(first, second);
+        let first_identity = repl.expected_kernel_identity(first).unwrap();
+        assert_eq!(first_identity.kernel(), first);
+        assert_eq!(first_identity.public_key(), &[1; 32]);
+        assert_eq!(first_identity.signer(), ed25519_key_id(&[1; 32]));
+        assert_eq!(
+            ExpectedKernelIdentity::from_untrusted_parts(
+                first,
+                &first_identity.signer().to_string(),
+                &[1; 32],
+            )
+            .unwrap(),
+            first_identity
+        );
+        assert!(matches!(
+            ExpectedKernelIdentity::from_untrusted_parts(
+                first,
+                &ed25519_key_id(&[9; 32]).to_string(),
+                &[1; 32],
+            ),
+            Err(ExpectedKernelIdentityError::SignerMismatch { .. })
+        ));
 
         let first_connection = repl
             .insert_at(first, "nucleus/hol", Some("7"), "alpha")
@@ -1651,6 +1892,11 @@ mod tests {
         let mut source = producer.open_hol(AllowAll).unwrap();
         let output = produce_signed_hol_artifact(&producer, &mut source).unwrap();
         let artifact = output.artifact();
+        let expected = ExpectedKernelIdentity::from_public_key(
+            KernelId::from_u32(7),
+            producer.verifying_key().as_bytes(),
+        )
+        .unwrap();
 
         let oversized = SignedHolArtifact::from_untrusted_parts(
             artifact.namespace_id(),
@@ -1662,25 +1908,13 @@ mod tests {
             artifact.signature().to_vec(),
         )
         .unwrap();
-        let mut target = Kernel::ephemeral().open_hol(AllowAll).unwrap();
         assert_eq!(
-            receive_signed_hol_artifact(&mut target, &oversized)
-                .unwrap_err()
+            authenticate_pinned_signed_hol_artifact(&expected, &oversized)
+                .err()
+                .unwrap()
                 .phase(),
             "image-size-checked"
         );
-
-        let reconstructed = SignedHolArtifact::from_untrusted_parts(
-            artifact.namespace_id(),
-            artifact.image().to_vec(),
-            &artifact.schema().to_string(),
-            &artifact.image_hash().to_string(),
-            &artifact.signer().to_string(),
-            artifact.public_key().to_vec(),
-            artifact.signature().to_vec(),
-        )
-        .unwrap();
-        receive_signed_hol_artifact(&mut target, &reconstructed).unwrap();
 
         let mut bytes = artifact.image().to_vec();
         bytes[0] ^= 1;
@@ -1694,10 +1928,10 @@ mod tests {
             artifact.signature().to_vec(),
         )
         .unwrap();
-        let mut target = Kernel::ephemeral().open_hol(AllowAll).unwrap();
         assert_eq!(
-            receive_signed_hol_artifact(&mut target, &wrong_bytes)
-                .unwrap_err()
+            authenticate_pinned_signed_hol_artifact(&expected, &wrong_bytes)
+                .err()
+                .unwrap()
                 .phase(),
             "signature-authenticated"
         );
@@ -1712,10 +1946,10 @@ mod tests {
             artifact.signature().to_vec(),
         )
         .unwrap();
-        let mut target = Kernel::ephemeral().open_hol(AllowAll).unwrap();
         assert_eq!(
-            receive_signed_hol_artifact(&mut target, &wrong_schema)
-                .unwrap_err()
+            authenticate_pinned_signed_hol_artifact(&expected, &wrong_schema)
+                .err()
+                .unwrap()
                 .phase(),
             "signature-authenticated"
         );
@@ -1732,12 +1966,99 @@ mod tests {
             signature,
         )
         .unwrap();
-        let mut target = Kernel::ephemeral().open_hol(AllowAll).unwrap();
         assert_eq!(
-            receive_signed_hol_artifact(&mut target, &wrong_signature)
-                .unwrap_err()
+            authenticate_pinned_signed_hol_artifact(&expected, &wrong_signature)
+                .err()
+                .unwrap()
                 .phase(),
             "signature-authenticated"
         );
+    }
+
+    #[test]
+    fn pinning_valid_artifact_is_nonmutating_until_explicit_trust() {
+        let producer = Kernel::ephemeral();
+        let mut source = producer.open_hol(AllowAll).unwrap();
+        let output = produce_signed_hol_artifact(&producer, &mut source).unwrap();
+        let expected = ExpectedKernelIdentity::from_public_key(
+            KernelId::from_u32(7),
+            producer.verifying_key().as_bytes(),
+        )
+        .unwrap();
+        let receiver = Kernel::ephemeral();
+        let mut target = receiver.open_hol(AllowAll).unwrap();
+        let before = receiver.export_hol(&mut target).unwrap();
+
+        let pinned = authenticate_pinned_signed_hol_artifact(&expected, output.artifact()).unwrap();
+        let after_authentication = receiver.export_hol(&mut target).unwrap();
+        assert_eq!(before.image().bytes(), after_authentication.image().bytes());
+        let authenticated = authenticate_artifact(output.artifact()).unwrap();
+        assert!(
+            !target
+                .snapshot_signer_is_trusted(authenticated.claim())
+                .unwrap()
+        );
+        assert!(
+            !target
+                .authenticated_snapshot_is_accepted(authenticated.claim())
+                .unwrap()
+        );
+        assert!(target.import_reference(ImportId::from_i64(0)).is_err());
+        assert!(target.namespace(NamespaceId::from_i64(1)).is_err());
+        assert!(target.trusted_import(TrustedImportId::from_i64(0)).is_err());
+
+        trust_and_receive_pinned_signed_hol_artifact(&mut target, pinned).unwrap();
+        assert!(
+            target
+                .snapshot_signer_is_trusted(authenticated.claim())
+                .unwrap()
+        );
+        assert!(
+            target
+                .authenticated_snapshot_is_accepted(authenticated.claim())
+                .unwrap()
+        );
+        assert!(target.import_reference(ImportId::from_i64(0)).is_ok());
+        assert!(target.namespace(NamespaceId::from_i64(1)).is_ok());
+        assert!(target.trusted_import(TrustedImportId::from_i64(0)).is_ok());
+    }
+
+    #[test]
+    fn valid_attacker_key_is_rejected_before_any_receiver_state_changes() {
+        let expected_kernel = Kernel::ephemeral();
+        let expected = ExpectedKernelIdentity::from_public_key(
+            KernelId::from_u32(4),
+            expected_kernel.verifying_key().as_bytes(),
+        )
+        .unwrap();
+        let attacker = Kernel::ephemeral();
+        let mut attacker_source = attacker.open_hol(AllowAll).unwrap();
+        let attack = produce_signed_hol_artifact(&attacker, &mut attacker_source).unwrap();
+
+        let receiver = Kernel::ephemeral();
+        let mut target = receiver.open_hol(AllowAll).unwrap();
+        let before = receiver.export_hol(&mut target).unwrap();
+        assert_eq!(
+            authenticate_pinned_signed_hol_artifact(&expected, attack.artifact())
+                .err()
+                .unwrap()
+                .phase(),
+            "signer-pinned"
+        );
+        let after = receiver.export_hol(&mut target).unwrap();
+        assert_eq!(before.image().bytes(), after.image().bytes());
+
+        let authenticated = authenticate_artifact(attack.artifact()).unwrap();
+        let claim = authenticated.claim();
+        assert!(!target.snapshot_signer_is_trusted(claim).unwrap());
+        assert!(!target.authenticated_snapshot_is_accepted(claim).unwrap());
+        assert!(
+            !target
+                .snapshot_reference_is_accepted(HolDatabaseRef::new(claim.schema(), claim.image(),))
+                .unwrap()
+        );
+        assert!(target.import_reference(ImportId::from_i64(0)).is_err());
+        assert!(target.namespace(NamespaceId::from_i64(1)).is_err());
+        assert!(target.trusted_import(TrustedImportId::from_i64(0)).is_err());
     }
 }

@@ -76,6 +76,14 @@ export interface ReceivedHolSnapshot {
   conclusion: string;
 }
 
+/** Artifact authenticated against one independently selected endpoint key. */
+export interface PinnedSignedHolArtifact {
+  readonly expectedKernelId: KernelId;
+  readonly signer: string;
+  trustAndReceive(): Promise<ReceivedHolSnapshot>;
+  abandon(): Promise<void>;
+}
+
 type SignedHolWireOutcome = Omit<SignedHolOutcome, "receiver"> & {
   receiverConnection: number;
 };
@@ -95,9 +103,7 @@ export interface BrowserHolConnection {
   run(recipe: string): Promise<HolOutcome>;
   runSignedRoundTrip(): Promise<SignedHolOutcome>;
   produceSignedArtifact(): Promise<ProducedSignedHol>;
-  receiveSignedArtifact(
-    artifact: SignedHolArtifact,
-  ): Promise<ReceivedHolSnapshot>;
+  stateImageHash(): Promise<string>;
   close(): Promise<void>;
 }
 
@@ -136,6 +142,10 @@ export interface ManagedBrowserSqlConnection extends BrowserSqlConnection {
 export interface ManagedBrowserHolConnection extends BrowserHolConnection {
   readonly id: ManagedConnectionId;
   readonly kernelId: KernelId;
+  authenticateSignedArtifact(
+    expectedKernel: KernelId,
+    artifact: SignedHolArtifact,
+  ): Promise<PinnedSignedHolArtifact>;
 }
 
 /** One independently keyed Worker endpoint owned by a top-level directory. */
@@ -176,11 +186,20 @@ type RequestBody =
   | { operation: "runSignedHolRoundTrip"; connection: number }
   | { operation: "maxImageBytes" }
   | { operation: "produceSignedHolArtifact"; connection: number }
+  | { operation: "holImageHash"; connection: number }
   | {
-      operation: "receiveSignedHolArtifact";
-      connection: number;
+      operation: "authenticatePinnedSignedHolArtifact";
+      expectedKernel: number;
+      expectedSigner: string;
+      expectedPublicKey: Uint8Array;
       artifact: SignedHolArtifact;
     }
+  | {
+      operation: "trustPinnedSignedHolArtifact";
+      connection: number;
+      pinned: number;
+    }
+  | { operation: "abandonPinnedSignedHolArtifact"; pinned: number }
   | { operation: "putImage"; connection: number; bytes: Uint8Array }
   | {
       operation: "attachImage";
@@ -379,6 +398,23 @@ class WorkerDirectory implements BrowserReplDirectory {
     (await this.#state).unregister_kernel(id);
     this.#kernels.delete(id);
   }
+
+  async expectedIdentity(id: KernelId): Promise<{
+    kernelId: KernelId;
+    publicKey: Uint8Array;
+    signer: string;
+  }> {
+    const kernel = this.#kernels.get(id);
+    if (kernel === undefined) throw new Error(`unknown kernel ${id}`);
+    const rows = await this.kernels();
+    const row = rows.find((entry) => entry.id === id);
+    if (row === undefined) throw new Error(`unknown kernel ${id}`);
+    return {
+      kernelId: id,
+      publicKey: row.publicKey,
+      signer: kernel.signer,
+    };
+  }
 }
 
 class DirectoryKernelEndpoint implements BrowserKernelEndpoint {
@@ -448,6 +484,14 @@ class DirectoryKernelEndpoint implements BrowserKernelEndpoint {
   async closedConnection(connection: DirectoryConnection): Promise<void> {
     this.#connections.delete(connection);
     await this.directory.removeConnection(connection.id);
+  }
+
+  expectedIdentity(id: KernelId): Promise<{
+    kernelId: KernelId;
+    publicKey: Uint8Array;
+    signer: string;
+  }> {
+    return this.directory.expectedIdentity(id);
   }
 
   async closeAll(): Promise<void> {
@@ -563,9 +607,17 @@ class WorkerHolConnection implements BrowserHolConnection {
     });
   }
 
-  async receiveSignedArtifact(
+  stateImageHash(): Promise<string> {
+    return this.#request({
+      operation: "holImageHash",
+      connection: this.connectionId,
+    });
+  }
+
+  async authenticateSignedArtifact(
+    expected: { kernelId: KernelId; publicKey: Uint8Array; signer: string },
     artifact: SignedHolArtifact,
-  ): Promise<ReceivedHolSnapshot> {
+  ): Promise<PinnedSignedHolArtifact> {
     const limit = await this.repl.request<number>({
       operation: "maxImageBytes",
     });
@@ -583,18 +635,43 @@ class WorkerHolConnection implements BrowserHolConnection {
       publicKey: artifact.publicKey.slice(),
       signature: artifact.signature.slice(),
     };
-    return this.#request(
+    const expectedPublicKey = expected.publicKey.slice();
+    const pinned = await this.#request<number>(
       {
-        operation: "receiveSignedHolArtifact",
-        connection: this.connectionId,
+        operation: "authenticatePinnedSignedHolArtifact",
+        expectedKernel: expected.kernelId,
+        expectedSigner: expected.signer,
+        expectedPublicKey,
         artifact: transported,
       },
       [
+        expectedPublicKey.buffer,
         transported.image.buffer,
         transported.publicKey.buffer,
         transported.signature.buffer,
       ],
     );
+    return new WorkerPinnedSignedHolArtifact(
+      this,
+      pinned,
+      expected.kernelId,
+      expected.signer,
+    );
+  }
+
+  trustPinned(pinned: number): Promise<ReceivedHolSnapshot> {
+    return this.#request({
+      operation: "trustPinnedSignedHolArtifact",
+      connection: this.connectionId,
+      pinned,
+    });
+  }
+
+  abandonPinned(pinned: number): Promise<void> {
+    return this.#request({
+      operation: "abandonPinnedSignedHolArtifact",
+      pinned,
+    });
   }
 
   async close(): Promise<void> {
@@ -610,6 +687,29 @@ class WorkerHolConnection implements BrowserHolConnection {
     if (this.#closed)
       return Promise.reject(new Error("HOL connection is closed"));
     return this.repl.request(body, transfer);
+  }
+}
+
+class WorkerPinnedSignedHolArtifact implements PinnedSignedHolArtifact {
+  #open = true;
+
+  constructor(
+    private readonly connection: WorkerHolConnection,
+    private readonly pinned: number,
+    readonly expectedKernelId: KernelId,
+    readonly signer: string,
+  ) {}
+
+  async trustAndReceive(): Promise<ReceivedHolSnapshot> {
+    if (!this.#open) throw new Error("pinned HOL artifact is closed");
+    this.#open = false;
+    return this.connection.trustPinned(this.pinned);
+  }
+
+  async abandon(): Promise<void> {
+    if (!this.#open) return;
+    this.#open = false;
+    await this.connection.abandonPinned(this.pinned);
   }
 }
 
@@ -688,12 +788,16 @@ class DirectoryHolConnection implements ManagedBrowserHolConnection {
     return this.remote.produceSignedArtifact();
   }
 
-  receiveSignedArtifact(
+  stateImageHash(): Promise<string> {
+    return this.remote.stateImageHash();
+  }
+
+  async authenticateSignedArtifact(
+    expectedKernel: KernelId,
     artifact: SignedHolArtifact,
-  ): Promise<ReceivedHolSnapshot> {
-    // This call is the explicit trust action. Registering or opening an
-    // endpoint never imports its key into a Nucleus connection.
-    return this.remote.receiveSignedArtifact(artifact);
+  ): Promise<PinnedSignedHolArtifact> {
+    const expected = await this.kernel.expectedIdentity(expectedKernel);
+    return this.remote.authenticateSignedArtifact(expected, artifact);
   }
 
   async close(): Promise<void> {

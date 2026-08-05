@@ -1,11 +1,14 @@
+use std::collections::HashMap;
+
 use covalence_lib_hash::O256;
 use wasm_bindgen::prelude::*;
 
 use super::{
     AllowAll, ConnectionEntry, ConnectionId, HolRecipe, HolRecipeResult, Kernel, KernelEntry,
-    KernelId, LocalConnection, Outcome, ProducedSignedHol, QueryResult, ReceivedHolSnapshot, Repl,
-    SIGNED_HOL_PHASES, SignedHolArtifact, SignedHolRoundTripResult, Value,
-    produce_signed_hol_artifact, receive_signed_hol_artifact,
+    KernelId, LocalConnection, Outcome, PinnedSignedHolArtifact, ProducedSignedHol, QueryResult,
+    ReceivedHolSnapshot, Repl, SIGNED_HOL_PHASES, SignedHolArtifact, SignedHolRoundTripResult,
+    Value, authenticate_pinned_signed_hol_artifact, produce_signed_hol_artifact,
+    trust_and_receive_pinned_signed_hol_artifact,
 };
 
 /// Main-thread directory for independently owned browser kernel endpoints.
@@ -35,6 +38,8 @@ pub struct WebConnectionEntry {
 pub struct WebKernel {
     kernel: Kernel,
     repl: Repl<LocalConnection>,
+    pinned_artifacts: HashMap<u32, PinnedSignedHolArtifact>,
+    next_pinned_artifact: u32,
 }
 
 /// Owned result of one statement executed by [`WebKernel`].
@@ -79,7 +84,12 @@ impl WebKernel {
     pub fn new() -> Result<WebKernel, JsValue> {
         let kernel = Kernel::ephemeral();
         let repl = Repl::new(kernel.verifying_key().as_bytes()).map_err(js_error)?;
-        Ok(Self { kernel, repl })
+        Ok(Self {
+            kernel,
+            repl,
+            pinned_artifacts: HashMap::new(),
+            next_pinned_artifact: 0,
+        })
     }
 
     /// Returns this kernel's public-key identity.
@@ -173,7 +183,7 @@ impl WebKernel {
         connection: u32,
     ) -> Result<WebSignedHolOutcome, JsValue> {
         let produced = {
-            let Self { kernel, repl } = self;
+            let Self { kernel, repl, .. } = self;
             let source = repl
                 .get_mut(ConnectionId::from_u32(connection))
                 .map_err(js_error)?
@@ -186,13 +196,20 @@ impl WebKernel {
             .repl
             .insert(receiver.protocol(), receiver)
             .map_err(js_error)?;
-        let received = receive_signed_hol_artifact(
+        let expected = super::ExpectedKernelIdentity::from_public_key(
+            KernelId::LOCAL,
+            self.kernel.verifying_key().as_bytes(),
+        )
+        .map_err(js_error)?;
+        let pinned = authenticate_pinned_signed_hol_artifact(&expected, produced.artifact())
+            .map_err(js_error)?;
+        let received = trust_and_receive_pinned_signed_hol_artifact(
             self.repl
                 .get_mut(receiver_id)
                 .map_err(js_error)?
                 .hol_mut()
                 .map_err(js_error)?,
-            produced.artifact(),
+            pinned,
         )
         .map_err(js_error)?;
         Ok(WebSignedHolOutcome {
@@ -205,7 +222,7 @@ impl WebKernel {
     ///
     /// The returned fields are an above-TCB structured carrier, not a stable
     /// wire encoding. A different [`WebKernel`] must authenticate and validate
-    /// every field with [`WebKernel::receive_signed_hol_artifact`].
+    /// every field with [`WebKernel::authenticate_pinned_signed_hol_artifact`].
     ///
     /// # Errors
     ///
@@ -216,7 +233,7 @@ impl WebKernel {
         connection: u32,
     ) -> Result<WebProducedSignedHol, JsValue> {
         let produced = {
-            let Self { kernel, repl } = self;
+            let Self { kernel, repl, .. } = self;
             let source = repl
                 .get_mut(ConnectionId::from_u32(connection))
                 .map_err(js_error)?
@@ -227,25 +244,46 @@ impl WebKernel {
         Ok(WebProducedSignedHol { produced })
     }
 
-    /// Authenticates, detached-validates, trusts, imports, and reads an artifact.
+    /// Returns the exact persistent HOL image hash without changing kernel state.
     ///
-    /// All arguments are untrusted transport fields. Hash parsing and fixed
-    /// widths do not confer authority; the receiver establishes authority from
-    /// the signature over the exact schema-qualified image before changing its
-    /// connection-local trust state.
+    /// This debugging surface intentionally excludes connection-local temp trust.
     ///
     /// # Errors
     ///
-    /// Returns a JavaScript error for malformed fields, a non-HOL connection,
-    /// or the first authentication, validation, trust, import, or reader
-    /// boundary rejected.
+    /// Returns a JavaScript error for a non-HOL connection or failed validated export.
+    pub fn hol_image_hash(&mut self, connection: u32) -> Result<String, JsValue> {
+        let Self { kernel, repl, .. } = self;
+        let source = repl
+            .get_mut(ConnectionId::from_u32(connection))
+            .map_err(js_error)?
+            .hol_mut()
+            .map_err(js_error)?;
+        kernel
+            .export_hol(source)
+            .map(|snapshot| snapshot.image().hash().to_string())
+            .map_err(js_error)
+    }
+
+    /// Authenticates and detached-validates an artifact against an expected endpoint key.
+    ///
+    /// All arguments are untrusted transport fields. Hash parsing and fixed
+    /// widths do not confer authority. The independently supplied endpoint key
+    /// is compared exactly before this method returns an opaque pending ID. No
+    /// HOL connection is read or mutated by this step.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for malformed fields or a rejected size,
+    /// authentication, endpoint pin, or detached-validation boundary.
     #[expect(
         clippy::too_many_arguments,
         reason = "the deliberately unencoded transport exposes every signed field"
     )]
-    pub fn receive_signed_hol_artifact(
+    pub fn authenticate_pinned_signed_hol_artifact(
         &mut self,
-        connection: u32,
+        expected_kernel: u32,
+        expected_signer: &str,
+        expected_public_key: &[u8],
         namespace: &str,
         image: &[u8],
         schema: &str,
@@ -253,7 +291,7 @@ impl WebKernel {
         signer: &str,
         public_key: &[u8],
         signature: &[u8],
-    ) -> Result<WebReceivedHolSnapshot, JsValue> {
+    ) -> Result<u32, JsValue> {
         if image.len() > super::MAX_IMAGE_BYTES {
             return Err(JsValue::from_str(&format!(
                 "image-size-checked: image is {} bytes; the limit is {} bytes",
@@ -272,9 +310,54 @@ impl WebKernel {
             signature.to_vec(),
         )
         .map_err(js_error)?;
+        let expected = super::ExpectedKernelIdentity::from_untrusted_parts(
+            KernelId::from_u32(expected_kernel),
+            expected_signer,
+            expected_public_key,
+        )
+        .map_err(js_error)?;
+        let pinned =
+            authenticate_pinned_signed_hol_artifact(&expected, &artifact).map_err(js_error)?;
+        let id = self.next_pinned_artifact;
+        self.next_pinned_artifact = self
+            .next_pinned_artifact
+            .checked_add(1)
+            .ok_or_else(|| JsValue::from_str("pinned artifact IDs are exhausted"))?;
+        self.pinned_artifacts.insert(id, pinned);
+        Ok(id)
+    }
+
+    /// Explicitly trusts and imports one previously authenticated pinned artifact.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for an unknown pending ID, non-HOL target, or
+    /// rejected trust, import, immutable mount, or reader boundary.
+    pub fn trust_pinned_signed_hol_artifact(
+        &mut self,
+        connection: u32,
+        pinned: u32,
+    ) -> Result<WebReceivedHolSnapshot, JsValue> {
+        let pinned = self
+            .pinned_artifacts
+            .remove(&pinned)
+            .ok_or_else(|| JsValue::from_str("unknown pinned HOL artifact"))?;
         let received =
-            receive_signed_hol_artifact(self.hol_mut(connection)?, &artifact).map_err(js_error)?;
+            trust_and_receive_pinned_signed_hol_artifact(self.hol_mut(connection)?, pinned)
+                .map_err(js_error)?;
         Ok(WebReceivedHolSnapshot { received })
+    }
+
+    /// Discards one authenticated artifact without granting any trust.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for an unknown pending ID.
+    pub fn abandon_pinned_signed_hol_artifact(&mut self, pinned: u32) -> Result<(), JsValue> {
+        self.pinned_artifacts
+            .remove(&pinned)
+            .map(drop)
+            .ok_or_else(|| JsValue::from_str("unknown pinned HOL artifact"))
     }
 
     /// Stores a complete resident database image and returns its address.
@@ -632,7 +715,7 @@ impl WebReceivedHolSnapshot {
     /// Returns the number of completed receiver boundary stages.
     #[must_use]
     pub fn phase_count(&self) -> usize {
-        7
+        SIGNED_HOL_PHASES.len() - 3
     }
 
     /// Returns one completed receiver boundary stage by index.
