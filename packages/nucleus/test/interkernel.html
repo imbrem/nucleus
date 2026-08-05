@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Nucleus inter-kernel signed HOL test</title>
+  </head>
+  <body>
+    <script type="module">
+      import { createBrowserRepl } from "../dist/index.js";
+
+      const producerRepl = createBrowserRepl();
+      const receiverRepl = createBrowserRepl();
+      let producer;
+      let receiver;
+      let receiverProbe;
+      let wrongNamespaceReceiver;
+      try {
+        producer = await producerRepl.openHol();
+        receiver = await receiverRepl.openHol();
+        receiverProbe = await receiverRepl.openHol();
+        wrongNamespaceReceiver = await receiverRepl.openHol();
+
+        const produced = await producer.produceSignedArtifact();
+        const receiverProduced = await receiverProbe.produceSignedArtifact();
+        const distinctKernels =
+          produced.artifact.signer !== receiverProduced.artifact.signer;
+
+        const originalImageLength = produced.artifact.image.byteLength;
+        const originalPublicKeyLength = produced.artifact.publicKey.byteLength;
+        const originalSignatureLength = produced.artifact.signature.byteLength;
+
+        const wrongBytes = {
+          ...produced.artifact,
+          image: produced.artifact.image.slice(),
+        };
+        wrongBytes.image[0] ^= 1;
+        let wrongBytesError = "";
+        try {
+          await receiver.receiveSignedArtifact(wrongBytes);
+        } catch (error) {
+          wrongBytesError = String(error);
+        }
+
+        const wrongSignature = {
+          ...produced.artifact,
+          signature: produced.artifact.signature.slice(),
+        };
+        wrongSignature.signature[0] ^= 1;
+        let wrongSignatureError = "";
+        try {
+          await receiver.receiveSignedArtifact(wrongSignature);
+        } catch (error) {
+          wrongSignatureError = String(error);
+        }
+
+        const received = await receiver.receiveSignedArtifact(
+          produced.artifact,
+        );
+
+        let wrongNamespaceError = "";
+        try {
+          await wrongNamespaceReceiver.receiveSignedArtifact({
+            ...produced.artifact,
+            namespace: String(BigInt(produced.artifact.namespace) + 1n),
+          });
+        } catch (error) {
+          wrongNamespaceError = String(error);
+        }
+
+        document.body.dataset.result = JSON.stringify({
+          distinctKernels,
+          producerSigner: produced.artifact.signer,
+          receiverSigner: receiverProduced.artifact.signer,
+          producerPhases: produced.phases,
+          receiverPhases: received.phases,
+          wrongBytesError,
+          wrongSignatureError,
+          wrongNamespaceError,
+          ownershipPreserved:
+            produced.artifact.image.byteLength === originalImageLength &&
+            produced.artifact.publicKey.byteLength ===
+              originalPublicKeyLength &&
+            produced.artifact.signature.byteLength === originalSignatureLength,
+          importedContext: received.context,
+          importedConclusion: received.conclusion,
+          producerConclusion: produced.conclusion,
+        });
+      } catch (error) {
+        document.body.dataset.error = String(error);
+      } finally {
+        await producer?.close();
+        await receiver?.close();
+        await receiverProbe?.close();
+        await wrongNamespaceReceiver?.close();
+        producerRepl.close();
+        receiverRepl.close();
+      }
+    </script>
+  </body>
+</html>

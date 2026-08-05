@@ -331,6 +331,7 @@ pub const SIGNED_HOL_PHASES: &[&str] = &[
     "proof-persisted",
     "namespace-exported",
     "snapshot-signed",
+    "image-size-checked",
     "signature-authenticated",
     "image-detached-validated",
     "signer-trusted",
@@ -754,6 +755,15 @@ pub fn receive_signed_hol_artifact(
     target: &mut Connection<Hol<AllowAll>>,
     artifact: &SignedHolArtifact,
 ) -> Result<ReceivedHolSnapshot, SignedHolRoundTripError> {
+    if artifact.image.len() > MAX_IMAGE_BYTES {
+        return Err(SignedHolRoundTripError::at(
+            "image-size-checked",
+            format_args!(
+                "image is {} bytes; the limit is {MAX_IMAGE_BYTES} bytes",
+                artifact.image.len()
+            ),
+        ));
+    }
     let validated = authenticate_and_validate_artifact(artifact)?;
     let claim = validated.claim();
     target
@@ -1155,7 +1165,10 @@ impl From<sqlite::Error> for ReplError {
 mod web;
 
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-pub use web::{WebHolOutcome, WebKernel, WebOutcome, WebSignedHolOutcome};
+pub use web::{
+    WebHolOutcome, WebKernel, WebOutcome, WebProducedSignedHol, WebReceivedHolSnapshot,
+    WebSignedHolOutcome,
+};
 
 /// Returns the cross-target `SQLite` smoke-test value.
 #[must_use]
@@ -1383,6 +1396,24 @@ mod tests {
         let output = produce_signed_hol_artifact(&producer, &mut source).unwrap();
         let artifact = output.artifact();
 
+        let oversized = SignedHolArtifact::from_untrusted_parts(
+            artifact.namespace_id(),
+            vec![0; MAX_IMAGE_BYTES + 1],
+            &artifact.schema().to_string(),
+            &artifact.image_hash().to_string(),
+            &artifact.signer().to_string(),
+            artifact.public_key().to_vec(),
+            artifact.signature().to_vec(),
+        )
+        .unwrap();
+        let mut target = Kernel::ephemeral().open_hol(AllowAll).unwrap();
+        assert_eq!(
+            receive_signed_hol_artifact(&mut target, &oversized)
+                .unwrap_err()
+                .phase(),
+            "image-size-checked"
+        );
+
         let reconstructed = SignedHolArtifact::from_untrusted_parts(
             artifact.namespace_id(),
             artifact.image().to_vec(),
@@ -1393,7 +1424,6 @@ mod tests {
             artifact.signature().to_vec(),
         )
         .unwrap();
-        let mut target = Kernel::ephemeral().open_hol(AllowAll).unwrap();
         receive_signed_hol_artifact(&mut target, &reconstructed).unwrap();
 
         let mut bytes = artifact.image().to_vec();

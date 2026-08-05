@@ -2,8 +2,12 @@ import init, {
   WebKernel,
   type WebHolOutcome,
   type WebOutcome,
+  type WebProducedSignedHol,
+  type WebReceivedHolSnapshot,
   type WebSignedHolOutcome,
 } from "../generated/nucleus.js";
+
+import type { SignedHolArtifact } from "./index.js";
 
 type Request =
   | { id: number; operation: "open" }
@@ -12,6 +16,14 @@ type Request =
   | { id: number; operation: "run"; connection: number; sql: string }
   | { id: number; operation: "runHol"; connection: number; recipe: string }
   | { id: number; operation: "runSignedHolRoundTrip"; connection: number }
+  | { id: number; operation: "maxImageBytes" }
+  | { id: number; operation: "produceSignedHolArtifact"; connection: number }
+  | {
+      id: number;
+      operation: "receiveSignedHolArtifact";
+      connection: number;
+      artifact: SignedHolArtifact;
+    }
   | {
       id: number;
       operation: "putImage";
@@ -80,6 +92,27 @@ async function execute(request: Request): Promise<unknown> {
       return readSignedHolOutcome(
         connection.run_signed_hol_round_trip(request.connection),
       );
+    case "maxImageBytes":
+      return WebKernel.max_image_bytes();
+    case "produceSignedHolArtifact":
+      return readProducedSignedHol(
+        connection.produce_signed_hol_artifact(request.connection),
+      );
+    case "receiveSignedHolArtifact": {
+      const artifact = request.artifact;
+      return readReceivedHolSnapshot(
+        connection.receive_signed_hol_artifact(
+          request.connection,
+          artifact.namespace,
+          artifact.image,
+          artifact.schema,
+          artifact.imageHash,
+          artifact.signer,
+          artifact.publicKey,
+          artifact.signature,
+        ),
+      );
+    }
     case "putImage":
       return connection.put_image(request.connection, request.bytes);
     case "attachImage":
@@ -119,6 +152,21 @@ function transferables(value: unknown): ArrayBuffer[] {
       outcome.image.buffer as ArrayBuffer,
       outcome.publicKey.buffer as ArrayBuffer,
       outcome.signature.buffer as ArrayBuffer,
+    ];
+  }
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "kind" in value &&
+    value.kind === "signed-hol-artifact"
+  ) {
+    const outcome = value as unknown as {
+      artifact: SignedHolArtifact;
+    };
+    return [
+      outcome.artifact.image.buffer as ArrayBuffer,
+      outcome.artifact.publicKey.buffer as ArrayBuffer,
+      outcome.artifact.signature.buffer as ArrayBuffer,
     ];
   }
   return [];
@@ -201,6 +249,49 @@ function readSignedHolOutcome(outcome: WebSignedHolOutcome): unknown {
       importedContext: outcome.imported_context_id(),
       importedConclusion: outcome.imported_conclusion_id(),
       receiverConnection: outcome.receiver_connection(),
+    };
+  } finally {
+    outcome.free();
+  }
+}
+
+function readProducedSignedHol(outcome: WebProducedSignedHol): unknown {
+  try {
+    const phases = Array.from({ length: outcome.phase_count() }, (_, index) =>
+      outcome.phase(index),
+    );
+    return {
+      kind: outcome.kind(),
+      phases,
+      statement: outcome.statement(),
+      conclusion: outcome.conclusion_id(),
+      artifact: {
+        namespace: outcome.namespace_id(),
+        image: outcome.image(),
+        schema: outcome.schema(),
+        imageHash: outcome.image_hash(),
+        signer: outcome.signer(),
+        publicKey: outcome.public_key(),
+        signature: outcome.signature(),
+      },
+    };
+  } finally {
+    outcome.free();
+  }
+}
+
+function readReceivedHolSnapshot(outcome: WebReceivedHolSnapshot): unknown {
+  try {
+    const phases = Array.from({ length: outcome.phase_count() }, (_, index) =>
+      outcome.phase(index),
+    );
+    return {
+      kind: outcome.kind(),
+      phases,
+      importId: outcome.import_id(),
+      namespace: outcome.namespace_id(),
+      context: outcome.context_id(),
+      conclusion: outcome.conclusion_id(),
     };
   } finally {
     outcome.free();
