@@ -191,6 +191,17 @@ test("real Chromium imports a signed beta artifact from native HTTP", async (con
     namespace: "1",
     context: "0",
     conclusion: "8",
+    kernelId: 1,
+    closedConnectionId: 1,
+    sessionId: "1",
+    sessionLifecycle: ["opening", "established", "closing", "closed"],
+    independentInspection: {
+      kernels: 1,
+      connections: 0,
+      sessionState: "closed",
+      connectionLifecycle: ["opened", "closed"],
+    },
+    afterExplicitCleanup: { kernels: 0, connections: 0 },
   });
   assert.match(result.signer, /^[0-9a-f]{64}$/);
   assert.ok(result.imageBytes > 0);

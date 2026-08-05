@@ -4,7 +4,8 @@
 <script type="module">
   import {
     init,
-    runNativeHttpSignedHol,
+    runManagedNativeHttpSignedHol,
+    WebReplDirectory,
     WebSignedKernelSession,
   } from "../dist/index.js";
 
@@ -48,11 +49,41 @@
     }
     let result;
     if (mode === "round-trip") {
-      result = await runNativeHttpSignedHol({
-        endpoint,
-        expectedPublicKey: publicKey,
-        timeoutMs: 10_000,
-      });
+      await init();
+      const directory = new WebReplDirectory();
+      try {
+        result = await runManagedNativeHttpSignedHol(directory, {
+          endpoint,
+          expectedPublicKey: publicKey,
+          timeoutMs: 10_000,
+        });
+        const sessionRow = directory.remote_session(result.sessionId);
+        const connectionEvents = directory.inspect_state(
+          `SELECT state FROM repl_lifecycle_event WHERE resource = 'connection' AND resource_id = ${result.closedConnectionId} ORDER BY event_id`,
+        );
+        try {
+          result.independentInspection = {
+            kernels: directory.kernel_count(),
+            connections: directory.connection_count(),
+            sessionState: sessionRow.state(),
+            connectionLifecycle: Array.from(
+              { length: connectionEvents.row_count() },
+              (_, row) => connectionEvents.text(row, 0),
+            ),
+          };
+        } finally {
+          connectionEvents.free();
+          sessionRow.free();
+        }
+        directory.forget_remote_session(result.sessionId);
+        directory.unregister_kernel(result.kernelId);
+        result.afterExplicitCleanup = {
+          kernels: directory.kernel_count(),
+          connections: directory.connection_count(),
+        };
+      } finally {
+        directory.free();
+      }
     } else {
       await init();
       const description = await post(WebSignedKernelSession.describe_request());

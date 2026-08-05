@@ -208,6 +208,17 @@ export interface NativeHttpHolOutcome {
   conclusion: string;
 }
 
+export interface ManagedNativeHttpHolOutcome extends NativeHttpHolOutcome {
+  /** Live registered endpoint in the caller-owned directory. */
+  kernelId: KernelId;
+  /** Historical local ID whose row was removed after authenticated remote close. */
+  closedConnectionId: ManagedConnectionId;
+  /** Live closed session row retained for caller inspection and explicit GC. */
+  sessionId: string;
+  /** Convenience copy read from the caller-owned raw SQLite event table. */
+  sessionLifecycle: string[];
+}
+
 /**
  * A transport failure after a stateful request may have reached the endpoint.
  * This adapter performs no explicit retry. Fetch, Chromium, or another network
@@ -237,6 +248,35 @@ export async function runNativeHttpSignedHol(
   options: NativeHttpHolOptions,
 ): Promise<NativeHttpHolOutcome> {
   await init();
+  const directory = new WebReplDirectory();
+  try {
+    const managed = await runManagedNativeHttpSignedHol(directory, options);
+    directory.forget_remote_session(managed.sessionId);
+    directory.unregister_kernel(managed.kernelId);
+    const {
+      kernelId: _kernelId,
+      closedConnectionId: _closedConnectionId,
+      sessionId: _sessionId,
+      sessionLifecycle: _sessionLifecycle,
+      ...outcome
+    } = managed;
+    return outcome;
+  } finally {
+    directory.free();
+  }
+}
+
+/**
+ * Runs the signed native HTTP demo through a caller-owned REPL directory.
+ * The successful return leaves the endpoint and closed session rows live for
+ * independent inspection. The caller explicitly forgets the session and then
+ * unregisters the endpoint when its debugging evidence is no longer needed.
+ */
+export async function runManagedNativeHttpSignedHol(
+  directory: WebReplDirectory,
+  options: NativeHttpHolOptions,
+): Promise<ManagedNativeHttpHolOutcome> {
+  await init();
   const timeoutMs = options.timeoutMs ?? 10_000;
   if (
     !Number.isSafeInteger(timeoutMs) ||
@@ -248,53 +288,92 @@ export async function runNativeHttpSignedHol(
     );
   }
 
-  const description = await signedFetch(
+  const kernelId = directory.register_kernel(
+    "native-http",
     options.endpoint,
-    WebSignedKernelSession.describe_request(),
-    timeoutMs,
-    false,
-  );
-  const session = WebSignedKernelSession.begin(
     options.expectedPublicKey,
-    description,
-  );
-  const accepted = await signedFetch(
-    options.endpoint,
-    session.session_request(),
-    timeoutMs,
-    true,
-  );
-  acceptStatefulReply(() => session.accept_session(accepted));
-
-  const local = new WebKernel();
-  const localConnection = local.open_hol_connection();
-  let remoteConnection: string | undefined;
+  ) as KernelId;
+  let session: WebSignedKernelSession | undefined;
+  let sessionId: string | undefined;
+  let sessionState:
+    | "opening"
+    | "established"
+    | "command-unknown"
+    | "closing"
+    | "closing-unknown"
+    | "closed"
+    | "failed"
+    | undefined;
+  let managedConnection: ManagedConnectionId | undefined;
+  let local: WebKernel | undefined;
+  let localConnection: number | undefined;
   try {
-    const opened = await signedFetch(
+    const description = await signedFetch(
+      options.endpoint,
+      WebSignedKernelSession.describe_request(),
+      timeoutMs,
+      false,
+    );
+    session = WebSignedKernelSession.begin(
+      options.expectedPublicKey,
+      description,
+    );
+    sessionId = directory.begin_remote_session(kernelId);
+    sessionState = "opening";
+    const handshake = session.session_request();
+    try {
+      const accepted = await signedFetch(
+        options.endpoint,
+        handshake,
+        timeoutMs,
+        true,
+      );
+      acceptStatefulReply(() => session?.accept_session(accepted));
+    } catch (error) {
+      directory.transition_remote_session(sessionId, "opening-unknown");
+      directory.transition_remote_session(sessionId, "failed");
+      sessionState = "failed";
+      throw error;
+    }
+    directory.transition_remote_session(sessionId, "established");
+    sessionState = "established";
+
+    local = new WebKernel();
+    localConnection = local.open_hol_connection();
+    const remoteConnection = await managedHttpCommand(
+      directory,
+      sessionId,
       options.endpoint,
       session.open_hol_command(),
       timeoutMs,
-      true,
-    );
-    remoteConnection = acceptStatefulReply(() =>
-      session.accept_open_hol(opened),
-    );
-    const producedReply = await signedFetch(
+      (reply) => session?.accept_open_hol(reply) ?? "",
+    ).catch((error) => {
+      sessionState = "command-unknown";
+      throw error;
+    });
+    managedConnection = directory.insert_connection(
+      kernelId,
+      "nucleus/hol",
+      remoteConnection,
+    ) as ManagedConnectionId;
+    const produced = await managedHttpCommand(
+      directory,
+      sessionId,
       options.endpoint,
       session.produce_signed_hol_command(remoteConnection),
       timeoutMs,
-      true,
-    );
-    const produced = acceptStatefulReply(() =>
-      session.accept_produced_hol(producedReply),
-    );
+      (reply) => session?.accept_produced_hol(reply),
+    ).catch((error) => {
+      sessionState = "command-unknown";
+      throw error;
+    });
+    if (produced === undefined) throw new Error("signed session was lost");
     try {
-      const openedConnection = remoteConnection;
       const image = produced.image();
       const publicKey = produced.public_key();
       const signature = produced.signature();
       const pinned = local.authenticate_pinned_signed_hol_artifact(
-        1,
+        kernelId,
         session.expected_signer(),
         options.expectedPublicKey,
         produced.namespace_id(),
@@ -310,32 +389,54 @@ export async function runNativeHttpSignedHol(
         pinned,
       );
       try {
-        const closed = await signedFetch(
+        await managedHttpCommand(
+          directory,
+          sessionId,
           options.endpoint,
           session.close_hol_command(remoteConnection),
           timeoutMs,
-          true,
-        );
-        acceptStatefulReply(() => session.accept_closed(closed));
-        remoteConnection = undefined;
-        const goodbye = await signedFetch(
-          options.endpoint,
-          session.shutdown_command(),
-          timeoutMs,
-          true,
-        );
-        acceptStatefulReply(() => session.accept_goodbye(goodbye));
+          (reply) => session?.accept_closed(reply),
+        ).catch((error) => {
+          sessionState = "command-unknown";
+          throw error;
+        });
+        directory.remove_connection(managedConnection);
+        const closedConnectionId = managedConnection;
+        managedConnection = undefined;
 
+        const shutdown = session.shutdown_command();
+        directory.transition_remote_session(sessionId, "closing");
+        sessionState = "closing";
+        try {
+          const goodbye = await signedFetch(
+            options.endpoint,
+            shutdown,
+            timeoutMs,
+            true,
+          );
+          acceptStatefulReply(() => session?.accept_goodbye(goodbye));
+        } catch (error) {
+          directory.transition_remote_session(sessionId, "closing-unknown");
+          sessionState = "closing-unknown";
+          throw error;
+        }
+        directory.transition_remote_session(sessionId, "closed");
+        sessionState = "closed";
+        const sessionLifecycle = readSessionLifecycle(directory, sessionId);
         return {
           kind: "native-http-signed-hol-round-trip",
           statement: produced.statement(),
           signer: produced.signer(),
-          remoteConnection: openedConnection,
+          remoteConnection,
           imageBytes: image.byteLength,
           importId: received.import_id(),
           namespace: received.namespace_id(),
           context: received.context_id(),
           conclusion: received.conclusion_id(),
+          kernelId,
+          closedConnectionId,
+          sessionId,
+          sessionLifecycle,
         };
       } finally {
         received.free();
@@ -343,9 +444,53 @@ export async function runNativeHttpSignedHol(
     } finally {
       produced.free();
     }
+  } catch (error) {
+    if (
+      sessionId !== undefined &&
+      sessionState !== "failed" &&
+      sessionState !== "closed"
+    ) {
+      directory.transition_remote_session(sessionId, "failed");
+    }
+    throw error;
   } finally {
-    local.close_connection(localConnection);
-    session.free();
+    if (local !== undefined && localConnection !== undefined) {
+      local.close_connection(localConnection);
+    }
+    session?.free();
+  }
+}
+
+async function managedHttpCommand<T>(
+  directory: WebReplDirectory,
+  sessionId: string,
+  endpoint: string,
+  command: Uint8Array,
+  timeoutMs: number,
+  accept: (reply: Uint8Array) => T,
+): Promise<T> {
+  try {
+    const reply = await signedFetch(endpoint, command, timeoutMs, true);
+    return acceptStatefulReply(() => accept(reply));
+  } catch (error) {
+    directory.transition_remote_session(sessionId, "command-unknown");
+    throw error;
+  }
+}
+
+function readSessionLifecycle(
+  directory: WebReplDirectory,
+  sessionId: string,
+): string[] {
+  const result = directory.inspect_state(
+    `SELECT state FROM repl_lifecycle_event WHERE resource = 'session' AND resource_id = ${sessionId} ORDER BY event_id`,
+  );
+  try {
+    return Array.from({ length: result.row_count() }, (_, row) =>
+      result.text(row, 0),
+    );
+  } finally {
+    result.free();
   }
 }
 

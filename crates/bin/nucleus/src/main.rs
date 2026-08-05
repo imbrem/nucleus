@@ -11,7 +11,10 @@ use covalence_repl::{
     produce_signed_hol_artifact, trust_and_receive_pinned_signed_hol_artifact,
 };
 #[cfg(not(target_arch = "wasm32"))]
-use covalence_repl::{NativeHttpKernelServer, SIGNED_KERNEL_HTTP_PATH};
+use covalence_repl::{
+    NativeHttpClientError, NativeHttpKernelClient, NativeHttpKernelServer, RemoteSessionState,
+    SIGNED_KERNEL_HTTP_PATH, ServiceOperation, ServiceProducedHol, ServiceResult,
+};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 type LocalRepl = Repl<LocalConnection>;
@@ -188,6 +191,202 @@ fn run_interkernel_hol(output: &mut impl io::Write) -> Result<()> {
         "imported_theorem\t{}\t{}",
         imported.context_id(),
         imported.conclusion_id()
+    )?;
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn parse_public_key(source: &str) -> Result<[u8; 32]> {
+    if source.len() != 64 || !source.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("public key must be exactly 64 hexadecimal characters".into());
+    }
+    let mut key = [0_u8; 32];
+    for (index, byte) in key.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&source[index * 2..index * 2 + 2], 16)?;
+    }
+    Ok(key)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn fail_remote_session(
+    directory: &Repl<()>,
+    session: covalence_repl::RemoteSessionId,
+    error: &NativeHttpClientError,
+    ambiguous: RemoteSessionState,
+) -> Result<()> {
+    if error.outcome_unknown() {
+        directory.transition_remote_session(session, ambiguous)?;
+    }
+    directory.transition_remote_session(session, RemoteSessionState::Failed)?;
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn execute_remote_operation(
+    directory: &Repl<()>,
+    session: covalence_repl::RemoteSessionId,
+    client: &mut NativeHttpKernelClient,
+    operation: ServiceOperation,
+    ambiguous: RemoteSessionState,
+) -> Result<ServiceResult> {
+    client.execute(operation).map_err(|error| {
+        let transition = fail_remote_session(directory, session, &error, ambiguous);
+        transition.map_or_else(|state_error| state_error, |()| error.into())
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn record_local_operation<T>(
+    directory: &mut Repl<()>,
+    session: covalence_repl::RemoteSessionId,
+    operation: impl FnOnce(&mut Repl<()>) -> Result<T>,
+) -> Result<T> {
+    operation(directory).map_err(|error| {
+        let transition = directory.transition_remote_session(session, RemoteSessionState::Failed);
+        transition.map_or_else(Into::into, |()| error)
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn import_remote_artifact(
+    directory: &mut Repl<()>,
+    session: covalence_repl::RemoteSessionId,
+    endpoint: covalence_repl::KernelId,
+    produced: &ServiceProducedHol,
+) -> Result<covalence_repl::ReceivedHolSnapshot> {
+    record_local_operation(directory, session, |directory| {
+        let expected = directory.expected_kernel_identity(endpoint)?;
+        let pinned = authenticate_pinned_signed_hol_artifact(&expected, produced.artifact())?;
+        let receiver_kernel = Kernel::ephemeral();
+        let mut receiver = receiver_kernel.open_hol(AllowAll)?;
+        trust_and_receive_pinned_signed_hol_artifact(&mut receiver, pinned).map_err(Into::into)
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn print_remote_lifecycle(
+    output: &mut impl io::Write,
+    directory: &Repl<()>,
+    session: covalence_repl::RemoteSessionId,
+) -> Result<()> {
+    let lifecycle = directory.inspect_state(&format!(
+        "SELECT state FROM repl_lifecycle_event
+         WHERE resource = 'session' AND resource_id = {} ORDER BY event_id",
+        session.get()
+    ))?;
+    for row in lifecycle.rows {
+        if let [Value::Text(state)] = row.as_slice() {
+            writeln!(output, "session_state\t{state}")?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn run_managed_native_http_hol(
+    output: &mut impl io::Write,
+    directory: &mut Repl<()>,
+    address: std::net::SocketAddr,
+    public_key: [u8; 32],
+) -> Result<()> {
+    let endpoint = directory.register_kernel(
+        "native-http",
+        Some(&format!("http://{address}{SIGNED_KERNEL_HTTP_PATH}")),
+        &public_key,
+    )?;
+    let session = directory.begin_remote_session(endpoint)?;
+    let mut client = match NativeHttpKernelClient::connect(address, public_key) {
+        Ok(client) => client,
+        Err(error) => {
+            fail_remote_session(
+                directory,
+                session,
+                &error,
+                RemoteSessionState::OpeningUnknown,
+            )?;
+            return Err(error.into());
+        }
+    };
+    directory.transition_remote_session(session, RemoteSessionState::Established)?;
+
+    let ServiceResult::Opened(opened) = execute_remote_operation(
+        directory,
+        session,
+        &mut client,
+        ServiceOperation::OpenHol,
+        RemoteSessionState::CommandUnknown,
+    )?
+    else {
+        directory.transition_remote_session(session, RemoteSessionState::Failed)?;
+        return Err("native endpoint returned the wrong OpenHol result".into());
+    };
+    let managed = record_local_operation(directory, session, |directory| {
+        directory
+            .insert_at(endpoint, "nucleus/hol", Some(&opened.to_string()), ())
+            .map_err(Into::into)
+    })?;
+
+    let ServiceResult::Produced(produced) = execute_remote_operation(
+        directory,
+        session,
+        &mut client,
+        ServiceOperation::ProduceSignedHol(opened),
+        RemoteSessionState::CommandUnknown,
+    )?
+    else {
+        directory.transition_remote_session(session, RemoteSessionState::Failed)?;
+        return Err("native endpoint returned the wrong ProduceSignedHol result".into());
+    };
+    let statement = produced.statement().to_owned();
+    let imported = import_remote_artifact(directory, session, endpoint, &produced)?;
+
+    if !matches!(
+        execute_remote_operation(
+            directory,
+            session,
+            &mut client,
+            ServiceOperation::CloseHol(opened),
+            RemoteSessionState::CommandUnknown,
+        )?,
+        ServiceResult::Closed
+    ) {
+        directory.transition_remote_session(session, RemoteSessionState::Failed)?;
+        return Err("native endpoint returned the wrong CloseHol result".into());
+    }
+    record_local_operation(directory, session, |directory| {
+        directory.remove(managed).map(drop).map_err(Into::into)
+    })?;
+    directory.transition_remote_session(session, RemoteSessionState::Closing)?;
+    if !matches!(
+        execute_remote_operation(
+            directory,
+            session,
+            &mut client,
+            ServiceOperation::Shutdown,
+            RemoteSessionState::ClosingUnknown,
+        )?,
+        ServiceResult::Goodbye
+    ) {
+        directory.transition_remote_session(session, RemoteSessionState::Failed)?;
+        return Err("native endpoint returned the wrong Shutdown result".into());
+    }
+    directory.transition_remote_session(session, RemoteSessionState::Closed)?;
+
+    writeln!(output, "kind\tmanaged-native-http-hol")?;
+    writeln!(output, "kernel\t{endpoint}")?;
+    writeln!(output, "session\t{session}")?;
+    writeln!(output, "remote_connection\t{opened}")?;
+    writeln!(output, "statement\t{statement}")?;
+    writeln!(
+        output,
+        "imported_theorem\t{}\t{}",
+        imported.context_id(),
+        imported.conclusion_id()
+    )?;
+    print_remote_lifecycle(output, directory, session)?;
+    writeln!(
+        output,
+        "directory_retention\tcaller-owned-until-explicit-cleanup"
     )?;
     Ok(())
 }
@@ -390,7 +589,34 @@ fn usage(output: &mut impl io::Write) -> io::Result<()> {
         output,
         "       nucleus --kernel-http ADDRESS ALLOWED_ORIGIN"
     )?;
+    writeln!(
+        output,
+        "       nucleus --managed-http-hol ADDRESS PUBLIC_KEY_HEX"
+    )?;
     writeln!(output, "       nucleus --help")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn run_managed_http_arguments(arguments: &mut impl Iterator<Item = String>) -> Result<()> {
+    let address = arguments
+        .next()
+        .ok_or("--managed-http-hol requires ADDRESS PUBLIC_KEY_HEX")?
+        .parse()?;
+    let public_key = parse_public_key(
+        &arguments
+            .next()
+            .ok_or("--managed-http-hol requires ADDRESS PUBLIC_KEY_HEX")?,
+    )?;
+    if arguments.next().is_some() {
+        return Err("unexpected arguments after --managed-http-hol ADDRESS PUBLIC_KEY_HEX".into());
+    }
+    let mut directory = Repl::empty()?;
+    run_managed_native_http_hol(
+        &mut io::stdout().lock(),
+        &mut directory,
+        address,
+        public_key,
+    )
 }
 
 fn run() -> Result<()> {
@@ -475,6 +701,8 @@ fn run() -> Result<()> {
             server.serve()?;
             Ok(())
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        Some("--managed-http-hol") => run_managed_http_arguments(&mut arguments),
         Some("-h" | "--help") => {
             usage(&mut io::stdout().lock())?;
             Ok(())
@@ -634,6 +862,67 @@ mod tests {
             "receiver_phases\timage-size-checked,signature-authenticated,signer-pinned,image-detached-validated,signer-trusted,snapshot-accepted,namespace-imported,theorem-read\n"
         ));
         assert!(output.contains("imported_theorem\t0\t8\n"));
+    }
+
+    #[test]
+    fn terminal_manages_a_native_http_session_in_raw_sqlite_state() {
+        let server =
+            NativeHttpKernelServer::bind((std::net::Ipv4Addr::LOCALHOST, 0), "http://127.0.0.1:1")
+                .unwrap();
+        let address = server.local_addr().unwrap();
+        let public_key = server.identity().public_key();
+        let handle = std::thread::spawn(move || server.serve());
+        let mut output = Vec::new();
+        let mut directory = Repl::empty().unwrap();
+        run_managed_native_http_hol(&mut output, &mut directory, address, public_key).unwrap();
+        handle.join().unwrap().unwrap();
+
+        let kernels = directory.kernels().unwrap();
+        assert_eq!(kernels.len(), 1);
+        assert!(directory.connections().unwrap().is_empty());
+        let session = directory
+            .inspect_state("SELECT session_id, state FROM repl_remote_session")
+            .unwrap();
+        assert_eq!(
+            session.rows,
+            [[Value::Integer(1), Value::Text("closed".to_owned())]]
+        );
+        directory
+            .forget_remote_session("1".parse().unwrap())
+            .unwrap();
+        directory.unregister_kernel(kernels[0].id).unwrap();
+        assert!(directory.kernels().unwrap().is_empty());
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("kind\tmanaged-native-http-hol\n"));
+        assert!(output.contains("remote_connection\t1\n"));
+        assert!(output.contains("statement\t(lambda x:bool. x) true = true\n"));
+        assert!(output.contains("imported_theorem\t0\t8\n"));
+        assert!(output.contains(
+            "session_state\topening\nsession_state\testablished\nsession_state\tclosing\nsession_state\tclosed\n"
+        ));
+        assert!(output.contains("directory_retention\tcaller-owned-until-explicit-cleanup\n"));
+    }
+
+    #[test]
+    fn terminal_records_failed_before_returning_a_local_post_handshake_error() {
+        let mut directory = Repl::empty().unwrap();
+        let endpoint = directory
+            .register_kernel("native-http", None, &[8; 32])
+            .unwrap();
+        let session = directory.begin_remote_session(endpoint).unwrap();
+        directory
+            .transition_remote_session(session, RemoteSessionState::Established)
+            .unwrap();
+        let result = record_local_operation::<()>(&mut directory, session, |_| {
+            Err("local artifact authentication failed".into())
+        });
+        assert!(result.is_err());
+        assert_eq!(
+            directory.remote_session(session).unwrap().state,
+            RemoteSessionState::Failed
+        );
+        assert!(directory.connections().unwrap().is_empty());
     }
 
     #[test]

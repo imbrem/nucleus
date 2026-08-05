@@ -9,8 +9,10 @@ use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
 use crate::{
-    MAX_SIGNED_MESSAGE_BYTES, ServiceIdentity, SignedKernelService, SignedMessageRequest,
-    SignedMessageResponse, decode_signed_request, encode_signed_response,
+    MAX_SIGNED_MESSAGE_BYTES, ServiceIdentity, ServiceOperation, ServiceResult, SessionInitiator,
+    SignedKernelService, SignedMessageRequest, SignedMessageResponse, SignedServiceCommand,
+    SignedServiceSession, decode_signed_request, decode_signed_response, encode_signed_request,
+    encode_signed_response,
 };
 
 /// The only application endpoint exposed by the native HTTP carrier.
@@ -161,6 +163,252 @@ impl NativeHttpKernelServer {
         write_response(stream, "200 OK", &body, &self.cors_origin)?;
         Ok(shutdown)
     }
+}
+
+/// Minimal native client for the same signed HTTP service used by browser Fetch.
+///
+/// HTTP is not authority. The pinned endpoint identity and the complete signed
+/// session capability live only in this process-local object.
+pub struct NativeHttpKernelClient {
+    address: SocketAddr,
+    identity: ServiceIdentity,
+    session: SignedServiceSession,
+    pending: Option<SignedServiceCommand>,
+}
+
+impl NativeHttpKernelClient {
+    /// Pins an endpoint description and establishes a requester-signed session.
+    ///
+    /// The exact public key must arrive independently of this HTTP connection.
+    /// An ambiguous `OpenSession` response is terminal because that handshake has
+    /// no cached-reply recovery.
+    ///
+    /// # Errors
+    ///
+    /// Returns a definite error before `OpenSession` is emitted, or an
+    /// outcome-unknown error after it may have reached the endpoint.
+    pub fn connect(
+        address: SocketAddr,
+        expected_public_key: [u8; 32],
+    ) -> Result<Self, NativeHttpClientError> {
+        let expected = ServiceIdentity::new(
+            covalence_nucleus::ed25519_key_id(&expected_public_key),
+            expected_public_key,
+        )
+        .map_err(|error| NativeHttpClientError::Definite(error.to_string()))?;
+        let description = exchange_message(address, &SignedMessageRequest::Describe)
+            .map_err(NativeHttpClientError::Definite)?;
+        let SignedMessageResponse::Description(description) = description else {
+            return Err(NativeHttpClientError::Definite(
+                "expected signed endpoint description".to_owned(),
+            ));
+        };
+        let initiator = SessionInitiator::begin(expected, &description)
+            .map_err(|error| NativeHttpClientError::Definite(error.to_string()))?;
+        let accepted = exchange_message(
+            address,
+            &SignedMessageRequest::OpenSession(initiator.request().clone()),
+        )
+        .map_err(NativeHttpClientError::OutcomeUnknown)?;
+        let SignedMessageResponse::SessionAccepted(accepted) = accepted else {
+            return Err(NativeHttpClientError::OutcomeUnknown(
+                "expected signed session acceptance".to_owned(),
+            ));
+        };
+        let session = initiator
+            .accept(&accepted)
+            .map_err(|error| NativeHttpClientError::OutcomeUnknown(error.to_string()))?;
+        Ok(Self {
+            address,
+            identity: expected,
+            session,
+            pending: None,
+        })
+    }
+
+    /// Returns the independently pinned endpoint identity.
+    #[must_use]
+    pub const fn identity(&self) -> ServiceIdentity {
+        self.identity
+    }
+
+    /// Signs, sends, authenticates, and accepts one service operation.
+    ///
+    /// If transport or reply acceptance fails, the exact signed command is
+    /// retained for an explicit [`Self::retry_pending`] decision.
+    ///
+    /// # Errors
+    ///
+    /// Returns an outcome-unknown error after a signed command may have been
+    /// dispatched, or a definite local error before any request was emitted.
+    pub fn execute(
+        &mut self,
+        operation: ServiceOperation,
+    ) -> Result<ServiceResult, NativeHttpClientError> {
+        if self.pending.is_some() {
+            return Err(NativeHttpClientError::Definite(
+                "a signed command is already pending".to_owned(),
+            ));
+        }
+        let command = self
+            .session
+            .command(operation)
+            .map_err(|error| NativeHttpClientError::Definite(error.to_string()))?;
+        self.pending = Some(command);
+        self.retry_pending()
+    }
+
+    /// Re-emits only the exact pending signed command.
+    ///
+    /// # Errors
+    ///
+    /// Returns a definite error when no command is pending, or an
+    /// outcome-unknown error if transport/reply authentication fails again.
+    pub fn retry_pending(&mut self) -> Result<ServiceResult, NativeHttpClientError> {
+        let command = self.pending.as_ref().ok_or_else(|| {
+            NativeHttpClientError::Definite("no signed command is pending".to_owned())
+        })?;
+        let response = exchange_message(
+            self.address,
+            &SignedMessageRequest::Execute(command.clone()),
+        )
+        .map_err(NativeHttpClientError::OutcomeUnknown)?;
+        let SignedMessageResponse::Reply(reply) = response else {
+            return Err(NativeHttpClientError::OutcomeUnknown(
+                "expected signed service reply".to_owned(),
+            ));
+        };
+        let result = self
+            .session
+            .accept_reply(command, reply)
+            .map_err(|error| NativeHttpClientError::OutcomeUnknown(error.to_string()))?;
+        self.pending = None;
+        Ok(result)
+    }
+
+    /// Reports whether an exact signed command is retained for explicit retry.
+    #[must_use]
+    pub const fn has_pending_command(&self) -> bool {
+        self.pending.is_some()
+    }
+}
+
+/// Failure observed by the native signed HTTP client.
+#[derive(Debug)]
+pub enum NativeHttpClientError {
+    /// No stateful request was emitted, so the endpoint outcome is known.
+    Definite(String),
+    /// A handshake/command may have been dispatched but was not accepted.
+    OutcomeUnknown(String),
+}
+
+impl NativeHttpClientError {
+    /// Returns whether remote state may have advanced.
+    #[must_use]
+    pub const fn outcome_unknown(&self) -> bool {
+        matches!(self, Self::OutcomeUnknown(_))
+    }
+}
+
+impl fmt::Display for NativeHttpClientError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Definite(message) => write!(formatter, "native HTTP client error: {message}"),
+            Self::OutcomeUnknown(message) => {
+                write!(formatter, "native HTTP client outcome unknown: {message}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for NativeHttpClientError {}
+
+fn exchange_message(
+    address: SocketAddr,
+    request: &SignedMessageRequest,
+) -> Result<SignedMessageResponse, String> {
+    let body = encode_signed_request(request).map_err(|error| error.to_string())?;
+    let body = post_message(address, &body)?;
+    decode_signed_response(&body).map_err(|error| error.to_string())
+}
+
+fn post_message(address: SocketAddr, body: &[u8]) -> Result<Vec<u8>, String> {
+    let mut stream = TcpStream::connect_timeout(&address, IO_TIMEOUT)
+        .map_err(|error| format!("connect failed: {error}"))?;
+    stream
+        .set_read_timeout(Some(IO_TIMEOUT))
+        .and_then(|()| stream.set_write_timeout(Some(IO_TIMEOUT)))
+        .map_err(|error| format!("could not set socket deadline: {error}"))?;
+    write!(
+        stream,
+        "POST {SIGNED_KERNEL_HTTP_PATH} HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    )
+    .and_then(|()| stream.write_all(body))
+    .and_then(|()| stream.flush())
+    .map_err(|error| format!("request write failed: {error}"))?;
+
+    let mut header = Vec::with_capacity(1024);
+    let mut byte = [0_u8; 1];
+    while !header.ends_with(b"\r\n\r\n") {
+        if header.len() == MAX_HTTP_HEADER_BYTES {
+            return Err("response header is too large".to_owned());
+        }
+        match stream.read(&mut byte) {
+            Ok(0) => return Err("response ended before its header".to_owned()),
+            Ok(_) => header.push(byte[0]),
+            Err(error) => return Err(format!("response read failed: {error}")),
+        }
+    }
+    let header =
+        std::str::from_utf8(&header).map_err(|_| "response header is not UTF-8".to_owned())?;
+    let mut lines = header[..header.len() - 4].split("\r\n");
+    if lines.next() != Some("HTTP/1.1 200 OK") {
+        return Err("endpoint returned a non-success HTTP status".to_owned());
+    }
+    let mut content_length = None;
+    let mut content_type = None;
+    for line in lines {
+        let (name, value) = line
+            .split_once(':')
+            .ok_or_else(|| "malformed response header".to_owned())?;
+        let value = value.trim();
+        if name.eq_ignore_ascii_case("content-length") {
+            if content_length.is_some() {
+                return Err("duplicate response Content-Length".to_owned());
+            }
+            let length = value
+                .parse::<usize>()
+                .map_err(|_| "invalid response Content-Length".to_owned())?;
+            if length > MAX_SIGNED_MESSAGE_BYTES {
+                return Err("response exceeds signed-message bound".to_owned());
+            }
+            content_length = Some(length);
+        } else if name.eq_ignore_ascii_case("content-type") {
+            if content_type.replace(value).is_some() {
+                return Err("duplicate response Content-Type".to_owned());
+            }
+        } else if name.eq_ignore_ascii_case("transfer-encoding") {
+            return Err("response Transfer-Encoding is unsupported".to_owned());
+        }
+    }
+    if content_type != Some("application/octet-stream") {
+        return Err("response Content-Type is not application/octet-stream".to_owned());
+    }
+    let length = content_length.ok_or_else(|| "response Content-Length is missing".to_owned())?;
+    let mut body = vec![0_u8; length];
+    stream
+        .read_exact(&mut body)
+        .map_err(|error| format!("response body is incomplete: {error}"))?;
+    let mut trailing = [0_u8; 1];
+    if stream
+        .read(&mut trailing)
+        .map_err(|error| format!("could not check response boundary: {error}"))?
+        != 0
+    {
+        return Err("response has bytes after Content-Length".to_owned());
+    }
+    Ok(body)
 }
 
 fn is_exact_http_origin(origin: &str) -> bool {
@@ -495,6 +743,105 @@ mod tests {
             ServiceResult::Goodbye
         ));
         handle.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn native_client_pins_and_drives_the_same_signed_service() {
+        let (address, handle) = spawn_server();
+        let description = exchange(address, &SignedMessageRequest::Describe);
+        let SignedMessageResponse::Description(description) = description else {
+            panic!("expected description")
+        };
+        let mut client =
+            NativeHttpKernelClient::connect(address, description.identity().public_key()).unwrap();
+        assert_eq!(client.identity(), description.identity());
+        let ServiceResult::Opened(connection) = client.execute(ServiceOperation::OpenHol).unwrap()
+        else {
+            panic!("expected opened HOL connection")
+        };
+        let ServiceResult::Produced(produced) = client
+            .execute(ServiceOperation::ProduceSignedHol(connection))
+            .unwrap()
+        else {
+            panic!("expected signed HOL artifact")
+        };
+        assert_eq!(produced.statement(), "(lambda x:bool. x) true = true");
+        assert!(matches!(
+            client
+                .execute(ServiceOperation::CloseHol(connection))
+                .unwrap(),
+            ServiceResult::Closed
+        ));
+        assert!(matches!(
+            client.execute(ServiceOperation::Shutdown).unwrap(),
+            ServiceResult::Goodbye
+        ));
+        assert!(!client.has_pending_command());
+        handle.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn native_client_rejects_the_http_description_against_the_out_of_band_key() {
+        let (address, handle) = spawn_server();
+        let Err(error) = NativeHttpKernelClient::connect(address, [0x55; 32]) else {
+            panic!("attacker key unexpectedly pinned")
+        };
+        assert!(!error.outcome_unknown());
+
+        let (session, _) = open_session(address);
+        shutdown(address, session, handle);
+    }
+
+    #[test]
+    fn native_client_retries_only_the_exact_pending_signed_command() {
+        let (upstream, server_handle) = spawn_server();
+        let SignedMessageResponse::Description(description) =
+            exchange(upstream, &SignedMessageRequest::Describe)
+        else {
+            panic!("expected description")
+        };
+        let proxy = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let proxy_address = proxy.local_addr().unwrap();
+        let proxy_handle = thread::spawn(move || {
+            let mut bodies = Vec::new();
+            for count in 1..=6 {
+                let (mut client, _) = proxy.accept().unwrap();
+                let request = read_http_request(&mut client).unwrap();
+                bodies.push(request.body.clone());
+                let (status, body, _) = post(upstream, &request.body);
+                assert_eq!(status, 200);
+                if count != 3 {
+                    write_response(&mut client, "200 OK", &body, "https://repl.example").unwrap();
+                }
+            }
+            bodies
+        });
+
+        let mut client =
+            NativeHttpKernelClient::connect(proxy_address, description.identity().public_key())
+                .unwrap();
+        let Err(error) = client.execute(ServiceOperation::OpenHol) else {
+            panic!("dropped reply unexpectedly succeeded")
+        };
+        assert!(error.outcome_unknown());
+        assert!(client.has_pending_command());
+        let ServiceResult::Opened(connection) = client.retry_pending().unwrap() else {
+            panic!("expected cached OpenHol reply")
+        };
+        assert!(!client.has_pending_command());
+        assert!(matches!(
+            client
+                .execute(ServiceOperation::CloseHol(connection))
+                .unwrap(),
+            ServiceResult::Closed
+        ));
+        assert!(matches!(
+            client.execute(ServiceOperation::Shutdown).unwrap(),
+            ServiceResult::Goodbye
+        ));
+        let bodies = proxy_handle.join().unwrap();
+        assert_eq!(bodies[2], bodies[3]);
+        server_handle.join().unwrap().unwrap();
     }
 
     #[test]
