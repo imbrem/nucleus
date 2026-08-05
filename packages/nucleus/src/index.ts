@@ -7,6 +7,13 @@ import init, {
 } from "../generated/nucleus.js";
 
 export { init, smoke, WebHolOutcome, WebKernel, WebOutcome, WebReplDirectory };
+export {
+  BrowserWitHolKernel,
+  type WitHolConnection,
+  type WitHolKernel,
+  type WitKernelIdentity,
+  type WitPinnedHolArtifact,
+} from "./wit-kernel.js";
 
 export type SqlValue =
   | { kind: "null" }

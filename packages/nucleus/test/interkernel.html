@@ -6,7 +6,10 @@
   </head>
   <body>
     <script type="module">
-      import { createBrowserReplDirectory } from "../dist/index.js";
+      import {
+        BrowserWitHolKernel,
+        createBrowserReplDirectory,
+      } from "../dist/index.js";
 
       const directory = createBrowserReplDirectory();
       let producerKernel;
@@ -15,6 +18,8 @@
       let receiver;
       let receiverProbe;
       let wrongNamespaceReceiver;
+      let witProducerConnection;
+      let witReceiverConnection;
       try {
         producerKernel = await directory.spawnWorker("worker:producer");
         receiverKernel = await directory.spawnWorker("worker:receiver");
@@ -110,6 +115,53 @@
           wrongNamespaceError = String(error);
         }
 
+        // Exercise the sibling WIT-shaped surface through the same two real
+        // independently keyed Worker kernels.
+        const witProducer = new BrowserWitHolKernel(producerKernel);
+        const witReceiver = new BrowserWitHolKernel(receiverKernel);
+        const witProducerIdentity = await witProducer.identity();
+        const witReceiverIdentity = await witReceiver.identity();
+        witProducerConnection = await witProducer.open();
+        witReceiverConnection = await witReceiver.open();
+        const witProduced = await witProducerConnection.betaSignExport();
+        const witAttackerProduced =
+          await witReceiverConnection.betaSignExport();
+        const witWrongSignature = {
+          ...witProduced.artifact,
+          signature: witProduced.artifact.signature.slice(),
+        };
+        witWrongSignature.signature[0] ^= 1;
+        let witWrongSignatureError = "";
+        try {
+          await witReceiverConnection.authenticate(
+            witProducerIdentity.directoryId,
+            witWrongSignature,
+          );
+        } catch (error) {
+          witWrongSignatureError = String(error);
+        }
+        const witBeforePin = await witReceiverConnection.stateImageHash();
+        let witAttackerKeyError = "";
+        try {
+          await witReceiverConnection.authenticate(
+            witProducerIdentity.directoryId,
+            witAttackerProduced.artifact,
+          );
+        } catch (error) {
+          witAttackerKeyError = String(error);
+        }
+        const witAfterAttacker = await witReceiverConnection.stateImageHash();
+        const witPinned = await witReceiverConnection.authenticate(
+          witProducerIdentity.directoryId,
+          witProduced.artifact,
+        );
+        const witAfterPin = await witReceiverConnection.stateImageHash();
+        const witReceived = await witPinned.trustImport();
+        await witProducerConnection.close();
+        witProducerConnection = undefined;
+        await witReceiverConnection.close();
+        witReceiverConnection = undefined;
+
         await producer.close();
         await producerKernel.close();
         const afterProducerClose = {
@@ -160,6 +212,28 @@
           importedContext: received.context,
           importedConclusion: received.conclusion,
           producerConclusion: produced.conclusion,
+          witBoundary: {
+            distinctIdentities:
+              witProducerIdentity.signer !== witReceiverIdentity.signer,
+            producerIdentityMatchesEndpoint:
+              witProducerIdentity.signer === producerKernel.signer,
+            receiverIdentityMatchesEndpoint:
+              witReceiverIdentity.signer === receiverKernel.signer,
+            producerPhases: witProduced.phases,
+            receiverPhases: witReceived.phases,
+            wrongSignatureRejected: /signature-authenticated/.test(
+              witWrongSignatureError,
+            ),
+            coherentAttackerRejected: /signer-pinned/.test(witAttackerKeyError),
+            stateUnchangedBeforeTrust:
+              witBeforePin === witAfterAttacker && witBeforePin === witAfterPin,
+            selectedProducer:
+              witPinned.expectedDirectoryId ===
+                witProducerIdentity.directoryId &&
+              witPinned.signer === witProducerIdentity.signer,
+            conclusionPreserved:
+              witReceived.conclusion === witProduced.conclusion,
+          },
         });
       } catch (error) {
         document.body.dataset.error = String(error);
@@ -168,6 +242,8 @@
         await receiver?.close();
         await receiverProbe?.close();
         await wrongNamespaceReceiver?.close();
+        await witProducerConnection?.close();
+        await witReceiverConnection?.close();
         await directory.close();
       }
     </script>

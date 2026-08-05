@@ -199,4 +199,29 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
     interkernelResult.importedConclusion,
     interkernelResult.producerConclusion,
   );
+  assert.deepEqual(interkernelResult.witBoundary, {
+    distinctIdentities: true,
+    producerIdentityMatchesEndpoint: true,
+    receiverIdentityMatchesEndpoint: true,
+    producerPhases: [
+      "proof-persisted",
+      "namespace-exported",
+      "snapshot-signed",
+    ],
+    receiverPhases: [
+      "image-size-checked",
+      "signature-authenticated",
+      "signer-pinned",
+      "image-detached-validated",
+      "signer-trusted",
+      "snapshot-accepted",
+      "namespace-imported",
+      "theorem-read",
+    ],
+    wrongSignatureRejected: true,
+    coherentAttackerRejected: true,
+    stateUnchangedBeforeTrust: true,
+    selectedProducer: true,
+    conclusionPreserved: true,
+  });
 });
