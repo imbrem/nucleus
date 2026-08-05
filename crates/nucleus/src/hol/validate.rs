@@ -1377,17 +1377,17 @@ mod tests {
         let physical = schema_manifest_id(&schema_manifest(expected.sqlite()).unwrap());
         assert_eq!(
             physical,
-            O256::from_hex("0420fd3e72a887b8cd91518123f4a732dd96a4ffb972753da5af6541dbd7e117")
+            O256::from_hex("fa6c179bbd55e98a20846e2ba752849411dc0f7e964474acbf9e4a55014981d3")
                 .unwrap()
         );
         assert_eq!(
             hol_semantics_id(),
-            O256::from_hex("5fbc7392009ab8bae709a5245661d83f6fd4e0b3acb01b6d0ccc66c2abf6ad98")
+            O256::from_hex("87f8b190f0f8f5ae0793847ea339aa05d721a0f9aca84c1e86189fba5deffcc7")
                 .unwrap()
         );
         assert_eq!(
             hol_schema_id(physical),
-            O256::from_hex("ada4fae555862f815491dfa5fab7eafc89cffa81e12c991a72804d96afc24644")
+            O256::from_hex("d96c1d1d49c5a7c2ac5ac06d3c265d79dfcaa37ff260ce29f44fa192461f695b")
                 .unwrap()
         );
     }
@@ -1446,14 +1446,6 @@ mod tests {
             .execute(
                 "INSERT INTO hol_judgement(ctx_id, term_id) VALUES (0, ?1)",
                 [falsehood],
-            )
-            .unwrap();
-        untrusted
-            .sqlite()
-            .execute(
-                "INSERT INTO hol_proof_event(ctx_id, term_id, rule)
-                 VALUES (999, 999, 'forged diagnostics')",
-                [],
             )
             .unwrap();
         untrusted

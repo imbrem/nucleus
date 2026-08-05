@@ -269,7 +269,6 @@ pub struct ProofSession<'brand, P> {
 pub struct Theorem<'brand> {
     context: ContextId,
     conclusion: TermId,
-    origin: Option<TheoremOrigin>,
     brand: Invariant<'brand>,
 }
 
@@ -312,45 +311,6 @@ impl Conversion<'_> {
     }
 }
 
-#[derive(Clone, Copy)]
-enum TheoremOrigin {
-    Hypothesis,
-    Truth,
-    Reflexivity,
-    Beta,
-    Weakening,
-    EqualityModusPonens,
-    EqualitySubstitution,
-    DeductionAntisymmetry,
-    TermInstantiation,
-    TypeInstantiation,
-    Abstraction,
-    Choice,
-    ConversionEquality,
-    Conversion,
-}
-
-impl TheoremOrigin {
-    const fn label(self) -> &'static str {
-        match self {
-            Self::Hypothesis => "hypothesis",
-            Self::Truth => "truth",
-            Self::Reflexivity => "reflexivity",
-            Self::Beta => "beta",
-            Self::Weakening => "weakening",
-            Self::EqualityModusPonens => "equality_modus_ponens",
-            Self::EqualitySubstitution => "equality_substitution",
-            Self::DeductionAntisymmetry => "deduction_antisymmetry",
-            Self::TermInstantiation => "term_instantiation",
-            Self::TypeInstantiation => "type_instantiation",
-            Self::Abstraction => "abstraction",
-            Self::Choice => "choice",
-            Self::ConversionEquality => "conversion_equality",
-            Self::Conversion => "conversion",
-        }
-    }
-}
-
 /// A proved implication between two contexts in one proof session.
 ///
 /// `antecedent ⇒ consequent` means every member of `consequent` is proved
@@ -358,25 +318,7 @@ impl TheoremOrigin {
 pub struct ContextImplication<'brand> {
     antecedent: ContextId,
     consequent: ContextId,
-    origin: Option<ImplicationOrigin>,
     brand: Invariant<'brand>,
-}
-
-#[derive(Clone, Copy)]
-enum ImplicationOrigin {
-    Introduction,
-    Reflexivity,
-    Transitivity,
-}
-
-impl ImplicationOrigin {
-    const fn label(self) -> &'static str {
-        match self {
-            Self::Introduction => "introduction",
-            Self::Reflexivity => "reflexivity",
-            Self::Transitivity => "transitivity",
-        }
-    }
 }
 
 /// A checked exact structural union of immutable context member sets.
@@ -1701,7 +1643,6 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         Ok(Theorem {
             context,
             conclusion: term,
-            origin: Some(TheoremOrigin::Hypothesis),
             brand: PhantomData,
         })
     }
@@ -1723,7 +1664,6 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         Ok(Theorem {
             context,
             conclusion: truth,
-            origin: Some(TheoremOrigin::Truth),
             brand: PhantomData,
         })
     }
@@ -2008,7 +1948,6 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         Ok(Theorem {
             context,
             conclusion: equality,
-            origin: Some(TheoremOrigin::ConversionEquality),
             brand: PhantomData,
         })
     }
@@ -2044,7 +1983,6 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         Ok(Theorem {
             context: theorem.context,
             conclusion: conversion.right,
-            origin: Some(TheoremOrigin::Conversion),
             brand: PhantomData,
         })
     }
@@ -2075,7 +2013,6 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         Ok(Theorem {
             context,
             conclusion: equality,
-            origin: Some(TheoremOrigin::Reflexivity),
             brand: PhantomData,
         })
     }
@@ -2136,16 +2073,13 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         Ok(Theorem {
             context,
             conclusion: equality,
-            origin: Some(TheoremOrigin::Beta),
             brand: PhantomData,
         })
     }
 
     /// Persists one branded theorem as an authoritative judgement row.
     ///
-    /// A freshly derived capability also appends its fixed observational rule
-    /// label. Re-persisting a capability loaded from the database is an
-    /// idempotent row insertion and creates no invented provenance event.
+    /// Re-persisting a capability is an idempotent row insertion.
     ///
     /// # Errors
     ///
@@ -2154,12 +2088,7 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         let (neutron, hol) = self.connection.parts_mut();
         authorize_proof(&mut hol.policy, Operation::PersistJudgement)?;
         let transaction = neutron.sqlite().unchecked_transaction()?;
-        persist_judgement(
-            &transaction,
-            theorem.context,
-            theorem.conclusion,
-            theorem.origin.map(TheoremOrigin::label),
-        )?;
+        persist_judgement(&transaction, theorem.context, theorem.conclusion)?;
         transaction.commit()?;
         Ok(())
     }
@@ -2198,7 +2127,6 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         Ok(exists.then_some(Theorem {
             context,
             conclusion,
-            origin: None,
             brand: PhantomData,
         }))
     }
@@ -2259,7 +2187,6 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         Ok(ContextImplication {
             antecedent,
             consequent,
-            origin: Some(ImplicationOrigin::Introduction),
             brand: PhantomData,
         })
     }
@@ -2292,7 +2219,6 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         Ok(exists.then_some(ContextImplication {
             antecedent,
             consequent,
-            origin: None,
             brand: PhantomData,
         }))
     }
@@ -2340,19 +2266,11 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         Ok(ContextImplication {
             antecedent,
             consequent,
-            origin: Some(if path.len() == 1 {
-                ImplicationOrigin::Reflexivity
-            } else {
-                ImplicationOrigin::Transitivity
-            }),
             brand: PhantomData,
         })
     }
 
     /// Persists one branded implication as an authoritative directed edge.
-    ///
-    /// Fresh derivations append their fixed observational rule label. A
-    /// capability loaded from the database adds no new provenance event.
     ///
     /// # Errors
     ///
@@ -2364,12 +2282,7 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         let (neutron, hol) = self.connection.parts_mut();
         authorize_proof(&mut hol.policy, Operation::PersistContextImplication)?;
         let transaction = neutron.sqlite().unchecked_transaction()?;
-        persist_context_implication(
-            &transaction,
-            implication.antecedent,
-            implication.consequent,
-            implication.origin.map(ImplicationOrigin::label),
-        )?;
+        persist_context_implication(&transaction, implication.antecedent, implication.consequent)?;
         transaction.commit()?;
         Ok(())
     }
@@ -2518,7 +2431,6 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         Ok(Theorem {
             context: implication.antecedent,
             conclusion: theorem.conclusion,
-            origin: Some(TheoremOrigin::Weakening),
             brand: PhantomData,
         })
     }
@@ -2602,7 +2514,6 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         Ok(Theorem {
             context: equality.context,
             conclusion,
-            origin: Some(TheoremOrigin::EqualitySubstitution),
             brand: PhantomData,
         })
     }
@@ -2670,7 +2581,6 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         Ok(Theorem {
             context,
             conclusion: equality,
-            origin: Some(TheoremOrigin::DeductionAntisymmetry),
             brand: PhantomData,
         })
     }
@@ -2759,7 +2669,6 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         Ok(Theorem {
             context,
             conclusion,
-            origin: Some(TheoremOrigin::TermInstantiation),
             brand: PhantomData,
         })
     }
@@ -2843,7 +2752,6 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         Ok(Theorem {
             context,
             conclusion,
-            origin: Some(TheoremOrigin::TypeInstantiation),
             brand: PhantomData,
         })
     }
@@ -2921,7 +2829,6 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         Ok(Theorem {
             context: theorem.context,
             conclusion,
-            origin: Some(TheoremOrigin::Abstraction),
             brand: PhantomData,
         })
     }
@@ -2981,7 +2888,6 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         Ok(Theorem {
             context: premise.context,
             conclusion,
-            origin: Some(TheoremOrigin::Choice),
             brand: PhantomData,
         })
     }
@@ -3019,7 +2925,6 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         Ok(Theorem {
             context: equality.context,
             conclusion: right,
-            origin: Some(TheoremOrigin::EqualityModusPonens),
             brand: PhantomData,
         })
     }
@@ -3573,18 +3478,11 @@ fn persist_judgement(
     connection: &sqlite::Connection,
     context: ContextId,
     term: TermId,
-    rule: Option<&str>,
 ) -> Result<(), sqlite::Error> {
     connection.execute(
         "INSERT OR IGNORE INTO hol_judgement(ctx_id, term_id) VALUES (?1, ?2)",
         (context.0, term.0),
     )?;
-    if let Some(rule) = rule {
-        connection.execute(
-            "INSERT INTO hol_proof_event(ctx_id, term_id, rule) VALUES (?1, ?2, ?3)",
-            (context.0, term.0, rule),
-        )?;
-    }
     Ok(())
 }
 
@@ -3592,7 +3490,6 @@ fn persist_context_implication(
     connection: &sqlite::Connection,
     antecedent: ContextId,
     consequent: ContextId,
-    rule: Option<&str>,
 ) -> Result<(), sqlite::Error> {
     connection.execute(
         "INSERT OR IGNORE INTO hol_context_implication(
@@ -3600,14 +3497,6 @@ fn persist_context_implication(
          ) VALUES (?1, ?2)",
         (antecedent.0, consequent.0),
     )?;
-    if let Some(rule) = rule {
-        connection.execute(
-            "INSERT INTO hol_context_implication_event(
-                 antecedent_ctx_id, consequent_ctx_id, rule
-             ) VALUES (?1, ?2, ?3)",
-            (antecedent.0, consequent.0, rule),
-        )?;
-    }
     Ok(())
 }
 
@@ -3621,12 +3510,6 @@ fn persist_context_union(
         "INSERT OR IGNORE INTO hol_context_exact_union(
              left_ctx_id, right_ctx_id, result_ctx_id
          ) VALUES (?1, ?2, ?3)",
-        (left.0, right.0, result.0),
-    )?;
-    connection.execute(
-        "INSERT INTO hol_context_exact_union_event(
-             left_ctx_id, right_ctx_id, result_ctx_id, rule
-         ) VALUES (?1, ?2, ?3, 'exact-membership')",
         (left.0, right.0, result.0),
     )?;
     Ok(())
@@ -6409,30 +6292,15 @@ mod tests {
                 proof.persist_theorem(&theorem)
             })
             .unwrap();
-        let counts = connection
+        let count = connection
             .parts_mut()
             .0
             .sqlite()
-            .query_row(
-                "SELECT
-                     (SELECT count(*) FROM hol_judgement),
-                     (SELECT count(*) FROM hol_proof_event)",
-                [],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
-            )
+            .query_row("SELECT count(*) FROM hol_judgement", [], |row| {
+                row.get::<_, i64>(0)
+            })
             .unwrap();
-        assert_eq!(counts, (1, 2));
-        let rule = connection
-            .parts_mut()
-            .0
-            .sqlite()
-            .query_row(
-                "SELECT rule FROM hol_proof_event WHERE ctx_id = 0 AND term_id = ?1",
-                [conclusion.get()],
-                |row| row.get::<_, String>(0),
-            )
-            .unwrap();
-        assert_eq!(rule, "reflexivity");
+        assert_eq!(count, 1);
     }
 
     #[test]
@@ -6527,20 +6395,15 @@ mod tests {
             })
             .unwrap();
         assert_eq!(conclusion, truth);
-        let (judgements, rule) = connection
+        let judgements = connection
             .parts_mut()
             .0
             .sqlite()
-            .query_row(
-                "SELECT
-                     (SELECT count(*) FROM hol_judgement),
-                     (SELECT rule FROM hol_proof_event LIMIT 1)",
-                [],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
-            )
+            .query_row("SELECT count(*) FROM hol_judgement", [], |row| {
+                row.get::<_, i64>(0)
+            })
             .unwrap();
         assert_eq!(judgements, 1);
-        assert_eq!(rule, "equality_modus_ponens");
     }
 
     #[test]
@@ -6584,18 +6447,17 @@ mod tests {
 
         assert_eq!(conclusion, expected);
         assert!(connection.proved_judgement(context, expected).unwrap());
-        let mut rules = connection
-            .parts_mut()
-            .0
-            .sqlite()
-            .prepare("SELECT rule FROM hol_proof_event WHERE ctx_id = ?1 ORDER BY event_id")
-            .unwrap();
-        let rules = rules
-            .query_map([context.get()], |row| row.get::<_, String>(0))
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert_eq!(rules, ["equality_substitution", "conversion"]);
+        assert_eq!(
+            connection
+                .parts_mut()
+                .0
+                .sqlite()
+                .query_row("SELECT count(*) FROM hol_judgement", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            2
+        );
     }
 
     #[test]
@@ -6742,17 +6604,11 @@ mod tests {
             [y, z]
         );
         assert_eq!(connection.context_members(collapsed_context).unwrap(), [z]);
-        let rule = connection
-            .parts_mut()
-            .0
-            .sqlite()
-            .query_row(
-                "SELECT rule FROM hol_proof_event WHERE ctx_id = ?1 AND term_id = ?2",
-                [simultaneous_context.get(), y.get()],
-                |row| row.get::<_, String>(0),
-            )
-            .unwrap();
-        assert_eq!(rule, "term_instantiation");
+        assert!(
+            connection
+                .proved_judgement(simultaneous_context, y)
+                .unwrap()
+        );
     }
 
     #[test]
@@ -7019,23 +6875,20 @@ mod tests {
                 _ => ProofError::Denied(denied),
             };
             assert_eq!(result.unwrap_err().to_string(), expected.to_string());
-            let counts = connection
+            let count = connection
                 .parts_mut()
                 .0
                 .sqlite()
-                .query_row(
-                    "SELECT (SELECT count(*) FROM hol_judgement),
-                            (SELECT count(*) FROM hol_proof_event)",
-                    [],
-                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
-                )
+                .query_row("SELECT count(*) FROM hol_judgement", [], |row| {
+                    row.get::<_, i64>(0)
+                })
                 .unwrap();
-            assert_eq!(counts, (0, 0));
+            assert_eq!(count, 0);
         }
     }
 
     #[test]
-    fn abstraction_closes_an_honest_beta_equality_and_persists_its_origin() {
+    fn abstraction_closes_an_honest_beta_equality_and_persists() {
         let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
         let bool_type = connection.insert_bool_type().unwrap();
         let x = connection.insert_free_term(800, bool_type).unwrap();
@@ -7075,17 +6928,11 @@ mod tests {
             connection.term(right_body).unwrap(),
             TermView::Bound { index: 0 }
         );
-        let rule = connection
-            .parts_mut()
-            .0
-            .sqlite()
-            .query_row(
-                "SELECT rule FROM hol_proof_event WHERE ctx_id = 0 AND term_id = ?1",
-                [conclusion.get()],
-                |row| row.get::<_, String>(0),
-            )
-            .unwrap();
-        assert_eq!(rule, "abstraction");
+        assert!(
+            connection
+                .proved_judgement(ContextId::empty(), conclusion)
+                .unwrap()
+        );
     }
 
     #[test]
@@ -7305,7 +7152,6 @@ mod tests {
                 let theorem = Theorem {
                     context: ContextId::empty(),
                     conclusion: x,
-                    origin: None,
                     brand: PhantomData,
                 };
                 proof.abstraction(&theorem, x).map(|_| ())
@@ -7426,7 +7272,7 @@ mod tests {
     }
 
     #[test]
-    fn choice_selects_from_an_exact_proved_application_and_persists_its_origin() {
+    fn choice_selects_from_an_exact_proved_application_and_persists() {
         let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
         let bool_type = connection.insert_bool_type().unwrap();
         let predicate_bound = connection.insert_bound_term(0, bool_type).unwrap();
@@ -7464,17 +7310,7 @@ mod tests {
             connection.term(argument).unwrap(),
             TermView::Epsilon { predicate }
         );
-        let rule = connection
-            .parts_mut()
-            .0
-            .sqlite()
-            .query_row(
-                "SELECT rule FROM hol_proof_event WHERE ctx_id = ?1 AND term_id = ?2",
-                [context.get(), conclusion.get()],
-                |row| row.get::<_, String>(0),
-            )
-            .unwrap();
-        assert_eq!(rule, "choice");
+        assert!(connection.proved_judgement(context, conclusion).unwrap());
     }
 
     #[test]
@@ -7504,7 +7340,6 @@ mod tests {
                 let theorem = Theorem {
                     context: ContextId::empty(),
                     conclusion: TermId::from_i64(i64::MAX),
-                    origin: None,
                     brand: PhantomData,
                 };
                 proof.choice(&theorem).map(|_| ())
@@ -7644,7 +7479,6 @@ mod tests {
             let premise = Theorem {
                 context: ContextId::empty(),
                 conclusion: application,
-                origin: None,
                 brand: PhantomData,
             };
             proof.choice(&premise).map(|_| ())
@@ -7783,17 +7617,6 @@ mod tests {
                 .proved_judgement(ContextId::empty(), expected)
                 .unwrap()
         );
-        let rule = connection
-            .parts_mut()
-            .0
-            .sqlite()
-            .query_row(
-                "SELECT rule FROM hol_proof_event WHERE ctx_id = 0 AND term_id = ?1",
-                [expected.get()],
-                |row| row.get::<_, String>(0),
-            )
-            .unwrap();
-        assert_eq!(rule, "deduction_antisymmetry");
     }
 
     #[test]
@@ -8158,17 +7981,15 @@ mod tests {
             .unwrap();
         assert_eq!(reloaded, (assumption, truth_id));
 
-        let rules = connection
+        let count = connection
             .parts_mut()
             .0
             .sqlite()
-            .prepare("SELECT rule FROM hol_proof_event ORDER BY event_id")
-            .unwrap()
-            .query_map([], |row| row.get::<_, String>(0))
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
+            .query_row("SELECT count(*) FROM hol_judgement", [], |row| {
+                row.get::<_, i64>(0)
+            })
             .unwrap();
-        assert_eq!(rules, ["hypothesis", "truth"]);
+        assert_eq!(count, 2);
     }
 
     #[test]
@@ -8230,21 +8051,12 @@ mod tests {
             .query_row(
                 "SELECT
                      (SELECT count(*) FROM hol_judgement),
-                     (SELECT count(*) FROM hol_proof_event),
-                     (SELECT count(*) FROM hol_context_implication),
-                     (SELECT count(*) FROM hol_context_implication_event)",
+                     (SELECT count(*) FROM hol_context_implication)",
                 [],
-                |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, i64>(2)?,
-                        row.get::<_, i64>(3)?,
-                    ))
-                },
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
             )
             .unwrap();
-        assert_eq!(counts, (0, 0, 0, 0));
+        assert_eq!(counts, (0, 0));
     }
 
     #[test]
@@ -8390,7 +8202,7 @@ mod tests {
     }
 
     #[test]
-    fn implication_events_are_repeatable_and_policy_denial_is_atomic() {
+    fn implication_persistence_is_idempotent_and_policy_denial_is_atomic() {
         let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
         connection
             .with_proof_session(|mut proof| {
@@ -8402,19 +8214,15 @@ mod tests {
                 proof.persist_context_implication(&second)
             })
             .unwrap();
-        let counts = connection
+        let count = connection
             .parts_mut()
             .0
             .sqlite()
-            .query_row(
-                "SELECT
-                     (SELECT count(*) FROM hol_context_implication),
-                     (SELECT count(*) FROM hol_context_implication_event)",
-                [],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
-            )
+            .query_row("SELECT count(*) FROM hol_context_implication", [], |row| {
+                row.get::<_, i64>(0)
+            })
             .unwrap();
-        assert_eq!(counts, (1, 2));
+        assert_eq!(count, 1);
 
         let mut denied = Connection::open_hol_in_memory(RecordingPolicy::default()).unwrap();
         assert!(matches!(
@@ -8530,19 +8338,12 @@ mod tests {
             .query_row(
                 "SELECT
                      (SELECT count(*) FROM hol_context_exact_union),
-                     (SELECT count(*) FROM hol_context_exact_union_event),
                      (SELECT count(*) FROM hol_context_implication)",
                 [],
-                |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, i64>(2)?,
-                    ))
-                },
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
             )
             .unwrap();
-        assert_eq!(counts, (1, 2, 0));
+        assert_eq!(counts, (1, 0));
     }
 
     #[test]
@@ -9039,17 +8840,11 @@ mod tests {
                 .unwrap(),
             [beta]
         );
-        let rule = connection
-            .parts_mut()
-            .0
-            .sqlite()
-            .query_row(
-                "SELECT rule FROM hol_proof_event WHERE ctx_id = ?1 AND term_id = ?2",
-                [actual_context.get(), actual_conclusion.get()],
-                |row| row.get::<_, String>(0),
-            )
-            .unwrap();
-        assert_eq!(rule, "type_instantiation");
+        assert!(
+            connection
+                .proved_judgement(actual_context, actual_conclusion)
+                .unwrap()
+        );
     }
 
     #[test]

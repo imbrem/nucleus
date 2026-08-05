@@ -11,9 +11,6 @@ const MAX_INDEX_COLUMNS: usize = 16;
 const MAX_IDENTIFIER_BYTES: usize = u16::MAX as usize;
 const MAX_INDEX_REFERENCES: usize = 512;
 const CORE_INDEX_NAMES: &[&str] = &[
-    "hol_proof_event_judgement",
-    "hol_context_implication_event_edge",
-    "hol_context_exact_union_event_key",
     "hol_namespace_named_child",
     "hol_namespace_export_name",
     "hol_kstar_unique",
@@ -494,7 +491,7 @@ mod tests {
         assert_eq!(descriptor.encode(), expected);
         assert_eq!(
             descriptor.schema_id().to_string(),
-            "8d924a92a4c2e2e07251f4a379ffb4800d3bd21ff889b368f5a3777256889144"
+            "7b62febff367af1defcc47bc8e28df70f6579af113993a52edeffc8610068cb1"
         );
     }
 

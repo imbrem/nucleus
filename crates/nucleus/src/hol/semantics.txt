@@ -56,8 +56,9 @@ Delta |- q. Abstraction derives Gamma |- (lambda x. l) = (lambda x. r) from Gamm
 the exact free-variable node x does not occur in any member of Gamma. Occurrences beneath existing
 lambdas become the correctly typed de Bruijn index, while existing bound occurrences remain
 unchanged. Exact context union is a separately checked structural relation. Context equivalence is
-a pair of opposite proved implications. Proof-event tables are diagnostic metadata and carry no
-authority.
+a pair of opposite proved implications. The authoritative HOL database stores kernel state, not
+proof steps or observational provenance. Such traces belong to a separate observer-selected store
+and do not affect the authenticated HOL image.
 
 Namespaces and exports name already-admitted local kinds, types, terms, and contexts. Hash-first
 imports and imported namespace aliases are inert coordinates. A persistent trusted-import row is
