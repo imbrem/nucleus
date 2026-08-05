@@ -16,6 +16,8 @@ use covalence_repl::{
     ManagedHolGuestResult, WasmtimeComponentLimits, retain_signed_hol_guest_artifact,
     run_hol_proof_component,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use covalence_repl::{NativeHttpKernelServer, SIGNED_KERNEL_HTTP_PATH};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 type LocalRepl = Repl<LocalConnection>;
@@ -552,7 +554,44 @@ fn usage(output: &mut impl io::Write) -> io::Result<()> {
         "       nucleus --wasm-hol COMPONENT OUTPUT-DIRECTORY"
     )?;
     writeln!(output, "       nucleus --interkernel-hol")?;
+    #[cfg(not(target_arch = "wasm32"))]
+    writeln!(
+        output,
+        "       nucleus --kernel-http ADDRESS ALLOWED_ORIGIN"
+    )?;
     writeln!(output, "       nucleus --help")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn run_kernel_http_arguments(
+    arguments: &mut impl Iterator<Item = std::ffi::OsString>,
+) -> Result<()> {
+    let address = arguments
+        .next()
+        .ok_or("--kernel-http requires ADDRESS ALLOWED_ORIGIN")?
+        .into_string()
+        .map_err(|_| "native HTTP address must be valid UTF-8")?;
+    let allowed_origin = arguments
+        .next()
+        .ok_or("--kernel-http requires ADDRESS ALLOWED_ORIGIN")?
+        .into_string()
+        .map_err(|_| "allowed origin must be valid UTF-8")?;
+    if arguments.next().is_some() {
+        return Err("unexpected arguments after --kernel-http ADDRESS ALLOWED_ORIGIN".into());
+    }
+    let server = NativeHttpKernelServer::bind(address, allowed_origin)?;
+    let address = server.local_addr()?;
+    let mut public_key = String::with_capacity(64);
+    for byte in server.identity().public_key() {
+        use std::fmt::Write as _;
+        write!(public_key, "{byte:02x}")?;
+    }
+    let mut output = io::stdout().lock();
+    writeln!(output, "url\thttp://{address}{SIGNED_KERNEL_HTTP_PATH}")?;
+    writeln!(output, "public_key\t{public_key}")?;
+    output.flush()?;
+    drop(output);
+    server.serve().map_err(Into::into)
 }
 
 fn run() -> Result<()> {
@@ -646,6 +685,8 @@ fn run() -> Result<()> {
             }
             run_interkernel_hol(&mut io::stdout().lock())
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        Some(flag) if flag == "--kernel-http" => run_kernel_http_arguments(&mut arguments),
         Some(flag) if flag == "-h" || flag == "--help" => {
             usage(&mut io::stdout().lock())?;
             Ok(())
