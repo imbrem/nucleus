@@ -33,6 +33,19 @@ use covalence_nucleus::{
     NamespaceExport, ProofError, SignedSnapshotEnvelope, TermError, TypeError, ed25519_key_id,
 };
 
+mod service;
+
+pub use service::signed_message::{
+    MAX_SIGNED_MESSAGE_BYTES, SignedMessageError, SignedMessageRequest, SignedMessageResponse,
+    decode_signed_request, decode_signed_response, encode_signed_request, encode_signed_response,
+};
+pub use service::{
+    EndpointDescription, MAX_SERVICE_CONNECTIONS_PER_SESSION, MAX_SERVICE_SESSIONS,
+    ServiceIdentity, ServiceOperation, ServiceProducedHol, ServiceReceivedHol, ServiceResult,
+    SessionAccepted, SessionInitiator, SessionRequest, SignedKernelService, SignedServiceCommand,
+    SignedServiceReply, SignedServiceSession, signed_kernel_service_schema,
+};
+
 const SCHEMA: &str = "
 PRAGMA foreign_keys = ON;
 CREATE TABLE repl_kernel (
@@ -88,6 +101,11 @@ impl KernelId {
     #[must_use]
     pub const fn from_u32(id: u32) -> Self {
         Self(id as i64)
+    }
+
+    /// Reconstructs the complete directory coordinate used by signed codecs.
+    pub(crate) const fn from_i64(id: i64) -> Self {
+        Self(id)
     }
 
     /// Returns the integer stored in the REPL state database.
