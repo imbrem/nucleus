@@ -180,9 +180,8 @@ function readHolOutcome(outcome: WebHolOutcome): unknown {
 
 function readSignedHolOutcome(outcome: WebSignedHolOutcome): unknown {
   try {
-    const phases = Array.from(
-      { length: outcome.phase_count() },
-      (_, index) => outcome.phase(index),
+    const phases = Array.from({ length: outcome.phase_count() }, (_, index) =>
+      outcome.phase(index),
     );
     return {
       kind: outcome.kind(),

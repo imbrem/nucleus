@@ -78,10 +78,7 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
   assert.equal(result.signed.kind, "signed-hol-round-trip");
   assert.equal(result.signed.phases[0], "proof-persisted");
   assert.equal(result.signed.phases.at(-1), "theorem-read");
-  assert.equal(
-    result.signed.statement,
-    "(lambda x:bool. x) true = true",
-  );
+  assert.equal(result.signed.statement, "(lambda x:bool. x) true = true");
   assert.ok(result.signed.image > 0);
   assert.equal(result.signed.publicKey, 32);
   assert.equal(result.signed.signature, 64);
@@ -119,9 +116,7 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
   await demo.locator("#run-signed-hol").click();
   await demo.getByText("kind\tsigned-hol-round-trip").waitFor();
   await demo.getByText(/phases\tproof-persisted,.*theorem-read/).waitFor();
-  await demo
-    .getByText("statement\t(lambda x:bool. x) true = true")
-    .waitFor();
+  await demo.getByText("statement\t(lambda x:bool. x) true = true").waitFor();
   await demo.getByText("receiver\thol receiver 4").waitFor();
   await bothDownloads;
   assert.deepEqual(
@@ -129,7 +124,9 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
     ["beta.attestation.txt", "beta.sqlite3"],
   );
   assert.equal(
-    await demo.locator("#connection option", { hasText: "hol receiver 4" }).count(),
+    await demo
+      .locator("#connection option", { hasText: "hol receiver 4" })
+      .count(),
     1,
   );
 });

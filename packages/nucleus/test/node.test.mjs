@@ -60,9 +60,7 @@ test("runs the REPL kernel through the Wasm binding in Node", async () => {
   assert.equal(signed.imported_context_id(), "0");
   assert.equal(signed.imported_conclusion_id(), signed.conclusion_id());
   assert.notEqual(signed.receiver_connection(), holConnection);
-  assert.throws(() =>
-    kernel.run(signed.receiver_connection(), "SELECT 1"),
-  );
+  assert.throws(() => kernel.run(signed.receiver_connection(), "SELECT 1"));
   assert.throws(() => kernel.run_hol(connection, "truth"));
   assert.throws(() => kernel.run(holConnection, "SELECT 1"));
 

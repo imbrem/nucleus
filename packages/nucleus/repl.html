@@ -266,16 +266,8 @@
             receiverOption.value = receiverId;
             receiverOption.textContent = `hol receiver ${receiverId}`;
             connectionSelect.append(receiverOption);
-            download(
-              "beta.sqlite3",
-              result.image,
-              "application/vnd.sqlite3",
-            );
-            download(
-              "beta.attestation.txt",
-              result.attestation,
-              "text/plain",
-            );
+            download("beta.sqlite3", result.image, "application/vnd.sqlite3");
+            download("beta.attestation.txt", result.attestation, "text/plain");
             output.className = "";
             output.textContent = [
               `kind\t${result.kind}`,
