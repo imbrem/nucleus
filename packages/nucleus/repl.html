@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Nucleus SQL connections</title>
+    <title>Nucleus local connections</title>
     <style>
       :root {
         color-scheme: light dark;
@@ -63,16 +63,18 @@
     </style>
   </head>
   <body>
-    <h1>Nucleus SQL connections</h1>
+    <h1>Nucleus local SQL and HOL connections</h1>
     <p>
       Each connection has a writable in-memory main database. URL loads fetch a
-      complete SQLite image into the Worker, then attach it immutably.
+      complete SQLite image into the Worker, then attach it immutably. HOL
+      recipes call the same Rust orchestration adapter as the terminal.
     </p>
 
     <div class="bar">
       <label for="connection">Connection</label>
       <select id="connection"></select>
-      <button id="new" type="button">New connection</button>
+      <button id="new" type="button">New SQL connection</button>
+      <button id="new-hol" type="button">New HOL connection</button>
       <button id="close" type="button">Close connection</button>
       <button id="export" type="button">Export main snapshot</button>
     </div>
@@ -95,6 +97,10 @@
     </div>
     <div id="output" aria-live="polite"></div>
 
+    <label for="recipe">HOL recipe</label>
+    <input id="recipe" value="beta true" />
+    <button id="run-hol" type="button">Run HOL recipe</button>
+
     <script type="module">
       import { createBrowserRepl } from "./dist/index.js";
 
@@ -112,13 +118,14 @@
         return connection;
       }
 
-      async function addConnection() {
+      async function addConnection(kind = "sql") {
         const id = String(nextConnection++);
-        const connection = await repl.open();
+        const connection =
+          kind === "hol" ? await repl.openHol() : await repl.openSql();
         connections.set(id, connection);
         const option = document.createElement("option");
         option.value = id;
-        option.textContent = `connection ${id}`;
+        option.textContent = `${kind} connection ${id}`;
         connectionSelect.append(option);
         connectionSelect.value = id;
         status.textContent = `${option.textContent} ready`;
@@ -176,6 +183,14 @@
         }
       });
 
+      document.querySelector("#new-hol").addEventListener("click", async () => {
+        try {
+          await addConnection("hol");
+        } catch (error) {
+          showError(error);
+        }
+      });
+
       document.querySelector("#close").addEventListener("click", async () => {
         try {
           const id = connectionSelect.value;
@@ -195,6 +210,29 @@
           showOutcome(
             await selected().run(document.querySelector("#sql").value),
           );
+          status.textContent = "Ready";
+        } catch (error) {
+          showError(error);
+        }
+      });
+
+      document.querySelector("#run-hol").addEventListener("click", async () => {
+        status.textContent = "Proving…";
+        try {
+          const connection = selected();
+          if (connection.kind !== "hol")
+            throw new Error("selected connection is not HOL");
+          const result = await connection.run(
+            document.querySelector("#recipe").value,
+          );
+          output.className = "";
+          output.textContent = [
+            `kind\t${result.kind}`,
+            `recipe\t${result.recipe}`,
+            `context\t${result.context}`,
+            `conclusion\t${result.conclusion}`,
+            `statement\t${result.statement}`,
+          ].join("\n");
           status.textContent = "Ready";
         } catch (error) {
           showError(error);
@@ -232,7 +270,7 @@
 
       addEventListener("beforeunload", () => repl.close());
       try {
-        await addConnection();
+        await addConnection("sql");
       } catch (error) {
         showError(error);
       }
