@@ -1938,6 +1938,700 @@ impl NotElim {
     }
 }
 
+fn church_or_operator<P: Policy>(connection: &mut Connection<Hol<P>>) -> Result<TermId, TermError> {
+    let bool_type = connection.insert_bool_type()?;
+    let left = connection.insert_bound_term(2, bool_type)?;
+    let right = connection.insert_bound_term(1, bool_type)?;
+    let result = connection.insert_bound_term(0, bool_type)?;
+    let left_to_result = canonical_imp_open(connection, left, result)?;
+    let right_to_result = canonical_imp_open(connection, right, result)?;
+    let right_continuation = canonical_imp_open(connection, right_to_result, result)?;
+    let body = canonical_imp_open(connection, left_to_result, right_continuation)?;
+    let predicate = connection.insert_lambda(bool_type, body)?;
+    let truth = connection.insert_bool_term(true)?;
+    let constant_truth = connection.insert_lambda(bool_type, truth)?;
+    let universal = connection.insert_equality(predicate, constant_truth)?;
+    let right = connection.insert_lambda(bool_type, universal)?;
+    connection.insert_lambda(bool_type, right)
+}
+
+fn normalize_church_or<'brand, P: Policy>(
+    proof: &mut ProofSession<'brand, P>,
+    operator: TermId,
+    left: TermId,
+    right: TermId,
+) -> Result<covalence_nucleus::Conversion<'brand>, ProofError> {
+    let first = proof.conversion_beta(operator, left)?;
+    let right_reflexive = proof.conversion_reflexivity(right)?;
+    let applied = proof.conversion_application(&first, &right_reflexive)?;
+    let second = proof.conversion_beta(first.right(), right)?;
+    proof.conversion_transitivity(&applied, &second)
+}
+
+/// Prepared Diaconescu derivation of Boolean excluded middle.
+///
+/// The proof uses only canonical `F`, Church disjunction, Hilbert choice,
+/// function extensionality, and Leibniz-derived epsilon congruence. It adds no
+/// Boolean-cases axiom, raw assumption, primitive proof rule, or persistence.
+pub struct ExcludedMiddle {
+    proposition: TermId,
+    negation: TermId,
+    result: TermId,
+    truth: TermId,
+    falsehood: TermId,
+    operator: TermId,
+    upper: TermId,
+    lower: TermId,
+    upper_choice: TermId,
+    lower_choice: TermId,
+    upper_member: TermId,
+    lower_member: TermId,
+    upper_seed_left: TermId,
+    lower_seed_left: TermId,
+    upper_equals_truth: TermId,
+    lower_equals_false: TermId,
+    upper_direct: TermId,
+    lower_direct: TermId,
+    point: TermId,
+    point_equals_truth: TermId,
+    point_equals_false: TermId,
+    point_upper_member: TermId,
+    point_lower_member: TermId,
+    upper_seed_intro: ChurchOrIntro,
+    lower_seed_intro: ChurchOrIntro,
+    point_upper_intro: ChurchOrIntro,
+    point_lower_intro: ChurchOrIntro,
+    function_extensionality: FunExt,
+    epsilon_congruence: EpsCongr,
+    truth_upper_symmetry: EqSym,
+    truth_to_lower: EqTrans,
+    truth_to_false: EqTrans,
+    not_truth_equals_false_intro: NotIntro,
+    not_truth_equals_false_elim: NotElim,
+    not_proposition_intro: NotIntro,
+    result_right_intro: ChurchOrIntro,
+    result_left_in_upper_context: ChurchOrIntro,
+    result_left_in_upper_lower_context: ChurchOrIntro,
+    upper_elimination: ChurchOrElim,
+    lower_elimination: ChurchOrElim,
+    empty_to_contradiction: WeakenPlan,
+    empty_to_upper_case: WeakenPlan,
+}
+
+impl ExcludedMiddle {
+    /// Exact proposition `p` selected at preparation time.
+    #[must_use]
+    pub const fn proposition(&self) -> TermId {
+        self.proposition
+    }
+
+    /// Exact canonical `NOT p` node.
+    #[must_use]
+    pub const fn negation(&self) -> TermId {
+        self.negation
+    }
+
+    /// Exact Church-encoded `p OR NOT p` conclusion.
+    #[must_use]
+    pub const fn conclusion(&self) -> TermId {
+        self.result
+    }
+
+    /// Prepares excluded middle for one exact closed proposition.
+    ///
+    /// `result_variable` is the fresh Boolean used by Church-OR introduction;
+    /// `point` is a distinct fresh Boolean used for predicate extensionality.
+    ///
+    /// # Errors
+    ///
+    /// Returns if either variable is not exact/fresh, the proposition is not a
+    /// closed Boolean, or an exact intermediate context cannot be prepared.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the explicit Diaconescu plan keeps every exact intermediate coordinate auditable"
+    )]
+    pub fn prepare<P: Policy>(
+        connection: &mut Connection<Hol<P>>,
+        proposition: TermId,
+        result_variable: TermId,
+        point: TermId,
+    ) -> Result<Self, DerivedRulePreparationError> {
+        require_closed(connection, proposition)?;
+        require_fresh_variable(connection, result_variable, &[proposition, point])?;
+        require_fresh_variable(connection, point, &[proposition, result_variable])?;
+        let bool_type = connection.insert_bool_type().map_err(TermError::from)?;
+        if connection.term_type(result_variable)? != bool_type
+            || connection.term_type(point)? != bool_type
+        {
+            return Err(TermError::ApplicationTypeMismatch {
+                expected: bool_type,
+                actual: connection.term_type(point)?,
+            }
+            .into());
+        }
+        let truth = connection.insert_bool_term(true)?;
+        let (_, falsehood) = canonical_false(connection)?;
+        let negation = canonical_not(connection, proposition)?;
+        let result = church_or(connection, proposition, negation, truth)?.proposition;
+        let operator = church_or_operator(connection)?;
+
+        let bound = connection.insert_bound_term(0, bool_type)?;
+        let bound_equals_truth = connection.insert_equality(bound, truth)?;
+        let upper_body = apply2(connection, operator, bound_equals_truth, proposition)?;
+        let upper = connection.insert_lambda(bool_type, upper_body)?;
+        let bound = connection.insert_bound_term(0, bool_type)?;
+        let bound_equals_false = connection.insert_equality(bound, falsehood)?;
+        let lower_body = apply2(connection, operator, bound_equals_false, proposition)?;
+        let lower = connection.insert_lambda(bool_type, lower_body)?;
+        let upper_choice = connection.insert_epsilon(upper)?;
+        let lower_choice = connection.insert_epsilon(lower)?;
+        let upper_member = connection.insert_application(upper, upper_choice)?;
+        let lower_member = connection.insert_application(lower, lower_choice)?;
+        let upper_equals_truth = connection.insert_equality(upper_choice, truth)?;
+        let lower_equals_false = connection.insert_equality(lower_choice, falsehood)?;
+        let upper_direct =
+            church_or(connection, upper_equals_truth, proposition, truth)?.proposition;
+        let lower_direct =
+            church_or(connection, lower_equals_false, proposition, truth)?.proposition;
+
+        let truth_equals_truth = connection.insert_equality(truth, truth)?;
+        let false_equals_false = connection.insert_equality(falsehood, falsehood)?;
+        let upper_seed_intro = ChurchOrIntro::left(
+            connection,
+            ContextId::empty(),
+            truth_equals_truth,
+            proposition,
+            result_variable,
+        )?;
+        let lower_seed_intro = ChurchOrIntro::left(
+            connection,
+            ContextId::empty(),
+            false_equals_false,
+            proposition,
+            result_variable,
+        )?;
+
+        let upper_case = connection.define_context([upper_equals_truth])?;
+        let upper_proposition_case =
+            connection.define_context([upper_equals_truth, proposition])?;
+        let upper_lower_case =
+            connection.define_context([upper_equals_truth, lower_equals_false])?;
+        let contradiction_context =
+            connection.define_context([upper_equals_truth, lower_equals_false, proposition])?;
+        let proposition_context = connection.define_context([proposition])?;
+
+        let point_equals_truth = connection.insert_equality(point, truth)?;
+        let point_equals_false = connection.insert_equality(point, falsehood)?;
+        church_or(connection, point_equals_truth, proposition, truth)?;
+        church_or(connection, point_equals_false, proposition, truth)?;
+        let point_upper_intro = ChurchOrIntro::right(
+            connection,
+            contradiction_context,
+            point_equals_truth,
+            proposition,
+            result_variable,
+        )?;
+        let point_lower_intro = ChurchOrIntro::right(
+            connection,
+            contradiction_context,
+            point_equals_false,
+            proposition,
+            result_variable,
+        )?;
+        let point_upper_member = connection.insert_application(upper, point)?;
+        let point_lower_member = connection.insert_application(lower, point)?;
+        let function_extensionality = FunExt::prepare(connection, upper, lower, point)?;
+        let epsilon_congruence = EpsCongr::prepare(connection, upper, lower)?;
+        let truth_upper_symmetry = EqSym::prepare(connection, upper_choice, truth)?;
+        let truth_to_lower = EqTrans::prepare(connection, truth, upper_choice, lower_choice)?;
+        let truth_to_false = EqTrans::prepare(connection, truth, lower_choice, falsehood)?;
+
+        let truth_equals_false = connection.insert_equality(truth, falsehood)?;
+        let not_truth_equals_false_intro =
+            NotIntro::prepare(connection, ContextId::empty(), truth_equals_false)?;
+        let not_truth_equals_false_elim = NotElim::prepare(connection, truth_equals_false)?;
+        let not_proposition_intro = NotIntro::prepare(connection, upper_lower_case, proposition)?;
+        if not_proposition_intro.premise_context() != contradiction_context {
+            return Err(DerivedRulePreparationError::ContextNotSubset {
+                source: contradiction_context,
+                target: not_proposition_intro.premise_context(),
+            });
+        }
+
+        let result_right_intro = ChurchOrIntro::right(
+            connection,
+            upper_lower_case,
+            proposition,
+            negation,
+            result_variable,
+        )?;
+        let result_left_in_upper_context = ChurchOrIntro::left(
+            connection,
+            proposition_context,
+            proposition,
+            negation,
+            result_variable,
+        )?;
+        let result_left_in_upper_lower_context = ChurchOrIntro::left(
+            connection,
+            upper_proposition_case,
+            proposition,
+            negation,
+            result_variable,
+        )?;
+        let upper_elimination = ChurchOrElim::prepare(
+            connection,
+            ContextId::empty(),
+            upper_equals_truth,
+            proposition,
+            result,
+        )?;
+        let lower_elimination = ChurchOrElim::prepare(
+            connection,
+            upper_case,
+            lower_equals_false,
+            proposition,
+            result,
+        )?;
+        if upper_elimination.left_context() != upper_case
+            || upper_elimination.right_context() != proposition_context
+            || lower_elimination.left_context() != upper_lower_case
+            || lower_elimination.right_context() != upper_proposition_case
+        {
+            return Err(DerivedRulePreparationError::ContextNotSubset {
+                source: upper_elimination.left_context(),
+                target: upper_case,
+            });
+        }
+        let empty_to_contradiction =
+            WeakenPlan::prepare(connection, ContextId::empty(), contradiction_context)?;
+        let empty_to_upper_case = WeakenPlan::prepare(connection, ContextId::empty(), upper_case)?;
+
+        Ok(Self {
+            proposition,
+            negation,
+            result,
+            truth,
+            falsehood,
+            operator,
+            upper,
+            lower,
+            upper_choice,
+            lower_choice,
+            upper_member,
+            lower_member,
+            upper_seed_left: truth_equals_truth,
+            lower_seed_left: false_equals_false,
+            upper_equals_truth,
+            lower_equals_false,
+            upper_direct,
+            lower_direct,
+            point,
+            point_equals_truth,
+            point_equals_false,
+            point_upper_member,
+            point_lower_member,
+            upper_seed_intro,
+            lower_seed_intro,
+            point_upper_intro,
+            point_lower_intro,
+            function_extensionality,
+            epsilon_congruence,
+            truth_upper_symmetry,
+            truth_to_lower,
+            truth_to_false,
+            not_truth_equals_false_intro,
+            not_truth_equals_false_elim,
+            not_proposition_intro,
+            result_right_intro,
+            result_left_in_upper_context,
+            result_left_in_upper_lower_context,
+            upper_elimination,
+            lower_elimination,
+            empty_to_contradiction,
+            empty_to_upper_case,
+        })
+    }
+
+    /// Derives `empty |- p OR NOT p` without persistence.
+    ///
+    /// # Errors
+    ///
+    /// Returns if any exact intermediate shape/context differs or a
+    /// constituent LCF rule is rejected.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the linear proof script mirrors the checked Diaconescu derivation step for step"
+    )]
+    pub fn prove<'brand, P: Policy>(
+        &self,
+        proof: &mut ProofSession<'brand, P>,
+    ) -> Result<Theorem<'brand>, DerivedRuleError> {
+        let truth_reflexive = proof.prove_reflexivity(ContextId::empty(), self.truth)?;
+        let upper_seed = self.upper_seed_intro.apply(proof, &truth_reflexive)?;
+        let upper_seed_normal =
+            normalize_church_or(proof, self.operator, self.upper_seed_left, self.proposition)?;
+        let upper_seed_reverse = proof.conversion_symmetry(&upper_seed_normal)?;
+        let upper_seed_operator = proof.convert_theorem(&upper_seed, &upper_seed_reverse)?;
+        let upper_beta = proof.conversion_beta(self.upper, self.truth)?;
+        let upper_beta_reverse = proof.conversion_symmetry(&upper_beta)?;
+        let upper_application = proof.convert_theorem(&upper_seed_operator, &upper_beta_reverse)?;
+        let upper_chosen = proof.choice(&upper_application)?;
+        require_conclusion(&upper_chosen, self.upper_member)?;
+
+        let false_reflexive = proof.prove_reflexivity(ContextId::empty(), self.falsehood)?;
+        let lower_seed = self.lower_seed_intro.apply(proof, &false_reflexive)?;
+        let lower_seed_normal =
+            normalize_church_or(proof, self.operator, self.lower_seed_left, self.proposition)?;
+        let lower_seed_reverse = proof.conversion_symmetry(&lower_seed_normal)?;
+        let lower_seed_operator = proof.convert_theorem(&lower_seed, &lower_seed_reverse)?;
+        let lower_beta = proof.conversion_beta(self.lower, self.falsehood)?;
+        let lower_beta_reverse = proof.conversion_symmetry(&lower_beta)?;
+        let lower_application = proof.convert_theorem(&lower_seed_operator, &lower_beta_reverse)?;
+        let lower_chosen = proof.choice(&lower_application)?;
+        require_conclusion(&lower_chosen, self.lower_member)?;
+
+        let upper_choice_beta = proof.conversion_beta(self.upper, self.upper_choice)?;
+        let upper_choice_operator = proof.convert_theorem(&upper_chosen, &upper_choice_beta)?;
+        let upper_direct_normal = normalize_church_or(
+            proof,
+            self.operator,
+            self.upper_equals_truth,
+            self.proposition,
+        )?;
+        let upper_direct = proof.convert_theorem(&upper_choice_operator, &upper_direct_normal)?;
+        require_conclusion(&upper_direct, self.upper_direct)?;
+
+        let lower_choice_beta = proof.conversion_beta(self.lower, self.lower_choice)?;
+        let lower_choice_operator = proof.convert_theorem(&lower_chosen, &lower_choice_beta)?;
+        let lower_direct_normal = normalize_church_or(
+            proof,
+            self.operator,
+            self.lower_equals_false,
+            self.proposition,
+        )?;
+        let lower_direct = proof.convert_theorem(&lower_choice_operator, &lower_direct_normal)?;
+        require_conclusion(&lower_direct, self.lower_direct)?;
+
+        let proposition = proof.prove_hypothesis(
+            self.not_proposition_intro.premise_context(),
+            self.proposition,
+        )?;
+        let point_upper = self.point_upper_intro.apply(proof, &proposition)?;
+        let point_upper_normal = normalize_church_or(
+            proof,
+            self.operator,
+            self.point_equals_truth,
+            self.proposition,
+        )?;
+        let point_upper_normal_reverse = proof.conversion_symmetry(&point_upper_normal)?;
+        let point_upper_operator =
+            proof.convert_theorem(&point_upper, &point_upper_normal_reverse)?;
+        let point_upper_beta = proof.conversion_beta(self.upper, self.point)?;
+        let point_upper_beta_reverse = proof.conversion_symmetry(&point_upper_beta)?;
+        let point_upper_member =
+            proof.convert_theorem(&point_upper_operator, &point_upper_beta_reverse)?;
+        require_conclusion(&point_upper_member, self.point_upper_member)?;
+
+        let point_lower = self.point_lower_intro.apply(proof, &proposition)?;
+        let point_lower_normal = normalize_church_or(
+            proof,
+            self.operator,
+            self.point_equals_false,
+            self.proposition,
+        )?;
+        let point_lower_normal_reverse = proof.conversion_symmetry(&point_lower_normal)?;
+        let point_lower_operator =
+            proof.convert_theorem(&point_lower, &point_lower_normal_reverse)?;
+        let point_lower_beta = proof.conversion_beta(self.lower, self.point)?;
+        let point_lower_beta_reverse = proof.conversion_symmetry(&point_lower_beta)?;
+        let point_lower_member =
+            proof.convert_theorem(&point_lower_operator, &point_lower_beta_reverse)?;
+        require_conclusion(&point_lower_member, self.point_lower_member)?;
+
+        let pointwise = proof.deduction_antisymmetry(&point_upper_member, &point_lower_member)?;
+        let predicates_equal = self.function_extensionality.apply(proof, &pointwise)?;
+        let choices_equal = self.epsilon_congruence.apply(proof, &predicates_equal)?;
+        let upper_equals_truth = proof.prove_hypothesis(
+            self.not_proposition_intro.premise_context(),
+            self.upper_equals_truth,
+        )?;
+        let truth_equals_upper = self
+            .truth_upper_symmetry
+            .apply(proof, &upper_equals_truth)?;
+        let truth_equals_lower =
+            self.truth_to_lower
+                .apply(proof, &truth_equals_upper, &choices_equal)?;
+        let lower_equals_false = proof.prove_hypothesis(
+            self.not_proposition_intro.premise_context(),
+            self.lower_equals_false,
+        )?;
+        let truth_equals_false =
+            self.truth_to_false
+                .apply(proof, &truth_equals_lower, &lower_equals_false)?;
+
+        let truth_equals_false_hypothesis = proof.prove_hypothesis(
+            self.not_truth_equals_false_intro.premise_context(),
+            truth_equals_false.conclusion(),
+        )?;
+        let truth_in_inequality_context =
+            proof.prove_truth(self.not_truth_equals_false_intro.premise_context())?;
+        let canonical_false = proof
+            .equality_modus_ponens(&truth_equals_false_hypothesis, &truth_in_inequality_context)?;
+        let truth_not_false = self
+            .not_truth_equals_false_intro
+            .apply(proof, &canonical_false)?;
+        let truth_not_false = self.empty_to_contradiction.apply(proof, &truth_not_false)?;
+        let contradiction =
+            self.not_truth_equals_false_elim
+                .apply(proof, &truth_equals_false, &truth_not_false)?;
+        let not_proposition = self.not_proposition_intro.apply(proof, &contradiction)?;
+        let nonclassical_branch = self.result_right_intro.apply(proof, &not_proposition)?;
+
+        let proposition_upper =
+            proof.prove_hypothesis(self.result_left_in_upper_context.base, self.proposition)?;
+        let proposition_branch = self
+            .result_left_in_upper_context
+            .apply(proof, &proposition_upper)?;
+        let proposition_upper_lower = proof.prove_hypothesis(
+            self.result_left_in_upper_lower_context.base,
+            self.proposition,
+        )?;
+        let proposition_inner_branch = self
+            .result_left_in_upper_lower_context
+            .apply(proof, &proposition_upper_lower)?;
+        let lower_direct = self.empty_to_upper_case.apply(proof, &lower_direct)?;
+        let upper_branch = self.lower_elimination.apply(
+            proof,
+            &lower_direct,
+            &nonclassical_branch,
+            &proposition_inner_branch,
+        )?;
+        let result = self.upper_elimination.apply(
+            proof,
+            &upper_direct,
+            &upper_branch,
+            &proposition_branch,
+        )?;
+        require_result(&result, ContextId::empty(), self.result)?;
+        Ok(result)
+    }
+}
+
+/// Prepared classical quantifier duality
+/// `NOT (ALL P) IMP EX (lambda x. NOT (P x))`.
+///
+/// `EX Q` is the existing Hilbert encoding `Q (epsilon Q)`. The proof invokes
+/// [`ExcludedMiddle`] for the existential and for one fresh instance, then
+/// uses only positive quantifier rules, canonical negation, and false
+/// elimination.
+pub struct NotAllToExistsNot {
+    witness_variable: TermId,
+    universal: TermId,
+    negated_universal: TermId,
+    negated_predicate: TermId,
+    existential: TermId,
+    negated_existential: TermId,
+    instance: TermId,
+    negated_instance: TermId,
+    conclusion: TermId,
+    implication_intro: ImpIntro,
+    existential_lem: ExcludedMiddle,
+    existential_lem_weakening: WeakenPlan,
+    existential_cases: ChurchOrElim,
+    instance_lem: ExcludedMiddle,
+    instance_lem_weakening: WeakenPlan,
+    instance_cases: ChurchOrElim,
+    existential_negation_elim: NotElim,
+    instance_false_elim: FalseElim,
+    universal_intro: AllIntroApplied,
+    universal_negation_elim: NotElim,
+    existential_false_elim: FalseElim,
+}
+
+impl NotAllToExistsNot {
+    /// Prepares the exact duality theorem for a closed predicate.
+    ///
+    /// `witness_variable` is a fresh exact `MFV` of the predicate domain.
+    /// `classical_variables` supplies four distinct fresh Boolean `MFV`s: two
+    /// for the existential LEM and two for the instance LEM.
+    ///
+    /// # Errors
+    ///
+    /// Returns if an input variable is not exact/fresh, `predicate` is not a
+    /// closed Boolean-valued function, or exact intermediate contexts differ.
+    pub fn prepare<P: Policy>(
+        connection: &mut Connection<Hol<P>>,
+        predicate: TermId,
+        witness_variable: TermId,
+        classical_variables: [TermId; 4],
+    ) -> Result<Self, DerivedRulePreparationError> {
+        require_closed(connection, predicate)?;
+        require_fresh_variable(connection, witness_variable, &[predicate])?;
+        let truth = connection.insert_bool_term(true)?;
+        let witness_type = connection.term_type(witness_variable)?;
+        let constant_truth = connection.insert_lambda(witness_type, truth)?;
+        let universal = connection.insert_equality(predicate, constant_truth)?;
+        let negated_universal = canonical_not(connection, universal)?;
+
+        let bound = connection.insert_bound_term(0, witness_type)?;
+        let bound_instance = connection.insert_application(predicate, bound)?;
+        let bound_negation = canonical_not(connection, bound_instance)?;
+        let negated_predicate = connection.insert_lambda(witness_type, bound_negation)?;
+        let epsilon = connection.insert_epsilon(negated_predicate)?;
+        let existential = connection.insert_application(negated_predicate, epsilon)?;
+        let negated_existential = canonical_not(connection, existential)?;
+        let instance = connection.insert_application(predicate, witness_variable)?;
+        let negated_instance = canonical_not(connection, instance)?;
+        let conclusion = canonical_imp(connection, negated_universal, existential)?.1;
+
+        let implication_intro = ImpIntro::prepare(
+            connection,
+            ContextId::empty(),
+            negated_universal,
+            existential,
+        )?;
+        let negated_universal_context = implication_intro.premise_context();
+        let existential_lem = ExcludedMiddle::prepare(
+            connection,
+            existential,
+            classical_variables[0],
+            classical_variables[1],
+        )?;
+        let existential_lem_weakening =
+            WeakenPlan::prepare(connection, ContextId::empty(), negated_universal_context)?;
+        let existential_cases = ChurchOrElim::prepare(
+            connection,
+            negated_universal_context,
+            existential,
+            negated_existential,
+            existential,
+        )?;
+        let instance_base = existential_cases.right_context();
+        let instance_lem = ExcludedMiddle::prepare(
+            connection,
+            instance,
+            classical_variables[2],
+            classical_variables[3],
+        )?;
+        let instance_lem_weakening =
+            WeakenPlan::prepare(connection, ContextId::empty(), instance_base)?;
+        let instance_cases = ChurchOrElim::prepare(
+            connection,
+            instance_base,
+            instance,
+            negated_instance,
+            instance,
+        )?;
+        let existential_negation_elim = NotElim::prepare(connection, existential)?;
+        let instance_false_elim = FalseElim::prepare(connection, instance)?;
+        let universal_intro = AllIntroApplied::prepare(connection, predicate, witness_variable)?;
+        let universal_negation_elim = NotElim::prepare(connection, universal)?;
+        let existential_false_elim = FalseElim::prepare(connection, existential)?;
+        Ok(Self {
+            witness_variable,
+            universal,
+            negated_universal,
+            negated_predicate,
+            existential,
+            negated_existential,
+            instance,
+            negated_instance,
+            conclusion,
+            implication_intro,
+            existential_lem,
+            existential_lem_weakening,
+            existential_cases,
+            instance_lem,
+            instance_lem_weakening,
+            instance_cases,
+            existential_negation_elim,
+            instance_false_elim,
+            universal_intro,
+            universal_negation_elim,
+            existential_false_elim,
+        })
+    }
+
+    /// Exact canonical duality conclusion.
+    #[must_use]
+    pub const fn conclusion(&self) -> TermId {
+        self.conclusion
+    }
+
+    /// Exact encoded existential `Q (epsilon Q)`.
+    #[must_use]
+    pub const fn existential(&self) -> TermId {
+        self.existential
+    }
+
+    /// Derives the empty-context duality theorem without persistence.
+    ///
+    /// # Errors
+    ///
+    /// Returns if an exact intermediate theorem/context differs or a
+    /// constituent LCF rule is rejected.
+    pub fn prove<'brand, P: Policy>(
+        &self,
+        proof: &mut ProofSession<'brand, P>,
+    ) -> Result<Theorem<'brand>, DerivedRuleError> {
+        let existential_lem = self.existential_lem.prove(proof)?;
+        let existential_lem = self
+            .existential_lem_weakening
+            .apply(proof, &existential_lem)?;
+        let existential_branch =
+            proof.prove_hypothesis(self.existential_cases.left_context(), self.existential)?;
+
+        let instance_lem = self.instance_lem.prove(proof)?;
+        let instance_lem = self.instance_lem_weakening.apply(proof, &instance_lem)?;
+        let instance_branch =
+            proof.prove_hypothesis(self.instance_cases.left_context(), self.instance)?;
+
+        let negated_instance =
+            proof.prove_hypothesis(self.instance_cases.right_context(), self.negated_instance)?;
+        let negated_predicate_beta =
+            proof.conversion_beta(self.negated_predicate, self.witness_variable)?;
+        let negated_predicate_beta_reverse = proof.conversion_symmetry(&negated_predicate_beta)?;
+        let negated_predicate_instance =
+            proof.convert_theorem(&negated_instance, &negated_predicate_beta_reverse)?;
+        let existential = proof.choice(&negated_predicate_instance)?;
+        require_conclusion(&existential, self.existential)?;
+        let negated_existential = proof.prove_hypothesis(
+            self.instance_cases.right_context(),
+            self.negated_existential,
+        )?;
+        let falsehood =
+            self.existential_negation_elim
+                .apply(proof, &existential, &negated_existential)?;
+        let instance_from_false = self.instance_false_elim.apply(proof, &falsehood)?;
+        let instance = self.instance_cases.apply(
+            proof,
+            &instance_lem,
+            &instance_branch,
+            &instance_from_false,
+        )?;
+        let universal = self.universal_intro.apply(proof, &instance)?;
+        require_conclusion(&universal, self.universal)?;
+        let negated_universal = proof.prove_hypothesis(
+            self.existential_cases.right_context(),
+            self.negated_universal,
+        )?;
+        let falsehood =
+            self.universal_negation_elim
+                .apply(proof, &universal, &negated_universal)?;
+        let existential_from_false = self.existential_false_elim.apply(proof, &falsehood)?;
+        let existential = self.existential_cases.apply(
+            proof,
+            &existential_lem,
+            &existential_branch,
+            &existential_from_false,
+        )?;
+        let result = self.implication_intro.apply(proof, &existential)?;
+        require_result(&result, ContextId::empty(), self.conclusion)?;
+        Ok(result)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2816,6 +3510,54 @@ mod tests {
                 Ok::<_, DerivedRuleError>(())
             })
             .unwrap();
+    }
+
+    #[test]
+    fn diaconescu_derives_excluded_middle_without_bool_cases_or_persistence() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let truth = connection.insert_bool_term(true).unwrap();
+        let bound = connection.insert_bound_term(0, bool_type).unwrap();
+        let identity = connection.insert_lambda(bool_type, bound).unwrap();
+        let proposition = connection.insert_application(identity, truth).unwrap();
+        let result_variable = connection.insert_free_term(8811, bool_type).unwrap();
+        let point = connection.insert_free_term(8812, bool_type).unwrap();
+        let excluded_middle =
+            ExcludedMiddle::prepare(&mut connection, proposition, result_variable, point).unwrap();
+
+        connection.with_proof_session(|mut proof| {
+            let theorem = excluded_middle.prove(&mut proof).unwrap();
+            assert_eq!(theorem.context(), ContextId::empty());
+            assert_eq!(theorem.conclusion(), excluded_middle.result);
+        });
+        let snapshot = Kernel::ephemeral().export_hol(&mut connection).unwrap();
+        assert_eq!(snapshot.image().counts().untrusted_judgement_rows, 0);
+    }
+
+    #[test]
+    fn classical_not_all_to_exists_not_is_derived_without_persistence() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let bound = connection.insert_bound_term(0, bool_type).unwrap();
+        let predicate = connection.insert_lambda(bool_type, bound).unwrap();
+        let witness = connection.insert_free_term(8820, bool_type).unwrap();
+        let classical_variables = [
+            connection.insert_free_term(8821, bool_type).unwrap(),
+            connection.insert_free_term(8822, bool_type).unwrap(),
+            connection.insert_free_term(8823, bool_type).unwrap(),
+            connection.insert_free_term(8824, bool_type).unwrap(),
+        ];
+        let duality =
+            NotAllToExistsNot::prepare(&mut connection, predicate, witness, classical_variables)
+                .unwrap();
+
+        connection.with_proof_session(|mut proof| {
+            let theorem = duality.prove(&mut proof).unwrap();
+            assert_eq!(theorem.context(), ContextId::empty());
+            assert_eq!(theorem.conclusion(), duality.conclusion());
+        });
+        let snapshot = Kernel::ephemeral().export_hol(&mut connection).unwrap();
+        assert_eq!(snapshot.image().counts().untrusted_judgement_rows, 0);
     }
 
     fn denied_and_intro() -> DerivedRuleError {
