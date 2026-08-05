@@ -21,6 +21,7 @@ test("runs the REPL kernel through the Wasm binding in Node", async () => {
   const kernel = new WebKernel();
   const connection = kernel.open_connection();
   const otherConnection = kernel.open_connection();
+  const holConnection = kernel.open_hol_connection();
   const hash = kernel.put_image(connection, image);
   kernel.attach_image(connection, hash, "library");
   const result = kernel.run(
@@ -42,7 +43,27 @@ test("runs the REPL kernel through the Wasm binding in Node", async () => {
   );
   kernel.close_connection(otherConnection);
   assert.throws(() => kernel.run(otherConnection, "SELECT 1"));
+  const theorem = kernel.run_hol(holConnection, "beta true");
+  assert.equal(theorem.kind(), "hol-theorem");
+  assert.equal(theorem.recipe(), "beta");
+  assert.equal(theorem.context_id(), "0");
+  assert.equal(theorem.conclusion_id(), "8");
+  assert.equal(theorem.judgement_id(), undefined);
+  assert.equal(theorem.statement(), "(lambda x:bool. x) true = true");
+  const truth = kernel.run_hol(holConnection, "truth");
+  const truthReplay = kernel.run_hol(holConnection, "truth");
+  assert.match(truth.judgement_id(), /^[1-9][0-9]*$/);
+  assert.equal(truthReplay.judgement_id(), truth.judgement_id());
+  const reflexivity = kernel.run_hol(holConnection, "reflexivity false");
+  assert.match(reflexivity.judgement_id(), /^[1-9][0-9]*$/);
+  assert.notEqual(reflexivity.judgement_id(), truth.judgement_id());
+  assert.throws(() => kernel.run_hol(connection, "truth"));
+  assert.throws(() => kernel.run(holConnection, "SELECT 1"));
 
+  reflexivity.free();
+  truthReplay.free();
+  truth.free();
+  theorem.free();
   result.free();
   kernel.free();
   source.free();

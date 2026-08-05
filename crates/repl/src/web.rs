@@ -1,19 +1,28 @@
 use covalence_lib_hash::O256;
 use wasm_bindgen::prelude::*;
 
-use super::{Connection, ConnectionId, Kernel, Outcome, QueryResult, Repl, Sql, Value};
+use super::{
+    AllowAll, ConnectionId, HolRecipe, HolRecipeResult, Kernel, LocalConnection, Outcome,
+    QueryResult, Repl, Value,
+};
 
 /// Browser adapter for the shared REPL connection directory.
 #[wasm_bindgen]
 pub struct WebKernel {
     kernel: Kernel,
-    repl: Repl<Connection<Sql>>,
+    repl: Repl<LocalConnection>,
 }
 
 /// Owned result of one statement executed by [`WebKernel`].
 #[wasm_bindgen]
 pub struct WebOutcome {
     outcome: Outcome,
+}
+
+/// Transport-neutral HOL recipe result exposed through Wasm.
+#[wasm_bindgen]
+pub struct WebHolOutcome {
+    outcome: HolRecipeResult,
 }
 
 #[wasm_bindgen]
@@ -37,10 +46,25 @@ impl WebKernel {
     /// Returns a JavaScript error when the connection or directory row cannot
     /// be opened.
     pub fn open_connection(&mut self) -> Result<u32, JsValue> {
-        let connection = self.kernel.open_sql().map_err(js_error)?;
+        let connection = LocalConnection::Sql(self.kernel.open_sql().map_err(js_error)?);
         let id = self
             .repl
-            .insert("nucleus/sql", connection)
+            .insert(connection.protocol(), connection)
+            .map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
+    /// Opens an in-memory HOL connection and returns its local ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error when the connection or directory row cannot
+    /// be opened.
+    pub fn open_hol_connection(&mut self) -> Result<u32, JsValue> {
+        let connection = LocalConnection::Hol(self.kernel.open_hol(AllowAll).map_err(js_error)?);
+        let id = self
+            .repl
+            .insert(connection.protocol(), connection)
             .map_err(js_error)?;
         u32::try_from(id.get()).map_err(js_error)
     }
@@ -63,9 +87,23 @@ impl WebKernel {
     ///
     /// Returns a JavaScript error when the statement fails.
     pub fn run(&mut self, connection: u32, sql: &str) -> Result<WebOutcome, JsValue> {
-        self.connection_mut(connection)?
+        self.sql_mut(connection)?
             .run(sql, &[])
             .map(|outcome| WebOutcome { outcome })
+            .map_err(js_error)
+    }
+
+    /// Parses and runs one shared HOL demo recipe.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for a non-HOL connection, invalid recipe, or
+    /// rejected Nucleus operation.
+    pub fn run_hol(&mut self, connection: u32, recipe: &str) -> Result<WebHolOutcome, JsValue> {
+        let recipe = recipe.parse::<HolRecipe>().map_err(js_error)?;
+        recipe
+            .execute(self.hol_mut(connection)?)
+            .map(|outcome| WebHolOutcome { outcome })
             .map_err(js_error)
     }
 
@@ -75,7 +113,7 @@ impl WebKernel {
     ///
     /// Returns a JavaScript error on a resident hash collision.
     pub fn put_image(&mut self, connection: u32, bytes: &[u8]) -> Result<String, JsValue> {
-        self.connection_mut(connection)?
+        self.sql_mut(connection)?
             .put_image(bytes)
             .map(|hash| hash.to_string())
             .map_err(js_error)
@@ -94,7 +132,7 @@ impl WebKernel {
         schema: &str,
     ) -> Result<(), JsValue> {
         let hash = O256::from_hex(hash).map_err(js_error)?;
-        self.connection_mut(connection)?
+        self.sql_mut(connection)?
             .attach_immutable_image(hash, schema)
             .map_err(js_error)
     }
@@ -115,7 +153,7 @@ impl WebKernel {
     ///
     /// Returns a JavaScript error when `SQLite` cannot serialize the database.
     pub fn serialize_main(&mut self, connection: u32) -> Result<Vec<u8>, JsValue> {
-        self.connection_mut(connection)?
+        self.sql_mut(connection)?
             .serialize_main()
             .map(|bytes| bytes.to_vec())
             .map_err(js_error)
@@ -123,10 +161,63 @@ impl WebKernel {
 }
 
 impl WebKernel {
-    fn connection_mut(&mut self, id: u32) -> Result<&mut Connection<Sql>, JsValue> {
+    fn connection_mut(&mut self, id: u32) -> Result<&mut LocalConnection, JsValue> {
         self.repl
             .get_mut(ConnectionId::from_u32(id))
             .map_err(js_error)
+    }
+
+    fn sql_mut(
+        &mut self,
+        id: u32,
+    ) -> Result<&mut covalence_nucleus::Connection<covalence_nucleus::Sql>, JsValue> {
+        self.connection_mut(id)?.sql_mut().map_err(js_error)
+    }
+
+    fn hol_mut(
+        &mut self,
+        id: u32,
+    ) -> Result<&mut covalence_nucleus::Connection<covalence_nucleus::Hol<AllowAll>>, JsValue> {
+        self.connection_mut(id)?.hol_mut().map_err(js_error)
+    }
+}
+
+#[wasm_bindgen]
+impl WebHolOutcome {
+    /// Returns `hol-theorem`.
+    #[must_use]
+    pub fn kind(&self) -> String {
+        self.outcome.kind().to_owned()
+    }
+
+    /// Returns the recipe constructor name.
+    #[must_use]
+    pub fn recipe(&self) -> String {
+        self.outcome.recipe().to_owned()
+    }
+
+    /// Returns the database-local context ID as an exact decimal string.
+    #[must_use]
+    pub fn context_id(&self) -> String {
+        self.outcome.context_id().to_string()
+    }
+
+    /// Returns the database-local conclusion ID as an exact decimal string.
+    #[must_use]
+    pub fn conclusion_id(&self) -> String {
+        self.outcome.conclusion_id().to_string()
+    }
+
+    /// Returns the persistent-step judgement ID, when that API handled the rule.
+    #[must_use]
+    pub fn judgement_id(&self) -> Option<String> {
+        self.outcome.judgement_id().map(|id| id.to_string())
+    }
+
+    /// Returns the recipe's stable human-readable proposition.
+    #[must_use]
+    pub fn statement(&self) -> String {
+        self.outcome.statement().to_owned()
     }
 }
 
