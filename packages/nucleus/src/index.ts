@@ -9,8 +9,15 @@ import initWasm, {
   WebSignedKernelSession,
   WebSignedKernelService,
 } from "../generated/nucleus.js";
+import {
+  SignedKernelTransportError,
+  acceptStatefulReply,
+  runNativeHttpHashSelectedArtifact,
+  signedFetch,
+} from "./signed-http.js";
 
 export { smoke, WebHolOutcome, WebKernel, WebOutcome, WebSignedKernelSession };
+export { SignedKernelTransportError };
 
 let initialization: ReturnType<typeof initWasm> | undefined;
 
@@ -234,17 +241,6 @@ export interface ManagedNativeHttpHashSelectedHolOutcome {
   cleanup(): Promise<void>;
 }
 
-export class SignedKernelTransportError extends Error {
-  constructor(
-    message: string,
-    readonly outcomeUnknown: boolean,
-    cause?: unknown,
-  ) {
-    super(message, { cause });
-    this.name = "SignedKernelTransportError";
-  }
-}
-
 /**
  * Drives a pinned native producer and caller-owned signed receiver.
  *
@@ -384,61 +380,12 @@ export async function runManagedNativeHttpHashSelectedHol(
 ): Promise<ManagedNativeHttpHashSelectedHolOutcome> {
   await init();
   const timeoutMs = options.timeoutMs ?? 10_000;
-  if (
-    !/^[0-9a-f]{64}$/.test(options.component) ||
-    !Number.isSafeInteger(timeoutMs) ||
-    timeoutMs <= 0 ||
-    options.expectedPublicKey.byteLength !== 32
-  ) {
-    throw new Error(
-      "component must be canonical O256, timeout positive, and endpoint key 32 bytes",
-    );
-  }
-  const description = await signedFetch(
-    options.endpoint,
-    WebSignedKernelSession.describe_request(),
+  const produced = await runNativeHttpHashSelectedArtifact({
+    ...options,
     timeoutMs,
-    false,
-  );
-  const session = WebSignedKernelSession.begin(
-    options.expectedPublicKey,
-    description,
-  );
-  let produced: WebRemoteProducedHolComponent | undefined;
+  });
   let cleaned = false;
   try {
-    const accepted = await signedFetch(
-      options.endpoint,
-      session.session_request(),
-      timeoutMs,
-      true,
-    );
-    acceptStatefulReply(() => session.accept_session(accepted));
-    const producedReply = await signedFetch(
-      options.endpoint,
-      session.run_hol_proof_component_command(options.component),
-      timeoutMs,
-      true,
-    );
-    produced = acceptStatefulReply(() =>
-      session.accept_hol_proof_component(producedReply, options.component),
-    );
-    if (produced.component() !== options.component) {
-      throw new SignedKernelTransportError(
-        "signed component result changed the selected digest",
-        true,
-      );
-    }
-    // Verify remote closure before mutating the caller-owned receiver. An
-    // ambiguous close therefore cannot make a thrown convenience call conceal
-    // a successful local import.
-    const sessionClosed = await signedFetch(
-      options.endpoint,
-      session.close_session_command(),
-      timeoutMs,
-      true,
-    );
-    acceptStatefulReply(() => session.accept_session_closed(sessionClosed));
     const received = await receiver.receiveExternalComponentHol(
       receiverConnection,
       0xffff_fffe,
@@ -471,109 +418,13 @@ export async function runManagedNativeHttpHashSelectedHol(
       async cleanup(): Promise<void> {
         if (cleaned) return;
         artifact.free();
-        session.free();
         cleaned = true;
       },
     };
   } catch (error) {
-    produced?.free();
-    session.free();
+    produced.free();
     throw error;
   }
-}
-
-function acceptStatefulReply<T>(accept: () => T): T {
-  try {
-    return accept();
-  } catch (error) {
-    throw new SignedKernelTransportError(
-      `native signed-kernel reply could not be accepted: ${String(error)}`,
-      true,
-      error,
-    );
-  }
-}
-
-async function signedFetch(
-  endpoint: string,
-  body: Uint8Array,
-  timeoutMs: number,
-  outcomeUnknown: boolean,
-): Promise<Uint8Array> {
-  if (body.byteLength > WebSignedKernelSession.max_message_bytes()) {
-    throw new SignedKernelTransportError("signed request exceeds bound", false);
-  }
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      mode: "cors",
-      body: body.slice().buffer as ArrayBuffer,
-      redirect: "error",
-      credentials: "omit",
-      cache: "no-store",
-      referrerPolicy: "no-referrer",
-      signal: controller.signal,
-      headers: { "content-type": "application/octet-stream" },
-    });
-    if (!response.ok)
-      throw new Error(`native kernel HTTP status ${response.status}`);
-    return await readBoundedResponse(
-      response,
-      WebSignedKernelSession.max_message_bytes(),
-    );
-  } catch (error) {
-    throw new SignedKernelTransportError(
-      `native signed-kernel request failed: ${String(error)}`,
-      outcomeUnknown,
-      error,
-    );
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function readBoundedResponse(
-  response: Response,
-  limit: number,
-): Promise<Uint8Array> {
-  const contentType = response.headers.get("content-type");
-  const mediaType = contentType?.split(";", 1)[0]?.trim().toLowerCase();
-  if (mediaType !== "application/octet-stream") {
-    throw new Error("signed response is not application/octet-stream");
-  }
-  const length = response.headers.get("content-length");
-  if (length !== null) {
-    const parsed = Number(length);
-    if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > limit) {
-      throw new Error(`signed response length exceeds ${limit} bytes`);
-    }
-  }
-  if (response.body === null) throw new Error("signed response has no body");
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > limit) {
-      await reader.cancel();
-      throw new Error(`signed response exceeds ${limit} bytes`);
-    }
-    chunks.push(value);
-  }
-  if (length !== null && total !== Number(length)) {
-    throw new Error("signed response body is truncated");
-  }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return bytes;
 }
 
 export type SqlValue =
