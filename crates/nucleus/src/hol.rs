@@ -4018,12 +4018,12 @@ fn shift_bound_type(
     ty: TypeId,
     amount: u32,
     cutoff: u32,
-    memo: &mut HashMap<(TypeId, u32), TypeId>,
+    memo: &mut HashMap<(TypeId, u32, u32), TypeId>,
 ) -> Result<TypeId, TypeError> {
     if amount == 0 {
         return Ok(ty);
     }
-    if let Some(result) = memo.get(&(ty, cutoff)) {
+    if let Some(result) = memo.get(&(ty, amount, cutoff)) {
         return Ok(*result);
     }
     let result = match read_type(connection, ty)? {
@@ -4054,7 +4054,7 @@ fn shift_bound_type(
             intern_forall_type(connection, body)?
         }
     };
-    memo.insert((ty, cutoff), result);
+    memo.insert((ty, amount, cutoff), result);
     Ok(result)
 }
 
@@ -4069,7 +4069,7 @@ fn substitute_bound_type(
         replacement: TypeId,
         depth: u32,
         memo: &mut HashMap<(TypeId, u32), TypeId>,
-        shift_memo: &mut HashMap<(TypeId, u32), TypeId>,
+        shift_memo: &mut HashMap<(TypeId, u32, u32), TypeId>,
     ) -> Result<TypeId, TypeError> {
         if let Some(result) = memo.get(&(ty, depth)) {
             return Ok(*result);
@@ -9959,6 +9959,33 @@ mod tests {
         let expected = connection.insert_forall_type(expected_body).unwrap();
 
         assert_eq!(connection.term_type(instantiated).unwrap(), expected);
+    }
+
+    #[test]
+    fn bound_type_shift_memo_distinguishes_different_amounts() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let replacement = connection.insert_bound_type(0).unwrap();
+        let at_depth_one = connection.insert_bound_type(1).unwrap();
+        let at_depth_two = connection.insert_bound_type(2).unwrap();
+        let beneath_one = connection.insert_forall_type(at_depth_one).unwrap();
+        let beneath_two_inner = connection.insert_forall_type(at_depth_two).unwrap();
+        let beneath_two = connection.insert_forall_type(beneath_two_inner).unwrap();
+        let body = connection
+            .insert_arrow_type(beneath_one, beneath_two)
+            .unwrap();
+        let universal = connection.insert_forall_type(body).unwrap();
+        let constant = connection.insert_constant(9_010, universal).unwrap();
+
+        let instantiated = connection
+            .insert_type_application(constant, replacement)
+            .unwrap();
+
+        assert_eq!(connection.term_type(instantiated).unwrap(), body);
+        let TypeView::Arrow { domain, codomain } = connection.type_view(body).unwrap() else {
+            panic!("expected substituted arrow type")
+        };
+        assert_eq!(domain, beneath_one);
+        assert_eq!(codomain, beneath_two);
     }
 
     #[test]
