@@ -10,7 +10,7 @@ use std::fmt;
 
 use covalence_nucleus::{
     Connection, ContextId, ExportId, Hol, Kernel, NamespaceExport, NamespaceId, Operation, Policy,
-    SignedHolSnapshot, TermId, Theorem, TypeId,
+    SignedHolSnapshot, TermId, TermInstantiation, Theorem, TypeId, TypeInstantiation,
 };
 
 use crate::SignedHolArtifact;
@@ -20,7 +20,7 @@ pub(crate) const MAX_RECIPE_NAME_BYTES: usize = 256;
 /// Maximum canonical bytes accepted from an untrusted guest executor.
 pub const MAX_SEALED_HOL_RECIPE_BYTES: usize = 64 * 1024;
 
-const RECIPE_VERSION: u8 = 1;
+const RECIPE_VERSION: u8 = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RecipeSort {
@@ -29,13 +29,22 @@ pub(crate) enum RecipeSort {
     Context,
     Theorem,
     Namespace,
+    TermInstantiationMap,
+    TypeInstantiationMap,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum RecipeNode {
     BoolType,
+    FreeType {
+        symbol: i64,
+    },
     Bound {
         index: u32,
+        ty: usize,
+    },
+    FreeTerm {
+        symbol: i64,
         ty: usize,
     },
     Lambda {
@@ -52,6 +61,30 @@ pub(crate) enum RecipeNode {
     Eta {
         context: usize,
         function: usize,
+    },
+    EmptyTermInstantiationMap,
+    ExtendTermInstantiationMap {
+        base: usize,
+        variable: usize,
+        replacement: usize,
+    },
+    TermInstantiation {
+        theorem: usize,
+        instantiations: usize,
+    },
+    EmptyTypeInstantiationMap,
+    ExtendTypeInstantiationMap {
+        base: usize,
+        variable: usize,
+        replacement: usize,
+    },
+    TypeInstantiation {
+        theorem: usize,
+        instantiations: usize,
+    },
+    Abstraction {
+        theorem: usize,
+        variable: usize,
     },
     Persist {
         theorem: usize,
@@ -184,6 +217,7 @@ impl fmt::Display for HolProofRecipeError {
 
 impl StdError for HolProofRecipeError {}
 
+#[allow(clippy::too_many_lines)]
 fn validate_structure(
     nodes: &[RecipeNode],
     selected_namespace: usize,
@@ -194,6 +228,8 @@ fn validate_structure(
         ));
     }
     let mut sorts = Vec::with_capacity(nodes.len());
+    let mut term_map_keys: Vec<Option<HashSet<usize>>> = Vec::with_capacity(nodes.len());
+    let mut type_map_keys: Vec<Option<HashSet<usize>>> = Vec::with_capacity(nodes.len());
     let mut persisted = HashSet::new();
     for (current, node) in nodes.iter().enumerate() {
         let require = |index: usize, expected: RecipeSort| {
@@ -209,9 +245,11 @@ fn validate_structure(
             }
             Ok(())
         };
+        let mut term_keys = None;
+        let mut type_keys = None;
         let sort = match node {
-            RecipeNode::BoolType => RecipeSort::Type,
-            RecipeNode::Bound { ty, .. } => {
+            RecipeNode::BoolType | RecipeNode::FreeType { .. } => RecipeSort::Type,
+            RecipeNode::Bound { ty, .. } | RecipeNode::FreeTerm { ty, .. } => {
                 require(*ty, RecipeSort::Type)?;
                 RecipeSort::Term
             }
@@ -238,6 +276,81 @@ fn validate_structure(
             RecipeNode::Eta { context, function } => {
                 require(*context, RecipeSort::Context)?;
                 require(*function, RecipeSort::Term)?;
+                RecipeSort::Theorem
+            }
+            RecipeNode::EmptyTermInstantiationMap => {
+                term_keys = Some(HashSet::new());
+                RecipeSort::TermInstantiationMap
+            }
+            RecipeNode::ExtendTermInstantiationMap {
+                base,
+                variable,
+                replacement,
+            } => {
+                require(*base, RecipeSort::TermInstantiationMap)?;
+                require(*variable, RecipeSort::Term)?;
+                require(*replacement, RecipeSort::Term)?;
+                let mut keys = term_map_keys
+                    .get(*base)
+                    .and_then(Option::as_ref)
+                    .cloned()
+                    .ok_or(HolProofRecipeError::Invalid(
+                        "term-instantiation map base is invalid",
+                    ))?;
+                if !keys.insert(*variable) {
+                    return Err(HolProofRecipeError::Invalid(
+                        "duplicate term-instantiation recipe key",
+                    ));
+                }
+                term_keys = Some(keys);
+                RecipeSort::TermInstantiationMap
+            }
+            RecipeNode::TermInstantiation {
+                theorem,
+                instantiations,
+            } => {
+                require(*theorem, RecipeSort::Theorem)?;
+                require(*instantiations, RecipeSort::TermInstantiationMap)?;
+                RecipeSort::Theorem
+            }
+            RecipeNode::EmptyTypeInstantiationMap => {
+                type_keys = Some(HashSet::new());
+                RecipeSort::TypeInstantiationMap
+            }
+            RecipeNode::ExtendTypeInstantiationMap {
+                base,
+                variable,
+                replacement,
+            } => {
+                require(*base, RecipeSort::TypeInstantiationMap)?;
+                require(*variable, RecipeSort::Type)?;
+                require(*replacement, RecipeSort::Type)?;
+                let mut keys = type_map_keys
+                    .get(*base)
+                    .and_then(Option::as_ref)
+                    .cloned()
+                    .ok_or(HolProofRecipeError::Invalid(
+                        "type-instantiation map base is invalid",
+                    ))?;
+                if !keys.insert(*variable) {
+                    return Err(HolProofRecipeError::Invalid(
+                        "duplicate type-instantiation recipe key",
+                    ));
+                }
+                type_keys = Some(keys);
+                RecipeSort::TypeInstantiationMap
+            }
+            RecipeNode::TypeInstantiation {
+                theorem,
+                instantiations,
+            } => {
+                require(*theorem, RecipeSort::Theorem)?;
+                require(*instantiations, RecipeSort::TypeInstantiationMap)?;
+                RecipeSort::Theorem
+            }
+            RecipeNode::Abstraction { theorem, variable } => {
+                require(*theorem, RecipeSort::Theorem)?;
+                require(*variable, RecipeSort::Term)?;
                 RecipeSort::Theorem
             }
             RecipeNode::Persist { theorem } => {
@@ -278,6 +391,8 @@ fn validate_structure(
             }
         };
         sorts.push(sort);
+        term_map_keys.push(term_keys);
+        type_map_keys.push(type_keys);
     }
     if sorts.get(selected_namespace) != Some(&RecipeSort::Namespace) {
         return Err(HolProofRecipeError::Invalid(
@@ -339,12 +454,22 @@ fn encode_name(bytes: &mut Vec<u8>, name: Option<&str>) -> Result<(), HolProofRe
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn encode_node(bytes: &mut Vec<u8>, node: &RecipeNode) -> Result<(), HolProofRecipeError> {
     match node {
         RecipeNode::BoolType => bytes.push(0),
+        RecipeNode::FreeType { symbol } => {
+            bytes.push(11);
+            bytes.extend_from_slice(&symbol.to_be_bytes());
+        }
         RecipeNode::Bound { index, ty } => {
             bytes.push(1);
             bytes.extend_from_slice(&index.to_be_bytes());
+            encode_index(bytes, *ty)?;
+        }
+        RecipeNode::FreeTerm { symbol, ty } => {
+            bytes.push(12);
+            bytes.extend_from_slice(&symbol.to_be_bytes());
             encode_index(bytes, *ty)?;
         }
         RecipeNode::Lambda {
@@ -374,6 +499,49 @@ fn encode_node(bytes: &mut Vec<u8>, node: &RecipeNode) -> Result<(), HolProofRec
             bytes.push(10);
             encode_index(bytes, *context)?;
             encode_index(bytes, *function)?;
+        }
+        RecipeNode::EmptyTermInstantiationMap => bytes.push(13),
+        RecipeNode::ExtendTermInstantiationMap {
+            base,
+            variable,
+            replacement,
+        } => {
+            bytes.push(14);
+            encode_index(bytes, *base)?;
+            encode_index(bytes, *variable)?;
+            encode_index(bytes, *replacement)?;
+        }
+        RecipeNode::TermInstantiation {
+            theorem,
+            instantiations,
+        } => {
+            bytes.push(15);
+            encode_index(bytes, *theorem)?;
+            encode_index(bytes, *instantiations)?;
+        }
+        RecipeNode::EmptyTypeInstantiationMap => bytes.push(16),
+        RecipeNode::ExtendTypeInstantiationMap {
+            base,
+            variable,
+            replacement,
+        } => {
+            bytes.push(17);
+            encode_index(bytes, *base)?;
+            encode_index(bytes, *variable)?;
+            encode_index(bytes, *replacement)?;
+        }
+        RecipeNode::TypeInstantiation {
+            theorem,
+            instantiations,
+        } => {
+            bytes.push(18);
+            encode_index(bytes, *theorem)?;
+            encode_index(bytes, *instantiations)?;
+        }
+        RecipeNode::Abstraction { theorem, variable } => {
+            bytes.push(19);
+            encode_index(bytes, *theorem)?;
+            encode_index(bytes, *variable)?;
         }
         RecipeNode::Persist { theorem } => {
             bytes.push(6);
@@ -529,6 +697,37 @@ impl<'a> Decoder<'a> {
                 context: self.index()?,
                 function: self.index()?,
             }),
+            11 => Ok(RecipeNode::FreeType {
+                symbol: self.i64()?,
+            }),
+            12 => Ok(RecipeNode::FreeTerm {
+                symbol: self.i64()?,
+                ty: self.index()?,
+            }),
+            13 => Ok(RecipeNode::EmptyTermInstantiationMap),
+            14 => Ok(RecipeNode::ExtendTermInstantiationMap {
+                base: self.index()?,
+                variable: self.index()?,
+                replacement: self.index()?,
+            }),
+            15 => Ok(RecipeNode::TermInstantiation {
+                theorem: self.index()?,
+                instantiations: self.index()?,
+            }),
+            16 => Ok(RecipeNode::EmptyTypeInstantiationMap),
+            17 => Ok(RecipeNode::ExtendTypeInstantiationMap {
+                base: self.index()?,
+                variable: self.index()?,
+                replacement: self.index()?,
+            }),
+            18 => Ok(RecipeNode::TypeInstantiation {
+                theorem: self.index()?,
+                instantiations: self.index()?,
+            }),
+            19 => Ok(RecipeNode::Abstraction {
+                theorem: self.index()?,
+                variable: self.index()?,
+            }),
             _ => Err(HolProofRecipeError::Invalid(
                 "unknown sealed recipe node tag",
             )),
@@ -548,6 +747,10 @@ impl Policy for ProofGuestPolicy {
                 | Operation::ProveConversionBeta
                 | Operation::ProveConversionEta
                 | Operation::ProveConversionEquality
+                | Operation::ProveTermInstantiation
+                | Operation::ProveTypeInstantiation
+                | Operation::ProveAbstraction
+                | Operation::DefineContext
                 | Operation::PersistJudgement
                 | Operation::DefineNamespace
                 | Operation::ExportNamespaceValue
@@ -565,9 +768,12 @@ enum Value {
         conclusion: TermId,
     },
     Namespace(NamespaceId),
+    TermInstantiationMap(Vec<TermInstantiation>),
+    TypeInstantiationMap(Vec<TypeInstantiation>),
     Unit,
 }
 
+#[allow(clippy::too_many_lines)]
 fn replay(
     kernel: &Kernel,
     recipe: &[RecipeNode],
@@ -579,8 +785,15 @@ fn replay(
     for node in recipe {
         let value = match node {
             RecipeNode::BoolType => Value::Type(db.insert_bool_type().map_err(replay_error)?),
+            RecipeNode::FreeType { symbol } => {
+                Value::Type(db.insert_free_type(*symbol).map_err(replay_error)?)
+            }
             RecipeNode::Bound { index, ty } => Value::Term(
                 db.insert_bound_term(*index, type_at(&values, *ty)?)
+                    .map_err(replay_error)?,
+            ),
+            RecipeNode::FreeTerm { symbol, ty } => Value::Term(
+                db.insert_free_term(*symbol, type_at(&values, *ty)?)
                     .map_err(replay_error)?,
             ),
             RecipeNode::Lambda {
@@ -598,8 +811,37 @@ fn replay(
                 db.create_namespace(Some(NamespaceId::root()), name.as_deref())
                     .map_err(replay_error)?,
             ),
+            RecipeNode::EmptyTermInstantiationMap => Value::TermInstantiationMap(Vec::new()),
+            RecipeNode::ExtendTermInstantiationMap {
+                base,
+                variable,
+                replacement,
+            } => {
+                let mut map = term_instantiation_map_at(&values, *base)?.to_vec();
+                map.push(TermInstantiation {
+                    variable: term_at(&values, *variable)?,
+                    replacement: term_at(&values, *replacement)?,
+                });
+                Value::TermInstantiationMap(map)
+            }
+            RecipeNode::EmptyTypeInstantiationMap => Value::TypeInstantiationMap(Vec::new()),
+            RecipeNode::ExtendTypeInstantiationMap {
+                base,
+                variable,
+                replacement,
+            } => {
+                let mut map = type_instantiation_map_at(&values, *base)?.to_vec();
+                map.push(TypeInstantiation {
+                    variable: type_at(&values, *variable)?,
+                    replacement: type_at(&values, *replacement)?,
+                });
+                Value::TypeInstantiationMap(map)
+            }
             RecipeNode::Beta { .. }
             | RecipeNode::Eta { .. }
+            | RecipeNode::TermInstantiation { .. }
+            | RecipeNode::TypeInstantiation { .. }
+            | RecipeNode::Abstraction { .. }
             | RecipeNode::Persist { .. }
             | RecipeNode::ExportTheorem { .. }
             | RecipeNode::ExportContext { .. } => Value::Unit,
@@ -683,6 +925,51 @@ fn replay_theorems<P: Policy>(
                     };
                     theorems[index] = Some(theorem);
                 }
+                RecipeNode::TermInstantiation {
+                    theorem,
+                    instantiations,
+                } => {
+                    let theorem = proof
+                        .instantiate_terms(
+                            theorem_at_index(&theorems, *theorem)?,
+                            term_instantiation_map_at(values, *instantiations)?,
+                        )
+                        .map_err(replay_error)?;
+                    values[index] = Value::Theorem {
+                        context: theorem.context(),
+                        conclusion: theorem.conclusion(),
+                    };
+                    theorems[index] = Some(theorem);
+                }
+                RecipeNode::TypeInstantiation {
+                    theorem,
+                    instantiations,
+                } => {
+                    let theorem = proof
+                        .instantiate_types(
+                            theorem_at_index(&theorems, *theorem)?,
+                            type_instantiation_map_at(values, *instantiations)?,
+                        )
+                        .map_err(replay_error)?;
+                    values[index] = Value::Theorem {
+                        context: theorem.context(),
+                        conclusion: theorem.conclusion(),
+                    };
+                    theorems[index] = Some(theorem);
+                }
+                RecipeNode::Abstraction { theorem, variable } => {
+                    let theorem = proof
+                        .abstraction(
+                            theorem_at_index(&theorems, *theorem)?,
+                            term_at(values, *variable)?,
+                        )
+                        .map_err(replay_error)?;
+                    values[index] = Value::Theorem {
+                        context: theorem.context(),
+                        conclusion: theorem.conclusion(),
+                    };
+                    theorems[index] = Some(theorem);
+                }
                 RecipeNode::Persist { theorem } => {
                     let theorem = theorems
                         .get(*theorem)
@@ -756,6 +1043,36 @@ fn theorem_at(values: &[Value], index: usize) -> Result<(ContextId, TermId), Hol
 fn namespace_at(values: &[Value], index: usize) -> Result<NamespaceId, HolProofRecipeError> {
     match values.get(index) {
         Some(Value::Namespace(value)) => Ok(*value),
+        _ => Err(value_error()),
+    }
+}
+
+fn theorem_at_index<'a, 'brand>(
+    theorems: &'a [Option<Theorem<'brand>>],
+    index: usize,
+) -> Result<&'a Theorem<'brand>, HolProofRecipeError> {
+    theorems
+        .get(index)
+        .and_then(Option::as_ref)
+        .ok_or_else(value_error)
+}
+
+fn term_instantiation_map_at(
+    values: &[Value],
+    index: usize,
+) -> Result<&[TermInstantiation], HolProofRecipeError> {
+    match values.get(index) {
+        Some(Value::TermInstantiationMap(value)) => Ok(value),
+        _ => Err(value_error()),
+    }
+}
+
+fn type_instantiation_map_at(
+    values: &[Value],
+    index: usize,
+) -> Result<&[TypeInstantiation], HolProofRecipeError> {
+    match values.get(index) {
+        Some(Value::TypeInstantiationMap(value)) => Ok(value),
         _ => Err(value_error()),
     }
 }
@@ -837,6 +1154,83 @@ fn closed_eta_test_recipe() -> SealedHolProofRecipe {
 }
 
 #[cfg(test)]
+pub(crate) fn schematic_binding_test_recipe() -> SealedHolProofRecipe {
+    SealedHolProofRecipe::seal(
+        vec![
+            RecipeNode::FreeType { symbol: 0 },
+            RecipeNode::Bound { index: 0, ty: 0 },
+            RecipeNode::Lambda {
+                parameter_type: 0,
+                body: 1,
+            },
+            RecipeNode::FreeTerm { symbol: 0, ty: 0 },
+            RecipeNode::FreeTerm { symbol: 1, ty: 0 },
+            RecipeNode::EmptyContext,
+            RecipeNode::Beta {
+                context: 5,
+                abstraction: 2,
+                argument: 3,
+            },
+            RecipeNode::EmptyTermInstantiationMap,
+            RecipeNode::ExtendTermInstantiationMap {
+                base: 7,
+                variable: 3,
+                replacement: 4,
+            },
+            RecipeNode::TermInstantiation {
+                theorem: 6,
+                instantiations: 8,
+            },
+            RecipeNode::Abstraction {
+                theorem: 9,
+                variable: 4,
+            },
+            RecipeNode::BoolType,
+            RecipeNode::EmptyTypeInstantiationMap,
+            RecipeNode::ExtendTypeInstantiationMap {
+                base: 12,
+                variable: 0,
+                replacement: 11,
+            },
+            RecipeNode::TypeInstantiation {
+                theorem: 10,
+                instantiations: 13,
+            },
+            RecipeNode::Persist { theorem: 14 },
+            RecipeNode::Namespace {
+                name: Some("schematic-binding-demo".into()),
+            },
+            RecipeNode::ExportContext {
+                namespace: 16,
+                export: 0,
+                context: 5,
+                name: Some("empty_context".into()),
+            },
+            RecipeNode::ExportTheorem {
+                namespace: 16,
+                export: 1,
+                theorem: 14,
+                name: Some("schematic_identity_binding".into()),
+            },
+        ],
+        16,
+    )
+    .expect("canonical schematic-binding test recipe")
+}
+
+#[cfg(test)]
+pub(crate) const SCHEMATIC_BINDING_WIRE: &[u8] = &[
+    2, 0, 19, 0, 16, 11, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 12, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 4, 5, 0, 5, 0, 2, 0, 3, 13, 14, 0, 7, 0,
+    3, 0, 4, 15, 0, 6, 0, 8, 19, 0, 9, 0, 4, 0, 16, 17, 0, 12, 0, 0, 0, 11, 18, 0, 10, 0, 13, 6, 0,
+    14, 7, 1, 0, 22, 115, 99, 104, 101, 109, 97, 116, 105, 99, 45, 98, 105, 110, 100, 105, 110,
+    103, 45, 100, 101, 109, 111, 9, 0, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 1, 0, 13, 101, 109, 112,
+    116, 121, 95, 99, 111, 110, 116, 101, 120, 116, 8, 0, 16, 0, 0, 0, 0, 0, 0, 0, 1, 0, 14, 1, 0,
+    26, 115, 99, 104, 101, 109, 97, 116, 105, 99, 95, 105, 100, 101, 110, 116, 105, 116, 121, 95,
+    98, 105, 110, 100, 105, 110, 103,
+];
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -858,8 +1252,8 @@ mod tests {
 
     #[test]
     fn canonical_eta_recipe_round_trips_and_replays() {
-        const VERSION_1_ETA_RECIPE: &[u8] = &[
-            1, 0, 9, 0, 6, // version, node count, selected namespace
+        const VERSION_2_ETA_RECIPE: &[u8] = &[
+            2, 0, 9, 0, 6, // version, node count, selected namespace
             0, // bool type
             1, 0, 0, 0, 0, 0, 0, // bound 0 : node 0
             2, 0, 0, 0, 1, // lambda node 0, node 1
@@ -872,14 +1266,27 @@ mod tests {
             b't', b'i', b't', b'y', b'_', b'e', b't', b'a',
         ];
         let recipe = closed_eta_test_recipe();
-        assert_eq!(recipe.as_bytes(), VERSION_1_ETA_RECIPE);
+        assert_eq!(recipe.as_bytes(), VERSION_2_ETA_RECIPE);
         assert_eq!(
-            SealedHolProofRecipe::from_untrusted_bytes(VERSION_1_ETA_RECIPE).unwrap(),
+            SealedHolProofRecipe::from_untrusted_bytes(VERSION_2_ETA_RECIPE).unwrap(),
             recipe
         );
         let kernel = Kernel::ephemeral();
         let artifact = recipe.replay(&kernel).unwrap();
         assert_eq!(artifact.signer(), kernel.key_id());
+    }
+
+    #[test]
+    fn canonical_schematic_binding_recipe_has_fixed_wire_and_replays() {
+        let recipe = schematic_binding_test_recipe();
+        assert_eq!(
+            SealedHolProofRecipe::from_untrusted_bytes(recipe.as_bytes()).unwrap(),
+            recipe
+        );
+        let kernel = Kernel::ephemeral();
+        let artifact = recipe.replay(&kernel).unwrap();
+        assert_eq!(artifact.signer(), kernel.key_id());
+        assert_eq!(recipe.as_bytes(), SCHEMATIC_BINDING_WIRE);
     }
 
     #[test]
@@ -934,13 +1341,30 @@ mod tests {
         bytes.push(0);
         assert!(SealedHolProofRecipe::from_untrusted_bytes(&bytes).is_err());
         let mut old_version = closed_beta().as_bytes().to_vec();
-        old_version[0] = 0;
+        old_version[0] = 1;
         assert!(matches!(
             SealedHolProofRecipe::from_untrusted_bytes(&old_version),
             Err(HolProofRecipeError::Invalid(
                 "unsupported sealed recipe version"
             ))
         ));
+
+        assert!(
+            SealedHolProofRecipe::seal(
+                vec![
+                    RecipeNode::BoolType,
+                    RecipeNode::EmptyTermInstantiationMap,
+                    RecipeNode::ExtendTermInstantiationMap {
+                        base: 1,
+                        variable: 0,
+                        replacement: 0,
+                    },
+                    RecipeNode::Namespace { name: None },
+                ],
+                3,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -950,6 +1374,122 @@ mod tests {
             Err(HolProofRecipeError::Invalid(
                 "sealed recipe exceeds byte limit"
             ))
+        ));
+    }
+
+    #[test]
+    fn rejects_unknown_truncated_and_duplicate_map_encodings() {
+        let mut unknown = schematic_binding_test_recipe().as_bytes().to_vec();
+        unknown[5] = u8::MAX;
+        assert!(matches!(
+            SealedHolProofRecipe::from_untrusted_bytes(&unknown),
+            Err(HolProofRecipeError::Invalid(
+                "unknown sealed recipe node tag"
+            ))
+        ));
+
+        let mut truncated = schematic_binding_test_recipe().as_bytes().to_vec();
+        truncated.pop();
+        assert!(matches!(
+            SealedHolProofRecipe::from_untrusted_bytes(&truncated),
+            Err(HolProofRecipeError::Invalid("truncated sealed recipe"))
+        ));
+
+        assert!(matches!(
+            SealedHolProofRecipe::seal(
+                vec![
+                    RecipeNode::FreeType { symbol: 0 },
+                    RecipeNode::FreeTerm { symbol: 0, ty: 0 },
+                    RecipeNode::FreeTerm { symbol: 1, ty: 0 },
+                    RecipeNode::EmptyTermInstantiationMap,
+                    RecipeNode::ExtendTermInstantiationMap {
+                        base: 3,
+                        variable: 1,
+                        replacement: 2,
+                    },
+                    RecipeNode::ExtendTermInstantiationMap {
+                        base: 4,
+                        variable: 1,
+                        replacement: 2,
+                    },
+                    RecipeNode::Namespace { name: None },
+                ],
+                6,
+            ),
+            Err(HolProofRecipeError::Invalid(
+                "duplicate term-instantiation recipe key"
+            ))
+        ));
+
+        assert!(matches!(
+            SealedHolProofRecipe::seal(
+                vec![
+                    RecipeNode::FreeType { symbol: 0 },
+                    RecipeNode::BoolType,
+                    RecipeNode::EmptyTypeInstantiationMap,
+                    RecipeNode::ExtendTypeInstantiationMap {
+                        base: 2,
+                        variable: 0,
+                        replacement: 1,
+                    },
+                    RecipeNode::ExtendTypeInstantiationMap {
+                        base: 3,
+                        variable: 0,
+                        replacement: 1,
+                    },
+                    RecipeNode::Namespace { name: None },
+                ],
+                5,
+            ),
+            Err(HolProofRecipeError::Invalid(
+                "duplicate type-instantiation recipe key"
+            ))
+        ));
+    }
+
+    #[test]
+    fn nucleus_rejects_distinct_recipe_keys_that_canonicalize_to_one_free_term() {
+        let recipe = SealedHolProofRecipe::seal(
+            vec![
+                RecipeNode::FreeType { symbol: 0 },
+                RecipeNode::Bound { index: 0, ty: 0 },
+                RecipeNode::Lambda {
+                    parameter_type: 0,
+                    body: 1,
+                },
+                RecipeNode::FreeTerm { symbol: 0, ty: 0 },
+                RecipeNode::FreeTerm { symbol: 0, ty: 0 },
+                RecipeNode::FreeTerm { symbol: 1, ty: 0 },
+                RecipeNode::EmptyContext,
+                RecipeNode::Beta {
+                    context: 6,
+                    abstraction: 2,
+                    argument: 3,
+                },
+                RecipeNode::EmptyTermInstantiationMap,
+                RecipeNode::ExtendTermInstantiationMap {
+                    base: 8,
+                    variable: 3,
+                    replacement: 5,
+                },
+                RecipeNode::ExtendTermInstantiationMap {
+                    base: 9,
+                    variable: 4,
+                    replacement: 5,
+                },
+                RecipeNode::TermInstantiation {
+                    theorem: 7,
+                    instantiations: 10,
+                },
+                RecipeNode::Namespace { name: None },
+            ],
+            12,
+        )
+        .unwrap();
+        assert!(matches!(
+            recipe.replay(&Kernel::ephemeral()),
+            Err(HolProofRecipeError::Replay(message))
+                if message.contains("occurs more than once")
         ));
     }
 }
