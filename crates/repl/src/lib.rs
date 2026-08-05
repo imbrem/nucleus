@@ -70,9 +70,9 @@ mod hol_guest;
 pub use covalence_proton::WasmtimeComponentLimits;
 #[cfg(not(target_arch = "wasm32"))]
 pub use hol_guest::{
-    HolGuestError, ManagedHolGuestError, ManagedHolGuestResult,
-    PrecompiledHolProofComponentExecutor, PreparedHolProofComponent,
-    retain_signed_hol_guest_artifact, run_hol_proof_component, run_managed_hol_proof_component,
+    HolGuestError, ManagedHolGuestError, PrecompiledHolProofComponentExecutor,
+    PreparedHolProofComponent, retain_signed_hol_guest_artifact, run_hol_proof_component,
+    run_managed_hol_proof_component,
 };
 
 pub use covalence_nucleus::sql::{
@@ -877,6 +877,45 @@ pub struct RetainedReceivedHolSnapshot {
     trusted_import: TrustedImportId,
     artifact: SignedHolArtifact,
     mounted: covalence_neutron::ImmutableImage,
+}
+
+/// Checked authority-free HOL guest output retained in a caller-owned REPL directory.
+///
+/// Whether a native component or a caller supplied the sealed recipe bytes,
+/// this value is returned only after Nucleus replayed them, the local kernel
+/// signed the resulting database, the signature and complete image were
+/// independently checked, and a fresh HOL receiver explicitly trusted and
+/// imported the snapshot.
+pub struct ManagedHolGuestResult {
+    artifact: SignedHolArtifact,
+    retained: RetainedReceivedHolSnapshot,
+    connection: ConnectionId,
+}
+
+impl ManagedHolGuestResult {
+    /// Returns the exact independently transportable signed snapshot.
+    #[must_use]
+    pub const fn artifact(&self) -> &SignedHolArtifact {
+        &self.artifact
+    }
+
+    /// Returns receiver-local coordinates for the imported snapshot.
+    #[must_use]
+    pub const fn received(&self) -> ReceivedHolSnapshot {
+        self.retained.received
+    }
+
+    /// Returns the live HOL receiver retained in the caller's directory.
+    #[must_use]
+    pub const fn connection(&self) -> ConnectionId {
+        self.connection
+    }
+
+    /// Separates transport bytes, the owner connection, and its retryable receipt.
+    #[must_use]
+    pub fn into_parts(self) -> (SignedHolArtifact, ConnectionId, RetainedReceivedHolSnapshot) {
+        (self.artifact, self.connection, self.retained)
+    }
 }
 
 struct UnboundReceivedHolSnapshot {
@@ -1693,6 +1732,108 @@ pub(crate) fn trust_receive_and_retain_bounded_selected_managed_hol_artifact(
         .insert_selected_bounded(target.protocol(), target, maximum_connection_id)
         .map_err(|error| SignedHolRoundTripError::at("receiver-retained", error))?;
     Ok((owner, retained.bind(owner)))
+}
+
+/// Decodes authority-free canonical bytes and replays them through Nucleus.
+///
+/// The untrusted input is accepted by the single [`SealedHolProofRecipe`]
+/// decoder. Successful replay constructs a fresh kernel database, persists
+/// only the recipe's selected theorem state, exports its selected namespace,
+/// and signs the resulting complete image with `kernel`.
+///
+/// # Errors
+///
+/// Returns before an artifact exists for malformed, oversized, non-canonical,
+/// structurally denied, or failed checked-replay input.
+pub fn replay_sealed_hol_proof_recipe(
+    kernel: &Kernel,
+    bytes: &[u8],
+) -> Result<SignedHolArtifact, SignedHolRoundTripError> {
+    let recipe = SealedHolProofRecipe::from_untrusted_bytes(bytes)
+        .map_err(|error| SignedHolRoundTripError::at("recipe-decoded", error))?;
+    recipe
+        .replay(kernel)
+        .map_err(|error| SignedHolRoundTripError::at("recipe-replayed", error))
+}
+
+/// Authenticates and retains one artifact produced by this exact local kernel.
+///
+/// The REPL's independently stored local endpoint key must match `kernel`.
+/// Authentication, endpoint pinning, and detached image validation complete
+/// before a fresh receiver is inserted and selected atomically.
+///
+/// # Errors
+///
+/// Returns without directory or selection mutation if key loading,
+/// authentication, validation, receiver creation, trust, import, or bounded
+/// insertion fails.
+pub fn retain_replayed_hol_proof_recipe(
+    kernel: &Kernel,
+    directory: &mut Repl<LocalConnection>,
+    artifact: SignedHolArtifact,
+) -> Result<ManagedHolGuestResult, SignedHolRoundTripError> {
+    retain_replayed_hol_proof_recipe_bounded(kernel, directory, artifact, i64::MAX)
+}
+
+pub(crate) fn retain_replayed_hol_proof_recipe_bounded(
+    kernel: &Kernel,
+    directory: &mut Repl<LocalConnection>,
+    artifact: SignedHolArtifact,
+    maximum_connection_id: i64,
+) -> Result<ManagedHolGuestResult, SignedHolRoundTripError> {
+    let expected = directory
+        .expected_kernel_identity(KernelId::LOCAL)
+        .map_err(|error| SignedHolRoundTripError::at("local-key-loaded", error))?;
+    if expected.public_key() != kernel.verifying_key().as_bytes() {
+        return Err(SignedHolRoundTripError::invalid(
+            "local-key-loaded",
+            "REPL local endpoint key does not match the replay kernel",
+        ));
+    }
+    let pinned = authenticate_pinned_signed_hol_artifact(&expected, &artifact)?;
+    let target = kernel
+        .open_hol(AllowAll)
+        .map_err(|error| SignedHolRoundTripError::at("receiver-opened", error))?;
+    let (connection, retained) = trust_receive_and_retain_bounded_selected_managed_hol_artifact(
+        directory,
+        target,
+        pinned,
+        maximum_connection_id,
+    )?;
+    Ok(ManagedHolGuestResult {
+        artifact,
+        retained,
+        connection,
+    })
+}
+
+/// Replays bounded canonical bytes and retains their authenticated signed state.
+///
+/// This is the shared terminal/browser orchestration path. Callers which must
+/// durably write the signed bytes before admitting a receiver can instead call
+/// [`replay_sealed_hol_proof_recipe`] and
+/// [`retain_replayed_hol_proof_recipe`] around their output step.
+///
+/// # Errors
+///
+/// Returns without directory or selection mutation on any decode, replay,
+/// authentication, validation, trust, import, or bounded-insertion failure.
+pub fn replay_and_retain_sealed_hol_proof_recipe(
+    kernel: &Kernel,
+    directory: &mut Repl<LocalConnection>,
+    bytes: &[u8],
+) -> Result<ManagedHolGuestResult, SignedHolRoundTripError> {
+    replay_and_retain_sealed_hol_proof_recipe_bounded(kernel, directory, bytes, i64::MAX)
+}
+
+pub(crate) fn replay_and_retain_sealed_hol_proof_recipe_bounded(
+    kernel: &Kernel,
+    directory: &mut Repl<LocalConnection>,
+    bytes: &[u8],
+    maximum_connection_id: i64,
+) -> Result<ManagedHolGuestResult, SignedHolRoundTripError> {
+    let artifact = replay_sealed_hol_proof_recipe(kernel, bytes)?;
+    retain_replayed_hol_proof_recipe_bounded(kernel, directory, artifact, maximum_connection_id)
 }
 
 /// Rereads one previously accepted receipt without repeating trust/import writes.

@@ -8,13 +8,15 @@ use std::process::ExitCode;
 
 use covalence_repl::{
     AllowAll, ConnectionId, ExpectedKernelIdentity, HolRecipe, HolRecipeResult, Kernel, KernelId,
-    LocalConnection, MAX_IMAGE_BYTES, MAX_SIGNED_HOL_ARTIFACT_SIDECAR_BYTES, Outcome, Repl,
-    RetainedReceivedHolSnapshot, SignedHolRoundTripResult, Value,
-    authenticate_pinned_signed_hol_artifact, open_retained_trusted_hol_as_managed_state,
-    parse_signed_hol_artifact_sidecar, produce_signed_dedekind_infinity_assumption,
-    produce_signed_hol_artifact, produce_signed_natlike_missing_zero,
-    retain_signed_dedekind_infinity_assumption, retain_signed_natlike_missing_zero,
-    run_managed_signed_hol_round_trip, trust_and_receive_pinned_signed_hol_artifact,
+    LocalConnection, MAX_IMAGE_BYTES, MAX_SEALED_HOL_RECIPE_BYTES,
+    MAX_SIGNED_HOL_ARTIFACT_SIDECAR_BYTES, Outcome, Repl, RetainedReceivedHolSnapshot,
+    SignedHolRoundTripResult, Value, authenticate_pinned_signed_hol_artifact,
+    open_retained_trusted_hol_as_managed_state, parse_signed_hol_artifact_sidecar,
+    produce_signed_dedekind_infinity_assumption, produce_signed_hol_artifact,
+    produce_signed_natlike_missing_zero, replay_sealed_hol_proof_recipe,
+    retain_replayed_hol_proof_recipe, retain_signed_dedekind_infinity_assumption,
+    retain_signed_natlike_missing_zero, run_managed_signed_hol_round_trip,
+    trust_and_receive_pinned_signed_hol_artifact,
     trust_receive_and_retain_selected_managed_hol_artifact,
 };
 #[cfg(not(target_arch = "wasm32"))]
@@ -556,6 +558,10 @@ fn print_help(output: &mut impl io::Write) -> io::Result<()> {
     )?;
     writeln!(
         output,
+        ".hol recipe FILE DIRECTORY  replay canonical bytes, dump, and retain the signed result"
+    )?;
+    writeln!(
+        output,
         ".hol receive-signed DIRECTORY EXPECTED_PUBLIC_KEY_HEX  verify and retain signed files"
     )?;
     writeln!(output, ".use ID            select a connection")?;
@@ -812,6 +818,101 @@ fn read_bounded_signed_artifact_sidecar(mut input: impl io::Read) -> Result<Vec<
     Ok(bytes)
 }
 
+fn read_bounded_hol_proof_recipe(mut input: impl io::Read) -> Result<Vec<u8>> {
+    let sentinel_limit = u64::try_from(MAX_SEALED_HOL_RECIPE_BYTES)? + 1;
+    let mut bytes = Vec::new();
+    input
+        .by_ref()
+        .take(sentinel_limit)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_SEALED_HOL_RECIPE_BYTES {
+        return Err(format!(
+            "sealed HOL recipe exceeds the {MAX_SEALED_HOL_RECIPE_BYTES}-byte limit"
+        )
+        .into());
+    }
+    Ok(bytes)
+}
+
+fn replay_interactive_hol_proof_recipe(
+    kernel: &Kernel,
+    repl: &mut LocalRepl,
+    received_artifacts: &mut HashMap<ConnectionId, RetainedReceivedHolSnapshot>,
+    output: &mut impl io::Write,
+    recipe_file: &Path,
+    artifact_directory: &Path,
+) -> Result<()> {
+    // Refuse a colliding destination before replaying, signing, or admitting a
+    // receiver. Until commit, every file created below is rollback-owned.
+    let mut fresh = FreshArtifactDirectory::create(artifact_directory)?;
+    let recipe = read_bounded_hol_proof_recipe(File::open(recipe_file)?)?;
+    let artifact = replay_sealed_hol_proof_recipe(kernel, &recipe)?;
+    let attestation = artifact.attestation_text();
+    fresh.write_pair(artifact.image(), attestation.as_bytes())?;
+    let managed = retain_replayed_hol_proof_recipe(kernel, repl, artifact)?;
+    let (artifact, receiver, retained) = managed.into_parts();
+    let imported = retained.received();
+    received_artifacts.insert(receiver, retained);
+    let path = fresh.path().to_owned();
+    fresh.commit();
+
+    writeln!(output, "kind\tsigned-hol-proof-recipe")?;
+    writeln!(output, "authority\tkernel-checked-replay")?;
+    writeln!(output, "connection\t{receiver}")?;
+    writeln!(output, "source_namespace\t{}", artifact.namespace_id())?;
+    writeln!(output, "schema\t{}", artifact.schema())?;
+    writeln!(output, "image\t{}", artifact.image_hash())?;
+    writeln!(output, "signer\t{}", artifact.signer())?;
+    writeln!(output, "import\t{}", imported.import_id())?;
+    writeln!(output, "imported_namespace\t{}", imported.namespace_id())?;
+    writeln!(
+        output,
+        "imported_theorem\t{}\t{}",
+        imported.context_id(),
+        imported.conclusion_id()
+    )?;
+    writeln!(output, "trusted_import_receipt\tretained")?;
+    writeln!(output, "database\t{}", path.join("proof.sqlite").display())?;
+    writeln!(
+        output,
+        "attestation\t{}",
+        path.join("attestation.txt").display()
+    )?;
+    Ok(())
+}
+
+fn run_interactive_hol_proof_recipe_command(
+    kernel: &Kernel,
+    repl: &mut LocalRepl,
+    received_artifacts: &mut HashMap<ConnectionId, RetainedReceivedHolSnapshot>,
+    output: &mut impl io::Write,
+    line: &str,
+) -> Result<bool> {
+    const USAGE: &str = "usage: .hol recipe FILE DIRECTORY";
+    if line == ".hol recipe" {
+        return Err(USAGE.into());
+    }
+    let Some(arguments) = line.strip_prefix(".hol recipe ") else {
+        return Ok(false);
+    };
+    let arguments = arguments.trim();
+    let split = arguments.find(char::is_whitespace).ok_or(USAGE)?;
+    let recipe_file = &arguments[..split];
+    let artifact_directory = arguments[split..].trim();
+    if recipe_file.is_empty() || artifact_directory.is_empty() {
+        return Err(USAGE.into());
+    }
+    replay_interactive_hol_proof_recipe(
+        kernel,
+        repl,
+        received_artifacts,
+        output,
+        Path::new(recipe_file),
+        Path::new(artifact_directory),
+    )?;
+    Ok(true)
+}
+
 fn receive_interactive_signed_artifact(
     kernel: &Kernel,
     repl: &mut LocalRepl,
@@ -896,6 +997,9 @@ fn run_interactive_hol_artifact_command(
     output: &mut impl io::Write,
     line: &str,
 ) -> Result<bool> {
+    if run_interactive_hol_proof_recipe_command(kernel, repl, received_artifacts, output, line)? {
+        return Ok(true);
+    }
     if run_interactive_infinity_command(kernel, repl, received_artifacts, output, line)? {
         return Ok(true);
     }
@@ -1366,6 +1470,12 @@ mod tests {
     use super::*;
     use covalence_repl::{Connection, Sql};
 
+    const CLOSED_BETA_RECIPE: &[u8] = &[
+        6, 0, 11, 0, 8, 0, 1, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 3, 1, 4, 53, 0, 2, 0, 3, 56, 0, 4,
+        0, 5, 6, 0, 6, 7, 1, 0, 4, 100, 101, 109, 111, 9, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 8,
+        0, 8, 0, 0, 0, 0, 0, 0, 0, 1, 0, 6, 0,
+    ];
+
     static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
 
     fn temporary_file(stem: &str) -> std::path::PathBuf {
@@ -1547,6 +1657,118 @@ mod tests {
         fs::remove_file(path.join("proof.sqlite")).unwrap();
         fs::remove_file(path.join("attestation.txt")).unwrap();
         fs::remove_dir(path).unwrap();
+    }
+
+    #[test]
+    fn sealed_recipe_command_replays_dumps_retains_and_opens_state() {
+        let recipe_path = temporary_file("closed-beta-recipe");
+        let output_path = temporary_file("closed-beta-recipe-artifact");
+        fs::write(&recipe_path, CLOSED_BETA_RECIPE).unwrap();
+        let script = format!(
+            ".hol recipe {} {}\n.hol open-state\n.hol truth\n.quit\n",
+            recipe_path.display(),
+            output_path.display()
+        );
+        let mut input = Cursor::new(script);
+        let mut output = Vec::new();
+        let mut errors = Vec::new();
+
+        run_repl(&mut input, &mut output, &mut errors, false).expect("run REPL");
+
+        let image = fs::read(output_path.join("proof.sqlite")).unwrap();
+        let sidecar = fs::read(output_path.join("attestation.txt")).unwrap();
+        let artifact = parse_signed_hol_artifact_sidecar(image, &sidecar).unwrap();
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("kind\tsigned-hol-proof-recipe\n"));
+        assert!(output.contains("authority\tkernel-checked-replay\n"));
+        assert!(output.contains("trusted_import_receipt\tretained\n"));
+        assert!(contains_imported_theorem(&output));
+        assert!(output.contains("kind\ttrusted-hol-state\n"));
+        assert!(output.contains("statement\ttrue\n"));
+        assert_eq!(artifact.namespace_id().to_string(), "1");
+        assert!(errors.is_empty());
+
+        fs::remove_file(recipe_path).unwrap();
+        remove_signed_hol_directory(&output_path);
+    }
+
+    #[test]
+    fn sealed_recipe_rejections_preserve_selection_receipts_and_output() {
+        let kernel = Kernel::ephemeral();
+        let mut repl = Repl::new(kernel.verifying_key().as_bytes()).unwrap();
+        let original = open_sql_connection(&kernel, &mut repl).unwrap();
+        let mut retained = HashMap::new();
+        let mut output = Vec::new();
+        let canonical = CLOSED_BETA_RECIPE.to_vec();
+
+        for (name, bytes) in [
+            ("malformed", vec![0xff]),
+            ("trailing", {
+                let mut bytes = canonical.clone();
+                bytes.push(0);
+                bytes
+            }),
+            ("policy-denied-version", {
+                let mut bytes = canonical.clone();
+                bytes[0] = bytes[0].wrapping_sub(1);
+                bytes
+            }),
+        ] {
+            let recipe_path = temporary_file(name);
+            let artifact_path = temporary_file(&format!("{name}-artifact"));
+            fs::write(&recipe_path, bytes).unwrap();
+            assert!(
+                replay_interactive_hol_proof_recipe(
+                    &kernel,
+                    &mut repl,
+                    &mut retained,
+                    &mut output,
+                    &recipe_path,
+                    &artifact_path,
+                )
+                .is_err()
+            );
+            assert!(!artifact_path.exists());
+            fs::remove_file(recipe_path).unwrap();
+        }
+
+        let recipe_path = temporary_file("existing-output-recipe");
+        let artifact_path = temporary_file("existing-output-artifact");
+        fs::write(&recipe_path, &canonical).unwrap();
+        fs::create_dir(&artifact_path).unwrap();
+        assert!(
+            replay_interactive_hol_proof_recipe(
+                &kernel,
+                &mut repl,
+                &mut retained,
+                &mut output,
+                &recipe_path,
+                &artifact_path,
+            )
+            .is_err()
+        );
+
+        assert_eq!(repl.active().unwrap(), Some(original));
+        assert_eq!(
+            repl.inspect_state("SELECT count(*) FROM repl_connection")
+                .unwrap()
+                .rows,
+            [[Value::Integer(1)]]
+        );
+        assert!(retained.is_empty());
+        assert!(output.is_empty());
+
+        fs::remove_file(recipe_path).unwrap();
+        fs::remove_dir(artifact_path).unwrap();
+    }
+
+    #[test]
+    fn sealed_recipe_reader_refuses_oversized_input() {
+        let error = read_bounded_hol_proof_recipe(GrowingImage {
+            remaining: MAX_SEALED_HOL_RECIPE_BYTES + 1,
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("exceeds"));
     }
 
     #[test]
