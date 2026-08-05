@@ -37,7 +37,9 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
   const browser = await chromium.launch({
     executablePath,
     headless: true,
-    args: ["--no-sandbox"],
+    // --disable-dev-shm-usage keeps Chromium alive in containers whose
+    // /dev/shm is too small for a second page plus the Wasm kernel.
+    args: ["--no-sandbox", "--disable-dev-shm-usage"],
   });
   context.after(() => browser.close());
   const page = await browser.newPage();
@@ -66,4 +68,18 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
     ],
   });
   assert.equal(result.readonly, true);
+
+  const demo = await browser.newPage();
+  await demo.goto(`http://127.0.0.1:${address.port}/repl.html`);
+  await demo.getByText("connection 1 ready").waitFor();
+  await demo.locator("#sql").fill("SELECT 42 AS answer");
+  await demo.locator("#run").click();
+  await demo.getByRole("cell", { name: "42" }).waitFor();
+  assert.equal(await demo.getByRole("columnheader").textContent(), "answer");
+
+  await demo.locator("#new").click();
+  await demo.locator("#connection").selectOption("2");
+  await demo.locator("#sql").fill("SELECT 84 AS independent");
+  await demo.locator("#run").click();
+  await demo.getByRole("cell", { name: "84" }).waitFor();
 });
