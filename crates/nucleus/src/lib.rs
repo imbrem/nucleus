@@ -4,8 +4,8 @@ mod connection;
 
 pub use connection::Connection;
 
-pub mod repl;
-pub use repl::Repl;
+pub mod sql;
+pub use sql::Sql;
 
 mod snapshot;
 

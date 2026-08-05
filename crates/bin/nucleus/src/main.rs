@@ -4,8 +4,8 @@ use std::fs;
 use std::io;
 use std::process::ExitCode;
 
-use covalence_nucleus::repl::{MAX_IMAGE_BYTES, Outcome, Value};
-use covalence_nucleus::{Connection, Repl};
+use covalence_nucleus::sql::{MAX_IMAGE_BYTES, Outcome, Value};
+use covalence_nucleus::{Connection, Sql};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -55,7 +55,7 @@ fn format_value(value: &Value) -> String {
 }
 
 fn load_image(
-    connection: &mut Connection<Repl>,
+    connection: &mut Connection<Sql>,
     output: &mut impl io::Write,
     schema: &str,
     path: &str,
@@ -80,7 +80,7 @@ fn parse_load(command: &str) -> Option<(&str, &str)> {
 }
 
 fn run_line(
-    connection: &mut Connection<Repl>,
+    connection: &mut Connection<Sql>,
     output: &mut impl io::Write,
     line: &str,
 ) -> Result<bool> {
@@ -119,7 +119,7 @@ fn run_repl(
     errors: &mut impl io::Write,
     prompt: bool,
 ) -> Result<()> {
-    let mut connection = Connection::<Repl>::open_in_memory()?;
+    let mut connection = Connection::<Sql>::open_in_memory()?;
     let mut line = String::new();
     loop {
         if prompt {
@@ -158,7 +158,7 @@ fn run() -> Result<()> {
             if arguments.next().is_some() {
                 return Err("unexpected arguments after SQL statement".into());
             }
-            let mut connection = Connection::<Repl>::open_in_memory()?;
+            let mut connection = Connection::<Sql>::open_in_memory()?;
             let outcome = connection.run(&sql, &[])?;
             print_outcome(&mut io::stdout().lock(), &outcome)?;
             Ok(())
@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn loads_a_complete_immutable_image() {
-        let mut source = Connection::<Repl>::open_in_memory().expect("open source");
+        let mut source = Connection::<Sql>::open_in_memory().expect("open source");
         source
             .execute_batch("CREATE TABLE example(value TEXT); INSERT INTO example VALUES ('ok');")
             .expect("populate source");

@@ -1,8 +1,8 @@
-//! Deliberately permeable SQL REPL protocol.
+//! Deliberately permeable SQL connection protocol and REPL transport values.
 //!
-//! Unlike trusted logical protocols, [`Repl`] permits arbitrary SQL and makes
-//! no semantic claim about returned values. The protocol-specific wrappers in
-//! this module own all access to the enclosed `SQLite` connection.
+//! Unlike trusted logical protocols, [`Sql`] permits arbitrary SQL and makes no
+//! semantic claim about returned values. A REPL may orchestrate any number of
+//! these connections, but is not itself a connection protocol.
 
 use covalence_lib_sqlite as sqlite;
 
@@ -16,7 +16,7 @@ pub use image::{ImageError, MAX_IMAGE_BYTES};
 ///
 /// Construction remains private so only Nucleus can enclose a connection as a
 /// REPL after performing any admission required by future revisions.
-pub struct Repl {
+pub struct Sql {
     _private: (),
 }
 
@@ -77,14 +77,14 @@ pub enum Outcome {
     Changed(usize),
 }
 
-/// Prepared statement belonging to the [`Repl`] protocol.
+/// Prepared statement belonging to the [`Sql`] protocol.
 ///
 /// This wrapper intentionally exposes no underlying rusqlite statement.
 pub struct Statement<'connection> {
     inner: sqlite::Statement<'connection>,
 }
 
-impl Connection<Repl> {
+impl Connection<Sql> {
     /// Opens a writable in-memory database as an unrestricted SQL session.
     ///
     /// # Errors
@@ -92,7 +92,7 @@ impl Connection<Repl> {
     /// Returns an error when the underlying `SQLite` connection cannot be opened.
     pub fn open_in_memory() -> Result<Self, covalence_neutron::ConnectionError> {
         let neutron = covalence_neutron::Connection::open_in_memory()?;
-        Ok(Self::from_neutron(neutron, Repl { _private: () }))
+        Ok(Self::from_neutron(neutron, Sql { _private: () }))
     }
 
     /// Prepares one SQL statement under the REPL protocol.
@@ -203,7 +203,7 @@ mod tests {
 
     #[test]
     fn runs_statements_and_owns_all_sqlite_values() {
-        let mut connection = Connection::<Repl>::open_in_memory().expect("open REPL");
+        let mut connection = Connection::<Sql>::open_in_memory().expect("open SQL connection");
         assert_eq!(
             connection
                 .run(
@@ -248,7 +248,7 @@ mod tests {
 
     #[test]
     fn preserves_duplicate_column_names() {
-        let mut connection = Connection::<Repl>::open_in_memory().expect("open REPL");
+        let mut connection = Connection::<Sql>::open_in_memory().expect("open SQL connection");
         assert_eq!(
             connection.run("SELECT 1 AS x, 2 AS x", &[]).unwrap(),
             Outcome::Rows(QueryResult {
@@ -260,7 +260,7 @@ mod tests {
 
     #[test]
     fn rejects_multiple_statements_in_single_run() {
-        let mut connection = Connection::<Repl>::open_in_memory().expect("open REPL");
+        let mut connection = Connection::<Sql>::open_in_memory().expect("open SQL connection");
         assert!(connection.run("SELECT 1; SELECT 2", &[]).is_err());
     }
 }
