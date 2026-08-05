@@ -1,4 +1,4 @@
-package covalence:hol-proof-guest@0.1.0;
+package covalence:hol-proof-guest@0.2.0;
 
 /// A bounded, non-authoritative recipe builder supplied to an untrusted proof guest.
 ///
@@ -13,9 +13,9 @@ package covalence:hol-proof-guest@0.1.0;
 /// successful replay may return the connection to the caller for optional serialization and
 /// signing.
 ///
-/// This contract is intentionally just large enough for the closed-beta north star. Extending it
-/// with another HOL rule changes the contract identity and requires an explicit host policy
-/// operation.
+/// This contract is intentionally just large enough for the closed-beta and closed-eta north
+/// stars. Extending it with another HOL rule changes the contract identity and requires an
+/// explicit host policy operation.
 interface host {
   enum append-error {
     invalid-resource,
@@ -46,6 +46,13 @@ interface host {
       context: borrow<context-node>,
       abstraction: borrow<term-node>,
       argument: borrow<term-node>,
+    ) -> result<theorem-node, append-error>;
+
+    /// Appends a request for the derived closed-eta recipe. Authoritative conversion and
+    /// equality checks occur only during host replay.
+    prove-eta: func(
+      context: borrow<context-node>,
+      function: borrow<term-node>,
     ) -> result<theorem-node, append-error>;
 
     persist-theorem: func(theorem: borrow<theorem-node>) -> result<_, append-error>;

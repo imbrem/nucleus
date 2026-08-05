@@ -85,6 +85,21 @@ pub fn beta<'brand, P: Policy>(
     proof.prove_conversion_equality(context, &conversion)
 }
 
+/// Derives closed eta equality by composing checked eta conversion with
+/// conversion-to-equality.
+///
+/// # Errors
+///
+/// Returns an error from either checked primitive operation.
+pub fn eta<'brand, P: Policy>(
+    proof: &mut ProofSession<'brand, P>,
+    context: ContextId,
+    function: TermId,
+) -> Result<Theorem<'brand>, ProofError> {
+    let conversion = proof.conversion_eta(function)?;
+    proof.prove_conversion_equality(context, &conversion)
+}
+
 /// Transports a Boolean theorem along a checked conversion.
 ///
 /// This is exactly conversion-to-equality followed by equality modus ponens;
@@ -157,6 +172,45 @@ mod tests {
             } if function == identity && argument == truth
         ));
         assert_eq!(right, truth);
+        assert!(
+            connection
+                .proved_judgement(ContextId::empty(), conclusion)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn eta_recipe_produces_a_persistable_kernel_theorem() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let variable = connection.insert_bound_term(0, bool_type).unwrap();
+        let identity = connection.insert_lambda(bool_type, variable).unwrap();
+
+        let conclusion = connection
+            .with_proof_session(|mut proof| {
+                let theorem = eta(&mut proof, ContextId::empty(), identity)?;
+                let conclusion = theorem.conclusion();
+                proof.persist_theorem(&theorem)?;
+                Ok::<_, ProofError>(conclusion)
+            })
+            .unwrap();
+
+        let TermView::Equality { left, right } = connection.term(conclusion).unwrap() else {
+            panic!("eta recipe did not produce equality")
+        };
+        let TermView::Lambda {
+            parameter_type,
+            body,
+        } = connection.term(left).unwrap()
+        else {
+            panic!("eta left endpoint is not a lambda")
+        };
+        assert_eq!(parameter_type, bool_type);
+        assert!(matches!(
+            connection.term(body).unwrap(),
+            TermView::Application { function, .. } if function == identity
+        ));
+        assert_eq!(right, identity);
         assert!(
             connection
                 .proved_judgement(ContextId::empty(), conclusion)

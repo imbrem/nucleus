@@ -1,4 +1,4 @@
-//! Native host for the bounded beta-only HOL proof component contract.
+//! Native host for the bounded HOL proof component contract.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -194,6 +194,23 @@ impl HostProofPlan for GuestState {
                     },
                     Sort::Theorem,
                 )
+            })
+    }
+
+    fn prove_eta(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        context: Resource<ContextNode>,
+        function: Resource<TermNode>,
+    ) -> Result<Resource<TheoremNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&context, Sort::Context))
+            .and_then(|context| {
+                self.node(&function, Sort::Term)
+                    .map(|function| (context, function))
+            })
+            .and_then(|(context, function)| {
+                self.append(Recipe::Eta { context, function }, Sort::Theorem)
             })
     }
 
@@ -728,6 +745,15 @@ mod tests {
             GuestState::plan(&Resource::new_borrow(PLAN_REP + 1)),
             Err(AppendError::InvalidResource)
         );
+        let context = state.empty_context(Resource::new_borrow(PLAN_REP)).unwrap();
+        assert!(matches!(
+            state.prove_eta(
+                Resource::new_borrow(PLAN_REP),
+                Resource::new_borrow(context.rep()),
+                Resource::new_borrow(context.rep()),
+            ),
+            Err(AppendError::InvalidDependency)
+        ));
     }
 
     #[test]
@@ -825,6 +851,184 @@ mod tests {
                 WasmtimeComponentLimits::default(),
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn configured_real_eta_component_exports_the_named_eta_graph() {
+        let Some(component) = std::env::var_os("COVALENCE_HOL_ETA_GUEST_COMPONENT") else {
+            return;
+        };
+        let bytes = std::fs::read(component).unwrap();
+        let artifact = run_hol_proof_component(
+            &Kernel::ephemeral(),
+            &bytes,
+            WasmtimeComponentLimits::default(),
+        )
+        .unwrap();
+        let image_bytes = covalence_neutron::Bytes::copy_from_slice(artifact.image());
+        let image = covalence_neutron::Connection::deserialize(&image_bytes).unwrap();
+        let sqlite = image.sqlite();
+        let namespace = artifact.namespace_id();
+
+        assert_eq!(
+            sqlite
+                .query_row(
+                    "SELECT parent_namespace_id, name FROM hol_namespace WHERE namespace_id = ?1",
+                    [namespace],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+                )
+                .unwrap(),
+            (0, "eta-demo".to_owned())
+        );
+        let (context, context_sort, context_name) = sqlite
+            .query_row(
+                "SELECT local_id, sort, name FROM hol_namespace_export
+                 WHERE namespace_id = ?1 AND export_id = 0",
+                [namespace],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            (context, context_sort.as_str(), context_name.as_str()),
+            (0, "context", "empty_context")
+        );
+        let (conclusion, conclusion_sort, conclusion_name) = sqlite
+            .query_row(
+                "SELECT local_id, sort, name FROM hol_namespace_export
+                 WHERE namespace_id = ?1 AND export_id = 1",
+                [namespace],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            (conclusion_sort.as_str(), conclusion_name.as_str()),
+            ("term", "identity_eta")
+        );
+        assert!(
+            sqlite
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM hol_judgement WHERE ctx_id = ?1 AND term_id = ?2)",
+                    [context, conclusion],
+                    |row| row.get::<_, bool>(0),
+                )
+                .unwrap()
+        );
+
+        let (equality_tag, eta_lambda, identity) = sqlite
+            .query_row(
+                "SELECT tag, lhs, rhs FROM hol_node WHERE node_id = ?1",
+                [conclusion],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(equality_tag, "MEQ");
+        let (eta_tag, parameter_type, application, eta_type) = sqlite
+            .query_row(
+                "SELECT tag, lhs, rhs, ty FROM hol_node WHERE node_id = ?1",
+                [eta_lambda],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(eta_tag, "MLAM");
+        let (application_tag, application_function, application_argument) = sqlite
+            .query_row(
+                "SELECT tag, lhs, rhs FROM hol_node WHERE node_id = ?1",
+                [application],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            (application_tag.as_str(), application_function),
+            ("MAPP", identity)
+        );
+        let (argument_tag, argument_index, argument_type) = sqlite
+            .query_row(
+                "SELECT tag, lhs, ty FROM hol_node WHERE node_id = ?1",
+                [application_argument],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            (argument_tag.as_str(), argument_index, argument_type),
+            ("MBV", 0, parameter_type)
+        );
+        let (identity_tag, identity_parameter_type, identity_body, identity_type) = sqlite
+            .query_row(
+                "SELECT tag, lhs, rhs, ty FROM hol_node WHERE node_id = ?1",
+                [identity],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            (
+                identity_tag.as_str(),
+                identity_parameter_type,
+                identity_type
+            ),
+            ("MLAM", parameter_type, eta_type)
+        );
+        let (body_tag, body_index, body_type) = sqlite
+            .query_row(
+                "SELECT tag, lhs, ty FROM hol_node WHERE node_id = ?1",
+                [identity_body],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            (body_tag.as_str(), body_index, body_type),
+            ("MBV", 0, parameter_type)
         );
     }
 
