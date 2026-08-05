@@ -34,7 +34,6 @@ rust_library(
         "covalence_neutron": "nucleus//crates/neutron:covalence_neutron",
     },
     env = {
-        "CARGO_MANIFEST_DIR": "crates/nucleus",
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Portable trusted core for Nucleus",
         "CARGO_PKG_HOMEPAGE": "",
@@ -69,7 +68,6 @@ rust_test(
         "covalence_neutron": "nucleus//crates/neutron:covalence_neutron",
     },
     env = {
-        "CARGO_MANIFEST_DIR": "crates/nucleus",
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Portable trusted core for Nucleus",
         "CARGO_PKG_HOMEPAGE": "",
@@ -105,7 +103,6 @@ rust_test(
         "covalence_nucleus": ":covalence_nucleus",
     },
     env = {
-        "CARGO_MANIFEST_DIR": "crates/nucleus",
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Portable trusted core for Nucleus",
         "CARGO_PKG_HOMEPAGE": "",
