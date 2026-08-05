@@ -98,7 +98,7 @@ pub(super) fn register<V: Vfs + Send + Sync + 'static>(
     name: CString,
     vfs: V,
     as_default: bool,
-) -> Result<(), c_int> {
+) -> Result<*mut ffi::sqlite3_vfs, c_int> {
     let name_ptr = name.as_ptr();
     // SAFETY: a null name asks SQLite for the current default VFS. Capture it
     // before registration so callbacks can delegate platform services without
@@ -173,7 +173,7 @@ pub(super) fn register<V: Vfs + Send + Sync + 'static>(
         }
         return Err(rc);
     }
-    Ok(())
+    Ok(vfs_obj)
 }
 
 pub(super) fn name_exists(name: &CStr) -> bool {

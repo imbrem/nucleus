@@ -19,7 +19,10 @@ mod registry;
 
 pub use readonly::{ReadOnlyFile, ReadOnlyVfs};
 #[cfg(feature = "vfs-register")]
-pub use registry::{RegisterError, VfsName, register, register_unique};
+pub use registry::{
+    ConnectionVfsExt, RegisterError, RegisteredVfs, VfsIdentity, VfsIdentityError, VfsName,
+    register, register_unique,
+};
 
 use std::io;
 
