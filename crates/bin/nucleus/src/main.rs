@@ -1,8 +1,11 @@
 use std::env;
 use std::error::Error;
-use std::fs;
+use std::ffi::{OsStr, OsString};
+use std::fs::{self, File, OpenOptions};
 use std::io;
+use std::io::Read as _;
 use std::io::Write as _;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use covalence_repl::{
@@ -14,6 +17,8 @@ use covalence_repl::{
 use covalence_repl::{
     NativeHttpClientError, NativeHttpKernelClient, NativeHttpKernelServer, RemoteSessionState,
     SIGNED_KERNEL_HTTP_PATH, ServiceOperation, ServiceProducedHol, ServiceResult,
+    SignedHolArtifact, WasmtimeComponentLimits, retain_signed_hol_guest_artifact,
+    run_hol_proof_component,
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
@@ -593,7 +598,177 @@ fn usage(output: &mut impl io::Write) -> io::Result<()> {
         output,
         "       nucleus --managed-http-hol ADDRESS PUBLIC_KEY_HEX"
     )?;
+    #[cfg(not(target_arch = "wasm32"))]
+    writeln!(
+        output,
+        "       nucleus --wasm-hol COMPONENT OUTPUT-DIRECTORY"
+    )?;
     writeln!(output, "       nucleus --help")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn read_bounded_component(path: &Path, maximum: usize) -> Result<Vec<u8>> {
+    let maximum_with_sentinel = maximum
+        .checked_add(1)
+        .ok_or("component byte limit cannot be represented")?;
+    let mut bytes = Vec::new();
+    File::open(path)?
+        .take(u64::try_from(maximum_with_sentinel)?)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > maximum {
+        return Err(
+            format!("component is larger than the {maximum}-byte pre-compilation limit").into(),
+        );
+    }
+    Ok(bytes)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn create_output_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn write_hol_guest_artifact_with<E>(
+    output: &Path,
+    image: &[u8],
+    manifest: &[u8],
+    mut write_file: impl FnMut(&Path, &[u8]) -> std::result::Result<(), E>,
+) -> std::result::Result<(), E> {
+    write_file(&output.join("proof.sqlite"), image)?;
+    write_file(&output.join("manifest.txt"), manifest)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn write_hol_guest_artifact(output: &Path, artifact: &SignedHolArtifact) -> Result<()> {
+    let manifest = artifact.attestation_text();
+    write_hol_guest_artifact_with(
+        output,
+        artifact.image(),
+        manifest.as_bytes(),
+        create_output_file,
+    )
+}
+
+/// Exact fresh directory owned by this invocation until committed.
+///
+/// Rollback names only the two files this command may create and then removes
+/// the directory non-recursively. A pre-existing path can never construct this
+/// guard and is therefore never a cleanup target.
+#[cfg(not(target_arch = "wasm32"))]
+struct FreshArtifactDirectory {
+    path: PathBuf,
+    committed: bool,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl FreshArtifactDirectory {
+    fn create(path: &Path) -> io::Result<Self> {
+        let name = path.file_name().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "artifact output must name a fresh directory",
+            )
+        })?;
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let path = fs::canonicalize(parent)?.join(name);
+        fs::create_dir(&path)?;
+        Ok(Self {
+            path,
+            committed: false,
+        })
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn commit(mut self) {
+        self.committed = true;
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for FreshArtifactDirectory {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        let _ = fs::remove_file(self.path.join("proof.sqlite"));
+        let _ = fs::remove_file(self.path.join("manifest.txt"));
+        let _ = fs::remove_dir(&self.path);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn run_managed_wasm_hol(
+    output: &mut impl io::Write,
+    directory: &mut LocalRepl,
+    kernel: &Kernel,
+    component_path: &Path,
+    artifact_directory: &Path,
+) -> Result<()> {
+    let limits = WasmtimeComponentLimits::default();
+    let component = read_bounded_component(component_path, limits.component_bytes)?;
+    let fresh = FreshArtifactDirectory::create(artifact_directory)?;
+    let artifact = run_hol_proof_component(kernel, &component, limits)?;
+    write_hol_guest_artifact(fresh.path(), &artifact)?;
+    let managed = retain_signed_hol_guest_artifact(kernel, directory, artifact)?;
+    let artifact_directory = fresh.path().to_owned();
+    fresh.commit();
+
+    writeln!(output, "kind\tmanaged-wasm-hol")?;
+    writeln!(output, "connection\t{}", managed.connection())?;
+    writeln!(
+        output,
+        "database\t{}",
+        artifact_directory.join("proof.sqlite").display()
+    )?;
+    writeln!(
+        output,
+        "manifest\t{}",
+        artifact_directory.join("manifest.txt").display()
+    )?;
+    writeln!(output, "namespace\t{}", managed.artifact().namespace_id())?;
+    writeln!(output, "schema\t{}", managed.artifact().schema())?;
+    writeln!(output, "image\t{}", managed.artifact().image_hash())?;
+    writeln!(output, "signer\t{}", managed.artifact().signer())?;
+    writeln!(output, "import\t{}", managed.received().import_id())?;
+    writeln!(
+        output,
+        "imported_theorem\t{}\t{}",
+        managed.received().context_id(),
+        managed.received().conclusion_id()
+    )?;
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn run_wasm_hol_arguments(mut arguments: impl Iterator<Item = OsString>) -> Result<()> {
+    let component = arguments
+        .next()
+        .ok_or("--wasm-hol requires COMPONENT OUTPUT-DIRECTORY")?;
+    let output = arguments
+        .next()
+        .ok_or("--wasm-hol requires COMPONENT OUTPUT-DIRECTORY")?;
+    if arguments.next().is_some() {
+        return Err("unexpected arguments after --wasm-hol COMPONENT OUTPUT-DIRECTORY".into());
+    }
+    let kernel = Kernel::ephemeral();
+    let mut directory = Repl::new(kernel.verifying_key().as_bytes())?;
+    run_managed_wasm_hol(
+        &mut io::stdout().lock(),
+        &mut directory,
+        &kernel,
+        Path::new(&component),
+        Path::new(&output),
+    )
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -620,6 +795,13 @@ fn run_managed_http_arguments(arguments: &mut impl Iterator<Item = String>) -> R
 }
 
 fn run() -> Result<()> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut arguments = env::args_os().skip(1);
+        if arguments.next().as_deref() == Some(OsStr::new("--wasm-hol")) {
+            return run_wasm_hol_arguments(arguments);
+        }
+    }
     let mut arguments = env::args().skip(1);
     match arguments.next().as_deref() {
         None => run_repl(
@@ -731,6 +913,11 @@ mod tests {
 
     static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
 
+    #[cfg(not(target_arch = "wasm32"))]
+    fn configured_guest_component() -> Option<OsString> {
+        std::env::var_os("COVALENCE_HOL_GUEST_COMPONENT")
+    }
+
     #[test]
     fn runs_sql_until_quit() {
         let mut input = Cursor::new(
@@ -746,6 +933,107 @@ mod tests {
         assert!(output.contains("changed 1\n"));
         assert!(output.contains("answer\n42\n"));
         assert!(errors.is_empty());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn bounded_component_reader_rejects_before_unbounded_allocation() {
+        let path = std::env::temp_dir().join(format!(
+            "nucleus-oversized-component-{}-{}",
+            std::process::id(),
+            NEXT_FILE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::write(&path, [0_u8; 17]).unwrap();
+        let error = read_bounded_component(&path, 16).err().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(error.to_string().contains("16-byte pre-compilation limit"));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn second_artifact_file_failure_rolls_back_only_the_fresh_directory() {
+        let output_path = std::env::temp_dir().join(format!(
+            "nucleus-artifact-rollback-{}-{}",
+            std::process::id(),
+            NEXT_FILE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let fresh = FreshArtifactDirectory::create(&output_path).unwrap();
+        let mut writes = 0;
+        let result =
+            write_hol_guest_artifact_with(fresh.path(), b"image", b"manifest", |path, bytes| {
+                writes += 1;
+                if writes == 2 {
+                    return Err(io::Error::other("injected second-file failure").into());
+                }
+                create_output_file(path, bytes)
+            });
+        assert!(result.is_err());
+        drop(fresh);
+        assert!(!output_path.exists());
+
+        fs::create_dir(&output_path).unwrap();
+        fs::write(output_path.join("user-data"), b"keep").unwrap();
+        assert!(FreshArtifactDirectory::create(&output_path).is_err());
+        assert_eq!(fs::read(output_path.join("user-data")).unwrap(), b"keep");
+        fs::remove_file(output_path.join("user-data")).unwrap();
+        fs::remove_dir(output_path).unwrap();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn configured_real_component_uses_caller_state_and_refuses_overwrite() {
+        let Some(component) = configured_guest_component() else {
+            return;
+        };
+        let output_path = std::env::temp_dir().join(format!(
+            "nucleus-managed-guest-{}-{}",
+            std::process::id(),
+            NEXT_FILE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let kernel = Kernel::ephemeral();
+        let mut directory = Repl::new(kernel.verifying_key().as_bytes()).unwrap();
+        let mut output = Vec::new();
+        run_managed_wasm_hol(
+            &mut output,
+            &mut directory,
+            &kernel,
+            Path::new(&component),
+            &output_path,
+        )
+        .unwrap();
+
+        let image = fs::read(output_path.join("proof.sqlite")).unwrap();
+        let manifest = fs::read_to_string(output_path.join("manifest.txt")).unwrap();
+        assert!(!image.is_empty());
+        assert!(manifest.contains("format=covalence-repl-signed-snapshot-demo-v0"));
+        assert_eq!(directory.connections().unwrap().len(), 1);
+        assert_eq!(
+            directory
+                .inspect_state("SELECT protocol FROM repl_connection")
+                .unwrap()
+                .rows,
+            [[Value::Text("nucleus/hol".into())]]
+        );
+
+        let before = image;
+        let mut second_output = Vec::new();
+        assert!(
+            run_managed_wasm_hol(
+                &mut second_output,
+                &mut directory,
+                &kernel,
+                Path::new(&component),
+                &output_path,
+            )
+            .is_err()
+        );
+        assert_eq!(directory.connections().unwrap().len(), 1);
+        assert_eq!(fs::read(output_path.join("proof.sqlite")).unwrap(), before);
+        fs::remove_dir_all(output_path).unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("kind\tmanaged-wasm-hol\n"));
+        assert!(output.contains("imported_theorem\t0\t8\n"));
     }
 
     #[test]

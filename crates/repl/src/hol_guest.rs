@@ -12,7 +12,10 @@ use covalence_proton::{
 };
 use wasmtime::component::{HasSelf, Linker, Resource};
 
-use crate::SignedHolArtifact;
+use crate::{
+    ConnectionId, KernelId, LocalConnection, ReceivedHolSnapshot, Repl, SignedHolArtifact,
+    authenticate_pinned_signed_hol_artifact, trust_and_receive_pinned_signed_hol_artifact,
+};
 
 mod bindings {
     use covalence_proton::wasmtime;
@@ -600,6 +603,129 @@ pub fn run_hol_proof_component(
     replay(kernel, &store.data().data.recipe, selected_namespace)
 }
 
+/// Signed guest output plus the receiver connection retained by a caller-owned REPL.
+pub struct ManagedHolGuestResult {
+    artifact: SignedHolArtifact,
+    received: ReceivedHolSnapshot,
+    connection: ConnectionId,
+}
+
+impl ManagedHolGuestResult {
+    /// Returns the exact independently transportable signed snapshot.
+    #[must_use]
+    pub const fn artifact(&self) -> &SignedHolArtifact {
+        &self.artifact
+    }
+
+    /// Returns the receiver-local imported coordinates.
+    #[must_use]
+    pub const fn received(&self) -> ReceivedHolSnapshot {
+        self.received
+    }
+
+    /// Returns the live HOL connection retained in the caller's directory.
+    #[must_use]
+    pub const fn connection(&self) -> ConnectionId {
+        self.connection
+    }
+}
+
+/// Executes a guest and retains its authenticated import in caller-owned REPL state.
+///
+/// The directory's local endpoint key must describe `kernel`. Component execution
+/// still occurs in a fresh disposable producer connection. Only after execution,
+/// checked replay, signing, independent authentication, key pinning, and detached
+/// validation succeed does this function open a receiver, import the snapshot, and
+/// insert that live receiver into `directory`. The signed bytes and cryptographic
+/// capabilities are never persisted in the raw REPL state database.
+///
+/// Existing active-connection selection is preserved. An empty directory selects
+/// the newly inserted receiver through [`Repl::insert`]'s ordinary behavior.
+///
+/// # Errors
+///
+/// Returns the exact high-level phase which failed. No connection is inserted into
+/// the caller's directory before all proof, signature, validation, and import work
+/// has succeeded.
+pub fn run_managed_hol_proof_component(
+    kernel: &Kernel,
+    directory: &mut Repl<LocalConnection>,
+    bytes: &[u8],
+    limits: WasmtimeComponentLimits,
+) -> Result<ManagedHolGuestResult, ManagedHolGuestError> {
+    let artifact = run_hol_proof_component(kernel, bytes, limits)
+        .map_err(|error| ManagedHolGuestError::at("component-executed", error))?;
+    retain_signed_hol_guest_artifact(kernel, directory, artifact)
+}
+
+/// Authenticates a completed guest artifact and retains its imported receiver.
+///
+/// This split form lets a caller durably present the signed bytes before it
+/// mutates its REPL directory. The artifact is still treated as untrusted: it
+/// is checked against the directory's independently recorded local key,
+/// detached-validated, trusted explicitly, and imported through a fresh
+/// receiver before that receiver is moved into caller-owned state.
+///
+/// # Errors
+///
+/// Returns the exact phase which failed. No receiver is inserted before the
+/// complete authentication, validation, trust, and import sequence succeeds.
+pub fn retain_signed_hol_guest_artifact(
+    kernel: &Kernel,
+    directory: &mut Repl<LocalConnection>,
+    artifact: SignedHolArtifact,
+) -> Result<ManagedHolGuestResult, ManagedHolGuestError> {
+    let expected = directory
+        .expected_kernel_identity(KernelId::LOCAL)
+        .map_err(|error| ManagedHolGuestError::at("local-key-loaded", error))?;
+    let pinned = authenticate_pinned_signed_hol_artifact(&expected, &artifact)
+        .map_err(|error| ManagedHolGuestError::at("artifact-authenticated", error))?;
+    let mut target = kernel
+        .open_hol(covalence_nucleus::AllowAll)
+        .map_err(|error| ManagedHolGuestError::at("receiver-opened", error))?;
+    let received = trust_and_receive_pinned_signed_hol_artifact(&mut target, pinned)
+        .map_err(|error| ManagedHolGuestError::at("artifact-imported", error))?;
+    let retained = LocalConnection::Hol(target);
+    let connection = directory
+        .insert(retained.protocol(), retained)
+        .map_err(|error| ManagedHolGuestError::at("receiver-retained", error))?;
+    Ok(ManagedHolGuestResult {
+        artifact,
+        received,
+        connection,
+    })
+}
+
+/// Failure of one explicit managed guest boundary.
+#[derive(Debug)]
+pub struct ManagedHolGuestError {
+    phase: &'static str,
+    message: String,
+}
+
+impl ManagedHolGuestError {
+    fn at(phase: &'static str, error: impl fmt::Display) -> Self {
+        Self {
+            phase,
+            message: error.to_string(),
+        }
+    }
+
+    /// Returns the first boundary which rejected the operation.
+    #[must_use]
+    pub const fn phase(&self) -> &'static str {
+        self.phase
+    }
+}
+
+impl fmt::Display for ManagedHolGuestError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}: {}", self.phase, self.message)
+    }
+}
+
+impl StdError for ManagedHolGuestError {}
+
 /// Failure before a signed HOL snapshot exists.
 #[derive(Debug)]
 pub enum HolGuestError {
@@ -778,5 +904,86 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn managed_success_retains_an_inspectable_receiver_not_authority() {
+        let recipe = vec![
+            Recipe::BoolType,
+            Recipe::Bound { index: 0, ty: 0 },
+            Recipe::Lambda {
+                parameter_type: 0,
+                body: 1,
+            },
+            Recipe::Bool(true),
+            Recipe::EmptyContext,
+            Recipe::Beta {
+                context: 4,
+                abstraction: 2,
+                argument: 3,
+            },
+            Recipe::Persist { theorem: 5 },
+            Recipe::Namespace { name: None },
+            Recipe::ExportContext {
+                namespace: 7,
+                export: 0,
+                context: 4,
+                name: None,
+            },
+            Recipe::ExportTheorem {
+                namespace: 7,
+                export: 1,
+                theorem: 5,
+                name: None,
+            },
+        ];
+        let kernel = Kernel::ephemeral();
+        let artifact = replay(&kernel, &recipe, 7).unwrap();
+        let mut directory = Repl::new(kernel.verifying_key().as_bytes()).unwrap();
+        let managed = retain_signed_hol_guest_artifact(&kernel, &mut directory, artifact).unwrap();
+
+        assert_eq!(directory.active().unwrap(), Some(managed.connection()));
+        assert_eq!(managed.received().context_id(), 0);
+        assert_eq!(managed.received().conclusion_id(), 8);
+        assert!(
+            directory
+                .get_mut(managed.connection())
+                .unwrap()
+                .hol_mut()
+                .is_ok()
+        );
+        let state = directory
+            .inspect_state("SELECT kernel_id, protocol, remote_connection_id FROM repl_connection")
+            .unwrap();
+        assert_eq!(
+            state.rows,
+            vec![vec![
+                crate::Value::Integer(0),
+                crate::Value::Text("nucleus/hol".into()),
+                crate::Value::Null,
+            ]]
+        );
+        let columns = directory
+            .inspect_state("SELECT name FROM pragma_table_info('repl_connection') ORDER BY cid")
+            .unwrap();
+        assert!(!columns.rows.iter().flatten().any(|value| {
+            matches!(value, crate::Value::Text(name) if matches!(name.as_str(), "image" | "signature" | "private_key" | "session"))
+        }));
+    }
+
+    #[test]
+    fn managed_component_failure_does_not_change_caller_state() {
+        let kernel = Kernel::ephemeral();
+        let mut directory = Repl::new(kernel.verifying_key().as_bytes()).unwrap();
+        let error = run_managed_hol_proof_component(
+            &kernel,
+            &mut directory,
+            b"not a component",
+            WasmtimeComponentLimits::default(),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error.phase(), "component-executed");
+        assert!(directory.connections().unwrap().is_empty());
     }
 }
