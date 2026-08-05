@@ -26,6 +26,12 @@ use covalence_nucleus::{
 
 mod service;
 
+#[cfg(not(target_arch = "wasm32"))]
+mod native_http;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use native_http::{MAX_NATIVE_HTTP_REQUESTS, NativeHttpKernelServer, SIGNED_KERNEL_HTTP_PATH};
+
 pub use service::signed_message::{
     MAX_SIGNED_MESSAGE_BYTES, SignedMessageError, SignedMessageRequest, SignedMessageResponse,
     decode_signed_request, decode_signed_response, encode_signed_request, encode_signed_response,
