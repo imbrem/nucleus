@@ -20,6 +20,9 @@ const CORE_INDEX_NAMES: &[&str] = &[
     "hol_karr_unique",
     "hol_tbool_unique",
     "hol_tbase_unique",
+    "hol_tfv_unique",
+    "hol_tbv_unique",
+    "hol_tall_unique",
     "hol_tarr_unique",
     "hol_mbool_unique",
     "hol_mfv_unique",
@@ -28,6 +31,9 @@ const CORE_INDEX_NAMES: &[&str] = &[
     "hol_mapp_unique",
     "hol_mlam_unique",
     "hol_meq_unique",
+    "hol_meps_unique",
+    "hol_mtylam_unique",
+    "hol_mtyapp_unique",
 ];
 
 /// Canonical, bounded evidence for one portable checked HOL metadata schema.
@@ -494,8 +500,13 @@ mod tests {
         assert_eq!(descriptor.encode(), expected);
         assert_eq!(
             descriptor.schema_id().to_string(),
-            "11ae67072eb378e902019925a75072fd4deae1b5fee6ed72072906b1bd10d375"
+            "8ceef24ecd8c248888d94516db4b0be8f1b1bca10b2f7cc90b0c38f2aa51383d"
         );
+        // Version seven used the identical descriptor bytes with its previous
+        // semantic and physical commitments. Preserve the published vector.
+        let version_seven_composite =
+            "11ae67072eb378e902019925a75072fd4deae1b5fee6ed72072906b1bd10d375";
+        assert_ne!(descriptor.schema_id().to_string(), version_seven_composite);
         // Version six used the identical descriptor bytes with the previous
         // physical/semantic commitments. Keep its published composite visible.
         let version_six_composite =

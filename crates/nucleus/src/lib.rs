@@ -18,12 +18,13 @@ pub use hol::{
     NamespaceId, NamespaceSource, NamespaceView, Operation, Policy, ProofError, ProofSession,
     SignedHolSnapshot, SnapshotTrustError, TermError, TermId, TermInstantiation, TermView, Theorem,
     TrustedImportError, TrustedImportId, TrustedImportImageError, TrustedImportView, TypeError,
-    TypeId, TypeInstantiation, TypeView, UnboundVariable, ValidatedHolImage,
+    TypeId, TypeInstantiation, TypeView, UnboundTypeVariable, UnboundVariable, ValidatedHolImage,
     stlc_bool_eq_v1_schema_id, stlc_bool_eq_v1_semantics, stlc_bool_eq_v2_schema_id,
     stlc_bool_eq_v2_semantics, stlc_bool_eq_v3_schema_id, stlc_bool_eq_v3_semantics,
     stlc_bool_eq_v4_schema_id, stlc_bool_eq_v4_semantics, stlc_bool_eq_v5_schema_id,
     stlc_bool_eq_v5_semantics, stlc_bool_eq_v6_schema_id, stlc_bool_eq_v6_semantics,
-    stlc_bool_eq_v7_schema_id, stlc_bool_eq_v7_semantics,
+    stlc_bool_eq_v7_schema_id, stlc_bool_eq_v7_semantics, stlc_bool_eq_v8_schema_id,
+    stlc_bool_eq_v8_semantics,
 };
 pub use kernel::Kernel;
 

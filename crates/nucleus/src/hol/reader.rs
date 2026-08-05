@@ -58,6 +58,10 @@ pub enum ImportedTypeView<'reader> {
     Base { symbol: i64 },
     /// Free rank-zero schematic type variable.
     Free { symbol: i64 },
+    /// Rank-zero de Bruijn type occurrence.
+    Bound { index: u32 },
+    /// Rank-zero universal type.
+    Forall { body: ImportedTypeId<'reader> },
     /// Function type.
     Arrow {
         domain: ImportedTypeId<'reader>,
@@ -106,6 +110,17 @@ pub enum ImportedTermView<'reader> {
     /// Hilbert choice applied to a Boolean-valued predicate.
     Epsilon {
         predicate: ImportedTermId<'reader>,
+        ty: ImportedTypeId<'reader>,
+    },
+    /// Rank-zero type abstraction.
+    TypeLambda {
+        body: ImportedTermId<'reader>,
+        ty: ImportedTypeId<'reader>,
+    },
+    /// Rank-zero type application.
+    TypeApplication {
+        function: ImportedTermId<'reader>,
+        argument: ImportedTypeId<'reader>,
         ty: ImportedTypeId<'reader>,
     },
 }
@@ -375,6 +390,12 @@ fn decode_type<'reader>(
             Ok(ImportedTypeView::Base { symbol })
         }
         (tag, Some(symbol), None, Some(1)) if tag == "TFV" => Ok(ImportedTypeView::Free { symbol }),
+        (tag, Some(index), None, Some(1)) if tag == "TBV" => Ok(ImportedTypeView::Bound {
+            index: u32::try_from(index).map_err(|_| ImportedReaderError::CorruptType(id))?,
+        }),
+        (tag, Some(body), None, Some(1)) if tag == "TALL" => Ok(ImportedTypeView::Forall {
+            body: ImportedTypeId(body, PhantomData),
+        }),
         (tag, Some(domain), Some(codomain), Some(1)) if tag == "TARR" => {
             Ok(ImportedTypeView::Arrow {
                 domain: ImportedTypeId(domain, PhantomData),
@@ -424,6 +445,17 @@ fn decode_term<'reader>(
             predicate: ImportedTermId(predicate, PhantomData),
             ty: ImportedTypeId(ty, PhantomData),
         }),
+        ("MTYLAM", Some(body), None, Some(ty)) => Ok(ImportedTermView::TypeLambda {
+            body: ImportedTermId(body, PhantomData),
+            ty: ImportedTypeId(ty, PhantomData),
+        }),
+        ("MTYAPP", Some(function), Some(argument), Some(ty)) => {
+            Ok(ImportedTermView::TypeApplication {
+                function: ImportedTermId(function, PhantomData),
+                argument: ImportedTypeId(argument, PhantomData),
+                ty: ImportedTypeId(ty, PhantomData),
+            })
+        }
         _ => Err(corrupt()),
     }
 }
@@ -601,6 +633,20 @@ mod tests {
         let predicate = source.insert_lambda(bool_type, bound).unwrap();
         let epsilon = source.insert_epsilon(predicate).unwrap();
         let schematic_type = source.insert_free_type(77).unwrap();
+        let bound_type = source.insert_bound_type(0).unwrap();
+        let universal_type = source.insert_forall_type(bound_type).unwrap();
+        let universal_constant = source.insert_constant(78, universal_type).unwrap();
+        let polymorphic_variable = source.insert_bound_term(0, bound_type).unwrap();
+        let polymorphic_body = source
+            .insert_lambda(bound_type, polymorphic_variable)
+            .unwrap();
+        let polymorphic_body_type = source.term_type(polymorphic_body).unwrap();
+        let polymorphic_identity = source.insert_type_lambda(polymorphic_body).unwrap();
+        let polymorphic_identity_type = source.term_type(polymorphic_identity).unwrap();
+        let instantiated_identity = source
+            .insert_type_application(polymorphic_identity, bool_type)
+            .unwrap();
+        let instantiated_identity_type = source.term_type(instantiated_identity).unwrap();
         let namespace = source.create_namespace(None, Some("demo")).unwrap();
         source
             .export_value(
@@ -608,6 +654,38 @@ mod tests {
                 ExportId::from_i64(7),
                 NamespaceExport::Term(truth),
                 Some("truth"),
+            )
+            .unwrap();
+        source
+            .export_value(
+                namespace,
+                ExportId::from_i64(14),
+                NamespaceExport::Term(polymorphic_identity),
+                Some("polymorphic-identity"),
+            )
+            .unwrap();
+        source
+            .export_value(
+                namespace,
+                ExportId::from_i64(15),
+                NamespaceExport::Term(instantiated_identity),
+                Some("instantiated-identity"),
+            )
+            .unwrap();
+        source
+            .export_value(
+                namespace,
+                ExportId::from_i64(12),
+                NamespaceExport::Type(universal_type),
+                Some("universal"),
+            )
+            .unwrap();
+        source
+            .export_value(
+                namespace,
+                ExportId::from_i64(13),
+                NamespaceExport::Term(universal_constant),
+                Some("universal-constant"),
             )
             .unwrap();
         source
@@ -772,6 +850,93 @@ mod tests {
                 assert_eq!(
                     reader.type_view(imported_type).unwrap(),
                     ImportedTypeView::Free { symbol: 77 }
+                );
+                let ImportedExport::Type(imported_universal) =
+                    reader.namespace_export(12).unwrap().unwrap()
+                else {
+                    panic!("expected imported universal type export")
+                };
+                assert_eq!(
+                    reader.type_view(imported_universal).unwrap(),
+                    ImportedTypeView::Forall {
+                        body: ImportedTypeId(bound_type.get(), PhantomData),
+                    }
+                );
+                let ImportedExport::Term(imported_constant) =
+                    reader.namespace_export(13).unwrap().unwrap()
+                else {
+                    panic!("expected imported universal constant export")
+                };
+                assert_eq!(
+                    reader.term(imported_constant).unwrap(),
+                    ImportedTermView::Constant {
+                        symbol: 78,
+                        ty: ImportedTypeId(universal_type.get(), PhantomData),
+                    }
+                );
+                let ImportedExport::Term(imported_polymorphic_identity) =
+                    reader.namespace_export(14).unwrap().unwrap()
+                else {
+                    panic!("expected imported polymorphic identity export")
+                };
+                assert_eq!(
+                    reader.term(imported_polymorphic_identity).unwrap(),
+                    ImportedTermView::TypeLambda {
+                        body: ImportedTermId(polymorphic_body.get(), PhantomData),
+                        ty: ImportedTypeId(polymorphic_identity_type.get(), PhantomData),
+                    }
+                );
+                assert_eq!(
+                    reader
+                        .term(ImportedTermId(polymorphic_body.get(), PhantomData))
+                        .unwrap(),
+                    ImportedTermView::Lambda {
+                        parameter_type: ImportedTypeId(bound_type.get(), PhantomData),
+                        body: ImportedTermId(polymorphic_variable.get(), PhantomData),
+                        ty: ImportedTypeId(polymorphic_body_type.get(), PhantomData),
+                    }
+                );
+                assert_eq!(
+                    reader
+                        .term(ImportedTermId(polymorphic_variable.get(), PhantomData))
+                        .unwrap(),
+                    ImportedTermView::Bound {
+                        index: 0,
+                        ty: ImportedTypeId(bound_type.get(), PhantomData),
+                    }
+                );
+                assert_eq!(
+                    reader
+                        .type_view(ImportedTypeId(polymorphic_identity_type.get(), PhantomData))
+                        .unwrap(),
+                    ImportedTypeView::Forall {
+                        body: ImportedTypeId(polymorphic_body_type.get(), PhantomData),
+                    }
+                );
+                let ImportedExport::Term(imported_instantiated_identity) =
+                    reader.namespace_export(15).unwrap().unwrap()
+                else {
+                    panic!("expected imported instantiated identity export")
+                };
+                assert_eq!(
+                    reader.term(imported_instantiated_identity).unwrap(),
+                    ImportedTermView::TypeApplication {
+                        function: ImportedTermId(polymorphic_identity.get(), PhantomData),
+                        argument: ImportedTypeId(bool_type.get(), PhantomData),
+                        ty: ImportedTypeId(instantiated_identity_type.get(), PhantomData),
+                    }
+                );
+                assert_eq!(
+                    reader
+                        .type_view(ImportedTypeId(
+                            instantiated_identity_type.get(),
+                            PhantomData
+                        ))
+                        .unwrap(),
+                    ImportedTypeView::Arrow {
+                        domain: ImportedTypeId(bool_type.get(), PhantomData),
+                        codomain: ImportedTypeId(bool_type.get(), PhantomData),
+                    }
                 );
                 denied.set(Some(Operation::ReadImportedImageType));
                 assert!(matches!(

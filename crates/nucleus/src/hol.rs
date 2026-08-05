@@ -32,7 +32,7 @@ pub use validate::{
     stlc_bool_eq_v3_schema_id, stlc_bool_eq_v3_semantics, stlc_bool_eq_v4_schema_id,
     stlc_bool_eq_v4_semantics, stlc_bool_eq_v5_schema_id, stlc_bool_eq_v5_semantics,
     stlc_bool_eq_v6_schema_id, stlc_bool_eq_v6_semantics, stlc_bool_eq_v7_schema_id,
-    stlc_bool_eq_v7_semantics,
+    stlc_bool_eq_v7_semantics, stlc_bool_eq_v8_schema_id, stlc_bool_eq_v8_semantics,
 };
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -133,6 +133,16 @@ pub enum TypeView {
         /// Connection-local symbol identity.
         symbol: i64,
     },
+    /// A rank-zero de Bruijn type occurrence.
+    Bound {
+        /// Zero-based distance to its enclosing universal type binder.
+        index: u32,
+    },
+    /// An object-level universal type binding one rank-zero type variable.
+    Forall {
+        /// Body, possibly open before this binder is applied.
+        body: TypeId,
+    },
     /// A function type.
     Arrow {
         /// Argument type.
@@ -190,6 +200,15 @@ pub struct UnboundVariable {
     pub ty: TypeId,
 }
 
+/// One external de Bruijn type variable required by an open type or term.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UnboundTypeVariable {
+    /// Root-relative external index.
+    pub index: u32,
+    /// Required kind; version eight always records `star`.
+    pub kind: KindId,
+}
+
 /// One admitted term in the settled simply typed binding fragment.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TermView {
@@ -235,6 +254,18 @@ pub enum TermView {
     Epsilon {
         /// Predicate of type `A -> bool`; the epsilon term has type `A`.
         predicate: TermId,
+    },
+    /// Object-level type abstraction over one rank-zero type variable.
+    TypeLambda {
+        /// Body checked in an empty external term environment.
+        body: TermId,
+    },
+    /// Object-level type application.
+    TypeApplication {
+        /// Term of universal type.
+        function: TermId,
+        /// Rank-zero type argument.
+        argument: TypeId,
     },
 }
 
@@ -287,7 +318,8 @@ pub struct Conversion<'brand> {
     left: TermId,
     right: TermId,
     ty: TypeId,
-    boundary: BTreeMap<u32, TypeId>,
+    term_boundary: BTreeMap<u32, TypeId>,
+    type_boundary: BTreeMap<u32, KindId>,
     brand: Invariant<'brand>,
 }
 
@@ -313,7 +345,7 @@ impl Conversion<'_> {
     /// Returns whether both endpoints are locally closed.
     #[must_use]
     pub fn is_closed(&self) -> bool {
-        self.boundary.is_empty()
+        self.term_boundary.is_empty() && self.type_boundary.is_empty()
     }
 }
 
@@ -1269,6 +1301,33 @@ impl<P: Policy> Connection<Hol<P>> {
         intern_free_type(neutron.sqlite(), symbol)
     }
 
+    /// Canonically interns a rank-zero de Bruijn type occurrence.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies admission or `SQLite` rejects it.
+    pub fn insert_bound_type(&mut self, index: u32) -> Result<TypeId, TypeError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_type(&mut hol.policy, Operation::InsertType)?;
+        intern_bound_type(neutron.sqlite(), index)
+    }
+
+    /// Closes one rank-zero type binder around a type body.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies admission, the body is invalid, or insertion fails.
+    pub fn insert_forall_type(&mut self, body: TypeId) -> Result<TypeId, TypeError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_type(&mut hol.policy, Operation::InsertType)?;
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        validate_type(&transaction, body)?;
+        let result = intern_forall_type(&transaction, body)?;
+        validate_type(&transaction, result)?;
+        transaction.commit()?;
+        Ok(result)
+    }
+
     /// Canonically interns a closed function type.
     ///
     /// # Errors
@@ -1283,8 +1342,8 @@ impl<P: Policy> Connection<Hol<P>> {
         let (neutron, hol) = self.parts_mut();
         authorize_type(&mut hol.policy, Operation::InsertType)?;
         let transaction = neutron.sqlite().unchecked_transaction()?;
-        read_type(&transaction, domain)?;
-        read_type(&transaction, codomain)?;
+        validate_type(&transaction, domain)?;
+        validate_type(&transaction, codomain)?;
         let id = intern_type_arrow(&transaction, domain, codomain)?;
         transaction.commit()?;
         Ok(id)
@@ -1299,7 +1358,7 @@ impl<P: Policy> Connection<Hol<P>> {
     pub fn type_view(&mut self, id: TypeId) -> Result<TypeView, TypeError> {
         let (neutron, hol) = self.parts_mut();
         authorize_type(&mut hol.policy, Operation::ReadType)?;
-        read_type(neutron.sqlite(), id)
+        Ok(validate_type(neutron.sqlite(), id)?.view)
     }
 
     /// Returns the admitted kind of a type.
@@ -1313,7 +1372,7 @@ impl<P: Policy> Connection<Hol<P>> {
     pub fn type_kind(&mut self, id: TypeId) -> Result<KindId, TypeError> {
         let (neutron, hol) = self.parts_mut();
         authorize_type(&mut hol.policy, Operation::ReadType)?;
-        read_type(neutron.sqlite(), id)?;
+        validate_type(neutron.sqlite(), id)?;
         Ok(STAR_ID)
     }
 
@@ -1330,17 +1389,31 @@ impl<P: Policy> Connection<Hol<P>> {
 
     /// Reports whether a type is locally closed.
     ///
-    /// Version seven has no type de Bruijn constructors, so every valid type is
-    /// locally closed. This method still validates the complete graph.
-    ///
     /// # Errors
     ///
     /// Returns an error if policy denies the read or the type graph is invalid.
     pub fn type_is_locally_closed(&mut self, id: TypeId) -> Result<bool, TypeError> {
         let (neutron, hol) = self.parts_mut();
         authorize_type(&mut hol.policy, Operation::ReadType)?;
-        validate_type(neutron.sqlite(), id)?;
-        Ok(true)
+        Ok(validate_type(neutron.sqlite(), id)?.boundary.is_empty())
+    }
+
+    /// Returns external rank-zero de Bruijn variables required by a type.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the read or the type graph is invalid.
+    pub fn type_unbound_variables(
+        &mut self,
+        id: TypeId,
+    ) -> Result<Vec<UnboundTypeVariable>, TypeError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_type(&mut hol.policy, Operation::ReadType)?;
+        Ok(validate_type(neutron.sqlite(), id)?
+            .boundary
+            .into_iter()
+            .map(|(index, kind)| UnboundTypeVariable { index, kind })
+            .collect())
     }
 
     /// Canonically interns a Boolean literal term.
@@ -1364,7 +1437,7 @@ impl<P: Policy> Connection<Hol<P>> {
         let (neutron, hol) = self.parts_mut();
         authorize_term(&mut hol.policy, Operation::InsertTerm)?;
         let transaction = neutron.sqlite().unchecked_transaction()?;
-        read_type(&transaction, ty)?;
+        validate_type(&transaction, ty)?;
         let id = intern_free_term(&transaction, symbol, ty)?;
         transaction.commit()?;
         Ok(id)
@@ -1385,9 +1458,12 @@ impl<P: Policy> Connection<Hol<P>> {
         authorize_term(&mut hol.policy, Operation::DeclareConstant)?;
         authorize_term(&mut hol.policy, Operation::InsertTerm)?;
         let transaction = neutron.sqlite().unchecked_transaction()?;
-        validate_type(&transaction, ty)?;
+        let validation = validate_type(&transaction, ty)?;
         if type_contains_free_variable(&transaction, ty)? {
             return Err(TermError::PolymorphicConstantType { symbol, ty });
+        }
+        if !validation.boundary.is_empty() {
+            return Err(TermError::OpenConstantType { symbol, ty });
         }
         let id = intern_constant(&transaction, symbol, ty)?;
         transaction.commit()?;
@@ -1407,7 +1483,7 @@ impl<P: Policy> Connection<Hol<P>> {
         let (neutron, hol) = self.parts_mut();
         authorize_term(&mut hol.policy, Operation::InsertTerm)?;
         let transaction = neutron.sqlite().unchecked_transaction()?;
-        read_type(&transaction, ty)?;
+        validate_type(&transaction, ty)?;
         let id = intern_bound_term(&transaction, index, ty)?;
         transaction.commit()?;
         Ok(id)
@@ -1500,10 +1576,62 @@ impl<P: Policy> Connection<Hol<P>> {
         authorize_term(&mut hol.policy, Operation::InsertTerm)?;
         authorize_type(&mut hol.policy, Operation::InsertType).map_err(TermError::Type)?;
         let transaction = neutron.sqlite().unchecked_transaction()?;
-        read_type(&transaction, parameter_type)?;
+        validate_type(&transaction, parameter_type)?;
         let body_type = validate_term(&transaction, body)?.ty;
         let function_type = intern_type_arrow(&transaction, parameter_type, body_type)?;
         let id = intern_lambda(&transaction, parameter_type, body, function_type)?;
+        validate_term(&transaction, id)?;
+        transaction.commit()?;
+        Ok(id)
+    }
+
+    /// Closes one rank-zero type binder around a term with no external term environment.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies insertion, the body is invalid or has a forbidden
+    /// external term environment, or atomic insertion fails.
+    pub fn insert_type_lambda(&mut self, body: TermId) -> Result<TermId, TermError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_term(&mut hol.policy, Operation::InsertTerm)?;
+        authorize_type(&mut hol.policy, Operation::InsertType).map_err(TermError::Type)?;
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        let body_validation = validate_term(&transaction, body)?;
+        if !body_validation.term_boundary.is_empty() {
+            return Err(TermError::TypeLambdaOpenTermBody(body));
+        }
+        if body_validation.has_mfv {
+            return Err(TermError::TypeLambdaFreeTermBody(body));
+        }
+        let ty = intern_forall_type(&transaction, body_validation.ty)?;
+        let id = intern_type_lambda(&transaction, body, ty)?;
+        validate_term(&transaction, id)?;
+        transaction.commit()?;
+        Ok(id)
+    }
+
+    /// Instantiates one rank-zero universal term at an admitted type.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies insertion, either operand is invalid, the function is
+    /// not universal, substitution overflows, or atomic insertion fails.
+    pub fn insert_type_application(
+        &mut self,
+        function: TermId,
+        argument: TypeId,
+    ) -> Result<TermId, TermError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_term(&mut hol.policy, Operation::InsertTerm)?;
+        authorize_type(&mut hol.policy, Operation::InsertType).map_err(TermError::Type)?;
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        let function_validation = validate_term(&transaction, function)?;
+        validate_type(&transaction, argument)?;
+        let TypeView::Forall { body } = read_type(&transaction, function_validation.ty)? else {
+            return Err(TermError::NotUniversal(function_validation.ty));
+        };
+        let ty = substitute_bound_type(&transaction, body, argument)?;
+        let id = intern_type_application(&transaction, function, argument, ty)?;
         validate_term(&transaction, id)?;
         transaction.commit()?;
         Ok(id)
@@ -1528,7 +1656,10 @@ impl<P: Policy> Connection<Hol<P>> {
                 right: right_validation.ty,
             });
         }
-        merge_term_boundaries(left_validation.boundary, right_validation.boundary)?;
+        merge_term_boundaries(
+            left_validation.term_boundary,
+            right_validation.term_boundary,
+        )?;
         let equality = intern_equality(&transaction, left, right)?;
         validate_term(&transaction, equality)?;
         transaction.commit()?;
@@ -1593,7 +1724,7 @@ impl<P: Policy> Connection<Hol<P>> {
     pub fn term_is_locally_closed(&mut self, id: TermId) -> Result<bool, TermError> {
         let (neutron, hol) = self.parts_mut();
         authorize_term(&mut hol.policy, Operation::ReadTerm)?;
-        Ok(validate_term(neutron.sqlite(), id)?.boundary.is_empty())
+        Ok(validate_term(neutron.sqlite(), id)?.is_closed())
     }
 
     /// Returns unbound de Bruijn variables reachable from this term.
@@ -1608,9 +1739,27 @@ impl<P: Policy> Connection<Hol<P>> {
         let (neutron, hol) = self.parts_mut();
         authorize_term(&mut hol.policy, Operation::ReadTerm)?;
         Ok(validate_term(neutron.sqlite(), id)?
-            .boundary
+            .term_boundary
             .into_iter()
             .map(|(index, ty)| UnboundVariable { index, ty })
+            .collect())
+    }
+
+    /// Returns external rank-zero de Bruijn type variables required by a term.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies the read or the term/type graph is invalid.
+    pub fn term_unbound_type_variables(
+        &mut self,
+        id: TermId,
+    ) -> Result<Vec<UnboundTypeVariable>, TermError> {
+        let (neutron, hol) = self.parts_mut();
+        authorize_term(&mut hol.policy, Operation::ReadTerm)?;
+        Ok(validate_term(neutron.sqlite(), id)?
+            .type_boundary
+            .into_iter()
+            .map(|(index, kind)| UnboundTypeVariable { index, kind })
             .collect())
     }
 
@@ -1753,7 +1902,8 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
             left: term,
             right: term,
             ty: validated.ty,
-            boundary: validated.boundary,
+            term_boundary: validated.term_boundary,
+            type_boundary: validated.type_boundary,
             brand: PhantomData,
         })
     }
@@ -1773,7 +1923,8 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
             left: conversion.right,
             right: conversion.left,
             ty: conversion.ty,
-            boundary: conversion.boundary.clone(),
+            term_boundary: conversion.term_boundary.clone(),
+            type_boundary: conversion.type_boundary.clone(),
             brand: PhantomData,
         })
     }
@@ -1790,7 +1941,10 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
     ) -> Result<Conversion<'brand>, ProofError> {
         let (_, hol) = self.connection.parts_mut();
         authorize_proof(&mut hol.policy, Operation::ProveConversionTransitivity)?;
-        if first.right != second.left || first.ty != second.ty || first.boundary != second.boundary
+        if first.right != second.left
+            || first.ty != second.ty
+            || first.term_boundary != second.term_boundary
+            || first.type_boundary != second.type_boundary
         {
             return Err(ProofError::ConversionChainMismatch {
                 first_right: first.right,
@@ -1801,7 +1955,8 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
             left: first.left,
             right: second.right,
             ty: first.ty,
-            boundary: first.boundary.clone(),
+            term_boundary: first.term_boundary.clone(),
+            type_boundary: first.type_boundary.clone(),
             brand: PhantomData,
         })
     }
@@ -1833,7 +1988,10 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
             }
             .into());
         }
-        merge_term_boundaries(function.boundary.clone(), argument.boundary.clone())?;
+        merge_term_boundaries(
+            function.term_boundary.clone(),
+            argument.term_boundary.clone(),
+        )?;
         let left = intern_application(&transaction, function.left, argument.left, codomain)?;
         let right = intern_application(&transaction, function.right, argument.right, codomain)?;
         let conversion = checked_conversion(&transaction, left, right)?;
@@ -1857,9 +2015,9 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         authorize_proof(&mut hol.policy, Operation::InsertTerm)?;
         authorize_proof(&mut hol.policy, Operation::InsertType)?;
         let transaction = neutron.sqlite().unchecked_transaction()?;
-        read_type(&transaction, parameter_type).map_err(TermError::Type)?;
+        validate_type(&transaction, parameter_type).map_err(TermError::Type)?;
         // Check the capture type before writing either endpoint.
-        close_term_boundary(body.boundary.clone(), parameter_type)?;
+        close_term_boundary(body.term_boundary.clone(), parameter_type)?;
         let function_type =
             intern_type_arrow(&transaction, parameter_type, body.ty).map_err(TermError::Type)?;
         let left = intern_lambda(&transaction, parameter_type, body.left, function_type)?;
@@ -1888,7 +2046,7 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         authorize_proof(&mut hol.policy, Operation::InsertTerm)?;
         let transaction = neutron.sqlite().unchecked_transaction()?;
         let abstraction_validation = validate_term(&transaction, abstraction)?;
-        if !abstraction_validation.boundary.is_empty() {
+        if !abstraction_validation.is_closed() {
             return Err(ProofError::OpenConclusion(abstraction));
         }
         let TermView::Lambda {
@@ -1899,7 +2057,7 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
             return Err(ProofError::NotLambda(abstraction));
         };
         let argument_validation = validate_term(&transaction, argument)?;
-        if !argument_validation.boundary.is_empty() {
+        if !argument_validation.is_closed() {
             return Err(ProofError::OpenConclusion(argument));
         }
         if argument_validation.ty != parameter_type {
@@ -1935,7 +2093,7 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         authorize_proof(&mut hol.policy, Operation::InsertTerm)?;
         let transaction = neutron.sqlite().unchecked_transaction()?;
         let validated = validate_term(&transaction, function)?;
-        if !validated.boundary.is_empty() {
+        if !validated.is_closed() {
             return Err(ProofError::OpenConclusion(function));
         }
         let TypeView::Arrow { domain, codomain } =
@@ -2002,7 +2160,7 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         let (neutron, hol) = self.connection.parts_mut();
         authorize_proof(&mut hol.policy, Operation::ProveConversionEquality)?;
         authorize_proof(&mut hol.policy, Operation::InsertTerm)?;
-        if !conversion.boundary.is_empty() {
+        if !conversion.is_closed() {
             return Err(ProofError::OpenConclusion(conversion.left));
         }
         let transaction = neutron.sqlite().unchecked_transaction()?;
@@ -2031,7 +2189,7 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
     ) -> Result<Theorem<'brand>, ProofError> {
         let (_, hol) = self.connection.parts_mut();
         authorize_proof(&mut hol.policy, Operation::ProveTheoremConversion)?;
-        if !conversion.boundary.is_empty() {
+        if !conversion.is_closed() {
             return Err(ProofError::OpenConclusion(conversion.left));
         }
         if conversion.ty != BOOL_TYPE_ID {
@@ -2071,7 +2229,7 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         let transaction = neutron.sqlite().unchecked_transaction()?;
         require_context(&transaction, context)?;
         let validation = validate_term(&transaction, term)?;
-        if !validation.boundary.is_empty() {
+        if !validation.is_closed() {
             return Err(ProofError::OpenConclusion(term));
         }
         let equality = intern_equality(&transaction, term, term)?;
@@ -2107,7 +2265,7 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         let transaction = neutron.sqlite().unchecked_transaction()?;
         require_context(&transaction, context)?;
         let abstraction_validation = validate_term(&transaction, abstraction)?;
-        if !abstraction_validation.boundary.is_empty() {
+        if !abstraction_validation.is_closed() {
             return Err(ProofError::OpenConclusion(abstraction));
         }
         let TermView::Lambda {
@@ -2118,7 +2276,7 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
             return Err(ProofError::NotLambda(abstraction));
         };
         let argument_validation = validate_term(&transaction, argument)?;
-        if !argument_validation.boundary.is_empty() {
+        if !argument_validation.is_closed() {
             return Err(ProofError::OpenConclusion(argument));
         }
         if argument_validation.ty != parameter_type {
@@ -2190,7 +2348,7 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
                 ty: validation.ty,
             });
         }
-        if !validation.boundary.is_empty() {
+        if !validation.is_closed() {
             return Err(ProofError::OpenConclusion(conclusion));
         }
         let exists = neutron.sqlite().query_row(
@@ -2564,7 +2722,7 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         };
         let left_validation = validate_term(&transaction, left)?;
         let predicate_validation = validate_term(&transaction, predicate)?;
-        if !predicate_validation.boundary.is_empty() {
+        if !predicate_validation.is_closed() {
             return Err(ProofError::OpenEqualityPredicate(predicate));
         }
         let TypeView::Arrow { domain, codomain } =
@@ -2649,10 +2807,10 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
                 ty: second_validation.ty,
             });
         }
-        if !first_validation.boundary.is_empty() {
+        if !first_validation.is_closed() {
             return Err(ProofError::OpenConclusion(first.conclusion));
         }
-        if !second_validation.boundary.is_empty() {
+        if !second_validation.is_closed() {
             return Err(ProofError::OpenConclusion(second.conclusion));
         }
 
@@ -2736,7 +2894,7 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
                     actual: replacement.ty,
                 });
             }
-            if !replacement.boundary.is_empty() {
+            if !replacement.is_closed() {
                 return Err(ProofError::OpenTermInstantiationReplacement(
                     instantiation.replacement,
                 ));
@@ -2808,7 +2966,13 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
                     instantiation.variable,
                 ));
             }
-            validate_type(&transaction, instantiation.replacement).map_err(TermError::Type)?;
+            let replacement =
+                validate_type(&transaction, instantiation.replacement).map_err(TermError::Type)?;
+            if !replacement.boundary.is_empty() {
+                return Err(ProofError::OpenTypeInstantiationReplacement(
+                    instantiation.replacement,
+                ));
+            }
             if replacements
                 .insert(instantiation.variable, instantiation.replacement)
                 .is_some()
@@ -2881,7 +3045,7 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
             return Err(ProofError::AbstractionKeyNotFree(variable));
         }
         let conclusion_validation = validate_term(&transaction, theorem.conclusion)?;
-        if !conclusion_validation.boundary.is_empty() {
+        if !conclusion_validation.is_closed() {
             return Err(ProofError::OpenConclusion(theorem.conclusion));
         }
         let TermView::Equality { left, right } = conclusion_validation.view else {
@@ -2956,7 +3120,7 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
                 ty: conclusion.ty,
             });
         }
-        if !conclusion.boundary.is_empty() {
+        if !conclusion.is_closed() {
             return Err(ProofError::OpenConclusion(premise.conclusion));
         }
         let TermView::Application {
@@ -3104,7 +3268,7 @@ impl<P: Policy> Connection<Hol<P>> {
                 ty: validation.ty,
             });
         }
-        if !validation.boundary.is_empty() {
+        if !validation.is_closed() {
             return Err(ProofError::OpenConclusion(term));
         }
         neutron
@@ -3556,7 +3720,7 @@ fn intern_context(
                 ty: validation.ty,
             });
         }
-        if !validation.boundary.is_empty() {
+        if !validation.is_closed() {
             return Err(ContextError::OpenMember(*member));
         }
     }
@@ -3675,6 +3839,45 @@ fn intern_free_type(connection: &sqlite::Connection, symbol: i64) -> Result<Type
     Ok(TypeId(connection.last_insert_rowid()))
 }
 
+fn intern_bound_type(connection: &sqlite::Connection, index: u32) -> Result<TypeId, TypeError> {
+    let index = i64::from(index);
+    if let Some(id) = connection
+        .query_row(
+            "SELECT node_id FROM hol_node
+             WHERE tag = 'TBV' AND lhs = ?1 AND rhs IS NULL AND ty = ?2",
+            [index, STAR_ID.0],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+    {
+        return Ok(TypeId(id));
+    }
+    connection.execute(
+        "INSERT INTO hol_node(tag, lhs, ty) VALUES ('TBV', ?1, ?2)",
+        [index, STAR_ID.0],
+    )?;
+    Ok(TypeId(connection.last_insert_rowid()))
+}
+
+fn intern_forall_type(connection: &sqlite::Connection, body: TypeId) -> Result<TypeId, TypeError> {
+    if let Some(id) = connection
+        .query_row(
+            "SELECT node_id FROM hol_node
+             WHERE tag = 'TALL' AND lhs = ?1 AND rhs IS NULL AND ty = ?2",
+            [body.0, STAR_ID.0],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+    {
+        return Ok(TypeId(id));
+    }
+    connection.execute(
+        "INSERT INTO hol_node(tag, lhs, ty) VALUES ('TALL', ?1, ?2)",
+        [body.0, STAR_ID.0],
+    )?;
+    Ok(TypeId(connection.last_insert_rowid()))
+}
+
 fn intern_type_arrow(
     connection: &sqlite::Connection,
     domain: TypeId,
@@ -3722,6 +3925,16 @@ fn read_type(connection: &sqlite::Connection, id: TypeId) -> Result<TypeView, Ty
         (tag, Some(symbol), None, Some(kind)) if tag == "TFV" && kind == STAR_ID.0 => {
             Ok(TypeView::Free { symbol })
         }
+        (tag, Some(index), None, Some(kind))
+            if tag == "TBV" && kind == STAR_ID.0 && (0..=i64::from(u32::MAX)).contains(&index) =>
+        {
+            Ok(TypeView::Bound {
+                index: u32::try_from(index).map_err(|_| TypeError::CorruptType(id))?,
+            })
+        }
+        (tag, Some(body), None, Some(kind)) if tag == "TALL" && kind == STAR_ID.0 => {
+            Ok(TypeView::Forall { body: TypeId(body) })
+        }
         (tag, Some(domain), Some(codomain), Some(kind)) if tag == "TARR" && kind == STAR_ID.0 => {
             Ok(TypeView::Arrow {
                 domain: TypeId(domain),
@@ -3732,28 +3945,179 @@ fn read_type(connection: &sqlite::Connection, id: TypeId) -> Result<TypeView, Ty
     }
 }
 
-fn validate_type(connection: &sqlite::Connection, root: TypeId) -> Result<(), TypeError> {
+#[derive(Clone)]
+struct ValidatedType {
+    view: TypeView,
+    boundary: BTreeMap<u32, KindId>,
+}
+
+fn validate_type(
+    connection: &sqlite::Connection,
+    root: TypeId,
+) -> Result<ValidatedType, TypeError> {
     fn walk(
         connection: &sqlite::Connection,
         id: TypeId,
         active: &mut HashSet<TypeId>,
-        complete: &mut HashSet<TypeId>,
-    ) -> Result<(), TypeError> {
-        if complete.contains(&id) {
-            return Ok(());
+        memo: &mut HashMap<TypeId, ValidatedType>,
+    ) -> Result<ValidatedType, TypeError> {
+        if let Some(validated) = memo.get(&id) {
+            return Ok(validated.clone());
         }
         if !active.insert(id) {
             return Err(TypeError::CorruptType(id));
         }
-        if let TypeView::Arrow { domain, codomain } = read_type(connection, id)? {
-            walk(connection, domain, active, complete)?;
-            walk(connection, codomain, active, complete)?;
-        }
+        let view = read_type(connection, id)?;
+        let boundary = match view {
+            TypeView::Bound { index } => BTreeMap::from([(index, STAR_ID)]),
+            TypeView::Forall { body } => {
+                close_type_boundary(walk(connection, body, active, memo)?.boundary)
+            }
+            TypeView::Arrow { domain, codomain } => merge_type_boundaries(
+                walk(connection, domain, active, memo)?.boundary,
+                walk(connection, codomain, active, memo)?.boundary,
+            )?,
+            TypeView::Bool | TypeView::Base { .. } | TypeView::Free { .. } => BTreeMap::new(),
+        };
         active.remove(&id);
-        complete.insert(id);
-        Ok(())
+        let validated = ValidatedType { view, boundary };
+        memo.insert(id, validated.clone());
+        Ok(validated)
     }
-    walk(connection, root, &mut HashSet::new(), &mut HashSet::new())
+    walk(connection, root, &mut HashSet::new(), &mut HashMap::new())
+}
+
+fn merge_type_boundaries(
+    mut left: BTreeMap<u32, KindId>,
+    right: BTreeMap<u32, KindId>,
+) -> Result<BTreeMap<u32, KindId>, TypeError> {
+    for (index, kind) in right {
+        if let Some(first) = left.insert(index, kind)
+            && first != kind
+        {
+            return Err(TypeError::InconsistentUnboundVariable {
+                index,
+                first,
+                second: kind,
+            });
+        }
+    }
+    Ok(left)
+}
+
+fn close_type_boundary(mut boundary: BTreeMap<u32, KindId>) -> BTreeMap<u32, KindId> {
+    boundary.remove(&0);
+    boundary
+        .into_iter()
+        .map(|(index, kind)| (index - 1, kind))
+        .collect()
+}
+
+fn shift_bound_type(
+    connection: &sqlite::Connection,
+    ty: TypeId,
+    amount: u32,
+    cutoff: u32,
+    memo: &mut HashMap<(TypeId, u32, u32), TypeId>,
+) -> Result<TypeId, TypeError> {
+    if amount == 0 {
+        return Ok(ty);
+    }
+    if let Some(result) = memo.get(&(ty, amount, cutoff)) {
+        return Ok(*result);
+    }
+    let result = match read_type(connection, ty)? {
+        TypeView::Bound { index } if index >= cutoff => intern_bound_type(
+            connection,
+            index
+                .checked_add(amount)
+                .ok_or(TypeError::SubstitutionDepthOverflow)?,
+        )?,
+        TypeView::Bool | TypeView::Base { .. } | TypeView::Free { .. } | TypeView::Bound { .. } => {
+            ty
+        }
+        TypeView::Arrow { domain, codomain } => {
+            let domain = shift_bound_type(connection, domain, amount, cutoff, memo)?;
+            let codomain = shift_bound_type(connection, codomain, amount, cutoff, memo)?;
+            intern_type_arrow(connection, domain, codomain)?
+        }
+        TypeView::Forall { body } => {
+            let body = shift_bound_type(
+                connection,
+                body,
+                amount,
+                cutoff
+                    .checked_add(1)
+                    .ok_or(TypeError::SubstitutionDepthOverflow)?,
+                memo,
+            )?;
+            intern_forall_type(connection, body)?
+        }
+    };
+    memo.insert((ty, amount, cutoff), result);
+    Ok(result)
+}
+
+fn substitute_bound_type(
+    connection: &sqlite::Connection,
+    body: TypeId,
+    replacement: TypeId,
+) -> Result<TypeId, TypeError> {
+    fn walk(
+        connection: &sqlite::Connection,
+        ty: TypeId,
+        replacement: TypeId,
+        depth: u32,
+        memo: &mut HashMap<(TypeId, u32), TypeId>,
+        shift_memo: &mut HashMap<(TypeId, u32, u32), TypeId>,
+    ) -> Result<TypeId, TypeError> {
+        if let Some(result) = memo.get(&(ty, depth)) {
+            return Ok(*result);
+        }
+        let result = match read_type(connection, ty)? {
+            TypeView::Bound { index } if index == depth => {
+                shift_bound_type(connection, replacement, depth, 0, shift_memo)?
+            }
+            TypeView::Bound { index } if index > depth => intern_bound_type(connection, index - 1)?,
+            TypeView::Bool
+            | TypeView::Base { .. }
+            | TypeView::Free { .. }
+            | TypeView::Bound { .. } => ty,
+            TypeView::Arrow { domain, codomain } => {
+                let domain = walk(connection, domain, replacement, depth, memo, shift_memo)?;
+                let codomain = walk(connection, codomain, replacement, depth, memo, shift_memo)?;
+                intern_type_arrow(connection, domain, codomain)?
+            }
+            TypeView::Forall { body } => {
+                let body = walk(
+                    connection,
+                    body,
+                    replacement,
+                    depth
+                        .checked_add(1)
+                        .ok_or(TypeError::SubstitutionDepthOverflow)?,
+                    memo,
+                    shift_memo,
+                )?;
+                intern_forall_type(connection, body)?
+            }
+        };
+        memo.insert((ty, depth), result);
+        Ok(result)
+    }
+
+    validate_type(connection, body)?;
+    validate_type(connection, replacement)?;
+    let result = walk(
+        connection,
+        body,
+        replacement,
+        0,
+        &mut HashMap::new(),
+        &mut HashMap::new(),
+    )?;
+    validate_type(connection, result)?;
+    Ok(result)
 }
 
 fn collect_type_free_variables(
@@ -3781,7 +4145,10 @@ fn collect_type_free_variables(
                 walk(connection, domain, active, complete, variables)?;
                 walk(connection, codomain, active, complete, variables)?;
             }
-            TypeView::Bool | TypeView::Base { .. } => {}
+            TypeView::Forall { body } => {
+                walk(connection, body, active, complete, variables)?;
+            }
+            TypeView::Bool | TypeView::Base { .. } | TypeView::Bound { .. } => {}
         }
         active.remove(&id);
         complete.insert(id);
@@ -3998,6 +4365,53 @@ fn intern_epsilon(
     Ok(TermId(connection.last_insert_rowid()))
 }
 
+fn intern_type_lambda(
+    connection: &sqlite::Connection,
+    body: TermId,
+    ty: TypeId,
+) -> Result<TermId, TermError> {
+    if let Some(id) = connection
+        .query_row(
+            "SELECT node_id FROM hol_node
+             WHERE tag = 'MTYLAM' AND lhs = ?1 AND rhs IS NULL AND ty = ?2",
+            [body.0, ty.0],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+    {
+        return Ok(TermId(id));
+    }
+    connection.execute(
+        "INSERT INTO hol_node(tag, lhs, ty) VALUES ('MTYLAM', ?1, ?2)",
+        [body.0, ty.0],
+    )?;
+    Ok(TermId(connection.last_insert_rowid()))
+}
+
+fn intern_type_application(
+    connection: &sqlite::Connection,
+    function: TermId,
+    argument: TypeId,
+    ty: TypeId,
+) -> Result<TermId, TermError> {
+    if let Some(id) = connection
+        .query_row(
+            "SELECT node_id FROM hol_node
+             WHERE tag = 'MTYAPP' AND lhs = ?1 AND rhs = ?2 AND ty = ?3",
+            (function.0, argument.0, ty.0),
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?
+    {
+        return Ok(TermId(id));
+    }
+    connection.execute(
+        "INSERT INTO hol_node(tag, lhs, rhs, ty) VALUES ('MTYAPP', ?1, ?2, ?3)",
+        (function.0, argument.0, ty.0),
+    )?;
+    Ok(TermId(connection.last_insert_rowid()))
+}
+
 fn read_term_node(
     connection: &sqlite::Connection,
     id: TermId,
@@ -4064,6 +4478,16 @@ fn read_term_node(
             },
             TypeId(ty),
         ),
+        (tag, Some(body), None, Some(ty)) if tag == "MTYLAM" => {
+            (TermView::TypeLambda { body: TermId(body) }, TypeId(ty))
+        }
+        (tag, Some(function), Some(argument), Some(ty)) if tag == "MTYAPP" => (
+            TermView::TypeApplication {
+                function: TermId(function),
+                argument: TypeId(argument),
+            },
+            TypeId(ty),
+        ),
         _ => return Err(TermError::CorruptTerm(id)),
     };
     validate_type(connection, ty)?;
@@ -4077,7 +4501,15 @@ fn read_term_node(
 struct ValidatedTerm {
     view: TermView,
     ty: TypeId,
-    boundary: BTreeMap<u32, TypeId>,
+    term_boundary: BTreeMap<u32, TypeId>,
+    type_boundary: BTreeMap<u32, KindId>,
+    has_mfv: bool,
+}
+
+impl ValidatedTerm {
+    fn is_closed(&self) -> bool {
+        self.term_boundary.is_empty() && self.type_boundary.is_empty()
+    }
 }
 
 fn read_term(connection: &sqlite::Connection, id: TermId) -> Result<(TermView, TypeId), TermError> {
@@ -4089,6 +4521,7 @@ fn validate_term(connection: &sqlite::Connection, id: TermId) -> Result<Validate
     validate_term_inner(connection, id, &mut HashSet::new(), &mut HashMap::new())
 }
 
+#[allow(clippy::too_many_lines)]
 fn validate_term_inner(
     connection: &sqlite::Connection,
     id: TermId,
@@ -4102,15 +4535,20 @@ fn validate_term_inner(
         return Err(TermError::CyclicTerm(id));
     }
     let (view, ty) = read_term_node(connection, id)?;
-    let boundary = match view {
-        TermView::Bool(_) | TermView::Free { .. } => BTreeMap::new(),
+    let own_type_boundary = validate_type(connection, ty)?.boundary;
+    let (term_boundary, type_boundary, has_mfv) = match view {
+        TermView::Bool(_) => (BTreeMap::new(), own_type_boundary, false),
+        TermView::Free { .. } => (BTreeMap::new(), own_type_boundary, true),
         TermView::Constant { symbol } => {
             if type_contains_free_variable(connection, ty)? {
                 return Err(TermError::PolymorphicConstantType { symbol, ty });
             }
-            BTreeMap::new()
+            if !own_type_boundary.is_empty() {
+                return Err(TermError::OpenConstantType { symbol, ty });
+            }
+            (BTreeMap::new(), BTreeMap::new(), false)
         }
-        TermView::Bound { index } => BTreeMap::from([(index, ty)]),
+        TermView::Bound { index } => (BTreeMap::from([(index, ty)]), own_type_boundary, false),
         TermView::Application { function, argument } => {
             let function = validate_term_inner(connection, function, active, memo)?;
             let argument = validate_term_inner(connection, argument, active, memo)?;
@@ -4126,20 +4564,39 @@ fn validate_term_inner(
             if codomain != ty {
                 return Err(TermError::CorruptTerm(id));
             }
-            merge_term_boundaries(function.boundary, argument.boundary)?
+            let term_boundary =
+                merge_term_boundaries(function.term_boundary, argument.term_boundary)?;
+            let type_boundary = merge_type_boundaries(
+                merge_type_boundaries(function.type_boundary, argument.type_boundary)
+                    .map_err(TermError::Type)?,
+                own_type_boundary,
+            )
+            .map_err(TermError::Type)?;
+            (
+                term_boundary,
+                type_boundary,
+                function.has_mfv || argument.has_mfv,
+            )
         }
         TermView::Lambda {
             parameter_type,
             body,
         } => {
-            read_type(connection, parameter_type)?;
+            let parameter_type_boundary = validate_type(connection, parameter_type)?.boundary;
             let body = validate_term_inner(connection, body, active, memo)?;
             match read_type(connection, ty)? {
                 TypeView::Arrow { domain, codomain }
                     if domain == parameter_type && codomain == body.ty => {}
                 _ => return Err(TermError::CorruptTerm(id)),
             }
-            close_term_boundary(body.boundary, parameter_type)?
+            let term_boundary = close_term_boundary(body.term_boundary, parameter_type)?;
+            let type_boundary = merge_type_boundaries(
+                merge_type_boundaries(body.type_boundary, parameter_type_boundary)
+                    .map_err(TermError::Type)?,
+                own_type_boundary,
+            )
+            .map_err(TermError::Type)?;
+            (term_boundary, type_boundary, body.has_mfv)
         }
         TermView::Equality { left, right } => {
             if ty != BOOL_TYPE_ID {
@@ -4153,7 +4610,14 @@ fn validate_term_inner(
                     right: right.ty,
                 });
             }
-            merge_term_boundaries(left.boundary, right.boundary)?
+            let term_boundary = merge_term_boundaries(left.term_boundary, right.term_boundary)?;
+            let type_boundary = merge_type_boundaries(
+                merge_type_boundaries(left.type_boundary, right.type_boundary)
+                    .map_err(TermError::Type)?,
+                own_type_boundary,
+            )
+            .map_err(TermError::Type)?;
+            (term_boundary, type_boundary, left.has_mfv || right.has_mfv)
         }
         TermView::Epsilon { predicate } => {
             let predicate_validation = validate_term_inner(connection, predicate, active, memo)?;
@@ -4171,11 +4635,64 @@ fn validate_term_inner(
             if domain != ty {
                 return Err(TermError::CorruptTerm(id));
             }
-            predicate_validation.boundary
+            let type_boundary =
+                merge_type_boundaries(predicate_validation.type_boundary, own_type_boundary)
+                    .map_err(TermError::Type)?;
+            (
+                predicate_validation.term_boundary,
+                type_boundary,
+                predicate_validation.has_mfv,
+            )
+        }
+        TermView::TypeLambda { body } => {
+            let body = validate_term_inner(connection, body, active, memo)?;
+            if !body.term_boundary.is_empty() {
+                return Err(TermError::TypeLambdaOpenTermBody(id));
+            }
+            if body.has_mfv {
+                return Err(TermError::TypeLambdaFreeTermBody(id));
+            }
+            let TypeView::Forall {
+                body: expected_body,
+            } = read_type(connection, ty)?
+            else {
+                return Err(TermError::CorruptTerm(id));
+            };
+            if expected_body != body.ty {
+                return Err(TermError::CorruptTerm(id));
+            }
+            let type_boundary =
+                merge_type_boundaries(close_type_boundary(body.type_boundary), own_type_boundary)
+                    .map_err(TermError::Type)?;
+            (BTreeMap::new(), type_boundary, false)
+        }
+        TermView::TypeApplication { function, argument } => {
+            let function = validate_term_inner(connection, function, active, memo)?;
+            let argument_boundary = validate_type(connection, argument)?.boundary;
+            let TypeView::Forall { body } = read_type(connection, function.ty)? else {
+                return Err(TermError::NotUniversal(function.ty));
+            };
+            let expected = substitute_bound_type(connection, body, argument)?;
+            if expected != ty {
+                return Err(TermError::CorruptTerm(id));
+            }
+            let type_boundary = merge_type_boundaries(
+                merge_type_boundaries(function.type_boundary, argument_boundary)
+                    .map_err(TermError::Type)?,
+                own_type_boundary,
+            )
+            .map_err(TermError::Type)?;
+            (function.term_boundary, type_boundary, function.has_mfv)
         }
     };
     active.remove(&id);
-    let validated = ValidatedTerm { view, ty, boundary };
+    let validated = ValidatedTerm {
+        view,
+        ty,
+        term_boundary,
+        type_boundary,
+        has_mfv,
+    };
     memo.insert(id, validated.clone());
     Ok(validated)
 }
@@ -4230,14 +4747,17 @@ fn checked_conversion<'brand>(
         }
         .into());
     }
-    if left_validation.boundary != right_validation.boundary {
+    if left_validation.term_boundary != right_validation.term_boundary
+        || left_validation.type_boundary != right_validation.type_boundary
+    {
         return Err(ProofError::ConversionBoundaryMismatch { left, right });
     }
     Ok(Conversion {
         left,
         right,
         ty: left_validation.ty,
-        boundary: left_validation.boundary,
+        term_boundary: left_validation.term_boundary,
+        type_boundary: left_validation.type_boundary,
         brand: PhantomData,
     })
 }
@@ -4302,6 +4822,14 @@ fn substitute_closed_inner(
                 substitute_closed_inner(connection, predicate, replacement, depth, memo)?;
             intern_epsilon(connection, predicate, ty)?
         }
+        TermView::TypeLambda { body } => {
+            let body = substitute_closed_inner(connection, body, replacement, depth, memo)?;
+            intern_type_lambda(connection, body, ty)?
+        }
+        TermView::TypeApplication { function, argument } => {
+            let function = substitute_closed_inner(connection, function, replacement, depth, memo)?;
+            intern_type_application(connection, function, argument, ty)?
+        }
     };
     memo.insert((term, depth), result);
     Ok(result)
@@ -4347,6 +4875,14 @@ fn instantiate_free_terms_inner(
                 instantiate_free_terms_inner(connection, predicate, replacements, memo)?;
             intern_epsilon(connection, predicate, ty)?
         }
+        TermView::TypeLambda { body } => {
+            let body = instantiate_free_terms_inner(connection, body, replacements, memo)?;
+            intern_type_lambda(connection, body, ty)?
+        }
+        TermView::TypeApplication { function, argument } => {
+            let function = instantiate_free_terms_inner(connection, function, replacements, memo)?;
+            intern_type_application(connection, function, argument, ty)?
+        }
     };
     memo.insert(term, result);
     Ok(result)
@@ -4365,11 +4901,17 @@ fn instantiate_type_inner(
         return Ok(*result);
     }
     let result = match read_type(connection, ty)? {
-        TypeView::Bool | TypeView::Base { .. } | TypeView::Free { .. } => ty,
+        TypeView::Bool | TypeView::Base { .. } | TypeView::Free { .. } | TypeView::Bound { .. } => {
+            ty
+        }
         TypeView::Arrow { domain, codomain } => {
             let domain = instantiate_type_inner(connection, domain, replacements, memo)?;
             let codomain = instantiate_type_inner(connection, codomain, replacements, memo)?;
             intern_type_arrow(connection, domain, codomain)?
+        }
+        TypeView::Forall { body } => {
+            let body = instantiate_type_inner(connection, body, replacements, memo)?;
+            intern_forall_type(connection, body)?
         }
     };
     memo.insert(ty, result);
@@ -4441,6 +4983,22 @@ fn instantiate_term_types_inner(
             )?;
             intern_epsilon(connection, predicate, transformed_type)?
         }
+        TermView::TypeLambda { body } => {
+            let body =
+                instantiate_term_types_inner(connection, body, replacements, type_memo, term_memo)?;
+            intern_type_lambda(connection, body, transformed_type)?
+        }
+        TermView::TypeApplication { function, argument } => {
+            let function = instantiate_term_types_inner(
+                connection,
+                function,
+                replacements,
+                type_memo,
+                term_memo,
+            )?;
+            let argument = instantiate_type_inner(connection, argument, replacements, type_memo)?;
+            intern_type_application(connection, function, argument, transformed_type)?
+        }
     };
     term_memo.insert(term, result);
     Ok(result)
@@ -4468,13 +5026,18 @@ fn term_contains_exact(
             term_contains_exact(connection, function, needle, memo)?
                 || term_contains_exact(connection, argument, needle, memo)?
         }
-        TermView::Lambda { body, .. } => term_contains_exact(connection, body, needle, memo)?,
+        TermView::Lambda { body, .. } | TermView::TypeLambda { body } => {
+            term_contains_exact(connection, body, needle, memo)?
+        }
         TermView::Equality { left, right } => {
             term_contains_exact(connection, left, needle, memo)?
                 || term_contains_exact(connection, right, needle, memo)?
         }
         TermView::Epsilon { predicate } => {
             term_contains_exact(connection, predicate, needle, memo)?
+        }
+        TermView::TypeApplication { function, .. } => {
+            term_contains_exact(connection, function, needle, memo)?
         }
     };
     memo.insert(term, result);
@@ -4554,6 +5117,22 @@ fn abstract_free_term_inner(
             )?;
             intern_epsilon(connection, predicate, ty)?
         }
+        TermView::TypeLambda { body } => {
+            let body =
+                abstract_free_term_inner(connection, body, variable, variable_type, depth, memo)?;
+            intern_type_lambda(connection, body, ty)?
+        }
+        TermView::TypeApplication { function, argument } => {
+            let function = abstract_free_term_inner(
+                connection,
+                function,
+                variable,
+                variable_type,
+                depth,
+                memo,
+            )?;
+            intern_type_application(connection, function, argument, ty)?
+        }
     };
     memo.insert((term, depth), result);
     Ok(result)
@@ -4574,6 +5153,10 @@ fn free_term_symbols(connection: &sqlite::Connection, root: TermId) -> Result<Ve
              SELECT node_id, rhs FROM hol_node WHERE tag = 'MEQ'
              UNION ALL
              SELECT node_id, lhs FROM hol_node WHERE tag = 'MEPS'
+             UNION ALL
+             SELECT node_id, lhs FROM hol_node WHERE tag = 'MTYLAM'
+             UNION ALL
+             SELECT node_id, lhs FROM hol_node WHERE tag = 'MTYAPP'
          ),
          reachable(node_id) AS (
              SELECT ?1
@@ -4624,6 +5207,11 @@ fn collect_term_free_type_variables(
                 pending.push(right);
             }
             TermView::Epsilon { predicate } => pending.push(predicate),
+            TermView::TypeLambda { body } => pending.push(body),
+            TermView::TypeApplication { function, argument } => {
+                pending.push(function);
+                variables.extend(collect_type_free_variables(connection, argument)?);
+            }
         }
     }
     let mut variables = variables.into_iter().collect::<Vec<_>>();
@@ -4848,6 +5436,17 @@ pub enum TypeError {
     UnknownType(TypeId),
     /// A tagged node has an invalid type shape or classifier.
     CorruptType(TypeId),
+    /// One external type index has incompatible kind annotations.
+    InconsistentUnboundVariable {
+        /// External index.
+        index: u32,
+        /// First observed kind.
+        first: KindId,
+        /// Conflicting kind.
+        second: KindId,
+    },
+    /// A binder nesting depth exceeds the supported de Bruijn index range.
+    SubstitutionDepthOverflow,
     /// `SQLite` rejected an operation.
     Sqlite(sqlite::Error),
 }
@@ -4858,6 +5457,19 @@ impl fmt::Display for TypeError {
             Self::Denied(operation) => write!(formatter, "HOL policy denied {operation:?}"),
             Self::UnknownType(id) => write!(formatter, "unknown type {}", id.get()),
             Self::CorruptType(id) => write!(formatter, "type {} is structurally corrupt", id.get()),
+            Self::InconsistentUnboundVariable {
+                index,
+                first,
+                second,
+            } => write!(
+                formatter,
+                "unbound type index {index} has incompatible kinds {} and {}",
+                first.get(),
+                second.get()
+            ),
+            Self::SubstitutionDepthOverflow => {
+                formatter.write_str("type substitution depth overflow")
+            }
             Self::Sqlite(error) => error.fmt(formatter),
         }
     }
@@ -4867,7 +5479,11 @@ impl StdError for TypeError {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match self {
             Self::Sqlite(error) => Some(error),
-            Self::Denied(_) | Self::UnknownType(_) | Self::CorruptType(_) => None,
+            Self::Denied(_)
+            | Self::UnknownType(_)
+            | Self::CorruptType(_)
+            | Self::InconsistentUnboundVariable { .. }
+            | Self::SubstitutionDepthOverflow => None,
         }
     }
 }
@@ -4903,6 +5519,14 @@ pub enum TermError {
         /// Rejected schematic type.
         ty: TypeId,
     },
+    /// A constant declaration contains an unbound rank-zero type variable.
+    OpenConstantType { symbol: i64, ty: TypeId },
+    /// A type abstraction body has an external term de Bruijn environment.
+    TypeLambdaOpenTermBody(TermId),
+    /// A type abstraction body contains a schematic free term variable.
+    TypeLambdaFreeTermBody(TermId),
+    /// Type application was requested for a non-universal term.
+    NotUniversal(TypeId),
     /// The function position does not have a function type.
     NotFunction(TypeId),
     /// An application's argument type differs from its function domain.
@@ -4973,6 +5597,22 @@ impl fmt::Display for TermError {
                 "constant symbol {symbol} cannot be declared at schematic type {}",
                 ty.get()
             ),
+            Self::OpenConstantType { symbol, ty } => write!(
+                formatter,
+                "constant symbol {symbol} cannot be declared at open type {}",
+                ty.get()
+            ),
+            Self::TypeLambdaOpenTermBody(term) => write!(
+                formatter,
+                "type abstraction body {} has an external term environment",
+                term.get()
+            ),
+            Self::TypeLambdaFreeTermBody(term) => write!(
+                formatter,
+                "type abstraction body {} contains a schematic free term variable",
+                term.get()
+            ),
+            Self::NotUniversal(ty) => write!(formatter, "type {} is not universal", ty.get()),
             Self::NotFunction(ty) => write!(formatter, "type {} is not a function type", ty.get()),
             Self::ApplicationTypeMismatch { expected, actual } => write!(
                 formatter,
@@ -5029,6 +5669,10 @@ impl StdError for TermError {
             | Self::CorruptTerm(_)
             | Self::ConstantTypeConflict { .. }
             | Self::PolymorphicConstantType { .. }
+            | Self::OpenConstantType { .. }
+            | Self::TypeLambdaOpenTermBody(_)
+            | Self::TypeLambdaFreeTermBody(_)
+            | Self::NotUniversal(_)
             | Self::NotFunction(_)
             | Self::ApplicationTypeMismatch { .. }
             | Self::EpsilonPredicateNonBoolean { .. }
@@ -5274,6 +5918,8 @@ pub enum ProofError {
     TypeInstantiationKeyNotFree(TypeId),
     /// The same exact free-type-variable key occurs more than once.
     DuplicateTypeInstantiation(TypeId),
+    /// A theorem type-instantiation replacement is not locally closed.
+    OpenTypeInstantiationReplacement(TypeId),
     /// The abstraction key is not an exact `MFV` node.
     AbstractionKeyNotFree(TermId),
     /// The abstraction key occurs in one undischarged assumption.
@@ -5387,6 +6033,7 @@ impl fmt::Display for ProofError {
             | Self::OpenTermInstantiationReplacement(_)
             | Self::TypeInstantiationKeyNotFree(_)
             | Self::DuplicateTypeInstantiation(_)
+            | Self::OpenTypeInstantiationReplacement(_)
             | Self::AbstractionKeyNotFree(_)
             | Self::AbstractionVariableFreeInAssumption { .. }
             | Self::ChoicePremiseNotApplication(_)
@@ -5648,6 +6295,11 @@ fn format_instantiation_proof_error(
             "free-type-variable instantiation key {} occurs more than once",
             variable.get()
         )),
+        ProofError::OpenTypeInstantiationReplacement(replacement) => Some(write!(
+            formatter,
+            "free-type-variable instantiation replacement {} is not locally closed",
+            replacement.get()
+        )),
         _ => None,
     }
 }
@@ -5725,6 +6377,7 @@ impl StdError for ProofError {
             | Self::OpenTermInstantiationReplacement(_)
             | Self::TypeInstantiationKeyNotFree(_)
             | Self::DuplicateTypeInstantiation(_)
+            | Self::OpenTypeInstantiationReplacement(_)
             | Self::AbstractionKeyNotFree(_)
             | Self::AbstractionVariableFreeInAssumption { .. }
             | Self::ChoicePremiseNotApplication(_)
@@ -7608,7 +8261,8 @@ mod tests {
                     left: TermId::from_i64(i64::MAX),
                     right: TermId::from_i64(i64::MAX),
                     ty: TypeId::from_i64(i64::MAX),
-                    boundary: BTreeMap::new(),
+                    term_boundary: BTreeMap::new(),
+                    type_boundary: BTreeMap::new(),
                     brand: PhantomData,
                 };
                 proof.conversion_epsilon(&invalid).map(|_| ())
@@ -9253,5 +9907,198 @@ mod tests {
                 )
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn rank_zero_polymorphic_identity_is_canonical_and_instantiates() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let alpha = connection.insert_bound_type(0).unwrap();
+        let variable = connection.insert_bound_term(0, alpha).unwrap();
+        let identity = connection.insert_lambda(alpha, variable).unwrap();
+        let polymorphic = connection.insert_type_lambda(identity).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let instantiated = connection
+            .insert_type_application(polymorphic, bool_type)
+            .unwrap();
+        let bool_identity = connection.insert_arrow_type(bool_type, bool_type).unwrap();
+
+        assert_eq!(connection.term_type(instantiated).unwrap(), bool_identity);
+        assert_eq!(
+            connection.term(polymorphic).unwrap(),
+            TermView::TypeLambda { body: identity }
+        );
+        assert!(connection.term_is_locally_closed(polymorphic).unwrap());
+        assert!(
+            connection
+                .term_unbound_type_variables(polymorphic)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            instantiated,
+            connection
+                .insert_type_application(polymorphic, bool_type)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn bound_type_substitution_lifts_under_nested_forall() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let inner = connection.insert_bound_type(0).unwrap();
+        let outer = connection.insert_bound_type(1).unwrap();
+        let pair = connection.insert_arrow_type(outer, inner).unwrap();
+        let nested = connection.insert_forall_type(pair).unwrap();
+        let universal = connection.insert_forall_type(nested).unwrap();
+        let constant = connection.insert_constant(9_001, universal).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let instantiated = connection
+            .insert_type_application(constant, bool_type)
+            .unwrap();
+        let expected_body = connection.insert_arrow_type(bool_type, inner).unwrap();
+        let expected = connection.insert_forall_type(expected_body).unwrap();
+
+        assert_eq!(connection.term_type(instantiated).unwrap(), expected);
+    }
+
+    #[test]
+    fn bound_type_shift_memo_distinguishes_different_amounts() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let replacement = connection.insert_bound_type(0).unwrap();
+        let at_depth_one = connection.insert_bound_type(1).unwrap();
+        let at_depth_two = connection.insert_bound_type(2).unwrap();
+        let beneath_one = connection.insert_forall_type(at_depth_one).unwrap();
+        let beneath_two_inner = connection.insert_forall_type(at_depth_two).unwrap();
+        let beneath_two = connection.insert_forall_type(beneath_two_inner).unwrap();
+        let body = connection
+            .insert_arrow_type(beneath_one, beneath_two)
+            .unwrap();
+        let universal = connection.insert_forall_type(body).unwrap();
+        let constant = connection.insert_constant(9_010, universal).unwrap();
+
+        let instantiated = connection
+            .insert_type_application(constant, replacement)
+            .unwrap();
+
+        assert_eq!(connection.term_type(instantiated).unwrap(), body);
+        let TypeView::Arrow { domain, codomain } = connection.type_view(body).unwrap() else {
+            panic!("expected substituted arrow type")
+        };
+        assert_eq!(domain, beneath_one);
+        assert_eq!(codomain, beneath_two);
+    }
+
+    #[test]
+    fn type_lambda_rejects_external_and_schematic_term_environments() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let external = connection.insert_bound_term(0, bool_type).unwrap();
+        assert!(matches!(
+            connection.insert_type_lambda(external),
+            Err(TermError::TypeLambdaOpenTermBody(term)) if term == external
+        ));
+
+        let free = connection.insert_free_term(9_002, bool_type).unwrap();
+        assert!(matches!(
+            connection.insert_type_lambda(free),
+            Err(TermError::TypeLambdaFreeTermBody(term)) if term == free
+        ));
+    }
+
+    #[test]
+    fn erased_type_annotations_keep_boolean_results_type_open() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let alpha = connection.insert_bound_type(0).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let function_type = connection.insert_arrow_type(alpha, bool_type).unwrap();
+        let function = connection.insert_free_term(9_003, function_type).unwrap();
+        let argument = connection.insert_free_term(9_004, alpha).unwrap();
+        let proposition = connection.insert_application(function, argument).unwrap();
+
+        assert_eq!(connection.term_type(proposition).unwrap(), bool_type);
+        assert!(!connection.term_is_locally_closed(proposition).unwrap());
+        assert_eq!(
+            connection.term_unbound_type_variables(proposition).unwrap(),
+            [UnboundTypeVariable {
+                index: 0,
+                kind: STAR_ID,
+            }]
+        );
+        assert!(matches!(
+            connection.define_context([proposition]),
+            Err(ContextError::OpenMember(term)) if term == proposition
+        ));
+    }
+
+    #[test]
+    fn constants_accept_closed_universals_and_reject_open_types() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let alpha = connection.insert_bound_type(0).unwrap();
+        let universal = connection.insert_forall_type(alpha).unwrap();
+        assert!(connection.insert_constant(9_005, universal).is_ok());
+        assert!(matches!(
+            connection.insert_constant(9_006, alpha),
+            Err(TermError::OpenConstantType { symbol: 9_006, ty }) if ty == alpha
+        ));
+        let schematic = connection.insert_free_type(9_007).unwrap();
+        assert!(matches!(
+            connection.insert_constant(9_008, schematic),
+            Err(TermError::PolymorphicConstantType { symbol: 9_008, ty }) if ty == schematic
+        ));
+    }
+
+    #[test]
+    fn schematic_type_instantiation_traverses_type_lambdas_and_rejects_open_replacements() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let alpha = connection.insert_free_type(9_009).unwrap();
+        let variable = connection.insert_bound_term(0, alpha).unwrap();
+        let identity = connection.insert_lambda(alpha, variable).unwrap();
+        let polymorphic = connection.insert_type_lambda(identity).unwrap();
+        let context = ContextId::empty();
+        let bool_type = connection.insert_bool_type().unwrap();
+
+        let instantiated_conclusion = connection
+            .with_proof_session(|mut proof| {
+                let theorem = proof.prove_reflexivity(context, polymorphic)?;
+                let instantiated = proof.instantiate_types(
+                    &theorem,
+                    &[TypeInstantiation {
+                        variable: alpha,
+                        replacement: bool_type,
+                    }],
+                )?;
+                Ok::<_, ProofError>(instantiated.conclusion())
+            })
+            .unwrap();
+        let TermView::Equality { left, right } = connection.term(instantiated_conclusion).unwrap()
+        else {
+            panic!("expected instantiated reflexive equality")
+        };
+        assert_eq!(left, right);
+        let TermView::TypeLambda { body } = connection.term(left).unwrap() else {
+            panic!("expected instantiated type abstraction")
+        };
+        let TermView::Lambda { parameter_type, .. } = connection.term(body).unwrap() else {
+            panic!("expected instantiated term abstraction")
+        };
+        assert_eq!(parameter_type, bool_type);
+
+        let open = connection.insert_bound_type(0).unwrap();
+        let result = connection.with_proof_session(|mut proof| {
+            let theorem = proof.prove_truth(context)?;
+            proof
+                .instantiate_types(
+                    &theorem,
+                    &[TypeInstantiation {
+                        variable: alpha,
+                        replacement: open,
+                    }],
+                )
+                .map(|_| ())
+        });
+        assert!(matches!(
+            result,
+            Err(ProofError::OpenTypeInstantiationReplacement(ty)) if ty == open
+        ));
     }
 }

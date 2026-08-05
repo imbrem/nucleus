@@ -1097,6 +1097,12 @@ fn run_hol_type<'a>(
                 TypeView::Free { symbol } => {
                     writeln!(output, "type {} = free {symbol}", ty.get())?;
                 }
+                TypeView::Bound { index } => {
+                    writeln!(output, "type {} = bound {index}", ty.get())?;
+                }
+                TypeView::Forall { body } => {
+                    writeln!(output, "type {} = forall {}", ty.get(), body.get())?;
+                }
                 TypeView::Arrow { domain, codomain } => writeln!(
                     output,
                     "type {} = {} -> {}",
@@ -1271,6 +1277,16 @@ fn run_hol_term_query<'a>(
             TermView::Epsilon { predicate } => {
                 writeln!(output, "term {} = epsilon {}", term.get(), predicate.get())?;
             }
+            TermView::TypeLambda { body } => {
+                writeln!(output, "term {} = tylam {}", term.get(), body.get())?;
+            }
+            TermView::TypeApplication { function, argument } => writeln!(
+                output,
+                "term {} = tyapp {} {}",
+                term.get(),
+                function.get(),
+                argument.get()
+            )?,
         },
         "type" => {
             let ty = repl.hol_mut(connection)?.term_type(term)?;

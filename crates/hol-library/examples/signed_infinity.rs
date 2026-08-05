@@ -251,6 +251,10 @@ fn summarize<'reader>(
                 shape.epsilons += 1;
                 visit(reader, predicate, shape)?;
             }
+            ImportedTermView::TypeLambda { body, .. } => visit(reader, body, shape)?,
+            ImportedTermView::TypeApplication { function, .. } => {
+                visit(reader, function, shape)?;
+            }
         }
         Ok(())
     }
