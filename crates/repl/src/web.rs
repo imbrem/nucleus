@@ -7,12 +7,13 @@ use super::{
     AllowAll, ConnectionEntry, ConnectionId, ExpectedKernelIdentity, HolRecipe, HolRecipeResult,
     Kernel, KernelEntry, KernelId, LocalConnection, MAX_SIGNED_MESSAGE_BYTES, Outcome,
     PinnedSignedHolArtifact, ProducedSignedHol, QueryResult, ReceivedHolSnapshot, Repl,
-    SIGNED_HOL_PHASES, ServiceIdentity, ServiceOperation, ServiceProducedHol, ServiceResult,
-    SessionInitiator, SignedHolArtifact, SignedHolRoundTripResult, SignedKernelService,
-    SignedMessageRequest, SignedMessageResponse, SignedServiceCommand, SignedServiceSession, Value,
-    authenticate_pinned_signed_hol_artifact, decode_signed_request, decode_signed_response,
-    encode_signed_request, encode_signed_response, produce_signed_hol_artifact,
-    run_managed_signed_hol_round_trip, trust_and_receive_pinned_signed_hol_artifact,
+    SIGNED_HOL_PHASES, ServiceIdentity, ServiceOperation, ServiceProducedHol,
+    ServiceProducedHolComponent, ServiceResult, SessionInitiator, SignedHolArtifact,
+    SignedHolRoundTripResult, SignedKernelService, SignedMessageRequest, SignedMessageResponse,
+    SignedServiceCommand, SignedServiceSession, Value, authenticate_pinned_signed_hol_artifact,
+    decode_signed_request, decode_signed_response, encode_signed_request, encode_signed_response,
+    produce_signed_hol_artifact, run_managed_signed_hol_round_trip,
+    trust_and_receive_pinned_signed_hol_artifact,
 };
 
 /// Main-thread directory for independently owned browser kernel endpoints.
@@ -95,6 +96,12 @@ pub struct WebSignedKernelSession {
 #[wasm_bindgen]
 pub struct WebRemoteProducedHol {
     produced: ServiceProducedHol,
+}
+
+/// A hash-selected artifact accepted from an endpoint-signed result.
+#[wasm_bindgen]
+pub struct WebRemoteProducedHolComponent {
+    produced: ServiceProducedHolComponent,
 }
 
 /// Receiver-local coordinates accepted from an authenticated signed reply.
@@ -281,6 +288,34 @@ impl WebSignedKernelSession {
         }
     }
 
+    /// Encodes a signed request containing only one canonical component O256.
+    pub fn run_hol_proof_component_command(&mut self, component: &str) -> Result<Vec<u8>, JsValue> {
+        let component = O256::from_hex(component).map_err(js_error)?;
+        self.command(ServiceOperation::RunHolProofComponent(component))
+    }
+
+    /// Verifies the endpoint-signed result and its binding to the requested O256.
+    pub fn accept_hol_proof_component(
+        &mut self,
+        response: &[u8],
+        expected_component: &str,
+    ) -> Result<WebRemoteProducedHolComponent, JsValue> {
+        let expected = O256::from_hex(expected_component).map_err(js_error)?;
+        match self.accept_result(response)? {
+            ServiceResult::ProducedByComponent(produced) if produced.component() == expected => {
+                Ok(WebRemoteProducedHolComponent {
+                    produced: *produced,
+                })
+            }
+            ServiceResult::ProducedByComponent(_) => Err(JsValue::from_str(
+                "remote component result changed the requested digest",
+            )),
+            _ => Err(JsValue::from_str(
+                "remote kernel did not run the selected HOL proof component",
+            )),
+        }
+    }
+
     /// Encodes a signed command that pins, trusts, mounts, and reads an artifact.
     pub fn receive_signed_hol_command(
         &mut self,
@@ -288,6 +323,26 @@ impl WebSignedKernelSession {
         expected_kernel: u32,
         expected_public_key: &[u8],
         produced: &WebRemoteProducedHol,
+    ) -> Result<Vec<u8>, JsValue> {
+        let expected = ExpectedKernelIdentity::from_public_key(
+            KernelId::from_u32(expected_kernel),
+            expected_public_key,
+        )
+        .map_err(js_error)?;
+        self.command(ServiceOperation::ReceiveSignedHol {
+            connection: parse_remote_connection(connection)?,
+            expected,
+            artifact: Box::new(produced.produced.artifact().clone()),
+        })
+    }
+
+    /// Encodes a signed receive request for a hash-selected endpoint artifact.
+    pub fn receive_component_signed_hol_command(
+        &mut self,
+        connection: &str,
+        expected_kernel: u32,
+        expected_public_key: &[u8],
+        produced: &WebRemoteProducedHolComponent,
     ) -> Result<Vec<u8>, JsValue> {
         let expected = ExpectedKernelIdentity::from_public_key(
             KernelId::from_u32(expected_kernel),
@@ -353,6 +408,15 @@ impl WebSignedKernelSession {
             .ok_or_else(|| JsValue::from_str("no signed command is pending"))?;
         encode_signed_request(&SignedMessageRequest::Execute(pending.clone())).map_err(js_error)
     }
+
+    /// Reports whether an exact command remains pending after reply acceptance.
+    ///
+    /// A verified semantic error consumes the command; a malformed or
+    /// unauthenticated reply leaves it available for exact-byte retry.
+    #[must_use]
+    pub fn has_pending_command(&self) -> bool {
+        self.pending.is_some()
+    }
 }
 
 impl WebSignedKernelSession {
@@ -399,6 +463,57 @@ impl WebRemoteProducedHol {
     #[must_use]
     pub fn statement(&self) -> String {
         self.produced.statement().to_owned()
+    }
+
+    /// Returns the source namespace as an exact decimal string.
+    #[must_use]
+    pub fn namespace_id(&self) -> String {
+        self.produced.artifact().namespace_id().to_string()
+    }
+
+    /// Copies the exact SQLite image bytes.
+    #[must_use]
+    pub fn image(&self) -> Vec<u8> {
+        self.produced.artifact().image().to_vec()
+    }
+
+    /// Returns the signed HOL schema coordinate.
+    #[must_use]
+    pub fn schema(&self) -> String {
+        self.produced.artifact().schema().to_string()
+    }
+
+    /// Returns the claimed exact image hash.
+    #[must_use]
+    pub fn image_hash(&self) -> String {
+        self.produced.artifact().image_hash().to_string()
+    }
+
+    /// Returns the producer key identity.
+    #[must_use]
+    pub fn signer(&self) -> String {
+        self.produced.artifact().signer().to_string()
+    }
+
+    /// Copies the producer public key.
+    #[must_use]
+    pub fn public_key(&self) -> Vec<u8> {
+        self.produced.artifact().public_key().to_vec()
+    }
+
+    /// Copies the schema-qualified artifact signature.
+    #[must_use]
+    pub fn signature(&self) -> Vec<u8> {
+        self.produced.artifact().signature().to_vec()
+    }
+}
+
+#[wasm_bindgen]
+impl WebRemoteProducedHolComponent {
+    /// Returns the exact requested component digest bound into the signed result.
+    #[must_use]
+    pub fn component(&self) -> String {
+        self.produced.component().to_string()
     }
 
     /// Returns the source namespace as an exact decimal string.

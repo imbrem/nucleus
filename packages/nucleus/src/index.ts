@@ -4,6 +4,7 @@ import initWasm, {
   WebKernel,
   WebOutcome,
   WebRemoteProducedHol,
+  WebRemoteProducedHolComponent,
   WebRemoteReceivedHol,
   WebSignedKernelSession,
   WebSignedKernelService,
@@ -47,6 +48,15 @@ export class SignedKernelSessionClient {
     );
   }
 
+  async runHolProofComponent(
+    component: string,
+  ): Promise<WebRemoteProducedHolComponent> {
+    return this.#command(
+      this.session.run_hol_proof_component_command(component),
+      (reply) => this.session.accept_hol_proof_component(reply, component),
+    );
+  }
+
   async receiveExternalHol(
     connection: string,
     expectedKernelId: number,
@@ -55,6 +65,23 @@ export class SignedKernelSessionClient {
   ): Promise<WebRemoteReceivedHol> {
     return this.#command(
       this.session.receive_signed_hol_command(
+        connection,
+        expectedKernelId,
+        expectedPublicKey,
+        artifact,
+      ),
+      (reply) => this.session.accept_received_hol(reply),
+    );
+  }
+
+  async receiveExternalComponentHol(
+    connection: string,
+    expectedKernelId: number,
+    expectedPublicKey: Uint8Array,
+    artifact: WebRemoteProducedHolComponent,
+  ): Promise<WebRemoteReceivedHol> {
+    return this.#command(
+      this.session.receive_component_signed_hol_command(
         connection,
         expectedKernelId,
         expectedPublicKey,
@@ -81,9 +108,14 @@ export class SignedKernelSessionClient {
     const pending = this.#pending;
     if (pending === undefined) throw new Error("no signed command is pending");
     const reply = await this.transport.exchange(pending.bytes);
-    const result = pending.accept(reply);
-    this.#pending = undefined;
-    return result;
+    try {
+      const result = pending.accept(reply);
+      this.#pending = undefined;
+      return result;
+    } catch (error) {
+      if (!this.session.has_pending_command()) this.#pending = undefined;
+      throw error;
+    }
   }
 
   async #command<T>(
@@ -96,9 +128,14 @@ export class SignedKernelSessionClient {
     const pending = { bytes: bytes.slice(), accept };
     this.#pending = pending;
     const reply = await this.transport.exchange(pending.bytes);
-    const result = accept(reply);
-    this.#pending = undefined;
-    return result;
+    try {
+      const result = accept(reply);
+      this.#pending = undefined;
+      return result;
+    } catch (error) {
+      if (!this.session.has_pending_command()) this.#pending = undefined;
+      throw error;
+    }
   }
 }
 
@@ -163,6 +200,11 @@ export interface NativeHttpHolOptions {
   timeoutMs?: number;
 }
 
+export interface NativeHttpHashSelectedHolOptions extends NativeHttpHolOptions {
+  /** Canonical O256 of a component provisioned locally before server startup. */
+  component: string;
+}
+
 export interface ManagedNativeHttpHolOutcome {
   kind: "native-http-signed-hol-round-trip";
   statement: string;
@@ -174,6 +216,20 @@ export interface ManagedNativeHttpHolOutcome {
   context: string;
   conclusion: string;
   /** Revalidates the retained artifact until `cleanup()` releases it. */
+  rereadImportedTheorem(): Promise<WebRemoteReceivedHol>;
+  cleanup(): Promise<void>;
+}
+
+export interface ManagedNativeHttpHashSelectedHolOutcome {
+  kind: "native-http-hash-selected-hol";
+  component: string;
+  signer: string;
+  imageBytes: number;
+  importId: string;
+  namespace: string;
+  context: string;
+  conclusion: string;
+  /** Reauthenticates the exact retained artifact through the caller's receiver. */
   rereadImportedTheorem(): Promise<WebRemoteReceivedHol>;
   cleanup(): Promise<void>;
 }
@@ -288,6 +344,124 @@ export async function runManagedNativeHttpSignedHol(
           );
         }
         return receiver.receiveExternalHol(
+          receiverConnection,
+          0xffff_fffe,
+          options.expectedPublicKey,
+          artifact,
+        );
+      },
+      async cleanup(): Promise<void> {
+        if (cleaned) return;
+        artifact.free();
+        session.free();
+        cleaned = true;
+      },
+    };
+  } catch (error) {
+    produced?.free();
+    session.free();
+    throw error;
+  }
+}
+
+/**
+ * Runs one server-provisioned component by digest and imports its signed result.
+ *
+ * Component bytes never enter this API or its signed/HTTP messages. The native
+ * endpoint must prevalidate and precompile its exact allowlist before starting.
+ * The current same-process Wasmtime/JIT prototype is tracked by nucleus#320.
+ *
+ * This convenience flow abandons its remote session after any ambiguous remote
+ * failure, which occurs before the caller-owned receiver is mutated. If the
+ * receiver exchange itself is ambiguous, `receiver.retryPending()` retains the
+ * exact signed command for explicit recovery; this helper never retries it
+ * automatically.
+ */
+export async function runManagedNativeHttpHashSelectedHol(
+  receiver: SignedKernelSessionClient,
+  receiverConnection: string,
+  options: NativeHttpHashSelectedHolOptions,
+): Promise<ManagedNativeHttpHashSelectedHolOutcome> {
+  await init();
+  const timeoutMs = options.timeoutMs ?? 10_000;
+  if (
+    !/^[0-9a-f]{64}$/.test(options.component) ||
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs <= 0 ||
+    options.expectedPublicKey.byteLength !== 32
+  ) {
+    throw new Error(
+      "component must be canonical O256, timeout positive, and endpoint key 32 bytes",
+    );
+  }
+  const description = await signedFetch(
+    options.endpoint,
+    WebSignedKernelSession.describe_request(),
+    timeoutMs,
+    false,
+  );
+  const session = WebSignedKernelSession.begin(
+    options.expectedPublicKey,
+    description,
+  );
+  let produced: WebRemoteProducedHolComponent | undefined;
+  let cleaned = false;
+  try {
+    const accepted = await signedFetch(
+      options.endpoint,
+      session.session_request(),
+      timeoutMs,
+      true,
+    );
+    acceptStatefulReply(() => session.accept_session(accepted));
+    const producedReply = await signedFetch(
+      options.endpoint,
+      session.run_hol_proof_component_command(options.component),
+      timeoutMs,
+      true,
+    );
+    produced = acceptStatefulReply(() =>
+      session.accept_hol_proof_component(producedReply, options.component),
+    );
+    if (produced.component() !== options.component) {
+      throw new SignedKernelTransportError(
+        "signed component result changed the selected digest",
+        true,
+      );
+    }
+    // Verify remote closure before mutating the caller-owned receiver. An
+    // ambiguous close therefore cannot make a thrown convenience call conceal
+    // a successful local import.
+    const sessionClosed = await signedFetch(
+      options.endpoint,
+      session.close_session_command(),
+      timeoutMs,
+      true,
+    );
+    acceptStatefulReply(() => session.accept_session_closed(sessionClosed));
+    const received = await receiver.receiveExternalComponentHol(
+      receiverConnection,
+      0xffff_fffe,
+      options.expectedPublicKey,
+      produced,
+    );
+    const artifact = produced;
+    return {
+      kind: "native-http-hash-selected-hol",
+      component: artifact.component(),
+      signer: artifact.signer(),
+      imageBytes: artifact.image().byteLength,
+      importId: received.import_id(),
+      namespace: received.namespace_id(),
+      context: received.context_id(),
+      conclusion: received.conclusion_id(),
+      rereadImportedTheorem: () => {
+        if (cleaned) {
+          return Promise.reject(
+            new Error("managed artifact was released by cleanup"),
+          );
+        }
+        return receiver.receiveExternalComponentHol(
           receiverConnection,
           0xffff_fffe,
           options.expectedPublicKey,

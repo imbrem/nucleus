@@ -4,7 +4,9 @@
 <script type="module">
   import {
     createInProcessSignedKernel,
+    connectSignedKernel,
     init,
+    runManagedNativeHttpHashSelectedHol,
     runManagedNativeHttpSignedHol,
     WebSignedKernelSession,
   } from "../dist/index.js";
@@ -13,6 +15,15 @@
   const endpoint = parameters.get("endpoint");
   const key = parameters.get("key");
   const mode = parameters.get("mode") ?? "round-trip";
+  const component = parameters.get("component");
+  const componentBytes = Number(parameters.get("componentBytes"));
+  const requestByteLengths = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (input, init) => {
+    const body = init?.body;
+    if (body instanceof ArrayBuffer) requestByteLengths.push(body.byteLength);
+    return originalFetch(input, init);
+  };
 
   async function post(body) {
     const response = await fetch(endpoint, {
@@ -48,7 +59,7 @@
       );
     }
     let result;
-    if (mode === "round-trip") {
+    if (mode === "round-trip" || mode === "hash-component") {
       const receiverKernel = await createInProcessSignedKernel();
       document.body.dataset.progress = "receiver-spawned";
       const receiver = await receiverKernel.connect();
@@ -56,21 +67,57 @@
       const receiverConnection = await receiver.openHol();
       document.body.dataset.progress = "receiver-opened";
       try {
-        const managed = await runManagedNativeHttpSignedHol(
-          receiver,
-          receiverConnection,
-          {
-            endpoint,
-            expectedPublicKey: publicKey,
-            timeoutMs: 10_000,
-          },
-        );
+        let unknownRejected = false;
+        if (mode === "hash-component") {
+          if (
+            component === null ||
+            !/^[0-9a-f]{64}$/.test(component) ||
+            !Number.isSafeInteger(componentBytes) ||
+            componentBytes <= 0
+          ) {
+            throw new Error("missing canonical component metadata");
+          }
+          const probe = await connectSignedKernel(
+            { exchange: post },
+            publicKey,
+          );
+          const unknown =
+            component === "0".repeat(64) ? "1".repeat(64) : "0".repeat(64);
+          try {
+            await probe.runHolProofComponent(unknown);
+          } catch {
+            unknownRejected = true;
+          }
+          await probe.closeSession();
+        }
+        const managed =
+          mode === "hash-component"
+            ? await runManagedNativeHttpHashSelectedHol(
+                receiver,
+                receiverConnection,
+                {
+                  endpoint,
+                  expectedPublicKey: publicKey,
+                  component,
+                  timeoutMs: 10_000,
+                },
+              )
+            : await runManagedNativeHttpSignedHol(
+                receiver,
+                receiverConnection,
+                {
+                  endpoint,
+                  expectedPublicKey: publicKey,
+                  timeoutMs: 10_000,
+                },
+              );
         document.body.dataset.progress = "http-complete";
         const reread = await managed.rereadImportedTheorem();
         document.body.dataset.progress = "reread-complete";
         result = {
           kind: managed.kind,
-          statement: managed.statement,
+          statement: "statement" in managed ? managed.statement : undefined,
+          component: "component" in managed ? managed.component : undefined,
           signer: managed.signer,
           remoteConnection: managed.remoteConnection,
           imageBytes: managed.imageBytes,
@@ -83,6 +130,15 @@
               reread.context_id() === managed.context &&
               reread.conclusion_id() === managed.conclusion,
             receiverKeyBytes: receiverKernel.publicKey().byteLength,
+            ...(mode === "hash-component"
+              ? {
+                  unknownRejected,
+                  requestByteLengths,
+                  componentBytes,
+                  componentBytesUploaded:
+                    requestByteLengths.includes(componentBytes),
+                }
+              : {}),
           },
         };
         await managed.cleanup();

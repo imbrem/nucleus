@@ -11,10 +11,10 @@ use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
 use crate::{
-    MAX_SIGNED_MESSAGE_BYTES, ServiceIdentity, ServiceOperation, ServiceResult, SessionInitiator,
-    SignedKernelService, SignedMessageRequest, SignedMessageResponse, SignedServiceCommand,
-    SignedServiceSession, decode_signed_request, decode_signed_response, encode_signed_request,
-    encode_signed_response,
+    MAX_SIGNED_MESSAGE_BYTES, PrecompiledHolProofComponentExecutor, ServiceIdentity,
+    ServiceOperation, ServiceResult, SessionInitiator, SignedKernelService, SignedMessageRequest,
+    SignedMessageResponse, SignedServiceCommand, SignedServiceSession, decode_signed_request,
+    decode_signed_response, encode_signed_request, encode_signed_response,
 };
 
 /// The only application endpoint exposed by the native HTTP carrier.
@@ -54,13 +54,38 @@ impl NativeHttpKernelServer {
         address: impl ToSocketAddrs,
         cors_origin: impl Into<String>,
     ) -> Result<Self, NativeHttpError> {
-        Self::bind_with_request_limit(address, cors_origin, MAX_NATIVE_HTTP_REQUESTS)
+        Self::bind_with_request_limit(address, cors_origin, MAX_NATIVE_HTTP_REQUESTS, None)
+    }
+
+    /// Binds a service with an exact, already hashed and precompiled HOL guest allowlist.
+    ///
+    /// Compilation remains an in-process Wasmtime/JIT prototype, not an isolation
+    /// boundary; see <https://github.com/imbrem/nucleus/issues/320>. The caller must
+    /// finish all byte validation, hash agreement, and compilation before calling
+    /// this constructor. The executor is installed before any session can exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same binding/configuration errors as [`Self::bind`], or an
+    /// error if the fresh service rejects its pre-session executor installation.
+    pub fn bind_with_hol_proof_components(
+        address: impl ToSocketAddrs,
+        cors_origin: impl Into<String>,
+        executor: PrecompiledHolProofComponentExecutor,
+    ) -> Result<Self, NativeHttpError> {
+        Self::bind_with_request_limit(
+            address,
+            cors_origin,
+            MAX_NATIVE_HTTP_REQUESTS,
+            Some(executor),
+        )
     }
 
     fn bind_with_request_limit(
         address: impl ToSocketAddrs,
         cors_origin: impl Into<String>,
         request_limit: usize,
+        executor: Option<PrecompiledHolProofComponentExecutor>,
     ) -> Result<Self, NativeHttpError> {
         let cors_origin = cors_origin.into();
         if !is_exact_http_origin(&cors_origin) {
@@ -77,10 +102,16 @@ impl NativeHttpKernelServer {
                 "native HTTP MVP binds only loopback addresses",
             ));
         }
+        let mut service = SignedKernelService::new()
+            .map_err(|error| NativeHttpError::Service(error.to_string()))?;
+        if let Some(executor) = executor {
+            service
+                .install_hol_proof_component_executor(executor)
+                .map_err(|error| NativeHttpError::Service(error.to_string()))?;
+        }
         Ok(Self {
             listener: TcpListener::bind(addresses.as_slice())?,
-            service: SignedKernelService::new()
-                .map_err(|error| NativeHttpError::Service(error.to_string()))?,
+            service,
             cors_origin,
             remaining_requests: request_limit,
             stop_on_session_close: false,
@@ -915,6 +946,7 @@ mod tests {
             (std::net::Ipv4Addr::LOCALHOST, 0),
             "https://repl.example",
             2,
+            None,
         )
         .unwrap();
         let address = server.local_addr().unwrap();
