@@ -17,6 +17,9 @@ use super::{
     trust_and_receive_pinned_signed_hol_artifact,
 };
 
+#[path = "signed_message.rs"]
+pub mod signed_message;
+
 /// Returns the schema which defines command and response transcript hashing.
 #[must_use]
 pub fn signed_kernel_service_schema() -> O256 {
@@ -309,6 +312,15 @@ pub struct SignedServiceReply {
 }
 
 impl SignedServiceReply {
+    /// Checks server-produced shutdown state without exposing an unverified result.
+    ///
+    /// Client adapters must use [`SignedServiceSession::accept_reply`] instead.
+    #[must_use]
+    #[allow(dead_code, reason = "consumed by sibling transport adapters")]
+    pub(crate) const fn is_goodbye(&self) -> bool {
+        matches!(self.result, ServiceResult::Goodbye)
+    }
+
     fn statement(&self) -> O256 {
         reply_statement(
             self.session,
