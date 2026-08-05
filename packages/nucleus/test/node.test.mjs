@@ -122,9 +122,92 @@ test("runs the REPL kernel through the Wasm binding in Node", async () => {
   );
   assert.equal(missingZeroTruth.kind(), "hol-theorem");
   missingZeroTruth.free();
+
+  const handoffImage = missingZero.image();
+  const handoffSidecar = new TextEncoder().encode(
+    missingZero.attestation_text(),
+  );
+  const handoffReceiver = new WebKernel();
+  const activeBeforeRejectedHandoffs = handoffReceiver.active_connection();
+  assert.throws(
+    () =>
+      handoffReceiver.receive_signed_hol_artifact(
+        new Uint8Array(32),
+        handoffImage,
+        handoffSidecar,
+      ),
+    /signer-pinned/,
+  );
+  assert.equal(
+    handoffReceiver.active_connection(),
+    activeBeforeRejectedHandoffs,
+  );
+  const tamperedImage = handoffImage.slice();
+  tamperedImage[0] ^= 1;
+  assert.throws(
+    () =>
+      handoffReceiver.receive_signed_hol_artifact(
+        missingZero.public_key(),
+        tamperedImage,
+        handoffSidecar,
+      ),
+    /authenticated|image-hash|signature/,
+  );
+  assert.equal(
+    handoffReceiver.active_connection(),
+    activeBeforeRejectedHandoffs,
+  );
+  assert.throws(
+    () =>
+      handoffReceiver.receive_signed_hol_artifact(
+        missingZero.public_key(),
+        handoffImage,
+        handoffSidecar.slice(0, -1),
+      ),
+    /final LF|sidecar/,
+  );
+  assert.equal(
+    handoffReceiver.active_connection(),
+    activeBeforeRejectedHandoffs,
+  );
+
+  const receivedHandoff = handoffReceiver.receive_signed_hol_artifact(
+    missingZero.public_key().slice(),
+    handoffImage,
+    handoffSidecar,
+  );
+  assert.equal(receivedHandoff.kind(), "received-signed-hol-artifact");
+  assert.equal(receivedHandoff.attestation(), missingZero.attestation_text());
+  // Rejections consumed neither the distinct receiver's first receipt nor a row.
+  assert.equal(receivedHandoff.retained_id(), 0);
+  assert.equal(
+    handoffReceiver.active_connection(),
+    receivedHandoff.receiver_connection(),
+  );
+
   kernel.close_connection(missingZero.receiver_connection());
   kernel.close_connection(missingZeroState.connection());
   missingZeroState.free();
+
+  const handoffState = handoffReceiver.open_retained_trusted_hol_state(
+    receivedHandoff.receiver_connection(),
+    receivedHandoff.retained_id(),
+  );
+  assert.equal(receivedHandoff.context_id(), missingZero.context_id());
+  assert.equal(receivedHandoff.conclusion_id(), missingZero.conclusion_id());
+  assert.equal(handoffState.context_id(), receivedHandoff.context_id());
+  assert.equal(handoffState.conclusion_id(), receivedHandoff.conclusion_id());
+  const handoffTruth = handoffReceiver.run_hol(
+    handoffState.connection(),
+    "truth",
+  );
+  assert.equal(handoffTruth.statement(), "true");
+  handoffTruth.free();
+  handoffReceiver.close_connection(receivedHandoff.receiver_connection());
+  handoffReceiver.close_connection(handoffState.connection());
+  handoffState.free();
+  receivedHandoff.free();
+  handoffReceiver.free();
   missingZero.free();
 
   const produced = kernel.produce_signed_hol_artifact(holConnection);
