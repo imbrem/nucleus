@@ -77,6 +77,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-hol-proof-guest-choice@0.0.0",
+      "name": "covalence-hol-proof-guest-choice",
+      "version": "0.0.0",
+      "path": "crates/hol-proof-guest-choice",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_hol_proof_guest_choice",
+          "kinds": [
+            "cdylib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-hol-proof-guest-conversions@0.0.0",
       "name": "covalence-hol-proof-guest-conversions",
       "version": "0.0.0",

@@ -181,6 +181,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "covalence-hol-proof-guest-choice"
+version = "0.0.0"
+dependencies = [
+ "wit-bindgen",
+]
+
+[[package]]
 name = "covalence-hol-proof-guest-conversions"
 version = "0.0.0"
 dependencies = [

@@ -384,6 +384,16 @@ impl HostProofPlan for GuestState {
             })
     }
 
+    fn prove_choice(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        premise: Resource<TheoremNode>,
+    ) -> Result<Resource<TheoremNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&premise, Sort::Theorem))
+            .and_then(|premise| self.append(Recipe::Choice { premise }, Sort::Theorem))
+    }
+
     fn conversion_reflexivity(
         &mut self,
         plan: Resource<ProofPlan>,
@@ -1488,15 +1498,22 @@ mod tests {
                 Resource::new_borrow(premise),
             )
             .unwrap();
-        state
+        let truth_theorem = state
             .prove_truth(plan(), Resource::new_borrow(empty))
+            .unwrap();
+        state
+            .prove_choice(plan(), Resource::new_borrow(truth_theorem.rep()))
             .unwrap();
 
         assert!(matches!(
-            state.recipe[state.recipe.len() - 2],
+            state.recipe[state.recipe.len() - 3],
             Recipe::EqualitySubstitution { .. }
         ));
-        assert!(matches!(state.recipe.last(), Some(Recipe::Truth { .. })));
+        assert!(matches!(
+            state.recipe[state.recipe.len() - 2],
+            Recipe::Truth { .. }
+        ));
+        assert!(matches!(state.recipe.last(), Some(Recipe::Choice { .. })));
     }
 
     #[test]
@@ -1707,6 +1724,170 @@ mod tests {
         let coordinates = assert_assumptions_exports(image.sqlite(), artifact.namespace_id());
         assert_assumptions_kernel_state(image.sqlite(), coordinates);
         assert_generic_theorem_receive(&producer, &artifact, coordinates);
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn configured_real_choice_component_exports_exact_identity_epsilon_graph() {
+        let Some(component) = std::env::var_os("COVALENCE_HOL_CHOICE_GUEST_COMPONENT") else {
+            return;
+        };
+        let bytes = std::fs::read(component).unwrap();
+        let recipe =
+            collect_hol_proof_component(&bytes, WasmtimeComponentLimits::default()).unwrap();
+        assert_eq!(recipe.as_bytes(), crate::hol_guest_plan::CHOICE_WIRE);
+        assert_eq!(
+            recipe.as_bytes(),
+            crate::hol_guest_plan::choice_test_recipe().as_bytes()
+        );
+
+        let producer = Kernel::ephemeral();
+        let artifact = recipe.replay(&producer).unwrap();
+        let image_bytes = covalence_neutron::Bytes::copy_from_slice(artifact.image());
+        let image = covalence_neutron::Connection::deserialize(&image_bytes).unwrap();
+        let sqlite = image.sqlite();
+        let namespace = artifact.namespace_id();
+        assert_eq!(
+            sqlite
+                .query_row(
+                    "SELECT parent_namespace_id, name FROM hol_namespace WHERE namespace_id = ?1",
+                    [namespace],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+                )
+                .unwrap(),
+            (0, "choice-demo".to_owned())
+        );
+        let (context, context_sort, context_name) = sqlite
+            .query_row(
+                "SELECT local_id, sort, name FROM hol_namespace_export
+                 WHERE namespace_id = ?1 AND export_id = 0",
+                [namespace],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            (context, context_sort.as_str(), context_name.as_str()),
+            (0, "context", "empty_context")
+        );
+        let (conclusion, conclusion_sort, conclusion_name) = sqlite
+            .query_row(
+                "SELECT local_id, sort, name FROM hol_namespace_export
+                 WHERE namespace_id = ?1 AND export_id = 1",
+                [namespace],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            (conclusion_sort.as_str(), conclusion_name.as_str()),
+            ("term", "identity_epsilon")
+        );
+        assert_eq!(
+            sqlite
+                .query_row("SELECT count(*) FROM hol_judgement", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            1
+        );
+        assert!(
+            sqlite
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM hol_judgement WHERE ctx_id = ?1 AND term_id = ?2)",
+                    [context, conclusion],
+                    |row| row.get::<_, bool>(0),
+                )
+                .unwrap()
+        );
+
+        let (conclusion_tag, identity, epsilon, conclusion_ty) = sqlite
+            .query_row(
+                "SELECT tag, lhs, rhs, ty FROM hol_node WHERE node_id = ?1",
+                [conclusion],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(conclusion_tag, "MAPP");
+        assert_eq!(
+            sqlite
+                .query_row(
+                    "SELECT tag, lhs, rhs, ty FROM hol_node WHERE node_id = ?1",
+                    [epsilon],
+                    |row| Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, i64>(3)?,
+                    )),
+                )
+                .unwrap(),
+            ("MEPS".to_owned(), identity, None, conclusion_ty)
+        );
+        let (identity_tag, parameter_type, body, identity_type) = sqlite
+            .query_row(
+                "SELECT tag, lhs, rhs, ty FROM hol_node WHERE node_id = ?1",
+                [identity],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(identity_tag, "MLAM");
+        assert_eq!(parameter_type, conclusion_ty);
+        assert_eq!(
+            sqlite
+                .query_row(
+                    "SELECT tag, lhs, rhs, ty FROM hol_node WHERE node_id = ?1",
+                    [body],
+                    |row| Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, i64>(3)?,
+                    )),
+                )
+                .unwrap(),
+            ("MBV".to_owned(), 0, None, parameter_type)
+        );
+        assert_eq!(
+            sqlite
+                .query_row(
+                    "SELECT tag, lhs, rhs, ty FROM hol_node WHERE node_id = ?1",
+                    [identity_type],
+                    |row| Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                    )),
+                )
+                .unwrap(),
+            ("TARR".to_owned(), parameter_type, parameter_type, 1)
+        );
+        assert_generic_theorem_receive(&producer, &artifact, (context, conclusion));
     }
 
     fn assert_assumptions_exports(

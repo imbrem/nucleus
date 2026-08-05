@@ -1,4 +1,4 @@
-package covalence:hol-proof-guest@0.5.0;
+package covalence:hol-proof-guest@0.6.0;
 
 /// A bounded, non-authoritative recipe builder supplied to an untrusted proof guest.
 ///
@@ -14,8 +14,8 @@ package covalence:hol-proof-guest@0.5.0;
 /// signing.
 ///
 /// This contract exposes schematic binding, first-class conversions, immutable contexts, and the
-/// first rules for assumptions and equality composition. Extending it with another HOL rule
-/// changes the contract identity and requires an explicit host policy operation.
+/// first rules for assumptions, equality composition, and Hilbert choice. Extending it with
+/// another HOL rule changes the contract identity and requires an explicit host policy operation.
 interface host {
   enum append-error {
     invalid-resource,
@@ -76,6 +76,9 @@ interface host {
     prove-equality-substitution: func(
       equality: borrow<theorem-node>,
       predicate: borrow<term-node>,
+      premise: borrow<theorem-node>,
+    ) -> result<theorem-node, append-error>;
+    prove-choice: func(
       premise: borrow<theorem-node>,
     ) -> result<theorem-node, append-error>;
 
