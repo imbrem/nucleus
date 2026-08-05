@@ -36,6 +36,7 @@ rust_library(
         "rusqlite": "nucleus//buck/cargo/production:rusqlite-0.40.1",
     },
     env = {
+        "CARGO_MANIFEST_DIR": "crates/lib/sqlite",
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "SQLite binding used by Nucleus",
         "CARGO_PKG_HOMEPAGE": "",
@@ -72,6 +73,7 @@ rust_test(
         "rusqlite": "nucleus//buck/cargo/production:rusqlite-0.40.1",
     },
     env = {
+        "CARGO_MANIFEST_DIR": "crates/lib/sqlite",
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "SQLite binding used by Nucleus",
         "CARGO_PKG_HOMEPAGE": "",

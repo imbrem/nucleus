@@ -7,6 +7,9 @@ license.workspace = true
 description = "Transport-neutral REPL orchestration for Covalence kernels"
 publish = false
 
+[package.metadata.glu]
+buck-mapped-srcs = { "Cargo.toml" = "crates/repl/Cargo.toml", "nucleus//crates/nucleus:package_files" = "crates/nucleus" }
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 
@@ -17,6 +20,9 @@ covalence-lib-rand = { path = "../lib/rand" }
 covalence-lib-sqlite = { path = "../lib/sqlite" }
 covalence-neutron = { path = "../neutron" }
 covalence-nucleus = { path = "../nucleus" }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+covalence-proton = { path = "../proton" }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 wasm-bindgen = "=0.2.121"

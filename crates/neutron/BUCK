@@ -30,6 +30,7 @@ rust_library(
         "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
     },
     env = {
+        "CARGO_MANIFEST_DIR": "crates/neutron",
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Relational state instances for Nucleus",
         "CARGO_PKG_HOMEPAGE": "",
@@ -60,6 +61,7 @@ rust_test(
         "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
     },
     env = {
+        "CARGO_MANIFEST_DIR": "crates/neutron",
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Relational state instances for Nucleus",
         "CARGO_PKG_HOMEPAGE": "",
