@@ -39,6 +39,7 @@ rust_library(
         "sha2": "nucleus//buck/cargo/production:sha2-0.10.9",
     },
     env = {
+        "CARGO_MANIFEST_DIR": "crates/lib/hash",
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Hashing primitives for Nucleus",
         "CARGO_PKG_HOMEPAGE": "",
@@ -78,6 +79,7 @@ rust_test(
         "sha2": "nucleus//buck/cargo/production:sha2-0.10.9",
     },
     env = {
+        "CARGO_MANIFEST_DIR": "crates/lib/hash",
         "CARGO_PKG_AUTHORS": "",
         "CARGO_PKG_DESCRIPTION": "Hashing primitives for Nucleus",
         "CARGO_PKG_HOMEPAGE": "",
