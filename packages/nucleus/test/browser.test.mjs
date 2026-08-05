@@ -201,4 +201,40 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
   await demo.locator("#run-hol").click();
   await demo.getByText("statement\ttrue").waitFor();
 
+  await demo.locator("#prove-missing-zero").click();
+  await demo
+    .getByText("kind\tsigned-natlike-missing-zero")
+    .waitFor({ timeout: 120_000 });
+  await demo.getByText("theorem_oracle\t(APP missing zero)").waitFor();
+  await demo.getByText("receiver\thol missing-zero receiver 7").waitFor();
+
+  const missingZeroDownloads = [];
+  const bothMissingZeroDownloads = new Promise((resolve) => {
+    demo.on("download", (download) => {
+      missingZeroDownloads.push(download);
+      if (missingZeroDownloads.length === 2) resolve();
+    });
+  });
+  await demo.locator("#download-missing-zero").click();
+  await bothMissingZeroDownloads;
+  assert.deepEqual(
+    missingZeroDownloads.map((download) => download.suggestedFilename()).sort(),
+    ["missing-zero.attestation.txt", "missing-zero.sqlite"],
+  );
+
+  await demo.locator("#open-missing-zero-state").click();
+  await demo.getByText(/Opened trusted state/).waitFor();
+  await demo.locator("#connection").selectOption("7");
+  await demo.locator("#close").click();
+  await demo.getByText("Missing-zero receiver cleaned up").waitFor();
+  assert.equal(await demo.locator('#connection option[value="7"]').count(), 0);
+  assert.equal(await demo.locator("#download-missing-zero").isDisabled(), true);
+  assert.equal(
+    await demo.locator("#open-missing-zero-state").isDisabled(),
+    true,
+  );
+  await demo.locator("#connection").selectOption("8");
+  await demo.locator("#recipe").fill("truth");
+  await demo.locator("#run-hol").click();
+  await demo.getByText("statement\ttrue").waitFor();
 });
