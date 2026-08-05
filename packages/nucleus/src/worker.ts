@@ -2,8 +2,15 @@ import init, {
   WebKernel,
   type WebHolOutcome,
   type WebOutcome,
+  type WebRemoteProducedHolComponent,
+  type WebReceivedHolSnapshot,
+  type WebRetainedReceivedHolSnapshot,
   type WebSignedHolOutcome,
 } from "../generated/nucleus.js";
+import {
+  SignedKernelTransportError,
+  runNativeHttpHashSelectedArtifact,
+} from "./signed-http.js";
 
 type Request =
   | { id: number; operation: "open" }
@@ -12,6 +19,19 @@ type Request =
   | { id: number; operation: "run"; connection: number; sql: string }
   | { id: number; operation: "runHol"; connection: number; recipe: string }
   | { id: number; operation: "runSignedHolRoundTrip"; connection: number }
+  | {
+      id: number;
+      operation: "runNativeHttpHashSelectedHol";
+      endpoint: string;
+      expectedPublicKey: Uint8Array;
+      component: string;
+      timeoutMs: number;
+    }
+  | {
+      id: number;
+      operation: "rereadNativeHttpHashSelectedHol";
+      connection: number;
+    }
   | {
       id: number;
       operation: "putImage";
@@ -42,6 +62,22 @@ type SqlValue =
   | { kind: "blob"; value: Uint8Array };
 
 const kernel = init().then(() => new WebKernel());
+let nativeHashRunInFlight = false;
+
+interface RetainedHashSelectedArtifact {
+  component: string;
+  expectedSigner: string;
+  expectedPublicKey: Uint8Array;
+  namespace: string;
+  image: Uint8Array;
+  schema: string;
+  imageHash: string;
+  signer: string;
+  publicKey: Uint8Array;
+  signature: Uint8Array;
+}
+
+const retainedHashSelectedArtifacts = new Map<number, number>();
 
 globalThis.addEventListener(
   "message",
@@ -55,6 +91,8 @@ globalThis.addEventListener(
         id: data.id,
         ok: false,
         error: error instanceof Error ? error.message : String(error),
+        outcomeUnknown:
+          error instanceof SignedKernelTransportError && error.outcomeUnknown,
       });
     }
   },
@@ -68,7 +106,10 @@ async function execute(request: Request): Promise<unknown> {
     case "openHol":
       return connection.open_hol_connection();
     case "close":
+      // Keep the reread receipt until WebKernel has acknowledged connection
+      // removal. A rejected close therefore leaves both available for retry.
       connection.close_connection(request.connection);
+      retainedHashSelectedArtifacts.delete(request.connection);
       return undefined;
     case "run":
       return readOutcome(connection.run(request.connection, request.sql));
@@ -80,6 +121,18 @@ async function execute(request: Request): Promise<unknown> {
       return readSignedHolOutcome(
         connection.run_signed_hol_round_trip(request.connection),
       );
+    case "runNativeHttpHashSelectedHol":
+      if (nativeHashRunInFlight) {
+        throw new Error("a native hash-selected HOL run is already in flight");
+      }
+      nativeHashRunInFlight = true;
+      try {
+        return await runNativeHttpHashSelectedHol(connection, request);
+      } finally {
+        nativeHashRunInFlight = false;
+      }
+    case "rereadNativeHttpHashSelectedHol":
+      return rereadNativeHttpHashSelectedHol(connection, request.connection);
     case "putImage":
       return connection.put_image(request.connection, request.bytes);
     case "attachImage":
@@ -99,6 +152,136 @@ async function execute(request: Request): Promise<unknown> {
     }
     case "serializeMain":
       return connection.serialize_main(request.connection);
+  }
+}
+
+async function runNativeHttpHashSelectedHol(
+  connection: WebKernel,
+  request: Extract<Request, { operation: "runNativeHttpHashSelectedHol" }>,
+): Promise<unknown> {
+  const produced = await runNativeHttpHashSelectedArtifact(request);
+  try {
+    const artifact: RetainedHashSelectedArtifact = {
+      component: request.component,
+      expectedSigner: produced.signer(),
+      expectedPublicKey: request.expectedPublicKey.slice(),
+      namespace: produced.namespace_id(),
+      image: produced.image(),
+      schema: produced.schema(),
+      imageHash: produced.image_hash(),
+      signer: produced.signer(),
+      publicKey: produced.public_key(),
+      signature: produced.signature(),
+    };
+    const { receiverConnection, received } = importHashSelectedArtifact(
+      connection,
+      artifact,
+    );
+    try {
+      return {
+        kind: "native-http-hash-selected-hol",
+        component: artifact.component,
+        signer: artifact.signer,
+        imageBytes: artifact.image.byteLength,
+        ...received,
+        persistentStateHash: connection.hol_image_hash(receiverConnection),
+        receiverConnection,
+      };
+    } catch (error) {
+      // Import is not externally usable until its presentation reaches the
+      // caller. Roll back the receiver if even this final read-only step fails.
+      try {
+        connection.close_connection(receiverConnection);
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          "could not roll back an unpresented HOL receiver",
+        );
+      } finally {
+        retainedHashSelectedArtifacts.delete(receiverConnection);
+      }
+      throw error;
+    }
+  } finally {
+    produced.free();
+  }
+}
+
+function importHashSelectedArtifact(
+  connection: WebKernel,
+  artifact: RetainedHashSelectedArtifact,
+): {
+  receiverConnection: number;
+  received: ReturnType<typeof readReceivedHolSnapshot>;
+} {
+  const receiver = connection.open_hol_connection();
+  try {
+    const retained = receiveHashSelectedArtifact(
+      connection,
+      receiver,
+      artifact,
+    );
+    const retainedId = retained.retained_id();
+    const received = readReceivedHolSnapshot(retained);
+    retainedHashSelectedArtifacts.set(receiver, retainedId);
+    return { receiverConnection: receiver, received };
+  } catch (error) {
+    connection.close_connection(receiver);
+    throw error;
+  }
+}
+
+function rereadNativeHttpHashSelectedHol(
+  connection: WebKernel,
+  receiver: number,
+) {
+  const retained = retainedHashSelectedArtifacts.get(receiver);
+  if (retained === undefined) {
+    throw new Error("hash-selected HOL receiver was closed or cleaned up");
+  }
+  const before = connection.hol_image_hash(receiver);
+  const received = readReceivedHolSnapshot(
+    connection.reread_received_hol_artifact(receiver, retained),
+  );
+  const after = connection.hol_image_hash(receiver);
+  if (after !== before) {
+    throw new Error("read-only HOL reread changed persistent receiver state");
+  }
+  return { ...received, persistentStateHash: after };
+}
+
+function receiveHashSelectedArtifact(
+  connection: WebKernel,
+  receiver: number,
+  artifact: RetainedHashSelectedArtifact,
+): WebRetainedReceivedHolSnapshot {
+  const pinned = connection.authenticate_pinned_signed_hol_artifact(
+    0xffff_fffe,
+    artifact.expectedSigner,
+    artifact.expectedPublicKey,
+    artifact.namespace,
+    artifact.image,
+    artifact.schema,
+    artifact.imageHash,
+    artifact.signer,
+    artifact.publicKey,
+    artifact.signature,
+  );
+  return connection.trust_pinned_signed_hol_artifact_retained(receiver, pinned);
+}
+
+function readReceivedHolSnapshot(
+  snapshot: WebReceivedHolSnapshot | WebRetainedReceivedHolSnapshot,
+) {
+  try {
+    return {
+      importId: snapshot.import_id(),
+      namespace: snapshot.namespace_id(),
+      context: snapshot.context_id(),
+      conclusion: snapshot.conclusion_id(),
+    };
+  } finally {
+    snapshot.free();
   }
 }
 

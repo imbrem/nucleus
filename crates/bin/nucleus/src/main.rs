@@ -453,6 +453,60 @@ fn parse_load(command: &str) -> Option<(&str, &str)> {
     (!schema.is_empty() && !path.is_empty()).then_some((schema, path))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn run_interactive_hash_selected_wasm_hol(
+    kernel: &Kernel,
+    repl: &mut LocalRepl,
+    output: &mut impl io::Write,
+    arguments: &str,
+) -> Result<()> {
+    let mut arguments = arguments.split_whitespace();
+    let expected = arguments
+        .next()
+        .ok_or("usage: .hol hash-wasm O256 COMPONENT DIRECTORY")?;
+    let component = arguments
+        .next()
+        .ok_or("usage: .hol hash-wasm O256 COMPONENT DIRECTORY")?;
+    let directory = arguments
+        .next()
+        .ok_or("usage: .hol hash-wasm O256 COMPONENT DIRECTORY")?;
+    if arguments.next().is_some() {
+        return Err("usage: .hol hash-wasm O256 COMPONENT DIRECTORY".into());
+    }
+    let (receiver, _, _, _) = run_hash_selected_wasm_hol(
+        output,
+        kernel,
+        repl,
+        O256::from_hex(expected)?,
+        Path::new(component),
+        Path::new(directory),
+    )?;
+    repl.select(receiver)?;
+    writeln!(output, "using receiver connection {receiver}")?;
+    Ok(())
+}
+
+fn print_connections(repl: &mut LocalRepl, output: &mut impl io::Write) -> Result<()> {
+    let active = repl.active()?;
+    let mut statement = repl
+        .state()
+        .sqlite()
+        .prepare("SELECT connection_id, protocol FROM repl_connection ORDER BY connection_id")?;
+    let rows = statement.query_map((), |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+    })?;
+    for row in rows {
+        let (id, protocol) = row?;
+        let marker = if active.is_some_and(|active| active.get() == id) {
+            '*'
+        } else {
+            ' '
+        };
+        writeln!(output, "{marker} {id}\t{protocol}")?;
+    }
+    Ok(())
+}
+
 fn print_help(output: &mut impl io::Write) -> io::Result<()> {
     writeln!(
         output,
@@ -466,6 +520,11 @@ fn print_help(output: &mut impl io::Write) -> io::Result<()> {
     writeln!(
         output,
         ".hol signed-roundtrip DIRECTORY  prove, sign, import, verify, and export artifacts"
+    )?;
+    #[cfg(not(target_arch = "wasm32"))]
+    writeln!(
+        output,
+        ".hol hash-wasm O256 COMPONENT DIRECTORY  run a provisioned component and retain its receiver"
     )?;
     writeln!(output, ".use ID            select a connection")?;
     writeln!(output, ".close [ID]        close a connection")?;
@@ -515,22 +574,7 @@ fn run_line(
         return Ok(true);
     }
     if line == ".connections" {
-        let active = repl.active()?;
-        let mut statement = repl.state().sqlite().prepare(
-            "SELECT connection_id, protocol FROM repl_connection ORDER BY connection_id",
-        )?;
-        let rows = statement.query_map((), |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-        })?;
-        for row in rows {
-            let (id, protocol) = row?;
-            let marker = if active.is_some_and(|active| active.get() == id) {
-                '*'
-            } else {
-                ' '
-            };
-            writeln!(output, "{marker} {id}\t{protocol}")?;
-        }
+        print_connections(repl, output)?;
         return Ok(true);
     }
     if line == ".close" || line.starts_with(".close ") {
@@ -573,6 +617,11 @@ fn run_line(
         print_signed_hol_outcome(output, &outcome)?;
         writeln!(output, "receiver_connection\t{receiver}")?;
         write_signed_hol_artifacts(output, fresh, &outcome)?;
+        return Ok(true);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(arguments) = line.strip_prefix(".hol hash-wasm ") {
+        run_interactive_hash_selected_wasm_hol(kernel, repl, output, arguments)?;
         return Ok(true);
     }
     if let Some(source) = line.strip_prefix(".hol ") {
@@ -1106,6 +1155,48 @@ mod tests {
         assert!(output.contains("kind\thash-selected-wasm-hol\n"));
         assert!(output.contains(&format!("component\t{digest}\n")));
         assert!(output.contains("imported_theorem\t0\t8\n"));
+        fs::remove_file(output_path.join("proof.sqlite")).unwrap();
+        fs::remove_file(output_path.join("attestation.txt")).unwrap();
+        fs::remove_dir(output_path).unwrap();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn interactive_hash_selected_command_retains_and_selects_receiver() {
+        let Some(component) = std::env::var_os("COVALENCE_HOL_GUEST_COMPONENT") else {
+            return;
+        };
+        let digest = O256::from_bytes(fs::read(&component).unwrap());
+        let output_path = std::env::temp_dir().join(format!(
+            "nucleus-interactive-hash-guest-{}-{}",
+            std::process::id(),
+            NEXT_FILE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let kernel = Kernel::ephemeral();
+        let mut repl = Repl::new(kernel.verifying_key().as_bytes()).unwrap();
+        let mut output = Vec::new();
+        let command = format!(
+            ".hol hash-wasm {digest} {} {}",
+            Path::new(&component).display(),
+            output_path.display()
+        );
+
+        assert!(run_line(&kernel, &mut repl, &mut output, &command).unwrap());
+        let receiver = repl.active().unwrap().expect("selected receiver");
+        assert!(repl.get_mut(receiver).unwrap().hol_mut().is_ok());
+        assert_eq!(
+            repl.inspect_state(
+                "SELECT protocol, remote_connection_id FROM repl_connection WHERE connection_id = 1"
+            )
+            .unwrap()
+            .rows,
+            [[Value::Text("nucleus/hol".to_owned()), Value::Null]]
+        );
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains(&format!("component\t{digest}\n")));
+        assert!(output.contains("imported_theorem\t0\t8\n"));
+        assert!(output.contains(&format!("using receiver connection {receiver}\n")));
+
         fs::remove_file(output_path.join("proof.sqlite")).unwrap();
         fs::remove_file(output_path.join("attestation.txt")).unwrap();
         fs::remove_dir(output_path).unwrap();
