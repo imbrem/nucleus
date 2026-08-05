@@ -134,6 +134,28 @@
     <div id="infinity-status" role="status">No assumption retained</div>
     <div id="infinity-output" aria-live="polite"></div>
 
+    <h2>Signed NatLike missing-zero theorem</h2>
+    <p>
+      Derive the exact theorem <code>(APP missing zero)</code>, sign the
+      complete kernel-state database, and retain its explicitly trusted
+      receiver. The non-surjectivity and classical-duality steps are not
+      persisted.
+    </p>
+    <div class="bar">
+      <button id="prove-missing-zero" type="button">Prove missing zero</button>
+      <button id="download-missing-zero" type="button" disabled>
+        Download database + attestation
+      </button>
+      <button id="open-missing-zero-state" type="button" disabled>
+        Open trusted state
+      </button>
+      <button id="cleanup-missing-zero" type="button" disabled>
+        Clean up receiver
+      </button>
+    </div>
+    <div id="missing-zero-status" role="status">No theorem retained</div>
+    <div id="missing-zero-output" aria-live="polite"></div>
+
     <h2>Hash-selected native HOL guest</h2>
     <p>
       Build this package with
@@ -216,8 +238,21 @@ cargo run -p covalence-bin-nucleus -- \
       const infinityCleanup = document.querySelector("#cleanup-infinity");
       const infinityStatus = document.querySelector("#infinity-status");
       const infinityOutput = document.querySelector("#infinity-output");
+      const missingZeroRun = document.querySelector("#prove-missing-zero");
+      const missingZeroDownload = document.querySelector(
+        "#download-missing-zero",
+      );
+      const missingZeroOpenState = document.querySelector(
+        "#open-missing-zero-state",
+      );
+      const missingZeroCleanup = document.querySelector(
+        "#cleanup-missing-zero",
+      );
+      const missingZeroStatus = document.querySelector("#missing-zero-status");
+      const missingZeroOutput = document.querySelector("#missing-zero-output");
       let retainedNative;
       let retainedInfinity;
+      let retainedMissingZero;
 
       function selected() {
         const connection = connections.get(connectionSelect.value);
@@ -415,6 +450,114 @@ cargo run -p covalence-bin-nucleus -- \
         }
       });
 
+      async function disposeMissingZero(state) {
+        await state.result.cleanup();
+        connections.delete(state.receiverId);
+        connectionSelect
+          .querySelector(`option[value="${state.receiverId}"]`)
+          ?.remove();
+        if (retainedMissingZero === state) {
+          retainedMissingZero = undefined;
+          missingZeroDownload.disabled = true;
+          missingZeroOpenState.disabled = true;
+          missingZeroCleanup.disabled = true;
+          missingZeroRun.disabled = false;
+        }
+      }
+
+      missingZeroRun.addEventListener("click", async () => {
+        if (missingZeroRun.disabled) return;
+        missingZeroRun.disabled = true;
+        missingZeroStatus.textContent =
+          "Deriving, signing, and importing missing zero…";
+        missingZeroOutput.className = "";
+        try {
+          const result = await repl.proveNatLikeMissingZero();
+          const receiverId = String(nextConnection++);
+          connections.set(receiverId, result.receiver);
+          const option = document.createElement("option");
+          option.value = receiverId;
+          option.textContent = `hol missing-zero receiver ${receiverId}`;
+          connectionSelect.append(option);
+          connectionSelect.value = receiverId;
+          retainedMissingZero = { result, receiverId };
+          missingZeroDownload.disabled = false;
+          missingZeroOpenState.disabled = false;
+          missingZeroCleanup.disabled = false;
+          missingZeroOutput.textContent = [
+            `kind\t${result.kind}`,
+            `theorem_oracle\t${result.theoremOracle}`,
+            `namespace\t${result.namespace}`,
+            `schema\t${result.schema}`,
+            `image\t${result.imageHash}`,
+            `signer\t${result.signer}`,
+            `theorem\t${result.context}\t${result.conclusion}`,
+            `receiver\t${option.textContent}`,
+          ].join("\n");
+          missingZeroStatus.textContent =
+            "Signed theorem and receiver retained";
+        } catch (error) {
+          missingZeroOutput.className = "error";
+          missingZeroOutput.textContent =
+            error instanceof Error ? error.message : String(error);
+          missingZeroStatus.textContent = "Missing-zero proof failed";
+          missingZeroRun.disabled = false;
+        }
+      });
+
+      missingZeroDownload.addEventListener("click", () => {
+        if (retainedMissingZero === undefined) return;
+        download(
+          "missing-zero.sqlite",
+          retainedMissingZero.result.image,
+          "application/vnd.sqlite3",
+        );
+        download(
+          "missing-zero.attestation.txt",
+          retainedMissingZero.result.attestation,
+          "text/plain",
+        );
+        missingZeroStatus.textContent = "Exact signed theorem files downloaded";
+      });
+
+      missingZeroOpenState.addEventListener("click", async () => {
+        try {
+          if (retainedMissingZero === undefined)
+            throw new Error("no signed missing-zero theorem is retained");
+          const state = await retainedMissingZero.result.openTrustedState();
+          const childId = String(nextConnection++);
+          connections.set(childId, state.connection);
+          const option = document.createElement("option");
+          option.value = childId;
+          option.textContent = `hol missing-zero state ${childId}`;
+          connectionSelect.append(option);
+          connectionSelect.value = childId;
+          missingZeroStatus.textContent = `Opened trusted state ${state.sourceNamespace}\t${state.context}\t${state.conclusion}`;
+        } catch (error) {
+          missingZeroOutput.className = "error";
+          missingZeroOutput.textContent =
+            error instanceof Error ? error.message : String(error);
+          missingZeroStatus.textContent = "Trusted-state open failed";
+        }
+      });
+
+      missingZeroCleanup.addEventListener("click", async () => {
+        const state = retainedMissingZero;
+        if (state === undefined) return;
+        missingZeroCleanup.disabled = true;
+        try {
+          await disposeMissingZero(state);
+          missingZeroStatus.textContent = "Missing-zero receiver cleaned up";
+        } catch (error) {
+          missingZeroOutput.className = "error";
+          missingZeroOutput.textContent =
+            error instanceof Error ? error.message : String(error);
+          missingZeroStatus.textContent =
+            "Cleanup failed; receiver retained for retry";
+          missingZeroCleanup.disabled = false;
+        }
+      });
+
       async function disposeNative(state) {
         await state.result.cleanup();
         connections.delete(state.receiverId);
@@ -560,6 +703,7 @@ cargo run -p covalence-bin-nucleus -- \
           const id = connectionSelect.value;
           const managed = retainedNative;
           const assumed = retainedInfinity;
+          const missingZero = retainedMissingZero;
           if (assumed !== undefined && assumed.receiverId === id) {
             infinityCleanup.disabled = true;
             try {
@@ -568,6 +712,21 @@ cargo run -p covalence-bin-nucleus -- \
             } catch (error) {
               infinityCleanup.disabled = false;
               infinityStatus.textContent =
+                "Cleanup failed; receiver retained for retry";
+              throw error;
+            }
+          } else if (
+            missingZero !== undefined &&
+            missingZero.receiverId === id
+          ) {
+            missingZeroCleanup.disabled = true;
+            try {
+              await disposeMissingZero(missingZero);
+              missingZeroStatus.textContent =
+                "Missing-zero receiver cleaned up";
+            } catch (error) {
+              missingZeroCleanup.disabled = false;
+              missingZeroStatus.textContent =
                 "Cleanup failed; receiver retained for retry";
               throw error;
             }
