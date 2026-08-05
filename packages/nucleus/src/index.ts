@@ -3,7 +3,9 @@ import init, {
   WebHolOutcome,
   WebKernel,
   WebOutcome,
+  WebRemoteHolComponentReply,
   WebRemoteProducedHol,
+  WebRemoteProducedHolComponent,
   WebReplDirectory,
   WebSignedKernelSession,
 } from "../generated/nucleus.js";
@@ -14,7 +16,9 @@ export {
   WebHolOutcome,
   WebKernel,
   WebOutcome,
+  WebRemoteHolComponentReply,
   WebRemoteProducedHol,
+  WebRemoteProducedHolComponent,
   WebReplDirectory,
   WebSignedKernelSession,
 };
@@ -172,6 +176,9 @@ export interface BrowserKernelEndpoint {
 /** Above-TCB coordinator for multiple independently keyed browser Workers. */
 export interface BrowserReplDirectory {
   spawnWorker(endpoint?: string): Promise<BrowserKernelEndpoint>;
+  connectNativeHttpHolComponent(
+    options: NativeHttpHolComponentOptions,
+  ): Promise<ManagedNativeHttpHolComponentEndpoint>;
   kernels(): Promise<BrowserKernelEntry[]>;
   connections(): Promise<BrowserConnectionEntry[]>;
   select(connection: ManagedConnectionId): Promise<void>;
@@ -194,6 +201,32 @@ export interface NativeHttpHolOptions {
   expectedPublicKey: Uint8Array;
   /** Per-request deadline. Defaults to ten seconds. */
   timeoutMs?: number;
+}
+
+export interface NativeHttpHolComponentOptions extends NativeHttpHolOptions {
+  /** Exact locally allowlisted component digest obtained out of band. */
+  expectedComponent: string;
+}
+
+export interface RemoteProducedHolComponent {
+  kind: "signed-hol-component-artifact";
+  component: string;
+  artifact: SignedHolArtifact;
+}
+
+/** Caller-owned authenticated native session for one allowlisted component. */
+export interface ManagedNativeHttpHolComponentEndpoint {
+  readonly id: KernelId;
+  readonly signer: string;
+  readonly publicKey: Uint8Array;
+  readonly component: string;
+  readonly sessionId: string;
+  run(): Promise<RemoteProducedHolComponent>;
+  retryPendingRun(): Promise<RemoteProducedHolComponent>;
+  lifecycle(): Promise<string[]>;
+  shutdown(): Promise<void>;
+  retryPendingShutdown(): Promise<void>;
+  forget(): Promise<void>;
 }
 
 export interface NativeHttpHolOutcome {
@@ -237,6 +270,16 @@ export class SignedKernelTransportError extends Error {
     super(message, { cause });
     this.name = "SignedKernelTransportError";
     this.outcomeUnknown = outcomeUnknown;
+  }
+}
+
+/** A bounded endpoint-signed failure whose command outcome is known. */
+export class SignedKernelOperationError extends Error {
+  readonly outcomeUnknown = false;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "SignedKernelOperationError";
   }
 }
 
@@ -544,6 +587,28 @@ async function signedFetch(
   }
 }
 
+function validateNativeHttpOptions(options: NativeHttpHolComponentOptions): void {
+  const timeoutMs = options.timeoutMs ?? 10_000;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new Error("HTTP timeout must be a positive safe integer");
+  }
+  if (options.expectedPublicKey.byteLength !== 32) {
+    throw new Error("endpoint key must be exactly 32 bytes");
+  }
+  if (!/^[0-9a-f]{64}$/.test(options.expectedComponent)) {
+    throw new Error("component must be a canonical lowercase O256");
+  }
+  const endpoint = new URL(options.endpoint);
+  if (
+    (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") ||
+    endpoint.username !== "" ||
+    endpoint.password !== "" ||
+    endpoint.hash !== ""
+  ) {
+    throw new Error("native endpoint must be an exact HTTP(S) URL");
+  }
+}
+
 async function readBoundedResponse(
   response: Response,
   limit: number,
@@ -700,6 +765,10 @@ class WorkerRepl implements BrowserRepl {
 class WorkerDirectory implements BrowserReplDirectory {
   readonly #state = init().then(() => new WebReplDirectory());
   readonly #kernels = new Map<KernelId, DirectoryKernelEndpoint>();
+  readonly #nativeEndpoints = new Map<
+    KernelId,
+    NativeHttpHolComponentEndpoint
+  >();
   #closed = false;
 
   async spawnWorker(endpoint?: string): Promise<BrowserKernelEndpoint> {
@@ -724,6 +793,50 @@ class WorkerDirectory implements BrowserReplDirectory {
       return kernel;
     } catch (error) {
       worker.close();
+      throw error;
+    }
+  }
+
+  async connectNativeHttpHolComponent(
+    options: NativeHttpHolComponentOptions,
+  ): Promise<ManagedNativeHttpHolComponentEndpoint> {
+    if (this.#closed) throw new Error("browser REPL directory is closed");
+    validateNativeHttpOptions(options);
+    const timeoutMs = options.timeoutMs ?? 10_000;
+    const description = await signedFetch(
+      options.endpoint,
+      WebSignedKernelSession.describe_request(),
+      timeoutMs,
+      false,
+    );
+    const session = WebSignedKernelSession.begin(
+      options.expectedPublicKey,
+      description,
+    );
+    const state = await this.#state;
+    const id = state.register_kernel(
+      "native-http-hol-component",
+      options.endpoint,
+      options.expectedPublicKey,
+    ) as KernelId;
+    const sessionId = state.begin_remote_session(id);
+    const endpoint = new NativeHttpHolComponentEndpoint(
+      this,
+      session,
+      id,
+      session.expected_signer(),
+      options.expectedPublicKey.slice(),
+      options.expectedComponent,
+      sessionId,
+      options.endpoint,
+      timeoutMs,
+    );
+    this.#nativeEndpoints.set(id, endpoint);
+    try {
+      await endpoint.establish();
+      return endpoint;
+    } catch (error) {
+      await endpoint.markFailed();
       throw error;
     }
   }
@@ -778,6 +891,9 @@ class WorkerDirectory implements BrowserReplDirectory {
 
   async close(): Promise<void> {
     if (this.#closed) return;
+    for (const endpoint of [...this.#nativeEndpoints.values()]) {
+      await endpoint.closeAll();
+    }
     const kernels = [...this.#kernels.values()];
     for (const kernel of kernels) await kernel.closeAll();
     this.#closed = true;
@@ -804,6 +920,19 @@ class WorkerDirectory implements BrowserReplDirectory {
   async unregisterKernel(id: KernelId): Promise<void> {
     (await this.#state).unregister_kernel(id);
     this.#kernels.delete(id);
+    this.#nativeEndpoints.delete(id);
+  }
+
+  async transitionRemoteSession(session: string, state: string): Promise<void> {
+    (await this.#state).transition_remote_session(session, state);
+  }
+
+  async remoteSessionLifecycle(session: string): Promise<string[]> {
+    return readSessionLifecycle(await this.#state, session);
+  }
+
+  async forgetRemoteSession(session: string): Promise<void> {
+    (await this.#state).forget_remote_session(session);
   }
 
   async expectedIdentity(id: KernelId): Promise<{
@@ -812,15 +941,247 @@ class WorkerDirectory implements BrowserReplDirectory {
     signer: string;
   }> {
     const kernel = this.#kernels.get(id);
-    if (kernel === undefined) throw new Error(`unknown kernel ${id}`);
+    const native = this.#nativeEndpoints.get(id);
+    if (kernel === undefined && native === undefined)
+      throw new Error(`unknown kernel ${id}`);
     const rows = await this.kernels();
     const row = rows.find((entry) => entry.id === id);
     if (row === undefined) throw new Error(`unknown kernel ${id}`);
+    const signer = kernel?.signer ?? native?.signer;
+    if (signer === undefined) throw new Error(`unknown kernel ${id}`);
     return {
       kernelId: id,
       publicKey: row.publicKey,
-      signer: kernel.signer,
+      signer,
     };
+  }
+}
+
+type NativeSessionState =
+  | "opening"
+  | "opening-unknown"
+  | "established"
+  | "command-unknown"
+  | "closing"
+  | "closing-unknown"
+  | "closed"
+  | "failed";
+
+class NativeHttpHolComponentEndpoint
+  implements ManagedNativeHttpHolComponentEndpoint
+{
+  #state: NativeSessionState = "opening";
+  #forgotten = false;
+
+  constructor(
+    private readonly directory: WorkerDirectory,
+    private readonly session: WebSignedKernelSession,
+    readonly id: KernelId,
+    readonly signer: string,
+    readonly publicKey: Uint8Array,
+    readonly component: string,
+    readonly sessionId: string,
+    private readonly url: string,
+    private readonly timeoutMs: number,
+  ) {}
+
+  async establish(): Promise<void> {
+    const request = this.session.session_request();
+    try {
+      const response = await signedFetch(
+        this.url,
+        request,
+        this.timeoutMs,
+        true,
+      );
+      acceptStatefulReply(() => this.session.accept_session(response));
+    } catch (error) {
+      await this.directory.transitionRemoteSession(
+        this.sessionId,
+        "opening-unknown",
+      );
+      this.#state = "opening-unknown";
+      throw error;
+    }
+    await this.directory.transitionRemoteSession(
+      this.sessionId,
+      "established",
+    );
+    this.#state = "established";
+  }
+
+  run(): Promise<RemoteProducedHolComponent> {
+    if (this.#state !== "established") {
+      return Promise.reject(
+        new Error(`native component session is ${this.#state}`),
+      );
+    }
+    return this.sendRun(
+      this.session.run_hol_proof_component_command(this.component),
+      false,
+    );
+  }
+
+  retryPendingRun(): Promise<RemoteProducedHolComponent> {
+    if (this.#state !== "command-unknown") {
+      return Promise.reject(new Error("no ambiguous component command exists"));
+    }
+    return this.sendRun(this.session.retry_pending_command(), true);
+  }
+
+  lifecycle(): Promise<string[]> {
+    return this.directory.remoteSessionLifecycle(this.sessionId);
+  }
+
+  async shutdown(): Promise<void> {
+    if (this.#state !== "established") {
+      throw new Error(`native component session is ${this.#state}`);
+    }
+    const command = this.session.shutdown_command();
+    await this.directory.transitionRemoteSession(this.sessionId, "closing");
+    this.#state = "closing";
+    await this.sendShutdown(command);
+  }
+
+  async retryPendingShutdown(): Promise<void> {
+    if (this.#state !== "closing-unknown") {
+      throw new Error("no ambiguous shutdown command exists");
+    }
+    await this.sendShutdown(this.session.retry_pending_command());
+  }
+
+  async forget(): Promise<void> {
+    if (this.#forgotten) return;
+    if (this.#state !== "closed" && this.#state !== "failed") {
+      throw new Error("native component session must be closed or failed");
+    }
+    await this.directory.forgetRemoteSession(this.sessionId);
+    await this.directory.unregisterKernel(this.id);
+    this.#forgotten = true;
+    this.session.free();
+  }
+
+  async closeAll(): Promise<void> {
+    if (this.#forgotten) return;
+    if (this.#state === "established") {
+      try {
+        await this.shutdown();
+      } catch {
+        await this.markFailed();
+      }
+    } else if (this.#state !== "closed" && this.#state !== "failed") {
+      await this.markFailed();
+    }
+    await this.forget();
+  }
+
+  async markFailed(): Promise<void> {
+    if (this.#state === "failed" || this.#state === "closed") return;
+    await this.directory.transitionRemoteSession(this.sessionId, "failed");
+    this.#state = "failed";
+  }
+
+  async sendRun(
+    command: Uint8Array,
+    recovering: boolean,
+  ): Promise<RemoteProducedHolComponent> {
+    let response: Uint8Array;
+    try {
+      response = await signedFetch(
+        this.url,
+        command,
+        this.timeoutMs,
+        true,
+      );
+    } catch (error) {
+      if (this.#state !== "command-unknown") {
+        await this.directory.transitionRemoteSession(
+          this.sessionId,
+          "command-unknown",
+        );
+      }
+      this.#state = "command-unknown";
+      throw error;
+    }
+
+    let reply: WebRemoteHolComponentReply;
+    try {
+      reply = this.session.accept_hol_proof_component_reply(response);
+    } catch (error) {
+      if (this.#state !== "command-unknown") {
+        await this.directory.transitionRemoteSession(
+          this.sessionId,
+          "command-unknown",
+        );
+      }
+      this.#state = "command-unknown";
+      throw new SignedKernelTransportError(
+        `native signed-kernel reply could not be accepted: ${String(error)}`,
+        true,
+        error,
+      );
+    }
+    try {
+      if (recovering) {
+        await this.directory.transitionRemoteSession(
+          this.sessionId,
+          "established",
+        );
+        this.#state = "established";
+      }
+      const operationError = reply.operation_error();
+      if (operationError !== undefined) {
+        throw new SignedKernelOperationError(operationError);
+      }
+      const produced = reply.take_produced();
+      try {
+        if (produced.component() !== this.component) {
+          throw new SignedKernelOperationError(
+            "signed result identifies a different component",
+          );
+        }
+        return {
+          kind: "signed-hol-component-artifact",
+          component: produced.component(),
+          artifact: {
+            namespace: produced.namespace_id(),
+            image: produced.image(),
+            schema: produced.schema(),
+            imageHash: produced.image_hash(),
+            signer: produced.signer(),
+            publicKey: produced.public_key(),
+            signature: produced.signature(),
+          },
+        };
+      } finally {
+        produced.free();
+      }
+    } finally {
+      reply.free();
+    }
+  }
+
+  async sendShutdown(command: Uint8Array): Promise<void> {
+    try {
+      const response = await signedFetch(
+        this.url,
+        command,
+        this.timeoutMs,
+        true,
+      );
+      acceptStatefulReply(() => this.session.accept_goodbye(response));
+    } catch (error) {
+      if (this.#state !== "closing-unknown") {
+        await this.directory.transitionRemoteSession(
+          this.sessionId,
+          "closing-unknown",
+        );
+      }
+      this.#state = "closing-unknown";
+      throw error;
+    }
+    await this.directory.transitionRemoteSession(this.sessionId, "closed");
+    this.#state = "closed";
   }
 }
 
