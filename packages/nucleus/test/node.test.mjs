@@ -64,6 +64,32 @@ test("runs the REPL kernel through the Wasm binding in Node", async () => {
   assert.throws(() => kernel.run_hol(connection, "truth"));
   assert.throws(() => kernel.run(holConnection, "SELECT 1"));
 
+  const infinity = kernel.assume_dedekind_infinity();
+  assert.equal(infinity.kind(), "signed-assumption");
+  assert.match(infinity.attestation_text(), /^authority=signed-assumption\n/);
+  assert.ok(infinity.image().byteLength > 0);
+  assert.equal(infinity.public_key().byteLength, 32);
+  assert.equal(infinity.signature().byteLength, 64);
+  assert.equal(kernel.active_connection(), infinity.receiver_connection());
+  const infinityState = kernel.open_retained_trusted_hol_state(
+    infinity.receiver_connection(),
+    infinity.retained_id(),
+  );
+  assert.equal(infinityState.context_id(), infinity.context_id());
+  assert.equal(infinityState.conclusion_id(), infinity.conclusion_id());
+  const infinityTruth = kernel.run_hol(infinityState.connection(), "truth");
+  assert.equal(infinityTruth.kind(), "hol-theorem");
+  infinityTruth.free();
+  kernel.close_connection(infinity.receiver_connection());
+  const infinityTruthAfterOwnerClose = kernel.run_hol(
+    infinityState.connection(),
+    "truth",
+  );
+  infinityTruthAfterOwnerClose.free();
+  kernel.close_connection(infinityState.connection());
+  infinityState.free();
+  infinity.free();
+
   const produced = kernel.produce_signed_hol_artifact(holConnection);
   const receiver = kernel.open_hol_connection();
   const wrongReceiver = kernel.open_hol_connection();

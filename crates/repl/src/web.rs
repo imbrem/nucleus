@@ -3,14 +3,15 @@ use std::collections::HashMap;
 use covalence_lib_hash::O256;
 use wasm_bindgen::prelude::*;
 
+use super::hol_infinity::produce_and_retain_signed_dedekind_infinity_assumption_bounded;
 use super::{
     AllowAll, ConnectionEntry, ConnectionId, ExpectedKernelIdentity, HolRecipe, HolRecipeResult,
     Kernel, KernelEntry, KernelId, LocalConnection, MAX_SIGNED_MESSAGE_BYTES, Outcome,
     PinnedSignedHolArtifact, ProducedSignedHol, QueryResult, ReceivedHolSnapshot, Repl,
     RetainedReceivedHolSnapshot, SIGNED_HOL_PHASES, ServiceIdentity, ServiceOperation,
     ServiceProducedHol, ServiceProducedHolComponent, ServiceResult, SessionInitiator,
-    SignedHolArtifact, SignedHolRoundTripResult, SignedKernelService, SignedMessageRequest,
-    SignedMessageResponse, SignedServiceCommand, SignedServiceSession, Value,
+    SignedHolArtifact, SignedHolRoundTripResult, SignedInfinityAssumption, SignedKernelService,
+    SignedMessageRequest, SignedMessageResponse, SignedServiceCommand, SignedServiceSession, Value,
     authenticate_pinned_signed_hol_artifact, decode_signed_request, decode_signed_response,
     encode_signed_request, encode_signed_response, open_retained_trusted_hol_as_managed_state,
     produce_signed_hol_artifact, reread_received_hol_snapshot, run_managed_signed_hol_round_trip,
@@ -97,6 +98,14 @@ pub struct WebRetainedReceivedHolSnapshot {
 #[wasm_bindgen]
 pub struct WebManagedTrustedHolState {
     state: super::ManagedTrustedHolState,
+}
+
+/// Browser presentation of the explicit signed Dedekind-infinity assumption.
+#[wasm_bindgen]
+pub struct WebSignedInfinityAssumption {
+    assumption: SignedInfinityAssumption,
+    receiver: u32,
+    retained: u32,
 }
 
 /// Browser-side authenticated session state for a remote signed kernel service.
@@ -735,6 +744,29 @@ impl WebKernel {
         Ok(WebSignedHolOutcome {
             outcome,
             receiver_connection: u32::try_from(receiver_id.get()).map_err(js_error)?,
+        })
+    }
+
+    /// Creates, signs, explicitly trusts/imports, and retains the infinity assumption fixture.
+    pub fn assume_dedekind_infinity(&mut self) -> Result<WebSignedInfinityAssumption, JsValue> {
+        let retained_id = self.next_received_artifact;
+        let next_retained_id = retained_id
+            .checked_add(1)
+            .ok_or_else(|| JsValue::from_str("received artifact IDs are exhausted"))?;
+        let (assumption, receiver, retained) =
+            produce_and_retain_signed_dedekind_infinity_assumption_bounded(
+                &self.kernel,
+                &mut self.repl,
+                i64::from(u32::MAX),
+            )
+            .map_err(js_error)?;
+        let receiver = u32::try_from(receiver.get()).map_err(js_error)?;
+        self.next_received_artifact = next_retained_id;
+        self.received_artifacts.insert(retained_id, retained);
+        Ok(WebSignedInfinityAssumption {
+            assumption,
+            receiver,
+            retained: retained_id,
         })
     }
 
@@ -1413,6 +1445,87 @@ impl WebManagedTrustedHolState {
     #[must_use]
     pub fn conclusion_id(&self) -> String {
         self.state.conclusion_id().to_string()
+    }
+}
+
+#[wasm_bindgen]
+impl WebSignedInfinityAssumption {
+    /// Returns `signed-assumption`.
+    #[must_use]
+    pub fn kind(&self) -> String {
+        self.assumption.kind().to_owned()
+    }
+
+    /// Returns the explicitly trusted import receiver.
+    #[must_use]
+    pub fn receiver_connection(&self) -> u32 {
+        self.receiver
+    }
+
+    /// Returns the opaque retained-receipt ID used by the Worker.
+    #[must_use]
+    pub fn retained_id(&self) -> u32 {
+        self.retained
+    }
+
+    /// Returns the source namespace in the signed database.
+    #[must_use]
+    pub fn namespace_id(&self) -> String {
+        self.assumption.artifact().namespace_id().to_string()
+    }
+
+    /// Returns the schema-qualified image address.
+    #[must_use]
+    pub fn image_hash(&self) -> String {
+        self.assumption.artifact().image_hash().to_string()
+    }
+
+    /// Returns the exact detached-validated SQLite assumption bytes.
+    #[must_use]
+    pub fn image(&self) -> Vec<u8> {
+        self.assumption.artifact().image().to_vec()
+    }
+
+    /// Returns the schema coordinate qualified by the signature.
+    #[must_use]
+    pub fn schema(&self) -> String {
+        self.assumption.artifact().schema().to_string()
+    }
+
+    /// Returns the signer identity.
+    #[must_use]
+    pub fn signer(&self) -> String {
+        self.assumption.artifact().signer().to_string()
+    }
+
+    /// Returns the exact signing public key.
+    #[must_use]
+    pub fn public_key(&self) -> Vec<u8> {
+        self.assumption.artifact().public_key().to_vec()
+    }
+
+    /// Returns the exact schema-qualified signature.
+    #[must_use]
+    pub fn signature(&self) -> Vec<u8> {
+        self.assumption.artifact().signature().to_vec()
+    }
+
+    /// Returns the empty assumption context coordinate.
+    #[must_use]
+    pub fn context_id(&self) -> String {
+        self.assumption.context().get().to_string()
+    }
+
+    /// Returns the Dedekind-infinity conclusion coordinate.
+    #[must_use]
+    pub fn conclusion_id(&self) -> String {
+        self.assumption.conclusion().get().to_string()
+    }
+
+    /// Returns the explicitly classified demo-local attestation sidecar.
+    #[must_use]
+    pub fn attestation_text(&self) -> String {
+        self.assumption.attestation_text()
     }
 }
 
