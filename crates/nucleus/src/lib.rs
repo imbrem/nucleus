@@ -1,11 +1,14 @@
 //! Portable trusted core for Nucleus.
 
+mod kv;
+
 mod connection;
 
 pub use connection::{Connection, ConnectionError};
 
 mod snapshot;
 
+pub use kv::{KvEntry, KvError, KvIter, KvTable};
 pub use snapshot::{
     COV_VALID_DB_V0, ED25519_PUBLIC_KEY_V0, Ed25519Signer, Ed25519Verifier, SignError, Signer,
     VerificationError, Verifier, ed25519_key_id, valid_snapshot_statement,
