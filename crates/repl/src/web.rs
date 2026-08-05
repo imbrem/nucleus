@@ -1,19 +1,35 @@
 use covalence_lib_hash::O256;
 use wasm_bindgen::prelude::*;
 
-use super::{Connection, ConnectionId, Kernel, Outcome, QueryResult, Repl, Sql, Value};
+use super::{
+    AllowAll, ConnectionId, HolRecipe, HolRecipeResult, Kernel, LocalConnection, Outcome,
+    QueryResult, Repl, SignedHolRoundTripResult, Value, run_managed_signed_hol_round_trip,
+};
 
 /// Browser adapter for the shared REPL connection directory.
 #[wasm_bindgen]
 pub struct WebKernel {
     kernel: Kernel,
-    repl: Repl<Connection<Sql>>,
+    repl: Repl<LocalConnection>,
 }
 
 /// Owned result of one statement executed by [`WebKernel`].
 #[wasm_bindgen]
 pub struct WebOutcome {
     outcome: Outcome,
+}
+
+/// Transport-neutral HOL recipe result exposed through Wasm.
+#[wasm_bindgen]
+pub struct WebHolOutcome {
+    outcome: HolRecipeResult,
+}
+
+/// Complete signed HOL producer-to-receiver demonstration exposed through Wasm.
+#[wasm_bindgen]
+pub struct WebSignedHolOutcome {
+    outcome: SignedHolRoundTripResult,
+    receiver_connection: u32,
 }
 
 #[wasm_bindgen]
@@ -37,10 +53,25 @@ impl WebKernel {
     /// Returns a JavaScript error when the connection or directory row cannot
     /// be opened.
     pub fn open_connection(&mut self) -> Result<u32, JsValue> {
-        let connection = self.kernel.open_sql().map_err(js_error)?;
+        let connection = LocalConnection::Sql(self.kernel.open_sql().map_err(js_error)?);
         let id = self
             .repl
-            .insert("nucleus/sql", connection)
+            .insert(connection.protocol(), connection)
+            .map_err(js_error)?;
+        u32::try_from(id.get()).map_err(js_error)
+    }
+
+    /// Opens an in-memory HOL connection and returns its local ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error when the connection or directory row cannot
+    /// be opened.
+    pub fn open_hol_connection(&mut self) -> Result<u32, JsValue> {
+        let connection = LocalConnection::Hol(self.kernel.open_hol(AllowAll).map_err(js_error)?);
+        let id = self
+            .repl
+            .insert(connection.protocol(), connection)
             .map_err(js_error)?;
         u32::try_from(id.get()).map_err(js_error)
     }
@@ -63,10 +94,46 @@ impl WebKernel {
     ///
     /// Returns a JavaScript error when the statement fails.
     pub fn run(&mut self, connection: u32, sql: &str) -> Result<WebOutcome, JsValue> {
-        self.connection_mut(connection)?
+        self.sql_mut(connection)?
             .run(sql, &[])
             .map(|outcome| WebOutcome { outcome })
             .map_err(js_error)
+    }
+
+    /// Parses and runs one shared HOL demo recipe.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for a non-HOL connection, invalid recipe, or
+    /// rejected Nucleus operation.
+    pub fn run_hol(&mut self, connection: u32, recipe: &str) -> Result<WebHolOutcome, JsValue> {
+        let recipe = recipe.parse::<HolRecipe>().map_err(js_error)?;
+        recipe
+            .execute(self.hol_mut(connection)?)
+            .map(|outcome| WebHolOutcome { outcome })
+            .map_err(js_error)
+    }
+
+    /// Runs the shared signed HOL snapshot round trip on one HOL connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for a non-HOL connection or the first proof,
+    /// authentication, validation, trust, import, or reader boundary rejected.
+    pub fn run_signed_hol_round_trip(
+        &mut self,
+        connection: u32,
+    ) -> Result<WebSignedHolOutcome, JsValue> {
+        let (outcome, receiver_id) = run_managed_signed_hol_round_trip(
+            &self.kernel,
+            &mut self.repl,
+            ConnectionId::from_u32(connection),
+        )
+        .map_err(js_error)?;
+        Ok(WebSignedHolOutcome {
+            outcome,
+            receiver_connection: u32::try_from(receiver_id.get()).map_err(js_error)?,
+        })
     }
 
     /// Stores a complete resident database image and returns its address.
@@ -75,7 +142,7 @@ impl WebKernel {
     ///
     /// Returns a JavaScript error on a resident hash collision.
     pub fn put_image(&mut self, connection: u32, bytes: &[u8]) -> Result<String, JsValue> {
-        self.connection_mut(connection)?
+        self.sql_mut(connection)?
             .put_image(bytes)
             .map(|hash| hash.to_string())
             .map_err(js_error)
@@ -94,7 +161,7 @@ impl WebKernel {
         schema: &str,
     ) -> Result<(), JsValue> {
         let hash = O256::from_hex(hash).map_err(js_error)?;
-        self.connection_mut(connection)?
+        self.sql_mut(connection)?
             .attach_immutable_image(hash, schema)
             .map_err(js_error)
     }
@@ -115,7 +182,7 @@ impl WebKernel {
     ///
     /// Returns a JavaScript error when `SQLite` cannot serialize the database.
     pub fn serialize_main(&mut self, connection: u32) -> Result<Vec<u8>, JsValue> {
-        self.connection_mut(connection)?
+        self.sql_mut(connection)?
             .serialize_main()
             .map(|bytes| bytes.to_vec())
             .map_err(js_error)
@@ -123,10 +190,175 @@ impl WebKernel {
 }
 
 impl WebKernel {
-    fn connection_mut(&mut self, id: u32) -> Result<&mut Connection<Sql>, JsValue> {
+    fn connection_mut(&mut self, id: u32) -> Result<&mut LocalConnection, JsValue> {
         self.repl
             .get_mut(ConnectionId::from_u32(id))
             .map_err(js_error)
+    }
+
+    fn sql_mut(
+        &mut self,
+        id: u32,
+    ) -> Result<&mut covalence_nucleus::Connection<covalence_nucleus::Sql>, JsValue> {
+        self.connection_mut(id)?.sql_mut().map_err(js_error)
+    }
+
+    fn hol_mut(
+        &mut self,
+        id: u32,
+    ) -> Result<&mut covalence_nucleus::Connection<covalence_nucleus::Hol<AllowAll>>, JsValue> {
+        self.connection_mut(id)?.hol_mut().map_err(js_error)
+    }
+}
+
+#[wasm_bindgen]
+impl WebHolOutcome {
+    /// Returns `hol-theorem`.
+    #[must_use]
+    pub fn kind(&self) -> String {
+        self.outcome.kind().to_owned()
+    }
+
+    /// Returns the recipe constructor name.
+    #[must_use]
+    pub fn recipe(&self) -> String {
+        self.outcome.recipe().to_owned()
+    }
+
+    /// Returns the database-local context ID as an exact decimal string.
+    #[must_use]
+    pub fn context_id(&self) -> String {
+        self.outcome.context_id().to_string()
+    }
+
+    /// Returns the database-local conclusion ID as an exact decimal string.
+    #[must_use]
+    pub fn conclusion_id(&self) -> String {
+        self.outcome.conclusion_id().to_string()
+    }
+
+    /// Returns the recipe's stable human-readable proposition.
+    #[must_use]
+    pub fn statement(&self) -> String {
+        self.outcome.statement().to_owned()
+    }
+}
+
+#[wasm_bindgen]
+impl WebSignedHolOutcome {
+    /// Returns `signed-hol-round-trip`.
+    #[must_use]
+    pub fn kind(&self) -> String {
+        self.outcome.kind().to_owned()
+    }
+
+    /// Returns the managed receiver HOL connection ID.
+    #[must_use]
+    pub fn receiver_connection(&self) -> u32 {
+        self.receiver_connection
+    }
+
+    /// Returns the number of completed boundary stages.
+    #[must_use]
+    pub fn phase_count(&self) -> usize {
+        self.outcome.phases().len()
+    }
+
+    /// Returns one completed boundary stage by index.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error when `index` is out of bounds.
+    pub fn phase(&self, index: u32) -> Result<String, JsValue> {
+        self.outcome
+            .phases()
+            .get(index as usize)
+            .map(|phase| (*phase).to_owned())
+            .ok_or_else(|| JsValue::from_str("phase index out of bounds"))
+    }
+
+    /// Returns the stable proposition proved and read from the imported image.
+    #[must_use]
+    pub fn statement(&self) -> String {
+        self.outcome.proof().statement().to_owned()
+    }
+
+    /// Returns the producer-local conclusion as an exact decimal string.
+    #[must_use]
+    pub fn conclusion_id(&self) -> String {
+        self.outcome.proof().conclusion_id().to_string()
+    }
+
+    /// Returns the exported namespace ID as an exact decimal string.
+    #[must_use]
+    pub fn namespace_id(&self) -> String {
+        self.outcome.namespace_id().to_string()
+    }
+
+    /// Returns the exact signed SQLite bytes.
+    #[must_use]
+    pub fn image(&self) -> Vec<u8> {
+        self.outcome.image().to_vec()
+    }
+
+    /// Returns the signed schema hash.
+    #[must_use]
+    pub fn schema(&self) -> String {
+        self.outcome.schema().to_string()
+    }
+
+    /// Returns the exact image hash.
+    #[must_use]
+    pub fn image_hash(&self) -> String {
+        self.outcome.image_hash().to_string()
+    }
+
+    /// Returns the signing key identity.
+    #[must_use]
+    pub fn signer(&self) -> String {
+        self.outcome.signer().to_string()
+    }
+
+    /// Returns the producer's Ed25519 public key.
+    #[must_use]
+    pub fn public_key(&self) -> Vec<u8> {
+        self.outcome.public_key().to_vec()
+    }
+
+    /// Returns the schema-qualified snapshot signature.
+    #[must_use]
+    pub fn signature(&self) -> Vec<u8> {
+        self.outcome.signature().to_vec()
+    }
+
+    /// Returns the demo-local downloadable attestation sidecar.
+    #[must_use]
+    pub fn attestation_text(&self) -> String {
+        self.outcome.attestation_text()
+    }
+
+    /// Returns the receiver import ID as an exact decimal string.
+    #[must_use]
+    pub fn import_id(&self) -> String {
+        self.outcome.import_id().to_string()
+    }
+
+    /// Returns the receiver namespace alias ID as an exact decimal string.
+    #[must_use]
+    pub fn imported_namespace_id(&self) -> String {
+        self.outcome.imported_namespace_id().to_string()
+    }
+
+    /// Returns the imported context source coordinate as an exact decimal string.
+    #[must_use]
+    pub fn imported_context_id(&self) -> String {
+        self.outcome.imported_context_id().to_string()
+    }
+
+    /// Returns the imported conclusion source coordinate as an exact decimal string.
+    #[must_use]
+    pub fn imported_conclusion_id(&self) -> String {
+        self.outcome.imported_conclusion_id().to_string()
     }
 }
 

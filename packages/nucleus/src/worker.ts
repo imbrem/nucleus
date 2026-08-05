@@ -1,9 +1,17 @@
-import init, { WebKernel, type WebOutcome } from "../generated/nucleus.js";
+import init, {
+  WebKernel,
+  type WebHolOutcome,
+  type WebOutcome,
+  type WebSignedHolOutcome,
+} from "../generated/nucleus.js";
 
 type Request =
   | { id: number; operation: "open" }
+  | { id: number; operation: "openHol" }
   | { id: number; operation: "close"; connection: number }
   | { id: number; operation: "run"; connection: number; sql: string }
+  | { id: number; operation: "runHol"; connection: number; recipe: string }
+  | { id: number; operation: "runSignedHolRoundTrip"; connection: number }
   | {
       id: number;
       operation: "putImage";
@@ -40,8 +48,7 @@ globalThis.addEventListener(
   async ({ data }: MessageEvent<Request>) => {
     try {
       const value = await execute(data);
-      const transfer =
-        value instanceof Uint8Array ? [value.buffer as ArrayBuffer] : [];
+      const transfer = transferables(value);
       globalThis.postMessage({ id: data.id, ok: true, value }, { transfer });
     } catch (error) {
       globalThis.postMessage({
@@ -58,11 +65,21 @@ async function execute(request: Request): Promise<unknown> {
   switch (request.operation) {
     case "open":
       return connection.open_connection();
+    case "openHol":
+      return connection.open_hol_connection();
     case "close":
       connection.close_connection(request.connection);
       return undefined;
     case "run":
       return readOutcome(connection.run(request.connection, request.sql));
+    case "runHol":
+      return readHolOutcome(
+        connection.run_hol(request.connection, request.recipe),
+      );
+    case "runSignedHolRoundTrip":
+      return readSignedHolOutcome(
+        connection.run_signed_hol_round_trip(request.connection),
+      );
     case "putImage":
       return connection.put_image(request.connection, request.bytes);
     case "attachImage":
@@ -83,6 +100,28 @@ async function execute(request: Request): Promise<unknown> {
     case "serializeMain":
       return connection.serialize_main(request.connection);
   }
+}
+
+function transferables(value: unknown): ArrayBuffer[] {
+  if (value instanceof Uint8Array) return [value.buffer as ArrayBuffer];
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "kind" in value &&
+    value.kind === "signed-hol-round-trip"
+  ) {
+    const outcome = value as unknown as {
+      image: Uint8Array;
+      publicKey: Uint8Array;
+      signature: Uint8Array;
+    };
+    return [
+      outcome.image.buffer as ArrayBuffer,
+      outcome.publicKey.buffer as ArrayBuffer,
+      outcome.signature.buffer as ArrayBuffer,
+    ];
+  }
+  return [];
 }
 
 /** Buffers a complete bounded response, refusing oversized downloads. */
@@ -123,6 +162,49 @@ async function readBounded(
     offset += chunk.byteLength;
   }
   return bytes;
+}
+
+function readHolOutcome(outcome: WebHolOutcome): unknown {
+  try {
+    return {
+      kind: outcome.kind(),
+      recipe: outcome.recipe(),
+      context: outcome.context_id(),
+      conclusion: outcome.conclusion_id(),
+      statement: outcome.statement(),
+    };
+  } finally {
+    outcome.free();
+  }
+}
+
+function readSignedHolOutcome(outcome: WebSignedHolOutcome): unknown {
+  try {
+    const phases = Array.from({ length: outcome.phase_count() }, (_, index) =>
+      outcome.phase(index),
+    );
+    return {
+      kind: outcome.kind(),
+      phases,
+      statement: outcome.statement(),
+      conclusion: outcome.conclusion_id(),
+      namespace: outcome.namespace_id(),
+      image: outcome.image(),
+      schema: outcome.schema(),
+      imageHash: outcome.image_hash(),
+      signer: outcome.signer(),
+      publicKey: outcome.public_key(),
+      signature: outcome.signature(),
+      attestation: outcome.attestation_text(),
+      importId: outcome.import_id(),
+      importedNamespace: outcome.imported_namespace_id(),
+      importedContext: outcome.imported_context_id(),
+      importedConclusion: outcome.imported_conclusion_id(),
+      receiverConnection: outcome.receiver_connection(),
+    };
+  } finally {
+    outcome.free();
+  }
 }
 
 function readOutcome(outcome: WebOutcome): unknown {

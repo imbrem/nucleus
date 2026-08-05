@@ -21,6 +21,7 @@ test("runs the REPL kernel through the Wasm binding in Node", async () => {
   const kernel = new WebKernel();
   const connection = kernel.open_connection();
   const otherConnection = kernel.open_connection();
+  const holConnection = kernel.open_hol_connection();
   const hash = kernel.put_image(connection, image);
   kernel.attach_image(connection, hash, "library");
   const result = kernel.run(
@@ -42,7 +43,30 @@ test("runs the REPL kernel through the Wasm binding in Node", async () => {
   );
   kernel.close_connection(otherConnection);
   assert.throws(() => kernel.run(otherConnection, "SELECT 1"));
+  const theorem = kernel.run_hol(holConnection, "beta true");
+  assert.equal(theorem.kind(), "hol-theorem");
+  assert.equal(theorem.recipe(), "beta");
+  assert.equal(theorem.context_id(), "0");
+  assert.equal(theorem.conclusion_id(), "8");
+  assert.equal(theorem.statement(), "(lambda x:bool. x) true = true");
+  const signed = kernel.run_signed_hol_round_trip(holConnection);
+  assert.equal(signed.kind(), "signed-hol-round-trip");
+  assert.equal(signed.phase(0), "proof-persisted");
+  assert.equal(signed.phase(signed.phase_count() - 1), "theorem-read");
+  assert.equal(signed.statement(), "(lambda x:bool. x) true = true");
+  assert.ok(signed.image().byteLength > 0);
+  assert.equal(signed.public_key().byteLength, 32);
+  assert.equal(signed.signature().byteLength, 64);
+  assert.equal(signed.imported_context_id(), "0");
+  assert.equal(signed.imported_conclusion_id(), signed.conclusion_id());
+  assert.notEqual(signed.receiver_connection(), holConnection);
+  assert.throws(() => kernel.run(signed.receiver_connection(), "SELECT 1"));
+  assert.throws(() => kernel.run_hol(connection, "truth"));
+  assert.throws(() => kernel.run(holConnection, "SELECT 1"));
 
+  kernel.close_connection(signed.receiver_connection());
+  signed.free();
+  theorem.free();
   result.free();
   kernel.free();
   source.free();
