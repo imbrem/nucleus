@@ -288,6 +288,155 @@ impl ContextId {
     }
 }
 
+/// Canonical database-local reference to one persisted HOL judgement.
+///
+/// This is ordinary, untrusted coordinate data rather than a proof
+/// capability. Any rule which consumes it rechecks that the exact
+/// `(context, conclusion)` row is authoritative in the receiving connection.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct JudgementRef {
+    context: ContextId,
+    conclusion: TermId,
+}
+
+impl JudgementRef {
+    /// Constructs an untrusted judgement reference from database coordinates.
+    ///
+    /// Construction proves nothing; [`Connection::proof_step`] re-resolves the
+    /// coordinates before using them as a premise.
+    #[must_use]
+    pub const fn from_coordinates(context: ContextId, conclusion: TermId) -> Self {
+        Self {
+            context,
+            conclusion,
+        }
+    }
+
+    /// Returns the immutable assumption context coordinate.
+    #[must_use]
+    pub const fn context(self) -> ContextId {
+        self.context
+    }
+
+    /// Returns the Boolean conclusion coordinate.
+    #[must_use]
+    pub const fn conclusion(self) -> TermId {
+        self.conclusion
+    }
+}
+
+/// Persistent application of primitive truth in an existing context.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TruthStep {
+    context: ContextId,
+}
+
+impl TruthStep {
+    /// Creates a primitive-truth transition request.
+    #[must_use]
+    pub const fn new(context: ContextId) -> Self {
+        Self { context }
+    }
+}
+
+/// Persistent application of the hypothesis rule to one context member.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HypothesisStep {
+    context: ContextId,
+    term: TermId,
+}
+
+impl HypothesisStep {
+    /// Creates a hypothesis transition request.
+    #[must_use]
+    pub const fn new(context: ContextId, term: TermId) -> Self {
+        Self { context, term }
+    }
+}
+
+/// Persistent application of equality reflexivity to one admitted term.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReflexivityStep {
+    context: ContextId,
+    term: TermId,
+}
+
+impl ReflexivityStep {
+    /// Creates an equality-reflexivity transition request.
+    #[must_use]
+    pub const fn new(context: ContextId, term: TermId) -> Self {
+        Self { context, term }
+    }
+}
+
+/// Persistent equality modus ponens over two authoritative judgements.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EqualityModusPonensStep {
+    equality: JudgementRef,
+    premise: JudgementRef,
+}
+
+impl EqualityModusPonensStep {
+    /// Creates an equality-modus-ponens transition request.
+    #[must_use]
+    pub const fn new(equality: JudgementRef, premise: JudgementRef) -> Self {
+        Self { equality, premise }
+    }
+}
+
+pub(crate) enum ProofStepRequest {
+    Hypothesis(HypothesisStep),
+    Truth(TruthStep),
+    Reflexivity(ReflexivityStep),
+    EqualityModusPonens(EqualityModusPonensStep),
+}
+
+#[allow(private_interfaces)]
+mod sealed_proof_step {
+    use super::{
+        EqualityModusPonensStep, HypothesisStep, ProofStepRequest, ReflexivityStep, TruthStep,
+    };
+
+    pub trait Sealed {
+        fn into_request(self) -> ProofStepRequest;
+    }
+
+    impl Sealed for TruthStep {
+        fn into_request(self) -> ProofStepRequest {
+            ProofStepRequest::Truth(self)
+        }
+    }
+
+    impl Sealed for HypothesisStep {
+        fn into_request(self) -> ProofStepRequest {
+            ProofStepRequest::Hypothesis(self)
+        }
+    }
+
+    impl Sealed for ReflexivityStep {
+        fn into_request(self) -> ProofStepRequest {
+            ProofStepRequest::Reflexivity(self)
+        }
+    }
+
+    impl Sealed for EqualityModusPonensStep {
+        fn into_request(self) -> ProofStepRequest {
+            ProofStepRequest::EqualityModusPonens(self)
+        }
+    }
+}
+
+/// A sealed live proof transition accepted by [`Connection::proof_step`].
+///
+/// Implementations are supplied only by Nucleus so every variant has a fixed,
+/// policy-visible kernel interpretation.
+pub trait ProofStep: sealed_proof_step::Sealed {}
+
+impl ProofStep for TruthStep {}
+impl ProofStep for HypothesisStep {}
+impl ProofStep for ReflexivityStep {}
+impl ProofStep for EqualityModusPonensStep {}
+
 type Invariant<'brand> = PhantomData<fn(&'brand ()) -> &'brand ()>;
 
 /// A generative proof scope borrowing one HOL connection.
@@ -1778,22 +1927,7 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         let (neutron, hol) = self.connection.parts_mut();
         authorize_proof(&mut hol.policy, Operation::ProveHypothesis)?;
         let transaction = neutron.sqlite().unchecked_transaction()?;
-        require_context(&transaction, context)?;
-        let member = transaction.query_row(
-            "SELECT EXISTS(
-                 SELECT 1 FROM hol_context_member WHERE ctx_id = ?1 AND term_id = ?2
-             )",
-            [context.0, term.0],
-            |row| row.get::<_, bool>(0),
-        )?;
-        if !member {
-            return Err(ProofError::NotMember { context, term });
-        }
-        Ok(Theorem {
-            context,
-            conclusion: term,
-            brand: PhantomData,
-        })
+        prove_hypothesis_in(&transaction, context, term)
     }
 
     /// Applies primitive truth in an existing context.
@@ -1807,14 +1941,9 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         authorize_proof(&mut hol.policy, Operation::ProveTruth)?;
         authorize_proof(&mut hol.policy, Operation::InsertTerm)?;
         let transaction = neutron.sqlite().unchecked_transaction()?;
-        require_context(&transaction, context)?;
-        let truth = intern_bool_term(&transaction, true)?;
+        let theorem = prove_truth_in(&transaction, context)?;
         transaction.commit()?;
-        Ok(Theorem {
-            context,
-            conclusion: truth,
-            brand: PhantomData,
-        })
+        Ok(theorem)
     }
 
     /// Introduces reflexive conversion for an admitted term.
@@ -2160,19 +2289,9 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
         authorize_proof(&mut hol.policy, Operation::ProveReflexivity)?;
         authorize_proof(&mut hol.policy, Operation::InsertTerm)?;
         let transaction = neutron.sqlite().unchecked_transaction()?;
-        require_context(&transaction, context)?;
-        let validation = validate_term(&transaction, term)?;
-        if !validation.is_closed() {
-            return Err(ProofError::OpenConclusion(term));
-        }
-        let equality = intern_equality(&transaction, term, term)?;
-        validate_term(&transaction, equality)?;
+        let theorem = prove_reflexivity_in(&transaction, context, term)?;
         transaction.commit()?;
-        Ok(Theorem {
-            context,
-            conclusion: equality,
-            brand: PhantomData,
-        })
+        Ok(theorem)
     }
 
     /// Proves one beta reduction with a closed abstraction and argument.
@@ -3070,31 +3189,74 @@ impl<'brand, P: Policy> ProofSession<'brand, P> {
     ) -> Result<Theorem<'brand>, ProofError> {
         let (neutron, hol) = self.connection.parts_mut();
         authorize_proof(&mut hol.policy, Operation::ProveEqualityModusPonens)?;
-        if equality.context != premise.context {
-            return Err(ProofError::MismatchedTheoremContexts {
-                expected: equality.context,
-                actual: premise.context,
-            });
-        }
-        let (view, _) = read_term(neutron.sqlite(), equality.conclusion)?;
-        let TermView::Equality { left, right } = view else {
-            return Err(ProofError::ExpectedEquality(equality.conclusion));
-        };
-        if premise.conclusion != left {
-            return Err(ProofError::EqualityPremiseMismatch {
-                expected: left,
-                actual: premise.conclusion,
-            });
-        }
-        Ok(Theorem {
-            context: equality.context,
-            conclusion: right,
-            brand: PhantomData,
-        })
+        equality_modus_ponens_in(neutron.sqlite(), equality, premise)
     }
 }
 
 impl<P: Policy> Connection<Hol<P>> {
+    /// Applies one sealed proof step and atomically persists its conclusion.
+    ///
+    /// Only the canonical `(context, conclusion)` judgement is stored. This is
+    /// a kernel-state transition, not a proof trace: replay is idempotent and
+    /// no rule or premise record is persisted.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if policy denies any required operation, a premise
+    /// coordinate is not an authoritative local judgement, the rule does not
+    /// apply, or `SQLite` rejects the transaction. No syntax or judgement
+    /// write survives failure.
+    pub fn proof_step<S: ProofStep>(&mut self, step: S) -> Result<JudgementRef, ProofError> {
+        let request = sealed_proof_step::Sealed::into_request(step);
+        let (neutron, hol) = self.parts_mut();
+        match &request {
+            ProofStepRequest::Hypothesis(_) => {
+                authorize_proof(&mut hol.policy, Operation::ProveHypothesis)?;
+                authorize_proof(&mut hol.policy, Operation::ReadContext)?;
+                authorize_proof(&mut hol.policy, Operation::PersistJudgement)?;
+            }
+            ProofStepRequest::Truth(_) => {
+                authorize_proof(&mut hol.policy, Operation::ProveTruth)?;
+                authorize_proof(&mut hol.policy, Operation::ReadContext)?;
+                authorize_proof(&mut hol.policy, Operation::InsertTerm)?;
+                authorize_proof(&mut hol.policy, Operation::PersistJudgement)?;
+            }
+            ProofStepRequest::Reflexivity(_) => {
+                authorize_proof(&mut hol.policy, Operation::ProveReflexivity)?;
+                authorize_proof(&mut hol.policy, Operation::ReadContext)?;
+                authorize_proof(&mut hol.policy, Operation::ReadTerm)?;
+                authorize_proof(&mut hol.policy, Operation::InsertTerm)?;
+                authorize_proof(&mut hol.policy, Operation::PersistJudgement)?;
+            }
+            ProofStepRequest::EqualityModusPonens(_) => {
+                authorize_proof(&mut hol.policy, Operation::ProveEqualityModusPonens)?;
+                authorize_proof(&mut hol.policy, Operation::ReadTheorem)?;
+                authorize_proof(&mut hol.policy, Operation::ReadTerm)?;
+                authorize_proof(&mut hol.policy, Operation::PersistJudgement)?;
+            }
+        }
+
+        let transaction = neutron.sqlite().unchecked_transaction()?;
+        let theorem = match request {
+            ProofStepRequest::Hypothesis(step) => {
+                prove_hypothesis_in(&transaction, step.context, step.term)?
+            }
+            ProofStepRequest::Truth(step) => prove_truth_in(&transaction, step.context)?,
+            ProofStepRequest::Reflexivity(step) => {
+                prove_reflexivity_in(&transaction, step.context, step.term)?
+            }
+            ProofStepRequest::EqualityModusPonens(step) => {
+                let equality = load_persisted_theorem(&transaction, step.equality)?;
+                let premise = load_persisted_theorem(&transaction, step.premise)?;
+                equality_modus_ponens_in(&transaction, &equality, &premise)?
+            }
+        };
+        persist_judgement(&transaction, theorem.context, theorem.conclusion)?;
+        let persisted = JudgementRef::from_coordinates(theorem.context, theorem.conclusion);
+        transaction.commit()?;
+        Ok(persisted)
+    }
+
     /// Returns every direct authoritative implication edge in key order.
     ///
     /// This ordinary read API is intended for untrusted candidate generators;
@@ -3636,6 +3798,121 @@ fn intern_context(
         )?;
     }
     Ok(context)
+}
+
+fn prove_truth_in<'brand>(
+    connection: &sqlite::Connection,
+    context: ContextId,
+) -> Result<Theorem<'brand>, ProofError> {
+    require_context(connection, context)?;
+    let truth = intern_bool_term(connection, true)?;
+    Ok(Theorem {
+        context,
+        conclusion: truth,
+        brand: PhantomData,
+    })
+}
+
+fn prove_hypothesis_in<'brand>(
+    connection: &sqlite::Connection,
+    context: ContextId,
+    term: TermId,
+) -> Result<Theorem<'brand>, ProofError> {
+    require_context(connection, context)?;
+    let member = connection.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM hol_context_member WHERE ctx_id = ?1 AND term_id = ?2
+         )",
+        [context.0, term.0],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if !member {
+        return Err(ProofError::NotMember { context, term });
+    }
+    Ok(Theorem {
+        context,
+        conclusion: term,
+        brand: PhantomData,
+    })
+}
+
+fn prove_reflexivity_in<'brand>(
+    connection: &sqlite::Connection,
+    context: ContextId,
+    term: TermId,
+) -> Result<Theorem<'brand>, ProofError> {
+    require_context(connection, context)?;
+    let validation = validate_term(connection, term)?;
+    if !validation.is_closed() {
+        return Err(ProofError::OpenConclusion(term));
+    }
+    let equality = intern_equality(connection, term, term)?;
+    validate_term(connection, equality)?;
+    Ok(Theorem {
+        context,
+        conclusion: equality,
+        brand: PhantomData,
+    })
+}
+
+fn equality_modus_ponens_in<'brand>(
+    connection: &sqlite::Connection,
+    equality: &Theorem<'brand>,
+    premise: &Theorem<'brand>,
+) -> Result<Theorem<'brand>, ProofError> {
+    if equality.context != premise.context {
+        return Err(ProofError::MismatchedTheoremContexts {
+            expected: equality.context,
+            actual: premise.context,
+        });
+    }
+    let (view, _) = read_term(connection, equality.conclusion)?;
+    let TermView::Equality { left, right } = view else {
+        return Err(ProofError::ExpectedEquality(equality.conclusion));
+    };
+    if premise.conclusion != left {
+        return Err(ProofError::EqualityPremiseMismatch {
+            expected: left,
+            actual: premise.conclusion,
+        });
+    }
+    Ok(Theorem {
+        context: equality.context,
+        conclusion: right,
+        brand: PhantomData,
+    })
+}
+
+fn load_persisted_theorem<'brand>(
+    connection: &sqlite::Connection,
+    reference: JudgementRef,
+) -> Result<Theorem<'brand>, ProofError> {
+    let exists = connection.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM hol_judgement WHERE ctx_id = ?1 AND term_id = ?2
+         )",
+        [reference.context.0, reference.conclusion.0],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if !exists {
+        return Err(ProofError::UnknownJudgement(reference));
+    }
+    require_context(connection, reference.context)?;
+    let validation = validate_term(connection, reference.conclusion)?;
+    if validation.ty != BOOL_TYPE_ID {
+        return Err(ProofError::NonBooleanConclusion {
+            term: reference.conclusion,
+            ty: validation.ty,
+        });
+    }
+    if !validation.is_closed() {
+        return Err(ProofError::OpenConclusion(reference.conclusion));
+    }
+    Ok(Theorem {
+        context: reference.context,
+        conclusion: reference.conclusion,
+        brand: PhantomData,
+    })
 }
 
 fn persist_judgement(
@@ -5655,6 +5932,8 @@ pub enum ProofError {
     Context(ContextError),
     /// The conclusion/member term is invalid.
     Term(TermError),
+    /// No authoritative persisted judgement has the requested coordinates.
+    UnknownJudgement(JudgementRef),
     /// The hypothesis rule was requested for a non-member.
     NotMember {
         /// Assumption context.
@@ -5891,7 +6170,8 @@ impl fmt::Display for ProofError {
                 antecedent.get(),
                 consequent.get()
             ),
-            Self::ContextUnionMissingMember { .. }
+            Self::UnknownJudgement(_)
+            | Self::ContextUnionMissingMember { .. }
             | Self::ContextUnionUnexpectedMember { .. }
             | Self::ContextUnionConflict { .. }
             | Self::ContextEquivalenceMismatch { .. }
@@ -5981,6 +6261,12 @@ fn format_relational_proof_error(
     formatter: &mut fmt::Formatter<'_>,
 ) -> Option<fmt::Result> {
     match error {
+        ProofError::UnknownJudgement(reference) => Some(write!(
+            formatter,
+            "unknown judgement ({}, {})",
+            reference.context().get(),
+            reference.conclusion().get()
+        )),
         ProofError::ContextUnionMissingMember {
             left,
             right,
@@ -6224,6 +6510,7 @@ impl StdError for ProofError {
             Self::Term(error) => Some(error),
             Self::Sqlite(error) => Some(error),
             Self::Denied(_)
+            | Self::UnknownJudgement(_)
             | Self::NotMember { .. }
             | Self::NonBooleanConclusion { .. }
             | Self::OpenConclusion(_)
@@ -6978,6 +7265,251 @@ mod tests {
             })
             .unwrap();
         assert_eq!(rows, 0);
+    }
+
+    #[test]
+    fn coordinate_steps_reload_premises_and_reuse_canonical_judgements() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let truth = connection
+            .proof_step(TruthStep::new(ContextId::empty()))
+            .unwrap();
+        let reflexivity = connection
+            .proof_step(ReflexivityStep::new(ContextId::empty(), truth.conclusion()))
+            .unwrap();
+        assert_ne!(reflexivity, truth);
+
+        let before = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row(
+                "SELECT
+                     (SELECT count(*) FROM hol_node),
+                     (SELECT count(*) FROM hol_judgement)",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .unwrap();
+        let result = connection
+            .proof_step(EqualityModusPonensStep::new(reflexivity, truth))
+            .unwrap();
+        assert_eq!(result, truth);
+        assert_eq!(
+            connection
+                .proof_step(EqualityModusPonensStep::new(reflexivity, truth))
+                .unwrap(),
+            truth
+        );
+        let after = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row(
+                "SELECT
+                     (SELECT count(*) FROM hol_node),
+                     (SELECT count(*) FROM hol_judgement)",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .unwrap();
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    fn coordinate_handles_survive_restart_without_new_schema_or_trace() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let truth_term = connection.insert_bool_term(true).unwrap();
+        let context = connection.define_context([truth_term]).unwrap();
+        let hypothesis = connection
+            .proof_step(HypothesisStep::new(context, truth_term))
+            .unwrap();
+        let reflexivity = connection
+            .proof_step(ReflexivityStep::new(context, truth_term))
+            .unwrap();
+        let bytes = connection.parts_mut().0.serialize().unwrap();
+
+        let neutron = covalence_neutron::Connection::deserialize(&bytes).unwrap();
+        let mut restarted = Connection::from_neutron(
+            neutron,
+            Hol {
+                policy: AllowAll,
+                schema: HolSchema::new(),
+            },
+        );
+        assert_eq!(
+            restarted
+                .proof_step(EqualityModusPonensStep::new(reflexivity, hypothesis))
+                .unwrap(),
+            hypothesis
+        );
+        assert!(
+            restarted
+                .proved_judgement(hypothesis.context(), hypothesis.conclusion())
+                .unwrap()
+        );
+
+        let columns = restarted
+            .parts_mut()
+            .0
+            .sqlite()
+            .prepare("SELECT name FROM pragma_table_info('hol_judgement') ORDER BY cid")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(columns, ["ctx_id", "term_id"]);
+        let trace_like_tables = restarted
+            .parts_mut()
+            .0
+            .sqlite()
+            .prepare(
+                "SELECT name FROM sqlite_schema
+                 WHERE type = 'table'
+                   AND (
+                     name LIKE '%proof%'
+                     OR name LIKE '%step%'
+                     OR name LIKE '%premise%'
+                     OR name LIKE '%rule%'
+                   )
+                 ORDER BY name",
+            )
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(trace_like_tables.is_empty());
+    }
+
+    #[test]
+    fn coordinate_steps_reject_missing_and_foreign_unproved_coordinates() {
+        let missing = JudgementRef::from_coordinates(
+            ContextId::from_i64(i64::MAX),
+            TermId::from_i64(i64::MAX),
+        );
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        assert!(matches!(
+            connection.proof_step(EqualityModusPonensStep::new(missing, missing)),
+            Err(ProofError::UnknownJudgement(reference)) if reference == missing
+        ));
+
+        let mut donor = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let foreign = donor
+            .proof_step(TruthStep::new(ContextId::empty()))
+            .unwrap();
+        let local_truth = connection.insert_bool_term(true).unwrap();
+        assert_eq!(local_truth, foreign.conclusion());
+        assert!(matches!(
+            connection.proof_step(EqualityModusPonensStep::new(foreign, foreign)),
+            Err(ProofError::UnknownJudgement(reference)) if reference == foreign
+        ));
+        assert!(
+            !connection
+                .proved_judgement(foreign.context(), foreign.conclusion())
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn coordinate_step_policy_checks_precede_database_work() {
+        let mut connection = Connection::open_hol_in_memory(RecordingPolicy {
+            allowed: true,
+            operations: Vec::new(),
+        })
+        .unwrap();
+        connection.parts_mut().1.policy.operations.clear();
+        let missing = JudgementRef::from_coordinates(
+            ContextId::from_i64(i64::MAX),
+            TermId::from_i64(i64::MAX),
+        );
+        assert!(matches!(
+            connection.proof_step(EqualityModusPonensStep::new(missing, missing)),
+            Err(ProofError::UnknownJudgement(reference)) if reference == missing
+        ));
+        assert_eq!(
+            connection.parts_mut().1.policy.operations,
+            [
+                Operation::ProveEqualityModusPonens,
+                Operation::ReadTheorem,
+                Operation::ReadTerm,
+                Operation::PersistJudgement,
+            ]
+        );
+
+        let mut denied = Connection::open_hol_in_memory(DenyPersistence::default()).unwrap();
+        let before = denied
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row("SELECT count(*) FROM hol_node", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert!(matches!(
+            denied.proof_step(TruthStep::new(ContextId::empty())),
+            Err(ProofError::Denied(Operation::PersistJudgement))
+        ));
+        let (neutron, hol) = denied.parts_mut();
+        assert_eq!(
+            hol.policy.operations,
+            [
+                Operation::ProveTruth,
+                Operation::ReadContext,
+                Operation::InsertTerm,
+                Operation::PersistJudgement,
+            ]
+        );
+        let after = neutron
+            .sqlite()
+            .query_row("SELECT count(*) FROM hol_node", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    fn coordinate_step_rolls_back_syntax_when_judgement_insert_fails() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let before = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row("SELECT count(*) FROM hol_node", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .execute_batch(
+                "CREATE TEMP TRIGGER reject_persistent_judgement
+                 BEFORE INSERT ON hol_judgement
+                 BEGIN
+                   SELECT RAISE(ABORT, 'test persistent judgement rejection');
+                 END",
+            )
+            .unwrap();
+
+        assert!(matches!(
+            connection.proof_step(TruthStep::new(ContextId::empty())),
+            Err(ProofError::Sqlite(_))
+        ));
+        let counts = connection
+            .parts_mut()
+            .0
+            .sqlite()
+            .query_row(
+                "SELECT
+                     (SELECT count(*) FROM hol_node),
+                     (SELECT count(*) FROM hol_judgement)",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .unwrap();
+        assert_eq!(counts, (before, 0));
     }
 
     #[test]
