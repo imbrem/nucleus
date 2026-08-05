@@ -114,6 +114,104 @@ export async function connectSignedKernel(
   return new SignedKernelSessionClient(transport, publicKey.slice(), session);
 }
 
+type SignedWorkerReply =
+  | { id: number; ok: true; bytes: Uint8Array }
+  | { id: number; ok: false; error: string };
+
+/** A Worker endpoint whose application surface carries only signed-service bytes. */
+export class SignedWorkerKernel implements SignedByteTransport {
+  readonly #worker: Worker;
+  readonly #pending = new Map<
+    number,
+    { resolve(value: Uint8Array): void; reject(error: Error): void }
+  >();
+  readonly #ready: Promise<Uint8Array>;
+  #next = 0;
+
+  constructor(readonly id: number) {
+    this.#worker = new Worker(new URL("./signed-worker.js", import.meta.url), {
+      type: "module",
+    });
+    this.#ready = new Promise((resolve, reject) => {
+      this.#worker.addEventListener("error", reject, { once: true });
+      this.#worker.addEventListener("message", ({ data }) => {
+        if (data?.kind === "ready") {
+          resolve((data.publicKey as Uint8Array).slice());
+          return;
+        }
+        const reply = data as SignedWorkerReply;
+        const pending = this.#pending.get(reply.id);
+        if (pending === undefined) return;
+        this.#pending.delete(reply.id);
+        if (
+          reply.ok &&
+          reply.bytes.byteLength <= WebSignedKernelSession.max_message_bytes()
+        ) {
+          pending.resolve(reply.bytes);
+        } else if (reply.ok) {
+          pending.reject(new Error("signed Worker reply exceeds codec bound"));
+        } else {
+          pending.reject(new Error(reply.error));
+        }
+      });
+    });
+    this.#worker.addEventListener("error", () => {
+      for (const pending of this.#pending.values()) {
+        pending.reject(
+          new Error("signed Worker failed with a request pending"),
+        );
+      }
+      this.#pending.clear();
+    });
+  }
+
+  async publicKey(): Promise<Uint8Array> {
+    return (await this.#ready).slice();
+  }
+
+  async exchange(bytes: Uint8Array): Promise<Uint8Array> {
+    await init();
+    if (bytes.byteLength > WebSignedKernelSession.max_message_bytes()) {
+      throw new Error("signed Worker message exceeds the shared codec bound");
+    }
+    await this.#ready;
+    if (
+      !Number.isSafeInteger(this.#next) ||
+      this.#next === Number.MAX_SAFE_INTEGER
+    ) {
+      throw new Error("signed Worker request ID space exhausted");
+    }
+    const id = this.#next++;
+    const owned = bytes.slice();
+    return new Promise((resolve, reject) => {
+      this.#pending.set(id, { resolve, reject });
+      this.#worker.postMessage({ id, bytes: owned }, [
+        owned.buffer as ArrayBuffer,
+      ]);
+    });
+  }
+
+  async connect(): Promise<SignedKernelSessionClient> {
+    return connectSignedKernel(this, await this.publicKey());
+  }
+
+  close(): void {
+    this.#worker.terminate();
+    for (const pending of this.#pending.values()) {
+      pending.reject(new Error("signed Worker kernel closed"));
+    }
+    this.#pending.clear();
+  }
+}
+
+export async function spawnSignedWorkerKernel(
+  id: number,
+): Promise<SignedWorkerKernel> {
+  const kernel = new SignedWorkerKernel(id);
+  await kernel.publicKey();
+  return kernel;
+}
+
 export type SqlValue =
   | { kind: "null" }
   | { kind: "integer"; value: string }

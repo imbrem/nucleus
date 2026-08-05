@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <body>
+    <script type="module">
+      import { spawnSignedWorkerKernel } from "../dist/index.js";
+
+      let producer;
+      let receiver;
+      try {
+        [producer, receiver] = await Promise.all([
+          spawnSignedWorkerKernel(1),
+          spawnSignedWorkerKernel(2),
+        ]);
+        const [producerSession, receiverSession] = await Promise.all([
+          producer.connect(),
+          receiver.connect(),
+        ]);
+        let oversizedRejected = false;
+        try {
+          await producer.exchange({
+            byteLength:
+              (
+                await import("../generated/nucleus.js")
+              ).WebSignedKernelSession.max_message_bytes() + 1,
+          });
+        } catch {
+          oversizedRejected = true;
+        }
+        const originalExchange = producer.exchange.bind(producer);
+        const commandBytes = [];
+        let dropOneReply = true;
+        producer.exchange = async (bytes) => {
+          commandBytes.push(bytes.slice());
+          const reply = await originalExchange(bytes);
+          if (dropOneReply) {
+            dropOneReply = false;
+            throw new Error("simulated ambiguous Worker reply loss");
+          }
+          return reply;
+        };
+        let outcomeUnknown = false;
+        try {
+          await producerSession.openHol();
+        } catch {
+          outcomeUnknown = true;
+        }
+        const source = await producerSession.retryPending();
+        producer.exchange = originalExchange;
+        const target = await receiverSession.openHol();
+        const artifact = await producerSession.produceHol(source);
+        const received = await receiverSession.receiveExternalHol(
+          target,
+          producer.id,
+          await producer.publicKey(),
+          artifact,
+        );
+        const reread = await receiverSession.receiveExternalHol(
+          target,
+          producer.id,
+          await producer.publicKey(),
+          artifact,
+        );
+        document.body.dataset.result = JSON.stringify({
+          statement: artifact.statement(),
+          producerKeyBytes: (await producer.publicKey()).byteLength,
+          receiverKeyBytes: (await receiver.publicKey()).byteLength,
+          distinctKeys:
+            String(await producer.publicKey()) !==
+            String(await receiver.publicKey()),
+          oversizedRejected,
+          outcomeUnknown,
+          retryExact:
+            commandBytes.length === 2 &&
+            commandBytes[0].every(
+              (byte, index) => byte === commandBytes[1][index],
+            ),
+          context: received.context_id(),
+          conclusion: received.conclusion_id(),
+          rereadContext: reread.context_id(),
+          rereadConclusion: reread.conclusion_id(),
+        });
+        await Promise.all([
+          producerSession.closeHol(source),
+          receiverSession.closeHol(target),
+        ]);
+        await Promise.all([
+          producerSession.closeSession(),
+          receiverSession.closeSession(),
+        ]);
+      } catch (error) {
+        document.body.dataset.error = String(error);
+      } finally {
+        producer?.close();
+        receiver?.close();
+      }
+    </script>
+  </body>
+</html>
