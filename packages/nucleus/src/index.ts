@@ -547,6 +547,29 @@ type BrowserSignedNatLikeMissingZeroWire = Omit<
   "receiver" | "openTrustedState" | "cleanup"
 > & { receiverConnection: number };
 
+/** Exact downloaded files plus a public key selected independently of them. */
+export interface BrowserSignedHolArtifactInput {
+  expectedPublicKey: Uint8Array;
+  image: Uint8Array;
+  sidecar: Uint8Array;
+}
+
+/** Authenticated, explicitly trusted import retained by the browser kernel. */
+export interface BrowserReceivedSignedHolArtifact
+  extends BrowserReceivedHolSnapshot {
+  kind: "received-signed-hol-artifact";
+  /** Bounded sidecar bytes decoded and returned verbatim, never as authority. */
+  attestation: string;
+  receiver: BrowserHolConnection;
+  openTrustedState(): Promise<BrowserManagedTrustedHolState>;
+  cleanup(): Promise<void>;
+}
+
+type BrowserReceivedSignedHolArtifactWire = Omit<
+  BrowserReceivedSignedHolArtifact,
+  "receiver" | "openTrustedState" | "cleanup"
+> & { receiverConnection: number };
+
 export interface BrowserNativeHttpHashSelectedHolOutcome
   extends BrowserReceivedHolSnapshot {
   kind: "native-http-hash-selected-hol";
@@ -589,6 +612,9 @@ export interface BrowserRepl {
   openHol(): Promise<BrowserHolConnection>;
   assumeDedekindInfinity(): Promise<BrowserSignedInfinityAssumption>;
   proveNatLikeMissingZero(): Promise<BrowserSignedNatLikeMissingZero>;
+  receiveSignedHolArtifact(
+    input: BrowserSignedHolArtifactInput,
+  ): Promise<BrowserReceivedSignedHolArtifact>;
   runNativeHttpHashSelectedHol(
     options: NativeHttpHashSelectedHolOptions,
   ): Promise<BrowserNativeHttpHashSelectedHolOutcome>;
@@ -604,6 +630,12 @@ type RequestBody =
   | { operation: "runSignedHolRoundTrip"; connection: number }
   | { operation: "assumeDedekindInfinity" }
   | { operation: "proveNatLikeMissingZero" }
+  | {
+      operation: "receiveSignedHolArtifact";
+      expectedPublicKey: Uint8Array;
+      image: Uint8Array;
+      sidecar: Uint8Array;
+    }
   | {
       operation: "runNativeHttpHashSelectedHol";
       endpoint: string;
@@ -691,6 +723,24 @@ class WorkerRepl implements BrowserRepl {
       operation: "proveNatLikeMissingZero",
     });
     return this.#retainSignedNatLikeMissingZero(wire);
+  }
+
+  async receiveSignedHolArtifact(
+    input: BrowserSignedHolArtifactInput,
+  ): Promise<BrowserReceivedSignedHolArtifact> {
+    const expectedPublicKey = input.expectedPublicKey.slice();
+    const image = input.image.slice();
+    const sidecar = input.sidecar.slice();
+    const wire = await this.request<BrowserReceivedSignedHolArtifactWire>(
+      {
+        operation: "receiveSignedHolArtifact",
+        expectedPublicKey,
+        image,
+        sidecar,
+      },
+      [expectedPublicKey.buffer, image.buffer, sidecar.buffer],
+    );
+    return this.#retainReceivedSignedHolArtifact(wire);
   }
 
   runNativeHttpHashSelectedHol(
@@ -839,6 +889,42 @@ class WorkerRepl implements BrowserRepl {
       openTrustedState: async () => {
         if (cleaned)
           throw new Error("signed missing-zero receiver was cleaned up");
+        const state = await this.request<BrowserManagedTrustedHolStateWire>({
+          operation: "openRetainedTrustedHolState",
+          connection: receiverConnection,
+        });
+        return {
+          ...state,
+          connection: new WorkerHolConnection(this, state.connection),
+        };
+      },
+      cleanup: async () => {
+        if (cleaned) return;
+        cleanupInFlight ??= receiver
+          .close()
+          .then(() => {
+            cleaned = true;
+          })
+          .finally(() => {
+            cleanupInFlight = undefined;
+          });
+        await cleanupInFlight;
+      },
+    };
+  }
+
+  #retainReceivedSignedHolArtifact(
+    wire: BrowserReceivedSignedHolArtifactWire,
+  ): BrowserReceivedSignedHolArtifact {
+    const { receiverConnection, ...presentation } = wire;
+    const receiver = new WorkerHolConnection(this, receiverConnection);
+    let cleaned = false;
+    let cleanupInFlight: Promise<void> | undefined;
+    return {
+      ...presentation,
+      receiver,
+      openTrustedState: async () => {
+        if (cleaned) throw new Error("signed artifact receiver was cleaned up");
         const state = await this.request<BrowserManagedTrustedHolStateWire>({
           operation: "openRetainedTrustedHolState",
           connection: receiverConnection,

@@ -9,12 +9,16 @@
       import { createBrowserRepl } from "../dist/index.js";
 
       const repl = createBrowserRepl();
+      const receiverRepl = createBrowserRepl();
       let source;
       let target;
       let hol;
       let signedReceiver;
       let missingZero;
       let missingZeroState;
+      let receivedHandoff;
+      let receivedHandoffState;
+      let missingZeroReopened;
       let url;
       try {
         source = await repl.open();
@@ -35,8 +39,39 @@
         const { receiver, ...signedResult } = signed;
         signedReceiver = receiver;
         missingZero = await repl.proveNatLikeMissingZero();
+        const sidecar = new TextEncoder().encode(missingZero.attestation);
+        let wrongKeyRejected = false;
+        try {
+          const unexpectedlyReceived =
+            await receiverRepl.receiveSignedHolArtifact({
+              expectedPublicKey: new Uint8Array(32),
+              image: missingZero.image,
+              sidecar,
+            });
+          await unexpectedlyReceived.cleanup();
+        } catch {
+          wrongKeyRejected = true;
+        }
+        receivedHandoff = await receiverRepl.receiveSignedHolArtifact({
+          expectedPublicKey: missingZero.publicKey,
+          image: missingZero.image,
+          sidecar,
+        });
         missingZeroState = await missingZero.openTrustedState();
         const missingZeroTruth = await missingZeroState.connection.run("truth");
+        missingZeroReopened = {
+          sourceNamespace: missingZeroState.sourceNamespace,
+          context: missingZeroState.context,
+          conclusion: missingZeroState.conclusion,
+          truth: missingZeroTruth.statement,
+        };
+        await missingZeroState.connection.close();
+        missingZeroState = undefined;
+        await missingZero.cleanup();
+
+        receivedHandoffState = await receivedHandoff.openTrustedState();
+        const receivedHandoffTruth =
+          await receivedHandoffState.connection.run("truth");
 
         let readonly = false;
         try {
@@ -82,11 +117,20 @@
               missingZero.attestation.includes(
                 "intermediate-persistence=none\n",
               ),
+            reopened: missingZeroReopened,
+          },
+          receivedHandoff: {
+            kind: receivedHandoff.kind,
+            wrongKeyRejected,
+            distinctReceiverAfterSourceCleanup: true,
+            attestationExact:
+              receivedHandoff.attestation === missingZero.attestation,
+            context: receivedHandoff.context,
+            conclusion: receivedHandoff.conclusion,
             reopened: {
-              sourceNamespace: missingZeroState.sourceNamespace,
-              context: missingZeroState.context,
-              conclusion: missingZeroState.conclusion,
-              truth: missingZeroTruth.statement,
+              context: receivedHandoffState.context,
+              conclusion: receivedHandoffState.conclusion,
+              truth: receivedHandoffTruth.statement,
             },
           },
         });
@@ -100,7 +144,10 @@
         await signedReceiver?.close();
         await missingZero?.cleanup();
         await missingZeroState?.connection.close();
+        await receivedHandoff?.cleanup();
+        await receivedHandoffState?.connection.close();
         repl.close();
+        receiverRepl.close();
       }
     </script>
   </body>
