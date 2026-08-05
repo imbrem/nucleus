@@ -10,6 +10,7 @@ const root = new URL("..", import.meta.url).pathname;
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
   ".wasm": "application/wasm",
 };
 
@@ -87,6 +88,25 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
   assert.equal(result.signed.attestation, true);
   assert.equal(result.signed.importedContext, "0");
   assert.equal(result.signed.importedConclusion, result.signed.conclusion);
+  assert.equal(result.replayedRecipe.kind, "signed-hol-proof-recipe");
+  assert.equal(result.replayedRecipe.malformedRecipeRejected, true);
+  assert.match(result.replayedRecipe.sourceNamespace, /^\d+$/);
+  assert.match(result.replayedRecipe.schema, /^[0-9a-f]{64}$/);
+  assert.match(result.replayedRecipe.imageHash, /^[0-9a-f]{64}$/);
+  assert.match(result.replayedRecipe.signer, /^[0-9a-f]{64}$/);
+  assert.ok(result.replayedRecipe.image > 0);
+  assert.equal(result.replayedRecipe.publicKey, 32);
+  assert.equal(result.replayedRecipe.signature, 64);
+  assert.equal(result.replayedRecipe.attestation, true);
+  assert.equal(
+    result.replayedRecipe.reopened.context,
+    result.replayedRecipe.context,
+  );
+  assert.equal(
+    result.replayedRecipe.reopened.conclusion,
+    result.replayedRecipe.conclusion,
+  );
+  assert.equal(result.replayedRecipe.reopened.truth, "true");
   assert.equal(result.missingZero.kind, "signed-natlike-missing-zero");
   assert.equal(result.missingZero.theoremOracle, "(APP missing zero)");
   assert.match(result.missingZero.namespace, /^\d+$/);

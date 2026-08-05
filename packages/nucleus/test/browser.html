@@ -7,6 +7,7 @@
   <body>
     <script type="module">
       import { createBrowserRepl } from "../dist/index.js";
+      import { CLOSED_BETA_RECIPE } from "./closed-beta-recipe.mjs";
 
       const repl = createBrowserRepl();
       const receiverRepl = createBrowserRepl();
@@ -19,6 +20,8 @@
       let receivedHandoff;
       let receivedHandoffState;
       let missingZeroReopened;
+      let replayedRecipe;
+      let replayedRecipeState;
       let url;
       try {
         source = await repl.open();
@@ -38,6 +41,22 @@
         const signed = await hol.runSignedRoundTrip();
         const { receiver, ...signedResult } = signed;
         signedReceiver = receiver;
+        let malformedRecipeRejected = false;
+        try {
+          const unexpected = await repl.replayHolProofRecipe(
+            new Uint8Array([0xff]),
+          );
+          await unexpected.cleanup();
+        } catch {
+          malformedRecipeRejected = true;
+        }
+        const mutableRecipe = CLOSED_BETA_RECIPE.slice();
+        const replayPromise = repl.replayHolProofRecipe(mutableRecipe);
+        mutableRecipe.fill(0);
+        replayedRecipe = await replayPromise;
+        replayedRecipeState = await replayedRecipe.openTrustedState();
+        const replayedRecipeTruth =
+          await replayedRecipeState.connection.run("truth");
         missingZero = await repl.proveNatLikeMissingZero();
         const sidecar = new TextEncoder().encode(missingZero.attestation);
         let wrongKeyRejected = false;
@@ -95,6 +114,27 @@
                 "format=covalence-repl-signed-snapshot-demo-v0",
               ) && signed.attestation.includes(`namespace=${signed.namespace}`),
           },
+          replayedRecipe: {
+            kind: replayedRecipe.kind,
+            malformedRecipeRejected,
+            sourceNamespace: replayedRecipe.sourceNamespace,
+            image: replayedRecipe.image.byteLength,
+            schema: replayedRecipe.schema,
+            imageHash: replayedRecipe.imageHash,
+            signer: replayedRecipe.signer,
+            publicKey: replayedRecipe.publicKey.byteLength,
+            signature: replayedRecipe.signature.byteLength,
+            attestation: replayedRecipe.attestation.startsWith(
+              "format=covalence-repl-signed-snapshot-demo-v0\n",
+            ),
+            context: replayedRecipe.context,
+            conclusion: replayedRecipe.conclusion,
+            reopened: {
+              context: replayedRecipeState.context,
+              conclusion: replayedRecipeState.conclusion,
+              truth: replayedRecipeTruth.statement,
+            },
+          },
           missingZero: {
             kind: missingZero.kind,
             theoremOracle: missingZero.theoremOracle,
@@ -144,6 +184,8 @@
         await signedReceiver?.close();
         await missingZero?.cleanup();
         await missingZeroState?.connection.close();
+        await replayedRecipe?.cleanup();
+        await replayedRecipeState?.connection.close();
         await receivedHandoff?.cleanup();
         await receivedHandoffState?.connection.close();
         repl.close();

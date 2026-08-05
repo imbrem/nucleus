@@ -547,6 +547,30 @@ type BrowserSignedNatLikeMissingZeroWire = Omit<
   "receiver" | "openTrustedState" | "cleanup"
 > & { receiverConnection: number };
 
+/** Checked canonical recipe bytes plus their signed, retained kernel state. */
+export interface BrowserReplayedHolProofRecipe
+  extends BrowserReceivedHolSnapshot {
+  kind: "signed-hol-proof-recipe";
+  sourceNamespace: string;
+  image: Uint8Array;
+  schema: string;
+  imageHash: string;
+  signer: string;
+  publicKey: Uint8Array;
+  signature: Uint8Array;
+  attestation: string;
+  importedNamespace: string;
+  persistentStateHash: string;
+  receiver: BrowserHolConnection;
+  openTrustedState(): Promise<BrowserManagedTrustedHolState>;
+  cleanup(): Promise<void>;
+}
+
+type BrowserReplayedHolProofRecipeWire = Omit<
+  BrowserReplayedHolProofRecipe,
+  "receiver" | "openTrustedState" | "cleanup"
+> & { receiverConnection: number };
+
 /** Exact downloaded files plus a public key selected independently of them. */
 export interface BrowserSignedHolArtifactInput {
   expectedPublicKey: Uint8Array;
@@ -612,6 +636,9 @@ export interface BrowserRepl {
   openHol(): Promise<BrowserHolConnection>;
   assumeDedekindInfinity(): Promise<BrowserSignedInfinityAssumption>;
   proveNatLikeMissingZero(): Promise<BrowserSignedNatLikeMissingZero>;
+  replayHolProofRecipe(
+    recipe: Uint8Array,
+  ): Promise<BrowserReplayedHolProofRecipe>;
   receiveSignedHolArtifact(
     input: BrowserSignedHolArtifactInput,
   ): Promise<BrowserReceivedSignedHolArtifact>;
@@ -630,6 +657,7 @@ type RequestBody =
   | { operation: "runSignedHolRoundTrip"; connection: number }
   | { operation: "assumeDedekindInfinity" }
   | { operation: "proveNatLikeMissingZero" }
+  | { operation: "replayHolProofRecipe"; recipe: Uint8Array }
   | {
       operation: "receiveSignedHolArtifact";
       expectedPublicKey: Uint8Array;
@@ -723,6 +751,17 @@ class WorkerRepl implements BrowserRepl {
       operation: "proveNatLikeMissingZero",
     });
     return this.#retainSignedNatLikeMissingZero(wire);
+  }
+
+  async replayHolProofRecipe(
+    input: Uint8Array,
+  ): Promise<BrowserReplayedHolProofRecipe> {
+    const recipe = input.slice();
+    const wire = await this.request<BrowserReplayedHolProofRecipeWire>(
+      { operation: "replayHolProofRecipe", recipe },
+      [recipe.buffer],
+    );
+    return this.#retainReplayedHolProofRecipe(wire);
   }
 
   async receiveSignedHolArtifact(
@@ -889,6 +928,42 @@ class WorkerRepl implements BrowserRepl {
       openTrustedState: async () => {
         if (cleaned)
           throw new Error("signed missing-zero receiver was cleaned up");
+        const state = await this.request<BrowserManagedTrustedHolStateWire>({
+          operation: "openRetainedTrustedHolState",
+          connection: receiverConnection,
+        });
+        return {
+          ...state,
+          connection: new WorkerHolConnection(this, state.connection),
+        };
+      },
+      cleanup: async () => {
+        if (cleaned) return;
+        cleanupInFlight ??= receiver
+          .close()
+          .then(() => {
+            cleaned = true;
+          })
+          .finally(() => {
+            cleanupInFlight = undefined;
+          });
+        await cleanupInFlight;
+      },
+    };
+  }
+
+  #retainReplayedHolProofRecipe(
+    wire: BrowserReplayedHolProofRecipeWire,
+  ): BrowserReplayedHolProofRecipe {
+    const { receiverConnection, ...presentation } = wire;
+    const receiver = new WorkerHolConnection(this, receiverConnection);
+    let cleaned = false;
+    let cleanupInFlight: Promise<void> | undefined;
+    return {
+      ...presentation,
+      receiver,
+      openTrustedState: async () => {
+        if (cleaned) throw new Error("recipe receiver was cleaned up");
         const state = await this.request<BrowserManagedTrustedHolStateWire>({
           operation: "openRetainedTrustedHolState",
           connection: receiverConnection,
