@@ -1,0 +1,22 @@
+[package]
+name = "covalence-hol-proof-recipe-collector"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Authority-free subprocess collector for bounded HOL proof recipes"
+publish = false
+
+[package.metadata.glu]
+buck-mapped-srcs = { "Cargo.toml" = "crates/bin/hol-proof-recipe-collector/Cargo.toml", "nucleus//crates/nucleus:package_files" = "crates/nucleus" }
+
+[[bin]]
+name = "covalence-hol-proof-recipe-collector"
+path = "src/main.rs"
+
+[dependencies]
+covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["blake3"] }
+covalence-proton = { path = "../../proton" }
+
+[lints]
+workspace = true

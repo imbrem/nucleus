@@ -11,6 +11,7 @@ members = [
   "crates/neutron",
   "crates/nucleus",
   "crates/hol-proof-guest-beta",
+  "crates/bin/hol-proof-recipe-collector",
   "crates/repl",
   "crates/bin/nucleus",
 ]
