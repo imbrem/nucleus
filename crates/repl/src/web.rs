@@ -4,6 +4,7 @@ use covalence_lib_hash::O256;
 use wasm_bindgen::prelude::*;
 
 use super::hol_infinity::produce_and_retain_signed_dedekind_infinity_assumption_bounded;
+use super::hol_natlike_missing_zero::retain_signed_natlike_missing_zero_bounded;
 use super::{
     AllowAll, ConnectionEntry, ConnectionId, ExpectedKernelIdentity, HolRecipe, HolRecipeResult,
     Kernel, KernelEntry, KernelId, LocalConnection, MAX_SIGNED_MESSAGE_BYTES, Outcome,
@@ -11,11 +12,12 @@ use super::{
     RetainedReceivedHolSnapshot, SIGNED_HOL_PHASES, ServiceIdentity, ServiceOperation,
     ServiceProducedHol, ServiceProducedHolComponent, ServiceResult, SessionInitiator,
     SignedHolArtifact, SignedHolRoundTripResult, SignedInfinityAssumption, SignedKernelService,
-    SignedMessageRequest, SignedMessageResponse, SignedServiceCommand, SignedServiceSession, Value,
-    authenticate_pinned_signed_hol_artifact, decode_signed_request, decode_signed_response,
-    encode_signed_request, encode_signed_response, open_retained_trusted_hol_as_managed_state,
-    produce_signed_hol_artifact, reread_received_hol_snapshot, run_managed_signed_hol_round_trip,
-    trust_and_receive_pinned_signed_hol_artifact,
+    SignedMessageRequest, SignedMessageResponse, SignedNatLikeMissingZero, SignedServiceCommand,
+    SignedServiceSession, Value, authenticate_pinned_signed_hol_artifact, decode_signed_request,
+    decode_signed_response, encode_signed_request, encode_signed_response,
+    open_retained_trusted_hol_as_managed_state, produce_signed_hol_artifact,
+    produce_signed_natlike_missing_zero, reread_received_hol_snapshot,
+    run_managed_signed_hol_round_trip, trust_and_receive_pinned_signed_hol_artifact,
     trust_receive_and_retain_pinned_signed_hol_artifact,
 };
 
@@ -104,6 +106,14 @@ pub struct WebManagedTrustedHolState {
 #[wasm_bindgen]
 pub struct WebSignedInfinityAssumption {
     assumption: SignedInfinityAssumption,
+    receiver: u32,
+    retained: u32,
+}
+
+/// Browser presentation of the exact signed `missing zero` theorem artifact.
+#[wasm_bindgen]
+pub struct WebSignedNatLikeMissingZero {
+    theorem: SignedNatLikeMissingZero,
     receiver: u32,
     retained: u32,
 }
@@ -765,6 +775,31 @@ impl WebKernel {
         self.received_artifacts.insert(retained_id, retained);
         Ok(WebSignedInfinityAssumption {
             assumption,
+            receiver,
+            retained: retained_id,
+        })
+    }
+
+    /// Derives, signs, explicitly trusts/imports, and retains exact `missing zero`.
+    pub fn prove_natlike_missing_zero(&mut self) -> Result<WebSignedNatLikeMissingZero, JsValue> {
+        let retained_id = self.next_received_artifact;
+        let next_retained_id = retained_id
+            .checked_add(1)
+            .ok_or_else(|| JsValue::from_str("received artifact IDs are exhausted"))?;
+        let theorem = produce_signed_natlike_missing_zero(&self.kernel).map_err(js_error)?;
+        let (receiver, retained) = retain_signed_natlike_missing_zero_bounded(
+            &self.kernel,
+            &mut self.repl,
+            &theorem,
+            i64::from(u32::MAX),
+        )
+        .map_err(js_error)?;
+        // Bounded admission establishes this before selecting or inserting.
+        let receiver = receiver.get() as u32;
+        self.next_received_artifact = next_retained_id;
+        self.received_artifacts.insert(retained_id, retained);
+        Ok(WebSignedNatLikeMissingZero {
+            theorem,
             receiver,
             retained: retained_id,
         })
@@ -1526,6 +1561,93 @@ impl WebSignedInfinityAssumption {
     #[must_use]
     pub fn attestation_text(&self) -> String {
         self.assumption.attestation_text()
+    }
+}
+
+#[wasm_bindgen]
+impl WebSignedNatLikeMissingZero {
+    /// Returns `signed-natlike-missing-zero`.
+    #[must_use]
+    pub fn kind(&self) -> String {
+        self.theorem.kind().to_owned()
+    }
+
+    /// Returns the explicitly trusted import receiver.
+    #[must_use]
+    pub fn receiver_connection(&self) -> u32 {
+        self.receiver
+    }
+
+    /// Returns the opaque retained-receipt ID used by the Worker.
+    #[must_use]
+    pub fn retained_id(&self) -> u32 {
+        self.retained
+    }
+
+    /// Returns the source namespace in the signed database.
+    #[must_use]
+    pub fn namespace_id(&self) -> String {
+        self.theorem.artifact().namespace_id().to_string()
+    }
+
+    /// Returns the schema-qualified image address.
+    #[must_use]
+    pub fn image_hash(&self) -> String {
+        self.theorem.artifact().image_hash().to_string()
+    }
+
+    /// Returns the exact detached-validated SQLite theorem bytes.
+    #[must_use]
+    pub fn image(&self) -> Vec<u8> {
+        self.theorem.artifact().image().to_vec()
+    }
+
+    /// Returns the schema coordinate qualified by the signature.
+    #[must_use]
+    pub fn schema(&self) -> String {
+        self.theorem.artifact().schema().to_string()
+    }
+
+    /// Returns the signer identity.
+    #[must_use]
+    pub fn signer(&self) -> String {
+        self.theorem.artifact().signer().to_string()
+    }
+
+    /// Returns the exact signing public key.
+    #[must_use]
+    pub fn public_key(&self) -> Vec<u8> {
+        self.theorem.artifact().public_key().to_vec()
+    }
+
+    /// Returns the exact schema-qualified signature.
+    #[must_use]
+    pub fn signature(&self) -> Vec<u8> {
+        self.theorem.artifact().signature().to_vec()
+    }
+
+    /// Returns the empty theorem context coordinate.
+    #[must_use]
+    pub fn context_id(&self) -> String {
+        self.theorem.context().get().to_string()
+    }
+
+    /// Returns the exact `missing zero` conclusion coordinate.
+    #[must_use]
+    pub fn conclusion_id(&self) -> String {
+        self.theorem.conclusion().get().to_string()
+    }
+
+    /// Returns the pinned structural theorem oracle.
+    #[must_use]
+    pub fn theorem_oracle(&self) -> String {
+        self.theorem.theorem_oracle().to_owned()
+    }
+
+    /// Returns the explicitly classified demo-local attestation sidecar.
+    #[must_use]
+    pub fn attestation_text(&self) -> String {
+        self.theorem.attestation_text()
     }
 }
 
