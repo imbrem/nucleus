@@ -64,7 +64,90 @@ test("runs the REPL kernel through the Wasm binding in Node", async () => {
   assert.throws(() => kernel.run_hol(connection, "truth"));
   assert.throws(() => kernel.run(holConnection, "SELECT 1"));
 
+  const producerKernel = new WebKernel();
+  const producerConnection = producerKernel.open_hol_connection();
+  const produced =
+    producerKernel.produce_signed_hol_artifact(producerConnection);
+  const receiverKernel = new WebKernel();
+  const receiverConnection = receiverKernel.open_hol_connection();
+  const receiverProbeConnection = receiverKernel.open_hol_connection();
+  const receiverProbe = receiverKernel.produce_signed_hol_artifact(
+    receiverProbeConnection,
+  );
+  assert.equal(produced.kind(), "signed-hol-artifact");
+  assert.equal(produced.phase(0), "proof-persisted");
+  assert.equal(produced.phase(2), "snapshot-signed");
+  assert.notEqual(produced.signer(), receiverProbe.signer());
+
+  const wrongBytes = produced.image();
+  wrongBytes[0] ^= 1;
+  assert.throws(
+    () =>
+      receiverKernel.receive_signed_hol_artifact(
+        receiverConnection,
+        produced.namespace_id(),
+        wrongBytes,
+        produced.schema(),
+        produced.image_hash(),
+        produced.signer(),
+        produced.public_key(),
+        produced.signature(),
+      ),
+    /signature-authenticated/,
+  );
+  const wrongSignature = produced.signature();
+  wrongSignature[0] ^= 1;
+  assert.throws(
+    () =>
+      receiverKernel.receive_signed_hol_artifact(
+        receiverConnection,
+        produced.namespace_id(),
+        produced.image(),
+        produced.schema(),
+        produced.image_hash(),
+        produced.signer(),
+        produced.public_key(),
+        wrongSignature,
+      ),
+    /signature-authenticated/,
+  );
+  const oversized = new Uint8Array(WebKernel.max_image_bytes() + 1);
+  assert.throws(
+    () =>
+      receiverKernel.receive_signed_hol_artifact(
+        receiverConnection,
+        produced.namespace_id(),
+        oversized,
+        produced.schema(),
+        produced.image_hash(),
+        produced.signer(),
+        produced.public_key(),
+        produced.signature(),
+      ),
+    /image-size-checked/,
+  );
+  const received = receiverKernel.receive_signed_hol_artifact(
+    receiverConnection,
+    produced.namespace_id(),
+    produced.image(),
+    produced.schema(),
+    produced.image_hash(),
+    produced.signer(),
+    produced.public_key(),
+    produced.signature(),
+  );
+  assert.equal(received.kind(), "received-hol-snapshot");
+  assert.equal(received.phase(0), "image-size-checked");
+  assert.equal(received.phase(6), "theorem-read");
+  assert.equal(received.context_id(), "0");
+  assert.equal(received.conclusion_id(), produced.conclusion_id());
+
   kernel.close_connection(signed.receiver_connection());
+  received.free();
+  receiverProbe.free();
+  produced.free();
+  receiverKernel.free();
+  producerKernel.free();
   signed.free();
   theorem.free();
   result.free();

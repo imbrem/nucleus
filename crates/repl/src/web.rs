@@ -3,7 +3,8 @@ use wasm_bindgen::prelude::*;
 
 use super::{
     AllowAll, ConnectionId, HolRecipe, HolRecipeResult, Kernel, LocalConnection, Outcome,
-    QueryResult, Repl, SignedHolRoundTripResult, Value, produce_signed_hol_artifact,
+    ProducedSignedHol, QueryResult, ReceivedHolSnapshot, Repl, SIGNED_HOL_PHASES,
+    SignedHolArtifact, SignedHolRoundTripResult, Value, produce_signed_hol_artifact,
     receive_signed_hol_artifact,
 };
 
@@ -31,6 +32,18 @@ pub struct WebHolOutcome {
 pub struct WebSignedHolOutcome {
     outcome: SignedHolRoundTripResult,
     receiver_connection: u32,
+}
+
+/// Producer-local proof presentation and its transportable signed artifact.
+#[wasm_bindgen]
+pub struct WebProducedSignedHol {
+    produced: ProducedSignedHol,
+}
+
+/// Receiver-local coordinates established from an untrusted signed artifact.
+#[wasm_bindgen]
+pub struct WebReceivedHolSnapshot {
+    received: ReceivedHolSnapshot,
 }
 
 #[wasm_bindgen]
@@ -154,6 +167,82 @@ impl WebKernel {
         })
     }
 
+    /// Proves, persists, exports, and signs one HOL artifact in this kernel.
+    ///
+    /// The returned fields are an above-TCB structured carrier, not a stable
+    /// wire encoding. A different [`WebKernel`] must authenticate and validate
+    /// every field with [`WebKernel::receive_signed_hol_artifact`].
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for a non-HOL connection or the first proof,
+    /// export, or signing boundary rejected.
+    pub fn produce_signed_hol_artifact(
+        &mut self,
+        connection: u32,
+    ) -> Result<WebProducedSignedHol, JsValue> {
+        let produced = {
+            let Self { kernel, repl } = self;
+            let source = repl
+                .get_mut(ConnectionId::from_u32(connection))
+                .map_err(js_error)?
+                .hol_mut()
+                .map_err(js_error)?;
+            produce_signed_hol_artifact(kernel, source).map_err(js_error)?
+        };
+        Ok(WebProducedSignedHol { produced })
+    }
+
+    /// Authenticates, detached-validates, trusts, imports, and reads an artifact.
+    ///
+    /// All arguments are untrusted transport fields. Hash parsing and fixed
+    /// widths do not confer authority; the receiver establishes authority from
+    /// the signature over the exact schema-qualified image before changing its
+    /// connection-local trust state.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for malformed fields, a non-HOL connection,
+    /// or the first authentication, validation, trust, import, or reader
+    /// boundary rejected.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the deliberately unencoded transport exposes every signed field"
+    )]
+    pub fn receive_signed_hol_artifact(
+        &mut self,
+        connection: u32,
+        namespace: &str,
+        image: &[u8],
+        schema: &str,
+        image_hash: &str,
+        signer: &str,
+        public_key: &[u8],
+        signature: &[u8],
+    ) -> Result<WebReceivedHolSnapshot, JsValue> {
+        if image.len() > super::MAX_IMAGE_BYTES {
+            return Err(JsValue::from_str(&format!(
+                "image-size-checked: image is {} bytes; the limit is {} bytes",
+                image.len(),
+                super::MAX_IMAGE_BYTES,
+            )));
+        }
+        let namespace = namespace.parse::<i64>().map_err(js_error)?;
+        let artifact = SignedHolArtifact::from_untrusted_parts(
+            namespace,
+            image.to_vec(),
+            schema,
+            image_hash,
+            signer,
+            public_key.to_vec(),
+            signature.to_vec(),
+        )
+        .map_err(js_error)?;
+        let received =
+            receive_signed_hol_artifact(self.hol_mut(connection)?, &artifact).map_err(js_error)?;
+        Ok(WebReceivedHolSnapshot { received })
+    }
+
     /// Stores a complete resident database image and returns its address.
     ///
     /// # Errors
@@ -259,6 +348,139 @@ impl WebHolOutcome {
     #[must_use]
     pub fn statement(&self) -> String {
         self.outcome.statement().to_owned()
+    }
+}
+
+#[wasm_bindgen]
+impl WebProducedSignedHol {
+    /// Returns `signed-hol-artifact`.
+    #[must_use]
+    pub fn kind(&self) -> String {
+        "signed-hol-artifact".to_owned()
+    }
+
+    /// Returns the number of completed producer boundary stages.
+    #[must_use]
+    pub fn phase_count(&self) -> usize {
+        3
+    }
+
+    /// Returns one completed producer boundary stage by index.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error when `index` is out of bounds.
+    pub fn phase(&self, index: u32) -> Result<String, JsValue> {
+        SIGNED_HOL_PHASES
+            .get(index as usize)
+            .filter(|_| index < 3)
+            .map(|phase| (*phase).to_owned())
+            .ok_or_else(|| JsValue::from_str("phase index out of bounds"))
+    }
+
+    /// Returns the stable proposition persisted by the producer.
+    #[must_use]
+    pub fn statement(&self) -> String {
+        self.produced.proof().statement().to_owned()
+    }
+
+    /// Returns the producer-local conclusion as an exact decimal string.
+    #[must_use]
+    pub fn conclusion_id(&self) -> String {
+        self.produced.proof().conclusion_id().to_string()
+    }
+
+    /// Returns the source namespace as an exact decimal string.
+    #[must_use]
+    pub fn namespace_id(&self) -> String {
+        self.produced.artifact().namespace_id().to_string()
+    }
+
+    /// Copies the exact signed SQLite bytes into JavaScript-owned memory.
+    #[must_use]
+    pub fn image(&self) -> Vec<u8> {
+        self.produced.artifact().image().to_vec()
+    }
+
+    /// Returns the signed interpretation-qualified schema hash.
+    #[must_use]
+    pub fn schema(&self) -> String {
+        self.produced.artifact().schema().to_string()
+    }
+
+    /// Returns the hash of the exact image bytes.
+    #[must_use]
+    pub fn image_hash(&self) -> String {
+        self.produced.artifact().image_hash().to_string()
+    }
+
+    /// Returns the producer's key identity.
+    #[must_use]
+    pub fn signer(&self) -> String {
+        self.produced.artifact().signer().to_string()
+    }
+
+    /// Copies the producer's Ed25519 public key into JavaScript-owned memory.
+    #[must_use]
+    pub fn public_key(&self) -> Vec<u8> {
+        self.produced.artifact().public_key().to_vec()
+    }
+
+    /// Copies the schema-qualified image signature into JavaScript-owned memory.
+    #[must_use]
+    pub fn signature(&self) -> Vec<u8> {
+        self.produced.artifact().signature().to_vec()
+    }
+}
+
+#[wasm_bindgen]
+impl WebReceivedHolSnapshot {
+    /// Returns `received-hol-snapshot`.
+    #[must_use]
+    pub fn kind(&self) -> String {
+        "received-hol-snapshot".to_owned()
+    }
+
+    /// Returns the number of completed receiver boundary stages.
+    #[must_use]
+    pub fn phase_count(&self) -> usize {
+        7
+    }
+
+    /// Returns one completed receiver boundary stage by index.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error when `index` is out of bounds.
+    pub fn phase(&self, index: u32) -> Result<String, JsValue> {
+        SIGNED_HOL_PHASES
+            .get(index as usize + 3)
+            .map(|phase| (*phase).to_owned())
+            .ok_or_else(|| JsValue::from_str("phase index out of bounds"))
+    }
+
+    /// Returns the receiver's inert import-directory ID.
+    #[must_use]
+    pub fn import_id(&self) -> String {
+        self.received.import_id().to_string()
+    }
+
+    /// Returns the receiver's imported namespace alias ID.
+    #[must_use]
+    pub fn namespace_id(&self) -> String {
+        self.received.namespace_id().to_string()
+    }
+
+    /// Returns the imported empty-context source coordinate.
+    #[must_use]
+    pub fn context_id(&self) -> String {
+        self.received.context_id().to_string()
+    }
+
+    /// Returns the imported conclusion source coordinate.
+    #[must_use]
+    pub fn conclusion_id(&self) -> String {
+        self.received.conclusion_id().to_string()
     }
 }
 

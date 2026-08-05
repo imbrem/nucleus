@@ -129,4 +129,54 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
       .count(),
     1,
   );
+
+  const interkernel = await browser.newPage();
+  await interkernel.goto(
+    `http://127.0.0.1:${address.port}/test/interkernel.html`,
+  );
+  await interkernel.waitForFunction(
+    () =>
+      document.body.dataset.result !== undefined ||
+      document.body.dataset.error !== undefined,
+  );
+  assert.equal(
+    await interkernel.locator("body").getAttribute("data-error"),
+    null,
+  );
+  const interkernelResult = JSON.parse(
+    await interkernel.locator("body").getAttribute("data-result"),
+  );
+  assert.equal(interkernelResult.distinctKernels, true);
+  assert.notEqual(
+    interkernelResult.producerSigner,
+    interkernelResult.receiverSigner,
+  );
+  assert.deepEqual(interkernelResult.producerPhases, [
+    "proof-persisted",
+    "namespace-exported",
+    "snapshot-signed",
+  ]);
+  assert.deepEqual(interkernelResult.receiverPhases, [
+    "image-size-checked",
+    "signature-authenticated",
+    "image-detached-validated",
+    "signer-trusted",
+    "snapshot-accepted",
+    "namespace-imported",
+    "theorem-read",
+  ]);
+  assert.match(interkernelResult.wrongBytesError, /signature-authenticated/);
+  assert.match(
+    interkernelResult.wrongSignatureError,
+    /signature-authenticated/,
+  );
+  // The exact 64 MiB boundary is covered in Rust and Node/Wasm. Allocating it
+  // here would turn this Worker/PKI test into a Chromium container memory test.
+  assert.match(interkernelResult.wrongNamespaceError, /theorem-read/);
+  assert.equal(interkernelResult.ownershipPreserved, true);
+  assert.equal(interkernelResult.importedContext, "0");
+  assert.equal(
+    interkernelResult.importedConclusion,
+    interkernelResult.producerConclusion,
+  );
 });

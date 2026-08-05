@@ -47,6 +47,34 @@ export interface SignedHolOutcome {
   receiver: BrowserHolConnection;
 }
 
+/** Unencoded fields transported between independently keyed kernels. */
+export interface SignedHolArtifact {
+  namespace: string;
+  image: Uint8Array;
+  schema: string;
+  imageHash: string;
+  signer: string;
+  publicKey: Uint8Array;
+  signature: Uint8Array;
+}
+
+export interface ProducedSignedHol {
+  kind: "signed-hol-artifact";
+  phases: string[];
+  statement: string;
+  conclusion: string;
+  artifact: SignedHolArtifact;
+}
+
+export interface ReceivedHolSnapshot {
+  kind: "received-hol-snapshot";
+  phases: string[];
+  importId: string;
+  namespace: string;
+  context: string;
+  conclusion: string;
+}
+
 type SignedHolWireOutcome = Omit<SignedHolOutcome, "receiver"> & {
   receiverConnection: number;
 };
@@ -65,6 +93,10 @@ export interface BrowserHolConnection {
   readonly kind: "hol";
   run(recipe: string): Promise<HolOutcome>;
   runSignedRoundTrip(): Promise<SignedHolOutcome>;
+  produceSignedArtifact(): Promise<ProducedSignedHol>;
+  receiveSignedArtifact(
+    artifact: SignedHolArtifact,
+  ): Promise<ReceivedHolSnapshot>;
   close(): Promise<void>;
 }
 
@@ -85,6 +117,13 @@ type RequestBody =
   | { operation: "run"; connection: number; sql: string }
   | { operation: "runHol"; connection: number; recipe: string }
   | { operation: "runSignedHolRoundTrip"; connection: number }
+  | { operation: "maxImageBytes" }
+  | { operation: "produceSignedHolArtifact"; connection: number }
+  | {
+      operation: "receiveSignedHolArtifact";
+      connection: number;
+      artifact: SignedHolArtifact;
+    }
   | { operation: "putImage"; connection: number; bytes: Uint8Array }
   | {
       operation: "attachImage";
@@ -266,6 +305,47 @@ class WorkerHolConnection implements BrowserHolConnection {
     };
   }
 
+  produceSignedArtifact(): Promise<ProducedSignedHol> {
+    return this.#request({
+      operation: "produceSignedHolArtifact",
+      connection: this.connection,
+    });
+  }
+
+  async receiveSignedArtifact(
+    artifact: SignedHolArtifact,
+  ): Promise<ReceivedHolSnapshot> {
+    const limit = await this.repl.request<number>({
+      operation: "maxImageBytes",
+    });
+    if (artifact.image.byteLength > limit) {
+      throw new Error(
+        `image-size-checked: image is ${artifact.image.byteLength} bytes; the limit is ${limit} bytes`,
+      );
+    }
+    // Transfer fresh copies so crossing into the receiver Worker never detaches
+    // the caller's artifact. The Worker-to-page producer path transfers its
+    // buffers without copying, so ownership remains explicit in both directions.
+    const transported: SignedHolArtifact = {
+      ...artifact,
+      image: artifact.image.slice(),
+      publicKey: artifact.publicKey.slice(),
+      signature: artifact.signature.slice(),
+    };
+    return this.#request(
+      {
+        operation: "receiveSignedHolArtifact",
+        connection: this.connection,
+        artifact: transported,
+      },
+      [
+        transported.image.buffer,
+        transported.publicKey.buffer,
+        transported.signature.buffer,
+      ],
+    );
+  }
+
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
@@ -275,10 +355,10 @@ class WorkerHolConnection implements BrowserHolConnection {
     });
   }
 
-  #request<T>(body: RequestBody): Promise<T> {
+  #request<T>(body: RequestBody, transfer: Transferable[] = []): Promise<T> {
     if (this.#closed)
       return Promise.reject(new Error("HOL connection is closed"));
-    return this.repl.request(body);
+    return this.repl.request(body, transfer);
   }
 }
 
