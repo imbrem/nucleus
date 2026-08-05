@@ -77,6 +77,7 @@ pub struct ValidatedHolImage {
     physical_schema: O256,
     bytes: covalence_neutron::Bytes,
     counts: HolImageCounts,
+    metadata_schema: HolSchema,
 }
 
 /// Conjoined evidence that exact received bytes are authenticated and structurally valid.
@@ -204,6 +205,7 @@ impl ValidatedHolImage {
             physical_schema,
             bytes: owned,
             counts,
+            metadata_schema: expected_schema.clone(),
         })
     }
 
@@ -247,6 +249,10 @@ impl ValidatedHolImage {
     #[must_use]
     pub const fn counts(&self) -> HolImageCounts {
         self.counts
+    }
+
+    pub(super) const fn metadata_schema(&self) -> &HolSchema {
+        &self.metadata_schema
     }
 
     /// Consumes the evidence and returns the exact admitted bytes.
