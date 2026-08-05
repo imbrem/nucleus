@@ -6,6 +6,7 @@ import init, {
   type WebRemoteProducedHolComponent,
   type WebReceivedHolSnapshot,
   type WebReceivedSignedHolArtifact,
+  type WebReplayedHolProofRecipe,
   type WebRetainedReceivedHolSnapshot,
   type WebSignedHolOutcome,
   type WebSignedInfinityAssumption,
@@ -25,6 +26,7 @@ type Request =
   | { id: number; operation: "runSignedHolRoundTrip"; connection: number }
   | { id: number; operation: "assumeDedekindInfinity" }
   | { id: number; operation: "proveNatLikeMissingZero" }
+  | { id: number; operation: "replayHolProofRecipe"; recipe: Uint8Array }
   | {
       id: number;
       operation: "receiveSignedHolArtifact";
@@ -148,6 +150,11 @@ async function execute(request: Request): Promise<unknown> {
       return readSignedNatLikeMissingZero(
         connection,
         connection.prove_natlike_missing_zero(),
+      );
+    case "replayHolProofRecipe":
+      return readReplayedHolProofRecipe(
+        connection,
+        connection.replay_hol_proof_recipe(request.recipe),
       );
     case "receiveSignedHolArtifact":
       return readReceivedSignedHolArtifact(
@@ -389,6 +396,31 @@ function readSignedNatLikeMissingZero(
   }));
 }
 
+function readReplayedHolProofRecipe(
+  connection: WebKernel,
+  result: WebReplayedHolProofRecipe,
+) {
+  return readRetainedSignedArtifact(connection, result, () => ({
+    kind: result.kind(),
+    sourceNamespace: result.source_namespace_id(),
+    image: result.image(),
+    schema: result.schema(),
+    imageHash: result.image_hash(),
+    signer: result.signer(),
+    publicKey: result.public_key(),
+    signature: result.signature(),
+    attestation: result.attestation_text(),
+    importId: result.import_id(),
+    namespace: result.imported_namespace_id(),
+    importedNamespace: result.imported_namespace_id(),
+    context: result.context_id(),
+    conclusion: result.conclusion_id(),
+    persistentStateHash: connection.hol_image_hash(
+      result.receiver_connection(),
+    ),
+  }));
+}
+
 function readReceivedSignedHolArtifact(
   connection: WebKernel,
   artifact: WebReceivedSignedHolArtifact,
@@ -453,7 +485,8 @@ function transferables(value: unknown): ArrayBuffer[] {
     "kind" in value &&
     (value.kind === "signed-hol-round-trip" ||
       value.kind === "signed-assumption" ||
-      value.kind === "signed-natlike-missing-zero")
+      value.kind === "signed-natlike-missing-zero" ||
+      value.kind === "signed-hol-proof-recipe")
   ) {
     const outcome = value as unknown as {
       image: Uint8Array;
