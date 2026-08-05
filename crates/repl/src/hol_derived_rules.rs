@@ -1803,6 +1803,141 @@ impl ChurchOrElim {
     }
 }
 
+fn canonical_not<P: Policy>(
+    connection: &mut Connection<Hol<P>>,
+    proposition: TermId,
+) -> Result<TermId, TermError> {
+    let (_, falsehood) = canonical_false(connection)?;
+    connection.insert_equality(proposition, falsehood)
+}
+
+/// Prepared canonical negation introduction.
+///
+/// Given `Gamma union {p} |- F`, this derives
+/// `Gamma minus {p} |- NOT p`, where `NOT p := p = F`. The subtraction makes
+/// the exact finite-set behavior explicit when the caller's base already
+/// contains the discharged proposition.
+pub struct NotIntro {
+    premise_context: ContextId,
+    result_context: ContextId,
+    falsehood: TermId,
+    result: TermId,
+    false_context: ContextId,
+    false_elim: FalseElim,
+}
+
+impl NotIntro {
+    /// Prepares canonical negation introduction from an explicit base context.
+    ///
+    /// # Errors
+    ///
+    /// Returns if the proposition is not a closed Boolean or a required exact
+    /// context cannot be defined.
+    pub fn prepare<P: Policy>(
+        connection: &mut Connection<Hol<P>>,
+        base: ContextId,
+        proposition: TermId,
+    ) -> Result<Self, DerivedRulePreparationError> {
+        require_closed(connection, proposition)?;
+        let (_, falsehood) = canonical_false(connection)?;
+        let result = canonical_not(connection, proposition)?;
+        let mut premise_members = connection.context_members(base)?;
+        premise_members.push(proposition);
+        let premise_context = connection.define_context(premise_members)?;
+        let result_members = connection
+            .context_members(base)?
+            .into_iter()
+            .filter(|member| *member != proposition)
+            .collect::<Vec<_>>();
+        let result_context = connection.define_context(result_members)?;
+        let false_context = connection.define_context([falsehood])?;
+        Ok(Self {
+            premise_context,
+            result_context,
+            falsehood,
+            result,
+            false_context,
+            false_elim: FalseElim::prepare(connection, proposition)?,
+        })
+    }
+
+    /// Exact context required for the falsehood premise.
+    #[must_use]
+    pub const fn premise_context(&self) -> ContextId {
+        self.premise_context
+    }
+
+    /// Exact post-discharge context (`base minus {p}`).
+    #[must_use]
+    pub const fn result_context(&self) -> ContextId {
+        self.result_context
+    }
+
+    /// Introduces exact canonical negation without persistence.
+    ///
+    /// # Errors
+    ///
+    /// Returns for a wrong falsehood premise or rejected constituent LCF rule.
+    pub fn apply<'brand, P: Policy>(
+        &self,
+        proof: &mut ProofSession<'brand, P>,
+        falsehood: &Theorem<'brand>,
+    ) -> Result<Theorem<'brand>, DerivedRuleError> {
+        require_result(falsehood, self.premise_context, self.falsehood)?;
+        let false_hypothesis = proof.prove_hypothesis(self.false_context, self.falsehood)?;
+        let proposition = self.false_elim.apply(proof, &false_hypothesis)?;
+        let result = proof.deduction_antisymmetry(&proposition, falsehood)?;
+        require_result(&result, self.result_context, self.result)?;
+        Ok(result)
+    }
+}
+
+/// Prepared canonical negation elimination.
+pub struct NotElim {
+    proposition: TermId,
+    negation: TermId,
+    falsehood: TermId,
+}
+
+impl NotElim {
+    /// Prepares `p`, `NOT p` elimination.
+    ///
+    /// # Errors
+    ///
+    /// Returns if `p` is not a checked closed Boolean proposition.
+    pub fn prepare<P: Policy>(
+        connection: &mut Connection<Hol<P>>,
+        proposition: TermId,
+    ) -> Result<Self, DerivedRulePreparationError> {
+        require_closed(connection, proposition)?;
+        let (_, falsehood) = canonical_false(connection)?;
+        let negation = canonical_not(connection, proposition)?;
+        Ok(Self {
+            proposition,
+            negation,
+            falsehood,
+        })
+    }
+
+    /// Eliminates same-context exact `p` and `NOT p` premises.
+    ///
+    /// # Errors
+    ///
+    /// Returns for a wrong premise/context or rejected equality modus ponens.
+    pub fn apply<'brand, P: Policy>(
+        &self,
+        proof: &mut ProofSession<'brand, P>,
+        proposition: &Theorem<'brand>,
+        negation: &Theorem<'brand>,
+    ) -> Result<Theorem<'brand>, DerivedRuleError> {
+        require_conclusion(proposition, self.proposition)?;
+        require_conclusion(negation, self.negation)?;
+        let result = proof.equality_modus_ponens(negation, proposition)?;
+        require_result(&result, proposition.context(), self.falsehood)?;
+        Ok(result)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2640,6 +2775,45 @@ mod tests {
                 assert_eq!(eliminated.context(), ContextId::empty());
                 assert_eq!(eliminated.conclusion(), truth);
                 Ok::<_, ProofError>(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn canonical_negation_derives_true_not_equal_false() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let truth = connection.insert_bool_term(true).unwrap();
+        let (_, falsehood) = canonical_false(&mut connection).unwrap();
+        let truth_equals_false = connection.insert_equality(truth, falsehood).unwrap();
+        let not_truth_equals_false = canonical_not(&mut connection, truth_equals_false).unwrap();
+        let introduction =
+            NotIntro::prepare(&mut connection, ContextId::empty(), truth_equals_false).unwrap();
+        assert_eq!(introduction.result_context(), ContextId::empty());
+        let elimination = NotElim::prepare(&mut connection, truth_equals_false).unwrap();
+
+        connection
+            .with_proof_session(|mut proof| {
+                let equality =
+                    proof.prove_hypothesis(introduction.premise_context(), truth_equals_false)?;
+                let truth = proof.prove_truth(introduction.premise_context())?;
+                let falsehood = proof.equality_modus_ponens(&equality, &truth)?;
+                let inequality = introduction.apply(&mut proof, &falsehood).unwrap();
+                assert_eq!(inequality.context(), ContextId::empty());
+                assert_eq!(inequality.conclusion(), not_truth_equals_false);
+
+                // `NotElim` is exercised in a context where both exact premises
+                // are available; no judgement is persisted.
+                let both =
+                    proof.prove_hypothesis(introduction.premise_context(), truth_equals_false)?;
+                let inequality = WeakenPlan {
+                    source: ContextId::empty(),
+                    target: introduction.premise_context(),
+                    members: Vec::new(),
+                }
+                .apply(&mut proof, &inequality)?;
+                let contradiction = elimination.apply(&mut proof, &both, &inequality).unwrap();
+                assert_eq!(contradiction.conclusion(), falsehood.conclusion());
+                Ok::<_, DerivedRuleError>(())
             })
             .unwrap();
     }

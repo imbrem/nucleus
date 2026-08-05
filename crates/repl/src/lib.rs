@@ -19,7 +19,7 @@ mod hol_derived_rules;
 pub use hol_derived_rules::{
     AllElim, AllIntroApplied, AndElim, AndIntro, ApTerm, ApThm, ChurchOrElim, ChurchOrIntro,
     DerivedRuleError, DerivedRulePreparationError, EpsCongr, EqSym, EqTrans, EqtElim, EqtIntro,
-    FalseElim, FunExt, ImpElim, ImpIntro,
+    FalseElim, FunExt, ImpElim, ImpIntro, NotElim, NotIntro,
 };
 
 mod hol_infinity;
