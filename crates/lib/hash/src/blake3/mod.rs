@@ -4,7 +4,15 @@
 mod cv;
 
 #[cfg(feature = "blake3")]
+mod proof_state;
+
+#[cfg(feature = "blake3")]
 pub use cv::{Blake3Cv, Blake3Merkle};
+
+#[cfg(feature = "blake3")]
+pub use proof_state::{
+    Blake3Node, Blake3Proof, Blake3ProofNode, Blake3ProofState, ProofStateError,
+};
 
 use crate::{Namespace, O256, Obj, Opaque, RootedNamespace};
 
