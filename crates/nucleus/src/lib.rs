@@ -14,6 +14,12 @@ pub use snapshot::{
     VerificationError, Verifier, ed25519_key_id, valid_snapshot_statement,
 };
 
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+mod web;
+
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+pub use web::{WebKernel, WebOutcome};
+
 #[cfg(target_os = "wasi")]
 #[allow(unsafe_code)]
 #[rustfmt::skip]
