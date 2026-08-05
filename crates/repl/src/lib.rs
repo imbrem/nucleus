@@ -41,6 +41,12 @@ pub use hol_natlike_zero::{
     retain_signed_natlike_zero,
 };
 
+mod hol_natlike_successor;
+pub use hol_natlike_successor::{
+    SignedNatLikeSuccessor, produce_and_retain_signed_natlike_successor,
+    produce_signed_natlike_successor, retain_signed_natlike_successor,
+};
+
 mod hol_nonsurjective;
 pub use hol_nonsurjective::{
     SignedNonsurjectiveConjunct, produce_and_retain_signed_nonsurjective_conjunct,
