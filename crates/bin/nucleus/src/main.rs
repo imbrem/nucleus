@@ -13,8 +13,10 @@ use covalence_repl::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use covalence_repl::{
-    ManagedHolGuestResult, WasmtimeComponentLimits, retain_signed_hol_guest_artifact,
-    run_hol_proof_component,
+    ExpectedKernelIdentity, KernelId, ManagedHolGuestResult, O256,
+    PrecompiledHolProofComponentExecutor, PreparedHolProofComponent, ReceivedHolSnapshot,
+    ServiceOperation, ServiceResult, SessionInitiator, SignedHolArtifact, SignedKernelService,
+    WasmtimeComponentLimits, retain_signed_hol_guest_artifact, run_hol_proof_component,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use covalence_repl::{NativeHttpKernelServer, SIGNED_KERNEL_HTTP_PATH};
@@ -347,6 +349,78 @@ fn run_managed_wasm_hol(
     Ok(managed)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn run_hash_selected_wasm_hol(
+    output: &mut impl io::Write,
+    receiver_kernel: &Kernel,
+    directory: &mut LocalRepl,
+    expected_component: O256,
+    component_path: &Path,
+    artifact_directory: &Path,
+) -> Result<(
+    ConnectionId,
+    ExpectedKernelIdentity,
+    SignedHolArtifact,
+    ReceivedHolSnapshot,
+)> {
+    let limits = WasmtimeComponentLimits::default();
+    let component = read_bounded_component(component_path, limits.component_bytes)?;
+    // Hash agreement, byte bounds, validation, and compilation all complete
+    // before a signing service or session exists.
+    let prepared = PreparedHolProofComponent::prepare(expected_component, &component, limits)?;
+    let mut executor = PrecompiledHolProofComponentExecutor::new();
+    executor.insert(prepared)?;
+    let mut fresh = FreshArtifactDirectory::create(artifact_directory)?;
+
+    let mut service = SignedKernelService::new()?;
+    service.install_hol_proof_component_executor(executor)?;
+    let description = service.description().clone();
+    let endpoint = description.identity();
+    let expected_endpoint =
+        ExpectedKernelIdentity::from_public_key(KernelId::from_u32(1), &endpoint.public_key())?;
+    let initiator = SessionInitiator::begin(endpoint, &description)?;
+    let accepted = service.open_session(initiator.request())?;
+    let mut session = initiator.accept(&accepted)?;
+    let command = session.command(ServiceOperation::RunHolProofComponent(expected_component))?;
+    let reply = service.execute(&command)?;
+    let ServiceResult::ProducedByComponent(produced) = session.accept_reply(&command, reply)?
+    else {
+        return Err("hash-selected HOL component did not produce an artifact".into());
+    };
+    if produced.component() != expected_component {
+        return Err("signed component result changed the selected digest".into());
+    }
+    let artifact = produced.into_artifact();
+    let attestation = artifact.attestation_text();
+    fresh.write_pair(artifact.image(), attestation.as_bytes())?;
+
+    let pinned = authenticate_pinned_signed_hol_artifact(&expected_endpoint, &artifact)?;
+    let mut receiver = receiver_kernel.open_hol(AllowAll)?;
+    let first_read = trust_and_receive_pinned_signed_hol_artifact(&mut receiver, pinned)?;
+    let retained = LocalConnection::Hol(receiver);
+    let connection = directory.insert(retained.protocol(), retained)?;
+
+    let path = fresh.path().to_owned();
+    fresh.commit();
+    writeln!(output, "kind\thash-selected-wasm-hol")?;
+    writeln!(output, "component\t{expected_component}")?;
+    writeln!(output, "endpoint\t{}", endpoint.signer())?;
+    writeln!(output, "connection\t{connection}")?;
+    writeln!(output, "database\t{}", path.join("proof.sqlite").display())?;
+    writeln!(
+        output,
+        "attestation\t{}",
+        path.join("attestation.txt").display()
+    )?;
+    writeln!(
+        output,
+        "imported_theorem\t{}\t{}",
+        first_read.context_id(),
+        first_read.conclusion_id()
+    )?;
+    Ok((connection, expected_endpoint, artifact, first_read))
+}
+
 fn write_new_file(path: &Path, write: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
     let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
     if let Err(write_error) = write(&mut file) {
@@ -553,6 +627,11 @@ fn usage(output: &mut impl io::Write) -> io::Result<()> {
         output,
         "       nucleus --wasm-hol COMPONENT OUTPUT-DIRECTORY"
     )?;
+    #[cfg(not(target_arch = "wasm32"))]
+    writeln!(
+        output,
+        "       nucleus --hash-wasm-hol O256 COMPONENT OUTPUT-DIRECTORY"
+    )?;
     writeln!(output, "       nucleus --interkernel-hol")?;
     #[cfg(not(target_arch = "wasm32"))]
     writeln!(
@@ -560,6 +639,63 @@ fn usage(output: &mut impl io::Write) -> io::Result<()> {
         "       nucleus --kernel-http ADDRESS ALLOWED_ORIGIN"
     )?;
     writeln!(output, "       nucleus --help")
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn run_wasm_arguments(arguments: &mut impl Iterator<Item = std::ffi::OsString>) -> Result<()> {
+    let component = arguments
+        .next()
+        .ok_or("--wasm-hol requires COMPONENT OUTPUT-DIRECTORY")?;
+    let output = arguments
+        .next()
+        .ok_or("--wasm-hol requires COMPONENT OUTPUT-DIRECTORY")?;
+    if arguments.next().is_some() {
+        return Err("unexpected arguments after --wasm-hol COMPONENT OUTPUT-DIRECTORY".into());
+    }
+    let kernel = Kernel::ephemeral();
+    let mut directory = Repl::new(kernel.verifying_key().as_bytes())?;
+    run_managed_wasm_hol(
+        &mut io::stdout().lock(),
+        &mut directory,
+        &kernel,
+        Path::new(&component),
+        Path::new(&output),
+    )?;
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn run_hash_selected_wasm_arguments(
+    arguments: &mut impl Iterator<Item = std::ffi::OsString>,
+) -> Result<()> {
+    let expected = arguments
+        .next()
+        .ok_or("--hash-wasm-hol requires O256 COMPONENT OUTPUT-DIRECTORY")?
+        .into_string()
+        .map_err(|_| "component O256 must be valid UTF-8")?;
+    let component = arguments
+        .next()
+        .ok_or("--hash-wasm-hol requires O256 COMPONENT OUTPUT-DIRECTORY")?;
+    let output = arguments
+        .next()
+        .ok_or("--hash-wasm-hol requires O256 COMPONENT OUTPUT-DIRECTORY")?;
+    if arguments.next().is_some() {
+        return Err(
+            "unexpected arguments after --hash-wasm-hol O256 COMPONENT OUTPUT-DIRECTORY".into(),
+        );
+    }
+    let expected = O256::from_hex(&expected)?;
+    let receiver_kernel = Kernel::ephemeral();
+    let mut directory = Repl::new(receiver_kernel.verifying_key().as_bytes())?;
+    run_hash_selected_wasm_hol(
+        &mut io::stdout().lock(),
+        &receiver_kernel,
+        &mut directory,
+        expected,
+        Path::new(&component),
+        Path::new(&output),
+    )?;
+    Ok(())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -656,29 +792,9 @@ fn run() -> Result<()> {
             write_signed_hol_artifacts(&mut io::stdout().lock(), fresh, &outcome)
         }
         #[cfg(not(target_arch = "wasm32"))]
-        Some(flag) if flag == "--wasm-hol" => {
-            let component = arguments
-                .next()
-                .ok_or("--wasm-hol requires COMPONENT OUTPUT-DIRECTORY")?;
-            let output = arguments
-                .next()
-                .ok_or("--wasm-hol requires COMPONENT OUTPUT-DIRECTORY")?;
-            if arguments.next().is_some() {
-                return Err(
-                    "unexpected arguments after --wasm-hol COMPONENT OUTPUT-DIRECTORY".into(),
-                );
-            }
-            let kernel = Kernel::ephemeral();
-            let mut directory = Repl::new(kernel.verifying_key().as_bytes())?;
-            run_managed_wasm_hol(
-                &mut io::stdout().lock(),
-                &mut directory,
-                &kernel,
-                Path::new(&component),
-                Path::new(&output),
-            )?;
-            Ok(())
-        }
+        Some(flag) if flag == "--wasm-hol" => run_wasm_arguments(&mut arguments),
+        #[cfg(not(target_arch = "wasm32"))]
+        Some(flag) if flag == "--hash-wasm-hol" => run_hash_selected_wasm_arguments(&mut arguments),
         Some(flag) if flag == "--interkernel-hol" => {
             if arguments.next().is_some() {
                 return Err("unexpected arguments after --interkernel-hol".into());
@@ -883,6 +999,92 @@ mod tests {
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("kind\tmanaged-wasm-hol\n"));
         assert!(output.contains("imported_theorem\t0\t8\n"));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn configured_real_component_runs_through_hash_selected_signed_service() {
+        let Some(component) = std::env::var_os("COVALENCE_HOL_GUEST_COMPONENT") else {
+            return;
+        };
+        let bytes = fs::read(&component).unwrap();
+        let digest = O256::from_bytes(&bytes);
+        let output_path = std::env::temp_dir().join(format!(
+            "nucleus-hash-guest-{}-{}",
+            std::process::id(),
+            NEXT_FILE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut output = Vec::new();
+        let receiver_kernel = Kernel::ephemeral();
+        let mut directory = Repl::new(receiver_kernel.verifying_key().as_bytes()).unwrap();
+        let (connection, expected_endpoint, artifact, first_read) = run_hash_selected_wasm_hol(
+            &mut output,
+            &receiver_kernel,
+            &mut directory,
+            digest,
+            Path::new(&component),
+            &output_path,
+        )
+        .unwrap();
+        assert_eq!(connection, ConnectionId::from_u32(1));
+        let pinned =
+            authenticate_pinned_signed_hol_artifact(&expected_endpoint, &artifact).unwrap();
+        let reread = trust_and_receive_pinned_signed_hol_artifact(
+            directory.get_mut(connection).unwrap().hol_mut().unwrap(),
+            pinned,
+        )
+        .unwrap();
+        assert_eq!(
+            (reread.context_id(), reread.conclusion_id()),
+            (first_read.context_id(), first_read.conclusion_id())
+        );
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("kind\thash-selected-wasm-hol\n"));
+        assert!(output.contains(&format!("component\t{digest}\n")));
+        assert!(output.contains("imported_theorem\t0\t8\n"));
+        fs::remove_file(output_path.join("proof.sqlite")).unwrap();
+        fs::remove_file(output_path.join("attestation.txt")).unwrap();
+        fs::remove_dir(output_path).unwrap();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn hash_selected_cli_rejects_hash_and_compile_before_output_reservation() {
+        let component = temporary_file("invalid-component.wasm");
+        let output_path = temporary_file("invalid-component-output");
+        let bytes = b"not a WebAssembly component";
+        fs::write(&component, bytes).unwrap();
+
+        let mut output = Vec::new();
+        let receiver_kernel = Kernel::ephemeral();
+        let mut directory = Repl::new(receiver_kernel.verifying_key().as_bytes()).unwrap();
+        assert!(
+            run_hash_selected_wasm_hol(
+                &mut output,
+                &receiver_kernel,
+                &mut directory,
+                O256::from_bytes(b"different bytes"),
+                &component,
+                &output_path,
+            )
+            .is_err()
+        );
+        assert!(!output_path.exists());
+
+        assert!(
+            run_hash_selected_wasm_hol(
+                &mut output,
+                &receiver_kernel,
+                &mut directory,
+                O256::from_bytes(bytes),
+                &component,
+                &output_path,
+            )
+            .is_err()
+        );
+        assert!(!output_path.exists());
+        assert!(output.is_empty());
+        fs::remove_file(component).unwrap();
     }
 
     #[test]
