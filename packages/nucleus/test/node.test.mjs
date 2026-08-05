@@ -31,6 +31,31 @@ test("runs the REPL kernel through the Wasm binding in Node", async () => {
     "nucleus/sql",
     "4",
   );
+  const session = directory.begin_remote_session(firstKernel);
+  assert.equal(typeof session, "string");
+  assert.throws(() => directory.remote_session("4294967297"), /4294967297/);
+  let sessionRow = directory.remote_session(session);
+  assert.equal(sessionRow.kernel_id(), String(firstKernel));
+  assert.equal(sessionRow.state(), "opening");
+  sessionRow.free();
+  directory.transition_remote_session(session, "established");
+  directory.transition_remote_session(session, "closing");
+  directory.transition_remote_session(session, "closed");
+  sessionRow = directory.remote_session(session);
+  assert.equal(sessionRow.state(), "closed");
+  sessionRow.free();
+  const lifecycle = directory.inspect_state(
+    "SELECT state FROM repl_lifecycle_event WHERE resource = 'session' ORDER BY event_id",
+  );
+  assert.equal(lifecycle.row_count(), 4);
+  assert.deepEqual(
+    Array.from({ length: lifecycle.row_count() }, (_, row) =>
+      lifecycle.text(row, 0),
+    ),
+    ["opening", "established", "closing", "closed"],
+  );
+  lifecycle.free();
+  directory.forget_remote_session(session);
   assert.equal(directory.kernel_count(), 2);
   assert.equal(directory.connection_count(), 2);
   directory.select_connection(managed);

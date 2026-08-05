@@ -6,12 +6,13 @@ use wasm_bindgen::prelude::*;
 use super::{
     AllowAll, ConnectionEntry, ConnectionId, ExpectedKernelIdentity, HolRecipe, HolRecipeResult,
     Kernel, KernelEntry, KernelId, LocalConnection, MAX_SIGNED_MESSAGE_BYTES, Outcome,
-    PinnedSignedHolArtifact, ProducedSignedHol, QueryResult, ReceivedHolSnapshot, Repl,
-    SIGNED_HOL_PHASES, ServiceIdentity, ServiceOperation, ServiceProducedHol, ServiceResult,
-    SessionInitiator, SignedHolArtifact, SignedHolRoundTripResult, SignedMessageRequest,
-    SignedMessageResponse, SignedServiceCommand, SignedServiceSession, Value,
-    authenticate_pinned_signed_hol_artifact, decode_signed_response, encode_signed_request,
-    produce_signed_hol_artifact, trust_and_receive_pinned_signed_hol_artifact,
+    PinnedSignedHolArtifact, ProducedSignedHol, QueryResult, ReceivedHolSnapshot,
+    RemoteSessionEntry, RemoteSessionId, RemoteSessionState, Repl, SIGNED_HOL_PHASES,
+    ServiceIdentity, ServiceOperation, ServiceProducedHol, ServiceResult, SessionInitiator,
+    SignedHolArtifact, SignedHolRoundTripResult, SignedMessageRequest, SignedMessageResponse,
+    SignedServiceCommand, SignedServiceSession, Value, authenticate_pinned_signed_hol_artifact,
+    decode_signed_response, encode_signed_request, produce_signed_hol_artifact,
+    trust_and_receive_pinned_signed_hol_artifact,
 };
 
 /// Main-thread directory for independently owned browser kernel endpoints.
@@ -34,6 +35,12 @@ pub struct WebKernelEntry {
 #[wasm_bindgen]
 pub struct WebConnectionEntry {
     entry: ConnectionEntry,
+}
+
+/// Inspectable, non-authoritative remote-session lifecycle row.
+#[wasm_bindgen]
+pub struct WebRemoteSessionEntry {
+    entry: RemoteSessionEntry,
 }
 
 /// Browser adapter for the shared REPL connection directory.
@@ -811,6 +818,84 @@ impl WebReplDirectory {
             .nth(index as usize)
             .map(|entry| WebConnectionEntry { entry })
             .ok_or_else(|| JsValue::from_str("connection index out of bounds"))
+    }
+
+    /// Records a fresh in-memory signed-session attempt.
+    ///
+    /// The returned decimal string is only a debugging coordinate. The signing key,
+    /// signed session ID, sequence, and pending request remain in JavaScript's
+    /// live [`WebSignedKernelSession`] object.
+    pub fn begin_remote_session(&self, kernel: u32) -> Result<String, JsValue> {
+        let id = self
+            .repl
+            .begin_remote_session(KernelId::from_u32(kernel))
+            .map_err(js_error)?;
+        Ok(id.to_string())
+    }
+
+    /// Advances one non-authoritative lifecycle row after the adapter has
+    /// independently authenticated (or failed to authenticate) its operation.
+    pub fn transition_remote_session(&self, session: &str, state: &str) -> Result<(), JsValue> {
+        let state = match state {
+            "established" => RemoteSessionState::Established,
+            "opening-unknown" => RemoteSessionState::OpeningUnknown,
+            "command-unknown" => RemoteSessionState::CommandUnknown,
+            "closing" => RemoteSessionState::Closing,
+            "closing-unknown" => RemoteSessionState::ClosingUnknown,
+            "closed" => RemoteSessionState::Closed,
+            "failed" => RemoteSessionState::Failed,
+            _ => return Err(JsValue::from_str("unknown remote-session lifecycle state")),
+        };
+        let session = session.parse::<RemoteSessionId>().map_err(js_error)?;
+        self.repl
+            .transition_remote_session(session, state)
+            .map_err(js_error)
+    }
+
+    /// Returns one non-authoritative lifecycle row.
+    pub fn remote_session(&self, session: &str) -> Result<WebRemoteSessionEntry, JsValue> {
+        let session = session.parse::<RemoteSessionId>().map_err(js_error)?;
+        self.repl
+            .remote_session(session)
+            .map(|entry| WebRemoteSessionEntry { entry })
+            .map_err(js_error)
+    }
+
+    /// Runs one row-returning, read-only query against the raw REPL state.
+    ///
+    /// This debugging database is never proof or session authority.
+    pub fn inspect_state(&self, sql: &str) -> Result<WebOutcome, JsValue> {
+        self.repl
+            .inspect_state(sql)
+            .map(|result| WebOutcome {
+                outcome: Outcome::Rows(result),
+            })
+            .map_err(js_error)
+    }
+
+    /// Collects one closed/failed session row. Its bounded lifecycle events
+    /// remain available in the raw state database for debugging.
+    pub fn forget_remote_session(&self, session: &str) -> Result<(), JsValue> {
+        let session = session.parse::<RemoteSessionId>().map_err(js_error)?;
+        self.repl.forget_remote_session(session).map_err(js_error)
+    }
+}
+
+#[wasm_bindgen]
+impl WebRemoteSessionEntry {
+    /// Returns the REPL-local debug coordinate.
+    pub fn id(&self) -> String {
+        self.entry.id.to_string()
+    }
+
+    /// Returns the registered endpoint coordinate.
+    pub fn kernel_id(&self) -> String {
+        self.entry.kernel.to_string()
+    }
+
+    /// Returns the explicit adapter lifecycle observation.
+    pub fn state(&self) -> String {
+        self.entry.state.as_str().to_owned()
     }
 }
 
