@@ -7,13 +7,15 @@ use super::{
     AllowAll, ConnectionEntry, ConnectionId, ExpectedKernelIdentity, HolRecipe, HolRecipeResult,
     Kernel, KernelEntry, KernelId, LocalConnection, MAX_SIGNED_MESSAGE_BYTES, Outcome,
     PinnedSignedHolArtifact, ProducedSignedHol, QueryResult, ReceivedHolSnapshot, Repl,
-    SIGNED_HOL_PHASES, ServiceIdentity, ServiceOperation, ServiceProducedHol,
-    ServiceProducedHolComponent, ServiceResult, SessionInitiator, SignedHolArtifact,
-    SignedHolRoundTripResult, SignedKernelService, SignedMessageRequest, SignedMessageResponse,
-    SignedServiceCommand, SignedServiceSession, Value, authenticate_pinned_signed_hol_artifact,
-    decode_signed_request, decode_signed_response, encode_signed_request, encode_signed_response,
-    produce_signed_hol_artifact, run_managed_signed_hol_round_trip,
+    RetainedReceivedHolSnapshot, SIGNED_HOL_PHASES, ServiceIdentity, ServiceOperation,
+    ServiceProducedHol, ServiceProducedHolComponent, ServiceResult, SessionInitiator,
+    SignedHolArtifact, SignedHolRoundTripResult, SignedKernelService, SignedMessageRequest,
+    SignedMessageResponse, SignedServiceCommand, SignedServiceSession, Value,
+    authenticate_pinned_signed_hol_artifact, decode_signed_request, decode_signed_response,
+    encode_signed_request, encode_signed_response, produce_signed_hol_artifact,
+    reread_received_hol_snapshot, run_managed_signed_hol_round_trip,
     trust_and_receive_pinned_signed_hol_artifact,
+    trust_receive_and_retain_pinned_signed_hol_artifact,
 };
 
 /// Main-thread directory for independently owned browser kernel endpoints.
@@ -45,6 +47,8 @@ pub struct WebKernel {
     repl: Repl<LocalConnection>,
     pinned_artifacts: HashMap<u32, PinnedSignedHolArtifact>,
     next_pinned_artifact: u32,
+    received_artifacts: HashMap<u32, (ConnectionId, RetainedReceivedHolSnapshot)>,
+    next_received_artifact: u32,
 }
 
 /// Owned result of one statement executed by [`WebKernel`].
@@ -80,6 +84,13 @@ pub struct WebProducedSignedHol {
 #[wasm_bindgen]
 pub struct WebReceivedHolSnapshot {
     received: ReceivedHolSnapshot,
+}
+
+/// First accepted receipt plus its opaque REPL-local reread handle.
+#[wasm_bindgen]
+pub struct WebRetainedReceivedHolSnapshot {
+    received: ReceivedHolSnapshot,
+    retained: u32,
 }
 
 /// Browser-side authenticated session state for a remote signed kernel service.
@@ -604,6 +615,8 @@ impl WebKernel {
             repl,
             pinned_artifacts: HashMap::new(),
             next_pinned_artifact: 0,
+            received_artifacts: HashMap::new(),
+            next_received_artifact: 0,
         })
     }
 
@@ -655,10 +668,11 @@ impl WebKernel {
     ///
     /// Returns a JavaScript error for an unknown ID or state update failure.
     pub fn close_connection(&mut self, connection: u32) -> Result<(), JsValue> {
-        self.repl
-            .remove(ConnectionId::from_u32(connection))
-            .map(drop)
-            .map_err(js_error)
+        let connection = ConnectionId::from_u32(connection);
+        self.repl.remove(connection).map(drop).map_err(js_error)?;
+        self.received_artifacts
+            .retain(|_, (owner, _)| *owner != connection);
+        Ok(())
     }
 
     /// Runs one parameterless SQL statement.
@@ -837,6 +851,64 @@ impl WebKernel {
             trust_and_receive_pinned_signed_hol_artifact(self.hol_mut(connection)?, pinned)
                 .map_err(js_error)?;
         Ok(WebReceivedHolSnapshot { received })
+    }
+
+    /// Trusts/imports once and retains an opaque read-only reread receipt.
+    pub fn trust_pinned_signed_hol_artifact_retained(
+        &mut self,
+        connection: u32,
+        pinned: u32,
+    ) -> Result<WebRetainedReceivedHolSnapshot, JsValue> {
+        let pinned = self
+            .pinned_artifacts
+            .remove(&pinned)
+            .ok_or_else(|| JsValue::from_str("unknown pinned HOL artifact"))?;
+        let connection_id = ConnectionId::from_u32(connection);
+        let retained =
+            trust_receive_and_retain_pinned_signed_hol_artifact(self.hol_mut(connection)?, pinned)
+                .map_err(js_error)?;
+        let received = retained.received;
+        let id = self.next_received_artifact;
+        self.next_received_artifact = self
+            .next_received_artifact
+            .checked_add(1)
+            .ok_or_else(|| JsValue::from_str("received artifact IDs are exhausted"))?;
+        self.received_artifacts
+            .insert(id, (connection_id, retained));
+        Ok(WebRetainedReceivedHolSnapshot {
+            received,
+            retained: id,
+        })
+    }
+
+    /// Rereads through one already accepted trusted import without trust/import writes.
+    pub fn reread_received_hol_artifact(
+        &mut self,
+        connection: u32,
+        retained: u32,
+    ) -> Result<WebReceivedHolSnapshot, JsValue> {
+        let connection = ConnectionId::from_u32(connection);
+        let Self {
+            repl,
+            received_artifacts,
+            ..
+        } = self;
+        let (owner, retained) = received_artifacts
+            .get(&retained)
+            .ok_or_else(|| JsValue::from_str("unknown retained HOL artifact"))?;
+        if *owner != connection {
+            return Err(JsValue::from_str(
+                "retained HOL artifact belongs to another connection",
+            ));
+        }
+        let target = repl
+            .get_mut(connection)
+            .map_err(js_error)?
+            .hol_mut()
+            .map_err(js_error)?;
+        reread_received_hol_snapshot(target, retained)
+            .map(|received| WebReceivedHolSnapshot { received })
+            .map_err(js_error)
     }
 
     /// Discards one authenticated artifact without granting any trust.
@@ -1240,6 +1312,39 @@ impl WebReceivedHolSnapshot {
     }
 
     /// Returns the imported conclusion source coordinate.
+    #[must_use]
+    pub fn conclusion_id(&self) -> String {
+        self.received.conclusion_id().to_string()
+    }
+}
+
+#[wasm_bindgen]
+impl WebRetainedReceivedHolSnapshot {
+    /// Returns the opaque REPL-local reread handle.
+    #[must_use]
+    pub fn retained_id(&self) -> u32 {
+        self.retained
+    }
+
+    /// Returns the receiver's inert import-directory ID.
+    #[must_use]
+    pub fn import_id(&self) -> String {
+        self.received.import_id().to_string()
+    }
+
+    /// Returns the receiver's imported namespace alias ID.
+    #[must_use]
+    pub fn namespace_id(&self) -> String {
+        self.received.namespace_id().to_string()
+    }
+
+    /// Returns the imported source context coordinate.
+    #[must_use]
+    pub fn context_id(&self) -> String {
+        self.received.context_id().to_string()
+    }
+
+    /// Returns the imported source conclusion coordinate.
     #[must_use]
     pub fn conclusion_id(&self) -> String {
         self.received.conclusion_id().to_string()
