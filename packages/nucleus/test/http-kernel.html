@@ -1,0 +1,107 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Native HTTP signed kernel test</title>
+<script type="module">
+  import {
+    init,
+    runNativeHttpSignedHol,
+    WebSignedKernelSession,
+  } from "../dist/index.js";
+
+  const parameters = new URLSearchParams(location.search);
+  const endpoint = parameters.get("endpoint");
+  const key = parameters.get("key");
+  const mode = parameters.get("mode") ?? "round-trip";
+
+  async function post(body) {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      mode: "cors",
+      body: new Uint8Array(body).buffer,
+      redirect: "error",
+      credentials: "omit",
+      cache: "no-store",
+      referrerPolicy: "no-referrer",
+      headers: { "content-type": "application/octet-stream" },
+    });
+    if (!response.ok) throw new Error(`HTTP status ${response.status}`);
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
+  function sameBytes(left, right) {
+    return (
+      left.byteLength === right.byteLength &&
+      left.every((byte, index) => byte === right[index])
+    );
+  }
+
+  try {
+    if (endpoint === null || key === null || !/^[0-9a-f]{64}$/.test(key)) {
+      throw new Error("missing canonical endpoint or public key");
+    }
+    const publicKey = new Uint8Array(32);
+    for (let index = 0; index < publicKey.length; index += 1) {
+      publicKey[index] = Number.parseInt(
+        key.slice(index * 2, index * 2 + 2),
+        16,
+      );
+    }
+    let result;
+    if (mode === "round-trip") {
+      result = await runNativeHttpSignedHol({
+        endpoint,
+        expectedPublicKey: publicKey,
+        timeoutMs: 10_000,
+      });
+    } else {
+      await init();
+      const description = await post(WebSignedKernelSession.describe_request());
+      const session = WebSignedKernelSession.begin(publicKey, description);
+      const handshake = session.session_request();
+      const accepted = await post(handshake);
+      if (mode === "handshake-poison") {
+        let acceptanceError;
+        let replayError;
+        try {
+          session.accept_session(accepted);
+        } catch (error) {
+          acceptanceError = String(error);
+        }
+        try {
+          session.session_request();
+        } catch (error) {
+          replayError = String(error);
+        }
+        result = { acceptanceError, replayError };
+      } else if (mode === "recover-command") {
+        session.accept_session(accepted);
+        const command = session.open_hol_command();
+        let outcomeUnknown = false;
+        try {
+          await post(command);
+        } catch {
+          outcomeUnknown = true;
+        }
+        const retry = session.retry_pending_command();
+        const retryExact = sameBytes(command, retry);
+        const opened = session.accept_open_hol(await post(retry));
+        session.accept_closed(await post(session.close_hol_command(opened)));
+        session.accept_goodbye(await post(session.shutdown_command()));
+        result = { outcomeUnknown, retryExact, opened };
+      } else {
+        throw new Error(`unknown test mode ${mode}`);
+      }
+      session.free();
+    }
+    document.body.dataset.result = JSON.stringify(result);
+  } catch (error) {
+    document.body.dataset.error =
+      error instanceof Error ? error.message : String(error);
+    document.body.dataset.outcomeUnknown = String(
+      typeof error === "object" &&
+        error !== null &&
+        "outcomeUnknown" in error &&
+        error.outcomeUnknown === true,
+    );
+  }
+</script>

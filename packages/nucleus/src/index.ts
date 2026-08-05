@@ -3,10 +3,21 @@ import init, {
   WebHolOutcome,
   WebKernel,
   WebOutcome,
+  WebRemoteProducedHol,
   WebReplDirectory,
+  WebSignedKernelSession,
 } from "../generated/nucleus.js";
 
-export { init, smoke, WebHolOutcome, WebKernel, WebOutcome, WebReplDirectory };
+export {
+  init,
+  smoke,
+  WebHolOutcome,
+  WebKernel,
+  WebOutcome,
+  WebRemoteProducedHol,
+  WebReplDirectory,
+  WebSignedKernelSession,
+};
 
 export type SqlValue =
   | { kind: "null" }
@@ -174,6 +185,257 @@ export interface BrowserRepl {
   openSql(): Promise<BrowserSqlConnection>;
   openHol(): Promise<BrowserHolConnection>;
   close(): void;
+}
+
+export interface NativeHttpHolOptions {
+  /** Exact endpoint URL selected independently of every signed HTTP response. */
+  endpoint: string;
+  /** Exact 32-byte public key obtained out of band from the native process. */
+  expectedPublicKey: Uint8Array;
+  /** Per-request deadline. Defaults to ten seconds. */
+  timeoutMs?: number;
+}
+
+export interface NativeHttpHolOutcome {
+  kind: "native-http-signed-hol-round-trip";
+  statement: string;
+  signer: string;
+  remoteConnection: string;
+  imageBytes: number;
+  importId: string;
+  namespace: string;
+  context: string;
+  conclusion: string;
+}
+
+/**
+ * A transport failure after a stateful request may have reached the endpoint.
+ * This adapter performs no explicit retry. Fetch, Chromium, or another network
+ * layer may nevertheless retransmit a replayable POST. Signed command safety
+ * therefore relies on #290 rejecting non-exact replays and returning a cached
+ * signed reply for an exact pending command without redispatch.
+ *
+ * OpenSession is deliberately different: it has no cached-reply recovery. An
+ * ambiguous or invalid acceptance poisons that session attempt, which callers
+ * must abandon before beginning a fresh handshake.
+ */
+export class SignedKernelTransportError extends Error {
+  readonly outcomeUnknown: boolean;
+
+  constructor(message: string, outcomeUnknown: boolean, cause?: unknown) {
+    super(message, { cause });
+    this.name = "SignedKernelTransportError";
+    this.outcomeUnknown = outcomeUnknown;
+  }
+}
+
+/**
+ * Drives a native signed kernel over bounded, explicitly pinned HTTP fetches.
+ * It stops on ambiguity and never makes the low-level retry decision itself.
+ */
+export async function runNativeHttpSignedHol(
+  options: NativeHttpHolOptions,
+): Promise<NativeHttpHolOutcome> {
+  await init();
+  const timeoutMs = options.timeoutMs ?? 10_000;
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs <= 0 ||
+    options.expectedPublicKey.byteLength !== 32
+  ) {
+    throw new Error(
+      "HTTP timeout must be positive and endpoint key must be 32 bytes",
+    );
+  }
+
+  const description = await signedFetch(
+    options.endpoint,
+    WebSignedKernelSession.describe_request(),
+    timeoutMs,
+    false,
+  );
+  const session = WebSignedKernelSession.begin(
+    options.expectedPublicKey,
+    description,
+  );
+  const accepted = await signedFetch(
+    options.endpoint,
+    session.session_request(),
+    timeoutMs,
+    true,
+  );
+  acceptStatefulReply(() => session.accept_session(accepted));
+
+  const local = new WebKernel();
+  const localConnection = local.open_hol_connection();
+  let remoteConnection: string | undefined;
+  try {
+    const opened = await signedFetch(
+      options.endpoint,
+      session.open_hol_command(),
+      timeoutMs,
+      true,
+    );
+    remoteConnection = acceptStatefulReply(() =>
+      session.accept_open_hol(opened),
+    );
+    const producedReply = await signedFetch(
+      options.endpoint,
+      session.produce_signed_hol_command(remoteConnection),
+      timeoutMs,
+      true,
+    );
+    const produced = acceptStatefulReply(() =>
+      session.accept_produced_hol(producedReply),
+    );
+    try {
+      const openedConnection = remoteConnection;
+      const image = produced.image();
+      const publicKey = produced.public_key();
+      const signature = produced.signature();
+      const pinned = local.authenticate_pinned_signed_hol_artifact(
+        1,
+        session.expected_signer(),
+        options.expectedPublicKey,
+        produced.namespace_id(),
+        image,
+        produced.schema(),
+        produced.image_hash(),
+        produced.signer(),
+        publicKey,
+        signature,
+      );
+      const received = local.trust_pinned_signed_hol_artifact(
+        localConnection,
+        pinned,
+      );
+      try {
+        const closed = await signedFetch(
+          options.endpoint,
+          session.close_hol_command(remoteConnection),
+          timeoutMs,
+          true,
+        );
+        acceptStatefulReply(() => session.accept_closed(closed));
+        remoteConnection = undefined;
+        const goodbye = await signedFetch(
+          options.endpoint,
+          session.shutdown_command(),
+          timeoutMs,
+          true,
+        );
+        acceptStatefulReply(() => session.accept_goodbye(goodbye));
+
+        return {
+          kind: "native-http-signed-hol-round-trip",
+          statement: produced.statement(),
+          signer: produced.signer(),
+          remoteConnection: openedConnection,
+          imageBytes: image.byteLength,
+          importId: received.import_id(),
+          namespace: received.namespace_id(),
+          context: received.context_id(),
+          conclusion: received.conclusion_id(),
+        };
+      } finally {
+        received.free();
+      }
+    } finally {
+      produced.free();
+    }
+  } finally {
+    local.close_connection(localConnection);
+    session.free();
+  }
+}
+
+function acceptStatefulReply<T>(accept: () => T): T {
+  try {
+    return accept();
+  } catch (error) {
+    throw new SignedKernelTransportError(
+      `native signed-kernel reply could not be accepted: ${String(error)}`,
+      true,
+      error,
+    );
+  }
+}
+
+async function signedFetch(
+  endpoint: string,
+  body: Uint8Array,
+  timeoutMs: number,
+  outcomeUnknown: boolean,
+): Promise<Uint8Array> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      mode: "cors",
+      body: new Uint8Array(body).buffer as ArrayBuffer,
+      redirect: "error",
+      credentials: "omit",
+      cache: "no-store",
+      referrerPolicy: "no-referrer",
+      signal: controller.signal,
+      headers: { "content-type": "application/octet-stream" },
+    });
+    if (!response.ok) {
+      throw new Error(`native kernel HTTP status ${response.status}`);
+    }
+    return await readBoundedResponse(
+      response,
+      WebSignedKernelSession.max_message_bytes(),
+    );
+  } catch (error) {
+    throw new SignedKernelTransportError(
+      `native signed-kernel request failed: ${String(error)}`,
+      outcomeUnknown,
+      error,
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function readBoundedResponse(
+  response: Response,
+  limit: number,
+): Promise<Uint8Array> {
+  const length = response.headers.get("content-length");
+  if (length !== null) {
+    const parsed = Number(length);
+    if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > limit) {
+      throw new Error(`signed response length exceeds ${limit} bytes`);
+    }
+  }
+  if (response.body === null) {
+    throw new Error("signed response has no bounded body stream");
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > limit) {
+      await reader.cancel();
+      throw new Error(`signed response exceeds ${limit} bytes`);
+    }
+    chunks.push(value);
+  }
+  if (length !== null && total !== Number(length)) {
+    throw new Error("signed response body is truncated");
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
 type RequestBody =

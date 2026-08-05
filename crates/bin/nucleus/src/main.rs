@@ -10,6 +10,8 @@ use covalence_repl::{
     Outcome, Repl, SignedHolRoundTripResult, Value, authenticate_pinned_signed_hol_artifact,
     produce_signed_hol_artifact, trust_and_receive_pinned_signed_hol_artifact,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use covalence_repl::{NativeHttpKernelServer, SIGNED_KERNEL_HTTP_PATH};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 type LocalRepl = Repl<LocalConnection>;
@@ -384,6 +386,10 @@ fn usage(output: &mut impl io::Write) -> io::Result<()> {
     writeln!(output, "       nucleus --hol RECIPE")?;
     writeln!(output, "       nucleus --signed-hol PATH")?;
     writeln!(output, "       nucleus --interkernel-hol")?;
+    writeln!(
+        output,
+        "       nucleus --kernel-http ADDRESS ALLOWED_ORIGIN"
+    )?;
     writeln!(output, "       nucleus --help")
 }
 
@@ -440,6 +446,34 @@ fn run() -> Result<()> {
                 return Err("unexpected arguments after --interkernel-hol".into());
             }
             run_interkernel_hol(&mut io::stdout().lock())
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        Some("--kernel-http") => {
+            let address = arguments
+                .next()
+                .ok_or("--kernel-http requires ADDRESS ALLOWED_ORIGIN")?;
+            let allowed_origin = arguments
+                .next()
+                .ok_or("--kernel-http requires ADDRESS ALLOWED_ORIGIN")?;
+            if arguments.next().is_some() {
+                return Err(
+                    "unexpected arguments after --kernel-http ADDRESS ALLOWED_ORIGIN".into(),
+                );
+            }
+            let server = NativeHttpKernelServer::bind(address, allowed_origin)?;
+            let address = server.local_addr()?;
+            let mut public_key = String::with_capacity(64);
+            for byte in server.identity().public_key() {
+                use std::fmt::Write as _;
+                write!(public_key, "{byte:02x}")?;
+            }
+            let mut output = io::stdout().lock();
+            writeln!(output, "url\thttp://{address}{SIGNED_KERNEL_HTTP_PATH}")?;
+            writeln!(output, "public_key\t{public_key}")?;
+            output.flush()?;
+            drop(output);
+            server.serve()?;
+            Ok(())
         }
         Some("-h" | "--help") => {
             usage(&mut io::stdout().lock())?;
