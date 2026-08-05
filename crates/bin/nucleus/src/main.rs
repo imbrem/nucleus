@@ -11,7 +11,8 @@ use covalence_repl::{
     Outcome, Repl, RetainedReceivedHolSnapshot, SignedHolRoundTripResult, Value,
     authenticate_pinned_signed_hol_artifact, open_retained_trusted_hol_as_managed_state,
     produce_signed_dedekind_infinity_assumption, produce_signed_hol_artifact,
-    retain_signed_dedekind_infinity_assumption, run_managed_signed_hol_round_trip,
+    produce_signed_natlike_missing_zero, retain_signed_dedekind_infinity_assumption,
+    retain_signed_natlike_missing_zero, run_managed_signed_hol_round_trip,
     trust_and_receive_pinned_signed_hol_artifact,
 };
 #[cfg(not(target_arch = "wasm32"))]
@@ -547,6 +548,10 @@ fn print_help(output: &mut impl io::Write) -> io::Result<()> {
         output,
         ".hol assume-infinity DIRECTORY  create, dump, and retain the signed Dedekind-infinity assumption"
     )?;
+    writeln!(
+        output,
+        ".hol natlike-missing-zero DIRECTORY  derive, dump, and retain signed missing zero"
+    )?;
     writeln!(output, ".use ID            select a connection")?;
     writeln!(output, ".close [ID]        close a connection")?;
     writeln!(output, ".connections       list open connections")?;
@@ -651,6 +656,97 @@ fn run_interactive_infinity_command(
     }
     assume_interactive_infinity(kernel, repl, received_artifacts, output, Path::new(path))?;
     Ok(true)
+}
+
+fn derive_interactive_natlike_missing_zero(
+    kernel: &Kernel,
+    repl: &mut LocalRepl,
+    received_artifacts: &mut HashMap<ConnectionId, RetainedReceivedHolSnapshot>,
+    output: &mut impl io::Write,
+    artifact_directory: &Path,
+) -> Result<()> {
+    let mut fresh = FreshArtifactDirectory::create(artifact_directory)?;
+    let derivation = produce_signed_natlike_missing_zero(kernel)?;
+    let attestation = derivation.attestation_text();
+    fresh.write_pair(derivation.artifact().image(), attestation.as_bytes())?;
+    let (receiver, retained) = retain_signed_natlike_missing_zero(kernel, repl, &derivation)?;
+    received_artifacts.insert(receiver, retained);
+    let path = fresh.path().to_owned();
+    fresh.commit();
+
+    writeln!(output, "kind\t{}", derivation.kind())?;
+    writeln!(output, "authority\tkernel-derived-theorem")?;
+    writeln!(output, "theorem\tnatlike-missing-zero")?;
+    writeln!(output, "falsehood\tall-bool-identity")?;
+    writeln!(output, "connection\t{receiver}")?;
+    writeln!(
+        output,
+        "source_namespace\t{}",
+        derivation.artifact().namespace_id()
+    )?;
+    writeln!(output, "schema\t{}", derivation.artifact().schema())?;
+    writeln!(output, "image\t{}", derivation.artifact().image_hash())?;
+    writeln!(output, "signer\t{}", derivation.artifact().signer())?;
+    writeln!(
+        output,
+        "inherited_assumption\t{}\t{}",
+        derivation.context().get(),
+        derivation.inherited_infinity().get()
+    )?;
+    writeln!(
+        output,
+        "derived_judgement\t{}\t{}",
+        derivation.context().get(),
+        derivation.conclusion().get()
+    )?;
+    writeln!(output, "trusted_import_receipt\tretained")?;
+    writeln!(output, "database\t{}", path.join("proof.sqlite").display())?;
+    writeln!(
+        output,
+        "attestation\t{}",
+        path.join("attestation.txt").display()
+    )?;
+    Ok(())
+}
+
+fn run_interactive_natlike_missing_zero_command(
+    kernel: &Kernel,
+    repl: &mut LocalRepl,
+    received_artifacts: &mut HashMap<ConnectionId, RetainedReceivedHolSnapshot>,
+    output: &mut impl io::Write,
+    line: &str,
+) -> Result<bool> {
+    if line == ".hol natlike-missing-zero" {
+        return Err("usage: .hol natlike-missing-zero DIRECTORY".into());
+    }
+    let Some(path) = line.strip_prefix(".hol natlike-missing-zero ") else {
+        return Ok(false);
+    };
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("usage: .hol natlike-missing-zero DIRECTORY".into());
+    }
+    derive_interactive_natlike_missing_zero(
+        kernel,
+        repl,
+        received_artifacts,
+        output,
+        Path::new(path),
+    )?;
+    Ok(true)
+}
+
+fn run_interactive_hol_artifact_command(
+    kernel: &Kernel,
+    repl: &mut LocalRepl,
+    received_artifacts: &mut HashMap<ConnectionId, RetainedReceivedHolSnapshot>,
+    output: &mut impl io::Write,
+    line: &str,
+) -> Result<bool> {
+    if run_interactive_infinity_command(kernel, repl, received_artifacts, output, line)? {
+        return Ok(true);
+    }
+    run_interactive_natlike_missing_zero_command(kernel, repl, received_artifacts, output, line)
 }
 
 fn close_interactive_connection(
@@ -778,7 +874,7 @@ fn run_line(
         )?;
         return Ok(true);
     }
-    if run_interactive_infinity_command(kernel, repl, received_artifacts, output, line)? {
+    if run_interactive_hol_artifact_command(kernel, repl, received_artifacts, output, line)? {
         return Ok(true);
     }
     if let Some(source) = line.strip_prefix(".hol ") {
@@ -1215,6 +1311,87 @@ mod tests {
 
         fs::remove_file(path.join("proof.sqlite")).unwrap();
         fs::remove_file(path.join("attestation.txt")).unwrap();
+        fs::remove_dir(path).unwrap();
+    }
+
+    #[test]
+    fn signed_natlike_missing_zero_command_dumps_retains_and_opens_state() {
+        let path = temporary_file("signed-natlike-missing-zero");
+        let script = format!(
+            ".hol natlike-missing-zero {}\n.hol open-state\n.hol truth\n.quit\n",
+            path.display()
+        );
+        let mut input = Cursor::new(script);
+        let mut output = Vec::new();
+        let mut errors = Vec::new();
+
+        run_repl(&mut input, &mut output, &mut errors, false).expect("run REPL");
+
+        let image = fs::read(path.join("proof.sqlite")).unwrap();
+        assert!(!image.is_empty());
+        let attestation = fs::read_to_string(path.join("attestation.txt")).unwrap();
+        assert!(attestation.starts_with("authority=kernel-derived-theorem\n"));
+        assert!(attestation.contains("theorem=natlike-missing-zero\n"));
+        assert!(attestation.contains("theorem-oracle=(APP missing zero)\n"));
+        assert!(attestation.contains("intermediate-persistence=none\n"));
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("kind\tsigned-natlike-missing-zero\n"));
+        assert!(output.contains("authority\tkernel-derived-theorem\n"));
+        assert!(output.contains("theorem\tnatlike-missing-zero\n"));
+        assert!(output.contains("trusted_import_receipt\tretained\n"));
+        assert!(output.contains("kind\ttrusted-hol-state\n"));
+        assert!(output.contains("statement\ttrue\n"));
+        assert!(errors.is_empty());
+
+        fs::remove_file(path.join("proof.sqlite")).unwrap();
+        fs::remove_file(path.join("attestation.txt")).unwrap();
+        fs::remove_dir(path).unwrap();
+    }
+
+    #[test]
+    fn missing_zero_write_failure_leaves_no_receiver_or_receipt() {
+        let path = temporary_file("signed-natlike-missing-zero-write-failure");
+        let blocker_path = path.clone();
+        let blocker = std::thread::spawn(move || {
+            while !blocker_path.is_dir() {
+                std::thread::yield_now();
+            }
+            fs::create_dir(blocker_path.join("proof.sqlite")).unwrap();
+        });
+        let kernel = Kernel::ephemeral();
+        let mut repl = Repl::new(kernel.verifying_key().as_bytes()).unwrap();
+        let original = open_sql_connection(&kernel, &mut repl).unwrap();
+        let mut retained = HashMap::new();
+        let mut output = Vec::new();
+
+        let error = derive_interactive_natlike_missing_zero(
+            &kernel,
+            &mut repl,
+            &mut retained,
+            &mut output,
+            &path,
+        )
+        .unwrap_err();
+        blocker.join().unwrap();
+
+        let error = error.downcast::<io::Error>().unwrap();
+        assert!(matches!(
+            error.kind(),
+            ErrorKind::AlreadyExists | ErrorKind::IsADirectory
+        ));
+        assert_eq!(repl.active().unwrap(), Some(original));
+        assert!(retained.is_empty());
+        assert_eq!(
+            repl.inspect_state("SELECT count(*) FROM repl_connection")
+                .unwrap()
+                .rows,
+            [[Value::Integer(1)]]
+        );
+        assert!(output.is_empty());
+        assert!(path.join("proof.sqlite").is_dir());
+        assert!(!path.join("attestation.txt").exists());
+
+        fs::remove_dir(path.join("proof.sqlite")).unwrap();
         fs::remove_dir(path).unwrap();
     }
 
