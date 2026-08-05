@@ -146,6 +146,9 @@
       <button id="download-missing-zero" type="button" disabled>
         Download database + attestation
       </button>
+      <button id="download-missing-zero-key" type="button" disabled>
+        Download public-key pin
+      </button>
       <button id="open-missing-zero-state" type="button" disabled>
         Open trusted state
       </button>
@@ -155,6 +158,34 @@
     </div>
     <div id="missing-zero-status" role="status">No theorem retained</div>
     <div id="missing-zero-output" aria-live="polite"></div>
+
+    <h2>Receive signed HOL files</h2>
+    <p>
+      Select the exact SQLite image and sidecar, plus a 32-byte public-key pin
+      obtained independently. The sidecar's claimed key is untrusted input; the
+      kernel parses it strictly and authenticates it against the separate pin.
+    </p>
+    <label for="receive-image">Signed SQLite image</label>
+    <input
+      id="receive-image"
+      type="file"
+      accept=".sqlite,application/vnd.sqlite3"
+    />
+    <label for="receive-sidecar">Signed artifact sidecar</label>
+    <input id="receive-sidecar" type="file" accept=".txt,text/plain" />
+    <label for="receive-key">Expected public-key pin (raw 32 bytes)</label>
+    <input id="receive-key" type="file" />
+    <div class="bar">
+      <button id="receive-signed-hol" type="button">Receive files</button>
+      <button id="open-received-state" type="button" disabled>
+        Open trusted state
+      </button>
+      <button id="cleanup-received-hol" type="button" disabled>
+        Clean up receiver
+      </button>
+    </div>
+    <div id="receive-status" role="status">No received artifact retained</div>
+    <div id="receive-output" aria-live="polite"></div>
 
     <h2>Hash-selected native HOL guest</h2>
     <p>
@@ -242,6 +273,9 @@ cargo run -p covalence-bin-nucleus -- \
       const missingZeroDownload = document.querySelector(
         "#download-missing-zero",
       );
+      const missingZeroDownloadKey = document.querySelector(
+        "#download-missing-zero-key",
+      );
       const missingZeroOpenState = document.querySelector(
         "#open-missing-zero-state",
       );
@@ -250,9 +284,18 @@ cargo run -p covalence-bin-nucleus -- \
       );
       const missingZeroStatus = document.querySelector("#missing-zero-status");
       const missingZeroOutput = document.querySelector("#missing-zero-output");
+      const receiveImage = document.querySelector("#receive-image");
+      const receiveSidecar = document.querySelector("#receive-sidecar");
+      const receiveKey = document.querySelector("#receive-key");
+      const receiveRun = document.querySelector("#receive-signed-hol");
+      const receiveOpenState = document.querySelector("#open-received-state");
+      const receiveCleanup = document.querySelector("#cleanup-received-hol");
+      const receiveStatus = document.querySelector("#receive-status");
+      const receiveOutput = document.querySelector("#receive-output");
       let retainedNative;
       let retainedInfinity;
       let retainedMissingZero;
+      let retainedReceivedHol;
 
       function selected() {
         const connection = connections.get(connectionSelect.value);
@@ -459,6 +502,7 @@ cargo run -p covalence-bin-nucleus -- \
         if (retainedMissingZero === state) {
           retainedMissingZero = undefined;
           missingZeroDownload.disabled = true;
+          missingZeroDownloadKey.disabled = true;
           missingZeroOpenState.disabled = true;
           missingZeroCleanup.disabled = true;
           missingZeroRun.disabled = false;
@@ -482,6 +526,7 @@ cargo run -p covalence-bin-nucleus -- \
           connectionSelect.value = receiverId;
           retainedMissingZero = { result, receiverId };
           missingZeroDownload.disabled = false;
+          missingZeroDownloadKey.disabled = false;
           missingZeroOpenState.disabled = false;
           missingZeroCleanup.disabled = false;
           missingZeroOutput.textContent = [
@@ -520,6 +565,16 @@ cargo run -p covalence-bin-nucleus -- \
         missingZeroStatus.textContent = "Exact signed theorem files downloaded";
       });
 
+      missingZeroDownloadKey.addEventListener("click", () => {
+        if (retainedMissingZero === undefined) return;
+        download(
+          "missing-zero.expected-public-key.bin",
+          retainedMissingZero.result.publicKey,
+          "application/octet-stream",
+        );
+        missingZeroStatus.textContent = "Expected public-key pin downloaded";
+      });
+
       missingZeroOpenState.addEventListener("click", async () => {
         try {
           if (retainedMissingZero === undefined)
@@ -555,6 +610,122 @@ cargo run -p covalence-bin-nucleus -- \
           missingZeroStatus.textContent =
             "Cleanup failed; receiver retained for retry";
           missingZeroCleanup.disabled = false;
+        }
+      });
+
+      async function readSelectedFile(input, maximum, label) {
+        const file = input.files?.[0];
+        if (file === undefined) throw new Error(`${label} is required`);
+        if (file.size > maximum)
+          throw new Error(`${label} exceeds its ${maximum}-byte limit`);
+        return new Uint8Array(await file.arrayBuffer());
+      }
+
+      async function disposeReceivedHol(state) {
+        await state.result.cleanup();
+        connections.delete(state.receiverId);
+        connectionSelect
+          .querySelector(`option[value="${state.receiverId}"]`)
+          ?.remove();
+        if (retainedReceivedHol === state) {
+          retainedReceivedHol = undefined;
+          receiveOpenState.disabled = true;
+          receiveCleanup.disabled = true;
+          receiveRun.disabled = false;
+        }
+      }
+
+      receiveRun.addEventListener("click", async () => {
+        if (receiveRun.disabled) return;
+        receiveRun.disabled = true;
+        receiveStatus.textContent = "Parsing, authenticating, and importing…";
+        receiveOutput.className = "";
+        try {
+          const image = await readSelectedFile(
+            receiveImage,
+            64 * 1024 * 1024,
+            "SQLite image",
+          );
+          const sidecar = await readSelectedFile(
+            receiveSidecar,
+            8 * 1024,
+            "sidecar",
+          );
+          const expectedPublicKey = await readSelectedFile(
+            receiveKey,
+            32,
+            "expected public-key pin",
+          );
+          if (expectedPublicKey.byteLength !== 32)
+            throw new Error("expected public-key pin must be exactly 32 bytes");
+          const result = await repl.receiveSignedHolArtifact({
+            expectedPublicKey,
+            image,
+            sidecar,
+          });
+          const receiverId = String(nextConnection++);
+          connections.set(receiverId, result.receiver);
+          const option = document.createElement("option");
+          option.value = receiverId;
+          option.textContent = `hol file receiver ${receiverId}`;
+          connectionSelect.append(option);
+          connectionSelect.value = receiverId;
+          retainedReceivedHol = { result, receiverId };
+          receiveOpenState.disabled = false;
+          receiveCleanup.disabled = false;
+          receiveOutput.textContent = [
+            `kind\t${result.kind}`,
+            `import\t${result.importId}`,
+            `namespace\t${result.namespace}`,
+            `theorem\t${result.context}\t${result.conclusion}`,
+            `receiver\t${option.textContent}`,
+          ].join("\n");
+          receiveStatus.textContent =
+            "Authenticated files and receiver retained";
+        } catch (error) {
+          receiveOutput.className = "error";
+          receiveOutput.textContent =
+            error instanceof Error ? error.message : String(error);
+          receiveStatus.textContent = "Failed before a receiver was imported";
+          receiveRun.disabled = false;
+        }
+      });
+
+      receiveOpenState.addEventListener("click", async () => {
+        try {
+          if (retainedReceivedHol === undefined)
+            throw new Error("no received signed artifact is retained");
+          const state = await retainedReceivedHol.result.openTrustedState();
+          const childId = String(nextConnection++);
+          connections.set(childId, state.connection);
+          const option = document.createElement("option");
+          option.value = childId;
+          option.textContent = `hol received state ${childId}`;
+          connectionSelect.append(option);
+          connectionSelect.value = childId;
+          receiveStatus.textContent = `Opened trusted state ${state.sourceNamespace}\t${state.context}\t${state.conclusion}`;
+        } catch (error) {
+          receiveOutput.className = "error";
+          receiveOutput.textContent =
+            error instanceof Error ? error.message : String(error);
+          receiveStatus.textContent = "Trusted-state open failed";
+        }
+      });
+
+      receiveCleanup.addEventListener("click", async () => {
+        const state = retainedReceivedHol;
+        if (state === undefined) return;
+        receiveCleanup.disabled = true;
+        try {
+          await disposeReceivedHol(state);
+          receiveStatus.textContent = "Received artifact receiver cleaned up";
+        } catch (error) {
+          receiveOutput.className = "error";
+          receiveOutput.textContent =
+            error instanceof Error ? error.message : String(error);
+          receiveStatus.textContent =
+            "Cleanup failed; receiver retained for retry";
+          receiveCleanup.disabled = false;
         }
       });
 
@@ -704,6 +875,7 @@ cargo run -p covalence-bin-nucleus -- \
           const managed = retainedNative;
           const assumed = retainedInfinity;
           const missingZero = retainedMissingZero;
+          const received = retainedReceivedHol;
           if (assumed !== undefined && assumed.receiverId === id) {
             infinityCleanup.disabled = true;
             try {
@@ -738,6 +910,18 @@ cargo run -p covalence-bin-nucleus -- \
             } catch (error) {
               nativeCleanup.disabled = false;
               nativeStatus.textContent =
+                "Cleanup failed; receiver retained for retry";
+              throw error;
+            }
+          } else if (received !== undefined && received.receiverId === id) {
+            receiveCleanup.disabled = true;
+            try {
+              await disposeReceivedHol(received);
+              receiveStatus.textContent =
+                "Received artifact receiver cleaned up";
+            } catch (error) {
+              receiveCleanup.disabled = false;
+              receiveStatus.textContent =
                 "Cleanup failed; receiver retained for retry";
               throw error;
             }

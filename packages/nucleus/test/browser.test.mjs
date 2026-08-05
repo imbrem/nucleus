@@ -234,6 +234,13 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
     missingZeroDownloads.map((download) => download.suggestedFilename()).sort(),
     ["missing-zero.attestation.txt", "missing-zero.sqlite"],
   );
+  const keyDownloadPromise = demo.waitForEvent("download");
+  await demo.locator("#download-missing-zero-key").click();
+  const keyDownload = await keyDownloadPromise;
+  assert.equal(
+    keyDownload.suggestedFilename(),
+    "missing-zero.expected-public-key.bin",
+  );
 
   await demo.locator("#open-missing-zero-state").click();
   await demo.getByText(/Opened trusted state/).waitFor();
@@ -247,6 +254,50 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
     true,
   );
   await demo.locator("#connection").selectOption("8");
+  await demo.locator("#recipe").fill("truth");
+  await demo.locator("#run-hol").click();
+  await demo.getByText("statement\ttrue").waitFor();
+
+  const imageDownload = missingZeroDownloads.find(
+    (download) => download.suggestedFilename() === "missing-zero.sqlite",
+  );
+  const sidecarDownload = missingZeroDownloads.find(
+    (download) =>
+      download.suggestedFilename() === "missing-zero.attestation.txt",
+  );
+  assert.notEqual(imageDownload, undefined);
+  assert.notEqual(sidecarDownload, undefined);
+  const imagePath = await imageDownload.path();
+  const sidecarPath = await sidecarDownload.path();
+  const keyPath = await keyDownload.path();
+  assert.notEqual(imagePath, null);
+  assert.notEqual(sidecarPath, null);
+  assert.notEqual(keyPath, null);
+  await demo.locator("#receive-image").setInputFiles(imagePath);
+  await demo.locator("#receive-sidecar").setInputFiles(sidecarPath);
+  await demo.locator("#receive-key").setInputFiles(keyPath);
+  await demo.locator("#receive-signed-hol").click();
+  await demo.getByText("kind\treceived-signed-hol-artifact").waitFor();
+  await demo.getByText("receiver\thol file receiver 9").waitFor();
+  await demo.locator("#open-received-state").click();
+  await demo.getByText(/Opened trusted state/).waitFor();
+  await demo.locator("#connection").selectOption("9");
+  await demo.locator("#close").click();
+  await demo.getByText("Received artifact receiver cleaned up").waitFor();
+  assert.equal(await demo.locator('#connection option[value="9"]').count(), 0);
+  assert.equal(await demo.locator("#open-received-state").isDisabled(), true);
+  assert.equal(await demo.locator("#cleanup-received-hol").isDisabled(), true);
+  assert.equal(await demo.locator("#receive-signed-hol").isEnabled(), true);
+
+  await demo.locator("#receive-signed-hol").click();
+  await demo.getByText("receiver\thol file receiver 11").waitFor();
+  assert.equal(await demo.locator("#open-received-state").isEnabled(), true);
+  assert.equal(await demo.locator("#cleanup-received-hol").isEnabled(), true);
+  await demo.locator("#cleanup-received-hol").click();
+  await demo.getByText("Received artifact receiver cleaned up").waitFor();
+  assert.equal(await demo.locator('#connection option[value="11"]').count(), 0);
+
+  await demo.locator("#connection").selectOption("10");
   await demo.locator("#recipe").fill("truth");
   await demo.locator("#run-hol").click();
   await demo.getByText("statement\ttrue").waitFor();
