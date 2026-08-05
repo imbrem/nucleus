@@ -103,9 +103,32 @@ test("runs the REPL kernel through the Wasm binding in Node", async () => {
   }
   assert.equal(kernel.hol_image_hash(receiver), beforeRereads);
 
+  const state = kernel.open_retained_trusted_hol_state(
+    receiver,
+    retained.retained_id(),
+  );
+  const child = state.connection();
+  assert.equal(kernel.active_connection(), child);
+  assert.equal(state.source_namespace_id(), produced.namespace_id());
+  assert.equal(state.context_id(), retained.context_id());
+  assert.equal(state.conclusion_id(), retained.conclusion_id());
+  const childTruth = kernel.run_hol(child, "truth");
+  assert.equal(childTruth.kind(), "hol-theorem");
+  childTruth.free();
+  kernel.close_connection(receiver);
+  const childTruthAfterOwnerClose = kernel.run_hol(child, "truth");
+  assert.equal(childTruthAfterOwnerClose.kind(), "hol-theorem");
+  childTruthAfterOwnerClose.free();
+  kernel.close_connection(child);
+  assert.throws(
+    () =>
+      kernel.open_retained_trusted_hol_state(receiver, retained.retained_id()),
+    /unknown retained HOL artifact/,
+  );
+  state.free();
+
   kernel.close_connection(signed.receiver_connection());
   kernel.close_connection(wrongReceiver);
-  kernel.close_connection(receiver);
   retained.free();
   produced.free();
   signed.free();

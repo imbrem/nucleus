@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::env;
 use std::error::Error;
 use std::fs::{self, File, OpenOptions};
@@ -7,7 +8,8 @@ use std::process::ExitCode;
 
 use covalence_repl::{
     AllowAll, ConnectionId, HolRecipe, HolRecipeResult, Kernel, LocalConnection, MAX_IMAGE_BYTES,
-    Outcome, Repl, SignedHolRoundTripResult, Value, authenticate_pinned_signed_hol_artifact,
+    Outcome, Repl, RetainedReceivedHolSnapshot, SignedHolRoundTripResult, Value,
+    authenticate_pinned_signed_hol_artifact, open_retained_trusted_hol_as_managed_state,
     produce_signed_hol_artifact, run_managed_signed_hol_round_trip,
     trust_and_receive_pinned_signed_hol_artifact,
 };
@@ -362,6 +364,7 @@ fn run_hash_selected_wasm_hol(
     ExpectedKernelIdentity,
     SignedHolArtifact,
     ReceivedHolSnapshot,
+    RetainedReceivedHolSnapshot,
 )> {
     let limits = WasmtimeComponentLimits::default();
     let component = read_bounded_component(component_path, limits.component_bytes)?;
@@ -395,10 +398,10 @@ fn run_hash_selected_wasm_hol(
     fresh.write_pair(artifact.image(), attestation.as_bytes())?;
 
     let pinned = authenticate_pinned_signed_hol_artifact(&expected_endpoint, &artifact)?;
-    let mut receiver = receiver_kernel.open_hol(AllowAll)?;
-    let first_read = trust_and_receive_pinned_signed_hol_artifact(&mut receiver, pinned)?;
-    let retained = LocalConnection::Hol(receiver);
-    let connection = directory.insert(retained.protocol(), retained)?;
+    let receiver = receiver_kernel.open_hol(AllowAll)?;
+    let (connection, retained) =
+        covalence_repl::trust_receive_and_retain_managed_hol_artifact(directory, receiver, pinned)?;
+    let first_read = retained.received();
 
     let path = fresh.path().to_owned();
     fresh.commit();
@@ -418,7 +421,13 @@ fn run_hash_selected_wasm_hol(
         first_read.context_id(),
         first_read.conclusion_id()
     )?;
-    Ok((connection, expected_endpoint, artifact, first_read))
+    Ok((
+        connection,
+        expected_endpoint,
+        artifact,
+        first_read,
+        retained,
+    ))
 }
 
 fn write_new_file(path: &Path, write: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
@@ -457,6 +466,7 @@ fn parse_load(command: &str) -> Option<(&str, &str)> {
 fn run_interactive_hash_selected_wasm_hol(
     kernel: &Kernel,
     repl: &mut LocalRepl,
+    received_artifacts: &mut HashMap<ConnectionId, RetainedReceivedHolSnapshot>,
     output: &mut impl io::Write,
     arguments: &str,
 ) -> Result<()> {
@@ -473,7 +483,7 @@ fn run_interactive_hash_selected_wasm_hol(
     if arguments.next().is_some() {
         return Err("usage: .hol hash-wasm O256 COMPONENT DIRECTORY".into());
     }
-    let (receiver, _, _, _) = run_hash_selected_wasm_hol(
+    let (receiver, _, _, _, retained) = run_hash_selected_wasm_hol(
         output,
         kernel,
         repl,
@@ -481,8 +491,10 @@ fn run_interactive_hash_selected_wasm_hol(
         Path::new(component),
         Path::new(directory),
     )?;
+    received_artifacts.insert(receiver, retained);
     repl.select(receiver)?;
     writeln!(output, "using receiver connection {receiver}")?;
+    writeln!(output, "trusted_state_receipt\tretained")?;
     Ok(())
 }
 
@@ -526,6 +538,10 @@ fn print_help(output: &mut impl io::Write) -> io::Result<()> {
         output,
         ".hol hash-wasm O256 COMPONENT DIRECTORY  pin and run a component, then select its receiver"
     )?;
+    writeln!(
+        output,
+        ".hol open-state [RECEIVER_ID]  reopen a hash-wasm receiver as writable HOL state"
+    )?;
     writeln!(output, ".use ID            select a connection")?;
     writeln!(output, ".close [ID]        close a connection")?;
     writeln!(output, ".connections       list open connections")?;
@@ -540,9 +556,70 @@ fn print_help(output: &mut impl io::Write) -> io::Result<()> {
     writeln!(output, ".quit              exit")
 }
 
+fn open_interactive_trusted_state(
+    repl: &mut LocalRepl,
+    received_artifacts: &HashMap<ConnectionId, RetainedReceivedHolSnapshot>,
+    output: &mut impl io::Write,
+    argument: Option<&str>,
+) -> Result<()> {
+    let owner = match argument {
+        Some(argument) => ConnectionId::from_u32(argument.trim().parse()?),
+        None => repl.active()?.ok_or("no active connection")?,
+    };
+    let retained = received_artifacts
+        .get(&owner)
+        .ok_or("connection has no retained trusted HOL snapshot")?;
+    let opened = open_retained_trusted_hol_as_managed_state(repl, owner, retained, AllowAll)?;
+    writeln!(output, "kind\ttrusted-hol-state")?;
+    writeln!(output, "connection\t{}", opened.connection())?;
+    writeln!(output, "source_namespace\t{}", opened.source_namespace_id())?;
+    writeln!(
+        output,
+        "trusted_theorem\t{}\t{}",
+        opened.context_id(),
+        opened.conclusion_id()
+    )?;
+    Ok(())
+}
+
+fn close_interactive_connection(
+    repl: &mut LocalRepl,
+    received_artifacts: &mut HashMap<ConnectionId, RetainedReceivedHolSnapshot>,
+    output: &mut impl io::Write,
+    argument: Option<&str>,
+) -> Result<()> {
+    let id = match argument {
+        Some(argument) => ConnectionId::from_u32(argument.trim().parse()?),
+        None => repl.active()?.ok_or("no active connection")?,
+    };
+    repl.remove(id)?;
+    received_artifacts.remove(&id);
+    writeln!(output, "closed connection {id}")?;
+    Ok(())
+}
+
+fn run_interactive_signed_round_trip(
+    kernel: &Kernel,
+    repl: &mut LocalRepl,
+    output: &mut impl io::Write,
+    path: &str,
+) -> Result<()> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("usage: .hol signed-roundtrip DIRECTORY".into());
+    }
+    let fresh = FreshArtifactDirectory::create(Path::new(path))?;
+    let source = repl.active()?.ok_or("no active connection")?;
+    let (outcome, receiver) = run_managed_signed_hol_round_trip(kernel, repl, source)?;
+    print_signed_hol_outcome(output, &outcome)?;
+    writeln!(output, "receiver_connection\t{receiver}")?;
+    write_signed_hol_artifacts(output, fresh, &outcome)
+}
+
 fn run_line(
     kernel: &Kernel,
     repl: &mut LocalRepl,
+    received_artifacts: &mut HashMap<ConnectionId, RetainedReceivedHolSnapshot>,
     output: &mut impl io::Write,
     line: &str,
 ) -> Result<bool> {
@@ -578,12 +655,12 @@ fn run_line(
         return Ok(true);
     }
     if line == ".close" || line.starts_with(".close ") {
-        let id = match line.strip_prefix(".close ") {
-            Some(argument) => ConnectionId::from_u32(argument.trim().parse()?),
-            None => repl.active()?.ok_or("no active connection")?,
-        };
-        repl.remove(id)?;
-        writeln!(output, "closed connection {id}")?;
+        close_interactive_connection(
+            repl,
+            received_artifacts,
+            output,
+            line.strip_prefix(".close "),
+        )?;
         return Ok(true);
     }
     if let Some(path) = line.strip_prefix(".export ") {
@@ -607,21 +684,27 @@ fn run_line(
         return Ok(true);
     }
     if let Some(path) = line.strip_prefix(".hol signed-roundtrip ") {
-        let path = path.trim();
-        if path.is_empty() {
-            return Err("usage: .hol signed-roundtrip DIRECTORY".into());
-        }
-        let fresh = FreshArtifactDirectory::create(Path::new(path))?;
-        let source = repl.active()?.ok_or("no active connection")?;
-        let (outcome, receiver) = run_managed_signed_hol_round_trip(kernel, repl, source)?;
-        print_signed_hol_outcome(output, &outcome)?;
-        writeln!(output, "receiver_connection\t{receiver}")?;
-        write_signed_hol_artifacts(output, fresh, &outcome)?;
+        run_interactive_signed_round_trip(kernel, repl, output, path)?;
         return Ok(true);
     }
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(arguments) = line.strip_prefix(".hol hash-wasm ") {
-        run_interactive_hash_selected_wasm_hol(kernel, repl, output, arguments)?;
+        run_interactive_hash_selected_wasm_hol(
+            kernel,
+            repl,
+            received_artifacts,
+            output,
+            arguments,
+        )?;
+        return Ok(true);
+    }
+    if line == ".hol open-state" || line.starts_with(".hol open-state ") {
+        open_interactive_trusted_state(
+            repl,
+            received_artifacts,
+            output,
+            line.strip_prefix(".hol open-state "),
+        )?;
         return Ok(true);
     }
     if let Some(source) = line.strip_prefix(".hol ") {
@@ -647,6 +730,7 @@ fn run_repl(
 ) -> Result<()> {
     let kernel = Kernel::ephemeral();
     let mut repl = Repl::new(kernel.verifying_key().as_bytes())?;
+    let mut received_artifacts = HashMap::new();
     open_sql_connection(&kernel, &mut repl)?;
     let mut line = String::new();
     loop {
@@ -658,7 +742,7 @@ fn run_repl(
         if input.read_line(&mut line)? == 0 {
             break;
         }
-        match run_line(&kernel, &mut repl, output, &line) {
+        match run_line(&kernel, &mut repl, &mut received_artifacts, output, &line) {
             Ok(true) => {}
             Ok(false) => break,
             Err(error) => writeln!(errors, "error: {error}")?,
@@ -1153,15 +1237,16 @@ mod tests {
         let mut output = Vec::new();
         let receiver_kernel = Kernel::ephemeral();
         let mut directory = Repl::new(receiver_kernel.verifying_key().as_bytes()).unwrap();
-        let (connection, expected_endpoint, artifact, first_read) = run_hash_selected_wasm_hol(
-            &mut output,
-            &receiver_kernel,
-            &mut directory,
-            digest,
-            Path::new(&component),
-            &output_path,
-        )
-        .unwrap();
+        let (connection, expected_endpoint, artifact, first_read, _retained) =
+            run_hash_selected_wasm_hol(
+                &mut output,
+                &receiver_kernel,
+                &mut directory,
+                digest,
+                Path::new(&component),
+                &output_path,
+            )
+            .unwrap();
         assert_eq!(connection, ConnectionId::from_u32(1));
         let pinned =
             authenticate_pinned_signed_hol_artifact(&expected_endpoint, &artifact).unwrap();
@@ -1204,7 +1289,17 @@ mod tests {
             output_path.display()
         );
 
-        assert!(run_line(&kernel, &mut repl, &mut output, &command).unwrap());
+        let mut received_artifacts = HashMap::new();
+        assert!(
+            run_line(
+                &kernel,
+                &mut repl,
+                &mut received_artifacts,
+                &mut output,
+                &command,
+            )
+            .unwrap()
+        );
         let receiver = repl.active().unwrap().expect("selected receiver");
         assert!(repl.get_mut(receiver).unwrap().hol_mut().is_ok());
         assert_eq!(
@@ -1215,10 +1310,55 @@ mod tests {
             .rows,
             [[Value::Text("nucleus/hol".to_owned()), Value::Null]]
         );
+        let open_command = format!(".hol open-state {receiver}");
+        assert!(
+            run_line(
+                &kernel,
+                &mut repl,
+                &mut received_artifacts,
+                &mut output,
+                &open_command,
+            )
+            .unwrap()
+        );
+        let child = repl.active().unwrap().expect("selected trusted child");
+        assert_ne!(child, receiver);
+        assert!(repl.get_mut(child).unwrap().hol_mut().is_ok());
+        assert!(
+            run_line(
+                &kernel,
+                &mut repl,
+                &mut received_artifacts,
+                &mut output,
+                &format!(".close {receiver}"),
+            )
+            .unwrap()
+        );
+        assert!(
+            run_line(
+                &kernel,
+                &mut repl,
+                &mut received_artifacts,
+                &mut output,
+                ".hol truth",
+            )
+            .unwrap()
+        );
+        assert!(
+            run_line(
+                &kernel,
+                &mut repl,
+                &mut received_artifacts,
+                &mut output,
+                &format!(".hol open-state {receiver}"),
+            )
+            .is_err()
+        );
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains(&format!("component\t{digest}\n")));
         assert!(contains_imported_theorem(&output));
         assert!(output.contains(&format!("using receiver connection {receiver}\n")));
+        assert!(output.contains("kind\ttrusted-hol-state\n"));
 
         fs::remove_file(output_path.join("proof.sqlite")).unwrap();
         fs::remove_file(output_path.join("attestation.txt")).unwrap();
@@ -1411,10 +1551,12 @@ mod tests {
         let mut repl = Repl::new(kernel.verifying_key().as_bytes()).unwrap();
         let source = open_hol_connection(&kernel, &mut repl).unwrap();
         let mut output = Vec::new();
+        let mut received_artifacts = HashMap::new();
 
         let error = run_line(
             &kernel,
             &mut repl,
+            &mut received_artifacts,
             &mut output,
             &format!(".hol signed-roundtrip {}", output_path.display()),
         )

@@ -12,8 +12,8 @@ use super::{
     SignedHolArtifact, SignedHolRoundTripResult, SignedKernelService, SignedMessageRequest,
     SignedMessageResponse, SignedServiceCommand, SignedServiceSession, Value,
     authenticate_pinned_signed_hol_artifact, decode_signed_request, decode_signed_response,
-    encode_signed_request, encode_signed_response, produce_signed_hol_artifact,
-    reread_received_hol_snapshot, run_managed_signed_hol_round_trip,
+    encode_signed_request, encode_signed_response, open_retained_trusted_hol_as_managed_state,
+    produce_signed_hol_artifact, reread_received_hol_snapshot, run_managed_signed_hol_round_trip,
     trust_and_receive_pinned_signed_hol_artifact,
     trust_receive_and_retain_pinned_signed_hol_artifact,
 };
@@ -47,7 +47,7 @@ pub struct WebKernel {
     repl: Repl<LocalConnection>,
     pinned_artifacts: HashMap<u32, PinnedSignedHolArtifact>,
     next_pinned_artifact: u32,
-    received_artifacts: HashMap<u32, (ConnectionId, RetainedReceivedHolSnapshot)>,
+    received_artifacts: HashMap<u32, RetainedReceivedHolSnapshot>,
     next_received_artifact: u32,
 }
 
@@ -91,6 +91,12 @@ pub struct WebReceivedHolSnapshot {
 pub struct WebRetainedReceivedHolSnapshot {
     received: ReceivedHolSnapshot,
     retained: u32,
+}
+
+/// Browser presentation of an independently writable trusted HOL child state.
+#[wasm_bindgen]
+pub struct WebManagedTrustedHolState {
+    state: super::ManagedTrustedHolState,
 }
 
 /// Browser-side authenticated session state for a remote signed kernel service.
@@ -662,6 +668,15 @@ impl WebKernel {
         u32::try_from(id.get()).map_err(js_error)
     }
 
+    /// Returns the atomically selected local connection, if any.
+    pub fn active_connection(&self) -> Result<Option<u32>, JsValue> {
+        self.repl
+            .active()
+            .map_err(js_error)?
+            .map(|id| u32::try_from(id.get()).map_err(js_error))
+            .transpose()
+    }
+
     /// Closes a connection.
     ///
     /// # Errors
@@ -671,7 +686,7 @@ impl WebKernel {
         let connection = ConnectionId::from_u32(connection);
         self.repl.remove(connection).map(drop).map_err(js_error)?;
         self.received_artifacts
-            .retain(|_, (owner, _)| *owner != connection);
+            .retain(|_, retained| !retained.belongs_to(connection));
         Ok(())
     }
 
@@ -866,15 +881,15 @@ impl WebKernel {
         let connection_id = ConnectionId::from_u32(connection);
         let retained =
             trust_receive_and_retain_pinned_signed_hol_artifact(self.hol_mut(connection)?, pinned)
-                .map_err(js_error)?;
+                .map_err(js_error)?
+                .bind(connection_id);
         let received = retained.received;
         let id = self.next_received_artifact;
         self.next_received_artifact = self
             .next_received_artifact
             .checked_add(1)
             .ok_or_else(|| JsValue::from_str("received artifact IDs are exhausted"))?;
-        self.received_artifacts
-            .insert(id, (connection_id, retained));
+        self.received_artifacts.insert(id, retained);
         Ok(WebRetainedReceivedHolSnapshot {
             received,
             retained: id,
@@ -893,10 +908,10 @@ impl WebKernel {
             received_artifacts,
             ..
         } = self;
-        let (owner, retained) = received_artifacts
+        let retained = received_artifacts
             .get(&retained)
             .ok_or_else(|| JsValue::from_str("unknown retained HOL artifact"))?;
-        if *owner != connection {
+        if !retained.belongs_to(connection) {
             return Err(JsValue::from_str(
                 "retained HOL artifact belongs to another connection",
             ));
@@ -909,6 +924,29 @@ impl WebKernel {
         reread_received_hol_snapshot(target, retained)
             .map(|received| WebReceivedHolSnapshot { received })
             .map_err(js_error)
+    }
+
+    /// Reopens a retained signed snapshot as independent writable HOL state.
+    ///
+    /// The same shared Rust action backs terminal and browser callers. The
+    /// retained receipt is borrowed, so rejection leaves it retryable.
+    pub fn open_retained_trusted_hol_state(
+        &mut self,
+        connection: u32,
+        retained: u32,
+    ) -> Result<WebManagedTrustedHolState, JsValue> {
+        let owner = ConnectionId::from_u32(connection);
+        let Self {
+            repl,
+            received_artifacts,
+            ..
+        } = self;
+        let retained = received_artifacts
+            .get(&retained)
+            .ok_or_else(|| JsValue::from_str("unknown retained HOL artifact"))?;
+        let state = open_retained_trusted_hol_as_managed_state(repl, owner, retained, AllowAll)
+            .map_err(js_error)?;
+        Ok(WebManagedTrustedHolState { state })
     }
 
     /// Discards one authenticated artifact without granting any trust.
@@ -1348,6 +1386,33 @@ impl WebRetainedReceivedHolSnapshot {
     #[must_use]
     pub fn conclusion_id(&self) -> String {
         self.received.conclusion_id().to_string()
+    }
+}
+
+#[wasm_bindgen]
+impl WebManagedTrustedHolState {
+    /// Returns the new managed child connection.
+    #[must_use]
+    pub fn connection(&self) -> Result<u32, JsValue> {
+        u32::try_from(self.state.connection().get()).map_err(js_error)
+    }
+
+    /// Returns the signed source namespace rather than the owner's local alias.
+    #[must_use]
+    pub fn source_namespace_id(&self) -> String {
+        self.state.source_namespace_id().to_string()
+    }
+
+    /// Returns the dynamically verified theorem context.
+    #[must_use]
+    pub fn context_id(&self) -> String {
+        self.state.context_id().to_string()
+    }
+
+    /// Returns the dynamically verified theorem conclusion.
+    #[must_use]
+    pub fn conclusion_id(&self) -> String {
+        self.state.conclusion_id().to_string()
     }
 }
 

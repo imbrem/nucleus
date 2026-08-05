@@ -35,8 +35,8 @@ pub use covalence_nucleus::sql::{
 pub use covalence_nucleus::{AllowAll, Connection, ContextId, Hol, Kernel, Sql, TermId};
 use covalence_nucleus::{
     AuthenticatedValidatedHolImage, ExportId, HolDatabaseRef, ImportedExport, NamespaceExport,
-    NamespaceId, ProofError, SignedSnapshotEnvelope, TermError, TrustedImportId, TypeError,
-    ed25519_key_id,
+    NamespaceId, ProofError, SignedSnapshotEnvelope, TermError, TrustedImportId,
+    TrustedStateOpenError, TypeError, ed25519_key_id,
 };
 
 mod service;
@@ -333,6 +333,40 @@ impl<C> Repl<C> {
     /// Returns an error if the directory cannot be updated.
     pub fn insert(&mut self, protocol: &str, connection: C) -> Result<ConnectionId, ReplError> {
         self.insert_at(KernelId::LOCAL, protocol, None, connection)
+    }
+
+    /// Adds and selects a runtime handle in one directory transaction.
+    ///
+    /// This is useful when returning an inserted connection without its ID on
+    /// selection failure would leak an undisclosed live row. The runtime handle
+    /// is installed only after both database writes commit.
+    ///
+    /// # Errors
+    ///
+    /// Returns without a directory row or runtime handle if either write fails.
+    pub fn insert_selected(
+        &mut self,
+        protocol: &str,
+        connection: C,
+    ) -> Result<ConnectionId, ReplError> {
+        self.require_kernel(KernelId::LOCAL)?;
+        let transaction = self.state.sqlite().unchecked_transaction()?;
+        transaction.execute(
+            "INSERT INTO repl_connection(kernel_id, protocol, remote_connection_id)
+             VALUES (0, ?1, NULL)",
+            [protocol],
+        )?;
+        let id = ConnectionId(transaction.last_insert_rowid());
+        let selected = transaction.execute(
+            "UPDATE repl_state SET active_connection_id = ?1 WHERE singleton = 0",
+            [id.0],
+        )?;
+        if selected != 1 {
+            return Err(ReplError::MissingStateSingleton);
+        }
+        transaction.commit()?;
+        self.connections.insert(id, connection);
+        Ok(id)
     }
 
     /// Registers a keyed kernel endpoint without granting it logical trust.
@@ -779,33 +813,115 @@ pub struct ReceivedHolSnapshot {
 /// original trust/import writes: [`reread_received_hol_snapshot`] only
 /// reauthenticates, matches the existing trusted-import row, reuses its initial
 /// immutable-image capability, and reads.
-pub(crate) struct RetainedReceivedHolSnapshot {
+pub struct RetainedReceivedHolSnapshot {
+    owner: ConnectionId,
     received: ReceivedHolSnapshot,
-    #[cfg_attr(
-        all(not(all(target_arch = "wasm32", target_os = "unknown")), not(test)),
-        expect(
-            dead_code,
-            reason = "the retained reread capability is owned by WebKernel"
-        )
-    )]
     trusted_import: TrustedImportId,
-    #[cfg_attr(
-        all(not(all(target_arch = "wasm32", target_os = "unknown")), not(test)),
-        expect(
-            dead_code,
-            reason = "the retained reread capability is owned by WebKernel"
-        )
-    )]
     artifact: SignedHolArtifact,
-    #[cfg_attr(
-        all(not(all(target_arch = "wasm32", target_os = "unknown")), not(test)),
-        expect(
-            dead_code,
-            reason = "the retained reread capability is owned by WebKernel"
-        )
-    )]
     mounted: covalence_neutron::ImmutableImage,
 }
+
+struct UnboundReceivedHolSnapshot {
+    received: ReceivedHolSnapshot,
+    trusted_import: TrustedImportId,
+    artifact: SignedHolArtifact,
+    mounted: covalence_neutron::ImmutableImage,
+}
+
+impl UnboundReceivedHolSnapshot {
+    fn bind(self, owner: ConnectionId) -> RetainedReceivedHolSnapshot {
+        RetainedReceivedHolSnapshot {
+            owner,
+            received: self.received,
+            trusted_import: self.trusted_import,
+            artifact: self.artifact,
+            mounted: self.mounted,
+        }
+    }
+}
+
+impl RetainedReceivedHolSnapshot {
+    /// Returns inert receiver-local coordinates established during admission.
+    #[must_use]
+    pub const fn received(&self) -> ReceivedHolSnapshot {
+        self.received
+    }
+
+    /// Reports whether this receipt is bound to `owner` in the REPL directory.
+    #[must_use]
+    pub fn belongs_to(&self, owner: ConnectionId) -> bool {
+        self.owner == owner
+    }
+}
+
+/// A trusted snapshot reopened as an independent writable managed HOL state.
+///
+/// The integer coordinates are presentation data. The theorem capability used
+/// to verify them existed only inside the scoped child proof session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ManagedTrustedHolState {
+    connection: ConnectionId,
+    source_namespace: i64,
+    context: i64,
+    conclusion: i64,
+}
+
+impl ManagedTrustedHolState {
+    /// Returns the new independently writable child connection.
+    #[must_use]
+    pub const fn connection(&self) -> ConnectionId {
+        self.connection
+    }
+
+    /// Returns the namespace coordinate in the signed source database.
+    #[must_use]
+    pub const fn source_namespace_id(&self) -> i64 {
+        self.source_namespace
+    }
+
+    /// Returns the dynamically established source context coordinate.
+    #[must_use]
+    pub const fn context_id(&self) -> i64 {
+        self.context
+    }
+
+    /// Returns the dynamically established source conclusion coordinate.
+    #[must_use]
+    pub const fn conclusion_id(&self) -> i64 {
+        self.conclusion
+    }
+}
+
+/// Failure of one above-TCB trusted-state orchestration boundary.
+#[derive(Debug)]
+pub struct ManagedTrustedHolStateError {
+    phase: &'static str,
+    message: String,
+}
+
+impl ManagedTrustedHolStateError {
+    fn at(phase: &'static str, error: impl fmt::Display) -> Self {
+        Self {
+            phase,
+            message: error.to_string(),
+        }
+    }
+
+    fn invalid(phase: &'static str, message: &'static str) -> Self {
+        Self {
+            phase,
+            message: message.to_owned(),
+        }
+    }
+}
+
+impl fmt::Display for ManagedTrustedHolStateError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}: {}", self.phase, self.message)
+    }
+}
+
+impl StdError for ManagedTrustedHolStateError {}
 
 /// Result shared by the terminal and browser signed-snapshot demonstrations.
 pub struct SignedHolRoundTripResult {
@@ -1249,7 +1365,7 @@ pub fn trust_and_receive_pinned_signed_hol_artifact(
 pub(crate) fn trust_receive_and_retain_pinned_signed_hol_artifact(
     target: &mut Connection<Hol<AllowAll>>,
     pinned: PinnedSignedHolArtifact,
-) -> Result<RetainedReceivedHolSnapshot, SignedHolRoundTripError> {
+) -> Result<UnboundReceivedHolSnapshot, SignedHolRoundTripError> {
     let PinnedSignedHolArtifact {
         namespace_id,
         image: validated,
@@ -1287,12 +1403,33 @@ pub(crate) fn trust_receive_and_retain_pinned_signed_hol_artifact(
         context: context_id,
         conclusion: conclusion_id,
     };
-    Ok(RetainedReceivedHolSnapshot {
+    Ok(UnboundReceivedHolSnapshot {
         received,
         trusted_import: trusted,
         artifact,
         mounted,
     })
+}
+
+/// Admits an authenticated artifact into a fresh owner and retains a bound receipt.
+///
+/// The unbound intermediate is private, so a public receipt can only name the
+/// exact directory connection which owns its trusted-import row.
+///
+/// # Errors
+///
+/// Returns before exposing a receipt if admission or directory insertion fails.
+pub fn trust_receive_and_retain_managed_hol_artifact(
+    directory: &mut Repl<LocalConnection>,
+    mut target: Connection<Hol<AllowAll>>,
+    pinned: PinnedSignedHolArtifact,
+) -> Result<(ConnectionId, RetainedReceivedHolSnapshot), SignedHolRoundTripError> {
+    let retained = trust_receive_and_retain_pinned_signed_hol_artifact(&mut target, pinned)?;
+    let target = LocalConnection::Hol(target);
+    let owner = directory
+        .insert(target.protocol(), target)
+        .map_err(|error| SignedHolRoundTripError::at("receiver-retained", error))?;
+    Ok((owner, retained.bind(owner)))
 }
 
 /// Rereads one previously accepted receipt without repeating trust/import writes.
@@ -1331,6 +1468,81 @@ pub(crate) fn reread_received_hol_snapshot(
         ));
     }
     Ok(retained.received)
+}
+
+/// Reopens one retained signed snapshot as an independent writable managed state.
+///
+/// This adapter carries no theorem authority of its own. It reauthenticates and
+/// detached-validates the retained bytes, rematches their already accepted
+/// trusted-import row against `owner`, delegates the explicit state assumption
+/// to Nucleus, and finally asks a scoped child proof session to load the exact
+/// dynamic context/conclusion established during receipt. Only a completely
+/// verified child is inserted into the REPL directory.
+///
+/// `retained` is borrowed throughout. Consequently every failure, including a
+/// directory insertion failure, leaves the receipt available for an exact
+/// retry or a read-only reread through its owner.
+///
+/// # Errors
+///
+/// Returns the first rejected owner lookup, authentication, validation,
+/// trusted-import match, state-open, theorem-load, or directory-insertion
+/// boundary. No directory row is added on failure.
+pub fn open_retained_trusted_hol_as_managed_state(
+    directory: &mut Repl<LocalConnection>,
+    owner: ConnectionId,
+    retained: &RetainedReceivedHolSnapshot,
+    child_policy: AllowAll,
+) -> Result<ManagedTrustedHolState, ManagedTrustedHolStateError> {
+    if retained.owner != owner {
+        return Err(ManagedTrustedHolStateError::invalid(
+            "receipt-owner-checked",
+            "retained HOL artifact belongs to another connection",
+        ));
+    }
+    let authenticated = authenticate_artifact(&retained.artifact)
+        .map_err(|error| ManagedTrustedHolStateError::at("signature-authenticated", error))?;
+    let validated = AuthenticatedValidatedHolImage::validate_default(authenticated)
+        .map_err(|error| ManagedTrustedHolStateError::at("image-detached-validated", error))?;
+    let mut child = directory
+        .get_mut(owner)
+        .map_err(|error| ManagedTrustedHolStateError::at("owner-selected", error))?
+        .hol_mut()
+        .map_err(|error| ManagedTrustedHolStateError::at("owner-selected", error))?
+        .match_trusted_import_image(retained.trusted_import, validated)
+        .map_err(|error| ManagedTrustedHolStateError::at("trusted-import-matched", error))?
+        .open_as_trusted_state(child_policy)
+        .map_err(|error: TrustedStateOpenError| {
+            ManagedTrustedHolStateError::at("trusted-state-opened", error)
+        })?;
+
+    let theorem_exists = child
+        .with_proof_session(|mut proof| {
+            proof
+                .load_theorem(
+                    ContextId::from_i64(retained.received.context),
+                    TermId::from_i64(retained.received.conclusion),
+                )
+                .map(|theorem| theorem.is_some())
+        })
+        .map_err(|error| ManagedTrustedHolStateError::at("theorem-loaded", error))?;
+    if !theorem_exists {
+        return Err(ManagedTrustedHolStateError::invalid(
+            "theorem-loaded",
+            "retained theorem is absent from trusted child state",
+        ));
+    }
+
+    let connection = LocalConnection::Hol(child);
+    let connection = directory
+        .insert_selected(connection.protocol(), connection)
+        .map_err(|error| ManagedTrustedHolStateError::at("child-retained", error))?;
+    Ok(ManagedTrustedHolState {
+        connection,
+        source_namespace: retained.artifact.namespace_id,
+        context: retained.received.context,
+        conclusion: retained.received.conclusion,
+    })
 }
 
 fn authenticate_artifact(
@@ -1708,6 +1920,8 @@ pub enum ReplError {
     StateQueryReturnsNoRows,
     /// No runtime connection is currently selected.
     NoActiveConnection,
+    /// The directory's required singleton state row is absent.
+    MissingStateSingleton,
 }
 
 impl fmt::Display for ReplError {
@@ -1727,6 +1941,7 @@ impl fmt::Display for ReplError {
                 formatter.write_str("state inspection statements must return rows")
             }
             Self::NoActiveConnection => formatter.write_str("no active connection"),
+            Self::MissingStateSingleton => formatter.write_str("REPL state singleton is missing"),
         }
     }
 }
@@ -1741,6 +1956,7 @@ impl StdError for ReplError {
             | Self::CorruptKernelPublicKey(_)
             | Self::CannotUnregisterLocalKernel
             | Self::NoActiveConnection
+            | Self::MissingStateSingleton
             | Self::StateQueryReturnsNoRows => None,
         }
     }
@@ -1763,8 +1979,9 @@ mod web;
 
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 pub use web::{
-    WebConnectionEntry, WebHolOutcome, WebKernel, WebKernelEntry, WebOutcome, WebProducedSignedHol,
-    WebReceivedHolSnapshot, WebReplDirectory, WebSignedHolOutcome,
+    WebConnectionEntry, WebHolOutcome, WebKernel, WebKernelEntry, WebManagedTrustedHolState,
+    WebOutcome, WebProducedSignedHol, WebReceivedHolSnapshot, WebReplDirectory,
+    WebSignedHolOutcome,
 };
 
 /// Returns the cross-target `SQLite` smoke-test value.
@@ -1781,6 +1998,34 @@ pub fn smoke() -> u32 {
 mod tests {
     use super::*;
     use covalence_nucleus::{ImportId, NamespaceId, TrustedImportId};
+
+    fn retained_managed_fixture() -> (
+        Kernel,
+        Repl<LocalConnection>,
+        ConnectionId,
+        RetainedReceivedHolSnapshot,
+    ) {
+        let kernel = Kernel::ephemeral();
+        let mut source = kernel.open_hol(AllowAll).unwrap();
+        let produced = produce_signed_hol_artifact(&kernel, &mut source).unwrap();
+        let source_namespace = produced.artifact().namespace_id();
+        let expected = ExpectedKernelIdentity::from_public_key(
+            KernelId::LOCAL,
+            kernel.verifying_key().as_bytes(),
+        )
+        .unwrap();
+        let pinned =
+            authenticate_pinned_signed_hol_artifact(&expected, produced.artifact()).unwrap();
+        let mut owner = kernel.open_hol(AllowAll).unwrap();
+        let retained =
+            trust_receive_and_retain_pinned_signed_hol_artifact(&mut owner, pinned).unwrap();
+        let mut directory = Repl::new(kernel.verifying_key().as_bytes()).unwrap();
+        let owner = LocalConnection::Hol(owner);
+        let owner = directory.insert(owner.protocol(), owner).unwrap();
+        let retained = retained.bind(owner);
+        assert_eq!(retained.artifact.namespace_id(), source_namespace);
+        (kernel, directory, owner, retained)
+    }
 
     #[test]
     fn orchestrates_two_simultaneous_sql_connections() {
@@ -1890,6 +2135,29 @@ mod tests {
             )
             .unwrap();
         assert_eq!(public_key, vec![7; 32]);
+    }
+
+    #[test]
+    fn atomic_insert_selected_rejects_missing_state_singleton_without_a_row_or_handle() {
+        let mut repl = Repl::new(&[7; 32]).unwrap();
+        repl.state
+            .sqlite()
+            .execute("DELETE FROM repl_state", [])
+            .unwrap();
+
+        assert!(matches!(
+            repl.insert_selected("nucleus/hol", ()),
+            Err(ReplError::MissingStateSingleton)
+        ));
+        assert!(repl.connections.is_empty());
+        assert_eq!(
+            repl.state
+                .sqlite()
+                .query_row("SELECT count(*) FROM repl_connection", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
     }
 
     #[test]
@@ -2139,6 +2407,7 @@ mod tests {
         let mut target = receiver.open_hol(AllowAll).unwrap();
         let retained =
             trust_receive_and_retain_pinned_signed_hol_artifact(&mut target, pinned).unwrap();
+        let retained = retained.bind(ConnectionId::from_u32(17));
         let before = receiver.export_hol(&mut target).unwrap();
 
         let mut reread = None;
@@ -2150,6 +2419,163 @@ mod tests {
         assert_eq!(reread, Some(retained.received));
         assert_eq!(before.image().hash(), after.image().hash());
         assert_eq!(before.image().bytes(), after.image().bytes());
+    }
+
+    #[test]
+    fn retained_snapshot_opens_twice_without_mutating_owner_and_children_are_writable() {
+        let (kernel, mut directory, owner, retained) = retained_managed_fixture();
+        let before = kernel
+            .export_hol(directory.get_mut(owner).unwrap().hol_mut().unwrap())
+            .unwrap();
+
+        let first =
+            open_retained_trusted_hol_as_managed_state(&mut directory, owner, &retained, AllowAll)
+                .unwrap();
+        let second =
+            open_retained_trusted_hol_as_managed_state(&mut directory, owner, &retained, AllowAll)
+                .unwrap();
+
+        assert_ne!(first.connection(), second.connection());
+        assert_eq!(
+            first.source_namespace_id(),
+            retained.artifact.namespace_id()
+        );
+        assert_eq!(first.context_id(), retained.received.context_id());
+        assert_eq!(first.conclusion_id(), retained.received.conclusion_id());
+        directory
+            .get_mut(first.connection())
+            .unwrap()
+            .hol_mut()
+            .unwrap()
+            .insert_bool_term(false)
+            .unwrap();
+        assert_eq!(
+            reread_received_hol_snapshot(
+                directory.get_mut(owner).unwrap().hol_mut().unwrap(),
+                &retained,
+            )
+            .unwrap(),
+            retained.received
+        );
+        let after = kernel
+            .export_hol(directory.get_mut(owner).unwrap().hol_mut().unwrap())
+            .unwrap();
+        assert_eq!(before.image().hash(), after.image().hash());
+        assert_eq!(before.image().bytes(), after.image().bytes());
+    }
+
+    #[test]
+    fn retained_snapshot_rejects_wrong_owner_before_opening_a_child() {
+        let (kernel, mut directory, owner, retained) = retained_managed_fixture();
+        let other = LocalConnection::Hol(kernel.open_hol(AllowAll).unwrap());
+        let other = directory.insert(other.protocol(), other).unwrap();
+        let before = directory.connections().unwrap();
+
+        let error =
+            open_retained_trusted_hol_as_managed_state(&mut directory, other, &retained, AllowAll)
+                .unwrap_err();
+
+        assert!(error.to_string().contains("receipt-owner-checked"));
+        assert_eq!(directory.connections().unwrap(), before);
+        assert!(
+            reread_received_hol_snapshot(
+                directory.get_mut(owner).unwrap().hol_mut().unwrap(),
+                &retained,
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn failed_directory_insert_leaves_no_row_and_receipt_can_retry() {
+        let (_kernel, mut directory, owner, retained) = retained_managed_fixture();
+        let before = directory.connections().unwrap();
+        let runtime_before = directory.connections.len();
+        let active_before = directory.active().unwrap();
+        directory
+            .state()
+            .sqlite()
+            .execute_batch(
+                "CREATE TEMP TRIGGER reject_trusted_child
+                 BEFORE INSERT ON main.repl_connection
+                 BEGIN SELECT RAISE(FAIL, 'reject child'); END;",
+            )
+            .unwrap();
+
+        let error =
+            open_retained_trusted_hol_as_managed_state(&mut directory, owner, &retained, AllowAll)
+                .unwrap_err();
+        assert!(error.to_string().contains("child-retained"));
+        assert_eq!(directory.connections().unwrap(), before);
+        assert_eq!(directory.connections.len(), runtime_before);
+        assert_eq!(directory.active().unwrap(), active_before);
+
+        directory
+            .state()
+            .sqlite()
+            .execute_batch("DROP TRIGGER temp.reject_trusted_child")
+            .unwrap();
+        let opened =
+            open_retained_trusted_hol_as_managed_state(&mut directory, owner, &retained, AllowAll)
+                .unwrap();
+        assert_eq!(directory.connections().unwrap().len(), before.len() + 1);
+        assert_eq!(opened.context_id(), retained.received.context_id());
+        assert_eq!(directory.active().unwrap(), Some(opened.connection()));
+    }
+
+    #[test]
+    fn failed_atomic_selection_rolls_back_child_and_preserves_previous_active() {
+        let (_kernel, mut directory, owner, retained) = retained_managed_fixture();
+        directory.select(owner).unwrap();
+        let before = directory.connections().unwrap();
+        let runtime_before = directory.connections.len();
+        directory
+            .state()
+            .sqlite()
+            .execute_batch(
+                "CREATE TEMP TRIGGER reject_trusted_child_selection
+                 BEFORE UPDATE OF active_connection_id ON main.repl_state
+                 BEGIN SELECT RAISE(FAIL, 'reject selection'); END;",
+            )
+            .unwrap();
+
+        let error =
+            open_retained_trusted_hol_as_managed_state(&mut directory, owner, &retained, AllowAll)
+                .unwrap_err();
+        assert!(error.to_string().contains("child-retained"));
+        assert_eq!(directory.connections().unwrap(), before);
+        assert_eq!(directory.connections.len(), runtime_before);
+        assert_eq!(directory.active().unwrap(), Some(owner));
+
+        directory
+            .state()
+            .sqlite()
+            .execute_batch("DROP TRIGGER temp.reject_trusted_child_selection")
+            .unwrap();
+        let opened =
+            open_retained_trusted_hol_as_managed_state(&mut directory, owner, &retained, AllowAll)
+                .unwrap();
+        assert_eq!(directory.active().unwrap(), Some(opened.connection()));
+    }
+
+    #[test]
+    fn missing_dynamic_theorem_leaves_no_child_and_restored_receipt_retries() {
+        let (_kernel, mut directory, owner, mut retained) = retained_managed_fixture();
+        let conclusion = retained.received.conclusion;
+        retained.received.conclusion = i64::MAX;
+        let before = directory.connections().unwrap();
+
+        let error =
+            open_retained_trusted_hol_as_managed_state(&mut directory, owner, &retained, AllowAll)
+                .unwrap_err();
+        assert!(error.to_string().contains("theorem-loaded"));
+        assert_eq!(directory.connections().unwrap(), before);
+
+        retained.received.conclusion = conclusion;
+        let opened =
+            open_retained_trusted_hol_as_managed_state(&mut directory, owner, &retained, AllowAll)
+                .unwrap();
+        assert_eq!(opened.conclusion_id(), conclusion);
     }
 
     #[test]

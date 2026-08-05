@@ -1,6 +1,7 @@
 import init, {
   WebKernel,
   type WebHolOutcome,
+  type WebManagedTrustedHolState,
   type WebOutcome,
   type WebRemoteProducedHolComponent,
   type WebReceivedHolSnapshot,
@@ -30,6 +31,11 @@ type Request =
   | {
       id: number;
       operation: "rereadNativeHttpHashSelectedHol";
+      connection: number;
+    }
+  | {
+      id: number;
+      operation: "openNativeHttpHashSelectedHolState";
       connection: number;
     }
   | {
@@ -133,6 +139,8 @@ async function execute(request: Request): Promise<unknown> {
       }
     case "rereadNativeHttpHashSelectedHol":
       return rereadNativeHttpHashSelectedHol(connection, request.connection);
+    case "openNativeHttpHashSelectedHolState":
+      return openNativeHttpHashSelectedHolState(connection, request.connection);
     case "putImage":
       return connection.put_image(request.connection, request.bytes);
     case "attachImage":
@@ -248,6 +256,32 @@ function rereadNativeHttpHashSelectedHol(
     throw new Error("read-only HOL reread changed persistent receiver state");
   }
   return { ...received, persistentStateHash: after };
+}
+
+function openNativeHttpHashSelectedHolState(
+  connection: WebKernel,
+  receiver: number,
+) {
+  const retained = retainedHashSelectedArtifacts.get(receiver);
+  if (retained === undefined) {
+    throw new Error("hash-selected HOL receiver was closed or cleaned up");
+  }
+  return readManagedTrustedHolState(
+    connection.open_retained_trusted_hol_state(receiver, retained),
+  );
+}
+
+function readManagedTrustedHolState(state: WebManagedTrustedHolState) {
+  try {
+    return {
+      connection: state.connection(),
+      sourceNamespace: state.source_namespace_id(),
+      context: state.context_id(),
+      conclusion: state.conclusion_id(),
+    };
+  } finally {
+    state.free();
+  }
 }
 
 function receiveHashSelectedArtifact(
