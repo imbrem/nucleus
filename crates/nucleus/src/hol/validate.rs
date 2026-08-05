@@ -26,6 +26,7 @@ const STLC_BOOL_EQ_V4_SPEC: &[u8] = include_bytes!("semantics-v4.txt");
 const STLC_BOOL_EQ_V5_SPEC: &[u8] = include_bytes!("semantics-v5.txt");
 const STLC_BOOL_EQ_V6_SPEC: &[u8] = include_bytes!("semantics-v6.txt");
 const STLC_BOOL_EQ_V7_SPEC: &[u8] = include_bytes!("semantics-v7.txt");
+const STLC_BOOL_EQ_V8_SPEC: &[u8] = include_bytes!("semantics-v8.txt");
 
 /// Returns the content hash of version one of the normative `hol-common-v2` semantics.
 #[must_use]
@@ -108,7 +109,7 @@ pub fn stlc_bool_eq_v6_semantics() -> O256 {
     o256_path!(::nucleus.hol.protocol.stlc_bool_eq.v6).tag(STLC_BOOL_EQ_V6_SPEC)
 }
 
-/// Derives the current signed schema identity from version-six semantics and exact physical bytes.
+/// Derives the version-six signed schema identity from its semantics and exact physical bytes.
 #[must_use]
 pub fn stlc_bool_eq_v6_schema_id(physical_schema: O256) -> O256 {
     let mut commitments = [0_u8; 64];
@@ -123,13 +124,28 @@ pub fn stlc_bool_eq_v7_semantics() -> O256 {
     o256_path!(::nucleus.hol.protocol.stlc_bool_eq.v7).tag(STLC_BOOL_EQ_V7_SPEC)
 }
 
-/// Derives the current signed schema identity from version-seven semantics and physical bytes.
+/// Derives the version-seven signed schema identity from its semantics and physical bytes.
 #[must_use]
 pub fn stlc_bool_eq_v7_schema_id(physical_schema: O256) -> O256 {
     let mut commitments = [0_u8; 64];
     commitments[..32].copy_from_slice(stlc_bool_eq_v7_semantics().as_ref());
     commitments[32..].copy_from_slice(physical_schema.as_ref());
     o256_path!(::nucleus.hol.protocol.stlc_bool_eq.sqlite_schema.v7).tag(commitments)
+}
+
+/// Returns the content hash of version eight of the normative semantics.
+#[must_use]
+pub fn stlc_bool_eq_v8_semantics() -> O256 {
+    o256_path!(::nucleus.hol.protocol.stlc_bool_eq.v8).tag(STLC_BOOL_EQ_V8_SPEC)
+}
+
+/// Derives the version-eight signed schema identity from semantics and physical bytes.
+#[must_use]
+pub fn stlc_bool_eq_v8_schema_id(physical_schema: O256) -> O256 {
+    let mut commitments = [0_u8; 64];
+    commitments[..32].copy_from_slice(stlc_bool_eq_v8_semantics().as_ref());
+    commitments[32..].copy_from_slice(physical_schema.as_ref());
+    o256_path!(::nucleus.hol.protocol.stlc_bool_eq.sqlite_schema.v8).tag(commitments)
 }
 
 /// Counts established while validating one complete HOL database image.
@@ -292,7 +308,7 @@ impl ValidatedHolImage {
             .map_err(HolImageValidationError::Image)?;
         validate_integrity(disposable.sqlite())?;
         let physical_schema = validate_schema(disposable.sqlite(), expected_schema)?;
-        let schema = stlc_bool_eq_v7_schema_id(physical_schema);
+        let schema = stlc_bool_eq_v8_schema_id(physical_schema);
         let counts = validate_contents(disposable.sqlite())?;
         Ok(Self {
             hash,
@@ -398,7 +414,7 @@ fn validate_schema(
         [],
         |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
     )?;
-    if identity == (10, "tagged-node".to_owned()) {
+    if identity == (11, "tagged-node".to_owned()) {
         Ok(schema_manifest_id(&expected_manifest))
     } else {
         Err(HolImageValidationError::SchemaMismatch)
@@ -412,7 +428,7 @@ pub(super) fn expected_composite_schema_id(
         .map_err(HolImageValidationError::Connection)?;
     expected.sqlite().execute_batch(SCHEMA)?;
     install_metadata_schema(expected.sqlite(), schema)?;
-    Ok(stlc_bool_eq_v7_schema_id(schema_manifest_id(
+    Ok(stlc_bool_eq_v8_schema_id(schema_manifest_id(
         &schema_manifest(expected.sqlite())?,
     )))
 }
@@ -490,7 +506,7 @@ fn validate_contents(
         }
         for member in members {
             let validation = validate_term_cached(connection, member, &mut term_memo)?;
-            if validation.ty != BOOL_TYPE_ID || !validation.boundary.is_empty() {
+            if validation.ty != BOOL_TYPE_ID || !validation.is_closed() {
                 return Err(HolImageValidationError::InvalidContextMember {
                     context: *context,
                     term: member,
@@ -517,7 +533,7 @@ fn validate_contents(
             return Err(HolImageValidationError::OrphanJudgement(*context, *term));
         }
         let validation = validate_term_cached(connection, *term, &mut term_memo)?;
-        if validation.ty != BOOL_TYPE_ID || !validation.boundary.is_empty() {
+        if validation.ty != BOOL_TYPE_ID || !validation.is_closed() {
             return Err(HolImageValidationError::InvalidJudgement(*context, *term));
         }
     }
@@ -877,11 +893,11 @@ fn validate_graph_depth(nodes: &[NodeRow]) -> Result<(), HolImageValidationError
         .map(|(id, tag, lhs, rhs, ty)| {
             let children = match tag.as_str() {
                 "KARR" => vec![*lhs, *rhs],
-                "TBOOL" | "TBASE" | "TFV" | "MBOOL" | "MFV" | "MCONST" | "MBV" => {
+                "TBOOL" | "TBASE" | "TFV" | "TBV" | "MBOOL" | "MFV" | "MCONST" | "MBV" => {
                     vec![*ty]
                 }
-                "MEPS" => vec![*lhs, *ty],
-                "TARR" | "MAPP" | "MLAM" | "MEQ" => vec![*lhs, *rhs, *ty],
+                "TALL" | "MEPS" | "MTYLAM" => vec![*lhs, *ty],
+                "TARR" | "MAPP" | "MLAM" | "MEQ" | "MTYAPP" => vec![*lhs, *rhs, *ty],
                 _ => Vec::new(),
             }
             .into_iter()
@@ -950,7 +966,11 @@ fn validate_type_graph(
         return Err(TypeError::CorruptType(id));
     }
     match read_type(connection, id)? {
-        TypeView::Bool | TypeView::Base { .. } | TypeView::Free { .. } => {}
+        TypeView::Bool | TypeView::Base { .. } | TypeView::Free { .. } | TypeView::Bound { .. } => {
+        }
+        TypeView::Forall { body } => {
+            validate_type_graph(connection, body, active, memo)?;
+        }
         TypeView::Arrow { domain, codomain } => {
             validate_type_graph(connection, domain, active, memo)?;
             validate_type_graph(connection, codomain, active, memo)?;
@@ -1469,15 +1489,19 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn semantic_schema_vectors_are_stable_and_version_distinct() {
         let expected = covalence_neutron::Connection::open_in_memory().unwrap();
         expected.sqlite().execute_batch(SCHEMA).unwrap();
         let physical = schema_manifest_id(&schema_manifest(expected.sqlite()).unwrap());
         assert_eq!(
             physical,
-            O256::from_hex("a534744bf70be24bae2945f5e339f649dc01a3653401dc618b77cd4681201246")
+            O256::from_hex("d30267952bacc2fe52628c26392c147b49b705cfaf3680d84f6bc80d7c647d18")
                 .unwrap()
         );
+        let version_seven_physical =
+            O256::from_hex("a534744bf70be24bae2945f5e339f649dc01a3653401dc618b77cd4681201246")
+                .unwrap();
         let version_six_physical =
             O256::from_hex("9af69cfcbcea7c0a3f3ed0fc8d0416367c3c978c31938362d4188f8fd4ec5fc8")
                 .unwrap();
@@ -1550,8 +1574,18 @@ mod tests {
                 .unwrap()
         );
         assert_eq!(
-            stlc_bool_eq_v7_schema_id(physical),
+            stlc_bool_eq_v7_schema_id(version_seven_physical),
             O256::from_hex("b547051acd2b072235e9cd261c2ea6eab1a6e57049699dde614e2f6ea1df9593")
+                .unwrap()
+        );
+        assert_eq!(
+            stlc_bool_eq_v8_semantics(),
+            O256::from_hex("bd08fc02c66259777d7b67a583d24c805cf304ecd31879be82cf01b14f1c16be")
+                .unwrap()
+        );
+        assert_eq!(
+            stlc_bool_eq_v8_schema_id(physical),
+            O256::from_hex("06d755d88a27f5b2700f93bf0b0b2b6f43283ed718bb448450a77a5429cdea12")
                 .unwrap()
         );
         assert_ne!(
@@ -1569,10 +1603,10 @@ mod tests {
         expected.sqlite().execute_batch(SCHEMA).unwrap();
         let physical = schema_manifest_id(&schema_manifest(expected.sqlite()).unwrap());
         assert_eq!(validated.physical_schema(), physical);
-        assert_eq!(validated.schema(), stlc_bool_eq_v7_schema_id(physical));
-        assert_ne!(validated.schema(), stlc_bool_eq_v6_schema_id(physical));
+        assert_eq!(validated.schema(), stlc_bool_eq_v8_schema_id(physical));
+        assert_ne!(validated.schema(), stlc_bool_eq_v7_schema_id(physical));
         assert_ne!(validated.schema(), validated.physical_schema());
-        assert_ne!(validated.schema(), stlc_bool_eq_v7_semantics());
+        assert_ne!(validated.schema(), stlc_bool_eq_v8_semantics());
         assert_eq!(validated.bytes(), bytes.as_ref());
         assert_eq!(
             validated.counts(),
@@ -1809,6 +1843,64 @@ mod tests {
     }
 
     #[test]
+    fn detached_validation_rechecks_rank_zero_polymorphic_terms() {
+        let mut connection = Connection::open_hol_in_memory(AllowAll).unwrap();
+        let bool_type = connection.insert_bool_type().unwrap();
+        let external = connection.insert_bound_term(0, bool_type).unwrap();
+        let schematic = connection.insert_free_term(702, bool_type).unwrap();
+        let unused_universal = connection.insert_forall_type(bool_type).unwrap();
+        let alpha = connection.insert_bound_type(0).unwrap();
+        let identity_universal = connection.insert_forall_type(alpha).unwrap();
+        let constant = connection.insert_constant(701, identity_universal).unwrap();
+        let bytes = connection.parts_mut().0.serialize().unwrap();
+
+        let open_lambda = covalence_neutron::Connection::deserialize(&bytes).unwrap();
+        open_lambda
+            .sqlite()
+            .execute(
+                "INSERT INTO hol_node(tag, lhs, ty) VALUES ('MTYLAM', ?1, ?2)",
+                [external.get(), unused_universal.get()],
+            )
+            .unwrap();
+        let lambda = TermId(open_lambda.sqlite().last_insert_rowid());
+        assert!(matches!(
+            ValidatedHolImage::validate(&open_lambda.serialize().unwrap()),
+            Err(HolImageValidationError::Term(TermError::TypeLambdaOpenTermBody(term)))
+                if term == lambda
+        ));
+
+        let schematic_lambda = covalence_neutron::Connection::deserialize(&bytes).unwrap();
+        schematic_lambda
+            .sqlite()
+            .execute(
+                "INSERT INTO hol_node(tag, lhs, ty) VALUES ('MTYLAM', ?1, ?2)",
+                [schematic.get(), unused_universal.get()],
+            )
+            .unwrap();
+        let lambda = TermId(schematic_lambda.sqlite().last_insert_rowid());
+        assert!(matches!(
+            ValidatedHolImage::validate(&schematic_lambda.serialize().unwrap()),
+            Err(HolImageValidationError::Term(TermError::TypeLambdaFreeTermBody(term)))
+                if term == lambda
+        ));
+
+        let wrong_application = covalence_neutron::Connection::deserialize(&bytes).unwrap();
+        wrong_application
+            .sqlite()
+            .execute(
+                "INSERT INTO hol_node(tag, lhs, rhs, ty) VALUES ('MTYAPP', ?1, ?2, ?3)",
+                [constant.get(), bool_type.get(), identity_universal.get()],
+            )
+            .unwrap();
+        let application = TermId(wrong_application.sqlite().last_insert_rowid());
+        assert!(matches!(
+            ValidatedHolImage::validate(&wrong_application.serialize().unwrap()),
+            Err(HolImageValidationError::Term(TermError::CorruptTerm(term)))
+                if term == application
+        ));
+    }
+
+    #[test]
     fn rejects_non_sqlite_bytes() {
         assert!(ValidatedHolImage::validate(b"not sqlite").is_err());
     }
@@ -1863,7 +1955,7 @@ mod tests {
         assert_eq!(validated.bytes(), bytes.as_ref());
         assert_eq!(
             validated.semantic_schema(),
-            stlc_bool_eq_v7_schema_id(validated.physical_schema_manifest())
+            stlc_bool_eq_v8_schema_id(validated.physical_schema_manifest())
         );
         let default = ValidatedHolImage::validate(&sample_image()).unwrap();
         assert_ne!(

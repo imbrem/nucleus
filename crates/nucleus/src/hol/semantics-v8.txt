@@ -1,0 +1,36 @@
+Nucleus hol-common-v2 semantics, version 8
+
+This protocol extends version 7 with explicit rank-zero object polymorphism. It deliberately
+separates object-level universal types TALL and term type abstraction/application MTYLAM/MTYAPP
+from the future kind-level type-operator constructors TLAM/TAPP, which are not present here.
+
+TBV(i) is a star-kinded de Bruijn type occurrence. TALL(A) binds TBV(0) in A. Types and terms have
+independent external de Bruijn boundaries; TALL and MTYLAM close one type boundary, while MLAM
+closes one term boundary. TFV remains a free schematic atom and is never captured by TALL.
+
+MTYLAM(t) has type TALL(type(t)). Version 8 admits this constructor only when t has no external
+term de Bruijn variables and contains no MFV node. Variables bound by MLAM within t are permitted.
+This is the empty-term-environment fragment of the standard type-abstraction rule and avoids
+identifying differently typed free-term nodes during environment weakening. MTYAPP(f,X) is
+well-typed when f has type TALL(A), and has the capture-avoiding bound-type substitution A[X/0].
+
+Bound-type substitution lifts X once for each crossed TALL or MTYLAM binder, replaces the selected
+TBV, and decrements higher indices. It traverses every type annotation in a term. Schematic theorem
+type instantiation remains simultaneous and non-recursive, but replacements must now be locally
+type-closed so they cannot be captured beneath TALL or MTYLAM.
+
+The semantic universe is the one-sort impredicative rank-zero System F model used by the
+ProjectBeth shallow kernel: Code is closed under allCode : (Code -> Code) -> Code, with an
+equivalence between El(allCode F) and the dependent function (X : Code) -> El(F X). Every code has
+an inhabited carrier. TALL denotes allCode, MTYLAM denotes semantic abstraction, and MTYAPP denotes
+application. These universe closure and equivalence operations are explicit model assumptions.
+
+MCONST still names one fixed declared type. Its type must contain no TFV and must be locally
+type-closed, but it may be a closed TALL type. This is one object at one universal type, not a
+principal polymorphic scheme.
+
+Version 8 adds syntax, typing, boundary, substitution, structural query, validation and import
+semantics only. It adds no new authoritative proof or conversion rule. All version 7 proof rules,
+choice, namespaces, trust and metadata behavior otherwise remain unchanged. Current validation,
+descriptors, signing and authenticated import use semantic version 8 and physical schema version
+11. Earlier semantic identities remain fixed; multi-version authenticated import is not provided.
