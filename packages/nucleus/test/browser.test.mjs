@@ -129,4 +129,34 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
       .count(),
     1,
   );
+
+  const signedWorkers = await browser.newPage();
+  await signedWorkers.goto(
+    `http://127.0.0.1:${address.port}/test/signed-worker.html`,
+  );
+  await signedWorkers.waitForFunction(
+    () =>
+      document.body.dataset.result !== undefined ||
+      document.body.dataset.error !== undefined,
+  );
+  assert.equal(
+    await signedWorkers.locator("body").getAttribute("data-error"),
+    null,
+  );
+  const signedWorkerResult = JSON.parse(
+    await signedWorkers.locator("body").getAttribute("data-result"),
+  );
+  assert.deepEqual(signedWorkerResult, {
+    statement: "(lambda x:bool. x) true = true",
+    producerKeyBytes: 32,
+    receiverKeyBytes: 32,
+    distinctKeys: true,
+    oversizedRejected: true,
+    outcomeUnknown: true,
+    retryExact: true,
+    context: "0",
+    conclusion: "8",
+    rereadContext: "0",
+    rereadConclusion: "8",
+  });
 });

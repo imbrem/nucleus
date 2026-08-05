@@ -94,6 +94,10 @@ impl Runner {
                 "tsc",
                 as_utf8(&staged.join("src/index.ts"), "TypeScript source")?,
                 as_utf8(&staged.join("src/worker.ts"), "Worker TypeScript source")?,
+                as_utf8(
+                    &staged.join("src/signed-worker.ts"),
+                    "signed Worker TypeScript source",
+                )?,
                 "--declaration",
                 "--module",
                 "ESNext",
