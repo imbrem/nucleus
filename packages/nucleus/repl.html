@@ -66,8 +66,8 @@
     <h1>Nucleus local SQL and HOL connections</h1>
     <p>
       Each connection has a writable in-memory main database. URL loads fetch a
-      complete SQLite image into the Worker, then attach it immutably.
-      HOL recipes call the same Rust orchestration adapter as the terminal.
+      complete SQLite image into the Worker, then attach it immutably. HOL
+      recipes call the same Rust orchestration adapter as the terminal.
     </p>
 
     <div class="bar">
@@ -183,15 +183,13 @@
         }
       });
 
-      document
-        .querySelector("#new-hol")
-        .addEventListener("click", async () => {
-          try {
-            await addConnection("hol");
-          } catch (error) {
-            showError(error);
-          }
-        });
+      document.querySelector("#new-hol").addEventListener("click", async () => {
+        try {
+          await addConnection("hol");
+        } catch (error) {
+          showError(error);
+        }
+      });
 
       document.querySelector("#close").addEventListener("click", async () => {
         try {
@@ -218,30 +216,28 @@
         }
       });
 
-      document
-        .querySelector("#run-hol")
-        .addEventListener("click", async () => {
-          status.textContent = "Proving…";
-          try {
-            const connection = selected();
-            if (connection.kind !== "hol")
-              throw new Error("selected connection is not HOL");
-            const result = await connection.run(
-              document.querySelector("#recipe").value,
-            );
-            output.className = "";
-            output.textContent = [
-              `kind\t${result.kind}`,
-              `recipe\t${result.recipe}`,
-              `context\t${result.context}`,
-              `conclusion\t${result.conclusion}`,
-              `statement\t${result.statement}`,
-            ].join("\n");
-            status.textContent = "Ready";
-          } catch (error) {
-            showError(error);
-          }
-        });
+      document.querySelector("#run-hol").addEventListener("click", async () => {
+        status.textContent = "Proving…";
+        try {
+          const connection = selected();
+          if (connection.kind !== "hol")
+            throw new Error("selected connection is not HOL");
+          const result = await connection.run(
+            document.querySelector("#recipe").value,
+          );
+          output.className = "";
+          output.textContent = [
+            `kind\t${result.kind}`,
+            `recipe\t${result.recipe}`,
+            `context\t${result.context}`,
+            `conclusion\t${result.conclusion}`,
+            `statement\t${result.statement}`,
+          ].join("\n");
+          status.textContent = "Ready";
+        } catch (error) {
+          showError(error);
+        }
+      });
 
       document.querySelector("#load").addEventListener("click", async () => {
         status.textContent = "Downloading complete image…";
