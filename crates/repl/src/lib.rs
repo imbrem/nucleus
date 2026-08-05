@@ -2403,7 +2403,7 @@ mod web;
 pub use web::{
     WebConnectionEntry, WebHolOutcome, WebKernel, WebKernelEntry, WebManagedTrustedHolState,
     WebOutcome, WebProducedSignedHol, WebReceivedHolSnapshot, WebReplDirectory,
-    WebSignedHolOutcome, WebSignedInfinityAssumption,
+    WebReplayedHolProofRecipe, WebSignedHolOutcome, WebSignedInfinityAssumption,
 };
 
 /// Returns the cross-target `SQLite` smoke-test value.

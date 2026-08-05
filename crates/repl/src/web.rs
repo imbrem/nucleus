@@ -7,16 +7,17 @@ use super::hol_infinity::produce_and_retain_signed_dedekind_infinity_assumption_
 use super::hol_natlike_missing_zero::retain_signed_natlike_missing_zero_bounded;
 use super::{
     AllowAll, ConnectionEntry, ConnectionId, ExpectedKernelIdentity, HolRecipe, HolRecipeResult,
-    Kernel, KernelEntry, KernelId, LocalConnection, MAX_SIGNED_MESSAGE_BYTES, Outcome,
-    PinnedSignedHolArtifact, ProducedSignedHol, QueryResult, ReceivedHolSnapshot, Repl,
-    RetainedReceivedHolSnapshot, SIGNED_HOL_PHASES, ServiceIdentity, ServiceOperation,
-    ServiceProducedHol, ServiceProducedHolComponent, ServiceResult, SessionInitiator,
-    SignedHolArtifact, SignedHolRoundTripResult, SignedInfinityAssumption, SignedKernelService,
-    SignedMessageRequest, SignedMessageResponse, SignedNatLikeMissingZero, SignedServiceCommand,
-    SignedServiceSession, Value, authenticate_pinned_signed_hol_artifact, decode_signed_request,
-    decode_signed_response, encode_signed_request, encode_signed_response,
+    Kernel, KernelEntry, KernelId, LocalConnection, MAX_SEALED_HOL_RECIPE_BYTES,
+    MAX_SIGNED_MESSAGE_BYTES, Outcome, PinnedSignedHolArtifact, ProducedSignedHol, QueryResult,
+    ReceivedHolSnapshot, Repl, RetainedReceivedHolSnapshot, SIGNED_HOL_PHASES, ServiceIdentity,
+    ServiceOperation, ServiceProducedHol, ServiceProducedHolComponent, ServiceResult,
+    SessionInitiator, SignedHolArtifact, SignedHolRoundTripResult, SignedInfinityAssumption,
+    SignedKernelService, SignedMessageRequest, SignedMessageResponse, SignedNatLikeMissingZero,
+    SignedServiceCommand, SignedServiceSession, Value, authenticate_pinned_signed_hol_artifact,
+    decode_signed_request, decode_signed_response, encode_signed_request, encode_signed_response,
     open_retained_trusted_hol_as_managed_state, parse_signed_hol_artifact_sidecar,
-    produce_signed_hol_artifact, produce_signed_natlike_missing_zero, reread_received_hol_snapshot,
+    produce_signed_hol_artifact, produce_signed_natlike_missing_zero,
+    replay_and_retain_sealed_hol_proof_recipe_bounded, reread_received_hol_snapshot,
     run_managed_signed_hol_round_trip, trust_and_receive_pinned_signed_hol_artifact,
     trust_receive_and_retain_bounded_selected_managed_hol_artifact,
     trust_receive_and_retain_pinned_signed_hol_artifact,
@@ -126,6 +127,15 @@ pub struct WebReceivedSignedHolArtifact {
     receiver: u32,
     retained: u32,
     attestation: String,
+}
+
+/// Checked sealed-recipe output signed and retained by this browser kernel.
+#[wasm_bindgen]
+pub struct WebReplayedHolProofRecipe {
+    artifact: SignedHolArtifact,
+    received: ReceivedHolSnapshot,
+    receiver: u32,
+    retained: u32,
 }
 
 /// Browser-side authenticated session state for a remote signed kernel service.
@@ -815,6 +825,48 @@ impl WebKernel {
         })
     }
 
+    /// Replays canonical authority-free recipe bytes and retains the signed result.
+    ///
+    /// The bytes are decoded once by [`super::SealedHolProofRecipe`]. Checked
+    /// Nucleus replay and local signing happen before the ordinary
+    /// authenticate/pin/detached-validate/trust/import path admits a fresh
+    /// receiver. No connection, kernel key, or raw Nucleus handle crosses the
+    /// Wasm boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns without changing the selected connection or receipt IDs for
+    /// oversized, malformed, non-canonical, structurally denied, failed-replay,
+    /// authentication, validation, trust, import, or bounded-admission input.
+    pub fn replay_hol_proof_recipe(
+        &mut self,
+        recipe: &[u8],
+    ) -> Result<WebReplayedHolProofRecipe, JsValue> {
+        let retained_id = self.next_received_artifact;
+        let next_retained_id = retained_id
+            .checked_add(1)
+            .ok_or_else(|| JsValue::from_str("received artifact IDs are exhausted"))?;
+        let managed = replay_and_retain_sealed_hol_proof_recipe_bounded(
+            &self.kernel,
+            &mut self.repl,
+            recipe,
+            i64::from(u32::MAX),
+        )
+        .map_err(js_error)?;
+        let (artifact, receiver, retained) = managed.into_parts();
+        let received = retained.received();
+        // Bounded admission establishes this before selecting or inserting.
+        let receiver = receiver.get() as u32;
+        self.next_received_artifact = next_retained_id;
+        self.received_artifacts.insert(retained_id, retained);
+        Ok(WebReplayedHolProofRecipe {
+            artifact,
+            received,
+            receiver,
+            retained: retained_id,
+        })
+    }
+
     /// Proves, persists, exports, and signs one HOL artifact in this kernel.
     ///
     /// The returned fields are an above-TCB structured carrier, not a stable
@@ -1137,6 +1189,12 @@ impl WebKernel {
     #[must_use]
     pub fn max_signed_hol_artifact_sidecar_bytes() -> usize {
         super::MAX_SIGNED_HOL_ARTIFACT_SIDECAR_BYTES
+    }
+
+    /// Returns the maximum accepted sealed HOL recipe size in bytes.
+    #[must_use]
+    pub fn max_hol_proof_recipe_bytes() -> usize {
+        MAX_SEALED_HOL_RECIPE_BYTES
     }
 
     /// Serializes the writable in-memory `main` database.
@@ -1719,6 +1777,99 @@ impl WebSignedNatLikeMissingZero {
     #[must_use]
     pub fn attestation_text(&self) -> String {
         self.theorem.attestation_text()
+    }
+}
+
+#[wasm_bindgen]
+impl WebReplayedHolProofRecipe {
+    /// Returns `signed-hol-proof-recipe`.
+    #[must_use]
+    pub fn kind(&self) -> String {
+        "signed-hol-proof-recipe".to_owned()
+    }
+
+    /// Returns the explicitly trusted receiver connection.
+    #[must_use]
+    pub fn receiver_connection(&self) -> u32 {
+        self.receiver
+    }
+
+    /// Returns the opaque retained-receipt ID used by the Worker.
+    #[must_use]
+    pub fn retained_id(&self) -> u32 {
+        self.retained
+    }
+
+    /// Returns the source namespace in the signed database.
+    #[must_use]
+    pub fn source_namespace_id(&self) -> String {
+        self.artifact.namespace_id().to_string()
+    }
+
+    /// Copies the exact signed SQLite database bytes.
+    #[must_use]
+    pub fn image(&self) -> Vec<u8> {
+        self.artifact.image().to_vec()
+    }
+
+    /// Returns the schema coordinate qualified by the signature.
+    #[must_use]
+    pub fn schema(&self) -> String {
+        self.artifact.schema().to_string()
+    }
+
+    /// Returns the exact database image hash.
+    #[must_use]
+    pub fn image_hash(&self) -> String {
+        self.artifact.image_hash().to_string()
+    }
+
+    /// Returns the signing-key identity.
+    #[must_use]
+    pub fn signer(&self) -> String {
+        self.artifact.signer().to_string()
+    }
+
+    /// Copies the exact Ed25519 public key.
+    #[must_use]
+    pub fn public_key(&self) -> Vec<u8> {
+        self.artifact.public_key().to_vec()
+    }
+
+    /// Copies the schema-qualified artifact signature.
+    #[must_use]
+    pub fn signature(&self) -> Vec<u8> {
+        self.artifact.signature().to_vec()
+    }
+
+    /// Renders the ordinary bounded signed-artifact sidecar.
+    #[must_use]
+    pub fn attestation_text(&self) -> String {
+        self.artifact.attestation_text()
+    }
+
+    /// Returns the receiver's inert trusted-import coordinate.
+    #[must_use]
+    pub fn import_id(&self) -> String {
+        self.received.import_id().to_string()
+    }
+
+    /// Returns the receiver-local imported namespace alias.
+    #[must_use]
+    pub fn imported_namespace_id(&self) -> String {
+        self.received.namespace_id().to_string()
+    }
+
+    /// Returns the imported theorem context coordinate.
+    #[must_use]
+    pub fn context_id(&self) -> String {
+        self.received.context_id().to_string()
+    }
+
+    /// Returns the imported theorem conclusion coordinate.
+    #[must_use]
+    pub fn conclusion_id(&self) -> String {
+        self.received.conclusion_id().to_string()
     }
 }
 
