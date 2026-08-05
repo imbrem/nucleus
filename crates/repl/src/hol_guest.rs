@@ -2,6 +2,7 @@
 
 use std::{collections::HashSet, error::Error as StdError, fmt};
 
+use covalence_lib_hash::O256;
 use covalence_nucleus::{
     Connection, ContextId, ExportId, Hol, Kernel, NamespaceExport, NamespaceId, Operation, Policy,
     SignedHolSnapshot, TermId, Theorem, TypeId,
@@ -10,7 +11,7 @@ use covalence_proton::{
     WasmtimeComponentLimits, WasmtimeComponentRuntime, WasmtimeRuntimeError, WasmtimeStore,
     wasmtime,
 };
-use wasmtime::component::{HasSelf, Linker, Resource};
+use wasmtime::component::{Component, HasSelf, Linker, Resource};
 
 use crate::SignedHolArtifact;
 
@@ -33,6 +34,9 @@ use bindings::covalence::hol_proof_guest::host::{
 const PLAN_REP: u32 = 1;
 const MAX_NODES: usize = 128;
 const MAX_NAME_BYTES: usize = 256;
+
+/// Maximum exact component bytes accepted by the default HOL guest host.
+pub const MAX_HOL_PROOF_COMPONENT_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Sort {
@@ -560,6 +564,95 @@ fn namespace_at(values: &[Value], index: usize) -> Result<NamespaceId, HolGuestE
     }
 }
 
+/// A locally validated and compiled HOL proof component.
+///
+/// Construction is the only operation which parses or compiles component
+/// bytes. Native services prepare this value before accepting remote sessions,
+/// then expose only [`Self::digest`] to signed requests.
+pub struct PreparedHolProofComponent {
+    digest: O256,
+    runtime: WasmtimeComponentRuntime,
+    component: Component,
+}
+
+impl PreparedHolProofComponent {
+    /// Validates and compiles exact component bytes with the fixed demo limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if runtime configuration, the byte bound, validation,
+    /// or compilation fails.
+    pub fn prepare_default(bytes: &[u8]) -> Result<Self, HolGuestError> {
+        Self::prepare(
+            bytes,
+            WasmtimeComponentLimits {
+                component_bytes: MAX_HOL_PROOF_COMPONENT_BYTES,
+                ..WasmtimeComponentLimits::default()
+            },
+        )
+    }
+
+    /// Validates and compiles exact, size-bounded component bytes locally.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if runtime configuration, the byte bound, validation,
+    /// or compilation fails.
+    pub fn prepare(bytes: &[u8], limits: WasmtimeComponentLimits) -> Result<Self, HolGuestError> {
+        let runtime = WasmtimeComponentRuntime::new(limits).map_err(HolGuestError::Runtime)?;
+        let component = runtime.component(bytes).map_err(HolGuestError::Runtime)?;
+        Ok(Self {
+            digest: O256::from_bytes(bytes),
+            runtime,
+            component,
+        })
+    }
+
+    /// Returns the content digest which remote operations may select.
+    #[must_use]
+    pub const fn digest(&self) -> O256 {
+        self.digest
+    }
+
+    /// Runs the precompiled component in a fresh bounded store, then replays
+    /// and signs only its successful sealed plan.
+    ///
+    /// The guest receives neither a database connection nor signing authority.
+    /// A failed component, plan, replay, persistence, namespace export, or
+    /// signing step returns no snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instantiation or execution fails, the guest aborts,
+    /// a resource bound is exceeded, or checked replay/export/signing rejects
+    /// the requested plan.
+    pub fn run(&self, kernel: &Kernel) -> Result<SignedHolArtifact, HolGuestError> {
+        let mut linker: Linker<WasmtimeStore<GuestState>> = Linker::new(self.runtime.engine());
+        bindings::HolProofGuest::add_to_linker::<_, HasSelf<GuestState>>(&mut linker, |state| {
+            &mut state.data
+        })
+        .map_err(HolGuestError::Wasmtime)?;
+        let mut store = self
+            .runtime
+            .store(GuestState::new())
+            .map_err(HolGuestError::Runtime)?;
+        let guest = bindings::HolProofGuest::instantiate(&mut store, &self.component, &linker)
+            .map_err(HolGuestError::Wasmtime)?;
+        let selected_namespace = guest
+            .covalence_hol_proof_guest_guest()
+            .call_build(&mut store, Resource::new_borrow(PLAN_REP))
+            .map_err(HolGuestError::Wasmtime)?
+            .map_err(|_| HolGuestError::GuestAborted)?;
+        let selected_namespace = store
+            .data()
+            .data
+            .node(&selected_namespace, Sort::Namespace)
+            .map_err(|_| HolGuestError::InvalidReturnedNamespace)?;
+        store.data_mut().data.sealed = true;
+        replay(kernel, &store.data().data.recipe, selected_namespace)
+    }
+}
+
 /// Executes one untrusted component, then replays and signs only its successful sealed plan.
 ///
 /// The guest receives neither a database connection nor signing authority. A failed component,
@@ -574,30 +667,7 @@ pub fn run_hol_proof_component(
     bytes: &[u8],
     limits: WasmtimeComponentLimits,
 ) -> Result<SignedHolArtifact, HolGuestError> {
-    let runtime = WasmtimeComponentRuntime::new(limits).map_err(HolGuestError::Runtime)?;
-    let component = runtime.component(bytes).map_err(HolGuestError::Runtime)?;
-    let mut linker: Linker<WasmtimeStore<GuestState>> = Linker::new(runtime.engine());
-    bindings::HolProofGuest::add_to_linker::<_, HasSelf<GuestState>>(&mut linker, |state| {
-        &mut state.data
-    })
-    .map_err(HolGuestError::Wasmtime)?;
-    let mut store = runtime
-        .store(GuestState::new())
-        .map_err(HolGuestError::Runtime)?;
-    let guest = bindings::HolProofGuest::instantiate(&mut store, &component, &linker)
-        .map_err(HolGuestError::Wasmtime)?;
-    let selected_namespace = guest
-        .covalence_hol_proof_guest_guest()
-        .call_build(&mut store, Resource::new_borrow(PLAN_REP))
-        .map_err(HolGuestError::Wasmtime)?
-        .map_err(|_| HolGuestError::GuestAborted)?;
-    let selected_namespace = store
-        .data()
-        .data
-        .node(&selected_namespace, Sort::Namespace)
-        .map_err(|_| HolGuestError::InvalidReturnedNamespace)?;
-    store.data_mut().data.sealed = true;
-    replay(kernel, &store.data().data.recipe, selected_namespace)
+    PreparedHolProofComponent::prepare(bytes, limits)?.run(kernel)
 }
 
 /// Failure before a signed HOL snapshot exists.
@@ -778,5 +848,17 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn default_preparation_rejects_oversize_before_compilation() {
+        let bytes = vec![0; MAX_HOL_PROOF_COMPONENT_BYTES + 1];
+        assert!(matches!(
+            PreparedHolProofComponent::prepare_default(&bytes),
+            Err(HolGuestError::Runtime(
+                WasmtimeRuntimeError::ComponentTooLarge { size, maximum }
+            )) if size == MAX_HOL_PROOF_COMPONENT_BYTES + 1
+                && maximum == MAX_HOL_PROOF_COMPONENT_BYTES
+        ));
     }
 }

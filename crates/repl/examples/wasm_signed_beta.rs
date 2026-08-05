@@ -3,8 +3,7 @@
 use std::{env, error::Error, fmt::Write as _, fs, path::PathBuf};
 
 use covalence_nucleus::{Kernel, schema_valid_snapshot_statement};
-use covalence_proton::WasmtimeComponentLimits;
-use covalence_repl::run_hol_proof_component;
+use covalence_repl::PreparedHolProofComponent;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let component = env::args_os()
@@ -15,9 +14,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         .ok_or("usage: wasm_signed_beta COMPONENT OUTPUT-DIRECTORY")?;
     let output = PathBuf::from(output);
     let component = fs::read(component)?;
+    let component = PreparedHolProofComponent::prepare_default(&component)?;
     let kernel = Kernel::ephemeral();
-    let artifact =
-        run_hol_proof_component(&kernel, &component, WasmtimeComponentLimits::default())?;
+    let artifact = component.run(&kernel)?;
     let statement = schema_valid_snapshot_statement(artifact.schema(), artifact.image_hash());
 
     fs::create_dir_all(&output)?;

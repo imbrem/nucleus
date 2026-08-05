@@ -9,10 +9,10 @@ use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
 use crate::{
-    MAX_SIGNED_MESSAGE_BYTES, ServiceIdentity, ServiceOperation, ServiceResult, SessionInitiator,
-    SignedKernelService, SignedMessageRequest, SignedMessageResponse, SignedServiceCommand,
-    SignedServiceSession, decode_signed_request, decode_signed_response, encode_signed_request,
-    encode_signed_response,
+    MAX_SIGNED_MESSAGE_BYTES, PreparedHolProofComponent, ServiceIdentity, ServiceOperation,
+    ServiceResult, SessionInitiator, SignedKernelService, SignedMessageRequest,
+    SignedMessageResponse, SignedServiceCommand, SignedServiceSession, decode_signed_request,
+    decode_signed_response, encode_signed_request, encode_signed_response,
 };
 
 /// The only application endpoint exposed by the native HTTP carrier.
@@ -24,6 +24,16 @@ pub const SIGNED_KERNEL_HTTP_PATH: &str = "/v0/signed-message";
 /// preflight requests. This bounds remotely retained session/connection state
 /// until the semantic service grows its own compaction and per-session caps.
 pub const MAX_NATIVE_HTTP_REQUESTS: usize = 4_096;
+
+/// Lifetime socket budget for an endpoint which executes an allowlisted proof component.
+///
+/// Signed replies retain the last artifact for exact retry. Keeping this demo
+/// endpoint deliberately short-lived bounds both execution and retained state
+/// even though any requester can establish a PKI session.
+pub const MAX_NATIVE_HOL_COMPONENT_REQUESTS: usize = 16;
+
+/// Maximum artifact retained in a component endpoint's cached signed reply.
+pub const MAX_NATIVE_HOL_COMPONENT_ARTIFACT_BYTES: usize = 1024 * 1024;
 
 const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
 const IO_TIMEOUT: Duration = Duration::from_secs(10);
@@ -54,10 +64,59 @@ impl NativeHttpKernelServer {
         Self::bind_with_request_limit(address, cors_origin, MAX_NATIVE_HTTP_REQUESTS)
     }
 
+    /// Binds a short-lived service for one locally prepared proof component.
+    ///
+    /// The component was already size-checked, validated, and compiled. Remote
+    /// commands carry only its digest; they cannot upload bytes or trigger
+    /// compilation. Every invocation uses a fresh fuel- and memory-bounded
+    /// store and the existing checked replay/signing path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the address cannot be bound, the CORS value can
+    /// inject a header, or the ephemeral signed service cannot be created.
+    pub fn bind_hol_proof_component(
+        address: impl ToSocketAddrs,
+        cors_origin: impl Into<String>,
+        component: PreparedHolProofComponent,
+    ) -> Result<Self, NativeHttpError> {
+        let digest = component.digest();
+        let mut service = SignedKernelService::new()
+            .map_err(|error| NativeHttpError::Service(error.to_string()))?;
+        service
+            .allow_hol_proof_component(digest, move |kernel| {
+                let artifact = component
+                    .run(kernel)
+                    .map_err(|_| "allowlisted HOL proof component failed")?;
+                if artifact.image().len() > MAX_NATIVE_HOL_COMPONENT_ARTIFACT_BYTES {
+                    return Err("allowlisted HOL proof component artifact is too large");
+                }
+                Ok(artifact)
+            })
+            .map_err(|error| NativeHttpError::Service(error.to_string()))?;
+        Self::bind_service_with_request_limit(
+            address,
+            cors_origin,
+            MAX_NATIVE_HOL_COMPONENT_REQUESTS,
+            service,
+        )
+    }
+
     fn bind_with_request_limit(
         address: impl ToSocketAddrs,
         cors_origin: impl Into<String>,
         request_limit: usize,
+    ) -> Result<Self, NativeHttpError> {
+        let service = SignedKernelService::new()
+            .map_err(|error| NativeHttpError::Service(error.to_string()))?;
+        Self::bind_service_with_request_limit(address, cors_origin, request_limit, service)
+    }
+
+    fn bind_service_with_request_limit(
+        address: impl ToSocketAddrs,
+        cors_origin: impl Into<String>,
+        request_limit: usize,
+        service: SignedKernelService,
     ) -> Result<Self, NativeHttpError> {
         let cors_origin = cors_origin.into();
         if !is_exact_http_origin(&cors_origin) {
@@ -70,8 +129,7 @@ impl NativeHttpKernelServer {
         }
         Ok(Self {
             listener: TcpListener::bind(address)?,
-            service: SignedKernelService::new()
-                .map_err(|error| NativeHttpError::Service(error.to_string()))?,
+            service,
             cors_origin,
             remaining_requests: request_limit,
         })
