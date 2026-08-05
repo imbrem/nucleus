@@ -26,6 +26,31 @@ export interface HolOutcome {
   statement: string;
 }
 
+export interface SignedHolOutcome {
+  kind: "signed-hol-round-trip";
+  phases: string[];
+  statement: string;
+  conclusion: string;
+  namespace: string;
+  image: Uint8Array;
+  schema: string;
+  imageHash: string;
+  signer: string;
+  publicKey: Uint8Array;
+  signature: Uint8Array;
+  attestation: string;
+  importId: string;
+  importedNamespace: string;
+  importedContext: string;
+  importedConclusion: string;
+  /** Receiver retained by the same REPL for trust/import-state inspection. */
+  receiver: BrowserHolConnection;
+}
+
+type SignedHolWireOutcome = Omit<SignedHolOutcome, "receiver"> & {
+  receiverConnection: number;
+};
+
 export interface BrowserSqlConnection {
   readonly kind: "sql";
   run(sql: string): Promise<SqlOutcome>;
@@ -39,6 +64,7 @@ export interface BrowserSqlConnection {
 export interface BrowserHolConnection {
   readonly kind: "hol";
   run(recipe: string): Promise<HolOutcome>;
+  runSignedRoundTrip(): Promise<SignedHolOutcome>;
   close(): Promise<void>;
 }
 
@@ -58,6 +84,7 @@ type RequestBody =
   | { operation: "close"; connection: number }
   | { operation: "run"; connection: number; sql: string }
   | { operation: "runHol"; connection: number; recipe: string }
+  | { operation: "runSignedHolRoundTrip"; connection: number }
   | { operation: "putImage"; connection: number; bytes: Uint8Array }
   | {
       operation: "attachImage";
@@ -225,6 +252,18 @@ class WorkerHolConnection implements BrowserHolConnection {
       connection: this.connection,
       recipe,
     });
+  }
+
+  async runSignedRoundTrip(): Promise<SignedHolOutcome> {
+    const wire = await this.#request<SignedHolWireOutcome>({
+      operation: "runSignedHolRoundTrip",
+      connection: this.connection,
+    });
+    const { receiverConnection, ...outcome } = wire;
+    return {
+      ...outcome,
+      receiver: new WorkerHolConnection(this.repl, receiverConnection),
+    };
   }
 
   async close(): Promise<void> {

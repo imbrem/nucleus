@@ -3,7 +3,8 @@ use wasm_bindgen::prelude::*;
 
 use super::{
     AllowAll, ConnectionId, HolRecipe, HolRecipeResult, Kernel, LocalConnection, Outcome,
-    QueryResult, Repl, Value,
+    QueryResult, Repl, SignedHolRoundTripResult, Value, produce_signed_hol_artifact,
+    receive_signed_hol_artifact,
 };
 
 /// Browser adapter for the shared REPL connection directory.
@@ -23,6 +24,13 @@ pub struct WebOutcome {
 #[wasm_bindgen]
 pub struct WebHolOutcome {
     outcome: HolRecipeResult,
+}
+
+/// Complete signed HOL producer-to-receiver demonstration exposed through Wasm.
+#[wasm_bindgen]
+pub struct WebSignedHolOutcome {
+    outcome: SignedHolRoundTripResult,
+    receiver_connection: u32,
 }
 
 #[wasm_bindgen]
@@ -105,6 +113,45 @@ impl WebKernel {
             .execute(self.hol_mut(connection)?)
             .map(|outcome| WebHolOutcome { outcome })
             .map_err(js_error)
+    }
+
+    /// Runs the shared signed HOL snapshot round trip on one HOL connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for a non-HOL connection or the first proof,
+    /// authentication, validation, trust, import, or reader boundary rejected.
+    pub fn run_signed_hol_round_trip(
+        &mut self,
+        connection: u32,
+    ) -> Result<WebSignedHolOutcome, JsValue> {
+        let produced = {
+            let Self { kernel, repl } = self;
+            let source = repl
+                .get_mut(ConnectionId::from_u32(connection))
+                .map_err(js_error)?
+                .hol_mut()
+                .map_err(js_error)?;
+            produce_signed_hol_artifact(kernel, source).map_err(js_error)?
+        };
+        let receiver = LocalConnection::Hol(self.kernel.open_hol(AllowAll).map_err(js_error)?);
+        let receiver_id = self
+            .repl
+            .insert(receiver.protocol(), receiver)
+            .map_err(js_error)?;
+        let received = receive_signed_hol_artifact(
+            self.repl
+                .get_mut(receiver_id)
+                .map_err(js_error)?
+                .hol_mut()
+                .map_err(js_error)?,
+            produced.artifact(),
+        )
+        .map_err(js_error)?;
+        Ok(WebSignedHolOutcome {
+            outcome: SignedHolRoundTripResult::from_parts(produced, received),
+            receiver_connection: u32::try_from(receiver_id.get()).map_err(js_error)?,
+        })
     }
 
     /// Stores a complete resident database image and returns its address.
@@ -212,6 +259,124 @@ impl WebHolOutcome {
     #[must_use]
     pub fn statement(&self) -> String {
         self.outcome.statement().to_owned()
+    }
+}
+
+#[wasm_bindgen]
+impl WebSignedHolOutcome {
+    /// Returns `signed-hol-round-trip`.
+    #[must_use]
+    pub fn kind(&self) -> String {
+        self.outcome.kind().to_owned()
+    }
+
+    /// Returns the managed receiver HOL connection ID.
+    #[must_use]
+    pub fn receiver_connection(&self) -> u32 {
+        self.receiver_connection
+    }
+
+    /// Returns the number of completed boundary stages.
+    #[must_use]
+    pub fn phase_count(&self) -> usize {
+        self.outcome.phases().len()
+    }
+
+    /// Returns one completed boundary stage by index.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error when `index` is out of bounds.
+    pub fn phase(&self, index: u32) -> Result<String, JsValue> {
+        self.outcome
+            .phases()
+            .get(index as usize)
+            .map(|phase| (*phase).to_owned())
+            .ok_or_else(|| JsValue::from_str("phase index out of bounds"))
+    }
+
+    /// Returns the stable proposition proved and read from the imported image.
+    #[must_use]
+    pub fn statement(&self) -> String {
+        self.outcome.proof().statement().to_owned()
+    }
+
+    /// Returns the producer-local conclusion as an exact decimal string.
+    #[must_use]
+    pub fn conclusion_id(&self) -> String {
+        self.outcome.proof().conclusion_id().to_string()
+    }
+
+    /// Returns the exported namespace ID as an exact decimal string.
+    #[must_use]
+    pub fn namespace_id(&self) -> String {
+        self.outcome.namespace_id().to_string()
+    }
+
+    /// Returns the exact signed SQLite bytes.
+    #[must_use]
+    pub fn image(&self) -> Vec<u8> {
+        self.outcome.image().to_vec()
+    }
+
+    /// Returns the signed schema hash.
+    #[must_use]
+    pub fn schema(&self) -> String {
+        self.outcome.schema().to_string()
+    }
+
+    /// Returns the exact image hash.
+    #[must_use]
+    pub fn image_hash(&self) -> String {
+        self.outcome.image_hash().to_string()
+    }
+
+    /// Returns the signing key identity.
+    #[must_use]
+    pub fn signer(&self) -> String {
+        self.outcome.signer().to_string()
+    }
+
+    /// Returns the producer's Ed25519 public key.
+    #[must_use]
+    pub fn public_key(&self) -> Vec<u8> {
+        self.outcome.public_key().to_vec()
+    }
+
+    /// Returns the schema-qualified snapshot signature.
+    #[must_use]
+    pub fn signature(&self) -> Vec<u8> {
+        self.outcome.signature().to_vec()
+    }
+
+    /// Returns the demo-local downloadable attestation sidecar.
+    #[must_use]
+    pub fn attestation_text(&self) -> String {
+        self.outcome.attestation_text()
+    }
+
+    /// Returns the receiver import ID as an exact decimal string.
+    #[must_use]
+    pub fn import_id(&self) -> String {
+        self.outcome.import_id().to_string()
+    }
+
+    /// Returns the receiver namespace alias ID as an exact decimal string.
+    #[must_use]
+    pub fn imported_namespace_id(&self) -> String {
+        self.outcome.imported_namespace_id().to_string()
+    }
+
+    /// Returns the imported context source coordinate as an exact decimal string.
+    #[must_use]
+    pub fn imported_context_id(&self) -> String {
+        self.outcome.imported_context_id().to_string()
+    }
+
+    /// Returns the imported conclusion source coordinate as an exact decimal string.
+    #[must_use]
+    pub fn imported_conclusion_id(&self) -> String {
+        self.outcome.imported_conclusion_id().to_string()
     }
 }
 

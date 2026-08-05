@@ -12,6 +12,7 @@
       let source;
       let target;
       let hol;
+      let signedReceiver;
       let url;
       try {
         source = await repl.open();
@@ -28,6 +29,9 @@
           "SELECT name, value FROM library.facts",
         );
         const theorem = await hol.run("beta true");
+        const signed = await hol.runSignedRoundTrip();
+        const { receiver, ...signedResult } = signed;
+        signedReceiver = receiver;
 
         let readonly = false;
         try {
@@ -41,6 +45,15 @@
           result,
           readonly,
           theorem,
+          signed: {
+            ...signedResult,
+            image: signed.image.byteLength,
+            publicKey: signed.publicKey.byteLength,
+            signature: signed.signature.byteLength,
+            attestation: signed.attestation.startsWith(
+              "format=covalence-repl-signed-snapshot-demo-v0",
+            ),
+          },
         });
       } catch (error) {
         document.body.dataset.error = String(error);
@@ -49,6 +62,7 @@
         await source?.close();
         await target?.close();
         await hol?.close();
+        await signedReceiver?.close();
         repl.close();
       }
     </script>

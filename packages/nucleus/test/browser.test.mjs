@@ -75,6 +75,19 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
     conclusion: "8",
     statement: "(lambda x:bool. x) true = true",
   });
+  assert.equal(result.signed.kind, "signed-hol-round-trip");
+  assert.equal(result.signed.phases[0], "proof-persisted");
+  assert.equal(result.signed.phases.at(-1), "theorem-read");
+  assert.equal(
+    result.signed.statement,
+    "(lambda x:bool. x) true = true",
+  );
+  assert.ok(result.signed.image > 0);
+  assert.equal(result.signed.publicKey, 32);
+  assert.equal(result.signed.signature, 64);
+  assert.equal(result.signed.attestation, true);
+  assert.equal(result.signed.importedContext, "0");
+  assert.equal(result.signed.importedConclusion, result.signed.conclusion);
 
   const demo = await browser.newPage();
   await demo.goto(`http://127.0.0.1:${address.port}/repl.html`);

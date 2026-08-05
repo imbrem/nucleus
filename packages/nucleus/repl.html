@@ -100,6 +100,9 @@
     <label for="recipe">HOL recipe</label>
     <input id="recipe" value="beta true" />
     <button id="run-hol" type="button">Run HOL recipe</button>
+    <button id="run-signed-hol" type="button">
+      Run signed HOL round trip + download
+    </button>
 
     <script type="module">
       import { createBrowserRepl } from "./dist/index.js";
@@ -175,6 +178,15 @@
         output.append(table);
       }
 
+      function download(name, contents, type) {
+        const url = URL.createObjectURL(new Blob([contents], { type }));
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = name;
+        anchor.click();
+        URL.revokeObjectURL(url);
+      }
+
       document.querySelector("#new").addEventListener("click", async () => {
         try {
           await addConnection();
@@ -238,6 +250,51 @@
           showError(error);
         }
       });
+
+      document
+        .querySelector("#run-signed-hol")
+        .addEventListener("click", async () => {
+          status.textContent = "Proving, signing, and importing…";
+          try {
+            const connection = selected();
+            if (connection.kind !== "hol")
+              throw new Error("selected connection is not HOL");
+            const result = await connection.runSignedRoundTrip();
+            const receiverId = String(nextConnection++);
+            connections.set(receiverId, result.receiver);
+            const receiverOption = document.createElement("option");
+            receiverOption.value = receiverId;
+            receiverOption.textContent = `hol receiver ${receiverId}`;
+            connectionSelect.append(receiverOption);
+            download(
+              "beta.sqlite3",
+              result.image,
+              "application/vnd.sqlite3",
+            );
+            download(
+              "beta.attestation.txt",
+              result.attestation,
+              "text/plain",
+            );
+            output.className = "";
+            output.textContent = [
+              `kind\t${result.kind}`,
+              `phases\t${result.phases.join(",")}`,
+              `statement\t${result.statement}`,
+              `conclusion\t${result.conclusion}`,
+              `schema\t${result.schema}`,
+              `image\t${result.imageHash}`,
+              `signer\t${result.signer}`,
+              `import\t${result.importId}`,
+              `imported_namespace\t${result.importedNamespace}`,
+              `imported_theorem\t${result.importedContext}\t${result.importedConclusion}`,
+              `receiver\t${receiverOption.textContent}`,
+            ].join("\n");
+            status.textContent = "Verified and downloaded";
+          } catch (error) {
+            showError(error);
+          }
+        });
 
       document.querySelector("#load").addEventListener("click", async () => {
         status.textContent = "Downloading complete image…";
