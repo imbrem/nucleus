@@ -15,8 +15,8 @@ use covalence_proton::{
 use wasmtime::component::{Component, HasSelf, Linker, Resource};
 
 use crate::hol_guest_plan::{
-    MAX_RECIPE_NAME_BYTES, MAX_RECIPE_NODES, RecipeNode as Recipe, RecipeSort as Sort,
-    SealedHolProofRecipe,
+    MAX_CONTEXT_MEMBERS, MAX_RECIPE_NAME_BYTES, MAX_RECIPE_NODES, RecipeNode as Recipe,
+    RecipeSort as Sort, SealedHolProofRecipe,
 };
 use crate::{
     ConnectionId, HolProofComponentExecutor, KernelId, LocalConnection, ReceivedHolSnapshot, Repl,
@@ -147,6 +147,15 @@ impl GuestState {
             }
         }
     }
+
+    fn context_depth(&self, mut context: usize) -> usize {
+        let mut depth = 0;
+        while let Some(Recipe::ExtendContext { base, .. }) = self.recipe.get(context) {
+            depth += 1;
+            context = *base;
+        }
+        depth
+    }
 }
 
 impl Host for GuestState {}
@@ -249,6 +258,130 @@ impl HostProofPlan for GuestState {
         plan: Resource<ProofPlan>,
     ) -> Result<Resource<ContextNode>, AppendError> {
         Self::plan(&plan).and_then(|()| self.append(Recipe::EmptyContext, Sort::Context))
+    }
+
+    fn extend_context(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        base: Resource<ContextNode>,
+        member: Resource<TermNode>,
+    ) -> Result<Resource<ContextNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&base, Sort::Context))
+            .and_then(|base| self.node(&member, Sort::Term).map(|member| (base, member)))
+            .and_then(|(base, member)| {
+                if self.context_depth(base) >= MAX_CONTEXT_MEMBERS {
+                    return Err(AppendError::ResourceLimit);
+                }
+                self.append(Recipe::ExtendContext { base, member }, Sort::Context)
+            })
+    }
+
+    fn prove_hypothesis(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        context: Resource<ContextNode>,
+        term: Resource<TermNode>,
+    ) -> Result<Resource<TheoremNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&context, Sort::Context))
+            .and_then(|context| self.node(&term, Sort::Term).map(|term| (context, term)))
+            .and_then(|(context, term)| {
+                self.append(Recipe::Hypothesis { context, term }, Sort::Theorem)
+            })
+    }
+
+    fn prove_truth(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        context: Resource<ContextNode>,
+    ) -> Result<Resource<TheoremNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&context, Sort::Context))
+            .and_then(|context| self.append(Recipe::Truth { context }, Sort::Theorem))
+    }
+
+    fn prove_reflexivity(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        context: Resource<ContextNode>,
+        term: Resource<TermNode>,
+    ) -> Result<Resource<TheoremNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&context, Sort::Context))
+            .and_then(|context| self.node(&term, Sort::Term).map(|term| (context, term)))
+            .and_then(|(context, term)| {
+                self.append(Recipe::Reflexivity { context, term }, Sort::Theorem)
+            })
+    }
+
+    fn prove_deduction_antisymmetry(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        first: Resource<TheoremNode>,
+        second: Resource<TheoremNode>,
+    ) -> Result<Resource<TheoremNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&first, Sort::Theorem))
+            .and_then(|first| {
+                self.node(&second, Sort::Theorem)
+                    .map(|second| (first, second))
+            })
+            .and_then(|(first, second)| {
+                self.append(
+                    Recipe::DeductionAntisymmetry { first, second },
+                    Sort::Theorem,
+                )
+            })
+    }
+
+    fn prove_equality_modus_ponens(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        equality: Resource<TheoremNode>,
+        premise: Resource<TheoremNode>,
+    ) -> Result<Resource<TheoremNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&equality, Sort::Theorem))
+            .and_then(|equality| {
+                self.node(&premise, Sort::Theorem)
+                    .map(|premise| (equality, premise))
+            })
+            .and_then(|(equality, premise)| {
+                self.append(
+                    Recipe::EqualityModusPonens { equality, premise },
+                    Sort::Theorem,
+                )
+            })
+    }
+
+    fn prove_equality_substitution(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        equality: Resource<TheoremNode>,
+        predicate: Resource<TermNode>,
+        premise: Resource<TheoremNode>,
+    ) -> Result<Resource<TheoremNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&equality, Sort::Theorem))
+            .and_then(|equality| {
+                self.node(&predicate, Sort::Term)
+                    .map(|predicate| (equality, predicate))
+            })
+            .and_then(|(equality, predicate)| {
+                self.node(&premise, Sort::Theorem)
+                    .map(|premise| (equality, predicate, premise))
+            })
+            .and_then(|(equality, predicate, premise)| {
+                self.append(
+                    Recipe::EqualitySubstitution {
+                        equality,
+                        predicate,
+                        premise,
+                    },
+                    Sort::Theorem,
+                )
+            })
     }
 
     fn conversion_reflexivity(
@@ -1297,6 +1430,76 @@ mod tests {
     }
 
     #[test]
+    fn adapter_appends_context_truth_reflexivity_and_substitution_nodes() {
+        let plan = || Resource::new_borrow(PLAN_REP);
+        let mut state = GuestState::new();
+        let ty = state.bool_type(plan()).unwrap().rep();
+        let bound = state
+            .bound_term(plan(), 0, Resource::new_borrow(ty))
+            .unwrap()
+            .rep();
+        let identity = state
+            .lambda(
+                plan(),
+                Resource::new_borrow(ty),
+                Resource::new_borrow(bound),
+            )
+            .unwrap()
+            .rep();
+        let truth = state.bool_term(plan(), true).unwrap().rep();
+        let application = state
+            .application(
+                plan(),
+                Resource::new_borrow(identity),
+                Resource::new_borrow(truth),
+            )
+            .unwrap()
+            .rep();
+        let empty = state.empty_context(plan()).unwrap().rep();
+        let context = state
+            .extend_context(
+                plan(),
+                Resource::new_borrow(empty),
+                Resource::new_borrow(application),
+            )
+            .unwrap()
+            .rep();
+        let reflexivity = state
+            .prove_reflexivity(
+                plan(),
+                Resource::new_borrow(context),
+                Resource::new_borrow(truth),
+            )
+            .unwrap()
+            .rep();
+        let premise = state
+            .prove_hypothesis(
+                plan(),
+                Resource::new_borrow(context),
+                Resource::new_borrow(application),
+            )
+            .unwrap()
+            .rep();
+        state
+            .prove_equality_substitution(
+                plan(),
+                Resource::new_borrow(reflexivity),
+                Resource::new_borrow(identity),
+                Resource::new_borrow(premise),
+            )
+            .unwrap();
+        state
+            .prove_truth(plan(), Resource::new_borrow(empty))
+            .unwrap();
+
+        assert!(matches!(
+            state.recipe[state.recipe.len() - 2],
+            Recipe::EqualitySubstitution { .. }
+        ));
+        assert!(matches!(state.recipe.last(), Some(Recipe::Truth { .. })));
+    }
+
+    #[test]
     fn invalid_component_never_returns_a_signed_snapshot() {
         let kernel = Kernel::ephemeral();
         assert!(
@@ -1482,6 +1685,171 @@ mod tests {
                 )
                 .unwrap(),
             ("MBOOL".to_owned(), 1)
+        );
+    }
+
+    #[test]
+    fn configured_real_assumptions_component_exports_exact_context_and_truth() {
+        let Some(component) = std::env::var_os("COVALENCE_HOL_ASSUMPTIONS_GUEST_COMPONENT") else {
+            return;
+        };
+        let bytes = std::fs::read(component).unwrap();
+        let recipe =
+            collect_hol_proof_component(&bytes, WasmtimeComponentLimits::default()).unwrap();
+        assert_eq!(
+            recipe.as_bytes(),
+            crate::hol_guest_plan::ASSUMPTIONS_EQUALITY_WIRE
+        );
+        let producer = Kernel::ephemeral();
+        let artifact = recipe.replay(&producer).unwrap();
+        let image_bytes = covalence_neutron::Bytes::copy_from_slice(artifact.image());
+        let image = covalence_neutron::Connection::deserialize(&image_bytes).unwrap();
+        let coordinates = assert_assumptions_exports(image.sqlite(), artifact.namespace_id());
+        assert_assumptions_kernel_state(image.sqlite(), coordinates);
+        assert_generic_theorem_receive(&producer, &artifact, coordinates);
+    }
+
+    fn assert_assumptions_exports(
+        sqlite: &covalence_lib_sqlite::Connection,
+        namespace: i64,
+    ) -> (i64, i64) {
+        assert_eq!(
+            sqlite
+                .query_row(
+                    "SELECT parent_namespace_id, name FROM hol_namespace WHERE namespace_id = ?1",
+                    [namespace],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+                )
+                .unwrap(),
+            (0, "assumptions-demo".to_owned())
+        );
+        let (context, context_sort, context_name) = sqlite
+            .query_row(
+                "SELECT local_id, sort, name FROM hol_namespace_export
+                 WHERE namespace_id = ?1 AND export_id = 0",
+                [namespace],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            (context_sort.as_str(), context_name.as_str()),
+            ("context", "p_context")
+        );
+        let (conclusion, conclusion_sort, conclusion_name) = sqlite
+            .query_row(
+                "SELECT local_id, sort, name FROM hol_namespace_export
+                 WHERE namespace_id = ?1 AND export_id = 1",
+                [namespace],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            (conclusion_sort.as_str(), conclusion_name.as_str()),
+            ("term", "truth_from_p")
+        );
+        (context, conclusion)
+    }
+
+    fn assert_assumptions_kernel_state(
+        sqlite: &covalence_lib_sqlite::Connection,
+        (context, conclusion): (i64, i64),
+    ) {
+        assert_eq!(
+            sqlite
+                .query_row(
+                    "SELECT tag, lhs, rhs, ty FROM hol_node WHERE node_id = ?1",
+                    [conclusion],
+                    |row| Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, i64>(3)?,
+                    )),
+                )
+                .unwrap(),
+            ("MBOOL".to_owned(), 1, None, 2)
+        );
+        let member = sqlite
+            .query_row(
+                "SELECT term_id FROM hol_context_member WHERE ctx_id = ?1",
+                [context],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(
+            sqlite
+                .query_row(
+                    "SELECT tag, lhs, rhs, ty FROM hol_node WHERE node_id = ?1",
+                    [member],
+                    |row| Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, i64>(3)?,
+                    )),
+                )
+                .unwrap(),
+            ("MFV".to_owned(), 0, None, 2)
+        );
+        assert_eq!(
+            sqlite
+                .query_row(
+                    "SELECT count(*) FROM hol_context_member WHERE ctx_id = ?1",
+                    [context],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            sqlite
+                .query_row("SELECT count(*) FROM hol_judgement", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            1
+        );
+        assert!(
+            sqlite
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM hol_judgement WHERE ctx_id = ?1 AND term_id = ?2)",
+                    [context, conclusion],
+                    |row| row.get::<_, bool>(0),
+                )
+                .unwrap()
+        );
+    }
+
+    fn assert_generic_theorem_receive(
+        producer: &Kernel,
+        artifact: &SignedHolArtifact,
+        expected_coordinates: (i64, i64),
+    ) {
+        let consumer = Kernel::ephemeral();
+        let mut target = consumer.open_hol(covalence_nucleus::AllowAll).unwrap();
+        let expected = crate::ExpectedKernelIdentity::from_public_key(
+            crate::KernelId::LOCAL,
+            producer.verifying_key().as_bytes(),
+        )
+        .unwrap();
+        let pinned = crate::authenticate_pinned_signed_hol_artifact(&expected, artifact).unwrap();
+        let receipt =
+            crate::trust_and_receive_pinned_signed_hol_artifact(&mut target, pinned).unwrap();
+        assert_eq!(
+            (receipt.context_id(), receipt.conclusion_id()),
+            expected_coordinates
         );
     }
 

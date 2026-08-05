@@ -18,10 +18,11 @@ use crate::SignedHolArtifact;
 
 pub(crate) const MAX_RECIPE_NODES: usize = 128;
 pub(crate) const MAX_RECIPE_NAME_BYTES: usize = 256;
+pub(crate) const MAX_CONTEXT_MEMBERS: usize = 64;
 /// Maximum canonical bytes accepted from an untrusted guest executor.
 pub const MAX_SEALED_HOL_RECIPE_BYTES: usize = 64 * 1024;
 
-const RECIPE_VERSION: u8 = 3;
+const RECIPE_VERSION: u8 = 4;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RecipeSort {
@@ -62,6 +63,34 @@ pub(crate) enum RecipeNode {
         predicate: usize,
     },
     EmptyContext,
+    ExtendContext {
+        base: usize,
+        member: usize,
+    },
+    Hypothesis {
+        context: usize,
+        term: usize,
+    },
+    Truth {
+        context: usize,
+    },
+    Reflexivity {
+        context: usize,
+        term: usize,
+    },
+    DeductionAntisymmetry {
+        first: usize,
+        second: usize,
+    },
+    EqualityModusPonens {
+        equality: usize,
+        premise: usize,
+    },
+    EqualitySubstitution {
+        equality: usize,
+        predicate: usize,
+        premise: usize,
+    },
     ConversionReflexivity {
         term: usize,
     },
@@ -266,6 +295,7 @@ fn validate_structure(
     let mut sorts = Vec::with_capacity(nodes.len());
     let mut term_map_keys: Vec<Option<HashSet<usize>>> = Vec::with_capacity(nodes.len());
     let mut type_map_keys: Vec<Option<HashSet<usize>>> = Vec::with_capacity(nodes.len());
+    let mut context_depths: Vec<Option<usize>> = Vec::with_capacity(nodes.len());
     let mut persisted = HashSet::new();
     for (current, node) in nodes.iter().enumerate() {
         let require = |index: usize, expected: RecipeSort| {
@@ -283,6 +313,7 @@ fn validate_structure(
         };
         let mut term_keys = None;
         let mut type_keys = None;
+        let mut context_depth = None;
         let sort = match node {
             RecipeNode::BoolType | RecipeNode::FreeType { .. } => RecipeSort::Type,
             RecipeNode::Bound { ty, .. } | RecipeNode::FreeTerm { ty, .. } => {
@@ -307,7 +338,61 @@ fn validate_structure(
                 require(*predicate, RecipeSort::Term)?;
                 RecipeSort::Term
             }
-            RecipeNode::EmptyContext => RecipeSort::Context,
+            RecipeNode::EmptyContext => {
+                context_depth = Some(0);
+                RecipeSort::Context
+            }
+            RecipeNode::ExtendContext { base, member } => {
+                require(*base, RecipeSort::Context)?;
+                require(*member, RecipeSort::Term)?;
+                let depth = context_depths
+                    .get(*base)
+                    .and_then(|depth| *depth)
+                    .ok_or(HolProofRecipeError::Invalid(
+                        "context recipe base is invalid",
+                    ))?
+                    .checked_add(1)
+                    .ok_or(HolProofRecipeError::Invalid(
+                        "context recipe member count overflow",
+                    ))?;
+                if depth > MAX_CONTEXT_MEMBERS {
+                    return Err(HolProofRecipeError::Invalid(
+                        "context recipe exceeds member limit",
+                    ));
+                }
+                context_depth = Some(depth);
+                RecipeSort::Context
+            }
+            RecipeNode::Hypothesis { context, term }
+            | RecipeNode::Reflexivity { context, term } => {
+                require(*context, RecipeSort::Context)?;
+                require(*term, RecipeSort::Term)?;
+                RecipeSort::Theorem
+            }
+            RecipeNode::Truth { context } => {
+                require(*context, RecipeSort::Context)?;
+                RecipeSort::Theorem
+            }
+            RecipeNode::DeductionAntisymmetry { first, second } => {
+                require(*first, RecipeSort::Theorem)?;
+                require(*second, RecipeSort::Theorem)?;
+                RecipeSort::Theorem
+            }
+            RecipeNode::EqualityModusPonens { equality, premise } => {
+                require(*equality, RecipeSort::Theorem)?;
+                require(*premise, RecipeSort::Theorem)?;
+                RecipeSort::Theorem
+            }
+            RecipeNode::EqualitySubstitution {
+                equality,
+                predicate,
+                premise,
+            } => {
+                require(*equality, RecipeSort::Theorem)?;
+                require(*predicate, RecipeSort::Term)?;
+                require(*premise, RecipeSort::Theorem)?;
+                RecipeSort::Theorem
+            }
             RecipeNode::ConversionReflexivity { term } => {
                 require(*term, RecipeSort::Term)?;
                 RecipeSort::Conversion
@@ -480,6 +565,7 @@ fn validate_structure(
         sorts.push(sort);
         term_map_keys.push(term_keys);
         type_map_keys.push(type_keys);
+        context_depths.push(context_depth);
     }
     if sorts.get(selected_namespace) != Some(&RecipeSort::Namespace) {
         return Err(HolProofRecipeError::Invalid(
@@ -581,6 +667,45 @@ fn encode_node(bytes: &mut Vec<u8>, node: &RecipeNode) -> Result<(), HolProofRec
             encode_index(bytes, *predicate)?;
         }
         RecipeNode::EmptyContext => bytes.push(4),
+        RecipeNode::ExtendContext { base, member } => {
+            bytes.push(0x40);
+            encode_index(bytes, *base)?;
+            encode_index(bytes, *member)?;
+        }
+        RecipeNode::Hypothesis { context, term } => {
+            bytes.push(0x41);
+            encode_index(bytes, *context)?;
+            encode_index(bytes, *term)?;
+        }
+        RecipeNode::Truth { context } => {
+            bytes.push(0x42);
+            encode_index(bytes, *context)?;
+        }
+        RecipeNode::Reflexivity { context, term } => {
+            bytes.push(0x43);
+            encode_index(bytes, *context)?;
+            encode_index(bytes, *term)?;
+        }
+        RecipeNode::DeductionAntisymmetry { first, second } => {
+            bytes.push(0x44);
+            encode_index(bytes, *first)?;
+            encode_index(bytes, *second)?;
+        }
+        RecipeNode::EqualityModusPonens { equality, premise } => {
+            bytes.push(0x45);
+            encode_index(bytes, *equality)?;
+            encode_index(bytes, *premise)?;
+        }
+        RecipeNode::EqualitySubstitution {
+            equality,
+            predicate,
+            premise,
+        } => {
+            bytes.push(0x46);
+            encode_index(bytes, *equality)?;
+            encode_index(bytes, *predicate)?;
+            encode_index(bytes, *premise)?;
+        }
         RecipeNode::ConversionReflexivity { term } => {
             bytes.push(0x30);
             encode_index(bytes, *term)?;
@@ -902,6 +1027,34 @@ impl<'a> Decoder<'a> {
                 theorem: self.index()?,
                 conversion: self.index()?,
             }),
+            0x40 => Ok(RecipeNode::ExtendContext {
+                base: self.index()?,
+                member: self.index()?,
+            }),
+            0x41 => Ok(RecipeNode::Hypothesis {
+                context: self.index()?,
+                term: self.index()?,
+            }),
+            0x42 => Ok(RecipeNode::Truth {
+                context: self.index()?,
+            }),
+            0x43 => Ok(RecipeNode::Reflexivity {
+                context: self.index()?,
+                term: self.index()?,
+            }),
+            0x44 => Ok(RecipeNode::DeductionAntisymmetry {
+                first: self.index()?,
+                second: self.index()?,
+            }),
+            0x45 => Ok(RecipeNode::EqualityModusPonens {
+                equality: self.index()?,
+                premise: self.index()?,
+            }),
+            0x46 => Ok(RecipeNode::EqualitySubstitution {
+                equality: self.index()?,
+                predicate: self.index()?,
+                premise: self.index()?,
+            }),
             _ => Err(HolProofRecipeError::Invalid(
                 "unknown sealed recipe node tag",
             )),
@@ -931,6 +1084,12 @@ impl Policy for ProofGuestPolicy {
                 | Operation::ProveTermInstantiation
                 | Operation::ProveTypeInstantiation
                 | Operation::ProveAbstraction
+                | Operation::ProveHypothesis
+                | Operation::ProveTruth
+                | Operation::ProveReflexivity
+                | Operation::ProveDeductionAntisymmetry
+                | Operation::ProveEqualityModusPonens
+                | Operation::ProveEqualitySubstitution
                 | Operation::DefineContext
                 | Operation::PersistJudgement
                 | Operation::DefineNamespace
@@ -943,7 +1102,10 @@ impl Policy for ProofGuestPolicy {
 enum Value {
     Type(TypeId),
     Term(TermId),
-    Context(ContextId),
+    Context {
+        id: ContextId,
+        members: Vec<TermId>,
+    },
     Theorem {
         context: ContextId,
         conclusion: TermId,
@@ -995,7 +1157,21 @@ fn replay(
                 db.insert_epsilon(term_at(&values, *predicate)?)
                     .map_err(replay_error)?,
             ),
-            RecipeNode::EmptyContext => Value::Context(ContextId::empty()),
+            RecipeNode::EmptyContext => Value::Context {
+                id: ContextId::empty(),
+                members: Vec::new(),
+            },
+            RecipeNode::ExtendContext { base, member } => {
+                let mut members = context_members_at(&values, *base)?.to_vec();
+                let member = term_at(&values, *member)?;
+                if let Err(position) = members.binary_search(&member) {
+                    members.insert(position, member);
+                }
+                let id = db
+                    .define_context(members.iter().copied())
+                    .map_err(replay_error)?;
+                Value::Context { id, members }
+            }
             RecipeNode::Namespace { name } => Value::Namespace(
                 db.create_namespace(Some(NamespaceId::root()), name.as_deref())
                     .map_err(replay_error)?,
@@ -1036,6 +1212,12 @@ fn replay(
             | RecipeNode::ConversionEpsilon { .. }
             | RecipeNode::ConversionEquality { .. }
             | RecipeNode::ConvertTheorem { .. }
+            | RecipeNode::Hypothesis { .. }
+            | RecipeNode::Truth { .. }
+            | RecipeNode::Reflexivity { .. }
+            | RecipeNode::DeductionAntisymmetry { .. }
+            | RecipeNode::EqualityModusPonens { .. }
+            | RecipeNode::EqualitySubstitution { .. }
             | RecipeNode::TermInstantiation { .. }
             | RecipeNode::TypeInstantiation { .. }
             | RecipeNode::Abstraction { .. }
@@ -1094,6 +1276,80 @@ fn replay_theorems<P: Policy>(
         let mut theorems: Vec<Option<Theorem<'_>>> = (0..recipe.len()).map(|_| None).collect();
         for (index, node) in recipe.iter().enumerate() {
             match node {
+                RecipeNode::Hypothesis { context, term } => {
+                    let theorem = proof
+                        .prove_hypothesis(context_at(values, *context)?, term_at(values, *term)?)
+                        .map_err(replay_error)?;
+                    values[index] = Value::Theorem {
+                        context: theorem.context(),
+                        conclusion: theorem.conclusion(),
+                    };
+                    theorems[index] = Some(theorem);
+                }
+                RecipeNode::Truth { context } => {
+                    let theorem = proof
+                        .prove_truth(context_at(values, *context)?)
+                        .map_err(replay_error)?;
+                    values[index] = Value::Theorem {
+                        context: theorem.context(),
+                        conclusion: theorem.conclusion(),
+                    };
+                    theorems[index] = Some(theorem);
+                }
+                RecipeNode::Reflexivity { context, term } => {
+                    let theorem = proof
+                        .prove_reflexivity(context_at(values, *context)?, term_at(values, *term)?)
+                        .map_err(replay_error)?;
+                    values[index] = Value::Theorem {
+                        context: theorem.context(),
+                        conclusion: theorem.conclusion(),
+                    };
+                    theorems[index] = Some(theorem);
+                }
+                RecipeNode::DeductionAntisymmetry { first, second } => {
+                    let theorem = proof
+                        .deduction_antisymmetry(
+                            theorem_at_index(&theorems, *first)?,
+                            theorem_at_index(&theorems, *second)?,
+                        )
+                        .map_err(replay_error)?;
+                    values[index] = Value::Theorem {
+                        context: theorem.context(),
+                        conclusion: theorem.conclusion(),
+                    };
+                    theorems[index] = Some(theorem);
+                }
+                RecipeNode::EqualityModusPonens { equality, premise } => {
+                    let theorem = proof
+                        .equality_modus_ponens(
+                            theorem_at_index(&theorems, *equality)?,
+                            theorem_at_index(&theorems, *premise)?,
+                        )
+                        .map_err(replay_error)?;
+                    values[index] = Value::Theorem {
+                        context: theorem.context(),
+                        conclusion: theorem.conclusion(),
+                    };
+                    theorems[index] = Some(theorem);
+                }
+                RecipeNode::EqualitySubstitution {
+                    equality,
+                    predicate,
+                    premise,
+                } => {
+                    let theorem = proof
+                        .equality_substitution(
+                            theorem_at_index(&theorems, *equality)?,
+                            term_at(values, *predicate)?,
+                            theorem_at_index(&theorems, *premise)?,
+                        )
+                        .map_err(replay_error)?;
+                    values[index] = Value::Theorem {
+                        context: theorem.context(),
+                        conclusion: theorem.conclusion(),
+                    };
+                    theorems[index] = Some(theorem);
+                }
                 RecipeNode::ConversionReflexivity { term } => {
                     conversions[index] = Some(
                         proof
@@ -1312,7 +1568,14 @@ fn term_at(values: &[Value], index: usize) -> Result<TermId, HolProofRecipeError
 }
 fn context_at(values: &[Value], index: usize) -> Result<ContextId, HolProofRecipeError> {
     match values.get(index) {
-        Some(Value::Context(value)) => Ok(*value),
+        Some(Value::Context { id, .. }) => Ok(*id),
+        _ => Err(value_error()),
+    }
+}
+
+fn context_members_at(values: &[Value], index: usize) -> Result<&[TermId], HolProofRecipeError> {
+    match values.get(index) {
+        Some(Value::Context { members, .. }) => Ok(members),
         _ => Err(value_error()),
     }
 }
@@ -1562,8 +1825,51 @@ pub(crate) fn nested_identity_conversion_test_recipe() -> SealedHolProofRecipe {
 }
 
 #[cfg(test)]
+pub(crate) fn assumptions_equality_test_recipe() -> SealedHolProofRecipe {
+    SealedHolProofRecipe::seal(
+        vec![
+            RecipeNode::BoolType,
+            RecipeNode::FreeTerm { symbol: 0, ty: 0 },
+            RecipeNode::EmptyContext,
+            RecipeNode::ExtendContext { base: 2, member: 1 },
+            RecipeNode::Hypothesis {
+                context: 3,
+                term: 1,
+            },
+            RecipeNode::Truth { context: 2 },
+            RecipeNode::DeductionAntisymmetry {
+                first: 4,
+                second: 5,
+            },
+            RecipeNode::EqualityModusPonens {
+                equality: 6,
+                premise: 4,
+            },
+            RecipeNode::Persist { theorem: 7 },
+            RecipeNode::Namespace {
+                name: Some("assumptions-demo".into()),
+            },
+            RecipeNode::ExportContext {
+                namespace: 9,
+                export: 0,
+                context: 3,
+                name: Some("p_context".into()),
+            },
+            RecipeNode::ExportTheorem {
+                namespace: 9,
+                export: 1,
+                theorem: 7,
+                name: Some("truth_from_p".into()),
+            },
+        ],
+        9,
+    )
+    .expect("canonical assumptions and equality-composition recipe")
+}
+
+#[cfg(test)]
 pub(crate) const SCHEMATIC_BINDING_WIRE: &[u8] = &[
-    3, 0, 20, 0, 17, 11, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 12, 0, 0, 0,
+    4, 0, 20, 0, 17, 11, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 12, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 12, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 4, 53, 0, 2, 0, 3, 56, 0, 5, 0, 6, 13,
     14, 0, 8, 0, 3, 0, 4, 15, 0, 7, 0, 9, 19, 0, 10, 0, 4, 0, 16, 17, 0, 13, 0, 0, 0, 12, 18, 0,
     11, 0, 14, 6, 0, 15, 7, 1, 0, 22, 115, 99, 104, 101, 109, 97, 116, 105, 99, 45, 98, 105, 110,
@@ -1571,6 +1877,26 @@ pub(crate) const SCHEMATIC_BINDING_WIRE: &[u8] = &[
     101, 109, 112, 116, 121, 95, 99, 111, 110, 116, 101, 120, 116, 8, 0, 17, 0, 0, 0, 0, 0, 0, 0,
     1, 0, 15, 1, 0, 26, 115, 99, 104, 101, 109, 97, 116, 105, 99, 95, 105, 100, 101, 110, 116, 105,
     116, 121, 95, 98, 105, 110, 100, 105, 110, 103,
+];
+
+#[cfg(test)]
+pub(crate) const ASSUMPTIONS_EQUALITY_WIRE: &[u8] = &[
+    4, 0, 12, 0, 9, // version, node count, selected namespace
+    0, // bool type
+    12, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // free term symbol 0 : bool
+    4, // empty context
+    0x40, 0, 2, 0, 1, // extend empty with p
+    0x41, 0, 3, 0, 1, // {p} |- p
+    0x42, 0, 2, // empty |- true
+    0x44, 0, 4, 0, 5, // {p} |- p = true
+    0x45, 0, 6, 0, 4, // {p} |- true
+    6, 0, 7, // persist final theorem
+    7, 1, 0, 16, b'a', b's', b's', b'u', b'm', b'p', b't', b'i', b'o', b'n', b's', b'-', b'd',
+    b'e', b'm', b'o', // namespace
+    9, 0, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 1, 0, 9, b'p', b'_', b'c', b'o', b'n', b't', b'e', b'x',
+    b't', // context export
+    8, 0, 9, 0, 0, 0, 0, 0, 0, 0, 1, 0, 7, 1, 0, 12, b't', b'r', b'u', b't', b'h', b'_', b'f',
+    b'r', b'o', b'm', b'_', b'p', // theorem export
 ];
 
 #[cfg(test)]
@@ -1595,8 +1921,8 @@ mod tests {
 
     #[test]
     fn canonical_eta_recipe_round_trips_and_replays() {
-        const VERSION_3_ETA_RECIPE: &[u8] = &[
-            3, 0, 10, 0, 7, // version, node count, selected namespace
+        const VERSION_4_ETA_RECIPE: &[u8] = &[
+            4, 0, 10, 0, 7, // version, node count, selected namespace
             0, // bool type
             1, 0, 0, 0, 0, 0, 0, // bound 0 : node 0
             2, 0, 0, 0, 1, // lambda node 0, node 1
@@ -1610,9 +1936,9 @@ mod tests {
             b't', b'i', b't', b'y', b'_', b'e', b't', b'a',
         ];
         let recipe = closed_eta_test_recipe();
-        assert_eq!(recipe.as_bytes(), VERSION_3_ETA_RECIPE);
+        assert_eq!(recipe.as_bytes(), VERSION_4_ETA_RECIPE);
         assert_eq!(
-            SealedHolProofRecipe::from_untrusted_bytes(VERSION_3_ETA_RECIPE).unwrap(),
+            SealedHolProofRecipe::from_untrusted_bytes(VERSION_4_ETA_RECIPE).unwrap(),
             recipe
         );
         let kernel = Kernel::ephemeral();
@@ -1622,8 +1948,8 @@ mod tests {
 
     #[test]
     fn canonical_nested_identity_conversion_has_fixed_wire_and_replays() {
-        const VERSION_3_NESTED_IDENTITY: &[u8] = &[
-            3, 0, 14, 0, 11, 0, 1, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 3, 1, 4, 0x30, 0, 2, 0x35, 0,
+        const VERSION_4_NESTED_IDENTITY: &[u8] = &[
+            4, 0, 14, 0, 11, 0, 1, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 3, 1, 4, 0x30, 0, 2, 0x35, 0,
             2, 0, 3, 0x33, 0, 5, 0, 6, 0x32, 0, 7, 0, 6, 0x38, 0, 4, 0, 8, 6, 0, 9, 7, 1, 0, 15,
             b'c', b'o', b'n', b'v', b'e', b'r', b's', b'i', b'o', b'n', b'-', b'd', b'e', b'm',
             b'o', 9, 0, 11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 1, 0, 13, b'e', b'm', b'p', b't', b'y',
@@ -1632,9 +1958,9 @@ mod tests {
             b't', b'y', b'_', b'b', b'e', b't', b'a',
         ];
         let recipe = nested_identity_conversion_test_recipe();
-        assert_eq!(recipe.as_bytes(), VERSION_3_NESTED_IDENTITY);
+        assert_eq!(recipe.as_bytes(), VERSION_4_NESTED_IDENTITY);
         assert_eq!(
-            SealedHolProofRecipe::from_untrusted_bytes(VERSION_3_NESTED_IDENTITY).unwrap(),
+            SealedHolProofRecipe::from_untrusted_bytes(VERSION_4_NESTED_IDENTITY).unwrap(),
             recipe
         );
         let kernel = Kernel::ephemeral();
@@ -1653,6 +1979,196 @@ mod tests {
         let artifact = recipe.replay(&kernel).unwrap();
         assert_eq!(artifact.signer(), kernel.key_id());
         assert_eq!(recipe.as_bytes(), SCHEMATIC_BINDING_WIRE);
+    }
+
+    #[test]
+    fn assumptions_equality_recipe_has_fixed_wire_and_replays() {
+        let recipe = assumptions_equality_test_recipe();
+        assert_eq!(recipe.as_bytes(), ASSUMPTIONS_EQUALITY_WIRE);
+        assert_eq!(
+            SealedHolProofRecipe::from_untrusted_bytes(ASSUMPTIONS_EQUALITY_WIRE).unwrap(),
+            recipe
+        );
+        let kernel = Kernel::ephemeral();
+        let artifact = recipe.replay(&kernel).unwrap();
+        assert_eq!(artifact.signer(), kernel.key_id());
+    }
+
+    #[test]
+    fn reflexivity_and_leibniz_substitution_replay_as_branded_rules() {
+        let recipe = SealedHolProofRecipe::seal(
+            vec![
+                RecipeNode::BoolType,
+                RecipeNode::Bound { index: 0, ty: 0 },
+                RecipeNode::Lambda {
+                    parameter_type: 0,
+                    body: 1,
+                },
+                RecipeNode::Bool(true),
+                RecipeNode::EmptyContext,
+                RecipeNode::Application {
+                    function: 2,
+                    argument: 3,
+                },
+                RecipeNode::ExtendContext { base: 4, member: 5 },
+                RecipeNode::Reflexivity {
+                    context: 6,
+                    term: 3,
+                },
+                RecipeNode::Hypothesis {
+                    context: 6,
+                    term: 5,
+                },
+                RecipeNode::EqualitySubstitution {
+                    equality: 7,
+                    predicate: 2,
+                    premise: 8,
+                },
+                RecipeNode::Persist { theorem: 9 },
+                RecipeNode::Namespace { name: None },
+                RecipeNode::ExportContext {
+                    namespace: 11,
+                    export: 0,
+                    context: 6,
+                    name: None,
+                },
+                RecipeNode::ExportTheorem {
+                    namespace: 11,
+                    export: 1,
+                    theorem: 9,
+                    name: None,
+                },
+            ],
+            11,
+        )
+        .unwrap();
+        recipe.replay(&Kernel::ephemeral()).unwrap();
+    }
+
+    #[test]
+    fn contexts_are_bounded_and_semantically_canonicalized() {
+        let mut oversized = vec![RecipeNode::Bool(true), RecipeNode::EmptyContext];
+        for index in 0..=MAX_CONTEXT_MEMBERS {
+            oversized.push(RecipeNode::ExtendContext {
+                base: index + 1,
+                member: 0,
+            });
+        }
+        oversized.push(RecipeNode::Namespace { name: None });
+        let selected = oversized.len() - 1;
+        assert!(matches!(
+            SealedHolProofRecipe::seal(oversized, selected),
+            Err(HolProofRecipeError::Invalid(
+                "context recipe exceeds member limit"
+            ))
+        ));
+
+        let recipe = SealedHolProofRecipe::seal(
+            vec![
+                RecipeNode::Bool(false),
+                RecipeNode::Bool(true),
+                RecipeNode::EmptyContext,
+                RecipeNode::ExtendContext { base: 2, member: 0 },
+                RecipeNode::ExtendContext { base: 3, member: 1 },
+                RecipeNode::ExtendContext { base: 2, member: 1 },
+                RecipeNode::ExtendContext { base: 5, member: 0 },
+                RecipeNode::ExtendContext { base: 6, member: 0 },
+                RecipeNode::Truth { context: 4 },
+                RecipeNode::Persist { theorem: 8 },
+                RecipeNode::Namespace { name: None },
+                RecipeNode::ExportContext {
+                    namespace: 10,
+                    export: 0,
+                    context: 4,
+                    name: None,
+                },
+                RecipeNode::ExportContext {
+                    namespace: 10,
+                    export: 1,
+                    context: 6,
+                    name: None,
+                },
+                RecipeNode::ExportContext {
+                    namespace: 10,
+                    export: 2,
+                    context: 7,
+                    name: None,
+                },
+                RecipeNode::ExportTheorem {
+                    namespace: 10,
+                    export: 3,
+                    theorem: 8,
+                    name: None,
+                },
+            ],
+            10,
+        )
+        .unwrap();
+        let artifact = recipe.replay(&Kernel::ephemeral()).unwrap();
+        let bytes = covalence_neutron::Bytes::copy_from_slice(artifact.image());
+        let image = covalence_neutron::Connection::deserialize(&bytes).unwrap();
+        let sqlite = image.sqlite();
+        let mut statement = sqlite
+            .prepare(
+                "SELECT local_id FROM hol_namespace_export
+                 WHERE namespace_id = ?1 AND export_id IN (0, 1, 2) ORDER BY export_id",
+            )
+            .unwrap();
+        let ids = statement
+            .query_map([artifact.namespace_id()], |row| row.get::<_, i64>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(ids, vec![ids[0]; 3]);
+    }
+
+    #[test]
+    fn new_rule_structure_and_kernel_failures_are_rejected() {
+        let invalid_structures = [
+            vec![
+                RecipeNode::Bool(true),
+                RecipeNode::ExtendContext { base: 0, member: 0 },
+                RecipeNode::Namespace { name: None },
+            ],
+            vec![
+                RecipeNode::EmptyContext,
+                RecipeNode::Truth { context: 1 },
+                RecipeNode::Namespace { name: None },
+            ],
+            vec![
+                RecipeNode::Bool(true),
+                RecipeNode::EmptyContext,
+                RecipeNode::Truth { context: 1 },
+                RecipeNode::EqualitySubstitution {
+                    equality: 2,
+                    predicate: 2,
+                    premise: 2,
+                },
+                RecipeNode::Namespace { name: None },
+            ],
+        ];
+        for nodes in invalid_structures {
+            let selected = nodes.len() - 1;
+            assert!(SealedHolProofRecipe::seal(nodes, selected).is_err());
+        }
+
+        let nonmember_hypothesis = SealedHolProofRecipe::seal(
+            vec![
+                RecipeNode::Bool(false),
+                RecipeNode::EmptyContext,
+                RecipeNode::Hypothesis {
+                    context: 1,
+                    term: 0,
+                },
+                RecipeNode::Namespace { name: None },
+            ],
+            3,
+        )
+        .unwrap();
+        assert!(matches!(
+            nonmember_hypothesis.replay(&Kernel::ephemeral()),
+            Err(HolProofRecipeError::Replay(message)) if message.contains("not a member")
+        ));
     }
 
     #[test]
@@ -1703,7 +2219,7 @@ mod tests {
         let mut bytes = closed_beta().as_bytes().to_vec();
         bytes.push(0);
         assert!(SealedHolProofRecipe::from_untrusted_bytes(&bytes).is_err());
-        for version in [1, 2] {
+        for version in [1, 2, 3] {
             let mut old_version = closed_beta().as_bytes().to_vec();
             old_version[0] = version;
             assert!(matches!(
@@ -1872,7 +2388,7 @@ mod tests {
         ));
         for retired_tag in [5, 10] {
             assert!(matches!(
-                SealedHolProofRecipe::from_untrusted_bytes(&[3, 0, 1, 0, 0, retired_tag]),
+                SealedHolProofRecipe::from_untrusted_bytes(&[4, 0, 1, 0, 0, retired_tag]),
                 Err(HolProofRecipeError::Invalid(
                     "unknown sealed recipe node tag"
                 ))
@@ -1885,6 +2401,25 @@ mod tests {
             SealedHolProofRecipe::from_untrusted_bytes(&truncated),
             Err(HolProofRecipeError::Invalid("truncated sealed recipe"))
         ));
+
+        for (tag, operand_bytes) in [
+            (0x40, 4),
+            (0x41, 4),
+            (0x42, 2),
+            (0x43, 4),
+            (0x44, 4),
+            (0x45, 4),
+            (0x46, 6),
+        ] {
+            for available in 0..operand_bytes {
+                let mut bytes = vec![4, 0, 1, 0, 0, tag];
+                bytes.resize(bytes.len() + available, 0);
+                assert!(matches!(
+                    SealedHolProofRecipe::from_untrusted_bytes(&bytes),
+                    Err(HolProofRecipeError::Invalid("truncated sealed recipe"))
+                ));
+            }
+        }
 
         assert!(matches!(
             SealedHolProofRecipe::seal(
