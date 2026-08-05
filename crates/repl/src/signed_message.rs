@@ -12,8 +12,8 @@ use crate::{KernelId, MAX_IMAGE_BYTES};
 
 use super::{
     EndpointDescription, ExpectedKernelIdentity, ServiceIdentity, ServiceOperation,
-    ServiceProducedHol, ServiceReceivedHol, ServiceResult, SessionAccepted, SessionRequest,
-    SignedHolArtifact, SignedServiceCommand, SignedServiceReply,
+    ServiceProducedHol, ServiceProducedHolComponent, ServiceReceivedHol, ServiceResult,
+    SessionAccepted, SessionRequest, SignedHolArtifact, SignedServiceCommand, SignedServiceReply,
 };
 
 const VERSION: u8 = 0;
@@ -298,6 +298,10 @@ impl Encoder {
                 self.artifact(artifact)?;
             }
             ServiceOperation::Shutdown => self.byte(4),
+            ServiceOperation::RunHolProofComponent(component) => {
+                self.byte(5);
+                self.o256(*component)?;
+            }
         }
         Ok(())
     }
@@ -339,6 +343,11 @@ impl Encoder {
             ServiceResult::Rejected(message) => {
                 self.byte(6);
                 self.string(message)?;
+            }
+            ServiceResult::ProducedByComponent(produced) => {
+                self.byte(7);
+                self.o256(produced.component)?;
+                self.artifact(&produced.artifact)?;
             }
         }
         Ok(())
@@ -530,6 +539,7 @@ impl<'a> Decoder<'a> {
                 artifact: Box::new(self.artifact()?),
             }),
             4 => Ok(ServiceOperation::Shutdown),
+            5 => Ok(ServiceOperation::RunHolProofComponent(self.o256()?)),
             _ => Err(SignedMessageError::Protocol("unknown operation tag")),
         }
     }
@@ -563,6 +573,12 @@ impl<'a> Decoder<'a> {
             4 => Ok(ServiceResult::Goodbye),
             5 => Ok(ServiceResult::OperationError(self.string()?)),
             6 => Ok(ServiceResult::Rejected(self.string()?)),
+            7 => Ok(ServiceResult::ProducedByComponent(Box::new(
+                ServiceProducedHolComponent {
+                    component: self.o256()?,
+                    artifact: self.artifact()?,
+                },
+            ))),
             _ => Err(SignedMessageError::Protocol("unknown result tag")),
         }
     }
@@ -584,7 +600,10 @@ impl<'a> Decoder<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{SessionInitiator, SignedKernelService, SignedServiceSession};
+    use crate::{
+        AllowAll, SessionInitiator, SignedKernelService, SignedServiceSession,
+        produce_signed_hol_artifact,
+    };
 
     fn hex(bytes: &[u8]) -> String {
         const DIGITS: &[u8; 16] = b"0123456789abcdef";
@@ -607,6 +626,17 @@ mod tests {
     #[test]
     fn codec_preserves_a_verified_signed_lifecycle() {
         let mut service = SignedKernelService::new().unwrap();
+        let component = O256::from_bytes(b"allowlisted component");
+        service
+            .allow_hol_proof_component(component, |kernel| {
+                let mut connection = kernel
+                    .open_hol(AllowAll)
+                    .map_err(|_| "could not open executor HOL connection")?;
+                produce_signed_hol_artifact(kernel, &mut connection)
+                    .map(|produced| produced.into_parts().1)
+                    .map_err(|_| "could not produce executor artifact")
+            })
+            .unwrap();
         let SignedMessageResponse::Description(description) = round_trip_response(
             &SignedMessageResponse::Description(service.description().clone()),
         ) else {
@@ -626,6 +656,38 @@ mod tests {
         };
         let mut session = initiator.accept(&accepted).unwrap();
         assert_open(&mut service, &mut session);
+        assert_component(&mut service, &mut session, component);
+    }
+
+    fn assert_component(
+        service: &mut SignedKernelService,
+        session: &mut SignedServiceSession,
+        component: O256,
+    ) {
+        let command = session
+            .command(ServiceOperation::RunHolProofComponent(component))
+            .unwrap();
+        let SignedMessageRequest::Execute(command) =
+            round_trip_request(&SignedMessageRequest::Execute(command))
+        else {
+            panic!("wrong request");
+        };
+        let reply = service.execute(&command).unwrap();
+        let SignedMessageResponse::Reply(reply) =
+            round_trip_response(&SignedMessageResponse::Reply(reply))
+        else {
+            panic!("wrong response");
+        };
+        let ServiceResult::ProducedByComponent(produced) =
+            session.accept_reply(&command, reply).unwrap()
+        else {
+            panic!("wrong result");
+        };
+        assert_eq!(produced.component(), component);
+        assert_eq!(
+            produced.artifact().signer(),
+            service.description().identity().signer()
+        );
     }
 
     fn assert_open(service: &mut SignedKernelService, session: &mut SignedServiceSession) {

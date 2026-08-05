@@ -45,9 +45,10 @@ pub use service::signed_message::{
     decode_signed_request, decode_signed_response, encode_signed_request, encode_signed_response,
 };
 pub use service::{
-    EndpointDescription, ServiceIdentity, ServiceOperation, ServiceProducedHol, ServiceReceivedHol,
-    ServiceResult, SessionAccepted, SessionInitiator, SessionRequest, SignedKernelService,
-    SignedServiceCommand, SignedServiceReply, SignedServiceSession, signed_kernel_service_schema,
+    EndpointDescription, ServiceIdentity, ServiceOperation, ServiceProducedHol,
+    ServiceProducedHolComponent, ServiceReceivedHol, ServiceResult, SessionAccepted,
+    SessionInitiator, SessionRequest, SignedKernelService, SignedServiceCommand,
+    SignedServiceReply, SignedServiceSession, signed_kernel_service_schema,
 };
 
 const SCHEMA: &str = "
