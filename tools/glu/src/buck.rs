@@ -22,7 +22,7 @@ _PACKAGE_FILES = glob(
 )
 
 _RUST_SOURCES = glob(
-    ["**/*.rs", "**/*.sql"],
+    ["**/*.rs", "**/*.sql", "**/*.txt"],
     exclude = ["target/**"],
 )
 
