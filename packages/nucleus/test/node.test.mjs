@@ -91,6 +91,42 @@ test("runs the REPL kernel through the Wasm binding in Node", async () => {
   infinityState.free();
   infinity.free();
 
+  const missingZero = kernel.prove_natlike_missing_zero();
+  assert.equal(missingZero.kind(), "signed-natlike-missing-zero");
+  assert.equal(missingZero.theorem_oracle(), "(APP missing zero)");
+  assert.match(
+    missingZero.attestation_text(),
+    /^authority=kernel-derived-theorem\nsource-assumption=dedekind-infinity\n/,
+  );
+  assert.match(
+    missingZero.attestation_text(),
+    /\ntheorem=natlike-missing-zero\ntheorem-oracle=\(APP missing zero\)\nintermediate-persistence=none\n/,
+  );
+  assert.match(missingZero.namespace_id(), /^\d+$/);
+  assert.match(missingZero.schema(), /^[0-9a-f]{64}$/);
+  assert.match(missingZero.image_hash(), /^[0-9a-f]{64}$/);
+  assert.match(missingZero.signer(), /^[0-9a-f]{64}$/);
+  assert.ok(missingZero.image().byteLength > 0);
+  assert.equal(missingZero.public_key().byteLength, 32);
+  assert.equal(missingZero.signature().byteLength, 64);
+  assert.equal(kernel.active_connection(), missingZero.receiver_connection());
+  const missingZeroState = kernel.open_retained_trusted_hol_state(
+    missingZero.receiver_connection(),
+    missingZero.retained_id(),
+  );
+  assert.equal(missingZeroState.context_id(), missingZero.context_id());
+  assert.equal(missingZeroState.conclusion_id(), missingZero.conclusion_id());
+  const missingZeroTruth = kernel.run_hol(
+    missingZeroState.connection(),
+    "truth",
+  );
+  assert.equal(missingZeroTruth.kind(), "hol-theorem");
+  missingZeroTruth.free();
+  kernel.close_connection(missingZero.receiver_connection());
+  kernel.close_connection(missingZeroState.connection());
+  missingZeroState.free();
+  missingZero.free();
+
   const produced = kernel.produce_signed_hol_artifact(holConnection);
   const receiver = kernel.open_hol_connection();
   const wrongReceiver = kernel.open_hol_connection();
