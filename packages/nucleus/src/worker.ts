@@ -7,6 +7,7 @@ import init, {
   type WebReceivedHolSnapshot,
   type WebRetainedReceivedHolSnapshot,
   type WebSignedHolOutcome,
+  type WebSignedInfinityAssumption,
 } from "../generated/nucleus.js";
 import {
   SignedKernelTransportError,
@@ -20,6 +21,7 @@ type Request =
   | { id: number; operation: "run"; connection: number; sql: string }
   | { id: number; operation: "runHol"; connection: number; recipe: string }
   | { id: number; operation: "runSignedHolRoundTrip"; connection: number }
+  | { id: number; operation: "assumeDedekindInfinity" }
   | {
       id: number;
       operation: "runNativeHttpHashSelectedHol";
@@ -35,7 +37,7 @@ type Request =
     }
   | {
       id: number;
-      operation: "openNativeHttpHashSelectedHolState";
+      operation: "openRetainedTrustedHolState";
       connection: number;
     }
   | {
@@ -83,7 +85,7 @@ interface RetainedHashSelectedArtifact {
   signature: Uint8Array;
 }
 
-const retainedHashSelectedArtifacts = new Map<number, number>();
+const retainedTrustedArtifacts = new Map<number, number>();
 
 globalThis.addEventListener(
   "message",
@@ -115,7 +117,7 @@ async function execute(request: Request): Promise<unknown> {
       // Keep the reread receipt until WebKernel has acknowledged connection
       // removal. A rejected close therefore leaves both available for retry.
       connection.close_connection(request.connection);
-      retainedHashSelectedArtifacts.delete(request.connection);
+      retainedTrustedArtifacts.delete(request.connection);
       return undefined;
     case "run":
       return readOutcome(connection.run(request.connection, request.sql));
@@ -126,6 +128,11 @@ async function execute(request: Request): Promise<unknown> {
     case "runSignedHolRoundTrip":
       return readSignedHolOutcome(
         connection.run_signed_hol_round_trip(request.connection),
+      );
+    case "assumeDedekindInfinity":
+      return readSignedInfinityAssumption(
+        connection,
+        connection.assume_dedekind_infinity(),
       );
     case "runNativeHttpHashSelectedHol":
       if (nativeHashRunInFlight) {
@@ -139,8 +146,8 @@ async function execute(request: Request): Promise<unknown> {
       }
     case "rereadNativeHttpHashSelectedHol":
       return rereadNativeHttpHashSelectedHol(connection, request.connection);
-    case "openNativeHttpHashSelectedHolState":
-      return openNativeHttpHashSelectedHolState(connection, request.connection);
+    case "openRetainedTrustedHolState":
+      return openRetainedTrustedHolState(connection, request.connection);
     case "putImage":
       return connection.put_image(request.connection, request.bytes);
     case "attachImage":
@@ -206,7 +213,7 @@ async function runNativeHttpHashSelectedHol(
           "could not roll back an unpresented HOL receiver",
         );
       } finally {
-        retainedHashSelectedArtifacts.delete(receiverConnection);
+        retainedTrustedArtifacts.delete(receiverConnection);
       }
       throw error;
     }
@@ -231,7 +238,7 @@ function importHashSelectedArtifact(
     );
     const retainedId = retained.retained_id();
     const received = readReceivedHolSnapshot(retained);
-    retainedHashSelectedArtifacts.set(receiver, retainedId);
+    retainedTrustedArtifacts.set(receiver, retainedId);
     return { receiverConnection: receiver, received };
   } catch (error) {
     connection.close_connection(receiver);
@@ -243,9 +250,9 @@ function rereadNativeHttpHashSelectedHol(
   connection: WebKernel,
   receiver: number,
 ) {
-  const retained = retainedHashSelectedArtifacts.get(receiver);
+  const retained = retainedTrustedArtifacts.get(receiver);
   if (retained === undefined) {
-    throw new Error("hash-selected HOL receiver was closed or cleaned up");
+    throw new Error("trusted HOL receiver was closed or cleaned up");
   }
   const before = connection.hol_image_hash(receiver);
   const received = readReceivedHolSnapshot(
@@ -258,13 +265,10 @@ function rereadNativeHttpHashSelectedHol(
   return { ...received, persistentStateHash: after };
 }
 
-function openNativeHttpHashSelectedHolState(
-  connection: WebKernel,
-  receiver: number,
-) {
-  const retained = retainedHashSelectedArtifacts.get(receiver);
+function openRetainedTrustedHolState(connection: WebKernel, receiver: number) {
+  const retained = retainedTrustedArtifacts.get(receiver);
   if (retained === undefined) {
-    throw new Error("hash-selected HOL receiver was closed or cleaned up");
+    throw new Error("trusted HOL receiver was closed or cleaned up");
   }
   return readManagedTrustedHolState(
     connection.open_retained_trusted_hol_state(receiver, retained),
@@ -319,13 +323,59 @@ function readReceivedHolSnapshot(
   }
 }
 
+function readSignedInfinityAssumption(
+  connection: WebKernel,
+  assumption: WebSignedInfinityAssumption,
+) {
+  let receiver: number | undefined;
+  try {
+    const receivedConnection = assumption.receiver_connection();
+    receiver = receivedConnection;
+    const retained = assumption.retained_id();
+    const result = {
+      kind: assumption.kind(),
+      authority: "signed-assumption",
+      assumption: "dedekind-infinity",
+      falsehood: "all-bool-identity",
+      receiverConnection: receivedConnection,
+      namespace: assumption.namespace_id(),
+      image: assumption.image(),
+      schema: assumption.schema(),
+      imageHash: assumption.image_hash(),
+      signer: assumption.signer(),
+      publicKey: assumption.public_key(),
+      signature: assumption.signature(),
+      context: assumption.context_id(),
+      conclusion: assumption.conclusion_id(),
+      attestation: assumption.attestation_text(),
+    };
+    retainedTrustedArtifacts.set(receivedConnection, retained);
+    return result;
+  } catch (error) {
+    if (receiver !== undefined) {
+      try {
+        connection.close_connection(receiver);
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          "signed-assumption presentation and receiver cleanup both failed",
+        );
+      }
+    }
+    throw error;
+  } finally {
+    assumption.free();
+  }
+}
+
 function transferables(value: unknown): ArrayBuffer[] {
   if (value instanceof Uint8Array) return [value.buffer as ArrayBuffer];
   if (
     typeof value === "object" &&
     value !== null &&
     "kind" in value &&
-    value.kind === "signed-hol-round-trip"
+    (value.kind === "signed-hol-round-trip" ||
+      value.kind === "signed-assumption")
   ) {
     const outcome = value as unknown as {
       image: Uint8Array;
