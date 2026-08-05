@@ -1,6 +1,11 @@
-import init, { smoke, WebKernel, WebOutcome } from "../generated/nucleus.js";
+import init, {
+  smoke,
+  WebHolOutcome,
+  WebKernel,
+  WebOutcome,
+} from "../generated/nucleus.js";
 
-export { init, smoke, WebKernel, WebOutcome };
+export { init, smoke, WebHolOutcome, WebKernel, WebOutcome };
 
 export type SqlValue =
   | { kind: "null" }
@@ -13,7 +18,41 @@ export type SqlOutcome =
   | { kind: "changed"; changed: number }
   | { kind: "rows"; columns: string[]; rows: SqlValue[][] };
 
+export interface HolOutcome {
+  kind: "hol-theorem";
+  recipe: string;
+  context: string;
+  conclusion: string;
+  statement: string;
+}
+
+export interface SignedHolOutcome {
+  kind: "signed-hol-round-trip";
+  phases: string[];
+  statement: string;
+  conclusion: string;
+  namespace: string;
+  image: Uint8Array;
+  schema: string;
+  imageHash: string;
+  signer: string;
+  publicKey: Uint8Array;
+  signature: Uint8Array;
+  attestation: string;
+  importId: string;
+  importedNamespace: string;
+  importedContext: string;
+  importedConclusion: string;
+  /** Receiver retained by the same REPL for trust/import-state inspection. */
+  receiver: BrowserHolConnection;
+}
+
+type SignedHolWireOutcome = Omit<SignedHolOutcome, "receiver"> & {
+  receiverConnection: number;
+};
+
 export interface BrowserSqlConnection {
+  readonly kind: "sql";
   run(sql: string): Promise<SqlOutcome>;
   putImage(bytes: Uint8Array): Promise<string>;
   attachImage(hash: string, schema: string): Promise<void>;
@@ -22,15 +61,30 @@ export interface BrowserSqlConnection {
   close(): Promise<void>;
 }
 
+export interface BrowserHolConnection {
+  readonly kind: "hol";
+  run(recipe: string): Promise<HolOutcome>;
+  runSignedRoundTrip(): Promise<SignedHolOutcome>;
+  close(): Promise<void>;
+}
+
+export type BrowserConnection = BrowserSqlConnection | BrowserHolConnection;
+
 export interface BrowserRepl {
+  /** Opens a SQL connection. Retained as the original concise API. */
   open(): Promise<BrowserSqlConnection>;
+  openSql(): Promise<BrowserSqlConnection>;
+  openHol(): Promise<BrowserHolConnection>;
   close(): void;
 }
 
 type RequestBody =
   | { operation: "open" }
+  | { operation: "openHol" }
   | { operation: "close"; connection: number }
   | { operation: "run"; connection: number; sql: string }
+  | { operation: "runHol"; connection: number; recipe: string }
+  | { operation: "runSignedHolRoundTrip"; connection: number }
   | { operation: "putImage"; connection: number; bytes: Uint8Array }
   | {
       operation: "attachImage";
@@ -78,8 +132,17 @@ class WorkerRepl implements BrowserRepl {
   }
 
   async open(): Promise<BrowserSqlConnection> {
+    return this.openSql();
+  }
+
+  async openSql(): Promise<BrowserSqlConnection> {
     const id = await this.request<number>({ operation: "open" });
     return new WorkerConnection(this, id);
+  }
+
+  async openHol(): Promise<BrowserHolConnection> {
+    const id = await this.request<number>({ operation: "openHol" });
+    return new WorkerHolConnection(this, id);
   }
 
   close(): void {
@@ -109,6 +172,7 @@ class WorkerRepl implements BrowserRepl {
 }
 
 class WorkerConnection implements BrowserSqlConnection {
+  readonly kind = "sql" as const;
   #closed = false;
 
   constructor(
@@ -170,6 +234,51 @@ class WorkerConnection implements BrowserSqlConnection {
     if (this.#closed)
       return Promise.reject(new Error("SQL connection is closed"));
     return this.repl.request(body, transfer);
+  }
+}
+
+class WorkerHolConnection implements BrowserHolConnection {
+  readonly kind = "hol" as const;
+  #closed = false;
+
+  constructor(
+    private readonly repl: WorkerRepl,
+    private readonly connection: number,
+  ) {}
+
+  run(recipe: string): Promise<HolOutcome> {
+    return this.#request({
+      operation: "runHol",
+      connection: this.connection,
+      recipe,
+    });
+  }
+
+  async runSignedRoundTrip(): Promise<SignedHolOutcome> {
+    const wire = await this.#request<SignedHolWireOutcome>({
+      operation: "runSignedHolRoundTrip",
+      connection: this.connection,
+    });
+    const { receiverConnection, ...outcome } = wire;
+    return {
+      ...outcome,
+      receiver: new WorkerHolConnection(this.repl, receiverConnection),
+    };
+  }
+
+  async close(): Promise<void> {
+    if (this.#closed) return;
+    this.#closed = true;
+    await this.repl.request({
+      operation: "close",
+      connection: this.connection,
+    });
+  }
+
+  #request<T>(body: RequestBody): Promise<T> {
+    if (this.#closed)
+      return Promise.reject(new Error("HOL connection is closed"));
+    return this.repl.request(body);
   }
 }
 

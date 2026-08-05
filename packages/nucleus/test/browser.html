@@ -11,10 +11,13 @@
       const repl = createBrowserRepl();
       let source;
       let target;
+      let hol;
+      let signedReceiver;
       let url;
       try {
         source = await repl.open();
         target = await repl.open();
+        hol = await repl.openHol();
         await source.run("CREATE TABLE facts (name TEXT, value INTEGER)");
         await source.run(
           "INSERT INTO facts VALUES ('exact', 9223372036854775807)",
@@ -25,6 +28,10 @@
         const result = await target.run(
           "SELECT name, value FROM library.facts",
         );
+        const theorem = await hol.run("beta true");
+        const signed = await hol.runSignedRoundTrip();
+        const { receiver, ...signedResult } = signed;
+        signedReceiver = receiver;
 
         let readonly = false;
         try {
@@ -37,6 +44,17 @@
           hash,
           result,
           readonly,
+          theorem,
+          signed: {
+            ...signedResult,
+            image: signed.image.byteLength,
+            publicKey: signed.publicKey.byteLength,
+            signature: signed.signature.byteLength,
+            attestation:
+              signed.attestation.startsWith(
+                "format=covalence-repl-signed-snapshot-demo-v0",
+              ) && signed.attestation.includes(`namespace=${signed.namespace}`),
+          },
         });
       } catch (error) {
         document.body.dataset.error = String(error);
@@ -44,6 +62,8 @@
         if (url !== undefined) URL.revokeObjectURL(url);
         await source?.close();
         await target?.close();
+        await hol?.close();
+        await signedReceiver?.close();
         repl.close();
       }
     </script>
