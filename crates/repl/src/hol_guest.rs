@@ -13,8 +13,9 @@ use covalence_proton::{
 use wasmtime::component::{HasSelf, Linker, Resource};
 
 use crate::{
-    ConnectionId, LocalConnection, ReceivedHolSnapshot, Repl, SignedHolArtifact, Value as SqlValue,
-    receive_signed_hol_artifact,
+    ConnectionId, KernelId, LocalConnection, ReceivedHolSnapshot, Repl, SignedHolArtifact,
+    Value as SqlValue, authenticate_pinned_signed_hol_artifact,
+    trust_and_receive_pinned_signed_hol_artifact,
 };
 
 mod bindings {
@@ -686,10 +687,15 @@ pub fn retain_signed_hol_guest_artifact(
         ));
     }
 
+    let expected_identity = directory
+        .expected_kernel_identity(KernelId::LOCAL)
+        .map_err(|error| ManagedHolGuestError::at("local-key-loaded", error))?;
+    let pinned = authenticate_pinned_signed_hol_artifact(&expected_identity, &artifact)
+        .map_err(|error| ManagedHolGuestError::at("artifact-authenticated", error))?;
     let mut target = kernel
         .open_hol(covalence_nucleus::AllowAll)
         .map_err(|error| ManagedHolGuestError::at("receiver-opened", error))?;
-    let received = receive_signed_hol_artifact(&mut target, &artifact)
+    let received = trust_and_receive_pinned_signed_hol_artifact(&mut target, pinned)
         .map_err(|error| ManagedHolGuestError::at("artifact-imported", error))?;
     let retained = LocalConnection::Hol(target);
     let connection = directory
@@ -858,7 +864,14 @@ mod tests {
 
         let receiver = Kernel::ephemeral();
         let mut target = receiver.open_hol(covalence_nucleus::AllowAll).unwrap();
-        let accepted = crate::receive_signed_hol_artifact(&mut target, &artifact).unwrap();
+        let expected = crate::ExpectedKernelIdentity::from_public_key(
+            crate::KernelId::LOCAL,
+            producer.verifying_key().as_bytes(),
+        )
+        .unwrap();
+        let pinned = crate::authenticate_pinned_signed_hol_artifact(&expected, &artifact).unwrap();
+        let accepted =
+            crate::trust_and_receive_pinned_signed_hol_artifact(&mut target, pinned).unwrap();
         assert_eq!(accepted.context_id(), 0);
         assert_eq!(accepted.conclusion_id(), 8);
     }
@@ -925,35 +938,19 @@ mod tests {
         let managed = retain_signed_hol_guest_artifact(&kernel, &mut directory, artifact).unwrap();
 
         assert_eq!(directory.active().unwrap(), Some(managed.connection()));
-        let validated = crate::authenticate_and_validate_artifact(managed.artifact()).unwrap();
+        let expected = directory
+            .expected_kernel_identity(crate::KernelId::LOCAL)
+            .unwrap();
+        let pinned =
+            crate::authenticate_pinned_signed_hol_artifact(&expected, managed.artifact()).unwrap();
         let target = directory
             .get_mut(managed.connection())
             .unwrap()
             .hol_mut()
             .unwrap();
-        let import = target
-            .register_import(covalence_nucleus::HolDatabaseRef::new(
-                validated.claim().schema(),
-                validated.claim().image(),
-            ))
-            .unwrap();
-        assert_eq!(import.get(), managed.received().import_id());
-        let trusted = target
-            .accept_trusted_import(import, validated.claim())
-            .unwrap();
-        let namespace = NamespaceId::from_i64(managed.received().namespace_id());
-        let mounted = covalence_neutron::ImmutableImage::register(std::sync::Arc::from(
-            managed.artifact().image(),
-        ))
-        .unwrap();
-        let reread = target
-            .match_trusted_import_image(trusted, validated)
-            .unwrap()
-            .with_mounted_reader(namespace, &mounted, crate::read_imported_beta)
-            .unwrap()
-            .unwrap();
-        assert_eq!(reread.0, managed.received().context_id());
-        assert_eq!(reread.1, managed.received().conclusion_id());
+        let reread = crate::trust_and_receive_pinned_signed_hol_artifact(target, pinned).unwrap();
+        assert_eq!(reread.context_id(), managed.received().context_id());
+        assert_eq!(reread.conclusion_id(), managed.received().conclusion_id());
     }
 
     #[test]

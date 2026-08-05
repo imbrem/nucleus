@@ -7,7 +7,9 @@ use std::process::ExitCode;
 
 use covalence_repl::{
     AllowAll, ConnectionId, HolRecipe, HolRecipeResult, Kernel, LocalConnection, MAX_IMAGE_BYTES,
-    Outcome, Repl, SignedHolRoundTripResult, Value, run_managed_signed_hol_round_trip,
+    Outcome, Repl, SignedHolRoundTripResult, Value, authenticate_pinned_signed_hol_artifact,
+    produce_signed_hol_artifact, run_managed_signed_hol_round_trip,
+    trust_and_receive_pinned_signed_hol_artifact,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use covalence_repl::{
@@ -202,6 +204,57 @@ impl Drop for FreshArtifactDirectory {
         }
         let _ = fs::remove_dir(&self.path);
     }
+}
+
+fn run_interkernel_hol(output: &mut impl io::Write) -> Result<()> {
+    let producer_kernel = Kernel::ephemeral();
+    let receiver_kernel = Kernel::ephemeral();
+    let mut directory = Repl::empty()?;
+    let producer_endpoint = directory.register_kernel(
+        "local",
+        Some("producer"),
+        producer_kernel.verifying_key().as_bytes(),
+    )?;
+    let receiver_endpoint = directory.register_kernel(
+        "local",
+        Some("receiver"),
+        receiver_kernel.verifying_key().as_bytes(),
+    )?;
+    let source = LocalConnection::Hol(producer_kernel.open_hol(AllowAll)?);
+    let source_id = directory.insert_at(producer_endpoint, source.protocol(), Some("1"), source)?;
+    let target = LocalConnection::Hol(receiver_kernel.open_hol(AllowAll)?);
+    let target_id = directory.insert_at(receiver_endpoint, target.protocol(), Some("1"), target)?;
+
+    let artifact_bundle =
+        produce_signed_hol_artifact(&producer_kernel, directory.get_mut(source_id)?.hol_mut()?)?;
+    let expected = directory.expected_kernel_identity(producer_endpoint)?;
+    let pinned = authenticate_pinned_signed_hol_artifact(&expected, artifact_bundle.artifact())?;
+    let imported = trust_and_receive_pinned_signed_hol_artifact(
+        directory.get_mut(target_id)?.hol_mut()?,
+        pinned,
+    )?;
+
+    writeln!(output, "producer_kernel\t{producer_endpoint}")?;
+    writeln!(output, "receiver_kernel\t{receiver_endpoint}")?;
+    writeln!(
+        output,
+        "producer_signer\t{}",
+        artifact_bundle.artifact().signer()
+    )?;
+    writeln!(output, "receiver_signer\t{}", receiver_kernel.key_id())?;
+    writeln!(output, "connections\t{}", directory.connections()?.len())?;
+    writeln!(
+        output,
+        "receiver_phases\t{}",
+        covalence_repl::SIGNED_HOL_PHASES[3..].join(",")
+    )?;
+    writeln!(
+        output,
+        "imported_theorem\t{}\t{}",
+        imported.context_id(),
+        imported.conclusion_id()
+    )?;
+    Ok(())
 }
 
 fn load_image(
@@ -498,6 +551,7 @@ fn usage(output: &mut impl io::Write) -> io::Result<()> {
         output,
         "       nucleus --wasm-hol COMPONENT OUTPUT-DIRECTORY"
     )?;
+    writeln!(output, "       nucleus --interkernel-hol")?;
     writeln!(output, "       nucleus --help")
 }
 
@@ -585,6 +639,12 @@ fn run() -> Result<()> {
                 Path::new(&output),
             )?;
             Ok(())
+        }
+        Some(flag) if flag == "--interkernel-hol" => {
+            if arguments.next().is_some() {
+                return Err("unexpected arguments after --interkernel-hol".into());
+            }
+            run_interkernel_hol(&mut io::stdout().lock())
         }
         Some(flag) if flag == "-h" || flag == "--help" => {
             usage(&mut io::stdout().lock())?;
@@ -945,6 +1005,20 @@ mod tests {
         assert_eq!(fs::read(output_path.join("user-data")).unwrap(), b"keep");
         fs::remove_file(output_path.join("user-data")).unwrap();
         fs::remove_dir(output_path).unwrap();
+    }
+
+    #[test]
+    fn transfers_a_signed_theorem_between_registered_local_kernels() {
+        let mut output = Vec::new();
+        run_interkernel_hol(&mut output).expect("run inter-kernel demo");
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("producer_kernel\t1\n"));
+        assert!(output.contains("receiver_kernel\t2\n"));
+        assert!(output.contains("connections\t2\n"));
+        assert!(output.contains(
+            "receiver_phases\timage-size-checked,signature-authenticated,signer-pinned,image-detached-validated,signer-trusted,snapshot-accepted,namespace-imported,theorem-read\n"
+        ));
+        assert!(output.contains("imported_theorem\t0\t8\n"));
     }
 
     #[test]

@@ -30,7 +30,7 @@ pub use covalence_nucleus::sql::{
 pub use covalence_nucleus::{AllowAll, Connection, ContextId, Hol, Kernel, Sql, TermId};
 use covalence_nucleus::{
     AuthenticatedValidatedHolImage, ExportId, HolDatabaseRef, ImportedExport, ImportedTermView,
-    NamespaceExport, ProofError, SignedSnapshotEnvelope, TermError, TypeError,
+    NamespaceExport, ProofError, SignedSnapshotEnvelope, TermError, TypeError, ed25519_key_id,
 };
 
 const SCHEMA: &str = "
@@ -72,6 +72,172 @@ impl ConnectionId {
     }
 }
 
+/// Opaque process-local identifier for a kernel endpoint in a REPL directory.
+///
+/// It is deliberately unrelated to a kernel's public-key identity: the same
+/// process may expose several keyed endpoints, and transports may reconnect an
+/// endpoint without changing the rows which describe it.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct KernelId(i64);
+
+impl KernelId {
+    /// The kernel installed by [`Repl::new`].
+    pub const LOCAL: Self = Self(0);
+
+    /// Creates an ID from the browser ABI's unsigned representation.
+    #[must_use]
+    pub const fn from_u32(id: u32) -> Self {
+        Self(id as i64)
+    }
+
+    /// Returns the integer stored in the REPL state database.
+    #[must_use]
+    pub const fn get(self) -> i64 {
+        self.0
+    }
+}
+
+impl fmt::Display for KernelId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+/// One independently supplied endpoint identity selected by the REPL caller.
+///
+/// This is routing policy, not HOL trust. Its signer is derived from and
+/// checked against the exact Ed25519 public key before it may pin an artifact.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExpectedKernelIdentity {
+    kernel: KernelId,
+    signer: covalence_lib_hash::O256,
+    public_key: [u8; 32],
+}
+
+impl ExpectedKernelIdentity {
+    /// Derives the signer for one independently supplied exact public key.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `public_key` is exactly 32 bytes.
+    pub fn from_public_key(
+        kernel: KernelId,
+        public_key: &[u8],
+    ) -> Result<Self, ExpectedKernelIdentityError> {
+        let public_key = <[u8; 32]>::try_from(public_key)
+            .map_err(|_| ExpectedKernelIdentityError::InvalidPublicKeyWidth)?;
+        Ok(Self {
+            kernel,
+            signer: ed25519_key_id(&public_key),
+            public_key,
+        })
+    }
+
+    /// Reconstructs an independently transported endpoint identity.
+    ///
+    /// The caller must choose these fields independently of the artifact being
+    /// checked. This function establishes only key/signer coherence.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed fields or a signer which is not derived
+    /// from the exact public key.
+    pub fn from_untrusted_parts(
+        kernel: KernelId,
+        signer: &str,
+        public_key: &[u8],
+    ) -> Result<Self, ExpectedKernelIdentityError> {
+        let expected = Self::from_public_key(kernel, public_key)?;
+        let signer = covalence_lib_hash::O256::from_hex(signer)
+            .map_err(|_| ExpectedKernelIdentityError::InvalidSigner)?;
+        let derived = expected.signer;
+        if signer != derived {
+            return Err(ExpectedKernelIdentityError::SignerMismatch {
+                claimed: signer,
+                derived,
+            });
+        }
+        Ok(expected)
+    }
+
+    /// Returns the directory-local endpoint selected by the caller.
+    #[must_use]
+    pub const fn kernel(&self) -> KernelId {
+        self.kernel
+    }
+
+    /// Returns the checked public-key identity.
+    #[must_use]
+    pub const fn signer(&self) -> covalence_lib_hash::O256 {
+        self.signer
+    }
+
+    /// Returns the exact expected Ed25519 public key.
+    #[must_use]
+    pub const fn public_key(&self) -> &[u8; 32] {
+        &self.public_key
+    }
+}
+
+/// Malformed independently supplied kernel identity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExpectedKernelIdentityError {
+    /// The Ed25519 public key is not exactly 32 bytes.
+    InvalidPublicKeyWidth,
+    /// The signer coordinate is not an O256 hexadecimal string.
+    InvalidSigner,
+    /// The claimed signer is not derived from the supplied public key.
+    SignerMismatch {
+        /// Claimed identity.
+        claimed: covalence_lib_hash::O256,
+        /// Identity derived from the exact public key.
+        derived: covalence_lib_hash::O256,
+    },
+}
+
+impl fmt::Display for ExpectedKernelIdentityError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidPublicKeyWidth => {
+                formatter.write_str("kernel public key must be exactly 32 bytes")
+            }
+            Self::InvalidSigner => formatter.write_str("kernel signer must be an O256 hex string"),
+            Self::SignerMismatch { claimed, derived } => write!(
+                formatter,
+                "kernel signer {claimed} differs from public-key identity {derived}"
+            ),
+        }
+    }
+}
+
+impl StdError for ExpectedKernelIdentityError {}
+
+/// Inspectable metadata for one registered kernel endpoint.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct KernelEntry {
+    /// Directory-local opaque ID.
+    pub id: KernelId,
+    /// Adapter-defined transport name such as `local` or `worker`.
+    pub transport: String,
+    /// Optional adapter-defined endpoint locator.
+    pub endpoint: Option<String>,
+    /// Exact Ed25519 public key advertised by the endpoint.
+    pub public_key: Vec<u8>,
+}
+
+/// Inspectable metadata for one managed connection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConnectionEntry {
+    /// Directory-local opaque ID.
+    pub id: ConnectionId,
+    /// Kernel endpoint which owns the runtime connection.
+    pub kernel: KernelId,
+    /// Protocol label interpreted by the adapter.
+    pub protocol: String,
+    /// Optional endpoint-local connection coordinate.
+    pub remote_connection_id: Option<String>,
+}
+
 impl fmt::Display for ConnectionId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(formatter)
@@ -85,6 +251,24 @@ pub struct Repl<C> {
 }
 
 impl<C> Repl<C> {
+    /// Opens an empty, in-memory REPL directory with no implied kernel.
+    ///
+    /// This is useful for a coordinator which owns endpoints rather than being
+    /// a kernel itself.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the raw Neutron connection or directory schema
+    /// cannot be opened.
+    pub fn empty() -> Result<Self, ReplError> {
+        let state = covalence_neutron::Connection::open_in_memory()?;
+        state.sqlite().execute_batch(SCHEMA)?;
+        Ok(Self {
+            state,
+            connections: HashMap::new(),
+        })
+    }
+
     /// Opens an empty, in-memory REPL state database.
     ///
     /// # Errors
@@ -92,18 +276,14 @@ impl<C> Repl<C> {
     /// Returns an error if the raw Neutron connection or state schema cannot
     /// be opened.
     pub fn new(local_public_key: &[u8]) -> Result<Self, ReplError> {
-        let state = covalence_neutron::Connection::open_in_memory()?;
-        let transaction = state.sqlite().unchecked_transaction()?;
-        transaction.execute_batch(SCHEMA)?;
+        let repl = Self::empty()?;
+        let transaction = repl.state.sqlite().unchecked_transaction()?;
         transaction.execute(
             "INSERT INTO repl_kernel(kernel_id, transport, public_key) VALUES (0, 'local', ?1)",
             [local_public_key],
         )?;
         transaction.commit()?;
-        Ok(Self {
-            state,
-            connections: HashMap::new(),
-        })
+        Ok(repl)
     }
 
     /// Returns the raw state connection for inspection and debugging.
@@ -118,10 +298,51 @@ impl<C> Repl<C> {
     ///
     /// Returns an error if the directory cannot be updated.
     pub fn insert(&mut self, protocol: &str, connection: C) -> Result<ConnectionId, ReplError> {
+        self.insert_at(KernelId::LOCAL, protocol, None, connection)
+    }
+
+    /// Registers a keyed kernel endpoint without granting it logical trust.
+    ///
+    /// Registration is directory bookkeeping only. In particular, the public
+    /// key is not inserted into any Nucleus connection's trust relation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the endpoint metadata is rejected by the directory.
+    pub fn register_kernel(
+        &self,
+        transport: &str,
+        endpoint: Option<&str>,
+        public_key: &[u8],
+    ) -> Result<KernelId, ReplError> {
         let transaction = self.state.sqlite().unchecked_transaction()?;
         transaction.execute(
-            "INSERT INTO repl_connection(kernel_id, protocol) VALUES (0, ?1)",
-            [protocol],
+            "INSERT INTO repl_kernel(transport, endpoint, public_key) VALUES (?1, ?2, ?3)",
+            sqlite::params![transport, endpoint, public_key],
+        )?;
+        let id = KernelId(transaction.last_insert_rowid());
+        transaction.commit()?;
+        Ok(id)
+    }
+
+    /// Adds a runtime connection owned by a registered kernel endpoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown kernel or failed directory update.
+    pub fn insert_at(
+        &mut self,
+        kernel: KernelId,
+        protocol: &str,
+        remote_connection_id: Option<&str>,
+        connection: C,
+    ) -> Result<ConnectionId, ReplError> {
+        self.require_kernel(kernel)?;
+        let transaction = self.state.sqlite().unchecked_transaction()?;
+        transaction.execute(
+            "INSERT INTO repl_connection(kernel_id, protocol, remote_connection_id)
+             VALUES (?1, ?2, ?3)",
+            sqlite::params![kernel.0, protocol, remote_connection_id],
         )?;
         let id = ConnectionId(transaction.last_insert_rowid());
         transaction.execute(
@@ -133,6 +354,97 @@ impl<C> Repl<C> {
         transaction.commit()?;
         self.connections.insert(id, connection);
         Ok(id)
+    }
+
+    /// Lists registered kernel endpoints in directory order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the directory cannot be read.
+    pub fn kernels(&self) -> Result<Vec<KernelEntry>, ReplError> {
+        let mut statement = self.state.sqlite().prepare(
+            "SELECT kernel_id, transport, endpoint, public_key
+             FROM repl_kernel ORDER BY kernel_id",
+        )?;
+        let rows = statement.query_map((), |row| {
+            Ok(KernelEntry {
+                id: KernelId(row.get(0)?),
+                transport: row.get(1)?,
+                endpoint: row.get(2)?,
+                public_key: row.get(3)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(ReplError::from)
+    }
+
+    /// Loads one endpoint's exact directory key as an expected identity.
+    ///
+    /// This does not grant Nucleus trust. It creates an immutable routing
+    /// capability which a later artifact-authentication step may compare
+    /// against before the caller separately elects to trust the result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown endpoint, malformed directory key, or
+    /// failed state inspection.
+    pub fn expected_kernel_identity(
+        &self,
+        kernel: KernelId,
+    ) -> Result<ExpectedKernelIdentity, ReplError> {
+        let public_key = self
+            .state
+            .sqlite()
+            .query_row(
+                "SELECT public_key FROM repl_kernel WHERE kernel_id = ?1",
+                [kernel.0],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .map_err(|error| match error {
+                sqlite::Error::QueryReturnedNoRows => ReplError::UnknownKernel(kernel),
+                other => ReplError::State(other),
+            })?;
+        let public_key = <[u8; 32]>::try_from(public_key.as_slice())
+            .map_err(|_| ReplError::CorruptKernelPublicKey(kernel))?;
+        ExpectedKernelIdentity::from_public_key(kernel, &public_key)
+            .map_err(|_| ReplError::CorruptKernelPublicKey(kernel))
+    }
+
+    /// Lists managed connections in directory order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the directory cannot be read.
+    pub fn connections(&self) -> Result<Vec<ConnectionEntry>, ReplError> {
+        let mut statement = self.state.sqlite().prepare(
+            "SELECT connection_id, kernel_id, protocol, remote_connection_id
+             FROM repl_connection ORDER BY connection_id",
+        )?;
+        let rows = statement.query_map((), |row| {
+            Ok(ConnectionEntry {
+                id: ConnectionId(row.get(0)?),
+                kernel: KernelId(row.get(1)?),
+                protocol: row.get(2)?,
+                remote_connection_id: row.get(3)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(ReplError::from)
+    }
+
+    /// Removes a registered endpoint after all of its connections are closed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown or implicit local kernel, an endpoint
+    /// with live connections, or a failed directory update.
+    pub fn unregister_kernel(&self, kernel: KernelId) -> Result<(), ReplError> {
+        self.require_kernel(kernel)?;
+        if kernel == KernelId::LOCAL {
+            return Err(ReplError::CannotUnregisterLocalKernel);
+        }
+        self.state
+            .sqlite()
+            .execute("DELETE FROM repl_kernel WHERE kernel_id = ?1", [kernel.0])?;
+        Ok(())
     }
 
     /// Returns the active connection ID, if any.
@@ -262,6 +574,19 @@ impl<C> Repl<C> {
             Err(ReplError::UnknownConnection(id))
         }
     }
+
+    fn require_kernel(&self, id: KernelId) -> Result<(), ReplError> {
+        let exists = self.state.sqlite().query_row(
+            "SELECT EXISTS(SELECT 1 FROM repl_kernel WHERE kernel_id = ?1)",
+            [id.0],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if exists {
+            Ok(())
+        } else {
+            Err(ReplError::UnknownKernel(id))
+        }
+    }
 }
 
 /// A process-local connection managed by the terminal or browser adapter.
@@ -341,7 +666,9 @@ pub const SIGNED_HOL_PHASES: &[&str] = &[
     "proof-persisted",
     "namespace-exported",
     "snapshot-signed",
+    "image-size-checked",
     "signature-authenticated",
+    "signer-pinned",
     "image-detached-validated",
     "signer-trusted",
     "snapshot-accepted",
@@ -363,6 +690,37 @@ pub struct SignedHolArtifact {
     signer: covalence_lib_hash::O256,
     public_key: Vec<u8>,
     signature: Vec<u8>,
+}
+
+/// Authenticated and detached-validated artifact pinned to an independent endpoint key.
+///
+/// Constructing this capability never borrows or mutates a receiver connection. The
+/// caller must separately pass it to [`trust_and_receive_pinned_signed_hol_artifact`]
+/// to make an explicit trust/import decision.
+pub struct PinnedSignedHolArtifact {
+    expected: ExpectedKernelIdentity,
+    namespace_id: i64,
+    image: AuthenticatedValidatedHolImage,
+}
+
+impl PinnedSignedHolArtifact {
+    /// Returns the independently selected source endpoint.
+    #[must_use]
+    pub const fn expected_kernel(&self) -> KernelId {
+        self.expected.kernel()
+    }
+
+    /// Returns the exact authenticated signer pinned to that endpoint.
+    #[must_use]
+    pub const fn signer(&self) -> covalence_lib_hash::O256 {
+        self.expected.signer()
+    }
+
+    /// Returns the untrusted selector into the authenticated complete database.
+    #[must_use]
+    pub const fn namespace_id(&self) -> i64 {
+        self.namespace_id
+    }
 }
 
 /// Producer-local presentation paired with an independently transportable artifact.
@@ -390,7 +748,7 @@ impl SignedHolArtifact {
     /// Reconstructs untrusted transport fields without authenticating them.
     ///
     /// This parses hash coordinates and checks fixed-width fields only.
-    /// [`receive_signed_hol_artifact`] performs every semantic check.
+    /// [`authenticate_pinned_signed_hol_artifact`] performs every semantic check.
     ///
     /// # Errors
     ///
@@ -750,21 +1108,70 @@ pub fn produce_signed_hol_artifact(
     })
 }
 
-/// Authenticates, validates, trusts, imports, and reads one transported artifact.
+/// Authenticates and validates one artifact against an independently selected endpoint.
 ///
-/// The caller supplies the receiver connection explicitly, so it remains in
-/// the REPL and its connection-local trust and persistent import state can be
-/// inspected after this operation. Imported theorem authority remains scoped
-/// to the immutable reader and is never promoted to a local LCF theorem.
+/// This phase has no receiver connection and therefore cannot mutate trust,
+/// imports, namespaces, judgements, or VFS state. Internal signature coherence
+/// is followed by an exact expected signer/key comparison before `SQLite` bytes
+/// are detached-validated.
 ///
 /// # Errors
 ///
-/// Returns the name and message of the first rejected receiver stage.
-pub fn receive_signed_hol_artifact(
-    target: &mut Connection<Hol<AllowAll>>,
+/// Returns the name and message of the first rejected pre-trust stage.
+pub fn authenticate_pinned_signed_hol_artifact(
+    expected: &ExpectedKernelIdentity,
     artifact: &SignedHolArtifact,
+) -> Result<PinnedSignedHolArtifact, SignedHolRoundTripError> {
+    if artifact.image.len() > MAX_IMAGE_BYTES {
+        return Err(SignedHolRoundTripError::at(
+            "image-size-checked",
+            format_args!(
+                "image is {} bytes; the limit is {MAX_IMAGE_BYTES} bytes",
+                artifact.image.len()
+            ),
+        ));
+    }
+    let authenticated = authenticate_artifact(artifact)?;
+    let claim = authenticated.claim();
+    if claim.signer() != expected.signer || claim.public_key() != &expected.public_key {
+        return Err(SignedHolRoundTripError::at(
+            "signer-pinned",
+            format_args!(
+                "artifact signer {} is not the selected kernel {} signer {}",
+                claim.signer(),
+                expected.kernel,
+                expected.signer,
+            ),
+        ));
+    }
+    let image = AuthenticatedValidatedHolImage::validate_default(authenticated)
+        .map_err(|error| SignedHolRoundTripError::at("image-detached-validated", error))?;
+    Ok(PinnedSignedHolArtifact {
+        expected: expected.clone(),
+        namespace_id: artifact.namespace_id,
+        image,
+    })
+}
+
+/// Explicitly trusts, imports, and reads one already pinned artifact.
+///
+/// Authentication, expected-key pinning, and detached validation have already
+/// completed without a receiver. Calling this function is the distinct policy
+/// decision which mutates connection-local trust and persistent import state.
+/// Imported theorem authority remains scoped to the immutable reader.
+///
+/// # Errors
+///
+/// Returns the first rejected trust, import, immutable mount, or reader stage.
+pub fn trust_and_receive_pinned_signed_hol_artifact(
+    target: &mut Connection<Hol<AllowAll>>,
+    pinned: PinnedSignedHolArtifact,
 ) -> Result<ReceivedHolSnapshot, SignedHolRoundTripError> {
-    let validated = authenticate_and_validate_artifact(artifact)?;
+    let PinnedSignedHolArtifact {
+        namespace_id,
+        image: validated,
+        ..
+    } = pinned;
     let claim = validated.claim();
     target
         .trust_snapshot_signer(claim)
@@ -779,15 +1186,10 @@ pub fn receive_signed_hol_artifact(
         .accept_trusted_import(import, claim)
         .map_err(|error| SignedHolRoundTripError::at("namespace-imported", error))?;
     let namespace = target
-        .create_imported_namespace(
-            None,
-            Some("received-beta-demo"),
-            import,
-            artifact.namespace_id,
-        )
+        .create_imported_namespace(None, Some("received-beta-demo"), import, namespace_id)
         .map_err(|error| SignedHolRoundTripError::at("namespace-imported", error))?;
 
-    let mounted = covalence_neutron::ImmutableImage::register(Arc::from(artifact.image.as_slice()))
+    let mounted = covalence_neutron::ImmutableImage::register(Arc::from(validated.image().bytes()))
         .map_err(|error| SignedHolRoundTripError::at("theorem-read", error))?;
     let (context_id, conclusion_id) = target
         .match_trusted_import_image(trusted, validated)
@@ -803,13 +1205,13 @@ pub fn receive_signed_hol_artifact(
     })
 }
 
-fn authenticate_and_validate_artifact(
+fn authenticate_artifact(
     artifact: &SignedHolArtifact,
-) -> Result<AuthenticatedValidatedHolImage, SignedHolRoundTripError> {
+) -> Result<covalence_nucleus::AuthenticatedSnapshot, SignedHolRoundTripError> {
     let public_key: [u8; 32] = artifact.public_key.as_slice().try_into().map_err(|_| {
         SignedHolRoundTripError::invalid("signature-authenticated", "public key is not 32 bytes")
     })?;
-    let authenticated = SignedSnapshotEnvelope::new(
+    SignedSnapshotEnvelope::new(
         &artifact.image,
         artifact.schema,
         artifact.image_hash,
@@ -818,9 +1220,7 @@ fn authenticate_and_validate_artifact(
         &artifact.signature,
     )
     .authenticate()
-    .map_err(|error| SignedHolRoundTripError::at("signature-authenticated", error))?;
-    AuthenticatedValidatedHolImage::validate_default(authenticated)
-        .map_err(|error| SignedHolRoundTripError::at("image-detached-validated", error))
+    .map_err(|error| SignedHolRoundTripError::at("signature-authenticated", error))
 }
 
 fn read_imported_beta(
@@ -891,7 +1291,13 @@ pub fn run_signed_hol_round_trip(
     target: &mut Connection<Hol<AllowAll>>,
 ) -> Result<SignedHolRoundTripResult, SignedHolRoundTripError> {
     let output = produce_signed_hol_artifact(producer_kernel, source)?;
-    let received = receive_signed_hol_artifact(target, output.artifact())?;
+    let expected = ExpectedKernelIdentity {
+        kernel: KernelId::LOCAL,
+        signer: producer_kernel.key_id(),
+        public_key: producer_kernel.verifying_key().to_bytes(),
+    };
+    let pinned = authenticate_pinned_signed_hol_artifact(&expected, output.artifact())?;
+    let received = trust_and_receive_pinned_signed_hol_artifact(target, pinned)?;
     Ok(SignedHolRoundTripResult::from_parts(output, received))
 }
 
@@ -911,6 +1317,9 @@ pub fn run_managed_signed_hol_round_trip(
     directory: &mut Repl<LocalConnection>,
     source: ConnectionId,
 ) -> Result<(SignedHolRoundTripResult, ConnectionId), SignedHolRoundTripError> {
+    let expected = directory
+        .expected_kernel_identity(KernelId::LOCAL)
+        .map_err(|error| SignedHolRoundTripError::at("signer-selected", error))?;
     let produced = produce_signed_hol_artifact(
         producer_kernel,
         directory
@@ -927,14 +1336,17 @@ pub fn run_managed_signed_hol_round_trip(
     let receiver_id = directory
         .insert(target_connection.protocol(), target_connection)
         .map_err(|error| SignedHolRoundTripError::at("receiver-opened", error))?;
-    let admission = receive_signed_hol_artifact(
-        directory
-            .get_mut(receiver_id)
-            .map_err(|error| SignedHolRoundTripError::at("receiver-opened", error))?
-            .hol_mut()
-            .map_err(|error| SignedHolRoundTripError::at("receiver-opened", error))?,
-        produced.artifact(),
-    );
+    let admission = authenticate_pinned_signed_hol_artifact(&expected, produced.artifact())
+        .and_then(|pinned| {
+            trust_and_receive_pinned_signed_hol_artifact(
+                directory
+                    .get_mut(receiver_id)
+                    .map_err(|error| SignedHolRoundTripError::at("receiver-opened", error))?
+                    .hol_mut()
+                    .map_err(|error| SignedHolRoundTripError::at("receiver-opened", error))?,
+                pinned,
+            )
+        });
     match admission {
         Ok(admitted) => Ok((
             SignedHolRoundTripResult::from_parts(produced, admitted),
@@ -1169,6 +1581,12 @@ pub enum ReplError {
     State(sqlite::Error),
     /// A requested runtime connection does not exist.
     UnknownConnection(ConnectionId),
+    /// A kernel endpoint is not registered in this directory.
+    UnknownKernel(KernelId),
+    /// A directory row contains a malformed endpoint public key.
+    CorruptKernelPublicKey(KernelId),
+    /// The implicit local kernel row lives for the directory's lifetime.
+    CannotUnregisterLocalKernel,
     /// A state inspection statement returned no columns.
     StateQueryReturnsNoRows,
     /// No runtime connection is currently selected.
@@ -1181,6 +1599,13 @@ impl fmt::Display for ReplError {
             Self::Open(error) => write!(formatter, "could not open REPL state: {error}"),
             Self::State(error) => write!(formatter, "could not access REPL state: {error}"),
             Self::UnknownConnection(id) => write!(formatter, "unknown connection {id}"),
+            Self::UnknownKernel(id) => write!(formatter, "unknown kernel {id}"),
+            Self::CorruptKernelPublicKey(id) => {
+                write!(formatter, "kernel {id} has a malformed public key")
+            }
+            Self::CannotUnregisterLocalKernel => {
+                formatter.write_str("cannot unregister the local kernel")
+            }
             Self::StateQueryReturnsNoRows => {
                 formatter.write_str("state inspection statements must return rows")
             }
@@ -1195,6 +1620,9 @@ impl StdError for ReplError {
             Self::Open(error) => Some(error),
             Self::State(error) => Some(error),
             Self::UnknownConnection(_)
+            | Self::UnknownKernel(_)
+            | Self::CorruptKernelPublicKey(_)
+            | Self::CannotUnregisterLocalKernel
             | Self::NoActiveConnection
             | Self::StateQueryReturnsNoRows => None,
         }
@@ -1217,7 +1645,10 @@ impl From<sqlite::Error> for ReplError {
 mod web;
 
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-pub use web::{WebHolOutcome, WebKernel, WebOutcome, WebSignedHolOutcome};
+pub use web::{
+    WebConnectionEntry, WebHolOutcome, WebKernel, WebKernelEntry, WebOutcome, WebProducedSignedHol,
+    WebReceivedHolSnapshot, WebReplDirectory, WebSignedHolOutcome,
+};
 
 /// Returns the cross-target `SQLite` smoke-test value.
 #[must_use]
@@ -1232,6 +1663,7 @@ pub fn smoke() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use covalence_nucleus::{ImportId, NamespaceId, TrustedImportId};
 
     #[test]
     fn orchestrates_two_simultaneous_sql_connections() {
@@ -1344,6 +1776,89 @@ mod tests {
     }
 
     #[test]
+    fn registers_keyed_endpoints_without_conflating_them_with_trust() {
+        let mut repl = Repl::empty().unwrap();
+        let first = repl
+            .register_kernel("worker", Some("worker:alpha"), &[1; 32])
+            .unwrap();
+        let second = repl
+            .register_kernel("worker", Some("worker:beta"), &[2; 32])
+            .unwrap();
+        assert_ne!(first, second);
+        let first_identity = repl.expected_kernel_identity(first).unwrap();
+        assert_eq!(first_identity.kernel(), first);
+        assert_eq!(first_identity.public_key(), &[1; 32]);
+        assert_eq!(first_identity.signer(), ed25519_key_id(&[1; 32]));
+        assert_eq!(
+            ExpectedKernelIdentity::from_untrusted_parts(
+                first,
+                &first_identity.signer().to_string(),
+                &[1; 32],
+            )
+            .unwrap(),
+            first_identity
+        );
+        assert!(matches!(
+            ExpectedKernelIdentity::from_untrusted_parts(
+                first,
+                &ed25519_key_id(&[9; 32]).to_string(),
+                &[1; 32],
+            ),
+            Err(ExpectedKernelIdentityError::SignerMismatch { .. })
+        ));
+
+        let first_connection = repl
+            .insert_at(first, "nucleus/hol", Some("7"), "alpha")
+            .unwrap();
+        let second_connection = repl
+            .insert_at(second, "nucleus/hol", Some("3"), "beta")
+            .unwrap();
+        assert_eq!(
+            repl.kernels().unwrap(),
+            [
+                KernelEntry {
+                    id: first,
+                    transport: "worker".to_owned(),
+                    endpoint: Some("worker:alpha".to_owned()),
+                    public_key: vec![1; 32],
+                },
+                KernelEntry {
+                    id: second,
+                    transport: "worker".to_owned(),
+                    endpoint: Some("worker:beta".to_owned()),
+                    public_key: vec![2; 32],
+                },
+            ]
+        );
+        assert_eq!(
+            repl.connections().unwrap(),
+            [
+                ConnectionEntry {
+                    id: first_connection,
+                    kernel: first,
+                    protocol: "nucleus/hol".to_owned(),
+                    remote_connection_id: Some("7".to_owned()),
+                },
+                ConnectionEntry {
+                    id: second_connection,
+                    kernel: second,
+                    protocol: "nucleus/hol".to_owned(),
+                    remote_connection_id: Some("3".to_owned()),
+                },
+            ]
+        );
+
+        assert!(repl.unregister_kernel(first).is_err());
+        assert_eq!(repl.remove(first_connection).unwrap(), "alpha");
+        repl.unregister_kernel(first).unwrap();
+        assert_eq!(repl.kernels().unwrap().len(), 1);
+        assert!(matches!(
+            repl.insert_at(first, "nucleus/sql", None, "closed"),
+            Err(ReplError::UnknownKernel(id)) if id == first
+        ));
+    }
+
+    #[test]
     fn manages_independent_sql_and_hol_connections() {
         let kernel = Kernel::ephemeral();
         let mut repl = Repl::new(kernel.verifying_key().as_bytes()).unwrap();
@@ -1451,7 +1966,10 @@ mod tests {
         // Re-establish portable evidence independently after the managed helper
         // has returned. Returned integer coordinates are not used as authority.
         let artifact = result.produced.artifact();
-        let validated = authenticate_and_validate_artifact(artifact).unwrap();
+        let validated = AuthenticatedValidatedHolImage::validate_default(
+            authenticate_artifact(artifact).unwrap(),
+        )
+        .unwrap();
         let target = directory.get_mut(receiver).unwrap().hol_mut().unwrap();
         let import = target
             .register_import(HolDatabaseRef::new(
@@ -1495,10 +2013,15 @@ mod tests {
         let mut source = producer.open_hol(AllowAll).unwrap();
         let output = produce_signed_hol_artifact(&producer, &mut source).unwrap();
         let artifact = output.artifact();
+        let expected = ExpectedKernelIdentity::from_public_key(
+            KernelId::from_u32(7),
+            producer.verifying_key().as_bytes(),
+        )
+        .unwrap();
 
-        let reconstructed = SignedHolArtifact::from_untrusted_parts(
+        let oversized = SignedHolArtifact::from_untrusted_parts(
             artifact.namespace_id(),
-            artifact.image().to_vec(),
+            vec![0; MAX_IMAGE_BYTES + 1],
             &artifact.schema().to_string(),
             &artifact.image_hash().to_string(),
             &artifact.signer().to_string(),
@@ -1506,8 +2029,13 @@ mod tests {
             artifact.signature().to_vec(),
         )
         .unwrap();
-        let mut target = Kernel::ephemeral().open_hol(AllowAll).unwrap();
-        receive_signed_hol_artifact(&mut target, &reconstructed).unwrap();
+        assert_eq!(
+            authenticate_pinned_signed_hol_artifact(&expected, &oversized)
+                .err()
+                .unwrap()
+                .phase(),
+            "image-size-checked"
+        );
 
         let mut bytes = artifact.image().to_vec();
         bytes[0] ^= 1;
@@ -1521,10 +2049,10 @@ mod tests {
             artifact.signature().to_vec(),
         )
         .unwrap();
-        let mut target = Kernel::ephemeral().open_hol(AllowAll).unwrap();
         assert_eq!(
-            receive_signed_hol_artifact(&mut target, &wrong_bytes)
-                .unwrap_err()
+            authenticate_pinned_signed_hol_artifact(&expected, &wrong_bytes)
+                .err()
+                .unwrap()
                 .phase(),
             "signature-authenticated"
         );
@@ -1539,10 +2067,10 @@ mod tests {
             artifact.signature().to_vec(),
         )
         .unwrap();
-        let mut target = Kernel::ephemeral().open_hol(AllowAll).unwrap();
         assert_eq!(
-            receive_signed_hol_artifact(&mut target, &wrong_schema)
-                .unwrap_err()
+            authenticate_pinned_signed_hol_artifact(&expected, &wrong_schema)
+                .err()
+                .unwrap()
                 .phase(),
             "signature-authenticated"
         );
@@ -1559,12 +2087,99 @@ mod tests {
             signature,
         )
         .unwrap();
-        let mut target = Kernel::ephemeral().open_hol(AllowAll).unwrap();
         assert_eq!(
-            receive_signed_hol_artifact(&mut target, &wrong_signature)
-                .unwrap_err()
+            authenticate_pinned_signed_hol_artifact(&expected, &wrong_signature)
+                .err()
+                .unwrap()
                 .phase(),
             "signature-authenticated"
         );
+    }
+
+    #[test]
+    fn pinning_valid_artifact_is_nonmutating_until_explicit_trust() {
+        let producer = Kernel::ephemeral();
+        let mut source = producer.open_hol(AllowAll).unwrap();
+        let output = produce_signed_hol_artifact(&producer, &mut source).unwrap();
+        let expected = ExpectedKernelIdentity::from_public_key(
+            KernelId::from_u32(7),
+            producer.verifying_key().as_bytes(),
+        )
+        .unwrap();
+        let receiver = Kernel::ephemeral();
+        let mut target = receiver.open_hol(AllowAll).unwrap();
+        let before = receiver.export_hol(&mut target).unwrap();
+
+        let pinned = authenticate_pinned_signed_hol_artifact(&expected, output.artifact()).unwrap();
+        let after_authentication = receiver.export_hol(&mut target).unwrap();
+        assert_eq!(before.image().bytes(), after_authentication.image().bytes());
+        let authenticated = authenticate_artifact(output.artifact()).unwrap();
+        assert!(
+            !target
+                .snapshot_signer_is_trusted(authenticated.claim())
+                .unwrap()
+        );
+        assert!(
+            !target
+                .authenticated_snapshot_is_accepted(authenticated.claim())
+                .unwrap()
+        );
+        assert!(target.import_reference(ImportId::from_i64(0)).is_err());
+        assert!(target.namespace(NamespaceId::from_i64(1)).is_err());
+        assert!(target.trusted_import(TrustedImportId::from_i64(0)).is_err());
+
+        trust_and_receive_pinned_signed_hol_artifact(&mut target, pinned).unwrap();
+        assert!(
+            target
+                .snapshot_signer_is_trusted(authenticated.claim())
+                .unwrap()
+        );
+        assert!(
+            target
+                .authenticated_snapshot_is_accepted(authenticated.claim())
+                .unwrap()
+        );
+        assert!(target.import_reference(ImportId::from_i64(0)).is_ok());
+        assert!(target.namespace(NamespaceId::from_i64(1)).is_ok());
+        assert!(target.trusted_import(TrustedImportId::from_i64(0)).is_ok());
+    }
+
+    #[test]
+    fn valid_attacker_key_is_rejected_before_any_receiver_state_changes() {
+        let expected_kernel = Kernel::ephemeral();
+        let expected = ExpectedKernelIdentity::from_public_key(
+            KernelId::from_u32(4),
+            expected_kernel.verifying_key().as_bytes(),
+        )
+        .unwrap();
+        let attacker = Kernel::ephemeral();
+        let mut attacker_source = attacker.open_hol(AllowAll).unwrap();
+        let attack = produce_signed_hol_artifact(&attacker, &mut attacker_source).unwrap();
+
+        let receiver = Kernel::ephemeral();
+        let mut target = receiver.open_hol(AllowAll).unwrap();
+        let before = receiver.export_hol(&mut target).unwrap();
+        assert_eq!(
+            authenticate_pinned_signed_hol_artifact(&expected, attack.artifact())
+                .err()
+                .unwrap()
+                .phase(),
+            "signer-pinned"
+        );
+        let after = receiver.export_hol(&mut target).unwrap();
+        assert_eq!(before.image().bytes(), after.image().bytes());
+
+        let authenticated = authenticate_artifact(attack.artifact()).unwrap();
+        let claim = authenticated.claim();
+        assert!(!target.snapshot_signer_is_trusted(claim).unwrap());
+        assert!(!target.authenticated_snapshot_is_accepted(claim).unwrap());
+        assert!(
+            !target
+                .snapshot_reference_is_accepted(HolDatabaseRef::new(claim.schema(), claim.image(),))
+                .unwrap()
+        );
+        assert!(target.import_reference(ImportId::from_i64(0)).is_err());
+        assert!(target.namespace(NamespaceId::from_i64(1)).is_err());
+        assert!(target.trusted_import(TrustedImportId::from_i64(0)).is_err());
     }
 }
