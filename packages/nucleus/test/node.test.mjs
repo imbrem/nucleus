@@ -21,6 +21,7 @@ test("runs the REPL kernel through the Wasm binding in Node", async () => {
   const kernel = new WebKernel();
   const connection = kernel.open_connection();
   const otherConnection = kernel.open_connection();
+  const holConnection = kernel.open_hol_connection();
   const hash = kernel.put_image(connection, image);
   kernel.attach_image(connection, hash, "library");
   const result = kernel.run(
@@ -42,7 +43,16 @@ test("runs the REPL kernel through the Wasm binding in Node", async () => {
   );
   kernel.close_connection(otherConnection);
   assert.throws(() => kernel.run(otherConnection, "SELECT 1"));
+  const theorem = kernel.run_hol(holConnection, "beta true");
+  assert.equal(theorem.kind(), "hol-theorem");
+  assert.equal(theorem.recipe(), "beta");
+  assert.equal(theorem.context_id(), "0");
+  assert.equal(theorem.conclusion_id(), "8");
+  assert.equal(theorem.statement(), "(lambda x:bool. x) true = true");
+  assert.throws(() => kernel.run_hol(connection, "truth"));
+  assert.throws(() => kernel.run(holConnection, "SELECT 1"));
 
+  theorem.free();
   result.free();
   kernel.free();
   source.free();

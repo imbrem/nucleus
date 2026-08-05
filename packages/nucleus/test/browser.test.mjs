@@ -68,10 +68,17 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
     ],
   });
   assert.equal(result.readonly, true);
+  assert.deepEqual(result.theorem, {
+    kind: "hol-theorem",
+    recipe: "beta",
+    context: "0",
+    conclusion: "8",
+    statement: "(lambda x:bool. x) true = true",
+  });
 
   const demo = await browser.newPage();
   await demo.goto(`http://127.0.0.1:${address.port}/repl.html`);
-  await demo.getByText("connection 1 ready").waitFor();
+  await demo.getByText("sql connection 1 ready").waitFor();
   await demo.locator("#sql").fill("SELECT 42 AS answer");
   await demo.locator("#run").click();
   await demo.getByRole("cell", { name: "42" }).waitFor();
@@ -82,4 +89,10 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
   await demo.locator("#sql").fill("SELECT 84 AS independent");
   await demo.locator("#run").click();
   await demo.getByRole("cell", { name: "84" }).waitFor();
+
+  await demo.locator("#new-hol").click();
+  await demo.locator("#connection").selectOption("3");
+  await demo.locator("#recipe").fill("reflexivity false");
+  await demo.locator("#run-hol").click();
+  await demo.getByText("statement\tfalse = false").waitFor();
 });

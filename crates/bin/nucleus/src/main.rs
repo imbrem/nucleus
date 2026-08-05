@@ -5,15 +5,23 @@ use std::io;
 use std::process::ExitCode;
 
 use covalence_repl::{
-    Connection, ConnectionId, Kernel, MAX_IMAGE_BYTES, Outcome, Repl, Sql, Value,
+    AllowAll, ConnectionId, HolRecipe, HolRecipeResult, Kernel, LocalConnection, MAX_IMAGE_BYTES,
+    Outcome, Repl, Value,
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
-type LocalRepl = Repl<Connection<Sql>>;
+type LocalRepl = Repl<LocalConnection>;
 
-fn open_connection(kernel: &Kernel, repl: &mut LocalRepl) -> Result<ConnectionId> {
-    let connection = kernel.open_sql()?;
-    let id = repl.insert("nucleus/sql", connection)?;
+fn open_sql_connection(kernel: &Kernel, repl: &mut LocalRepl) -> Result<ConnectionId> {
+    let connection = LocalConnection::Sql(kernel.open_sql()?);
+    let id = repl.insert(connection.protocol(), connection)?;
+    repl.select(id)?;
+    Ok(id)
+}
+
+fn open_hol_connection(kernel: &Kernel, repl: &mut LocalRepl) -> Result<ConnectionId> {
+    let connection = LocalConnection::Hol(kernel.open_hol(AllowAll)?);
+    let id = repl.insert(connection.protocol(), connection)?;
     repl.select(id)?;
     Ok(id)
 }
@@ -63,6 +71,14 @@ fn format_value(value: &Value) -> String {
     }
 }
 
+fn print_hol_outcome(output: &mut impl io::Write, outcome: &HolRecipeResult) -> io::Result<()> {
+    writeln!(output, "kind\t{}", outcome.kind())?;
+    writeln!(output, "recipe\t{}", outcome.recipe())?;
+    writeln!(output, "context\t{}", outcome.context_id())?;
+    writeln!(output, "conclusion\t{}", outcome.conclusion_id())?;
+    writeln!(output, "statement\t{}", outcome.statement())
+}
+
 fn load_image(
     repl: &mut LocalRepl,
     output: &mut impl io::Write,
@@ -74,7 +90,7 @@ fn load_image(
         return Err(format!("image is {size} bytes; the limit is {MAX_IMAGE_BYTES} bytes").into());
     }
     let bytes = fs::read(path)?;
-    let connection = repl.active_mut()?;
+    let connection = repl.active_mut()?.sql_mut()?;
     let hash = connection.put_image(&bytes)?;
     connection.attach_immutable_image(hash, schema)?;
     writeln!(output, "attached {schema} {hash}")?;
@@ -87,6 +103,30 @@ fn parse_load(command: &str) -> Option<(&str, &str)> {
     let schema = arguments[..split].trim();
     let path = arguments[split..].trim();
     (!schema.is_empty() && !path.is_empty()).then_some((schema, path))
+}
+
+fn print_help(output: &mut impl io::Write) -> io::Result<()> {
+    writeln!(
+        output,
+        ".load SCHEMA PATH  attach a complete immutable SQLite image"
+    )?;
+    writeln!(output, ".open [sql|hol]    open and select a connection")?;
+    writeln!(
+        output,
+        ".hol RECIPE        run truth, reflexivity BOOL, or beta BOOL"
+    )?;
+    writeln!(output, ".use ID            select a connection")?;
+    writeln!(output, ".close [ID]        close a connection")?;
+    writeln!(output, ".connections       list open connections")?;
+    writeln!(
+        output,
+        ".export PATH       write the active main snapshot to a file"
+    )?;
+    writeln!(
+        output,
+        ".state SQL         query the REPL state database read-only"
+    )?;
+    writeln!(output, ".quit              exit")
 }
 
 fn run_line(
@@ -103,28 +143,17 @@ fn run_line(
         return Ok(false);
     }
     if line == ".help" {
-        writeln!(
-            output,
-            ".load SCHEMA PATH  attach a complete immutable SQLite image"
-        )?;
-        writeln!(output, ".open              open and select a connection")?;
-        writeln!(output, ".use ID            select a connection")?;
-        writeln!(output, ".close [ID]        close a connection")?;
-        writeln!(output, ".connections       list open connections")?;
-        writeln!(
-            output,
-            ".export PATH       write the active main snapshot to a file"
-        )?;
-        writeln!(
-            output,
-            ".state SQL         query the REPL state database read-only"
-        )?;
-        writeln!(output, ".quit              exit")?;
+        print_help(output)?;
         return Ok(true);
     }
-    if line == ".open" {
-        let id = open_connection(kernel, repl)?;
-        writeln!(output, "opened connection {id}")?;
+    if line == ".open" || line == ".open sql" {
+        let id = open_sql_connection(kernel, repl)?;
+        writeln!(output, "opened SQL connection {id}")?;
+        return Ok(true);
+    }
+    if line == ".open hol" {
+        let id = open_hol_connection(kernel, repl)?;
+        writeln!(output, "opened HOL connection {id}")?;
         return Ok(true);
     }
     if let Some(argument) = line.strip_prefix(".use ") {
@@ -166,7 +195,7 @@ fn run_line(
         if path.is_empty() {
             return Err("usage: .export PATH".into());
         }
-        let bytes = repl.active_mut()?.serialize_main()?;
+        let bytes = repl.active_mut()?.sql_mut()?.serialize_main()?;
         fs::write(path, &bytes)?;
         writeln!(output, "exported {} bytes to {path}", bytes.len())?;
         return Ok(true);
@@ -181,11 +210,17 @@ fn run_line(
         load_image(repl, output, schema, path)?;
         return Ok(true);
     }
+    if let Some(source) = line.strip_prefix(".hol ") {
+        let recipe = source.parse::<HolRecipe>()?;
+        let outcome = recipe.execute(repl.active_mut()?.hol_mut()?)?;
+        print_hol_outcome(output, &outcome)?;
+        return Ok(true);
+    }
     if line.starts_with('.') {
         return Err(format!("unknown command: {line}").into());
     }
 
-    let outcome = repl.active_mut()?.run(line, &[])?;
+    let outcome = repl.active_mut()?.sql_mut()?.run(line, &[])?;
     print_outcome(output, &outcome)?;
     Ok(true)
 }
@@ -198,7 +233,7 @@ fn run_repl(
 ) -> Result<()> {
     let kernel = Kernel::ephemeral();
     let mut repl = Repl::new(kernel.verifying_key().as_bytes())?;
-    open_connection(&kernel, &mut repl)?;
+    open_sql_connection(&kernel, &mut repl)?;
     let mut line = String::new();
     loop {
         if prompt {
@@ -220,6 +255,7 @@ fn run_repl(
 
 fn usage(output: &mut impl io::Write) -> io::Result<()> {
     writeln!(output, "usage: nucleus [-c SQL]")?;
+    writeln!(output, "       nucleus --hol RECIPE")?;
     writeln!(output, "       nucleus --help")
 }
 
@@ -239,9 +275,23 @@ fn run() -> Result<()> {
             }
             let kernel = Kernel::ephemeral();
             let mut repl = Repl::new(kernel.verifying_key().as_bytes())?;
-            open_connection(&kernel, &mut repl)?;
-            let outcome = repl.active_mut()?.run(&sql, &[])?;
+            open_sql_connection(&kernel, &mut repl)?;
+            let outcome = repl.active_mut()?.sql_mut()?.run(&sql, &[])?;
             print_outcome(&mut io::stdout().lock(), &outcome)?;
+            Ok(())
+        }
+        Some("--hol") => {
+            let source = arguments.next().ok_or("--hol requires one recipe")?;
+            if arguments.next().is_some() {
+                return Err("unexpected arguments after HOL recipe".into());
+            }
+            let kernel = Kernel::ephemeral();
+            let mut repl = Repl::new(kernel.verifying_key().as_bytes())?;
+            open_hol_connection(&kernel, &mut repl)?;
+            let outcome = source
+                .parse::<HolRecipe>()?
+                .execute(repl.active_mut()?.hol_mut()?)?;
+            print_hol_outcome(&mut io::stdout().lock(), &outcome)?;
             Ok(())
         }
         Some("-h" | "--help") => {
@@ -268,6 +318,7 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
+    use covalence_repl::{Connection, Sql};
 
     static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
 
@@ -299,7 +350,7 @@ mod tests {
         run_repl(&mut input, &mut output, &mut errors, false).expect("run REPL");
 
         let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("opened connection 2\n"));
+        assert!(output.contains("opened SQL connection 2\n"));
         assert!(output.contains("absent\n0\n"));
         assert!(output.contains("using connection 1\n"));
         assert!(output.contains("value\n42\n"));
@@ -332,6 +383,30 @@ mod tests {
         assert!(output.contains("exported "));
         assert!(output.contains("attached library"));
         assert!(output.contains("value\n\"roundtrip\"\n"));
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn shares_hol_recipes_across_multiple_protocol_connections() {
+        let mut input = Cursor::new(
+            ".open hol\n.hol beta true\n.open sql\nSELECT 7 AS sql_only\n.use 2\n.hol reflexivity false\n.connections\n.quit\n",
+        );
+        let mut output = Vec::new();
+        let mut errors = Vec::new();
+
+        run_repl(&mut input, &mut output, &mut errors, false).expect("run REPL");
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("opened HOL connection 2\n"));
+        assert!(output.contains("recipe\tbeta\n"));
+        assert!(output.contains("statement\t(lambda x:bool. x) true = true\n"));
+        assert!(output.contains("opened SQL connection 3\n"));
+        assert!(output.contains("sql_only\n7\n"));
+        assert!(output.contains("recipe\treflexivity\n"));
+        assert!(output.contains("statement\tfalse = false\n"));
+        assert!(output.contains("  1\tnucleus/sql\n"));
+        assert!(output.contains("* 2\tnucleus/hol\n"));
+        assert!(output.contains("  3\tnucleus/sql\n"));
         assert!(errors.is_empty());
     }
 
