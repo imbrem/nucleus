@@ -4,10 +4,14 @@ use covalence_lib_hash::O256;
 use wasm_bindgen::prelude::*;
 
 use super::{
-    AllowAll, ConnectionEntry, ConnectionId, HolRecipe, HolRecipeResult, Kernel, KernelEntry,
-    KernelId, LocalConnection, Outcome, PinnedSignedHolArtifact, ProducedSignedHol, QueryResult,
-    ReceivedHolSnapshot, Repl, SIGNED_HOL_PHASES, SignedHolArtifact, SignedHolRoundTripResult,
-    Value, authenticate_pinned_signed_hol_artifact, produce_signed_hol_artifact,
+    AllowAll, ConnectionEntry, ConnectionId, ExpectedKernelIdentity, HolRecipe, HolRecipeResult,
+    Kernel, KernelEntry, KernelId, LocalConnection, MAX_SIGNED_MESSAGE_BYTES, Outcome,
+    PinnedSignedHolArtifact, ProducedSignedHol, QueryResult, ReceivedHolSnapshot, Repl,
+    SIGNED_HOL_PHASES, ServiceIdentity, ServiceOperation, ServiceProducedHol, ServiceResult,
+    SessionInitiator, SignedHolArtifact, SignedHolRoundTripResult, SignedKernelService,
+    SignedMessageRequest, SignedMessageResponse, SignedServiceCommand, SignedServiceSession, Value,
+    authenticate_pinned_signed_hol_artifact, decode_signed_request, decode_signed_response,
+    encode_signed_request, encode_signed_response, produce_signed_hol_artifact,
     run_managed_signed_hol_round_trip, trust_and_receive_pinned_signed_hol_artifact,
 };
 
@@ -75,6 +79,398 @@ pub struct WebProducedSignedHol {
 #[wasm_bindgen]
 pub struct WebReceivedHolSnapshot {
     received: ReceivedHolSnapshot,
+}
+
+/// Browser-side authenticated session state for a remote signed kernel service.
+#[wasm_bindgen]
+pub struct WebSignedKernelSession {
+    expected: ServiceIdentity,
+    initiator: Option<SessionInitiator>,
+    handshake_sent: bool,
+    session: Option<SignedServiceSession>,
+    pending: Option<SignedServiceCommand>,
+}
+
+/// A remote producer result accepted only after verifying its signed reply.
+#[wasm_bindgen]
+pub struct WebRemoteProducedHol {
+    produced: ServiceProducedHol,
+}
+
+/// Receiver-local coordinates accepted from an authenticated signed reply.
+#[wasm_bindgen]
+pub struct WebRemoteReceivedHol {
+    received: super::ServiceReceivedHol,
+}
+
+/// Worker-side signed kernel service. Its only command surface is bounded bytes.
+#[wasm_bindgen]
+pub struct WebSignedKernelService {
+    service: SignedKernelService,
+}
+
+#[wasm_bindgen]
+impl WebSignedKernelService {
+    /// Creates a service with a fresh ephemeral signing key.
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Result<WebSignedKernelService, JsValue> {
+        Ok(Self {
+            service: SignedKernelService::new().map_err(js_error)?,
+        })
+    }
+
+    /// Returns the bootstrap public key for independent coordinator pinning.
+    #[must_use]
+    pub fn public_key(&self) -> Vec<u8> {
+        self.service.description().identity().public_key().to_vec()
+    }
+
+    /// Decodes, authenticates, dispatches, and encodes one bounded message.
+    pub fn handle(&mut self, bytes: &[u8]) -> Result<Vec<u8>, JsValue> {
+        let request = decode_signed_request(bytes).map_err(js_error)?;
+        let response = match request {
+            SignedMessageRequest::Describe => {
+                SignedMessageResponse::Description(self.service.description().clone())
+            }
+            SignedMessageRequest::OpenSession(request) => SignedMessageResponse::SessionAccepted(
+                self.service.open_session(&request).map_err(js_error)?,
+            ),
+            SignedMessageRequest::Execute(command) => {
+                SignedMessageResponse::Reply(self.service.execute(&command).map_err(js_error)?)
+            }
+        };
+        encode_signed_response(&response).map_err(js_error)
+    }
+}
+
+#[wasm_bindgen]
+impl WebSignedKernelSession {
+    /// Returns the shared maximum encoded message size.
+    #[must_use]
+    pub fn max_message_bytes() -> usize {
+        MAX_SIGNED_MESSAGE_BYTES
+    }
+
+    /// Encodes the transport-neutral request for signed endpoint metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error if the fixed request cannot be encoded.
+    pub fn describe_request() -> Result<Vec<u8>, JsValue> {
+        encode_signed_request(&SignedMessageRequest::Describe).map_err(js_error)
+    }
+
+    /// Pins a decoded description to an independently supplied public key.
+    ///
+    /// The key must come from outside the HTTP response path. This establishes
+    /// a fresh requester-signed handshake but performs no network operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for malformed bytes, unexpected message kind,
+    /// incoherent key coordinates, or endpoint-pin/signature failure.
+    pub fn begin(
+        expected_public_key: &[u8],
+        description: &[u8],
+    ) -> Result<WebSignedKernelSession, JsValue> {
+        let expected =
+            ExpectedKernelIdentity::from_public_key(KernelId::LOCAL, expected_public_key)
+                .map_err(js_error)?;
+        let pinned =
+            ServiceIdentity::new(expected.signer(), *expected.public_key()).map_err(js_error)?;
+        let SignedMessageResponse::Description(description) =
+            decode_signed_response(description).map_err(js_error)?
+        else {
+            return Err(JsValue::from_str("expected signed endpoint description"));
+        };
+        let initiator = SessionInitiator::begin(pinned, &description).map_err(js_error)?;
+        Ok(Self {
+            expected: pinned,
+            initiator: Some(initiator),
+            handshake_sent: false,
+            session: None,
+            pending: None,
+        })
+    }
+
+    /// Returns the O256 identity derived from the out-of-band public key.
+    #[must_use]
+    pub fn expected_signer(&self) -> String {
+        self.expected.signer().to_string()
+    }
+
+    /// Encodes this requester's signed session handshake.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error after the one handshake request has been
+    /// emitted. Unlike commands, OpenSession has no exact-replay recovery: an
+    /// ambiguous attempt must be abandoned and restarted with a fresh session.
+    pub fn session_request(&mut self) -> Result<Vec<u8>, JsValue> {
+        if self.handshake_sent {
+            return Err(JsValue::from_str(
+                "session handshake was already emitted; begin a fresh session",
+            ));
+        }
+        let request = self
+            .initiator
+            .as_ref()
+            .ok_or_else(|| JsValue::from_str("session handshake is no longer pending"))?
+            .request()
+            .clone();
+        self.handshake_sent = true;
+        encode_signed_request(&SignedMessageRequest::OpenSession(request)).map_err(js_error)
+    }
+
+    /// Verifies the endpoint-signed session acceptance.
+    ///
+    /// # Errors
+    ///
+    /// Returns a JavaScript error for malformed, misrouted, or invalidly signed
+    /// bytes. Every call consumes the handshake attempt, including failed
+    /// verification. The caller must begin a fresh session after any error.
+    pub fn accept_session(&mut self, response: &[u8]) -> Result<(), JsValue> {
+        if !self.handshake_sent {
+            return Err(JsValue::from_str("session handshake was not emitted"));
+        }
+        let initiator = self
+            .initiator
+            .take()
+            .ok_or_else(|| JsValue::from_str("session handshake is not pending"))?;
+        let SignedMessageResponse::SessionAccepted(accepted) =
+            decode_signed_response(response).map_err(js_error)?
+        else {
+            return Err(JsValue::from_str("expected signed session acceptance"));
+        };
+        self.session = Some(initiator.accept(&accepted).map_err(js_error)?);
+        Ok(())
+    }
+
+    /// Encodes a signed request to open one remote HOL connection.
+    pub fn open_hol_command(&mut self) -> Result<Vec<u8>, JsValue> {
+        self.command(ServiceOperation::OpenHol)
+    }
+
+    /// Verifies an OpenHol reply and returns its exact remote handle.
+    pub fn accept_open_hol(&mut self, response: &[u8]) -> Result<String, JsValue> {
+        match self.accept_result(response)? {
+            ServiceResult::Opened(connection) => Ok(connection.to_string()),
+            _ => Err(JsValue::from_str("remote kernel did not open HOL")),
+        }
+    }
+
+    /// Encodes a signed request for the shared closed-beta artifact.
+    pub fn produce_signed_hol_command(&mut self, connection: &str) -> Result<Vec<u8>, JsValue> {
+        self.command(ServiceOperation::ProduceSignedHol(parse_remote_connection(
+            connection,
+        )?))
+    }
+
+    /// Verifies a producer reply before exposing its signed artifact.
+    pub fn accept_produced_hol(
+        &mut self,
+        response: &[u8],
+    ) -> Result<WebRemoteProducedHol, JsValue> {
+        match self.accept_result(response)? {
+            ServiceResult::Produced(produced) => Ok(WebRemoteProducedHol {
+                produced: *produced,
+            }),
+            _ => Err(JsValue::from_str(
+                "remote kernel did not produce a signed HOL artifact",
+            )),
+        }
+    }
+
+    /// Encodes a signed command that pins, trusts, mounts, and reads an artifact.
+    pub fn receive_signed_hol_command(
+        &mut self,
+        connection: &str,
+        expected_kernel: u32,
+        expected_public_key: &[u8],
+        produced: &WebRemoteProducedHol,
+    ) -> Result<Vec<u8>, JsValue> {
+        let expected = ExpectedKernelIdentity::from_public_key(
+            KernelId::from_u32(expected_kernel),
+            expected_public_key,
+        )
+        .map_err(js_error)?;
+        self.command(ServiceOperation::ReceiveSignedHol {
+            connection: parse_remote_connection(connection)?,
+            expected,
+            artifact: Box::new(produced.produced.artifact().clone()),
+        })
+    }
+
+    /// Verifies the receiver's signed reply before exposing inert coordinates.
+    pub fn accept_received_hol(
+        &mut self,
+        response: &[u8],
+    ) -> Result<WebRemoteReceivedHol, JsValue> {
+        match self.accept_result(response)? {
+            ServiceResult::Received(received) => Ok(WebRemoteReceivedHol { received }),
+            _ => Err(JsValue::from_str(
+                "remote kernel did not receive the signed HOL artifact",
+            )),
+        }
+    }
+
+    /// Encodes a signed close request for one remote HOL connection.
+    pub fn close_hol_command(&mut self, connection: &str) -> Result<Vec<u8>, JsValue> {
+        self.command(ServiceOperation::CloseHol(parse_remote_connection(
+            connection,
+        )?))
+    }
+
+    /// Verifies a signed close reply.
+    pub fn accept_closed(&mut self, response: &[u8]) -> Result<(), JsValue> {
+        match self.accept_result(response)? {
+            ServiceResult::Closed => Ok(()),
+            _ => Err(JsValue::from_str("remote kernel did not close HOL")),
+        }
+    }
+
+    /// Encodes a signed request to close this authenticated session.
+    pub fn close_session_command(&mut self) -> Result<Vec<u8>, JsValue> {
+        self.command(ServiceOperation::CloseSession)
+    }
+
+    /// Verifies the signed session-closed reply.
+    pub fn accept_session_closed(&mut self, response: &[u8]) -> Result<(), JsValue> {
+        match self.accept_result(response)? {
+            ServiceResult::SessionClosed => Ok(()),
+            _ => Err(JsValue::from_str("remote kernel did not close the session")),
+        }
+    }
+
+    /// Re-encodes the exact pending signed request without changing sequence state.
+    ///
+    /// This is the only safe retry after an ambiguous transport failure: the
+    /// endpoint contract returns its cached signed reply without redispatch.
+    pub fn retry_pending_command(&self) -> Result<Vec<u8>, JsValue> {
+        let pending = self
+            .pending
+            .as_ref()
+            .ok_or_else(|| JsValue::from_str("no signed command is pending"))?;
+        encode_signed_request(&SignedMessageRequest::Execute(pending.clone())).map_err(js_error)
+    }
+}
+
+impl WebSignedKernelSession {
+    fn command(&mut self, operation: ServiceOperation) -> Result<Vec<u8>, JsValue> {
+        if self.pending.is_some() {
+            return Err(JsValue::from_str("a signed command is already pending"));
+        }
+        let command = self
+            .session
+            .as_mut()
+            .ok_or_else(|| JsValue::from_str("signed session is not established"))?
+            .command(operation)
+            .map_err(js_error)?;
+        let encoded = encode_signed_request(&SignedMessageRequest::Execute(command.clone()))
+            .map_err(js_error)?;
+        self.pending = Some(command);
+        Ok(encoded)
+    }
+
+    fn accept_result(&mut self, response: &[u8]) -> Result<ServiceResult, JsValue> {
+        let SignedMessageResponse::Reply(reply) =
+            decode_signed_response(response).map_err(js_error)?
+        else {
+            return Err(JsValue::from_str("expected signed service reply"));
+        };
+        let command = self
+            .pending
+            .as_ref()
+            .ok_or_else(|| JsValue::from_str("no signed command is pending"))?;
+        let result = self
+            .session
+            .as_mut()
+            .ok_or_else(|| JsValue::from_str("signed session is not established"))?
+            .accept_reply(command, reply)
+            .map_err(js_error)?;
+        self.pending = None;
+        Ok(result)
+    }
+}
+
+#[wasm_bindgen]
+impl WebRemoteProducedHol {
+    /// Returns the endpoint-signed presentation string.
+    #[must_use]
+    pub fn statement(&self) -> String {
+        self.produced.statement().to_owned()
+    }
+
+    /// Returns the source namespace as an exact decimal string.
+    #[must_use]
+    pub fn namespace_id(&self) -> String {
+        self.produced.artifact().namespace_id().to_string()
+    }
+
+    /// Copies the exact SQLite image bytes.
+    #[must_use]
+    pub fn image(&self) -> Vec<u8> {
+        self.produced.artifact().image().to_vec()
+    }
+
+    /// Returns the signed HOL schema coordinate.
+    #[must_use]
+    pub fn schema(&self) -> String {
+        self.produced.artifact().schema().to_string()
+    }
+
+    /// Returns the claimed exact image hash.
+    #[must_use]
+    pub fn image_hash(&self) -> String {
+        self.produced.artifact().image_hash().to_string()
+    }
+
+    /// Returns the producer key identity.
+    #[must_use]
+    pub fn signer(&self) -> String {
+        self.produced.artifact().signer().to_string()
+    }
+
+    /// Copies the producer public key.
+    #[must_use]
+    pub fn public_key(&self) -> Vec<u8> {
+        self.produced.artifact().public_key().to_vec()
+    }
+
+    /// Copies the schema-qualified artifact signature.
+    #[must_use]
+    pub fn signature(&self) -> Vec<u8> {
+        self.produced.artifact().signature().to_vec()
+    }
+}
+
+#[wasm_bindgen]
+impl WebRemoteReceivedHol {
+    #[must_use]
+    pub fn import_id(&self) -> String {
+        self.received.import_id().to_string()
+    }
+
+    #[must_use]
+    pub fn namespace_id(&self) -> String {
+        self.received.namespace_id().to_string()
+    }
+
+    #[must_use]
+    pub fn context_id(&self) -> String {
+        self.received.context_id().to_string()
+    }
+
+    #[must_use]
+    pub fn conclusion_id(&self) -> String {
+        self.received.conclusion_id().to_string()
+    }
+}
+
+fn parse_remote_connection(connection: &str) -> Result<u64, JsValue> {
+    connection
+        .parse()
+        .map_err(|_| JsValue::from_str("remote connection is not a u64"))
 }
 
 #[wasm_bindgen]

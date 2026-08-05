@@ -1,11 +1,118 @@
-import init, {
+import initWasm, {
   smoke,
   WebHolOutcome,
   WebKernel,
   WebOutcome,
+  WebRemoteProducedHol,
+  WebRemoteReceivedHol,
+  WebSignedKernelSession,
 } from "../generated/nucleus.js";
 
-export { init, smoke, WebHolOutcome, WebKernel, WebOutcome };
+export { smoke, WebHolOutcome, WebKernel, WebOutcome, WebSignedKernelSession };
+
+let initialization: ReturnType<typeof initWasm> | undefined;
+
+/** Initializes the shared main-thread Wasm module exactly once. */
+export function init(): ReturnType<typeof initWasm> {
+  initialization ??= initWasm();
+  return initialization;
+}
+
+export interface SignedByteTransport {
+  exchange(bytes: Uint8Array): Promise<Uint8Array>;
+}
+
+export class SignedKernelSessionClient {
+  #pending:
+    | { bytes: Uint8Array; accept(response: Uint8Array): unknown }
+    | undefined;
+
+  constructor(
+    readonly transport: SignedByteTransport,
+    readonly publicKey: Uint8Array,
+    private readonly session: WebSignedKernelSession,
+  ) {}
+
+  async openHol(): Promise<string> {
+    return this.#command(this.session.open_hol_command(), (reply) =>
+      this.session.accept_open_hol(reply),
+    );
+  }
+
+  async produceHol(connection: string): Promise<WebRemoteProducedHol> {
+    return this.#command(
+      this.session.produce_signed_hol_command(connection),
+      (reply) => this.session.accept_produced_hol(reply),
+    );
+  }
+
+  async receiveExternalHol(
+    connection: string,
+    expectedKernelId: number,
+    expectedPublicKey: Uint8Array,
+    artifact: WebRemoteProducedHol,
+  ): Promise<WebRemoteReceivedHol> {
+    return this.#command(
+      this.session.receive_signed_hol_command(
+        connection,
+        expectedKernelId,
+        expectedPublicKey,
+        artifact,
+      ),
+      (reply) => this.session.accept_received_hol(reply),
+    );
+  }
+
+  async closeHol(connection: string): Promise<void> {
+    await this.#command(this.session.close_hol_command(connection), (reply) =>
+      this.session.accept_closed(reply),
+    );
+  }
+
+  async closeSession(): Promise<void> {
+    await this.#command(this.session.close_session_command(), (reply) =>
+      this.session.accept_session_closed(reply),
+    );
+  }
+
+  async retryPending(): Promise<unknown> {
+    const pending = this.#pending;
+    if (pending === undefined) throw new Error("no signed command is pending");
+    const reply = await this.transport.exchange(pending.bytes);
+    const result = pending.accept(reply);
+    this.#pending = undefined;
+    return result;
+  }
+
+  async #command<T>(
+    bytes: Uint8Array,
+    accept: (response: Uint8Array) => T,
+  ): Promise<T> {
+    if (this.#pending !== undefined) {
+      throw new Error("an exact signed command is already pending");
+    }
+    const pending = { bytes: bytes.slice(), accept };
+    this.#pending = pending;
+    const reply = await this.transport.exchange(pending.bytes);
+    const result = accept(reply);
+    this.#pending = undefined;
+    return result;
+  }
+}
+
+export async function connectSignedKernel(
+  transport: SignedByteTransport,
+  publicKey: Uint8Array,
+): Promise<SignedKernelSessionClient> {
+  await init();
+  const description = await transport.exchange(
+    WebSignedKernelSession.describe_request(),
+  );
+  const session = WebSignedKernelSession.begin(publicKey, description);
+  const accepted = await transport.exchange(session.session_request());
+  session.accept_session(accepted);
+  return new SignedKernelSessionClient(transport, publicKey.slice(), session);
+}
 
 export type SqlValue =
   | { kind: "null" }
