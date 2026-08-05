@@ -35,10 +35,10 @@ mod bindings {
 }
 
 use bindings::covalence::hol_proof_guest::host::{
-    AppendError, ContextNode, Host, HostContextNode, HostNamespaceNode, HostProofPlan,
-    HostTermInstantiationMapNode, HostTermNode, HostTheoremNode, HostTypeInstantiationMapNode,
-    HostTypeNode, NamespaceNode, ProofPlan, TermInstantiationMapNode, TermNode, TheoremNode,
-    TypeInstantiationMapNode, TypeNode,
+    AppendError, ContextNode, ConversionNode, Host, HostContextNode, HostConversionNode,
+    HostNamespaceNode, HostProofPlan, HostTermInstantiationMapNode, HostTermNode, HostTheoremNode,
+    HostTypeInstantiationMapNode, HostTypeNode, NamespaceNode, ProofPlan, TermInstantiationMapNode,
+    TermNode, TheoremNode, TypeInstantiationMapNode, TypeNode,
 };
 
 const PLAN_REP: u32 = 1;
@@ -217,6 +217,33 @@ impl HostProofPlan for GuestState {
         Self::plan(&plan).and_then(|()| self.append(Recipe::Bool(value), Sort::Term))
     }
 
+    fn application(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        function: Resource<TermNode>,
+        argument: Resource<TermNode>,
+    ) -> Result<Resource<TermNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&function, Sort::Term))
+            .and_then(|function| {
+                self.node(&argument, Sort::Term)
+                    .map(|argument| (function, argument))
+            })
+            .and_then(|(function, argument)| {
+                self.append(Recipe::Application { function, argument }, Sort::Term)
+            })
+    }
+
+    fn epsilon(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        predicate: Resource<TermNode>,
+    ) -> Result<Resource<TermNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&predicate, Sort::Term))
+            .and_then(|predicate| self.append(Recipe::Epsilon { predicate }, Sort::Term))
+    }
+
     fn empty_context(
         &mut self,
         plan: Resource<ProofPlan>,
@@ -224,49 +251,179 @@ impl HostProofPlan for GuestState {
         Self::plan(&plan).and_then(|()| self.append(Recipe::EmptyContext, Sort::Context))
     }
 
-    fn prove_beta(
+    fn conversion_reflexivity(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        term: Resource<TermNode>,
+    ) -> Result<Resource<ConversionNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&term, Sort::Term))
+            .and_then(|term| self.append(Recipe::ConversionReflexivity { term }, Sort::Conversion))
+    }
+
+    fn conversion_symmetry(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        conversion: Resource<ConversionNode>,
+    ) -> Result<Resource<ConversionNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&conversion, Sort::Conversion))
+            .and_then(|conversion| {
+                self.append(Recipe::ConversionSymmetry { conversion }, Sort::Conversion)
+            })
+    }
+
+    fn conversion_transitivity(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        first: Resource<ConversionNode>,
+        second: Resource<ConversionNode>,
+    ) -> Result<Resource<ConversionNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&first, Sort::Conversion))
+            .and_then(|first| {
+                self.node(&second, Sort::Conversion)
+                    .map(|second| (first, second))
+            })
+            .and_then(|(first, second)| {
+                self.append(
+                    Recipe::ConversionTransitivity { first, second },
+                    Sort::Conversion,
+                )
+            })
+    }
+
+    fn conversion_application(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        function: Resource<ConversionNode>,
+        argument: Resource<ConversionNode>,
+    ) -> Result<Resource<ConversionNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&function, Sort::Conversion))
+            .and_then(|function| {
+                self.node(&argument, Sort::Conversion)
+                    .map(|argument| (function, argument))
+            })
+            .and_then(|(function, argument)| {
+                self.append(
+                    Recipe::ConversionApplication { function, argument },
+                    Sort::Conversion,
+                )
+            })
+    }
+
+    fn conversion_lambda(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        parameter_type: Resource<TypeNode>,
+        body: Resource<ConversionNode>,
+    ) -> Result<Resource<ConversionNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&parameter_type, Sort::Type))
+            .and_then(|parameter_type| {
+                self.node(&body, Sort::Conversion)
+                    .map(|body| (parameter_type, body))
+            })
+            .and_then(|(parameter_type, body)| {
+                self.append(
+                    Recipe::ConversionLambda {
+                        parameter_type,
+                        body,
+                    },
+                    Sort::Conversion,
+                )
+            })
+    }
+
+    fn conversion_beta(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        abstraction: Resource<TermNode>,
+        argument: Resource<TermNode>,
+    ) -> Result<Resource<ConversionNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&abstraction, Sort::Term))
+            .and_then(|abstraction| {
+                self.node(&argument, Sort::Term)
+                    .map(|argument| (abstraction, argument))
+            })
+            .and_then(|(abstraction, argument)| {
+                self.append(
+                    Recipe::ConversionBeta {
+                        abstraction,
+                        argument,
+                    },
+                    Sort::Conversion,
+                )
+            })
+    }
+
+    fn conversion_eta(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        function: Resource<TermNode>,
+    ) -> Result<Resource<ConversionNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&function, Sort::Term))
+            .and_then(|function| self.append(Recipe::ConversionEta { function }, Sort::Conversion))
+    }
+
+    fn conversion_epsilon(
+        &mut self,
+        plan: Resource<ProofPlan>,
+        predicate: Resource<ConversionNode>,
+    ) -> Result<Resource<ConversionNode>, AppendError> {
+        Self::plan(&plan)
+            .and_then(|()| self.node(&predicate, Sort::Conversion))
+            .and_then(|predicate| {
+                self.append(Recipe::ConversionEpsilon { predicate }, Sort::Conversion)
+            })
+    }
+
+    fn prove_conversion_equality(
         &mut self,
         plan: Resource<ProofPlan>,
         context: Resource<ContextNode>,
-        abstraction: Resource<TermNode>,
-        argument: Resource<TermNode>,
+        conversion: Resource<ConversionNode>,
     ) -> Result<Resource<TheoremNode>, AppendError> {
         Self::plan(&plan)
             .and_then(|()| self.node(&context, Sort::Context))
             .and_then(|context| {
-                self.node(&abstraction, Sort::Term)
-                    .map(|abstraction| (context, abstraction))
+                self.node(&conversion, Sort::Conversion)
+                    .map(|conversion| (context, conversion))
             })
-            .and_then(|(context, abstraction)| {
-                self.node(&argument, Sort::Term)
-                    .map(|argument| (context, abstraction, argument))
-            })
-            .and_then(|(context, abstraction, argument)| {
+            .and_then(|(context, conversion)| {
                 self.append(
-                    Recipe::Beta {
+                    Recipe::ConversionEquality {
                         context,
-                        abstraction,
-                        argument,
+                        conversion,
                     },
                     Sort::Theorem,
                 )
             })
     }
 
-    fn prove_eta(
+    fn convert_theorem(
         &mut self,
         plan: Resource<ProofPlan>,
-        context: Resource<ContextNode>,
-        function: Resource<TermNode>,
+        theorem: Resource<TheoremNode>,
+        conversion: Resource<ConversionNode>,
     ) -> Result<Resource<TheoremNode>, AppendError> {
         Self::plan(&plan)
-            .and_then(|()| self.node(&context, Sort::Context))
-            .and_then(|context| {
-                self.node(&function, Sort::Term)
-                    .map(|function| (context, function))
+            .and_then(|()| self.node(&theorem, Sort::Theorem))
+            .and_then(|theorem| {
+                self.node(&conversion, Sort::Conversion)
+                    .map(|conversion| (theorem, conversion))
             })
-            .and_then(|(context, function)| {
-                self.append(Recipe::Eta { context, function }, Sort::Theorem)
+            .and_then(|(theorem, conversion)| {
+                self.append(
+                    Recipe::ConvertTheorem {
+                        theorem,
+                        conversion,
+                    },
+                    Sort::Theorem,
+                )
             })
     }
 
@@ -532,6 +689,7 @@ macro_rules! drop_resource {
 drop_resource!(HostTypeNode, TypeNode);
 drop_resource!(HostTermNode, TermNode);
 drop_resource!(HostContextNode, ContextNode);
+drop_resource!(HostConversionNode, ConversionNode);
 drop_resource!(HostTheoremNode, TheoremNode);
 drop_resource!(HostNamespaceNode, NamespaceNode);
 drop_resource!(HostTermInstantiationMapNode, TermInstantiationMapNode);
@@ -918,25 +1076,28 @@ mod tests {
             },
             Recipe::Bool(true),
             Recipe::EmptyContext,
-            Recipe::Beta {
-                context: 4,
+            Recipe::ConversionBeta {
                 abstraction: 2,
                 argument: 3,
             },
-            Recipe::Persist { theorem: 5 },
+            Recipe::ConversionEquality {
+                context: 4,
+                conversion: 5,
+            },
+            Recipe::Persist { theorem: 6 },
             Recipe::Namespace {
                 name: Some("demo".into()),
             },
             Recipe::ExportContext {
-                namespace: 7,
+                namespace: 8,
                 export: 0,
                 context: 4,
                 name: Some("empty_context".into()),
             },
             Recipe::ExportTheorem {
-                namespace: 7,
+                namespace: 8,
                 export: 1,
-                theorem: 5,
+                theorem: 6,
                 name: Some("identity_true_beta".into()),
             },
         ]
@@ -960,12 +1121,56 @@ mod tests {
         );
         let context = state.empty_context(Resource::new_borrow(PLAN_REP)).unwrap();
         assert!(matches!(
-            state.prove_eta(
+            state.conversion_eta(
                 Resource::new_borrow(PLAN_REP),
-                Resource::new_borrow(context.rep()),
                 Resource::new_borrow(context.rep()),
             ),
             Err(AppendError::InvalidDependency)
+        ));
+        assert!(matches!(
+            state.conversion_symmetry(
+                Resource::new_borrow(PLAN_REP),
+                Resource::new_borrow(context.rep()),
+            ),
+            Err(AppendError::InvalidDependency)
+        ));
+    }
+
+    #[test]
+    fn conversion_and_theorem_transport_resources_are_typed_recipe_nodes() {
+        let mut state = GuestState::new();
+        let truth = state
+            .bool_term(Resource::new_borrow(PLAN_REP), true)
+            .unwrap();
+        let context = state.empty_context(Resource::new_borrow(PLAN_REP)).unwrap();
+        let conversion = state
+            .conversion_reflexivity(
+                Resource::new_borrow(PLAN_REP),
+                Resource::new_borrow(truth.rep()),
+            )
+            .unwrap();
+        let theorem = state
+            .prove_conversion_equality(
+                Resource::new_borrow(PLAN_REP),
+                Resource::new_borrow(context.rep()),
+                Resource::new_borrow(conversion.rep()),
+            )
+            .unwrap();
+        let transported = state
+            .convert_theorem(
+                Resource::new_borrow(PLAN_REP),
+                Resource::new_borrow(theorem.rep()),
+                Resource::new_borrow(conversion.rep()),
+            )
+            .unwrap();
+        assert_eq!(state.node(&conversion, Sort::Conversion), Ok(2));
+        assert_eq!(state.node(&transported, Sort::Theorem), Ok(4));
+        assert!(matches!(
+            state.recipe.last(),
+            Some(Recipe::ConvertTheorem {
+                theorem: 3,
+                conversion: 2
+            })
         ));
     }
 
@@ -1032,7 +1237,7 @@ mod tests {
     fn replayed_guest_artifact_uses_the_selected_receiver_contract() {
         let recipe = closed_beta_recipe();
         let producer = Kernel::ephemeral();
-        let artifact = SealedHolProofRecipe::seal(recipe, 7)
+        let artifact = SealedHolProofRecipe::seal(recipe, 8)
             .unwrap()
             .replay(&producer)
             .unwrap();
@@ -1068,13 +1273,11 @@ mod tests {
         let argument = state
             .bool_term(Resource::new_borrow(PLAN_REP), true)
             .unwrap();
+        let conversion = state
+            .conversion_beta(Resource::new_borrow(PLAN_REP), abstraction, argument)
+            .unwrap();
         let theorem = state
-            .prove_beta(
-                Resource::new_borrow(PLAN_REP),
-                context,
-                abstraction,
-                argument,
-            )
+            .prove_conversion_equality(Resource::new_borrow(PLAN_REP), context, conversion)
             .unwrap();
         let namespace = state
             .root_child_namespace(Resource::new_borrow(PLAN_REP), Some("demo".into()))
@@ -1123,6 +1326,162 @@ mod tests {
             "schematic-binding-demo",
             "schematic_identity_binding",
             Some(crate::hol_guest_plan::SCHEMATIC_BINDING_WIRE),
+        );
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn configured_real_conversion_component_exports_the_nested_identity_graph() {
+        let Some(component) = std::env::var_os("COVALENCE_HOL_CONVERSION_GUEST_COMPONENT") else {
+            return;
+        };
+        let bytes = std::fs::read(component).unwrap();
+        let recipe =
+            collect_hol_proof_component(&bytes, WasmtimeComponentLimits::default()).unwrap();
+        assert_eq!(
+            recipe.as_bytes(),
+            crate::hol_guest_plan::nested_identity_conversion_test_recipe().as_bytes()
+        );
+        let artifact = recipe.replay(&Kernel::ephemeral()).unwrap();
+        let image_bytes = covalence_neutron::Bytes::copy_from_slice(artifact.image());
+        let image = covalence_neutron::Connection::deserialize(&image_bytes).unwrap();
+        let sqlite = image.sqlite();
+        let namespace = artifact.namespace_id();
+        assert_eq!(
+            sqlite
+                .query_row(
+                    "SELECT parent_namespace_id, name FROM hol_namespace WHERE namespace_id = ?1",
+                    [namespace],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+                )
+                .unwrap(),
+            (0, "conversion-demo".to_owned())
+        );
+        let (context, context_sort, context_name) = sqlite
+            .query_row(
+                "SELECT local_id, sort, name FROM hol_namespace_export
+                 WHERE namespace_id = ?1 AND export_id = 0",
+                [namespace],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            (context, context_sort.as_str(), context_name.as_str()),
+            (0, "context", "empty_context")
+        );
+        let (conclusion, conclusion_sort, conclusion_name) = sqlite
+            .query_row(
+                "SELECT local_id, sort, name FROM hol_namespace_export
+                 WHERE namespace_id = ?1 AND export_id = 1",
+                [namespace],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            (conclusion_sort.as_str(), conclusion_name.as_str()),
+            ("term", "nested_identity_beta")
+        );
+        assert!(
+            sqlite
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM hol_judgement WHERE ctx_id = ?1 AND term_id = ?2)",
+                    [context, conclusion],
+                    |row| row.get::<_, bool>(0),
+                )
+                .unwrap()
+        );
+
+        let (tag, outer, truth) = sqlite
+            .query_row(
+                "SELECT tag, lhs, rhs FROM hol_node WHERE node_id = ?1",
+                [conclusion],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(tag, "MEQ");
+        let (outer_tag, identity, inner) = sqlite
+            .query_row(
+                "SELECT tag, lhs, rhs FROM hol_node WHERE node_id = ?1",
+                [outer],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(outer_tag, "MAPP");
+        assert_eq!(
+            sqlite
+                .query_row(
+                    "SELECT tag, lhs, rhs FROM hol_node WHERE node_id = ?1",
+                    [inner],
+                    |row| Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?
+                    )),
+                )
+                .unwrap(),
+            ("MAPP".to_owned(), identity, truth)
+        );
+        let (identity_tag, parameter_type, body) = sqlite
+            .query_row(
+                "SELECT tag, lhs, rhs FROM hol_node WHERE node_id = ?1",
+                [identity],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(identity_tag, "MLAM");
+        assert_eq!(
+            sqlite
+                .query_row(
+                    "SELECT tag, lhs, ty FROM hol_node WHERE node_id = ?1",
+                    [body],
+                    |row| Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?
+                    )),
+                )
+                .unwrap(),
+            ("MBV".to_owned(), 0, parameter_type)
+        );
+        assert_eq!(
+            sqlite
+                .query_row(
+                    "SELECT tag, lhs FROM hol_node WHERE node_id = ?1",
+                    [truth],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+                )
+                .unwrap(),
+            ("MBOOL".to_owned(), 1)
         );
     }
 
@@ -1375,7 +1734,7 @@ mod tests {
     fn managed_success_retains_a_live_receiver_for_post_return_reread() {
         let recipe = closed_beta_recipe();
         let kernel = Kernel::ephemeral();
-        let artifact = SealedHolProofRecipe::seal(recipe, 7)
+        let artifact = SealedHolProofRecipe::seal(recipe, 8)
             .unwrap()
             .replay(&kernel)
             .unwrap();
@@ -1424,7 +1783,7 @@ mod tests {
     fn managed_receive_requires_the_directory_local_key() {
         let recipe = closed_beta_recipe();
         let kernel = Kernel::ephemeral();
-        let artifact = SealedHolProofRecipe::seal(recipe, 7)
+        let artifact = SealedHolProofRecipe::seal(recipe, 8)
             .unwrap()
             .replay(&kernel)
             .unwrap();
