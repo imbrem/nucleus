@@ -13,6 +13,8 @@
       let target;
       let hol;
       let signedReceiver;
+      let missingZero;
+      let missingZeroState;
       let url;
       try {
         source = await repl.open();
@@ -32,6 +34,9 @@
         const signed = await hol.runSignedRoundTrip();
         const { receiver, ...signedResult } = signed;
         signedReceiver = receiver;
+        missingZero = await repl.proveNatLikeMissingZero();
+        missingZeroState = await missingZero.openTrustedState();
+        const missingZeroTruth = await missingZeroState.connection.run("truth");
 
         let readonly = false;
         try {
@@ -55,6 +60,35 @@
                 "format=covalence-repl-signed-snapshot-demo-v0",
               ) && signed.attestation.includes(`namespace=${signed.namespace}`),
           },
+          missingZero: {
+            kind: missingZero.kind,
+            theoremOracle: missingZero.theoremOracle,
+            namespace: missingZero.namespace,
+            schema: missingZero.schema,
+            imageHash: missingZero.imageHash,
+            signer: missingZero.signer,
+            context: missingZero.context,
+            conclusion: missingZero.conclusion,
+            image: missingZero.image.byteLength,
+            publicKey: missingZero.publicKey.byteLength,
+            signature: missingZero.signature.byteLength,
+            attestation:
+              missingZero.attestation.startsWith(
+                "authority=kernel-derived-theorem\n",
+              ) &&
+              missingZero.attestation.includes(
+                "theorem-oracle=(APP missing zero)\n",
+              ) &&
+              missingZero.attestation.includes(
+                "intermediate-persistence=none\n",
+              ),
+            reopened: {
+              sourceNamespace: missingZeroState.sourceNamespace,
+              context: missingZeroState.context,
+              conclusion: missingZeroState.conclusion,
+              truth: missingZeroTruth.statement,
+            },
+          },
         });
       } catch (error) {
         document.body.dataset.error = String(error);
@@ -64,6 +98,8 @@
         await target?.close();
         await hol?.close();
         await signedReceiver?.close();
+        await missingZero?.cleanup();
+        await missingZeroState?.connection.close();
         repl.close();
       }
     </script>

@@ -51,6 +51,8 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
     () =>
       document.body.dataset.result !== undefined ||
       document.body.dataset.error !== undefined,
+    undefined,
+    { timeout: 120_000 },
   );
   assert.equal(await page.locator("body").getAttribute("data-error"), null);
   const result = JSON.parse(
@@ -85,6 +87,22 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
   assert.equal(result.signed.attestation, true);
   assert.equal(result.signed.importedContext, "0");
   assert.equal(result.signed.importedConclusion, result.signed.conclusion);
+  assert.equal(result.missingZero.kind, "signed-natlike-missing-zero");
+  assert.equal(result.missingZero.theoremOracle, "(APP missing zero)");
+  assert.match(result.missingZero.namespace, /^\d+$/);
+  assert.match(result.missingZero.schema, /^[0-9a-f]{64}$/);
+  assert.match(result.missingZero.imageHash, /^[0-9a-f]{64}$/);
+  assert.match(result.missingZero.signer, /^[0-9a-f]{64}$/);
+  assert.ok(result.missingZero.image > 0);
+  assert.equal(result.missingZero.publicKey, 32);
+  assert.equal(result.missingZero.signature, 64);
+  assert.equal(result.missingZero.attestation, true);
+  assert.equal(result.missingZero.reopened.context, result.missingZero.context);
+  assert.equal(
+    result.missingZero.reopened.conclusion,
+    result.missingZero.conclusion,
+  );
+  assert.equal(result.missingZero.reopened.truth, "true");
 
   const demo = await browser.newPage();
   await demo.goto(`http://127.0.0.1:${address.port}/repl.html`);
@@ -182,4 +200,5 @@ test("downloads and attaches an immutable SQLite image in a Worker", async (cont
   await demo.locator("#recipe").fill("truth");
   await demo.locator("#run-hol").click();
   await demo.getByText("statement\ttrue").waitFor();
+
 });
