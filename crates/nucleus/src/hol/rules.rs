@@ -13,8 +13,9 @@ use covalence_lib_sqlite::OptionalExtension;
 
 use super::syntax::{HypsId, Kind, KindsId, TermId, TheoremId, Tm, Ty, TypeId, VarsId};
 use super::typing::{
-    DeepTm, lift_tm_in_tm, lift_ty_in_tm, lift_ty_in_ty, open_tm_in_tm, strengthen_tm_in_tm,
-    subst_tm_in_tm, subst_ty_in_tm, subst_ty_in_ty,
+    DeepTm, lift_tm_in_tm, lift_ty_in_tm, lift_ty_in_ty, open_tm_in_tm, open_ty_in_tm,
+    strengthen_tm_in_tm, strengthen_ty_in_tm, strengthen_ty_in_ty, subst_tm_in_tm, subst_ty_in_tm,
+    subst_ty_in_ty,
 };
 use super::view::{
     ArityMismatchSnafu, ContextMismatchSnafu, HolError, HolView, HypothesisNotStrengthenableSnafu,
@@ -234,6 +235,39 @@ rule!(
         pred: TermId<'v>,
         /// The value.
         value: TermId<'v>,
+    }
+);
+
+rule!(
+    /// `TY_ABS`: type-lambda congruence; the premise context must be the
+    /// lift of the conclusion context.
+    TyAbs<'v> {
+        /// Equality under the innermost kind variable.
+        premise: TheoremId<'v>,
+    }
+);
+rule!(
+    /// `TY_BETA`: `|- EQ (TYAPP (TYLAM K t) X) (t[X])`.
+    TyBeta<'v> {
+        /// Kind context.
+        kinds: KindsId<'v>,
+        /// Variable context.
+        vars: VarsId<'v>,
+        /// The type abstraction.
+        tylam: TermId<'v>,
+        /// The type argument.
+        ty_arg: TypeId<'v>,
+    }
+);
+rule!(
+    /// `TY_ETA`: `|- EQ (TYLAM K (TYAPP f' (TY_BV 0))) f`.
+    TyEta<'v> {
+        /// Kind context.
+        kinds: KindsId<'v>,
+        /// Variable context.
+        vars: VarsId<'v>,
+        /// The function term of universal type.
+        function: TermId<'v>,
     }
 );
 
@@ -705,6 +739,74 @@ impl_rule!(RepAbs, RepAbs, |self, view| {
     view.insert_theorem(kinds, vars, hyps, eq)
 });
 
+impl_rule!(TyAbs, TyAbs, |self, view| {
+    let (kinds, vars, hyps, concl) = view.theorem_parts(self.premise.raw())?;
+    let kind_entries = view.kinds_entries(kinds)?;
+    let Some((bound_kind, outer_kinds)) = kind_entries.split_first() else {
+        return ContextMismatchSnafu.fail();
+    };
+    let kinds = view.kinds(outer_kinds)?;
+    // The premise variable context must be the lift of a context that
+    // does not mention the bound kind variable.
+    let mut strengthened_vars = Vec::new();
+    for entry in view.vars_entries(vars)? {
+        let tree = view.load_ty(entry)?;
+        let Some(lowered) = strengthen_ty_in_ty(&tree) else {
+            return HypothesisNotStrengthenableSnafu.fail();
+        };
+        strengthened_vars.push(view.intern_ty(&lowered)?);
+    }
+    let vars = view.vars(&strengthened_vars)?;
+    let mut strengthened_hyps = Vec::new();
+    for hyp in view.hyps_entries(hyps)? {
+        let tree = view.load_tm(hyp)?;
+        let Some(lowered) = strengthen_ty_in_tm(&tree) else {
+            return HypothesisNotStrengthenableSnafu.fail();
+        };
+        strengthened_hyps.push(view.intern_tm(&lowered)?);
+    }
+    let hyps = view.hyps(&strengthened_hyps)?;
+    let (x, y) = view.equality_sides(concl)?;
+    let left = view.tm(Tm::TyLam(*bound_kind, x))?;
+    let right = view.tm(Tm::TyLam(*bound_kind, y))?;
+    let concl = view.tm(Tm::Eq(left, right))?;
+    view.insert_theorem(kinds, vars, hyps, concl)
+});
+
+impl_rule!(TyBeta, TyBeta, |self, view| {
+    view.require_valid_ctx(self.kinds, self.vars)?;
+    let Tm::TyLam(bound_kind, body) = view.tm_node(self.tylam)? else {
+        return NotAnApplicationSnafu.fail();
+    };
+    view.type_of(self.kinds, self.vars, self.tylam)?;
+    if view.kind_of(self.kinds, self.ty_arg)? != bound_kind {
+        return TypeMismatchSnafu.fail();
+    }
+    let body_tree = view.load_tm(body)?;
+    let argument_tree = view.load_ty(self.ty_arg)?;
+    let reduct = open_ty_in_tm(&body_tree, &argument_tree);
+    let reduct = view.intern_tm(&reduct)?;
+    let redex = view.tm(Tm::TyApp(self.tylam, self.ty_arg))?;
+    let concl = view.tm(Tm::Eq(redex, reduct))?;
+    view.insert_theorem(self.kinds, self.vars, view.empty_hyps(), concl)
+});
+
+impl_rule!(TyEta, TyEta, |self, view| {
+    view.require_valid_ctx(self.kinds, self.vars)?;
+    let Ty::All(bound_kind, _) =
+        view.ty_node(view.type_of(self.kinds, self.vars, self.function)?)?
+    else {
+        return TypeMismatchSnafu.fail();
+    };
+    let function_tree = view.load_tm(self.function)?;
+    let lifted = view.intern_tm(&lift_ty_in_tm(&function_tree, 1, 0))?;
+    let variable = view.ty(Ty::Bv(0))?;
+    let applied = view.tm(Tm::TyApp(lifted, variable))?;
+    let expansion = view.tm(Tm::TyLam(bound_kind, applied))?;
+    let concl = view.tm(Tm::Eq(expansion, self.function))?;
+    view.insert_theorem(self.kinds, self.vars, view.empty_hyps(), concl)
+});
+
 impl<'v> Rule<'v> for Infinity {
     type Output = TheoremId<'v>;
 
@@ -1164,5 +1266,135 @@ mod tests {
             Tm::Eq(eps_left, eps_right)
         );
         let _ = right_app;
+    }
+}
+
+#[cfg(test)]
+mod omega_tests {
+    use super::super::syntax::Kind as KindNode;
+    use super::super::{AllowAll, Hol};
+    use super::*;
+    use crate::Connection;
+
+    fn open() -> Connection<Hol<AllowAll>> {
+        Connection::open_hol_in_memory(AllowAll).expect("open kernel-state database")
+    }
+
+    #[test]
+    fn type_beta_reduces_the_polymorphic_identity() {
+        // (TYLAM *. \x:BV0. x)[bool] = \x:bool. x, in the empty context —
+        // the fully general open-argument form the boundary design could
+        // not support.
+        let connection = open();
+        let hol = connection.view();
+        let star = hol.kind(KindNode::Star).expect("star");
+        let tyvar = hol.ty(Ty::Bv(0)).expect("tyvar");
+        let body = hol.tm(Tm::Bv(0)).expect("bv0");
+        let poly_id = hol.tm(Tm::Lam(tyvar, body)).expect("poly id");
+        let tylam = hol.tm(Tm::TyLam(star, poly_id)).expect("tylam");
+        let bool_ty = hol.ty(Ty::Bool).expect("bool");
+        let step = hol
+            .proof_step(TyBeta {
+                kinds: hol.empty_kinds(),
+                vars: hol.empty_vars(),
+                tylam,
+                ty_arg: bool_ty,
+            })
+            .expect("ty_beta");
+        let (.., concl) = hol.theorem(step).expect("parts");
+        let mono_id = hol.tm(Tm::Lam(bool_ty, body)).expect("mono id");
+        let redex = hol.tm(Tm::TyApp(tylam, bool_ty)).expect("redex");
+        assert_eq!(hol.tm_node(concl).expect("node"), Tm::Eq(redex, mono_id));
+    }
+
+    #[test]
+    fn open_type_beta_works_in_an_ambient_kind_context() {
+        // The gist's dead end: (TYLAM *. true)[TY_BV 0] under Delta = [*]
+        // — open argument, fine with explicit contexts.
+        let connection = open();
+        let hol = connection.view();
+        let star = hol.kind(KindNode::Star).expect("star");
+        let kinds = hol.kinds(&[star]).expect("kinds");
+        let truth = hol.tm(Tm::Bool(true)).expect("true");
+        let tylam = hol.tm(Tm::TyLam(star, truth)).expect("tylam");
+        let open_arg = hol.ty(Ty::Bv(0)).expect("ambient tyvar");
+        let step = hol
+            .proof_step(TyBeta {
+                kinds,
+                vars: hol.empty_vars(),
+                tylam,
+                ty_arg: open_arg,
+            })
+            .expect("open ty_beta");
+        let (out_kinds, _, _, concl) = hol.theorem(step).expect("parts");
+        assert_eq!(out_kinds, kinds);
+        let redex = hol.tm(Tm::TyApp(tylam, open_arg)).expect("redex");
+        assert_eq!(hol.tm_node(concl).expect("node"), Tm::Eq(redex, truth));
+    }
+
+    #[test]
+    fn type_abs_requires_and_strips_the_lifted_context() {
+        let connection = open();
+        let hol = connection.view();
+        let star = hol.kind(KindNode::Star).expect("star");
+        let kinds = hol.kinds(&[star]).expect("kinds");
+        // Premise: refl of BV0 : lift of [bool] under the kind binder.
+        let bool_ty = hol.ty(Ty::Bool).expect("bool");
+        let vars = hol.vars(&[bool_ty]).expect("lifted vars");
+        let variable = hol.tm(Tm::Bv(0)).expect("bv0");
+        let premise = hol
+            .proof_step(Refl {
+                kinds,
+                vars,
+                term: variable,
+            })
+            .expect("refl");
+        let generalized = hol.proof_step(TyAbs { premise }).expect("ty_abs");
+        let (out_kinds, out_vars, _, concl) = hol.theorem(generalized).expect("parts");
+        assert_eq!(out_kinds, hol.empty_kinds());
+        assert_eq!(hol.vars_entries(out_vars).expect("vars"), vec![bool_ty]);
+        let tylam = hol.tm(Tm::TyLam(star, variable)).expect("tylam");
+        assert_eq!(hol.tm_node(concl).expect("node"), Tm::Eq(tylam, tylam));
+
+        // A variable context mentioning TY_BV 0 is not a lift: rejected.
+        let dependent = hol.ty(Ty::Bv(0)).expect("dependent");
+        let bad_vars = hol.vars(&[dependent]).expect("bad vars");
+        let bad = hol
+            .proof_step(Refl {
+                kinds,
+                vars: bad_vars,
+                term: variable,
+            })
+            .expect("bad refl");
+        assert!(matches!(
+            hol.proof_step(TyAbs { premise: bad }),
+            Err(HolError::HypothesisNotStrengthenable)
+        ));
+    }
+
+    #[test]
+    fn type_eta_expands_universal_functions() {
+        let connection = open();
+        let hol = connection.view();
+        let star = hol.kind(KindNode::Star).expect("star");
+        let truth = hol.tm(Tm::Bool(true)).expect("true");
+        let tylam = hol.tm(Tm::TyLam(star, truth)).expect("tylam true");
+        let step = hol
+            .proof_step(TyEta {
+                kinds: hol.empty_kinds(),
+                vars: hol.empty_vars(),
+                function: tylam,
+            })
+            .expect("ty_eta");
+        let (.., concl) = hol.theorem(step).expect("parts");
+        let (expansion, function) = match hol.tm_node(concl).expect("node") {
+            Tm::Eq(left, right) => (left, right),
+            other => panic!("unexpected {other:?}"),
+        };
+        assert_eq!(function, tylam);
+        assert!(matches!(
+            hol.tm_node(expansion).expect("expansion"),
+            Tm::TyLam(kind, _) if kind == star
+        ));
     }
 }
