@@ -18,27 +18,24 @@ filegroup(
 )
 
 rust_library(
-    name = "covalence_repl",
-    crate = "covalence_repl",
+    name = "covalence_data_cas_wire",
+    crate = "covalence_data_cas_wire",
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
-    tests = [":covalence_repl-unit-test"],
+    tests = [":covalence_data_cas_wire-unit-test"],
     named_deps = {
         "bytes": "nucleus//buck/cargo/production:bytes-1.12.1",
         "covalence_data_cas": "nucleus//crates/data/cas:covalence_data_cas",
-        "covalence_data_cas_wire": "nucleus//crates/data/cas-wire:covalence_data_cas_wire",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
-        "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
-        "covalence_neutron": "nucleus//crates/neutron:covalence_neutron",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "Content-addressed SQLite REPL orchestration",
+        "CARGO_PKG_DESCRIPTION": "The CAS interface carried over a byte stream",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",
-        "CARGO_PKG_NAME": "covalence-repl",
+        "CARGO_PKG_NAME": "covalence-data-cas-wire",
         "CARGO_PKG_README": "",
         "CARGO_PKG_REPOSITORY": "",
         "CARGO_PKG_RUST_VERSION": "",
@@ -52,26 +49,23 @@ rust_library(
 )
 
 rust_test(
-    name = "covalence_repl-unit-test",
-    crate = "covalence_repl",
+    name = "covalence_data_cas_wire-unit-test",
+    crate = "covalence_data_cas_wire",
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
     named_deps = {
         "bytes": "nucleus//buck/cargo/production:bytes-1.12.1",
         "covalence_data_cas": "nucleus//crates/data/cas:covalence_data_cas",
-        "covalence_data_cas_wire": "nucleus//crates/data/cas-wire:covalence_data_cas_wire",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
-        "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
-        "covalence_neutron": "nucleus//crates/neutron:covalence_neutron",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "Content-addressed SQLite REPL orchestration",
+        "CARGO_PKG_DESCRIPTION": "The CAS interface carried over a byte stream",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",
-        "CARGO_PKG_NAME": "covalence-repl",
+        "CARGO_PKG_NAME": "covalence-data-cas-wire",
         "CARGO_PKG_README": "",
         "CARGO_PKG_REPOSITORY": "",
         "CARGO_PKG_RUST_VERSION": "",

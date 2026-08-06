@@ -1,0 +1,30 @@
+[package]
+name = "covalence-bin-cas-shell"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The upstream SQLite shell over a remote content-addressed store"
+publish = false
+build = "build.rs"
+
+[lib]
+name = "covalence_bin_cas_shell"
+path = "src/lib.rs"
+
+[[bin]]
+name = "covalence-cas-shell"
+path = "src/main.rs"
+
+[dependencies]
+covalence-data-cas-wire = { path = "../../data/cas-wire" }
+covalence-lib-sqlite = { path = "../../lib/sqlite", features = ["vfs-register"] }
+
+[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
+libsqlite3-sys = { version = "=0.38.1", features = ["bundled"] }
+
+[build-dependencies]
+cc = "1"
+
+[lints]
+workspace = true
