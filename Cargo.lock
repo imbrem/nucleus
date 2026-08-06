@@ -183,6 +183,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "covalence-lib-sqlite-shell"
+version = "0.0.0"
+dependencies = [
+ "cc",
+ "covalence-data-cas",
+ "covalence-lib-sqlite",
+ "libsqlite3-sys",
+]
+
+[[package]]
 name = "covalence-neutron"
 version = "0.0.0"
 dependencies = [

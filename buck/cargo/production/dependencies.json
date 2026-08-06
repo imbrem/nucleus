@@ -446,6 +446,21 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#equivalent@1.0.2",
+      "name": "equivalent",
+      "version": "1.0.2",
+      "checksum": "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f",
+      "edition": "2015",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Traits for key comparison in maps.",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/indexmap-rs/equivalent"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#fallible-iterator@0.3.0",
       "name": "fallible-iterator",
       "version": "0.3.0",
@@ -644,6 +659,30 @@
       },
       "targets": [
         {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
+      "name": "indexmap",
+      "version": "2.14.0",
+      "checksum": "d466e9454f08e4a911e14806c24e16fba1b4c121d1ea474396f396069cf949d9",
+      "edition": "2024",
+      "features": [
+        "default",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "A hash table with consistent order and fast iteration.",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/indexmap-rs/indexmap"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "equivalent": ":equivalent-1.0.2",
+            "hashbrown": ":hashbrown-0.17.1"
+          }
+        }
       ]
     },
     {
@@ -1560,8 +1599,19 @@
       "name": "covalence-lib-sqlite",
       "category": "tcb",
       "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#bitflags@2.13.1",
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+        "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
         "registry+https://github.com/rust-lang/crates.io-index#rusqlite@0.40.1"
+      ]
+    },
+    {
+      "id": "workspace#covalence-lib-sqlite-shell@0.0.0",
+      "name": "covalence-lib-sqlite-shell",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#cc@1.4.0",
+        "registry+https://github.com/rust-lang/crates.io-index#libsqlite3-sys@0.38.1"
       ]
     },
     {
@@ -1871,6 +1921,20 @@
     },
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#hashlink@0.12.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#equivalent@1.0.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
       "target": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
       "kinds": [
         "normal"

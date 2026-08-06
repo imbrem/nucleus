@@ -5,3 +5,13 @@ path = ["**"]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Nucleus contributors"
 SPDX-License-Identifier = "CC0-1.0"
+
+# Vendored verbatim from the SQLite amalgamation 3.53.2, matching the version
+# libsqlite3-sys bundles. SQLite is released into the public domain by its
+# authors; recorded separately so the provenance of code we did not write
+# stays visible.
+[[annotations]]
+path = ["crates/lib/sqlite-shell/vendor/shell.c"]
+precedence = "override"
+SPDX-FileCopyrightText = "NONE"
+SPDX-License-Identifier = "blessing"
