@@ -390,8 +390,14 @@ fn replay_learn<P: Policy>(
     tracked: &HashMap<u64, TrackedClause>,
     id: u64,
     clause: &[i64],
-    hints: &[u64],
+    hints: &[i64],
 ) -> Result<Learned, PropError> {
+    if hints.iter().any(|hint| *hint < 0) {
+        return Err(LratRejectedSnafu {
+            reason: LratError::RatUnsupported { step: id },
+        }
+        .build());
+    }
     let lit = |value: i64| Lit::new(value).expect("nonzero literal");
     let negation = if clause.is_empty() {
         None
@@ -414,11 +420,12 @@ fn replay_learn<P: Policy>(
         }
     }
     for hint in hints {
-        let info = tracked.get(hint).ok_or_else(|| {
+        let hint = u64::try_from(*hint).expect("negative hints rejected above");
+        let info = tracked.get(&hint).ok_or_else(|| {
             LratRejectedSnafu {
                 reason: LratError::UnknownClause {
                     step: id,
-                    clause: *hint,
+                    clause: hint,
                 },
             }
             .build()
@@ -426,7 +433,7 @@ fn replay_learn<P: Policy>(
         let useless = LratRejectedSnafu {
             reason: LratError::UselessHint {
                 step: id,
-                clause: *hint,
+                clause: hint,
             },
         };
         if info.literals.iter().any(|literal| truths.contains(literal)) {
@@ -461,28 +468,7 @@ fn replay_learn<P: Policy>(
             .filter(|literal| !truths.contains(&-**literal));
         match (unassigned.next(), unassigned.next()) {
             (None, _) => {
-                // Conflict: every literal false; fold the negation and
-                // contradict, then case-split to (0, -ctx).
-                let negation_id = PropId::new(hint_negation).expect("clause id");
-                scratch.fold(x, negation_id)?;
-                scratch.contra(context.lit(), negation_id.lit())?;
-                scratch.trans(x, lit(-hint_negation), context.negated())?;
-                scratch.refl(context.negated())?;
-                scratch.cases(context.lit(), context.negated())?;
-                if clause.is_empty() {
-                    // (0, -ctx) with ctx = {formula}: weaken to the
-                    // formula and unfold to reach (formula, -formula).
-                    scratch.weaken(formula.lit(), context.negated())?;
-                    scratch.unfold(Ant::from(formula.lit()), context, formula.lit())?;
-                    return Ok(Learned::Refuted);
-                }
-                return Ok(Learned::Clause(TrackedClause {
-                    literals: clause.to_vec(),
-                    form: ClauseForm::Learned {
-                        context: context.get(),
-                        negation: negation.map(PropId::get),
-                    },
-                }));
+                return close_conflict(scratch, formula, context, negation, hint_negation, clause);
             }
             (Some(unit), None) => {
                 let negation_id = PropId::new(hint_negation).expect("clause id");
@@ -496,4 +482,45 @@ fn replay_learn<P: Policy>(
         reason: LratError::NoConflict { step: id },
     }
     .build())
+}
+
+/// Closes a conflicting hint into `(0, -context)` — fold, contradict,
+/// case-split — and, for the empty clause, on to `(formula, -formula)`.
+///
+/// # Panics
+///
+/// Never in practice: clause-negation ids are positive.
+fn close_conflict<P: Policy>(
+    scratch: &Scratch<'_, '_, P>,
+    formula: PropId,
+    context: PropId,
+    negation: Option<PropId>,
+    hint_negation: i64,
+    clause: &[i64],
+) -> Result<Learned, PropError> {
+    let x = Ant::from(context.lit());
+    let negation_id = PropId::new(hint_negation).expect("clause id");
+    scratch.fold(x, negation_id)?;
+    scratch.contra(context.lit(), negation_id.lit())?;
+    scratch.trans(
+        x,
+        Lit::new(-hint_negation).expect("nonzero literal"),
+        context.negated(),
+    )?;
+    scratch.refl(context.negated())?;
+    scratch.cases(context.lit(), context.negated())?;
+    if clause.is_empty() {
+        // (0, -ctx) with ctx = {formula}: weaken to the formula and
+        // unfold to reach (formula, -formula).
+        scratch.weaken(formula.lit(), context.negated())?;
+        scratch.unfold(Ant::from(formula.lit()), context, formula.lit())?;
+        return Ok(Learned::Refuted);
+    }
+    Ok(Learned::Clause(TrackedClause {
+        literals: clause.to_vec(),
+        form: ClauseForm::Learned {
+            context: context.get(),
+            negation: negation.map(PropId::get),
+        },
+    }))
 }

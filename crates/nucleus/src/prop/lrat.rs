@@ -26,8 +26,9 @@ pub enum LratInstr {
         id: u64,
         /// The clause's literals; empty is the refutation.
         clause: Vec<i64>,
-        /// Propagation hints, in order.
-        hints: Vec<u64>,
+        /// Propagation hints, in order; a negative hint opens a RAT
+        /// group for the named clause.
+        hints: Vec<i64>,
     },
     /// Forget the named clauses.
     Forget {
@@ -63,6 +64,19 @@ pub enum LratError {
         /// The instruction being applied.
         step: u64,
     },
+    /// A RAT step does not cover every clause containing the negated
+    /// pivot.
+    IncompleteRat {
+        /// The instruction being applied.
+        step: u64,
+        /// A clause containing the negated pivot with no group.
+        clause: u64,
+    },
+    /// A RAT step was encountered where only RUP is permitted.
+    RatUnsupported {
+        /// The instruction being applied.
+        step: u64,
+    },
     /// The instruction stream ended without deriving the empty clause.
     NoRefutation,
 }
@@ -91,56 +105,139 @@ impl LratKernel {
         }
     }
 
-    /// The `learn` rule: admits `clause` iff its negation propagates to a
-    /// conflict through the hinted clauses, in order.
+    /// The `learn` rule: admits `clause` iff its negation propagates to
+    /// a conflict through the hinted clauses (RUP), or — when the hints
+    /// contain RAT groups — every resolvent on the pivot (the clause's
+    /// first literal) does. RAT additions preserve satisfiability rather
+    /// than equivalence, which suffices for the kernel's only judgement,
+    /// unsatisfiability of the initial clauses.
     ///
     /// # Errors
     ///
     /// Fails without changing kernel state when the hints do not certify
     /// the clause.
-    pub fn learn(&mut self, id: u64, clause: &[i64], hints: &[u64]) -> Result<(), LratError> {
-        // The set of literals currently assigned true: the clause's
-        // negation.
+    pub fn learn(&mut self, id: u64, clause: &[i64], hints: &[i64]) -> Result<(), LratError> {
+        let split = hints
+            .iter()
+            .position(|hint| *hint < 0)
+            .unwrap_or(hints.len());
+        let (rup_hints, rat_hints) = hints.split_at(split);
         let mut assigned: BTreeSet<i64> = clause.iter().map(|literal| -literal).collect();
-        let mut conflict = false;
-        for hint in hints {
-            let hinted = self.live.get(hint).ok_or(LratError::UnknownClause {
-                step: id,
-                clause: *hint,
-            })?;
-            if hinted.iter().any(|literal| assigned.contains(literal)) {
-                return Err(LratError::UselessHint {
-                    step: id,
-                    clause: *hint,
-                });
+        if !self.propagate(id, &mut assigned, rup_hints)? {
+            if clause.is_empty() {
+                return Err(LratError::NoConflict { step: id });
             }
-            let mut unassigned = hinted
-                .iter()
-                .filter(|literal| !assigned.contains(&-**literal));
-            match (unassigned.next(), unassigned.next()) {
-                (None, _) => {
-                    conflict = true;
-                    break;
-                }
-                (Some(unit), None) => {
-                    assigned.insert(*unit);
-                }
-                (Some(_), Some(_)) => {
-                    return Err(LratError::UselessHint {
-                        step: id,
-                        clause: *hint,
-                    });
-                }
-            }
-        }
-        if !conflict {
-            return Err(LratError::NoConflict { step: id });
+            self.rat(id, clause, &assigned, rat_hints)?;
         }
         if clause.is_empty() {
             self.refuted = true;
         }
         self.live.insert(id, clause.to_vec());
         Ok(())
+    }
+
+    /// Checks the RAT groups against the propagated assignment: every
+    /// live clause containing the negated pivot (the clause's first
+    /// literal) must resolve to a conflict, either tautologically or
+    /// through its group's propagation hints.
+    fn rat(
+        &self,
+        id: u64,
+        clause: &[i64],
+        assigned: &BTreeSet<i64>,
+        rat_hints: &[i64],
+    ) -> Result<(), LratError> {
+        let pivot = *clause.first().ok_or(LratError::NoConflict { step: id })?;
+        let mut groups: Vec<(u64, Vec<i64>)> = Vec::new();
+        for hint in rat_hints {
+            if *hint < 0 {
+                let key = u64::try_from(-hint).map_err(|_| LratError::NoConflict { step: id })?;
+                groups.push((key, Vec::new()));
+            } else if let Some(group) = groups.last_mut() {
+                group.1.push(*hint);
+            } else {
+                return Err(LratError::NoConflict { step: id });
+            }
+        }
+        let covered: BTreeSet<u64> = groups.iter().map(|(key, _)| *key).collect();
+        for (other_id, other) in &self.live {
+            if other.contains(&-pivot) && !covered.contains(other_id) {
+                return Err(LratError::IncompleteRat {
+                    step: id,
+                    clause: *other_id,
+                });
+            }
+        }
+        for (key, group_hints) in &groups {
+            let other = self.live.get(key).ok_or(LratError::UnknownClause {
+                step: id,
+                clause: *key,
+            })?;
+            if !other.contains(&-pivot) {
+                continue;
+            }
+            // Resolvent assignment: extend the propagated assignment
+            // with the negation of the other clause minus the resolved
+            // literal. A contradictory extension is an immediate
+            // (tautological) conflict.
+            let mut assignment = assigned.clone();
+            let mut contradictory = false;
+            for literal in other {
+                if *literal != -pivot {
+                    if assignment.contains(literal) {
+                        contradictory = true;
+                        break;
+                    }
+                    assignment.insert(-literal);
+                }
+            }
+            if contradictory {
+                continue;
+            }
+            if !self.propagate(id, &mut assignment, group_hints)? {
+                return Err(LratError::NoConflict { step: id });
+            }
+        }
+        Ok(())
+    }
+
+    /// Unit-propagates through hinted clauses, extending `assigned`;
+    /// returns whether a conflict was reached.
+    fn propagate(
+        &self,
+        id: u64,
+        assigned: &mut BTreeSet<i64>,
+        hints: &[i64],
+    ) -> Result<bool, LratError> {
+        for hint in hints {
+            let key = u64::try_from(*hint).map_err(|_| LratError::NoConflict { step: id })?;
+            let hinted = self.live.get(&key).ok_or(LratError::UnknownClause {
+                step: id,
+                clause: key,
+            })?;
+            if hinted.iter().any(|literal| assigned.contains(literal)) {
+                return Err(LratError::UselessHint {
+                    step: id,
+                    clause: key,
+                });
+            }
+            let mut unassigned = hinted
+                .iter()
+                .filter(|literal| !assigned.contains(&-**literal));
+            match (unassigned.next(), unassigned.next()) {
+                (None, _) => return Ok(true),
+                (Some(unit), None) => {
+                    assigned.insert(*unit);
+                }
+                (Some(_), Some(_)) => {
+                    return Err(LratError::UselessHint {
+                        step: id,
+                        clause: key,
+                    });
+                }
+            }
+        }
+        Ok(false)
     }
 
     /// The `forget` rule: dropping clauses only ever weakens the kernel.
@@ -254,8 +351,7 @@ pub fn parse_text(text: &str) -> Result<Vec<LratInstr>, LratError> {
                 }
                 in_hints = true;
             } else if in_hints {
-                let hint = u64::try_from(value).map_err(|_| parse_error.clone())?;
-                hints.push(hint);
+                hints.push(value);
             } else {
                 clause.push(value);
             }
@@ -300,9 +396,7 @@ pub fn parse_binary(bytes: &[u8]) -> Result<Vec<LratInstr>, LratError> {
                     if value == 0 {
                         break;
                     }
-                    let hint =
-                        u64::try_from(value).map_err(|_| LratError::Parse { at: position })?;
-                    hints.push(hint);
+                    hints.push(value);
                 }
                 instructions.push(LratInstr::Learn { id, clause, hints });
             }
@@ -434,6 +528,31 @@ mod tests {
             Err(LratError::NoRefutation)
         );
         assert_eq!(check(&initial, &[]), Err(LratError::NoRefutation));
+    }
+
+    #[test]
+    fn accepts_rat_steps_with_fresh_variables() {
+        // Mirrors the shape CaDiCaL's preprocessing emits: clauses over
+        // fresh variable 3 introduced with vacuous/blocked RAT (empty
+        // hints, no clause contains -3), then a full RAT step whose
+        // resolvents are tautological.
+        // The exact shape of CaDiCaL's php5 preprocessing steps
+        // (46/47/48 there), relabeled: fresh variable 3 enters through
+        // blocked clauses, then the definition's other direction is RAT
+        // with tautological resolvents.
+        let initial = vec![vec![1, 2], vec![-1, 2]];
+        let mut kernel = LratKernel::new(&initial);
+        // Blocked: no live clause contains -3.
+        kernel.learn(3, &[3, -2], &[]).expect("blocked clause");
+        kernel.learn(4, &[3, -1], &[]).expect("blocked clause");
+        kernel
+            .learn(5, &[-3, 2, 1], &[-3, -4])
+            .expect("rat with tautological resolvents");
+        // Incomplete coverage is rejected.
+        assert_eq!(
+            kernel.learn(6, &[-3, -2], &[-3]),
+            Err(LratError::IncompleteRat { step: 6, clause: 4 })
+        );
     }
 
     #[test]
