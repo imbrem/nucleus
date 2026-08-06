@@ -210,3 +210,46 @@ test("bytes which do not match their address are refused", async (context) => {
   assert.match(result.message, /does not match its address/);
   assert.deepEqual(result.held, [], "refused content must not be stored");
 });
+
+test("the upstream SQLite shell runs in the browser", async (context) => {
+  const origin = await servePackage(context);
+  const page = await openPage(context, origin);
+  const database = await readFile(fixture);
+
+  const result = await page.evaluate(async (bytes) => {
+    const kernel = new window.nucleus.Kernel();
+    const address = kernel.put(new Uint8Array(bytes));
+
+    // `shell.wasm` is `shell.c` compiled for wasm32-wasip1, fetched like any
+    // other asset and instantiated with a partial WASI host.
+    const shell = await fetch("../generated/shell.wasm");
+    const run = await window.nucleus.runShell(kernel, shell, {
+      args: [
+        `file:${address}?mode=ro&immutable=1&vfs=cas`,
+        "-batch",
+        "-header",
+        "SELECT a, b, sum FROM adder;",
+      ],
+    });
+    return { ...run, address };
+  }, Array.from(database));
+
+  assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+  assert.equal(result.stdout.trim(), "a|b|sum\n2|3|5\n7|8|15");
+});
+
+test("the shell in the browser has no filesystem to reach", async (context) => {
+  const origin = await servePackage(context);
+  const page = await openPage(context, origin);
+
+  const result = await page.evaluate(async () => {
+    const kernel = new window.nucleus.Kernel();
+    const shell = await fetch("../generated/shell.wasm");
+    return await window.nucleus.runShell(kernel, shell, {
+      args: ["/etc/passwd", "-batch", "SELECT 1;"],
+    });
+  });
+
+  // Its databases arrive by address or not at all.
+  assert.notEqual(result.status, 0);
+});

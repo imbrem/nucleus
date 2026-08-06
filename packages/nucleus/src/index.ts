@@ -1,6 +1,8 @@
 import init, { Kernel } from "../generated/nucleus.js";
 
 export { init, Kernel };
+export { runShell } from "./wasi.js";
+export type { ShellOptions, ShellResult } from "./wasi.js";
 
 /** How an object was obtained, for display. */
 export type Origin = "local" | string;

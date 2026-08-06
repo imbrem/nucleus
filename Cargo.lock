@@ -211,6 +211,7 @@ dependencies = [
 name = "covalence-bin-cas-shell"
 version = "0.0.0"
 dependencies = [
+ "bytes",
  "cc",
  "covalence-data-cas",
  "covalence-data-cas-wire",
@@ -234,6 +235,7 @@ dependencies = [
 name = "covalence-browser"
 version = "0.0.0"
 dependencies = [
+ "covalence-data-cas",
  "covalence-lib-hash",
  "covalence-lib-sqlite",
  "covalence-neutron",
