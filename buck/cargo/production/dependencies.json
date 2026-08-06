@@ -1556,6 +1556,14 @@
       ]
     },
     {
+      "id": "workspace#covalence-lib-sqlite3@0.0.0",
+      "name": "covalence-lib-sqlite3",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#libsqlite3-sys@0.38.1"
+      ]
+    },
+    {
       "id": "workspace#covalence-neutron@0.0.0",
       "name": "covalence-neutron",
       "category": "tcb",
