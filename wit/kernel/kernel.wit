@@ -1,0 +1,99 @@
+// Kernel component ABI.
+
+package covalence:kernel@0.1.0;
+
+interface identity {
+    use covalence:cas/types@0.1.0.{address};
+
+    // Self-reported kernel identity.
+    record kernel-identity {
+        // Ed25519 public key, 32 bytes.
+        public-key: list<u8>,
+        // Address of the implemented contract.
+        contract: address,
+    }
+
+    identity: func() -> kernel-identity;
+}
+
+interface sql {
+    use covalence:cas/types@0.1.0.{address, error};
+
+    // One caller-owned raw SQLite connection.
+    resource connection {
+        // Executes one statement, returning its outcome.
+        run: func(statement: string) -> result<outcome, sql-error>;
+
+        // Attaches a store object read-only under `schema`.
+        attach: func(schema: string, addr: address) -> result<_, sql-error>;
+
+        // Serialises and admits the writable `main` database.
+        snapshot: func() -> result<address, sql-error>;
+    }
+
+    // Opens a private in-memory connection.
+    open: func() -> result<connection, sql-error>;
+
+    variant value {
+        null,
+        integer(s64),
+        real(f64),
+        text(string),
+        blob(list<u8>),
+    }
+
+    record rows {
+        columns: list<string>,
+        values: list<list<value>>,
+    }
+
+    // Statement result, bounded without truncation.
+    variant outcome {
+        // Statement completed and changed this many rows.
+        done(u64),
+        // Statement returned rows.
+        returned(rows),
+    }
+
+    variant sql-error {
+        // SQLite refused, with its primary and extended codes.
+        sqlite(sqlite-error),
+        // The result exceeded what the kernel will marshal.
+        too-large(u64),
+        // The statement was not valid UTF-8, or contained an interior NUL.
+        malformed-statement,
+        // The store, or the attach path, failed.
+        store(error),
+    }
+
+    record sqlite-error {
+        primary: s32,
+        extended: s32,
+        // Diagnostic only; must not be parsed.
+        message: string,
+    }
+}
+
+// A writable kernel.
+world kernel {
+    export covalence:cas/store@0.1.0;
+    export covalence:cas/admit@0.1.0;
+    export identity;
+    export sql;
+}
+
+// A read-only kernel: serves objects, accepts none.
+world reader {
+    export covalence:cas/store@0.1.0;
+    export identity;
+}
+
+// A proof script using the public kernel interface.
+world proof-script {
+    import covalence:cas/store@0.1.0;
+    import covalence:cas/admit@0.1.0;
+    import identity;
+    import sql;
+
+    export run: func() -> result<list<u8>, string>;
+}
