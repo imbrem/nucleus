@@ -1,0 +1,17 @@
+[package]
+name = "covalence-hol-logic"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Out-of-TCB propositional logic over the HOL kernel"
+publish = false
+
+[dependencies]
+covalence-hol-init = { path = "../init" }
+covalence-lib-error = { path = "../../lib/error" }
+covalence-neutron = { path = "../../neutron" }
+covalence-nucleus = { path = "../../nucleus" }
+
+[lints]
+workspace = true
