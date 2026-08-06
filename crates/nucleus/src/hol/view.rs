@@ -103,6 +103,21 @@ pub enum HolError {
     /// Syntax exceeds the expansion depth bound.
     #[snafu(display("syntax exceeds the maximum expansion depth"))]
     DepthExceeded,
+    /// A namespace or export name is empty.
+    #[snafu(display("namespace and export names must be non-empty"))]
+    InvalidName,
+    /// No export carries the requested name or position.
+    #[snafu(display("no export named {name:?} in this namespace"))]
+    UnknownExport {
+        /// The unresolved export name (or `#position`).
+        name: String,
+    },
+    /// An export name already names a different object.
+    #[snafu(display("export {name:?} already names a different object"))]
+    ExportConflict {
+        /// The conflicting export name.
+        name: String,
+    },
     /// The underlying storage failed.
     #[snafu(display("kernel storage failure"))]
     Storage {

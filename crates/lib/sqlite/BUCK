@@ -24,6 +24,7 @@ rust_library(
     edition = "2024",
     srcs = _RUST_SOURCES,
     features = [
+        "cache",
         "default",
         "serialize",
         "vfs",
@@ -61,6 +62,7 @@ rust_test(
     edition = "2024",
     srcs = _RUST_SOURCES,
     features = [
+        "cache",
         "default",
         "serialize",
         "vfs",

@@ -128,6 +128,16 @@ name = "covalence-data-container"
 version = "0.0.0"
 
 [[package]]
+name = "covalence-hol-init"
+version = "0.0.0"
+dependencies = [
+ "covalence-lib-error",
+ "covalence-lib-hash",
+ "covalence-neutron",
+ "covalence-nucleus",
+]
+
+[[package]]
 name = "covalence-lib-crypto"
 version = "0.0.0"
 dependencies = [
