@@ -285,6 +285,13 @@ pub enum PropError {
         /// This connection's identity.
         expected: O256,
     },
+    /// A bound foreign variable is defined or theory-bound in the
+    /// source.
+    #[snafu(display("bound foreign id {foreign} is not free in the source"))]
+    BoundNotFree {
+        /// The offending foreign id.
+        foreign: i64,
+    },
     /// The source database failed its own validity assertions.
     #[snafu(display("imported database is invalid: {violations:?}"))]
     ImportInvalid {
@@ -985,7 +992,7 @@ mod tests {
     fn semantics_identity_matches_fixed_vector() {
         assert_eq!(
             prop_semantics_id(),
-            o256!("565806c62d1d9c53bdb58205a679f2ffddf99b8100fa323f70d79e6ee8e6c679")
+            o256!("3d294e5417ba7512bc08ce7c99c1e2769773c9c4265f2a65958a826b06f7d309")
         );
     }
 
