@@ -714,6 +714,18 @@ impl<P: Policy> PropView<'_, P> {
             .map(|found| found.is_some())
     }
 
+    /// Whether `a => b` is established universally (definitionally or
+    /// derived) — the read HOL-context layering builds on: contexts as
+    /// propositions, entailment as row queries.
+    ///
+    /// # Errors
+    ///
+    /// Fails only on storage errors.
+    pub fn implies(&self, a: Ant, b: Lit) -> Result<bool, PropError> {
+        self.authorize(Operation::Read)?;
+        self.usable(a.get(), b.get(), Target::Universal(-1))
+    }
+
     /// Whether `p` holds in the given world.
     ///
     /// # Errors
@@ -922,7 +934,7 @@ mod tests {
     fn semantics_identity_matches_fixed_vector() {
         assert_eq!(
             prop_semantics_id(),
-            o256!("1b577a5bf0085cea3909ee4e70836d631d879203ea4db01b391e9e2db44f4c63")
+            o256!("825355d586a4d3ee5688561ea0b8413e5814a387830635bc882541362cf0a1b8")
         );
     }
 

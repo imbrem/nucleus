@@ -24,17 +24,18 @@ type Kernel = Connection<Prop<AllowAll>>;
 
 fn main() {
     let mut paranoid = false;
+    let mut plain = false;
     let mut positional = Vec::new();
     for argument in std::env::args().skip(1) {
-        if argument == "--paranoid" {
-            paranoid = true;
-        } else {
-            positional.push(argument);
+        match argument.as_str() {
+            "--paranoid" => paranoid = true,
+            "--plain" => plain = true,
+            _ => positional.push(argument),
         }
     }
     let mut arguments = positional.into_iter();
     let Some(path) = arguments.next() else {
-        eprintln!("usage: sat_lrat [--paranoid] <problem.cnf> [cadical-binary]");
+        eprintln!("usage: sat_lrat [--paranoid] [--plain] <problem.cnf> [cadical-binary]");
         std::process::exit(2);
     };
     let solver = arguments.next().unwrap_or_else(|| "cadical".to_owned());
@@ -76,8 +77,16 @@ fn main() {
 
     // Ask the solver for a verdict and an LRAT certificate.
     let proof_path = std::env::temp_dir().join(format!("sat-lrat-{}.lrat", std::process::id()));
-    let output = Command::new(&solver)
-        .arg("--lrat")
+    let mut command = Command::new(&solver);
+    command.arg("--lrat");
+    if paranoid || plain {
+        // Scratch replay derives implications of the formula, so the
+        // proof must be RUP-only: RAT extensions are equisatisfiable,
+        // not equivalent. --plain disables the preprocessing that
+        // introduces them (also available standalone for comparisons).
+        command.arg("--plain");
+    }
+    let output = command
         .arg(&path)
         .arg(&proof_path)
         .output()
