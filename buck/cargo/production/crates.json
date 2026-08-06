@@ -32,6 +32,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-data-cas@0.0.0",
+      "name": "covalence-data-cas",
+      "version": "0.0.0",
+      "path": "crates/data/cas",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_data_cas",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-data-container@0.0.0",
       "name": "covalence-data-container",
       "version": "0.0.0",
@@ -184,6 +199,13 @@
     {
       "source": "workspace#covalence-bin-nucleus@0.0.0",
       "target": "workspace#covalence-nucleus@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-cas@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
       "kinds": [
         "normal"
       ]
