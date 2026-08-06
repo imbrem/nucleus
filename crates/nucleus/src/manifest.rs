@@ -13,11 +13,24 @@ use covalence_lib_sqlite as sqlite;
 ///
 /// Returns an error if the manifest cannot be read.
 pub fn schema_manifest_id(connection: &sqlite::Connection) -> Result<O256, sqlite::Error> {
-    let mut statement = connection.prepare(
-        "SELECT type, name, tbl_name, sql FROM main.sqlite_schema
+    schema_manifest_id_in(connection, "main")
+}
+
+/// [`schema_manifest_id`] over a named attached schema.
+///
+/// # Errors
+///
+/// Returns an error if the manifest cannot be read.
+pub fn schema_manifest_id_in(
+    connection: &sqlite::Connection,
+    schema: &str,
+) -> Result<O256, sqlite::Error> {
+    let quoted = format!("\"{}\"", schema.replace('"', "\"\""));
+    let mut statement = connection.prepare(&format!(
+        "SELECT type, name, tbl_name, sql FROM {quoted}.sqlite_schema
          ORDER BY type COLLATE BINARY, name COLLATE BINARY,
-                  tbl_name COLLATE BINARY, sql COLLATE BINARY",
-    )?;
+                  tbl_name COLLATE BINARY, sql COLLATE BINARY"
+    ))?;
     let rows = statement.query_map((), |row| {
         Ok((
             row.get::<_, String>(0)?,
