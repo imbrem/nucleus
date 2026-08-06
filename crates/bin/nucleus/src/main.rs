@@ -102,9 +102,10 @@ fn step(
     match session.eval(line)? {
         Response::Quit => return Ok(true),
         Response::Value(value) => {
-            // `()` is what a form returns when it has nothing to say, and
-            // printing it every time would be noise.
-            if value != covalence_repl::Value::Nil {
+            // A form done for its effect has no result to show. `()` is not
+            // that: an empty `(objects)` prints `()`, because that is what it
+            // returned.
+            if value != covalence_repl::Value::Unspecified {
                 writeln!(out, "{}", value.display())?;
             }
         }
