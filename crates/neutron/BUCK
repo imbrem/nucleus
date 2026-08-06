@@ -29,7 +29,9 @@ rust_library(
     tests = [":covalence_neutron-unit-test"],
     named_deps = {
         "bytes": "nucleus//buck/cargo/production:bytes-1.12.1",
+        "covalence_data_cas": "nucleus//crates/data/cas:covalence_data_cas",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
+        "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
     },
     env = {
@@ -59,7 +61,9 @@ rust_test(
     srcs = _RUST_SOURCES,
     named_deps = {
         "bytes": "nucleus//buck/cargo/production:bytes-1.12.1",
+        "covalence_data_cas": "nucleus//crates/data/cas:covalence_data_cas",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
+        "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
     },
     env = {

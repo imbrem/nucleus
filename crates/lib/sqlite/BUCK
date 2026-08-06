@@ -36,6 +36,8 @@ rust_binary(
     srcs = _RUST_SOURCES,
     features = [
         "default",
+        "vfs",
+        "vfs-register",
     ],
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -73,6 +75,8 @@ buildscript_run(
     rustc_link_search = True,
     features = [
         "default",
+        "vfs",
+        "vfs-register",
     ],
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -105,9 +109,13 @@ rust_library(
     srcs = _RUST_SOURCES,
     features = [
         "default",
+        "vfs",
+        "vfs-register",
     ],
     tests = [":covalence_lib_sqlite-unit-test"],
     named_deps = {
+        "bitflags": "nucleus//buck/cargo/production:bitflags-2.13.1",
+        "indexmap": "nucleus//buck/cargo/production:indexmap-2.14.0",
         "libsqlite3_sys": "nucleus//buck/cargo/production:libsqlite3-sys-0.38.1",
     },
     env = {
@@ -141,8 +149,12 @@ rust_test(
     srcs = _RUST_SOURCES,
     features = [
         "default",
+        "vfs",
+        "vfs-register",
     ],
     named_deps = {
+        "bitflags": "nucleus//buck/cargo/production:bitflags-2.13.1",
+        "indexmap": "nucleus//buck/cargo/production:indexmap-2.14.0",
         "libsqlite3_sys": "nucleus//buck/cargo/production:libsqlite3-sys-0.38.1",
     },
     env = {

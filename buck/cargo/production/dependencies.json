@@ -54,6 +54,23 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#bitflags@2.13.1",
+      "name": "bitflags",
+      "version": "2.13.1",
+      "checksum": "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Rust Project Developers",
+        "CARGO_PKG_DESCRIPTION": "A macro to generate structures which behave like bitflags.\n",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/bitflags/bitflags",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bitflags/bitflags"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#blake3@1.8.5",
       "name": "blake3",
       "version": "1.8.5",
@@ -1455,6 +1472,8 @@
       "name": "covalence-lib-sqlite",
       "category": "tcb",
       "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#bitflags@2.13.1",
+        "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
         "registry+https://github.com/rust-lang/crates.io-index#libsqlite3-sys@0.38.1"
       ]
     },
