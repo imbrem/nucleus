@@ -323,7 +323,10 @@ fn quote(text: &str) -> String {
 ///
 /// Saturates rather than wrapping: a value past `f64`'s exact range would be a
 /// silently wrong handle, and there is no honest number to return.
-#[allow(clippy::cast_precision_loss, reason = "saturated below the exact range")]
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "saturated below the exact range"
+)]
 fn handle_to_js(value: u64) -> f64 {
     const EXACT: u64 = 1 << 53;
     if value >= EXACT { -1.0 } else { value as f64 }
