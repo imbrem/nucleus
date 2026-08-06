@@ -9,6 +9,7 @@ publish = false
 
 [features]
 default = ["serialize"]
+cache = ["rusqlite/cache"]
 serialize = ["rusqlite/serialize"]
 vfs = ["dep:bitflags"]
 vfs-register = ["vfs", "dep:indexmap"]
