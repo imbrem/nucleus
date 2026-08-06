@@ -9,7 +9,7 @@ use std::io;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use covalence_data_cas::Cas;
+use covalence_data_cas::{Cas, CasObject};
 use covalence_lib_hash::O256;
 
 use super::{
@@ -85,14 +85,19 @@ where
     unsafe { super::register(name, CasVfs::new(cas), as_default) }
 }
 
-/// An immutable `SQLite` file backed by authenticated CAS range reads.
-pub struct CasFile<C: ?Sized> {
-    cas: Arc<C>,
+/// An immutable `SQLite` file backed by an opened CAS object.
+///
+/// The object is resolved once, when `SQLite` opens the file, and held for as
+/// long as the file is open. That is what lets a database survive its address
+/// being dropped from the store mid-query: the file is not holding an address
+/// to re-resolve, it is holding the object.
+pub struct CasFile<O> {
     address: O256,
+    object: O,
     len: u64,
 }
 
-impl<C: ?Sized> std::fmt::Debug for CasFile<C> {
+impl<O> std::fmt::Debug for CasFile<O> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("CasFile")
@@ -115,7 +120,7 @@ where
     C: Cas + ?Sized + 'static,
     C::Error: std::error::Error + Send + Sync + 'static,
 {
-    type File = CasFile<C>;
+    type File = CasFile<C::Object>;
 
     fn open(
         &self,
@@ -136,15 +141,16 @@ where
             io::Error::new(io::ErrorKind::InvalidInput, "content address required")
         })?;
         let address = address(path)?;
-        let len = self
+        let object = self
             .cas
-            .len(address)
+            .open(address)
             .map_err(source_error)?
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, path.to_owned()))?;
+        let len = object.len();
         Ok(OpenedFile::new(
             CasFile {
-                cas: Arc::clone(&self.cas),
                 address,
+                object,
                 len,
             },
             OpenFlags::READ_ONLY,
@@ -177,10 +183,10 @@ where
     }
 }
 
-impl<C> File for CasFile<C>
+impl<O> File for CasFile<O>
 where
-    C: Cas + ?Sized,
-    C::Error: std::error::Error + Send + Sync + 'static,
+    O: CasObject,
+    O::Error: std::error::Error + Send + Sync + 'static,
 {
     fn read(&self, buf: &mut [u8], offset: u64) -> io::Result<usize> {
         let available = self.len.saturating_sub(offset);
@@ -192,11 +198,7 @@ where
         let end = offset
             .checked_add(read_len)
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "range overflow"))?;
-        let data = self
-            .cas
-            .read(self.address, offset..end)
-            .map_err(source_error)?
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "CAS object disappeared"))?;
+        let data = self.object.read(offset..end).map_err(source_error)?;
         if data.len() as u64 != read_len {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -276,36 +278,59 @@ mod tests {
         bytes
     }
 
-    struct MemoryCas {
+    /// Records the ranges the VFS actually asks for, so the tests can show
+    /// that reads stay ranged rather than materialising whole objects.
+    struct Recorder {
         data: Bytes,
-        reads: Mutex<Vec<Range<u64>>>,
+        reads: Arc<Mutex<Vec<Range<u64>>>>,
     }
 
-    impl Cas for MemoryCas {
+    struct RecorderObject {
+        data: Bytes,
+        reads: Arc<Mutex<Vec<Range<u64>>>>,
+    }
+
+    impl Cas for Recorder {
         type Error = io::Error;
+        type Object = RecorderObject;
 
-        fn len(&self, address: O256) -> io::Result<Option<u64>> {
-            Ok((address == ADDRESS).then_some(self.data.len() as u64))
-        }
-
-        fn read(&self, address: O256, range: Range<u64>) -> io::Result<Option<Bytes>> {
+        fn open(&self, address: O256) -> io::Result<Option<Self::Object>> {
             if address != ADDRESS {
                 return Ok(None);
             }
+            Ok(Some(RecorderObject {
+                data: self.data.clone(),
+                reads: Arc::clone(&self.reads),
+            }))
+        }
+    }
+
+    impl CasObject for RecorderObject {
+        type Error = io::Error;
+
+        fn len(&self) -> u64 {
+            self.data.len() as u64
+        }
+
+        fn read(&self, range: Range<u64>) -> io::Result<Bytes> {
             self.reads.lock().unwrap().push(range.clone());
             let start = usize::try_from(range.start)
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "range too large"))?;
             let end = usize::try_from(range.end)
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "range too large"))?;
-            Ok(self.data.get(start..end).map(Bytes::copy_from_slice))
+            self.data
+                .get(start..end)
+                .map(Bytes::copy_from_slice)
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "range out of bounds"))
         }
     }
 
     #[test]
     fn file_reads_only_the_requested_range() {
-        let cas = Arc::new(MemoryCas {
+        let reads = Arc::new(Mutex::new(Vec::new()));
+        let cas = Arc::new(Recorder {
             data: Bytes::from_static(b"abcdefgh"),
-            reads: Mutex::new(Vec::new()),
+            reads: Arc::clone(&reads),
         });
         let vfs = CasVfs::new(Arc::clone(&cas));
         let file = vfs
@@ -319,16 +344,17 @@ mod tests {
         let mut output = [0; 3];
         assert_eq!(file.read(&mut output, 2).unwrap(), 3);
         assert_eq!(&output, b"cde");
-        let reads = cas.reads.lock().unwrap();
+        // Opening resolved the object; only the requested page was fetched.
+        let reads = reads.lock().unwrap();
         assert_eq!(reads.len(), 1);
         assert_eq!(reads[0], 2..5);
     }
 
     #[test]
     fn rejects_non_addresses_and_writable_opens() {
-        let vfs = CasVfs::new(Arc::new(MemoryCas {
+        let vfs = CasVfs::new(Arc::new(Recorder {
             data: Bytes::new(),
-            reads: Mutex::new(Vec::new()),
+            reads: Arc::new(Mutex::new(Vec::new())),
         }));
 
         assert_eq!(
@@ -438,6 +464,51 @@ mod tests {
         assert!(
             connection
                 .execute("INSERT INTO object.value VALUES (7)", [])
+                .is_err()
+        );
+    }
+
+    #[cfg(feature = "vfs-register")]
+    #[test]
+    #[allow(unsafe_code, reason = "registers a VFS name private to this test")]
+    fn an_open_database_survives_its_address_being_dropped() {
+        use covalence_data_cas::MemoryCas;
+
+        use crate::Connection;
+
+        let cas = Arc::new(MemoryCas::new());
+        let address = cas.insert(database_image("cas-vfs-dropped")).unwrap();
+        // SAFETY: this name is unique to this test and nothing else registers it.
+        let mounted =
+            unsafe { register_cas(Arc::clone(&cas), "covalence-test-cas-dropped", false) }.unwrap();
+
+        let uri = format!(
+            "file:{}?mode=ro&immutable=1&vfs={}",
+            address.hex(),
+            mounted.name().as_str()
+        );
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute("ATTACH DATABASE ?1 AS object", [&uri])
+            .unwrap();
+
+        // Drop it from the store while the database is open and attached.
+        assert!(cas.remove(address));
+
+        // The attached database keeps answering: the file holds the object,
+        // not the address. This is the property the whole interface exists for.
+        assert_eq!(
+            connection
+                .query_row("SELECT n FROM object.value", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            42
+        );
+
+        // A fresh open of the same address does not resolve.
+        let second = Connection::open_in_memory().unwrap();
+        assert!(
+            second
+                .execute("ATTACH DATABASE ?1 AS object", [&uri])
                 .is_err()
         );
     }
