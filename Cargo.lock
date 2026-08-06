@@ -175,6 +175,9 @@ name = "covalence-lib-sqlite"
 version = "0.0.0"
 dependencies = [
  "bitflags",
+ "bytes",
+ "covalence-data-cas",
+ "covalence-lib-hash",
  "indexmap",
  "libsqlite3-sys",
  "sqlite-wasm-rs",
