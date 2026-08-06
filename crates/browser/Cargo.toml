@@ -1,0 +1,21 @@
+[package]
+name = "covalence-browser"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "A content-addressed SQLite kernel for the browser"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+covalence-lib-hash = { path = "../lib/hash", default-features = false, features = ["blake3"] }
+covalence-lib-sqlite = { path = "../lib/sqlite", features = ["vfs-register"] }
+covalence-neutron = { path = "../neutron" }
+covalence-repl = { path = "../repl" }
+wasm-bindgen = "=0.2.121"
+
+[lints]
+workspace = true
