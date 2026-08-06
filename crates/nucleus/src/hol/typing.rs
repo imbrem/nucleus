@@ -576,6 +576,87 @@ fn strengthen_tm_at(tm: &Tm<Deep>, cutoff: u32) -> Option<Tm<Deep>> {
     })
 }
 
+/// Strengthens a type out of the innermost kind variable's scope: lowers
+/// every free type index by one, returning `None` on a `TY_BV 0` use.
+#[must_use]
+pub fn strengthen_ty_in_ty(ty: &Ty<Deep>) -> Option<Ty<Deep>> {
+    strengthen_ty_at(ty, 0)
+}
+
+/// Strengthens a term out of the innermost kind variable's scope.
+#[must_use]
+pub fn strengthen_ty_in_tm(tm: &Tm<Deep>) -> Option<Tm<Deep>> {
+    strengthen_ty_in_tm_at(tm, 0)
+}
+
+fn strengthen_ty_at(ty: &Ty<Deep>, cutoff: u32) -> Option<Ty<Deep>> {
+    Some(match ty {
+        Ty::Bv(index) => match (*index).cmp(&cutoff) {
+            std::cmp::Ordering::Less => Ty::Bv(*index),
+            std::cmp::Ordering::Equal => return None,
+            std::cmp::Ordering::Greater => Ty::Bv(*index - 1),
+        },
+        Ty::Lam(kind, body) => Ty::Lam(kind.clone(), Box::new(strengthen_ty_at(body, cutoff + 1)?)),
+        Ty::App(function, argument) => Ty::App(
+            Box::new(strengthen_ty_at(function, cutoff)?),
+            Box::new(strengthen_ty_at(argument, cutoff)?),
+        ),
+        Ty::All(kind, body) => Ty::All(kind.clone(), Box::new(strengthen_ty_at(body, cutoff + 1)?)),
+        Ty::Bool => Ty::Bool,
+        Ty::Arr(domain, codomain) => Ty::Arr(
+            Box::new(strengthen_ty_at(domain, cutoff)?),
+            Box::new(strengthen_ty_at(codomain, cutoff)?),
+        ),
+        Ty::Sub(carrier, predicate) => Ty::Sub(
+            Box::new(strengthen_ty_at(carrier, cutoff)?),
+            Box::new(strengthen_ty_in_tm_at(predicate, cutoff)?),
+        ),
+        Ty::Ind => Ty::Ind,
+        Ty::Ext(source, position) => Ty::Ext(*source, *position),
+    })
+}
+
+fn strengthen_ty_in_tm_at(tm: &Tm<Deep>, cutoff: u32) -> Option<Tm<Deep>> {
+    Some(match tm {
+        Tm::Bv(index) => Tm::Bv(*index),
+        Tm::App(function, argument) => Tm::App(
+            Box::new(strengthen_ty_in_tm_at(function, cutoff)?),
+            Box::new(strengthen_ty_in_tm_at(argument, cutoff)?),
+        ),
+        Tm::Lam(domain, body) => Tm::Lam(
+            Box::new(strengthen_ty_at(domain, cutoff)?),
+            Box::new(strengthen_ty_in_tm_at(body, cutoff)?),
+        ),
+        Tm::TyApp(function, argument) => Tm::TyApp(
+            Box::new(strengthen_ty_in_tm_at(function, cutoff)?),
+            Box::new(strengthen_ty_at(argument, cutoff)?),
+        ),
+        Tm::TyLam(kind, body) => Tm::TyLam(
+            kind.clone(),
+            Box::new(strengthen_ty_in_tm_at(body, cutoff + 1)?),
+        ),
+        Tm::Bool(value) => Tm::Bool(*value),
+        Tm::Eq(left, right) => Tm::Eq(
+            Box::new(strengthen_ty_in_tm_at(left, cutoff)?),
+            Box::new(strengthen_ty_in_tm_at(right, cutoff)?),
+        ),
+        Tm::Eps(predicate) => Tm::Eps(Box::new(strengthen_ty_in_tm_at(predicate, cutoff)?)),
+        Tm::Abs(predicate, value) => Tm::Abs(
+            Box::new(strengthen_ty_in_tm_at(predicate, cutoff)?),
+            Box::new(strengthen_ty_in_tm_at(value, cutoff)?),
+        ),
+        Tm::Rep(predicate, value) => Tm::Rep(
+            Box::new(strengthen_ty_in_tm_at(predicate, cutoff)?),
+            Box::new(strengthen_ty_in_tm_at(value, cutoff)?),
+        ),
+        Tm::Ext(source, position, claim) => Tm::Ext(
+            *source,
+            *position,
+            Box::new(strengthen_ty_at(claim, cutoff)?),
+        ),
+    })
+}
+
 impl<'v, P: Policy> HolView<'v, P> {
     // ------------------------------------------------------------------
     // Loading and interning deep trees.
