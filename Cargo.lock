@@ -167,8 +167,17 @@ name = "covalence-lib-sqlite"
 version = "0.0.0"
 dependencies = [
  "bitflags",
+ "covalence-lib-sqlite3",
  "indexmap",
  "rusqlite",
+]
+
+[[package]]
+name = "covalence-lib-sqlite3"
+version = "0.0.0"
+dependencies = [
+ "libsqlite3-sys",
+ "sqlite-wasm-rs",
 ]
 
 [[package]]

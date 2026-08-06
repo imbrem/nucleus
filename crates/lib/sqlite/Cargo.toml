@@ -14,6 +14,7 @@ vfs = ["dep:bitflags"]
 vfs-register = ["vfs", "dep:indexmap"]
 
 [dependencies]
+covalence-lib-sqlite3 = { path = "../sqlite3" }
 bitflags = { version = "2", optional = true }
 indexmap = { version = "2", optional = true }
 

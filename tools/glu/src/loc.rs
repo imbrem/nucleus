@@ -11,6 +11,7 @@ const TCB: &[&str] = &[
     "crates/lib/hash",
     "crates/lib/rand",
     "crates/lib/sqlite",
+    "crates/lib/sqlite3",
     "crates/data/basic",
     "crates/proton",
     "crates/neutron",
