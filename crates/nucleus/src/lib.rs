@@ -7,6 +7,9 @@ pub mod manifest;
 pub use connection::Connection;
 pub use kernel::Kernel;
 
+pub mod hol;
+pub use hol::Hol;
+
 pub mod prop;
 pub use prop::Prop;
 
