@@ -26,17 +26,24 @@
 //! Arguments after `--cas <SOCKET>` are the ordinary `sqlite3` command line. A
 //! resident object opens as `file:<address>?vfs=cas`.
 
-use std::os::unix::net::UnixStream;
 use std::process::ExitCode;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
-use covalence_data_cas_wire::{RemoteCas, Transport};
 use covalence_neutron::{CAS_VFS_NAME, register_cas};
+
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
+#[cfg(unix)]
+use std::sync::OnceLock;
+
+#[cfg(unix)]
+use covalence_data_cas_wire::{RemoteCas, Transport};
 
 /// The store, parked between connecting to it and the shell asking for it.
 ///
 /// The handoff goes through a static because the shell calls back into us from
 /// C, with no argument to carry it.
+#[cfg(unix)]
 static STORE: OnceLock<Arc<RemoteCas<UnixStream, UnixStream>>> = OnceLock::new();
 
 /// Called by `shell.c` at the point it initializes `SQLite`.
@@ -49,11 +56,18 @@ static STORE: OnceLock<Arc<RemoteCas<UnixStream, UnixStream>>> = OnceLock::new()
 #[allow(unsafe_code, reason = "the shell calls this from C by name")]
 #[unsafe(no_mangle)]
 extern "C" fn covalence_shell_init() {
-    let Some(store) = STORE.get() else {
+    #[cfg(unix)]
+    let store = match STORE.get() {
+        Some(store) => Arc::clone(store),
         // Nothing to mount. The shell still runs; only `?vfs=cas` is missing.
-        return;
+        None => return,
     };
-    if let Err(error) = register_cas(Arc::clone(store), CAS_VFS_NAME, false) {
+    // Under WASI the store is the host, which is always there: no connection
+    // to establish and nothing to park.
+    #[cfg(target_os = "wasi")]
+    let store = Arc::new(covalence_bin_cas_shell::wasi::HostCas);
+
+    if let Err(error) = register_cas(store, CAS_VFS_NAME, false) {
         eprintln!("cas-shell: could not mount the store: {error}");
     }
 }
@@ -68,6 +82,15 @@ fn main() -> ExitCode {
     }
 }
 
+/// Under WASI the store arrives through imports, so every argument is the
+/// shell's.
+#[cfg(target_os = "wasi")]
+fn run() -> Result<i32, Box<dyn std::error::Error>> {
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    Ok(covalence_bin_cas_shell::run(&arguments)?)
+}
+
+#[cfg(unix)]
 fn run() -> Result<i32, Box<dyn std::error::Error>> {
     let mut arguments = std::env::args().skip(1);
     let socket = match arguments.next().as_deref() {

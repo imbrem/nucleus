@@ -1,5 +1,9 @@
 //! The upstream `SQLite` shell, linked as a private subprocess library.
 
+/// A [`covalence_data_cas::Cas`] provided by a WASI host.
+#[cfg(target_os = "wasi")]
+pub mod wasi;
+
 use std::ffi::{CString, NulError, c_char, c_int};
 
 // Ensure the shell's SQLite symbols resolve to this library.

@@ -74,6 +74,7 @@ genrule(
     name = "wasm",
     srcs = named_sources(
         {
+            "bin-cas-shell": "//crates/bin/cas-shell:package_files",
             "browser": "//crates/browser:package_files",
             "data-cas": "//crates/data/cas:package_files",
             "data-cas-wire": "//crates/data/cas-wire:package_files",
