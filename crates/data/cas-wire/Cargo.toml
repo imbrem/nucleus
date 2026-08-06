@@ -1,0 +1,19 @@
+[package]
+name = "covalence-data-cas-wire"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The CAS interface carried over a byte stream"
+publish = false
+
+[dependencies]
+bytes = "1"
+covalence-data-cas = { path = "../cas" }
+covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["blake3"] }
+
+[dev-dependencies]
+os_pipe = "1"
+
+[lints]
+workspace = true

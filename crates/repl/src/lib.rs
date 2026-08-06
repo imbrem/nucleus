@@ -21,6 +21,7 @@
 //! address cannot disturb an open database.
 
 pub mod sexpr;
+pub mod shell;
 
 mod session;
 
