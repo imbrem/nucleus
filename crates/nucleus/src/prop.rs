@@ -18,6 +18,7 @@ use crate::Connection;
 
 pub mod lrat;
 pub mod scratch;
+pub mod transfer;
 
 /// The normative semantic commitment, byte for byte.
 pub const SEMANTICS: &str = include_str!("prop/semantics.txt");
@@ -46,6 +47,9 @@ pub enum Operation {
     Choose,
     ScratchImport,
     LratRefutation,
+    Export,
+    TrustSigner,
+    ImportTable,
     Read,
 }
 
@@ -68,6 +72,8 @@ impl Policy for AllowAll {
 /// Protocol state for a propositional kernel-state connection.
 pub struct Prop<P: Policy> {
     policy: P,
+    /// Connection-local trusted snapshot signers; never serialized.
+    pub(crate) trusted: std::cell::RefCell<std::collections::BTreeSet<O256>>,
 }
 
 /// A proposition id: always positive.
@@ -262,6 +268,44 @@ pub enum PropError {
         /// Required consequent.
         rhs: i64,
     },
+    /// The envelope failed authentication.
+    #[snafu(display("snapshot authentication failed"))]
+    Snapshot {
+        /// Underlying authentication failure.
+        source: crate::snapshot::SnapshotAuthenticationError,
+    },
+    /// The envelope's signer is not in this connection's trusted set.
+    #[snafu(display("signer {signer} is not trusted by this connection"))]
+    UntrustedSigner {
+        /// The authenticated but untrusted signer identity.
+        signer: O256,
+    },
+    /// The envelope does not carry this protocol's schema identity.
+    #[snafu(display("schema {claimed} does not match expected {expected}"))]
+    SchemaMismatch {
+        /// The claimed or recomputed identity.
+        claimed: O256,
+        /// This connection's identity.
+        expected: O256,
+    },
+    /// The source database failed its own validity assertions.
+    #[snafu(display("imported database is invalid: {violations:?}"))]
+    ImportInvalid {
+        /// The failing assertions.
+        violations: Vec<String>,
+    },
+    /// The kernel could not sign the export statement.
+    #[snafu(display("cannot sign the export statement"))]
+    Sign {
+        /// Underlying signing failure.
+        source: crate::snapshot::SignError,
+    },
+    /// Serialization or attachment of image bytes failed.
+    #[snafu(display("cannot move database image bytes"))]
+    Image {
+        /// Underlying image failure.
+        source: covalence_neutron::ImageError,
+    },
     /// The underlying connection could not be created.
     #[snafu(display("cannot open the propositional connection"), context(false))]
     Connection {
@@ -289,7 +333,13 @@ impl<P: Policy> Connection<Prop<P>> {
             .sqlite()
             .execute_batch(SCHEMA)
             .context(StorageSnafu)?;
-        Ok(Self::from_neutron(neutron, Prop { policy }))
+        Ok(Self::from_neutron(
+            neutron,
+            Prop {
+                policy,
+                trusted: std::cell::RefCell::default(),
+            },
+        ))
     }
 
     /// Opens a borrowing kernel view.
@@ -882,7 +932,13 @@ impl<P: Policy> PropView<'_, P> {
     ///
     /// Fails only on storage errors.
     pub fn check_validity(&self) -> Result<Vec<String>, PropError> {
+        self.check_validity_in("main")
+    }
+
+    /// [`Self::check_validity`] against a named attached schema.
+    pub(crate) fn check_validity_in(&self, schema: &str) -> Result<Vec<String>, PropError> {
         self.authorize(Operation::Read)?;
+        let quoted = format!("\"{}\"", schema.replace('"', "\"\""));
         let mut violations = Vec::new();
         let sqlite = self.sqlite();
         let mut collect = |sql: &str, label: &str| -> Result<(), PropError> {
@@ -898,34 +954,43 @@ impl<P: Policy> PropView<'_, P> {
         };
         // W1: definitional and declaration rows need positive antecedents.
         collect(
-            "SELECT DISTINCT lhs FROM prop_row
-             WHERE (model = 0 AND lhs <= 0)
-                OR (model > 0 AND rhs = 0 AND lhs <= 0)",
+            &format!(
+                "SELECT DISTINCT lhs FROM {quoted}.prop_row
+                 WHERE (model = 0 AND lhs <= 0)
+                    OR (model > 0 AND rhs = 0 AND lhs <= 0)"
+            ),
             "non-positive definiendum",
         )?;
         // W2: at most one non-negative binding level per id.
         collect(
-            "SELECT lhs FROM prop_row
-             WHERE lhs > 0 AND model >= 0 AND (model = 0 OR rhs = 0)
-             GROUP BY lhs HAVING count(DISTINCT model) > 1",
+            &format!(
+                "SELECT lhs FROM {quoted}.prop_row
+                 WHERE lhs > 0 AND model >= 0 AND (model = 0 OR rhs = 0)
+                 GROUP BY lhs HAVING count(DISTINCT model) > 1"
+            ),
             "multiple non-negative binding levels",
         )?;
         // W3: definitional acyclicity.
         collect(
-            "WITH RECURSIVE step(root, x) AS (
-                 SELECT lhs, abs(rhs) FROM prop_row WHERE model = 0 AND rhs != 0
-                 UNION
-                 SELECT step.root, abs(prop_row.rhs) FROM prop_row
-                 JOIN step ON prop_row.lhs = step.x
-                 WHERE prop_row.model = 0 AND prop_row.rhs != 0
-             )
-             SELECT DISTINCT root FROM step WHERE root = x",
+            &format!(
+                "WITH RECURSIVE step(root, x) AS (
+                     SELECT lhs, abs(rhs) FROM {quoted}.prop_row
+                     WHERE model = 0 AND rhs != 0
+                     UNION
+                     SELECT step.root, abs(source.rhs) FROM {quoted}.prop_row AS source
+                     JOIN step ON source.lhs = step.x
+                     WHERE source.model = 0 AND source.rhs != 0
+                 )
+                 SELECT DISTINCT root FROM step WHERE root = x"
+            ),
             "definitional cycle",
         )?;
         // W4: worlds must be registered.
         collect(
-            "SELECT DISTINCT model FROM prop_row WHERE model > 0
-             AND model NOT IN (SELECT world_id FROM prop_world)",
+            &format!(
+                "SELECT DISTINCT model FROM {quoted}.prop_row WHERE model > 0
+                 AND model NOT IN (SELECT world_id FROM {quoted}.prop_world)"
+            ),
             "unregistered world",
         )?;
         Ok(violations)
@@ -954,7 +1019,7 @@ mod tests {
     fn semantics_identity_matches_fixed_vector() {
         assert_eq!(
             prop_semantics_id(),
-            o256!("825355d586a4d3ee5688561ea0b8413e5814a387830635bc882541362cf0a1b8")
+            o256!("565806c62d1d9c53bdb58205a679f2ffddf99b8100fa323f70d79e6ee8e6c679")
         );
     }
 
