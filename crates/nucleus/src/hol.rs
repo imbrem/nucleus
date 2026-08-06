@@ -15,13 +15,16 @@ use covalence_lib_sqlite as sqlite;
 
 use crate::Connection;
 
+pub mod namespace;
 pub mod rules;
 pub mod syntax;
 pub mod typing;
 mod view;
 
+pub use namespace::ExportTarget;
 pub use syntax::{
-    HypsId, Ids, Kind, KindId, KindsId, Sort, SourceId, Substrate, TermId, Tm, Ty, TypeId, VarsId,
+    HypsId, Ids, Kind, KindId, KindsId, NamespaceId, Sort, SourceId, Substrate, TermId, Tm, Ty,
+    TypeId, VarsId,
 };
 pub use typing::{Deep, DeepKind, DeepTm, DeepTy, MAX_DEPTH};
 pub use view::{HolError, HolView};
@@ -114,6 +117,32 @@ pub enum HolOpenError {
     },
 }
 
+/// Failure to open a kernel-state database from a serialized image.
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+pub enum HolImageError {
+    /// The image bytes could not be serialized or deserialized.
+    #[snafu(display("cannot read or write the kernel-state image"), context(false))]
+    Image {
+        /// Underlying image failure.
+        source: covalence_neutron::ImageError,
+    },
+    /// The schema identity could not be computed.
+    #[snafu(display("cannot identify the kernel-state schema"))]
+    Identify {
+        /// Underlying `SQLite` failure.
+        source: sqlite::Error,
+    },
+    /// The image does not carry the current kernel-state schema.
+    #[snafu(display("image schema identity {found} is not the expected {expected}"))]
+    SchemaMismatch {
+        /// The identity of the current kernel-state schema.
+        expected: O256,
+        /// The identity computed from the image.
+        found: O256,
+    },
+}
+
 impl<P: Policy> Connection<Hol<P>> {
     /// Opens a fresh in-memory kernel-state database under `policy`.
     ///
@@ -130,6 +159,50 @@ impl<P: Policy> Connection<Hol<P>> {
         Ok(Self::from_neutron(neutron, Hol { policy }))
     }
 
+    /// Opens a serialized kernel-state image as a writable in-memory
+    /// database under `policy`.
+    ///
+    /// The image's schema identity is checked against the current
+    /// kernel-state schema before the connection is returned. This check
+    /// admits the *schema*, never the rows: an image's theorem rows are
+    /// trusted exactly as far as the image's provenance (regeneration, or
+    /// a pinned content address), so callers establishing trust from a
+    /// content hash must verify the bytes before opening them.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the image cannot be deserialized, its schema
+    /// identity cannot be computed, or the identity differs from the
+    /// current kernel-state schema.
+    pub fn open_hol_image(
+        bytes: &covalence_neutron::Bytes,
+        policy: P,
+    ) -> Result<Self, HolImageError> {
+        let neutron = covalence_neutron::Connection::deserialize(bytes)?;
+        let connection = Self::from_neutron(neutron, Hol { policy });
+        let expected = current_hol_schema_id().context(IdentifySnafu)?;
+        let found = {
+            let (neutron, _) = connection.parts();
+            let physical =
+                crate::manifest::schema_manifest_id(neutron.sqlite()).context(IdentifySnafu)?;
+            hol_schema_id(physical)
+        };
+        if found != expected {
+            return SchemaMismatchSnafu { expected, found }.fail();
+        }
+        Ok(connection)
+    }
+
+    /// Serializes this connection's database as a whole image.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `SQLite` cannot serialize the database.
+    pub fn serialize_image(&self) -> Result<covalence_neutron::Bytes, HolImageError> {
+        let (neutron, _) = self.parts();
+        Ok(neutron.serialize()?)
+    }
+
     /// Returns the composite schema identity of this connection's database.
     ///
     /// # Errors
@@ -141,6 +214,13 @@ impl<P: Policy> Connection<Hol<P>> {
             crate::manifest::schema_manifest_id(neutron.sqlite()).context(InstallSnafu)?;
         Ok(hol_schema_id(physical))
     }
+}
+
+/// Computes the schema identity of a fresh kernel-state installation.
+fn current_hol_schema_id() -> Result<O256, sqlite::Error> {
+    let fresh = sqlite::Connection::open_in_memory()?;
+    fresh.execute_batch(SCHEMA)?;
+    Ok(hol_schema_id(crate::manifest::schema_manifest_id(&fresh)?))
 }
 
 impl crate::Kernel {
@@ -218,6 +298,36 @@ mod tests {
         }
         assert!(AllowAll.allows(Operation::Beta));
         assert!(!DenyAll.allows(Operation::Beta));
+    }
+
+    #[test]
+    fn images_round_trip_and_admit_only_the_current_schema() {
+        let source = Connection::open_hol_in_memory(AllowAll).expect("open source");
+        let truth = {
+            let hol = source.view();
+            hol.tm(syntax::Tm::Bool(true)).expect("intern true").raw()
+        };
+        let bytes = source.serialize_image().expect("serialize");
+
+        let restored =
+            Connection::<Hol<AllowAll>>::open_hol_image(&bytes, AllowAll).expect("reopen");
+        let hol = restored.view();
+        let reread = hol.tm_from_raw(truth).expect("revalidate");
+        assert_eq!(hol.tm_node(reread).expect("node"), syntax::Tm::Bool(true));
+
+        // A schema extension is a different identity and must be refused.
+        let extended = Connection::open_hol_in_memory(AllowAll).expect("open extended");
+        extended
+            .parts()
+            .0
+            .sqlite()
+            .execute_batch("CREATE TABLE extra (value INTEGER) STRICT")
+            .expect("extend schema");
+        let extended_bytes = extended.serialize_image().expect("serialize extended");
+        assert!(matches!(
+            Connection::<Hol<AllowAll>>::open_hol_image(&extended_bytes, AllowAll),
+            Err(HolImageError::SchemaMismatch { .. })
+        ));
     }
 
     #[test]

@@ -1,0 +1,21 @@
+[package]
+name = "covalence-hol-init"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Propositional init database for the HOL kernel"
+publish = false
+
+[[bin]]
+name = "hol-init"
+path = "src/bin/hol-init.rs"
+
+[dependencies]
+covalence-lib-error = { path = "../../lib/error" }
+covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["blake3"] }
+covalence-neutron = { path = "../../neutron" }
+covalence-nucleus = { path = "../../nucleus" }
+
+[lints]
+workspace = true

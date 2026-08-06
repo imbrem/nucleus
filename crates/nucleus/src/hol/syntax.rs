@@ -122,6 +122,10 @@ branded_id!(
     SourceId
 );
 branded_id!(
+    /// An interned export namespace (`hol_namespace` row).
+    NamespaceId
+);
+branded_id!(
     /// An established theorem handle, never authority.
     TheoremId
 );
