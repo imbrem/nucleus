@@ -171,6 +171,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "covalence-lib-sql-shell"
+version = "0.0.0"
+dependencies = [
+ "covalence-data-cas",
+ "covalence-lib-sqlite",
+]
+
+[[package]]
 name = "covalence-lib-sqlite"
 version = "0.0.0"
 dependencies = [

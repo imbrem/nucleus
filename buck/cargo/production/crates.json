@@ -128,6 +128,27 @@
       ]
     },
     {
+      "id": "workspace#covalence-lib-sql-shell@0.0.0",
+      "name": "covalence-lib-sql-shell",
+      "version": "0.0.0",
+      "path": "crates/lib/sql-shell",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_lib_sql_shell",
+          "kinds": [
+            "lib"
+          ]
+        },
+        {
+          "name": "mounted_cas",
+          "kinds": [
+            "test"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-lib-sqlite@0.0.0",
       "name": "covalence-lib-sqlite",
       "version": "0.0.0",
@@ -220,6 +241,34 @@
     {
       "source": "workspace#covalence-lib-hash@0.0.0",
       "target": "workspace#covalence-lib-rand@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-lib-sql-shell@0.0.0",
+      "target": "workspace#covalence-data-cas@0.0.0",
+      "kinds": [
+        "dev"
+      ]
+    },
+    {
+      "source": "workspace#covalence-lib-sql-shell@0.0.0",
+      "target": "workspace#covalence-lib-sqlite@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-lib-sqlite@0.0.0",
+      "target": "workspace#covalence-data-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-lib-sqlite@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
       "kinds": [
         "normal"
       ]
