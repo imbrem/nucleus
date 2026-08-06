@@ -54,6 +54,23 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#bitflags@2.13.1",
+      "name": "bitflags",
+      "version": "2.13.1",
+      "checksum": "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Rust Project Developers",
+        "CARGO_PKG_DESCRIPTION": "A macro to generate structures which behave like bitflags.\n",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/bitflags/bitflags",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bitflags/bitflags"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#blake3@1.8.5",
       "name": "blake3",
       "version": "1.8.5",
@@ -429,6 +446,21 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#equivalent@1.0.2",
+      "name": "equivalent",
+      "version": "1.0.2",
+      "checksum": "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f",
+      "edition": "2015",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Traits for key comparison in maps.",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/indexmap-rs/equivalent"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#find-msvc-tools@0.1.9",
       "name": "find-msvc-tools",
       "version": "0.1.9",
@@ -522,6 +554,21 @@
       "buildscript": {}
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
+      "name": "hashbrown",
+      "version": "0.17.1",
+      "checksum": "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a",
+      "edition": "2024",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "A Rust port of Google's SwissTable hash map",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/hashbrown"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#heck@0.5.0",
       "name": "heck",
       "version": "0.5.0",
@@ -534,6 +581,30 @@
       },
       "targets": [
         {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
+      "name": "indexmap",
+      "version": "2.14.0",
+      "checksum": "d466e9454f08e4a911e14806c24e16fba1b4c121d1ea474396f396069cf949d9",
+      "edition": "2024",
+      "features": [
+        "default",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "A hash table with consistent order and fast iteration.",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/indexmap-rs/indexmap"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "equivalent": ":equivalent-1.0.2",
+            "hashbrown": ":hashbrown-0.17.1"
+          }
+        }
       ]
     },
     {
@@ -1400,7 +1471,9 @@
       "name": "covalence-lib-sqlite",
       "category": "tcb",
       "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#bitflags@2.13.1",
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+        "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
         "registry+https://github.com/rust-lang/crates.io-index#libsqlite3-sys@0.38.1"
       ]
     },
@@ -1415,6 +1488,14 @@
     {
       "id": "workspace#covalence-nucleus@0.0.0",
       "name": "covalence-nucleus",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1"
+      ]
+    },
+    {
+      "id": "workspace#covalence-repl@0.0.0",
+      "name": "covalence-repl",
       "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1"
@@ -1700,6 +1781,20 @@
         "normal (cfg(target_os = \"netbsd\"))",
         "normal (cfg(target_os = \"solaris\"))",
         "normal (cfg(target_os = \"vxworks\"))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#equivalent@1.0.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
+      "kinds": [
+        "normal"
       ]
     },
     {
