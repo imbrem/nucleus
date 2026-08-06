@@ -24,6 +24,10 @@ impl<P> Connection<P> {
     pub(crate) const fn parts(&self) -> (&neutron::Connection, &P) {
         (&self.neutron, &self.protocol)
     }
+
+    pub(crate) const fn parts_mut(&mut self) -> (&mut neutron::Connection, &mut P) {
+        (&mut self.neutron, &mut self.protocol)
+    }
 }
 
 #[cfg(test)]

@@ -14,10 +14,22 @@ use covalence_neutron::Connection;
 ///
 /// Returns an error if the manifest cannot be read.
 pub fn schema_manifest_id(connection: &Connection) -> Result<O256, Error> {
+    schema_manifest_id_in(connection, "main")
+}
+
+/// [`schema_manifest_id`] over a named attached schema.
+///
+/// # Errors
+///
+/// Returns an error if the manifest cannot be read.
+pub fn schema_manifest_id_in(connection: &Connection, schema: &str) -> Result<O256, Error> {
+    let quoted = format!("\"{}\"", schema.replace('"', "\"\""));
     let rows = connection.query_all(
-        "SELECT type, name, tbl_name, sql FROM main.sqlite_schema
+        &format!(
+            "SELECT type, name, tbl_name, sql FROM {quoted}.sqlite_schema
          ORDER BY type COLLATE BINARY, name COLLATE BINARY,
-                  tbl_name COLLATE BINARY, sql COLLATE BINARY",
+                  tbl_name COLLATE BINARY, sql COLLATE BINARY"
+        ),
         &[],
         |row| Ok((row.text(0)?, row.text(1)?, row.text(2)?, row.text_opt(3)?)),
     )?;
