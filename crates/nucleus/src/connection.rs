@@ -1,39 +1,46 @@
-use std::path::Path;
-
 use covalence_neutron as neutron;
 
-/// Failure to open a Nucleus connection.
-pub type ConnectionError = neutron::ConnectionError;
-
-/// A policy-enforcing connection to Nucleus state.
+/// A protocol-enforcing connection to Nucleus state.
 ///
-/// This initial wrapper intentionally exposes no access to its underlying
-/// Neutron or `SQLite` connections. Later APIs can add operations only when
-/// Nucleus can preserve their semantic invariants by construction.
-#[derive(Debug)]
-pub struct Connection {
-    _neutron: neutron::Connection,
+/// `P` is the connection's protocol and carries its connection-local policy
+/// and evidence. Protocol modules construct this enclosure only after
+/// admitting the underlying `SQLite` connection, and expose operations only
+/// for the reads and writes their logic permits.
+///
+/// There is intentionally no generic constructor, statement API, or escape
+/// hatch to the enclosed Neutron connection. A deliberately permeable
+/// protocol, such as a SQL shell, must make that authority explicit in its own
+/// API.
+pub struct Connection<P> {
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "used by protocol modules in stacked changes")
+    )]
+    neutron: neutron::Connection,
+    protocol: P,
 }
 
-impl Connection {
-    /// Opens a database through Neutron and encloses it in the Nucleus boundary.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the underlying `SQLite` connection cannot be
-    /// opened or Neutron's connection metadata cannot be initialized.
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, ConnectionError> {
-        neutron::Connection::open(path).map(|neutron| Self { _neutron: neutron })
+impl<P> Connection<P> {
+    /// Returns the protocol state carried by this connection.
+    #[must_use]
+    pub const fn protocol(&self) -> &P {
+        &self.protocol
     }
 
-    /// Opens an in-memory database through Neutron.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when Neutron's connection metadata cannot be
-    /// initialized.
-    pub fn open_in_memory() -> Result<Self, ConnectionError> {
-        neutron::Connection::open_in_memory().map(|neutron| Self { _neutron: neutron })
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "used by protocol modules in stacked changes")
+    )]
+    pub(crate) const fn from_neutron(neutron: neutron::Connection, protocol: P) -> Self {
+        Self { neutron, protocol }
+    }
+
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "used by protocol modules in stacked changes")
+    )]
+    pub(crate) const fn parts_mut(&mut self) -> (&mut neutron::Connection, &mut P) {
+        (&mut self.neutron, &mut self.protocol)
     }
 }
 
@@ -41,8 +48,31 @@ impl Connection {
 mod tests {
     use super::Connection;
 
+    #[derive(Debug, Eq, PartialEq)]
+    struct TestProtocol {
+        admitted_generation: u64,
+    }
+
     #[test]
-    fn opens_through_neutron() {
-        let _connection = Connection::open_in_memory().expect("open Nucleus connection");
+    fn encloses_protocol_state_with_neutron_connection() {
+        let neutron = covalence_neutron::Connection::open_in_memory().expect("open Neutron");
+        let mut connection = Connection::from_neutron(
+            neutron,
+            TestProtocol {
+                admitted_generation: 7,
+            },
+        );
+
+        assert_eq!(connection.protocol().admitted_generation, 7);
+        let (neutron, protocol) = connection.parts_mut();
+        assert_eq!(
+            neutron
+                .sqlite()
+                .query_row("SELECT 42", (), |row| row.get::<_, i64>(0))
+                .expect("query enclosed connection"),
+            42
+        );
+        protocol.admitted_generation += 1;
+        assert_eq!(connection.protocol().admitted_generation, 8);
     }
 }
