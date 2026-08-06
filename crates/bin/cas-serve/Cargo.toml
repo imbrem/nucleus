@@ -1,0 +1,19 @@
+[package]
+name = "covalence-bin-cas-serve"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Serve a content-addressed store over HTTP"
+publish = false
+
+[[bin]]
+name = "covalence-cas-serve"
+path = "src/main.rs"
+
+[dependencies]
+covalence-data-cas = { path = "../../data/cas" }
+covalence-data-cas-http = { path = "../../data/cas-http" }
+
+[lints]
+workspace = true
