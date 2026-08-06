@@ -12,6 +12,7 @@ members = [
   "crates/proton",
   "crates/neutron",
   "crates/nucleus",
+  "crates/repl",
   "crates/bin/nucleus",
 ]
 resolver = "3"
