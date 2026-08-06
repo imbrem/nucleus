@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nucleus — content-addressed SQLite</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --line: color-mix(in oklab, currentColor 18%, transparent);
+        --soft: color-mix(in oklab, currentColor 60%, transparent);
+      }
+      body {
+        margin: 0 auto;
+        padding: 2rem 1.25rem 4rem;
+        max-width: 60rem;
+        font: 15px/1.55 system-ui, sans-serif;
+      }
+      h1 {
+        font-size: 1.35rem;
+        margin: 0 0 0.25rem;
+      }
+      p.lede {
+        color: var(--soft);
+        margin: 0 0 2rem;
+      }
+      section {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 1rem 1.25rem 1.25rem;
+        margin-bottom: 1.5rem;
+      }
+      h2 {
+        font-size: 1rem;
+        margin: 0 0 0.15rem;
+      }
+      h2 small {
+        font-weight: normal;
+        color: var(--soft);
+      }
+      .note {
+        color: var(--soft);
+        font-size: 0.9rem;
+        margin: 0 0 1rem;
+      }
+      label {
+        display: block;
+        margin: 0.6rem 0 0.2rem;
+        font-size: 0.85rem;
+        color: var(--soft);
+      }
+      input,
+      textarea,
+      button {
+        font: inherit;
+      }
+      input,
+      textarea {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 0.4rem 0.5rem;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        background: transparent;
+        color: inherit;
+        font-family: ui-monospace, monospace;
+        font-size: 0.85rem;
+      }
+      button {
+        margin-top: 0.75rem;
+        margin-right: 0.4rem;
+        padding: 0.4rem 0.9rem;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+      }
+      button:hover {
+        border-color: currentColor;
+      }
+      pre {
+        margin: 0.85rem 0 0;
+        padding: 0.7rem 0.85rem;
+        border-radius: 5px;
+        background: color-mix(in oklab, currentColor 7%, transparent);
+        overflow-x: auto;
+        font-family: ui-monospace, monospace;
+        font-size: 0.82rem;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .bad {
+        color: #c0392b;
+      }
+      table {
+        border-collapse: collapse;
+        margin-top: 0.85rem;
+        font-size: 0.85rem;
+      }
+      th,
+      td {
+        border: 1px solid var(--line);
+        padding: 0.25rem 0.6rem;
+        text-align: left;
+        font-family: ui-monospace, monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Content-addressed SQLite</h1>
+    <p class="lede">
+      A database is named by the hash of its bytes. The same design runs as a
+      kernel inside this page and as a kernel you reach over HTTP.
+    </p>
+
+    <section>
+      <h2>1. A kernel in this page <small>— wasm, no server</small></h2>
+      <p class="note">
+        SQLite, a content-addressed store, and a VFS mounting one on the other,
+        all compiled to wasm. Choose a <code>.sqlite</code> file: it is hashed,
+        admitted, and opened by address. Nothing leaves the tab.
+      </p>
+      <label for="file">SQLite database</label>
+      <input id="file" type="file" accept=".sqlite,.db,.sqlite3" />
+      <label for="local-sql">Query</label>
+      <textarea id="local-sql" rows="2">
+SELECT name FROM sqlite_schema WHERE type = 'table'</textarea
+      >
+      <button id="local-run">Run</button>
+      <button id="local-forget">Forget the object</button>
+      <pre id="local-out">Choose a file to begin.</pre>
+    </section>
+
+    <section>
+      <h2>2. A kernel over HTTP <small>— another process, another origin</small></h2>
+      <p class="note">
+        Start one with
+        <code>cargo run -p covalence-bin-cas-serve -- FILE.sqlite</code>; it
+        prints an address and a URL. The page fetches the object, checks it
+        hashes to the address it asked for, and only then admits it. A wrong or
+        hostile server is caught here rather than believed.
+      </p>
+      <label for="base">Kernel URL</label>
+      <input id="base" value="http://127.0.0.1:8080" />
+      <label for="remote-address">Address</label>
+      <input id="remote-address" placeholder="64 hexadecimal characters" />
+      <label for="remote-sql">Query</label>
+      <textarea id="remote-sql" rows="2">
+SELECT name FROM sqlite_schema WHERE type = 'table'</textarea
+      >
+      <button id="remote-fetch">Fetch, verify, admit</button>
+      <button id="remote-run">Run</button>
+      <button id="remote-range">Read bytes 0–14</button>
+      <button id="remote-tamper">Admit tampered bytes</button>
+      <pre id="remote-out">Enter a kernel URL and an address.</pre>
+    </section>
+
+    <script type="module">
+      import init, { Kernel } from "./generated/nucleus.js";
+      import { fetchInto, fetchRange } from "./dist/index.js";
+
+      await init();
+
+      const $ = (id) => document.getElementById(id);
+      const show = (element, text, bad = false) => {
+        element.textContent = text;
+        element.classList.toggle("bad", bad);
+      };
+
+      /** Renders a query result as a table, appended after `element`. */
+      function table(element, result) {
+        const existing = element.parentElement.querySelector("table");
+        if (existing) existing.remove();
+        if (!result.rows.length) return;
+        const html = [
+          "<tr>",
+          ...result.columns.map((name) => `<th>${name}</th>`),
+          "</tr>",
+          ...result.rows.map(
+            (row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`,
+          ),
+        ].join("");
+        const node = document.createElement("table");
+        node.innerHTML = html;
+        element.after(node);
+      }
+
+      // --- 1. in-page kernel -------------------------------------------------
+
+      const local = new Kernel();
+      let localAddress = null;
+      const localOut = $("local-out");
+
+      $("file").addEventListener("change", async (event) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        try {
+          const bytes = new Uint8Array(await file.arrayBuffer());
+          localAddress = local.put(bytes);
+          show(
+            localOut,
+            `admitted ${bytes.length} bytes\naddress ${localAddress}\nopens as ${local.uri(localAddress)}`,
+          );
+        } catch (error) {
+          show(localOut, String(error), true);
+        }
+      });
+
+      $("local-run").addEventListener("click", () => {
+        if (!localAddress) return show(localOut, "Choose a file first.", true);
+        try {
+          const result = JSON.parse(local.query(localAddress, $("local-sql").value));
+          show(localOut, `${result.rows.length} row(s)`);
+          table(localOut, result);
+        } catch (error) {
+          show(localOut, String(error), true);
+        }
+      });
+
+      $("local-forget").addEventListener("click", () => {
+        if (!localAddress) return;
+        local.forget(localAddress);
+        show(
+          localOut,
+          `forgotten. The store now holds ${JSON.parse(local.stats()).objects} object(s);\nopening this address again will fail.`,
+        );
+      });
+
+      // --- 2. kernel over HTTP ----------------------------------------------
+
+      const remote = new Kernel();
+      const remoteOut = $("remote-out");
+      const target = () => ({
+        baseUrl: $("base").value.trim(),
+        address: $("remote-address").value.trim(),
+      });
+
+      $("remote-fetch").addEventListener("click", async () => {
+        const { baseUrl, address } = target();
+        try {
+          const length = await fetchInto(remote, baseUrl, address);
+          show(
+            remoteOut,
+            `fetched ${length} bytes from ${baseUrl}\nverified against ${address}\nadmitted`,
+          );
+        } catch (error) {
+          show(remoteOut, String(error), true);
+        }
+      });
+
+      $("remote-run").addEventListener("click", () => {
+        try {
+          const result = JSON.parse(
+            remote.query(target().address, $("remote-sql").value),
+          );
+          show(remoteOut, `${result.rows.length} row(s)`);
+          table(remoteOut, result);
+        } catch (error) {
+          show(remoteOut, String(error), true);
+        }
+      });
+
+      $("remote-range").addEventListener("click", async () => {
+        const { baseUrl, address } = target();
+        try {
+          const { bytes, contentRange } = await fetchRange(baseUrl, address, 0, 14);
+          const text = new TextDecoder().decode(bytes);
+          show(
+            remoteOut,
+            `Content-Range: ${contentRange}\n${bytes.length} bytes: ${JSON.stringify(text)}\n\nRanged reads work, but a range cannot yet be verified without\nfetching the whole object — that needs BLAKE3 range proofs (#442).\nSo these bytes are shown, not admitted.`,
+          );
+        } catch (error) {
+          show(remoteOut, String(error), true);
+        }
+      });
+
+      $("remote-tamper").addEventListener("click", async () => {
+        const { baseUrl, address } = target();
+        try {
+          const response = await fetch(`${baseUrl.replace(/\/$/, "")}/cas/${address}`);
+          const bytes = new Uint8Array(await response.arrayBuffer());
+          bytes[100] ^= 0xff;
+          remote.admit(address, bytes);
+          show(remoteOut, "admitted — this should not happen", true);
+        } catch (error) {
+          show(
+            remoteOut,
+            `refused, correctly:\n${error}\n\nThe URL says where bytes might be. The address says whether\nthey are the right ones.`,
+          );
+        }
+      });
+    </script>
+  </body>
+</html>

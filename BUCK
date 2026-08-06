@@ -73,8 +73,14 @@ genrule(
     name = "wasm",
     srcs = named_sources(
         {
+            "browser": "//crates/browser:package_files",
+            "data-cas": "//crates/data/cas:package_files",
+            "data-cas-wire": "//crates/data/cas-wire:package_files",
+            "lib-hash": "//crates/lib/hash:package_files",
             "lib-sqlite": "//crates/lib/sqlite:package_files",
+            "neutron": "//crates/neutron:package_files",
             "nucleus": "//crates/nucleus:package_files",
+            "repl": "//crates/repl:package_files",
         },
         _NUCLEUS_PACKAGE_SOURCES +
         [
