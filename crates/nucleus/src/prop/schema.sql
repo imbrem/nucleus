@@ -20,6 +20,15 @@ CREATE TABLE prop_row (
     PRIMARY KEY (lhs, rhs)
 ) STRICT, WITHOUT ROWID;
 
+-- Provenance registry for inter-table imports: a universal row whose
+-- model is -import_id was concluded from a registered scratch
+-- derivation. Non-authoritative; the negative integer stays semantically
+-- a plain universal marker.
+CREATE TABLE prop_import (
+    import_id INTEGER PRIMARY KEY CHECK (import_id > 0),
+    meaning   TEXT NOT NULL CHECK (length(meaning) > 0)
+) STRICT;
+
 CREATE TABLE prop_world (
     world_id INTEGER PRIMARY KEY CHECK (world_id > 0),
     meaning  TEXT CHECK (meaning IS NULL OR length(meaning) > 0)
