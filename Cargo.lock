@@ -138,6 +138,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "covalence-hol-logic"
+version = "0.0.0"
+dependencies = [
+ "covalence-hol-init",
+ "covalence-lib-error",
+ "covalence-neutron",
+ "covalence-nucleus",
+]
+
+[[package]]
 name = "covalence-lib-crypto"
 version = "0.0.0"
 dependencies = [

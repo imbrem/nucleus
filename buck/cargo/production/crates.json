@@ -68,6 +68,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-hol-logic@0.0.0",
+      "name": "covalence-hol-logic",
+      "version": "0.0.0",
+      "path": "crates/hol/logic",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_hol_logic",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-lib-crypto@0.0.0",
       "name": "covalence-lib-crypto",
       "version": "0.0.0",
@@ -248,6 +263,34 @@
     },
     {
       "source": "workspace#covalence-hol-init@0.0.0",
+      "target": "workspace#covalence-nucleus@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-hol-logic@0.0.0",
+      "target": "workspace#covalence-hol-init@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-hol-logic@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-hol-logic@0.0.0",
+      "target": "workspace#covalence-neutron@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-hol-logic@0.0.0",
       "target": "workspace#covalence-nucleus@0.0.0",
       "kinds": [
         "normal"
