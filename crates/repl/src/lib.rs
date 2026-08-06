@@ -20,6 +20,8 @@
 //! immutable and content-addressed, the mount is read-only, and dropping an
 //! address cannot disturb an open database.
 
+pub mod shell;
+
 use std::sync::Arc;
 
 use covalence_data_cas::{AdmissionError, CasStats, MemoryCas};

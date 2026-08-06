@@ -10,6 +10,7 @@ publish = false
 [dependencies]
 bytes = "1"
 covalence-data-cas = { path = "../data/cas" }
+covalence-data-cas-wire = { path = "../data/cas-wire" }
 covalence-lib-hash = { path = "../lib/hash", default-features = false, features = ["blake3"] }
 covalence-lib-sqlite = { path = "../lib/sqlite", features = ["vfs-register"] }
 

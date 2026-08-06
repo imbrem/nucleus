@@ -21,6 +21,8 @@ const HELP: &str = "\
 .connections       list open connections
 .select N          select a connection
 .close N           close a connection
+.shell [ARG...]    run the real SQLite shell, in its own process, with
+                   the store mounted; a bare ADDRESS expands to its URI
 .help              show this
 .quit              leave
 ";
@@ -140,9 +142,81 @@ fn dispatch(
         ".select" => repl.select(parse_connection(rest)?)?,
         ".close" => repl.close(parse_connection(rest)?)?,
 
+        ".shell" => {
+            let status = shell(repl, rest)?;
+            if status != 0 {
+                writeln!(out, "shell exited with status {status}")?;
+            }
+        }
+
         other => return Err(format!("unknown command {other}; try .help").into()),
     }
     Ok(Control::Continue)
+}
+
+/// Runs the real `SQLite` shell in its own process.
+///
+/// The shell reaches the store over a socket rather than by sharing this
+/// process's memory, so nothing it does can touch the REPL. A bare address is
+/// expanded to the URI which opens it, because typing the full
+/// `file:...?vfs=cas` form every time is friction with no upside.
+fn shell(repl: &Repl, rest: &str) -> Result<i32, Box<dyn std::error::Error>> {
+    let arguments: Vec<String> = split_arguments(rest)?
+        .into_iter()
+        .map(|argument| O256::from_str(&argument).map_or(argument, |address| repl.uri(address)))
+        .collect();
+    Ok(covalence_repl::shell::run(repl.cas(), &arguments)?)
+}
+
+/// Splits a `.shell` argument line the way a shell would.
+///
+/// Whitespace separates arguments, and single or double quotes group them. SQL
+/// contains spaces, so splitting on whitespace alone would make the most
+/// obvious use — `.shell ADDRESS 'SELECT * FROM t'` — impossible.
+///
+/// This is not a full shell parser and does not try to be: there is no
+/// expansion, substitution, or escaping beyond a backslash inside double
+/// quotes. Anything more belongs to the shell itself.
+fn split_arguments(line: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let mut arguments = Vec::new();
+    let mut current = String::new();
+    let mut started = false;
+    let mut quote: Option<char> = None;
+    let mut characters = line.chars();
+
+    while let Some(character) = characters.next() {
+        match (quote, character) {
+            (Some(open), c) if c == open => quote = None,
+            (Some('"'), '\\') => match characters.next() {
+                Some(escaped) => current.push(escaped),
+                None => return Err("unterminated escape".into()),
+            },
+            (Some(_), c) => current.push(c),
+            (None, '\'' | '"') => {
+                quote = Some(character);
+                // An empty quoted string is still an argument.
+                started = true;
+            }
+            (None, c) if c.is_whitespace() => {
+                if started {
+                    arguments.push(std::mem::take(&mut current));
+                    started = false;
+                }
+            }
+            (None, c) => {
+                current.push(c);
+                started = true;
+            }
+        }
+    }
+
+    if quote.is_some() {
+        return Err("unterminated quote".into());
+    }
+    if started {
+        arguments.push(current);
+    }
+    Ok(arguments)
 }
 
 fn parse_address(text: &str) -> Result<O256, Box<dyn std::error::Error>> {
@@ -215,6 +289,26 @@ mod tests {
     fn a_bad_address_is_rejected() {
         let output = session(&[".forget not-an-address"]);
         assert!(output.contains("is not an address"), "{output}");
+    }
+
+    #[test]
+    fn shell_arguments_split_on_whitespace_and_respect_quotes() {
+        assert_eq!(split_arguments("").unwrap(), Vec::<String>::new());
+        assert_eq!(split_arguments("  a   b ").unwrap(), ["a", "b"]);
+        assert_eq!(
+            split_arguments("db -batch 'SELECT * FROM t'").unwrap(),
+            ["db", "-batch", "SELECT * FROM t"]
+        );
+        assert_eq!(
+            split_arguments(r#"db "a b" 'c d'"#).unwrap(),
+            ["db", "a b", "c d"]
+        );
+        // An empty quoted string is an argument, not nothing.
+        assert_eq!(split_arguments("a '' b").unwrap(), ["a", "", "b"]);
+        // Quotes may open mid-argument, as in a shell.
+        assert_eq!(split_arguments("pre'fix ed'").unwrap(), ["prefix ed"]);
+        assert_eq!(split_arguments(r#""say \"hi\"""#).unwrap(), [r#"say "hi""#]);
+        assert!(split_arguments("'unterminated").is_err());
     }
 
     #[test]
