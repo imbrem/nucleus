@@ -18,10 +18,15 @@ mod readonly;
 #[cfg(feature = "vfs-register")]
 mod registry;
 
-pub use cas::{CasFile, CasVfs};
+#[cfg(feature = "vfs-register")]
+pub use cas::register_cas;
+pub use cas::{CAS_VFS_NAME, CasFile, CasVfs};
 pub use readonly::{ReadOnlyFile, ReadOnlyVfs};
 #[cfg(feature = "vfs-register")]
-pub use registry::{RegisterError, VfsName, register};
+pub use registry::{
+    ConnectionVfsExt, RegisterError, RegisteredVfs, VfsIdentity, VfsIdentityError, VfsName,
+    register, register_unique,
+};
 
 use std::io;
 
