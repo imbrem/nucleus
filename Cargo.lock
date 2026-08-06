@@ -124,6 +124,14 @@ name = "covalence-data-basic"
 version = "0.0.0"
 
 [[package]]
+name = "covalence-data-cas"
+version = "0.0.0"
+dependencies = [
+ "bytes",
+ "covalence-lib-hash",
+]
+
+[[package]]
 name = "covalence-data-container"
 version = "0.0.0"
 
