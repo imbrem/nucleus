@@ -156,9 +156,24 @@ SELECT name FROM sqlite_schema WHERE type = 'table'</textarea
       <pre id="remote-out">Enter a kernel URL and an address.</pre>
     </section>
 
+    <section>
+      <h2>3. The real SQLite shell <small>— shell.c, compiled to WASI</small></h2>
+      <p class="note">
+        Not a reimplementation: this is upstream&rsquo;s
+        <code>shell.c</code>, unmodified, compiled for
+        <code>wasm32-wasip1</code> and run in its own wasm instance. Dot
+        commands work because they are upstream&rsquo;s. It has no filesystem
+        — its databases arrive by address, through the same kernel above.
+      </p>
+      <label for="shell-args">Shell command line</label>
+      <input id="shell-args" value="-batch -header .schema" />
+      <button id="shell-run">Run against the local object</button>
+      <pre id="shell-out">Load a file in section 1 first.</pre>
+    </section>
+
     <script type="module">
       import init, { Kernel } from "./generated/nucleus.js";
-      import { fetchInto, fetchRange } from "./dist/index.js";
+      import { fetchInto, fetchRange, runShell } from "./dist/index.js";
 
       await init();
 
@@ -272,6 +287,27 @@ SELECT name FROM sqlite_schema WHERE type = 'table'</textarea
           );
         } catch (error) {
           show(remoteOut, String(error), true);
+        }
+      });
+
+      // --- 3. the real shell, in WASI ---------------------------------------
+
+      $("shell-run").addEventListener("click", async () => {
+        const out = $("shell-out");
+        if (!localAddress) return show(out, "Load a file in section 1 first.", true);
+        show(out, "running…");
+        try {
+          const args = $("shell-args").value.trim().split(/\s+/).filter(Boolean);
+          const result = await runShell(local, fetch("./generated/shell.wasm"), {
+            args: [local.uri(localAddress), ...args],
+          });
+          show(
+            out,
+            `exit ${result.status}\n\n${result.stdout}${result.stderr ? `\n${result.stderr}` : ""}`,
+            result.status !== 0,
+          );
+        } catch (error) {
+          show(out, String(error), true);
         }
       });
 

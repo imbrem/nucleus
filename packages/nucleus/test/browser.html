@@ -7,11 +7,11 @@
   <body>
     <script type="module">
       import init, { Kernel } from "../generated/nucleus.js";
-      import { fetchInto, fetchRange } from "../dist/index.js";
+      import { fetchInto, fetchRange, runShell } from "../dist/index.js";
 
       await init();
       // Exposed for the test driver; this page is not a demo.
-      window.nucleus = { Kernel, fetchInto, fetchRange };
+      window.nucleus = { Kernel, fetchInto, fetchRange, runShell };
       document.body.dataset.ready = "yes";
     </script>
   </body>
