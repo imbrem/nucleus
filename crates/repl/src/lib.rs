@@ -177,12 +177,7 @@ impl Repl {
     /// Returns an error if `SQLite` rejects the registration.
     pub fn with_mount_name(name: &str, as_default: bool) -> Result<Self, ReplError> {
         let cas = Arc::new(MemoryCas::new());
-        // SAFETY: `register_cas` inherits SQLite's process-global registration
-        // contract. Nothing in this workspace registers VFS names outside the
-        // one registry, and a concurrent external registration of this exact
-        // name is reported as an error rather than silently accepted.
-        #[allow(unsafe_code, reason = "mounts the store in SQLite's global registry")]
-        let mount = unsafe { register_cas(Arc::clone(&cas), name, as_default) }?;
+        let mount = register_cas(Arc::clone(&cas), name, as_default)?;
         Ok(Self {
             cas,
             mount,
@@ -267,9 +262,8 @@ impl Repl {
 
         let connection = Connection::open_with_flags(
             uri,
-            OpenFlags::SQLITE_OPEN_READ_WRITE
-                | OpenFlags::SQLITE_OPEN_CREATE
-                | OpenFlags::SQLITE_OPEN_URI,
+            OpenFlags::READ_WRITE | OpenFlags::CREATE | OpenFlags::URI,
+            None,
         )?;
         Ok(self.insert(uri.to_owned(), connection))
     }
@@ -285,10 +279,8 @@ impl Repl {
         use covalence_lib_sqlite::OpenFlags;
 
         let uri = self.uri(address);
-        let connection = Connection::open_with_flags(
-            &uri,
-            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
-        )?;
+        let connection =
+            Connection::open_with_flags(&uri, OpenFlags::READ_ONLY | OpenFlags::URI, None)?;
 
         // The URI asked for this mount. This is the check that it got it.
         if connection.database_vfs("main")? != self.mount.identity() {
@@ -417,10 +409,18 @@ mod tests {
         connection
             .execute_batch("CREATE TABLE value (n INTEGER); INSERT INTO value VALUES (42);")
             .unwrap();
-        connection
-            .serialize(covalence_lib_sqlite::MAIN_DB)
-            .unwrap()
-            .to_vec()
+        connection.serialize("main").unwrap()
+    }
+
+    /// Runs a statement expected to return one integer.
+    fn scalar(connection: &Connection, sql: &str) -> Result<i64, covalence_lib_sqlite::Error> {
+        let mut statement = connection.prepare(sql)?;
+        match statement.step()? {
+            covalence_lib_sqlite::Step::Row => {
+                Ok(statement.column(0).as_integer().unwrap_or_default())
+            }
+            covalence_lib_sqlite::Step::Done => Ok(0),
+        }
     }
 
     #[test]
@@ -430,10 +430,7 @@ mod tests {
         let id = repl.open_address(address).unwrap();
 
         assert_eq!(
-            repl.connection(id)
-                .unwrap()
-                .query_row("SELECT n FROM value", [], |row| row.get::<_, i64>(0))
-                .unwrap(),
+            scalar(repl.connection(id).unwrap(), "SELECT n FROM value").unwrap(),
             42
         );
     }
@@ -457,7 +454,7 @@ mod tests {
         assert!(
             repl.connection(id)
                 .unwrap()
-                .execute("INSERT INTO value VALUES (7)", [])
+                .execute_batch("INSERT INTO value VALUES (7)")
                 .is_err()
         );
     }
@@ -472,10 +469,7 @@ mod tests {
 
         // The open connection keeps answering: it holds the object it opened.
         assert_eq!(
-            repl.connection(id)
-                .unwrap()
-                .query_row("SELECT n FROM value", [], |row| row.get::<_, i64>(0))
-                .unwrap(),
+            scalar(repl.connection(id).unwrap(), "SELECT n FROM value").unwrap(),
             42
         );
         // Only a fresh resolution fails.
@@ -496,11 +490,11 @@ mod tests {
             .unwrap();
         // Separate databases: the table is not visible from the other.
         assert!(
-            repl.connection(second)
-                .unwrap()
-                .query_row("SELECT count(*) FROM only_in_first", [], |row| row
-                    .get::<_, i64>(0))
-                .is_err()
+            scalar(
+                repl.connection(second).unwrap(),
+                "SELECT count(*) FROM only_in_first"
+            )
+            .is_err()
         );
 
         repl.select(first).unwrap();

@@ -10,6 +10,7 @@
 
 mod connection;
 mod image;
+pub mod sql;
 
 pub use bytes::Bytes;
 pub use connection::{

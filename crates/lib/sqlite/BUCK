@@ -25,7 +25,6 @@ rust_library(
     srcs = _RUST_SOURCES,
     features = [
         "default",
-        "serialize",
         "vfs",
         "vfs-register",
     ],
@@ -35,11 +34,11 @@ rust_library(
         "covalence_data_cas": "nucleus//crates/data/cas:covalence_data_cas",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "indexmap": "nucleus//buck/cargo/production:indexmap-2.14.0",
-        "rusqlite": "nucleus//buck/cargo/production:rusqlite-0.40.1",
+        "libsqlite3_sys": "nucleus//buck/cargo/production:libsqlite3-sys-0.38.1",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "SQLite binding used by Nucleus",
+        "CARGO_PKG_DESCRIPTION": "Minimal safe wrapper over the SQLite C API",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",
@@ -64,7 +63,6 @@ rust_test(
     srcs = _RUST_SOURCES,
     features = [
         "default",
-        "serialize",
         "vfs",
         "vfs-register",
     ],
@@ -73,11 +71,11 @@ rust_test(
         "covalence_data_cas": "nucleus//crates/data/cas:covalence_data_cas",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "indexmap": "nucleus//buck/cargo/production:indexmap-2.14.0",
-        "rusqlite": "nucleus//buck/cargo/production:rusqlite-0.40.1",
+        "libsqlite3_sys": "nucleus//buck/cargo/production:libsqlite3-sys-0.38.1",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "SQLite binding used by Nucleus",
+        "CARGO_PKG_DESCRIPTION": "Minimal safe wrapper over the SQLite C API",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",

@@ -56,12 +56,20 @@ impl<C: ?Sized> CasVfs<C> {
 /// explicitly — `file:/path/to/db?vfs=unix` on Unix. Leaving it unset keeps
 /// the platform default and reaches the CAS through `?vfs=cas`.
 ///
-/// # Safety
+/// # Why this is safe when [`register`](super::register) is not
 ///
-/// Inherits the contract of [`register`](super::register): `SQLite`'s VFS
-/// registry is process-global and has no atomic reserve-by-name operation, so
-/// the caller must ensure nothing outside this registry concurrently registers
-/// or unregisters this name.
+/// `register` is marked unsafe because `SQLite`'s VFS registry is
+/// process-global and offers no atomic reserve-by-name. That race has a
+/// defined outcome here rather than an undefined one: the registry holds a
+/// mutex, re-checks `SQLite`'s own list, and a collision returns
+/// [`RegisterError::AlreadyRegistered`](super::RegisterError::AlreadyRegistered).
+/// A mount is never unregistered, so no VFS pointer `SQLite` holds is ever
+/// invalidated.
+///
+/// Losing the race therefore costs a mount, not memory safety, and callers
+/// need no `unsafe` block. The residual hazard — some other library
+/// *unregistering* a VFS `SQLite` is using — is not one an `unsafe` marker on
+/// this function would help with.
 ///
 /// # Errors
 ///
@@ -70,9 +78,9 @@ impl<C: ?Sized> CasVfs<C> {
 #[cfg(feature = "vfs-register")]
 #[allow(
     unsafe_code,
-    reason = "forwards the process-global contract of `register`"
+    reason = "the process-global race has a defined outcome; see above"
 )]
-pub unsafe fn register_cas<C>(
+pub fn register_cas<C>(
     cas: Arc<C>,
     name: &str,
     as_default: bool,
@@ -268,7 +276,7 @@ mod tests {
         let path = std::env::temp_dir().join(format!("{stem}.sqlite"));
         let _ = std::fs::remove_file(&path);
         {
-            let connection = crate::Connection::open(&path).unwrap();
+            let connection = crate::Connection::open(path.to_str().unwrap()).unwrap();
             connection
                 .execute_batch("CREATE TABLE value (n INTEGER); INSERT INTO value VALUES (42);")
                 .unwrap();
@@ -276,6 +284,31 @@ mod tests {
         let bytes = std::fs::read(&path).unwrap();
         std::fs::remove_file(&path).unwrap();
         bytes
+    }
+
+    /// Attaches `uri` as `schema`.
+    ///
+    /// The filename is bound rather than interpolated: a URI carrying a `?vfs=`
+    /// parameter has no business being spliced into SQL text.
+    #[cfg(feature = "vfs-register")]
+    fn attach(connection: &crate::Connection, uri: &str, schema: &str) -> crate::Result<()> {
+        let mut statement = connection.prepare(&format!("ATTACH DATABASE ?1 AS {schema}"))?;
+        statement.bind_text(1, uri)?;
+        statement.step()?;
+        Ok(())
+    }
+
+    /// Runs a statement expected to return one integer.
+    #[cfg(feature = "vfs-register")]
+    fn scalar(connection: &crate::Connection, sql: &str) -> crate::Result<i64> {
+        let mut statement = connection.prepare(sql)?;
+        match statement.step()? {
+            crate::Step::Row => Ok(statement.column(0).as_integer().unwrap_or_default()),
+            crate::Step::Done => Err(crate::Error::with_message(
+                crate::ResultCode::new(crate::ffi::SQLITE_ERROR),
+                "statement returned no rows",
+            )),
+        }
     }
 
     /// Records the ranges the VFS actually asks for, so the tests can show
@@ -396,7 +429,7 @@ mod tests {
         use covalence_data_cas::MemoryCas;
 
         use crate::vfs::ConnectionVfsExt;
-        use crate::{Connection, OpenFlags as SqliteOpenFlags};
+        use crate::{Connection, OpenFlags};
 
         let cas = Arc::new(MemoryCas::new());
         let address = cas.insert(database_image("cas-vfs-by-address")).unwrap();
@@ -404,24 +437,18 @@ mod tests {
         // A private name stands in for CAS_VFS_NAME: the test process must not
         // fight other tests over one process-global registration.
         // SAFETY: this name is unique to this test and nothing else registers it.
-        let mounted =
-            unsafe { register_cas(Arc::clone(&cas), "covalence-test-cas-address", false) }.unwrap();
+        let mounted = register_cas(Arc::clone(&cas), "covalence-test-cas-address", false).unwrap();
 
-        let connection = Connection::open_with_flags_and_vfs(
-            address.to_string(),
-            SqliteOpenFlags::SQLITE_OPEN_READ_ONLY,
-            mounted.name().as_str(),
+        let connection = Connection::open_with_flags(
+            &address.to_string(),
+            OpenFlags::READ_ONLY,
+            Some(mounted.name().as_str()),
         )
         .unwrap();
 
         // The name only selected the VFS; this is the check that it was used.
         assert_eq!(connection.database_vfs("main").unwrap(), mounted.identity());
-        assert_eq!(
-            connection
-                .query_row("SELECT n FROM value", [], |row| row.get::<_, i64>(0))
-                .unwrap(),
-            42
-        );
+        assert_eq!(scalar(&connection, "SELECT n FROM value").unwrap(), 42);
     }
 
     #[cfg(feature = "vfs-register")]
@@ -436,8 +463,7 @@ mod tests {
         let cas = Arc::new(MemoryCas::new());
         let address = cas.insert(database_image("cas-vfs-uri")).unwrap();
         // SAFETY: this name is unique to this test and nothing else registers it.
-        let mounted =
-            unsafe { register_cas(Arc::clone(&cas), "covalence-test-cas-uri", false) }.unwrap();
+        let mounted = register_cas(Arc::clone(&cas), "covalence-test-cas-uri", false).unwrap();
 
         // This is the shape a REPL or shell user types: `?vfs=<name>`.
         let uri = format!(
@@ -446,9 +472,7 @@ mod tests {
             mounted.name().as_str()
         );
         let connection = Connection::open_in_memory().unwrap();
-        connection
-            .execute("ATTACH DATABASE ?1 AS object", [&uri])
-            .unwrap();
+        attach(&connection, &uri, "object").unwrap();
 
         assert_eq!(
             connection.database_vfs("object").unwrap(),
@@ -456,14 +480,12 @@ mod tests {
         );
         assert_ne!(connection.database_vfs("main").unwrap(), mounted.identity());
         assert_eq!(
-            connection
-                .query_row("SELECT n FROM object.value", [], |row| row.get::<_, i64>(0))
-                .unwrap(),
+            scalar(&connection, "SELECT n FROM object.value").unwrap(),
             42
         );
         assert!(
             connection
-                .execute("INSERT INTO object.value VALUES (7)", [])
+                .execute_batch("INSERT INTO object.value VALUES (7)")
                 .is_err()
         );
     }
@@ -479,8 +501,7 @@ mod tests {
         let cas = Arc::new(MemoryCas::new());
         let address = cas.insert(database_image("cas-vfs-dropped")).unwrap();
         // SAFETY: this name is unique to this test and nothing else registers it.
-        let mounted =
-            unsafe { register_cas(Arc::clone(&cas), "covalence-test-cas-dropped", false) }.unwrap();
+        let mounted = register_cas(Arc::clone(&cas), "covalence-test-cas-dropped", false).unwrap();
 
         let uri = format!(
             "file:{}?mode=ro&immutable=1&vfs={}",
@@ -488,9 +509,7 @@ mod tests {
             mounted.name().as_str()
         );
         let connection = Connection::open_in_memory().unwrap();
-        connection
-            .execute("ATTACH DATABASE ?1 AS object", [&uri])
-            .unwrap();
+        attach(&connection, &uri, "object").unwrap();
 
         // Drop it from the store while the database is open and attached.
         assert!(cas.remove(address));
@@ -498,19 +517,13 @@ mod tests {
         // The attached database keeps answering: the file holds the object,
         // not the address. This is the property the whole interface exists for.
         assert_eq!(
-            connection
-                .query_row("SELECT n FROM object.value", [], |row| row.get::<_, i64>(0))
-                .unwrap(),
+            scalar(&connection, "SELECT n FROM object.value").unwrap(),
             42
         );
 
         // A fresh open of the same address does not resolve.
         let second = Connection::open_in_memory().unwrap();
-        assert!(
-            second
-                .execute("ATTACH DATABASE ?1 AS object", [&uri])
-                .is_err()
-        );
+        assert!(attach(&second, &uri, "object").is_err());
     }
 
     #[cfg(feature = "vfs-register")]
@@ -519,28 +532,27 @@ mod tests {
     fn an_unknown_address_does_not_resolve() {
         use covalence_data_cas::MemoryCas;
 
-        use crate::{Connection, OpenFlags as SqliteOpenFlags};
+        use crate::{Connection, OpenFlags};
 
         let cas = Arc::new(MemoryCas::new());
         // SAFETY: this name is unique to this test and nothing else registers it.
-        let mounted =
-            unsafe { register_cas(Arc::clone(&cas), "covalence-test-cas-absent", false) }.unwrap();
+        let mounted = register_cas(Arc::clone(&cas), "covalence-test-cas-absent", false).unwrap();
 
         // A well-formed address which was never admitted.
         assert!(
-            Connection::open_with_flags_and_vfs(
-                ADDRESS.to_string(),
-                SqliteOpenFlags::SQLITE_OPEN_READ_ONLY,
-                mounted.name().as_str(),
+            Connection::open_with_flags(
+                &ADDRESS.to_string(),
+                OpenFlags::READ_ONLY,
+                Some(mounted.name().as_str()),
             )
             .is_err()
         );
         // A path which is not an address at all.
         assert!(
-            Connection::open_with_flags_and_vfs(
+            Connection::open_with_flags(
                 "/etc/passwd",
-                SqliteOpenFlags::SQLITE_OPEN_READ_ONLY,
-                mounted.name().as_str(),
+                OpenFlags::READ_ONLY,
+                Some(mounted.name().as_str()),
             )
             .is_err()
         );

@@ -286,12 +286,12 @@ impl ConnectionVfsExt for crate::Connection {
     fn database_vfs(&self, database: &str) -> Result<VfsIdentity, VfsIdentityError> {
         let database = CString::new(database).map_err(|_| VfsIdentityError::InvalidDatabaseName)?;
         let mut pointer = ptr::null_mut::<crate::ffi::sqlite3_vfs>();
-        // SAFETY: `self.handle()` is used only for the duration of this call;
+        // SAFETY: `self.as_ptr()` is used only for the duration of this call;
         // `database` is NUL-terminated; and the fourth argument points to the
         // writable `sqlite3_vfs*` slot required by SQLITE_FCNTL_VFS_POINTER.
         let result = unsafe {
             crate::ffi::sqlite3_file_control(
-                self.handle(),
+                self.as_ptr(),
                 database.as_ptr(),
                 crate::ffi::SQLITE_FCNTL_VFS_POINTER,
                 ptr::from_mut(&mut pointer).cast::<c_void>(),
@@ -310,12 +310,19 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use crate::{Connection, OpenFlags as SqliteOpenFlags};
+    use crate::{Connection, OpenFlags, Step};
 
     use super::*;
     use crate::vfs::ReadOnlyVfs;
 
     static NEXT_NAME: AtomicU64 = AtomicU64::new(0);
+
+    /// Runs a statement expected to return one integer.
+    fn scalar(connection: &Connection, sql: &str) -> i64 {
+        let mut statement = connection.prepare(sql).unwrap();
+        assert_eq!(statement.step().unwrap(), Step::Row);
+        statement.column(0).as_integer().unwrap()
+    }
 
     fn unique_name() -> String {
         format!(
@@ -346,7 +353,7 @@ mod tests {
         std::fs::create_dir_all(&temporary).unwrap();
         let path = temporary.join(format!("{}.sqlite", unique_name()));
         {
-            let connection = Connection::open(&path).unwrap();
+            let connection = Connection::open(path.to_str().unwrap()).unwrap();
             connection
                 .execute_batch("CREATE TABLE value (n INTEGER); INSERT INTO value VALUES (42);")
                 .unwrap();
@@ -363,22 +370,17 @@ mod tests {
         let registered =
             unsafe { register(&unique_name(), ReadOnlyVfs::new(files), false) }.unwrap();
 
-        let connection = Connection::open_with_flags_and_vfs(
+        let connection = Connection::open_with_flags(
             logical_path,
-            SqliteOpenFlags::SQLITE_OPEN_READ_ONLY,
-            registered.name().as_str(),
+            OpenFlags::READ_ONLY,
+            Some(registered.name().as_str()),
         )
         .unwrap();
         assert_eq!(
             connection.database_vfs("main").unwrap(),
             registered.identity()
         );
-        assert_eq!(
-            connection
-                .query_row("SELECT n FROM value", [], |row| row.get::<_, i64>(0))
-                .unwrap(),
-            42
-        );
+        assert_eq!(scalar(&connection, "SELECT n FROM value"), 42);
     }
 
     #[test]
@@ -411,7 +413,7 @@ mod tests {
         std::fs::create_dir_all(&temporary).unwrap();
         let path = temporary.join(format!("{}.sqlite", unique_name()));
         {
-            let connection = Connection::open(&path).unwrap();
+            let connection = Connection::open(path.to_str().unwrap()).unwrap();
             connection
                 .execute_batch("CREATE TABLE value (n INTEGER); INSERT INTO value VALUES (42);")
                 .unwrap();
@@ -430,9 +432,13 @@ mod tests {
             registered.name().as_str()
         );
         let connection = Connection::open_in_memory().unwrap();
-        connection
-            .execute("ATTACH DATABASE ?1 AS imported", [&uri])
-            .unwrap();
+        {
+            let mut statement = connection
+                .prepare("ATTACH DATABASE ?1 AS imported")
+                .unwrap();
+            statement.bind_text(1, &uri).unwrap();
+            statement.step().unwrap();
+        }
 
         assert_eq!(
             connection.database_vfs("imported").unwrap(),
@@ -443,16 +449,10 @@ mod tests {
             registered.identity()
         );
 
-        assert_eq!(
-            connection
-                .query_row("SELECT n FROM imported.value", [], |row| row
-                    .get::<_, i64>(0))
-                .unwrap(),
-            42
-        );
+        assert_eq!(scalar(&connection, "SELECT n FROM imported.value"), 42);
         assert!(
             connection
-                .execute("INSERT INTO imported.value VALUES (7)", [])
+                .execute_batch("INSERT INTO imported.value VALUES (7)")
                 .is_err()
         );
     }

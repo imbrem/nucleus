@@ -30,7 +30,7 @@ fn database_image(stem: &str) -> Vec<u8> {
     let path = std::env::temp_dir().join(format!("covalence-shell-{stem}.sqlite"));
     let _ = std::fs::remove_file(&path);
     {
-        let connection = Connection::open(&path).unwrap();
+        let connection = Connection::open(path.to_str().unwrap()).unwrap();
         connection
             .execute_batch("CREATE TABLE value (n INTEGER); INSERT INTO value VALUES (42);")
             .unwrap();
@@ -64,7 +64,7 @@ fn the_shell_queries_a_database_mounted_in_the_cas() {
     let cas = Arc::new(MemoryCas::new());
     let address = cas.insert(database_image("mounted")).unwrap();
     // SAFETY: this name is private to this test binary.
-    let mounted = unsafe { register_cas(Arc::clone(&cas), "covalence-test-shell-cas", false) }
+    let mounted = register_cas(Arc::clone(&cas), "covalence-test-shell-cas", false)
         .expect("mounting the CAS");
 
     // Exactly what a user would type at a shell prompt.
@@ -85,7 +85,7 @@ fn the_shell_cannot_write_through_the_mount() {
     let cas = Arc::new(MemoryCas::new());
     let address = cas.insert(database_image("readonly")).unwrap();
     // SAFETY: this name is private to this test binary.
-    let mounted = unsafe { register_cas(Arc::clone(&cas), "covalence-test-shell-cas-ro", false) }
+    let mounted = register_cas(Arc::clone(&cas), "covalence-test-shell-cas-ro", false)
         .expect("mounting the CAS");
 
     let uri = format!(
@@ -107,9 +107,8 @@ fn the_shell_reports_an_address_which_is_not_resident() {
     assert!(cas.remove(address));
 
     // SAFETY: this name is private to this test binary.
-    let mounted =
-        unsafe { register_cas(Arc::clone(&cas), "covalence-test-shell-cas-absent", false) }
-            .expect("mounting the CAS");
+    let mounted = register_cas(Arc::clone(&cas), "covalence-test-shell-cas-absent", false)
+        .expect("mounting the CAS");
 
     let uri = format!(
         "file:{}?mode=ro&immutable=1&vfs={}",
