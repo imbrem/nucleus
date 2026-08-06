@@ -21,7 +21,7 @@ use std::sync::RwLock;
 use bytes::Bytes;
 use covalence_lib_hash::O256;
 
-use crate::Cas;
+use crate::{Cas, CasObject};
 
 /// Default largest object this store will admit.
 pub const MAX_OBJECT_BYTES: u64 = 64 * 1024 * 1024;
@@ -194,18 +194,30 @@ impl MemoryCas {
     }
 }
 
-impl Cas for MemoryCas {
+/// An object opened from a [`MemoryCas`].
+///
+/// Holds its own bytes, so it is entirely independent of the store it came
+/// from: removing the address, or dropping the store, leaves it readable.
+#[derive(Clone, Debug)]
+pub struct ResidentObject(Bytes);
+
+impl ResidentObject {
+    /// Borrows the complete bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &Bytes {
+        &self.0
+    }
+}
+
+impl CasObject for ResidentObject {
     type Error = InvalidRange;
 
-    fn len(&self, address: O256) -> Result<Option<u64>, Self::Error> {
-        Ok(self.objects().get(&address).map(|bytes| bytes.len() as u64))
+    fn len(&self) -> u64 {
+        self.0.len() as u64
     }
 
-    fn read(&self, address: O256, range: Range<u64>) -> Result<Option<Bytes>, Self::Error> {
-        let Some(bytes) = self.get(address) else {
-            return Ok(None);
-        };
-        let len = bytes.len() as u64;
+    fn read(&self, range: Range<u64>) -> Result<Bytes, Self::Error> {
+        let len = self.len();
         if range.start > range.end || range.end > len {
             return Err(InvalidRange {
                 start: range.start,
@@ -214,10 +226,19 @@ impl Cas for MemoryCas {
             });
         }
         // Both bounds are `<= len`, which fits `usize` because the object is
-        // already resident.
+        // resident.
         let start = usize::try_from(range.start).unwrap_or(usize::MAX);
         let end = usize::try_from(range.end).unwrap_or(usize::MAX);
-        Ok(Some(bytes.slice(start..end)))
+        Ok(self.0.slice(start..end))
+    }
+}
+
+impl Cas for MemoryCas {
+    type Error = InvalidRange;
+    type Object = ResidentObject;
+
+    fn open(&self, address: O256) -> Result<Option<Self::Object>, Self::Error> {
+        Ok(self.get(address).map(ResidentObject))
     }
 }
 
@@ -329,20 +350,49 @@ mod tests {
     }
 
     #[test]
-    fn removal_only_affects_future_resolution() {
+    fn an_opened_object_survives_removal() {
         let cas = MemoryCas::new();
-        let address = cas.insert(&b"hello"[..]).unwrap();
-        let outstanding = cas.read(address, 0..5).unwrap().unwrap();
+        let address = cas.insert(&b"hello world"[..]).unwrap();
+        let object = cas.open(address).unwrap().unwrap();
 
         assert!(cas.remove(address));
         assert!(!cas.remove(address));
 
-        // The holder keeps exactly the bytes it was given.
-        assert_eq!(outstanding, Bytes::from_static(b"hello"));
+        // This is the guarantee: while you hold it, it reads. Removal is not
+        // observable through an object already handed out.
+        assert_eq!(object.len(), 11);
+        assert_eq!(object.read(0..5).unwrap(), Bytes::from_static(b"hello"));
+        assert_eq!(object.read(6..11).unwrap(), Bytes::from_static(b"world"));
+
         // Only resolution through the store is affected.
         assert!(!cas.contains(address));
         assert_eq!(cas.len(address).unwrap(), None);
+        assert!(cas.open(address).unwrap().is_none());
         assert_eq!(cas.stats(), CasStats::default());
+    }
+
+    #[test]
+    fn an_opened_object_outlives_the_store() {
+        let object = {
+            let cas = MemoryCas::new();
+            let address = cas.insert(&b"hello"[..]).unwrap();
+            cas.open(address).unwrap().unwrap()
+        };
+        // The store is gone entirely; the object is still an object.
+        assert_eq!(object.len(), 5);
+        assert_eq!(object.read(0..5).unwrap(), Bytes::from_static(b"hello"));
+    }
+
+    #[test]
+    fn an_empty_object_is_not_an_absent_one() {
+        let cas = MemoryCas::new();
+        let address = cas.insert(&b""[..]).unwrap();
+        let object = cas.open(address).unwrap().expect("empty objects resolve");
+        assert!(object.is_empty());
+        assert_eq!(object.len(), 0);
+
+        assert!(cas.remove(address));
+        assert!(cas.open(address).unwrap().is_none());
     }
 
     #[test]

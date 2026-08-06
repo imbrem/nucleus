@@ -1,16 +1,33 @@
 //! Synchronous content-addressed byte sources.
 //!
-//! [`Cas`] is the trusted interface: implementations may serve any requested
-//! byte range, but the bytes must belong to the object named by the address.
-//! [`Verified`] upgrades an untrusted [`RangeSource`] by checking every
-//! response with a [`RangeVerifier`] before exposing it through [`Cas`].
+//! [`Cas`] is the trusted interface. Its primitive is *opening* an address,
+//! not reading one: [`Cas::open`] resolves an address once and returns a
+//! [`CasObject`] which serves ranges thereafter. [`Verified`] upgrades an
+//! untrusted [`RangeSource`] by checking every response with a
+//! [`RangeVerifier`] before exposing it through [`Cas`].
 //!
 //! [`MemoryCas`] is the concrete starting point: whole objects, resident in
 //! memory, admitted by hashing complete bytes.
+//!
+//! # Why opening is the primitive
+//!
+//! An address-keyed `read` cannot promise anything about an object it is not
+//! holding. If the object is dropped from the store between two reads, the
+//! second fails — so a database opened over a content-addressed file would
+//! start failing mid-query. Handing out an object instead makes the guarantee
+//! structural: *while you hold it, it reads*. Removal affects only future
+//! opens.
+//!
+//! This also gives composition somewhere to attach. A copy-on-write layer, an
+//! overlay, or a cache is naturally an object built from other objects, and it
+//! can hold its bases open for exactly as long as it needs them. That is not
+//! expressible when the only operation is "read this address, now".
 
 mod memory;
 
-pub use memory::{AdmissionError, CasStats, InvalidRange, MAX_OBJECT_BYTES, MemoryCas};
+pub use memory::{
+    AdmissionError, CasStats, InvalidRange, MAX_OBJECT_BYTES, MemoryCas, ResidentObject,
+};
 
 use std::ops::Range;
 
@@ -22,21 +39,84 @@ pub trait Cas: Send + Sync {
     /// Implementation-specific failure.
     type Error;
 
-    /// Returns the length of `address`, or `None` when it is absent.
+    /// An object opened from this source.
+    type Object: CasObject<Error = Self::Error>;
+
+    /// Opens `address`, or returns `None` when it does not resolve.
+    ///
+    /// The returned object stays readable for as long as it is held, whatever
+    /// happens to the store afterwards. Resolving an address is therefore a
+    /// one-time act, and implementations may do their length lookup,
+    /// authentication, or handle acquisition here rather than per read.
+    ///
+    /// `None` is an unauthenticated, fail-closed absence signal. It means this
+    /// source did not produce the object, not that no such object exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the source fails to answer at all, as distinct
+    /// from answering that the address does not resolve.
+    fn open(&self, address: O256) -> Result<Option<Self::Object>, Self::Error>;
+
+    /// Returns the length of `address`, or `None` when it does not resolve.
     ///
     /// # Errors
     ///
     /// Returns an error when the source cannot determine the length.
-    fn len(&self, address: O256) -> Result<Option<u64>, Self::Error>;
+    fn len(&self, address: O256) -> Result<Option<u64>, Self::Error> {
+        Ok(self.open(address)?.map(|object| object.len()))
+    }
 
-    /// Returns exactly `range` from `address`, or `None` when it is absent.
+    /// Returns exactly `range` from `address`, or `None` when it does not
+    /// resolve.
     ///
-    /// Implementations must reject ranges outside the object.
+    /// This is a convenience for a single read. A caller making several reads
+    /// of one address should [`open`](Self::open) it instead, both to resolve
+    /// once and to hold the object still.
     ///
     /// # Errors
     ///
     /// Returns an error when the range cannot be served or authenticated.
-    fn read(&self, address: O256, range: Range<u64>) -> Result<Option<Bytes>, Self::Error>;
+    fn read(&self, address: O256, range: Range<u64>) -> Result<Option<Bytes>, Self::Error> {
+        self.open(address)?
+            .map(|object| object.read(range))
+            .transpose()
+    }
+}
+
+/// An object opened from a [`Cas`].
+///
+/// Holding one keeps its bytes readable. An implementation must not depend on
+/// the address still resolving in the store it came from.
+pub trait CasObject: Send + Sync {
+    /// Implementation-specific failure.
+    type Error;
+
+    /// Returns the object's total length in bytes.
+    ///
+    /// This is fixed for the object's lifetime: content-addressed objects are
+    /// immutable, so length cannot change under a holder.
+    fn len(&self) -> u64;
+
+    /// Returns whether the object is empty.
+    ///
+    /// An empty object is a legitimate object, distinct from an address which
+    /// does not resolve.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Returns exactly `range`.
+    ///
+    /// Implementations must reject a reversed range or one extending past
+    /// [`len`](Self::len) rather than truncating it. A short read is an error,
+    /// not a silent partial answer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the range is invalid, cannot be served, or cannot
+    /// be authenticated.
+    fn read(&self, range: Range<u64>) -> Result<Bytes, Self::Error>;
 }
 
 /// Data and opaque authentication evidence returned by an untrusted source.
@@ -106,6 +186,15 @@ pub enum VerifiedError<S, V> {
     },
     /// The source returned the wrong number of bytes.
     WrongLength { expected: u64, actual: usize },
+    /// The source stopped serving an object which had already been opened.
+    Withdrawn,
+    /// The source restated a total length contradicting the opened one.
+    LengthChanged {
+        /// Length authenticated when the object was opened.
+        opened: u64,
+        /// Length the source has now returned.
+        returned: u64,
+    },
 }
 
 impl<S: std::fmt::Display, V: std::fmt::Display> std::fmt::Display for VerifiedError<S, V> {
@@ -129,6 +218,11 @@ impl<S: std::fmt::Display, V: std::fmt::Display> std::fmt::Display for VerifiedE
             Self::WrongLength { expected, actual } => {
                 write!(formatter, "expected {expected} bytes, received {actual}")
             }
+            Self::Withdrawn => formatter.write_str("the source withdrew an opened object"),
+            Self::LengthChanged { opened, returned } => write!(
+                formatter,
+                "object opened at {opened} bytes is now claimed to be {returned}"
+            ),
         }
     }
 }
@@ -141,28 +235,106 @@ where
 }
 
 /// A trusted CAS view over an untrusted source and a verifier.
+///
+/// The source and verifier are held behind [`Arc`](std::sync::Arc) so that an
+/// opened object can keep them alive independently of this view. An object
+/// must stay readable once handed out, and for a remote source that means
+/// still being able to fetch and authenticate.
 pub struct Verified<S, V> {
-    source: S,
-    verifier: V,
+    source: std::sync::Arc<S>,
+    verifier: std::sync::Arc<V>,
 }
 
 impl<S, V> Verified<S, V> {
     /// Constructs a verified view.
     #[must_use]
-    pub const fn new(source: S, verifier: V) -> Self {
-        Self { source, verifier }
+    pub fn new(source: S, verifier: V) -> Self {
+        Self {
+            source: std::sync::Arc::new(source),
+            verifier: std::sync::Arc::new(verifier),
+        }
     }
 
     /// Borrows the underlying source.
     #[must_use]
-    pub const fn source(&self) -> &S {
+    pub fn source(&self) -> &S {
         &self.source
     }
 
     /// Borrows the verifier.
     #[must_use]
-    pub const fn verifier(&self) -> &V {
+    pub fn verifier(&self) -> &V {
         &self.verifier
+    }
+}
+
+/// An object opened from a [`Verified`] view.
+///
+/// Every read is fetched from the untrusted source and authenticated before
+/// being returned, exactly as it would be through the view. The object exists
+/// so that the length claim is established once, at open, and so that holding
+/// it keeps the source and verifier alive.
+pub struct VerifiedObject<S, V> {
+    source: std::sync::Arc<S>,
+    verifier: std::sync::Arc<V>,
+    address: O256,
+    len: u64,
+}
+
+impl<S, V> CasObject for VerifiedObject<S, V>
+where
+    S: RangeSource,
+    V: RangeVerifier,
+{
+    type Error = VerifiedError<S::Error, V::Error>;
+
+    fn len(&self) -> u64 {
+        self.len
+    }
+
+    fn read(&self, range: Range<u64>) -> Result<Bytes, Self::Error> {
+        let expected = range
+            .end
+            .checked_sub(range.start)
+            .ok_or(VerifiedError::InvalidRange {
+                start: range.start,
+                end: range.end,
+                total_len: Some(self.len),
+            })?;
+        if range.end > self.len {
+            return Err(VerifiedError::InvalidRange {
+                start: range.start,
+                end: range.end,
+                total_len: Some(self.len),
+            });
+        }
+        let response = self
+            .source
+            .fetch(self.address, range.clone())
+            .map_err(VerifiedError::Source)?
+            // The object was resolvable at open. A source which now denies it
+            // is a source failure, not an absence: the object is still an
+            // object, and the holder was promised it would read.
+            .ok_or(VerifiedError::Withdrawn)?;
+        // The source restates the total length on every response. It is
+        // untrusted, so a restatement which contradicts the one authenticated
+        // at open is rejected rather than believed.
+        if response.total_len != self.len {
+            return Err(VerifiedError::LengthChanged {
+                opened: self.len,
+                returned: response.total_len,
+            });
+        }
+        if response.data.len() as u64 != expected {
+            return Err(VerifiedError::WrongLength {
+                expected,
+                actual: response.data.len(),
+            });
+        }
+        self.verifier
+            .verify(self.address, range, &response)
+            .map_err(VerifiedError::Verify)?;
+        Ok(response.data)
     }
 }
 
@@ -172,8 +344,11 @@ where
     V: RangeVerifier,
 {
     type Error = VerifiedError<S::Error, V::Error>;
+    type Object = VerifiedObject<S, V>;
 
-    fn len(&self, address: O256) -> Result<Option<u64>, Self::Error> {
+    fn open(&self, address: O256) -> Result<Option<Self::Object>, Self::Error> {
+        // An empty range is the length probe: it carries no data, so a
+        // well-behaved source answers it with evidence and nothing else.
         let response = self
             .source
             .fetch(address, 0..0)
@@ -190,42 +365,12 @@ where
         self.verifier
             .verify(address, 0..0, &response)
             .map_err(VerifiedError::Verify)?;
-        Ok(Some(response.total_len))
-    }
-
-    fn read(&self, address: O256, range: Range<u64>) -> Result<Option<Bytes>, Self::Error> {
-        let expected = range
-            .end
-            .checked_sub(range.start)
-            .ok_or(VerifiedError::InvalidRange {
-                start: range.start,
-                end: range.end,
-                total_len: None,
-            })?;
-        let response = self
-            .source
-            .fetch(address, range.clone())
-            .map_err(VerifiedError::Source)?;
-        let Some(response) = response else {
-            return Ok(None);
-        };
-        if range.end > response.total_len {
-            return Err(VerifiedError::InvalidRange {
-                start: range.start,
-                end: range.end,
-                total_len: Some(response.total_len),
-            });
-        }
-        if response.data.len() as u64 != expected {
-            return Err(VerifiedError::WrongLength {
-                expected,
-                actual: response.data.len(),
-            });
-        }
-        self.verifier
-            .verify(address, range, &response)
-            .map_err(VerifiedError::Verify)?;
-        Ok(Some(response.data))
+        Ok(Some(VerifiedObject {
+            source: std::sync::Arc::clone(&self.source),
+            verifier: std::sync::Arc::clone(&self.verifier),
+            address,
+            len: response.total_len,
+        }))
     }
 }
 
@@ -253,7 +398,15 @@ mod tests {
             range: Range<u64>,
         ) -> Result<Option<UntrustedRange>, Self::Error> {
             assert_eq!(address, ADDRESS);
-            self.requests.lock().unwrap().push(range);
+            self.requests.lock().unwrap().push(range.clone());
+            // The empty range is the length probe `open` issues. A source
+            // answers it with evidence and no data.
+            if range == (0..0) {
+                return Ok(self.response.as_ref().map(|response| UntrustedRange {
+                    data: Bytes::new(),
+                    ..response.clone()
+                }));
+            }
             Ok(self.response.clone())
         }
     }
@@ -273,6 +426,11 @@ mod tests {
         ) -> Result<(), Self::Error> {
             assert_eq!(address, ADDRESS);
             assert_eq!(response.proof, Bytes::from_static(b"proof"));
+            // The probe must authenticate too, or nothing could ever be
+            // opened. Only the data range is gated by `accepted`.
+            if range == (0..0) {
+                return Ok(());
+            }
             if self.accepted && range == (2..5) {
                 Ok(())
             } else {
@@ -301,9 +459,11 @@ mod tests {
             cas.read(ADDRESS, 2..5).unwrap(),
             Some(Bytes::from_static(b"cde"))
         );
+        // One probe at open, one fetch for the data.
         let requests = cas.source().requests.lock().unwrap();
-        assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0], 2..5);
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0], 0..0);
+        assert_eq!(requests[1], 2..5);
     }
 
     #[test]
@@ -364,6 +524,8 @@ mod tests {
             Verifier { accepted: true },
         );
 
+        // After `open`, the length is known, so both a reversed range and one
+        // past the end are reported against it.
         let start = 5;
         let end = 2;
         assert_eq!(
@@ -371,7 +533,7 @@ mod tests {
             Err(VerifiedError::InvalidRange {
                 start: 5,
                 end: 2,
-                total_len: None,
+                total_len: Some(9),
             })
         );
         assert_eq!(
