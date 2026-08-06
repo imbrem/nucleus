@@ -1,19 +1,24 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, join } from "node:path";
 import test from "node:test";
 import { chromium } from "playwright-core";
 
 const root = new URL("..", import.meta.url).pathname;
+const repository = new URL("../../..", import.meta.url).pathname;
+const fixture = new URL("./fixture.sqlite", import.meta.url).pathname;
+
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".wasm": "application/wasm",
 };
 
-test("loads the Wasm binding in a browser", async (context) => {
+/** Serves the package directory, so the page and wasm have an origin. */
+async function servePackage(context) {
   const server = createServer(async (request, response) => {
     const relative = new URL(request.url ?? "/", "http://localhost").pathname;
     const path = join(root, relative);
@@ -21,8 +26,7 @@ test("loads the Wasm binding in a browser", async (context) => {
       const info = await stat(path);
       if (!info.isFile()) throw new Error("not a file");
       response.writeHead(200, {
-        "content-type":
-          contentTypes[extname(path)] ?? "application/octet-stream",
+        "content-type": contentTypes[extname(path)] ?? "application/octet-stream",
       });
       createReadStream(path).pipe(response);
     } catch {
@@ -31,7 +35,38 @@ test("loads the Wasm binding in a browser", async (context) => {
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   context.after(() => server.close());
+  return `http://127.0.0.1:${server.address().port}`;
+}
 
+/**
+ * Starts the real HTTP kernel over the fixture database.
+ *
+ * This is the separate-process, cross-origin half of the demo: a kernel the
+ * page reaches only over HTTP.
+ */
+async function startKernel(context) {
+  const child = spawn(
+    "cargo",
+    ["run", "--quiet", "-p", "covalence-bin-cas-serve", "--", fixture],
+    { cwd: repository, stdio: ["ignore", "pipe", "inherit"] },
+  );
+  context.after(() => child.kill());
+
+  let output = "";
+  const lines = await new Promise((resolve, reject) => {
+    child.stdout.on("data", (chunk) => {
+      output += chunk;
+      const complete = output.trim().split("\n");
+      // One line per admitted file, then the base URL.
+      if (complete.length >= 2) resolve(complete);
+    });
+    child.on("exit", (code) => reject(new Error(`cas-serve exited ${code}`)));
+  });
+
+  return { address: lines[0].split(" ")[0], baseUrl: lines[lines.length - 1] };
+}
+
+async function openPage(context, origin) {
   const executablePath = process.env.CHROMIUM_PATH;
   assert.ok(executablePath, "CHROMIUM_PATH is set by the Nix shell");
   const browser = await chromium.launch({
@@ -41,10 +76,101 @@ test("loads the Wasm binding in a browser", async (context) => {
   });
   context.after(() => browser.close());
   const page = await browser.newPage();
-  const address = server.address();
-  assert.notEqual(address, null);
-  assert.equal(typeof address, "object");
-  await page.goto(`http://127.0.0.1:${address.port}/test/browser.html`);
-  await page.waitForFunction(() => document.body.dataset.result !== undefined);
-  assert.equal(await page.locator("body").getAttribute("data-result"), "42");
+  page.on("console", (message) => {
+    if (message.type() === "error") console.error("page:", message.text());
+  });
+  await page.goto(`${origin}/test/browser.html`);
+  await page.waitForFunction(() => document.body.dataset.ready === "yes");
+  return page;
+}
+
+test("a kernel runs in the browser and reads a database by address", async (context) => {
+  const origin = await servePackage(context);
+  const page = await openPage(context, origin);
+  const database = await readFile(fixture);
+
+  const result = await page.evaluate(async (bytes) => {
+    const kernel = new window.nucleus.Kernel();
+    const address = kernel.put(new Uint8Array(bytes));
+    return {
+      address,
+      mount: kernel.mountName(),
+      uri: kernel.uri(address),
+      rows: JSON.parse(kernel.query(address, "SELECT a, b, sum FROM adder ORDER BY a")),
+    };
+  }, Array.from(database));
+
+  assert.match(result.address, /^[0-9a-f]{64}$/);
+  assert.equal(result.mount, "cas");
+  assert.ok(result.uri.includes("vfs=cas"), result.uri);
+  assert.deepEqual(result.rows.columns, ["a", "b", "sum"]);
+  assert.deepEqual(result.rows.rows, [
+    [2, 3, 5],
+    [7, 8, 15],
+  ]);
+});
+
+test("the browser reads a database from a kernel it reaches over HTTP", async (context) => {
+  const origin = await servePackage(context);
+  const kernel = await startKernel(context);
+  const page = await openPage(context, origin);
+
+  const result = await page.evaluate(async ({ baseUrl, address }) => {
+    const local = new window.nucleus.Kernel();
+    // Fetched across an origin, verified against its address, then admitted.
+    const length = await window.nucleus.fetchInto(local, baseUrl, address);
+    return {
+      length,
+      held: local.addresses(),
+      rows: JSON.parse(local.query(address, "SELECT sum FROM adder ORDER BY a")),
+    };
+  }, kernel);
+
+  assert.ok(result.length > 0);
+  assert.deepEqual(result.held, [kernel.address]);
+  assert.deepEqual(result.rows.rows, [[5], [15]]);
+});
+
+test("the HTTP kernel really serves ranges", async (context) => {
+  const origin = await servePackage(context);
+  const kernel = await startKernel(context);
+  const page = await openPage(context, origin);
+
+  const result = await page.evaluate(
+    async ({ baseUrl, address }) =>
+      await window.nucleus.fetchRange(baseUrl, address, 0, 14),
+    kernel,
+  );
+
+  // Every SQLite database begins with this, so a ranged read is verifiable by
+  // eye as well as by assertion. `bytes=0-14` is 15 bytes, because HTTP ranges
+  // are inclusive at both ends -- asking for 0-15 would also pull the NUL that
+  // terminates the header string.
+  const header = new TextDecoder().decode(Uint8Array.from(Object.values(result.bytes)));
+  assert.equal(header, "SQLite format 3");
+  assert.match(result.contentRange, /^bytes 0-14\//);
+});
+
+test("bytes which do not match their address are refused", async (context) => {
+  const origin = await servePackage(context);
+  const kernel = await startKernel(context);
+  const page = await openPage(context, origin);
+
+  const result = await page.evaluate(async ({ baseUrl, address }) => {
+    const local = new window.nucleus.Kernel();
+    const response = await fetch(`${baseUrl}/cas/${address}`);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    // A hostile or broken server, simulated by corrupting what it sent.
+    bytes[100] ^= 0xff;
+    try {
+      local.admit(address, bytes);
+      return { refused: false, held: local.addresses() };
+    } catch (error) {
+      return { refused: true, message: String(error), held: local.addresses() };
+    }
+  }, kernel);
+
+  assert.ok(result.refused, "tampered content must be refused");
+  assert.match(result.message, /does not match its address/);
+  assert.deepEqual(result.held, [], "refused content must not be stored");
 });
