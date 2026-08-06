@@ -1,0 +1,21 @@
+[package]
+name = "covalence-hol-wasm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Runs untrusted WASM proof modules against the HOL kernel"
+publish = false
+
+[dependencies]
+covalence-hol-init = { path = "../init" }
+covalence-hol-logic = { path = "../logic" }
+covalence-lib-error = { path = "../../lib/error" }
+covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["blake3"] }
+covalence-neutron = { path = "../../neutron" }
+covalence-nucleus = { path = "../../nucleus" }
+wasmtime = { version = "47.0.3", default-features = false, features = ["cranelift", "runtime"] }
+wasmtime-wasi = { version = "47.0.3", default-features = false, features = ["p1"] }
+
+[lints]
+workspace = true

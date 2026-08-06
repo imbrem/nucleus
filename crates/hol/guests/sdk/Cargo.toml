@@ -1,0 +1,11 @@
+[package]
+name = "covalence-hol-guest-sdk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Guest-side bindings for the nucleus-logic import namespace"
+publish = false
+
+[lints]
+workspace = true
