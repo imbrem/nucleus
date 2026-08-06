@@ -97,6 +97,11 @@ FOLD (m, x, a)          gate: a defined with conjuncts r1..rk and every
                         (x, rj) usable for m. insert (x, a, m).
                         (The completeness direction of the definition;
                         with x = 0 this is evaluation.)
+UNFOLD (m, x, d, keep)  gate: d defined with conjuncts containing keep;
+                        (x, -d) usable for m; (x, r) usable for every
+                        other conjunct r. insert (x, -keep, m).
+                        (Disjunction elimination through a definition.)
+WEAKEN (m, x, y)        gate: (0, y) usable for m. insert (x, y, m).
 CASES (m, a, c)         gate: (a, c) and (-a, c) usable for m.
                         insert (0, c, m).
 CHOOSE (i, l)           gate: i a registered world; |l| free (declared
@@ -106,6 +111,45 @@ CHOOSE (i, l)           gate: i a registered world; |l| free (declared
                         (Free choices on distinct free variables are
                         jointly satisfiable, so worlds built by CHOOSE
                         plus derivation are consistent.)
+
+LRAT_REFUTATION (F, [c1..cn], instrs, m < 0)
+                        gate: F is defined as the conjunction of exactly
+                        {-c1..-cn}; each ci is defined; clause i is the
+                        negation set of ci's conjuncts; the instruction
+                        stream drives the mini-LCF LRAT kernel (clauses
+                        enter only through the checked learn rule: RUP,
+                        or RAT groups over the pivot with completeness of
+                        coverage) to the empty clause. insert (F, -F, m).
+                        RAT additions preserve satisfiability rather than
+                        equivalence, which suffices for the recorded
+                        judgement (unsatisfiability of F).
+                        Big-step but LCF: parsing (ASCII or binary LRAT)
+                        is untrusted instruction production, and a
+                        connection may refuse this rule and demand
+                        SCRATCH replay instead. The solver and the proof
+                        file are never trusted; every initial clause is
+                        read from kernel rows.
+
+SCRATCH / CONCLUDE      A scratch prop table layers over the main one:
+                        its definitions allocate fresh ids above every id
+                        the main table mentions (an acyclic, conservative
+                        definitional extension), its rule applications
+                        may use non-world main rows as premises, and on
+                        conclusion exactly one derived universal row over
+                        main ids is copied back with model = -import_id,
+                        where prop_import records the derivation's
+                        meaning (non-authoritative provenance; the
+                        negative value remains a plain universal marker).
+                        Conservativity makes the copied fact entailed by
+                        the main definitional layer alone. Scratch-table
+                        LRAT replay derives (F, -F) this way using only
+                        the rules above: the zero-added-TCB alternative
+                        to LRAT_REFUTATION over the same instructions.
+                        It is RUP-only by construction — learned RAT
+                        clauses are not consequences of F and have no
+                        implication-row reading — so paranoid replay
+                        takes solver proofs produced without RAT-
+                        introducing preprocessing.
 
 Soundness invariant: every universal row is entailed by the definitional
 layer; every world-i row holds in some model of the definitional layer
@@ -120,6 +164,6 @@ SAT(p): a row (0, p) usable for some world i built only from CHOOSE and
 the rules above (a universal (0, p) row witnesses satisfiability in every
 world of the definitions).
 
-Deferred by this version: CNF export, DRAT/LRAT certificate checking
-(which would extend the universal layer), negative definitions, and
-theory-fact admission gates for externally interpreted worlds.
+Deferred by this version: CNF export helpers, DRAT (hint-free) checking,
+negative definitions, and theory-fact admission gates for externally
+interpreted worlds.

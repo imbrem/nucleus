@@ -16,6 +16,9 @@ use covalence_lib_sqlite::{self as sqlite, OptionalExtension};
 
 use crate::Connection;
 
+pub mod lrat;
+pub mod scratch;
+
 /// The normative semantic commitment, byte for byte.
 pub const SEMANTICS: &str = include_str!("prop/semantics.txt");
 
@@ -37,8 +40,12 @@ pub enum Operation {
     Trans,
     Contra,
     Fold,
+    Unfold,
+    Weaken,
     Cases,
     Choose,
+    ScratchImport,
+    LratRefutation,
     Read,
 }
 
@@ -228,6 +235,15 @@ pub enum PropError {
     /// A choice contradicts an existing fact usable in the same world.
     #[snafu(display("the opposite literal already holds in this world"))]
     ContradictoryChoice,
+    /// An LRAT proof was rejected by the checker.
+    #[snafu(display("LRAT proof rejected: {reason:?}"))]
+    LratRejected {
+        /// The checker's verdict.
+        reason: lrat::LratError,
+    },
+    /// The formula's definitional shape does not match the clause list.
+    #[snafu(display("formula shape does not match the supplied clauses"))]
+    MalformedFormula,
     /// The implication pair is already held by a different world.
     #[snafu(display("{lhs} => {rhs} is already held with model {model}"))]
     PairClaimed {
@@ -327,11 +343,11 @@ pub struct PropView<'v, P: Policy> {
 }
 
 impl<P: Policy> PropView<'_, P> {
-    fn sqlite(&self) -> &sqlite::Connection {
+    pub(crate) fn sqlite(&self) -> &sqlite::Connection {
         self.connection.parts().0.sqlite()
     }
 
-    fn authorize(&self, operation: Operation) -> Result<(), PropError> {
+    pub(crate) fn authorize(&self, operation: Operation) -> Result<(), PropError> {
         if self.connection.parts().1.policy.allows(operation) {
             Ok(())
         } else {
@@ -360,7 +376,12 @@ impl<P: Policy> PropView<'_, P> {
             .context(StorageSnafu)
     }
 
-    fn insert_for_target(&self, lhs: i64, rhs: i64, target: Target) -> Result<(), PropError> {
+    pub(crate) fn insert_for_target(
+        &self,
+        lhs: i64,
+        rhs: i64,
+        target: Target,
+    ) -> Result<(), PropError> {
         let stored = self.insert_row(lhs, rhs, target.model())?;
         match target {
             Target::Universal(_) => Ok(()),
@@ -709,6 +730,18 @@ impl<P: Policy> PropView<'_, P> {
             .map(|found| found.is_some())
     }
 
+    /// Whether `a => b` is established universally (definitionally or
+    /// derived) — the read HOL-context layering builds on: contexts as
+    /// propositions, entailment as row queries.
+    ///
+    /// # Errors
+    ///
+    /// Fails only on storage errors.
+    pub fn implies(&self, a: Ant, b: Lit) -> Result<bool, PropError> {
+        self.authorize(Operation::Read)?;
+        self.usable(a.get(), b.get(), Target::Universal(-1))
+    }
+
     /// Whether `p` holds in the given world.
     ///
     /// # Errors
@@ -727,6 +760,117 @@ impl<P: Policy> PropView<'_, P> {
             .and_then(|mut statement| statement.query_row((p.get(),), |_| Ok(())).optional())
             .context(StorageSnafu)
             .map(|found| found.is_some())
+    }
+
+    /// `LRAT_REFUTATION`: checks an LRAT proof that the clause set of
+    /// `formula` is unsatisfiable, and records `formula => -formula`
+    /// universally.
+    ///
+    /// `clauses` names the clause-negation ids in solver order: the
+    /// formula must be defined as the conjunction of their negations, and
+    /// clause `i + 1` of the proof is read off `clauses[i]`'s definition
+    /// (the negations of its conjuncts). Everything the proof is checked
+    /// against is therefore kernel state; only the checker itself is
+    /// trusted, and it is policy-gated.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the formula/clause shape does not match, the proof is
+    /// rejected, or the metadata is not negative.
+    pub fn lrat_refutation(
+        &self,
+        formula: PropId,
+        clauses: &[PropId],
+        instructions: &[lrat::LratInstr],
+        metadata: i64,
+    ) -> Result<(), PropError> {
+        self.authorize(Operation::LratRefutation)?;
+        if metadata >= 0 {
+            return InvalidTargetSnafu { metadata }.fail();
+        }
+        let initial = self.clause_matrix(formula, clauses)?;
+        lrat::check(&initial, instructions)
+            .map_err(|reason| LratRejectedSnafu { reason }.build())?;
+        self.insert_row(formula.get(), -formula.get(), metadata)
+            .map(|_| ())
+    }
+
+    /// Reads defined conjuncts of an id (its model-0 rows).
+    pub(crate) fn conjuncts_of(&self, id: i64) -> Result<Vec<i64>, PropError> {
+        self.sqlite()
+            .prepare_cached("SELECT rhs FROM prop_row WHERE lhs = ?1 AND model = 0 AND rhs != 0")
+            .and_then(|mut statement| {
+                statement
+                    .query_map((id,), |row| row.get(0))?
+                    .collect::<Result<Vec<i64>, _>>()
+            })
+            .context(StorageSnafu)
+    }
+
+    /// Verifies the formula/clause-list correspondence and returns the
+    /// clause matrix: clause `i + 1` is the negation set of
+    /// `clauses[i]`'s conjuncts, and `formula` must be defined as exactly
+    /// the conjunction of the negated clause ids.
+    pub(crate) fn clause_matrix(
+        &self,
+        formula: PropId,
+        clauses: &[PropId],
+    ) -> Result<Vec<Vec<i64>>, PropError> {
+        let formula_conjuncts: std::collections::BTreeSet<i64> =
+            self.conjuncts_of(formula.get())?.into_iter().collect();
+        let expected: std::collections::BTreeSet<i64> =
+            clauses.iter().map(|clause| -clause.get()).collect();
+        if formula_conjuncts != expected || clauses.len() != expected.len() {
+            return MalformedFormulaSnafu.fail();
+        }
+        let mut initial = Vec::new();
+        for clause in clauses {
+            let negated_literals = self.conjuncts_of(clause.get())?;
+            if negated_literals.is_empty() {
+                return MalformedFormulaSnafu.fail();
+            }
+            initial.push(negated_literals.into_iter().map(|lit| -lit).collect());
+        }
+        Ok(initial)
+    }
+
+    /// `UNFOLD`: disjunction elimination through a definition. With `d`
+    /// defined as the conjunction of `r1..rk`, from usable `x => -d` and
+    /// `x => ri` for every conjunct except `keep`, inserts `x => -keep`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `keep` is not a conjunct of `d` or a premise is missing.
+    pub fn unfold(&self, target: Target, x: Ant, d: PropId, keep: Lit) -> Result<(), PropError> {
+        self.authorize(Operation::Unfold)?;
+        self.require_target(target)?;
+        let conjuncts = self.conjuncts_of(d.get())?;
+        if !conjuncts.contains(&keep.get()) {
+            return MissingPremiseSnafu {
+                lhs: d.get(),
+                rhs: keep.get(),
+            }
+            .fail();
+        }
+        self.require_usable(x.get(), -d.get(), target)?;
+        for conjunct in conjuncts {
+            if conjunct != keep.get() {
+                self.require_usable(x.get(), conjunct, target)?;
+            }
+        }
+        self.insert_for_target(x.get(), -keep.get(), target)
+    }
+
+    /// `WEAKEN`: from a usable truth `true => y`, inserts `x => y`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the truth premise is not usable for the target.
+    pub fn weaken(&self, target: Target, x: Lit, y: Lit) -> Result<(), PropError> {
+        self.authorize(Operation::Weaken)?;
+        self.require_target(target)?;
+        self.require_usable(0, y.get(), target)?;
+        self.insert_for_target(x.get(), y.get(), target)
     }
 
     /// Runs the decidable well-formedness assertions (W1-W4) and returns
@@ -810,7 +954,7 @@ mod tests {
     fn semantics_identity_matches_fixed_vector() {
         assert_eq!(
             prop_semantics_id(),
-            o256!("906956d2d6e14241289f0dc2df314b9e472b3b2beb4e90de6a11e2a0c77edbdf")
+            o256!("825355d586a4d3ee5688561ea0b8413e5814a387830635bc882541362cf0a1b8")
         );
     }
 
@@ -959,6 +1103,127 @@ mod tests {
         prop_view
             .trans(Target::World(second), Ant::from(lit(1)), lit(1), lit(1))
             .expect("universal premise serves any world");
+    }
+
+    #[test]
+    fn lrat_refutation_is_kernel_checked() {
+        // Clauses (1) and (-1): 2 := {-1} is the negation of clause one,
+        // 3 := {1} of clause two, F = 4 := {-2, -3}.
+        let connection = open();
+        let prop_view = connection.view();
+        prop_view.declare_free(prop(1)).expect("declare");
+        prop_view.define(prop(2), &[lit(-1)]).expect("clause one");
+        prop_view.define(prop(3), &[lit(1)]).expect("clause two");
+        prop_view
+            .define(prop(4), &[lit(-2), lit(-3)])
+            .expect("formula");
+        let clauses = [prop(2), prop(3)];
+        let good = lrat::parse_text("3 0 1 2 0\n").expect("parse");
+        prop_view
+            .lrat_refutation(prop(4), &clauses, &good, -1)
+            .expect("refutation accepted");
+        assert!(prop_view.unsat(lit(4)).expect("judgement"));
+
+        // A proof over the wrong clause order or bogus hints is rejected
+        // and records nothing.
+        let fresh = open();
+        let fresh_view = fresh.view();
+        fresh_view.declare_free(prop(1)).expect("declare");
+        fresh_view.define(prop(2), &[lit(-1)]).expect("clause one");
+        fresh_view.define(prop(3), &[lit(1)]).expect("clause two");
+        fresh_view
+            .define(prop(4), &[lit(-2), lit(-3)])
+            .expect("formula");
+        let bad = lrat::parse_text("3 0 1 1 0\n").expect("parse");
+        assert!(matches!(
+            fresh_view.lrat_refutation(prop(4), &clauses, &bad, -1),
+            Err(PropError::LratRejected { .. })
+        ));
+        assert!(!fresh_view.unsat(lit(4)).expect("nothing recorded"));
+        assert!(matches!(
+            fresh_view.lrat_refutation(prop(4), &[prop(2)], &good, -1),
+            Err(PropError::MalformedFormula)
+        ));
+    }
+
+    #[test]
+    fn scratch_replay_certifies_without_the_checker() {
+        // Same unit contradiction as the mini-kernel test, replayed
+        // entirely through scratch-table rule applications.
+        let connection = open();
+        let prop_view = connection.view();
+        prop_view.declare_free(prop(1)).expect("declare");
+        prop_view.define(prop(2), &[lit(-1)]).expect("clause one");
+        prop_view.define(prop(3), &[lit(1)]).expect("clause two");
+        prop_view
+            .define(prop(4), &[lit(-2), lit(-3)])
+            .expect("formula");
+        let instructions = lrat::parse_text("3 0 1 2 0\n").expect("parse");
+        scratch::lrat_replay_scratch(
+            &prop_view,
+            prop(4),
+            &[prop(2), prop(3)],
+            &instructions,
+            "unit contradiction replay",
+        )
+        .expect("scratch replay");
+        assert!(prop_view.unsat(lit(4)).expect("judgement"));
+        // The imported row names its provenance record.
+        let meaning: String = connection
+            .parts()
+            .0
+            .sqlite()
+            .query_row(
+                "SELECT i.meaning FROM prop_row r JOIN prop_import i
+                 ON r.model = -i.import_id
+                 WHERE r.lhs = 4 AND r.rhs = -4",
+                (),
+                |row| row.get(0),
+            )
+            .expect("import provenance");
+        assert_eq!(meaning, "unit contradiction replay");
+        assert!(prop_view.check_validity().expect("validity").is_empty());
+    }
+
+    #[test]
+    fn unfold_and_weaken_eliminate_disjunctions() {
+        // d := {1, 2}; from x => -d and x => 1 conclude x => -2.
+        let connection = open();
+        let prop_view = connection.view();
+        prop_view.declare_free(prop(1)).expect("declare 1");
+        prop_view.declare_free(prop(2)).expect("declare 2");
+        prop_view
+            .define(prop(3), &[lit(1), lit(2)])
+            .expect("define");
+        prop_view.declare_free(prop(4)).expect("declare x");
+        let world = prop_view.world(None).expect("world");
+        let target = Target::World(world);
+        prop_view.choose(world, lit(1)).expect("choose 1");
+        prop_view.choose(world, lit(-2)).expect("choose -2");
+        // Derive the world truth -d from the falsified conjunct, then
+        // WEAKEN the world truths into x-implications.
+        prop_view
+            .contra(target, lit(3), lit(2))
+            .expect("contra def row");
+        prop_view
+            .trans(target, Ant::TRUE, lit(-2), lit(-3))
+            .expect("truth chain to -d");
+        prop_view
+            .weaken(target, lit(4), lit(-3))
+            .expect("weaken -d");
+        prop_view.weaken(target, lit(4), lit(1)).expect("weaken 1");
+        prop_view
+            .unfold(target, Ant::from(lit(4)), prop(3), lit(2))
+            .expect("unfold");
+        // The conclusion (4, -2) is a usable premise now: chain it.
+        prop_view.refl(target, lit(-2)).expect("refl");
+        prop_view
+            .trans(target, Ant::from(lit(4)), lit(-2), lit(-2))
+            .expect("conclusion is present");
+        // Without the excluded-conjunct premise the rule refuses.
+        prop_view
+            .unfold(target, Ant::from(lit(4)), prop(3), lit(1))
+            .expect_err("missing (4, 2) premise");
     }
 
     #[test]
