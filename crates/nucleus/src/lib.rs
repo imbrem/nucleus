@@ -31,10 +31,19 @@ pub fn smoke() -> u32 {
 }
 
 fn sqlite_smoke() -> covalence_lib_sqlite::Result<u32> {
+    use covalence_lib_sqlite::Step;
+
     let connection = covalence_lib_sqlite::Connection::open_in_memory()?;
-    connection.execute("CREATE TABLE smoke (value INTEGER NOT NULL)", ())?;
-    connection.execute("INSERT INTO smoke VALUES (42)", ())?;
-    connection.query_row("SELECT value FROM smoke", (), |row| row.get(0))
+    connection.execute_batch(
+        "CREATE TABLE smoke (value INTEGER NOT NULL); INSERT INTO smoke VALUES (42);",
+    )?;
+    let mut statement = connection.prepare("SELECT value FROM smoke")?;
+    if statement.step()? == Step::Row
+        && let Some(value) = statement.column(0).as_integer()
+    {
+        return Ok(u32::try_from(value).unwrap_or(0));
+    }
+    Ok(0)
 }
 
 #[cfg(target_os = "wasi")]
