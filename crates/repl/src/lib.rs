@@ -215,18 +215,9 @@ impl Repl {
 
     /// Drops an address from the store, reporting whether it resolved.
     ///
-    /// # Effect on open databases
-    ///
-    /// A database currently open through this address **will start failing its
-    /// reads**. The mount resolves every page through the store rather than
-    /// capturing the object at open, so removal is visible immediately.
-    ///
-    /// This is weaker than the intended semantics, under which an outstanding
-    /// handle keeps its object resolvable and removal only affects future
-    /// opens. It is safe — a failed read is an error, never wrong bytes — but
-    /// it is not yet the contract. Delivering it needs the store to hand out
-    /// pinned objects rather than answer address-keyed reads, which is a change
-    /// to the `Cas` interface itself. Tracked in the foundation issue.
+    /// Databases already open through this address keep working. The mount
+    /// holds the *object* it opened, not the address, so removal is invisible
+    /// to anything already reading and affects only future opens.
     #[must_use = "the return value says whether the address was resident"]
     pub fn forget(&self, address: O256) -> bool {
         self.cas.remove(address)
@@ -471,26 +462,23 @@ mod tests {
         );
     }
 
-    /// Pins down the *current* removal semantics, which are weaker than
-    /// intended. When the store learns to hand out pinned objects this test
-    /// should invert: the open connection must keep answering.
     #[test]
-    fn forgetting_an_address_currently_breaks_open_databases() {
+    fn forgetting_an_address_leaves_open_databases_alone() {
         let mut repl = repl();
         let address = repl.put(database_image()).unwrap();
         let id = repl.open_address(address).unwrap();
 
         assert!(repl.forget(address));
 
-        // Reads fail, because the mount re-resolves each page through the
-        // store. They fail cleanly: an I/O error, never wrong bytes.
-        assert!(
+        // The open connection keeps answering: it holds the object it opened.
+        assert_eq!(
             repl.connection(id)
                 .unwrap()
                 .query_row("SELECT n FROM value", [], |row| row.get::<_, i64>(0))
-                .is_err()
+                .unwrap(),
+            42
         );
-        // A fresh open fails too.
+        // Only a fresh resolution fails.
         assert!(repl.open_address(address).is_err());
     }
 
