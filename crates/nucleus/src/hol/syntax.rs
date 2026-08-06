@@ -121,6 +121,10 @@ branded_id!(
     /// A registered external source (`hol_source` row).
     SourceId
 );
+branded_id!(
+    /// An established theorem handle, never authority.
+    TheoremId
+);
 
 /// Index family for syntax nodes: what a child reference is.
 pub trait Substrate {

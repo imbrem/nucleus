@@ -15,6 +15,7 @@ use covalence_lib_sqlite as sqlite;
 
 use crate::Connection;
 
+pub mod rules;
 pub mod syntax;
 pub mod typing;
 mod view;
@@ -52,6 +53,8 @@ pub enum Operation {
     InstTy,
     Truth,
     Refl,
+    Sym,
+    Trans,
     EqMp,
     MkComb,
     Abs,
@@ -231,14 +234,14 @@ mod tests {
         // vector deliberately.
         assert_eq!(
             hol_semantics_id(),
-            o256!("ed291d29061a329a55f6b902511e8447312eee0e0bc9e3e8a9a7bcc008e7d0e1")
+            o256!("0b66dce1f3f6d950d023c2f8b215bfb9e83465a226eb3519eca3f690b4db020e")
         );
         assert_eq!(
             Connection::open_hol_in_memory(AllowAll)
                 .expect("open")
                 .schema_id()
                 .expect("identify"),
-            o256!("6f46eb1ab8e5d9833004afffdf3cc7f04002b09b7a3408d71f8bf9fe5b3962df")
+            o256!("2076f97317b93c7d8b4f771a0cb363d71d09d12147c427462eb57317eac122c7")
         );
     }
 }

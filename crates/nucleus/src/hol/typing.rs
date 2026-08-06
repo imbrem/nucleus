@@ -531,6 +531,51 @@ fn open_tm_in_tm_at(
     }
 }
 
+/// Strengthens a term out of the innermost variable's scope: lowers every
+/// free term index by one, returning `None` if the term mentions `TM_BV 0`.
+#[must_use]
+pub fn strengthen_tm_in_tm(tm: &Tm<Deep>) -> Option<Tm<Deep>> {
+    strengthen_tm_at(tm, 0)
+}
+
+fn strengthen_tm_at(tm: &Tm<Deep>, cutoff: u32) -> Option<Tm<Deep>> {
+    Some(match tm {
+        Tm::Bv(index) => match (*index).cmp(&cutoff) {
+            std::cmp::Ordering::Less => Tm::Bv(*index),
+            std::cmp::Ordering::Equal => return None,
+            std::cmp::Ordering::Greater => Tm::Bv(*index - 1),
+        },
+        Tm::App(function, argument) => Tm::App(
+            Box::new(strengthen_tm_at(function, cutoff)?),
+            Box::new(strengthen_tm_at(argument, cutoff)?),
+        ),
+        Tm::Lam(domain, body) => Tm::Lam(
+            domain.clone(),
+            Box::new(strengthen_tm_at(body, cutoff + 1)?),
+        ),
+        Tm::TyApp(function, argument) => Tm::TyApp(
+            Box::new(strengthen_tm_at(function, cutoff)?),
+            argument.clone(),
+        ),
+        Tm::TyLam(kind, body) => Tm::TyLam(kind.clone(), Box::new(strengthen_tm_at(body, cutoff)?)),
+        Tm::Bool(value) => Tm::Bool(*value),
+        Tm::Eq(left, right) => Tm::Eq(
+            Box::new(strengthen_tm_at(left, cutoff)?),
+            Box::new(strengthen_tm_at(right, cutoff)?),
+        ),
+        Tm::Eps(predicate) => Tm::Eps(Box::new(strengthen_tm_at(predicate, cutoff)?)),
+        Tm::Abs(predicate, value) => Tm::Abs(
+            predicate.clone(),
+            Box::new(strengthen_tm_at(value, cutoff)?),
+        ),
+        Tm::Rep(predicate, value) => Tm::Rep(
+            predicate.clone(),
+            Box::new(strengthen_tm_at(value, cutoff)?),
+        ),
+        Tm::Ext(source, position, claim) => Tm::Ext(*source, *position, claim.clone()),
+    })
+}
+
 impl<'v, P: Policy> HolView<'v, P> {
     // ------------------------------------------------------------------
     // Loading and interning deep trees.
