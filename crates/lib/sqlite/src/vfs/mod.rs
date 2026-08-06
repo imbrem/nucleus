@@ -11,12 +11,16 @@
 //! files. Advisory locking is included because `SQLite` calls these methods
 //! even for single-connection in-process databases.
 
+mod cas;
 #[cfg(feature = "vfs-register")]
 mod ffi;
 mod readonly;
 #[cfg(feature = "vfs-register")]
 mod registry;
 
+#[cfg(feature = "vfs-register")]
+pub use cas::register_cas;
+pub use cas::{CAS_VFS_NAME, CasFile, CasVfs};
 pub use readonly::{ReadOnlyFile, ReadOnlyVfs};
 #[cfg(feature = "vfs-register")]
 pub use registry::{
