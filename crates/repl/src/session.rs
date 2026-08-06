@@ -11,7 +11,7 @@ use crate::{ConnectionId, Repl, ReplError};
 /// What the host should do with a form.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Response {
-    /// Show this value. [`Value::Nil`] means show nothing.
+    /// Show this value. [`Value::Unspecified`] means show nothing.
     Value(Value),
     /// Ask the host to read a file for [`Session::admit`].
     ReadFile(String),
@@ -240,7 +240,7 @@ impl Session {
     ///
     /// Returns an error if the input does not read, names nothing, or fails.
     pub fn eval(&mut self, input: &str) -> Result<Response, SessionError> {
-        let mut last = Response::Value(Value::Nil);
+        let mut last = Response::Value(Value::Unspecified);
         for form in read(input)? {
             last = self.eval_form(&form)?;
             if !matches!(last, Response::Value(_)) {
@@ -356,11 +356,11 @@ impl Session {
             ))),
             ("select", [value]) => {
                 self.repl.select(Self::connection(value)?)?;
-                Ok(Response::value(Value::Nil))
+                Ok(Response::value(Value::Unspecified))
             }
             ("close", [value]) => {
                 self.repl.close(Self::connection(value)?)?;
-                Ok(Response::value(Value::Nil))
+                Ok(Response::value(Value::Unspecified))
             }
 
             ("sqlite", _) => Ok(Response::Shell(self.shell_arguments(arguments)?)),

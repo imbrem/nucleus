@@ -5,7 +5,6 @@ use std::path::PathBuf;
 
 fn main() {
     println!("cargo::rerun-if-changed=vendor/shell.c");
-    println!("cargo::rerun-if-changed=vendor/trampoline.c");
 
     // Use the header matching the linked SQLite library.
     let include =
@@ -13,17 +12,15 @@ fn main() {
             "DEP_SQLITE3_INCLUDE is unset: this crate must link the bundled libsqlite3-sys",
         ));
 
-    // Keep the mutually dependent shell and trampoline in one archive.
     let mut build = cc::Build::new();
     build.file("vendor/shell.c");
-    build.file("vendor/trampoline.c");
     build.include(&include);
 
     // Rename the entry point without patching vendored source.
     build.define("main", "covalence_sqlite_shell_main");
 
-    // Route process exit through the trampoline.
-    build.define("exit", "covalence_shell_exit");
+    // Mount the CAS through upstream's pre-initialization hook.
+    build.define("SQLITE_SHELL_INIT_PROC", "covalence_shell_init");
 
     // Disable capabilities not granted to the shell process.
     build.define("SQLITE_OMIT_LOAD_EXTENSION", None);

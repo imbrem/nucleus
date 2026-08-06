@@ -28,10 +28,35 @@
 
 use std::os::unix::net::UnixStream;
 use std::process::ExitCode;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use covalence_data_cas_wire::{RemoteCas, Transport};
 use covalence_neutron::{CAS_VFS_NAME, register_cas};
+
+/// The store, parked between connecting to it and the shell asking for it.
+///
+/// The handoff goes through a static because the shell calls back into us from
+/// C, with no argument to carry it.
+static STORE: OnceLock<Arc<RemoteCas<UnixStream, UnixStream>>> = OnceLock::new();
+
+/// Called by `shell.c` at the point it initializes `SQLite`.
+///
+/// Mounting here rather than before entering the shell is what keeps `SQLite`
+/// uninitialized until the shell is ready: registering a VFS initializes it,
+/// and doing that early makes the shell's own `sqlite3_config` calls fail with
+/// a warning printed to stdout, which would corrupt any script reading its
+/// output.
+#[allow(unsafe_code, reason = "the shell calls this from C by name")]
+#[unsafe(no_mangle)]
+extern "C" fn covalence_shell_init() {
+    let Some(store) = STORE.get() else {
+        // Nothing to mount. The shell still runs; only `?vfs=cas` is missing.
+        return;
+    };
+    if let Err(error) = register_cas(Arc::clone(store), CAS_VFS_NAME, false) {
+        eprintln!("cas-shell: could not mount the store: {error}");
+    }
+}
 
 fn main() -> ExitCode {
     match run() {
@@ -56,9 +81,11 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
     let stream = UnixStream::connect(&socket)?;
     let cas = Arc::new(RemoteCas::new(Transport::new(stream.try_clone()?, stream)));
 
-    // The mount is process-global, but this process is the shell, so there is
-    // nothing here to protect it from.
-    register_cas(cas, CAS_VFS_NAME, false)?;
+    // Parked for `covalence_shell_init`, which the shell calls once it is
+    // ready for SQLite to exist.
+    STORE
+        .set(cas)
+        .map_err(|_| "the store was already connected")?;
 
     let shell_arguments: Vec<String> = arguments.collect();
     Ok(covalence_bin_cas_shell::run(&shell_arguments)?)
