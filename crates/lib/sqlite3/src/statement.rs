@@ -1,15 +1,34 @@
 #![allow(unsafe_code)]
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "SQLite's own constants and lengths are narrowed here, each at a single reviewed site"
+)]
 //! Prepared statements.
 
 use std::cell::Cell;
-use std::ffi::CStr;
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::fmt;
 use std::ptr::{self, NonNull};
 use std::rc::Rc;
+use std::slice;
 
 use crate::connection::{Connection, Handle};
 use crate::error::{Error, ResultCode};
 use crate::ffi;
+use crate::value::{ValueRef, ValueType};
+
+/// `SQLITE_UTF8` as `sqlite3_bind_text64` wants it.
+const UTF8: u8 = ffi::SQLITE_UTF8 as u8;
+
+/// What a call to [`Statement::step`] produced.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum Step {
+    /// A row is available; read it with [`Statement::column`].
+    Row,
+    /// Execution finished.
+    Done,
+}
 
 /// A prepared statement.
 ///
@@ -69,6 +88,276 @@ impl Statement {
         }
         // SAFETY: `text` is a live NUL-terminated string, as above.
         unsafe { CStr::from_ptr(text) }.to_str().ok()
+    }
+
+    /// Fails when the connection has been closed out from under the statement.
+    fn usable(&self) -> Result<(), Error> {
+        if self.handle.is_closed() {
+            return Err(Error::with_message(
+                ResultCode::MISUSE,
+                "the connection this statement was prepared against is closed",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Turns a bind or step result code into an error carrying the connection's
+    /// message.
+    fn check(&self, code: c_int) -> Result<(), Error> {
+        let code = ResultCode::new(code);
+        if code.is_ok() {
+            Ok(())
+        } else {
+            Err(self.handle.error(code))
+        }
+    }
+
+    /// Returns the number of `?` parameters in the statement.
+    #[must_use]
+    pub fn parameter_count(&self) -> c_int {
+        // SAFETY: the statement is live.
+        unsafe { ffi::sqlite3_bind_parameter_count(self.raw.get()) }
+    }
+
+    /// Returns the one-based index of a named parameter, if it has one.
+    #[must_use]
+    pub fn parameter_index(&self, name: &str) -> Option<c_int> {
+        let name = CString::new(name).ok()?;
+        // SAFETY: the statement is live and `name` is NUL-terminated and
+        // outlives the call.
+        let index = unsafe { ffi::sqlite3_bind_parameter_index(self.raw.get(), name.as_ptr()) };
+        (index != 0).then_some(index)
+    }
+
+    /// Binds `NULL` to the one-based parameter `index`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the connection is closed or the index is out of
+    /// range.
+    pub fn bind_null(&mut self, index: c_int) -> Result<(), Error> {
+        self.usable()?;
+        // SAFETY: the statement is live; an out-of-range index is reported as
+        // SQLITE_RANGE rather than being undefined.
+        self.check(unsafe { ffi::sqlite3_bind_null(self.raw.get(), index) })
+    }
+
+    /// Binds an integer to the one-based parameter `index`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the connection is closed or the index is out of
+    /// range.
+    pub fn bind_integer(&mut self, index: c_int, value: i64) -> Result<(), Error> {
+        self.usable()?;
+        // SAFETY: as in `bind_null`.
+        self.check(unsafe { ffi::sqlite3_bind_int64(self.raw.get(), index, value) })
+    }
+
+    /// Binds a float to the one-based parameter `index`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the connection is closed or the index is out of
+    /// range.
+    pub fn bind_real(&mut self, index: c_int, value: f64) -> Result<(), Error> {
+        self.usable()?;
+        // SAFETY: as in `bind_null`.
+        self.check(unsafe { ffi::sqlite3_bind_double(self.raw.get(), index, value) })
+    }
+
+    /// Binds UTF-8 text to the one-based parameter `index`.
+    ///
+    /// `SQLite` copies the text, so `value` need not outlive the call.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the connection is closed, the index is out of
+    /// range, or `SQLite` cannot allocate the copy.
+    pub fn bind_text(&mut self, index: c_int, value: &str) -> Result<(), Error> {
+        self.usable()?;
+        // SAFETY: `value` is a live byte range of exactly `value.len()` bytes,
+        // and SQLITE_TRANSIENT tells SQLite to copy it before returning, so the
+        // borrow does not outlive the call.
+        self.check(unsafe {
+            ffi::sqlite3_bind_text64(
+                self.raw.get(),
+                index,
+                value.as_ptr().cast::<c_char>(),
+                value.len() as u64,
+                ffi::SQLITE_TRANSIENT(),
+                UTF8,
+            )
+        })
+    }
+
+    /// Binds a byte string to the one-based parameter `index`.
+    ///
+    /// `SQLite` copies the bytes, so `value` need not outlive the call.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the connection is closed, the index is out of
+    /// range, or `SQLite` cannot allocate the copy.
+    pub fn bind_blob(&mut self, index: c_int, value: &[u8]) -> Result<(), Error> {
+        self.usable()?;
+        // SAFETY: as in `bind_text`. A zero-length slice yields a dangling but
+        // non-null pointer, which SQLite never dereferences when the length is
+        // zero.
+        self.check(unsafe {
+            ffi::sqlite3_bind_blob64(
+                self.raw.get(),
+                index,
+                value.as_ptr().cast::<c_void>(),
+                value.len() as u64,
+                ffi::SQLITE_TRANSIENT(),
+            )
+        })
+    }
+
+    /// Binds a [`ValueRef`] to the one-based parameter `index`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the connection is closed, the index is out of
+    /// range, or `SQLite` cannot allocate a copy.
+    pub fn bind(&mut self, index: c_int, value: ValueRef<'_>) -> Result<(), Error> {
+        match value {
+            ValueRef::Null => self.bind_null(index),
+            ValueRef::Integer(value) => self.bind_integer(index, value),
+            ValueRef::Real(value) => self.bind_real(index, value),
+            ValueRef::Text(bytes) | ValueRef::Blob(bytes) => {
+                // Text arrives here as bytes; bind it as a blob only when it is
+                // not valid UTF-8, so a round trip preserves the storage class
+                // for everything this crate can produce.
+                match (value, std::str::from_utf8(bytes)) {
+                    (ValueRef::Text(_), Ok(text)) => self.bind_text(index, text),
+                    _ => self.bind_blob(index, bytes),
+                }
+            }
+        }
+    }
+
+    /// Advances the statement by one step.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the connection is closed or `SQLite` reports one.
+    /// An error leaves the statement's transaction untouched; `SQLite` decides
+    /// whether it is still live, and the caller decides whether to roll back.
+    pub fn step(&mut self) -> Result<Step, Error> {
+        self.usable()?;
+        // SAFETY: the statement is live and belongs to an open connection.
+        let code = ResultCode::new(unsafe { ffi::sqlite3_step(self.raw.get()) });
+        match code {
+            ResultCode::ROW => Ok(Step::Row),
+            ResultCode::DONE => Ok(Step::Done),
+            _ => Err(self.handle.error(code)),
+        }
+    }
+
+    /// Resets the statement so it can be run again, keeping its bindings.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error the most recent execution ended with, if any.
+    pub fn reset(&mut self) -> Result<(), Error> {
+        self.usable()?;
+        // SAFETY: the statement is live.
+        self.check(unsafe { ffi::sqlite3_reset(self.raw.get()) })
+    }
+
+    /// Sets every parameter back to `NULL`.
+    pub fn clear_bindings(&mut self) {
+        // SAFETY: the statement is live. `sqlite3_clear_bindings` cannot fail in
+        // any way a caller can act on.
+        unsafe { ffi::sqlite3_clear_bindings(self.raw.get()) };
+    }
+
+    /// Returns the number of columns the statement produces.
+    #[must_use]
+    pub fn column_count(&self) -> c_int {
+        // SAFETY: the statement is live.
+        unsafe { ffi::sqlite3_column_count(self.raw.get()) }
+    }
+
+    /// Returns the name assigned to a zero-based output column.
+    #[must_use]
+    pub fn column_name(&self, index: c_int) -> Option<&str> {
+        // SAFETY: the statement is live. The returned string is owned by the
+        // statement and outlives the borrow of `self`.
+        let name = unsafe { ffi::sqlite3_column_name(self.raw.get(), index) };
+        if name.is_null() {
+            return None;
+        }
+        // SAFETY: `name` is a live NUL-terminated string, as above.
+        unsafe { CStr::from_ptr(name) }.to_str().ok()
+    }
+
+    /// Returns the storage class of a zero-based column in the current row.
+    ///
+    /// Out-of-range columns report [`ValueType::Null`], which is what `SQLite`
+    /// does.
+    #[must_use]
+    pub fn column_type(&self, index: c_int) -> ValueType {
+        // SAFETY: the statement is live.
+        let code = unsafe { ffi::sqlite3_column_type(self.raw.get(), index) };
+        ValueType::from_raw(code).unwrap_or(ValueType::Null)
+    }
+
+    /// Borrows a zero-based column of the current row.
+    ///
+    /// The borrow ends at the next [`Statement::step`], [`Statement::reset`],
+    /// or drop, which is what the `&self` borrow encodes. Only the accessor
+    /// matching the column's storage class is called, so `SQLite` is never
+    /// asked to convert a value and never invalidates a pointer this returned.
+    #[must_use]
+    pub fn column(&self, index: c_int) -> ValueRef<'_> {
+        let raw = self.raw.get();
+        match self.column_type(index) {
+            ValueType::Null => ValueRef::Null,
+            // SAFETY: the statement is live and the column holds an integer, so
+            // `sqlite3_column_int64` reads it without converting.
+            ValueType::Integer => {
+                ValueRef::Integer(unsafe { ffi::sqlite3_column_int64(raw, index) })
+            }
+            // SAFETY: as above, for a float.
+            ValueType::Real => ValueRef::Real(unsafe { ffi::sqlite3_column_double(raw, index) }),
+            ValueType::Text => {
+                // SAFETY: the column holds text, so this returns the stored
+                // representation without converting. `sqlite3_column_bytes` is
+                // called after the pointer accessor, as SQLite requires.
+                let bytes = unsafe {
+                    let data = ffi::sqlite3_column_text(raw, index);
+                    Self::borrow(data.cast::<u8>(), ffi::sqlite3_column_bytes(raw, index))
+                };
+                ValueRef::Text(bytes)
+            }
+            ValueType::Blob => {
+                // SAFETY: as above, for a blob.
+                let bytes = unsafe {
+                    let data = ffi::sqlite3_column_blob(raw, index);
+                    Self::borrow(data.cast::<u8>(), ffi::sqlite3_column_bytes(raw, index))
+                };
+                ValueRef::Blob(bytes)
+            }
+        }
+    }
+
+    /// Views `length` bytes at `data` as a slice.
+    ///
+    /// # Safety
+    ///
+    /// When `length` is positive, `data` must point at that many initialised
+    /// bytes that outlive the returned borrow.
+    unsafe fn borrow<'a>(data: *const u8, length: c_int) -> &'a [u8] {
+        let length = usize::try_from(length).unwrap_or(0);
+        if data.is_null() || length == 0 {
+            // SQLite returns a null pointer for a zero-length blob.
+            return &[];
+        }
+        // SAFETY: guaranteed by the caller.
+        unsafe { slice::from_raw_parts(data, length) }
     }
 
     /// Finalizes the statement and reports the result.

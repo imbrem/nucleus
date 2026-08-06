@@ -35,10 +35,12 @@ pub use sqlite_wasm_rs as ffi;
 mod connection;
 mod error;
 mod statement;
+mod value;
 
 pub use connection::{Connection, OpenFlags};
 pub use error::{Error, ResultCode};
-pub use statement::Statement;
+pub use statement::{Statement, Step};
+pub use value::{ValueRef, ValueType};
 
 /// Result of a fallible `SQLite` call.
 pub type Result<T, E = Error> = std::result::Result<T, E>;

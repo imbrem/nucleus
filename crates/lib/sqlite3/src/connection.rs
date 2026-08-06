@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use crate::error::{Error, ResultCode};
 use crate::ffi;
-use crate::statement::Statement;
+use crate::statement::{Statement, Step};
 
 unsafe extern "C" {
     /// Closes a connection, tolerating outstanding prepared statements.
@@ -239,6 +239,45 @@ impl Connection {
     /// Returns an error only when `sqlite3_close_v2` itself reports one.
     pub fn close(self) -> Result<(), Error> {
         self.handle.close().ok()
+    }
+
+    /// Runs every statement in `sql`, discarding any rows they produce.
+    ///
+    /// Statements are prepared and stepped one at a time, so an error stops the
+    /// batch at the statement that failed. Nothing here starts or ends a
+    /// transaction: wrap the call in `BEGIN`/`COMMIT` when the batch must be
+    /// atomic.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first error `SQLite` reports while compiling or running the
+    /// batch.
+    pub fn execute_batch(&self, sql: &str) -> Result<(), Error> {
+        let mut rest = sql;
+        while !rest.is_empty() {
+            let (statement, tail) = self.prepare_prefix(rest)?;
+            rest = tail;
+            let Some(mut statement) = statement else {
+                continue;
+            };
+            while statement.step()? == Step::Row {}
+            statement.finalize()?;
+        }
+        Ok(())
+    }
+
+    /// Returns the rowid of the most recent successful insert.
+    #[must_use]
+    pub fn last_insert_rowid(&self) -> i64 {
+        // SAFETY: the handle is live for the duration of the call.
+        unsafe { ffi::sqlite3_last_insert_rowid(self.handle.as_ptr()) }
+    }
+
+    /// Returns the number of rows the most recent statement changed.
+    #[must_use]
+    pub fn changes(&self) -> i64 {
+        // SAFETY: the handle is live for the duration of the call.
+        unsafe { ffi::sqlite3_changes64(self.handle.as_ptr()) }
     }
 
     /// Prepares a single SQL statement.
