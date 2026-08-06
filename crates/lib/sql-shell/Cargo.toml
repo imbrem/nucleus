@@ -1,0 +1,17 @@
+[package]
+name = "covalence-lib-sql-shell"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "A small SQL shell, in Rust, over the workspace SQLite binding"
+publish = false
+
+[dependencies]
+covalence-lib-sqlite = { path = "../sqlite", features = ["vfs-register"] }
+
+[dev-dependencies]
+covalence-data-cas = { path = "../../data/cas" }
+
+[lints]
+workspace = true

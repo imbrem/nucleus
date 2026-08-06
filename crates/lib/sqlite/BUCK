@@ -26,9 +26,15 @@ rust_library(
     features = [
         "default",
         "serialize",
+        "vfs",
+        "vfs-register",
     ],
     tests = [":covalence_lib_sqlite-unit-test"],
     named_deps = {
+        "bitflags": "nucleus//buck/cargo/production:bitflags-2.13.1",
+        "covalence_data_cas": "nucleus//crates/data/cas:covalence_data_cas",
+        "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
+        "indexmap": "nucleus//buck/cargo/production:indexmap-2.14.0",
         "rusqlite": "nucleus//buck/cargo/production:rusqlite-0.40.1",
     },
     env = {
@@ -59,8 +65,14 @@ rust_test(
     features = [
         "default",
         "serialize",
+        "vfs",
+        "vfs-register",
     ],
     named_deps = {
+        "bitflags": "nucleus//buck/cargo/production:bitflags-2.13.1",
+        "covalence_data_cas": "nucleus//crates/data/cas:covalence_data_cas",
+        "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
+        "indexmap": "nucleus//buck/cargo/production:indexmap-2.14.0",
         "rusqlite": "nucleus//buck/cargo/production:rusqlite-0.40.1",
     },
     env = {
