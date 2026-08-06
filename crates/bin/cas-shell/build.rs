@@ -12,7 +12,6 @@ use std::path::PathBuf;
 
 fn main() {
     println!("cargo::rerun-if-changed=vendor/shell.c");
-    println!("cargo::rerun-if-changed=vendor/trampoline.c");
 
     // Provided by libsqlite3-sys (`links = "sqlite3"`, `cargo:include=...`).
     // Its absence means we would compile against some other sqlite3.h, which
@@ -22,24 +21,27 @@ fn main() {
             "DEP_SQLITE3_INCLUDE is unset: this crate must link the bundled libsqlite3-sys",
         ));
 
-    // Both files go into one archive. They refer to each other — the
-    // trampoline calls the shell's renamed `main`, the shell calls the
-    // trampoline's `exit` replacement — and two archives with a cycle between
-    // them are not reliably resolvable in link order.
     let mut build = cc::Build::new();
     build.file("vendor/shell.c");
-    build.file("vendor/trampoline.c");
     build.include(&include);
 
     // `shell.c` is a program. Renaming its entry point turns it into a library
     // without patching the vendored source.
     build.define("main", "covalence_sqlite_shell_main");
 
-    // Programs terminate by calling `exit()`, which would take the host
-    // process with them. Redirecting the whole translation unit sends every
-    // such call — `cli_exit`'s and the direct ones in argument parsing — to
-    // the trampoline instead. See `vendor/trampoline.c`.
-    build.define("exit", "covalence_shell_exit");
+    // Upstream's hook for exactly this case: "initialization actions on
+    // SQLite that occur just before or after sqlite3_initialize(). Use this
+    // compile-time option to embed this shell program in larger
+    // applications." Mounting the CAS here rather than before entering the
+    // shell keeps SQLite uninitialized until the shell says so, which is what
+    // its own `verify_uninitialized` check is asserting.
+    build.define("SQLITE_SHELL_INIT_PROC", "covalence_shell_init");
+
+    // `exit()` is deliberately left alone. This is a shell process, so a
+    // program terminating the process is the correct outcome, and upstream's
+    // exit codes and `atexit` handlers survive. Redirecting it would only be
+    // necessary if the shell shared an address space with something that had
+    // to outlive it, which is exactly what running it separately avoids.
 
     // The shell is a debugging surface, not a capability boundary. These
     // removals keep it from acquiring capabilities the host process does not

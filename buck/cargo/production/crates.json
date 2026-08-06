@@ -19,6 +19,12 @@
           "kinds": [
             "lib"
           ]
+        },
+        {
+          "name": "subprocess",
+          "kinds": [
+            "test"
+          ]
         }
       ]
     },
@@ -252,6 +258,20 @@
       "target": "workspace#covalence-data-cas-wire@0.0.0",
       "kinds": [
         "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-bin-cas-shell@0.0.0",
+      "target": "workspace#covalence-data-cas@0.0.0",
+      "kinds": [
+        "dev"
+      ]
+    },
+    {
+      "source": "workspace#covalence-bin-cas-shell@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "dev"
       ]
     },
     {

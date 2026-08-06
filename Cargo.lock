@@ -117,7 +117,9 @@ name = "covalence-bin-cas-shell"
 version = "0.0.0"
 dependencies = [
  "cc",
+ "covalence-data-cas",
  "covalence-data-cas-wire",
+ "covalence-lib-hash",
  "covalence-lib-sqlite",
  "libsqlite3-sys",
 ]
