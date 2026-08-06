@@ -21,7 +21,7 @@ use crate::Connection;
 
 /// Failure of a kernel-view operation.
 #[derive(Debug, Snafu)]
-#[snafu(crate_root(covalence_lib_error::snafu))]
+#[snafu(crate_root(covalence_lib_error::snafu), visibility(pub(crate)))]
 pub enum HolError {
     /// The connection policy refused the operation.
     #[snafu(display("policy refused {operation:?}"))]
@@ -65,6 +65,44 @@ pub enum HolError {
         /// The offending raw id.
         raw: i64,
     },
+    /// A de Bruijn index escapes its context.
+    #[snafu(display("variable {index} is unbound in this context"))]
+    UnboundVariable {
+        /// The offending index.
+        index: u32,
+    },
+    /// Two types that must coincide differ.
+    #[snafu(display("type mismatch"))]
+    TypeMismatch,
+    /// Two kinds that must coincide differ.
+    #[snafu(display("kind mismatch"))]
+    KindMismatch,
+    /// A conclusion or hypothesis is not Boolean.
+    #[snafu(display("term is not Boolean"))]
+    NotBoolean,
+    /// A premise conclusion is not an equality node.
+    #[snafu(display("conclusion is not an equality"))]
+    NotAnEquality,
+    /// A premise conclusion is not an application node.
+    #[snafu(display("conclusion is not an application"))]
+    NotAnApplication,
+    /// Premises disagree on a context that must be shared.
+    #[snafu(display("premise contexts disagree"))]
+    ContextMismatch,
+    /// A hypothesis mentions the variable being discharged.
+    #[snafu(display("hypothesis mentions the bound variable"))]
+    HypothesisNotStrengthenable,
+    /// An instantiation vector has the wrong length.
+    #[snafu(display("expected {expected} values, found {found}"))]
+    ArityMismatch {
+        /// Required number of values.
+        expected: usize,
+        /// Supplied number of values.
+        found: usize,
+    },
+    /// Syntax exceeds the expansion depth bound.
+    #[snafu(display("syntax exceeds the maximum expansion depth"))]
+    DepthExceeded,
     /// The underlying storage failed.
     #[snafu(display("kernel storage failure"))]
     Storage {
