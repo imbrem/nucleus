@@ -4,13 +4,13 @@ use std::{
     env,
     ffi::{OsStr, OsString},
     fs,
-    io::{self, Write},
+    io::{self, BufRead, BufReader, Write},
     path::{Path, PathBuf},
-    process::{Command, Output, Stdio},
+    process::{Child, Command, Output, Stdio},
     time::Instant,
 };
 
-use color_eyre::eyre::{Result, WrapErr, bail};
+use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 
 use crate::{BuildTarget, buck, cargo, loc};
 
@@ -474,6 +474,123 @@ impl Runner {
             format!("docs.dirty={dirty}"),
         ]);
         Ok(arguments)
+    }
+
+    /// Builds the browser demo, starts a kernel behind it, and serves it.
+    ///
+    /// Three things have to line up for the demo to be interesting, and doing
+    /// them by hand is three chances to get one wrong: the wasm has to be
+    /// built, an HTTP kernel has to be holding a database, and the page has to
+    /// know that database's address. This does all three and prints the
+    /// address, so the only manual step left is pasting it.
+    ///
+    /// Both servers are children of this process and share its process group,
+    /// so Ctrl-C stops all three. The kernel is also killed explicitly when
+    /// the page server exits normally. A signal delivered to this process
+    /// alone rather than to the group would leave them running, which is a
+    /// limitation of not being able to use `prctl` here: this crate forbids
+    /// `unsafe`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the build fails, no database can be served, or
+    /// either server cannot start.
+    pub(crate) fn demo(
+        &self,
+        files: &[PathBuf],
+        port: u16,
+        kernel_port: u16,
+        open: bool,
+        no_build: bool,
+    ) -> Result<()> {
+        // The committed fixture, so `glu demo` with no arguments still shows
+        // something rather than an empty store.
+        let default = self.root.join("packages/nucleus/test/fixture.sqlite");
+        let files: Vec<PathBuf> = if files.is_empty() {
+            vec![default]
+        } else {
+            files.to_vec()
+        };
+        for file in &files {
+            if !file.is_file() {
+                bail!("{} is not a file", file.display());
+            }
+        }
+
+        if !no_build {
+            self.pnpm("build browser demo", &["--dir", "packages/nucleus", "build"])?;
+            self.cargo("build demo kernel", &["build", "-p", "covalence-bin-cas-serve"])?;
+        }
+
+        let mut kernel = self.start_kernel(&files, kernel_port)?;
+        let page = format!("http://127.0.0.1:{port}/demo.html");
+
+        eprintln!();
+        eprintln!("  demo      {page}");
+        eprintln!("  kernel    http://127.0.0.1:{kernel_port}");
+        eprintln!();
+        eprintln!("  Sections 1 and 3 need only a file from your disk.");
+        eprintln!("  For section 2, paste an address above into the page.");
+        eprintln!();
+
+        if open {
+            // A failure here is not worth stopping for; the URL is printed.
+            let _ = self.run("open demo", "xdg-open", [page.as_str()]);
+        }
+
+        let served = self.exec(
+            "serve demo",
+            "caddy",
+            [
+                OsStr::new("file-server"),
+                OsStr::new("--root"),
+                self.root.join("packages/nucleus").as_os_str(),
+                OsStr::new("--listen"),
+                OsStr::new(&format!("127.0.0.1:{port}")),
+            ],
+        );
+
+        // The kernel is a child of this process, so it must not outlive it.
+        let _ = kernel.kill();
+        let _ = kernel.wait();
+        served
+    }
+
+    /// Starts the HTTP kernel and reports the addresses it admitted.
+    ///
+    /// The kernel prints one `address path` line per file and then its base
+    /// URL, so reading until the URL both collects the addresses and confirms
+    /// it is listening.
+    fn start_kernel(&self, files: &[PathBuf], port: u16) -> Result<Child> {
+        let binary = self.root.join("target/debug/covalence-cas-serve");
+        let mut child = Command::new(&binary)
+            .arg("--port")
+            .arg(port.to_string())
+            .args(files)
+            .current_dir(&self.root)
+            .stdout(Stdio::piped())
+            .spawn()
+            .wrap_err_with(|| format!("could not start {}", binary.display()))?;
+
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| eyre!("demo kernel produced no output"))?;
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            if reader.read_line(&mut line)? == 0 {
+                let _ = child.kill();
+                bail!("demo kernel exited before it started listening");
+            }
+            let line = line.trim_end();
+            if line.starts_with("http://") {
+                break;
+            }
+            eprintln!("  {line}");
+        }
+        Ok(child)
     }
 
     pub(crate) fn serve_docs(&self, port: u16, open: bool) -> Result<()> {
