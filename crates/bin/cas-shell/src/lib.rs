@@ -36,6 +36,10 @@
 //! without `system()`, so it cannot acquire capabilities this process was not
 //! given — and this process was given a CAS socket and nothing else.
 
+/// A [`covalence_data_cas::Cas`] provided by a WASI host.
+#[cfg(target_os = "wasi")]
+pub mod wasi;
+
 use std::ffi::{CString, NulError, c_char, c_int};
 
 // The shell's `sqlite3_*` symbols resolve to this library. Naming it here is

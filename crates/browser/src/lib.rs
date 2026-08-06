@@ -25,9 +25,11 @@
 //! browser's stand-in for the shell until the shell itself runs here. It sits
 //! outside the trusted core for exactly the reason the shell does.
 
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use covalence_data_cas::{Cas, CasObject, ResidentObject};
 use covalence_lib_hash::O256;
 use covalence_lib_sqlite::{Connection, Step, ValueType};
 use covalence_repl::Repl;
@@ -46,6 +48,13 @@ static NEXT_MOUNT: AtomicU64 = AtomicU64::new(0);
 pub struct Kernel {
     repl: Repl,
     mount: String,
+    /// Objects held open on behalf of a guest, such as the WASI shell.
+    ///
+    /// Holding them here is what gives the guest the same guarantee a local
+    /// caller gets: while it holds a handle, its reads keep working, whatever
+    /// happens to the address in the store.
+    open: HashMap<u64, ResidentObject>,
+    next_handle: u64,
 }
 
 #[wasm_bindgen]
@@ -66,7 +75,66 @@ impl Kernel {
         Ok(Self {
             repl: Repl::with_mount_name(&mount, false).map_err(to_js)?,
             mount,
+            open: HashMap::new(),
+            next_handle: 1,
         })
+    }
+
+    /// Opens an address, returning a handle, or `-1` when it does not resolve.
+    ///
+    /// This is the `covalence:cas/store` resource, in the shape a wasm guest
+    /// can call. The object stays open until [`Kernel::close_object`].
+    ///
+    /// Handles are `f64` because that is the number `JavaScript` has. They are
+    /// issued sequentially from 1, so they stay exactly representable for far
+    /// longer than a page will live.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `address` is not an address, or if the store fails.
+    #[wasm_bindgen(js_name = openObject)]
+    pub fn open_object(&mut self, address: &str) -> Result<f64, JsError> {
+        let address = self::address(address)?;
+        let Some(object) = self.repl.cas().open(address).map_err(to_js)? else {
+            return Ok(-1.0);
+        };
+        let handle = self.next_handle;
+        self.next_handle += 1;
+        self.open.insert(handle, object);
+        Ok(handle_to_js(handle))
+    }
+
+    /// Returns an open object's length, or `-1` for an unknown handle.
+    #[wasm_bindgen(js_name = objectLength)]
+    #[must_use]
+    pub fn object_length(&self, handle: f64) -> f64 {
+        self.open
+            .get(&handle_from_js(handle))
+            .map_or(-1.0, |object| length_to_js(object.len()))
+    }
+
+    /// Reads exactly `len` bytes from `offset` of an open object.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown handle or a range outside the object.
+    /// A short read is never returned as success: `SQLite` would read the
+    /// difference as zeroes and see a corrupt database.
+    #[wasm_bindgen(js_name = readObject)]
+    pub fn read_object(&self, handle: f64, offset: f64, len: f64) -> Result<Vec<u8>, JsError> {
+        let object = self
+            .open
+            .get(&handle_from_js(handle))
+            .ok_or_else(|| JsError::new("unknown object handle"))?;
+        let start = handle_from_js(offset);
+        let end = start.saturating_add(handle_from_js(len));
+        Ok(object.read(start..end).map_err(to_js)?.to_vec())
+    }
+
+    /// Releases an open object.
+    #[wasm_bindgen(js_name = closeObject)]
+    pub fn close_object(&mut self, handle: f64) {
+        self.open.remove(&handle_from_js(handle));
     }
 
     /// The `SQLite` VFS name this kernel's store is mounted under.
@@ -249,6 +317,38 @@ fn quote(text: &str) -> String {
     }
     out.push('"');
     out
+}
+
+/// Converts a handle or length for `JavaScript`.
+///
+/// Saturates rather than wrapping: a value past `f64`'s exact range would be a
+/// silently wrong handle, and there is no honest number to return.
+#[allow(clippy::cast_precision_loss, reason = "saturated below the exact range")]
+fn handle_to_js(value: u64) -> f64 {
+    const EXACT: u64 = 1 << 53;
+    if value >= EXACT { -1.0 } else { value as f64 }
+}
+
+/// Converts an object length for `JavaScript`.
+fn length_to_js(value: u64) -> f64 {
+    handle_to_js(value)
+}
+
+/// Converts a handle, offset or length back from `JavaScript`.
+///
+/// A negative or non-finite input becomes 0, which no handle uses and which
+/// every range check rejects.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "non-finite and negative inputs are mapped to 0"
+)]
+fn handle_from_js(value: f64) -> u64 {
+    if value.is_finite() && value >= 0.0 {
+        value as u64
+    } else {
+        0
+    }
 }
 
 fn address(text: &str) -> Result<O256, JsError> {

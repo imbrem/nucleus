@@ -323,21 +323,23 @@
       "source": "workspace#covalence-bin-cas-shell@0.0.0",
       "target": "workspace#covalence-data-cas-wire@0.0.0",
       "kinds": [
-        "normal"
+        "normal (cfg(unix))"
       ]
     },
     {
       "source": "workspace#covalence-bin-cas-shell@0.0.0",
       "target": "workspace#covalence-data-cas@0.0.0",
       "kinds": [
-        "dev"
+        "dev",
+        "normal (cfg(target_os = \"wasi\"))"
       ]
     },
     {
       "source": "workspace#covalence-bin-cas-shell@0.0.0",
       "target": "workspace#covalence-lib-hash@0.0.0",
       "kinds": [
-        "dev"
+        "dev",
+        "normal (cfg(target_os = \"wasi\"))"
       ]
     },
     {
@@ -357,6 +359,13 @@
     {
       "source": "workspace#covalence-bin-nucleus@0.0.0",
       "target": "workspace#covalence-repl@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-browser@0.0.0",
+      "target": "workspace#covalence-data-cas@0.0.0",
       "kinds": [
         "normal"
       ]
