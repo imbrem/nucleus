@@ -20,9 +20,11 @@
 
 use covalence_lib_error::snafu::ResultExt;
 use covalence_lib_hash::O256;
+use covalence_lib_sqlite as sqlite;
+use covalence_lib_sqlite::OptionalExtension;
 
 use super::{
-    ImageSnafu, ImportInvalidSnafu, Operation, Policy, Prop, PropError, PropId,
+    BoundNotFreeSnafu, ImageSnafu, ImportInvalidSnafu, Operation, Policy, Prop, PropError, PropId,
     SchemaMismatchSnafu, SignSnafu, SnapshotSnafu, StorageSnafu, UntrustedSignerSnafu,
     prop_schema_id,
 };
@@ -32,14 +34,17 @@ use crate::{Connection, Kernel};
 /// The private schema name used while admitting an import.
 const IMPORT_SCHEMA: &str = "prop_source_import";
 
-/// The id translation for one admitted import: local = foreign + offset
-/// (negated for negative literals).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// The id translation for one admitted import: bound foreign variables
+/// map to their designated local ids, everything else lands at
+/// `foreign + offset` (sign-preserving for literals).
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PropImportMap {
     /// The `prop_import` provenance row naming this admission.
     pub import_id: i64,
-    /// The positive id offset applied to every foreign proposition.
+    /// The positive id offset applied to unbound foreign propositions.
     pub offset: i64,
+    /// Foreign-to-local variable bindings applied by this admission.
+    pub bindings: std::collections::BTreeMap<i64, i64>,
 }
 
 impl PropImportMap {
@@ -47,26 +52,27 @@ impl PropImportMap {
     ///
     /// # Panics
     ///
-    /// Never in practice: offsets keep ids positive.
+    /// Never in practice: offsets and bindings keep ids positive.
     #[must_use]
     pub fn local(&self, foreign: PropId) -> PropId {
-        PropId::new(foreign.get() + self.offset).expect("offset ids are positive")
+        let raw = self
+            .bindings
+            .get(&foreign.get())
+            .copied()
+            .unwrap_or(foreign.get() + self.offset);
+        PropId::new(raw).expect("mapped ids are positive")
     }
 
     /// Maps a foreign literal to its local literal.
     ///
     /// # Panics
     ///
-    /// Never in practice: offsets keep literals nonzero.
+    /// Never in practice: mapped literals stay nonzero.
     #[must_use]
     pub fn local_lit(&self, foreign: super::Lit) -> super::Lit {
-        let value = foreign.get();
-        let shifted = if value > 0 {
-            value + self.offset
-        } else {
-            value - self.offset
-        };
-        super::Lit::new(shifted).expect("offset literals are nonzero")
+        let mapped = self.local(foreign.proposition()).get();
+        let value = if foreign.get() > 0 { mapped } else { -mapped };
+        super::Lit::new(value).expect("mapped literals are nonzero")
     }
 }
 
@@ -132,6 +138,29 @@ impl<P: Policy> Connection<Prop<P>> {
         envelope: SignedSnapshotEnvelope,
         meaning: &str,
     ) -> Result<PropImportMap, PropError> {
+        self.import_signed_bound(envelope, meaning, &[])
+    }
+
+    /// [`Self::import_signed`] with variable bindings: each `(foreign,
+    /// local)` pair identifies a source variable with a local
+    /// proposition instead of a fresh offset id.
+    ///
+    /// Binding is universal instantiation of the source's free
+    /// variables, so it is sound for **any** local target — the gate is
+    /// entirely on the foreign side, which must be genuinely free in the
+    /// source (no definition, no theory binding). Non-injective maps are
+    /// diagonal specializations and are permitted.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::import_signed`], plus a bound foreign id that is
+    /// defined or theory-bound in the source.
+    pub fn import_signed_bound(
+        &mut self,
+        envelope: SignedSnapshotEnvelope,
+        meaning: &str,
+        bindings: &[(PropId, PropId)],
+    ) -> Result<PropImportMap, PropError> {
         self.view().authorize(Operation::ImportTable)?;
         let snapshot = envelope.authenticate().context(SnapshotSnafu)?;
         let expected = self.schema_id()?;
@@ -153,7 +182,7 @@ impl<P: Policy> Connection<Prop<P>> {
             .0
             .attach_deserialized(IMPORT_SCHEMA, &bytes)
             .context(ImageSnafu)?;
-        let admitted = self.admit_attached(meaning);
+        let admitted = self.admit_attached(meaning, bindings);
         let _ = self
             .parts()
             .0
@@ -164,25 +193,12 @@ impl<P: Policy> Connection<Prop<P>> {
 
     /// Verifies and copies the attached source, assuming it is already
     /// authenticated and trusted.
-    fn admit_attached(&mut self, meaning: &str) -> Result<PropImportMap, PropError> {
-        // The signed claim covered the whole image; confirm the attached
-        // bytes carry exactly this protocol's physical schema.
-        let attached_manifest =
-            crate::manifest::schema_manifest_id_in(self.parts().0.sqlite(), IMPORT_SCHEMA)
-                .context(StorageSnafu)?;
-        let expected = prop_schema_id(attached_manifest);
-        if expected != self.schema_id()? {
-            return SchemaMismatchSnafu {
-                claimed: expected,
-                expected: self.schema_id()?,
-            }
-            .fail();
-        }
-        // The source must satisfy its own decidable well-formedness.
-        let violations = self.view().check_validity_in(IMPORT_SCHEMA)?;
-        if !violations.is_empty() {
-            return ImportInvalidSnafu { violations }.fail();
-        }
+    fn admit_attached(
+        &mut self,
+        meaning: &str,
+        bindings: &[(PropId, PropId)],
+    ) -> Result<PropImportMap, PropError> {
+        self.verify_attached_source(bindings)?;
         let sqlite = self.parts().0.sqlite();
         let offset: i64 = sqlite
             .prepare_cached("SELECT COALESCE(MAX(MAX(abs(lhs), abs(rhs))), 0) FROM prop_row")
@@ -192,43 +208,146 @@ impl<P: Policy> Connection<Prop<P>> {
             .prepare("INSERT INTO prop_import(meaning) VALUES (?1) RETURNING import_id")
             .and_then(|mut statement| statement.query_row((meaning,), |row| row.get(0)))
             .context(StorageSnafu)?;
-        // Admit the definitional layer (definitions and free-variable
-        // declarations) verbatim under the offset, then the universal
-        // layer under this import's provenance. Theory declarations and
-        // world rows are deliberately dropped: forgetting a constraint
-        // never strengthens the universal layer.
-        let shift = |column: &str| {
-            format!(
-                "CASE WHEN {column} > 0 THEN {column} + ?1
-                      WHEN {column} < 0 THEN {column} - ?1
-                      ELSE 0 END"
-            )
-        };
-        let admit_definitional = format!(
-            "INSERT INTO prop_row(lhs, rhs, model)
-             SELECT {lhs}, {rhs}, 0 FROM \"{IMPORT_SCHEMA}\".prop_row
-             WHERE model = 0",
-            lhs = shift("lhs"),
-            rhs = shift("rhs"),
-        );
-        let admit_universal = format!(
-            "INSERT INTO prop_row(lhs, rhs, model)
-             SELECT {lhs}, {rhs}, ?2 FROM \"{IMPORT_SCHEMA}\".prop_row
-             WHERE model < 0
-             ON CONFLICT(lhs, rhs) DO NOTHING",
-            lhs = shift("lhs"),
-            rhs = shift("rhs"),
-        );
-        let transaction = sqlite.unchecked_transaction().context(StorageSnafu)?;
-        transaction
-            .execute(&admit_definitional, (offset,))
-            .context(StorageSnafu)?;
-        transaction
-            .execute(&admit_universal, (offset, -import_id))
-            .context(StorageSnafu)?;
-        transaction.commit().context(StorageSnafu)?;
-        Ok(PropImportMap { import_id, offset })
+        install_binding_table(sqlite, bindings)?;
+        admit_translated_rows(sqlite, offset, import_id)?;
+        let _ = sqlite.execute_batch("DROP TABLE IF EXISTS temp.prop_import_binding");
+        Ok(PropImportMap {
+            import_id,
+            offset,
+            bindings: bindings
+                .iter()
+                .map(|(foreign, local)| (foreign.get(), local.get()))
+                .collect(),
+        })
     }
+
+    /// Confirms the attached schema matches this protocol's identity,
+    /// the source satisfies its own W1-W4, and every bound foreign id is
+    /// genuinely free in the source (no definitional conjuncts, no
+    /// theory binding).
+    fn verify_attached_source(&self, bindings: &[(PropId, PropId)]) -> Result<(), PropError> {
+        let attached_manifest =
+            crate::manifest::schema_manifest_id_in(self.parts().0.sqlite(), IMPORT_SCHEMA)
+                .context(StorageSnafu)?;
+        let expected_from_attached = prop_schema_id(attached_manifest);
+        let expected = self.schema_id()?;
+        if expected_from_attached != expected {
+            return SchemaMismatchSnafu {
+                claimed: expected_from_attached,
+                expected,
+            }
+            .fail();
+        }
+        let violations = self.view().check_validity_in(IMPORT_SCHEMA)?;
+        if !violations.is_empty() {
+            return ImportInvalidSnafu { violations }.fail();
+        }
+        let sqlite = self.parts().0.sqlite();
+        for (foreign, _) in bindings {
+            let constrained: Option<i64> = sqlite
+                .prepare(&format!(
+                    "SELECT lhs FROM \"{IMPORT_SCHEMA}\".prop_row
+                     WHERE lhs = ?1 AND model >= 0
+                       AND (rhs != 0 OR model > 0)
+                     LIMIT 1"
+                ))
+                .and_then(|mut statement| {
+                    statement
+                        .query_row((foreign.get(),), |row| row.get(0))
+                        .optional()
+                })
+                .context(StorageSnafu)?;
+            if constrained.is_some() {
+                return BoundNotFreeSnafu {
+                    foreign: foreign.get(),
+                }
+                .fail();
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Installs the temp binding table `install_binding_table` and
+/// `admit_translated_rows` share.
+fn install_binding_table(
+    sqlite: &sqlite::Connection,
+    bindings: &[(PropId, PropId)],
+) -> Result<(), PropError> {
+    sqlite
+        .execute_batch(
+            "DROP TABLE IF EXISTS temp.prop_import_binding;
+             CREATE TEMP TABLE prop_import_binding (
+                 foreign_id INTEGER PRIMARY KEY,
+                 local_id   INTEGER NOT NULL
+             ) STRICT;",
+        )
+        .context(StorageSnafu)?;
+    for (foreign, local) in bindings {
+        sqlite
+            .prepare_cached(
+                "INSERT OR REPLACE INTO temp.prop_import_binding(foreign_id, local_id)
+                 VALUES (?1, ?2)",
+            )
+            .and_then(|mut statement| statement.execute((foreign.get(), local.get())))
+            .context(StorageSnafu)?;
+    }
+    Ok(())
+}
+
+/// Copies the attached source's definitional and universal layers into
+/// the main table, translating every id through the installed bindings
+/// (falling back to `offset`) and re-scoping universal rows to
+/// `-import_id`. Theory declarations and world rows are deliberately
+/// dropped: forgetting a constraint never strengthens the universal
+/// layer, and declaration rows of bound variables are skipped since the
+/// local side already governs them.
+fn admit_translated_rows(
+    sqlite: &sqlite::Connection,
+    offset: i64,
+    import_id: i64,
+) -> Result<(), PropError> {
+    let translate = |column: &str| {
+        format!(
+            "CASE WHEN {column} = 0 THEN 0 ELSE
+                 (CASE WHEN {column} > 0 THEN 1 ELSE -1 END) *
+                 COALESCE(
+                     (SELECT local_id FROM temp.prop_import_binding
+                      WHERE foreign_id = abs({column})),
+                     abs({column}) + ?1
+                 )
+             END"
+        )
+    };
+    let admit_definitional = format!(
+        "INSERT INTO prop_row(lhs, rhs, model)
+         SELECT {lhs}, {rhs}, 0 FROM \"{IMPORT_SCHEMA}\".prop_row
+         WHERE model = 0
+           AND NOT (rhs = 0 AND lhs IN
+               (SELECT foreign_id FROM temp.prop_import_binding))",
+        lhs = translate("lhs"),
+        rhs = translate("rhs"),
+    );
+    let admit_universal = format!(
+        "INSERT INTO prop_row(lhs, rhs, model)
+         SELECT {lhs}, {rhs}, ?2 FROM \"{IMPORT_SCHEMA}\".prop_row
+         WHERE model < 0
+         ON CONFLICT(lhs, rhs) DO UPDATE SET model = CASE
+             WHEN excluded.model <= 0 AND prop_row.model > 0
+             THEN excluded.model
+             ELSE prop_row.model
+         END",
+        lhs = translate("lhs"),
+        rhs = translate("rhs"),
+    );
+    let transaction = sqlite.unchecked_transaction().context(StorageSnafu)?;
+    transaction
+        .execute(&admit_definitional, (offset,))
+        .context(StorageSnafu)?;
+    transaction
+        .execute(&admit_universal, (offset, -import_id))
+        .context(StorageSnafu)?;
+    transaction.commit().context(StorageSnafu)
 }
 
 #[cfg(test)]
@@ -337,6 +456,72 @@ mod tests {
             )
             .expect("provenance");
         assert_eq!(meaning, "php3 from kernel one");
+    }
+
+    #[test]
+    fn bound_import_composes_two_independent_provers() {
+        // The multi-kernel shape: two independent kernels each prove a
+        // universal fact about "their" variable 1, which is bound on
+        // import to a shared local atom. Neither kernel's proof alone
+        // gives the combined conclusion.
+        let kernel_a = Kernel::ephemeral();
+        let source_a = Connection::open_prop_in_memory(AllowAll).expect("open a");
+        {
+            let view = source_a.view();
+            view.declare_free(prop(1)).expect("declare a.1");
+            // a.1 => a.1 (trivial, but exercises the pipeline); the real
+            // content is that a.1 is genuinely free, hence bindable.
+            view.refl(Target::Universal(-1), lit(1)).expect("refl a");
+        }
+
+        let kernel_b = Kernel::ephemeral();
+        let source_b = Connection::open_prop_in_memory(AllowAll).expect("open b");
+        {
+            let view = source_b.view();
+            view.declare_free(prop(1)).expect("declare b.1");
+            view.refl(Target::Universal(-1), lit(-1)).expect("refl b");
+        }
+
+        let mut hub = Connection::open_prop_in_memory(AllowAll).expect("open hub");
+        hub.view().declare_free(prop(1)).expect("shared atom");
+        hub.trust_signer(kernel_a.key_id()).expect("trust a");
+        hub.trust_signer(kernel_b.key_id()).expect("trust b");
+
+        let envelope_a = source_a.export_signed(&kernel_a).expect("export a");
+        let map_a = hub
+            .import_signed_bound(envelope_a, "from kernel a", &[(prop(1), prop(1))])
+            .expect("import a");
+        assert!(map_a.bindings.contains_key(&1));
+
+        let envelope_b = source_b.export_signed(&kernel_b).expect("export b");
+        let map_b = hub
+            .import_signed_bound(envelope_b, "from kernel b", &[(prop(1), prop(1))])
+            .expect("import b");
+        assert_eq!(map_b.local(prop(1)), prop(1));
+
+        // Both facts now share the same local atom: combine them.
+        let view = hub.view();
+        assert!(view.implies(Ant::from(lit(1)), lit(1)).expect("a's fact"));
+        assert!(view.implies(Ant::from(lit(-1)), lit(-1)).expect("b's fact"));
+        assert!(view.check_validity().expect("validity").is_empty());
+    }
+
+    #[test]
+    fn binding_a_defined_foreign_id_is_rejected() {
+        let kernel = Kernel::ephemeral();
+        let source = Connection::open_prop_in_memory(AllowAll).expect("open source");
+        source.view().declare_free(prop(1)).expect("declare");
+        source.view().define(prop(2), &[lit(1)]).expect("define");
+        let mut hub = Connection::open_prop_in_memory(AllowAll).expect("open hub");
+        hub.view().declare_free(prop(9)).expect("local atom");
+        hub.trust_signer(kernel.key_id()).expect("trust");
+        let envelope = source.export_signed(&kernel).expect("export");
+        assert!(matches!(
+            hub.import_signed_bound(envelope, "bad binding", &[(prop(2), prop(9))]),
+            Err(PropError::BoundNotFree { foreign: 2 })
+        ));
+        // Nothing was admitted on the failed binding.
+        assert!(!hub.view().tautology(lit(1)).expect("no leakage"));
     }
 
     #[test]

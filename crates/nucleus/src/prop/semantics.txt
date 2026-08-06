@@ -172,7 +172,14 @@ EXPORT / TRUST_SIGNER / IMPORT_TABLE
                         Offsetting preserves positivity, binding
                         uniqueness, and acyclicity by construction, so
                         the merged database satisfies W1-W4 whenever
-                        both sides did.
+                        both sides did. An import may carry variable
+                        bindings identifying source variables with local
+                        propositions: binding is universal instantiation
+                        of the source's free variables, sound for any
+                        local target (including diagonal maps); the gate
+                        is on the foreign side only, which must be
+                        genuinely free in the source. Declaration rows
+                        of bound variables are not copied.
 
 Soundness invariant: every universal row is entailed by the definitional
 layer; every world-i row holds in some model of the definitional layer
