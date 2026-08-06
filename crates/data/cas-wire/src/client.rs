@@ -34,8 +34,21 @@ impl<R: Read, W: Write> Transport<R, W> {
 
 /// A CAS served by another process.
 ///
-/// Requests are serialised by a mutex: the protocol is one request, one
-/// answer, and `SQLite` may read from several files on one connection.
+/// # Why the transport is behind a mutex
+///
+/// The protocol is strictly one request, one answer, on one stream, with
+/// nothing in a response identifying which request it answers. `Cas::open` and
+/// `CasObject::read` both take `&self`, and `SQLite` may hold several files
+/// open on one connection, so two callers sharing this client could otherwise
+/// interleave frames and each read the other's answer. The mutex is the
+/// smallest thing that makes that impossible.
+///
+/// It is also a bottleneck, and a deliberate one for now: the shell is
+/// single-threaded, so it costs nothing here. Removing it means either request
+/// identifiers plus a demultiplexing reader, or one connection per object —
+/// and neither is worth building before something concurrent needs it. A
+/// stateless request-per-read transport such as ranged HTTP would not need it
+/// at all, at the cost of the handle guarantee this protocol exists to carry.
 pub struct RemoteCas<R, W> {
     transport: Arc<Mutex<Transport<R, W>>>,
 }

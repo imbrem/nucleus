@@ -117,8 +117,11 @@ name = "covalence-bin-cas-shell"
 version = "0.0.0"
 dependencies = [
  "cc",
+ "covalence-data-cas",
  "covalence-data-cas-wire",
+ "covalence-lib-hash",
  "covalence-lib-sqlite",
+ "covalence-neutron",
  "libsqlite3-sys",
 ]
 
@@ -127,6 +130,8 @@ name = "covalence-bin-nucleus"
 version = "0.0.0"
 dependencies = [
  "covalence-lib-hash",
+ "covalence-lib-sqlite",
+ "covalence-neutron",
  "covalence-repl",
 ]
 
