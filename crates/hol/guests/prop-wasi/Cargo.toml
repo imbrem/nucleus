@@ -1,0 +1,17 @@
+[package]
+name = "covalence-hol-guest-prop-wasi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Proof-module guest fixture using native WASI preview 1"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+covalence-hol-guest-sdk = { path = "../sdk" }
+
+[lints]
+workspace = true

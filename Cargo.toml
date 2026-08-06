@@ -12,6 +12,10 @@ members = [
   "crates/nucleus",
   "crates/hol/init",
   "crates/hol/logic",
+  "crates/hol/wasm",
+  "crates/hol/guests/sdk",
+  "crates/hol/guests/prop",
+  "crates/hol/guests/prop-wasi",
   "crates/repl",
   "crates/bin/nucleus",
 ]
