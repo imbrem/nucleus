@@ -2,6 +2,27 @@
   "generatedBy": "glu 0.0.0",
   "crates": [
     {
+      "id": "workspace#covalence-bin-cas-shell@0.0.0",
+      "name": "covalence-bin-cas-shell",
+      "version": "0.0.0",
+      "path": "crates/bin/cas-shell",
+      "category": "product",
+      "targets": [
+        {
+          "name": "covalence-cas-shell",
+          "kinds": [
+            "bin"
+          ]
+        },
+        {
+          "name": "covalence_bin_cas_shell",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-bin-nucleus@0.0.0",
       "name": "covalence-bin-nucleus",
       "version": "0.0.0",
@@ -40,6 +61,21 @@
       "targets": [
         {
           "name": "covalence_data_cas",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-data-cas-wire@0.0.0",
+      "name": "covalence-data-cas-wire",
+      "version": "0.0.0",
+      "path": "crates/data/cas-wire",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_data_cas_wire",
           "kinds": [
             "lib"
           ]
@@ -212,6 +248,20 @@
   ],
   "edges": [
     {
+      "source": "workspace#covalence-bin-cas-shell@0.0.0",
+      "target": "workspace#covalence-data-cas-wire@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-bin-cas-shell@0.0.0",
+      "target": "workspace#covalence-lib-sqlite@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "workspace#covalence-bin-nucleus@0.0.0",
       "target": "workspace#covalence-lib-hash@0.0.0",
       "kinds": [
@@ -221,6 +271,20 @@
     {
       "source": "workspace#covalence-bin-nucleus@0.0.0",
       "target": "workspace#covalence-repl@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-cas-wire@0.0.0",
+      "target": "workspace#covalence-data-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-cas-wire@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
       "kinds": [
         "normal"
       ]
@@ -319,6 +383,13 @@
     {
       "source": "workspace#covalence-nucleus@0.0.0",
       "target": "workspace#covalence-neutron@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-repl@0.0.0",
+      "target": "workspace#covalence-data-cas-wire@0.0.0",
       "kinds": [
         "normal"
       ]

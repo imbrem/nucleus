@@ -1,6 +1,7 @@
 //! A content-addressed `SQLite` REPL using the upstream shell.
 
 pub mod sexpr;
+pub mod shell;
 
 mod session;
 
