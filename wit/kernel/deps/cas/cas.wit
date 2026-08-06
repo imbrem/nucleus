@@ -1,0 +1,149 @@
+// The content-addressed store, as a component-model interface.
+//
+// This is the same shape as the Rust `Cas` and `CasObject` traits, and for the
+// same reason: opening is the primitive. A `cas-object` resource is a handle,
+// and holding one keeps its bytes readable no matter what happens to the store
+// it came from. An interface whose only operation were "read this address now"
+// could not promise that, and could not be composed.
+//
+// Two directions of use, from one interface:
+//
+//   - A component that *imports* `store` is a client. The kernel exports this,
+//     so a REPL, a shell's VFS, and a proof script are all the same kind of
+//     consumer of it.
+//   - A component that *exports* `store` is a provider. That is what makes
+//     user-supplied composition possible: a guest may implement `store` by
+//     consulting a cache, then a filesystem, then S3, in whatever order it
+//     likes, and hand back objects it obtained from providers it imported.
+//
+// A composing guest is untrusted and does not need to be trusted. It chooses
+// *which* provider answers, not *what* the answer is: every object it can pass
+// on came from a provider that already authenticated it against the address.
+// Bad routing costs latency and availability. It cannot produce wrong bytes.
+
+package covalence:cas@0.1.0;
+
+interface types {
+    // A 256-bit content address. Exactly 32 bytes.
+    //
+    // Carried as a list rather than a string because this is an address, not a
+    // display form; hex encoding belongs at the edges.
+    type address = list<u8>;
+
+    // Why an operation could not be answered.
+    //
+    // Absence is deliberately *not* here. An address which does not resolve is
+    // an ordinary `none`, not an error, because the two mean different things:
+    // an error says this provider failed, `none` says this provider did not
+    // produce the object. Neither is proof that no such object exists.
+    variant error {
+        // The address was not 32 bytes.
+        malformed-address,
+        // The requested range was reversed, or extended past the object.
+        invalid-range(range-error),
+        // The object exceeded a limit this provider enforces.
+        too-large(limit-error),
+        // The provider failed for a reason the caller cannot act on.
+        // The string is diagnostic only and must not be parsed.
+        backend(string),
+        // A provider stopped serving an object it had already handed out, or
+        // contradicted a length it had already stated. This is a protocol
+        // violation by the provider, not a normal absence.
+        withdrawn,
+    }
+
+    record range-error {
+        start: u64,
+        end: u64,
+        len: u64,
+    }
+
+    record limit-error {
+        len: u64,
+        limit: u64,
+    }
+
+    // What a store currently holds. Advisory: a store may be unable to answer
+    // exactly, and a composing store may answer only for its own layer.
+    record store-stats {
+        objects: u64,
+        bytes: u64,
+        largest: u64,
+    }
+}
+
+interface store {
+    use types.{address, error, store-stats};
+
+    // An object opened from a store.
+    //
+    // The handle is the guarantee. While it is alive its bytes are readable,
+    // regardless of whether the address still resolves in the store it came
+    // from. Dropping the handle releases whatever the provider was holding.
+    resource cas-object {
+        // The object's total length. Fixed: content-addressed objects are
+        // immutable, so this cannot change under a holder.
+        len: func() -> u64;
+
+        // Returns exactly the bytes in [start, end).
+        //
+        // A reversed range, or one extending past `len`, is an error. A short
+        // read is an error too: providers must not answer partially.
+        read: func(start: u64, end: u64) -> result<list<u8>, error>;
+
+        // The address this object was opened under.
+        //
+        // Present so a composing provider can pass objects around without
+        // threading addresses alongside them.
+        address: func() -> address;
+    }
+
+    // Opens an address, or returns none when it does not resolve here.
+    open: func(addr: address) -> result<option<cas-object>, error>;
+
+    // Whether an address currently resolves. Advisory: it may stop resolving
+    // before a later `open`, which is exactly why `open` is the primitive.
+    has: func(addr: address) -> result<bool, error>;
+
+    // Summarises what this store holds.
+    stats: func() -> result<store-stats, error>;
+}
+
+// Admission, separated from reading.
+//
+// A read-only provider — a remote mirror, a composing router — exports `store`
+// and not this. Keeping them apart means "can serve objects" does not imply
+// "can be written to", and a client can be handed exactly one of them.
+interface admit {
+    use types.{address, error};
+
+    // Hashes and admits complete bytes, returning their address.
+    //
+    // Idempotent: admitting bytes already present returns the same address.
+    put: func(bytes: list<u8>) -> result<address, error>;
+
+    // Drops an address, reporting whether it resolved beforehand.
+    //
+    // This cannot disturb an already-open `cas-object`. The worst it can do is
+    // make a future `open` fail, which is why exposing it to untrusted callers
+    // is safe.
+    forget: func(addr: address) -> result<bool, error>;
+}
+
+// A store which serves objects and accepts them.
+world cas {
+    export store;
+    export admit;
+}
+
+// A store assembled from other stores.
+//
+// The guest imports providers and exports one store built from them. This is
+// the user-supplied, untrusted composition path: try the cache, then the
+// filesystem, then S3, in whatever order and with whatever policy the guest
+// wants. It cannot forge an object, because it can only pass on objects its
+// imported providers produced.
+world composing-store {
+    import store;
+    export store;
+}
