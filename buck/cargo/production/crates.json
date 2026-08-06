@@ -145,6 +145,12 @@
           "kinds": [
             "lib"
           ]
+        },
+        {
+          "name": "prop_table",
+          "kinds": [
+            "test"
+          ]
         }
       ]
     },
