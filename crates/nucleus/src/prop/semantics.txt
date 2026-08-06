@@ -117,8 +117,12 @@ LRAT_REFUTATION (F, [c1..cn], instrs, m < 0)
                         {-c1..-cn}; each ci is defined; clause i is the
                         negation set of ci's conjuncts; the instruction
                         stream drives the mini-LCF LRAT kernel (clauses
-                        enter only through the RUP-checked learn rule) to
-                        the empty clause. insert (F, -F, m).
+                        enter only through the checked learn rule: RUP,
+                        or RAT groups over the pivot with completeness of
+                        coverage) to the empty clause. insert (F, -F, m).
+                        RAT additions preserve satisfiability rather than
+                        equivalence, which suffices for the recorded
+                        judgement (unsatisfiability of F).
                         Big-step but LCF: parsing (ASCII or binary LRAT)
                         is untrusted instruction production, and a
                         connection may refuse this rule and demand
@@ -141,6 +145,11 @@ SCRATCH / CONCLUDE      A scratch prop table layers over the main one:
                         LRAT replay derives (F, -F) this way using only
                         the rules above: the zero-added-TCB alternative
                         to LRAT_REFUTATION over the same instructions.
+                        It is RUP-only by construction — learned RAT
+                        clauses are not consequences of F and have no
+                        implication-row reading — so paranoid replay
+                        takes solver proofs produced without RAT-
+                        introducing preprocessing.
 
 Soundness invariant: every universal row is entailed by the definitional
 layer; every world-i row holds in some model of the definitional layer
