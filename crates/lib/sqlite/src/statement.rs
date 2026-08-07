@@ -384,7 +384,10 @@ impl Statement {
 
 impl Drop for Statement {
     fn drop(&mut self) {
-        // SAFETY: same as before; pointer is either live or null.
+        // SAFETY: `raw` is either a live statement owned by this value or null;
+        // `sqlite3_finalize(NULL)` is a documented no-op. Finalizing is valid
+        // even when the connection has already been closed (zombie state from
+        // `sqlite3_close_v2`).
         unsafe { ffi::sqlite3_finalize(self.raw) };
     }
 }
