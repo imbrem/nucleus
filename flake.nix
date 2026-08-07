@@ -91,19 +91,26 @@
             export CC_wasm32_wasip1=wasm32-unknown-wasi-cc
             export CC_wasm32_wasip2=wasm32-unknown-wasi-cc
             mkdir -p .direnv/bin
-            glu buck configure >/dev/null 2>&1
-            buck_environment="$(command -v rustc):$(rustc --print sysroot):$(command -v clang):$(command -v cargo-component):$(command -v nucleus-wasm-clang):$(command -v wasm32-unknown-wasi-cc)"
-            if [ ! -f .direnv/buck-environment ] ||
-               [ "$(cat .direnv/buck-environment)" != "$buck_environment" ]; then
-              buck2 kill >/dev/null 2>&1 || true
-              printf '%s\n' "$buck_environment" > .direnv/buck-environment
-            fi
-            if glu_output="$(buck2 build //tools/glu:glu --show-full-simple-output)"; then
-              ln -sf "$glu_output" .direnv/bin/glu
-            else
-              echo "error: Buck could not build glu" >&2
-              exit 1
-            fi
+            # direnv collects the environment through file descriptor 3 and
+            # blocks until every writer closes it. Buck's daemon and forkserver
+            # outlive the build and inherit fd 3, so a fresh `direnv allow`
+            # hangs after the build finishes unless everything that can start
+            # them runs with fd 3 closed. Keep new Buck calls inside this group.
+            {
+              glu buck configure >/dev/null 2>&1
+              buck_environment="$(command -v rustc):$(rustc --print sysroot):$(command -v clang):$(command -v cargo-component):$(command -v nucleus-wasm-clang):$(command -v wasm32-unknown-wasi-cc)"
+              if [ ! -f .direnv/buck-environment ] ||
+                 [ "$(cat .direnv/buck-environment)" != "$buck_environment" ]; then
+                buck2 kill >/dev/null 2>&1 || true
+                printf '%s\n' "$buck_environment" > .direnv/buck-environment
+              fi
+              if glu_output="$(buck2 build //tools/glu:glu --show-full-simple-output)"; then
+                ln -sf "$glu_output" .direnv/bin/glu
+              else
+                echo "error: Buck could not build glu" >&2
+                exit 1
+              fi
+            } 3>&-
             export PATH="$PWD/.direnv/bin:$PATH"
           '';
         };
