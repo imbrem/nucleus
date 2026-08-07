@@ -16,15 +16,19 @@
 
 import type { Repl } from "../generated/nucleus.js";
 import { OP, SLOT, STATE, createChannel } from "./protocol.js";
+import type { Source } from "./shell-worker.js";
 import type { ShellOptions, ShellResult } from "./wasi.js";
 
 /** Whether this host can run the shell in a worker of its own. */
-export function canSpawn(): boolean {
+export function canSpawn(remote = false): boolean {
+  if (typeof Worker === "undefined") return false;
+  // Reading a remote kernel needs no shared memory at all: the worker blocks
+  // on synchronous ranged XHR, which a worker may do. Only the local kernel,
+  // whose bytes live in this thread's memory, needs SharedArrayBuffer -- and
+  // that in turn needs cross-origin isolation.
+  if (remote) return true;
   return (
-    typeof Worker !== "undefined" &&
     typeof SharedArrayBuffer !== "undefined" &&
-    // Cross-origin isolation is what makes SharedArrayBuffer usable rather
-    // than merely declared. The demo server sets COOP and COEP for this.
     globalThis.crossOriginIsolated === true
   );
 }
@@ -95,11 +99,17 @@ function serviceOnce(repl: Repl, control: Int32Array, data: Uint8Array): void {
 export async function spawnShell(
   repl: Repl,
   wasm: ArrayBuffer,
-  options: ShellOptions,
+  options: ShellOptions & { remote?: string },
 ): Promise<ShellResult> {
+  // A remote kernel needs no shared memory: the worker reads it directly with
+  // synchronous ranged XHR, which is permitted in a worker and is how
+  // sql.js-httpvfs does the same job.
   const channel = createChannel();
   const control = new Int32Array(channel.control);
   const data = new Uint8Array(channel.data);
+  const source: Source = options.remote
+    ? { kind: "http", baseUrl: options.remote }
+    : { kind: "local", channel };
 
   const worker = new Worker(new URL("./shell-worker.js", import.meta.url), {
     type: "module",
@@ -135,7 +145,7 @@ export async function spawnShell(
       wasm,
       args: options.args,
       stdin: options.stdin ?? "",
-      channel,
+      source,
     });
   });
 }
