@@ -70,13 +70,21 @@ export async function drive(
 
     case "shell":
       try {
+        const remote = repl.selectedKernel() !== "local";
         const result = await runTheShell(repl, host, step.arguments);
+        // A whole object can be checked against its address by hashing it; a
+        // single range cannot, until BLAKE3 range proofs exist (#442). So a
+        // streaming read trusts the server in a way `.fetch` does not, and
+        // saying so is the difference between a caveat and a surprise.
+        const caveat = remote
+          ? "-- reading the remote kernel directly; ranges are not verified (#442)\n"
+          : "";
         const trailer =
           result.status === 0
             ? ""
             : `\nshell exited with status ${result.status}`;
         return {
-          output: `${result.stdout}${result.stderr}${trailer}`.replace(
+          output: `${caveat}${result.stdout}${result.stderr}${trailer}`.replace(
             /\n+$/,
             "",
           ),
@@ -102,7 +110,14 @@ async function runTheShell(
   host: Host,
   args: string[],
 ): Promise<ShellResult> {
-  if (host.inline || !canSpawn()) {
+  // A remote kernel is read straight from the worker with synchronous ranged
+  // XHR, so nothing is copied into this page first and no shared memory is
+  // involved. The local kernel's bytes live here, so that path needs the
+  // channel and therefore cross-origin isolation.
+  const selected = repl.selectedKernel();
+  const remote = selected === "local" ? undefined : selected;
+
+  if (host.inline || !canSpawn(remote !== undefined)) {
     return await runShell(repl, host.shell(), { args });
   }
   const source = host.shell();
@@ -110,7 +125,7 @@ async function runTheShell(
     source instanceof Response || source instanceof Promise
       ? await (await source).arrayBuffer()
       : toArrayBuffer(source);
-  return await spawnShell(repl, wasm, { args });
+  return await spawnShell(repl, wasm, { args, remote });
 }
 
 function toArrayBuffer(source: BufferSource): ArrayBuffer {
