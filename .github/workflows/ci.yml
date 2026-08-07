@@ -32,22 +32,31 @@ jobs:
   # so they get their own job rather than joining `glu ci`. `glu lean` fetches
   # Mathlib's prebuilt artifacts before building; without them this would
   # compile Mathlib from source.
+  # The Lean development is a specification, not a build input, so it gets its
+  # own job rather than joining `glu ci`.
   lean:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3
       - run: nix develop --command glu lean
-      # Generated on every run so a broken documentation build is caught on the
-      # pull request that breaks it, but only kept on main, where `pages` is
-      # the one consumer.
-      #
-      # Documentation generation holds an elaborated environment per worker, and
-      # at the default parallelism the runner ran out of memory partway through
-      # — surfacing as a failure to fork `git` for the source-URL targets rather
-      # than as a failure in Lean. Hence both the swap headroom and the cap.
-      # The swap file goes on /mnt, the large ephemeral disk, because / is
-      # already carrying the Nix store and Mathlib's build cache.
+
+  # Documentation is a separate job from the check above, because the two fail
+  # for unrelated reasons and only one of them gates the foundations. Building
+  # the library has been reliable; generating documentation is the part that
+  # needs a tuned runner, so it should not be able to hold up a green build.
+  #
+  # It still runs on every pull request, so a broken documentation build is
+  # caught on the change that breaks it, and uploads only on main, where
+  # `pages` is the one consumer.
+  lean-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3
+      # Generation holds an elaborated environment per worker. Swap on /mnt, the
+      # large ephemeral disk, since / already carries the Nix store and
+      # Mathlib's build cache.
       - run: |
           sudo fallocate -l 8G /mnt/swapfile
           sudo chmod 600 /mnt/swapfile
@@ -77,7 +86,7 @@ jobs:
 
   pages:
     if: github.ref == 'refs/heads/main'
-    needs: [check, nix, container, lean]
+    needs: [check, nix, container, lean, lean-docs]
     runs-on: ubuntu-latest
     permissions:
       contents: read
