@@ -1,0 +1,56 @@
+# The demo server, and the test server, and eventually the hosted one.
+#
+# One file, because a server that only the tests use is a server nobody has
+# tested. `glu demo` runs this and so does `packages/nucleus/test`, so the
+# headers a test sees are the headers a visitor gets.
+#
+# Everything variable is an environment variable, which Caddy substitutes
+# itself -- no templating on our side, and no second copy of the config to
+# drift.
+{
+	admin off
+	auto_https off
+}
+
+{$NUCLEUS_ADDRESS} {
+	root * {$NUCLEUS_ROOT}
+	{$NUCLEUS_TLS}
+
+	header {
+		# Cross-origin isolation, so SharedArrayBuffer exists. A WASI guest
+		# needs it to block on host calls the browser can only do async.
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Embedder-Policy "require-corp"
+		-Server
+	}
+
+	@wasm path *.wasm
+	header @wasm Content-Type "application/wasm"
+
+	# The sample databases, served as a kernel -- which takes no kernel. Each
+	# file is named by its own address, so a file server already answers
+	# `GET /cas/<address>` correctly, ranges included. `(connect "<origin>")`
+	# in the REPL reaches it, and so would an S3 bucket holding the same names.
+	handle_path /cas/* {
+		root * {$NUCLEUS_SAMPLES}
+		# Cacheable forever, because the key *is* the hash: these bytes cannot
+		# become stale without becoming a different address. This is the one
+		# place a dev server should cache hard, which is why the no-store below
+		# is scoped to everything else rather than set for the whole site.
+		header Cache-Control "public, max-age=31536000, immutable"
+		file_server
+	}
+
+	# Everything else. A `handle` block, not a bare `try_files`, because
+	# Caddy orders directives by kind rather than by where they appear:
+	# a loose `try_files` runs *before* the `handle_path` above and rewrites
+	# `/cas/<address>` to the demo page. Two `handle`s are mutually exclusive
+	# and taken in written order, which is what this reads as.
+	handle {
+		# A development server must never serve a page that no longer exists.
+		header Cache-Control "no-store"
+		# The REPL is the demo, so it is also the root.
+		try_files {path} /demo.html
+		file_server
+	}
+}
