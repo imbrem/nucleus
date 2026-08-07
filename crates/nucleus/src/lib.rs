@@ -1,8 +1,12 @@
 //! Portable trusted core for Nucleus.
 
+pub mod hol;
+pub mod manifest;
+
 mod connection;
 
 pub use connection::{Connection, ConnectionError};
+pub use hol::Hol;
 
 mod snapshot;
 
