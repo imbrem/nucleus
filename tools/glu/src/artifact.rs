@@ -88,6 +88,8 @@ impl Runner {
                 "build",
                 "--target-dir",
                 as_utf8(&target, "temporary target")?,
+                "--profile",
+                "wasm-release",
                 "-p",
                 "covalence-bin-cas-shell",
                 "--target",
@@ -95,7 +97,7 @@ impl Runner {
             ],
         )?;
         fs::copy(
-            target.join("wasm32-wasip1/debug/covalence-cas-shell.wasm"),
+            target.join("wasm32-wasip1/wasm-release/covalence-cas-shell.wasm"),
             generated.join("shell.wasm"),
         )
         .wrap_err("could not stage the shell Wasm")?;
