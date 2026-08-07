@@ -150,6 +150,17 @@ impl Repl {
         )
     }
 
+    /// Where the selected kernel is: `local`, or a base URL.
+    ///
+    /// The page needs this to decide how a spawned shell should reach its
+    /// objects: through the channel back to this store, or directly over
+    /// HTTP.
+    #[wasm_bindgen(js_name = selectedKernel)]
+    #[must_use]
+    pub fn selected_kernel(&self) -> String {
+        self.session.endpoint().to_string()
+    }
+
     /// The `SQLite` VFS name this REPL's store is mounted under.
     #[wasm_bindgen(js_name = mountName)]
     #[must_use]

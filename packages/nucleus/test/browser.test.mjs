@@ -181,9 +181,14 @@ test("the REPL connects to a kernel over HTTP and fetches from it", async (conte
   assert.equal(result.connected, "1");
   assert.match(result.kernels, /^\(\(0 "local" #f\) \(1 "http/);
   assert.equal(result.fetched, kernel.address);
-  assert.equal(result.attached.trim(), "2");
+  // Trailing, because a shell reading a remote kernel prints the
+  // unverified-ranges caveat above its output.
+  assert.match(result.attached.trim(), /(^|\n)2$/);
   assert.deepEqual(result.held, [kernel.address]);
-  assert.equal(result.shell.trim(), "5\n15");
+  // The caveat is part of the output, because an unverified read must not
+  // look like a verified one.
+  assert.match(result.shell, /ranges are not verified/);
+  assert.match(result.shell, /5\n15/);
 });
 
 test("a kernel serving something other than what was asked for is refused", async (context) => {
@@ -289,4 +294,80 @@ test("the shell in the browser has no filesystem to reach", async (context) => {
 
   // Its databases arrive by address or not at all.
   assert.match(result.output, /exited with status/);
+});
+
+test("the shell runs in a process of its own", async (context) => {
+  const origin = await servePackage(context);
+  const page = await openPage(context, origin);
+  const database = await readFile(fixture);
+
+  const result = await page.evaluate(async (bytes) => {
+    const { Repl, drive, host, canSpawn } = window.nucleus;
+    const repl = new Repl();
+    const address = repl.admit(new Uint8Array(bytes));
+
+    // The worker path is only available on a cross-origin-isolated page,
+    // which is why the demo server sets COOP and COEP.
+    const spawned = canSpawn();
+    const run = await drive(repl, host, `(sqlite ${address} "-batch" ".schema")`);
+
+    // The REPL is still answering, which is the point of the shell not
+    // sharing this instance.
+    const after = await drive(repl, host, "(stats)");
+    return { isolated: globalThis.crossOriginIsolated, spawned, run, after };
+  }, Array.from(database));
+
+  assert.equal(result.isolated, true, "the test server must isolate the page");
+  assert.equal(result.spawned, true, "the shell must run in its own worker");
+  assert.match(result.run.output, /CREATE TABLE adder/);
+  assert.match(result.after.output, /\(objects 1\)/);
+});
+
+test("the shell still runs inline where a worker is not available", async (context) => {
+  const origin = await servePackage(context);
+  const page = await openPage(context, origin);
+  const database = await readFile(fixture);
+
+  const result = await page.evaluate(async (bytes) => {
+    const { Repl, drive, host } = window.nucleus;
+    const repl = new Repl();
+    const address = repl.admit(new Uint8Array(bytes));
+    // A host without cross-origin isolation takes this path; forcing it here
+    // keeps the fallback honest rather than merely present.
+    return await drive(
+      repl,
+      { ...host, inline: true },
+      `(sqlite ${address} "-batch" ".schema")`,
+    );
+  }, Array.from(database));
+
+  assert.match(result.output, /CREATE TABLE adder/);
+});
+
+test("a shell reads a remote database directly, without copying it here", async (context) => {
+  const origin = await servePackage(context);
+  const kernel = await startKernel(context);
+  const page = await openPage(context, origin);
+
+  const result = await page.evaluate(async ({ baseUrl, address }) => {
+    const { Repl, drive, host } = window.nucleus;
+    const repl = new Repl();
+    const say = async (line) => (await drive(repl, host, line)).output;
+
+    await say(`(connect ${JSON.stringify(baseUrl)})`);
+    // Deliberately no `(fetch …)`: the shell should read the remote kernel a
+    // page at a time, with synchronous ranged XHR from its worker.
+    const shell = await say(
+      `(sqlite ${address} "-batch" "SELECT sum FROM adder ORDER BY a")`,
+    );
+    return { shell, held: repl.addresses(), stats: JSON.parse(repl.stats()) };
+  }, kernel);
+
+  // The caveat is part of the output, because an unverified read must not
+  // look like a verified one.
+  assert.match(result.shell, /ranges are not verified/);
+  assert.match(result.shell, /5\n15/);
+  // Nothing was copied into this page. That is the difference from `(fetch …)`.
+  assert.deepEqual(result.held, []);
+  assert.equal(result.stats.objects, 0);
 });

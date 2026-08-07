@@ -1,9 +1,11 @@
 import init, { Repl, Step } from "../generated/nucleus.js";
+import { canSpawn, spawnShell } from "./shell-process.js";
 import { runShell } from "./wasi.js";
 
-export { init, Repl, runShell };
+export { init, Repl, runShell, spawnShell, canSpawn };
 export type { Step };
 export type { ShellOptions, ShellResult } from "./wasi.js";
+import type { ShellResult } from "./wasi.js";
 
 /** What a driven line produced. */
 export interface Line {
@@ -17,6 +19,15 @@ export interface Line {
 export interface Host {
   /** The shell wasm, for `(sqlite …)`. */
   shell: () => BufferSource | Response | Promise<Response>;
+  /**
+   * Run the shell in this instance rather than a worker of its own.
+   *
+   * The default is a separate process, which is what the native binary does
+   * and what keeps a slow shell from freezing the REPL. Inline exists for
+   * hosts without cross-origin isolation, where there is no
+   * `SharedArrayBuffer` and therefore no way for the guest to block.
+   */
+  inline?: boolean;
 }
 
 /**
@@ -59,13 +70,22 @@ export async function drive(
 
     case "shell":
       try {
-        const result = await runShell(repl, host.shell(), {
-          args: step.arguments,
-        });
+        const remote = repl.selectedKernel() !== "local";
+        const result = await runTheShell(repl, host, step.arguments);
+        // A whole object can be checked against its address by hashing it; a
+        // single range cannot, until BLAKE3 range proofs exist (#442). So a
+        // streaming read trusts the server in a way `.fetch` does not, and
+        // saying so is the difference between a caveat and a surprise.
+        const caveat = remote
+          ? "-- reading the remote kernel directly; ranges are not verified (#442)\n"
+          : "";
         const trailer =
           result.status === 0 ? "" : `\nshell exited with status ${result.status}`;
         return {
-          output: `${result.stdout}${result.stderr}${trailer}`.replace(/\n+$/, ""),
+          output: `${caveat}${result.stdout}${result.stderr}${trailer}`.replace(
+            /\n+$/,
+            "",
+          ),
           quit: false,
         };
       } catch (error) {
@@ -75,6 +95,44 @@ export async function drive(
     default:
       return { output: step.text, quit: false };
   }
+}
+
+/**
+ * Runs the shell, in its own process where that is possible.
+ *
+ * A worker needs the wasm as bytes rather than a response, because it is
+ * transferred rather than streamed.
+ */
+async function runTheShell(
+  repl: Repl,
+  host: Host,
+  args: string[],
+): Promise<ShellResult> {
+  // A remote kernel is read straight from the worker with synchronous ranged
+  // XHR, so nothing is copied into this page first and no shared memory is
+  // involved. The local kernel's bytes live here, so that path needs the
+  // channel and therefore cross-origin isolation.
+  const selected = repl.selectedKernel();
+  const remote = selected === "local" ? undefined : selected;
+
+  if (host.inline || !canSpawn(remote !== undefined)) {
+    return await runShell(repl, host.shell(), { args });
+  }
+  const source = host.shell();
+  const wasm =
+    source instanceof Response || source instanceof Promise
+      ? await (await source).arrayBuffer()
+      : toArrayBuffer(source);
+  return await spawnShell(repl, wasm, { args, remote });
+}
+
+function toArrayBuffer(source: BufferSource): ArrayBuffer {
+  return source instanceof ArrayBuffer
+    ? source
+    : (source.buffer.slice(
+        source.byteOffset,
+        source.byteOffset + source.byteLength,
+      ) as ArrayBuffer);
 }
 
 function messageOf(error: unknown): string {
