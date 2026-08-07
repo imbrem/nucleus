@@ -1,7 +1,9 @@
-/-!
-# Nucleus
-
-The root of the Lean development. Deliberately empty: this package exists so
-the toolchain, `glu lean`, and the documentation pipeline can be reviewed and
-landed on their own. The HOL-omega formalization lands on top of it.
--/
+import Nucleus.HolOmega.Env
+import Nucleus.HolOmega.TotalSubtype
+import Nucleus.HolOmega.Syntax
+import Nucleus.HolOmega.Typing
+import Nucleus.HolOmega.Substitution
+import Nucleus.HolOmega.Semantics
+import Nucleus.HolOmega.Soundness
+import Nucleus.HolOmega.Kernel
+import Nucleus.HolOmega.Spec
