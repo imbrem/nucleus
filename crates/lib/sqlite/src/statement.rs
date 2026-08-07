@@ -64,15 +64,6 @@ impl Statement {
         self.raw
     }
 
-    /// Returns the connection this statement was prepared against.
-    ///
-    /// The returned value shares the same `sqlite3` handle; it does not open a
-    /// new one.
-    #[must_use]
-    pub fn connection(&self) -> Connection {
-        Connection::from_handle(Rc::clone(&self.handle))
-    }
-
     /// Returns the SQL text this statement was compiled from.
     ///
     /// This is `sqlite3_sql`: the original text, with parameters unexpanded.
