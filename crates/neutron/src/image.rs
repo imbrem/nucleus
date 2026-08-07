@@ -21,15 +21,16 @@ impl Connection {
     ///
     /// Returns an error when `SQLite` cannot serialize the database.
     pub fn serialize(&self) -> Result<Bytes, ImageError> {
-        let data = self.sqlite().serialize("main").context(SerializeSnafu)?;
-        Ok(Bytes::from(data))
+        let image = self.sqlite().serialize(c"main").context(SerializeSnafu)?;
+        Ok(Bytes::from(image.to_vec()))
     }
 
     /// Creates an in-memory Neutron connection from an `SQLite` database image.
     ///
-    /// `SQLite` takes its own copy of `bytes`; the returned connection does not
-    /// borrow from the input. Neutron's connection-local metadata is rebuilt
-    /// in `temp`.
+    /// The image is copied into `SQLite`'s allocator and handed over, so the
+    /// returned connection does not borrow from the input and the database it
+    /// holds is writable. Neutron's connection-local metadata is rebuilt in
+    /// `temp`.
     ///
     /// This is a low-level image operation, not content verification. Callers
     /// establishing trust from a content address must verify `bytes` first.
@@ -40,8 +41,9 @@ impl Connection {
     /// image cannot be installed, or Neutron metadata cannot be initialized.
     pub fn deserialize(bytes: &Bytes) -> Result<Self, ImageError> {
         let sqlite = sqlite::Connection::open_in_memory().context(OpenSnafu)?;
+        let image = sqlite::SqlBytes::copy_from_slice(bytes.as_ref()).context(DeserializeSnafu)?;
         sqlite
-            .deserialize("main", bytes.as_ref())
+            .deserialize(c"main", image)
             .context(DeserializeSnafu)?;
         Self::from_sqlite(sqlite).context(InitializeSnafu)
     }
@@ -61,37 +63,36 @@ impl Connection {
         schema_name: &str,
         bytes: &Bytes,
     ) -> Result<i64, ImageError> {
-        let attached = sql::query_row(
-            self.sqlite(),
-            DATABASE_IS_ATTACHED_SQL,
-            &[Param::Text(schema_name)],
-            |row| row.boolean(0),
-        )
-        .context(AttachSnafu)?
-        .unwrap_or(false);
+        let attached = self
+            .query_row(
+                DATABASE_IS_ATTACHED_SQL,
+                &[Param::Text(schema_name)],
+                |row| row.boolean(0),
+            )
+            .context(AttachSnafu)?
+            .unwrap_or(false);
         if attached {
             return Err(ImageError::AlreadyAttached {
                 schema_name: schema_name.to_owned(),
             });
         }
 
-        let database_id = sql::query_row(self.sqlite(), NEXT_DATABASE_ID_SQL, &[], |row| {
-            row.integer(0)
-        })
-        .context(RegisterSnafu)?
-        .unwrap_or(1);
+        let database_id = self
+            .query_row(NEXT_DATABASE_ID_SQL, &[], |row| row.integer(0))
+            .context(RegisterSnafu)?
+            .unwrap_or(1);
         let schema = quote_identifier(schema_name);
-        self.sqlite()
-            .execute_batch(&format!("ATTACH DATABASE ':memory:' AS {schema}"))
+        let name = sql::c_string(schema_name).context(DeserializeSnafu)?;
+        let image = sqlite::SqlBytes::copy_from_slice(bytes.as_ref()).context(DeserializeSnafu)?;
+        self.execute_batch(&format!("ATTACH DATABASE ':memory:' AS {schema}"))
             .context(AttachSnafu)?;
 
-        if let Err(error) = self.sqlite().deserialize(schema_name, bytes.as_ref()) {
+        if let Err(error) = self.sqlite().deserialize(&name, image) {
             self.detach_after_failed_attach(&schema);
             return Err(ImageError::Deserialize { source: error });
         }
 
-        if let Err(error) = sql::execute(
-            self.sqlite(),
+        if let Err(error) = self.execute(
             REGISTER_DATABASE_SQL,
             &[Param::Integer(database_id), Param::Text(schema_name)],
         ) {
@@ -103,9 +104,7 @@ impl Connection {
     }
 
     fn detach_after_failed_attach(&self, quoted_schema: &str) {
-        let _ = self
-            .sqlite()
-            .execute_batch(&format!("DETACH DATABASE {quoted_schema}"));
+        let _ = self.execute_batch(&format!("DETACH DATABASE {quoted_schema}"));
     }
 }
 
@@ -176,7 +175,6 @@ mod tests {
     fn round_trips_main_database() {
         let connection = Connection::open_in_memory().expect("open source");
         connection
-            .sqlite()
             .execute_batch(
                 "CREATE TABLE example (
                     id INTEGER PRIMARY KEY,
@@ -190,13 +188,11 @@ mod tests {
         assert!(bytes.starts_with(b"SQLite format 3\0"));
 
         let restored = Connection::deserialize(&bytes).expect("deserialize");
-        let values = sql::query_all(
-            restored.sqlite(),
-            "SELECT value FROM example ORDER BY id",
-            &[],
-            |row| row.text(0),
-        )
-        .expect("read restored data");
+        let values = restored
+            .query_all("SELECT value FROM example ORDER BY id", &[], |row| {
+                row.text(0)
+            })
+            .expect("read restored data");
         assert_eq!(values, ["hello", "world"]);
     }
 
@@ -205,21 +201,20 @@ mod tests {
         let bytes = {
             let connection = Connection::open_in_memory().expect("open source");
             connection
-                .sqlite()
                 .execute_batch("CREATE TABLE example (value INTEGER) STRICT;")
                 .expect("populate source");
             connection.serialize().expect("serialize")
         };
 
         let restored = Connection::deserialize(&bytes).expect("deserialize after source drop");
-        let exists = sql::query_row(
-            restored.sqlite(),
-            "SELECT count(*) FROM main.sqlite_schema
+        let exists = restored
+            .query_row(
+                "SELECT count(*) FROM main.sqlite_schema
              WHERE type = 'table' AND name = 'example'",
-            &[],
-            |row| row.integer(0),
-        )
-        .expect("inspect restored schema");
+                &[],
+                |row| row.integer(0),
+            )
+            .expect("inspect restored schema");
         assert_eq!(exists, Some(1));
     }
 
@@ -229,15 +224,15 @@ mod tests {
         let bytes = connection.serialize().expect("serialize");
         let restored = Connection::deserialize(&bytes).expect("deserialize");
 
-        let temp_tables = sql::query_all(
-            restored.sqlite(),
-            "SELECT name FROM temp.sqlite_schema
+        let temp_tables = restored
+            .query_all(
+                "SELECT name FROM temp.sqlite_schema
              WHERE type = 'table'
              ORDER BY name",
-            &[],
-            |row| row.text(0),
-        )
-        .expect("read metadata");
+                &[],
+                |row| row.text(0),
+            )
+            .expect("read metadata");
         assert_eq!(temp_tables, [ATTACHED_DATABASES, CONNECTION_CATALOG]);
     }
 
@@ -245,7 +240,6 @@ mod tests {
     fn attaches_deserialized_database() {
         let source = Connection::open_in_memory().expect("open source");
         source
-            .sqlite()
             .execute_batch(
                 "CREATE TABLE example (value TEXT NOT NULL) STRICT;
                  INSERT INTO example VALUES ('attached');",
@@ -258,24 +252,20 @@ mod tests {
             .attach_deserialized("aux", &bytes)
             .expect("attach image");
 
-        let value = sql::query_row(
-            connection.sqlite(),
-            "SELECT value FROM aux.example",
-            &[],
-            |row| row.text(0),
-        )
-        .expect("query attached image");
+        let value = connection
+            .query_row("SELECT value FROM aux.example", &[], |row| row.text(0))
+            .expect("query attached image");
         assert_eq!(value.as_deref(), Some("attached"));
         assert_eq!(
-            sql::query_row(
-                connection.sqlite(),
-                "SELECT schema_name FROM temp.cov_conn_attached
+            connection
+                .query_row(
+                    "SELECT schema_name FROM temp.cov_conn_attached
                  WHERE database_id = ?1",
-                &[Param::Integer(database_id)],
-                |row| row.text(0),
-            )
-            .expect("query database catalog")
-            .as_deref(),
+                    &[Param::Integer(database_id)],
+                    |row| row.text(0),
+                )
+                .expect("query database catalog")
+                .as_deref(),
             Some("aux")
         );
     }
@@ -284,7 +274,6 @@ mod tests {
     fn attach_quotes_schema_name() {
         let source = Connection::open_in_memory().expect("open source");
         source
-            .sqlite()
             .execute_batch("CREATE TABLE example (value INTEGER) STRICT;")
             .expect("populate source");
         let bytes = source.serialize().expect("serialize");
@@ -294,14 +283,14 @@ mod tests {
             .attach_deserialized("quoted\"name", &bytes)
             .expect("attach quoted schema");
 
-        let exists = sql::query_row(
-            connection.sqlite(),
-            "SELECT count(*) FROM \"quoted\"\"name\".sqlite_schema
+        let exists = connection
+            .query_row(
+                "SELECT count(*) FROM \"quoted\"\"name\".sqlite_schema
              WHERE name = 'example'",
-            &[],
-            |row| row.integer(0),
-        )
-        .expect("query quoted schema");
+                &[],
+                |row| row.integer(0),
+            )
+            .expect("query quoted schema");
         assert_eq!(exists, Some(1));
     }
 
@@ -309,7 +298,6 @@ mod tests {
     fn attach_rejects_an_existing_neutron_database() {
         let source = Connection::open_in_memory().expect("open source");
         source
-            .sqlite()
             .execute_batch("CREATE TABLE example (value INTEGER) STRICT;")
             .expect("populate source");
         let bytes = source.serialize().expect("serialize");
@@ -331,7 +319,6 @@ mod tests {
         let bytes = source.serialize().expect("serialize");
         let mut connection = Connection::open_in_memory().expect("open destination");
         connection
-            .sqlite()
             .execute_batch("ATTACH DATABASE ':memory:' AS external")
             .expect("attach through SQLite");
 

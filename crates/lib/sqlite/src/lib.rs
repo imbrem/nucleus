@@ -12,28 +12,31 @@
 //!
 //! # Every `unsafe` in the trusted path is here
 //!
-//! Nothing above this crate writes `unsafe`. The workspace denies it, and only
-//! this crate's modules opt out, each call site carrying the argument for why
-//! it is sound. That is the property worth having: auditing the FFI boundary
-//! means reading one crate.
+//! Nothing above this crate writes `unsafe`. The workspace denies it and only
+//! this crate's modules opt out, each call site carrying its own argument for
+//! why it is sound. Auditing the FFI boundary means reading one crate.
 //!
 //! # Statements do not borrow their connection
 //!
-//! [`Statement`] carries no `'conn` lifetime, because `SQLite` does not
-//! require one. [`Connection`]'s `Drop` closes with `sqlite3_close_v2`, which
-//! leaves a connection holding outstanding prepared statements as an unusable
-//! "zombie" and deallocates it once the last statement is finalized. A
-//! [`Statement`] holds a refcounted handle, so dropping the [`Connection`]
-//! first is safe.
+//! [`Statement`] carries no `'conn` lifetime and there is no refcount behind
+//! it. `sqlite3_close_v2` defers freeing a connection until the last statement
+//! from it is finalized, so:
 //!
-//! This matters for what we are building. A prop table is a fixed set of
-//! prepared statements — one insert for a fact, one per deduction rule — owned
-//! alongside the connection they came from. With a `'conn` borrow that is a
-//! self-referential struct; without one it is an ordinary one.
+//! - the two can be dropped in any order;
+//! - a `Statement` can be stored without dragging a borrow along;
+//! - [`ConnectionRef`] exists for naming a connection without owning it, which
+//!   is what `stmt.connection()` returns.
 //!
-//! `rusqlite` cannot offer this: `libsqlite3-sys` blocklists `sqlite3_close_v2`
-//! (misclassified as deprecated, see its `build.rs`), so `rusqlite` closes with
-//! `sqlite3_close` and must keep statements borrowing their connection.
+//! `sqlite3_close_v2` is documented for "host languages ... where the order in
+//! which destructors are called is arbitrary" — Rust's situation exactly.
+//!
+//! This is what a prop table needs: a fixed set of prepared statements owned
+//! alongside their connection. With a `'conn` borrow that is a self-referential
+//! struct; without one it is an ordinary one.
+//!
+//! `rusqlite` cannot offer it. `libsqlite3-sys` blocklists `sqlite3_close_v2`
+//! as deprecated, which it is not, so `rusqlite` closes with `sqlite3_close`
+//! and must keep statements borrowing their connection.
 //!
 //! # Bindings
 //!
@@ -53,12 +56,14 @@ pub use libsqlite3_sys as ffi;
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 pub use sqlite_wasm_rs as ffi;
 
+mod bytes;
 mod connection;
 mod error;
 mod statement;
 mod value;
 
-pub use connection::{Connection, OpenFlags};
+pub use crate::bytes::SqlBytes;
+pub use connection::{Connection, ConnectionRef, OpenFlags};
 pub use error::{Error, ResultCode};
 pub use statement::{Statement, Step};
 pub use value::{ValueRef, ValueType};

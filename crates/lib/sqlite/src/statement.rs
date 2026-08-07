@@ -6,14 +6,12 @@
 )]
 //! Prepared statements.
 
-use std::cell::Cell;
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::fmt;
-use std::ptr::{self, NonNull};
-use std::rc::Rc;
+use std::ptr::NonNull;
 use std::slice;
 
-use crate::connection::{Connection, Handle};
+use crate::connection::{Connection, ConnectionRef};
 use crate::error::{Error, ResultCode};
 use crate::ffi;
 use crate::value::{ValueRef, ValueType};
@@ -32,46 +30,95 @@ pub enum Step {
 
 /// A prepared statement.
 ///
-/// A statement carries no `'conn` lifetime. It holds a refcounted reference to
-/// the connection it was compiled against, so the connection outlives every
-/// statement prepared from it no matter what order the values are dropped in.
-/// [`Connection::close`] may still be called early; the connection then becomes
-/// an `SQLite` zombie and the statement can be finalized but not run.
+/// A statement holds its own pointer and nothing else — no `'conn` lifetime,
+/// no reference count. `sqlite3_close_v2` defers freeing a connection until
+/// the last statement from it is finalized, so these can be dropped in any
+/// order.
+///
+/// [`Connection`]: crate::Connection
 pub struct Statement {
-    /// Null once the statement has been finalized. `sqlite3_finalize` on a null
-    /// pointer is a documented no-op, which is what makes [`Statement::finalize`]
-    /// and [`Drop`] able to share one path without an extra flag.
-    raw: Cell<*mut ffi::sqlite3_stmt>,
-    handle: Rc<Handle>,
+    raw: NonNull<ffi::sqlite3_stmt>,
 }
 
 impl Statement {
-    /// Adopts a statement compiled against `handle`.
+    /// Compiles a single statement.
+    ///
+    /// Trailing text is rejected rather than ignored, so a second statement
+    /// cannot ride along behind the first.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `sql` holds no statement, holds more than one, or
+    /// does not compile.
+    pub fn prepare(connection: &Connection, sql: &str) -> Result<Self, Error> {
+        let (statement, rest) = connection.prepare_prefix(sql)?;
+        let statement = statement.ok_or_else(|| {
+            Error::with_message(ResultCode::MISUSE, "SQL text contains no statement")
+        })?;
+        // Trailing whitespace and comments are not a second statement; ask
+        // SQLite rather than guessing.
+        if connection.prepare_prefix(rest)?.0.is_some() {
+            return Err(Error::with_message(
+                ResultCode::MISUSE,
+                "SQL text contains more than one statement",
+            ));
+        }
+        Ok(statement)
+    }
+
+    /// Runs every statement in `sql`, discarding any rows.
+    ///
+    /// Statements run one at a time, so an error stops the batch where it
+    /// failed. Nothing here opens a transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first error `SQLite` reports.
+    pub fn execute_batch(connection: &Connection, sql: &str) -> Result<(), Error> {
+        let mut rest = sql;
+        while !rest.is_empty() {
+            let (statement, tail) = connection.prepare_prefix(rest)?;
+            rest = tail;
+            let Some(mut statement) = statement else {
+                continue;
+            };
+            while statement.step()? == Step::Row {}
+            statement.finalize()?;
+        }
+        Ok(())
+    }
+
+    /// Adopts a compiled statement.
     ///
     /// # Safety
     ///
-    /// `raw` must be a live statement produced by `sqlite3_prepare_v2` on
-    /// `handle`, and ownership of it must be transferred to the new value.
-    pub(crate) unsafe fn from_raw(raw: NonNull<ffi::sqlite3_stmt>, handle: Rc<Handle>) -> Self {
-        Self {
-            raw: Cell::new(raw.as_ptr()),
-            handle,
-        }
+    /// `raw` must be a live statement produced by `sqlite3_prepare_v2`, and
+    /// ownership of it must transfer to the new value.
+    pub(crate) const unsafe fn from_raw(raw: NonNull<ffi::sqlite3_stmt>) -> Self {
+        Self { raw }
     }
 
-    /// Returns the raw statement pointer, or null once finalized.
+    /// Returns the raw statement pointer.
     #[must_use]
-    pub fn as_ptr(&self) -> *mut ffi::sqlite3_stmt {
-        self.raw.get()
+    pub const fn as_ptr(&self) -> *mut ffi::sqlite3_stmt {
+        self.raw.as_ptr()
     }
 
     /// Returns the connection this statement was prepared against.
     ///
-    /// The returned value shares the same `sqlite3` handle; it does not open a
-    /// new one.
+    /// Borrowed, not owned: `sqlite3_db_handle` does not hand over the right
+    /// to close it.
     #[must_use]
-    pub fn connection(&self) -> Connection {
-        Connection::from_handle(Rc::clone(&self.handle))
+    pub fn connection(&self) -> ConnectionRef<'_> {
+        // SAFETY: `sqlite3_db_handle` on a live statement returns the handle
+        // it was compiled against, which cannot have been deallocated while
+        // this statement exists: `sqlite3_close_v2` defers that until the last
+        // statement is finalized.
+        let db = unsafe { ffi::sqlite3_db_handle(self.raw.as_ptr()) };
+        let db = NonNull::new(db)
+            .unwrap_or_else(|| unreachable!("a live statement always has a database handle"));
+        // SAFETY: the handle is live for as long as `self` is, as above.
+        unsafe { ConnectionRef::from_raw(db) }
     }
 
     /// Returns the SQL text this statement was compiled from.
@@ -82,23 +129,12 @@ impl Statement {
         // SAFETY: the statement is live, and `sqlite3_sql` returns either null
         // or a NUL-terminated string owned by the statement and valid for as
         // long as the statement is.
-        let text = unsafe { ffi::sqlite3_sql(self.raw.get()) };
+        let text = unsafe { ffi::sqlite3_sql(self.raw.as_ptr()) };
         if text.is_null() {
             return None;
         }
         // SAFETY: `text` is a live NUL-terminated string, as above.
         unsafe { CStr::from_ptr(text) }.to_str().ok()
-    }
-
-    /// Fails when the connection has been closed out from under the statement.
-    fn usable(&self) -> Result<(), Error> {
-        if self.handle.is_closed() {
-            return Err(Error::with_message(
-                ResultCode::MISUSE,
-                "the connection this statement was prepared against is closed",
-            ));
-        }
-        Ok(())
     }
 
     /// Turns a bind or step result code into an error carrying the connection's
@@ -108,7 +144,7 @@ impl Statement {
         if code.is_ok() {
             Ok(())
         } else {
-            Err(self.handle.error(code))
+            Err(self.connection().error(code))
         }
     }
 
@@ -116,7 +152,7 @@ impl Statement {
     #[must_use]
     pub fn parameter_count(&self) -> c_int {
         // SAFETY: the statement is live.
-        unsafe { ffi::sqlite3_bind_parameter_count(self.raw.get()) }
+        unsafe { ffi::sqlite3_bind_parameter_count(self.raw.as_ptr()) }
     }
 
     /// Returns the one-based index of a named parameter, if it has one.
@@ -125,7 +161,7 @@ impl Statement {
         let name = CString::new(name).ok()?;
         // SAFETY: the statement is live and `name` is NUL-terminated and
         // outlives the call.
-        let index = unsafe { ffi::sqlite3_bind_parameter_index(self.raw.get(), name.as_ptr()) };
+        let index = unsafe { ffi::sqlite3_bind_parameter_index(self.raw.as_ptr(), name.as_ptr()) };
         (index != 0).then_some(index)
     }
 
@@ -133,37 +169,31 @@ impl Statement {
     ///
     /// # Errors
     ///
-    /// Returns an error when the connection is closed or the index is out of
-    /// range.
+    /// Returns an error when the index is out of range.
     pub fn bind_null(&mut self, index: c_int) -> Result<(), Error> {
-        self.usable()?;
         // SAFETY: the statement is live; an out-of-range index is reported as
         // SQLITE_RANGE rather than being undefined.
-        self.check(unsafe { ffi::sqlite3_bind_null(self.raw.get(), index) })
+        self.check(unsafe { ffi::sqlite3_bind_null(self.raw.as_ptr(), index) })
     }
 
     /// Binds an integer to the one-based parameter `index`.
     ///
     /// # Errors
     ///
-    /// Returns an error when the connection is closed or the index is out of
-    /// range.
+    /// Returns an error when the index is out of range.
     pub fn bind_integer(&mut self, index: c_int, value: i64) -> Result<(), Error> {
-        self.usable()?;
         // SAFETY: as in `bind_null`.
-        self.check(unsafe { ffi::sqlite3_bind_int64(self.raw.get(), index, value) })
+        self.check(unsafe { ffi::sqlite3_bind_int64(self.raw.as_ptr(), index, value) })
     }
 
     /// Binds a float to the one-based parameter `index`.
     ///
     /// # Errors
     ///
-    /// Returns an error when the connection is closed or the index is out of
-    /// range.
+    /// Returns an error when the index is out of range.
     pub fn bind_real(&mut self, index: c_int, value: f64) -> Result<(), Error> {
-        self.usable()?;
         // SAFETY: as in `bind_null`.
-        self.check(unsafe { ffi::sqlite3_bind_double(self.raw.get(), index, value) })
+        self.check(unsafe { ffi::sqlite3_bind_double(self.raw.as_ptr(), index, value) })
     }
 
     /// Binds UTF-8 text to the one-based parameter `index`.
@@ -172,16 +202,15 @@ impl Statement {
     ///
     /// # Errors
     ///
-    /// Returns an error when the connection is closed, the index is out of
-    /// range, or `SQLite` cannot allocate the copy.
+    /// Returns an error when the index is out of range, or `SQLite` cannot
+    /// allocate the copy.
     pub fn bind_text(&mut self, index: c_int, value: &str) -> Result<(), Error> {
-        self.usable()?;
         // SAFETY: `value` is a live byte range of exactly `value.len()` bytes,
         // and SQLITE_TRANSIENT tells SQLite to copy it before returning, so the
         // borrow does not outlive the call.
         self.check(unsafe {
             ffi::sqlite3_bind_text64(
-                self.raw.get(),
+                self.raw.as_ptr(),
                 index,
                 value.as_ptr().cast::<c_char>(),
                 value.len() as u64,
@@ -197,16 +226,15 @@ impl Statement {
     ///
     /// # Errors
     ///
-    /// Returns an error when the connection is closed, the index is out of
-    /// range, or `SQLite` cannot allocate the copy.
+    /// Returns an error when the index is out of range, or `SQLite` cannot
+    /// allocate the copy.
     pub fn bind_blob(&mut self, index: c_int, value: &[u8]) -> Result<(), Error> {
-        self.usable()?;
         // SAFETY: as in `bind_text`. A zero-length slice yields a dangling but
         // non-null pointer, which SQLite never dereferences when the length is
         // zero.
         self.check(unsafe {
             ffi::sqlite3_bind_blob64(
-                self.raw.get(),
+                self.raw.as_ptr(),
                 index,
                 value.as_ptr().cast::<c_void>(),
                 value.len() as u64,
@@ -219,8 +247,8 @@ impl Statement {
     ///
     /// # Errors
     ///
-    /// Returns an error when the connection is closed, the index is out of
-    /// range, or `SQLite` cannot allocate a copy.
+    /// Returns an error when the index is out of range, or `SQLite` cannot
+    /// allocate a copy.
     pub fn bind(&mut self, index: c_int, value: ValueRef<'_>) -> Result<(), Error> {
         match value {
             ValueRef::Null => self.bind_null(index),
@@ -242,17 +270,16 @@ impl Statement {
     ///
     /// # Errors
     ///
-    /// Returns an error when the connection is closed or `SQLite` reports one.
+    /// Returns an error when `SQLite` reports one.
     /// An error leaves the statement's transaction untouched; `SQLite` decides
     /// whether it is still live, and the caller decides whether to roll back.
     pub fn step(&mut self) -> Result<Step, Error> {
-        self.usable()?;
         // SAFETY: the statement is live and belongs to an open connection.
-        let code = ResultCode::new(unsafe { ffi::sqlite3_step(self.raw.get()) });
+        let code = ResultCode::new(unsafe { ffi::sqlite3_step(self.raw.as_ptr()) });
         match code {
             ResultCode::ROW => Ok(Step::Row),
             ResultCode::DONE => Ok(Step::Done),
-            _ => Err(self.handle.error(code)),
+            _ => Err(self.connection().error(code)),
         }
     }
 
@@ -262,23 +289,22 @@ impl Statement {
     ///
     /// Returns the error the most recent execution ended with, if any.
     pub fn reset(&mut self) -> Result<(), Error> {
-        self.usable()?;
         // SAFETY: the statement is live.
-        self.check(unsafe { ffi::sqlite3_reset(self.raw.get()) })
+        self.check(unsafe { ffi::sqlite3_reset(self.raw.as_ptr()) })
     }
 
     /// Sets every parameter back to `NULL`.
     pub fn clear_bindings(&mut self) {
         // SAFETY: the statement is live. `sqlite3_clear_bindings` cannot fail in
         // any way a caller can act on.
-        unsafe { ffi::sqlite3_clear_bindings(self.raw.get()) };
+        unsafe { ffi::sqlite3_clear_bindings(self.raw.as_ptr()) };
     }
 
     /// Returns the number of columns the statement produces.
     #[must_use]
     pub fn column_count(&self) -> c_int {
         // SAFETY: the statement is live.
-        unsafe { ffi::sqlite3_column_count(self.raw.get()) }
+        unsafe { ffi::sqlite3_column_count(self.raw.as_ptr()) }
     }
 
     /// Returns the name assigned to a zero-based output column.
@@ -286,7 +312,7 @@ impl Statement {
     pub fn column_name(&self, index: c_int) -> Option<&str> {
         // SAFETY: the statement is live. The returned string is owned by the
         // statement and outlives the borrow of `self`.
-        let name = unsafe { ffi::sqlite3_column_name(self.raw.get(), index) };
+        let name = unsafe { ffi::sqlite3_column_name(self.raw.as_ptr(), index) };
         if name.is_null() {
             return None;
         }
@@ -301,7 +327,7 @@ impl Statement {
     #[must_use]
     pub fn column_type(&self, index: c_int) -> ValueType {
         // SAFETY: the statement is live.
-        let code = unsafe { ffi::sqlite3_column_type(self.raw.get(), index) };
+        let code = unsafe { ffi::sqlite3_column_type(self.raw.as_ptr(), index) };
         ValueType::from_raw(code).unwrap_or(ValueType::Null)
     }
 
@@ -313,7 +339,7 @@ impl Statement {
     /// asked to convert a value and never invalidates a pointer this returned.
     #[must_use]
     pub fn column(&self, index: c_int) -> ValueRef<'_> {
-        let raw = self.raw.get();
+        let raw = self.raw.as_ptr();
         match self.column_type(index) {
             ValueType::Null => ValueRef::Null,
             // SAFETY: the statement is live and the column holds an integer, so
@@ -371,25 +397,26 @@ impl Statement {
     /// Returns the error the most recent execution of this statement ended
     /// with, if any.
     pub fn finalize(self) -> Result<(), Error> {
-        let raw = self.raw.replace(ptr::null_mut());
-        // SAFETY: `raw` is a live statement that this value owned, and taking it
-        // out leaves null behind so the `Drop` below is a no-op.
-        let code = ResultCode::new(unsafe { ffi::sqlite3_finalize(raw) });
-        if code.is_ok() {
-            Ok(())
-        } else {
-            Err(self.handle.error(code))
-        }
+        // Read the message *before* finalizing: if this is the last statement
+        // on a closed connection, finalizing frees the connection, and asking
+        // it for a message afterwards would read freed memory.
+        let message = self.connection().message();
+        let this = std::mem::ManuallyDrop::new(self);
+        // SAFETY: `this` owns a live statement and its destructor will not run,
+        // so this is the only finalize.
+        let code = ResultCode::new(unsafe { ffi::sqlite3_finalize(this.raw.as_ptr()) });
+        code.ok().map_err(|_| {
+            message.map_or_else(|| Error::new(code), |text| Error::with_message(code, text))
+        })
     }
 }
 
 impl Drop for Statement {
     fn drop(&mut self) {
-        // SAFETY: `raw` is either a live statement owned by this value or null,
-        // and `sqlite3_finalize(NULL)` is a documented no-op. Finalizing is
-        // valid even when the connection has already been closed: that is the
-        // point of `sqlite3_close_v2`'s zombie state.
-        unsafe { ffi::sqlite3_finalize(self.raw.get()) };
+        // SAFETY: `raw` is a live statement owned by this value. Finalizing is
+        // valid after the connection has been closed -- that is what
+        // `sqlite3_close_v2` is for.
+        unsafe { ffi::sqlite3_finalize(self.raw.as_ptr()) };
     }
 }
 
@@ -404,19 +431,20 @@ impl fmt::Debug for Statement {
 
 #[cfg(test)]
 mod tests {
+    use super::{Statement, Step};
     use crate::connection::Connection;
 
     #[test]
     fn a_statement_reports_its_sql() {
         let connection = Connection::open_in_memory().expect("open");
-        let statement = connection.prepare("SELECT 1").expect("prepare");
+        let statement = Statement::prepare(&connection, "SELECT 1").expect("compile");
         assert_eq!(statement.sql(), Some("SELECT 1"));
     }
 
     #[test]
     fn a_statement_hands_back_its_connection() {
         let connection = Connection::open_in_memory().expect("open");
-        let statement = connection.prepare("SELECT 1").expect("prepare");
+        let statement = Statement::prepare(&connection, "SELECT 1").expect("compile");
         assert_eq!(statement.connection().as_ptr(), connection.as_ptr());
     }
 
@@ -424,26 +452,29 @@ mod tests {
     fn statements_outlive_every_connection_value() {
         // A plain `Vec<Statement>` with no lifetime parameter, built from a
         // connection that is dropped before the statements are used.
-        let statements: Vec<_> = {
+        let mut statements: Vec<_> = {
             let connection = Connection::open_in_memory().expect("open");
             ["SELECT 1", "SELECT 2", "SELECT 3"]
                 .into_iter()
-                .map(|sql| connection.prepare(sql).expect("prepare"))
+                .map(|sql| Statement::prepare(&connection, sql).expect("compile"))
                 .collect()
         };
         assert_eq!(statements.len(), 3);
-        assert!(!statements[0].connection().is_closed());
+        // The connection has been closed, and these still run.
+        for statement in &mut statements {
+            assert_eq!(statement.step().expect("step"), Step::Row);
+        }
         for statement in statements {
             statement.finalize().expect("finalize");
         }
     }
 
     #[test]
-    fn finalizing_twice_is_impossible_and_dropping_after_finalize_is_a_no_op() {
+    fn finalizing_consumes_the_statement() {
         let connection = Connection::open_in_memory().expect("open");
-        let statement = connection.prepare("SELECT 1").expect("prepare");
-        // `finalize` consumes the statement, so the null left behind is only
-        // ever observed by the `Drop` that immediately follows.
+        let statement = Statement::prepare(&connection, "SELECT 1").expect("compile");
+        // `finalize` takes `self`, so there is no way to finalize twice and no
+        // flag to check: the type system is the whole mechanism.
         statement.finalize().expect("finalize");
     }
 }

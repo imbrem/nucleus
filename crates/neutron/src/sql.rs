@@ -1,6 +1,6 @@
 //! The opinionated layer over [`covalence_lib_sqlite`].
 //!
-//! `lib/sqlite` hides unsafety and nothing else: it exposes `prepare`, `bind`,
+//! `lib/sqlite` hides unsafety and little else: it exposes `prepare`, `bind`,
 //! `step`, `column` with the same names and argument order as the C API. That
 //! is the right shape for an auditable boundary and the wrong shape for
 //! everyday use — three lines of ceremony to read one integer gets old fast,
@@ -13,7 +13,11 @@
 //! something not here, the answer is to write it here or to drop to the raw
 //! API, not to reach for a general binding.
 
-use covalence_lib_sqlite::{Connection, Error, ResultCode, Statement, Step, ValueRef};
+use std::ffi::CString;
+
+use covalence_lib_sqlite::{Error, ResultCode, Statement, Step, ValueRef};
+
+use crate::Connection;
 
 /// A value this project stores in `SQLite`.
 ///
@@ -59,6 +63,21 @@ impl<T: Into<Self> + Copy> From<Option<T>> for Param<'_> {
     }
 }
 
+/// Copies `text` into a NUL-terminated C string.
+///
+/// `SQLite` names schemas, paths and VFSes with `char *`, so the conversion has
+/// to happen somewhere. It happens here rather than in `lib/sqlite` because
+/// what to do about an interior NUL is a policy question, and this is where the
+/// policy lives: refuse it.
+///
+/// # Errors
+///
+/// Returns `SQLITE_MISUSE` when `text` contains a NUL byte.
+pub fn c_string(text: &str) -> Result<CString, Error> {
+    CString::new(text)
+        .map_err(|_| Error::with_message(ResultCode::MISUSE, "string contains a NUL byte"))
+}
+
 /// Binds `params` to `statement` in order, starting at parameter 1.
 ///
 /// # Errors
@@ -90,70 +109,96 @@ pub fn bind_all(statement: &mut Statement, params: &[Param<'_>]) -> Result<(), E
     Ok(())
 }
 
-/// Runs one statement to completion, returning the number of rows it changed.
+/// Querying, on the connection itself.
 ///
-/// # Errors
-///
-/// Returns an error when the statement does not compile, the parameters do not
-/// match, or execution fails.
-pub fn execute(connection: &Connection, sql: &str, params: &[Param<'_>]) -> Result<i64, Error> {
-    let mut statement = connection.prepare(sql)?;
-    bind_all(&mut statement, params)?;
-    while statement.step()? == Step::Row {
+/// A second `impl` block rather than free functions, so that `lib/sqlite`
+/// stays behind [`Connection`] instead of appearing in every call. The raw
+/// handle is still reachable through
+/// [`sqlite`](Connection::sqlite) for what this layer does not cover.
+impl Connection {
+    /// Prepares a single statement against this connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `sql` holds no statement, holds more than one, or
+    /// does not compile.
+    pub fn prepare(&self, sql: &str) -> Result<Statement, Error> {
+        Statement::prepare(self.sqlite(), sql)
+    }
+
+    /// Runs every statement in `sql`, discarding any rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first error `SQLite` reports.
+    pub fn execute_batch(&self, sql: &str) -> Result<(), Error> {
+        Statement::execute_batch(self.sqlite(), sql)
+    }
+
+    /// Runs one statement to completion, returning the rows it changed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the statement does not compile, the parameters do
+    /// not match, or execution fails.
+    pub fn execute(&self, sql: &str, params: &[Param<'_>]) -> Result<i64, Error> {
+        let mut statement = self.prepare(sql)?;
+        bind_all(&mut statement, params)?;
         // A statement used for its effect may still return rows; drain them
         // rather than leaving the statement mid-scan.
+        while statement.step()? == Step::Row {}
+        Ok(self.sqlite().changes())
     }
-    Ok(connection.changes())
-}
 
-/// Runs one statement and maps its first row, if any.
-///
-/// Returns `None` when the query selected nothing. Rows beyond the first are
-/// not an error and are not read: a caller wanting exactly one row should say
-/// so in SQL with `LIMIT 1`, which is clearer than a runtime check here.
-///
-/// # Errors
-///
-/// Returns an error when the statement does not compile, the parameters do not
-/// match, execution fails, or `map` fails.
-pub fn query_row<T>(
-    connection: &Connection,
-    sql: &str,
-    params: &[Param<'_>],
-    map: impl FnOnce(&Row<'_>) -> Result<T, Error>,
-) -> Result<Option<T>, Error> {
-    let mut statement = connection.prepare(sql)?;
-    bind_all(&mut statement, params)?;
-    if statement.step()? == Step::Done {
-        return Ok(None);
-    }
-    map(&Row {
-        statement: &statement,
-    })
-    .map(Some)
-}
-
-/// Runs one statement and maps every row.
-///
-/// # Errors
-///
-/// Returns an error when the statement does not compile, the parameters do not
-/// match, execution fails, or `map` fails on any row.
-pub fn query_all<T>(
-    connection: &Connection,
-    sql: &str,
-    params: &[Param<'_>],
-    mut map: impl FnMut(&Row<'_>) -> Result<T, Error>,
-) -> Result<Vec<T>, Error> {
-    let mut statement = connection.prepare(sql)?;
-    bind_all(&mut statement, params)?;
-    let mut rows = Vec::new();
-    while statement.step()? == Step::Row {
-        rows.push(map(&Row {
+    /// Runs one statement and maps its first row, if any.
+    ///
+    /// `None` means the query selected nothing. Rows beyond the first are not
+    /// an error and are not read: a caller wanting exactly one should say so
+    /// in SQL with `LIMIT 1`, which is clearer than a runtime check here.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the statement does not compile, the parameters do
+    /// not match, execution fails, or `map` fails.
+    pub fn query_row<T>(
+        &self,
+        sql: &str,
+        params: &[Param<'_>],
+        map: impl FnOnce(&Row<'_>) -> Result<T, Error>,
+    ) -> Result<Option<T>, Error> {
+        let mut statement = self.prepare(sql)?;
+        bind_all(&mut statement, params)?;
+        if statement.step()? == Step::Done {
+            return Ok(None);
+        }
+        map(&Row {
             statement: &statement,
-        })?);
+        })
+        .map(Some)
     }
-    Ok(rows)
+
+    /// Runs one statement and maps every row.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the statement does not compile, the parameters do
+    /// not match, execution fails, or `map` fails on any row.
+    pub fn query_all<T>(
+        &self,
+        sql: &str,
+        params: &[Param<'_>],
+        mut map: impl FnMut(&Row<'_>) -> Result<T, Error>,
+    ) -> Result<Vec<T>, Error> {
+        let mut statement = self.prepare(sql)?;
+        bind_all(&mut statement, params)?;
+        let mut rows = Vec::new();
+        while statement.step()? == Step::Row {
+            rows.push(map(&Row {
+                statement: &statement,
+            })?);
+        }
+        Ok(rows)
+    }
 }
 
 /// One row of a result set.
@@ -330,92 +375,93 @@ mod tests {
     #[test]
     fn execute_binds_and_reports_changes() {
         let connection = connection();
-        let changed = execute(
-            &connection,
-            "INSERT INTO t (id, name, data) VALUES (?1, ?2, ?3)",
-            &[
-                Param::Integer(1),
-                Param::Text("one"),
-                Param::Blob(b"\x00\xff"),
-            ],
-        )
-        .unwrap();
+        let changed = connection
+            .execute(
+                "INSERT INTO t (id, name, data) VALUES (?1, ?2, ?3)",
+                &[
+                    Param::Integer(1),
+                    Param::Text("one"),
+                    Param::Blob(b"\x00\xff"),
+                ],
+            )
+            .unwrap();
         assert_eq!(changed, 1);
 
-        let name = query_row(
-            &connection,
-            "SELECT name FROM t WHERE id = ?1",
-            &[Param::Integer(1)],
-            |row| row.text(0),
-        )
-        .unwrap();
+        let name = connection
+            .query_row(
+                "SELECT name FROM t WHERE id = ?1",
+                &[Param::Integer(1)],
+                |row| row.text(0),
+            )
+            .unwrap();
         assert_eq!(name.as_deref(), Some("one"));
     }
 
     #[test]
     fn a_missing_row_is_none_not_an_error() {
         let connection = connection();
-        let found = query_row(
-            &connection,
-            "SELECT name FROM t WHERE id = ?1",
-            &[Param::Integer(99)],
-            |row| row.text(0),
-        )
-        .unwrap();
+        let found = connection
+            .query_row(
+                "SELECT name FROM t WHERE id = ?1",
+                &[Param::Integer(99)],
+                |row| row.text(0),
+            )
+            .unwrap();
         assert!(found.is_none());
     }
 
     #[test]
     fn a_wrong_parameter_count_is_refused() {
         let connection = connection();
-        let error = execute(&connection, "SELECT ?1, ?2", &[Param::Integer(1)]).unwrap_err();
+        let error = connection
+            .execute("SELECT ?1, ?2", &[Param::Integer(1)])
+            .unwrap_err();
         assert!(error.to_string().contains("takes 2 parameters"), "{error}");
     }
 
     #[test]
     fn null_round_trips_as_none() {
         let connection = connection();
-        execute(
-            &connection,
-            "INSERT INTO t (id, name) VALUES (?1, ?2)",
-            &[Param::Integer(1), Param::Null],
-        )
-        .unwrap();
-        let name = query_row(&connection, "SELECT name FROM t", &[], |row| {
-            row.text_opt(0)
-        })
-        .unwrap()
-        .unwrap();
+        connection
+            .execute(
+                "INSERT INTO t (id, name) VALUES (?1, ?2)",
+                &[Param::Integer(1), Param::Null],
+            )
+            .unwrap();
+        let name = connection
+            .query_row("SELECT name FROM t", &[], |row| row.text_opt(0))
+            .unwrap()
+            .unwrap();
         assert!(name.is_none());
     }
 
     #[test]
     fn a_type_mismatch_is_an_error_not_a_coercion() {
         let connection = connection();
-        execute(
-            &connection,
-            "INSERT INTO t (id, name) VALUES (?1, ?2)",
-            &[Param::Integer(1), Param::Text("not a number")],
-        )
-        .unwrap();
-        assert!(query_row(&connection, "SELECT name FROM t", &[], |row| row.integer(0)).is_err());
+        connection
+            .execute(
+                "INSERT INTO t (id, name) VALUES (?1, ?2)",
+                &[Param::Integer(1), Param::Text("not a number")],
+            )
+            .unwrap();
+        assert!(
+            connection
+                .query_row("SELECT name FROM t", &[], |row| row.integer(0))
+                .is_err()
+        );
     }
 
     #[test]
     fn query_all_maps_every_row() {
         let connection = connection();
         for id in 1..=3 {
-            execute(
-                &connection,
-                "INSERT INTO t (id) VALUES (?1)",
-                &[Param::Integer(id)],
-            )
-            .unwrap();
+            connection
+                .execute("INSERT INTO t (id) VALUES (?1)", &[Param::Integer(id)])
+                .unwrap();
         }
-        let ids = query_all(&connection, "SELECT id FROM t ORDER BY id", &[], |row| {
-            row.integer(0)
-        })
-        .unwrap();
+        let ids = connection
+            .query_all("SELECT id FROM t ORDER BY id", &[], |row| row.integer(0))
+            .unwrap();
         assert_eq!(ids, vec![1, 2, 3]);
     }
 
@@ -423,18 +469,15 @@ mod tests {
     fn a_committed_transaction_persists() {
         let connection = connection();
         let transaction = Transaction::begin(&connection).unwrap();
-        execute(
-            transaction.connection(),
-            "INSERT INTO t (id) VALUES (1)",
-            &[],
-        )
-        .unwrap();
+        transaction
+            .connection()
+            .execute("INSERT INTO t (id) VALUES (1)", &[])
+            .unwrap();
         transaction.commit().unwrap();
 
-        let count = query_row(&connection, "SELECT count(*) FROM t", &[], |row| {
-            row.integer(0)
-        })
-        .unwrap();
+        let count = connection
+            .query_row("SELECT count(*) FROM t", &[], |row| row.integer(0))
+            .unwrap();
         assert_eq!(count, Some(1));
     }
 
@@ -443,18 +486,15 @@ mod tests {
         let connection = connection();
         {
             let transaction = Transaction::begin(&connection).unwrap();
-            execute(
-                transaction.connection(),
-                "INSERT INTO t (id) VALUES (1)",
-                &[],
-            )
-            .unwrap();
+            transaction
+                .connection()
+                .execute("INSERT INTO t (id) VALUES (1)", &[])
+                .unwrap();
             // Dropped without committing: this is the path an early `?` takes.
         }
-        let count = query_row(&connection, "SELECT count(*) FROM t", &[], |row| {
-            row.integer(0)
-        })
-        .unwrap();
+        let count = connection
+            .query_row("SELECT count(*) FROM t", &[], |row| row.integer(0))
+            .unwrap();
         assert_eq!(count, Some(0));
     }
 
@@ -462,18 +502,15 @@ mod tests {
     fn an_explicit_rollback_discards() {
         let connection = connection();
         let transaction = Transaction::begin(&connection).unwrap();
-        execute(
-            transaction.connection(),
-            "INSERT INTO t (id) VALUES (1)",
-            &[],
-        )
-        .unwrap();
+        transaction
+            .connection()
+            .execute("INSERT INTO t (id) VALUES (1)", &[])
+            .unwrap();
         transaction.rollback().unwrap();
 
-        let count = query_row(&connection, "SELECT count(*) FROM t", &[], |row| {
-            row.integer(0)
-        })
-        .unwrap();
+        let count = connection
+            .query_row("SELECT count(*) FROM t", &[], |row| row.integer(0))
+            .unwrap();
         assert_eq!(count, Some(0));
     }
 }
