@@ -765,10 +765,10 @@ impl Runner {
         eprintln!("  kernel    http://127.0.0.1:{kernel_port}");
         eprintln!();
         eprintln!("  The page is a REPL. Try:");
-        eprintln!("    .help");
-        eprintln!("    .connect http://127.0.0.1:{kernel_port}");
-        eprintln!("    .fetch ADDRESS          (an address printed above)");
-        eprintln!("    .shell ADDRESS -batch .schema");
+        eprintln!("    (help)");
+        eprintln!("    (connect \"http://127.0.0.1:{kernel_port}\")");
+        eprintln!("    (fetch ADDRESS)         (an address printed above)");
+        eprintln!("    (sqlite ADDRESS \"-batch\" \".schema\")");
         eprintln!();
         eprintln!("  Ctrl-C stops both servers.");
         eprintln!();

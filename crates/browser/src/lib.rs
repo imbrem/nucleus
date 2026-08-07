@@ -364,7 +364,7 @@ fn to_js(error: impl std::fmt::Display) -> JsError {
 
 /// Runs `sql` and renders the result as JSON.
 fn run(connection: &Connection, sql: &str) -> Result<String, JsError> {
-    let mut statement = covalence_neutron::sql::prepare(connection, sql).map_err(to_js)?;
+    let mut statement = covalence_lib_sqlite::Statement::prepare(connection, sql).map_err(to_js)?;
 
     let column_count = statement.column_count();
     let columns: Vec<String> = (0..column_count)

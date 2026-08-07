@@ -205,6 +205,59 @@ test("a kernel serving something other than what was asked for is refused", asyn
   assert.deepEqual(result.held, []);
 });
 
+test("a directory of hash-named files is a serviceable kernel", async (context) => {
+  const origin = await servePackage(context);
+  const page = await openPage(context, origin);
+
+  // The address of the `planets` sample. The page knows it because the sample
+  // is baked into the wasm too; the point is that fetching it needs nothing
+  // but a file server.
+  const result = await page.evaluate(async (base) => {
+    const { Repl, drive, host } = window.nucleus;
+    const repl = new Repl();
+    const say = async (line) => (await drive(repl, host, line)).output;
+
+    // Learn the address from the baked-in copy, then throw that copy away so
+    // the fetch has to do real work.
+    const samples = await say("(samples)");
+    const [, address] = /\(planets ([0-9a-f]{64})\)/.exec(samples);
+    await say(`(forget ${address})`);
+    await say(`(forget ${/\(moons ([0-9a-f]{64})\)/.exec(samples)[1]})`);
+
+    const connected = await say(`(connect ${JSON.stringify(base)})`);
+    // Fetched from a plain file server, verified against the address, admitted.
+    const fetched = await say(`(fetch ${address})`);
+    const queried = await say(
+      `(sqlite ${address} "-batch" "SELECT name FROM planets ORDER BY moons DESC LIMIT 1")`,
+    );
+    return { connected, fetched, queried, address, held: repl.addresses() };
+  }, origin);
+
+  assert.equal(result.connected, "1");
+  // The address came back unchanged, which is the verification passing.
+  assert.equal(result.fetched, result.address);
+  assert.deepEqual(result.held, [result.address]);
+  assert.match(result.queried, /Saturn/);
+});
+
+test("a file server which answers with the wrong bytes is caught", async (context) => {
+  const origin = await servePackage(context);
+  const page = await openPage(context, origin);
+
+  const result = await page.evaluate(async (base) => {
+    const { Repl, drive, host } = window.nucleus;
+    const repl = new Repl();
+    const say = async (line) => (await drive(repl, host, line)).output;
+    await say(`(connect ${JSON.stringify(base)})`);
+    // `/cas/<address>` for something the directory does not hold. A file
+    // server has no way to be wrong here except by 404, and it is: absence is
+    // an error, not an empty object silently admitted.
+    return await say(`(fetch ${"0".repeat(64)})`);
+  }, origin);
+
+  assert.match(result, /^error: /);
+});
+
 test("the upstream SQLite shell runs in the browser", async (context) => {
   const origin = await servePackage(context);
   const page = await openPage(context, origin);
