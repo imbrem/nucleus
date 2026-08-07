@@ -13,7 +13,7 @@
  * better than a complete one that quietly grants reach.
  */
 
-import type { Kernel } from "../generated/nucleus.js";
+import type { Repl } from "../generated/nucleus.js";
 
 /** WASI `errno` values this host produces. */
 const OK = 0;
@@ -54,14 +54,17 @@ export interface ShellOptions {
  * native subprocess has.
  */
 export async function runShell(
-  kernel: Kernel,
+  kernel: Repl,
   wasm: BufferSource | Response | Promise<Response>,
   options: ShellOptions,
 ): Promise<ShellResult> {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
 
-  const argv = ["sqlite3", ...options.args];
+  // `-noinit` because there is no home directory here and never will be.
+  // Without it the shell warns about a `~/.sqliterc` it cannot read, on
+  // stderr, for every invocation.
+  const argv = ["sqlite3", "-noinit", ...options.args];
   const stdinBytes = encoder.encode(options.stdin ?? "");
   let stdinOffset = 0;
 

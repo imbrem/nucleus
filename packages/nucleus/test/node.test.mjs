@@ -1,73 +1,160 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import init, { Kernel } from "../generated/nucleus.js";
+import init, { Repl } from "../generated/nucleus.js";
 
-/** Loads the wasm kernel once for every test in this file. */
 async function load() {
-  const bytes = await readFile(
-    new URL("../generated/nucleus_bg.wasm", import.meta.url),
-  );
-  await init({ module_or_path: bytes });
+  await init({
+    module_or_path: await readFile(
+      new URL("../generated/nucleus_bg.wasm", import.meta.url),
+    ),
+  });
 }
 
-test("a kernel runs entirely in wasm", async () => {
-  await load();
-  const kernel = new Kernel();
+const fixture = () => readFile(new URL("./fixture.sqlite", import.meta.url));
 
-  const database = await readFile(new URL("./fixture.sqlite", import.meta.url));
-  const address = kernel.put(database);
+/** Evaluates a form and returns its printed value, asserting it was one. */
+function value(repl, text) {
+  const step = repl.eval(text);
+  assert.equal(step.kind, "output", `${text} -> ${step.kind}`);
+  return step.text;
+}
+
+test("the browser REPL evaluates the same forms as the CLI", async () => {
+  await load();
+  const repl = new Repl();
+
+  // A named list, not a sentence about a store -- and not a bare tuple whose
+  // fields you have to remember the order of.
+  assert.equal(
+    value(repl, "(stats)"),
+    "((objects 0) (bytes 0) (largest 0))",
+  );
+  assert.equal(value(repl, "(objects)"), "()");
+  assert.equal(value(repl, "(kernels)"), '((0 "local" #t))');
+  assert.match(value(repl, "(help)"), /\(connect "URL"\)/);
+});
+
+test("a file picker admits, and the store then reports it", async () => {
+  await load();
+  const repl = new Repl();
+  const database = await fixture();
+
+  const address = repl.admit(database);
   assert.match(address, /^[0-9a-f]{64}$/);
 
-  const result = JSON.parse(kernel.query(address, "SELECT a, b, sum FROM adder ORDER BY a"));
-  assert.deepEqual(result.columns, ["a", "b", "sum"]);
-  assert.deepEqual(result.rows, [
-    [2, 3, 5],
-    [7, 8, 15],
-  ]);
+  assert.deepEqual(repl.addresses(), [address]);
+  assert.equal(value(repl, "(objects)"), `(${address})`);
+  assert.equal(JSON.parse(repl.stats()).objects, 1);
 });
 
-test("admitting verifies the content against its address", async () => {
+test("(put …) says what a page cannot do rather than failing obscurely", async () => {
   await load();
-  const kernel = new Kernel();
-  const database = await readFile(new URL("./fixture.sqlite", import.meta.url));
+  const repl = new Repl();
+  assert.match(value(repl, '(put "/tmp/x.sqlite")'), /no filesystem here/);
+});
 
-  // The honest path: the address the bytes actually hash to.
-  const address = kernel.put(database);
-  kernel.forget(address);
-  assert.equal(kernel.admit(address, database), address);
+test("kernels can be connected to and switched between", async () => {
+  await load();
+  const repl = new Repl();
 
-  // The dishonest one: bytes that do not hash to the address asked for. This
-  // is what makes an untrusted HTTP source usable, so it must not be lenient.
-  kernel.forget(address);
+  assert.equal(value(repl, '(connect "http://127.0.0.1:8080")'), "1");
+  assert.equal(
+    value(repl, "(kernels)"),
+    '((0 "local" #f) (1 "http://127.0.0.1:8080" #t))',
+  );
+  assert.equal(value(repl, "(local)"), "0");
+  assert.equal(value(repl, "(kernel 1)"), "1");
+
+  // A URL without a scheme is not a URL.
+  assert.throws(() => repl.eval('(connect "127.0.0.1:8080")'));
+  assert.throws(() => repl.eval("(kernel 7)"), /no kernel 7/);
+});
+
+test("fetching asks the host for the selected kernel's URL", async () => {
+  await load();
+  const repl = new Repl();
+  const address = repl.admit(await fixture());
+
+  // Local has nothing to fetch from.
+  assert.throws(() => repl.eval(`(fetch ${address})`));
+
+  value(repl, '(connect "http://127.0.0.1:8080")');
+  const step = repl.eval(`(fetch ${address})`);
+  assert.equal(step.kind, "fetch");
+  assert.equal(step.text, `http://127.0.0.1:8080/cas/${address}`);
+  assert.equal(step.address, address);
+});
+
+test("fetched bytes are verified against the address asked for", async () => {
+  await load();
+  const repl = new Repl();
+  const database = await fixture();
+  const address = repl.admit(database);
+  value(repl, `(forget ${address})`);
+
+  assert.equal(repl.admitVerified(address, database), address);
+
+  value(repl, `(forget ${address})`);
   const tampered = Uint8Array.from(database);
   tampered[100] ^= 0xff;
-  assert.throws(() => kernel.admit(address, tampered), /does not match its address/);
-  assert.deepEqual(kernel.addresses(), []);
+  assert.throws(
+    () => repl.admitVerified(address, tampered),
+    /does not match its address/,
+  );
+  assert.deepEqual(repl.addresses(), []);
 });
 
-test("an address which was forgotten no longer opens", async () => {
+test("forgetting removes an address from the store", async () => {
   await load();
-  const kernel = new Kernel();
-  const database = await readFile(new URL("./fixture.sqlite", import.meta.url));
-  const address = kernel.put(database);
+  const repl = new Repl();
+  const address = repl.admit(await fixture());
 
-  assert.equal(kernel.forget(address), true);
-  assert.throws(() => kernel.query(address, "SELECT 1"));
+  // #t and #f, because the question is whether it was there.
+  assert.equal(value(repl, `(forget ${address})`), "#t");
+  assert.equal(value(repl, "(objects)"), "()");
+  assert.equal(value(repl, `(forget ${address})`), "#f");
 });
 
-test("the store reports what it holds", async () => {
+test("an unbound name is refused", async () => {
   await load();
-  const kernel = new Kernel();
-  assert.deepEqual(JSON.parse(kernel.stats()), {
-    objects: 0,
-    bytes: 0,
-    largest: 0,
-  });
+  const repl = new Repl();
+  assert.throws(() => repl.eval("(nope)"), /unbound: nope/);
+});
 
-  const database = await readFile(new URL("./fixture.sqlite", import.meta.url));
-  kernel.put(database);
-  const stats = JSON.parse(kernel.stats());
-  assert.equal(stats.objects, 1);
-  assert.equal(stats.bytes, database.length);
+test("input that is not an s-expression is refused", async () => {
+  await load();
+  const repl = new Repl();
+  assert.throws(() => repl.eval("(stats"), /unterminated/);
+  assert.throws(() => repl.eval(")"), /unexpected \)/);
+});
+
+test("samples give an empty store something to query", async () => {
+  await load();
+  const repl = new Repl();
+
+  // No fixture file and no fetch: SQLite builds them here.
+  const listed = value(repl, "(samples)");
+  assert.match(listed, /^\(\(planets [0-9a-f]{64}\) \(moons [0-9a-f]{64}\)\)$/);
+  assert.equal(JSON.parse(repl.stats()).objects, 2);
+
+  // Content-addressed, so asking twice is the same two objects.
+  assert.equal(value(repl, "(samples)"), listed);
+  assert.equal(JSON.parse(repl.stats()).objects, 2);
+});
+
+test("objects is bounded and stats says how much there is", async () => {
+  await load();
+  const repl = new Repl();
+  value(repl, "(samples)");
+
+  assert.equal(value(repl, "(objects 1)").split(" ").length, 1);
+  assert.equal(value(repl, "(objects)").split(" ").length, 2);
+  assert.match(value(repl, "(stats)"), /\(objects 2\)/);
+});
+
+test("quit is quit", async () => {
+  await load();
+  const repl = new Repl();
+  assert.equal(repl.eval("(quit)").kind, "quit");
 });
