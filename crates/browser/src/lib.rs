@@ -1,29 +1,29 @@
-//! A content-addressed `SQLite` kernel, in the browser.
+//! A content-addressed `SQLite` REPL, in the browser.
 //!
-//! This is a whole kernel compiled to wasm: a store, a mounted VFS, and
-//! `SQLite` itself. A page can put bytes in, get an address back, and open that
-//! address as a database — with no server involved at all.
+//! The page runs the **same** [`Session`] the terminal does. Not a similar
+//! one: the same dispatch, the same commands, the same output. That is the
+//! only arrangement under which "the browser behaves like the CLI" survives
+//! the next change to either.
 //!
-//! It is also a client. Objects can be admitted from a *remote* kernel over
-//! HTTP, which is the other half of the demo: one design, two places it runs.
+//! A session performs no I/O of its own. It answers a line of input with a
+//! response, and a response may be a request — *fetch this URL*, *run the
+//! shell* — which the page carries out and hands back. That is what lets one
+//! dispatch serve a host that can read files and block on sockets and a host
+//! that can do neither.
 //!
-//! # Verification is the whole point of the remote path
+//! # Kernels
 //!
-//! [`Kernel::admit`] takes the address the caller expected and refuses bytes
-//! that do not hash to it. That is what makes an untrusted HTTP source usable:
-//! the URL is a hint about where bytes might be, and the address is what says
-//! whether they are the right ones. A server that returns something else — or
-//! a cache, or a proxy, or an attacker — is caught here rather than believed.
-//!
-//! Whole objects are fetched and hashed. Verifying a *range* without fetching
-//! the whole object needs BLAKE3 range proofs, tracked in #442; until those
-//! exist, whole-object verification is the honest option and is what this does.
+//! `(connect "URL")` points the session at a kernel reachable over HTTP;
+//! `(local)` points it back at the one compiled into this page. Objects
+//! fetched from a remote kernel are verified against the address they were
+//! asked for before being admitted, so a wrong or hostile kernel is caught
+//! rather than believed.
 //!
 //! # Trust
 //!
-//! Nothing here is trusted. [`Kernel::query`] runs arbitrary SQL, which is the
-//! browser's stand-in for the shell until the shell itself runs here. It sits
-//! outside the trusted core for exactly the reason the shell does.
+//! Nothing here is trusted. [`Repl::query`] runs arbitrary SQL, which is a
+//! convenience for a page; the shell is the real answer, and it runs here too
+//! in its own wasm instance.
 
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -31,24 +31,86 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use covalence_data_cas::{Cas, CasObject, ResidentObject};
 use covalence_lib_hash::O256;
-use covalence_lib_sqlite::{Connection, Step, ValueType};
-use covalence_repl::Repl;
+use covalence_lib_sqlite::{Connection, Step as SqliteStep, ValueType};
+use covalence_repl::{Response, Session};
 use wasm_bindgen::prelude::*;
 
-/// Names handed to successive kernels in one wasm instance.
+/// Names handed to successive REPLs in one wasm instance.
 ///
-/// `SQLite`'s VFS registry is process-global and permanent, so a second kernel
-/// cannot reuse the first's mount name. The first kernel gets the conventional
-/// `cas`, because that is what a page will have in its URLs; later ones get a
-/// distinct name, which [`Kernel::uri`] reports.
+/// `SQLite`'s VFS registry is process-global and permanent, so a second REPL
+/// cannot reuse the first's mount name. The first gets the conventional `cas`,
+/// because that is what a page will have in its URLs; later ones get a
+/// distinct name, which the session reports.
 static NEXT_MOUNT: AtomicU64 = AtomicU64::new(0);
 
-/// A kernel running in this page.
+/// What the page should do with a line of input.
+///
+/// Mirrors `covalence_repl::Response` across the wasm boundary, which cannot
+/// carry a Rust enum with payloads.
 #[wasm_bindgen]
-pub struct Kernel {
-    repl: Repl,
-    mount: String,
-    /// Objects held open on behalf of a guest, such as the WASI shell.
+pub struct Step {
+    kind: String,
+    text: String,
+    address: String,
+    arguments: Vec<String>,
+}
+
+#[wasm_bindgen]
+impl Step {
+    /// One of `output`, `fetch`, `shell`, or `quit`.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn kind(&self) -> String {
+        self.kind.clone()
+    }
+
+    /// Text to show, or the URL to fetch.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn text(&self) -> String {
+        self.text.clone()
+    }
+
+    /// For `fetch`, the address the bytes must hash to.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn address(&self) -> String {
+        self.address.clone()
+    }
+
+    /// For `shell`, the arguments to run it with.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn arguments(&self) -> Vec<String> {
+        self.arguments.clone()
+    }
+}
+
+impl Step {
+    fn output(text: impl Into<String>) -> Self {
+        Self {
+            kind: "output".to_owned(),
+            text: text.into(),
+            address: String::new(),
+            arguments: Vec::new(),
+        }
+    }
+
+    fn bare(kind: &str) -> Self {
+        Self {
+            kind: kind.to_owned(),
+            text: String::new(),
+            address: String::new(),
+            arguments: Vec::new(),
+        }
+    }
+}
+
+/// The REPL this page runs.
+#[wasm_bindgen]
+pub struct Repl {
+    session: Session,
+    /// Objects held open for a guest, such as the WASI shell.
     ///
     /// Holding them here is what gives the guest the same guarantee a local
     /// caller gets: while it holds a handle, its reads keep working, whatever
@@ -58,8 +120,8 @@ pub struct Kernel {
 }
 
 #[wasm_bindgen]
-impl Kernel {
-    /// Creates a kernel with an empty store, mounted as `vfs=cas`.
+impl Repl {
+    /// Creates a REPL with an empty local store.
     ///
     /// # Errors
     ///
@@ -73,17 +135,140 @@ impl Kernel {
             format!("{}-{index}", covalence_lib_sqlite::vfs::CAS_VFS_NAME)
         };
         Ok(Self {
-            repl: Repl::with_mount_name(&mount, false).map_err(to_js)?,
-            mount,
+            session: Session::with_mount_name(&mount).map_err(to_js)?,
             open: HashMap::new(),
             next_handle: 1,
         })
     }
 
+    /// The banner a terminal prints on startup.
+    #[must_use]
+    pub fn banner(&self) -> String {
+        format!(
+            "nucleus: content-addressed SQLite. Store mounted as vfs={}. `.help` for commands.",
+            self.session.repl().mount().name()
+        )
+    }
+
+    /// The `SQLite` VFS name this REPL's store is mounted under.
+    #[wasm_bindgen(js_name = mountName)]
+    #[must_use]
+    pub fn mount_name(&self) -> String {
+        self.session.repl().mount().name().as_str().to_owned()
+    }
+
+    /// Reads and evaluates one line of input.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the input does not read, names nothing, or fails. A
+    /// failed form is ordinary: show it and keep the prompt.
+    pub fn eval(&mut self, line: &str) -> Result<Step, JsError> {
+        Ok(match self.session.eval(line).map_err(to_js)? {
+            // `display` rather than `write`: the help text is a message, not
+            // a datum to be read back.
+            Response::Value(value) => Step::output(value.display()),
+            Response::Quit => Step::bare("quit"),
+            // A page has no filesystem, so `(put …)` cannot mean here what it
+            // means in a terminal. Say so rather than failing obscurely.
+            Response::ReadFile(path) => Step::output(format!(
+                "no filesystem here: use the file picker to admit {path:?}"
+            )),
+            Response::Fetch { url, address } => Step {
+                kind: "fetch".to_owned(),
+                text: url,
+                address: address.hex().to_string(),
+                arguments: Vec::new(),
+            },
+            Response::Shell(arguments) => Step {
+                kind: "shell".to_owned(),
+                text: String::new(),
+                address: String::new(),
+                arguments,
+            },
+        })
+    }
+
+    /// Admits bytes the page read from a file picker.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the bytes exceed the admission limit.
+    pub fn admit(&self, bytes: &[u8]) -> Result<String, JsError> {
+        self.session
+            .admit(bytes.to_vec())
+            .map(|value| value.display())
+            .map_err(to_js)
+    }
+
+    /// Admits bytes the page fetched, refusing any that do not match.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `expected` is not an address, or the bytes hash to
+    /// something else.
+    #[wasm_bindgen(js_name = admitVerified)]
+    pub fn admit_verified(&self, expected: &str, bytes: &[u8]) -> Result<String, JsError> {
+        self.session
+            .admit_verified(address(expected)?, bytes.to_vec())
+            .map(|value| value.display())
+            .map_err(to_js)
+    }
+
+    /// Returns every resident address.
+    #[must_use]
+    pub fn addresses(&self) -> Vec<String> {
+        self.session
+            .repl()
+            .addresses()
+            .into_iter()
+            .map(|address| address.hex().to_string())
+            .collect()
+    }
+
+    /// Returns `{objects, bytes, largest}` as JSON.
+    #[must_use]
+    pub fn stats(&self) -> String {
+        let stats = self.session.repl().stats();
+        format!(
+            r#"{{"objects":{},"bytes":{},"largest":{}}}"#,
+            stats.objects, stats.bytes, stats.largest
+        )
+    }
+
+    /// Returns the `SQLite` URI which opens `address` through the mount.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `address` is not an address.
+    pub fn uri(&self, address: &str) -> Result<String, JsError> {
+        Ok(self.session.repl().uri(self::address(address)?))
+    }
+
+    /// Runs a query against a resident object and returns JSON.
+    ///
+    /// A convenience for a page. The shell is the real answer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the address does not resolve, if it was not opened
+    /// through the mount, or if the SQL fails.
+    pub fn query(&mut self, address: &str, sql: &str) -> Result<String, JsError> {
+        let repl = self.session.repl_mut();
+        let id = repl.open_address(self::address(address)?).map_err(to_js)?;
+        let result = {
+            let connection = repl.connection(id).map_err(to_js)?;
+            run(connection, sql)
+        };
+        // The connection was opened for this query; do not accumulate them.
+        let _ = repl.close(id);
+        result
+    }
+
     /// Opens an address, returning a handle, or `-1` when it does not resolve.
     ///
-    /// This is the `covalence:cas/store` resource, in the shape a wasm guest
-    /// can call. The object stays open until [`Kernel::close_object`].
+    /// This and the three below are `covalence:cas/store` in the shape a wasm
+    /// guest can call; the shell reaches its databases through them.
     ///
     /// Handles are `f64` because that is the number `JavaScript` has. They are
     /// issued sequentially from 1, so they stay exactly representable for far
@@ -91,11 +276,11 @@ impl Kernel {
     ///
     /// # Errors
     ///
-    /// Returns an error if `address` is not an address, or if the store fails.
+    /// Returns an error if `address` is not an address, or the store fails.
     #[wasm_bindgen(js_name = openObject)]
     pub fn open_object(&mut self, address: &str) -> Result<f64, JsError> {
         let address = self::address(address)?;
-        let Some(object) = self.repl.cas().open(address).map_err(to_js)? else {
+        let Some(object) = self.session.store().open(address).map_err(to_js)? else {
             return Ok(-1.0);
         };
         let handle = self.next_handle;
@@ -110,7 +295,7 @@ impl Kernel {
     pub fn object_length(&self, handle: f64) -> f64 {
         self.open
             .get(&handle_from_js(handle))
-            .map_or(-1.0, |object| length_to_js(object.len()))
+            .map_or(-1.0, |object| handle_to_js(object.len()))
     }
 
     /// Reads exactly `len` bytes from `offset` of an open object.
@@ -136,110 +321,45 @@ impl Kernel {
     pub fn close_object(&mut self, handle: f64) {
         self.open.remove(&handle_from_js(handle));
     }
+}
 
-    /// The `SQLite` VFS name this kernel's store is mounted under.
-    #[wasm_bindgen(js_name = mountName)]
-    #[must_use]
-    pub fn mount_name(&self) -> String {
-        self.mount.clone()
-    }
+/// Converts a handle or length for `JavaScript`.
+///
+/// Saturates rather than wrapping: a value past `f64`'s exact range would be a
+/// silently wrong handle, and there is no honest number to return.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "saturated below the exact range"
+)]
+fn handle_to_js(value: u64) -> f64 {
+    const EXACT: u64 = 1 << 53;
+    if value >= EXACT { -1.0 } else { value as f64 }
+}
 
-    /// Admits bytes and returns their address.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the bytes exceed the store's admission limit.
-    pub fn put(&self, bytes: &[u8]) -> Result<String, JsError> {
-        let address = self.repl.put(bytes.to_vec()).map_err(to_js)?;
-        Ok(address.hex().to_string())
+/// Converts a handle, offset or length back from `JavaScript`.
+///
+/// A negative or non-finite input becomes 0, which no handle uses and which
+/// every range check rejects.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "non-finite and negative inputs are mapped to 0"
+)]
+fn handle_from_js(value: f64) -> u64 {
+    if value.is_finite() && value >= 0.0 {
+        value as u64
+    } else {
+        0
     }
+}
 
-    /// Admits bytes only if they hash to `expected`.
-    ///
-    /// This is the check that makes a remote source usable without trusting
-    /// it. Bytes which do not match are refused and not stored.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `expected` is not an address, if the bytes hash to
-    /// something else, or if they exceed the admission limit.
-    pub fn admit(&self, expected: &str, bytes: &[u8]) -> Result<String, JsError> {
-        let expected = address(expected)?;
-        let actual = O256::from_bytes(bytes);
-        if actual != expected {
-            return Err(JsError::new(&format!(
-                "content does not match its address: expected {}, received {}",
-                expected.hex(),
-                actual.hex()
-            )));
-        }
-        let stored = self.repl.put(bytes.to_vec()).map_err(to_js)?;
-        Ok(stored.hex().to_string())
-    }
+fn address(text: &str) -> Result<O256, JsError> {
+    O256::from_str(text.trim())
+        .map_err(|error| JsError::new(&format!("{text:?} is not an address: {error}")))
+}
 
-    /// Drops an address, reporting whether it resolved.
-    ///
-    /// Databases already open through it keep working.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `address` is not an address.
-    pub fn forget(&self, address: &str) -> Result<bool, JsError> {
-        Ok(self.repl.forget(self::address(address)?))
-    }
-
-    /// Returns every resident address.
-    #[wasm_bindgen(js_name = addresses)]
-    #[must_use]
-    pub fn addresses(&self) -> Vec<String> {
-        self.repl
-            .addresses()
-            .into_iter()
-            .map(|address| address.hex().to_string())
-            .collect()
-    }
-
-    /// Returns `{objects, bytes, largest}` as JSON.
-    #[must_use]
-    pub fn stats(&self) -> String {
-        let stats = self.repl.stats();
-        format!(
-            r#"{{"objects":{},"bytes":{},"largest":{}}}"#,
-            stats.objects, stats.bytes, stats.largest
-        )
-    }
-
-    /// Returns the `SQLite` URI which opens `address` through the mount.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `address` is not an address.
-    pub fn uri(&self, address: &str) -> Result<String, JsError> {
-        Ok(self.repl.uri(self::address(address)?))
-    }
-
-    /// Runs a query against a resident object and returns JSON.
-    ///
-    /// The result is `{"columns": [...], "rows": [[...]]}`. This is the
-    /// browser's stand-in for the shell and is outside the trusted core.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the address does not resolve, if it was not opened
-    /// through the mount, or if the SQL fails.
-    pub fn query(&mut self, address: &str, sql: &str) -> Result<String, JsError> {
-        let id = self
-            .repl
-            .open_address(self::address(address)?)
-            .map_err(to_js)?;
-        let result = {
-            let connection = self.repl.connection(id).map_err(to_js)?;
-            run(connection, sql)
-        };
-        // The connection was opened for this query; do not accumulate them.
-        let _ = self.repl.close(id);
-        result
-    }
+fn to_js(error: impl std::fmt::Display) -> JsError {
+    JsError::new(&error.to_string())
 }
 
 /// Runs `sql` and renders the result as JSON.
@@ -252,7 +372,7 @@ fn run(connection: &Connection, sql: &str) -> Result<String, JsError> {
         .collect();
 
     let mut rows: Vec<Vec<String>> = Vec::new();
-    while statement.step().map_err(to_js)? == Step::Row {
+    while statement.step().map_err(to_js)? == SqliteStep::Row {
         rows.push(
             (0..column_count)
                 .map(|index| encode(&statement, index))
@@ -317,48 +437,4 @@ fn quote(text: &str) -> String {
     }
     out.push('"');
     out
-}
-
-/// Converts a handle or length for `JavaScript`.
-///
-/// Saturates rather than wrapping: a value past `f64`'s exact range would be a
-/// silently wrong handle, and there is no honest number to return.
-#[allow(
-    clippy::cast_precision_loss,
-    reason = "saturated below the exact range"
-)]
-fn handle_to_js(value: u64) -> f64 {
-    const EXACT: u64 = 1 << 53;
-    if value >= EXACT { -1.0 } else { value as f64 }
-}
-
-/// Converts an object length for `JavaScript`.
-fn length_to_js(value: u64) -> f64 {
-    handle_to_js(value)
-}
-
-/// Converts a handle, offset or length back from `JavaScript`.
-///
-/// A negative or non-finite input becomes 0, which no handle uses and which
-/// every range check rejects.
-#[allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "non-finite and negative inputs are mapped to 0"
-)]
-fn handle_from_js(value: f64) -> u64 {
-    if value.is_finite() && value >= 0.0 {
-        value as u64
-    } else {
-        0
-    }
-}
-
-fn address(text: &str) -> Result<O256, JsError> {
-    O256::from_str(text.trim())
-        .map_err(|error| JsError::new(&format!("{text:?} is not an address: {error}")))
-}
-
-fn to_js(error: impl std::fmt::Display) -> JsError {
-    JsError::new(&error.to_string())
 }

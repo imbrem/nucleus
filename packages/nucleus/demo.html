@@ -3,329 +3,202 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Nucleus — content-addressed SQLite</title>
+    <title>nucleus</title>
     <style>
       :root {
         color-scheme: light dark;
         --line: color-mix(in oklab, currentColor 18%, transparent);
-        --soft: color-mix(in oklab, currentColor 60%, transparent);
+        --soft: color-mix(in oklab, currentColor 55%, transparent);
+      }
+      * {
+        box-sizing: border-box;
       }
       body {
-        margin: 0 auto;
-        padding: 2rem 1.25rem 4rem;
-        max-width: 60rem;
-        font: 15px/1.55 system-ui, sans-serif;
+        margin: 0;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
       }
-      h1 {
-        font-size: 1.35rem;
-        margin: 0 0 0.25rem;
+      header {
+        padding: 0.6rem 1rem;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        gap: 1rem;
+        align-items: center;
+        flex-wrap: wrap;
       }
-      p.lede {
-        color: var(--soft);
-        margin: 0 0 2rem;
+      header strong {
+        font-weight: 600;
       }
-      section {
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        padding: 1rem 1.25rem 1.25rem;
-        margin-bottom: 1.5rem;
-      }
-      h2 {
-        font-size: 1rem;
-        margin: 0 0 0.15rem;
-      }
-      h2 small {
-        font-weight: normal;
+      header .hint {
         color: var(--soft);
       }
-      .note {
+      header label {
         color: var(--soft);
-        font-size: 0.9rem;
-        margin: 0 0 1rem;
-      }
-      label {
-        display: block;
-        margin: 0.6rem 0 0.2rem;
-        font-size: 0.85rem;
-        color: var(--soft);
-      }
-      input,
-      textarea,
-      button {
-        font: inherit;
-      }
-      input,
-      textarea {
-        width: 100%;
-        box-sizing: border-box;
-        padding: 0.4rem 0.5rem;
-        border: 1px solid var(--line);
-        border-radius: 5px;
-        background: transparent;
-        color: inherit;
-        font-family: ui-monospace, monospace;
-        font-size: 0.85rem;
-      }
-      button {
-        margin-top: 0.75rem;
-        margin-right: 0.4rem;
-        padding: 0.4rem 0.9rem;
-        border: 1px solid var(--line);
-        border-radius: 5px;
-        background: transparent;
-        color: inherit;
         cursor: pointer;
+        text-decoration: underline dotted;
       }
-      button:hover {
-        border-color: currentColor;
+      header input[type="file"] {
+        display: none;
       }
-      pre {
-        margin: 0.85rem 0 0;
-        padding: 0.7rem 0.85rem;
-        border-radius: 5px;
-        background: color-mix(in oklab, currentColor 7%, transparent);
-        overflow-x: auto;
-        font-family: ui-monospace, monospace;
-        font-size: 0.82rem;
+      #transcript {
+        flex: 1;
+        overflow-y: auto;
+        padding: 0.8rem 1rem;
         white-space: pre-wrap;
         word-break: break-word;
       }
-      .bad {
-        color: #c0392b;
+      #transcript .echo {
+        color: var(--soft);
       }
-      table {
-        border-collapse: collapse;
-        margin-top: 0.85rem;
-        font-size: 0.85rem;
+      #transcript .bad {
+        color: #d14;
       }
-      th,
-      td {
-        border: 1px solid var(--line);
-        padding: 0.25rem 0.6rem;
-        text-align: left;
-        font-family: ui-monospace, monospace;
+      form {
+        display: flex;
+        gap: 0.5rem;
+        padding: 0.6rem 1rem;
+        border-top: 1px solid var(--line);
+        align-items: baseline;
+      }
+      form span {
+        color: var(--soft);
+      }
+      input[type="text"] {
+        flex: 1;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        outline: none;
       }
     </style>
   </head>
   <body>
-    <h1>Content-addressed SQLite</h1>
-    <p class="lede">
-      A database is named by the hash of its bytes. The same design runs as a
-      kernel inside this page and as a kernel you reach over HTTP.
-    </p>
-
-    <section>
-      <h2>1. A kernel in this page <small>— wasm, no server</small></h2>
-      <p class="note">
-        SQLite, a content-addressed store, and a VFS mounting one on the other,
-        all compiled to wasm. Choose a <code>.sqlite</code> file: it is hashed,
-        admitted, and opened by address. Nothing leaves the tab.
-      </p>
-      <label for="file">SQLite database</label>
+    <header>
+      <strong>nucleus</strong>
+      <span class="hint">the same REPL the terminal runs, in a page</span>
+      <label for="file">admit a file…</label>
       <input id="file" type="file" accept=".sqlite,.db,.sqlite3" />
-      <label for="local-sql">Query</label>
-      <textarea id="local-sql" rows="2">
-SELECT name FROM sqlite_schema WHERE type = 'table'</textarea
-      >
-      <button id="local-run">Run</button>
-      <button id="local-forget">Forget the object</button>
-      <pre id="local-out">Choose a file to begin.</pre>
-    </section>
+    </header>
 
-    <section>
-      <h2>2. A kernel over HTTP <small>— another process, another origin</small></h2>
-      <p class="note">
-        Start one with
-        <code>cargo run -p covalence-bin-cas-serve -- FILE.sqlite</code>; it
-        prints an address and a URL. The page fetches the object, checks it
-        hashes to the address it asked for, and only then admits it. A wrong or
-        hostile server is caught here rather than believed.
-      </p>
-      <label for="base">Kernel URL</label>
-      <input id="base" value="http://127.0.0.1:8080" />
-      <label for="remote-address">Address</label>
-      <input id="remote-address" placeholder="64 hexadecimal characters" />
-      <label for="remote-sql">Query</label>
-      <textarea id="remote-sql" rows="2">
-SELECT name FROM sqlite_schema WHERE type = 'table'</textarea
-      >
-      <button id="remote-fetch">Fetch, verify, admit</button>
-      <button id="remote-run">Run</button>
-      <button id="remote-range">Read bytes 0–14</button>
-      <button id="remote-tamper">Admit tampered bytes</button>
-      <pre id="remote-out">Enter a kernel URL and an address.</pre>
-    </section>
+    <div id="transcript"></div>
 
-    <section>
-      <h2>3. The real SQLite shell <small>— shell.c, compiled to WASI</small></h2>
-      <p class="note">
-        Not a reimplementation: this is upstream&rsquo;s
-        <code>shell.c</code>, unmodified, compiled for
-        <code>wasm32-wasip1</code> and run in its own wasm instance. Dot
-        commands work because they are upstream&rsquo;s. It has no filesystem
-        — its databases arrive by address, through the same kernel above.
-      </p>
-      <label for="shell-args">Shell command line</label>
-      <input id="shell-args" value="-batch -header .schema" />
-      <button id="shell-run">Run against the local object</button>
-      <pre id="shell-out">Load a file in section 1 first.</pre>
-    </section>
+    <form id="prompt">
+      <span>nucleus&gt;</span>
+      <input
+        id="line"
+        type="text"
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+        autofocus
+      />
+    </form>
 
     <script type="module">
-      import init, { Kernel } from "./generated/nucleus.js";
-      import { fetchInto, fetchRange, runShell } from "./dist/index.js";
+      import { init, Repl, drive } from "./dist/index.js";
 
       await init();
+      const repl = new Repl();
+      const host = { shell: () => fetch("./generated/shell.wasm") };
 
-      const $ = (id) => document.getElementById(id);
-      const show = (element, text, bad = false) => {
-        element.textContent = text;
-        element.classList.toggle("bad", bad);
-      };
+      const transcript = document.getElementById("transcript");
+      const line = document.getElementById("line");
 
-      /** Renders a query result as a table, appended after `element`. */
-      function table(element, result) {
-        const existing = element.parentElement.querySelector("table");
-        if (existing) existing.remove();
-        if (!result.rows.length) return;
-        const html = [
-          "<tr>",
-          ...result.columns.map((name) => `<th>${name}</th>`),
-          "</tr>",
-          ...result.rows.map(
-            (row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`,
-          ),
-        ].join("");
-        const node = document.createElement("table");
-        node.innerHTML = html;
-        element.after(node);
+      function write(text, className) {
+        if (!text) return;
+        const node = document.createElement("div");
+        if (className) node.className = className;
+        node.textContent = text;
+        transcript.append(node);
+        transcript.scrollTop = transcript.scrollHeight;
       }
 
-      // --- 1. in-page kernel -------------------------------------------------
+      write(repl.banner());
 
-      const local = new Kernel();
-      let localAddress = null;
-      const localOut = $("local-out");
+      // A page has no filesystem, so an empty store means nothing to try.
+      // `(samples)` is a REPL form, not a page feature: the terminal has the
+      // same one, and both get their databases from the same place.
+      const samples = (await drive(repl, host, "(samples)")).output;
+      const demos = [...samples.matchAll(/\((\w+) ([0-9a-f]{64})\)/g)].map(
+        ([, name, address]) => ({ name, address }),
+      );
+      write(
+        [
+          "",
+          "In the store:",
+          ...demos.map(({ name, address }) => `  ${name.padEnd(10)}${address}`),
+          "",
+          "Try:",
+          "  (help)                            every form",
+          "  (objects)                         what the store holds",
+          "  (sqlite ADDRESS)                  the real sqlite3, in wasm",
+          '  (connect "http://127.0.0.1:8080") a kernel in another process',
+          "  (fetch ADDRESS)                   pull an object and verify it",
+          "",
+          "Paste an address from above wherever ADDRESS appears.",
+          "",
+          "Inside sqlite, every object in the store is one ATTACH away:",
+          `  ATTACH 'file:${demos[1].address}?vfs=cas' AS m;`,
+          "",
+          "`glu demo` starts a kernel and prints an address to paste.",
+          "",
+        ].join("\n"),
+        "echo",
+      );
 
-      $("file").addEventListener("change", async (event) => {
-        const file = event.target.files?.[0];
-        if (!file) return;
-        try {
-          const bytes = new Uint8Array(await file.arrayBuffer());
-          localAddress = local.put(bytes);
-          show(
-            localOut,
-            `admitted ${bytes.length} bytes\naddress ${localAddress}\nopens as ${local.uri(localAddress)}`,
+      // History, because a REPL without it is a form with extra steps.
+      const history = [];
+      let cursor = 0;
+
+      document
+        .getElementById("prompt")
+        .addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const text = line.value;
+          line.value = "";
+          if (!text.trim()) return;
+
+          history.push(text);
+          cursor = history.length;
+          write(`nucleus> ${text}`, "echo");
+
+          const result = await drive(repl, host, text);
+          write(
+            result.output,
+            result.output.startsWith("error:") ? "bad" : undefined,
           );
-        } catch (error) {
-          show(localOut, String(error), true);
-        }
+          if (result.quit) {
+            write("(a page cannot quit; reload to start over)", "echo");
+          }
+        });
+
+      line.addEventListener("keydown", (event) => {
+        if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+        event.preventDefault();
+        cursor += event.key === "ArrowUp" ? -1 : 1;
+        cursor = Math.max(0, Math.min(cursor, history.length));
+        line.value = history[cursor] ?? "";
       });
 
-      $("local-run").addEventListener("click", () => {
-        if (!localAddress) return show(localOut, "Choose a file first.", true);
-        try {
-          const result = JSON.parse(local.query(localAddress, $("local-sql").value));
-          show(localOut, `${result.rows.length} row(s)`);
-          table(localOut, result);
-        } catch (error) {
-          show(localOut, String(error), true);
-        }
-      });
-
-      $("local-forget").addEventListener("click", () => {
-        if (!localAddress) return;
-        local.forget(localAddress);
-        show(
-          localOut,
-          `forgotten. The store now holds ${JSON.parse(local.stats()).objects} object(s);\nopening this address again will fail.`,
-        );
-      });
-
-      // --- 2. kernel over HTTP ----------------------------------------------
-
-      const remote = new Kernel();
-      const remoteOut = $("remote-out");
-      const target = () => ({
-        baseUrl: $("base").value.trim(),
-        address: $("remote-address").value.trim(),
-      });
-
-      $("remote-fetch").addEventListener("click", async () => {
-        const { baseUrl, address } = target();
-        try {
-          const length = await fetchInto(remote, baseUrl, address);
-          show(
-            remoteOut,
-            `fetched ${length} bytes from ${baseUrl}\nverified against ${address}\nadmitted`,
-          );
-        } catch (error) {
-          show(remoteOut, String(error), true);
-        }
-      });
-
-      $("remote-run").addEventListener("click", () => {
-        try {
-          const result = JSON.parse(
-            remote.query(target().address, $("remote-sql").value),
-          );
-          show(remoteOut, `${result.rows.length} row(s)`);
-          table(remoteOut, result);
-        } catch (error) {
-          show(remoteOut, String(error), true);
-        }
-      });
-
-      $("remote-range").addEventListener("click", async () => {
-        const { baseUrl, address } = target();
-        try {
-          const { bytes, contentRange } = await fetchRange(baseUrl, address, 0, 14);
-          const text = new TextDecoder().decode(bytes);
-          show(
-            remoteOut,
-            `Content-Range: ${contentRange}\n${bytes.length} bytes: ${JSON.stringify(text)}\n\nRanged reads work, but a range cannot yet be verified without\nfetching the whole object — that needs BLAKE3 range proofs (#442).\nSo these bytes are shown, not admitted.`,
-          );
-        } catch (error) {
-          show(remoteOut, String(error), true);
-        }
-      });
-
-      // --- 3. the real shell, in WASI ---------------------------------------
-
-      $("shell-run").addEventListener("click", async () => {
-        const out = $("shell-out");
-        if (!localAddress) return show(out, "Load a file in section 1 first.", true);
-        show(out, "running…");
-        try {
-          const args = $("shell-args").value.trim().split(/\s+/).filter(Boolean);
-          const result = await runShell(local, fetch("./generated/shell.wasm"), {
-            args: [local.uri(localAddress), ...args],
-          });
-          show(
-            out,
-            `exit ${result.status}\n\n${result.stdout}${result.stderr ? `\n${result.stderr}` : ""}`,
-            result.status !== 0,
-          );
-        } catch (error) {
-          show(out, String(error), true);
-        }
-      });
-
-      $("remote-tamper").addEventListener("click", async () => {
-        const { baseUrl, address } = target();
-        try {
-          const response = await fetch(`${baseUrl.replace(/\/$/, "")}/cas/${address}`);
-          const bytes = new Uint8Array(await response.arrayBuffer());
-          bytes[100] ^= 0xff;
-          remote.admit(address, bytes);
-          show(remoteOut, "admitted — this should not happen", true);
-        } catch (error) {
-          show(
-            remoteOut,
-            `refused, correctly:\n${error}\n\nThe URL says where bytes might be. The address says whether\nthey are the right ones.`,
-          );
-        }
-      });
+      // A page has no filesystem, so `(put …)` cannot work here. This is the
+      // affordance that replaces it.
+      document
+        .getElementById("file")
+        .addEventListener("change", async (event) => {
+          const file = event.target.files?.[0];
+          if (!file) return;
+          try {
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            write(`nucleus> (put ${JSON.stringify(file.name)})`, "echo");
+            write(repl.admit(bytes));
+          } catch (error) {
+            write(`error: ${error}`, "bad");
+          }
+          event.target.value = "";
+        });
     </script>
   </body>
 </html>
