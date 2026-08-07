@@ -23,7 +23,7 @@
     "./shell-wasm": "./generated/shell.wasm"
   },
   "scripts": {
-    "generate": "cargo build --locked -p covalence-browser --target wasm32-unknown-unknown && wasm-bindgen ../../target/wasm32-unknown-unknown/debug/covalence_browser.wasm --out-dir generated --out-name nucleus --target web && cargo build --locked -p covalence-bin-cas-shell --target wasm32-wasip1 && cp ../../target/wasm32-wasip1/debug/covalence-cas-shell.wasm generated/shell.wasm",
+    "generate": "cargo build --locked -p covalence-browser --target wasm32-unknown-unknown && wasm-bindgen ../../target/wasm32-unknown-unknown/debug/covalence_browser.wasm --out-dir generated --out-name nucleus --target web && cargo build --locked --profile wasm-release -p covalence-bin-cas-shell --target wasm32-wasip1 && cp ../../target/wasm32-wasip1/wasm-release/covalence-cas-shell.wasm generated/shell.wasm",
     "transpile": "cargo component build --locked -p covalence-nucleus && jco transpile ../../target/wasm32-wasip1/debug/covalence_nucleus.wasm --out-dir component --name nucleus",
     "build": "pnpm run generate && tsc",
     "check": "tsc --noEmit",
