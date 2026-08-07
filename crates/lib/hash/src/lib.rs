@@ -7,24 +7,25 @@
 //! Their common fixed-width representation lets systems exchange and compose
 //! names while preserving the hierarchy that gives them meaning.
 
-use std::{
-    fmt,
-    hash::{Hash, Hasher},
-    marker::PhantomData,
-    str::FromStr,
-};
+use std::{fmt, hash::Hash, marker::PhantomData, str::FromStr};
 
 use covalence_lib_error::snafu;
 use snafu::Snafu;
 
 pub mod blake3;
 mod git;
+mod hasher;
 
 pub use blake3::{
     Blake3, Blake3Hash, COV, COV_ROOT, Cov, CtxKey, CtxKeyNamespace, Sha256, Sha256Hash,
 };
 pub use git::{Git, GitHash, Sha1};
+pub use hasher::{Hasher, HasherNamespace};
 
+#[cfg(feature = "blake3")]
+pub use blake3::Blake3Hasher;
+#[cfg(feature = "sha256")]
+pub use blake3::Sha256Hasher;
 #[cfg(feature = "git-sha1")]
 pub use git::{git_blob, git_object, sha1};
 
@@ -252,7 +253,7 @@ impl<N: Namespace> Ord for Obj<N> {
     }
 }
 impl<N: Namespace> Hash for Obj<N> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.bytes.hash(state);
     }
 }
@@ -744,6 +745,7 @@ macro_rules! assert_o256_path {
 #[cfg(test)]
 mod tests {
     use std::collections::hash_map::DefaultHasher;
+    use std::hash::Hasher as _;
     use std::rc::Rc;
 
     use super::*;
@@ -920,6 +922,47 @@ mod tests {
         let context: CtxKey = standard.coerce();
         assert_eq!(opaque_again.as_ref(), &[0xa5; 32]);
         assert_eq!(context.as_ref(), standard.as_ref());
+    }
+
+    #[cfg(feature = "blake3")]
+    #[test]
+    fn incremental_hashing_agrees_with_hashing_the_whole_input() {
+        fn absorbed<N: HasherNamespace>(chunks: &[&[u8]]) -> Obj<N> {
+            let mut hasher = N::hasher();
+            for chunk in chunks {
+                hasher.update(chunk);
+            }
+            hasher.finish()
+        }
+
+        let whole: &[u8] = b"the quick brown fox jumps over the lazy dog";
+        let expected = O256::from_bytes(whole);
+
+        // Any split of the input produces the same object.
+        assert_eq!(absorbed::<Cov>(&[whole]), expected);
+        assert_eq!(absorbed::<Cov>(&[&whole[..1], &whole[1..]]), expected);
+        assert_eq!(
+            absorbed::<Cov>(&[&whole[..10], &whole[10..30], &whole[30..]]),
+            expected
+        );
+        assert_eq!(absorbed::<Cov>(&[b"", whole, b""]), expected);
+
+        // The empty stream is the hash of the empty input.
+        assert_eq!(absorbed::<Cov>(&[]), O256::from_bytes([]));
+
+        // Finishing does not end the stream.
+        let mut hasher = Cov::hasher();
+        hasher.update(&whole[..10]);
+        let partial = hasher.finish();
+        assert_eq!(partial, O256::from_bytes(&whole[..10]));
+        hasher.update(&whole[10..]);
+        assert_eq!(hasher.finish(), expected);
+
+        // The namespace claim does not change the digest.
+        assert_eq!(absorbed::<Blake3>(&[whole]).into_o256(), expected);
+
+        #[cfg(feature = "sha256")]
+        assert_eq!(absorbed::<Sha256>(&[whole]), Sha256::hash(whole));
     }
 
     #[test]

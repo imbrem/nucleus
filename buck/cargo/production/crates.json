@@ -28,6 +28,12 @@
           "kinds": [
             "lib"
           ]
+        },
+        {
+          "name": "untrusted",
+          "kinds": [
+            "test"
+          ]
         }
       ]
     },

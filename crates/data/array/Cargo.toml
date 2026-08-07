@@ -7,6 +7,11 @@ license.workspace = true
 description = "Flat hash arrays, sets, and index maps in CAS normal form"
 publish = false
 
+[features]
+default = ["blake3"]
+blake3 = ["covalence-lib-hash/blake3"]
+sha256 = ["covalence-lib-hash/sha256"]
+
 [dependencies]
 covalence-lib-error = { path = "../../lib/error" }
 covalence-lib-hash = { path = "../../lib/hash", default-features = false }
