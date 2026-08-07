@@ -144,6 +144,9 @@ pub struct Connection {
     handle: Rc<Handle>,
 }
 
+#[cfg(not(any(target_arch = "wasm32")))]
+unsafe impl Send for Connection {}
+
 impl Connection {
     /// Opens a private, temporary in-memory database.
     ///

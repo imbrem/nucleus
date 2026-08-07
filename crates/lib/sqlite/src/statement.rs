@@ -6,7 +6,6 @@
 )]
 //! Prepared statements.
 
-use std::cell::Cell;
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::fmt;
 use std::ptr::{self, NonNull};
@@ -41,7 +40,7 @@ pub struct Statement {
     /// Null once the statement has been finalized. `sqlite3_finalize` on a null
     /// pointer is a documented no-op, which is what makes [`Statement::finalize`]
     /// and [`Drop`] able to share one path without an extra flag.
-    raw: Cell<*mut ffi::sqlite3_stmt>,
+    raw: *mut ffi::sqlite3_stmt,
     handle: Rc<Handle>,
 }
 
@@ -54,7 +53,7 @@ impl Statement {
     /// `handle`, and ownership of it must be transferred to the new value.
     pub(crate) unsafe fn from_raw(raw: NonNull<ffi::sqlite3_stmt>, handle: Rc<Handle>) -> Self {
         Self {
-            raw: Cell::new(raw.as_ptr()),
+            raw: raw.as_ptr(),
             handle,
         }
     }
@@ -62,7 +61,7 @@ impl Statement {
     /// Returns the raw statement pointer, or null once finalized.
     #[must_use]
     pub fn as_ptr(&self) -> *mut ffi::sqlite3_stmt {
-        self.raw.get()
+        self.raw
     }
 
     /// Returns the connection this statement was prepared against.
@@ -82,7 +81,7 @@ impl Statement {
         // SAFETY: the statement is live, and `sqlite3_sql` returns either null
         // or a NUL-terminated string owned by the statement and valid for as
         // long as the statement is.
-        let text = unsafe { ffi::sqlite3_sql(self.raw.get()) };
+        let text = unsafe { ffi::sqlite3_sql(self.raw) };
         if text.is_null() {
             return None;
         }
@@ -116,7 +115,7 @@ impl Statement {
     #[must_use]
     pub fn parameter_count(&self) -> c_int {
         // SAFETY: the statement is live.
-        unsafe { ffi::sqlite3_bind_parameter_count(self.raw.get()) }
+        unsafe { ffi::sqlite3_bind_parameter_count(self.raw) }
     }
 
     /// Returns the one-based index of a named parameter, if it has one.
@@ -125,7 +124,7 @@ impl Statement {
         let name = CString::new(name).ok()?;
         // SAFETY: the statement is live and `name` is NUL-terminated and
         // outlives the call.
-        let index = unsafe { ffi::sqlite3_bind_parameter_index(self.raw.get(), name.as_ptr()) };
+        let index = unsafe { ffi::sqlite3_bind_parameter_index(self.raw, name.as_ptr()) };
         (index != 0).then_some(index)
     }
 
@@ -139,7 +138,7 @@ impl Statement {
         self.usable()?;
         // SAFETY: the statement is live; an out-of-range index is reported as
         // SQLITE_RANGE rather than being undefined.
-        self.check(unsafe { ffi::sqlite3_bind_null(self.raw.get(), index) })
+        self.check(unsafe { ffi::sqlite3_bind_null(self.raw, index) })
     }
 
     /// Binds an integer to the one-based parameter `index`.
@@ -151,7 +150,7 @@ impl Statement {
     pub fn bind_integer(&mut self, index: c_int, value: i64) -> Result<(), Error> {
         self.usable()?;
         // SAFETY: as in `bind_null`.
-        self.check(unsafe { ffi::sqlite3_bind_int64(self.raw.get(), index, value) })
+        self.check(unsafe { ffi::sqlite3_bind_int64(self.raw, index, value) })
     }
 
     /// Binds a float to the one-based parameter `index`.
@@ -163,7 +162,7 @@ impl Statement {
     pub fn bind_real(&mut self, index: c_int, value: f64) -> Result<(), Error> {
         self.usable()?;
         // SAFETY: as in `bind_null`.
-        self.check(unsafe { ffi::sqlite3_bind_double(self.raw.get(), index, value) })
+        self.check(unsafe { ffi::sqlite3_bind_double(self.raw, index, value) })
     }
 
     /// Binds UTF-8 text to the one-based parameter `index`.
@@ -181,7 +180,7 @@ impl Statement {
         // borrow does not outlive the call.
         self.check(unsafe {
             ffi::sqlite3_bind_text64(
-                self.raw.get(),
+                self.raw,
                 index,
                 value.as_ptr().cast::<c_char>(),
                 value.len() as u64,
@@ -206,7 +205,7 @@ impl Statement {
         // zero.
         self.check(unsafe {
             ffi::sqlite3_bind_blob64(
-                self.raw.get(),
+                self.raw,
                 index,
                 value.as_ptr().cast::<c_void>(),
                 value.len() as u64,
@@ -248,7 +247,7 @@ impl Statement {
     pub fn step(&mut self) -> Result<Step, Error> {
         self.usable()?;
         // SAFETY: the statement is live and belongs to an open connection.
-        let code = ResultCode::new(unsafe { ffi::sqlite3_step(self.raw.get()) });
+        let code = ResultCode::new(unsafe { ffi::sqlite3_step(self.raw) });
         match code {
             ResultCode::ROW => Ok(Step::Row),
             ResultCode::DONE => Ok(Step::Done),
@@ -264,21 +263,21 @@ impl Statement {
     pub fn reset(&mut self) -> Result<(), Error> {
         self.usable()?;
         // SAFETY: the statement is live.
-        self.check(unsafe { ffi::sqlite3_reset(self.raw.get()) })
+        self.check(unsafe { ffi::sqlite3_reset(self.raw) })
     }
 
     /// Sets every parameter back to `NULL`.
     pub fn clear_bindings(&mut self) {
         // SAFETY: the statement is live. `sqlite3_clear_bindings` cannot fail in
         // any way a caller can act on.
-        unsafe { ffi::sqlite3_clear_bindings(self.raw.get()) };
+        unsafe { ffi::sqlite3_clear_bindings(self.raw) };
     }
 
     /// Returns the number of columns the statement produces.
     #[must_use]
     pub fn column_count(&self) -> c_int {
         // SAFETY: the statement is live.
-        unsafe { ffi::sqlite3_column_count(self.raw.get()) }
+        unsafe { ffi::sqlite3_column_count(self.raw) }
     }
 
     /// Returns the name assigned to a zero-based output column.
@@ -286,7 +285,7 @@ impl Statement {
     pub fn column_name(&self, index: c_int) -> Option<&str> {
         // SAFETY: the statement is live. The returned string is owned by the
         // statement and outlives the borrow of `self`.
-        let name = unsafe { ffi::sqlite3_column_name(self.raw.get(), index) };
+        let name = unsafe { ffi::sqlite3_column_name(self.raw, index) };
         if name.is_null() {
             return None;
         }
@@ -301,7 +300,7 @@ impl Statement {
     #[must_use]
     pub fn column_type(&self, index: c_int) -> ValueType {
         // SAFETY: the statement is live.
-        let code = unsafe { ffi::sqlite3_column_type(self.raw.get(), index) };
+        let code = unsafe { ffi::sqlite3_column_type(self.raw, index) };
         ValueType::from_raw(code).unwrap_or(ValueType::Null)
     }
 
@@ -313,7 +312,7 @@ impl Statement {
     /// asked to convert a value and never invalidates a pointer this returned.
     #[must_use]
     pub fn column(&self, index: c_int) -> ValueRef<'_> {
-        let raw = self.raw.get();
+        let raw = self.raw;
         match self.column_type(index) {
             ValueType::Null => ValueRef::Null,
             // SAFETY: the statement is live and the column holds an integer, so
@@ -371,25 +370,22 @@ impl Statement {
     /// Returns the error the most recent execution of this statement ended
     /// with, if any.
     pub fn finalize(self) -> Result<(), Error> {
-        let raw = self.raw.replace(ptr::null_mut());
-        // SAFETY: `raw` is a live statement that this value owned, and taking it
-        // out leaves null behind so the `Drop` below is a no-op.
+        let raw = self.raw;
+        let handle = self.handle.clone();
+        std::mem::forget(self);
         let code = ResultCode::new(unsafe { ffi::sqlite3_finalize(raw) });
         if code.is_ok() {
             Ok(())
         } else {
-            Err(self.handle.error(code))
+            Err(handle.error(code))
         }
     }
 }
 
 impl Drop for Statement {
     fn drop(&mut self) {
-        // SAFETY: `raw` is either a live statement owned by this value or null,
-        // and `sqlite3_finalize(NULL)` is a documented no-op. Finalizing is
-        // valid even when the connection has already been closed: that is the
-        // point of `sqlite3_close_v2`'s zombie state.
-        unsafe { ffi::sqlite3_finalize(self.raw.get()) };
+        // SAFETY: same as before; pointer is either live or null.
+        unsafe { ffi::sqlite3_finalize(self.raw) };
     }
 }
 
@@ -401,6 +397,9 @@ impl fmt::Debug for Statement {
             .finish()
     }
 }
+
+#[cfg(not(any(target_arch = "wasm32")))]
+unsafe impl Send for Statement {}
 
 #[cfg(test)]
 mod tests {
