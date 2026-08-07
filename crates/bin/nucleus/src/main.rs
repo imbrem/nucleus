@@ -7,6 +7,17 @@
 //!
 //! There is no SQL at this prompt. `(sqlite)` is not a fallback for a missing
 //! feature: it hands you the real thing.
+//!
+//! # The same binary, compiled for WASI
+//!
+//! Built for `wasm32-wasip1` this *is* the REPL — same session, same forms,
+//! same output — but a guest cannot open a socket or spawn a process, so
+//! fetching and running the shell become imports the embedder supplies. The
+//! two `#[cfg]` pairs below are the whole difference.
+
+/// The capabilities a WASI guest cannot supply for itself.
+#[cfg(target_os = "wasi")]
+mod host;
 
 #[cfg(not(target_os = "wasi"))]
 use std::fs::File;
@@ -14,8 +25,6 @@ use std::io::{self, Read, Write};
 #[cfg(not(target_os = "wasi"))]
 use std::os::fd::AsFd;
 
-#[cfg(unix)]
-use covalence_repl::shell;
 use covalence_repl::{Response, Session};
 
 fn main() -> std::process::ExitCode {
@@ -53,7 +62,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
 
-        // A command failing is ordinary. Report it and keep the prompt.
+        // A form failing is ordinary. Report it and keep the prompt.
         match step(&mut session, &line, &mut stdout) {
             Ok(true) => return Ok(()),
             Ok(false) => {}
@@ -134,28 +143,52 @@ fn step(
             let bytes = fetch(&url)?;
             writeln!(out, "{}", session.admit_verified(address, bytes)?)?;
         }
-        Response::Shell(arguments) => {
-            #[cfg(not(unix))]
-            let _ = arguments;
-            #[cfg(not(unix))]
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "the SQLite subprocess shell is unavailable on this platform",
-            )
-            .into());
-
-            // The shell inherits this terminal, so a bare `(sqlite)` is a real
-            // sqlite3 owning the screen until the user leaves it -- which is
-            // what running a shell means.
-            #[cfg(unix)]
-            let status = shell::run(session.store(), &arguments)?;
-            #[cfg(unix)]
-            if status != 0 {
-                writeln!(out, "shell exited with status {status}")?;
-            }
-        }
+        Response::Shell(arguments) => run_shell(session, &arguments, out)?,
     }
     Ok(false)
+}
+
+/// Runs the shell, in whatever way this host can.
+///
+/// Natively that is a subprocess over a Unix socket, sharing this terminal —
+/// which is what makes a bare `(sqlite)` an interactive `sqlite3` that owns
+/// the screen until you leave it. Under WASI it is an import, because a guest
+/// cannot spawn anything: the embedder runs the shell module and hands back
+/// what it printed.
+#[cfg(unix)]
+fn run_shell(
+    session: &Session,
+    arguments: &[String],
+    out: &mut impl Write,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let status = covalence_repl::shell::run(session.store(), arguments)?;
+    if status != 0 {
+        writeln!(out, "shell exited with status {status}")?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "wasi")]
+fn run_shell(
+    _session: &Session,
+    arguments: &[String],
+    out: &mut impl Write,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (output, status) = host::shell(arguments)?;
+    let output = output.trim_end();
+    if !output.is_empty() {
+        writeln!(out, "{output}")?;
+    }
+    if status != 0 {
+        writeln!(out, "shell exited with status {status}")?;
+    }
+    Ok(())
+}
+
+/// Fetches a URL through the host.
+#[cfg(target_os = "wasi")]
+fn fetch(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    Ok(host::fetch(url)?)
 }
 
 /// Fetches a URL with `curl`.
@@ -164,6 +197,7 @@ fn step(
 /// async runtime out of the binary that owns the store. The bytes are
 /// untrusted either way — they are checked against their address before being
 /// admitted — so what fetches them is a dependency question, not a trust one.
+#[cfg(unix)]
 fn fetch(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let output = std::process::Command::new("curl")
         .args(["--silent", "--show-error", "--fail", "--location", url])

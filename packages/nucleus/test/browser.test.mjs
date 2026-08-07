@@ -295,3 +295,51 @@ test("the shell in the browser has no filesystem to reach", async (context) => {
   // Its databases arrive by address or not at all.
   assert.match(result.output, /exited with status/);
 });
+
+test("the shell runs in a process of its own", async (context) => {
+  const origin = await servePackage(context);
+  const page = await openPage(context, origin);
+  const database = await readFile(fixture);
+
+  const result = await page.evaluate(async (bytes) => {
+    const { Repl, drive, host, canSpawn } = window.nucleus;
+    const repl = new Repl();
+    const address = repl.admit(new Uint8Array(bytes));
+
+    // The worker path is only available on a cross-origin-isolated page,
+    // which is why the demo server sets COOP and COEP.
+    const spawned = canSpawn();
+    const run = await drive(repl, host, `(sqlite ${address} "-batch" ".schema")`);
+
+    // The REPL is still answering, which is the point of the shell not
+    // sharing this instance.
+    const after = await drive(repl, host, "(stats)");
+    return { isolated: globalThis.crossOriginIsolated, spawned, run, after };
+  }, Array.from(database));
+
+  assert.equal(result.isolated, true, "the test server must isolate the page");
+  assert.equal(result.spawned, true, "the shell must run in its own worker");
+  assert.match(result.run.output, /CREATE TABLE adder/);
+  assert.match(result.after.output, /\(objects 1\)/);
+});
+
+test("the shell still runs inline where a worker is not available", async (context) => {
+  const origin = await servePackage(context);
+  const page = await openPage(context, origin);
+  const database = await readFile(fixture);
+
+  const result = await page.evaluate(async (bytes) => {
+    const { Repl, drive, host } = window.nucleus;
+    const repl = new Repl();
+    const address = repl.admit(new Uint8Array(bytes));
+    // A host without cross-origin isolation takes this path; forcing it here
+    // keeps the fallback honest rather than merely present.
+    return await drive(
+      repl,
+      { ...host, inline: true },
+      `(sqlite ${address} "-batch" ".schema")`,
+    );
+  }, Array.from(database));
+
+  assert.match(result.output, /CREATE TABLE adder/);
+});
