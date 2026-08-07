@@ -1,9 +1,11 @@
 import init, { Repl, Step } from "../generated/nucleus.js";
+import { canSpawn, spawnShell } from "./shell-process.js";
 import { runShell } from "./wasi.js";
 
-export { init, Repl, runShell };
+export { init, Repl, runShell, spawnShell, canSpawn };
 export type { Step };
 export type { ShellOptions, ShellResult } from "./wasi.js";
+import type { ShellResult } from "./wasi.js";
 
 /** What a driven line produced. */
 export interface Line {
@@ -17,6 +19,15 @@ export interface Line {
 export interface Host {
   /** The shell wasm, for `(sqlite …)`. */
   shell: () => BufferSource | Response | Promise<Response>;
+  /**
+   * Run the shell in this instance rather than a worker of its own.
+   *
+   * The default is a separate process, which is what the native binary does
+   * and what keeps a slow shell from freezing the REPL. Inline exists for
+   * hosts without cross-origin isolation, where there is no
+   * `SharedArrayBuffer` and therefore no way for the guest to block.
+   */
+  inline?: boolean;
 }
 
 /**
@@ -59,9 +70,7 @@ export async function drive(
 
     case "shell":
       try {
-        const result = await runShell(repl, host.shell(), {
-          args: step.arguments,
-        });
+        const result = await runTheShell(repl, host, step.arguments);
         const trailer =
           result.status === 0 ? "" : `\nshell exited with status ${result.status}`;
         return {
@@ -75,6 +84,37 @@ export async function drive(
     default:
       return { output: step.text, quit: false };
   }
+}
+
+/**
+ * Runs the shell, in its own process where that is possible.
+ *
+ * A worker needs the wasm as bytes rather than a response, because it is
+ * transferred rather than streamed.
+ */
+async function runTheShell(
+  repl: Repl,
+  host: Host,
+  args: string[],
+): Promise<ShellResult> {
+  if (host.inline || !canSpawn()) {
+    return await runShell(repl, host.shell(), { args });
+  }
+  const source = host.shell();
+  const wasm =
+    source instanceof Response || source instanceof Promise
+      ? await (await source).arrayBuffer()
+      : toArrayBuffer(source);
+  return await spawnShell(repl, wasm, { args });
+}
+
+function toArrayBuffer(source: BufferSource): ArrayBuffer {
+  return source instanceof ArrayBuffer
+    ? source
+    : (source.buffer.slice(
+        source.byteOffset,
+        source.byteOffset + source.byteLength,
+      ) as ArrayBuffer);
 }
 
 function messageOf(error: unknown): string {
