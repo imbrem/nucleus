@@ -468,6 +468,26 @@ impl<N: Namespace> HashArray<N> {
         })
     }
 
+    /// Collects `values` into canonical set form: ascending and distinct.
+    #[must_use]
+    pub fn from_set(values: impl IntoIterator<Item = Obj<N>>) -> Self {
+        let mut array: Self = values.into_iter().collect();
+        array.sort_dedup();
+        array
+    }
+
+    /// Collects `entries` into canonical map form: ascending by key.
+    ///
+    /// Entries are not deduplicated, and entries sharing a key keep their
+    /// relative order. A canonical map has distinct keys, which
+    /// [`FlatIndexMap::is_strictly_sorted_by_key`] checks.
+    #[must_use]
+    pub fn from_map(entries: impl IntoIterator<Item = (Obj<N>, Obj<N>)>) -> Self {
+        let mut entries: Vec<_> = entries.into_iter().collect();
+        entries.sort_by_key(|(key, _)| *key);
+        entries.into_iter().collect()
+    }
+
     /// Creates an empty array with room for `elements` elements.
     #[must_use]
     pub fn with_capacity(elements: usize) -> Self {

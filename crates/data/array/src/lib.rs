@@ -30,13 +30,22 @@
 //!
 //! # Addressing
 //!
-//! This crate defines normal form only; it computes no hashes and depends on
-//! no hash algorithm. An array's address is the store's hash of
-//! [`Hashes::as_bytes`], taken by whichever layer owns that decision.
+//! [`Canonical`] gives a value one normal form, and with it one address. It is
+//! generic over the hasher, so this crate names no algorithm: `address::<A>()`
+//! works in whichever namespace the caller asks for. Because a normal form is
+//! a bare concatenation, the elements are absorbed as they are written and the
+//! array itself is never built.
+//!
+//! That is what makes an untrusted store usable. Ask it for an array by
+//! address; let it answer in whatever representation it keeps, however dense;
+//! parse that into a value; then check the value re-derives the address that
+//! was asked for. See the `untrusted` integration test for the round trip.
 //!
 //! ```
-//! use covalence_data_array::{HashArray, Hashes};
-//! use covalence_lib_hash::O256;
+//! use std::collections::BTreeSet;
+//!
+//! use covalence_data_array::{Canonical, HashArray, Hashes};
+//! use covalence_lib_hash::{Cov, O256};
 //!
 //! // Build an array, then put it in canonical set form.
 //! let mut array: HashArray = [3, 1, 3, 2]
@@ -52,15 +61,21 @@
 //! let set = hashes.flat_set()?;
 //! assert!(set.contains(&O256::from_array([2; 32])));
 //! assert!(!set.contains(&O256::from_array([9; 32])));
+//!
+//! // Any representation of those elements addresses identically.
+//! let elsewhere: BTreeSet<O256> = [1, 2, 3].map(|b| O256::from_array([b; 32])).into();
+//! assert_eq!(elsewhere.address::<Cov>(), array.address::<Cov>());
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
 #![deny(unsafe_code)]
 
+mod canonical;
 mod map;
 mod seq;
 mod set;
 
+pub use canonical::{Canonical, HashSink, Sink};
 pub use map::{Entries, FlatIndexMap, ParityError};
 pub use seq::{HashArray, Hashes, Iter, WidthError, width};
 pub use set::{FlatSet, OrderError};

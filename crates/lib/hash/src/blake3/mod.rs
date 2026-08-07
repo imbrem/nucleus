@@ -129,6 +129,85 @@ impl HashNamespace for Blake3 {
     }
 }
 
+/// An incremental BLAKE3 hasher producing objects in namespace `N`.
+///
+/// The namespace is a claim about where the digest is used, not about how it
+/// is computed: every instantiation absorbs and finalizes identically.
+#[cfg(feature = "blake3")]
+pub struct Blake3Hasher<N = Cov> {
+    inner: ::blake3::Hasher,
+    namespace: std::marker::PhantomData<fn(N) -> N>,
+}
+
+#[cfg(feature = "blake3")]
+impl<N> Blake3Hasher<N> {
+    /// Creates a hasher that has absorbed nothing.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            inner: ::blake3::Hasher::new(),
+            namespace: std::marker::PhantomData,
+        }
+    }
+}
+
+#[cfg(feature = "blake3")]
+impl<N> Default for Blake3Hasher<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(feature = "blake3")]
+impl<N> Clone for Blake3Hasher<N> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            namespace: std::marker::PhantomData,
+        }
+    }
+}
+
+#[cfg(feature = "blake3")]
+impl<N> std::fmt::Debug for Blake3Hasher<N> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Blake3Hasher")
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(feature = "blake3")]
+impl<N: Namespace<Bytes = [u8; 32]>> crate::Hasher for Blake3Hasher<N> {
+    type Namespace = N;
+
+    fn update(&mut self, bytes: &[u8]) {
+        self.inner.update(bytes);
+    }
+
+    fn finish(&self) -> Obj<N> {
+        Obj::from_array(*self.inner.finalize().as_bytes())
+    }
+}
+
+#[cfg(feature = "blake3")]
+impl crate::HasherNamespace for Blake3 {
+    type Hasher = Blake3Hasher<Self>;
+
+    fn hasher() -> Self::Hasher {
+        Blake3Hasher::new()
+    }
+}
+
+#[cfg(feature = "blake3")]
+impl crate::HasherNamespace for Cov {
+    type Hasher = Blake3Hasher<Self>;
+
+    fn hasher() -> Self::Hasher {
+        Blake3Hasher::new()
+    }
+}
+
 impl Obj<Blake3> {
     /// Embeds this BLAKE3 digest into the Covalence namespace.
     ///
@@ -261,6 +340,55 @@ impl HashNamespace for Sha256 {
             hasher.update(&buffer[..count]);
         }
         Ok(Obj::from_array(hasher.finalize().into()))
+    }
+}
+
+/// An incremental SHA-256 hasher.
+#[cfg(feature = "sha256")]
+#[derive(Clone, Default)]
+pub struct Sha256Hasher {
+    inner: sha2::Sha256,
+}
+
+#[cfg(feature = "sha256")]
+impl Sha256Hasher {
+    /// Creates a hasher that has absorbed nothing.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[cfg(feature = "sha256")]
+impl std::fmt::Debug for Sha256Hasher {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Sha256Hasher")
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(feature = "sha256")]
+impl crate::Hasher for Sha256Hasher {
+    type Namespace = Sha256;
+
+    fn update(&mut self, bytes: &[u8]) {
+        use sha2::Digest;
+        self.inner.update(bytes);
+    }
+
+    fn finish(&self) -> Sha256Hash {
+        use sha2::Digest;
+        Obj::from_array(self.inner.clone().finalize().into())
+    }
+}
+
+#[cfg(feature = "sha256")]
+impl crate::HasherNamespace for Sha256 {
+    type Hasher = Sha256Hasher;
+
+    fn hasher() -> Self::Hasher {
+        Sha256Hasher::new()
     }
 }
 
