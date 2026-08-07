@@ -1,7 +1,7 @@
 #![allow(unsafe_code)]
 //! Process-global registry for Rust [`Vfs`] implementations.
 
-use std::ffi::{CString, c_int, c_void};
+use std::ffi::{CStr, CString, c_int, c_void};
 use std::fmt;
 use std::num::NonZeroUsize;
 use std::ptr;
@@ -40,6 +40,16 @@ impl VfsName {
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.text
+    }
+
+    /// Returns the name in the form `SQLite` takes it.
+    ///
+    /// This is the same bytes as [`as_str`](Self::as_str), NUL-terminated. It
+    /// exists so selecting a VFS -- `Connection::open_with_flags` -- needs no
+    /// allocation and no fallible conversion: validation already happened.
+    #[must_use]
+    pub fn as_c_str(&self) -> &CStr {
+        &self.ffi
     }
 }
 
@@ -277,14 +287,13 @@ pub trait ConnectionVfsExt {
     ///
     /// # Errors
     ///
-    /// Returns an error if `database` is invalid, `SQLite` rejects the file
-    /// control, or `SQLite` returns a null pointer.
-    fn database_vfs(&self, database: &str) -> Result<VfsIdentity, VfsIdentityError>;
+    /// Returns an error if `SQLite` rejects the file control or returns a null
+    /// pointer.
+    fn database_vfs(&self, database: &CStr) -> Result<VfsIdentity, VfsIdentityError>;
 }
 
 impl ConnectionVfsExt for crate::Connection {
-    fn database_vfs(&self, database: &str) -> Result<VfsIdentity, VfsIdentityError> {
-        let database = CString::new(database).map_err(|_| VfsIdentityError::InvalidDatabaseName)?;
+    fn database_vfs(&self, database: &CStr) -> Result<VfsIdentity, VfsIdentityError> {
         let mut pointer = ptr::null_mut::<crate::ffi::sqlite3_vfs>();
         // SAFETY: `self.as_ptr()` is used only for the duration of this call;
         // `database` is NUL-terminated; and the fourth argument points to the
@@ -310,7 +319,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use crate::{Connection, OpenFlags, Step};
+    use crate::{Connection, OpenFlags, Statement, Step};
 
     use super::*;
     use crate::vfs::ReadOnlyVfs;
@@ -319,7 +328,7 @@ mod tests {
 
     /// Runs a statement expected to return one integer.
     fn scalar(connection: &Connection, sql: &str) -> i64 {
-        let mut statement = connection.prepare(sql).unwrap();
+        let mut statement = Statement::prepare(connection, sql).expect("compile");
         assert_eq!(statement.step().unwrap(), Step::Row);
         statement.column(0).as_integer().unwrap()
     }
@@ -353,10 +362,13 @@ mod tests {
         std::fs::create_dir_all(&temporary).unwrap();
         let path = temporary.join(format!("{}.sqlite", unique_name()));
         {
-            let connection = Connection::open(path.to_str().unwrap()).unwrap();
-            connection
-                .execute_batch("CREATE TABLE value (n INTEGER); INSERT INTO value VALUES (42);")
-                .unwrap();
+            let path = CString::new(path.to_str().unwrap()).unwrap();
+            let connection = Connection::open(&path).unwrap();
+            Statement::execute_batch(
+                &connection,
+                "CREATE TABLE value (n INTEGER); INSERT INTO value VALUES (42);",
+            )
+            .expect("populate");
         }
         let bytes = std::fs::read(&path).unwrap();
         std::fs::remove_file(&path).unwrap();
@@ -370,14 +382,15 @@ mod tests {
         let registered =
             unsafe { register(&unique_name(), ReadOnlyVfs::new(files), false) }.unwrap();
 
+        let path = CString::new(logical_path).unwrap();
         let connection = Connection::open_with_flags(
-            logical_path,
+            &path,
             OpenFlags::READ_ONLY,
-            Some(registered.name().as_str()),
+            Some(registered.name().as_c_str()),
         )
         .unwrap();
         assert_eq!(
-            connection.database_vfs("main").unwrap(),
+            connection.database_vfs(c"main").unwrap(),
             registered.identity()
         );
         assert_eq!(scalar(&connection, "SELECT n FROM value"), 42);
@@ -413,10 +426,13 @@ mod tests {
         std::fs::create_dir_all(&temporary).unwrap();
         let path = temporary.join(format!("{}.sqlite", unique_name()));
         {
-            let connection = Connection::open(path.to_str().unwrap()).unwrap();
-            connection
-                .execute_batch("CREATE TABLE value (n INTEGER); INSERT INTO value VALUES (42);")
-                .unwrap();
+            let path = CString::new(path.to_str().unwrap()).unwrap();
+            let connection = Connection::open(&path).unwrap();
+            Statement::execute_batch(
+                &connection,
+                "CREATE TABLE value (n INTEGER); INSERT INTO value VALUES (42);",
+            )
+            .expect("populate");
         }
         let bytes = std::fs::read(&path).unwrap();
         std::fs::remove_file(&path).unwrap();
@@ -433,27 +449,26 @@ mod tests {
         );
         let connection = Connection::open_in_memory().unwrap();
         {
-            let mut statement = connection
-                .prepare("ATTACH DATABASE ?1 AS imported")
-                .unwrap();
+            let mut statement =
+                Statement::prepare(&connection, "ATTACH DATABASE ?1 AS imported").expect("compile");
             statement.bind_text(1, &uri).unwrap();
             statement.step().unwrap();
         }
 
         assert_eq!(
-            connection.database_vfs("imported").unwrap(),
+            connection.database_vfs(c"imported").unwrap(),
             registered.identity()
         );
         assert_ne!(
-            connection.database_vfs("main").unwrap(),
+            connection.database_vfs(c"main").unwrap(),
             registered.identity()
         );
 
         assert_eq!(scalar(&connection, "SELECT n FROM imported.value"), 42);
-        assert!(
-            connection
-                .execute_batch("INSERT INTO imported.value VALUES (7)")
-                .is_err()
-        );
+        // Immutable means immutable: the write is refused rather than applied
+        // to a copy no one would ever see again.
+        let mut insert = Statement::prepare(&connection, "INSERT INTO imported.value VALUES (7)")
+            .expect("compile");
+        assert!(insert.step().is_err());
     }
 }

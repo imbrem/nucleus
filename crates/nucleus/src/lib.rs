@@ -31,13 +31,14 @@ pub fn smoke() -> u32 {
 }
 
 fn sqlite_smoke() -> covalence_lib_sqlite::Result<u32> {
-    use covalence_lib_sqlite::Step;
+    use covalence_lib_sqlite::{Statement, Step};
 
     let connection = covalence_lib_sqlite::Connection::open_in_memory()?;
-    connection.execute_batch(
+    Statement::execute_batch(
+        &connection,
         "CREATE TABLE smoke (value INTEGER NOT NULL); INSERT INTO smoke VALUES (42);",
     )?;
-    let mut statement = connection.prepare("SELECT value FROM smoke")?;
+    let mut statement = Statement::prepare(&connection, "SELECT value FROM smoke")?;
     if statement.step()? == Step::Row
         && let Some(value) = statement.column(0).as_integer()
     {

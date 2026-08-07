@@ -1,6 +1,6 @@
 //! The opinionated layer over [`covalence_lib_sqlite`].
 //!
-//! `lib/sqlite` hides unsafety and nothing else: it exposes `prepare`, `bind`,
+//! `lib/sqlite` hides unsafety and little else: it exposes `prepare`, `bind`,
 //! `step`, `column` with the same names and argument order as the C API. That
 //! is the right shape for an auditable boundary and the wrong shape for
 //! everyday use — three lines of ceremony to read one integer gets old fast,
@@ -12,6 +12,8 @@
 //! no statement cache, no reflection, no trait-object rows. When a query needs
 //! something not here, the answer is to write it here or to drop to the raw
 //! API, not to reach for a general binding.
+
+use std::ffi::CString;
 
 use covalence_lib_sqlite::{Connection, Error, ResultCode, Statement, Step, ValueRef};
 
@@ -59,6 +61,21 @@ impl<T: Into<Self> + Copy> From<Option<T>> for Param<'_> {
     }
 }
 
+/// Copies `text` into a NUL-terminated C string.
+///
+/// `SQLite` names schemas, paths and VFSes with `char *`, so the conversion has
+/// to happen somewhere. It happens here rather than in `lib/sqlite` because
+/// what to do about an interior NUL is a policy question, and this is where the
+/// policy lives: refuse it.
+///
+/// # Errors
+///
+/// Returns `SQLITE_MISUSE` when `text` contains a NUL byte.
+pub fn c_string(text: &str) -> Result<CString, Error> {
+    CString::new(text)
+        .map_err(|_| Error::with_message(ResultCode::MISUSE, "string contains a NUL byte"))
+}
+
 /// Binds `params` to `statement` in order, starting at parameter 1.
 ///
 /// # Errors
@@ -97,7 +114,7 @@ pub fn bind_all(statement: &mut Statement, params: &[Param<'_>]) -> Result<(), E
 /// Returns an error when the statement does not compile, the parameters do not
 /// match, or execution fails.
 pub fn execute(connection: &Connection, sql: &str, params: &[Param<'_>]) -> Result<i64, Error> {
-    let mut statement = connection.prepare(sql)?;
+    let mut statement = Statement::prepare(connection, sql)?;
     bind_all(&mut statement, params)?;
     while statement.step()? == Step::Row {
         // A statement used for its effect may still return rows; drain them
@@ -122,7 +139,7 @@ pub fn query_row<T>(
     params: &[Param<'_>],
     map: impl FnOnce(&Row<'_>) -> Result<T, Error>,
 ) -> Result<Option<T>, Error> {
-    let mut statement = connection.prepare(sql)?;
+    let mut statement = Statement::prepare(connection, sql)?;
     bind_all(&mut statement, params)?;
     if statement.step()? == Step::Done {
         return Ok(None);
@@ -145,7 +162,7 @@ pub fn query_all<T>(
     params: &[Param<'_>],
     mut map: impl FnMut(&Row<'_>) -> Result<T, Error>,
 ) -> Result<Vec<T>, Error> {
-    let mut statement = connection.prepare(sql)?;
+    let mut statement = Statement::prepare(connection, sql)?;
     bind_all(&mut statement, params)?;
     let mut rows = Vec::new();
     while statement.step()? == Step::Row {
@@ -269,7 +286,7 @@ impl<'a> Transaction<'a> {
     /// Returns an error when `BEGIN` fails, which includes a transaction
     /// already being open on this connection.
     pub fn begin(connection: &'a Connection) -> Result<Self, Error> {
-        connection.execute_batch("BEGIN")?;
+        Statement::execute_batch(connection, "BEGIN")?;
         Ok(Self {
             connection,
             finished: false,
@@ -291,7 +308,7 @@ impl<'a> Transaction<'a> {
     /// rolling back afterwards would be a second, wrong decision.
     pub fn commit(mut self) -> Result<(), Error> {
         self.finished = true;
-        self.connection.execute_batch("COMMIT")
+        Statement::execute_batch(self.connection, "COMMIT")
     }
 
     /// Rolls back explicitly.
@@ -301,7 +318,7 @@ impl<'a> Transaction<'a> {
     /// Returns an error when `ROLLBACK` fails.
     pub fn rollback(mut self) -> Result<(), Error> {
         self.finished = true;
-        self.connection.execute_batch("ROLLBACK")
+        Statement::execute_batch(self.connection, "ROLLBACK")
     }
 }
 
@@ -310,7 +327,7 @@ impl Drop for Transaction<'_> {
         if !self.finished {
             // Nothing useful to do with a failure here: we are already
             // unwinding or returning, and the connection reports its own state.
-            let _ = self.connection.execute_batch("ROLLBACK");
+            let _ = Statement::execute_batch(self.connection, "ROLLBACK");
         }
     }
 }
@@ -321,9 +338,11 @@ mod tests {
 
     fn connection() -> Connection {
         let connection = Connection::open_in_memory().unwrap();
-        connection
-            .execute_batch("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT, data BLOB)")
-            .unwrap();
+        Statement::execute_batch(
+            &connection,
+            "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT, data BLOB)",
+        )
+        .unwrap();
         connection
     }
 

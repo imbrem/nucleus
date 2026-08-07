@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use covalence_lib_error::snafu::{ResultExt, Snafu};
-use covalence_lib_sqlite as sqlite;
+use covalence_lib_sqlite::{self as sqlite, Statement};
 
 use crate::sql::{self, Param, Transaction};
 
@@ -46,7 +46,8 @@ impl Connection {
         let path = path.to_str().ok_or_else(|| ConnectionError::NonUtf8Path {
             path: path.to_owned(),
         })?;
-        let sqlite = sqlite::Connection::open(path).context(OpenSnafu)?;
+        let path = sql::c_string(path).context(OpenSnafu)?;
+        let sqlite = sqlite::Connection::open(&path).context(OpenSnafu)?;
         Self::from_sqlite(sqlite)
     }
 
@@ -128,9 +129,7 @@ pub enum ConnectionError {
 fn initialize(connection: &mut sqlite::Connection) -> Result<(), ConnectionError> {
     let transaction = Transaction::begin(connection).context(InitializeSnafu)?;
 
-    transaction
-        .connection()
-        .execute_batch(CREATE_CONNECTION_CATALOG_SQL)
+    Statement::execute_batch(transaction.connection(), CREATE_CONNECTION_CATALOG_SQL)
         .context(InitializeSnafu)?;
     register_table(
         &transaction,
@@ -159,10 +158,7 @@ fn create_and_register_table(
     interpretation: &str,
     create_sql: &str,
 ) -> Result<(), ConnectionError> {
-    transaction
-        .connection()
-        .execute_batch(create_sql)
-        .context(InitializeSnafu)?;
+    Statement::execute_batch(transaction.connection(), create_sql).context(InitializeSnafu)?;
     register_table(transaction, table_id, table_name, interpretation)
 }
 
@@ -203,7 +199,7 @@ fn register_attached_database(
 mod tests {
     use super::{ATTACHED_DATABASES, CONNECTION_CATALOG, Connection, ConnectionError, initialize};
     use crate::sql;
-    use covalence_lib_sqlite as sqlite;
+    use covalence_lib_sqlite::{self as sqlite, Statement};
 
     #[test]
     fn initializes_catalog_and_main_registration() {
@@ -262,9 +258,11 @@ mod tests {
     #[test]
     fn failed_initialization_rolls_back_new_metadata() {
         let mut sqlite = sqlite::Connection::open_in_memory().expect("open SQLite");
-        sqlite
-            .execute_batch("CREATE TEMP TABLE cov_conn_attached (sentinel INTEGER) STRICT")
-            .expect("reserve connection name");
+        Statement::execute_batch(
+            &sqlite,
+            "CREATE TEMP TABLE cov_conn_attached (sentinel INTEGER) STRICT",
+        )
+        .expect("reserve connection name");
 
         assert!(matches!(
             initialize(&mut sqlite),
@@ -295,9 +293,11 @@ mod tests {
     #[test]
     fn existing_connection_catalog_is_rejected() {
         let mut sqlite = sqlite::Connection::open_in_memory().expect("open SQLite");
-        sqlite
-            .execute_batch("CREATE TEMP TABLE cov_conn_catalog (sentinel INTEGER) STRICT")
-            .expect("reserve catalog name");
+        Statement::execute_batch(
+            &sqlite,
+            "CREATE TEMP TABLE cov_conn_catalog (sentinel INTEGER) STRICT",
+        )
+        .expect("reserve catalog name");
 
         assert!(matches!(
             initialize(&mut sqlite),
@@ -317,10 +317,11 @@ mod tests {
     #[test]
     fn exposes_underlying_connection() {
         let mut connection = Connection::open_in_memory().expect("initialize Neutron");
-        connection
-            .sqlite_mut()
-            .execute_batch("CREATE TABLE application_data (value TEXT)")
-            .expect("write through escape hatch");
+        Statement::execute_batch(
+            connection.sqlite_mut(),
+            "CREATE TABLE application_data (value TEXT)",
+        )
+        .expect("write through escape hatch");
 
         let sqlite = connection.into_sqlite();
         let exists = sql::query_row(

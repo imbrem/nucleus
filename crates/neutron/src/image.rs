@@ -1,5 +1,5 @@
 use covalence_lib_error::snafu::{ResultExt, Snafu};
-use covalence_lib_sqlite as sqlite;
+use covalence_lib_sqlite::{self as sqlite, Statement};
 
 use crate::sql::{self, Param};
 use crate::{Bytes, Connection, ConnectionError};
@@ -21,15 +21,16 @@ impl Connection {
     ///
     /// Returns an error when `SQLite` cannot serialize the database.
     pub fn serialize(&self) -> Result<Bytes, ImageError> {
-        let data = self.sqlite().serialize("main").context(SerializeSnafu)?;
-        Ok(Bytes::from(data))
+        let image = self.sqlite().serialize(c"main").context(SerializeSnafu)?;
+        Ok(Bytes::from(image.to_vec()))
     }
 
     /// Creates an in-memory Neutron connection from an `SQLite` database image.
     ///
-    /// `SQLite` takes its own copy of `bytes`; the returned connection does not
-    /// borrow from the input. Neutron's connection-local metadata is rebuilt
-    /// in `temp`.
+    /// The image is copied into `SQLite`'s allocator and handed over, so the
+    /// returned connection does not borrow from the input and the database it
+    /// holds is writable. Neutron's connection-local metadata is rebuilt in
+    /// `temp`.
     ///
     /// This is a low-level image operation, not content verification. Callers
     /// establishing trust from a content address must verify `bytes` first.
@@ -40,8 +41,9 @@ impl Connection {
     /// image cannot be installed, or Neutron metadata cannot be initialized.
     pub fn deserialize(bytes: &Bytes) -> Result<Self, ImageError> {
         let sqlite = sqlite::Connection::open_in_memory().context(OpenSnafu)?;
+        let image = sqlite::Bytes::copy_from_slice(bytes.as_ref()).context(DeserializeSnafu)?;
         sqlite
-            .deserialize("main", bytes.as_ref())
+            .deserialize(c"main", image)
             .context(DeserializeSnafu)?;
         Self::from_sqlite(sqlite).context(InitializeSnafu)
     }
@@ -81,11 +83,15 @@ impl Connection {
         .context(RegisterSnafu)?
         .unwrap_or(1);
         let schema = quote_identifier(schema_name);
-        self.sqlite()
-            .execute_batch(&format!("ATTACH DATABASE ':memory:' AS {schema}"))
-            .context(AttachSnafu)?;
+        let name = sql::c_string(schema_name).context(DeserializeSnafu)?;
+        let image = sqlite::Bytes::copy_from_slice(bytes.as_ref()).context(DeserializeSnafu)?;
+        Statement::execute_batch(
+            self.sqlite(),
+            &format!("ATTACH DATABASE ':memory:' AS {schema}"),
+        )
+        .context(AttachSnafu)?;
 
-        if let Err(error) = self.sqlite().deserialize(schema_name, bytes.as_ref()) {
+        if let Err(error) = self.sqlite().deserialize(&name, image) {
             self.detach_after_failed_attach(&schema);
             return Err(ImageError::Deserialize { source: error });
         }
@@ -103,9 +109,8 @@ impl Connection {
     }
 
     fn detach_after_failed_attach(&self, quoted_schema: &str) {
-        let _ = self
-            .sqlite()
-            .execute_batch(&format!("DETACH DATABASE {quoted_schema}"));
+        let _ =
+            Statement::execute_batch(self.sqlite(), &format!("DETACH DATABASE {quoted_schema}"));
     }
 }
 
@@ -175,16 +180,15 @@ mod tests {
     #[test]
     fn round_trips_main_database() {
         let connection = Connection::open_in_memory().expect("open source");
-        connection
-            .sqlite()
-            .execute_batch(
-                "CREATE TABLE example (
+        Statement::execute_batch(
+            connection.sqlite(),
+            "CREATE TABLE example (
                     id INTEGER PRIMARY KEY,
                     value TEXT NOT NULL
                 ) STRICT;
                 INSERT INTO example (value) VALUES ('hello'), ('world');",
-            )
-            .expect("populate source");
+        )
+        .expect("populate source");
 
         let bytes = connection.serialize().expect("serialize");
         assert!(bytes.starts_with(b"SQLite format 3\0"));
@@ -204,10 +208,11 @@ mod tests {
     fn serialized_bytes_are_owned() {
         let bytes = {
             let connection = Connection::open_in_memory().expect("open source");
-            connection
-                .sqlite()
-                .execute_batch("CREATE TABLE example (value INTEGER) STRICT;")
-                .expect("populate source");
+            Statement::execute_batch(
+                connection.sqlite(),
+                "CREATE TABLE example (value INTEGER) STRICT;",
+            )
+            .expect("populate source");
             connection.serialize().expect("serialize")
         };
 
@@ -244,13 +249,12 @@ mod tests {
     #[test]
     fn attaches_deserialized_database() {
         let source = Connection::open_in_memory().expect("open source");
-        source
-            .sqlite()
-            .execute_batch(
-                "CREATE TABLE example (value TEXT NOT NULL) STRICT;
+        Statement::execute_batch(
+            source.sqlite(),
+            "CREATE TABLE example (value TEXT NOT NULL) STRICT;
                  INSERT INTO example VALUES ('attached');",
-            )
-            .expect("populate source");
+        )
+        .expect("populate source");
         let bytes = source.serialize().expect("serialize");
 
         let mut connection = Connection::open_in_memory().expect("open destination");
@@ -283,10 +287,11 @@ mod tests {
     #[test]
     fn attach_quotes_schema_name() {
         let source = Connection::open_in_memory().expect("open source");
-        source
-            .sqlite()
-            .execute_batch("CREATE TABLE example (value INTEGER) STRICT;")
-            .expect("populate source");
+        Statement::execute_batch(
+            source.sqlite(),
+            "CREATE TABLE example (value INTEGER) STRICT;",
+        )
+        .expect("populate source");
         let bytes = source.serialize().expect("serialize");
 
         let mut connection = Connection::open_in_memory().expect("open destination");
@@ -308,10 +313,11 @@ mod tests {
     #[test]
     fn attach_rejects_an_existing_neutron_database() {
         let source = Connection::open_in_memory().expect("open source");
-        source
-            .sqlite()
-            .execute_batch("CREATE TABLE example (value INTEGER) STRICT;")
-            .expect("populate source");
+        Statement::execute_batch(
+            source.sqlite(),
+            "CREATE TABLE example (value INTEGER) STRICT;",
+        )
+        .expect("populate source");
         let bytes = source.serialize().expect("serialize");
 
         let mut connection = Connection::open_in_memory().expect("open destination");
@@ -330,10 +336,11 @@ mod tests {
         let source = Connection::open_in_memory().expect("open source");
         let bytes = source.serialize().expect("serialize");
         let mut connection = Connection::open_in_memory().expect("open destination");
-        connection
-            .sqlite()
-            .execute_batch("ATTACH DATABASE ':memory:' AS external")
-            .expect("attach through SQLite");
+        Statement::execute_batch(
+            connection.sqlite(),
+            "ATTACH DATABASE ':memory:' AS external",
+        )
+        .expect("attach through SQLite");
 
         assert!(matches!(
             connection.attach_deserialized("external", &bytes),
