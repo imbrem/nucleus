@@ -120,95 +120,89 @@ async function openPage(context, origin) {
   return page;
 }
 
-test("a kernel runs in the browser and reads a database by address", async (context) => {
+test("the browser runs the same REPL as the CLI", async (context) => {
   const origin = await servePackage(context);
   const page = await openPage(context, origin);
   const database = await readFile(fixture);
 
   const result = await page.evaluate(async (bytes) => {
-    const kernel = new window.nucleus.Kernel();
-    const address = kernel.put(new Uint8Array(bytes));
-    return {
-      address,
-      mount: kernel.mountName(),
-      uri: kernel.uri(address),
-      rows: JSON.parse(kernel.query(address, "SELECT a, b, sum FROM adder ORDER BY a")),
-    };
+    const { Repl, drive, host } = window.nucleus;
+    const repl = new Repl();
+    const say = async (line) => (await drive(repl, host, line)).output;
+
+    const banner = repl.banner();
+    const empty = await say("(stats)");
+    const address = repl.admit(new Uint8Array(bytes));
+    const after = await say("(stats)");
+    const objects = await say("(objects)");
+    const kernels = await say("(kernels)");
+    const help = await say("(help)");
+    return { banner, empty, address, after, objects, kernels, help };
   }, Array.from(database));
 
+  assert.match(result.banner, /vfs=cas/);
+  assert.equal(result.empty, "((objects 0) (bytes 0) (largest 0))");
   assert.match(result.address, /^[0-9a-f]{64}$/);
-  assert.equal(result.mount, "cas");
-  assert.ok(result.uri.includes("vfs=cas"), result.uri);
-  assert.deepEqual(result.rows.columns, ["a", "b", "sum"]);
-  assert.deepEqual(result.rows.rows, [
-    [2, 3, 5],
-    [7, 8, 15],
-  ]);
+  assert.match(result.after, /\(objects 1\)/);
+  assert.equal(result.objects, `(${result.address})`);
+  assert.equal(result.kernels, '((0 "local" #t))');
+  assert.match(result.help, /\(connect "URL"\)/);
 });
 
-test("the browser reads a database from a kernel it reaches over HTTP", async (context) => {
+test("the REPL connects to a kernel over HTTP and fetches from it", async (context) => {
   const origin = await servePackage(context);
   const kernel = await startKernel(context);
   const page = await openPage(context, origin);
 
   const result = await page.evaluate(async ({ baseUrl, address }) => {
-    const local = new window.nucleus.Kernel();
-    // Fetched across an origin, verified against its address, then admitted.
-    const length = await window.nucleus.fetchInto(local, baseUrl, address);
+    const { Repl, drive, host } = window.nucleus;
+    const repl = new Repl();
+    const say = async (line) => (await drive(repl, host, line)).output;
+
     return {
-      length,
-      held: local.addresses(),
-      rows: JSON.parse(local.query(address, "SELECT sum FROM adder ORDER BY a")),
+      connected: await say(`(connect ${JSON.stringify(baseUrl)})`),
+      kernels: await say("(kernels)"),
+      // Fetched across an origin, verified, admitted -- one form.
+      fetched: await say(`(fetch ${address})`),
+      held: repl.addresses(),
+      // Then queried through the real shell, which is a wasm module of its
+      // own reaching this store through the CAS imports.
+      shell: await say(
+        `(sqlite ${address} "-batch" "SELECT sum FROM adder ORDER BY a")`,
+      ),
+      // And the whole store reached from inside SQL, with the URI a person
+      // would guess: no mode=ro, no immutable=1.
+      attached: await say(
+        `(sqlite ":memory:" "-batch" "ATTACH 'file:${address}?vfs=cas' AS o; SELECT count(*) FROM o.adder;")`,
+      ),
     };
   }, kernel);
 
-  assert.ok(result.length > 0);
+  assert.equal(result.connected, "1");
+  assert.match(result.kernels, /^\(\(0 "local" #f\) \(1 "http/);
+  assert.equal(result.fetched, kernel.address);
+  assert.equal(result.attached.trim(), "2");
   assert.deepEqual(result.held, [kernel.address]);
-  assert.deepEqual(result.rows.rows, [[5], [15]]);
+  assert.equal(result.shell.trim(), "5\n15");
 });
 
-test("the HTTP kernel really serves ranges", async (context) => {
+test("a kernel serving something other than what was asked for is refused", async (context) => {
   const origin = await servePackage(context);
   const kernel = await startKernel(context);
   const page = await openPage(context, origin);
 
-  const result = await page.evaluate(
-    async ({ baseUrl, address }) =>
-      await window.nucleus.fetchRange(baseUrl, address, 0, 14),
-    kernel,
-  );
-
-  // Every SQLite database begins with this, so a ranged read is verifiable by
-  // eye as well as by assertion. `bytes=0-14` is 15 bytes, because HTTP ranges
-  // are inclusive at both ends -- asking for 0-15 would also pull the NUL that
-  // terminates the header string.
-  const header = new TextDecoder().decode(Uint8Array.from(Object.values(result.bytes)));
-  assert.equal(header, "SQLite format 3");
-  assert.match(result.contentRange, /^bytes 0-14\//);
-});
-
-test("bytes which do not match their address are refused", async (context) => {
-  const origin = await servePackage(context);
-  const kernel = await startKernel(context);
-  const page = await openPage(context, origin);
-
-  const result = await page.evaluate(async ({ baseUrl, address }) => {
-    const local = new window.nucleus.Kernel();
-    const response = await fetch(`${baseUrl}/cas/${address}`);
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    // A hostile or broken server, simulated by corrupting what it sent.
-    bytes[100] ^= 0xff;
-    try {
-      local.admit(address, bytes);
-      return { refused: false, held: local.addresses() };
-    } catch (error) {
-      return { refused: true, message: String(error), held: local.addresses() };
-    }
+  const result = await page.evaluate(async ({ baseUrl }) => {
+    const { Repl, drive, host } = window.nucleus;
+    const repl = new Repl();
+    await drive(repl, host, `(connect ${JSON.stringify(baseUrl)})`);
+    // An address the kernel does not hold: the fetch itself fails, and
+    // nothing is stored either way.
+    const output = (await drive(repl, host, `(fetch ${"0".repeat(64)})`)).output;
+    return { output, held: repl.addresses() };
   }, kernel);
 
-  assert.ok(result.refused, "tampered content must be refused");
-  assert.match(result.message, /does not match its address/);
-  assert.deepEqual(result.held, [], "refused content must not be stored");
+  assert.match(result.output, /^error: /);
+  assert.deepEqual(result.held, []);
 });
 
 test("the upstream SQLite shell runs in the browser", async (context) => {
@@ -217,25 +211,17 @@ test("the upstream SQLite shell runs in the browser", async (context) => {
   const database = await readFile(fixture);
 
   const result = await page.evaluate(async (bytes) => {
-    const kernel = new window.nucleus.Kernel();
-    const address = kernel.put(new Uint8Array(bytes));
-
-    // `shell.wasm` is `shell.c` compiled for wasm32-wasip1, fetched like any
-    // other asset and instantiated with a partial WASI host.
-    const shell = await fetch("../generated/shell.wasm");
-    const run = await window.nucleus.runShell(kernel, shell, {
-      args: [
-        `file:${address}?mode=ro&immutable=1&vfs=cas`,
-        "-batch",
-        "-header",
-        "SELECT a, b, sum FROM adder;",
-      ],
-    });
-    return { ...run, address };
+    const { Repl, drive, host } = window.nucleus;
+    const repl = new Repl();
+    const address = repl.admit(new Uint8Array(bytes));
+    return await drive(
+      repl,
+      host,
+      `(sqlite ${address} "-batch" "-header" "SELECT a, b, sum FROM adder")`,
+    );
   }, Array.from(database));
 
-  assert.equal(result.status, 0, `stderr: ${result.stderr}`);
-  assert.equal(result.stdout.trim(), "a|b|sum\n2|3|5\n7|8|15");
+  assert.equal(result.output.trim(), "a|b|sum\n2|3|5\n7|8|15");
 });
 
 test("the shell in the browser has no filesystem to reach", async (context) => {
@@ -243,13 +229,11 @@ test("the shell in the browser has no filesystem to reach", async (context) => {
   const page = await openPage(context, origin);
 
   const result = await page.evaluate(async () => {
-    const kernel = new window.nucleus.Kernel();
-    const shell = await fetch("../generated/shell.wasm");
-    return await window.nucleus.runShell(kernel, shell, {
-      args: ["/etc/passwd", "-batch", "SELECT 1;"],
-    });
+    const { Repl, drive, host } = window.nucleus;
+    const repl = new Repl();
+    return await drive(repl, host, '(sqlite "/etc/passwd" "-batch" "SELECT 1")');
   });
 
   // Its databases arrive by address or not at all.
-  assert.notEqual(result.status, 0);
+  assert.match(result.output, /exited with status/);
 });

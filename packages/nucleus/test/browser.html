@@ -2,16 +2,16 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Nucleus kernel tests</title>
+    <title>Nucleus REPL tests</title>
   </head>
   <body>
     <script type="module">
-      import init, { Kernel } from "../generated/nucleus.js";
-      import { fetchInto, fetchRange, runShell } from "../dist/index.js";
+      import { init, Repl, drive } from "../dist/index.js";
 
       await init();
+      const host = { shell: () => fetch("../generated/shell.wasm") };
       // Exposed for the test driver; this page is not a demo.
-      window.nucleus = { Kernel, fetchInto, fetchRange, runShell };
+      window.nucleus = { Repl, drive, host };
       document.body.dataset.ready = "yes";
     </script>
   </body>

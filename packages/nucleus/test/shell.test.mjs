@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import init, { Kernel } from "../generated/nucleus.js";
+import init, { Repl } from "../generated/nucleus.js";
 import { runShell } from "../dist/wasi.js";
 
 /** The kernel wasm, and the shell wasm it will read through. */
@@ -11,9 +11,9 @@ async function setup() {
       new URL("../generated/nucleus_bg.wasm", import.meta.url),
     ),
   });
-  const kernel = new Kernel();
+  const kernel = new Repl();
   const database = await readFile(new URL("./fixture.sqlite", import.meta.url));
-  const address = kernel.put(database);
+  const address = kernel.admit(database).split(" ")[0];
   const shell = await readFile(new URL("../generated/shell.wasm", import.meta.url));
   return { kernel, address, shell };
 }
@@ -22,7 +22,7 @@ test("the upstream shell runs in wasm and reads a database by address", async ()
   const { kernel, address, shell } = await setup();
 
   const result = await runShell(kernel, shell, {
-    args: [`file:${address}?mode=ro&immutable=1&vfs=cas`, "-batch", "SELECT a, b, sum FROM adder;"],
+    args: [`file:${address}?vfs=cas`, "-batch", "SELECT a, b, sum FROM adder;"],
   });
 
   assert.equal(result.status, 0, `stderr: ${result.stderr}`);
@@ -33,7 +33,7 @@ test("the shell's own dot commands work", async () => {
   const { kernel, address, shell } = await setup();
 
   const result = await runShell(kernel, shell, {
-    args: [`file:${address}?mode=ro&immutable=1&vfs=cas`, "-batch", ".schema"],
+    args: [`file:${address}?vfs=cas`, "-batch", ".schema"],
   });
 
   assert.equal(result.status, 0, `stderr: ${result.stderr}`);
@@ -45,7 +45,7 @@ test("the shell reads SQL from stdin", async () => {
   const { kernel, address, shell } = await setup();
 
   const result = await runShell(kernel, shell, {
-    args: [`file:${address}?mode=ro&immutable=1&vfs=cas`, "-batch"],
+    args: [`file:${address}?vfs=cas`, "-batch"],
     stdin: "SELECT count(*) FROM adder;\n",
   });
 
@@ -58,7 +58,7 @@ test("the mount is read-only from the shell too", async () => {
 
   const result = await runShell(kernel, shell, {
     args: [
-      `file:${address}?mode=ro&immutable=1&vfs=cas`,
+      `file:${address}?vfs=cas`,
       "-batch",
       "INSERT INTO adder VALUES (1, 1, 2);",
     ],
@@ -69,10 +69,10 @@ test("the mount is read-only from the shell too", async () => {
 
 test("an address which does not resolve fails to open", async () => {
   const { kernel, address, shell } = await setup();
-  assert.equal(kernel.forget(address), true);
+  assert.equal(kernel.eval(`(forget ${address})`).text, "#t");
 
   const result = await runShell(kernel, shell, {
-    args: [`file:${address}?mode=ro&immutable=1&vfs=cas`, "-batch", "SELECT 1;"],
+    args: [`file:${address}?vfs=cas`, "-batch", "SELECT 1;"],
   });
 
   assert.notEqual(result.status, 0);
@@ -86,7 +86,7 @@ test("a database the shell has open survives the address being forgotten", async
   // statement must still answer -- the same guarantee the native subprocess
   // gets over its socket.
   const result = await runShell(kernel, shell, {
-    args: [`file:${address}?mode=ro&immutable=1&vfs=cas`, "-batch"],
+    args: [`file:${address}?vfs=cas`, "-batch"],
     stdin: "SELECT count(*) FROM adder;\nSELECT sum FROM adder ORDER BY a;\n",
   });
 

@@ -2,8 +2,8 @@
 //!
 //! There is almost nothing here, and that is the point. Every command lives in
 //! [`covalence_repl::Session`], which knows nothing about terminals; this
-//! binary reads lines, hands them over, and does the two things a session
-//! cannot do for itself — read a file, and run the shell.
+//! binary reads lines, hands them over, and does the three things a session
+//! cannot do for itself — read a file, fetch a URL, and run the shell.
 //!
 //! There is no SQL at this prompt. `(sqlite)` is not a fallback for a missing
 //! feature: it hands you the real thing.
@@ -130,6 +130,10 @@ fn step(
             let bytes = std::fs::read(&path)?;
             writeln!(out, "{}", session.admit(bytes)?)?;
         }
+        Response::Fetch { url, address } => {
+            let bytes = fetch(&url)?;
+            writeln!(out, "{}", session.admit_verified(address, bytes)?)?;
+        }
         Response::Shell(arguments) => {
             #[cfg(not(unix))]
             let _ = arguments;
@@ -152,4 +156,22 @@ fn step(
         }
     }
     Ok(false)
+}
+
+/// Fetches a URL with `curl`.
+///
+/// Shelling out rather than linking an HTTP client keeps a TLS stack and an
+/// async runtime out of the binary that owns the store. The bytes are
+/// untrusted either way — they are checked against their address before being
+/// admitted — so what fetches them is a dependency question, not a trust one.
+fn fetch(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let output = std::process::Command::new("curl")
+        .args(["--silent", "--show-error", "--fail", "--location", url])
+        .output()
+        .map_err(|error| format!("could not run curl: {error}"))?;
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("fetch failed: {}", message.trim()).into());
+    }
+    Ok(output.stdout)
 }
