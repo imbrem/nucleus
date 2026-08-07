@@ -10,13 +10,13 @@ pub use signing::{Ed25519Signer, Ed25519Verifier, SignError, Signer, Verificatio
 /// its hash has a truthful catalog and truthful interpreted relations. This
 /// assertion never includes connection-local `cov_conn_*` state.
 pub const COV_VALID_DB_V0: O256 = o256_path!(
-    ::nucleus.snapshot.valid.v0 =
+    const ::nucleus.snapshot.valid.v0 =
         "e8095bfb2c053a7ae2033105d9b194160cb55d36b02330aaf9b787262aa58078"
 );
 
 /// Namespace root for Ed25519 public-key identities.
 pub const ED25519_PUBLIC_KEY_V0: O256 = o256_path!(
-    ::crypto.public_key.ed25519.v0 =
+    const ::crypto.public_key.ed25519.v0 =
         "6d5b0cc7de272425ce91d2712182758b08fec18eb9c2ce3c37457dfdf9ee5822"
 );
 

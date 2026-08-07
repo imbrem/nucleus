@@ -86,7 +86,7 @@ impl Cov {
     /// the literal records the expected value and fails the build if the
     /// hierarchy ever moves.
     pub const ROOT_CTX: CtxKey = crate::ctx_key!(
-        Cov::ROOT_CTX_KEY,
+        const Cov::ROOT_CTX_KEY,
         "9d4dd8ba210b01b0332a3481238222c990c6a7f6df58a1a63f2e741833793a96"
     );
 
