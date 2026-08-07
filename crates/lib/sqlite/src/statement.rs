@@ -367,13 +367,12 @@ impl Statement {
     /// with, if any.
     pub fn finalize(self) -> Result<(), Error> {
         let raw = self.raw;
-        let handle = self.handle.clone();
-        std::mem::forget(self);
+        std::mem::forget(self); // leak so Drop is never called
         let code = ResultCode::new(unsafe { ffi::sqlite3_finalize(raw) });
         if code.is_ok() {
             Ok(())
         } else {
-            Err(handle.error(code))
+            Err(Error::new(code))
         }
     }
 }
