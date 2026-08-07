@@ -12,3 +12,4 @@ packages/nucleus/generated/
 Cargo.lock
 tools/glu/Cargo.lock
 pnpm-lock.yaml
+lean/**/lake-manifest.json

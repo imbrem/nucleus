@@ -55,6 +55,10 @@
           clang
           chromium
           devcontainer
+          # Lean toolchain manager. elan reads each development's
+          # lean-toolchain file, so the pinned version is the one that runs.
+          # Only `glu lean` needs it; nothing in `glu build` does.
+          elan
           git
           glu
           nodejs_24

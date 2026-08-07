@@ -28,6 +28,44 @@ jobs:
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3
       - run: nix flake check
 
+  # The Lean developments under lean/ are a specification, not a build input,
+  # so they get their own job rather than joining `glu ci`. `glu lean` fetches
+  # Mathlib's prebuilt artifacts before building; without them this would
+  # compile Mathlib from source.
+  lean:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3
+      - run: nix develop --command glu lean
+      # Generated on every run so a broken documentation build is caught on the
+      # pull request that breaks it, but only kept on main, where `pages` is
+      # the one consumer.
+      #
+      # Documentation generation holds an elaborated environment per worker, and
+      # at the default parallelism the runner ran out of memory partway through
+      # — surfacing as a failure to fork `git` for the source-URL targets rather
+      # than as a failure in Lean. Hence both the swap headroom and the cap.
+      # The swap file goes on /mnt, the large ephemeral disk, because / is
+      # already carrying the Nix store and Mathlib's build cache.
+      - run: |
+          sudo fallocate -l 8G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          # doc-gen4 shells out to `git` once per package for source URLs, and
+          # the Lake process forking them holds the whole documentation
+          # environment. The default heuristic refuses a fork that large however
+          # much memory is free, since it sizes the reservation by the parent.
+          # The child immediately execs, so the reservation is never used.
+          sudo sysctl -w vm.overcommit_memory=1
+      - run: nix develop --command glu lean --docs --jobs 2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: github.ref == 'refs/heads/main'
+        with:
+          name: lean-docs
+          path: lean-docs
+
   container:
     runs-on: ubuntu-latest
     steps:
@@ -39,7 +77,7 @@ jobs:
 
   pages:
     if: github.ref == 'refs/heads/main'
-    needs: [check, nix, container]
+    needs: [check, nix, container, lean]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -54,6 +92,13 @@ jobs:
       - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
       - run: nix develop --command pnpm install --frozen-lockfile
       - run: BASE_PATH=/${{ github.event.repository.name }} nix develop --command glu docs
+      # Placed after the site is built, so Vite never has to walk the generated
+      # documentation. Pages allows one deployment per repository, so the Lean
+      # docs ship inside the site rather than as a deployment of their own.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: lean-docs
+          path: apps/docs/build/lean
       - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
         with:
           path: apps/docs/build
