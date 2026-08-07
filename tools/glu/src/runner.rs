@@ -132,6 +132,32 @@ impl Runner {
         Ok(())
     }
 
+    /// Runs a program to completion with extra environment variables.
+    fn exec_with_environment<I, S>(
+        &self,
+        phase: &str,
+        program: &str,
+        args: I,
+        environment: &[(&str, String)],
+    ) -> Result<()>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let mut command = Command::new(program);
+        command.args(args).current_dir(&self.root);
+        for (name, value) in environment {
+            command.env(name, value);
+        }
+        let status = command
+            .status()
+            .wrap_err_with(|| format!("{phase}: could not run {program}"))?;
+        if !status.success() {
+            bail!("{phase} failed with {status}");
+        }
+        Ok(())
+    }
+
     fn cargo(&self, phase: &str, args: &[&str]) -> Result<()> {
         let mut full = vec!["--locked"];
         full.extend_from_slice(args);
@@ -708,6 +734,7 @@ impl Runner {
         kernel_port: u16,
         open: bool,
         no_build: bool,
+        tls: bool,
     ) -> Result<()> {
         // The committed fixture, so `glu demo` with no arguments still shows
         // something rather than an empty store.
@@ -729,14 +756,21 @@ impl Runner {
         }
 
         let mut kernel = self.start_kernel(&files, kernel_port)?;
-        let page = format!("http://127.0.0.1:{port}/demo.html");
+        let scheme = if tls { "https" } else { "http" };
+        let host = if tls { "localhost" } else { "127.0.0.1" };
+        let page = format!("{scheme}://{host}:{port}/");
 
         eprintln!();
         eprintln!("  demo      {page}");
         eprintln!("  kernel    http://127.0.0.1:{kernel_port}");
         eprintln!();
-        eprintln!("  Sections 1 and 3 need only a file from your disk.");
-        eprintln!("  For section 2, paste an address above into the page.");
+        eprintln!("  The page is a REPL. Try:");
+        eprintln!("    .help");
+        eprintln!("    .connect http://127.0.0.1:{kernel_port}");
+        eprintln!("    .fetch ADDRESS          (an address printed above)");
+        eprintln!("    .shell ADDRESS -batch .schema");
+        eprintln!();
+        eprintln!("  Ctrl-C stops both servers.");
         eprintln!();
 
         if open {
@@ -744,22 +778,60 @@ impl Runner {
             let _ = self.run("open demo", "xdg-open", [page.as_str()]);
         }
 
-        let served = self.exec(
+        let (config, environment) = self.demo_config(port, tls);
+        let served = self.exec_with_environment(
             "serve demo",
             "caddy",
             [
-                OsStr::new("file-server"),
-                OsStr::new("--root"),
-                self.root.join("packages/nucleus").as_os_str(),
-                OsStr::new("--listen"),
-                OsStr::new(&format!("127.0.0.1:{port}")),
+                OsStr::new("run"),
+                OsStr::new("--adapter"),
+                OsStr::new("caddyfile"),
+                OsStr::new("--config"),
+                config.as_os_str(),
             ],
+            &environment,
         );
 
         // The kernel is a child of this process, so it must not outlive it.
         let _ = kernel.kill();
         let _ = kernel.wait();
         served
+    }
+
+    /// Returns the demo server's configuration and the environment it needs.
+    ///
+    /// The config is a file in the repository, not a string built here, and
+    /// that is the point: `packages/nucleus/test` runs the same one. A server
+    /// only the demo uses is a server only the demo has tested, and the
+    /// headers below are exactly the sort of thing that is wrong for weeks
+    /// without anyone noticing.
+    ///
+    /// `caddy file-server` alone is not enough, for three reasons that each
+    /// cost real debugging time when missing -- no caching, the REPL at the
+    /// root, and cross-origin isolation so `SharedArrayBuffer` exists. They
+    /// are spelled out in the config, next to the lines that implement them.
+    fn demo_config(&self, port: u16, tls: bool) -> (PathBuf, Vec<(&'static str, String)>) {
+        // `tls internal` uses Caddy's own CA. The certificate is not trusted
+        // by default, so a browser will warn; `caddy trust` installs it, and
+        // that needs privileges this tool should not assume.
+        let (address, tls_directive) = if tls {
+            (format!("https://localhost:{port}"), "tls internal")
+        } else {
+            (format!("http://127.0.0.1:{port}"), "")
+        };
+        let package = self.root.join("packages/nucleus");
+        (
+            package.join("demo.caddyfile"),
+            vec![
+                ("NUCLEUS_ADDRESS", address),
+                ("NUCLEUS_ROOT", package.display().to_string()),
+                (
+                    "NUCLEUS_SAMPLES",
+                    self.root.join("crates/repl/samples").display().to_string(),
+                ),
+                ("NUCLEUS_TLS", tls_directive.to_owned()),
+            ],
+        )
     }
 
     /// Starts the HTTP kernel and reports the addresses it admitted.
