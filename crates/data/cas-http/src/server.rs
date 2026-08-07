@@ -206,11 +206,20 @@ fn unsatisfiable(len: u64) -> Response {
 }
 
 /// A content address names fixed bytes, so a response can be cached forever.
-fn immutable_headers() -> [(header::HeaderName, &'static str); 3] {
+fn immutable_headers() -> [(header::HeaderName, &'static str); 4] {
     [
         (header::CONTENT_TYPE, "application/octet-stream"),
         (header::ACCEPT_RANGES, "bytes"),
         (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+        // A cross-origin-isolated page -- one under COOP and COEP, which the
+        // demo sets so that `SharedArrayBuffer` exists -- refuses every
+        // subresource that does not opt in. Without this a browser blocks each
+        // fetch from this kernel, and the failure appears in the page rather
+        // than here.
+        (
+            header::HeaderName::from_static("cross-origin-resource-policy"),
+            "cross-origin",
+        ),
     ]
 }
 

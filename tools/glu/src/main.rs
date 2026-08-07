@@ -89,6 +89,13 @@ enum Task {
         /// Serve what is already built rather than rebuilding first.
         #[arg(long)]
         no_build: bool,
+
+        /// Serve over HTTPS with Caddy's internal CA.
+        ///
+        /// The certificate is not trusted by default, so a browser will warn
+        /// until `caddy trust` installs it.
+        #[arg(long)]
+        tls: bool,
     },
     /// Build or serve the documentation site.
     Docs {
@@ -223,7 +230,8 @@ fn run() -> Result<()> {
             kernel_port,
             open,
             no_build,
-        } => runner.demo(&files, port, kernel_port, open, no_build),
+            tls,
+        } => runner.demo(&files, port, kernel_port, open, no_build, tls),
         Task::Docs { command: None } => runner.docs(),
         Task::Docs {
             command: Some(DocsTask::Serve { open, port }),
