@@ -76,8 +76,10 @@ impl Statement {
     /// Returns the SQL text this statement was compiled from.
     ///
     /// This is `sqlite3_sql`: the original text, with parameters unexpanded.
+    /// Returns raw bytes; the encoding matches whatever SQLite used when the
+    /// statement was prepared (UTF-8 or UTF-16).
     #[must_use]
-    pub fn sql(&self) -> Option<&str> {
+    pub fn sql(&self) -> Option<&[u8]> {
         // SAFETY: the statement is live, and `sqlite3_sql` returns either null
         // or a NUL-terminated string owned by the statement and valid for as
         // long as the statement is.
@@ -86,7 +88,9 @@ impl Statement {
             return None;
         }
         // SAFETY: `text` is a live NUL-terminated string, as above.
-        unsafe { CStr::from_ptr(text) }.to_str().ok()
+        // We return the bytes without assuming UTF-8.
+        let bytes = unsafe { CStr::from_ptr(text) }.to_bytes();
+        Some(bytes)
     }
 
     /// Fails when the connection has been closed out from under the statement.
@@ -167,12 +171,16 @@ impl Statement {
 
     /// Binds UTF-8 text to the one-based parameter `index`.
     ///
+    /// This is the explicit UTF-8 path (`SQLITE_UTF8`). For exact byte
+    /// round-tripping of arbitrary text or blob data use [`Statement::bind_blob`]
+    /// (or the [`Statement::bind`] helper).
+    ///
     /// `SQLite` copies the text, so `value` need not outlive the call.
     ///
     /// # Errors
     ///
     /// Returns an error when the connection is closed, the index is out of
-    /// range, or `SQLite` cannot allocate the copy.
+    /// range, or `SQLite` cannot allocate a copy.
     pub fn bind_text(&mut self, index: c_int, value: &str) -> Result<(), Error> {
         self.usable()?;
         // SAFETY: `value` is a live byte range of exactly `value.len()` bytes,
@@ -216,6 +224,9 @@ impl Statement {
 
     /// Binds a [`ValueRef`] to the one-based parameter `index`.
     ///
+    /// Text and Blob variants are bound as blobs (exact bytes). Call
+    /// [`Statement::bind_text`] directly if you need the UTF-8 text path.
+    ///
     /// # Errors
     ///
     /// Returns an error when the connection is closed, the index is out of
@@ -226,13 +237,9 @@ impl Statement {
             ValueRef::Integer(value) => self.bind_integer(index, value),
             ValueRef::Real(value) => self.bind_real(index, value),
             ValueRef::Text(bytes) | ValueRef::Blob(bytes) => {
-                // Text arrives here as bytes; bind it as a blob only when it is
-                // not valid UTF-8, so a round trip preserves the storage class
-                // for everything this crate can produce.
-                match (value, std::str::from_utf8(bytes)) {
-                    (ValueRef::Text(_), Ok(text)) => self.bind_text(index, text),
-                    _ => self.bind_blob(index, bytes),
-                }
+                // Exact byte round-trip for both Text and Blob variants.
+                // Higher layers decide whether to interpret as UTF-8.
+                self.bind_blob(index, bytes)
             }
         }
     }
