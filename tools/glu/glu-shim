@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+
+# Build glu on demand, then run it.
+#
+# The development environment puts this script on PATH as `glu` rather than
+# building glu while direnv is loading. Nothing direnv starts then outlives the
+# load, so no Buck daemon can inherit direnv's environment pipe and hold it
+# open, and neither .envrc nor the shellHook needs to juggle descriptors.
+#
+# The cost is that the first `glu` of a session pays for the build, and reports
+# a build failure at first use rather than when the environment loads.
+
+set -euo pipefail
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+state=$root/.direnv
+mkdir -p "$state"
+
+# `command -v` fails for anything missing, which is expected outside the Nix
+# environment, so keep it from tripping `set -e`.
+locate() { command -v "$1" || true; }
+
+if [ -n "$(locate buck2)" ]; then
+  environment="buck2:$(locate rustc):$(rustc --print sysroot 2>/dev/null || true)"
+  environment="$environment:$(locate clang):$(locate cargo-component)"
+  environment="$environment:$(locate nucleus-wasm-clang):$(locate wasm32-unknown-wasi-cc)"
+else
+  environment="cargo:$(locate cargo)"
+fi
+
+recorded=""
+if [ -f "$state/glu-environment" ]; then
+  recorded=$(cat "$state/glu-environment")
+fi
+
+target=""
+if [ -f "$state/glu-path" ]; then
+  target=$(cat "$state/glu-path")
+fi
+
+if [ "$recorded" = "$environment" ] && [ -x "$target" ]; then
+  exec "$target" "$@"
+fi
+
+cd "$root"
+
+if [ -n "$(locate buck2)" ]; then
+  # A toolchain change invalidates what the daemon has cached about it.
+  if [ -n "$recorded" ]; then
+    buck2 kill >/dev/null 2>&1 || true
+  fi
+  target=$(buck2 build //tools/glu:glu --show-full-simple-output)
+else
+  cargo build --quiet --locked --manifest-path tools/glu/Cargo.toml
+  target=$root/tools/glu/target/debug/glu
+fi
+
+printf '%s\n' "$target" >"$state/glu-path"
+printf '%s\n' "$environment" >"$state/glu-environment"
+
+exec "$target" "$@"
