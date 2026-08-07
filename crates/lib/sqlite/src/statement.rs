@@ -76,10 +76,10 @@ impl Statement {
     /// Returns the SQL text this statement was compiled from.
     ///
     /// This is `sqlite3_sql`: the original text, with parameters unexpanded.
-    /// Returns raw bytes; the encoding matches whatever SQLite used when the
-    /// statement was prepared (UTF-8 or UTF-16).
+    /// Returns a `CStr` so callers can decide on encoding, length, or
+    /// round-tripping the bytes back into SQLite.
     #[must_use]
-    pub fn sql(&self) -> Option<&[u8]> {
+    pub fn sql(&self) -> Option<&CStr> {
         // SAFETY: the statement is live, and `sqlite3_sql` returns either null
         // or a NUL-terminated string owned by the statement and valid for as
         // long as the statement is.
@@ -88,9 +88,7 @@ impl Statement {
             return None;
         }
         // SAFETY: `text` is a live NUL-terminated string, as above.
-        // We return the bytes without assuming UTF-8.
-        let bytes = unsafe { CStr::from_ptr(text) }.to_bytes();
-        Some(bytes)
+        Some(unsafe { CStr::from_ptr(text) })
     }
 
     /// Fails when the connection has been closed out from under the statement.
