@@ -253,7 +253,7 @@ impl Runner {
         expect_output(
             "nucleus CLI smoke test",
             &output,
-            "hello from nucleus: SQLite returned 42",
+            "nucleus: content-addressed SQLite. Store mounted as vfs=cas. (help) for commands.\nnucleus>",
         )?;
         eprintln!("• test nucleus CLI… done");
         Ok(())
@@ -693,12 +693,16 @@ impl Runner {
         )?;
         expect_output("nucleus component smoke test", &output, "42")?;
 
+        // The CLI is a REPL, so with no input it prints its banner, prompts
+        // once, and reaches end of input. That is the whole of what this
+        // checks: the component starts, `SQLite` initializes, and the store
+        // mounts under the conventional name.
         let cli = self.buck_output("//:cli-component")?;
         let output = self.command("test CLI component", "wasmtime", [cli.as_os_str()])?;
         expect_output(
             "CLI component smoke test",
             &output,
-            "hello from nucleus: SQLite returned 42",
+            "nucleus: content-addressed SQLite. Store mounted as vfs=cas. (help) for commands.\nnucleus>",
         )?;
         eprintln!("• test Wasm components… done");
         Ok(())
