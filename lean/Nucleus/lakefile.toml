@@ -6,10 +6,9 @@ defaultTargets = ["Nucleus"]
 pp.unicode.fun = true # pretty-prints `fun a ↦ b`
 relaxedAutoImplicit = false
 weak.linter.mathlibStandardSet = true
-# Every file here carries an SPDX header, the form REUSE.toml declares for the
-# whole repository. Mathlib's header linter checks for its own Apache-2.0
-# boilerplate instead — it requires the line "Copyright (c) YYYY … All rights
-# reserved.", which is the opposite of what CC0-1.0 says — so it is off.
+# Licensing is declared centrally in REUSE.toml, which annotates `**`; no file
+# in this repository carries a per-file copyright header. Mathlib's header
+# linter requires one, in its own Apache-2.0 wording, so it is off.
 weak.linter.style.header = false
 maxSynthPendingDepth = 3
 
