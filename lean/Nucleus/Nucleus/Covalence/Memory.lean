@@ -53,17 +53,18 @@ def Cursor.local (c : Cursor Base Index) : LocalNode Base Index := ⟨c, c.fetch
 /-- The stable injection into the current persisted hole-name representation.
 It is kept explicit: unfolding never invents, shifts, or conflates names. -/
 structure Naming (Index : Type v) where
-  holeName : Index → Nat
+  holeName : Index → HoleName
   injective : Function.Injective holeName
 
 def hole (names : Naming Index) (i : Index) : Hol Base :=
-  .node (.hole (names.holeName i)) none none none
+  .node ⟨.hole (names.holeName i), 0⟩ none none none
 
 /-- Which coordinates are required by each stored tag.  Missing required
 coordinates become the hole named by the row being unfolded; genuinely
 unused coordinates remain absent. -/
-def requirements : HolTag Base → Bool × Bool × Bool
-  | .hole _ | .atom _ | .tyVar | .tyBool | .tmVar | .tmBool => (false, false, false)
+def requirements (annotated : AnnotatedTag Base) : Bool × Bool × Bool :=
+  match annotated.tag with
+  | .hole _ | .atom _ | .tyVar _ | .tyBool | .tmVar _ | .tmBool => (false, false, false)
   | .tyLam | .tyAll | .tmTyLam => (true, false, false)
   | .tyApp | .tyArr | .tmApp => (true, true, false)
   | .tySub | .tmLam | .tmTyApp | .tmEps => (true, false, true)
@@ -113,7 +114,7 @@ inductive OptionRefines : Option (Hol Base) → Option (Hol Base) → Prop
 /-- Untyped tree information order.  Cutoff/missing holes are bottom; fetched
 matching rows refine componentwise. -/
 inductive Refines : Hol Base → Hol Base → Prop
-  | hole : Refines (Hol.node (.hole name) none none none) t
+  | hole : Refines (Hol.node ⟨.hole name, depth⟩ none none none) t
   | node : OptionRefines lhs lhs' → OptionRefines rhs rhs' → OptionRefines ty ty' →
       Refines (.node tag lhs rhs ty) (.node tag lhs' rhs' ty')
 
@@ -165,7 +166,7 @@ theorem unfold_mono (names : Naming Index) (mem : Memory Base Index)
 /-- Unfolding preserves the locally nameless identity of every cutoff: the
 stored free/hole name is exactly the injected index and is never shifted. -/
 theorem cutoff_name (names : Naming Index) (mem : Memory Base Index) (i : Index) :
-    unfold names mem 0 i = .node (.hole (names.holeName i)) none none none := rfl
+    unfold names mem 0 i = .node ⟨.hole (names.holeName i), 0⟩ none none none := rfl
 
 theorem distinct_cutoff_names (names : Naming Index) (hij : i ≠ j) :
     names.holeName i ≠ names.holeName j := fun h => hij (names.injective h)

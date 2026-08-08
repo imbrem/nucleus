@@ -11,6 +11,7 @@ import Nucleus.HolOmegaSimple.Syntax
 import Nucleus.HolOmegaSimple.Typing
 import Nucleus.HolOmega.Kernel
 import Nucleus.HolOmega.Model
+import Nucleus.HolOmega.RankedKinds
 import Nucleus.HolOmega.Examples
 import Nucleus.HolOmega.ProofTyping
 import Nucleus.HolOmega.Semantics
@@ -27,3 +28,4 @@ import Nucleus.Hol.Typing
 import Nucleus.Hol.Kernel
 import Nucleus.Hol.Extension
 import Nucleus.Covalence
+import Nucleus.Covalence.Memory

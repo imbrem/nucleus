@@ -88,57 +88,70 @@ domain is a coherent family of slices with both restriction and canonical
 extension laws. -/
 
 structure CoherentVal (K : Kind) where
-  slice : ∀ r, Slice U r K
-  restrict_natural : ∀ {r s} (hrs : r ≤ s),
-    restrict U hrs K (slice s) = slice r
-  extend_natural : ∀ {r s} (hrs : r ≤ s),
-    extend U hrs K (slice r) = slice s
+  minRank : Nat
+  slice : ∀ r, minRank ≤ r → Slice U r K
+  restrict_natural : ∀ {r s} (hr : minRank ≤ r) (hrs : r ≤ s),
+    restrict U hrs K (slice s (hr.trans hrs)) = slice r hr
+  extend_natural : ∀ {r s} (hr : minRank ≤ r) (hrs : r ≤ s),
+    extend U hrs K (slice r hr) = slice s (hr.trans hrs)
 
 /-- A rank view retains the coherent whole value; only its observation level
 changes.  This is the restricted-graph presentation needed for higher-kind
 subsumption. -/
 structure AtRank (r : Nat) (K : Kind) where
   whole : CoherentVal U K
+  within : whole.minRank ≤ r
 
-def AtRank.observe (x : AtRank U r K) : Slice U r K := x.whole.slice r
+def AtRank.observe (x : AtRank U r K) : Slice U r K := x.whole.slice r x.within
 
-def down (r : Nat) (x : CoherentVal U K) : AtRank U r K := ⟨x⟩
+def down (r : Nat) (x : CoherentVal U K) (h : x.minRank ≤ r) : AtRank U r K := ⟨x, h⟩
 def up (x : AtRank U r K) : CoherentVal U K := x.whole
 
-@[simp] theorem up_down (r : Nat) (x : CoherentVal U K) : up U (down U r x) = x := rfl
-@[simp] theorem down_up (x : AtRank U r K) : down U r (up U x) = x := by cases x; rfl
+@[simp] theorem up_down (r : Nat) (x : CoherentVal U K) (h : x.minRank ≤ r) :
+    up U (down U r x h) = x := rfl
+@[simp] theorem down_up (x : AtRank U r K) : down U r (up U x) x.within = x := by
+  cases x; rfl
 
 /-- All-kind rank subsumption is monotone because both views share the same
 coherent whole value. -/
-def subsume (hrs : r ≤ s) (x : AtRank U r K) : AtRank U s K := ⟨x.whole⟩
+def subsume (hrs : r ≤ s) (x : AtRank U r K) : AtRank U s K :=
+  ⟨x.whole, x.within.trans hrs⟩
 
 @[simp] theorem subsume_observe (hrs : r ≤ s) (x : AtRank U r K) :
     (subsume U hrs x).observe = extend U hrs K x.observe := by
-  exact (x.whole.extend_natural hrs).symm
+  exact (x.whole.extend_natural x.within hrs).symm
 
 /-- Coherent application is pointwise on every slice. -/
 noncomputable def coherentApp (F : CoherentVal U (.arr K L))
     (X : CoherentVal U K) : CoherentVal U L where
-  slice r := F.slice r (X.slice r)
+  minRank := max F.minRank X.minRank
+  slice r hr := F.slice r ((Nat.le_max_left _ _).trans hr)
+    (X.slice r ((Nat.le_max_right _ _).trans hr))
   restrict_natural := by
-    intro r s hrs
-    have hF := F.restrict_natural hrs
-    have hX := X.extend_natural hrs
-    change restrict U hrs L (F.slice s (X.slice s)) = F.slice r (X.slice r)
+    intro r s hr hrs
+    have hFr := (Nat.le_max_left F.minRank X.minRank).trans hr
+    have hXr := (Nat.le_max_right F.minRank X.minRank).trans hr
+    have hF := F.restrict_natural hFr hrs
+    have hX := X.extend_natural hXr hrs
+    change restrict U hrs L (F.slice s _ (X.slice s _)) = F.slice r _ (X.slice r _)
     rw [← hX]
-    have happ := congrFun hF (X.slice r)
+    have happ := congrFun hF (X.slice r hXr)
     simpa [restrict, restrict_extend] using happ
   extend_natural := by
-    intro r s hrs
-    have hF := F.extend_natural hrs
-    have hX := X.restrict_natural hrs
-    change extend U hrs L (F.slice r (X.slice r)) = F.slice s (X.slice s)
+    intro r s hr hrs
+    have hFr := (Nat.le_max_left F.minRank X.minRank).trans hr
+    have hXr := (Nat.le_max_right F.minRank X.minRank).trans hr
+    have hF := F.extend_natural hFr hrs
+    have hX := X.restrict_natural hXr hrs
+    change extend U hrs L (F.slice r _ (X.slice r _)) = F.slice s _ (X.slice s _)
     rw [← hX]
-    have happ := congrFun hF (X.slice s)
+    have happ := congrFun hF (X.slice s (hXr.trans hrs))
     simpa [extend, restrict_extend] using happ
 
 def coherentAppAt (F : AtRank U r₁ (.arr K L)) (X : AtRank U r₂ K) :
-    AtRank U (max r₁ r₂) L := down U _ (coherentApp U F.whole X.whole)
+    AtRank U (max r₁ r₂) L :=
+  down U _ (coherentApp U F.whole X.whole)
+    (max_le_max F.within X.within)
 
 /-- Beth's existing model supplies the prototype maps directly. -/
 example : Slice Beth.model r K = KindVal Beth.model.rank r K := rfl
