@@ -16,6 +16,7 @@ import Nucleus.HolOmega.ProofTyping
 import Nucleus.HolOmega.Semantics
 import Nucleus.HolOmega.SemanticSubstitution
 import Nucleus.HolOmega.Soundness
+import Nucleus.HolOmega.Conversion
 import Nucleus.HolOmega.LogicalSoundness
 import Nucleus.HolOmega.Consistency
 import Nucleus.HolOmega.Spec
