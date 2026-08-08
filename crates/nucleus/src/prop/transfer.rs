@@ -157,10 +157,7 @@ impl<P: Policy> Connection<Prop<P>> {
             .attach_deserialized(IMPORT_SCHEMA, &bytes)
             .context(ImageSnafu)?;
         let admitted = self.admit_attached(meaning, bindings);
-        let _ = self
-            .parts()
-            .0
-            .execute_batch(&format!("DETACH DATABASE \"{IMPORT_SCHEMA}\""));
+        let _ = self.parts().0.detach(IMPORT_SCHEMA);
         admitted
     }
 

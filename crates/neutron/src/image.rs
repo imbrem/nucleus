@@ -8,6 +8,9 @@ const NEXT_DATABASE_ID_SQL: &str =
     "SELECT COALESCE(MAX(database_id), 0) + 1 FROM temp.cov_conn_attached";
 const REGISTER_DATABASE_SQL: &str =
     "INSERT INTO temp.cov_conn_attached (database_id, schema_name) VALUES (?1, ?2)";
+const FIND_DATABASE_SQL: &str =
+    "SELECT database_id FROM temp.cov_conn_attached WHERE schema_name = ?1";
+const UNREGISTER_DATABASE_SQL: &str = "DELETE FROM temp.cov_conn_attached WHERE schema_name = ?1";
 const DATABASE_IS_ATTACHED_SQL: &str =
     "SELECT EXISTS(SELECT 1 FROM pragma_database_list WHERE name = ?1)";
 
@@ -103,6 +106,35 @@ impl Connection {
         Ok(database_id)
     }
 
+    /// Detaches a database and removes it from Neutron's connection catalog.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `schema_name` is not a Neutron-managed attachment,
+    /// or if `SQLite` cannot detach it. A failed detach restores the catalog row.
+    pub fn detach(&self, schema_name: &str) -> Result<(), ImageError> {
+        let database_id = self
+            .query_row(FIND_DATABASE_SQL, &[Param::Text(schema_name)], |row| {
+                row.integer(0)
+            })
+            .context(DetachSnafu)?
+            .ok_or_else(|| ImageError::NotAttached {
+                schema_name: schema_name.to_owned(),
+            })?;
+        self.execute(UNREGISTER_DATABASE_SQL, &[Param::Text(schema_name)])
+            .context(DetachSnafu)?;
+
+        let schema = quote_identifier(schema_name);
+        if let Err(source) = self.execute_batch(&format!("DETACH DATABASE {schema}")) {
+            let _ = self.execute(
+                REGISTER_DATABASE_SQL,
+                &[Param::Integer(database_id), Param::Text(schema_name)],
+            );
+            return Err(ImageError::Detach { source });
+        }
+        Ok(())
+    }
+
     fn detach_after_failed_attach(&self, quoted_schema: &str) {
         let _ = self.execute_batch(&format!("DETACH DATABASE {quoted_schema}"));
     }
@@ -149,6 +181,20 @@ pub enum ImageError {
     AlreadyAttached {
         /// Conflicting `SQLite` schema name.
         schema_name: String,
+    },
+
+    /// The requested schema is not managed by Neutron.
+    #[snafu(display("database schema {schema_name:?} is not attached through Neutron"))]
+    NotAttached {
+        /// Missing `SQLite` schema name.
+        schema_name: String,
+    },
+
+    /// An attached database could not be detached cleanly.
+    #[snafu(display("could not detach Neutron database: {source}"))]
+    Detach {
+        /// Underlying `SQLite` error.
+        source: sqlite::Error,
     },
 
     /// An attached database could not be recorded in Neutron's catalog.
@@ -311,6 +357,31 @@ mod tests {
             connection.attach_deserialized("aux", &bytes),
             Err(ImageError::AlreadyAttached { schema_name }) if schema_name == "aux"
         ));
+    }
+
+    #[test]
+    fn detach_removes_the_schema_and_allows_its_name_to_be_reused() {
+        let source = Connection::open_in_memory().expect("open source");
+        let bytes = source.serialize().expect("serialize");
+        let mut connection = Connection::open_in_memory().expect("open destination");
+        connection
+            .attach_deserialized("aux", &bytes)
+            .expect("attach image");
+
+        connection.detach("aux").expect("detach image");
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM pragma_database_list WHERE name = 'aux'",
+                    &[],
+                    |row| row.integer(0),
+                )
+                .expect("query schemas"),
+            Some(0)
+        );
+        connection
+            .attach_deserialized("aux", &bytes)
+            .expect("reuse schema name");
     }
 
     #[test]
