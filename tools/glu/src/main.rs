@@ -57,6 +57,45 @@ enum Task {
         #[command(subcommand)]
         command: BuckTask,
     },
+    /// Build the Lean developments under `lean/`.
+    ///
+    /// These are a specification, not a build input, so this is deliberately
+    /// separate: `glu build`, `glu check`, and `glu ci` never touch them. It
+    /// shells out to `lake` rather than going through Buck.
+    Lean {
+        /// List the developments that would be built, without building.
+        #[arg(long)]
+        list: bool,
+
+        /// Build without first fetching Mathlib's prebuilt artifacts.
+        ///
+        /// On a cold checkout this compiles Mathlib from source, which takes
+        /// hours.
+        #[arg(long)]
+        no_cache: bool,
+
+        /// Generate API documentation rather than just checking the sources.
+        ///
+        /// Collects doc-gen4's HTML tree and its `SQLite` database for every
+        /// development that has a `docbuild` companion project.
+        #[arg(long)]
+        docs: bool,
+
+        /// Directory to stage generated documentation into.
+        #[arg(long, default_value = "lean-docs")]
+        out: PathBuf,
+
+        /// Cap Lake's build parallelism.
+        ///
+        /// Documentation generation holds an elaborated environment per
+        /// worker, so peak memory scales with this. Lowering it is the way out
+        /// of allocation failures on small machines.
+        ///
+        /// Lake has no parallelism flag of its own; it schedules on Lean's
+        /// task pool, so this sets `LEAN_NUM_THREADS`.
+        #[arg(long)]
+        jobs: Option<u16>,
+    },
     /// Report source line counts.
     Loc,
     /// Show the project status headline.
@@ -79,6 +118,7 @@ enum BuildTarget {
     All,
     Native,
     Wasm,
+    Component,
     Docs,
 }
 
@@ -129,6 +169,13 @@ enum ArtifactTask {
     },
     /// Internal: build the Nucleus WIT component.
     Component {
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Internal: transpile the Nucleus WIT component to JavaScript.
+    ComponentJs {
+        #[arg(long)]
+        component: PathBuf,
         #[arg(long)]
         out: PathBuf,
     },
@@ -200,6 +247,9 @@ fn run() -> Result<()> {
             ArtifactTask::Rustdoc { out } => runner.artifact_rustdoc(&out),
             ArtifactTask::Wasm { out } => runner.artifact_wasm(&out),
             ArtifactTask::Component { out } => runner.artifact_component(&out),
+            ArtifactTask::ComponentJs { component, out } => {
+                runner.artifact_component_js(&component, &out)
+            }
             ArtifactTask::CliComponent { out } => runner.artifact_cli_component(&out),
             ArtifactTask::Docs {
                 production_crates,
@@ -217,6 +267,19 @@ fn run() -> Result<()> {
                 &out,
             ),
         },
+        Task::Lean {
+            list,
+            no_cache,
+            docs,
+            out,
+            jobs,
+        } => {
+            if docs {
+                runner.lean_docs(&out, !no_cache, jobs)
+            } else {
+                runner.lean(list, !no_cache, jobs)
+            }
+        }
         Task::Loc => runner.loc(),
         Task::Status => runner.status(),
     }

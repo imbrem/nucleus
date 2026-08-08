@@ -3,6 +3,8 @@ use std::path::Path;
 use covalence_lib_error::snafu::{ResultExt, Snafu};
 use covalence_lib_sqlite as sqlite;
 
+use crate::sql::{self, Param, Transaction};
+
 const CREATE_CONNECTION_CATALOG_SQL: &str = include_str!("../sql/create_connection_catalog.sql");
 const CREATE_ATTACHED_DATABASES_SQL: &str = include_str!("../sql/create_attached_databases.sql");
 const REGISTER_TABLE_SQL: &str = include_str!("../sql/register_table.sql");
@@ -37,7 +39,15 @@ impl Connection {
     /// Returns an error when the database cannot be opened or the connection
     /// metadata cannot be initialized atomically.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ConnectionError> {
-        let sqlite = sqlite::Connection::open(path).context(OpenSnafu)?;
+        // `sqlite3_open_v2` takes a `char *`. A path which is not UTF-8 has no
+        // faithful representation there, so it is refused rather than
+        // lossily converted into a path naming a different file.
+        let path = path.as_ref();
+        let path = path.to_str().ok_or_else(|| ConnectionError::NonUtf8Path {
+            path: path.to_owned(),
+        })?;
+        let path = sql::c_string(path).context(OpenSnafu)?;
+        let sqlite = sqlite::Connection::open(&path).context(OpenSnafu)?;
         Self::from_sqlite(sqlite)
     }
 
@@ -59,24 +69,20 @@ impl Connection {
     /// # Errors
     ///
     /// Returns an error when the connection metadata cannot be initialized.
-    pub fn from_sqlite(mut sqlite: sqlite::Connection) -> Result<Self, ConnectionError> {
-        initialize(&mut sqlite)?;
-        Ok(Self { sqlite })
+    pub fn from_sqlite(sqlite: sqlite::Connection) -> Result<Self, ConnectionError> {
+        let connection = Self { sqlite };
+        connection.initialize()?;
+        Ok(connection)
     }
 
     /// Borrows the underlying `SQLite` connection.
-    #[must_use]
-    pub const fn sqlite(&self) -> &sqlite::Connection {
-        &self.sqlite
-    }
-
-    /// Mutably borrows the underlying `SQLite` connection.
     ///
-    /// Mutations made through this escape hatch can invalidate any assumptions
-    /// a higher layer has established.
+    /// Crate-private: `lib/sqlite` is an implementation detail of this layer,
+    /// and everything callers need is a method on [`Connection`]. Widen it if
+    /// something outside genuinely needs the handle.
     #[must_use]
-    pub const fn sqlite_mut(&mut self) -> &mut sqlite::Connection {
-        &mut self.sqlite
+    pub(crate) const fn sqlite(&self) -> &sqlite::Connection {
+        &self.sqlite
     }
 
     /// Consumes the wrapper and returns the underlying connection.
@@ -103,73 +109,106 @@ pub enum ConnectionError {
         /// Underlying `SQLite` error.
         source: sqlite::Error,
     },
+
+    /// The database path is not valid UTF-8.
+    ///
+    /// `SQLite` names files with a `char *`, so a path this crate cannot
+    /// represent as UTF-8 is refused rather than converted lossily into a path
+    /// naming some other file.
+    #[snafu(display("database path is not valid UTF-8: {}", path.display()))]
+    NonUtf8Path {
+        /// The rejected path.
+        path: std::path::PathBuf,
+    },
 }
 
-fn initialize(connection: &mut sqlite::Connection) -> Result<(), ConnectionError> {
-    let transaction = connection.transaction().context(InitializeSnafu)?;
+impl Connection {
+    /// Installs Neutron's connection-local metadata.
+    ///
+    /// Transactional: a connection which already holds objects under Neutron's
+    /// reserved names leaves nothing behind when this fails.
+    fn initialize(&self) -> Result<(), ConnectionError> {
+        let transaction = Transaction::begin(self).context(InitializeSnafu)?;
 
-    transaction
-        .execute_batch(CREATE_CONNECTION_CATALOG_SQL)
-        .context(InitializeSnafu)?;
-    register_table(
-        &transaction,
-        1,
-        CONNECTION_CATALOG,
-        CONNECTION_CATALOG_INTERPRETATION,
-    )?;
+        transaction
+            .connection()
+            .execute_batch(CREATE_CONNECTION_CATALOG_SQL)
+            .context(InitializeSnafu)?;
+        register_table(
+            &transaction,
+            1,
+            CONNECTION_CATALOG,
+            CONNECTION_CATALOG_INTERPRETATION,
+        )?;
 
-    create_and_register_table(
-        &transaction,
-        2,
-        ATTACHED_DATABASES,
-        ATTACHED_DATABASES_INTERPRETATION,
-        CREATE_ATTACHED_DATABASES_SQL,
-    )?;
+        create_and_register_table(
+            &transaction,
+            2,
+            ATTACHED_DATABASES,
+            ATTACHED_DATABASES_INTERPRETATION,
+            CREATE_ATTACHED_DATABASES_SQL,
+        )?;
 
-    register_attached_database(&transaction, 1, "main")?;
+        register_attached_database(&transaction, 1, "main")?;
 
-    transaction.commit().context(InitializeSnafu)
+        transaction.commit().context(InitializeSnafu)
+    }
 }
 
 fn create_and_register_table(
-    transaction: &sqlite::Transaction<'_>,
+    transaction: &Transaction<'_>,
     table_id: i64,
     table_name: &str,
     interpretation: &str,
     create_sql: &str,
 ) -> Result<(), ConnectionError> {
     transaction
+        .connection()
         .execute_batch(create_sql)
         .context(InitializeSnafu)?;
     register_table(transaction, table_id, table_name, interpretation)
 }
 
 fn register_table(
-    transaction: &sqlite::Transaction<'_>,
+    transaction: &Transaction<'_>,
     table_id: i64,
     table_name: &str,
     interpretation: &str,
 ) -> Result<(), ConnectionError> {
     transaction
-        .execute(REGISTER_TABLE_SQL, (table_id, table_name, interpretation))
+        .connection()
+        .execute(
+            REGISTER_TABLE_SQL,
+            &[
+                Param::Integer(table_id),
+                Param::Text(table_name),
+                Param::Text(interpretation),
+            ],
+        )
         .context(InitializeSnafu)?;
     Ok(())
 }
 
 fn register_attached_database(
-    transaction: &sqlite::Transaction<'_>,
+    transaction: &Transaction<'_>,
     database_id: i64,
     schema_name: &str,
 ) -> Result<(), ConnectionError> {
     transaction
-        .execute(REGISTER_ATTACHED_DATABASE_SQL, (database_id, schema_name))
+        .connection()
+        .execute(
+            REGISTER_ATTACHED_DATABASE_SQL,
+            &[Param::Integer(database_id), Param::Text(schema_name)],
+        )
         .context(InitializeSnafu)?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ATTACHED_DATABASES, CONNECTION_CATALOG, Connection, ConnectionError, initialize};
+    use covalence_lib_sqlite::{Statement, Step};
+
+    use super::{ATTACHED_DATABASES, CONNECTION_CATALOG, Connection, ConnectionError};
     use covalence_lib_sqlite as sqlite;
 
     #[test]
@@ -177,22 +216,13 @@ mod tests {
         let connection = Connection::open_in_memory().expect("initialize Neutron");
 
         let catalog = connection
-            .sqlite()
-            .prepare(
+            .query_all(
                 "SELECT table_id, table_name, interpretation
-                 FROM temp.cov_conn_catalog
-                 ORDER BY table_id",
+             FROM temp.cov_conn_catalog
+             ORDER BY table_id",
+                &[],
+                |row| Ok((row.integer(0)?, row.text(1)?, row.text(2)?)),
             )
-            .expect("prepare catalog query")
-            .query_map((), |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                ))
-            })
-            .expect("query catalog")
-            .collect::<sqlite::Result<Vec<_>>>()
             .expect("read catalog");
 
         assert_eq!(
@@ -212,13 +242,13 @@ mod tests {
         );
 
         let attached = connection
-            .sqlite()
             .query_row(
                 "SELECT database_id, schema_name FROM temp.cov_conn_attached",
-                (),
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+                &[],
+                |row| Ok((row.integer(0)?, row.text(1)?)),
             )
-            .expect("read attached database");
+            .expect("read attached database")
+            .expect("one attached database");
         assert_eq!(attached, (1, String::from("main")));
     }
 
@@ -226,94 +256,94 @@ mod tests {
     fn initialization_does_not_modify_main() {
         let connection = Connection::open_in_memory().expect("initialize Neutron");
         let main_tables = connection
-            .sqlite()
             .query_row(
                 "SELECT count(*) FROM main.sqlite_schema WHERE type = 'table'",
-                (),
-                |row| row.get::<_, i64>(0),
+                &[],
+                |row| row.integer(0),
             )
             .expect("count main tables");
-        assert_eq!(main_tables, 0);
+        assert_eq!(main_tables, Some(0));
     }
 
     #[test]
     fn failed_initialization_rolls_back_new_metadata() {
-        let mut sqlite = sqlite::Connection::open_in_memory().expect("open SQLite");
-        sqlite
-            .execute(
-                "CREATE TEMP TABLE cov_conn_attached (sentinel INTEGER) STRICT",
-                (),
-            )
+        // The metadata lives in `temp`, which is connection-local, so this has
+        // to inspect the same connection that failed. Wrapping without
+        // initializing is how it keeps hold of it.
+        let connection = Connection {
+            sqlite: sqlite::Connection::open_in_memory().expect("open SQLite"),
+        };
+        connection
+            .execute_batch("CREATE TEMP TABLE cov_conn_attached (sentinel INTEGER) STRICT")
             .expect("reserve connection name");
 
         assert!(matches!(
-            initialize(&mut sqlite),
+            connection.initialize(),
             Err(ConnectionError::Initialize { .. })
         ));
 
-        let catalog_exists = sqlite
+        let catalog_exists = connection
             .query_row(
                 "SELECT count(*) FROM temp.sqlite_schema
                  WHERE type = 'table' AND name = 'cov_conn_catalog'",
-                (),
-                |row| row.get::<_, i64>(0),
+                &[],
+                |row| row.integer(0),
             )
             .expect("inspect rolled-back schema");
-        assert_eq!(catalog_exists, 0);
+        assert_eq!(catalog_exists, Some(0));
 
-        let sentinel_exists = sqlite
+        let sentinel_exists = connection
             .query_row(
                 "SELECT count(*) FROM temp.sqlite_schema
                  WHERE type = 'table' AND name = 'cov_conn_attached'",
-                (),
-                |row| row.get::<_, i64>(0),
+                &[],
+                |row| row.integer(0),
             )
             .expect("inspect pre-existing schema");
-        assert_eq!(sentinel_exists, 1);
+        assert_eq!(sentinel_exists, Some(1));
     }
 
     #[test]
     fn existing_connection_catalog_is_rejected() {
-        let mut sqlite = sqlite::Connection::open_in_memory().expect("open SQLite");
-        sqlite
-            .execute(
-                "CREATE TEMP TABLE cov_conn_catalog (sentinel INTEGER) STRICT",
-                (),
-            )
+        let connection = Connection {
+            sqlite: sqlite::Connection::open_in_memory().expect("open SQLite"),
+        };
+        connection
+            .execute_batch("CREATE TEMP TABLE cov_conn_catalog (sentinel INTEGER) STRICT")
             .expect("reserve catalog name");
 
         assert!(matches!(
-            initialize(&mut sqlite),
+            connection.initialize(),
             Err(ConnectionError::Initialize { .. })
         ));
 
-        let columns = sqlite
+        let columns = connection
             .query_row(
                 "SELECT count(*) FROM temp.pragma_table_info('cov_conn_catalog')",
-                (),
-                |row| row.get::<_, i64>(0),
+                &[],
+                |row| row.integer(0),
             )
             .expect("inspect pre-existing catalog");
-        assert_eq!(columns, 1);
+        assert_eq!(columns, Some(1));
     }
 
     #[test]
     fn exposes_underlying_connection() {
-        let mut connection = Connection::open_in_memory().expect("initialize Neutron");
+        let connection = Connection::open_in_memory().expect("initialize Neutron");
         connection
-            .sqlite_mut()
-            .execute("CREATE TABLE application_data (value TEXT)", ())
-            .expect("write through escape hatch");
+            .execute_batch("CREATE TABLE application_data (value TEXT)")
+            .expect("write through the wrapper");
 
+        // The escape hatch still hands back the raw connection, with the
+        // table this wrote still on it.
         let sqlite = connection.into_sqlite();
-        let exists = sqlite
-            .query_row(
-                "SELECT count(*) FROM main.sqlite_schema
-                 WHERE type = 'table' AND name = 'application_data'",
-                (),
-                |row| row.get::<_, i64>(0),
-            )
-            .expect("inspect raw connection");
-        assert_eq!(exists, 1);
+        let mut statement = Statement::prepare(
+            &sqlite,
+            "SELECT count(*) FROM main.sqlite_schema
+             WHERE type = 'table' AND name = 'application_data'",
+        )
+        .expect("compile");
+        assert_eq!(statement.step().expect("step"), Step::Row);
+        assert_eq!(statement.column(0).as_integer(), Some(1));
     }
 }

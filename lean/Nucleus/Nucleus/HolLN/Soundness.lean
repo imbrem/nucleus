@@ -28,6 +28,7 @@ theorem EqTm.typing {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
   | eta name fresh functionTyping etaTyping => exact ⟨etaTyping, functionTyping⟩
 
 set_option maxHeartbeats 1000000 in
+-- Soundness eliminates both equality certificates and dependent evaluations.
 set_option maxRecDepth 2000 in
 theorem EqTm.sound {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
     {Γ : BoundCtx Base depth} {t uterm : Tm Base depth} {A : Ty Base}
@@ -122,6 +123,7 @@ def Entails {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
     Eval Δ Γ freeEnv boundEnv conclusion .boolTy true
 
 set_option maxHeartbeats 1000000 in
+-- The complete entailment induction carries dependent environments through every rule.
 set_option maxRecDepth 2000 in
 theorem Proves.sound {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
     {Γ : BoundCtx Base depth} {H : List (Tm Base depth)} {p : Tm Base depth}

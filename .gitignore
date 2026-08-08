@@ -6,10 +6,13 @@ node_modules/
 /apps/docs/static/api/
 /apps/docs/static/generated/
 /apps/docs/.svelte-kit/
+/packages/nucleus/component/
 /packages/nucleus/dist/
 /packages/nucleus/generated/
 .direnv/
 .claude/
+.lake/
+/lean-docs/
 .glu.json
 .buckconfig.local
 /buck-out/

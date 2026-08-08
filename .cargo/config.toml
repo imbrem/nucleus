@@ -1,0 +1,17 @@
+# `SQLite`'s threading mode, for targets whose `-sys` crate gets it wrong for us.
+#
+# `libsqlite3-sys` forces `SQLITE_THREADSAFE=0` for every `wasm32-wasi*`
+# target. That is a reasonable default -- WASI preview 1 has no threads -- but
+# it makes `Connection` neither `Send` nor `Sync` there, so the same code that
+# compiles natively fails to compile for WASI, and the divergence is found by
+# whoever next tries to build it.
+#
+# The flags are applied after the crate's own, and a later `-D` wins.
+# `crates/lib/sqlite/build.rs` reads this same variable, so the Rust side and
+# the C side cannot disagree.
+#
+# `wasm32-unknown-unknown` is not here and cannot be: `sqlite-wasm-rs` hardcodes
+# the flag and reads no environment. That target stays single-threaded, which is
+# true of it anyway.
+[env]
+LIBSQLITE3_FLAGS = "-USQLITE_THREADSAFE -DSQLITE_THREADSAFE=1"

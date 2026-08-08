@@ -251,6 +251,7 @@ theorem Eval.typing {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
   | rep hA hp _ ih => exact .rep hA hp ih
 
 set_option maxHeartbeats 1000000 in
+-- Dependent elimination over two relational evaluations generates a large proof term.
 set_option maxRecDepth 2000 in
 /-- The relational interpretation is deterministic. -/
 theorem Eval.unique {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
@@ -451,6 +452,7 @@ theorem liftSub_env {Base : Type u} {Δ : FreeCtx Base} {m n : Nat}
     convert renamed using 1 <;> rfl
 
 set_option maxHeartbeats 1000000 in
+-- Substitution traverses typing and evaluation derivations simultaneously.
 set_option maxRecDepth 2000 in
 theorem HasType.eval_instantiate {Base : Type u} {Δ : FreeCtx Base} {m : Nat}
     {sourceContext : BoundCtx Base m} {freeEnv : FreeEnv Δ}

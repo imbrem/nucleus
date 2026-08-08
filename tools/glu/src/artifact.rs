@@ -173,6 +173,37 @@ impl Runner {
         Ok(())
     }
 
+    /// Transpile the component into JavaScript plus its core modules.
+    ///
+    /// This is the component-model route to JavaScript: the interface comes
+    /// from WIT, so it does not pull in `wasm-bindgen` and is not restricted to
+    /// `wasm32-unknown-unknown`. It runs alongside, not instead of, the
+    /// `wasm-bindgen` package that `artifact_wasm` builds.
+    ///
+    /// jco is a pnpm dependency of `@nucleus/nucleus` rather than a tool in the
+    /// Nix shell, so it is reached through pnpm rather than as a binary on
+    /// PATH.
+    pub(crate) fn artifact_component_js(&self, component: &Path, out: &Path) -> Result<()> {
+        let component = absolute(component)?;
+        let out = absolute(out)?;
+        self.run(
+            "transpile nucleus component",
+            "pnpm",
+            [
+                "--filter",
+                "@nucleus/nucleus",
+                "exec",
+                "jco",
+                "transpile",
+                as_utf8(&component, "component")?,
+                "--out-dir",
+                as_utf8(&out, "transpiled component output")?,
+                "--name",
+                "nucleus",
+            ],
+        )
+    }
+
     pub(crate) fn artifact_cli_component(&self, out: &Path) -> Result<()> {
         let out = absolute(out)?;
         let target = artifact_temp(&out, "cli-component-target")?;

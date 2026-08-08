@@ -4,11 +4,16 @@ defaultTargets = ["Nucleus"]
 
 [leanOptions]
 warningAsError = true
-pp.unicode.fun = true
+pp.unicode.fun = true # pretty-prints `fun a ↦ b`
 relaxedAutoImplicit = false
+weak.linter.mathlibStandardSet = true
+# Licensing is declared centrally in REUSE.toml, which annotates `**`; no file
+# in this repository carries a per-file copyright header. Mathlib's header
+# linter requires one, in its own Apache-2.0 wording, so it is off.
 weak.linter.style.header = false
 maxSynthPendingDepth = 3
 
+# Pinned alongside lean-toolchain; bump both together.
 [[require]]
 name = "mathlib"
 scope = "leanprover-community"

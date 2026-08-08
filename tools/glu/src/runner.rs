@@ -245,6 +245,7 @@ impl Runner {
         }
         self.exec("test Buck Rust targets", "buck2", ["test", "//crates/..."])?;
         self.build(BuildTarget::Wasm)?;
+        self.build(BuildTarget::Component)?;
         self.pnpm("test web", &["run", "test"])?;
         self.test_components()?;
         let cli = self.buck_output("//crates/bin/nucleus:nucleus")?;
@@ -273,6 +274,13 @@ impl Runner {
                 eprintln!("• build Wasm package… done");
                 Ok(())
             }
+            BuildTarget::Component => {
+                self.buck_check()?;
+                let source = self.buck_output("//:component-js")?;
+                self.materialize_component_js(&source)?;
+                eprintln!("• build transpiled component… done");
+                Ok(())
+            }
             BuildTarget::Docs => self.docs(),
         }
     }
@@ -283,12 +291,14 @@ impl Runner {
             "build".to_owned(),
             "//crates/...".to_owned(),
             "//:wasm".to_owned(),
+            "//:component-js".to_owned(),
             "//:docs".to_owned(),
         ];
         arguments.extend(self.docs_config()?);
         arguments.push("--show-full-json-output".to_owned());
         let outputs = self.buck_outputs("build all targets", &arguments)?;
         self.materialize_wasm(required_output(&outputs, "nucleus//:wasm")?)?;
+        self.materialize_component_js(required_output(&outputs, "nucleus//:component-js")?)?;
         replace_dir(
             required_output(&outputs, "nucleus//:docs")?,
             &self.root.join("apps/docs/build"),
@@ -306,6 +316,15 @@ impl Runner {
             &source.join("dist"),
             &self.root.join("packages/nucleus/dist"),
         )
+    }
+
+    /// Stage the transpiled component beside the `wasm-bindgen` output.
+    ///
+    /// Its own directory rather than a subdirectory of `generated`, because the
+    /// two are produced by independent Buck targets and `materialize_wasm`
+    /// replaces `generated` wholesale.
+    fn materialize_component_js(&self, source: &Path) -> Result<()> {
+        replace_dir(source, &self.root.join("packages/nucleus/component"))
     }
 
     pub(crate) fn check(&self) -> Result<()> {
@@ -327,6 +346,187 @@ impl Runner {
             "dependencies: {} workspace packages, {} external packages, {} edges",
             summary.workspace_packages, summary.external_packages, summary.edges
         );
+        Ok(())
+    }
+
+    /// Build every Lean development under `lean/`.
+    ///
+    /// Deliberately outside `build`, `check`, and `ci`: the Lean sources are a
+    /// specification of what the kernel implements, not an input to anything
+    /// that gets built, and they carry a Mathlib dependency nothing else
+    /// needs. For the same reason this shells out to `lake` instead of going
+    /// through Buck.
+    ///
+    /// `lake build` rather than a bare elaboration, because building is what
+    /// reports errors and `sorry` warnings across a whole library.
+    pub(crate) fn lean(&self, list: bool, cache: bool, jobs: Option<u16>) -> Result<()> {
+        let projects = lean_projects(&self.root.join("lean"))?;
+        if projects.is_empty() {
+            eprintln!("no Lean developments found under lean/");
+            return Ok(());
+        }
+
+        for project in &projects {
+            let name = project
+                .strip_prefix(&self.root)
+                .unwrap_or(project)
+                .display()
+                .to_string();
+            if list {
+                println!("{name}");
+                continue;
+            }
+
+            // Mathlib publishes prebuilt artifacts for every revision. Without
+            // them `lake build` compiles all of Mathlib from source, which is
+            // hours rather than minutes, so this is not really optional on a
+            // cold checkout. `cache get` is cheap once the store is populated.
+            if cache && requires_mathlib(project)? {
+                self.run_in(
+                    &format!("fetch Mathlib cache for {name}"),
+                    project,
+                    "lake",
+                    ["exe", "cache", "get"],
+                    &[],
+                )?;
+            }
+            self.run_in(
+                &format!("build {name}"),
+                project,
+                "lake",
+                ["build"],
+                &lake_jobs_env(jobs),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Generate API documentation for every Lean development that has a
+    /// `docbuild` companion project.
+    ///
+    /// Each development is staged into `out/<name>/`: doc-gen4's HTML tree,
+    /// plus its `SQLite` database, which lands beside the tree rather than
+    /// inside it and so has to be collected explicitly. The database is worth
+    /// publishing on its own — upstream does not deploy one, so there is no
+    /// hosted Mathlib equivalent to point tooling at.
+    ///
+    /// `docbuild` is doc-gen4's documented pattern: a nested project that
+    /// depends on both the library and the generator, keeping the generator
+    /// out of the library's own dependency set.
+    pub(crate) fn lean_docs(&self, out: &Path, cache: bool, jobs: Option<u16>) -> Result<()> {
+        let out = if out.is_absolute() {
+            out.to_path_buf()
+        } else {
+            self.root.join(out)
+        };
+        if out.exists() {
+            fs::remove_dir_all(&out)
+                .wrap_err_with(|| format!("could not clear {}", out.display()))?;
+        }
+
+        let mut generated = 0;
+        for project in lean_projects(&self.root.join("lean"))? {
+            let docbuild = project.join("docbuild");
+            if !docbuild.join("lakefile.toml").is_file() {
+                continue;
+            }
+            let name = project
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .ok_or_else(|| color_eyre::eyre::eyre!("Lean development has no name"))?;
+            let label = project
+                .strip_prefix(&self.root)
+                .unwrap_or(&project)
+                .display()
+                .to_string();
+
+            if cache && requires_mathlib(&project)? {
+                self.run_in(
+                    &format!("fetch Mathlib cache for {label}"),
+                    &project,
+                    "lake",
+                    ["exe", "cache", "get"],
+                    &[],
+                )?;
+            }
+            // Materialise the documentation dependencies before patching one
+            // of them. `lake build` clones what the manifest names as part of
+            // resolution, which would land after the patch and silently undo
+            // it; loading the workspace resolves at the pinned revisions
+            // without rewriting the manifest.
+            self.run_in(
+                &format!("resolve documentation dependencies for {label}"),
+                &docbuild,
+                "lake",
+                ["env", "true"],
+                &[],
+            )?;
+            unguard_unicode_extern_lib(&project)?;
+            self.run_in(
+                &format!("document {label}"),
+                &docbuild,
+                "lake",
+                ["build", &format!("{name}:docs")],
+                &lake_jobs_env(jobs),
+            )?;
+
+            let build = docbuild.join(".lake/build");
+            let staged = out.join(&name);
+            copy_dir(&build.join("doc"), &staged)?;
+            fs::copy(build.join("api-docs.db"), staged.join("api-docs.db"))
+                .wrap_err("could not publish the doc-gen4 database")?;
+            generated += 1;
+        }
+
+        if generated == 0 {
+            eprintln!("no Lean development under lean/ has a docbuild project");
+        }
+        Ok(())
+    }
+
+    fn run_in<I, S>(
+        &self,
+        phase: &str,
+        directory: &Path,
+        program: &str,
+        args: I,
+        environment: &[(&str, OsString)],
+    ) -> Result<()>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let args: Vec<OsString> = args.into_iter().map(|arg| arg.as_ref().into()).collect();
+        if self.verbose > 0 {
+            eprintln!(
+                "  $ (cd {} && {program} {})",
+                directory.display(),
+                args.iter()
+                    .map(|arg| arg.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+        }
+
+        let started = Instant::now();
+        eprint!("• {phase}…");
+        let output = Command::new(program)
+            .args(&args)
+            .envs(environment.iter().map(|(key, value)| (*key, value)))
+            .current_dir(directory)
+            .output()
+            .wrap_err_with(|| format!("{phase}: could not run {program}"))?;
+
+        if self.verbose > 1 || !output.status.success() {
+            eprintln!();
+            print!("{}", String::from_utf8_lossy(&output.stdout));
+            eprint!("{}", String::from_utf8_lossy(&output.stderr));
+        }
+        if !output.status.success() {
+            bail!("{phase} failed with {}", output.status);
+        }
+
+        eprintln!(" done ({:.2?})", started.elapsed());
         Ok(())
     }
 
@@ -426,7 +626,13 @@ impl Runner {
         ] {
             self.run(tool, tool, ["--version"])?;
         }
-        self.run("cargo component", "cargo", ["component", "--version"])
+        self.run("cargo component", "cargo", ["component", "--version"])?;
+        // jco comes from the pnpm workspace rather than the Nix shell, so it
+        // is only reachable once `pnpm install` has run.
+        self.pnpm(
+            "jco",
+            &["--filter", "@nucleus/nucleus", "exec", "jco", "--version"],
+        )
     }
 
     pub(crate) fn docs(&self) -> Result<()> {
@@ -606,6 +812,124 @@ fn expect_output(phase: &str, output: &Output, expected: &str) -> Result<()> {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     )
+}
+
+/// Directories at or below `directory` that hold a lakefile.
+///
+/// A lakefile marks the root of a development, so the walk stops descending
+/// once it finds one: nested lakefiles belong to fetched dependencies, not to
+/// this repository.
+fn lean_projects(directory: &Path) -> Result<Vec<PathBuf>> {
+    let mut found = Vec::new();
+    collect_lean_projects(directory, &mut found)?;
+    found.sort();
+    Ok(found)
+}
+
+/// Environment capping Lake's build parallelism.
+///
+/// Lake has no parallelism flag; it schedules on Lean's task pool, so the pool
+/// size is the knob.
+fn lake_jobs_env(jobs: Option<u16>) -> Vec<(&'static str, OsString)> {
+    jobs.map(|jobs| ("LEAN_NUM_THREADS", jobs.to_string().into()))
+        .into_iter()
+        .collect()
+}
+
+/// Drop the Windows guard on `UnicodeBasic`'s `extern_lib` declaration.
+///
+/// doc-gen4 depends on `UnicodeBasic`, whose native helpers are attached to the
+/// library with `moreLinkObjs`. Lake does not link those into *precompiled
+/// module dynlibs* — only an `extern_lib` reaches those — and `UnicodeBasic`
+/// declares its `extern_lib` behind `meta if System.Platform.isWindows`,
+/// commented "temporary fix for Windows". So on Linux the static library is
+/// built correctly but never linked in, and loading the precompiled module
+/// fails with `undefined symbol: unicode_script_to_abbrev`.
+///
+/// Removing the guard fixes it. Idempotent, and a silent no-op once upstream
+/// drops the guard itself or the package stops being a dependency. The stale
+/// dynlibs are deleted so they relink against the extern library.
+fn unguard_unicode_extern_lib(project: &Path) -> Result<()> {
+    let package = project.join(".lake/packages/UnicodeBasic");
+    let lakefile = package.join("lakefile.lean");
+    if !lakefile.is_file() {
+        return Ok(());
+    }
+
+    let contents = fs::read_to_string(&lakefile)
+        .wrap_err_with(|| format!("could not read {}", lakefile.display()))?;
+    let guard = "meta if System.Platform.isWindows then\nextern_lib libunicodeclib";
+    if !contents.contains(guard) {
+        return Ok(());
+    }
+
+    fs::write(
+        &lakefile,
+        contents.replace(guard, "extern_lib libunicodeclib"),
+    )
+    .wrap_err_with(|| format!("could not patch {}", lakefile.display()))?;
+
+    let libraries = package.join(".lake/build/lib/lean");
+    if libraries.is_dir() {
+        for entry in fs::read_dir(&libraries)
+            .wrap_err_with(|| format!("could not read {}", libraries.display()))?
+        {
+            let path = entry
+                .wrap_err_with(|| format!("could not read {}", libraries.display()))?
+                .path();
+            if path.extension().is_some_and(|extension| extension == "so") {
+                fs::remove_file(&path)
+                    .wrap_err_with(|| format!("could not remove {}", path.display()))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Whether a development depends on Mathlib, and so has a prebuilt cache to
+/// fetch. `lake exe cache` is a Mathlib executable, so asking for it in a
+/// development that does not require Mathlib is an error rather than a no-op.
+fn requires_mathlib(project: &Path) -> Result<bool> {
+    for lakefile in ["lakefile.toml", "lakefile.lean"] {
+        let path = project.join(lakefile);
+        if path.is_file() {
+            let contents = fs::read_to_string(&path)
+                .wrap_err_with(|| format!("could not read {}", path.display()))?;
+            return Ok(contents.contains("mathlib"));
+        }
+    }
+    Ok(false)
+}
+
+fn collect_lean_projects(directory: &Path, found: &mut Vec<PathBuf>) -> Result<()> {
+    if !directory.is_dir() {
+        return Ok(());
+    }
+
+    let mut subdirectories = Vec::new();
+    for entry in fs::read_dir(directory)
+        .wrap_err_with(|| format!("could not read {}", directory.display()))?
+    {
+        let entry = entry.wrap_err_with(|| format!("could not read {}", directory.display()))?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let file_type = entry
+            .file_type()
+            .wrap_err_with(|| format!("could not stat {}", entry.path().display()))?;
+
+        if file_type.is_file() && matches!(&*name, "lakefile.toml" | "lakefile.lean") {
+            found.push(directory.to_path_buf());
+            return Ok(());
+        }
+        if file_type.is_dir() && !name.starts_with('.') {
+            subdirectories.push(entry.path());
+        }
+    }
+
+    for subdirectory in subdirectories {
+        collect_lean_projects(&subdirectory, found)?;
+    }
+    Ok(())
 }
 
 fn command_path(name: &str) -> Result<PathBuf> {

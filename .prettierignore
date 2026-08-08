@@ -7,8 +7,10 @@ node_modules/
 apps/docs/build/
 apps/docs/static/api/
 apps/docs/.svelte-kit/
+packages/nucleus/component/
 packages/nucleus/dist/
 packages/nucleus/generated/
 Cargo.lock
 tools/glu/Cargo.lock
 pnpm-lock.yaml
+lean/**/lake-manifest.json

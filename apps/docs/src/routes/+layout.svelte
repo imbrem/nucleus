@@ -10,6 +10,7 @@
   <a href={`${base}/crates/`}>Crates</a>
   <a href={`${base}/dependencies/`}>Dependencies</a>
   <a href={`${base}/api/nucleus/`}>API</a>
+  <a href={`${base}/lean/Nucleus/`}>Lean</a>
 </nav>
 
 {@render children()}
