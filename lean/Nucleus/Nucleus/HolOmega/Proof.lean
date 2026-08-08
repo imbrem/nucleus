@@ -97,6 +97,20 @@ def TypedHyps {Base : Type u} (Δ : KindCtx) (Γ : TmCtx Base)
     (H : Hyps Base) : Prop :=
   ∀ p ∈ H, HasType Δ Γ p .tyBool
 
+def Hyps.subst {Base : Type u} (H : Hyps Base) (σ : Nat → Tm Base) : Hyps Base :=
+  H.map (Expr.subst σ)
+
+theorem Hyps.mem_subst {Base : Type u} {H : Hyps Base} {p : Tm Base}
+    {σ : Nat → Tm Base}
+    (hp : p ∈ H) : p.subst σ ∈ H.subst σ := by
+  exact List.mem_map.mpr ⟨p, hp, rfl⟩
+
+theorem TypedHyps.subst (hH : TypedHyps Δ Γ H) (hσ : TmSub Δ Γ Γ' σ) :
+    TypedHyps Δ Γ' (H.subst σ) := by
+  intro q hq
+  rcases List.mem_map.mp hq with ⟨p, hp, rfl⟩
+  exact (hH p hp).subst hσ
+
 /-- Typed theorem certificates for every rule of `Kernel.Derives`.
 
 Every constructor carries `TypedHyps`, so even unused entries cannot make a
