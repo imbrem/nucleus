@@ -5,6 +5,7 @@
   "license": "CC0-1.0",
   "type": "module",
   "files": [
+    "component",
     "dist",
     "generated/nucleus_bg.wasm"
   ],
@@ -13,15 +14,24 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./component": {
+      "types": "./component/nucleus.d.ts",
+      "import": "./component/nucleus.js"
+    },
     "./wasm": "./generated/nucleus_bg.wasm"
   },
   "scripts": {
     "generate": "cargo build --locked -p nucleus --target wasm32-unknown-unknown && wasm-bindgen ../../target/wasm32-unknown-unknown/debug/nucleus.wasm --out-dir generated --target web",
+    "transpile": "cargo component build --locked -p covalence-nucleus && jco transpile ../../target/wasm32-wasip1/debug/covalence_nucleus.wasm --out-dir component --name nucleus",
     "build": "pnpm run generate && tsc",
     "check": "tsc --noEmit",
     "test": "node --test test/*.test.mjs"
   },
+  "dependencies": {
+    "@bytecodealliance/preview2-shim": "0.20.1"
+  },
   "devDependencies": {
+    "@bytecodealliance/jco": "1.27.0",
     "playwright-core": "1.61.1",
     "typescript": "5.9.2"
   }

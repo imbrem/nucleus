@@ -18,6 +18,7 @@ _DOCS_SOURCES = glob(
 _NUCLEUS_PACKAGE_SOURCES = glob(
     ["packages/nucleus/**"],
     exclude = [
+        "packages/nucleus/component/**",
         "packages/nucleus/dist/**",
         "packages/nucleus/generated/**",
     ],
@@ -100,6 +101,25 @@ genrule(
     }),
     out = "nucleus-component.wasm",
     cmd = "$(exe //tools/glu:glu) artifact component --out $OUT",
+    labels = ["uses_undeclared_inputs"],
+)
+
+# JavaScript for the same component `:component` produces, so the browser and
+# Node can call it without going through wasm-bindgen. jco comes from the pnpm
+# workspace, so the manifests that pin it are inputs.
+genrule(
+    name = "component-js",
+    srcs = named_sources(
+        {"component": ":component"},
+        [
+            "package.json",
+            "packages/nucleus/package.json",
+            "pnpm-lock.yaml",
+            "pnpm-workspace.yaml",
+        ],
+    ),
+    out = "component-js",
+    cmd = "mkdir -p $OUT && $(exe //tools/glu:glu) artifact component-js --component $(location :component) --out $OUT",
     labels = ["uses_undeclared_inputs"],
 )
 
