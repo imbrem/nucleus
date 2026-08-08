@@ -253,6 +253,22 @@ structure RankScheme (Base : Type u) where
 theorem RankScheme.instantiate (S : RankScheme Base) (ξ : Nat → Nat) :
     Kinded (S.context ξ) (S.type ξ) ⟨S.kind, S.rank.eval ξ⟩ := S.formed ξ
 
+/-- A concrete rank-polymorphic higher-kind identity.  One formation object
+instantiates to the expected lambda at every assignment, including affine
+`z+n` ranks. -/
+def rankIdentityScheme (Base : Type u) (K : Kind) (r : RankExpr) : RankScheme Base where
+  context _ := []
+  type ξ := .tyLam ⟨K, r.eval ξ⟩ (.tyVar 0)
+  kind := .arr K K
+  rank := r
+  formed ξ := by
+    simpa using Kinded.tyLam (Kinded.tyVar (Δ := []) (RK := ⟨K, r.eval ξ⟩) (by simp))
+
+example (ξ : Nat → Nat) :
+    Kinded [] ((rankIdentityScheme Base K (.varAdd z n)).type ξ)
+      ⟨.arr K K, ξ z + n⟩ :=
+  (rankIdentityScheme Base K (.varAdd z n)).instantiate ξ
+
 /-- Current equal-rank formation embeds in the max-rank calculus, after
 normalizing base/Boolean ranks by subsumption. -/
 theorem ofCore {Base : Type u} (h : HolOmega.Kinded Δ A RK) : Kinded Δ A RK := by
