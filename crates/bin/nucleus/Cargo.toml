@@ -12,7 +12,12 @@ name = "nucleus"
 path = "src/main.rs"
 
 [dependencies]
-covalence-nucleus = { path = "../../nucleus" }
+covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["blake3"] }
+covalence-repl = { path = "../../repl" }
+
+[dev-dependencies]
+covalence-lib-sqlite = { path = "../../lib/sqlite" }
+covalence-neutron = { path = "../../neutron" }
 
 [lints]
 workspace = true

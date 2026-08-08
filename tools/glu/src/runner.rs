@@ -4,13 +4,13 @@ use std::{
     env,
     ffi::{OsStr, OsString},
     fs,
-    io::{self, Write},
+    io::{self, BufRead, BufReader, Write},
     path::{Path, PathBuf},
-    process::{Command, Output, Stdio},
+    process::{Child, Command, Output, Stdio},
     time::Instant,
 };
 
-use color_eyre::eyre::{Result, WrapErr, bail};
+use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 
 use crate::{BuildTarget, buck, cargo, loc};
 
@@ -124,6 +124,32 @@ impl Runner {
         let status = Command::new(program)
             .args(args)
             .current_dir(&self.root)
+            .status()
+            .wrap_err_with(|| format!("{phase}: could not run {program}"))?;
+        if !status.success() {
+            bail!("{phase} failed with {status}");
+        }
+        Ok(())
+    }
+
+    /// Runs a program to completion with extra environment variables.
+    fn exec_with_environment<I, S>(
+        &self,
+        phase: &str,
+        program: &str,
+        args: I,
+        environment: &[(&str, String)],
+    ) -> Result<()>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let mut command = Command::new(program);
+        command.args(args).current_dir(&self.root);
+        for (name, value) in environment {
+            command.env(name, value);
+        }
+        let status = command
             .status()
             .wrap_err_with(|| format!("{phase}: could not run {program}"))?;
         if !status.success() {
@@ -680,6 +706,175 @@ impl Runner {
             format!("docs.dirty={dirty}"),
         ]);
         Ok(arguments)
+    }
+
+    /// Builds the browser demo, starts a kernel behind it, and serves it.
+    ///
+    /// Three things have to line up for the demo to be interesting, and doing
+    /// them by hand is three chances to get one wrong: the wasm has to be
+    /// built, an HTTP kernel has to be holding a database, and the page has to
+    /// know that database's address. This does all three and prints the
+    /// address, so the only manual step left is pasting it.
+    ///
+    /// Both servers are children of this process and share its process group,
+    /// so Ctrl-C stops all three. The kernel is also killed explicitly when
+    /// the page server exits normally. A signal delivered to this process
+    /// alone rather than to the group would leave them running, which is a
+    /// limitation of not being able to use `prctl` here: this crate forbids
+    /// `unsafe`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the build fails, no database can be served, or
+    /// either server cannot start.
+    pub(crate) fn demo(
+        &self,
+        files: &[PathBuf],
+        port: u16,
+        kernel_port: u16,
+        open: bool,
+        no_build: bool,
+        tls: bool,
+    ) -> Result<()> {
+        // The committed fixture, so `glu demo` with no arguments still shows
+        // something rather than an empty store.
+        let default = self.root.join("packages/nucleus/test/fixture.sqlite");
+        let files: Vec<PathBuf> = if files.is_empty() {
+            vec![default]
+        } else {
+            files.to_vec()
+        };
+        for file in &files {
+            if !file.is_file() {
+                bail!("{} is not a file", file.display());
+            }
+        }
+
+        if !no_build {
+            self.pnpm(
+                "build browser demo",
+                &["--dir", "packages/nucleus", "build"],
+            )?;
+            self.cargo(
+                "build demo kernel",
+                &["build", "-p", "covalence-bin-cas-serve"],
+            )?;
+        }
+
+        let mut kernel = self.start_kernel(&files, kernel_port)?;
+        let scheme = if tls { "https" } else { "http" };
+        let host = if tls { "localhost" } else { "127.0.0.1" };
+        let page = format!("{scheme}://{host}:{port}/");
+
+        eprintln!();
+        eprintln!("  demo      {page}");
+        eprintln!("  kernel    http://127.0.0.1:{kernel_port}");
+        eprintln!();
+        eprintln!("  The page is a REPL. Try:");
+        eprintln!("    (help)");
+        eprintln!("    (connect \"http://127.0.0.1:{kernel_port}\")");
+        eprintln!("    (fetch ADDRESS)         (an address printed above)");
+        eprintln!("    (sqlite ADDRESS \"-batch\" \".schema\")");
+        eprintln!();
+        eprintln!("  Ctrl-C stops both servers.");
+        eprintln!();
+
+        if open {
+            // A failure here is not worth stopping for; the URL is printed.
+            let _ = self.run("open demo", "xdg-open", [page.as_str()]);
+        }
+
+        let (config, environment) = self.demo_config(port, tls);
+        let served = self.exec_with_environment(
+            "serve demo",
+            "caddy",
+            [
+                OsStr::new("run"),
+                OsStr::new("--adapter"),
+                OsStr::new("caddyfile"),
+                OsStr::new("--config"),
+                config.as_os_str(),
+            ],
+            &environment,
+        );
+
+        // The kernel is a child of this process, so it must not outlive it.
+        let _ = kernel.kill();
+        let _ = kernel.wait();
+        served
+    }
+
+    /// Returns the demo server's configuration and the environment it needs.
+    ///
+    /// The config is a file in the repository, not a string built here, and
+    /// that is the point: `packages/nucleus/test` runs the same one. A server
+    /// only the demo uses is a server only the demo has tested, and the
+    /// headers below are exactly the sort of thing that is wrong for weeks
+    /// without anyone noticing.
+    ///
+    /// `caddy file-server` alone is not enough, for three reasons that each
+    /// cost real debugging time when missing -- no caching, the REPL at the
+    /// root, and cross-origin isolation so `SharedArrayBuffer` exists. They
+    /// are spelled out in the config, next to the lines that implement them.
+    fn demo_config(&self, port: u16, tls: bool) -> (PathBuf, Vec<(&'static str, String)>) {
+        // `tls internal` uses Caddy's own CA. The certificate is not trusted
+        // by default, so a browser will warn; `caddy trust` installs it, and
+        // that needs privileges this tool should not assume.
+        let (address, tls_directive) = if tls {
+            (format!("https://localhost:{port}"), "tls internal")
+        } else {
+            (format!("http://127.0.0.1:{port}"), "")
+        };
+        let package = self.root.join("packages/nucleus");
+        (
+            package.join("demo.caddyfile"),
+            vec![
+                ("NUCLEUS_ADDRESS", address),
+                ("NUCLEUS_ROOT", package.display().to_string()),
+                (
+                    "NUCLEUS_SAMPLES",
+                    self.root.join("crates/repl/samples").display().to_string(),
+                ),
+                ("NUCLEUS_TLS", tls_directive.to_owned()),
+            ],
+        )
+    }
+
+    /// Starts the HTTP kernel and reports the addresses it admitted.
+    ///
+    /// The kernel prints one `address path` line per file and then its base
+    /// URL, so reading until the URL both collects the addresses and confirms
+    /// it is listening.
+    fn start_kernel(&self, files: &[PathBuf], port: u16) -> Result<Child> {
+        let binary = self.root.join("target/debug/covalence-cas-serve");
+        let mut child = Command::new(&binary)
+            .arg("--port")
+            .arg(port.to_string())
+            .args(files)
+            .current_dir(&self.root)
+            .stdout(Stdio::piped())
+            .spawn()
+            .wrap_err_with(|| format!("could not start {}", binary.display()))?;
+
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| eyre!("demo kernel produced no output"))?;
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            if reader.read_line(&mut line)? == 0 {
+                let _ = child.kill();
+                bail!("demo kernel exited before it started listening");
+            }
+            let line = line.trim_end();
+            if line.starts_with("http://") {
+                break;
+            }
+            eprintln!("  {line}");
+        }
+        Ok(child)
     }
 
     pub(crate) fn serve_docs(&self, port: u16, open: bool) -> Result<()> {

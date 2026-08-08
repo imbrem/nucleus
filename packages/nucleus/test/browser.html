@@ -2,18 +2,17 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Nucleus browser smoke test</title>
+    <title>Nucleus REPL tests</title>
   </head>
   <body>
     <script type="module">
-      import init, { smoke } from "../generated/nucleus.js";
+      import { init, Repl, drive, canSpawn } from "../dist/index.js";
 
-      try {
-        await init();
-        document.body.dataset.result = String(smoke());
-      } catch (error) {
-        document.body.dataset.error = String(error);
-      }
+      await init();
+      const host = { shell: () => fetch("../generated/shell.wasm") };
+      // Exposed for the test driver; this page is not a demo.
+      window.nucleus = { Repl, drive, host, canSpawn };
+      document.body.dataset.ready = "yes";
     </script>
   </body>
 </html>

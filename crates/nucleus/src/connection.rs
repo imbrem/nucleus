@@ -1,39 +1,28 @@
-use std::path::Path;
-
 use covalence_neutron as neutron;
 
-/// Failure to open a Nucleus connection.
-pub type ConnectionError = neutron::ConnectionError;
-
-/// A policy-enforcing connection to Nucleus state.
+/// A protocol-enforcing connection to Nucleus state.
 ///
-/// This initial wrapper intentionally exposes no access to its underlying
-/// Neutron or `SQLite` connections. Later APIs can add operations only when
-/// Nucleus can preserve their semantic invariants by construction.
-#[derive(Debug)]
-pub struct Connection {
-    _neutron: neutron::Connection,
+/// The protocol value carries connection-local policy and evidence. There is
+/// deliberately no generic SQL escape hatch: each protocol exposes only the
+/// operations that preserve its invariants.
+pub struct Connection<P> {
+    neutron: neutron::Connection,
+    protocol: P,
 }
 
-impl Connection {
-    /// Opens a database through Neutron and encloses it in the Nucleus boundary.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the underlying `SQLite` connection cannot be
-    /// opened or Neutron's connection metadata cannot be initialized.
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, ConnectionError> {
-        neutron::Connection::open(path).map(|neutron| Self { _neutron: neutron })
+impl<P> Connection<P> {
+    /// Returns the protocol state carried by this connection.
+    #[must_use]
+    pub const fn protocol(&self) -> &P {
+        &self.protocol
     }
 
-    /// Opens an in-memory database through Neutron.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when Neutron's connection metadata cannot be
-    /// initialized.
-    pub fn open_in_memory() -> Result<Self, ConnectionError> {
-        neutron::Connection::open_in_memory().map(|neutron| Self { _neutron: neutron })
+    pub(crate) const fn from_neutron(neutron: neutron::Connection, protocol: P) -> Self {
+        Self { neutron, protocol }
+    }
+
+    pub(crate) const fn parts(&self) -> (&neutron::Connection, &P) {
+        (&self.neutron, &self.protocol)
     }
 }
 
@@ -42,7 +31,10 @@ mod tests {
     use super::Connection;
 
     #[test]
-    fn opens_through_neutron() {
-        let _connection = Connection::open_in_memory().expect("open Nucleus connection");
+    fn encloses_protocol_state() {
+        let neutron = covalence_neutron::Connection::open_in_memory().expect("open Neutron");
+        let connection = Connection::from_neutron(neutron, 7_u64);
+        assert_eq!(*connection.protocol(), 7);
+        assert_eq!(*connection.parts().1, 7);
     }
 }

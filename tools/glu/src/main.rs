@@ -100,6 +100,42 @@ enum Task {
     Loc,
     /// Show the project status headline.
     Status,
+    /// Build and serve the browser demo, with a kernel behind it.
+    ///
+    /// Builds both wasm modules, starts an HTTP kernel holding a database,
+    /// prints its address, and serves the page. Ctrl-C stops everything.
+    Demo {
+        /// Databases the HTTP kernel should serve.
+        ///
+        /// Defaults to the committed fixture, so the demo works unattended.
+        files: Vec<PathBuf>,
+
+        /// Loopback port for the demo page.
+        #[arg(long, default_value_t = 8000)]
+        port: u16,
+
+        /// Loopback port for the HTTP kernel.
+        ///
+        /// The page defaults to this, so changing it means changing the URL
+        /// on the page too.
+        #[arg(long, default_value_t = 8080)]
+        kernel_port: u16,
+
+        /// Open the demo in the default browser.
+        #[arg(long)]
+        open: bool,
+
+        /// Serve what is already built rather than rebuilding first.
+        #[arg(long)]
+        no_build: bool,
+
+        /// Serve over HTTPS with Caddy's internal CA.
+        ///
+        /// The certificate is not trusted by default, so a browser will warn
+        /// until `caddy trust` installs it.
+        #[arg(long)]
+        tls: bool,
+    },
     /// Build or serve the documentation site.
     Docs {
         #[command(subcommand)]
@@ -235,6 +271,14 @@ fn run() -> Result<()> {
         Task::Buck {
             command: BuckTask::Check,
         } => runner.buck_check(),
+        Task::Demo {
+            files,
+            port,
+            kernel_port,
+            open,
+            no_build,
+            tls,
+        } => runner.demo(&files, port, kernel_port, open, no_build, tls),
         Task::Docs { command: None } => runner.docs(),
         Task::Docs {
             command: Some(DocsTask::Serve { open, port }),

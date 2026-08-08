@@ -46,7 +46,7 @@ impl Runner {
         let target = artifact_temp(&out, "wasm-target")?;
         let staged = artifact_temp(&out, "wasm-package")?;
         self.run(
-            "compile nucleus for Wasm",
+            "compile the browser kernel for Wasm",
             "cargo",
             [
                 "--locked",
@@ -54,7 +54,7 @@ impl Runner {
                 "--target-dir",
                 as_utf8(&target, "temporary target")?,
                 "-p",
-                "covalence-nucleus",
+                "covalence-browser",
                 "--target",
                 "wasm32-unknown-unknown",
             ],
@@ -66,7 +66,7 @@ impl Runner {
             "wasm-bindgen",
             [
                 as_utf8(
-                    &target.join("wasm32-unknown-unknown/debug/covalence_nucleus.wasm"),
+                    &target.join("wasm32-unknown-unknown/debug/covalence_browser.wasm"),
                     "Wasm",
                 )?,
                 "--out-dir",
@@ -77,13 +77,39 @@ impl Runner {
                 "web",
             ],
         )?;
-        fs::create_dir_all(staged.join("src"))
-            .wrap_err("could not create staged TypeScript source directory")?;
+        // The upstream SQLite shell, as its own module. It targets WASI
+        // because it needs real stdio, which `wasm32-unknown-unknown` does not
+        // have.
+        self.run(
+            "compile the SQLite shell for WASI",
+            "cargo",
+            [
+                "--locked",
+                "build",
+                "--target-dir",
+                as_utf8(&target, "temporary target")?,
+                "--profile",
+                "wasm-release",
+                "-p",
+                "covalence-bin-cas-shell",
+                "--target",
+                "wasm32-wasip1",
+            ],
+        )?;
         fs::copy(
-            self.root().join("packages/nucleus/src/index.ts"),
-            staged.join("src/index.ts"),
+            target.join("wasm32-wasip1/wasm-release/covalence-cas-shell.wasm"),
+            generated.join("shell.wasm"),
         )
-        .wrap_err("could not stage TypeScript wrapper")?;
+        .wrap_err("could not stage the shell Wasm")?;
+
+        // Stage the package as a package, so its own `tsconfig.json` is what
+        // compiles it, and copy the whole `src` directory rather than naming
+        // files. Both are the same point: this build and `pnpm build` must not
+        // be able to disagree about the same source.
+        let package = self.root().join("packages/nucleus");
+        copy_dir(&package.join("src"), &staged.join("src"))?;
+        fs::copy(package.join("tsconfig.json"), staged.join("tsconfig.json"))
+            .wrap_err("could not stage tsconfig.json")?;
         let dist = out.join("dist");
         fs::create_dir_all(&dist).wrap_err("could not create TypeScript output directory")?;
         self.run(
@@ -94,17 +120,10 @@ impl Runner {
                 "@nucleus/nucleus",
                 "exec",
                 "tsc",
-                as_utf8(&staged.join("src/index.ts"), "TypeScript source")?,
-                "--declaration",
-                "--module",
-                "NodeNext",
-                "--moduleResolution",
-                "NodeNext",
+                "--project",
+                as_utf8(&staged.join("tsconfig.json"), "TypeScript project")?,
                 "--outDir",
                 as_utf8(&dist, "TypeScript output")?,
-                "--strict",
-                "--target",
-                "ES2022",
             ],
         )?;
         copy_dir(&generated, &out.join("generated"))

@@ -1,14 +1,20 @@
 //! Portable trusted core for Nucleus.
 
 mod connection;
+pub mod manifest;
 
-pub use connection::{Connection, ConnectionError};
+pub use connection::Connection;
+
+pub mod prop;
+pub use prop::Prop;
 
 mod snapshot;
 
 pub use snapshot::{
-    COV_VALID_DB_V0, ED25519_PUBLIC_KEY_V0, Ed25519Signer, Ed25519Verifier, SignError, Signer,
-    VerificationError, Verifier, ed25519_key_id, valid_snapshot_statement,
+    AuthenticatedSnapshot, AuthenticatedSnapshotClaim, COV_SCHEMA_VALID_DB_V0,
+    ED25519_PUBLIC_KEY_V0, Ed25519Signer, Ed25519Verifier, SignError, SignedSnapshotAttestation,
+    SignedSnapshotEnvelope, Signer, SnapshotAuthenticationError, VerificationError, Verifier,
+    ed25519_key_id, schema_valid_snapshot_statement,
 };
 
 #[cfg(target_os = "wasi")]
