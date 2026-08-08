@@ -191,7 +191,8 @@ impl<P: Policy> Connection<Prop<P>> {
                 |row| row.integer(0),
             )
             .context(StorageSnafu)?
-            .ok_or_else(super::missing_result_row)?;
+            .ok_or_else(super::missing_result_row)
+            .context(StorageSnafu)?;
         let import_id = storage
             .query_row(
                 "INSERT INTO prop_import(meaning) VALUES (?1) RETURNING import_id",
@@ -199,7 +200,8 @@ impl<P: Policy> Connection<Prop<P>> {
                 |row| row.integer(0),
             )
             .context(StorageSnafu)?
-            .ok_or_else(super::missing_result_row)?;
+            .ok_or_else(super::missing_result_row)
+            .context(StorageSnafu)?;
         // Admit the definitional layer (definitions and free-variable
         // declarations) verbatim under the offset, then the universal
         // layer under this import's provenance. Theory declarations and
