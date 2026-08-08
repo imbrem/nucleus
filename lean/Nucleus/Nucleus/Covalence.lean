@@ -163,13 +163,31 @@ rows are persisted and therefore are not schema tags. -/
 inductive Dialect (Base : Type u) where
   | tree (term : Hol Base)
   | bound (depth : Nat) (term : Hol Base)
+  | cast (term targetAnnotation : Hol Base) (oneLayerCompatible : Bool)
+      (fallback : HoleName)
 
 def Dialect.ty (missingName : HoleName) : Dialect Base → Hol Base
   | .tree t | .bound _ t => t.ty missingName
+  | .cast _ target _ _ => target
+
+def Hol.withTy (term target : Hol Base) : Hol Base :=
+  match term with
+  | .node tag lhs rhs _ => .node tag lhs rhs (some target)
 
 def Dialect.compile : Dialect Base → Hol Base
   | .tree t => t
   | .bound n t => t.applyBound n
+  | .cast t target compatible fallback =>
+      if compatible && decide (t.requiredDepth = 0) then t.withTy target
+      else .node ⟨.hole fallback, 0⟩ none none (some target)
+
+@[simp] theorem Dialect.ty_cast (t target : Hol Base) (ok fallback missing) :
+    (Dialect.cast t target ok fallback).ty missing = target := rfl
+
+theorem Dialect.compile_cast_failure (t target : Hol Base) (fallback : HoleName) :
+    Dialect.compile (.cast t target false fallback) =
+      .node ⟨.hole fallback, 0⟩ none none (some target) := by
+  simp [Dialect.compile]
 
 def canonicalTy : (K : Kind) → Nat → Ty Base
   | .star, _ => .tyBool
@@ -289,6 +307,11 @@ children and their stored annotations. Constructing any rule below is O(1):
 the constructor stores child/certificate references and performs no recursive
 typing, conversion search, normalization, or substitution. `lower` is the
 separate metatheoretic traversal. -/
+structure UniformEqRef {Base : Type u} (Δ : KindCtx) (Γ : TmCtx Base)
+    {A : Ty Base} (t u : SortedHol Base Δ Γ A) : Type u where
+  lower : ∀ (free : FreeEnv Base Δ Γ) (holes : FillingEnv Base Δ Γ),
+    EqTm Δ Γ (t.lower free holes).1 (u.lower free holes).1 A
+
 inductive CovEq {Base : Type u} (Δ : KindCtx) (Γ : TmCtx Base) :
     SortedHol Base Δ Γ A → SortedHol Base Δ Γ A → Type u
   | refl (t : SortedHol Base Δ Γ A) : CovEq Δ Γ t t
@@ -298,6 +321,12 @@ inductive CovEq {Base : Type u} (Δ : KindCtx) (Γ : TmCtx Base) :
       CovEq Δ Γ (.app f x) (.app g y)
   | lam (formed : Kinded Δ A ⟨.kind.star, r⟩) :
       CovEq Δ (A :: Γ) t u → CovEq Δ Γ (.lam formed t) (.lam formed u)
+  | tyApp (ref : UniformEqRef Δ Γ t u)
+  | tyLam (ref : UniformEqRef Δ Γ t u)
+  | beta (ref : UniformEqRef Δ Γ t u)
+  | eta (ref : UniformEqRef Δ Γ t u)
+  | tyBeta (ref : UniformEqRef Δ Γ t u)
+  | tyEta (ref : UniformEqRef Δ Γ t u)
 
 /-- Every filling lowers a Covalence equality to the corresponding raw
 HOL-omega equality certificate. -/
@@ -311,6 +340,9 @@ def CovEq.lower {t u : SortedHol Base Δ Γ A} (d : CovEq Δ Γ t u) :
   | trans _ _ ih₁ ih₂ => exact .trans (ih₁ free f) (ih₂ free f)
   | app _ _ ihf ihx => exact .app (ihf free f) (ihx free f)
   | lam hA _ ih => exact .lam hA (ih (free.weaken _) (f.weaken _))
+  | tyApp ref | tyLam ref | beta ref | eta ref | tyBeta ref | tyEta ref =>
+      cases ref with
+      | mk lower => exact lower free f
 
 theorem CovEq.fillings_nonempty (d : @CovEq Base Δ Γ A t u) :
     Nonempty (FillingEnv Base Δ Γ) := fillingEnvs_nonempty
@@ -319,6 +351,13 @@ theorem CovEq.fillings_nonempty (d : @CovEq Base Δ Γ A t u) :
 Producing this reference may require store traversal; applying `hyp` does not. -/
 structure HypRef {Base : Type u} (H : Hyps Base) (p : Tm Base) : Prop where
   membership : p ∈ H
+
+/-- Uniform reference for theorem rules with nonlocal premise alignment. The
+conclusion and raw certificate vary over the shared hole environment. -/
+structure UniformProofRef {Base : Type u} (Δ : KindCtx) (Γ : TmCtx Base)
+    (H : Hyps Base) (n : TermNode Base Δ Γ .tyBool) where
+  conclusion : FillingEnv Base Δ Γ → Tm Base
+  certificate : ∀ f, Proves Δ Γ H (conclusion f)
 
 /-- A sorted term node. Malformed nodes carry only the formation evidence of
 the expected type, which suffices to turn them into named holes. -/
@@ -366,6 +405,13 @@ inductive CovProves {Base : Type u} (Δ : KindCtx) (Γ : TmCtx Base)
       (x : TermNode Base Δ Γ A) :
       CovProves Δ Γ H (.valid (.tmEq A x.repair.1 x.repair.1)
         (.tmEq hA x.repair.2 x.repair.2))
+  | eqMp (ref : UniformProofRef Δ Γ H n) : CovProves Δ Γ H n
+  | choice (ref : UniformProofRef Δ Γ H n) : CovProves Δ Γ H n
+  | convert (ref : UniformProofRef Δ Γ H n) : CovProves Δ Γ H n
+  | eqOfEqTm (ref : UniformProofRef Δ Γ H n) : CovProves Δ Γ H n
+  | antisymm (ref : UniformProofRef Δ Γ H n) : CovProves Δ Γ H n
+  | absRep (ref : UniformProofRef Δ Γ H n) : CovProves Δ Γ H n
+  | repAbs (ref : UniformProofRef Δ Γ H n) : CovProves Δ Γ H n
 
 /-- The simultaneous family of fillings used by a Covalence derivation.
 Logical leaves have no holes; equality reflexivity may contain one typed term
@@ -382,6 +428,8 @@ def CovProves.lowerTerm {n : TermNode Base Δ Γ .tyBool}
     | .hyp _ _ => n.fill f |>.1
     | .truth _ => .tmBool true
     | .eqRefl _ _ x => .tmEq _ (x.fill f).1 (x.fill f).1
+    | .eqMp ref | .choice ref | .convert ref | .eqOfEqTm ref |
+        .antisymm ref | .absRep ref | .repAbs ref => ref.conclusion f
 
 /-- Uniform entailment lowering: every legal filling produces an ordinary
 raw HOL-omega proof. -/
@@ -392,6 +440,8 @@ def CovProves.lower {n : TermNode Base Δ Γ .tyBool}
   | hyp hH hp => exact .hyp hH hp.membership
   | truth hH => exact .truth hH
   | eqRefl hH hA x => exact .eqRefl hH (x.fill f).2 hA
+  | eqMp ref | choice ref | convert ref | eqOfEqTm ref |
+      antisymm ref | absRep ref | repAbs ref => exact ref.certificate f
 
 def CovProves.canonicalFilling {n : TermNode Base Δ Γ .tyBool}
     (d : CovProves Δ Γ H n) : d.Fillings := canonicalFillingEnv Base Δ Γ
