@@ -11,6 +11,7 @@ import Nucleus.HolOmegaSimple.Typing
 import Nucleus.HolOmega.Kernel
 import Nucleus.HolOmega.Model
 import Nucleus.HolOmega.Examples
+import Nucleus.HolOmega.ProofTyping
 import Nucleus.Hol.Universe
 import Nucleus.Hol.Syntax
 import Nucleus.Hol.Substitution
