@@ -1,5 +1,6 @@
 buck/cargo/*/BUCK linguist-generated=true
 buck/cargo/*/*.json linguist-generated=true
+crates/bin/cas-shell/vendor/shell.c linguist-generated=true -whitespace
 crates/**/BUCK linguist-generated=true
 tools/glu/BUCK linguist-generated=true
 lean/**/lake-manifest.json linguist-generated=true
