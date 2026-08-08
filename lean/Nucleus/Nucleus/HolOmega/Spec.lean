@@ -1,8 +1,3 @@
-/-
-SPDX-FileCopyrightText: 2026 Nucleus contributors
-SPDX-License-Identifier: CC0-1.0
--/
-
 import Nucleus.HolOmega.Kernel
 import Nucleus.HolOmega.Soundness
 
@@ -161,22 +156,27 @@ namespace Logic
 
 /-! The logical layer uses the standard Tarskian model. Types and terms are
 intrinsic here, so every rule constructor is impossible to form at the wrong
-kind or type. `Proof` remains an ordinary inductive tree. -/
+kind or type. `Proof` remains an ordinary inductive tree.
+
+Kind contexts here bind `RKind`s — a kind together with the rank its variables
+range over — because `∀` may only quantify over the codes below a rank. See
+`Kernel.lean` for why that restriction is forced rather than chosen. -/
 
 abbrev Universe := HolOmega.Kernel.Universe
-abbrev SemanticTy (U : Universe) (Δ : List Kind) (K : Kind) :=
-  HolOmega.Kernel.Ty U Δ K
-abbrev SemanticTm (U : Universe) {Δ : List Kind}
-    (Γ : HolOmega.Kernel.Ctx U Δ) (A : HolOmega.Kernel.Ty U Δ .star) :=
+abbrev RKind := HolOmega.Kernel.RKind
+abbrev SemanticTy (U : Universe) (Δ : List RKind) (RK : RKind) :=
+  HolOmega.Kernel.Ty U Δ RK
+abbrev SemanticTm (U : Universe) {Δ : List RKind}
+    (Γ : HolOmega.Kernel.Ctx U Δ) (A : HolOmega.Kernel.STy U Δ) :=
   HolOmega.Kernel.Tm U Γ A
-abbrev Equality (U : Universe) {Δ : List Kind}
-    (Γ : HolOmega.Kernel.Ctx U Δ) {A : HolOmega.Kernel.Ty U Δ .star}
+abbrev Equality (U : Universe) {Δ : List RKind}
+    (Γ : HolOmega.Kernel.Ctx U Δ) {A : HolOmega.Kernel.STy U Δ}
     (x y : HolOmega.Kernel.Tm U Γ A) := HolOmega.Kernel.EqTm U Γ x y
-abbrev Proof (U : Universe) {Δ : List Kind} {Γ : HolOmega.Kernel.Ctx U Δ}
+abbrev Proof (U : Universe) {Δ : List RKind} {Γ : HolOmega.Kernel.Ctx U Δ}
     (H : List (HolOmega.Kernel.Tm U Γ (HolOmega.Kernel.Ty.boolCode U)))
     (p : HolOmega.Kernel.Tm U Γ (HolOmega.Kernel.Ty.boolCode U)) :=
   HolOmega.Kernel.Derives U H p
-abbrev Entails (U : Universe) {Δ : List Kind} {Γ : HolOmega.Kernel.Ctx U Δ}
+abbrev Entails (U : Universe) {Δ : List RKind} {Γ : HolOmega.Kernel.Ctx U Δ}
     (H : List (HolOmega.Kernel.Tm U Γ (HolOmega.Kernel.Ty.boolCode U)))
     (p : HolOmega.Kernel.Tm U Γ (HolOmega.Kernel.Ty.boolCode U)) :=
   HolOmega.Kernel.Entails U H p
@@ -192,14 +192,14 @@ Boolean antisymmetry, and both directions of the subtype isomorphism. -/
 abbrev ProofRules (U : Universe) := @HolOmega.Kernel.Derives U
 
 /-- Every equality rule denotes actual equality in the standard model. -/
-theorem equalitySound {U : Universe} {Δ : List Kind}
-    {Γ : HolOmega.Kernel.Ctx U Δ} {A : HolOmega.Kernel.Ty U Δ .star}
+theorem equalitySound {U : Universe} {Δ : List RKind}
+    {Γ : HolOmega.Kernel.Ctx U Δ} {A : HolOmega.Kernel.STy U Δ}
     {x y : HolOmega.Kernel.Tm U Γ A}
     (d : HolOmega.Kernel.EqTm U Γ x y) : x = y :=
   d.sound U
 
 /-- Every logical rule preserves truth in the standard model. -/
-theorem proofSound {U : Universe} {Δ : List Kind}
+theorem proofSound {U : Universe} {Δ : List RKind}
     {Γ : HolOmega.Kernel.Ctx U Δ}
     {H : List (HolOmega.Kernel.Tm U Γ (HolOmega.Kernel.Ty.boolCode U))}
     {p : HolOmega.Kernel.Tm U Γ (HolOmega.Kernel.Ty.boolCode U)}

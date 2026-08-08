@@ -1,4 +1,6 @@
 import Nucleus.HolOmega.Env
+import Nucleus.HolOmega.PowerTower
+import Nucleus.HolOmega.Beth
 import Nucleus.HolOmega.TotalSubtype
 import Nucleus.HolOmega.Syntax
 import Nucleus.HolOmega.Typing
@@ -6,4 +8,5 @@ import Nucleus.HolOmega.Substitution
 import Nucleus.HolOmega.Semantics
 import Nucleus.HolOmega.Soundness
 import Nucleus.HolOmega.Kernel
+import Nucleus.HolOmega.Model
 import Nucleus.HolOmega.Spec

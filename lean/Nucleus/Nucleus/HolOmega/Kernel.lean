@@ -1,8 +1,3 @@
-/-
-SPDX-FileCopyrightText: 2026 Nucleus contributors
-SPDX-License-Identifier: CC0-1.0
--/
-
 import Mathlib.Logic.Equiv.Defs
 import Nucleus.HolOmega.Syntax
 import Nucleus.HolOmega.TotalSubtype
@@ -18,9 +13,29 @@ the equality and proof calculi need no typing side conditions.
 
 `Universe` is a Tarskian universe with exactly the closures the kernel uses.
 Predicate codes keep syntax stratified: subtype formation does not mention the
-term datatype.
+term datatype. `Beth.lean` builds one.
 
-Two calculi, each with one soundness theorem:
+## Why ranks
+
+`∀` may only quantify over the codes below a given rank. Without that
+restriction the class has no models at all. Take `allCode` over all of `Code`
+with every fibre a two-element code: the product is `2 ^ #Code`, and it has to
+be some `El c` — instantiate it at `c` itself and you get a surjection from a
+set onto its own double powerset.
+
+So ranks are the price of set semantics for `∀`, not an artefact of this
+model. Strengthening the cardinal does not buy them off, and impredicative
+polymorphism has no set model at all. They are part of Homeier's HOL-omega too.
+
+In this file that means:
+
+* Kind contexts bind `RKind`s — a kind plus the rank its variables range over.
+* `Ty.all` takes the binder's rank `r`, a bound `s` on the body's rank, and a
+  proof. The side condition is a `Prop`, so proof irrelevance keeps it out of
+  every equation.
+* `→` and `Sub` do not move rank, so nothing else in the file mentions one.
+
+## The two calculi
 
 * `EqTm` — reflexivity, symmetry, transitivity, application and abstraction
   congruence at both term and type level, and beta/eta at both levels.
@@ -45,6 +60,17 @@ namespace Nucleus.HolOmega.Kernel
 -- the specific code they need rather than by instance search.
 set_option warn.classDefReducibility false
 
+/-- The codes of rank at most `r`. -/
+def CodeLE {Code : Type u} (rank : Code → Nat) (r : Nat) : Type u :=
+  {c : Code // rank c ≤ r}
+
+/-- Kind values over the codes of rank at most `r`. This is what `∀` quantifies
+over; `Code` itself is too big. -/
+def KindVal {Code : Type u} (rank : Code → Nat) (r : Nat) :
+    HolOmega.Kind → Type u
+  | .star => CodeLE rank r
+  | .arr K L => KindVal rank r K → KindVal rank r L
+
 /-- A Tarskian universe with the closures needed by the shallow-intrinsic HOLω
 kernel. Predicate codes keep syntax stratified: subtype formation does not
 mention the term datatype. -/
@@ -52,113 +78,133 @@ class Universe where
   Code : Type u
   El : Code → Type u
   inhabited : ∀ A, Inhabited (El A)
+  rank : Code → Nat
   boolCode : Code
   boolEquiv : El boolCode ≃ Bool
+  rank_boolCode : rank boolCode = 0
   arr : Code → Code → Code
   arrEquiv : ∀ A B, El (arr A B) ≃ (El A → El B)
-  allCode : (I : Type u) → (I → Code) → Code
-  allEquiv : ∀ I F, El (allCode I F) ≃ ((X : I) → El (F X))
+  rank_arr : ∀ A B, rank (arr A B) ≤ max (rank A) (rank B)
   subCode : (A : Code) → (El A → Prop) → Code
   subEquiv : ∀ A P, El (subCode A P) ≃ TotalSubtype (El A) P
+  rank_subCode : ∀ A P, rank (subCode A P) ≤ rank A
+  allCode : (K : HolOmega.Kind) → (r s : Nat) →
+    (F : KindVal rank r K → Code) → (∀ X, rank (F X) ≤ s) → Code
+  allEquiv : ∀ K r s F h,
+    El (allCode K r s F h) ≃ ((X : KindVal rank r K) → El (F X))
+  rank_allCode : ∀ K r s F h, rank (allCode K r s F h) ≤ max r s + 2
 
 attribute [instance] Universe.inhabited
 
+/-- A kind, together with the rank its variables range over. -/
+structure RKind where
+  kind : HolOmega.Kind
+  rank : Nat
+  deriving DecidableEq, Repr
+
 variable (U : Universe)
 
-def Kind.Val : HolOmega.Kind → Type u
-  | .star => U.Code
-  | .arr K L => Kind.Val K → Kind.Val L
+abbrev Kind.Val (RK : RKind) : Type u := KindVal U.rank RK.rank RK.kind
 
-def Kind.Env : List HolOmega.Kind → Type u
+def Kind.Env : List RKind → Type u
   | [] => PUnit
-  | K :: Δ => Kind.Val U K × Kind.Env Δ
+  | RK :: Δ => Kind.Val U RK × Kind.Env Δ
 
-abbrev Ty (Δ : List HolOmega.Kind) (K : HolOmega.Kind) :=
-  Kind.Env U Δ → Kind.Val U K
+/-- Semantic types of kind `⋆`. Contexts and terms only ever need these, so the
+rank stays out of their way. -/
+abbrev STy (Δ : List RKind) := Kind.Env U Δ → U.Code
+
+/-- Semantic types at an arbitrary kind: the type-level lambda calculus, and
+the argument of a type application. -/
+abbrev Ty (Δ : List RKind) (RK : RKind) := Kind.Env U Δ → Kind.Val U RK
 
 namespace Ty
 
-def base (A : U.Code) : Ty U Δ .star := fun _ => A
-def boolCode : Ty U Δ .star := fun _ => U.boolCode
-def arr (A B : Ty U Δ .star) : Ty U Δ .star := fun ρ => U.arr (A ρ) (B ρ)
-def lam (A : Ty U (K :: Δ) L) : Ty U Δ (.arr K L) := fun ρ X => A (X, ρ)
-def app (F : Ty U Δ (.arr K L)) (A : Ty U Δ K) : Ty U Δ L := fun ρ => F ρ (A ρ)
-def all (A : Ty U (K :: Δ) .star) : Ty U Δ .star :=
-  fun ρ => U.allCode (Kind.Val U K) (fun X => A (X, ρ))
-def inst (A : Ty U (K :: Δ) L) (X : Ty U Δ K) : Ty U Δ L :=
+def base (A : U.Code) : STy U Δ := fun _ => A
+def boolCode : STy U Δ := fun _ => U.boolCode
+def arr (A B : STy U Δ) : STy U Δ := fun ρ => U.arr (A ρ) (B ρ)
+def lam (A : Ty U (⟨K, r⟩ :: Δ) ⟨L, r⟩) : Ty U Δ ⟨.arr K L, r⟩ :=
+  fun ρ X => A (X, ρ)
+def app (F : Ty U Δ ⟨.arr K L, r⟩) (A : Ty U Δ ⟨K, r⟩) : Ty U Δ ⟨L, r⟩ :=
+  fun ρ => F ρ (A ρ)
+
+/-- Quantification over the types of kind `K` at rank `r`, with the body's rank
+bounded by `s`. The one place a rank is visible. -/
+def all {Δ : List RKind} {K : HolOmega.Kind} (r s : Nat)
+    (A : STy U (⟨K, r⟩ :: Δ)) (h : ∀ ρ, U.rank (A ρ) ≤ s) : STy U Δ :=
+  fun ρ => U.allCode K r s (fun X => A (X, ρ)) (fun X => h (X, ρ))
+
+def inst {RK : RKind} (A : STy U (RK :: Δ)) (X : Ty U Δ RK) : STy U Δ :=
   fun ρ => A (X ρ, ρ)
 
-def Pred (A : Ty U Δ .star) := ∀ ρ, U.El (A ρ) → Prop
+def Pred (A : STy U Δ) := ∀ ρ, U.El (A ρ) → Prop
 
-def sub (A : Ty U Δ .star) (P : Pred U A) : Ty U Δ .star :=
+def sub (A : STy U Δ) (P : Pred U A) : STy U Δ :=
   fun ρ => U.subCode (A ρ) (P ρ)
 
-abbrev Sub (Δ Δ' : List HolOmega.Kind) := Kind.Env U Δ' → Kind.Env U Δ
+abbrev Sub (Δ Δ' : List RKind) := Kind.Env U Δ' → Kind.Env U Δ
 
-def subst (A : Ty U Δ K) (σ : Sub U Δ Δ') : Ty U Δ' K := fun ρ => A (σ ρ)
+def subst (A : STy U Δ) (σ : Sub U Δ Δ') : STy U Δ' := fun ρ => A (σ ρ)
 
-@[simp] theorem subst_apply (A : Ty U Δ K) (σ : Sub U Δ Δ') (ρ) :
-    A.subst U σ ρ = A (σ ρ) := rfl
+@[simp] theorem subst_apply (A : STy U Δ) (σ : Sub U Δ Δ') (ρ) :
+    Ty.subst U A σ ρ = A (σ ρ) := rfl
 
-@[simp] theorem subst_id (A : Ty U Δ K) : A.subst U id = A := rfl
+@[simp] theorem subst_id (A : STy U Δ) : Ty.subst U A id = A := rfl
 
-theorem subst_comp (A : Ty U Δ K) (σ : Sub U Δ Δ') (τ : Sub U Δ' Δ'') :
-    (A.subst U σ).subst U τ = A.subst U (σ ∘ τ) := rfl
+theorem subst_comp (A : STy U Δ) (σ : Sub U Δ Δ') (τ : Sub U Δ' Δ'') :
+    Ty.subst U (Ty.subst U A σ) τ = Ty.subst U A (σ ∘ τ) := rfl
 
-theorem subst_arr (A B : Ty U Δ .star) (σ : Sub U Δ Δ') :
-    (arr U A B).subst U σ = arr U (A.subst U σ) (B.subst U σ) := rfl
+theorem subst_arr (A B : STy U Δ) (σ : Sub U Δ Δ') :
+    Ty.subst U (arr U A B) σ = arr U (Ty.subst U A σ) (Ty.subst U B σ) := rfl
 
-theorem subst_app (F : Ty U Δ (.arr K L)) (A : Ty U Δ K) (σ : Sub U Δ Δ') :
-    (app U F A).subst U σ = app U (F.subst U σ) (A.subst U σ) := rfl
-
-@[simp] theorem beta (A : Ty U (K :: Δ) L) (X : Ty U Δ K) :
+@[simp] theorem beta (A : Ty U (⟨K, r⟩ :: Δ) ⟨L, r⟩) (X : Ty U Δ ⟨K, r⟩) :
     app U (lam U A) X = fun ρ => A (X ρ, ρ) := rfl
 
-theorem eta (F : Ty U Δ (.arr K L)) : lam U (fun ρ => F ρ.2 ρ.1) = F := rfl
+theorem eta (F : Ty U Δ ⟨.arr K L, r⟩) : lam U (fun ρ => F ρ.2 ρ.1) = F := rfl
 
 end Ty
 
-def Ctx (Δ : List HolOmega.Kind) := List (Ty U Δ .star)
+def Ctx (Δ : List RKind) := List (STy U Δ)
 
 def Ctx.El : (Γ : Ctx U Δ) → (ρ : Kind.Env U Δ) → Type u
   | [], _ => PUnit
   | A :: Γ, ρ => U.El (A ρ) × Ctx.El Γ ρ
 
-def Ctx.weaken (K : HolOmega.Kind) (Γ : Ctx U Δ) : Ctx U (K :: Δ) :=
+def Ctx.weaken (RK : RKind) (Γ : Ctx U Δ) : Ctx U (RK :: Δ) :=
   Γ.map fun A ρ => A ρ.2
 
 def Ctx.subst (Γ : Ctx U Δ) (σ : Ty.Sub U Δ Δ') : Ctx U Δ' :=
-  Γ.map fun A => A.subst U σ
+  Γ.map fun A => Ty.subst U A σ
 
 def Ctx.substEl (σ : Ty.Sub U Δ Δ') :
     (Γ : Ctx U Δ) → Ctx.El U (Ctx.subst U Γ σ) ρ → Ctx.El U Γ (σ ρ)
   | [], _ => PUnit.unit
   | _ :: Γ, γ => (γ.1, Ctx.substEl σ Γ γ.2)
 
-def Ctx.weakenEl {Δ : List HolOmega.Kind} {ρ : Kind.Env U Δ}
-    (K : HolOmega.Kind) (X : Kind.Val U K) :
-    (Γ : Ctx U Δ) → Ctx.El U Γ ρ → Ctx.El U (Ctx.weaken U K Γ) (X, ρ)
+def Ctx.weakenEl {Δ : List RKind} {ρ : Kind.Env U Δ}
+    (RK : RKind) (X : Kind.Val U RK) :
+    (Γ : Ctx U Δ) → Ctx.El U Γ ρ → Ctx.El U (Ctx.weaken U RK Γ) (X, ρ)
   | [], _ => PUnit.unit
-  | _ :: Γ, γ => (γ.1, Ctx.weakenEl K X Γ γ.2)
+  | _ :: Γ, γ => (γ.1, Ctx.weakenEl RK X Γ γ.2)
 
-def Ctx.strengthenEl {Δ : List HolOmega.Kind} {ρ : Kind.Env U Δ}
-    (K : HolOmega.Kind) (X : Kind.Val U K) :
-    (Γ : Ctx U Δ) → Ctx.El U (Ctx.weaken U K Γ) (X, ρ) → Ctx.El U Γ ρ
+def Ctx.strengthenEl {Δ : List RKind} {ρ : Kind.Env U Δ}
+    (RK : RKind) (X : Kind.Val U RK) :
+    (Γ : Ctx U Δ) → Ctx.El U (Ctx.weaken U RK Γ) (X, ρ) → Ctx.El U Γ ρ
   | [], _ => PUnit.unit
-  | _ :: Γ, γ => (γ.1, Ctx.strengthenEl K X Γ γ.2)
+  | _ :: Γ, γ => (γ.1, Ctx.strengthenEl RK X Γ γ.2)
 
 @[simp] theorem Ctx.strengthen_weaken
-    {Δ : List HolOmega.Kind} {ρ : Kind.Env U Δ}
-    (K : HolOmega.Kind) (X : Kind.Val U K)
+    {Δ : List RKind} {ρ : Kind.Env U Δ}
+    (RK : RKind) (X : Kind.Val U RK)
     (Γ : Ctx U Δ) (γ : Ctx.El U Γ ρ) :
-    Ctx.strengthenEl U K X Γ (Ctx.weakenEl U K X Γ γ) = γ := by
+    Ctx.strengthenEl U RK X Γ (Ctx.weakenEl U RK X Γ γ) = γ := by
   induction Γ with
   | nil => rfl
   | cons A Γ ih =>
     rcases γ with ⟨x, γ⟩
     exact congrArg (fun z => (x, z)) (ih γ)
 
-abbrev Tm (Γ : Ctx U Δ) (A : Ty U Δ .star) :=
+abbrev Tm (Γ : Ctx U Δ) (A : STy U Δ) :=
   ∀ ρ, Ctx.El U Γ ρ → U.El (A ρ)
 
 namespace Tm
@@ -173,29 +219,34 @@ def app (f : Tm U Γ (Ty.arr U A B)) (x : Tm U Γ A) : Tm U Γ B :=
 def lam (t : Tm U (A :: Γ) B) : Tm U Γ (Ty.arr U A B) :=
   fun ρ γ => (U.arrEquiv (A ρ) (B ρ)).symm (fun x => t ρ (x, γ))
 
-def tyLam {Δ : List HolOmega.Kind} {Γ : Ctx U Δ}
-    (K : HolOmega.Kind) {A : Ty U (K :: Δ) .star}
-    (t : Tm U (Ctx.weaken U K Γ) A) :
-    Tm U Γ (Ty.all U A) :=
-  fun ρ γ => (U.allEquiv (Kind.Val U K) (fun X => A (X, ρ))).symm
-    (fun X => t (X, ρ) (Ctx.weakenEl U K X Γ γ))
+def tyLam {Δ : List RKind} {Γ : Ctx U Δ}
+    (K : HolOmega.Kind) (r s : Nat) {A : STy U (⟨K, r⟩ :: Δ)}
+    (h : ∀ ρ, U.rank (A ρ) ≤ s) (t : Tm U (Ctx.weaken U ⟨K, r⟩ Γ) A) :
+    Tm U Γ (Ty.all U r s A h) :=
+  fun ρ γ => (U.allEquiv K r s (fun X => A (X, ρ)) (fun X => h (X, ρ))).symm
+    (fun X => t (X, ρ) (Ctx.weakenEl U ⟨K, r⟩ X Γ γ))
 
-def tyApp {Δ : List HolOmega.Kind} {Γ : Ctx U Δ}
-    {K : HolOmega.Kind} {A : Ty U (K :: Δ) .star}
-    (f : Tm U Γ (Ty.all U A)) (X : Ty U Δ K) :
+def tyApp {Δ : List RKind} {Γ : Ctx U Δ}
+    {K : HolOmega.Kind} {r s : Nat} {A : STy U (⟨K, r⟩ :: Δ)}
+    {h : ∀ ρ, U.rank (A ρ) ≤ s}
+    (f : Tm U Γ (Ty.all U r s A h)) (X : Ty U Δ ⟨K, r⟩) :
     Tm U Γ (Ty.inst U A X) :=
-  fun ρ γ => U.allEquiv (Kind.Val U K) (fun Y => A (Y, ρ)) (f ρ γ) (X ρ)
+  fun ρ γ =>
+    U.allEquiv K r s (fun Y => A (Y, ρ)) (fun Y => h (Y, ρ)) (f ρ γ) (X ρ)
 
-def instantiateBody {Δ : List HolOmega.Kind} {Γ : Ctx U Δ}
-    {K : HolOmega.Kind} {A : Ty U (K :: Δ) .star}
-    (t : Tm U (Ctx.weaken U K Γ) A) (X : Ty U Δ K) : Tm U Γ (Ty.inst U A X) :=
-  fun ρ γ => t (X ρ, ρ) (Ctx.weakenEl U K (X ρ) Γ γ)
+def instantiateBody {Δ : List RKind} {Γ : Ctx U Δ}
+    {K : HolOmega.Kind} {r : Nat} {A : STy U (⟨K, r⟩ :: Δ)}
+    (t : Tm U (Ctx.weaken U ⟨K, r⟩ Γ) A) (X : Ty U Δ ⟨K, r⟩) :
+    Tm U Γ (Ty.inst U A X) :=
+  fun ρ γ => t (X ρ, ρ) (Ctx.weakenEl U ⟨K, r⟩ (X ρ) Γ γ)
 
-def weakenTy {Δ : List HolOmega.Kind} {Γ : Ctx U Δ}
-    (K : HolOmega.Kind) {A : Ty U (K :: Δ) .star}
-    (f : Tm U Γ (Ty.all U A)) : Tm U (Ctx.weaken U K Γ) A :=
-  fun ρ γ => f ρ.2 (Ctx.strengthenEl U K ρ.1 Γ γ) |> fun z =>
-    U.allEquiv (Kind.Val U K) (fun X => A (X, ρ.2)) z ρ.1
+def weakenTy {Δ : List RKind} {Γ : Ctx U Δ}
+    (K : HolOmega.Kind) (r s : Nat) {A : STy U (⟨K, r⟩ :: Δ)}
+    {h : ∀ ρ, U.rank (A ρ) ≤ s}
+    (f : Tm U Γ (Ty.all U r s A h)) : Tm U (Ctx.weaken U ⟨K, r⟩ Γ) A :=
+  fun ρ γ =>
+    U.allEquiv K r s (fun X => A (X, ρ.2)) (fun X => h (X, ρ.2))
+      (f ρ.2 (Ctx.strengthenEl U ⟨K, r⟩ ρ.1 Γ γ)) ρ.1
 
 def boolCode (b : Bool) : Tm U Γ (Ty.boolCode U) := fun _ _ => U.boolEquiv.symm b
 
@@ -243,30 +294,30 @@ abbrev Sub (Γ Γ' : Ctx U Δ) := ∀ ρ, Ctx.El U Γ' ρ → Ctx.El U Γ ρ
 
 def subst (t : Tm U Γ A) (σ : Sub U Γ Γ') : Tm U Γ' A := fun ρ γ => t ρ (σ ρ γ)
 
-def substTy {Δ Δ' : List HolOmega.Kind} {Γ : Ctx U Δ}
-    {A : Ty U Δ .star} (t : Tm U Γ A) (σ : Ty.Sub U Δ Δ') :
-    Tm U (Ctx.subst U Γ σ) (A.subst U σ) :=
+def substTy {Δ Δ' : List RKind} {Γ : Ctx U Δ}
+    {A : STy U Δ} (t : Tm U Γ A) (σ : Ty.Sub U Δ Δ') :
+    Tm U (Ctx.subst U Γ σ) (Ty.subst U A σ) :=
   fun ρ γ => t (σ ρ) (Ctx.substEl U σ Γ γ)
 
-@[simp] theorem substTy_apply {Δ Δ' : List HolOmega.Kind} {Γ : Ctx U Δ}
-    {A : Ty U Δ .star} (t : Tm U Γ A) (σ : Ty.Sub U Δ Δ') ρ γ :
-    t.substTy U σ ρ γ = t (σ ρ) (Ctx.substEl U σ Γ γ) := rfl
+@[simp] theorem substTy_apply {Δ Δ' : List RKind} {Γ : Ctx U Δ}
+    {A : STy U Δ} (t : Tm U Γ A) (σ : Ty.Sub U Δ Δ') ρ γ :
+    Tm.substTy U t σ ρ γ = t (σ ρ) (Ctx.substEl U σ Γ γ) := rfl
 
-theorem substTy_app {Δ Δ' : List HolOmega.Kind} {Γ : Ctx U Δ}
-    {A B : Ty U Δ .star} (f : Tm U Γ (Ty.arr U A B)) (x : Tm U Γ A)
+theorem substTy_app {Δ Δ' : List RKind} {Γ : Ctx U Δ}
+    {A B : STy U Δ} (f : Tm U Γ (Ty.arr U A B)) (x : Tm U Γ A)
     (σ : Ty.Sub U Δ Δ') :
-    (Tm.app U f x).substTy U σ =
-      Tm.app U (f.substTy U σ) (x.substTy U σ) := rfl
+    Tm.substTy U (Tm.app U f x) σ =
+      Tm.app U (Tm.substTy U f σ) (Tm.substTy U x σ) := rfl
 
-theorem substTy_bool {Δ Δ' : List HolOmega.Kind} {Γ : Ctx U Δ}
+theorem substTy_bool {Δ Δ' : List RKind} {Γ : Ctx U Δ}
     (b : Bool) (σ : Ty.Sub U Δ Δ') :
-    (Tm.boolCode U (Γ := Γ) b).substTy U σ =
+    Tm.substTy U (Tm.boolCode U (Γ := Γ) b) σ =
       Tm.boolCode U (Γ := Ctx.subst U Γ σ) b := rfl
 
-@[simp] theorem subst_id (t : Tm U Γ A) : t.subst U (fun _ γ => γ) = t := rfl
+@[simp] theorem subst_id (t : Tm U Γ A) : Tm.subst U t (fun _ γ => γ) = t := rfl
 
 theorem subst_comp (t : Tm U Γ A) (σ : Sub U Γ Γ') (τ : Sub U Γ' Γ'') :
-    (t.subst U σ).subst U τ = t.subst U (fun ρ γ => σ ρ (τ ρ γ)) := rfl
+    Tm.subst U (Tm.subst U t σ) τ = Tm.subst U t (fun ρ γ => σ ρ (τ ρ γ)) := rfl
 
 @[simp] theorem beta (t : Tm U (A :: Γ) B) (x : Tm U Γ A) :
     app U (lam U t) x = fun ρ γ => t ρ (x ρ γ, γ) := by
@@ -284,24 +335,23 @@ theorem eta (f : Tm U Γ (Ty.arr U A B)) :
       U.arrEquiv (A ρ) (B ρ) (f ρ γ) from rfl]
   exact (U.arrEquiv (A ρ) (B ρ)).symm_apply_apply _
 
-@[simp] theorem tyBeta {Δ : List HolOmega.Kind}
-    {K : HolOmega.Kind} {Γ : Ctx U Δ} {A : Ty U (K :: Δ) .star}
-    (t : Tm U (Ctx.weaken U K Γ) A) (X : Ty U Δ K) :
-    @tyApp U Δ Γ K A (tyLam U K t) X =
-      @instantiateBody U Δ Γ K A t X := by
+@[simp] theorem tyBeta {Δ : List RKind} {K : HolOmega.Kind} {r s : Nat}
+    {Γ : Ctx U Δ} {A : STy U (⟨K, r⟩ :: Δ)} {h : ∀ ρ, U.rank (A ρ) ≤ s}
+    (t : Tm U (Ctx.weaken U ⟨K, r⟩ Γ) A) (X : Ty U Δ ⟨K, r⟩) :
+    tyApp U (h := h) (tyLam U K r s h t) X = instantiateBody U t X := by
   funext ρ γ
-  change U.allEquiv (Kind.Val U K) (fun Y => A (Y, ρ))
-    ((U.allEquiv (Kind.Val U K) (fun Y => A (Y, ρ))).symm
-      (fun Y => t (Y, ρ) (Ctx.weakenEl U K Y Γ γ))) (X ρ) = _
+  change U.allEquiv K r s (fun Y => A (Y, ρ)) (fun Y => h (Y, ρ))
+    ((U.allEquiv K r s (fun Y => A (Y, ρ)) (fun Y => h (Y, ρ))).symm
+      (fun Y => t (Y, ρ) (Ctx.weakenEl U ⟨K, r⟩ Y Γ γ))) (X ρ) = _
   rw [Equiv.apply_symm_apply]
   rfl
 
-theorem tyEta {Δ : List HolOmega.Kind}
-    {K : HolOmega.Kind} {Γ : Ctx U Δ} {A : Ty U (K :: Δ) .star}
-    (f : Tm U Γ (Ty.all U A)) :
-    tyLam U K (@weakenTy U Δ Γ K A f) = f := by
+theorem tyEta {Δ : List RKind} {K : HolOmega.Kind} {r s : Nat}
+    {Γ : Ctx U Δ} {A : STy U (⟨K, r⟩ :: Δ)} {h : ∀ ρ, U.rank (A ρ) ≤ s}
+    (f : Tm U Γ (Ty.all U r s A h)) :
+    tyLam U K r s h (weakenTy U K r s f) = f := by
   funext ρ γ
-  apply (U.allEquiv (Kind.Val U K) (fun X => A (X, ρ))).injective
+  apply (U.allEquiv K r s (fun X => A (X, ρ)) (fun X => h (X, ρ))).injective
   funext X
   simp [tyLam, weakenTy]
 
@@ -309,28 +359,35 @@ end Tm
 
 /-- The equality calculus is intentionally small: congruence is inherited from
 Lean equality, while these constructors expose the HOLω proof rules. -/
-inductive EqTm : {Δ : List HolOmega.Kind} →
-    (Γ : Ctx U Δ) → {A : Ty U Δ .star} → Tm U Γ A → Tm U Γ A → Prop
-  | refl {Δ} {Γ : Ctx U Δ} {A : Ty U Δ .star} (t : Tm U Γ A) : EqTm Γ t t
+inductive EqTm : {Δ : List RKind} →
+    (Γ : Ctx U Δ) → {A : STy U Δ} → Tm U Γ A → Tm U Γ A → Prop
+  | refl {Δ} {Γ : Ctx U Δ} {A : STy U Δ} (t : Tm U Γ A) : EqTm Γ t t
   | symm : EqTm Γ t u → EqTm Γ u t
   | trans : EqTm Γ t u → EqTm Γ u v → EqTm Γ t v
   | app : EqTm Γ f g → EqTm Γ x y → EqTm Γ (Tm.app U f x) (Tm.app U g y)
   | lam : EqTm (A :: Γ) t u → EqTm Γ (Tm.lam U t) (Tm.lam U u)
-  | tyApp : EqTm Γ (A := Ty.all U A) f g →
-      EqTm Γ (Tm.tyApp U f X) (Tm.tyApp U g X)
-  | tyLam : EqTm (Ctx.weaken U K Γ) t u →
-      EqTm Γ (Tm.tyLam U K t) (Tm.tyLam U K u)
+  | tyApp {Δ K r s} {Γ : Ctx U Δ} {A : STy U (⟨K, r⟩ :: Δ)}
+      {h : ∀ ρ, U.rank (A ρ) ≤ s} {f g : Tm U Γ (Ty.all U r s A h)}
+      {X : Ty U Δ ⟨K, r⟩} :
+      EqTm Γ f g → EqTm Γ (Tm.tyApp U f X) (Tm.tyApp U g X)
+  | tyLam {Δ K r s} {Γ : Ctx U Δ} {A : STy U (⟨K, r⟩ :: Δ)}
+      {h : ∀ ρ, U.rank (A ρ) ≤ s} {t u : Tm U (Ctx.weaken U ⟨K, r⟩ Γ) A} :
+      EqTm (Ctx.weaken U ⟨K, r⟩ Γ) t u →
+      EqTm Γ (Tm.tyLam U K r s h t) (Tm.tyLam U K r s h u)
   | beta (t : Tm U (A :: Γ) B) (x : Tm U Γ A) :
       EqTm Γ (Tm.app U (Tm.lam U t) x) (fun ρ γ => t ρ (x ρ γ, γ))
   | eta (f : Tm U Γ (Ty.arr U A B)) :
       EqTm Γ (Tm.lam U (Tm.app U (Tm.vs U f) (Tm.vz U))) f
-  | tyBeta {Δ K Γ A} (t : Tm U (Ctx.weaken U K Γ) A) (X : Ty U Δ K) :
-      EqTm Γ (@Tm.tyApp U Δ Γ K A (Tm.tyLam U K t) X)
-        (@Tm.instantiateBody U Δ Γ K A t X)
-  | tyEta {Δ K Γ A} (f : Tm U Γ (Ty.all U A)) :
-      EqTm Γ (Tm.tyLam U K (@Tm.weakenTy U Δ Γ K A f)) f
+  | tyBeta {Δ K r s} {Γ : Ctx U Δ} {A : STy U (⟨K, r⟩ :: Δ)}
+      {h : ∀ ρ, U.rank (A ρ) ≤ s} (t : Tm U (Ctx.weaken U ⟨K, r⟩ Γ) A)
+      (X : Ty U Δ ⟨K, r⟩) :
+      EqTm Γ (Tm.tyApp U (h := h) (Tm.tyLam U K r s h t) X)
+        (Tm.instantiateBody U t X)
+  | tyEta {Δ K r s} {Γ : Ctx U Δ} {A : STy U (⟨K, r⟩ :: Δ)}
+      {h : ∀ ρ, U.rank (A ρ) ≤ s} (f : Tm U Γ (Ty.all U r s A h)) :
+      EqTm Γ (Tm.tyLam U K r s h (Tm.weakenTy U K r s f)) f
 
-theorem EqTm.sound {Δ} {Γ : Ctx U Δ} {A : Ty U Δ .star} {t u : Tm U Γ A}
+theorem EqTm.sound {Δ} {Γ : Ctx U Δ} {A : STy U Δ} {t u : Tm U Γ A}
     (h : EqTm U Γ t u) : t = u := by
   induction h with
   | refl => rfl
@@ -352,13 +409,13 @@ def Entails {Δ} {Γ : Ctx U Δ} (H : List (Tm U Γ (Ty.boolCode U)))
     (p : Tm U Γ (Ty.boolCode U)) : Prop :=
   ∀ ρ γ, (∀ q ∈ H, U.boolEquiv (q ρ γ) = true) → U.boolEquiv (p ρ γ) = true
 
-theorem Tm.equal_true_iff {Δ} {Γ : Ctx U Δ} {A : Ty U Δ .star}
+theorem Tm.equal_true_iff {Δ} {Γ : Ctx U Δ} {A : STy U Δ}
     (x y : Tm U Γ A) (ρ γ) :
     U.boolEquiv (Tm.equal U x y ρ γ) = true ↔ x ρ γ = y ρ γ := by
   classical
   simp [Tm.equal]
 
-theorem Tm.epsilon_spec {Δ} {Γ : Ctx U Δ} {A : Ty U Δ .star}
+theorem Tm.epsilon_spec {Δ} {Γ : Ctx U Δ} {A : STy U Δ}
     (p : Tm U Γ (Ty.arr U A (Ty.boolCode U))) (x : Tm U Γ A) (ρ γ)
     (hx : U.boolEquiv (U.arrEquiv (A ρ) U.boolCode (p ρ γ) (x ρ γ)) = true) :
     U.boolEquiv (U.arrEquiv (A ρ) U.boolCode (p ρ γ)

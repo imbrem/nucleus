@@ -1,8 +1,3 @@
-/-
-SPDX-FileCopyrightText: 2026 Nucleus contributors
-SPDX-License-Identifier: CC0-1.0
--/
-
 import Mathlib.Data.Set.Basic
 import Nucleus.HolOmega.Env
 import Nucleus.HolOmega.Typing
