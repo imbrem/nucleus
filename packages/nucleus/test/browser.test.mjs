@@ -314,7 +314,11 @@ test("the shell runs in a process of its own", async (context) => {
     // The worker path is only available on a cross-origin-isolated page,
     // which is why the demo server sets COOP and COEP.
     const spawned = canSpawn();
-    const run = await drive(repl, host, `(sqlite ${address} "-batch" ".schema")`);
+    const run = await drive(
+      repl,
+      host,
+      `(sqlite ${address} "-batch" ".schema")`,
+    );
 
     // The REPL is still answering, which is the point of the shell not
     // sharing this instance.
