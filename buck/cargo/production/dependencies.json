@@ -613,6 +613,10 @@
       "version": "0.2.189",
       "checksum": "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2",
       "edition": "2021",
+      "features": [
+        "default",
+        "std"
+      ],
       "env": {
         "CARGO_PKG_DESCRIPTION": "Raw FFI bindings to platform libraries like libc.",
         "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
@@ -701,6 +705,26 @@
             "syn": ":syn-2.0.119"
           },
           "proc_macro": true
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#os_pipe@1.2.3",
+      "name": "os_pipe",
+      "version": "1.2.3",
+      "checksum": "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Jack O'Connor",
+        "CARGO_PKG_DESCRIPTION": "a cross-platform library for opening OS pipes",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/oconnor663/os_pipe.rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "libc": ":libc-0.2.189"
+          }
         }
       ]
     },
@@ -1424,12 +1448,30 @@
   ],
   "roots": [
     {
+      "id": "workspace#covalence-bin-cas-shell@0.0.0",
+      "name": "covalence-bin-cas-shell",
+      "category": "product",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#cc@1.4.0",
+        "registry+https://github.com/rust-lang/crates.io-index#libsqlite3-sys@0.38.1"
+      ]
+    },
+    {
       "id": "workspace#covalence-data-cas@0.0.0",
       "name": "covalence-data-cas",
       "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
         "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0"
+      ]
+    },
+    {
+      "id": "workspace#covalence-data-cas-wire@0.0.0",
+      "name": "covalence-data-cas-wire",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+        "registry+https://github.com/rust-lang/crates.io-index#os_pipe@1.2.3"
       ]
     },
     {
@@ -1858,6 +1900,13 @@
       "target": "registry+https://github.com/rust-lang/crates.io-index#unicode-width@0.1.14",
       "kinds": [
         "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#os_pipe@1.2.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
+      "kinds": [
+        "normal (cfg(not(windows)))"
       ]
     },
     {

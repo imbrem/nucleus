@@ -7,11 +7,13 @@ members = [
   "crates/lib/sqlite",
   "crates/data/basic",
   "crates/data/cas",
+  "crates/data/cas-wire",
   "crates/data/container",
   "crates/proton",
   "crates/neutron",
   "crates/nucleus",
   "crates/repl",
+  "crates/bin/cas-shell",
   "crates/bin/nucleus",
 ]
 resolver = "3"
