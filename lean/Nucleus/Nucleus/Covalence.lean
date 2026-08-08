@@ -285,7 +285,10 @@ def SortedHol.repair (t : SortedHol Base Δ Γ A) : {raw : Tm Base // HasType Δ
   t.lower (canonicalFreeEnv Base Δ Γ) (canonicalFillingEnv Base Δ Γ)
 
 /-- Equality rules whose applicability is determined entirely by direct
-children and their stored annotations. -/
+children and their stored annotations. Constructing any rule below is O(1):
+the constructor stores child/certificate references and performs no recursive
+typing, conversion search, normalization, or substitution. `lower` is the
+separate metatheoretic traversal. -/
 inductive CovEq {Base : Type u} (Δ : KindCtx) (Γ : TmCtx Base) :
     SortedHol Base Δ Γ A → SortedHol Base Δ Γ A → Type u
   | refl (t : SortedHol Base Δ Γ A) : CovEq Δ Γ t t
@@ -311,6 +314,11 @@ def CovEq.lower {t u : SortedHol Base Δ Γ A} (d : CovEq Δ Γ t u) :
 
 theorem CovEq.fillings_nonempty (d : @CovEq Base Δ Γ A t u) :
     Nonempty (FillingEnv Base Δ Γ) := fillingEnvs_nonempty
+
+/-- Constant-size reference to a hypothesis-spine alignment certificate.
+Producing this reference may require store traversal; applying `hyp` does not. -/
+structure HypRef {Base : Type u} (H : Hyps Base) (p : Tm Base) : Prop where
+  membership : p ∈ H
 
 /-- A sorted term node. Malformed nodes carry only the formation evidence of
 the expected type, which suffices to turn them into named holes. -/
@@ -350,8 +358,8 @@ occur in their term arguments, but there is deliberately no hole-as-proof
 constructor. -/
 inductive CovProves {Base : Type u} (Δ : KindCtx) (Γ : TmCtx Base)
     (H : Hyps Base) : TermNode Base Δ Γ .tyBool → Type u
-  | hyp (hH : TypedHyps Δ Γ H) (hp : p ∈ H) :
-      CovProves Δ Γ H (.valid p (hH.lookup hp))
+  | hyp (hH : TypedHyps Δ Γ H) (hp : HypRef H p) :
+      CovProves Δ Γ H (.valid p (hH.lookup hp.membership))
   | truth (hH : TypedHyps Δ Γ H) :
       CovProves Δ Γ H (.valid (.tmBool true) .tmBool)
   | eqRefl (hH : TypedHyps Δ Γ H) (hA : Kinded Δ A ⟨.kind.star, r⟩)
@@ -381,7 +389,7 @@ def CovProves.lower {n : TermNode Base Δ Γ .tyBool}
     (d : CovProves Δ Γ H n) : (f : d.Fillings) → Proves Δ Γ H (d.lowerTerm f) := by
   intro f
   cases d with
-  | hyp hH hp => exact .hyp hH hp
+  | hyp hH hp => exact .hyp hH hp.membership
   | truth hH => exact .truth hH
   | eqRefl hH hA x => exact .eqRefl hH (x.fill f).2 hA
 
