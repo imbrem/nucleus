@@ -95,7 +95,11 @@ def declare_cargo_dependencies(dependencies):
             sha256 = package["checksum"],
             strip_prefix = label,
             urls = ["https://crates.io/api/v1/crates/{}/{}/download".format(package["name"], package["version"])],
-            visibility = [],
+            # A `links` crate publishes paths into its own source tree, such as
+            # the header of a C library it bundles, and a dependent's build
+            # script is handed them as `DEP_<LINKS>_<KEY>`. Those paths are
+            # `$(location)` on this archive, so it cannot stay package-private.
+            visibility = ["PUBLIC"],
         )
         for target in package["targets"]:
             _target(package, target, label, archive)
