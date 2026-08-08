@@ -37,7 +37,7 @@ theorem Judgement.renameTm {i : JudgementIndex Base} (h : Judgement i) :
     | .kinded .. => True
     | .hasType Δ Γ t A => ∀ Γ' ρ, TmRen Γ Γ' ρ → HasType Δ Γ' (t.rename ρ) A := by
   induction h with
-  | base | tyVar | tyLam | tyApp | tyAll | tyBool | tyArr | tySub | subsume => trivial
+  | base | tyVar | tyLam | tyApp | tyAll | tyEx | tyBool | tyArr | tySub | subsume => trivial
   | conv _ hc ih =>
       intro Γ' ρ hρ
       exact Judgement.conv (ih _ _ hρ) hc
@@ -56,6 +56,13 @@ theorem Judgement.renameTm {i : JudgementIndex Base} (h : Judgement i) :
   | tmTyLam _ iht =>
       intro Γ' ρ hρ
       simpa [Expr.rename] using Judgement.tmTyLam (iht _ _ hρ.mapLiftTy)
+  | tmPack hA hX _ _ _ iht =>
+      intro Γ' ρ hρ
+      simpa [Expr.rename] using Judgement.tmPack hA hX (iht _ _ hρ)
+  | tmUnpack hA hB _ _ _ _ ihk ihp =>
+      intro Γ' ρ hρ
+      simpa [Expr.rename] using Judgement.tmUnpack hA hB (ihk _ _ hρ.mapLiftTy.lift)
+        (ihp _ _ hρ)
   | tmBool =>
       intro Γ' ρ hρ
       simpa [Expr.rename] using (Judgement.tmBool (Δ := _) (Γ := Γ'))
@@ -158,6 +165,14 @@ theorem TmCtx.renameTy_lift (Γ : TmCtx Base) (ρ : Nat → Nat) :
       rw [Expr.renameTy_comp, liftRen_comp_succ, ← Expr.renameTy_comp]
       exact congrArg (List.cons _) ih
 
+theorem Expr.renameTy_liftTy (e : Expr Base s) (ρ : Nat → Nat) :
+    e.liftTy.renameTy (liftRen ρ) = (e.renameTy ρ).liftTy := by
+  rw [Expr.renameTy_comp]
+  calc
+    e.renameTy (liftRen ρ ∘ Nat.succ) = e.renameTy (Nat.succ ∘ ρ) := by
+      rw [liftRen_comp_succ]
+    _ = (e.renameTy ρ).renameTy Nat.succ := (Expr.renameTy_comp e ρ Nat.succ).symm
+
 theorem liftSub_renameTy (σ : Nat → Ty Base) (ρ : Nat → Nat) :
     (fun n => (liftSub σ n).renameTy (liftRen ρ)) =
       liftSub (fun n => (σ n).renameTy ρ) := by
@@ -223,6 +238,7 @@ theorem Judgement.renameTy {i : JudgementIndex Base} (h : Judgement i) :
   | tyLam _ ih => intro Δ' ρ hρ; exact .tyLam (ih _ _ hρ.lift)
   | tyApp _ _ ihF ihX => intro Δ' ρ hρ; exact .tyApp (ihF _ _ hρ) (ihX _ _ hρ)
   | tyAll _ ih => intro Δ' ρ hρ; exact .tyAll (ih _ _ hρ.lift)
+  | tyEx _ ih => intro Δ' ρ hρ; exact .tyEx (ih _ _ hρ.lift)
   | tyBool => intro Δ' ρ hρ; exact .tyBool
   | tyArr _ _ ihA ihB => intro Δ' ρ hρ; exact .tyArr (ihA _ _ hρ) (ihB _ _ hρ)
   | tySub _ _ ihA ihp => intro Δ' ρ hρ; exact .tySub (ihA _ _ hρ) (ihp _ _ hρ)
@@ -240,6 +256,24 @@ theorem Judgement.renameTy {i : JudgementIndex Base} (h : Judgement i) :
   | tmTyLam _ iht =>
       intro Δ' ρ hρ
       exact .tmTyLam (by simpa [TmCtx.renameTy_lift] using iht _ _ hρ.lift)
+  | tmPack _ _ _ ihA ihX iht =>
+      intro Δ' ρ hρ
+      have ht := iht _ _ hρ
+      rw [Expr.renameTy_instTy] at ht
+      simpa only [Expr.renameTy, Expr.renameTy_instTy] using
+        Judgement.tmPack (ihA _ _ hρ.lift) (ihX _ _ hρ) ht
+  | tmUnpack _ _ _ _ ihA ihB ihk ihp =>
+      intro Δ' ρ hρ
+      have hfun : (Expr.renameTy (liftRen ρ) ∘ Expr.liftTy) =
+          (Expr.liftTy ∘ Expr.renameTy ρ : Ty Base → Ty Base) := by
+        funext C
+        exact Expr.renameTy_liftTy C ρ
+      simpa only [Expr.renameTy] using
+        Judgement.tmUnpack (ihA _ _ hρ.lift) (ihB _ _ hρ)
+          (by simpa only [TmCtx.renameTy, TmCtx.liftTy, List.map_cons,
+                List.map_map, Function.comp_apply, Expr.renameTy_liftTy, hfun]
+              using ihk _ _ hρ.lift)
+          (ihp _ _ hρ)
   | tmBool => intro Δ' ρ hρ; exact .tmBool
   | tmEq _ _ _ ihA ihx ihy => intro Δ' ρ hρ; exact .tmEq (ihA _ _ hρ) (ihx _ _ hρ) (ihy _ _ hρ)
   | tmEps _ _ ihA ihp => intro Δ' ρ hρ; exact .tmEps (ihA _ _ hρ) (ihp _ _ hρ)
@@ -284,13 +318,18 @@ theorem Judgement.substTm {i : JudgementIndex Base} (h : Judgement i) :
     | .kinded .. => True
     | .hasType Δ Γ t A => ∀ Γ' σ, TmSub Δ Γ Γ' σ → HasType Δ Γ' (t.subst σ) A := by
   induction h with
-  | base | tyVar | tyLam | tyApp | tyAll | tyBool | tyArr | tySub | subsume => trivial
+  | base | tyVar | tyLam | tyApp | tyAll | tyEx | tyBool | tyArr | tySub | subsume => trivial
   | conv _ hc ih => intro Γ' σ hσ; exact .conv (ih _ _ hσ) hc
   | tmVar hn => intro Γ' σ hσ; simpa [Expr.subst] using hσ hn
   | tmApp _ _ ihf ihx => intro Γ' σ hσ; simpa [Expr.subst] using Judgement.tmApp (ihf _ _ hσ) (ihx _ _ hσ)
   | tmLam hA _ _ iht => intro Γ' σ hσ; simpa [Expr.subst] using Judgement.tmLam hA (iht _ _ hσ.lift)
   | tmTyApp _ hX ihf _ => intro Γ' σ hσ; simpa [Expr.subst] using Judgement.tmTyApp (ihf _ _ hσ) hX
   | tmTyLam _ iht => intro Γ' σ hσ; simpa [Expr.subst] using Judgement.tmTyLam (iht _ _ hσ.mapLiftTy)
+  | tmPack hA hX _ _ _ iht => intro Γ' σ hσ; simpa [Expr.subst] using Judgement.tmPack hA hX (iht _ _ hσ)
+  | tmUnpack hA hB _ _ _ _ ihk ihp =>
+      intro Γ' σ hσ
+      simpa [Expr.subst] using Judgement.tmUnpack hA hB
+        (ihk _ _ hσ.mapLiftTy.lift) (ihp _ _ hσ)
   | tmBool => intro Γ' σ hσ; simpa [Expr.subst] using (Judgement.tmBool (Δ := _) (Γ := Γ'))
   | tmEq hA _ _ _ ihx ihy => intro Γ' σ hσ; simpa [Expr.subst] using Judgement.tmEq hA (ihx _ _ hσ) (ihy _ _ hσ)
   | tmEps hA _ _ ihp => intro Γ' σ hσ; simpa [Expr.subst] using Judgement.tmEps hA (ihp _ _ hσ)

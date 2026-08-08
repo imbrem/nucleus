@@ -23,6 +23,9 @@ theorem EqTm.hasType (h : @EqTm Base Δ Γ t u A) :
   | eta hf heta => exact ⟨heta, hf⟩
   | tyBeta hbody hX hinst => exact ⟨.tmTyApp (.tmTyLam hbody) hX, hinst⟩
   | tyEta hf heta => exact ⟨heta, hf⟩
+  | unpackPack hA hB hX ht hk hrhs =>
+      exact ⟨.tmUnpack hA hB hk (.tmPack hA hX ht), hrhs⟩
+  | packOnto hp heta => exact ⟨heta, hp⟩
 
 theorem EqTm.leftType (h : @EqTm Base Δ Γ t u A) : HasType Δ Γ t A :=
   h.hasType.1

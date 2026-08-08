@@ -27,6 +27,11 @@ universe u
 
 namespace Nucleus.HolOmega
 
+/-- Continuation used by package extensionality: expose the hidden witness and
+payload, then immediately rebuild the same existential package. -/
+def Expr.repack {Base : Type u} (RK : RKind) (A : Ty Base) : Tm Base :=
+  .tmPack RK (A.renameTy (liftRen Nat.succ)) (.tyVar 0) (.tmVar 0)
+
 /-- Typed equality certificates for raw terms.
 
 The final type index is explicit.  Besides ruling out malformed equations,
@@ -79,6 +84,22 @@ inductive EqTm {Base : Type u} :
       (heta : HasType Δ Γ
         (.tmTyLam RK (.tmTyApp f.liftTy (.tyVar 0))) (.tyAll RK A)) :
       EqTm Δ Γ (.tmTyLam RK (.tmTyApp f.liftTy (.tyVar 0))) f (.tyAll RK A)
+  | unpackPack {RK : RKind}
+      (hA : Kinded (RK :: Δ) A ⟨.star, s⟩)
+      (hB : Kinded Δ B ⟨.star, q⟩)
+      (hX : Kinded Δ X RK)
+      (ht : HasType Δ Γ t (A.instTy X))
+      (hk : HasType (RK :: Δ) (A :: Γ.liftTy) k B.liftTy)
+      (hrhs : HasType Δ Γ ((k.instTy X).inst t) B) :
+      EqTm Δ Γ
+        (.tmUnpack RK A B k (.tmPack RK A X t))
+        ((k.instTy X).inst t) B
+  | packOnto {RK : RKind}
+      (hp : HasType Δ Γ p (.tyEx RK A))
+      (heta : HasType Δ Γ
+        (.tmUnpack RK A (.tyEx RK A) (Expr.repack RK A) p) (.tyEx RK A)) :
+      EqTm Δ Γ
+        (.tmUnpack RK A (.tyEx RK A) (Expr.repack RK A) p) p (.tyEx RK A)
 
 /-- Intrinsic-style eta: the single `TypedTerm` premise contains exactly what
 the shallow kernel's term index provides (typing and formation of its type).
