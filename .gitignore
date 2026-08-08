@@ -10,6 +10,8 @@ node_modules/
 /packages/nucleus/generated/
 .direnv/
 .claude/
+.lake/
+/lean-docs/
 .glu.json
 .buckconfig.local
 /buck-out/

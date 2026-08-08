@@ -28,6 +28,66 @@ jobs:
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3
       - run: nix flake check
 
+  # The Lean developments under lean/ are a specification, not a build input,
+  # so they get their own job rather than joining `glu ci`. `glu lean` fetches
+  # Mathlib's prebuilt artifacts before building; without them this would
+  # compile Mathlib from source.
+  # The Lean development is a specification, not a build input, so it gets its
+  # own job rather than joining `glu ci`. This one uses the upstream action:
+  # checking a Lean package is exactly what it is for, and it brings toolchain
+  # setup, the Mathlib cache, and build-artifact caching without us maintaining
+  # any of it.
+  lean:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: leanprover/lean-action@38fbc41a8c28c4cbaec22d7f7de508ec2e7c0dd9 # v1.5.0
+        with:
+          lake-package-directory: lean/Nucleus
+
+  # Documentation stays on our own runner: `lean-action` has no doc-gen4
+  # support, and generation needs both a tuned runner and `glu`.
+  #
+  # Separate from `lean` because the two fail for unrelated reasons and only one
+  # gates the foundations - building has been reliable, generating has not, and
+  # a tuned-runner problem should not hold up a green build.
+  #
+  # It caches for itself rather than depending on `lean`. Sharing that job's
+  # cache would mean waiting for it, and would still miss `docbuild/.lake`,
+  # which holds doc-gen4 and its dependencies and which `lean-action` knows
+  # nothing about. Caching both directories here keeps the jobs parallel.
+  lean-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            lean/Nucleus/.lake
+            lean/Nucleus/docbuild/.lake
+          key: lean-docs-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean/Nucleus/lean-toolchain', 'lean/Nucleus/lake-manifest.json', 'lean/Nucleus/docbuild/lake-manifest.json') }}
+      # Generation holds an elaborated environment per worker. Swap on /mnt, the
+      # large ephemeral disk, since / already carries the Nix store and
+      # Mathlib's build cache.
+      - run: |
+          sudo fallocate -l 8G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          # doc-gen4 shells out to `git` once per package for source URLs, and
+          # the Lake process forking them holds the whole documentation
+          # environment. The default heuristic refuses a fork that large however
+          # much memory is free, since it sizes the reservation by the parent.
+          # The child immediately execs, so the reservation is never used.
+          sudo sysctl -w vm.overcommit_memory=1
+      - run: nix develop --command glu lean --docs --jobs 2
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: github.ref == 'refs/heads/main'
+        with:
+          name: lean-docs
+          path: lean-docs
+
   container:
     runs-on: ubuntu-latest
     steps:
@@ -39,7 +99,7 @@ jobs:
 
   pages:
     if: github.ref == 'refs/heads/main'
-    needs: [check, nix, container]
+    needs: [check, nix, container, lean, lean-docs]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -54,6 +114,13 @@ jobs:
       - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
       - run: nix develop --command pnpm install --frozen-lockfile
       - run: BASE_PATH=/${{ github.event.repository.name }} nix develop --command glu docs
+      # Placed after the site is built, so Vite never has to walk the generated
+      # documentation. Pages allows one deployment per repository, so the Lean
+      # docs ship inside the site rather than as a deployment of their own.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: lean-docs
+          path: apps/docs/build/lean
       - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
         with:
           path: apps/docs/build

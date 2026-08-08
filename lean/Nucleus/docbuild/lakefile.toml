@@ -1,0 +1,14 @@
+name = "docbuild"
+reservoir = false
+version = "0.1.0"
+packagesDir = "../.lake/packages"
+
+[[require]]
+scope = "leanprover"
+name = "doc-gen4"
+# Pinned to the toolchain in ../lean-toolchain; bump both together.
+rev = "v4.33.0-rc1"
+
+[[require]]
+name = "Nucleus"
+path = "../"
