@@ -1,14 +1,4 @@
-//! Propositional kernel-state protocol.
-//!
-//! [`Prop`] encloses a connection holding the single-table propositional
-//! schema of `prop/schema.sql`: SAT-style literals, one implication row
-//! per `(lhs, rhs, model)`, and a registry of positive worlds. The
-//! `model` column is the possible-world index — 0 definitional, negative
-//! universal, positive per-world — and every mutation goes through the
-//! LCF rules of `prop/semantics.txt`. This is the first logic layer over
-//! bare `SQLite`; richer kernels (HOL) stack above it and reuse the same
-//! discipline: one checker, typed handles, schema identity, freely
-//! deletable derived rows.
+//! Propositional kernel state governed by `prop/semantics.txt`.
 
 use covalence_lib_error::snafu::{ResultExt, Snafu};
 use covalence_lib_hash::{O256, o256_path};
@@ -174,8 +164,7 @@ impl WorldId {
 /// The layer a rule derives into.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Target {
-    /// The universal layer; the payload is caller metadata and must be
-    /// negative.
+    /// The universal layer with negative caller metadata.
     Universal(i64),
     /// A registered world.
     World(WorldId),

@@ -1,20 +1,4 @@
-//! Scratch prop tables and zero-added-TCB LRAT replay.
-//!
-//! A [`Scratch`] is a second, temporary prop table layered over the main
-//! one: its definitional layer allocates fresh ids above everything the
-//! main table mentions (a conservative definitional extension), its
-//! derivations may use main rows as premises, and when it closes, exactly
-//! one derived universal fact over main ids is copied back — the
-//! inter-table import, recorded through `prop_import` with the copied
-//! row's model set to `-import_id`. Deriving in scratch and concluding
-//! once is the multiple-prop-tables pattern in miniature: unbounded
-//! intermediate rows, one authoritative conclusion, and dropping the
-//! scratch table is the garbage collection.
-//!
-//! [`lrat_replay_scratch`] drives the same [`LratInstr`] stream as the
-//! big-step checker through scratch-table *rule applications only*
-//! (REFL/TRANS/CONTRA/FOLD/UNFOLD/CASES/WEAKEN), so it adds zero TCB: the
-//! paranoid mode a policy can demand instead of `LRAT_REFUTATION`.
+//! Temporary propositional tables and rule-by-rule LRAT replay.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -35,8 +19,7 @@ pub struct Scratch<'s, 'v, P: Policy> {
 }
 
 impl<'v, P: Policy> PropView<'v, P> {
-    /// Opens a scratch table (dropping any previous one on this
-    /// connection) and registers its import record.
+    /// Replaces the scratch table and registers its import record.
     ///
     /// # Errors
     ///
@@ -96,8 +79,7 @@ impl<P: Policy> Scratch<'_, '_, P> {
         Ok(())
     }
 
-    /// A premise is usable when it is a scratch row or a non-world main
-    /// row.
+    /// Checks for a scratch or non-world main premise.
     fn usable(&self, lhs: i64, rhs: i64) -> Result<bool, PropError> {
         self.view
             .storage()
@@ -124,8 +106,7 @@ impl<P: Policy> Scratch<'_, '_, P> {
         }
     }
 
-    /// Conjuncts of a definition, wherever it lives (scratch ids are
-    /// disjoint from main ids, so exactly one table answers).
+    /// Returns a definition's conjuncts from either table.
     fn conjuncts_of(&self, id: i64) -> Result<Vec<i64>, PropError> {
         if id >= self.base {
             self.view
@@ -142,11 +123,7 @@ impl<P: Policy> Scratch<'_, '_, P> {
         }
     }
 
-    /// Defines a fresh scratch id as the conjunction of `conjuncts`.
-    ///
-    /// Fresh ids sit above everything either table mentions, so scratch
-    /// definitions are an acyclic, conservative extension by
-    /// construction.
+    /// Defines a fresh scratch id as a conjunction.
     ///
     /// # Errors
     ///

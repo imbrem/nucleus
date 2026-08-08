@@ -1,33 +1,17 @@
-//! An instruction-driven mini-LCF kernel for LRAT.
-//!
-//! The trusted surface is [`LratKernel`]: a clause store whose only way to
-//! grow is the RUP-checked [`LratKernel::learn`] rule, exactly in the LCF
-//! discipline — big-step, but a kernel like any other. Everything else is
-//! untrusted driving: the ASCII and binary parsers produce [`LratInstr`]
-//! streams, and a mangled file can only mis-drive the kernel into a
-//! rejection, never into a false refutation, because every clause the
-//! kernel checks against is either an initial clause supplied by the
-//! caller (read from prop-kernel rows) or one it previously checked
-//! itself.
-//!
-//! For the zero-added-TCB alternative, the same instruction stream can
-//! drive small-step replay through the propositional rules in a scratch
-//! table (`prop::scratch`); this module's kernel is the fast path.
+//! LRAT parsing and a small RUP/RAT-checking clause kernel.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 /// One LRAT instruction.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LratInstr {
-    /// Learn `clause` under `id`, justified by unit propagation over the
-    /// clauses named in `hints` (in order, ending in a conflict).
+    /// Learn a clause justified by ordered propagation hints.
     Learn {
         /// The new clause's identifier.
         id: u64,
         /// The clause's literals; empty is the refutation.
         clause: Vec<i64>,
-        /// Propagation hints, in order; a negative hint opens a RAT
-        /// group for the named clause.
+        /// Ordered hints; a negative hint opens a RAT group.
         hints: Vec<i64>,
     },
     /// Forget the named clauses.
@@ -81,11 +65,7 @@ pub enum LratError {
     NoRefutation,
 }
 
-/// The mini-LCF clause kernel.
-///
-/// Clauses enter only through [`Self::new`] (the caller-vouched initial
-/// clauses) and the checked [`Self::learn`]; [`Self::refuted`] reports
-/// whether the empty clause has been established.
+/// A clause store admitting only checked learned clauses.
 pub struct LratKernel {
     live: BTreeMap<u64, Vec<i64>>,
     refuted: bool,
@@ -105,12 +85,7 @@ impl LratKernel {
         }
     }
 
-    /// The `learn` rule: admits `clause` iff its negation propagates to
-    /// a conflict through the hinted clauses (RUP), or — when the hints
-    /// contain RAT groups — every resolvent on the pivot (the clause's
-    /// first literal) does. RAT additions preserve satisfiability rather
-    /// than equivalence, which suffices for the kernel's only judgement,
-    /// unsatisfiability of the initial clauses.
+    /// Admits a clause when its RUP or RAT hints check.
     ///
     /// # Errors
     ///
@@ -136,10 +111,7 @@ impl LratKernel {
         Ok(())
     }
 
-    /// Checks the RAT groups against the propagated assignment: every
-    /// live clause containing the negated pivot (the clause's first
-    /// literal) must resolve to a conflict, either tautologically or
-    /// through its group's propagation hints.
+    /// Checks every resolvent on the pivot.
     fn rat(
         &self,
         id: u64,
