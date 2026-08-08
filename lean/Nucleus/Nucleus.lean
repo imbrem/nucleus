@@ -5,6 +5,7 @@ import Nucleus.HolOmega.TotalSubtype
 import Nucleus.HolOmega.Syntax
 import Nucleus.HolOmega.Typing
 import Nucleus.HolOmega.Substitution
+import Nucleus.HolOmega.Proof
 import Nucleus.HolOmega.Kernel
 import Nucleus.HolOmega.Model
 import Nucleus.HolOmega.Examples
