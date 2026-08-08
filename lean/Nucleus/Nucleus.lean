@@ -25,3 +25,4 @@ import Nucleus.Hol.Substitution
 import Nucleus.Hol.Typing
 import Nucleus.Hol.Kernel
 import Nucleus.Hol.Extension
+import Nucleus.Covalence
