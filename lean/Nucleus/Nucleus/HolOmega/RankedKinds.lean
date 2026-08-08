@@ -64,6 +64,29 @@ end
     simp only [extend, restrict]
     rw [ihK, ihL]
 
+theorem extend_comp (hrs : r ≤ s) (hst : s ≤ t) :
+    ∀ (K : Kind) (x : Slice U r K),
+      extend U hst K (extend U hrs K x) = extend U (hrs.trans hst) K x := by
+  intro K
+  induction K with
+  | star => intro x; rfl
+  | arr K L ihK ihL =>
+    intro f
+    funext x
+    simp only [extend]
+    rw [show restrict U hrs K (restrict U hst K x) =
+        restrict U (hrs.trans hst) K x by
+      have h₁ := restrict_extend U hrs K (restrict U hst K x)
+      have h₂ := restrict_extend U (hrs.trans hst) K x
+      rw [← h₁, ← h₂, extend_comp U hrs hst K]
+      rfl]
+    exact ihL _
+
+theorem restrict_extend_between (hrq : r ≤ q) (hqs : q ≤ s) (x : Slice U r K) :
+    restrict U hqs K (extend U (hrq.trans hqs) K x) = extend U hrq K x := by
+  rw [← extend_comp U hrq hqs K x]
+  exact restrict_extend U hqs K (extend U hrq K x)
+
 /-- Application after aligning both ranks at their maximum. -/
 noncomputable def appMax (F : Slice U r₁ (.arr K L)) (X : Slice U r₂ K) :
     Slice U (max r₁ r₂) L :=
@@ -94,6 +117,18 @@ structure CoherentVal (K : Kind) where
     restrict U hrs K (slice s (hr.trans hrs)) = slice r hr
   extend_natural : ∀ {r s} (hr : minRank ≤ r) (hrs : r ≤ s),
     extend U hrs K (slice r hr) = slice s (hr.trans hrs)
+
+/-- Every individual slice has a canonical coherent extension whose tail
+starts at that slice's rank. -/
+noncomputable def fromSlice (r : Nat) (K : Kind) (x : Slice U r K) : CoherentVal U K where
+  minRank := r
+  slice s hrs := extend U hrs K x
+  restrict_natural := by
+    intro q s hrq hqs
+    exact restrict_extend_between U hrq hqs x
+  extend_natural := by
+    intro q s hrq hqs
+    exact extend_comp U hrq hqs K x
 
 /-- A rank view retains the coherent whole value; only its observation level
 changes.  This is the restricted-graph presentation needed for higher-kind
@@ -148,6 +183,32 @@ noncomputable def coherentApp (F : CoherentVal U (.arr K L))
     have happ := congrFun hF (X.slice s (hXr.trans hrs))
     simpa [extend, restrict_extend] using happ
 
+/-- Semantic type lambda.  Its premises are precisely the two naturality laws
+that a body interpretation must prove; application then consumes the result
+without further transports. -/
+noncomputable def coherentLam (m : Nat)
+    (body : ∀ r, m ≤ r → Slice U r K → Slice U r L)
+    (hrestrict : ∀ {r s} (hr : m ≤ r) (hrs : r ≤ s) (x : Slice U s K),
+      restrict U hrs L (body s (hr.trans hrs) x) =
+        body r hr (restrict U hrs K x))
+    (hextend : ∀ {r s} (hr : m ≤ r) (hrs : r ≤ s) (x : Slice U r K),
+      extend U hrs L (body r hr x) = body s (hr.trans hrs) (extend U hrs K x)) :
+    CoherentVal U (.arr K L) where
+  minRank := m
+  slice r hr := body r hr
+  restrict_natural := by
+    intro r s hr hrs
+    funext x
+    exact hrestrict hr hrs x
+  extend_natural := by
+    intro r s hr hrs
+    funext x
+    exact hextend hr hrs x
+
+@[simp] theorem coherentLam_observe (m : Nat)
+    (body : ∀ r, m ≤ r → Slice U r K → Slice U r L) hr hres hext :
+    (down U r (coherentLam U m body hres hext) hr).observe = body r hr := rfl
+
 def coherentAppAt (F : AtRank U r₁ (.arr K L)) (X : AtRank U r₂ K) :
     AtRank U (max r₁ r₂) L :=
   down U _ (coherentApp U F.whole X.whole)
@@ -160,6 +221,77 @@ theorem coherentAppAt_observe (F : AtRank U r₁ (.arr K L)) (X : AtRank U r₂ 
       (extend U (Nat.le_max_right r₁ r₂) K X.observe)
   rw [F.whole.extend_natural F.within (Nat.le_max_left r₁ r₂)]
   rw [X.whole.extend_natural X.within (Nat.le_max_right r₁ r₂)]
+
+/-- Every universe code yields a nonempty coherent base value, beginning at
+exactly its own rank. -/
+noncomputable def coherentCode (c : U.Code) : CoherentVal U .star where
+  minRank := U.rank c
+  slice r h := ⟨c, h⟩
+  restrict_natural := by
+    intro r s hr hrs
+    apply Subtype.ext
+    simp [restrict, hr]
+  extend_natural := by
+    intro r s hr hrs
+    rfl
+
+@[simp] theorem coherentCode_observe (c : U.Code) (h : U.rank c ≤ r) :
+    (down U r (coherentCode U c) h).observe = (⟨c, h⟩ : Slice U r .star) := rfl
+
+/-- Constant higher-kind values show that the coherent domain is inhabited at
+every kind, not merely an interface whose laws might have no witnesses. -/
+noncomputable def coherentConst : (K : Kind) → CoherentVal U K
+  | .star => coherentCode U U.boolCode
+  | .arr K L =>
+      let out := coherentConst U L
+      { minRank := out.minRank
+        slice := fun r h _ => out.slice r h
+        restrict_natural := by
+          intro r s hr hrs
+          funext x
+          simp only [restrict]
+          exact out.restrict_natural hr hrs
+        extend_natural := by
+          intro r s hr hrs
+          funext x
+          simp only [extend]
+          exact out.extend_natural hr hrs }
+
+instance coherentValInhabited (K : Kind) : Inhabited (CoherentVal U K) :=
+  ⟨coherentConst U K⟩
+
+theorem coherentVal_nonempty (K : Kind) : Nonempty (CoherentVal U K) :=
+  ⟨coherentConst U K⟩
+
+@[simp] theorem coherentConst_minRank (K : Kind) : (coherentConst U K).minRank = 0 := by
+  induction K with
+  | star => exact U.rank_boolCode
+  | arr K L _ ih => simpa [coherentConst] using ih
+
+/-- Coherent environments retain one whole value for every ranked binder,
+together with evidence that it is available at the binder's declared rank. -/
+def CoherentEnv : KindCtx → Type u
+  | [] => PUnit
+  | RK :: Δ => AtRank U RK.rank RK.kind × CoherentEnv U Δ
+
+def CoherentEnv.lookup {Δ : KindCtx} {n : Nat} {RK : RKind}
+    (h : Δ[n]? = some RK) : CoherentEnv U Δ → AtRank U RK.rank RK.kind := by
+  induction Δ generalizing n RK with
+  | nil => simp at h
+  | cons J Δ ih =>
+    intro ρ
+    cases n with
+    | zero =>
+      simp at h
+      subst J
+      exact ρ.1
+    | succ n => exact ih (by simpa using h) ρ.2
+
+noncomputable def coherentEnvDefault : (Δ : KindCtx) → CoherentEnv U Δ
+  | [] => PUnit.unit
+  | RK :: Δ =>
+      let x := coherentConst U RK.kind
+      (down U RK.rank x (by simp [x]), coherentEnvDefault U Δ)
 
 /-- Beth's existing model supplies the prototype maps directly. -/
 example : Slice Beth.model r K = KindVal Beth.model.rank r K := rfl
