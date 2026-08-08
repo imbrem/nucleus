@@ -14,7 +14,9 @@ use std::io::{self, Read, Write};
 #[cfg(not(target_os = "wasi"))]
 use std::os::fd::AsFd;
 
-use covalence_repl::{Response, Session, shell};
+#[cfg(unix)]
+use covalence_repl::shell;
+use covalence_repl::{Response, Session};
 
 fn main() -> std::process::ExitCode {
     match run() {
@@ -75,6 +77,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 ///
 /// WASI has neither `dup` nor a way to spawn anything, so there is nobody to
 /// hand the stream to and buffering costs nothing. It gets ordinary stdin.
+#[cfg_attr(target_os = "wasi", allow(clippy::unnecessary_wraps))]
 fn stdin() -> io::Result<Box<dyn Read>> {
     #[cfg(target_os = "wasi")]
     {
@@ -128,10 +131,21 @@ fn step(
             writeln!(out, "{}", session.admit(bytes)?)?;
         }
         Response::Shell(arguments) => {
+            #[cfg(not(unix))]
+            let _ = arguments;
+            #[cfg(not(unix))]
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "the SQLite subprocess shell is unavailable on this platform",
+            )
+            .into());
+
             // The shell inherits this terminal, so a bare `(sqlite)` is a real
             // sqlite3 owning the screen until the user leaves it -- which is
             // what running a shell means.
+            #[cfg(unix)]
             let status = shell::run(session.store(), &arguments)?;
+            #[cfg(unix)]
             if status != 0 {
                 writeln!(out, "shell exited with status {status}")?;
             }
