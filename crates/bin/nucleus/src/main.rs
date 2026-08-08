@@ -15,10 +15,6 @@
 //! fetching and running the shell become imports the embedder supplies. The
 //! two `#[cfg]` pairs below are the whole difference.
 
-/// The capabilities a WASI guest cannot supply for itself.
-#[cfg(target_os = "wasi")]
-mod host;
-
 #[cfg(not(target_os = "wasi"))]
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -153,8 +149,8 @@ fn step(
 /// Natively that is a subprocess over a Unix socket, sharing this terminal —
 /// which is what makes a bare `(sqlite)` an interactive `sqlite3` that owns
 /// the screen until you leave it. Under WASI it is an import, because a guest
-/// cannot spawn anything: the embedder runs the shell module and hands back
-/// what it printed.
+/// cannot spawn anything, so the browser drives the same session through the
+/// browser crate instead of this terminal binary.
 #[cfg(unix)]
 fn run_shell(
     session: &Session,
@@ -171,24 +167,24 @@ fn run_shell(
 #[cfg(target_os = "wasi")]
 fn run_shell(
     _session: &Session,
-    arguments: &[String],
-    out: &mut impl Write,
+    _arguments: &[String],
+    _out: &mut impl Write,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (output, status) = host::shell(arguments)?;
-    let output = output.trim_end();
-    if !output.is_empty() {
-        writeln!(out, "{output}")?;
-    }
-    if status != 0 {
-        writeln!(out, "shell exited with status {status}")?;
-    }
-    Ok(())
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "the SQLite subprocess shell is unavailable on this platform",
+    )
+    .into())
 }
 
-/// Fetches a URL through the host.
+/// Fetching is provided by the browser crate rather than this WASI binary.
 #[cfg(target_os = "wasi")]
-fn fetch(url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    Ok(host::fetch(url)?)
+fn fetch(_url: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "fetching is unavailable on this platform",
+    )
+    .into())
 }
 
 /// Fetches a URL with `curl`.
