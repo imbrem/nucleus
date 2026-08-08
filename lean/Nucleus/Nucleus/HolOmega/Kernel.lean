@@ -88,16 +88,18 @@ class Universe where
   subCode : (A : Code) → (El A → Prop) → Code
   subEquiv : ∀ A P, El (subCode A P) ≃ TotalSubtype (El A) P
   rank_subCode : ∀ A P, rank (subCode A P) ≤ rank A
-  allCode : (K : HolOmega.Kind) → (r s : Nat) →
-    (F : KindVal rank r K → Code) → (∀ X, rank (F X) ≤ s) → Code
-  allEquiv : ∀ K r s F h,
-    El (allCode K r s F h) ≃ ((X : KindVal rank r K) → El (F X))
-  rank_allCode : ∀ K r s F h, rank (allCode K r s F h) ≤ max r s + 2
-  exCode : (K : HolOmega.Kind) → (r s : Nat) →
-    (F : KindVal rank r K → Code) → (∀ X, rank (F X) ≤ s) → Code
-  exEquiv : ∀ K r s F h,
-    El (exCode K r s F h) ≃ ((X : KindVal rank r K) × El (F X))
-  rank_exCode : ∀ K r s F h, rank (exCode K r s F h) ≤ max r s + 2
+  allCode : (K : HolOmega.Kind) → (r : Nat) →
+    (F : KindVal rank r K → Code) → (∃ s, ∀ X, rank (F X) ≤ s) → Code
+  allEquiv : ∀ K r F h,
+    El (allCode K r F h) ≃ ((X : KindVal rank r K) → El (F X))
+  rank_allCode : ∀ K r F h s, (∀ X, rank (F X) ≤ s) →
+    rank (allCode K r F h) ≤ max r s + 2
+  exCode : (K : HolOmega.Kind) → (r : Nat) →
+    (F : KindVal rank r K → Code) → (∃ s, ∀ X, rank (F X) ≤ s) → Code
+  exEquiv : ∀ K r F h,
+    El (exCode K r F h) ≃ ((X : KindVal rank r K) × El (F X))
+  rank_exCode : ∀ K r F h s, (∀ X, rank (F X) ≤ s) →
+    rank (exCode K r F h) ≤ max r s + 2
 
 attribute [instance] Universe.inhabited
 
@@ -135,14 +137,14 @@ def app (F : Ty U Δ ⟨.arr K L, r⟩) (A : Ty U Δ ⟨K, r⟩) : Ty U Δ ⟨L,
 bounded by `s`. The one place a rank is visible. -/
 def all {Δ : List RKind} {K : HolOmega.Kind} (r s : Nat)
     (A : STy U (⟨K, r⟩ :: Δ)) (h : ∀ ρ, U.rank (A ρ) ≤ s) : STy U Δ :=
-  fun ρ => U.allCode K r s (fun X => A (X, ρ)) (fun X => h (X, ρ))
+  fun ρ => U.allCode K r (fun X => A (X, ρ)) ⟨s, fun X => h (X, ρ)⟩
 
 /-- Existential quantification over the types of kind `K` at rank `r`, with the
 body's rank bounded by `s`. A dependent *pair* where `all` is a dependent
 function, and it costs the same rank. -/
 def ex {Δ : List RKind} {K : HolOmega.Kind} (r s : Nat)
     (A : STy U (⟨K, r⟩ :: Δ)) (h : ∀ ρ, U.rank (A ρ) ≤ s) : STy U Δ :=
-  fun ρ => U.exCode K r s (fun X => A (X, ρ)) (fun X => h (X, ρ))
+  fun ρ => U.exCode K r (fun X => A (X, ρ)) ⟨s, fun X => h (X, ρ)⟩
 
 def inst {RK : RKind} (A : STy U (RK :: Δ)) (X : Ty U Δ RK) : STy U Δ :=
   fun ρ => A (X ρ, ρ)
@@ -233,7 +235,8 @@ def tyLam {Δ : List RKind} {Γ : Ctx U Δ}
     (K : HolOmega.Kind) (r s : Nat) {A : STy U (⟨K, r⟩ :: Δ)}
     (h : ∀ ρ, U.rank (A ρ) ≤ s) (t : Tm U (Ctx.weaken U ⟨K, r⟩ Γ) A) :
     Tm U Γ (Ty.all U r s A h) :=
-  fun ρ γ => (U.allEquiv K r s (fun X => A (X, ρ)) (fun X => h (X, ρ))).symm
+  fun ρ γ => (U.allEquiv K r (fun X => A (X, ρ))
+      ⟨s, fun X => h (X, ρ)⟩).symm
     (fun X => t (X, ρ) (Ctx.weakenEl U ⟨K, r⟩ X Γ γ))
 
 def tyApp {Δ : List RKind} {Γ : Ctx U Δ}
@@ -242,7 +245,7 @@ def tyApp {Δ : List RKind} {Γ : Ctx U Δ}
     (f : Tm U Γ (Ty.all U r s A h)) (X : Ty U Δ ⟨K, r⟩) :
     Tm U Γ (Ty.inst U A X) :=
   fun ρ γ =>
-    U.allEquiv K r s (fun Y => A (Y, ρ)) (fun Y => h (Y, ρ)) (f ρ γ) (X ρ)
+    U.allEquiv K r (fun Y => A (Y, ρ)) ⟨s, fun Y => h (Y, ρ)⟩ (f ρ γ) (X ρ)
 
 def instantiateBody {Δ : List RKind} {Γ : Ctx U Δ}
     {K : HolOmega.Kind} {r : Nat} {A : STy U (⟨K, r⟩ :: Δ)}
@@ -255,7 +258,7 @@ def weakenTy {Δ : List RKind} {Γ : Ctx U Δ}
     {h : ∀ ρ, U.rank (A ρ) ≤ s}
     (f : Tm U Γ (Ty.all U r s A h)) : Tm U (Ctx.weaken U ⟨K, r⟩ Γ) A :=
   fun ρ γ =>
-    U.allEquiv K r s (fun X => A (X, ρ.2)) (fun X => h (X, ρ.2))
+    U.allEquiv K r (fun X => A (X, ρ.2)) ⟨s, fun X => h (X, ρ.2)⟩
       (f ρ.2 (Ctx.strengthenEl U ⟨K, r⟩ ρ.1 Γ γ)) ρ.1
 
 /-- `PACK`: a witness type below the rank, and a term at it, make a package. -/
@@ -264,7 +267,7 @@ def pack {Δ : List RKind} {Γ : Ctx U Δ} {K : HolOmega.Kind} {r s : Nat}
     (X : Ty U Δ ⟨K, r⟩) (t : Tm U Γ (Ty.inst U A X)) :
     Tm U Γ (Ty.ex U r s A h) :=
   fun ρ γ =>
-    (U.exEquiv K r s (fun Y => A (Y, ρ)) (fun Y => h (Y, ρ))).symm ⟨X ρ, t ρ γ⟩
+    (U.exEquiv K r (fun Y => A (Y, ρ)) ⟨s, fun Y => h (Y, ρ)⟩).symm ⟨X ρ, t ρ γ⟩
 
 /-- `UNPACK`: eliminate a package with a continuation uniform in the witness.
 The result type `B` carries no rank constraint from the package, which is what
@@ -276,7 +279,7 @@ def unpack {Δ : List RKind} {Γ : Ctx U Δ} {K : HolOmega.Kind} {r s : Nat}
       U.El (B ρ))
     (p : Tm U Γ (Ty.ex U r s A h)) : Tm U Γ B :=
   fun ρ γ =>
-    let q := U.exEquiv K r s (fun Y => A (Y, ρ)) (fun Y => h (Y, ρ)) (p ρ γ)
+    let q := U.exEquiv K r (fun Y => A (Y, ρ)) ⟨s, fun Y => h (Y, ρ)⟩ (p ρ γ)
     k ρ γ q.1 q.2
 
 /-- `UNPACK_PACK`: the beta rule for packages. -/
@@ -299,9 +302,9 @@ theorem pack_onto {Δ : List RKind} {Γ : Ctx U Δ}
     {h : ∀ ρ, U.rank (A ρ) ≤ s} (p : Tm U Γ (Ty.ex U r s A h)) (ρ γ) :
     ∃ (X : Kind.Val U ⟨K, r⟩) (t : U.El (A (X, ρ))),
       p ρ γ =
-        (U.exEquiv K r s (fun Y => A (Y, ρ)) (fun Y => h (Y, ρ))).symm ⟨X, t⟩ := by
-  refine ⟨(U.exEquiv K r s (fun Y => A (Y, ρ)) (fun Y => h (Y, ρ)) (p ρ γ)).1,
-    (U.exEquiv K r s (fun Y => A (Y, ρ)) (fun Y => h (Y, ρ)) (p ρ γ)).2, ?_⟩
+        (U.exEquiv K r (fun Y => A (Y, ρ)) ⟨s, fun Y => h (Y, ρ)⟩).symm ⟨X, t⟩ := by
+  refine ⟨(U.exEquiv K r (fun Y => A (Y, ρ)) ⟨s, fun Y => h (Y, ρ)⟩ (p ρ γ)).1,
+    (U.exEquiv K r (fun Y => A (Y, ρ)) ⟨s, fun Y => h (Y, ρ)⟩ (p ρ γ)).2, ?_⟩
   exact (Equiv.symm_apply_apply _ _).symm
 
 def boolCode (b : Bool) : Tm U Γ (Ty.boolCode U) := fun _ _ => U.boolEquiv.symm b
@@ -396,8 +399,8 @@ theorem eta (f : Tm U Γ (Ty.arr U A B)) :
     (t : Tm U (Ctx.weaken U ⟨K, r⟩ Γ) A) (X : Ty U Δ ⟨K, r⟩) :
     tyApp U (h := h) (tyLam U K r s h t) X = instantiateBody U t X := by
   funext ρ γ
-  change U.allEquiv K r s (fun Y => A (Y, ρ)) (fun Y => h (Y, ρ))
-    ((U.allEquiv K r s (fun Y => A (Y, ρ)) (fun Y => h (Y, ρ))).symm
+  change U.allEquiv K r (fun Y => A (Y, ρ)) ⟨s, fun Y => h (Y, ρ)⟩
+    ((U.allEquiv K r (fun Y => A (Y, ρ)) ⟨s, fun Y => h (Y, ρ)⟩).symm
       (fun Y => t (Y, ρ) (Ctx.weakenEl U ⟨K, r⟩ Y Γ γ))) (X ρ) = _
   rw [Equiv.apply_symm_apply]
   rfl
@@ -407,7 +410,7 @@ theorem tyEta {Δ : List RKind} {K : HolOmega.Kind} {r s : Nat}
     (f : Tm U Γ (Ty.all U r s A h)) :
     tyLam U K r s h (weakenTy U K r s f) = f := by
   funext ρ γ
-  apply (U.allEquiv K r s (fun X => A (X, ρ)) (fun X => h (X, ρ))).injective
+  apply (U.allEquiv K r (fun X => A (X, ρ)) ⟨s, fun X => h (X, ρ)⟩).injective
   funext X
   simp [tyLam, weakenTy]
 

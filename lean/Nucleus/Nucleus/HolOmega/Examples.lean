@@ -165,8 +165,8 @@ theorem unpack_packEndo (r : Nat) (X : Ty U [] ⟨.star, r⟩)
 This is the half a degenerate model would fail. -/
 theorem packEndo_onto (r : Nat) (p : Tm U ([] : Ctx U []) (exEndoTy U r)) (ρ γ) :
     ∃ (Y : Kind.Val U ⟨.star, r⟩) (t : U.El (selfArrow U r (Y, ρ))),
-      p ρ γ = (U.exEquiv .star r r (fun Z => selfArrow U r (Z, ρ))
-        (fun Z => rank_selfArrow U r (Z, ρ))).symm ⟨Y, t⟩ :=
+      p ρ γ = (U.exEquiv .star r (fun Z => selfArrow U r (Z, ρ))
+        ⟨r, fun Z => rank_selfArrow U r (Z, ρ)⟩).symm ⟨Y, t⟩ :=
   Tm.pack_onto U p ρ γ
 
 /-! ## Consistency, restated for the record -/
