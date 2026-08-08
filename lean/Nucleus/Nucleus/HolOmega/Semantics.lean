@@ -54,6 +54,19 @@ def allLam {U : Kernel.Universe} (K r : _) (F : Kernel.KindVal U.rank r K → U.
   ⟨U.allCode K r F h,
     (U.allEquiv K r F h).symm (fun X => cast (hf X) (f X).2)⟩
 
+def exPack {U : Kernel.Universe} (K r : _)
+    (F : Kernel.KindVal U.rank r K → U.Code) (h : ∃ s, ∀ X, U.rank (F X) ≤ s)
+    (X : Kernel.KindVal U.rank r K) (t : Omega U) (ht : t.code = F X) : Omega U :=
+  ⟨U.exCode K r F h, (U.exEquiv K r F h).symm ⟨X, cast ht t.2⟩⟩
+
+def exUnpack {U : Kernel.Universe} (K r : _)
+    (F : Kernel.KindVal U.rank r K → U.Code) (h : ∃ s, ∀ X, U.rank (F X) ≤ s)
+    (B : U.Code) (k : ∀ X, U.El (F X) → Omega U)
+    (hk : ∀ X x, (k X x).code = B) (p : Omega U)
+    (hp : p.code = U.exCode K r F h) : Omega U :=
+  let q := U.exEquiv K r F h (cast hp p.2)
+  ⟨B, cast (hk q.1 q.2) (k q.1 q.2).2⟩
+
 def bool (U : Kernel.Universe) (b : Bool) : Omega U :=
   ⟨U.boolCode, U.boolEquiv.symm b⟩
 
@@ -150,6 +163,13 @@ inductive Denotes {Base : Type u} {U : Kernel.Universe.{v}} (B : BaseSemantics B
       Denotes B (.kinded Δ ρ (.tyAll RK A) ⟨.star, max RK.rank s + 2⟩
         ⟨U.allCode RK.kind RK.rank F ⟨s, hF⟩,
           U.rank_allCode RK.kind RK.rank F _ s hF⟩)
+  | tyEx {Δ ρ RK A s} {F : Kernel.Kind.Val U RK → U.Code}
+      (hF : ∀ X, U.rank (F X) ≤ s)
+      (hA : ∀ X, Denotes B (.kinded (RK :: Δ) (X, ρ) A ⟨.star, s⟩
+        ⟨F X, hF X⟩)) :
+      Denotes B (.kinded Δ ρ (.tyEx RK A) ⟨.star, max RK.rank s + 2⟩
+        ⟨U.exCode RK.kind RK.rank F ⟨s, hF⟩,
+          U.rank_exCode RK.kind RK.rank F _ s hF⟩)
   | tyBool {Δ ρ r} : Denotes B (.kinded Δ ρ .tyBool ⟨.star, r⟩
       ⟨U.boolCode, by simp [U.rank_boolCode]⟩)
   | tyArr {Δ ρ A C r} {a c : Kernel.Kind.Val U ⟨.star, r⟩}
@@ -211,6 +231,30 @@ inductive Denotes {Base : Type u} {U : Kernel.Universe.{v}} (B : BaseSemantics B
       (hfc : ∀ X, (f X).code = F X) :
       Denotes B (.hasType Δ ρ Γ γ (.tmTyLam RK t) (.tyAll RK A)
         (Omega.allLam RK.kind RK.rank F ⟨s, hF⟩ f hfc))
+  | tmPack {Δ ρ Γ γ RK A X t s} {F : Kernel.Kind.Val U RK → U.Code}
+      {x : Kernel.Kind.Val U RK} {tv : Omega U}
+      (hF : ∀ Y, U.rank (F Y) ≤ s)
+      (hA : ∀ Y, Denotes B (.kinded (RK :: Δ) (Y, ρ) A ⟨.star, s⟩
+        ⟨F Y, hF Y⟩))
+      (hX : Denotes B (.kinded Δ ρ X RK x))
+      (ht : Denotes B (.hasType Δ ρ Γ γ t (A.instTy X) tv))
+      (htc : tv.code = F x) :
+      Denotes B (.hasType Δ ρ Γ γ (.tmPack RK A X t) (.tyEx RK A)
+        (Omega.exPack RK.kind RK.rank F ⟨s, hF⟩ x tv htc))
+  | tmUnpack {Δ ρ Γ γ RK A C k p s q} {F : Kernel.Kind.Val U RK → U.Code}
+      {c : Kernel.Kind.Val U ⟨.star, q⟩} {pv : Omega U}
+      {kv : ∀ X, U.El (F X) → Omega U}
+      (hF : ∀ X, U.rank (F X) ≤ s)
+      (hA : ∀ X, Denotes B (.kinded (RK :: Δ) (X, ρ) A ⟨.star, s⟩
+        ⟨F X, hF X⟩))
+      (hC : Denotes B (.kinded Δ ρ C ⟨.star, q⟩ c))
+      (hk : ∀ X x, Denotes B (.hasType (RK :: Δ) (X, ρ) (A :: Γ.liftTy)
+        (⟨F X, x⟩, RawEnv.liftTy γ) k C.liftTy (kv X x)))
+      (hkc : ∀ X x, (kv X x).code = c.val)
+      (hp : Denotes B (.hasType Δ ρ Γ γ p (.tyEx RK A) pv))
+      (hpc : pv.code = U.exCode RK.kind RK.rank F ⟨s, hF⟩) :
+      Denotes B (.hasType Δ ρ Γ γ (.tmUnpack RK A C k p) C
+        (Omega.exUnpack RK.kind RK.rank F ⟨s, hF⟩ c.val kv hkc pv hpc))
   | tmBool {Δ ρ Γ γ b} :
       Denotes B (.hasType Δ ρ Γ γ (.tmBool b) .tyBool (Omega.bool U b))
   | tmEq {Δ ρ Γ γ A x y r} {a : Kernel.Kind.Val U ⟨.star, r⟩} {xv yv}
