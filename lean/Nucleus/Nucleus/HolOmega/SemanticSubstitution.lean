@@ -182,6 +182,115 @@ theorem Denotes.weakenTy {Base : Type u} {U : Kernel.Universe.{v}}
     Denotes B (DenoteIndex.renameTy (Ren.weaken Δ RK) (X, ρ) i) :=
   h.renameTy (Ren.weaken Δ RK) (X, ρ) (Ren.compatible_weaken ρ X)
 
+/-- A well-typed renaming of term variables. -/
+structure TmRen (Γ Γ' : TmCtx Base) where
+  fn : Nat → Nat
+  maps : ∀ n A, Γ[n]? = some A → Γ'[fn n]? = some A
+
+def TmRen.lift (R : TmRen Γ Γ') : TmRen (A :: Γ) (A :: Γ') where
+  fn := liftRen R.fn
+  maps := by
+    intro n C h
+    cases n with
+    | zero => simpa using h
+    | succ n => simpa [liftRen] using R.maps n C (by simpa using h)
+
+def TmRen.Compatible (R : TmRen Γ Γ') (γ : RawEnv U Γ) (γ' : RawEnv U Γ') : Prop :=
+  ∀ n A (h : Γ[n]? = some A), RawEnv.lookup h γ = RawEnv.lookup (R.maps n A h) γ'
+
+theorem TmRen.compatible_lift {R : TmRen Γ Γ'} {γ : RawEnv U Γ} {γ' : RawEnv U Γ'}
+    (hR : R.Compatible γ γ') (x : Omega U) : R.lift.Compatible (x, γ) (x, γ') := by
+  intro n C h
+  cases n with
+  | zero => simp [RawEnv.lookup]
+  | succ n => simpa [TmRen.lift, liftRen, RawEnv.lookup] using hR n C (by simpa using h)
+
+def TmRen.weaken (Γ : TmCtx Base) (A : Ty Base) : TmRen Γ (A :: Γ) where
+  fn := Nat.succ
+  maps := by intro n C h; simpa using h
+
+theorem TmRen.compatible_weaken (γ : RawEnv U Γ) (x : Omega U) :
+    (TmRen.weaken Γ A).Compatible γ (x, γ) := by
+  intro n C h
+  induction Γ generalizing n C with
+  | nil => simp at h
+  | cons D Γ ih =>
+    cases n with
+    | zero => simp [RawEnv.lookup]
+    | succ n => simpa [RawEnv.lookup] using ih (by simpa using h) γ.2
+
+def DenoteIndex.renameTm {Base : Type u} {U : Kernel.Universe.{v}}
+    {Γ Γ' : TmCtx Base} (R : TmRen Γ Γ') (γ' : RawEnv U Γ') :
+    DenoteIndex Base U → DenoteIndex Base U
+  | i@(.kinded ..) => i
+  | .hasType Δ ρ _ _ t A x => .hasType Δ ρ Γ' γ' (t.rename R.fn) A x
+
+set_option maxHeartbeats 1600000 in
+theorem Denotes.renameTm {Base : Type u} {U : Kernel.Universe.{v}}
+    {B : BaseSemantics Base U} {Γ Γ' : TmCtx Base} {γ : RawEnv U Γ}
+    (R : TmRen Γ Γ') (γ' : RawEnv U Γ') (hR : R.Compatible γ γ')
+    {i : DenoteIndex Base U} (h : Denotes B i) :
+    Denotes B (DenoteIndex.renameTm R γ' i) := by
+  induction h <;> simp only [DenoteIndex.renameTm, Expr.rename] at *
+  all_goals aesop (add safe constructors Denotes) (add safe cases Denotes)
+
+def TmSubDenotes {Base : Type u} {U : Kernel.Universe.{v}}
+    (B : BaseSemantics Base U) (ρ : Kernel.Kind.Env U Δ)
+    (γ : RawEnv U Γ) (γ' : RawEnv U Γ') (σ : Nat → Tm Base) : Prop :=
+  ∀ n A (h : Γ[n]? = some A), TmDenotes B ρ γ' (σ n) A (RawEnv.lookup h γ)
+
+theorem TmSubDenotes.lift {B : BaseSemantics Base U} {ρ : Kernel.Kind.Env U Δ}
+    {γ : RawEnv U Γ} {γ' : RawEnv U Γ'} {σ : Nat → Tm Base}
+    (hσ : TmSubDenotes B ρ γ γ' σ) (x : Omega U) :
+    TmSubDenotes B ρ (x, γ) (x, γ') (liftTmSub σ) := by
+  intro n C h
+  cases n with
+  | zero => exact .tmVar (by simpa using h)
+  | succ n =>
+    simp only [liftTmSub]
+    have hs := hσ n C (by simpa using h)
+    simpa only [DenoteIndex.renameTm] using
+      hs.renameTm (TmRen.weaken Γ' C) (x, γ') (TmRen.compatible_weaken γ' x)
+
+def DenoteIndex.substTm {Base : Type u} {U : Kernel.Universe.{v}}
+    {Γ' : TmCtx Base} (σ : Nat → Tm Base) (γ' : RawEnv U Γ') :
+    DenoteIndex Base U → DenoteIndex Base U
+  | i@(.kinded ..) => i
+  | .hasType Δ ρ _ _ t A x => .hasType Δ ρ Γ' γ' (t.subst σ) A x
+
+set_option maxHeartbeats 1600000 in
+theorem Denotes.substTm {Base : Type u} {U : Kernel.Universe.{v}}
+    {B : BaseSemantics Base U} {ρ : Kernel.Kind.Env U Δ}
+    {γ : RawEnv U Γ} {γ' : RawEnv U Γ'} {σ : Nat → Tm Base}
+    (hσ : TmSubDenotes B ρ γ γ' σ) {i : DenoteIndex Base U} (h : Denotes B i) :
+    Denotes B (DenoteIndex.substTm σ γ' i) := by
+  induction h <;> simp only [DenoteIndex.substTm, Expr.subst] at *
+  all_goals aesop (add safe constructors Denotes) (add safe cases Denotes)
+
+def instTmSub (x : Tm Base) : Nat → Tm Base
+  | 0 => x
+  | n + 1 => .tmVar n
+
+@[simp] theorem instTmSub_eq (t x : Tm Base) : t.subst (instTmSub x) = t.inst x := rfl
+
+theorem TmSubDenotes.inst {B : BaseSemantics Base U} {ρ : Kernel.Kind.Env U Δ}
+    {γ : RawEnv U Γ} {A : Ty Base} {x : Tm Base} {xv : Omega U}
+    (hx : TmDenotes B ρ γ x A xv) :
+    TmSubDenotes B ρ (xv, γ) γ (instTmSub x) := by
+  intro n C h
+  cases n with
+  | zero =>
+    simp at h
+    subst C
+    exact hx
+  | succ n => exact .tmVar (by simpa using h)
+
+theorem TmDenotes.inst {B : BaseSemantics Base U} {ρ : Kernel.Kind.Env U Δ}
+    {γ : RawEnv U Γ} {A C : Ty Base} {t x : Tm Base} {xv tv : Omega U}
+    (ht : TmDenotes B ρ (xv, γ) t C tv) (hx : TmDenotes B ρ γ x A xv) :
+    TmDenotes B ρ γ (t.inst x) C tv := by
+  simpa only [DenoteIndex.substTm, instTmSub_eq] using ht.substTm (TmSubDenotes.inst hx)
+
 end Semantic
 
 end Nucleus.HolOmega
