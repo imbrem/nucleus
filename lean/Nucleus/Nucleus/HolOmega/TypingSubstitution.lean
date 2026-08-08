@@ -158,4 +158,44 @@ theorem TmCtx.renameTy_lift (Γ : TmCtx Base) (ρ : Nat → Nat) :
       rw [Expr.renameTy_comp, liftRen_comp_succ, ← Expr.renameTy_comp]
       exact congrArg (List.cons _) ih
 
+theorem liftSub_renameTy (σ : Nat → Ty Base) (ρ : Nat → Nat) :
+    (fun n => (liftSub σ n).renameTy (liftRen ρ)) =
+      liftSub (fun n => (σ n).renameTy ρ) := by
+  funext n
+  cases n with
+  | zero => rfl
+  | succ n =>
+      change ((σ n).renameTy Nat.succ).renameTy (liftRen ρ) =
+        ((σ n).renameTy ρ).renameTy Nat.succ
+      rw [Expr.renameTy_comp, Expr.renameTy_comp]
+      exact congrArg (fun τ => (σ n).renameTy τ) (liftRen_comp_succ ρ)
+
+theorem liftSub_comp_liftRen (σ : Nat → Ty Base) (ρ : Nat → Nat) :
+    (fun n => liftSub σ (liftRen ρ n)) = liftSub (fun n => σ (ρ n)) := by
+  funext n
+  cases n <;> rfl
+
+theorem Expr.renameTy_substTy (e : Expr Base s) (σ : Nat → Ty Base)
+    (ρ : Nat → Nat) :
+    (e.substTy σ).renameTy ρ =
+      e.substTy (fun n => (σ n).renameTy ρ) := by
+  induction e generalizing σ ρ <;>
+    simp only [Expr.substTy, Expr.renameTy, *]
+  all_goals rw [liftSub_renameTy]
+
+theorem Expr.substTy_renameTy (e : Expr Base s) (ρ : Nat → Nat)
+    (σ : Nat → Ty Base) :
+    (e.renameTy ρ).substTy σ = e.substTy (fun n => σ (ρ n)) := by
+  induction e generalizing ρ σ <;>
+    simp only [Expr.renameTy, Expr.substTy, *]
+  all_goals rw [liftSub_comp_liftRen]
+
+theorem Expr.renameTy_instTy (e : Expr Base s) (X : Ty Base) (ρ : Nat → Nat) :
+    (e.instTy X).renameTy ρ =
+      (e.renameTy (liftRen ρ)).instTy (X.renameTy ρ) := by
+  rw [Expr.instTy, Expr.renameTy_substTy, Expr.instTy, Expr.substTy_renameTy]
+  congr 1
+  funext n
+  cases n <;> rfl
+
 end Nucleus.HolOmega
