@@ -24,22 +24,59 @@ structure Broken where
   tag : Nat
   deriving DecidableEq, Repr
 
+structure FreeName where
+  value : Nat
+  deriving DecidableEq, Repr
+
+structure HoleName where
+  value : Nat
+  deriving DecidableEq, Repr
+
+/-- Locally nameless identity. Constructor identity prevents equal numeric
+payloads in the free and hole namespaces from ever aliasing. -/
+inductive VarId where
+  | bound (index : Nat)
+  | free (name : FreeName)
+  | hole (name : HoleName)
+  deriving DecidableEq, Repr
+
+def VarId.shift (cutoff : Nat) : VarId → VarId
+  | .bound n => if cutoff ≤ n then .bound (n + 1) else .bound n
+  | .free n => .free n
+  | .hole n => .hole n
+
+def VarId.openAt (index : Nat) (with : VarId) : VarId → VarId
+  | .bound n => if n = index then with else .bound n
+  | .free n => .free n
+  | .hole n => .hole n
+
+@[simp] theorem VarId.shift_free (c) (n) : shift c (.free n) = .free n := rfl
+@[simp] theorem VarId.shift_hole (c) (n) : shift c (.hole n) = .hole n := rfl
+@[simp] theorem VarId.open_free (k) (w) (n) : openAt k w (.free n) = .free n := rfl
+@[simp] theorem VarId.open_hole (k) (w) (n) : openAt k w (.hole n) = .hole n := rfl
+
 /-- Stored vocabulary tags. `cast` is intentionally absent: it is a dialect
 operation compiled during sorted repair, not a persisted schema row. -/
 inductive HolTag (Base : Type u) where
-  | hole (name : Nat)
+  | hole (name : HoleName)
   | atom (value : Base)
-  | tyVar | tyLam | tyApp | tyAll | tyBool | tyArr | tySub
-  | tmVar | tmApp | tmLam | tmTyApp | tmTyLam | tmBool | tmEq | tmEps | tmAbs | tmRep
+  | tyVar (id : VarId) | tyLam | tyApp | tyAll | tyBool | tyArr | tySub
+  | tmVar (id : VarId) | tmApp | tmLam | tmTyApp | tmTyLam | tmBool | tmEq | tmEps | tmAbs | tmRep
+
+/-- Immediate tag payload stored in the first row coordinate. `requiredDepth`
+is cached metadata, so local-closure/cast applicability is O(1). -/
+structure AnnotatedTag (Base : Type u) where
+  tag : HolTag Base
+  requiredDepth : Nat
 
 /-- The recursive, untyped tree is exactly the in-memory row shape: a tag and
 three optional child rows. For term rows the third child is the stored type
 annotation; accessing it never descends into `lhs` or `rhs`. -/
 inductive Hol (Base : Type u) where
-  | node (tag : HolTag Base) (lhs rhs ty : Option (Hol Base))
+  | node (tag : AnnotatedTag Base) (lhs rhs ty : Option (Hol Base))
 
 abbrev Hol.View (Base : Type u) :=
-  HolTag Base × Option (Hol Base) × Option (Hol Base) × Option (Hol Base)
+  AnnotatedTag Base × Option (Hol Base) × Option (Hol Base) × Option (Hol Base)
 
 def Hol.view : Hol Base → Hol.View Base
   | .node tag lhs rhs ty => (tag, lhs, rhs, ty)
@@ -55,19 +92,84 @@ def Hol.viewEquiv : Hol Base ≃ Hol.View Base where
 
 /-- One-layer stored annotation projection. A missing annotation becomes a
 named annotation hole; no other child is inspected. -/
-def Hol.ty (missingName : Nat) : Hol Base → Hol Base
+def Hol.ty (missingName : HoleName) : Hol Base → Hol Base
   | .node _ _ _ (some ty) => ty
-  | .node _ _ _ none => .node (.hole missingName) none none none
+  | .node _ _ _ none => .node ⟨.hole missingName, 0⟩ none none none
 
 /-- Exact persistent row and image types. Tree unfolding replaces each child
 tree in `Hol.View` by its content index without changing field order. -/
 abbrev Row (Base : Type u) (Index : Type v) :=
-  HolTag Base × Option Index × Option Index × Option Index
+  AnnotatedTag Base × Option Index × Option Index × Option Index
 
 abbrev Image (Base : Type u) (Index : Type v) := Index → Option (Row Base Index)
 
 def Row.map (f : I → J) : Row Base I → Row Base J
   | (tag, lhs, rhs, ty) => (tag, lhs.map f, rhs.map f, ty.map f)
+
+def HolTag.mapVar (f : VarId → VarId) : HolTag Base → HolTag Base
+  | .tyVar id => .tyVar (f id)
+  | .tmVar id => .tmVar (f id)
+  | tag => tag
+
+def Hol.mapVar (f : VarId → VarId) : Hol Base → Hol Base
+  | .node tag lhs rhs ty => .node ⟨tag.tag.mapVar f, tag.requiredDepth⟩
+      (lhs.map (Hol.mapVar f))
+      (rhs.map (Hol.mapVar f)) (ty.map (Hol.mapVar f))
+
+def Hol.shiftBound (cutoff : Nat) (h : Hol Base) : Hol Base := h.mapVar (.shift cutoff)
+
+def Hol.openBound (index : Nat) (with : VarId) (h : Hol Base) : Hol Base :=
+  h.mapVar (.openAt index with)
+
+def Hol.requiredDepth : Hol Base → Nat
+  | .node tag _ _ _ => tag.requiredDepth
+
+def Hol.LocallyClosed (h : Hol Base) : Prop := h.requiredDepth = 0
+
+def HolTag.isBinder : HolTag Base → Bool
+  | .tyLam | .tmLam | .tmTyLam => true
+  | _ => false
+
+/-- Compiling lazy `bound n`: out-of-scope indices become stable named holes;
+free variables and existing holes are untouched. -/
+def Hol.applyBound (n : Nat) : Hol Base → Hol Base
+  | .node tag lhs rhs ty =>
+      let replace : VarId → VarId
+        | .bound k => if n ≤ k then .hole ⟨k⟩ else .bound k
+        | .free x => .free x
+        | .hole x => .hole x
+      let childN := if tag.tag.isBinder then n + 1 else n
+      .node ⟨tag.tag.mapVar replace, min tag.requiredDepth n⟩
+        (lhs.map (Hol.applyBound childN)) (rhs.map (Hol.applyBound childN))
+        (ty.map (Hol.applyBound n))
+
+theorem Hol.applyBound_requiredDepth (n : Nat) (h : Hol Base) :
+    (h.applyBound n).requiredDepth ≤ n := by
+  cases h
+  exact Nat.min_le_right _ _
+
+theorem Hol.applyBound_zero_closed (h : Hol Base) : (h.applyBound 0).LocallyClosed := by
+  cases h
+  rfl
+
+theorem Hol.applyBound_depth_mono {n m : Nat} (h : Hol Base) (hnm : n ≤ m) :
+    (h.applyBound n).requiredDepth ≤ (h.applyBound m).requiredDepth := by
+  cases h
+  simp only [applyBound, requiredDepth]
+  exact Nat.min_le_min_left _ hnm
+
+/-- O(1) pre-store dialect operations. `cast` and `bound` are compiled before
+rows are persisted and therefore are not schema tags. -/
+inductive Dialect (Base : Type u) where
+  | tree (term : Hol Base)
+  | bound (depth : Nat) (term : Hol Base)
+
+def Dialect.ty (missingName : HoleName) : Dialect Base → Hol Base
+  | .tree t | .bound _ t => t.ty missingName
+
+def Dialect.compile : Dialect Base → Hol Base
+  | .tree t => t
+  | .bound n t => t.applyBound n
 
 def canonicalTy : (K : Kind) → Nat → Ty Base
   | .star, _ => .tyBool
@@ -90,7 +192,7 @@ def repairTy (_ : Broken) (Δ : KindCtx) (RK : RKind) : RepairedTy Base Δ RK :=
 /-- One named typed hole. Its open lowering is a fresh variable in the
 extended context; `Filling` is the family of every legal closing term. -/
 structure Hole (Base : Type u) (Δ : KindCtx) (Γ : TmCtx Base) (A : Ty Base) where
-  name : Nat
+  name : HoleName
   formed : Kinded Δ A ⟨.kind.star, rank⟩
 
 def Hole.Filling (h : Hole Base Δ Γ A) := {t : Tm Base // HasType Δ Γ t A}
@@ -98,7 +200,11 @@ def Hole.Filling (h : Hole Base Δ Γ A) := {t : Tm Base // HasType Δ Γ t A}
 /-- One simultaneous assignment for every named, typed hole. Repeated uses of
 the same name/type are therefore forced to receive the same term. -/
 def FillingEnv (Base : Type u) (Δ : KindCtx) (Γ : TmCtx Base) :=
-  ∀ (name : Nat) (A : Ty Base) (r : Nat), Kinded Δ A ⟨.kind.star, r⟩ →
+  ∀ (name : HoleName) (A : Ty Base) (r : Nat), Kinded Δ A ⟨.kind.star, r⟩ →
+    {t : Tm Base // HasType Δ Γ t A}
+
+def FreeEnv (Base : Type u) (Δ : KindCtx) (Γ : TmCtx Base) :=
+  ∀ (name : FreeName) (A : Ty Base) (r : Nat), Kinded Δ A ⟨.kind.star, r⟩ →
     {t : Tm Base // HasType Δ Γ t A}
 
 def Hole.open (h : Hole Base Δ Γ A) :
@@ -120,12 +226,21 @@ def FillingEnv.weaken (f : FillingEnv Base Δ Γ) (B : Ty Base) :
     FillingEnv Base Δ (B :: Γ) := fun name A r hA =>
   ⟨(f name A r hA).1.rename Nat.succ, (f name A r hA).2.weaken⟩
 
+def canonicalFreeEnv (Base : Type u) (Δ : KindCtx) (Γ : TmCtx Base) :
+    FreeEnv Base Δ Γ := fun name A r hA => (Hole.mk ⟨name.value⟩ hA).canonical
+
+def FreeEnv.weaken (f : FreeEnv Base Δ Γ) (B : Ty Base) :
+    FreeEnv Base Δ (B :: Γ) := fun name A r hA =>
+  ⟨(f name A r hA).1.rename Nat.succ, (f name A r hA).2.weaken⟩
+
 /-- The row-shaped Covalence term family. Its type annotation is the index,
 so `.ty` below is a one-layer projection and never traverses children.
 Constructors are intrinsically sorted: callers provide children, not raw
 `HasType` certificates. -/
 inductive SortedHol (Base : Type u) (Δ : KindCtx) (Γ : TmCtx Base) : Ty Base → Type u
-  | hole (name : Nat) (formed : Kinded Δ A ⟨.kind.star, r⟩) : SortedHol Base Δ Γ A
+  | bound (index : Nat) (lookup : Γ[index]? = some A) : SortedHol Base Δ Γ A
+  | free (name : FreeName) (formed : Kinded Δ A ⟨.kind.star, r⟩) : SortedHol Base Δ Γ A
+  | hole (name : HoleName) (formed : Kinded Δ A ⟨.kind.star, r⟩) : SortedHol Base Δ Γ A
   | bool (b : Bool) : SortedHol Base Δ Γ .tyBool
   | app : SortedHol Base Δ Γ (.tyArr A B) → SortedHol Base Δ Γ A → SortedHol Base Δ Γ B
   | lam (formed : Kinded Δ A ⟨.kind.star, r⟩) :
@@ -146,23 +261,56 @@ def SortedHol.ty {A : Ty Base} (_ : SortedHol Base Δ Γ A) : Ty Base := A
 /-- Uniform lowering of an annotated row under a simultaneous hole filling.
 A successful cast retains the child's raw term and applies core conversion;
 a failed cast selects the named typed hole at the target annotation. -/
-def SortedHol.lower (f : FillingEnv Base Δ Γ) : (t : SortedHol Base Δ Γ A) →
+def SortedHol.lower (free : FreeEnv Base Δ Γ) (f : FillingEnv Base Δ Γ) :
+    (t : SortedHol Base Δ Γ A) →
     {raw : Tm Base // HasType Δ Γ raw A}
+  | .bound index lookup => ⟨.tmVar index, .tmVar lookup⟩
+  | .free name hA => free name A _ hA
   | .hole name hA => f name A _ hA
   | .bool b => ⟨.tmBool b, .tmBool⟩
-  | .app g x => ⟨.tmApp (g.lower f).1 (x.lower f).1, .tmApp (g.lower f).2 (x.lower f).2⟩
+  | .app g x => ⟨.tmApp (g.lower free f).1 (x.lower free f).1,
+      .tmApp (g.lower free f).2 (x.lower free f).2⟩
   | .lam hA body =>
-      ⟨.tmLam A (body.lower (f.weaken A)).1, .tmLam hA (body.lower (f.weaken A)).2⟩
-  | .eq hA x y => ⟨.tmEq A (x.lower f).1 (y.lower f).1,
-      .tmEq hA (x.lower f).2 (y.lower f).2⟩
-  | .eps hA p => ⟨.tmEps A (p.lower f).1, .tmEps hA (p.lower f).2⟩
+      ⟨.tmLam A (body.lower (free.weaken A) (f.weaken A)).1,
+        .tmLam hA (body.lower (free.weaken A) (f.weaken A)).2⟩
+  | .eq hA x y => ⟨.tmEq A (x.lower free f).1 (y.lower free f).1,
+      .tmEq hA (x.lower free f).2 (y.lower free f).2⟩
+  | .eps hA p => ⟨.tmEps A (p.lower free f).1, .tmEps hA (p.lower free f).2⟩
   | .cast term target htarget decision =>
       match decision with
-      | .inl hc => ⟨(term.lower f).1, .conv (term.lower f).2 hc⟩
+      | .inl hc => ⟨(term.lower free f).1, .conv (term.lower free f).2 hc⟩
       | .inr name => f name target _ htarget
 
 def SortedHol.repair (t : SortedHol Base Δ Γ A) : {raw : Tm Base // HasType Δ Γ raw A} :=
-  t.lower (canonicalFillingEnv Base Δ Γ)
+  t.lower (canonicalFreeEnv Base Δ Γ) (canonicalFillingEnv Base Δ Γ)
+
+/-- Equality rules whose applicability is determined entirely by direct
+children and their stored annotations. -/
+inductive CovEq {Base : Type u} (Δ : KindCtx) (Γ : TmCtx Base) :
+    SortedHol Base Δ Γ A → SortedHol Base Δ Γ A → Type u
+  | refl (t : SortedHol Base Δ Γ A) : CovEq Δ Γ t t
+  | symm : CovEq Δ Γ t u → CovEq Δ Γ u t
+  | trans : CovEq Δ Γ t u → CovEq Δ Γ u v → CovEq Δ Γ t v
+  | app : CovEq Δ Γ f g → CovEq Δ Γ x y →
+      CovEq Δ Γ (.app f x) (.app g y)
+  | lam (formed : Kinded Δ A ⟨.kind.star, r⟩) :
+      CovEq Δ (A :: Γ) t u → CovEq Δ Γ (.lam formed t) (.lam formed u)
+
+/-- Every filling lowers a Covalence equality to the corresponding raw
+HOL-omega equality certificate. -/
+def CovEq.lower {t u : SortedHol Base Δ Γ A} (d : CovEq Δ Γ t u) :
+    (free : FreeEnv Base Δ Γ) → (f : FillingEnv Base Δ Γ) →
+      EqTm Δ Γ (t.lower free f).1 (u.lower free f).1 A := by
+  intro free f
+  induction d generalizing free f with
+  | refl t => exact .refl (t.lower free f).2
+  | symm _ ih => exact (ih free f).symm
+  | trans _ _ ih₁ ih₂ => exact .trans (ih₁ free f) (ih₂ free f)
+  | app _ _ ihf ihx => exact .app (ihf free f) (ihx free f)
+  | lam hA _ ih => exact .lam hA (ih (free.weaken _) (f.weaken _))
+
+theorem CovEq.fillings_nonempty (d : @CovEq Base Δ Γ A t u) :
+    Nonempty (FillingEnv Base Δ Γ) := fillingEnvs_nonempty
 
 /-- A sorted term node. Malformed nodes carry only the formation evidence of
 the expected type, which suffices to turn them into named holes. -/
@@ -173,7 +321,7 @@ inductive TermNode (Base : Type u) (Δ : KindCtx) (Γ : TmCtx Base) (A : Ty Base
 
 def TermNode.asHole : TermNode Base Δ Γ A → Hole Base Δ Γ A
   | .hole h => h
-  | .broken b hA => ⟨b.tag, hA⟩
+  | .broken b hA => ⟨⟨b.tag⟩, hA⟩
   | .valid _ ht => by
       have hA := HasType.formed ht
       exact ⟨0, hA.choose_spec⟩
@@ -184,7 +332,7 @@ def TermNode.open : (n : TermNode Base Δ Γ A) →
     {t : Tm Base // HasType Δ (A :: Γ) t A}
   | .valid t ht => ⟨t.rename Nat.succ, ht.weaken⟩
   | .hole h => h.open
-  | .broken b hA => (Hole.mk b.tag hA).open
+  | .broken b hA => (Hole.mk ⟨b.tag⟩ hA).open
 
 /-- Filling is total and ranges over all typed terms of the claimed type. -/
 def TermNode.fill (n : TermNode Base Δ Γ A) (f : FillingEnv Base Δ Γ) :
@@ -192,7 +340,7 @@ def TermNode.fill (n : TermNode Base Δ Γ A) (f : FillingEnv Base Δ Γ) :
   match n with
   | .valid t ht => ⟨t, ht⟩
   | .hole h => f h.name A _ h.formed
-  | .broken b hA => f b.tag A _ hA
+  | .broken b hA => f ⟨b.tag⟩ A _ hA
 
 def TermNode.repair (n : TermNode Base Δ Γ A) : {t : Tm Base // HasType Δ Γ t A} :=
   n.fill (canonicalFillingEnv Base Δ Γ)
