@@ -176,6 +176,41 @@ theorem TyDenotes.instTy {Base : Type u} {U : Kernel.Universe.{v}}
     (hX : TyDenotes B ρ X RK x) : TyDenotes B ρ (A.instTy X) ⟨.star, s⟩ a := by
   simpa only [DenoteIndex.substTy, instSub_eq] using hA.substTy (SubDenotes.inst hX)
 
+/-- Every model-independent conversion certificate preserves the denoted
+universe code, uniformly in the universe, base interpretation, and kind
+environment.  This is the sole semantic interface consumed by `CONV`. -/
+theorem TyConv.sound {Base : Type u} {U : Kernel.Universe.{v}}
+    {B : BaseSemantics Base U} {Δ : KindCtx} {A C : Ty Base}
+    (h : TyConv Δ A C) (ρ : Kernel.Kind.Env U Δ) {r : Nat}
+    {a : Kernel.Kind.Val U ⟨.star, r⟩}
+    (hA : TyDenotes B ρ A ⟨.star, r⟩ a) :
+    ∃ s (c : Kernel.Kind.Val U ⟨.star, s⟩),
+      TyDenotes B ρ C ⟨.star, s⟩ c ∧ a.val = c.val := by
+  induction h with
+  | alpha h => subst C; exact ⟨r, a, hA, rfl⟩
+  | trans _ _ ih₁ ih₂ =>
+    obtain ⟨s, b, hB, hab⟩ := ih₁ ρ hA
+    obtain ⟨q, c, hC, hbc⟩ := ih₂ ρ hB
+    exact ⟨q, c, hC, hab.trans hbc⟩
+  | tyBeta RK A X =>
+    cases hA with
+    | tyApp hf hX =>
+      cases hf with
+      | tyLam hbody =>
+        exact ⟨r, _, TyDenotes.instTy (hbody _) hX, rfl⟩
+
+theorem TmDenotes.convert {Base : Type u} {U : Kernel.Universe.{v}}
+    {B : BaseSemantics Base U} {Δ : KindCtx} {ρ : Kernel.Kind.Env U Δ}
+    {Γ : TmCtx Base} {γ : RawEnv U Γ} {t : Tm Base} {A C : Ty Base}
+    {x : Omega U} {r : Nat} {a : Kernel.Kind.Val U ⟨.star, r⟩}
+    (hAC : TyConv Δ A C) (ht : TmDenotes B ρ γ t A x)
+    (hA : TyDenotes B ρ A ⟨.star, r⟩ a) (hxa : x.code = a.val) :
+    ∃ s c, TmDenotes B ρ γ t C x ∧ TyDenotes B ρ C ⟨.star, s⟩ c ∧
+      x.code = c.val := by
+  obtain ⟨s, c, hC, hac⟩ := hAC.sound ρ hA
+  have hxc := hxa.trans hac
+  exact ⟨s, c, .tmConv hAC ht hC hxc, hC, hxc⟩
+
 theorem Denotes.weakenTy {Base : Type u} {U : Kernel.Universe.{v}}
     {B : BaseSemantics Base U} {Δ : KindCtx} {ρ : Kernel.Kind.Env U Δ}
     (X : Kernel.Kind.Val U RK) {i : DenoteIndex Base U} (h : Denotes B i) :

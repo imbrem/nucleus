@@ -169,6 +169,11 @@ inductive Denotes {Base : Type u} {U : Kernel.Universe.{v}} (B : BaseSemantics B
   | subsume {Δ ρ A r s} {a : Kernel.Kind.Val U ⟨.star, r⟩}
       (hA : Denotes B (.kinded Δ ρ A ⟨.star, r⟩ a)) (hrs : r ≤ s) :
       Denotes B (.kinded Δ ρ A ⟨.star, s⟩ ⟨a.val, Nat.le_trans a.property hrs⟩)
+  | tmConv {Δ ρ Γ γ t A C r} {x : Omega U}
+      {c : Kernel.Kind.Val U ⟨.star, r⟩}
+      (hAC : TyConv Δ A C) (ht : Denotes B (.hasType Δ ρ Γ γ t A x))
+      (hC : Denotes B (.kinded Δ ρ C ⟨.star, r⟩ c))
+      (hxc : x.code = c.val) : Denotes B (.hasType Δ ρ Γ γ t C x)
   | tmVar {Δ ρ Γ γ n A} (h : Γ[n]? = some A) :
       Denotes B (.hasType Δ ρ Γ γ (.tmVar n) A (RawEnv.lookup h γ))
   | tmApp {Δ ρ Γ γ f x A C r} {a c : Kernel.Kind.Val U ⟨.star, r⟩} {fv xv}
@@ -260,7 +265,7 @@ def CoherentAt {Base : Type u} {U : Kernel.Universe.{v}}
       | ⟨.star, _⟩ => ∀ s w, TyDenotes B ρ A ⟨.star, s⟩ w → v.val = w.val
       | _ => True
   | .hasType Δ ρ Γ γ t A x =>
-      ∀ A' x', TmDenotes B ρ γ t A' x' → A = A' ∧ x = x'
+      ∀ A' x', TmDenotes B ρ γ t A' x' → x = x'
 
 set_option maxHeartbeats 800000 in
 theorem Denotes.coherent {Base : Type u} {U : Kernel.Universe.{v}}
@@ -284,14 +289,14 @@ theorem TyDenotes.star_code_eq {Base : Type u} {U : Kernel.Universe.{v}}
 theorem TmDenotes.type_value_eq {Base : Type u} {U : Kernel.Universe.{v}}
     {B : BaseSemantics Base U} {Δ ρ Γ γ t A A'} {x x' : Omega U}
     (hx : TmDenotes B (Δ := Δ) (Γ := Γ) ρ γ t A x)
-    (hx' : TmDenotes B ρ γ t A' x') : A = A' ∧ x = x' :=
+    (hx' : TmDenotes B ρ γ t A' x') : x = x' :=
   hx.coherent A' x' hx'
 
 theorem TmDenotes.eq {Base : Type u} {U : Kernel.Universe.{v}}
     {B : BaseSemantics Base U} {Δ ρ Γ γ t A} {x x' : Omega U}
     (hx : TmDenotes B (Δ := Δ) (Γ := Γ) ρ γ t A x)
     (hx' : TmDenotes B ρ γ t A x') : x = x' :=
-  (hx.type_value_eq hx').2
+  hx.type_value_eq hx'
 
 
 end Nucleus.HolOmega

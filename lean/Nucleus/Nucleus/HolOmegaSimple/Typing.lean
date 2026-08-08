@@ -116,6 +116,7 @@ theorem Judgement.toSimpleKinded {i : JudgementIndex Base} (h : Judgement i) :
   | tyArr _ _ ihA ihB => simpa [Ty.toSimple] using HolOmegaSimple.Judgement.tyArr ihA ihB
   | tySub _ _ ihA _ => simpa [Ty.toSimple] using ihA
   | subsume _ hrs ih => simpa [Ty.toSimple] using HolOmegaSimple.Judgement.subsume ih hrs
+  | conv => trivial
   | tmVar | tmApp | tmLam | tmTyApp | tmTyLam | tmBool | tmEq | tmEps | tmAbs | tmRep => trivial
 
 theorem Kinded.toSimple {RK : RKind} (h : Kinded Δ A RK) :

@@ -46,6 +46,15 @@ universe u
 
 namespace Nucleus.HolOmega
 
+/-- Model-independent certificates for definitional conversion of raw types.
+New conversion principles belong here only when accompanied by a
+universe-polymorphic semantic soundness theorem. -/
+inductive TyConv {Base : Type u} (Δ : KindCtx) : Ty Base → Ty Base → Prop
+  | alpha (h : A = B) : TyConv Δ A B
+  | trans : TyConv Δ A B → TyConv Δ B C → TyConv Δ A C
+  | tyBeta (RK : RKind) (A X : Ty Base) :
+      TyConv Δ (.tyApp (.tyLam RK A) X) (A.instTy X)
+
 /-- A common index for the formation and typing judgements. -/
 inductive JudgementIndex (Base : Type u) : Type u
   | kinded (Δ : KindCtx) (A : Ty Base) (RK : RKind)
@@ -79,6 +88,9 @@ inductive Judgement {Base : Type u} : JudgementIndex Base → Prop
   | subsume {Δ : KindCtx} {A : Ty Base} {r s : Nat} :
       Judgement (.kinded Δ A ⟨.star, r⟩) → r ≤ s →
       Judgement (.kinded Δ A ⟨.star, s⟩)
+  | conv {Δ : KindCtx} {Γ : TmCtx Base} {t : Tm Base} {A B : Ty Base} :
+      Judgement (.hasType Δ Γ t A) → TyConv Δ A B →
+      Judgement (.hasType Δ Γ t B)
   | tmVar {Δ : KindCtx} {Γ : TmCtx Base} {n : Nat} {A : Ty Base} :
       Γ[n]? = some A → Judgement (.hasType Δ Γ (.tmVar n) A)
   | tmApp {Δ : KindCtx} {Γ : TmCtx Base} {f x : Tm Base} {A B : Ty Base} :
