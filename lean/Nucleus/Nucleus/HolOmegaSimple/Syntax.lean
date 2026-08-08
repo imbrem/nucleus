@@ -21,6 +21,7 @@ inductive Expr (Base : Type u) : ExprSort → Type u
   | tyLam : RKind → Expr Base .ty → Expr Base .ty
   | tyApp : Expr Base .ty → Expr Base .ty → Expr Base .ty
   | tyAll : RKind → Expr Base .ty → Expr Base .ty
+  | tyEx : RKind → Expr Base .ty → Expr Base .ty
   | tyBool : Expr Base .ty
   | tyArr : Expr Base .ty → Expr Base .ty → Expr Base .ty
   | tmVar : Nat → Expr Base .tm
@@ -28,6 +29,9 @@ inductive Expr (Base : Type u) : ExprSort → Type u
   | tmLam : Expr Base .ty → Expr Base .tm → Expr Base .tm
   | tmTyApp : Expr Base .tm → Expr Base .ty → Expr Base .tm
   | tmTyLam : RKind → Expr Base .tm → Expr Base .tm
+  | tmPack : RKind → Expr Base .ty → Expr Base .ty → Expr Base .tm → Expr Base .tm
+  | tmUnpack : RKind → Expr Base .ty → Expr Base .ty → Expr Base .tm →
+      Expr Base .tm → Expr Base .tm
   | tmBool : Bool → Expr Base .tm
   | tmEq : Expr Base .ty → Expr Base .tm → Expr Base .tm → Expr Base .tm
   | tmEps : Expr Base .ty → Expr Base .tm → Expr Base .tm
@@ -46,6 +50,7 @@ def renameTy (ρ : Nat → Nat) : {s : ExprSort} → Expr Base s → Expr Base s
   | _, .tyLam RK A => .tyLam RK (A.renameTy (HolOmega.liftRen ρ))
   | _, .tyApp F X => .tyApp (F.renameTy ρ) (X.renameTy ρ)
   | _, .tyAll RK A => .tyAll RK (A.renameTy (HolOmega.liftRen ρ))
+  | _, .tyEx RK A => .tyEx RK (A.renameTy (HolOmega.liftRen ρ))
   | _, .tyBool => .tyBool
   | _, .tyArr A B => .tyArr (A.renameTy ρ) (B.renameTy ρ)
   | _, .tmVar n => .tmVar n
@@ -53,6 +58,11 @@ def renameTy (ρ : Nat → Nat) : {s : ExprSort} → Expr Base s → Expr Base s
   | _, .tmLam A t => .tmLam (A.renameTy ρ) (t.renameTy ρ)
   | _, .tmTyApp f X => .tmTyApp (f.renameTy ρ) (X.renameTy ρ)
   | _, .tmTyLam RK t => .tmTyLam RK (t.renameTy (HolOmega.liftRen ρ))
+  | _, .tmPack RK A X t =>
+      .tmPack RK (A.renameTy (HolOmega.liftRen ρ)) (X.renameTy ρ) (t.renameTy ρ)
+  | _, .tmUnpack RK A B k p =>
+      .tmUnpack RK (A.renameTy (HolOmega.liftRen ρ)) (B.renameTy ρ)
+        (k.renameTy (HolOmega.liftRen ρ)) (p.renameTy ρ)
   | _, .tmBool b => .tmBool b
   | _, .tmEq A x y => .tmEq (A.renameTy ρ) (x.renameTy ρ) (y.renameTy ρ)
   | _, .tmEps A p => .tmEps (A.renameTy ρ) (p.renameTy ρ)
@@ -69,6 +79,7 @@ def substTy (σ : Nat → Ty Base) : {s : ExprSort} → Expr Base s → Expr Bas
   | _, .tyLam RK A => .tyLam RK (A.substTy (liftSub σ))
   | _, .tyApp F X => .tyApp (F.substTy σ) (X.substTy σ)
   | _, .tyAll RK A => .tyAll RK (A.substTy (liftSub σ))
+  | _, .tyEx RK A => .tyEx RK (A.substTy (liftSub σ))
   | _, .tyBool => .tyBool
   | _, .tyArr A B => .tyArr (A.substTy σ) (B.substTy σ)
   | _, .tmVar n => .tmVar n
@@ -76,6 +87,11 @@ def substTy (σ : Nat → Ty Base) : {s : ExprSort} → Expr Base s → Expr Bas
   | _, .tmLam A t => .tmLam (A.substTy σ) (t.substTy σ)
   | _, .tmTyApp f X => .tmTyApp (f.substTy σ) (X.substTy σ)
   | _, .tmTyLam RK t => .tmTyLam RK (t.substTy (liftSub σ))
+  | _, .tmPack RK A X t =>
+      .tmPack RK (A.substTy (liftSub σ)) (X.substTy σ) (t.substTy σ)
+  | _, .tmUnpack RK A B k p =>
+      .tmUnpack RK (A.substTy (liftSub σ)) (B.substTy σ)
+        (k.substTy (liftSub σ)) (p.substTy σ)
   | _, .tmBool b => .tmBool b
   | _, .tmEq A x y => .tmEq (A.substTy σ) (x.substTy σ) (y.substTy σ)
   | _, .tmEps A p => .tmEps (A.substTy σ) (p.substTy σ)
@@ -102,6 +118,7 @@ def Ty.toSimple : Ty Base → HolOmegaSimple.Ty Base
   | .tyLam RK A => .tyLam RK (Ty.toSimple A)
   | .tyApp F X => .tyApp (Ty.toSimple F) (Ty.toSimple X)
   | .tyAll RK A => .tyAll RK (Ty.toSimple A)
+  | .tyEx RK A => .tyEx RK (Ty.toSimple A)
   | .tyBool => .tyBool
   | .tyArr A B => .tyArr (Ty.toSimple A) (Ty.toSimple B)
   | .tySub A _ => Ty.toSimple A
@@ -112,6 +129,9 @@ def Tm.toSimple : Tm Base → HolOmegaSimple.Tm Base
   | .tmLam A t => .tmLam (Ty.toSimple A) (Tm.toSimple t)
   | .tmTyApp f X => .tmTyApp (Tm.toSimple f) (Ty.toSimple X)
   | .tmTyLam RK t => .tmTyLam RK (Tm.toSimple t)
+  | .tmPack RK A X t => .tmPack RK (Ty.toSimple A) (Ty.toSimple X) (Tm.toSimple t)
+  | .tmUnpack RK A B k p =>
+      .tmUnpack RK (Ty.toSimple A) (Ty.toSimple B) (Tm.toSimple k) (Tm.toSimple p)
   | .tmBool b => .tmBool b
   | .tmEq A x y => .tmEq (Ty.toSimple A) (Tm.toSimple x) (Tm.toSimple y)
   | .tmEps A p => .tmEps (Ty.toSimple A) (Tm.toSimple p)

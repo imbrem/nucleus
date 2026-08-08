@@ -21,6 +21,8 @@ inductive Judgement {Base : Type u} : JudgementIndex Base → Prop
       Judgement (.kinded Δ (.tyApp F X) ⟨L, r⟩)
   | tyAll {RK : RKind} : Judgement (.kinded (RK :: Δ) A ⟨.star, s⟩) →
       Judgement (.kinded Δ (.tyAll RK A) ⟨.star, max RK.rank s + 2⟩)
+  | tyEx {RK : RKind} : Judgement (.kinded (RK :: Δ) A ⟨.star, s⟩) →
+      Judgement (.kinded Δ (.tyEx RK A) ⟨.star, max RK.rank s + 2⟩)
   | tyBool : Judgement (.kinded Δ .tyBool ⟨.star, r⟩)
   | tyArr : Judgement (.kinded Δ A ⟨.star, r⟩) →
       Judgement (.kinded Δ B ⟨.star, r⟩) →
@@ -38,6 +40,14 @@ inductive Judgement {Base : Type u} : JudgementIndex Base → Prop
       Judgement (.hasType Δ Γ (.tmTyApp f X) (B.instTy X))
   | tmTyLam {RK : RKind} : Judgement (.hasType (RK :: Δ) Γ.liftTy t A) →
       Judgement (.hasType Δ Γ (.tmTyLam RK t) (.tyAll RK A))
+  | tmPack {RK : RKind} : Judgement (.kinded (RK :: Δ) A ⟨.star, s⟩) →
+      Judgement (.kinded Δ X RK) → Judgement (.hasType Δ Γ t (A.instTy X)) →
+      Judgement (.hasType Δ Γ (.tmPack RK A X t) (.tyEx RK A))
+  | tmUnpack {RK : RKind} : Judgement (.kinded (RK :: Δ) A ⟨.star, s⟩) →
+      Judgement (.kinded Δ B ⟨.star, q⟩) →
+      Judgement (.hasType (RK :: Δ) (A :: Γ.liftTy) k B.liftTy) →
+      Judgement (.hasType Δ Γ p (.tyEx RK A)) →
+      Judgement (.hasType Δ Γ (.tmUnpack RK A B k p) B)
   | tmBool : Judgement (.hasType Δ Γ (.tmBool b) .tyBool)
   | tmEq : Judgement (.kinded Δ A ⟨.star, r⟩) →
       Judgement (.hasType Δ Γ x A) → Judgement (.hasType Δ Γ y A) →
@@ -64,6 +74,7 @@ def kindOf (Δ : KindCtx) : Ty Base → Option Kind
       | some (.arr _ L) => some L
       | _ => none
   | .tyAll _ _ => some .star
+  | .tyEx _ _ => some .star
   | .tyBool => some .star
   | .tyArr _ _ => some .star
 
@@ -77,10 +88,12 @@ theorem Judgement.kindOf_eq {i : JudgementIndex Base} (h : Judgement i) :
   | tyLam _ ih => simp [kindOf, ih]
   | tyApp _ _ ihF _ => simp [kindOf, ihF]
   | tyAll => simp [kindOf]
+  | tyEx => simp [kindOf]
   | tyBool => simp [kindOf]
   | tyArr => simp [kindOf]
   | subsume _ _ ih => exact ih
-  | tmVar | tmApp | tmLam | tmTyApp | tmTyLam | tmBool | tmEq | tmEps => trivial
+  | tmVar | tmApp | tmLam | tmTyApp | tmTyLam | tmPack | tmUnpack | tmBool | tmEq | tmEps =>
+      trivial
 
 theorem Kinded.kindOf_eq {RK : RKind} (h : Kinded Δ A RK) :
     kindOf Δ A = some RK.kind := Judgement.kindOf_eq h
@@ -112,12 +125,14 @@ theorem Judgement.toSimpleKinded {i : JudgementIndex Base} (h : Judgement i) :
   | tyLam _ ih => simpa [Ty.toSimple] using HolOmegaSimple.Judgement.tyLam ih
   | tyApp _ _ ihF ihX => simpa [Ty.toSimple] using HolOmegaSimple.Judgement.tyApp ihF ihX
   | tyAll _ ih => simpa [Ty.toSimple] using HolOmegaSimple.Judgement.tyAll ih
+  | tyEx _ ih => simpa [Ty.toSimple] using HolOmegaSimple.Judgement.tyEx ih
   | tyBool => simpa [Ty.toSimple] using (HolOmegaSimple.Judgement.tyBool (Base := Base))
   | tyArr _ _ ihA ihB => simpa [Ty.toSimple] using HolOmegaSimple.Judgement.tyArr ihA ihB
   | tySub _ _ ihA _ => simpa [Ty.toSimple] using ihA
   | subsume _ hrs ih => simpa [Ty.toSimple] using HolOmegaSimple.Judgement.subsume ih hrs
   | conv => trivial
-  | tmVar | tmApp | tmLam | tmTyApp | tmTyLam | tmBool | tmEq | tmEps | tmAbs | tmRep => trivial
+  | tmVar | tmApp | tmLam | tmTyApp | tmTyLam | tmPack | tmUnpack | tmBool | tmEq | tmEps |
+      tmAbs | tmRep => trivial
 
 theorem Kinded.toSimple {RK : RKind} (h : Kinded Δ A RK) :
     HolOmegaSimple.Kinded Δ (Ty.toSimple A) RK := Judgement.toSimpleKinded h
