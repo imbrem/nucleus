@@ -93,6 +93,11 @@ class Universe where
   allEquiv : ∀ K r s F h,
     El (allCode K r s F h) ≃ ((X : KindVal rank r K) → El (F X))
   rank_allCode : ∀ K r s F h, rank (allCode K r s F h) ≤ max r s + 2
+  exCode : (K : HolOmega.Kind) → (r s : Nat) →
+    (F : KindVal rank r K → Code) → (∀ X, rank (F X) ≤ s) → Code
+  exEquiv : ∀ K r s F h,
+    El (exCode K r s F h) ≃ ((X : KindVal rank r K) × El (F X))
+  rank_exCode : ∀ K r s F h, rank (exCode K r s F h) ≤ max r s + 2
 
 attribute [instance] Universe.inhabited
 
@@ -131,6 +136,13 @@ bounded by `s`. The one place a rank is visible. -/
 def all {Δ : List RKind} {K : HolOmega.Kind} (r s : Nat)
     (A : STy U (⟨K, r⟩ :: Δ)) (h : ∀ ρ, U.rank (A ρ) ≤ s) : STy U Δ :=
   fun ρ => U.allCode K r s (fun X => A (X, ρ)) (fun X => h (X, ρ))
+
+/-- Existential quantification over the types of kind `K` at rank `r`, with the
+body's rank bounded by `s`. A dependent *pair* where `all` is a dependent
+function, and it costs the same rank. -/
+def ex {Δ : List RKind} {K : HolOmega.Kind} (r s : Nat)
+    (A : STy U (⟨K, r⟩ :: Δ)) (h : ∀ ρ, U.rank (A ρ) ≤ s) : STy U Δ :=
+  fun ρ => U.exCode K r s (fun X => A (X, ρ)) (fun X => h (X, ρ))
 
 def inst {RK : RKind} (A : STy U (RK :: Δ)) (X : Ty U Δ RK) : STy U Δ :=
   fun ρ => A (X ρ, ρ)
@@ -245,6 +257,52 @@ def weakenTy {Δ : List RKind} {Γ : Ctx U Δ}
   fun ρ γ =>
     U.allEquiv K r s (fun X => A (X, ρ.2)) (fun X => h (X, ρ.2))
       (f ρ.2 (Ctx.strengthenEl U ⟨K, r⟩ ρ.1 Γ γ)) ρ.1
+
+/-- `PACK`: a witness type below the rank, and a term at it, make a package. -/
+def pack {Δ : List RKind} {Γ : Ctx U Δ} {K : HolOmega.Kind} {r s : Nat}
+    {A : STy U (⟨K, r⟩ :: Δ)} (h : ∀ ρ, U.rank (A ρ) ≤ s)
+    (X : Ty U Δ ⟨K, r⟩) (t : Tm U Γ (Ty.inst U A X)) :
+    Tm U Γ (Ty.ex U r s A h) :=
+  fun ρ γ =>
+    (U.exEquiv K r s (fun Y => A (Y, ρ)) (fun Y => h (Y, ρ))).symm ⟨X ρ, t ρ γ⟩
+
+/-- `UNPACK`: eliminate a package with a continuation uniform in the witness.
+The result type `B` carries no rank constraint from the package, which is what
+a primitive existential buys over the `∀`-encoding — there the answer rank is
+frozen into the type. -/
+def unpack {Δ : List RKind} {Γ : Ctx U Δ} {K : HolOmega.Kind} {r s : Nat}
+    {A : STy U (⟨K, r⟩ :: Δ)} {h : ∀ ρ, U.rank (A ρ) ≤ s} {B : STy U Δ}
+    (k : ∀ ρ, Ctx.El U Γ ρ → (X : Kind.Val U ⟨K, r⟩) → U.El (A (X, ρ)) →
+      U.El (B ρ))
+    (p : Tm U Γ (Ty.ex U r s A h)) : Tm U Γ B :=
+  fun ρ γ =>
+    let q := U.exEquiv K r s (fun Y => A (Y, ρ)) (fun Y => h (Y, ρ)) (p ρ γ)
+    k ρ γ q.1 q.2
+
+/-- `UNPACK_PACK`: the beta rule for packages. -/
+@[simp] theorem unpack_pack {Δ : List RKind} {Γ : Ctx U Δ}
+    {K : HolOmega.Kind} {r s : Nat} {A : STy U (⟨K, r⟩ :: Δ)}
+    {h : ∀ ρ, U.rank (A ρ) ≤ s} {B : STy U Δ}
+    (k : ∀ ρ, Ctx.El U Γ ρ → (X : Kind.Val U ⟨K, r⟩) → U.El (A (X, ρ)) →
+      U.El (B ρ))
+    (X : Ty U Δ ⟨K, r⟩) (t : Tm U Γ (Ty.inst U A X)) :
+    unpack U (h := h) k (pack U h X t) = fun ρ γ => k ρ γ (X ρ) (t ρ γ) := by
+  funext ρ γ
+  simp only [unpack, pack]
+  rw [Equiv.apply_symm_apply]
+
+/-- `PACK_ONTO`: every package is a `pack`. HOL-Omega takes this as an axiom;
+here it is a theorem, because the existential really is a dependent sum and
+every element of a sum is a pair. -/
+theorem pack_onto {Δ : List RKind} {Γ : Ctx U Δ}
+    {K : HolOmega.Kind} {r s : Nat} {A : STy U (⟨K, r⟩ :: Δ)}
+    {h : ∀ ρ, U.rank (A ρ) ≤ s} (p : Tm U Γ (Ty.ex U r s A h)) (ρ γ) :
+    ∃ (X : Kind.Val U ⟨K, r⟩) (t : U.El (A (X, ρ))),
+      p ρ γ =
+        (U.exEquiv K r s (fun Y => A (Y, ρ)) (fun Y => h (Y, ρ))).symm ⟨X, t⟩ := by
+  refine ⟨(U.exEquiv K r s (fun Y => A (Y, ρ)) (fun Y => h (Y, ρ)) (p ρ γ)).1,
+    (U.exEquiv K r s (fun Y => A (Y, ρ)) (fun Y => h (Y, ρ)) (p ρ γ)).2, ?_⟩
+  exact (Equiv.symm_apply_apply _ _).symm
 
 def boolCode (b : Bool) : Tm U Γ (Ty.boolCode U) := fun _ _ => U.boolEquiv.symm b
 

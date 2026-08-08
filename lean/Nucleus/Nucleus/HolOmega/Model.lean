@@ -33,6 +33,14 @@ def kindValFits (r : Nat) :
   | .star => CodeLE.fits r
   | .arr K L => (kindValFits r K).arrow (kindValFits r L)
 
+/-- Kind values are never empty: `boolCode` has rank `0` so it inhabits every
+`CodeLE`, and function kinds inherit. A dependent sum needs this, since every
+code must be inhabited. -/
+theorem kindValNonempty (r : Nat) :
+    ∀ K : HolOmega.Kind, Nonempty (KindVal Code.rank r K)
+  | .star => ⟨⟨boolCode, Nat.zero_le r⟩⟩
+  | .arr _ L => (kindValNonempty r L).elim fun y => ⟨fun _ => y⟩
+
 /-- The beth tower as a HOLω universe. -/
 noncomputable def model : Universe.{0} where
   Code := Code
@@ -52,6 +60,11 @@ noncomputable def model : Universe.{0} where
   allEquiv K r _s F h := piEquiv (kindValFits r K) F h
   rank_allCode _K r s _F _h := by
     rw [rank_piCode]
+    omega
+  exCode K r _s F h := sigmaCode (kindValFits r K) (kindValNonempty r K) F h
+  exEquiv K r _s F h := sigmaEquiv (kindValFits r K) (kindValNonempty r K) F h
+  rank_exCode _K r s _F _h := by
+    rw [rank_sigmaCode]
     omega
 
 /-- Nothing derives `false`. Vacuous for an arbitrary universe; `consistent`

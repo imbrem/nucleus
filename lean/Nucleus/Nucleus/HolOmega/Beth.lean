@@ -92,6 +92,21 @@ def pi {I : Type} {G : I → Type} (f : Fits b I)
       fun _ _ hh => funext fun i => (g i).injective (congrFun hh i)⟩
   ⟨f.level + 4, e.trans (graphEmb f.emb (Level.raise (Nat.zero_le f.level)))⟩
 
+/-- A dependent sum whose index fits at `b` and whose fibres all embed into `b`
+fits at `b`. Cheaper than the product: a pair costs three levels where a graph
+costs four, and the index needs no bound relative to the fibres. -/
+def sigma {I : Type} {G : I → Type} (f : Fits b I)
+    (g : ∀ i, G i ↪ Block b) : Fits b ((i : I) × G i) :=
+  let e : ((i : I) × G i) ↪ (I × Block b) :=
+    ⟨fun p => (p.1, g p.1 p.2), by
+      rintro ⟨i, x⟩ ⟨j, y⟩ hij
+      simp only [Prod.mk.injEq] at hij
+      obtain ⟨rfl, hij⟩ := hij
+      exact congrArg _ ((g i).injective hij)⟩
+  ⟨f.level + 3,
+    e.trans ((f.emb.prodMap (Level.raise (Nat.zero_le f.level))).trans
+      Pairing.pairEmb)⟩
+
 end Fits
 
 /-- A code: a nonempty bounded subset of a block. `rank` is which block; the
@@ -230,5 +245,23 @@ noncomputable def piEquiv {r s : Nat} {I : Type} (hI : Fits r I)
 @[simp] theorem rank_piCode {r s : Nat} {I : Type} (hI : Fits r I)
     (F : I → Code) (hF : ∀ X, (F X).rank ≤ s) :
     (piCode hI F hF).rank = max r s + 1 := rfl
+
+/-- A dependent sum over an index fitting at `r` with fibres of rank at most
+`s`, at the same rank as the corresponding product. This is what an existential
+type denotes: a pair of a witness and an element of the fibre over it. -/
+noncomputable def sigmaCode {r s : Nat} {I : Type} (hI : Fits r I)
+    (hne : Nonempty I) (F : I → Code) (hF : ∀ X, (F X).rank ≤ s) : Code :=
+  Code.of (b := max r s + 1)
+    (Fits.sigma (hI.mono (by omega))
+      (fun X => ((F X).fits.mono (le_trans (hF X) (by omega))).toBlock))
+    ⟨⟨Classical.arbitrary I, default⟩⟩
+
+noncomputable def sigmaEquiv {r s : Nat} {I : Type} (hI : Fits r I)
+    (hne : Nonempty I) (F : I → Code) (hF : ∀ X, (F X).rank ≤ s) :
+    El (sigmaCode hI hne F hF) ≃ ((X : I) × El (F X)) := Code.ofEquiv _ _
+
+@[simp] theorem rank_sigmaCode {r s : Nat} {I : Type} (hI : Fits r I)
+    (hne : Nonempty I) (F : I → Code) (hF : ∀ X, (F X).rank ≤ s) :
+    (sigmaCode hI hne F hF).rank = max r s + 1 := rfl
 
 end Nucleus.HolOmega.Beth

@@ -18,6 +18,9 @@ built in the shallow-intrinsic syntax of `Kernel.lean` and holds for every
 `Forall` and `Exists` are the term-level quantifiers over a type. They are
 built *under* a `TY_ALL`, so `forallAll` below is genuinely `∀α. (α → bool) →
 bool` — a polymorphic constant, which the rank-zero encoding could not state.
+
+The last section does existential *types*: `pack`, `unpack`, and both package
+laws, with `PACK_ONTO` proved rather than assumed.
 -/
 
 namespace Nucleus.HolOmega.Kernel.Examples
@@ -124,6 +127,47 @@ noncomputable def forallAll (r : Nat) :
     Tm U (Γ := ([] : Ctx U [])) (forallAllTy U r) :=
   Tm.tyLam U .star r r (rank_predArrow U r)
     (Tm.lam U (Tm.equal U (Tm.vz U) (Tm.lam U (Tm.boolCode U true))))
+
+/-! ## Existential types
+
+`∃` is a primitive former, not the `∀`-encoding. Two reasons, and both bite:
+
+* The encoding freezes the elimination rank into the type — unpacking at result
+  rank `q` needs the answer variable at rank `≥ q`, so no single encoded type
+  serves every `q`. `unpack`'s result type carries no rank constraint at all.
+* `PACK_ONTO` is false for the encoding in any set model: `∀` denotes a full
+  product, which contains non-uniform elements no `pack` produces. Asserting it
+  there would be unsound. Here it is a theorem, because `ex` denotes a
+  dependent sum and every element of a sum is a pair. -/
+
+/-- `∃α:⋆@r. α → α` — a hidden type paired with an endofunction on it. -/
+noncomputable def exEndoTy (r : Nat) : STy U [] :=
+  Ty.ex U r r (selfArrow U r) (rank_selfArrow U r)
+
+/-- A package: a witness type, and a term at the body instantiated there. -/
+noncomputable def packEndo (r : Nat) (X : Ty U [] ⟨.star, r⟩)
+    (f : Tm U ([] : Ctx U []) (Ty.inst U (selfArrow U r) X)) :
+    Tm U ([] : Ctx U []) (exEndoTy U r) :=
+  Tm.pack U (rank_selfArrow U r) X f
+
+/-- `UNPACK_PACK` on a concrete package: unpacking runs the continuation on the
+witness and the payload. In HOL-Omega this is an axiom; here it is proved. -/
+theorem unpack_packEndo (r : Nat) (X : Ty U [] ⟨.star, r⟩)
+    (f : Tm U ([] : Ctx U []) (Ty.inst U (selfArrow U r) X))
+    {B : STy U []}
+    (k : ∀ ρ, Ctx.El U ([] : Ctx U []) ρ → (Y : Kind.Val U ⟨.star, r⟩) →
+      U.El (selfArrow U r (Y, ρ)) → U.El (B ρ)) :
+    Tm.unpack U (h := rank_selfArrow U r) k (packEndo U r X f)
+      = fun ρ γ => k ρ γ (X ρ) (f ρ γ) :=
+  Tm.unpack_pack U k X f
+
+/-- `PACK_ONTO` on a concrete existential: every package really is a `pack`.
+This is the half a degenerate model would fail. -/
+theorem packEndo_onto (r : Nat) (p : Tm U ([] : Ctx U []) (exEndoTy U r)) (ρ γ) :
+    ∃ (Y : Kind.Val U ⟨.star, r⟩) (t : U.El (selfArrow U r (Y, ρ))),
+      p ρ γ = (U.exEquiv .star r r (fun Z => selfArrow U r (Z, ρ))
+        (fun Z => rank_selfArrow U r (Z, ρ))).symm ⟨Y, t⟩ :=
+  Tm.pack_onto U p ρ γ
 
 /-! ## Consistency, restated for the record -/
 
