@@ -198,4 +198,64 @@ theorem Expr.renameTy_instTy (e : Expr Base s) (X : Ty Base) (ρ : Nat → Nat) 
   funext n
   cases n <;> rfl
 
+theorem TmCtx.lookup_renameTy {Γ : TmCtx Base} {n : Nat} {A : Ty Base}
+    (hn : Γ[n]? = some A) :
+    (Γ.renameTy ρ)[n]? = some (A.renameTy ρ) := by
+  simpa [TmCtx.renameTy, List.getElem?_map, hn]
+
+theorem TyConv.renameTy (h : TyConv Δ A B) (hρ : TyRen Δ Δ' ρ) :
+    TyConv Δ' (A.renameTy ρ) (B.renameTy ρ) := by
+  induction h with
+  | alpha h => exact .alpha (congrArg (Expr.renameTy ρ) h)
+  | trans _ _ ih₁ ih₂ => exact .trans ih₁ ih₂
+  | tyBeta RK A X =>
+      rw [Expr.renameTy_instTy]
+      exact .tyBeta RK (A.renameTy (liftRen ρ)) (X.renameTy ρ)
+
+theorem Judgement.renameTy {i : JudgementIndex Base} (h : Judgement i) :
+    match i with
+    | .kinded Δ A RK => ∀ Δ' ρ, TyRen Δ Δ' ρ → Kinded Δ' (A.renameTy ρ) RK
+    | .hasType Δ Γ t A => ∀ Δ' ρ, TyRen Δ Δ' ρ →
+        HasType Δ' (Γ.renameTy ρ) (t.renameTy ρ) (A.renameTy ρ) := by
+  induction h with
+  | base => intro Δ' ρ hρ; exact .base
+  | tyVar hn => intro Δ' ρ hρ; exact .tyVar (hρ hn)
+  | tyLam _ ih => intro Δ' ρ hρ; exact .tyLam (ih _ _ hρ.lift)
+  | tyApp _ _ ihF ihX => intro Δ' ρ hρ; exact .tyApp (ihF _ _ hρ) (ihX _ _ hρ)
+  | tyAll _ ih => intro Δ' ρ hρ; exact .tyAll (ih _ _ hρ.lift)
+  | tyBool => intro Δ' ρ hρ; exact .tyBool
+  | tyArr _ _ ihA ihB => intro Δ' ρ hρ; exact .tyArr (ihA _ _ hρ) (ihB _ _ hρ)
+  | tySub _ _ ihA ihp => intro Δ' ρ hρ; exact .tySub (ihA _ _ hρ) (ihp _ _ hρ)
+  | subsume _ hrs ih => intro Δ' ρ hρ; exact .subsume (ih _ _ hρ) hrs
+  | conv _ hc ih => intro Δ' ρ hρ; exact .conv (ih _ _ hρ) (hc.renameTy hρ)
+  | tmVar hn => intro Δ' ρ hρ; exact .tmVar (TmCtx.lookup_renameTy hn)
+  | tmApp _ _ ihf ihx => intro Δ' ρ hρ; exact .tmApp (ihf _ _ hρ) (ihx _ _ hρ)
+  | tmLam _ _ ihA iht =>
+      intro Δ' ρ hρ
+      exact .tmLam (ihA _ _ hρ) (by simpa [TmCtx.renameTy] using iht _ _ hρ)
+  | tmTyApp _ _ ihf ihX =>
+      intro Δ' ρ hρ
+      rw [Expr.renameTy_instTy]
+      exact .tmTyApp (ihf _ _ hρ) (ihX _ _ hρ)
+  | tmTyLam _ iht =>
+      intro Δ' ρ hρ
+      exact .tmTyLam (by simpa [TmCtx.renameTy_lift] using iht _ _ hρ.lift)
+  | tmBool => intro Δ' ρ hρ; exact .tmBool
+  | tmEq _ _ _ ihA ihx ihy => intro Δ' ρ hρ; exact .tmEq (ihA _ _ hρ) (ihx _ _ hρ) (ihy _ _ hρ)
+  | tmEps _ _ ihA ihp => intro Δ' ρ hρ; exact .tmEps (ihA _ _ hρ) (ihp _ _ hρ)
+  | tmAbs _ _ _ ihA ihp ihx => intro Δ' ρ hρ; exact .tmAbs (ihA _ _ hρ) (ihp _ _ hρ) (ihx _ _ hρ)
+  | tmRep _ _ _ ihA ihp ihx => intro Δ' ρ hρ; exact .tmRep (ihA _ _ hρ) (ihp _ _ hρ) (ihx _ _ hρ)
+
+theorem HasType.renameTy (h : HasType Δ Γ t A) (hρ : TyRen Δ Δ' ρ) :
+    HasType Δ' (Γ.renameTy ρ) (t.renameTy ρ) (A.renameTy ρ) :=
+  Judgement.renameTy h Δ' ρ hρ
+
+theorem TyRen.succ {RK : RKind} : TyRen Δ (RK :: Δ) Nat.succ := by
+  intro n S hn
+  simpa using hn
+
+theorem HasType.weakenTy {RK : RKind} (h : HasType Δ Γ t A) :
+    HasType (RK :: Δ) Γ.liftTy t.liftTy A.liftTy := by
+  simpa [TmCtx.renameTy] using h.renameTy TyRen.succ
+
 end Nucleus.HolOmega
