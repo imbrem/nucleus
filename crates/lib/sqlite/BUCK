@@ -36,6 +36,8 @@ rust_binary(
     srcs = _RUST_SOURCES,
     features = [
         "default",
+        "vfs",
+        "vfs-register",
     ],
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -73,6 +75,8 @@ buildscript_run(
     rustc_link_search = True,
     features = [
         "default",
+        "vfs",
+        "vfs-register",
     ],
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -152,6 +156,7 @@ rust_test(
     ],
     named_deps = {
         "bitflags": "nucleus//buck/cargo/production:bitflags-2.13.1",
+        "bytes": "nucleus//buck/cargo/production:bytes-1.12.1",
         "covalence_data_cas": "nucleus//crates/data/cas:covalence_data_cas",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "indexmap": "nucleus//buck/cargo/production:indexmap-2.14.0",

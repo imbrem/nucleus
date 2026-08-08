@@ -17,6 +17,13 @@ use covalence_neutron::sql::{Param, Transaction};
 
 use crate::Connection;
 
+fn missing_result_row() -> SqliteError {
+    SqliteError::with_message(
+        covalence_lib_sqlite::ResultCode::MISUSE,
+        "statement promised a result row but returned none",
+    )
+}
+
 pub mod lrat;
 pub mod scratch;
 
@@ -358,12 +365,7 @@ impl<P: Policy> PropView<'_, P> {
                 |row| row.integer(0),
             )
             .context(StorageSnafu)?
-            .ok_or_else(|| {
-                SqliteError::with_message(
-                    covalence_lib_sqlite::ResultCode::MISUSE,
-                    "INSERT RETURNING produced no row",
-                )
-            })
+            .ok_or_else(missing_result_row)
             .context(StorageSnafu)
     }
 
@@ -491,12 +493,7 @@ impl<P: Policy> PropView<'_, P> {
             )
             .context(StorageSnafu)?
             .map(WorldId)
-            .ok_or_else(|| {
-                SqliteError::with_message(
-                    covalence_lib_sqlite::ResultCode::MISUSE,
-                    "INSERT RETURNING produced no row",
-                )
-            })
+            .ok_or_else(missing_result_row)
             .context(StorageSnafu)
     }
 

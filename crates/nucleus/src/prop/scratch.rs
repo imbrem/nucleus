@@ -21,7 +21,7 @@ use std::collections::{BTreeSet, HashMap};
 use super::lrat::{LratError, LratInstr};
 use super::{
     Ant, Lit, LratRejectedSnafu, MalformedFormulaSnafu, MissingPremiseSnafu, Operation, Policy,
-    PropError, PropId, PropView, StorageSnafu, Target,
+    PropError, PropId, PropView, StorageSnafu, Target, missing_result_row,
 };
 use covalence_lib_error::snafu::ResultExt;
 
@@ -62,7 +62,8 @@ impl<'v, P: Policy> PropView<'v, P> {
                 |row| row.integer(0),
             )
             .context(StorageSnafu)?
-            .expect("aggregate query always returns one row");
+            .ok_or_else(missing_result_row)
+            .context(StorageSnafu)?;
         let import = self
             .storage()
             .query_row(
@@ -71,7 +72,8 @@ impl<'v, P: Policy> PropView<'v, P> {
                 |row| row.integer(0),
             )
             .context(StorageSnafu)?
-            .expect("INSERT RETURNING always returns one row");
+            .ok_or_else(missing_result_row)
+            .context(StorageSnafu)?;
         Ok(Scratch {
             view: self,
             base,

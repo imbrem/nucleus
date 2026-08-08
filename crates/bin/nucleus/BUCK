@@ -58,6 +58,8 @@ rust_test(
     srcs = _RUST_SOURCES,
     named_deps = {
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
+        "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
+        "covalence_neutron": "nucleus//crates/neutron:covalence_neutron",
         "covalence_repl": "nucleus//crates/repl:covalence_repl",
     },
     env = {
@@ -87,6 +89,8 @@ rust_test(
     srcs = _RUST_SOURCES,
     named_deps = {
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
+        "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
+        "covalence_neutron": "nucleus//crates/neutron:covalence_neutron",
         "covalence_repl": "nucleus//crates/repl:covalence_repl",
     },
     env = {
@@ -104,6 +108,7 @@ rust_test(
         "CARGO_PKG_VERSION_MINOR": "0",
         "CARGO_PKG_VERSION_PATCH": "0",
         "CARGO_PKG_VERSION_PRE": "",
+        "CARGO_BIN_EXE_nucleus": "$(location :nucleus)",
     },
     visibility = ["PUBLIC"],
 )
