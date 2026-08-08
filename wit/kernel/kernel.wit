@@ -1,0 +1,135 @@
+// The kernel's ABI.
+//
+// The kernel exports the content-addressed store as part of its standard
+// surface, not as an extra. Everything that talks to a kernel is a client of
+// the same interface: a REPL, a shell's VFS, a browser page, and a proof
+// script. A proof script is an automated client — it is not a distinct kind of
+// thing needing a distinct kind of access — so there is one CAS ABI and it is
+// this one.
+//
+// The consequence worth stating plainly: nothing needs to share an address
+// space with the kernel to read content-addressed data. A shell mounting a
+// database over `covalence:cas/store` is outside the process, and so is a
+// proof script. Isolation stops being something to argue about.
+
+package covalence:kernel@0.1.0;
+
+interface identity {
+    use covalence:cas/types@0.1.0.{address};
+
+    // What a kernel says it is.
+    //
+    // Observed, not trusted: a client checks signatures against the key it
+    // already expected, and this only reports what was presented.
+    record kernel-identity {
+        // Ed25519 public key, 32 bytes.
+        public-key: list<u8>,
+        // Address of the exact contract bytes this kernel implements.
+        //
+        // Clients compare it to the contract they were built against rather
+        // than negotiating versions. A mismatch is a refusal, not a downgrade.
+        contract: address,
+    }
+
+    identity: func() -> kernel-identity;
+}
+
+interface sql {
+    use covalence:cas/types@0.1.0.{address, error};
+
+    // One raw SQLite connection owned by the caller.
+    //
+    // Raw means exactly that: no schema, no protocol, no claim. Anything
+    // trusted is built above this, never assumed of it.
+    resource connection {
+        // Executes one statement, returning its outcome.
+        run: func(statement: string) -> result<outcome, sql-error>;
+
+        // Attaches a store object read-only under `schema`.
+        //
+        // The kernel verifies that SQLite actually opened it through the
+        // content-addressed VFS, rather than trusting the name it requested.
+        attach: func(schema: string, addr: address) -> result<_, sql-error>;
+
+        // Serialises the writable `main` database and admits it to the store,
+        // returning its address. This is how state leaves a connection.
+        snapshot: func() -> result<address, sql-error>;
+    }
+
+    // Opens a private in-memory connection.
+    open: func() -> result<connection, sql-error>;
+
+    variant value {
+        null,
+        integer(s64),
+        real(f64),
+        text(string),
+        blob(list<u8>),
+    }
+
+    record rows {
+        columns: list<string>,
+        values: list<list<value>>,
+    }
+
+    // Bounded on purpose. A statement returning more than the kernel will
+    // marshal is an error, not a truncated answer: a client must never mistake
+    // a partial result for a complete one.
+    variant outcome {
+        // Statement completed and changed this many rows.
+        done(u64),
+        // Statement returned rows.
+        returned(rows),
+    }
+
+    variant sql-error {
+        // SQLite refused, with its primary and extended codes.
+        sqlite(sqlite-error),
+        // The result exceeded what the kernel will marshal.
+        too-large(u64),
+        // The statement was not valid UTF-8, or contained an interior NUL.
+        malformed-statement,
+        // The store, or the attach path, failed.
+        store(error),
+    }
+
+    record sqlite-error {
+        primary: s32,
+        extended: s32,
+        // Diagnostic only; must not be parsed.
+        message: string,
+    }
+}
+
+// What a kernel offers.
+//
+// The store is exported alongside SQL, at the same level, because reading
+// content-addressed bytes is not a subordinate capability. `admit` is
+// separate, so a kernel may be handed out read-only.
+world kernel {
+    export covalence:cas/store@0.1.0;
+    export covalence:cas/admit@0.1.0;
+    export identity;
+    export sql;
+}
+
+// A read-only kernel: serves objects, accepts none.
+world reader {
+    export covalence:cas/store@0.1.0;
+    export identity;
+}
+
+// A proof script.
+//
+// It imports exactly what a REPL imports. That is the point: an automated
+// client and an interactive one are the same kind of consumer, so a script
+// needs no privileged channel and gets none. It reads objects, runs SQL
+// against connections it opened, and returns an address naming its result.
+world proof-script {
+    import covalence:cas/store@0.1.0;
+    import covalence:cas/admit@0.1.0;
+    import identity;
+    import sql;
+
+    export run: func() -> result<list<u8>, string>;
+}
