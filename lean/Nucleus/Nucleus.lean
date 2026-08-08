@@ -26,7 +26,12 @@ import Nucleus.Hol.Universe
 import Nucleus.Hol.Syntax
 import Nucleus.Hol.Substitution
 import Nucleus.Hol.Typing
+import Nucleus.Hol.Proof
+import Nucleus.Hol.Consistency
 import Nucleus.Hol.Kernel
 import Nucleus.Hol.Extension
+import Nucleus.Cov.Syntax
+import Nucleus.Cov.Proof
+import Nucleus.Cov.Consistency
 import Nucleus.Covalence
 import Nucleus.Covalence.Memory

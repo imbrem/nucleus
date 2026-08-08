@@ -44,6 +44,9 @@ def closed (A : Ty Base) (hA : Kinded A) (t : Tm Base) (ht : HasType Γ t A) :
 
 def bool (b : Bool) : At Base Γ .tyBool := ⟨Term.bool b, rfl⟩
 
+@[simp] theorem lower_bool (b : Bool) (e : Filling Base) :
+    (bool (Γ := Γ) b).lower e = .tmBool b := rfl
+
 def app (f : At Base Γ (.tyArr A B)) (x : At Base Γ A) : At Base Γ B :=
   ⟨Term.app f.term x.term A B f.type_eq x.type_eq, rfl⟩
 
