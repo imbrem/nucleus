@@ -92,6 +92,20 @@ noncomputable def model : Universe.{0} where
     have := leastBound_le F h hs
     omega
 
+/-- The bottom Beth block contains the ordinary natural numbers. -/
+def natFits : Fits 0 Nat := ⟨0, Block.ofNat 0⟩
+
+/-- Rank-zero standard individuals for the Beth model. -/
+noncomputable def natCode : Code := Code.of natFits inferInstance
+
+noncomputable def natEquiv : El natCode ≃ Nat :=
+  Code.ofEquiv natFits inferInstance
+
+noncomputable instance modelUniverseWithNat : UniverseWithNat model where
+  indCode := natCode
+  indEquiv := natEquiv
+  rank_indCode := Code.rank_of _ _
+
 /-- Nothing derives `false`. Vacuous for an arbitrary universe; `consistent`
 discharges it against the tower. -/
 theorem not_derives_false (U : Universe) :

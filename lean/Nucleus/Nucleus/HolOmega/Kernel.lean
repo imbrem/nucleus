@@ -103,6 +103,16 @@ class Universe where
 
 attribute [instance] Universe.inhabited
 
+/-- Optional standard-individual structure.  The pure universe interface does
+not assume infinity; theories with `TY_IND` and the `INFINITY` rule require
+this extension.  Requiring an equivalence with `Nat` at rank exactly zero is
+stronger and more useful than merely postulating an abstract infinite code:
+it gives the intended standard model of concrete numerals directly. -/
+class UniverseWithNat (U : Universe) where
+  indCode : U.Code
+  indEquiv : U.El indCode ≃ Nat
+  rank_indCode : U.rank indCode = 0
+
 -- Type-variable binders here are the raw layer's `HolOmega.RKind` — a kind
 -- plus the rank its variables range over — so what `Kind.Env` binds is
 -- literally what a kinding derivation concludes.
