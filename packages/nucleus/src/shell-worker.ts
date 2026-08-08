@@ -1,17 +1,4 @@
-/**
- * The SQLite shell, running as its own process.
- *
- * This is a Worker. It holds the shell's wasm instance and nothing else: no
- * kernel, no store, no page. Its databases arrive through the CAS channel, and
- * every one of its filesystem calls is refused, so there is nothing here for
- * it to reach.
- *
- * Being a separate context is the point rather than an implementation detail.
- * It is what the native binary already does with a subprocess, it keeps a slow
- * or wedged shell from freezing the REPL, and it is the step that makes "a
- * shell in one tab while the REPL runs in another" a change of transport
- * rather than a redesign.
- */
+/** Runs the SQLite shell in an isolated worker. */
 
 import { createWasi, instantiate, start } from "./wasi.js";
 import { type Channel, OP, SLOT, STATE } from "./protocol.js";
@@ -31,24 +18,7 @@ interface Start {
   source: Source;
 }
 
-/**
- * A CAS reached over HTTP, read synchronously.
- *
- * This is how `sql.js-httpvfs` does it, and the reason it works is narrow but
- * reliable: synchronous `XMLHttpRequest` is deprecated on a main thread but
- * still permitted inside a Worker. So a guest that must block can, without a
- * `SharedArrayBuffer` and therefore without cross-origin isolation.
- *
- * The consequence is worth stating plainly: the shell reads the *remote*
- * database directly, a page at a time. Nothing is copied into the page first.
- *
- * # These reads are not verified
- *
- * A whole object can be checked against its address by hashing it. A single
- * range cannot, without BLAKE3 range proofs — see issue #442. So this path
- * trusts the server for the bytes it returns, which `.fetch` does not.
- * That is a real difference in guarantee and the REPL says so before using it.
- */
+/** Synchronous ranged HTTP source; ranges are not content-verified. */
 function httpSource(baseUrl: string) {
   const base = baseUrl.replace(/\/$/, "");
   const open = new Map<number, { url: string; len: number }>();
@@ -77,8 +47,7 @@ function httpSource(baseUrl: string) {
   return {
     open(hex: string): { handle: number; len: number } | null {
       const url = `${base}/cas/${hex}`;
-      // A one-byte range is the cheapest way to learn the length, because
-      // `Content-Range` carries the total.
+      // Probe one byte to obtain the total length.
       const probe = request(url, [0, 0]);
       if (probe.status === 404) return null;
       if (probe.status !== 206) return null;
@@ -101,8 +70,7 @@ function httpSource(baseUrl: string) {
       const xhr = request(entry.url, [offset, offset + length - 1]);
       if (xhr.status !== 206) return null;
       const bytes = toBytes(xhr.responseText);
-      // A short answer must not become a short page: SQLite would read the
-      // difference as zeroes and see a corrupt database.
+      // Reject short pages.
       return bytes.length === length ? bytes : null;
     },
     close(handle: number) {

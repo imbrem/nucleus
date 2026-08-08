@@ -1,18 +1,4 @@
-/**
- * Running the SQLite shell as a separate process.
- *
- * The shell gets a Worker of its own and reaches the kernel over a shared
- * memory channel. That is the same arrangement the native binary has — a
- * subprocess over a Unix socket — with the transport swapped for what a
- * browser has.
- *
- * What this buys over instantiating the shell inline:
- *
- * - a wedged or slow shell cannot freeze the REPL;
- * - the shell holds no reference to the kernel, only a channel;
- * - "a shell in one tab while the REPL runs in another" becomes a change of
- *   transport rather than a redesign.
- */
+/** Runs the SQLite shell in a worker over a CAS channel. */
 
 import type { Repl } from "../generated/nucleus.js";
 import { OP, SLOT, STATE, createChannel } from "./protocol.js";
@@ -22,10 +8,7 @@ import type { ShellOptions, ShellResult } from "./wasi.js";
 /** Whether this host can run the shell in a worker of its own. */
 export function canSpawn(remote = false): boolean {
   if (typeof Worker === "undefined") return false;
-  // Reading a remote kernel needs no shared memory at all: the worker blocks
-  // on synchronous ranged XHR, which a worker may do. Only the local kernel,
-  // whose bytes live in this thread's memory, needs SharedArrayBuffer -- and
-  // that in turn needs cross-origin isolation.
+  // Only local stores need shared memory.
   if (remote) return true;
   return (
     typeof SharedArrayBuffer !== "undefined" &&
@@ -33,12 +16,7 @@ export function canSpawn(remote = false): boolean {
   );
 }
 
-/**
- * Answers one pending CAS request, if there is one.
- *
- * Kernel calls are synchronous, so the answer is in place before this returns
- * — which is what the worker's `Atomics.wait` is waiting for.
- */
+/** Answers one pending synchronous CAS request. */
 function serviceOnce(repl: Repl, control: Int32Array, data: Uint8Array): void {
   if (Atomics.load(control, SLOT.state) !== STATE.request) return;
 
@@ -68,8 +46,7 @@ function serviceOnce(repl: Repl, control: Int32Array, data: Uint8Array): void {
       case OP.read: {
         const bytes = repl.readObject(a, b, c);
         if (bytes.length > data.length) {
-          // The channel bounds one response; a guest asking for more is a
-          // protocol error rather than a reason to grow it.
+          // The channel bounds one response.
           answer(-1);
           break;
         }
@@ -85,7 +62,7 @@ function serviceOnce(repl: Repl, control: Int32Array, data: Uint8Array): void {
         answer(-1);
     }
   } catch {
-    // A refusal the guest can see, rather than a wedged channel.
+    // Refuse instead of leaving the worker blocked.
     answer(-1);
   }
 }
@@ -101,9 +78,7 @@ export async function spawnShell(
   wasm: ArrayBuffer,
   options: ShellOptions & { remote?: string },
 ): Promise<ShellResult> {
-  // A remote kernel needs no shared memory: the worker reads it directly with
-  // synchronous ranged XHR, which is permitted in a worker and is how
-  // sql.js-httpvfs does the same job.
+  // Remote kernels are read directly by the worker.
   const channel = createChannel();
   const control = new Int32Array(channel.control);
   const data = new Uint8Array(channel.data);

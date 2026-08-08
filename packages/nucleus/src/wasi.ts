@@ -1,17 +1,4 @@
-/**
- * Enough WASI to run the SQLite shell in a browser tab.
- *
- * The shell is `shell.c`, unmodified, compiled for `wasm32-wasip1`. It builds
- * there and not for `wasm32-unknown-unknown` for one reason: it uses stdio
- * heavily, and wasi-libc has real stdio where the freestanding target has none.
- *
- * This is a deliberately partial host. The shell needs 28 WASI functions; of
- * those, only argv, environment, stdio, clocks, randomness and exit do
- * anything. Every filesystem call returns `ENOSYS`, because the shell has no
- * filesystem here and must not be able to invent one — its databases arrive
- * through the CAS imports instead. A partial host that refuses loudly is
- * better than a complete one that quietly grants reach.
- */
+/** Minimal WASI host for the browser SQLite shell. */
 
 import type { Repl } from "../generated/nucleus.js";
 
@@ -39,16 +26,7 @@ export interface Wasi {
   stderr: () => string;
 }
 
-/**
- * Builds a partial WASI host.
- *
- * Deliberately partial: of the imports a guest asks for, only argv,
- * environment, stdio, clocks, randomness and exit do anything. Every
- * filesystem call returns `ENOSYS`, because neither guest has a filesystem
- * here and neither must be able to invent one — their databases arrive by
- * address. A host that refuses loudly is better than one that quietly grants
- * reach.
- */
+/** Builds a host with stdio and process services but no filesystem. */
 export function createWasi(argv: string[], stdin: string): Wasi {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
