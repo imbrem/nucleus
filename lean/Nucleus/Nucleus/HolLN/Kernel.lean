@@ -1,4 +1,4 @@
-import Nucleus.HolLN.Typing
+import Nucleus.HolLN.TypeSubstitution
 
 /-!
 # Ordinary HOL proof certificates
