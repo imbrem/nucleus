@@ -4,12 +4,11 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "SQLite binding used by Nucleus"
+description = "Minimal safe wrapper over the SQLite C API"
 publish = false
 
 [features]
-default = ["serialize"]
-serialize = ["rusqlite/serialize"]
+default = []
 vfs = ["dep:bitflags"]
 vfs-register = ["vfs", "dep:indexmap"]
 
@@ -18,10 +17,10 @@ bitflags = { version = "2", optional = true }
 indexmap = { version = "2", optional = true }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
-rusqlite = "=0.40.1"
+sqlite-wasm-rs = { version = "=0.5.5", default-features = false }
 
 [target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
-rusqlite = { version = "=0.40.1", default-features = false, features = ["bundled"] }
+libsqlite3-sys = { version = "=0.38.1", features = ["bundled"] }
 
 [lints]
 workspace = true
