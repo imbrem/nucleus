@@ -6,9 +6,12 @@ _PACKAGE_FILES = glob(
     exclude = ["BUCK", "target/**"],
 )
 
+# Every file in the package, because `include_bytes!` and `include_str!` can
+# name any of them and a glob by extension silently misses the ones it did not
+# think of. Coarser invalidation than listing extensions, and correct.
 _RUST_SOURCES = glob(
-    ["**/*.rs", "**/*.sql"],
-    exclude = ["target/**"],
+    ["**"],
+    exclude = ["BUCK", "target/**"],
 )
 
 filegroup(
