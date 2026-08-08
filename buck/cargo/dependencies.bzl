@@ -27,6 +27,9 @@ def _package_env(package):
 
 def _target(package, target, label, archive):
     env = _package_env(package)
+    # Cargo defines this for ordinary targets as well as build scripts. Proc
+    # macros such as wasm-bindgen read it while expanding library code.
+    env["CARGO_MANIFEST_DIR"] = "$(location :{})".format(archive)
     if package.get("buildscript") != None:
         env["OUT_DIR"] = "$(location :{}-build-script-run[out_dir])".format(label)
     attributes = {
