@@ -33,6 +33,7 @@ def Expr.renameTy {Base : Type u} (ρ : Nat → Nat) :
   | _, .tyVar n => .tyVar (ρ n)
   | _, .tyLam K A => .tyLam K (A.renameTy (liftRen ρ))
   | _, .tyApp F A => .tyApp (F.renameTy ρ) (A.renameTy ρ)
+  | _, .tyAll K A => .tyAll K (A.renameTy (liftRen ρ))
   | _, .tyBool => .tyBool
   | _, .tyArr A B => .tyArr (A.renameTy ρ) (B.renameTy ρ)
   | _, .tySub A p => .tySub (A.renameTy ρ) (p.renameTy ρ)
@@ -59,6 +60,7 @@ def Expr.substTy {Base : Type u} (σ : Nat → Ty Base) :
   | _, .tyVar n => σ n
   | _, .tyLam K A => .tyLam K (A.substTy (liftSub σ))
   | _, .tyApp F A => .tyApp (F.substTy σ) (A.substTy σ)
+  | _, .tyAll K A => .tyAll K (A.substTy (liftSub σ))
   | _, .tyBool => .tyBool
   | _, .tyArr A B => .tyArr (A.substTy σ) (B.substTy σ)
   | _, .tySub A p => .tySub (A.substTy σ) (p.substTy σ)
@@ -104,6 +106,16 @@ def Expr.subst {Base : Type u} (σ : Nat → Tm Base) : Tm Base → Tm Base
   | .tmEps A p => .tmEps A (p.subst σ)
   | .tmAbs A p x => .tmAbs A p (x.subst σ)
   | .tmRep A p x => .tmRep A p (x.subst σ)
+
+/-- Shift every free type variable by one: what `TM_TYLAM` does to the variable
+context, and `TY_ETA` to its subject. -/
+abbrev Expr.liftTy {Base : Type u} {s : ExprSort} (e : Expr Base s) :
+    Expr Base s := e.renameTy Nat.succ
+
+/-- Shift a whole variable context. `TM_TYLAM` is checked against this, which
+is what makes it strictly stronger than a rule reusing `Gamma` unchanged. -/
+abbrev TmCtx.liftTy {Base : Type u} (Γ : TmCtx Base) : TmCtx Base :=
+  Γ.map Expr.liftTy
 
 /-- Replace the outermost type variable. One definition serves both sorts,
 since `substTy` covers the whole family. -/

@@ -96,11 +96,9 @@ class Universe where
 
 attribute [instance] Universe.inhabited
 
-/-- A kind, together with the rank its variables range over. -/
-structure RKind where
-  kind : HolOmega.Kind
-  rank : Nat
-  deriving DecidableEq, Repr
+-- Type-variable binders here are the raw layer's `HolOmega.RKind` — a kind
+-- plus the rank its variables range over — so what `Kind.Env` binds is
+-- literally what a kinding derivation concludes.
 
 variable (U : Universe)
 

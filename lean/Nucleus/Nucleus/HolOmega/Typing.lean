@@ -1,4 +1,4 @@
-import Nucleus.HolOmega.Syntax
+import Nucleus.HolOmega.Substitution
 
 /-!
 # Formation and typing
@@ -15,6 +15,31 @@ addressed — a node at a time.
 
 `Kinded` and `HasType` survive as abbreviations, so the two judgements still
 read as separate notions where that is clearer.
+
+## The formation judgement carries a rank
+
+`Kinded` concludes an `RKind`, not a `Kind`: a rank bound comes with the kind.
+`tyAll` is the reason. Quantifying over *all* types of a kind has no set model,
+so the quantifier ranges over the types below a rank, and the rank of the
+result has to be tracked to know which quantifiers may later range over it.
+The bounds mirror `Kernel.Universe` exactly:
+
+* `tyArr` keeps the rank (`rank_arr`),
+* `tySub` keeps the rank (`rank_subCode`),
+* `tyBool` and `base` are rank `0`, so any bound holds,
+* `tyAll` over rank `RK.rank` with body bounded by `s` lands at
+  `max RK.rank s + 2` (`rank_allCode`).
+
+`subsume` raises a rank, and only at kind `⋆`. That is not squeamishness: at
+kind `⋆` a value is a code, and a code of rank `r` is literally a code of rank
+`s ≥ r` with `El` unchanged. At kind `K ⇒ L` a value is a *function from*
+rank-`r` values, so raising the rank enlarges the domain and there is nothing
+to lift. `tyApp` therefore demands one rank for both operands, and `tyLam`
+gives the binder and the body the same rank, matching `Kernel.Ty.lam`.
+
+`HasType` records no rank. A term's type is a code; how far up the tower it
+sits is the formation judgement's business, and soundness quantifies over the
+denotations of the type rather than fixing one.
 -/
 
 universe u
@@ -23,52 +48,86 @@ namespace Nucleus.HolOmega
 
 /-- A common index for the formation and typing judgements. -/
 inductive JudgementIndex (Base : Type u) : Type u
-  | kinded (Δ : KindCtx) (A : Ty Base) (K : Kind)
+  | kinded (Δ : KindCtx) (A : Ty Base) (RK : RKind)
   | hasType (Δ : KindCtx) (Γ : TmCtx Base) (t : Tm Base) (A : Ty Base)
 
-/-- `Δ ⊢ A : K` and `Δ; Γ ⊢ t : A`, as one relation. -/
+/-- `Δ ⊢ A : K@r` and `Δ; Γ ⊢ t : A`, as one relation. -/
 inductive Judgement {Base : Type u} : JudgementIndex Base → Prop
-  | base : Judgement (.kinded Δ (.base A) .star)
-  | tyVar : Δ[n]? = some K → Judgement (.kinded Δ (.tyVar n) K)
-  | tyLam : Judgement (.kinded (K :: Δ) A L) →
-      Judgement (.kinded Δ (.tyLam K A) (.arr K L))
-  | tyApp : Judgement (.kinded Δ F (.arr K L)) → Judgement (.kinded Δ X K) →
-      Judgement (.kinded Δ (.tyApp F X) L)
-  | tyBool : Judgement (.kinded Δ .tyBool .star)
-  | tyArr : Judgement (.kinded Δ A .star) → Judgement (.kinded Δ B .star) →
-      Judgement (.kinded Δ (.tyArr A B) .star)
-  | tySub : Judgement (.kinded Δ A .star) →
+  | base {Δ : KindCtx} {c : Base} {r : Nat} :
+      Judgement (.kinded Δ (.base c) ⟨.star, r⟩)
+  | tyVar {Δ : KindCtx} {n : Nat} {RK : RKind} :
+      Δ[n]? = some RK → Judgement (.kinded Δ (.tyVar n) RK)
+  | tyLam {Δ : KindCtx} {RK : RKind} {A : Ty Base} {L : Kind} :
+      Judgement (.kinded (RK :: Δ) A ⟨L, RK.rank⟩) →
+      Judgement (.kinded Δ (.tyLam RK A) ⟨.arr RK.kind L, RK.rank⟩)
+  | tyApp {Δ : KindCtx} {F X : Ty Base} {K L : Kind} {r : Nat} :
+      Judgement (.kinded Δ F ⟨.arr K L, r⟩) →
+      Judgement (.kinded Δ X ⟨K, r⟩) →
+      Judgement (.kinded Δ (.tyApp F X) ⟨L, r⟩)
+  | tyAll {Δ : KindCtx} {RK : RKind} {A : Ty Base} {s : Nat} :
+      Judgement (.kinded (RK :: Δ) A ⟨.star, s⟩) →
+      Judgement (.kinded Δ (.tyAll RK A) ⟨.star, max RK.rank s + 2⟩)
+  | tyBool {Δ : KindCtx} {r : Nat} : Judgement (.kinded Δ .tyBool ⟨.star, r⟩)
+  | tyArr {Δ : KindCtx} {A B : Ty Base} {r : Nat} :
+      Judgement (.kinded Δ A ⟨.star, r⟩) →
+      Judgement (.kinded Δ B ⟨.star, r⟩) →
+      Judgement (.kinded Δ (.tyArr A B) ⟨.star, r⟩)
+  | tySub {Δ : KindCtx} {A : Ty Base} {p : Tm Base} {r : Nat} :
+      Judgement (.kinded Δ A ⟨.star, r⟩) →
       Judgement (.hasType Δ [A] p .tyBool) →
-      Judgement (.kinded Δ (.tySub A p) .star)
-  | tmVar : Γ[n]? = some A → Judgement (.hasType Δ Γ (.tmVar n) A)
-  | tmApp : Judgement (.hasType Δ Γ f (.tyArr A B)) →
-      Judgement (.hasType Δ Γ x A) → Judgement (.hasType Δ Γ (.tmApp f x) B)
-  | tmLam : Judgement (.kinded Δ A .star) →
+      Judgement (.kinded Δ (.tySub A p) ⟨.star, r⟩)
+  | subsume {Δ : KindCtx} {A : Ty Base} {r s : Nat} :
+      Judgement (.kinded Δ A ⟨.star, r⟩) → r ≤ s →
+      Judgement (.kinded Δ A ⟨.star, s⟩)
+  | tmVar {Δ : KindCtx} {Γ : TmCtx Base} {n : Nat} {A : Ty Base} :
+      Γ[n]? = some A → Judgement (.hasType Δ Γ (.tmVar n) A)
+  | tmApp {Δ : KindCtx} {Γ : TmCtx Base} {f x : Tm Base} {A B : Ty Base} :
+      Judgement (.hasType Δ Γ f (.tyArr A B)) →
+      Judgement (.hasType Δ Γ x A) →
+      Judgement (.hasType Δ Γ (.tmApp f x) B)
+  | tmLam {Δ : KindCtx} {Γ : TmCtx Base} {t : Tm Base} {A B : Ty Base}
+      {r : Nat} :
+      Judgement (.kinded Δ A ⟨.star, r⟩) →
       Judgement (.hasType Δ (A :: Γ) t B) →
       Judgement (.hasType Δ Γ (.tmLam A t) (.tyArr A B))
-  | tmTyApp : Judgement (.hasType Δ Γ f (.tyApp F X)) →
-      Judgement (.kinded Δ A K) →
-      Judgement (.hasType Δ Γ (.tmTyApp f A) (.tyApp F A))
-  | tmTyLam : Judgement (.hasType (K :: Δ) Γ t A) →
-      Judgement (.hasType Δ Γ (.tmTyLam K t) (.tyLam K A))
-  | tmBool : Judgement (.hasType Δ Γ (.tmBool b) .tyBool)
-  | tmEq : Judgement (.kinded Δ A .star) → Judgement (.hasType Δ Γ x A) →
+  | tmTyApp {Δ : KindCtx} {Γ : TmCtx Base} {f : Tm Base} {RK : RKind}
+      {B X : Ty Base} :
+      Judgement (.hasType Δ Γ f (.tyAll RK B)) →
+      Judgement (.kinded Δ X RK) →
+      Judgement (.hasType Δ Γ (.tmTyApp f X) (B.instTy X))
+  | tmTyLam {Δ : KindCtx} {Γ : TmCtx Base} {RK : RKind} {t : Tm Base}
+      {A : Ty Base} :
+      Judgement (.hasType (RK :: Δ) Γ.liftTy t A) →
+      Judgement (.hasType Δ Γ (.tmTyLam RK t) (.tyAll RK A))
+  | tmBool {Δ : KindCtx} {Γ : TmCtx Base} {b : Bool} :
+      Judgement (.hasType Δ Γ (.tmBool b) .tyBool)
+  | tmEq {Δ : KindCtx} {Γ : TmCtx Base} {x y : Tm Base} {A : Ty Base}
+      {r : Nat} :
+      Judgement (.kinded Δ A ⟨.star, r⟩) →
+      Judgement (.hasType Δ Γ x A) →
       Judgement (.hasType Δ Γ y A) →
       Judgement (.hasType Δ Γ (.tmEq A x y) .tyBool)
-  | tmEps : Judgement (.kinded Δ A .star) →
+  | tmEps {Δ : KindCtx} {Γ : TmCtx Base} {p : Tm Base} {A : Ty Base}
+      {r : Nat} :
+      Judgement (.kinded Δ A ⟨.star, r⟩) →
       Judgement (.hasType Δ Γ p (.tyArr A .tyBool)) →
       Judgement (.hasType Δ Γ (.tmEps A p) A)
-  | tmAbs : Judgement (.kinded Δ A .star) →
-      Judgement (.hasType Δ [A] p .tyBool) → Judgement (.hasType Δ Γ x A) →
+  | tmAbs {Δ : KindCtx} {Γ : TmCtx Base} {p x : Tm Base} {A : Ty Base}
+      {r : Nat} :
+      Judgement (.kinded Δ A ⟨.star, r⟩) →
+      Judgement (.hasType Δ [A] p .tyBool) →
+      Judgement (.hasType Δ Γ x A) →
       Judgement (.hasType Δ Γ (.tmAbs A p x) (.tySub A p))
-  | tmRep : Judgement (.kinded Δ A .star) →
+  | tmRep {Δ : KindCtx} {Γ : TmCtx Base} {p x : Tm Base} {A : Ty Base}
+      {r : Nat} :
+      Judgement (.kinded Δ A ⟨.star, r⟩) →
       Judgement (.hasType Δ [A] p .tyBool) →
       Judgement (.hasType Δ Γ x (.tySub A p)) →
       Judgement (.hasType Δ Γ (.tmRep A p x) A)
 
-/-- `Δ ⊢ A : K`. -/
-abbrev Kinded {Base : Type u} (Δ : KindCtx) (A : Ty Base) (K : Kind) : Prop :=
-  Judgement (.kinded Δ A K)
+/-- `Δ ⊢ A : RK.kind` at rank `RK.rank`. -/
+abbrev Kinded {Base : Type u} (Δ : KindCtx) (A : Ty Base) (RK : RKind) : Prop :=
+  Judgement (.kinded Δ A RK)
 
 /-- `Δ; Γ ⊢ t : A`. -/
 abbrev HasType {Base : Type u} (Δ : KindCtx) (Γ : TmCtx Base) (t : Tm Base)

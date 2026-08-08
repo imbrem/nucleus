@@ -28,6 +28,22 @@ equivalent presentation; this is already that family, one tag short.
 
 `Ty` and `Tm` remain available as abbreviations, so `Ty Base` and `Tm Base`
 still read as types and dot notation still resolves.
+
+## Ranks
+
+Every binder for a type variable carries a rank as well as a kind, so `RKind`
+rather than `Kind` is what binders and kind contexts hold.
+
+The rank is not decoration. `TY_ALL` quantifies over the types of a kind, and
+if that means *all* of them there is no set-theoretic model: a product indexed
+by every type, instantiated at its own type, surjects onto its own double
+powerset. Restricting the quantifier to the types below a rank is what makes
+`Kernel.Universe` inhabitable, and full HOL-omega carries ranks for exactly
+this reason.
+
+Ranks are plain naturals and are always present at the point of import. Unlike
+a type or a kind, a rank can never itself be an import, so there are no hole
+ranks.
 -/
 
 universe u
@@ -38,6 +54,12 @@ namespace Nucleus.HolOmega
 inductive Kind : Type
   | star : Kind
   | arr : Kind → Kind → Kind
+  deriving DecidableEq, Repr
+
+/-- A kind together with the rank its variables range over. -/
+structure RKind where
+  kind : Kind
+  rank : Nat
   deriving DecidableEq, Repr
 
 /-- The two syntactic sorts of the raw language. -/
@@ -55,8 +77,9 @@ addressable. -/
 inductive Expr (Base : Type u) : ExprSort → Type u
   | base : Base → Expr Base .ty
   | tyVar : Nat → Expr Base .ty
-  | tyLam : Kind → Expr Base .ty → Expr Base .ty
+  | tyLam : RKind → Expr Base .ty → Expr Base .ty
   | tyApp : Expr Base .ty → Expr Base .ty → Expr Base .ty
+  | tyAll : RKind → Expr Base .ty → Expr Base .ty
   | tyBool : Expr Base .ty
   | tyArr : Expr Base .ty → Expr Base .ty → Expr Base .ty
   | tySub : Expr Base .ty → Expr Base .tm → Expr Base .ty
@@ -64,7 +87,7 @@ inductive Expr (Base : Type u) : ExprSort → Type u
   | tmApp : Expr Base .tm → Expr Base .tm → Expr Base .tm
   | tmLam : Expr Base .ty → Expr Base .tm → Expr Base .tm
   | tmTyApp : Expr Base .tm → Expr Base .ty → Expr Base .tm
-  | tmTyLam : Kind → Expr Base .tm → Expr Base .tm
+  | tmTyLam : RKind → Expr Base .tm → Expr Base .tm
   | tmBool : Bool → Expr Base .tm
   | tmEq : Expr Base .ty → Expr Base .tm → Expr Base .tm → Expr Base .tm
   | tmEps : Expr Base .ty → Expr Base .tm → Expr Base .tm
@@ -78,7 +101,7 @@ abbrev Ty (Base : Type u) := Expr Base .ty
 abbrev Tm (Base : Type u) := Expr Base .tm
 
 /-- A kind context. -/
-abbrev KindCtx := List Kind
+abbrev KindCtx := List RKind
 
 /-- A variable context. -/
 abbrev TmCtx (Base : Type u) := List (Ty Base)
