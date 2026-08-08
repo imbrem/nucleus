@@ -27,6 +27,11 @@ def _package_env(package):
 
 def _target(package, target, label, archive):
     env = _package_env(package)
+    # Cargo defines this for every crate target, not only build scripts.
+    # Procedural macros such as wasm-bindgen read it while expanding the
+    # library itself, so omitting it makes an otherwise ordinary dependency
+    # fail only under Buck.
+    env["CARGO_MANIFEST_DIR"] = "$(location :{})".format(archive)
     if package.get("buildscript") != None:
         env["OUT_DIR"] = "$(location :{}-build-script-run[out_dir])".format(label)
     attributes = {
