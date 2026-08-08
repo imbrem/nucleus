@@ -1,22 +1,4 @@
-//! Signed export and trusted import of propositional databases.
-//!
-//! Export serializes the connection's main database, hashes the exact
-//! bytes, and signs the schema-qualified `(schema_o256, image_o256)`
-//! statement with the kernel's identity — the same envelope family the
-//! snapshot layer defines. Import is the trust chain run in order:
-//! authenticate the envelope (signature over the exact claim), require
-//! the signer in this connection's trusted set (reject-before-trust),
-//! attach the bytes privately, verify the attached schema manifest
-//! matches the claim, check the source's own W1-W4 validity, and only
-//! then admit rows — definitional layer verbatim and universal facts
-//! under this import's provenance — through an id offset that maps every
-//! foreign proposition above everything local (so define-once, level
-//! uniqueness, and acyclicity are preserved by construction). World rows
-//! and theory bindings do not transfer: dropping a binding only forgets
-//! a constraint, which cannot strengthen the imported universal layer.
-//!
-//! Everything here is LCF-style calls on the connection — no recipe or
-//! replay layer; the import itself is one checked admission rule.
+//! Signed export and checked import of propositional databases.
 
 use covalence_lib_error::snafu::ResultExt;
 use covalence_lib_hash::O256;
@@ -33,8 +15,7 @@ use crate::{Connection, Ed25519Signer, Signer as _};
 /// The private schema name used while admitting an import.
 const IMPORT_SCHEMA: &str = "prop_source_import";
 
-/// The id translation for one admitted import: local = foreign + offset
-/// (negated for negative literals).
+/// The id translation for one admitted import.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PropImportMap {
     /// The `prop_import` provenance row naming this admission.
@@ -72,8 +53,7 @@ impl PropImportMap {
 }
 
 impl<P: Policy> Connection<Prop<P>> {
-    /// Serializes, hashes, and signs this connection's database as a
-    /// schema-qualified envelope under `signer`'s identity.
+    /// Serializes, hashes, and signs this database with its schema.
     ///
     /// # Errors
     ///
@@ -99,11 +79,7 @@ impl<P: Policy> Connection<Prop<P>> {
         ))
     }
 
-    /// Adds a signer to this connection's trusted set.
-    ///
-    /// Trust is connection-local and never serialized: receiving a
-    /// database that trusted a signer does not make this connection
-    /// trust it.
+    /// Adds a signer to this connection-local trusted set.
     ///
     /// # Errors
     ///
@@ -120,7 +96,7 @@ impl<P: Policy> Connection<Prop<P>> {
         self.protocol().trusted.borrow().contains(&signer)
     }
 
-    /// Runs the import trust chain and admits the envelope's database.
+    /// Verifies and admits an envelope's database.
     ///
     /// # Errors
     ///
