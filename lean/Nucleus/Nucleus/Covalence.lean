@@ -321,12 +321,7 @@ inductive CovEq {Base : Type u} (Δ : KindCtx) (Γ : TmCtx Base) :
       CovEq Δ Γ (.app f x) (.app g y)
   | lam (formed : Kinded Δ A ⟨.kind.star, r⟩) :
       CovEq Δ (A :: Γ) t u → CovEq Δ Γ (.lam formed t) (.lam formed u)
-  | tyApp (ref : UniformEqRef Δ Γ t u)
-  | tyLam (ref : UniformEqRef Δ Γ t u)
-  | beta (ref : UniformEqRef Δ Γ t u)
-  | eta (ref : UniformEqRef Δ Γ t u)
-  | tyBeta (ref : UniformEqRef Δ Γ t u)
-  | tyEta (ref : UniformEqRef Δ Γ t u)
+  | importEq (ref : UniformEqRef Δ Γ t u)
 
 /-- Every filling lowers a Covalence equality to the corresponding raw
 HOL-omega equality certificate. -/
@@ -340,7 +335,7 @@ def CovEq.lower {t u : SortedHol Base Δ Γ A} (d : CovEq Δ Γ t u) :
   | trans _ _ ih₁ ih₂ => exact .trans (ih₁ free f) (ih₂ free f)
   | app _ _ ihf ihx => exact .app (ihf free f) (ihx free f)
   | lam hA _ ih => exact .lam hA (ih (free.weaken _) (f.weaken _))
-  | tyApp ref | tyLam ref | beta ref | eta ref | tyBeta ref | tyEta ref =>
+  | importEq ref =>
       cases ref with
       | mk lower => exact lower free f
 
@@ -356,8 +351,7 @@ structure HypRef {Base : Type u} (H : Hyps Base) (p : Tm Base) : Prop where
 conclusion and raw certificate vary over the shared hole environment. -/
 structure UniformProofRef {Base : Type u} (Δ : KindCtx) (Γ : TmCtx Base)
     (H : Hyps Base) (n : TermNode Base Δ Γ .tyBool) where
-  conclusion : FillingEnv Base Δ Γ → Tm Base
-  certificate : ∀ f, Proves Δ Γ H (conclusion f)
+  certificate : ∀ f, Proves Δ Γ H (n.fill f).1
 
 /-- A sorted term node. Malformed nodes carry only the formation evidence of
 the expected type, which suffices to turn them into named holes. -/
@@ -405,13 +399,7 @@ inductive CovProves {Base : Type u} (Δ : KindCtx) (Γ : TmCtx Base)
       (x : TermNode Base Δ Γ A) :
       CovProves Δ Γ H (.valid (.tmEq A x.repair.1 x.repair.1)
         (.tmEq hA x.repair.2 x.repair.2))
-  | eqMp (ref : UniformProofRef Δ Γ H n) : CovProves Δ Γ H n
-  | choice (ref : UniformProofRef Δ Γ H n) : CovProves Δ Γ H n
-  | convert (ref : UniformProofRef Δ Γ H n) : CovProves Δ Γ H n
-  | eqOfEqTm (ref : UniformProofRef Δ Γ H n) : CovProves Δ Γ H n
-  | antisymm (ref : UniformProofRef Δ Γ H n) : CovProves Δ Γ H n
-  | absRep (ref : UniformProofRef Δ Γ H n) : CovProves Δ Γ H n
-  | repAbs (ref : UniformProofRef Δ Γ H n) : CovProves Δ Γ H n
+  | importProof (ref : UniformProofRef Δ Γ H n) : CovProves Δ Γ H n
 
 /-- The simultaneous family of fillings used by a Covalence derivation.
 Logical leaves have no holes; equality reflexivity may contain one typed term
@@ -428,8 +416,7 @@ def CovProves.lowerTerm {n : TermNode Base Δ Γ .tyBool}
     | .hyp _ _ => n.fill f |>.1
     | .truth _ => .tmBool true
     | .eqRefl _ _ x => .tmEq _ (x.fill f).1 (x.fill f).1
-    | .eqMp ref | .choice ref | .convert ref | .eqOfEqTm ref |
-        .antisymm ref | .absRep ref | .repAbs ref => ref.conclusion f
+    | .importProof _ => (n.fill f).1
 
 /-- Uniform entailment lowering: every legal filling produces an ordinary
 raw HOL-omega proof. -/
@@ -440,8 +427,7 @@ def CovProves.lower {n : TermNode Base Δ Γ .tyBool}
   | hyp hH hp => exact .hyp hH hp.membership
   | truth hH => exact .truth hH
   | eqRefl hH hA x => exact .eqRefl hH (x.fill f).2 hA
-  | eqMp ref | choice ref | convert ref | eqOfEqTm ref |
-      antisymm ref | absRep ref | repAbs ref => exact ref.certificate f
+  | importProof ref => exact ref.certificate f
 
 def CovProves.canonicalFilling {n : TermNode Base Δ Γ .tyBool}
     (d : CovProves Δ Γ H n) : d.Fillings := canonicalFillingEnv Base Δ Γ
@@ -464,5 +450,14 @@ theorem empty_not_proves_false
     rw [← hfalse d]
     exact d.lower d.canonicalFilling
   exact HolOmega.raw_not_proves_false raw
+
+/-- Golden, model-independent consistency theorem for the explicit repaired
+false node; no side premise or model appears in its type. -/
+theorem empty_consistent :
+    ¬ CovProves ([] : KindCtx) ([] : TmCtx Empty) []
+      (.valid (.tmBool false) (.tmBool : HasType [] [] (.tmBool false) .tyBool)) := by
+  apply empty_not_proves_false
+  intro d
+  cases d <;> rfl
 
 end Nucleus.Covalence
