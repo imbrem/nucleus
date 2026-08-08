@@ -76,6 +76,9 @@ inductive Judgement {Base : Type u} : JudgementIndex Base → Prop
   | tyAll {Δ : KindCtx} {RK : RKind} {A : Ty Base} {s : Nat} :
       Judgement (.kinded (RK :: Δ) A ⟨.star, s⟩) →
       Judgement (.kinded Δ (.tyAll RK A) ⟨.star, max RK.rank s + 2⟩)
+  | tyEx {Δ : KindCtx} {RK : RKind} {A : Ty Base} {s : Nat} :
+      Judgement (.kinded (RK :: Δ) A ⟨.star, s⟩) →
+      Judgement (.kinded Δ (.tyEx RK A) ⟨.star, max RK.rank s + 2⟩)
   | tyBool {Δ : KindCtx} {r : Nat} : Judgement (.kinded Δ .tyBool ⟨.star, r⟩)
   | tyArr {Δ : KindCtx} {A B : Ty Base} {r : Nat} :
       Judgement (.kinded Δ A ⟨.star, r⟩) →
@@ -111,6 +114,19 @@ inductive Judgement {Base : Type u} : JudgementIndex Base → Prop
       {A : Ty Base} :
       Judgement (.hasType (RK :: Δ) Γ.liftTy t A) →
       Judgement (.hasType Δ Γ (.tmTyLam RK t) (.tyAll RK A))
+  | tmPack {Δ : KindCtx} {Γ : TmCtx Base} {RK : RKind} {A X : Ty Base}
+      {t : Tm Base} {s : Nat} :
+      Judgement (.kinded (RK :: Δ) A ⟨.star, s⟩) →
+      Judgement (.kinded Δ X RK) →
+      Judgement (.hasType Δ Γ t (A.instTy X)) →
+      Judgement (.hasType Δ Γ (.tmPack RK A X t) (.tyEx RK A))
+  | tmUnpack {Δ : KindCtx} {Γ : TmCtx Base} {RK : RKind} {A B : Ty Base}
+      {k p : Tm Base} {s q : Nat} :
+      Judgement (.kinded (RK :: Δ) A ⟨.star, s⟩) →
+      Judgement (.kinded Δ B ⟨.star, q⟩) →
+      Judgement (.hasType (RK :: Δ) (A :: Γ.liftTy) k B.liftTy) →
+      Judgement (.hasType Δ Γ p (.tyEx RK A)) →
+      Judgement (.hasType Δ Γ (.tmUnpack RK A B k p) B)
   | tmBool {Δ : KindCtx} {Γ : TmCtx Base} {b : Bool} :
       Judgement (.hasType Δ Γ (.tmBool b) .tyBool)
   | tmEq {Δ : KindCtx} {Γ : TmCtx Base} {x y : Tm Base} {A : Ty Base}
