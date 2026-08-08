@@ -31,6 +31,11 @@ theorem typing (t : At Base Γ A) (e : Filling Base) : HasType Γ (t.lower e) A 
     rw [t.type_eq] at h
     exact h
 
+theorem formed (t : At Base Γ A) : Kinded A := by
+  have h := t.term.formed
+  rw [t.type_eq] at h
+  exact h
+
 def hole (name : HoleName) (A : Ty Base) (hA : Kinded A) : At Base Γ A :=
   ⟨Term.hole name A hA, rfl⟩
 
@@ -159,16 +164,17 @@ inductive Proves {Base : Type u} (Γ : Ctx Base) :
     List (At Base Γ .tyBool) -> At Base Γ .tyBool -> Prop
   | hyp (hp : p ∈ H) : Proves Γ H p
   | truth : Proves Γ H (At.bool true)
-  | eqRefl (hA : Kinded A) (x : At Base Γ A) : Proves Γ H (At.equal hA x x)
-  | eqMp (hA : Kinded A) (p : At Base Γ (.tyArr A .tyBool))
+  | eqRefl (x : At Base Γ A) : Proves Γ H (At.equal x.formed x x)
+  | eqMp (p : At Base Γ (.tyArr A .tyBool))
       (x y : At Base Γ A) :
-      Proves Γ H (At.equal hA x y) -> Proves Γ H (At.app p x) ->
+      Proves Γ H (At.equal x.formed x y) -> Proves Γ H (At.app p x) ->
       Proves Γ H (At.app p y)
-  | choice (hA : Kinded A) (p : At Base Γ (.tyArr A .tyBool))
+  | choice (p : At Base Γ (.tyArr A .tyBool))
       (x : At Base Γ A) :
-      Proves Γ H (At.app p x) -> Proves Γ H (At.app p (At.choice hA p))
+      Proves Γ H (At.app p x) -> Proves Γ H (At.app p (At.choice x.formed p))
   | convert : Eq Γ .tyBool p q -> Proves Γ H p -> Proves Γ H q
-  | eqOfEq (hA : Kinded A) (h : Eq Γ A x y) : Proves Γ H (At.equal hA x y)
+  | eqOfEq (x y : At Base Γ A) (h : Eq Γ A x y) :
+      Proves Γ H (At.equal x.formed x y)
   | antisymm (p q : At Base Γ .tyBool) :
       Proves Γ (p :: H) q -> Proves Γ (q :: H) p ->
       Proves Γ H (At.equal .tyBool p q)
@@ -188,13 +194,14 @@ theorem Proves.sound {Base : Type u} {Γ : Ctx Base}
   induction h with
   | hyp hp => exact .hyp (typed_lowerHyps e _) (List.mem_map.mpr ⟨_, hp, rfl⟩)
   | truth => exact .truth (typed_lowerHyps e _)
-  | eqRefl hA x => exact .eqRefl (typed_lowerHyps e _) (x.typing e) hA
-  | eqMp hA p x y _ _ ih1 ih2 =>
-      exact .eqMp (typed_lowerHyps e _) (p.typing e) (x.typing e) (y.typing e) hA ih1 ih2
-  | choice hA p x _ ih =>
-      exact .choice (typed_lowerHyps e _) (p.typing e) (x.typing e) hA ih
+  | eqRefl x => exact .eqRefl (typed_lowerHyps e _) (x.typing e) x.formed
+  | eqMp p x y _ _ ih1 ih2 =>
+      exact .eqMp (typed_lowerHyps e _) (p.typing e) (x.typing e) (y.typing e)
+        x.formed ih1 ih2
+  | choice p x _ ih =>
+      exact .choice (typed_lowerHyps e _) (p.typing e) (x.typing e) x.formed ih
   | convert he _ ih => exact .convert (typed_lowerHyps e _) (he.sound e) ih
-  | eqOfEq hA he => exact .eqOfEqTm (typed_lowerHyps e _) hA (he.sound e)
+  | eqOfEq x y he => exact .eqOfEqTm (typed_lowerHyps e _) x.formed (he.sound e)
   | antisymm p q _ _ ih1 ih2 =>
       exact .antisymm (typed_lowerHyps e _) (p.typing e) (q.typing e)
         (by
