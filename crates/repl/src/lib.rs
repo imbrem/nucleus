@@ -1,6 +1,13 @@
 //! A content-addressed `SQLite` REPL using the upstream shell.
 
 pub mod sexpr;
+
+/// Running the `SQLite` shell as a separate process.
+///
+/// Unix-only: it spawns a process and serves the store over a Unix socket,
+/// neither of which a browser has. The browser reaches the same store through
+/// the same `Cas` interface over a different transport.
+#[cfg(unix)]
 pub mod shell;
 
 mod session;
