@@ -751,8 +751,14 @@ impl Runner {
         }
 
         if !no_build {
-            self.pnpm("build browser demo", &["--dir", "packages/nucleus", "build"])?;
-            self.cargo("build demo kernel", &["build", "-p", "covalence-bin-cas-serve"])?;
+            self.pnpm(
+                "build browser demo",
+                &["--dir", "packages/nucleus", "build"],
+            )?;
+            self.cargo(
+                "build demo kernel",
+                &["build", "-p", "covalence-bin-cas-serve"],
+            )?;
         }
 
         let mut kernel = self.start_kernel(&files, kernel_port)?;
