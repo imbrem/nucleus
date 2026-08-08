@@ -1,0 +1,265 @@
+nucleus tree HOL-omega semantics, version 2
+============================================
+
+This file is the normative logical contract for the content-addressed HOL
+schema.  Changing these bytes changes the semantics identifier.  The proved
+reference is `lean/Nucleus/Nucleus/HolOmega`; the hole-bearing Covalence layer
+must lower to it.
+
+Version 2 corrects version 1 in three essential respects:
+
+* ranked kinds and the rank restriction on `TY_ALL`/`TM_TYAPP` are explicit;
+* type equality is alpha-beta conversion, not structural tree equality;
+* rules proved by the pure calculus are distinguished from store-structural
+  rules and trusted environment axioms.
+
+Identifiers and trees
+---------------------
+Object ids are positive 64-bit integers.  Coordinate 0 is absent.  Every
+id-valued child of a row precedes that row.  Equal ids denote equal syntax;
+distinct ids may denote alpha-beta-equal types.  Hash-consing is representation
+sharing, not logical equality.
+
+Each object has two child coordinates (`lhs`, `rhs`) and one annotation
+coordinate (`ty`).  A coordinate described below as a natural or rank is an
+immediate integer rather than an object id.  Unused coordinates are zero.
+
+Ranks and kinds
+---------------
+A ranked kind is `K@r`, where `r : Nat`.
+
+* `K_STAR` has `ty = r` and denotes `star@r`.
+* `K_ARR` has `lhs = K`, `rhs = L`, `ty = r` and denotes `(K => L)@r`.
+
+The rank is semantic data.  `TY_ALL` ranges only over values of its binder kind
+at the recorded rank.  Removing this restriction is impredicative and has no
+set model.
+
+Tags
+----
+
+ #  tag        lhs                 rhs                  ty
+ 1  K_STAR     -                   -                    rank
+ 2  K_ARR      domain kind         codomain kind        rank
+ 3  TY_BV      index               -                    ranked kind
+ 4  TY_LAM     body type           -                    binder ranked kind
+ 5  TY_APP     operator type       argument type        result ranked kind
+ 6  TY_ALL     body type           -                    binder ranked kind
+ 7  TY_BOOL    -                   -                    star kind annotation
+ 8  TY_ARR     domain type         codomain type         star kind annotation
+ 9  TY_SUB     predicate term      -                    carrier type
+10  TY_IND     -                   -                    star kind annotation
+11  TY_EXT     source id           position             claimed ranked kind
+12  TM_BV      index               -                    claimed type
+13  TM_APP     function term       argument term         claimed result type
+14  TM_LAM     body term           -                    domain type
+15  TM_TYAPP   function term       argument type         claimed result type
+16  TM_TYLAM   body term           -                    binder ranked kind
+17  TM_BOOL    0 or 1              -                    TY_BOOL
+18  TM_EQ      left term           right term            operand type
+19  TM_EPS     predicate term      -                    selected type
+20  TM_ABS     predicate term      value term            carrier type
+21  TM_REP     predicate term      value term            carrier type
+22  TM_EXT     source id           position             claimed type
+23  KS         parent spine        ranked kind           -
+24  VS         parent spine        type                  -
+25  HS         parent spine        Boolean term           -
+
+`TY_EXT` and `TM_EXT` are opaque imports.  Their annotations are checked at the
+import boundary.  They do not create trusted theorems by themselves.
+
+Formation and typing
+--------------------
+Write `Delta |- A : K@r` and `Delta;Gamma |- t : A`.
+
+    Delta[n] = K@r
+    ------------------------------- TY_BV
+    Delta |- TY_BV n : K@r
+
+    K@r :: Delta |- A : L@r
+    ------------------------------------------- TY_LAM
+    Delta |- TY_LAM K@r A : (K => L)@r
+
+    Delta |- F : (K => L)@r    Delta |- X : K@r
+    ------------------------------------------------ TY_APP
+    Delta |- TY_APP F X : L@r
+
+    K@r :: Delta |- A : star@s
+    ------------------------------------------------ TY_ALL
+    Delta |- TY_ALL K@r A : star@(max r s + 2)
+
+`TY_BOOL`, `TY_IND`, arrows, and subtypes have kind `star`; arrows and
+subtypes preserve a common admissible rank.  Rank subsumption currently raises
+only `star`-kinded types.  This is a sound conservative restriction, not the
+full Homeier higher-kind rank discipline.
+
+    Gamma[n] = A
+    ------------------------------- TM_BV
+    Delta;Gamma |- TM_BV n : A
+
+    f : A -> B    x : A
+    ------------------------------- TM_APP
+    TM_APP f x : B
+
+    A : star@r    A::Gamma |- t : B
+    ------------------------------------------- TM_LAM
+    Gamma |- TM_LAM A t : A -> B
+
+    f : TY_ALL K@r A    X : K@r
+    ------------------------------------------- TM_TYAPP
+    TM_TYAPP f X : A[X/0]
+
+    K@r::Delta; liftTy Gamma |- t : A
+    ------------------------------------------------ TM_TYLAM
+    Delta;Gamma |- TM_TYLAM K@r t : TY_ALL K@r A
+
+Boolean literals, equality, choice, subtype abstraction, and representation
+use the syntax-directed rules in the Lean `Judgement` relation.  Every stored
+term annotation is checked against the inferred conclusion modulo type
+conversion below.  A mismatch becomes a Covalence hole; it is never silently
+accepted as a theorem.
+
+Semantic type conversion
+------------------------
+The primitive conversion interface is semantic.  Write
+`Delta |- A =den B : K@r` when both sides are well-kinded and, uniformly for
+every interpretation of `Delta` and every admissible base interpretation,
+their type denotations agree.  A certificate also transports term denotations
+between the two syntactic type indices.  (In the relational Lean semantics,
+equality of the underlying universe codes alone is not enough to change that
+index.)  Denotational equality is an equivalence and a congruence.
+
+Typing admits every certified denotational conversion:
+
+    Delta;Gamma |- t : A    Delta |- A =den B : star@r
+    ------------------------------------------------- CONV
+    Delta;Gamma |- t : B
+
+Soundness of `CONV` is proved once from the certificate.  New conversion
+principles, including future principles for subtypes, are conservative when
+they are introduced by proving such a certificate; they do not require a new
+typing-soundness argument.
+
+Alpha-beta type conversion is the first syntactic procedure proved to produce
+semantic conversion certificates.  It is the least equivalence and
+congruence containing capture-avoiding type beta reduction:
+
+    TY_APP (TY_LAM K@r A) X  ==  A[X/0]
+
+and alpha-renaming of bound type variables.  Equivalently, types are compared
+up to alpha-beta conversion.  In de Bruijn syntax alpha-equivalent binders are
+represented identically, but beta conversion is still non-structural.
+
+Conversion is closed under `TY_LAM`, `TY_APP`, `TY_ALL`, `TY_ARR`, and the type
+components of terms.  `TY_SUB A p == TY_SUB B q` requires the carrier and
+predicate trees to convert under their respective sorts; theorem-level
+equality of predicates does not identify subtype syntax.
+
+Write `A == B` for this decidable/syntactic alpha-beta relation.  Its soundness
+theorem yields `A =den B`, after which `CONV` applies.  The lowering proof must
+produce a semantic certificate for every other accepted conversion.  Merely
+having distinct content hashes is not evidence of logical inequality.
+
+Theorem rules
+-------------
+A theorem is `Delta;Gamma;H |- p`, where `p` and every member of `H` have type
+`TY_BOOL`.  The pure logical rules are:
+
+* assumption, truth;
+* equality reflexivity, symmetry, transitivity, application and abstraction
+  congruence at term and type levels;
+* term beta/eta and type beta/eta;
+* equality modus ponens and equality introduction;
+* Hilbert choice and Boolean antisymmetry;
+* subtype `ABS_REP` and conditional `REP_ABS`.
+
+The Lean theorems `Judgement.sound`, `EqTm.sound`, and `Proves.sound` validate
+these rules.  `raw_not_proves_false` states that the empty raw calculus cannot
+prove `TM_BOOL 0`.
+
+Store-structural rules (`WEAKEN_HYP`, `WEAKEN_VAR`, `WEAKEN_KIND`, `INST_TM`,
+`INST_TY`, hypothesis union/alignment) are admissible operations that require
+separate preservation theorems.  They are not trusted axioms.
+
+`INFINITY` belongs to a well-formed standard environment containing `TY_IND`.
+It is a trusted environment axiom until its infinite interpretation and
+preservation theorem are connected to the raw calculus.  Imported theorem rows
+are trusted only through an explicit trusted-import capability.
+
+Holes and Covalence
+-------------------
+The persistent tree shape is exactly
+
+    (tag, optional lhs, optional rhs, optional type annotation).
+
+For a term, `.ty` is the one-layer projection of the fourth coordinate; it
+never traverses `lhs` or `rhs`.  The first sound Covalence calculus uses de
+Bruijn indices throughout, matching raw HOL-omega directly.  The locally
+nameless store-facing calculus is a later layer: bound variables are de Bruijn
+indices, free variables and holes have distinct stable names, and it must come
+with a proved lowering into the de-Bruijn Covalence calculus.
+
+Node-local Covalence operations should take O(1) time on their ordinary path.
+In particular, a rule must not traverse an entire term merely to discover its
+type, scope, or a malformed descendant: it inspects direct coordinates and
+cached annotations, and encounters malformed or missing information as a
+sorted hole.  O(1) is a design guideline rather than a bound on every rule;
+hypothesis lookup, explicit certificate checking, and deliberately indexed
+list operations may be linear.  Normalization, substitution, memory unfolding,
+and other recursive work are represented lazily where needed and justified by
+the specification's lowering relation and soundness proof.
+
+In the later locally nameless layer, `bound nt nv t` is the explicit
+scope-repair operation: its lowering replaces
+type-bound indices at least `nt` and term-bound indices at least `nv` by named
+holes.  Type binders increment only `nt`; term binders increment only `nv`.
+The shorthand `bound n t` sets both limits to `n`, so `bound 0 t` is locally
+closed in both namespaces.  Cached type- and term-depth annotations make the
+applicability check constant-time.  Those caches are validated from direct
+row data and are not trusted assertions.  A failed `cast t A`, including a
+scope failure, may produce one locally closed typed hole at `A` rather than
+recursively repairing `t` during rule application.
+
+A Covalence hole is typed and named.  Its initial lowering is a fresh variable
+of its claimed type.  Simultaneous well-typed substitutions for those fresh
+variables are exactly the filling family.  A malformed child, annotation,
+kind, or rank constraint triggers a hole at the enclosing syntactic sort; it
+does not introduce a rank hole or add an axiom.  The family is
+nonempty: at proper types a canonical member is Hilbert epsilon applied to the
+constantly-true predicate (and higher-sorted holes use the corresponding
+canonical type/kind repair).
+
+Entailment soundness is universal, never partial:
+
+    Covalence.Proves c
+      -> for every valid filling f, HOLOmega.Proves (lower f c).
+
+An unresolved proof node does not lower to `none`, and a term hole of Boolean
+type is not a theorem axiom.  Empty-context consistency specializes the
+universal lowering theorem to the canonical filling and then applies
+`raw_not_proves_false`.  The canonical filling witnesses nonemptiness; it does
+not define the meaning of a hole.
+
+Covalence formation is total at every expected sort: kinds-at-a-rank,
+types-at-a-kind, and terms-at-a-type.  Ranks remain immediate natural-number
+annotations, not a hole-bearing syntax sort.  Every tree has a repaired
+interpretation at every requested sort.  Failed kernel well-formedness
+premises (including freshness and context side conditions on eta rules) select
+typed holes at the offending positions instead of making the
+Covalence judgement fail.  The lowered HOL-omega derivation still contains and
+discharges the ordinary kernel side conditions.  “Everything is well-formed”
+therefore means total repair through holes, not that malformed raw HOL-omega
+syntax is admitted directly or that one unaltered term inhabits every type.
+
+The information order is hole refinement.  Formation, typing, equality, and
+entailment must be monotone under refinement.  Content-addressed resolution is
+sound only when it returns a member of the specified filling family.
+
+Known conformance work
+----------------------
+The proved core currently uses concrete natural ranks, equal-rank type
+application, `star`-only rank subsumption, and the conservative `+2` universal
+bound.  Full Homeier conformance additionally requires rank variables,
+`INST_RANK`, kind variables, `INST_KIND`, general higher-kind rank restriction,
+and the tighter presentation of universal ranks.  These are specification
+requirements, not facts silently assumed by version 2.

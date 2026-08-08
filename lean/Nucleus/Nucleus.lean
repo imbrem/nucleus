@@ -1,7 +1,37 @@
-/-!
-# Nucleus
-
-The root of the Lean development. Deliberately empty: this package exists so
-the toolchain, `glu lean`, and the documentation pipeline can be reviewed and
-landed on their own. The HOL-omega formalization lands on top of it.
--/
+import Nucleus.HolOmega.Env
+import Nucleus.HolOmega.PowerTower
+import Nucleus.HolOmega.Beth
+import Nucleus.HolOmega.TotalSubtype
+import Nucleus.HolOmega.Syntax
+import Nucleus.HolOmega.Typing
+import Nucleus.HolOmega.Substitution
+import Nucleus.HolOmega.TypingSubstitution
+import Nucleus.HolOmega.Proof
+import Nucleus.HolOmegaSimple.Syntax
+import Nucleus.HolOmegaSimple.Typing
+import Nucleus.HolOmega.Kernel
+import Nucleus.HolOmega.Model
+import Nucleus.HolOmega.RankedKinds
+import Nucleus.HolOmega.FullRanking
+import Nucleus.HolOmega.Examples
+import Nucleus.HolOmega.ProofTyping
+import Nucleus.HolOmega.Semantics
+import Nucleus.HolOmega.SemanticSubstitution
+import Nucleus.HolOmega.Soundness
+import Nucleus.HolOmega.Conversion
+import Nucleus.HolOmega.LogicalSoundness
+import Nucleus.HolOmega.Consistency
+import Nucleus.HolOmega.Spec
+import Nucleus.Hol.Universe
+import Nucleus.Hol.Syntax
+import Nucleus.Hol.Substitution
+import Nucleus.Hol.Typing
+import Nucleus.Hol.Proof
+import Nucleus.Hol.Consistency
+import Nucleus.Hol.Kernel
+import Nucleus.Hol.Extension
+import Nucleus.Cov.Syntax
+import Nucleus.Cov.Proof
+import Nucleus.Cov.Consistency
+import Nucleus.Covalence
+import Nucleus.Covalence.Memory
