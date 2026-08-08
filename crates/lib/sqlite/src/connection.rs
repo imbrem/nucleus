@@ -483,42 +483,75 @@ mod tests {
     /// The only route from SQL to native code, and it stays shut.
     ///
     /// An extension is arbitrary code in this process, so if this ever starts
-    /// succeeding then `Send` and `Sync` are the least of it. The capability is
-    /// compiled in -- `libsqlite3-sys` passes `SQLITE_ENABLE_LOAD_EXTENSION=1`
-    /// -- and it is `SQLite`'s runtime default, not our configuration, that
-    /// keeps the SQL function unavailable.
+    /// succeeding then `Send` and `Sync` are the least of it.
+    ///
+    /// The refusal has two shapes and this accepts either. Where `dlopen`
+    /// exists, `libsqlite3-sys` passes `SQLITE_ENABLE_LOAD_EXTENSION=1`, so the
+    /// SQL function is registered and declines at run time -- `SQLite`'s own
+    /// default, not our configuration. On WASI there is no `dlopen`, so the
+    /// function is never registered and the statement does not even compile.
+    /// The second is strictly the stronger refusal; what matters is that
+    /// neither one loads anything.
     #[test]
     fn sqlite_refuses_to_load_extensions_from_sql() {
         let connection = Connection::open_in_memory().expect("open");
-        let mut statement = Statement::prepare(&connection, "SELECT load_extension('/tmp/x.so')")
-            .expect("it compiles; the refusal comes when it runs");
-        let error = statement
-            .step()
-            .expect_err("load_extension must not be callable from SQL");
+        let error = match Statement::prepare(&connection, "SELECT load_extension('/tmp/x.so')") {
+            Ok(mut statement) => statement
+                .step()
+                .expect_err("load_extension must not be callable from SQL"),
+            Err(refused_at_compile_time) => refused_at_compile_time,
+        };
+        let message = error.to_string();
         assert!(
-            error.to_string().contains("not authorized"),
-            "unexpected refusal: {error}"
+            message.contains("not authorized") || message.contains("no such function"),
+            "unexpected refusal: {message}"
         );
     }
 
     /// A connection is serialized whatever the caller asked for, which is what
     /// `Sync` rests on.
+    ///
+    /// `sqlite3_db_mutex` is the observation: it returns the mutex serializing
+    /// the connection, and a null pointer when the connection is in
+    /// multi-thread or single-thread mode. So asking for `SQLITE_OPEN_NOMUTEX`
+    /// and still getting a mutex back is exactly the guarantee, read off the
+    /// connection `SQLite` actually built.
+    ///
+    /// Only meaningful where mutexes are compiled in at all; that is the same
+    /// condition the `unsafe impl`s carry.
+    #[cfg(sqlite_serialized)]
     #[test]
     fn nomutex_cannot_be_asked_for() {
         let asked = OpenFlags::new(crate::ffi::SQLITE_OPEN_NOMUTEX) | OpenFlags::DEFAULT;
         let connection = Connection::open_with_flags(c":memory:", asked, None).expect("open");
-        // `SQLITE_DBCONFIG` has no query for the mutex, so this checks the
-        // thing we control: the connection opened, and the bit we clear never
-        // reached SQLite because `open_with_flags` masks it.
-        drop(connection);
+        // SAFETY: the handle is live for the call, which only reads the mutex
+        // pointer SQLite stored on it.
+        let mutex = unsafe { crate::ffi::sqlite3_db_mutex(connection.as_ptr()) };
+        assert!(
+            !mutex.is_null(),
+            "asked for NOMUTEX and got a connection without a mutex, so `Sync` does not hold"
+        );
     }
 
+    /// The impls exist wherever the cfg does, which is the whole contract.
+    ///
+    /// Static, so it holds on targets that have no threads to check it with.
     #[cfg(sqlite_serialized)]
     #[test]
-    fn a_serialized_connection_crosses_threads() {
+    fn a_serialized_connection_is_send_and_sync() {
         const fn assert_send_and_sync<T: Send + Sync>() {}
         assert_send_and_sync::<Connection>();
+    }
 
+    /// And `Sync` survives one connection being used from another thread.
+    ///
+    /// Not on `wasm32-wasip1`, which is serialized -- the impls are there and
+    /// the assertion above covers them -- but has no threads in preview 1, so
+    /// `thread::scope` aborts rather than reporting anything. Nothing can race
+    /// there, so there is nothing this would catch.
+    #[cfg(all(sqlite_serialized, not(target_family = "wasm")))]
+    #[test]
+    fn a_serialized_connection_crosses_threads() {
         let connection = Connection::open_in_memory().expect("open");
         std::thread::scope(|scope| {
             scope.spawn(|| {
