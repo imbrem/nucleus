@@ -100,7 +100,7 @@ def Expr.subst {Base : Type u} (σ : Nat → Tm Base) : Tm Base → Tm Base
   | .tmApp f x => .tmApp (f.subst σ) (x.subst σ)
   | .tmLam A t => .tmLam A (t.subst (liftTmSub σ))
   | .tmTyApp f A => .tmTyApp (f.subst σ) A
-  | .tmTyLam K t => .tmTyLam K (t.subst σ)
+  | .tmTyLam K t => .tmTyLam K (t.subst fun n => (σ n).renameTy Nat.succ)
   | .tmBool b => .tmBool b
   | .tmEq A x y => .tmEq A (x.subst σ) (y.subst σ)
   | .tmEps A p => .tmEps A (p.subst σ)

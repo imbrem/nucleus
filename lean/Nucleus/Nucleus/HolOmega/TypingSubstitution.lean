@@ -258,4 +258,46 @@ theorem HasType.weakenTy {RK : RKind} (h : HasType Δ Γ t A) :
     HasType (RK :: Δ) Γ.liftTy t.liftTy A.liftTy := by
   simpa [TmCtx.renameTy] using h.renameTy TyRen.succ
 
+theorem TmSub.lift (h : TmSub Δ Γ Γ' σ) :
+    TmSub Δ (A :: Γ) (A :: Γ') (liftTmSub σ) := by
+  intro n B hn
+  cases n with
+  | zero =>
+      simp at hn
+      subst B
+      simpa [liftTmSub] using Judgement.tmVar (Δ := Δ) (Γ := A :: Γ') (n := 0) rfl
+  | succ n =>
+      simpa [liftTmSub] using (h (by simpa using hn)).weaken (B := A)
+
+theorem TmSub.mapLiftTy {RK : RKind} (h : TmSub Δ Γ Γ' σ) :
+    TmSub (RK :: Δ) Γ.liftTy Γ'.liftTy (fun n => (σ n).liftTy) := by
+  intro n A hn
+  simp only [TmCtx.liftTy, List.getElem?_map] at hn
+  rcases hn' : Γ[n]? with _ | B
+  · simp [hn'] at hn
+  · simp [hn'] at hn
+    subst A
+    exact (h hn').weakenTy
+
+theorem Judgement.substTm {i : JudgementIndex Base} (h : Judgement i) :
+    match i with
+    | .kinded .. => True
+    | .hasType Δ Γ t A => ∀ Γ' σ, TmSub Δ Γ Γ' σ → HasType Δ Γ' (t.subst σ) A := by
+  induction h with
+  | base | tyVar | tyLam | tyApp | tyAll | tyBool | tyArr | tySub | subsume => trivial
+  | conv _ hc ih => intro Γ' σ hσ; exact .conv (ih _ _ hσ) hc
+  | tmVar hn => intro Γ' σ hσ; simpa [Expr.subst] using hσ hn
+  | tmApp _ _ ihf ihx => intro Γ' σ hσ; simpa [Expr.subst] using Judgement.tmApp (ihf _ _ hσ) (ihx _ _ hσ)
+  | tmLam hA _ _ iht => intro Γ' σ hσ; simpa [Expr.subst] using Judgement.tmLam hA (iht _ _ hσ.lift)
+  | tmTyApp _ hX ihf _ => intro Γ' σ hσ; simpa [Expr.subst] using Judgement.tmTyApp (ihf _ _ hσ) hX
+  | tmTyLam _ iht => intro Γ' σ hσ; simpa [Expr.subst] using Judgement.tmTyLam (iht _ _ hσ.mapLiftTy)
+  | tmBool => intro Γ' σ hσ; simpa [Expr.subst] using (Judgement.tmBool (Δ := _) (Γ := Γ'))
+  | tmEq hA _ _ _ ihx ihy => intro Γ' σ hσ; simpa [Expr.subst] using Judgement.tmEq hA (ihx _ _ hσ) (ihy _ _ hσ)
+  | tmEps hA _ _ ihp => intro Γ' σ hσ; simpa [Expr.subst] using Judgement.tmEps hA (ihp _ _ hσ)
+  | tmAbs hA hp _ _ _ ihx => intro Γ' σ hσ; simpa [Expr.subst] using Judgement.tmAbs hA hp (ihx _ _ hσ)
+  | tmRep hA hp _ _ _ ihx => intro Γ' σ hσ; simpa [Expr.subst] using Judgement.tmRep hA hp (ihx _ _ hσ)
+
+theorem HasType.subst (h : HasType Δ Γ t A) (hσ : TmSub Δ Γ Γ' σ) :
+    HasType Δ Γ' (t.subst σ) A := Judgement.substTm h Γ' σ hσ
+
 end Nucleus.HolOmega
