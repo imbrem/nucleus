@@ -146,6 +146,21 @@ def ex {Δ : List RKind} {K : HolOmega.Kind} (r s : Nat)
     (A : STy U (⟨K, r⟩ :: Δ)) (h : ∀ ρ, U.rank (A ρ) ≤ s) : STy U Δ :=
   fun ρ => U.exCode K r (fun X => A (X, ρ)) ⟨s, fun X => h (X, ρ)⟩
 
+/-- The code of a universal type depends on its family, not on which uniform
+rank bound was used to establish that the family is bounded. -/
+theorem all_bound_irrel {Δ : List RKind} {K : HolOmega.Kind} {r s t : Nat}
+    (A : STy U (⟨K, r⟩ :: Δ)) (hs : ∀ ρ, U.rank (A ρ) ≤ s)
+    (ht : ∀ ρ, U.rank (A ρ) ≤ t) : all U r s A hs = all U r t A ht := by
+  funext ρ
+  simp only [all]
+
+/-- Existential codes have the same bound-independence property. -/
+theorem ex_bound_irrel {Δ : List RKind} {K : HolOmega.Kind} {r s t : Nat}
+    (A : STy U (⟨K, r⟩ :: Δ)) (hs : ∀ ρ, U.rank (A ρ) ≤ s)
+    (ht : ∀ ρ, U.rank (A ρ) ≤ t) : ex U r s A hs = ex U r t A ht := by
+  funext ρ
+  simp only [ex]
+
 def inst {RK : RKind} (A : STy U (RK :: Δ)) (X : Ty U Δ RK) : STy U Δ :=
   fun ρ => A (X ρ, ρ)
 
