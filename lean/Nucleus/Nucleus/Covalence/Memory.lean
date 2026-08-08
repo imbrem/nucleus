@@ -1,163 +1,146 @@
 import Mathlib
 import Nucleus.Covalence
 
-universe u
+/-!
+# Depth-bounded unfolding of persistent Covalence rows
+
+This module uses `Covalence.HolTag`, `Row`, and `Image` verbatim.  Depth is a
+dereference budget, not cycle detection: zero performs no lookup; successor
+performs one lookup and gives each referenced child the predecessor budget.
+
+The current Covalence API has no relation repairing an untyped recursive
+`Hol` into `SortedHol`.  Consequently this module proves the complete generic
+row/unfold/refinement layer.  Memory derivability must wait for that one
+integration operation; it is not simulated by a second tag or sorted-tree
+language here.
+-/
+
+universe u v
 
 namespace Nucleus.Covalence.Memory
 
-open HolOmega Nucleus.Covalence
+open Nucleus.Covalence
 
-/-- Row tags currently understood by the recursive Covalence term layer. -/
-inductive HolTag
-  | hole | boolTrue | boolFalse | app | lam | eq | eps | cast
-  deriving DecidableEq, Repr
+abbrev Memory (Base : Type u) (Index : Type v) := Image Base Index
 
-abbrev Row (Index : Type u) :=
-  HolTag × Option Index × Option Index × Option Index
+/-- The stable injection into the current persisted hole-name representation.
+It is kept explicit: unfolding never invents, shifts, or conflates names. -/
+structure Naming (Index : Type v) where
+  holeName : Index → Nat
+  injective : Function.Injective holeName
 
-/-- Content-addressed storage is deliberately only a partial row lookup. -/
-abbrev Memory (Index : Type u) := Index → Option (Row Index)
+def hole (names : Naming Index) (i : Index) : Hol Base :=
+  .node (.hole (names.holeName i)) none none none
 
-theorem kinded_arr_parts (h : Kinded Δ (.tyArr A B) ⟨.star, r⟩) :
-    Kinded Δ A ⟨.star, r⟩ ∧ Kinded Δ B ⟨.star, r⟩ := by
-  induction h with
-  | tyArr hA hB => exact ⟨hA, hB⟩
-  | subsume _ hrs ih => exact ⟨.subsume ih.1 hrs, .subsume ih.2 hrs⟩
+/-- Which coordinates are required by each stored tag.  Missing required
+coordinates become the hole named by the row being unfolded; genuinely
+unused coordinates remain absent. -/
+def requirements : HolTag Base → Bool × Bool × Bool
+  | .hole _ | .atom _ | .tyVar | .tyBool | .tmVar | .tmBool => (false, false, false)
+  | .tyLam | .tyAll | .tmTyLam => (true, false, false)
+  | .tyApp | .tyArr | .tmApp => (true, true, false)
+  | .tySub | .tmLam | .tmTyApp | .tmEps => (true, false, true)
+  | .tmEq | .tmAbs | .tmRep => (true, true, true)
 
-def cutoff (name : Index → Nat) (i : Index) (hA : Kinded Δ A ⟨.star, r⟩) :
-    Hol Base Δ Γ A := .hole (name i) hA
+def child (names : Naming Index) (go : Index → Hol Base) (parent : Index)
+    (required : Bool) : Option Index → Option (Hol Base)
+  | some i => some (go i)
+  | none => if required then some (hole names parent) else none
 
-/-- Spend at most `fuel` row dereferences.  There is no visited set: cycles,
-sharing, and long acyclic paths are treated identically.  Zero never reads
-memory.  A missing row, missing required coordinate, incompatible tag, or
-exhausted child budget becomes the hole named by the index being unfolded. -/
-def unfold [DecidableEq Base] (name : Index → Nat) (mem : Memory Index) :
-    (fuel : Nat) → (i : Index) → (A : Ty Base) →
-      Kinded Δ A ⟨.star, r⟩ → Hol Base Δ Γ A
-  | 0, i, _, hA => cutoff name i hA
-  | fuel + 1, i, A, hA =>
-    match mem i with
-    | none => cutoff name i hA
-    | some (.hole, _, _, _) => cutoff name i hA
-    | some (.boolTrue, _, _, _) =>
-        if h : A = .tyBool then h ▸ Hol.bool true else cutoff name i hA
-    | some (.boolFalse, _, _, _) =>
-        if h : A = .tyBool then h ▸ Hol.bool false else cutoff name i hA
-    | some (.app, some fi, some xi, _) =>
-        let hBool : Kinded Δ (.tyBool : Ty Base) ⟨.star, r⟩ := .tyBool
-        let hFun : Kinded Δ (.tyArr .tyBool A) ⟨.star, r⟩ := .tyArr hBool hA
-        .app (unfold name mem fuel fi (.tyArr .tyBool A) hFun)
-          (unfold name mem fuel xi .tyBool hBool)
-    | some (.lam, some bi, _, _) =>
-        match A, hA with
-        | .tyArr D C, hArr =>
-          let parts := kinded_arr_parts hArr
-          .lam parts.1 (unfold name mem fuel bi C parts.2)
-        | _, _ => cutoff name i hA
-    | some (.eq, some xi, some yi, _) =>
-        if h : A = .tyBool then
-          h ▸ Hol.eq (Judgement.tyBool (r := r))
-            (unfold name mem fuel xi .tyBool (.tyBool))
-            (unfold name mem fuel yi .tyBool (.tyBool))
-        else cutoff name i hA
-    | some (.eps, some pi, _, _) =>
-        let hBool : Kinded Δ (.tyBool : Ty Base) ⟨.star, r⟩ := .tyBool
-        let hPred : Kinded Δ (.tyArr A .tyBool) ⟨.star, r⟩ := .tyArr hA hBool
-        .eps hA (unfold name mem fuel pi (.tyArr A .tyBool) hPred)
-    | some (.cast, some ti, _, _) =>
-        .cast (unfold name mem fuel ti A hA) A hA (.inl (.alpha rfl))
-    | some _ => cutoff name i hA
+/-- Exact dereference-budget unfolding.  There is deliberately no visited
+set and no acyclicity premise. -/
+def unfold (names : Naming Index) (mem : Memory Base Index) : Nat → Index → Hol Base
+  | 0, i => hole names i
+  | d + 1, i =>
+      match mem i with
+      | none => hole names i
+      | some (tag, lhs, rhs, ty) =>
+        let req := requirements tag
+        .node tag
+          (child names (unfold names mem d) i req.1 lhs)
+          (child names (unfold names mem d) i req.2.1 rhs)
+          (child names (unfold names mem d) i req.2.2 ty)
 
-@[simp] theorem unfold_zero [DecidableEq Base] (name : Index → Nat)
-    (mem : Memory Index) (i : Index) (hA : Kinded Δ A ⟨.star, r⟩) :
-    unfold name mem 0 i A hA = cutoff name i hA := rfl
+@[simp] theorem unfold_zero (names : Naming Index) (mem : Memory Base Index) (i : Index) :
+    unfold names mem 0 i = hole names i := rfl
 
-/-- Typed information order: a named hole may be filled by any sorted tree;
-matching constructors refine componentwise. -/
-inductive Refines : Hol Base Δ Γ A → Hol Base Δ Γ A → Prop
-  | hole : Refines (.hole name hA) t
-  | bool : Refines (.bool b) (.bool b)
-  | app : Refines f g → Refines x y → Refines (.app f x) (.app g y)
-  | lam : Refines t u → Refines (.lam hA t) (.lam hA u)
-  | eq : Refines x x' → Refines y y' → Refines (.eq hA x y) (.eq hA x' y')
-  | eps : Refines p q → Refines (.eps hA p) (.eps hA q)
-  | cast : Refines t u → Refines (.cast t A hA d) (.cast u A hA d)
+theorem unfold_succ_missing (names : Naming Index) (mem : Memory Base Index)
+    (h : mem i = none) : unfold names mem (d + 1) i = hole names i := by
+  simp [unfold, h]
+
+/-- One-step fold/view law: a fetched persistent row becomes precisely one
+recursive node, with field order unchanged. -/
+theorem unfold_succ_view (names : Naming Index) (mem : Memory Base Index)
+    (h : mem i = some (tag, lhs, rhs, ty)) :
+    (unfold names mem (d + 1) i).view =
+      (tag,
+        child names (unfold names mem d) i (requirements tag).1 lhs,
+        child names (unfold names mem d) i (requirements tag).2.1 rhs,
+        child names (unfold names mem d) i (requirements tag).2.2 ty) := by
+  simp [unfold, h, Hol.view]
+
+inductive OptionRefines : Option (Hol Base) → Option (Hol Base) → Prop
+  | none : OptionRefines none none
+  | some : Refines a b → OptionRefines (some a) (some b)
+
+/-- Untyped tree information order.  Cutoff/missing holes are bottom; fetched
+matching rows refine componentwise. -/
+inductive Refines : Hol Base → Hol Base → Prop
+  | hole : Refines (Hol.node (.hole name) none none none) t
+  | node : OptionRefines lhs lhs' → OptionRefines rhs rhs' → OptionRefines ty ty' →
+      Refines (.node tag lhs rhs ty) (.node tag lhs' rhs' ty')
 
 notation:50 x " ⊑ " y => Refines x y
 
-theorem Refines.refl (t : Hol Base Δ Γ A) : t ⊑ t := by
-  induction t <;> aesop (add safe constructors Refines)
+theorem Refines.refl (t : Hol Base) : t ⊑ t := by
+  cases t
+  exact .node (by cases ‹Option (Hol Base)› <;> aesop)
+    (by cases ‹Option (Hol Base)› <;> aesop)
+    (by cases ‹Option (Hol Base)› <;> aesop)
 
-theorem Refines.trans {a b c : Hol Base Δ Γ A} : a ⊑ b → b ⊑ c → a ⊑ c := by
+theorem Refines.trans {a b c : Hol Base} : a ⊑ b → b ⊑ c → a ⊑ c := by
   intro hab hbc
-  induction hab generalizing c <;> cases hbc <;> aesop (add safe constructors Refines)
+  induction hab generalizing c with
+  | hole => exact .hole
+  | node hl hr ht ihl ihr iht =>
+    cases hbc with
+    | node hl' hr' ht' =>
+      exact .node (by cases hl <;> cases hl' <;> aesop)
+        (by cases hr <;> cases hr' <;> aesop)
+        (by cases ht <;> cases ht' <;> aesop)
 
-set_option maxHeartbeats 3200000 in
-theorem unfold_step [DecidableEq Base] (name : Index → Nat) (mem : Memory Index)
-    (d : Nat) (i : Index) (hA : Kinded Δ A ⟨.star, r⟩) :
-    unfold name mem d i A hA ⊑ unfold name mem (d + 1) i A hA := by
-  induction d generalizing i A Γ r with
+theorem child_refines (names : Naming Index) {f g : Index → Hol Base}
+    (hfg : ∀ i, f i ⊑ g i) (parent : Index) (required : Bool) (oi : Option Index) :
+    OptionRefines (child names f parent required oi) (child names g parent required oi) := by
+  cases oi with
+  | some i => exact .some (hfg i)
+  | none => cases required <;> simp [child] <;> aesop (add safe constructors OptionRefines Refines)
+
+/-- Mandatory one-step refinement theorem. -/
+theorem unfold_step (names : Naming Index) (mem : Memory Base Index) (d : Nat) (i : Index) :
+    unfold names mem d i ⊑ unfold names mem (d + 1) i := by
+  induction d generalizing i with
   | zero => exact .hole
   | succ d ih =>
     simp only [unfold]
-    split <;> aesop (add safe constructors Refines)
+    split
+    · exact .refl _
+    · exact .node (child_refines names ih _ _ _)
+        (child_refines names ih _ _ _) (child_refines names ih _ _ _)
 
-theorem unfold_mono [DecidableEq Base] (name : Index → Nat) (mem : Memory Index)
-    {d e : Nat} (hde : d ≤ e) (i : Index) (hA : Kinded Δ A ⟨.star, r⟩) :
-    unfold name mem d i A hA ⊑ unfold name mem e i A hA := by
+theorem unfold_mono (names : Naming Index) (mem : Memory Base Index)
+    {d e : Nat} (hde : d ≤ e) (i : Index) :
+    unfold names mem d i ⊑ unfold names mem e i := by
   induction hde with
   | refl => exact .refl _
-  | @step e _ ih => exact Refines.trans ih (unfold_step name mem e i hA)
+  | @step e _ ih => exact Refines.trans ih (unfold_step names mem e i)
 
-/-- Totality and sortedness are intrinsic in the unfolding result. -/
-theorem unfold_lower_typed [DecidableEq Base] (name : Index → Nat)
-    (mem : Memory Index) (d : Nat) (i : Index) (hA : Kinded Δ A ⟨.star, r⟩) :
-    HasType Δ Γ (unfold name mem d i A hA).repair.1 A :=
-  (unfold name mem d i A hA).repair.2
+/-- Unfolding preserves the locally nameless identity of every cutoff: the
+stored free/hole name is exactly the injected index and is never shifted. -/
+theorem cutoff_name (names : Naming Index) (mem : Memory Base Index) (i : Index) :
+    unfold names mem 0 i = .node (.hole (names.holeName i)) none none none := rfl
 
-def unfoldedNode [DecidableEq Base] (name : Index → Nat) (mem : Memory Index)
-    (d : Nat) (i : Index) (hA : Kinded Δ A ⟨.star, r⟩) : TermNode Base Δ Γ A :=
-  .valid (unfold name mem d i A hA).repair.1
-    (unfold name mem d i A hA).repair.2
-
-/-- Uniform memory derivability: every deeper dereference budget has a
-genuine Covalence derivation of its unfolded, sorted conclusion.  Quantifying
-over all extensions is exactly what makes shallow-to-deep monotonicity valid;
-a proof cannot depend on a particular canonical cutoff filling. -/
-def Derives (name : Index → Nat) (mem : Memory Index) (d : Nat) (i : Index) : Prop :=
-  ∀ e, d ≤ e → Nonempty (CovProves ([] : KindCtx) ([] : TmCtx Empty) []
-    (unfoldedNode name mem e i (Judgement.tyBool (r := 0))))
-
-theorem Derives.mono (h : Derives name mem d i) (hde : d ≤ e) :
-    Derives name mem e i := by
-  intro q heq
-  exact h q (hde.trans heq)
-
-/-- Lowering is uniform at every budget in a memory derivation. -/
-theorem Derives.lower (h : Derives name mem d i) (e : Nat) (hde : d ≤ e) :
-    ∃ (p : Proves ([] : KindCtx) ([] : TmCtx Empty) []
-        (unfoldedNode name mem e i (Judgement.tyBool (r := 0))).repair.1), True := by
-  obtain ⟨cov⟩ := h e hde
-  exact ⟨cov.lower cov.canonicalFilling, trivial⟩
-
-theorem validFalse_not_covProves :
-    ¬CovProves ([] : KindCtx) ([] : TmCtx Empty) []
-      (.valid (.tmBool false) (.tmBool)) := by
-  apply empty_not_proves_false
-  intro d
-  cases d <;> rfl
-
-/-- No uniformly derivable memory row may unfold to Boolean false at its
-starting budget.  This is the memory-indexed consistency theorem, discharged
-through Covalence consistency rather than by inspecting row tags. -/
-theorem not_derives_false (name : Index → Nat) (mem : Memory Index)
-    (d : Nat) (i : Index)
-    (hfalse : (unfold name mem d i (.tyBool : Ty Empty)
-      (Judgement.tyBool (r := 0))).repair.1 = .tmBool false) :
-    ¬Derives name mem d i := by
-  intro h
-  obtain ⟨cov⟩ := h d le_rfl
-  rw [hfalse] at cov
-  exact validFalse_not_covProves cov
+theorem distinct_cutoff_names (names : Naming Index) (hij : i ≠ j) :
+    names.holeName i ≠ names.holeName j := fun h => hij (names.injective h)
 
 end Nucleus.Covalence.Memory
