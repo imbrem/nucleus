@@ -6,6 +6,7 @@ node_modules/
 /apps/docs/static/api/
 /apps/docs/static/generated/
 /apps/docs/.svelte-kit/
+/packages/nucleus/component/
 /packages/nucleus/dist/
 /packages/nucleus/generated/
 .direnv/

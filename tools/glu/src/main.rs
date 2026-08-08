@@ -118,6 +118,7 @@ enum BuildTarget {
     All,
     Native,
     Wasm,
+    Component,
     Docs,
 }
 
@@ -168,6 +169,13 @@ enum ArtifactTask {
     },
     /// Internal: build the Nucleus WIT component.
     Component {
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Internal: transpile the Nucleus WIT component to JavaScript.
+    ComponentJs {
+        #[arg(long)]
+        component: PathBuf,
         #[arg(long)]
         out: PathBuf,
     },
@@ -239,6 +247,9 @@ fn run() -> Result<()> {
             ArtifactTask::Rustdoc { out } => runner.artifact_rustdoc(&out),
             ArtifactTask::Wasm { out } => runner.artifact_wasm(&out),
             ArtifactTask::Component { out } => runner.artifact_component(&out),
+            ArtifactTask::ComponentJs { component, out } => {
+                runner.artifact_component_js(&component, &out)
+            }
             ArtifactTask::CliComponent { out } => runner.artifact_cli_component(&out),
             ArtifactTask::Docs {
                 production_crates,

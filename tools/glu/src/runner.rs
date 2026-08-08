@@ -245,6 +245,7 @@ impl Runner {
         }
         self.exec("test Buck Rust targets", "buck2", ["test", "//crates/..."])?;
         self.build(BuildTarget::Wasm)?;
+        self.build(BuildTarget::Component)?;
         self.pnpm("test web", &["run", "test"])?;
         self.test_components()?;
         let cli = self.buck_output("//crates/bin/nucleus:nucleus")?;
@@ -273,6 +274,13 @@ impl Runner {
                 eprintln!("• build Wasm package… done");
                 Ok(())
             }
+            BuildTarget::Component => {
+                self.buck_check()?;
+                let source = self.buck_output("//:component-js")?;
+                self.materialize_component_js(&source)?;
+                eprintln!("• build transpiled component… done");
+                Ok(())
+            }
             BuildTarget::Docs => self.docs(),
         }
     }
@@ -283,12 +291,14 @@ impl Runner {
             "build".to_owned(),
             "//crates/...".to_owned(),
             "//:wasm".to_owned(),
+            "//:component-js".to_owned(),
             "//:docs".to_owned(),
         ];
         arguments.extend(self.docs_config()?);
         arguments.push("--show-full-json-output".to_owned());
         let outputs = self.buck_outputs("build all targets", &arguments)?;
         self.materialize_wasm(required_output(&outputs, "nucleus//:wasm")?)?;
+        self.materialize_component_js(required_output(&outputs, "nucleus//:component-js")?)?;
         replace_dir(
             required_output(&outputs, "nucleus//:docs")?,
             &self.root.join("apps/docs/build"),
@@ -306,6 +316,15 @@ impl Runner {
             &source.join("dist"),
             &self.root.join("packages/nucleus/dist"),
         )
+    }
+
+    /// Stage the transpiled component beside the `wasm-bindgen` output.
+    ///
+    /// Its own directory rather than a subdirectory of `generated`, because the
+    /// two are produced by independent Buck targets and `materialize_wasm`
+    /// replaces `generated` wholesale.
+    fn materialize_component_js(&self, source: &Path) -> Result<()> {
+        replace_dir(source, &self.root.join("packages/nucleus/component"))
     }
 
     pub(crate) fn check(&self) -> Result<()> {
@@ -607,7 +626,13 @@ impl Runner {
         ] {
             self.run(tool, tool, ["--version"])?;
         }
-        self.run("cargo component", "cargo", ["component", "--version"])
+        self.run("cargo component", "cargo", ["component", "--version"])?;
+        // jco comes from the pnpm workspace rather than the Nix shell, so it
+        // is only reachable once `pnpm install` has run.
+        self.pnpm(
+            "jco",
+            &["--filter", "@nucleus/nucleus", "exec", "jco", "--version"],
+        )
     }
 
     pub(crate) fn docs(&self) -> Result<()> {
