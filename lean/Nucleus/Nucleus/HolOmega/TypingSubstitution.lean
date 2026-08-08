@@ -38,6 +38,9 @@ theorem Judgement.renameTm {i : JudgementIndex Base} (h : Judgement i) :
     | .hasType Δ Γ t A => ∀ Γ' ρ, TmRen Γ Γ' ρ → HasType Δ Γ' (t.rename ρ) A := by
   induction h with
   | base | tyVar | tyLam | tyApp | tyAll | tyBool | tyArr | tySub | subsume => trivial
+  | conv _ hc ih =>
+      intro Γ' ρ hρ
+      exact Judgement.conv (ih _ _ hρ) hc
   | tmVar hn =>
       intro Γ' ρ hρ
       simpa [Expr.rename] using Judgement.tmVar (hρ hn)
@@ -78,6 +81,41 @@ theorem TmRen.succ : TmRen Γ (A :: Γ) Nat.succ := by
 
 theorem HasType.weaken (h : HasType Δ Γ t A) :
     HasType Δ (B :: Γ) (t.rename Nat.succ) A := h.rename TmRen.succ
+
+/-- Formation of every entry in a raw term context.  This is the natural
+extrinsic counterpart of the kernel's intrinsically formed `Ctx`. -/
+def TmCtx.Wf (Δ : KindCtx) (Γ : TmCtx Base) : Prop :=
+  ∀ A ∈ Γ, ∃ r, Kinded Δ A ⟨.star, r⟩
+
+theorem TmCtx.Wf.lookup {n : Nat} {A : Ty Base}
+    (hΓ : TmCtx.Wf Δ Γ) (hn : Γ[n]? = some A) :
+    ∃ r, Kinded Δ A ⟨.star, r⟩ := by
+  apply hΓ A
+  exact List.mem_of_getElem? hn
+
+/-- A typed raw term with the formation evidence that is implicit in every
+kernel term.  Bare `HasType` is intentionally weaker because `tmVar` accepts
+an arbitrary raw context entry. -/
+structure TypedTerm (Δ : KindCtx) (Γ : TmCtx Base) (t : Tm Base) (A : Ty Base) : Prop where
+  typing : HasType Δ Γ t A
+  formed : ∃ r, Kinded Δ A ⟨.star, r⟩
+
+def ArrowParts {Base : Type u} : JudgementIndex Base → Prop
+  | .kinded Δ (.tyArr A B) ⟨.star, _⟩ =>
+      (∃ s, Kinded Δ A ⟨.star, s⟩) ∧ (∃ s, Kinded Δ B ⟨.star, s⟩)
+  | _ => True
+
+theorem Judgement.arrowParts {i : JudgementIndex Base} (h : Judgement i) :
+    ArrowParts i := by
+  induction h <;> try trivial
+  case tyArr hA hB ihA ihB => exact ⟨⟨_, hA⟩, ⟨_, hB⟩⟩
+  case subsume Δ A r s h hrs ih => cases A <;> exact ih
+
+theorem kinded_arr_left (h : Kinded Δ (.tyArr A B) ⟨.star, r⟩) :
+    ∃ s, Kinded Δ A ⟨.star, s⟩ := (Judgement.arrowParts h).1
+
+theorem kinded_arr_right (h : Kinded Δ (.tyArr A B) ⟨.star, r⟩) :
+    ∃ s, Kinded Δ B ⟨.star, s⟩ := (Judgement.arrowParts h).2
 
 def TyRen (Δ Δ' : KindCtx) (ρ : Nat → Nat) : Prop :=
   ∀ ⦃n RK⦄, Δ[n]? = some RK → Δ'[ρ n]? = some RK

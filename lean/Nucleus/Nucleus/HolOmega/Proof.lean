@@ -1,4 +1,4 @@
-import Nucleus.HolOmega.Typing
+import Nucleus.HolOmega.TypingSubstitution
 
 /-!
 # Raw HOL-omega proof certificates
@@ -79,6 +79,17 @@ inductive EqTm {Base : Type u} :
       (heta : HasType Δ Γ
         (.tmTyLam RK (.tmTyApp f.liftTy (.tyVar 0))) (.tyAll RK A)) :
       EqTm Δ Γ (.tmTyLam RK (.tmTyApp f.liftTy (.tyVar 0))) f (.tyAll RK A)
+
+/-- Intrinsic-style eta: the single `TypedTerm` premise contains exactly what
+the shallow kernel's term index provides (typing and formation of its type).
+No checker-side typing certificate for the eta expansion is exposed. -/
+theorem EqTm.etaTyped (hf : TypedTerm Δ Γ f (.tyArr A B)) :
+    EqTm Δ Γ (.tmLam A (.tmApp (f.rename Nat.succ) (.tmVar 0))) f
+      (.tyArr A B) := by
+  rcases hf.formed with ⟨r, hAB⟩
+  rcases kinded_arr_left hAB with ⟨s, hA⟩
+  apply EqTm.eta hf.typing
+  exact Judgement.tmLam hA (Judgement.tmApp hf.typing.weaken (Judgement.tmVar rfl))
 
 /-- A raw hypothesis list is well typed when every member is Boolean in the
 same kind and term contexts. -/
