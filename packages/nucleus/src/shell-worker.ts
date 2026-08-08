@@ -155,7 +155,9 @@ self.addEventListener("message", async (event: MessageEvent<Start>) => {
   const guest = () => new Uint8Array(memory.buffer);
 
   const cas =
-    source.kind === "http" ? overHttp(source.baseUrl, guest) : overChannel(source.channel, guest);
+    source.kind === "http"
+      ? overHttp(source.baseUrl, guest)
+      : overChannel(source.channel, guest);
 
   try {
     const instance = await instantiate(wasm, {
@@ -192,7 +194,12 @@ function overHttp(baseUrl: string, guest: () => Uint8Array) {
     cas_length(handle: bigint): bigint {
       return BigInt(source.length(Number(handle)));
     },
-    cas_read(handle: bigint, offset: bigint, length: number, out: number): number {
+    cas_read(
+      handle: bigint,
+      offset: bigint,
+      length: number,
+      out: number,
+    ): number {
       const bytes = source.read(Number(handle), Number(offset), length);
       if (!bytes) return -1;
       guest().set(bytes, out);

@@ -202,7 +202,8 @@ test("a kernel serving something other than what was asked for is refused", asyn
     await drive(repl, host, `(connect ${JSON.stringify(baseUrl)})`);
     // An address the kernel does not hold: the fetch itself fails, and
     // nothing is stored either way.
-    const output = (await drive(repl, host, `(fetch ${"0".repeat(64)})`)).output;
+    const output = (await drive(repl, host, `(fetch ${"0".repeat(64)})`))
+      .output;
     return { output, held: repl.addresses() };
   }, kernel);
 
@@ -289,7 +290,11 @@ test("the shell in the browser has no filesystem to reach", async (context) => {
   const result = await page.evaluate(async () => {
     const { Repl, drive, host } = window.nucleus;
     const repl = new Repl();
-    return await drive(repl, host, '(sqlite "/etc/passwd" "-batch" "SELECT 1")');
+    return await drive(
+      repl,
+      host,
+      '(sqlite "/etc/passwd" "-batch" "SELECT 1")',
+    );
   });
 
   // Its databases arrive by address or not at all.
@@ -309,7 +314,11 @@ test("the shell runs in a process of its own", async (context) => {
     // The worker path is only available on a cross-origin-isolated page,
     // which is why the demo server sets COOP and COEP.
     const spawned = canSpawn();
-    const run = await drive(repl, host, `(sqlite ${address} "-batch" ".schema")`);
+    const run = await drive(
+      repl,
+      host,
+      `(sqlite ${address} "-batch" ".schema")`,
+    );
 
     // The REPL is still answering, which is the point of the shell not
     // sharing this instance.

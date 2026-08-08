@@ -80,7 +80,9 @@ export async function drive(
           ? "-- reading the remote kernel directly; ranges are not verified (#442)\n"
           : "";
         const trailer =
-          result.status === 0 ? "" : `\nshell exited with status ${result.status}`;
+          result.status === 0
+            ? ""
+            : `\nshell exited with status ${result.status}`;
         return {
           output: `${caveat}${result.stdout}${result.stderr}${trailer}`.replace(
             /\n+$/,

@@ -26,10 +26,7 @@ test("the browser REPL evaluates the same forms as the CLI", async () => {
 
   // A named list, not a sentence about a store -- and not a bare tuple whose
   // fields you have to remember the order of.
-  assert.equal(
-    value(repl, "(stats)"),
-    "((objects 0) (bytes 0) (largest 0))",
-  );
+  assert.equal(value(repl, "(stats)"), "((objects 0) (bytes 0) (largest 0))");
   assert.equal(value(repl, "(objects)"), "()");
   assert.equal(value(repl, "(kernels)"), '((0 "local" #t))');
   assert.match(value(repl, "(help)"), /\(connect "URL"\)/);

@@ -284,7 +284,12 @@ export function casImports(kernel: Repl, memory: () => WebAssembly.Memory) {
     cas_length(handle: bigint): bigint {
       return BigInt(kernel.objectLength(Number(handle)));
     },
-    cas_read(handle: bigint, offset: bigint, length: number, out: number): number {
+    cas_read(
+      handle: bigint,
+      offset: bigint,
+      length: number,
+      out: number,
+    ): number {
       try {
         const data = kernel.readObject(Number(handle), Number(offset), length);
         bytes().set(data, out);

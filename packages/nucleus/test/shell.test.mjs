@@ -14,7 +14,9 @@ async function setup() {
   const kernel = new Repl();
   const database = await readFile(new URL("./fixture.sqlite", import.meta.url));
   const address = kernel.admit(database).split(" ")[0];
-  const shell = await readFile(new URL("../generated/shell.wasm", import.meta.url));
+  const shell = await readFile(
+    new URL("../generated/shell.wasm", import.meta.url),
+  );
   return { kernel, address, shell };
 }
 
