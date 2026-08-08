@@ -153,6 +153,14 @@ def coherentAppAt (F : AtRank U r₁ (.arr K L)) (X : AtRank U r₂ K) :
   down U _ (coherentApp U F.whole X.whole)
     (max_le_max F.within X.within)
 
+theorem coherentAppAt_observe (F : AtRank U r₁ (.arr K L)) (X : AtRank U r₂ K) :
+    (coherentAppAt U F X).observe = appMax U F.observe X.observe := by
+  change F.whole.slice (max r₁ r₂) _ (X.whole.slice (max r₁ r₂) _) =
+    extend U (Nat.le_max_left r₁ r₂) (.arr K L) F.observe
+      (extend U (Nat.le_max_right r₁ r₂) K X.observe)
+  rw [F.whole.extend_natural F.within (Nat.le_max_left r₁ r₂)]
+  rw [X.whole.extend_natural X.within (Nat.le_max_right r₁ r₂)]
+
 /-- Beth's existing model supplies the prototype maps directly. -/
 example : Slice Beth.model r K = KindVal Beth.model.rank r K := rfl
 
