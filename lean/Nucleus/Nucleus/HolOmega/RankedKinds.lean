@@ -20,12 +20,12 @@ def WholeVal (U : Universe.{u}) : Kind → Type u
   | .star => U.Code
   | .arr K L => WholeVal U K → WholeVal U L
 
-def AtRank (U : Universe.{u}) (r : Nat) : (K : Kind) → WholeVal U K → Prop
+def PreservesSlice (U : Universe.{u}) (r : Nat) : (K : Kind) → WholeVal U K → Prop
   | .star, c => U.rank c ≤ r
-  | .arr K L, f => ∀ x, AtRank U r K x → AtRank U r L (f x)
+  | .arr K L, f => ∀ x, PreservesSlice U r K x → PreservesSlice U r L (f x)
 
-theorem AtRank.star_mono (hrs : r ≤ s) {c : WholeVal U .star}
-    (hc : AtRank U r .star c) : AtRank U s .star c := hc.trans hrs
+theorem PreservesSlice.star_mono (hrs : r ≤ s) {c : WholeVal U .star}
+    (hc : PreservesSlice U r .star c) : PreservesSlice U s .star c := hc.trans hrs
 
 variable (U : Universe.{u})
 
@@ -74,12 +74,71 @@ noncomputable def appMax (F : Slice U r₁ (.arr K L)) (X : Slice U r₂ K) :
 def Slice.toWholeStar (x : Slice U r .star) : WholeVal U .star := x.val
 
 theorem Slice.toWholeStar_atRank (x : Slice U r .star) :
-    AtRank U r .star (Slice.toWholeStar U x) := x.property
+    PreservesSlice U r .star (Slice.toWholeStar U x) := x.property
 
 /-- At base kind, the whole-value predicate and the existing kernel slice are
 literally the same subtype data. -/
-def wholeStarEquiv : {c : WholeVal U .star // AtRank U r .star c} ≃ Slice U r .star :=
+def wholeStarEquiv : {c : WholeVal U .star // PreservesSlice U r .star c} ≃ Slice U r .star :=
   Equiv.refl _
+
+/-!
+`PreservesSlice` alone is intentionally not called `AtRank`: at arrow kinds it
+is not monotone, since a larger rank admits new inputs.  The corrected whole
+domain is a coherent family of slices with both restriction and canonical
+extension laws. -/
+
+structure CoherentVal (K : Kind) where
+  slice : ∀ r, Slice U r K
+  restrict_natural : ∀ {r s} (hrs : r ≤ s),
+    restrict U hrs K (slice s) = slice r
+  extend_natural : ∀ {r s} (hrs : r ≤ s),
+    extend U hrs K (slice r) = slice s
+
+/-- A rank view retains the coherent whole value; only its observation level
+changes.  This is the restricted-graph presentation needed for higher-kind
+subsumption. -/
+structure AtRank (r : Nat) (K : Kind) where
+  whole : CoherentVal U K
+
+def AtRank.observe (x : AtRank U r K) : Slice U r K := x.whole.slice r
+
+def down (r : Nat) (x : CoherentVal U K) : AtRank U r K := ⟨x⟩
+def up (x : AtRank U r K) : CoherentVal U K := x.whole
+
+@[simp] theorem up_down (r : Nat) (x : CoherentVal U K) : up U (down U r x) = x := rfl
+@[simp] theorem down_up (x : AtRank U r K) : down U r (up U x) = x := by cases x; rfl
+
+/-- All-kind rank subsumption is monotone because both views share the same
+coherent whole value. -/
+def subsume (hrs : r ≤ s) (x : AtRank U r K) : AtRank U s K := ⟨x.whole⟩
+
+@[simp] theorem subsume_observe (hrs : r ≤ s) (x : AtRank U r K) :
+    (subsume U hrs x).observe = extend U hrs K x.observe := by
+  exact (x.whole.extend_natural hrs).symm
+
+/-- Coherent application is pointwise on every slice. -/
+noncomputable def coherentApp (F : CoherentVal U (.arr K L))
+    (X : CoherentVal U K) : CoherentVal U L where
+  slice r := F.slice r (X.slice r)
+  restrict_natural := by
+    intro r s hrs
+    have hF := F.restrict_natural hrs
+    have hX := X.extend_natural hrs
+    change restrict U hrs L (F.slice s (X.slice s)) = F.slice r (X.slice r)
+    rw [← hX]
+    have happ := congrFun hF (X.slice r)
+    simpa [restrict, restrict_extend] using happ
+  extend_natural := by
+    intro r s hrs
+    have hF := F.extend_natural hrs
+    have hX := X.restrict_natural hrs
+    change extend U hrs L (F.slice r (X.slice r)) = F.slice s (X.slice s)
+    rw [← hX]
+    have happ := congrFun hF (X.slice s)
+    simpa [extend, restrict_extend] using happ
+
+def coherentAppAt (F : AtRank U r₁ (.arr K L)) (X : AtRank U r₂ K) :
+    AtRank U (max r₁ r₂) L := down U _ (coherentApp U F.whole X.whole)
 
 /-- Beth's existing model supplies the prototype maps directly. -/
 example : Slice Beth.model r K = KindVal Beth.model.rank r K := rfl
