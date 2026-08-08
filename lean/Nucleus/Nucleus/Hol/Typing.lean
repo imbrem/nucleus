@@ -39,6 +39,49 @@ abbrev Kinded (A : Ty Base) := @Judgement Base (.kinded A)
 abbrev HasType (Γ : Ctx Base) (t : Tm Base) (A : Ty Base) :=
   @Judgement Base (.hasType Γ t A)
 
+/-- Formation evidence for every entry of a term context. -/
+def Ctx.WellFormed : Ctx Base → Prop
+  | [] => True
+  | A :: Γ => Kinded A ∧ Ctx.WellFormed Γ
+
+theorem Ctx.WellFormed.lookup {n : Nat} (hΓ : Ctx.WellFormed Γ)
+    (hn : Γ[n]? = some A) : Kinded A := by
+  induction Γ generalizing n A with
+  | nil => simp at hn
+  | cons B Γ ih =>
+    rcases hΓ with ⟨hB, hΓ⟩
+    cases n with
+    | zero =>
+      simp only [List.getElem?_cons_zero, Option.some.injEq] at hn
+      subst A
+      exact hB
+    | succ n => exact ih hΓ hn
+
+/-- Regularity: under a formed context, typing never manufactures an
+unformed result type.  The context hypothesis is necessary because `tmVar`
+deliberately performs only a lookup. -/
+theorem Judgement.regular : (h : @Judgement Base i) → match i with
+    | .kinded _ => True
+    | .hasType Γ _ A => Ctx.WellFormed Γ → Kinded A := by
+  intro h
+  induction h with
+  | base | tyBool | tyArr | tySub => trivial
+  | tmVar hn => exact fun hΓ => hΓ.lookup hn
+  | tmApp hf _ ihf _ =>
+    intro hΓ
+    have hArr := ihf hΓ
+    cases hArr with
+    | tyArr _ hB => exact hB
+  | tmLam hA _ _ iht => exact fun hΓ => .tyArr hA (iht ⟨hA, hΓ⟩)
+  | tmBool => exact fun _ => .tyBool
+  | tmEq => exact fun _ => .tyBool
+  | tmEps hA => exact fun _ => hA
+  | tmAbs hA hp _ _ _ => exact fun _ => .tySub hA hp
+  | tmRep hA => exact fun _ => hA
+
+theorem HasType.regular (h : HasType Γ t A) (hΓ : Ctx.WellFormed Γ) : Kinded A :=
+  Judgement.regular h hΓ
+
 def Ctx.toOmega (Γ : Ctx Base) : HolOmega.TmCtx Base := Γ.map Expr.toOmega
 
 @[simp] theorem Ctx.toOmega_cons : Ctx.toOmega (A :: Γ) = A.toOmega :: Ctx.toOmega Γ := rfl
