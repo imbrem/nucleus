@@ -8,6 +8,11 @@ import Nucleus.HolOmega.Substitution
 import Nucleus.HolOmega.Kernel
 import Nucleus.HolOmega.Model
 import Nucleus.HolOmega.Examples
+import Nucleus.Hol.Universe
+import Nucleus.Hol.Syntax
+import Nucleus.Hol.Typing
+import Nucleus.Hol.Kernel
+import Nucleus.Hol.Extension
 
 -- `Semantics.lean`, `Soundness.lean` and `Spec.lean` are not imported yet.
 -- They are written against a constant-domain `SoundModel` whose carrier
