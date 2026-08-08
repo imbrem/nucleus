@@ -18,7 +18,8 @@ abbrev ClosedProves {Base : Type u} (hypotheses : List (ClosedTm Base))
     hypotheses conclusion
 
 theorem empty_not_proves_false {Base : Type u} :
-    ¬ Nonempty (ClosedProves (Base := Base) [] (.bool false)) := by
+    ¬ Nonempty (Proves (emptyContext : FreeCtx Base)
+      (emptyBound : BoundCtx Base 0) [] (.bool false)) := by
   rintro ⟨proof⟩
   have mustBeTrue := proof.sound (emptyFreeEnv : FreeEnv (emptyContext : FreeCtx Base))
     (emptyBoundEnv : BoundEnv (emptyBound : BoundCtx Base 0)) (by

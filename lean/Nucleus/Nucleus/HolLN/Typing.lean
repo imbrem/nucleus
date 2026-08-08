@@ -4,10 +4,10 @@ import Nucleus.HolLN.Substitution
 # Syntax-directed typing
 
 Raw typing evidence lives in `Prop`; checked terms retain that proof behind a
-small façade.  The constructors are bound variable, free variable,
-application, lambda, Boolean literal, equality, choice, subtype abstraction,
-and subtype representation.  Type formation covers base, Boolean, arrow, and
-the fixed-context subtype predicate.
+small façade.  The term constructors are bound variable, free variable,
+application, lambda, Boolean literal, zero, successor, equality, choice,
+subtype abstraction, and subtype representation. Type formation covers base,
+Boolean, individual/natural, arrow, and the fixed-context subtype predicate.
 -/
 
 namespace Nucleus.HolLN
@@ -93,6 +93,11 @@ theorem Checked.scoped {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
     ScopedAt depth checked.term :=
   scopedAt_index checked.term
 
+theorem Checked.locallyClosed {Base : Type u} {Δ : FreeCtx Base} {A : Ty Base}
+    (checked : Checked Δ (emptyBound : BoundCtx Base 0) A) :
+    RequiredDepth checked.term = 0 := by
+  exact Nat.eq_zero_of_le_zero checked.scoped
+
 /-- Syntax annotations make the synthesized type unique. -/
 theorem HasType.unique {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
     {Γ : BoundCtx Base depth} {t : Tm Base depth} {A B : Ty Base}
@@ -139,6 +144,36 @@ theorem HasType.weakenFree {Base : Type u} {Δ Δ' : FreeCtx Base} {depth : Nat}
   | .abs hA hp hx => .abs hA hp (hx.weakenFree preserves)
   | .rep hA hp hx => .rep hA hp (hx.weakenFree preserves)
 
+/-- A free assumption unused by the term can be removed from its context. -/
+theorem HasType.strengthenFree {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
+    {Γ : BoundCtx Base depth} {t : Tm Base depth} {A : Ty Base} (name : Nat) :
+    HasType Δ Γ t A -> Fresh name t -> HasType (removeFree Δ name) Γ t A
+  | .bound hA lookup, _ => .bound hA lookup
+  | .free other hA lookup, freshness => by
+      have different : other ≠ name := by simpa [Fresh, FreeIn] using freshness
+      exact .free other hA (by simpa [removeFree, different] using lookup)
+  | .app hf hx, freshness =>
+      .app (hf.strengthenFree name (fun found => freshness (Or.inl found)))
+        (hx.strengthenFree name (fun found => freshness (Or.inr found)))
+  | .lam body hA ht, freshness =>
+      .lam body hA
+        (ht.strengthenFree name (fun found => freshness (Or.inr found)))
+  | .bool value, _ => .bool value
+  | .zero, _ => .zero
+  | .succ valueTyping, freshness => .succ (valueTyping.strengthenFree name freshness)
+  | .eq hA hx hy, freshness =>
+      .eq hA
+        (hx.strengthenFree name (fun found => freshness (Or.inr (Or.inl found))))
+        (hy.strengthenFree name (fun found => freshness (Or.inr (Or.inr found))))
+  | .eps hA hp, freshness =>
+      .eps hA (hp.strengthenFree name (fun found => freshness (Or.inr found)))
+  | .abs hA hp hx, freshness =>
+      .abs hA hp
+        (hx.strengthenFree name (fun found => freshness (Or.inr (Or.inr found))))
+  | .rep hA hp hx, freshness =>
+      .rep hA hp
+        (hx.strengthenFree name (fun found => freshness (Or.inr (Or.inr found))))
+
 def ContextRenaming {Base : Type u} {m n : Nat} (Γ : BoundCtx Base m)
     (Γ' : BoundCtx Base n) (ρ : Fin m -> Fin n) : Prop :=
   ∀ i, Γ' (ρ i) = Γ i
@@ -179,6 +214,51 @@ theorem HasType.weakenBound {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
     (typing : HasType Δ Γ t A) :
     HasType Δ (extendBound B Γ) (weaken t) A :=
   typing.renameBound (ρ := Fin.succ) (Γ' := extendBound B Γ) (fun _ => rfl)
+
+/-- Capture-avoiding substitution preserves typing. -/
+theorem HasType.substFree {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
+    {Γ : BoundCtx Base depth} {t replacement : Tm Base depth} {A B : Ty Base}
+    {name : Nat} (replacementTyping : HasType Δ Γ replacement B)
+    : HasType (extendFree Δ name B) Γ t A ->
+    HasType Δ Γ (Nucleus.HolLN.substFree name replacement t) A
+  | .bound hA lookup => by
+      simpa [Nucleus.HolLN.substFree] using HasType.bound (Δ := Δ) hA lookup
+  | .free other hA lookup => by
+      by_cases same : other = name
+      · subst other
+        have typeEquality : B = A := Option.some.inj (by simpa [extendFree] using lookup)
+        simpa [Nucleus.HolLN.substFree] using typeEquality ▸ replacementTyping
+      · have originalLookup : Δ other = some A := by
+          simpa [extendFree, same] using lookup
+        simpa [Nucleus.HolLN.substFree, same] using
+          HasType.free (Γ := Γ) other hA originalLookup
+  | .app hf hx => by
+      simpa [Nucleus.HolLN.substFree] using HasType.app
+        (HasType.substFree replacementTyping hf)
+        (HasType.substFree replacementTyping hx)
+  | .lam body hA ht => by
+      simpa [Nucleus.HolLN.substFree] using
+        HasType.lam (Γ := Γ) _ hA (HasType.substFree replacementTyping.weakenBound ht)
+  | .bool value => by
+      simpa [Nucleus.HolLN.substFree] using HasType.bool (Δ := Δ) (Γ := Γ) value
+  | .zero => by
+      simpa [Nucleus.HolLN.substFree] using HasType.zero (Δ := Δ) (Γ := Γ)
+  | .succ valueTyping => by
+      simpa [Nucleus.HolLN.substFree] using
+        HasType.succ (HasType.substFree replacementTyping valueTyping)
+  | .eq hA hx hy => by
+      simpa [Nucleus.HolLN.substFree] using HasType.eq hA
+        (HasType.substFree replacementTyping hx)
+        (HasType.substFree replacementTyping hy)
+  | .eps hA hp => by
+      simpa [Nucleus.HolLN.substFree] using
+        HasType.eps hA (HasType.substFree replacementTyping hp)
+  | .abs hA hp hx => by
+      simpa [Nucleus.HolLN.substFree] using
+        HasType.abs hA hp (HasType.substFree replacementTyping hx)
+  | .rep hA hp hx => by
+      simpa [Nucleus.HolLN.substFree] using
+        HasType.rep hA hp (HasType.substFree replacementTyping hx)
 
 def TypedSubstitution {Base : Type u} {Δ : FreeCtx Base} {m n : Nat}
     (source : BoundCtx Base m) (target : BoundCtx Base n)
@@ -231,5 +311,13 @@ theorem HasType.openBound {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
   refine Fin.cases ?_ (fun j => ?_) i
   · exact argumentTyping
   · exact .bound (wellFormed j) rfl
+
+theorem HasType.openFree {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
+    {Γ : BoundCtx Base depth} {A B : Ty Base} {body : Tm Base (depth + 1)}
+    {name : Nat} (bodyTyping : HasType Δ (extendBound A Γ) body B)
+    (hA : Kinded A) (lookup : Δ name = some A)
+    (wellFormed : ∀ i, Kinded (Γ i)) :
+    HasType Δ Γ (Nucleus.HolLN.openFree body name) B := by
+  apply bodyTyping.openBound (.free name hA lookup) wellFormed
 
 end Nucleus.HolLN

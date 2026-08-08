@@ -55,6 +55,37 @@ def Fresh {Base : Type u} (name : Nat) {s : HolSort} {n : Nat}
     (expression : Hol Base s n) : Prop :=
   ¬ FreeIn name expression
 
+theorem freeIn_rename_iff {Base : Type u} (name : Nat) {m n : Nat}
+    (ρ : Fin m -> Fin n) : (term : Tm Base m) ->
+      FreeIn name (rename ρ term) ↔ FreeIn name term
+  | .bound i => by simp [rename, FreeIn]
+  | .free other => by simp [rename, FreeIn]
+  | .app f x => by
+      simp [rename, FreeIn, freeIn_rename_iff name ρ f, freeIn_rename_iff name ρ x]
+  | .lam A body => by
+      simp [rename, FreeIn, freeIn_rename_iff name (liftRen ρ) body]
+  | .bool value => by simp [rename, FreeIn]
+  | .zero => by simp [rename, FreeIn]
+  | .succ value => by
+      simpa [rename, FreeIn] using freeIn_rename_iff name ρ value
+  | .eq A x y => by
+      simp [rename, FreeIn, freeIn_rename_iff name ρ x, freeIn_rename_iff name ρ y]
+  | .eps A p => by
+      simp [rename, FreeIn, freeIn_rename_iff name ρ p]
+  | .abs A p x => by
+      simp [rename, FreeIn, freeIn_rename_iff name ρ x]
+  | .rep A p x => by
+      simp [rename, FreeIn, freeIn_rename_iff name ρ x]
+
+theorem fresh_rename_iff {Base : Type u} (name : Nat) {m n : Nat}
+    (ρ : Fin m -> Fin n) (term : Tm Base m) :
+    Fresh name (rename ρ term) ↔ Fresh name term := by
+  simp [Fresh, freeIn_rename_iff]
+
+theorem fresh_weaken_iff {Base : Type u} (name : Nat) {n : Nat} (term : Tm Base n) :
+    Fresh name (weaken term) ↔ Fresh name term := by
+  exact fresh_rename_iff name Fin.succ term
+
 def RequiredDepth {Base : Type u} : {n : Nat} -> Tm Base n -> Nat
   | _, .bound i => i.val + 1
   | _, .free _ => 0

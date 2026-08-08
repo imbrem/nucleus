@@ -3,6 +3,7 @@ version = "0.1.0"
 defaultTargets = ["Nucleus"]
 
 [leanOptions]
+warningAsError = true
 pp.unicode.fun = true
 relaxedAutoImplicit = false
 weak.linter.style.header = false

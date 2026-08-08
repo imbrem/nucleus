@@ -1,4 +1,4 @@
-import Mathlib.Tactic
+import Mathlib.Tactic.Convert
 import Nucleus.HolLN.Kernel
 
 /-!
