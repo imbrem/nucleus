@@ -64,23 +64,44 @@ end
     simp only [extend, restrict]
     rw [ihK, ihL]
 
-theorem extend_comp (hrs : r ≤ s) (hst : s ≤ t) :
-    ∀ (K : Kind) (x : Slice U r K),
-      extend U hst K (extend U hrs K x) = extend U (hrs.trans hst) K x := by
-  intro K
+theorem extend_restrict_comp (hrs : r ≤ s) (hst : s ≤ t) (K : Kind) :
+    (∀ x : Slice U r K,
+      extend U hst K (extend U hrs K x) = extend U (hrs.trans hst) K x) ∧
+    (∀ x : Slice U t K,
+      restrict U hrs K (restrict U hst K x) = restrict U (hrs.trans hst) K x) := by
   induction K with
-  | star => intro x; rfl
+  | star =>
+    constructor
+    · intro x
+      rfl
+    · intro x
+      apply Subtype.ext
+      by_cases hs : U.rank x.val ≤ s
+      · by_cases hr : U.rank x.val ≤ r
+        · simp [restrict, hs, hr]
+        · simp [restrict, hs, hr, defaultSlice]
+      · have hr : ¬ U.rank x.val ≤ r := fun h => hs (h.trans hrs)
+        simp [restrict, hs, hr, defaultSlice, U.rank_boolCode]
   | arr K L ihK ihL =>
-    intro f
-    funext x
-    simp only [extend]
-    rw [show restrict U hrs K (restrict U hst K x) =
-        restrict U (hrs.trans hst) K x by
-      have h₁ := restrict_extend U hrs K (restrict U hst K x)
-      have h₂ := restrict_extend U (hrs.trans hst) K x
-      rw [← h₁, ← h₂, extend_comp U hrs hst K]
-      rfl]
-    exact ihL _
+    constructor
+    · intro f
+      funext x
+      simp only [extend]
+      rw [ihK.2]
+      exact ihL.1 _
+    · intro f
+      funext x
+      simp only [restrict]
+      rw [ihK.1]
+      exact ihL.2 _
+
+theorem extend_comp (hrs : r ≤ s) (hst : s ≤ t) (K : Kind) (x : Slice U r K) :
+    extend U hst K (extend U hrs K x) = extend U (hrs.trans hst) K x :=
+  (extend_restrict_comp U hrs hst K).1 x
+
+theorem restrict_comp (hrs : r ≤ s) (hst : s ≤ t) (K : Kind) (x : Slice U t K) :
+    restrict U hrs K (restrict U hst K x) = restrict U (hrs.trans hst) K x :=
+  (extend_restrict_comp U hrs hst K).2 x
 
 theorem restrict_extend_between (hrq : r ≤ q) (hqs : q ≤ s) (x : Slice U r K) :
     restrict U hqs K (extend U (hrq.trans hqs) K x) = extend U hrq K x := by
@@ -188,11 +209,10 @@ that a body interpretation must prove; application then consumes the result
 without further transports. -/
 noncomputable def coherentLam (m : Nat)
     (body : ∀ r, m ≤ r → Slice U r K → Slice U r L)
-    (hrestrict : ∀ {r s} (hr : m ≤ r) (hrs : r ≤ s) (x : Slice U s K),
-      restrict U hrs L (body s (hr.trans hrs) x) =
-        body r hr (restrict U hrs K x))
-    (hextend : ∀ {r s} (hr : m ≤ r) (hrs : r ≤ s) (x : Slice U r K),
-      extend U hrs L (body r hr x) = body s (hr.trans hrs) (extend U hrs K x)) :
+    (hrestrict : ∀ {r s} (hr : m ≤ r) (hrs : r ≤ s) (x : Slice U r K),
+      restrict U hrs L (body s (hr.trans hrs) (extend U hrs K x)) = body r hr x)
+    (hextend : ∀ {r s} (hr : m ≤ r) (hrs : r ≤ s) (x : Slice U s K),
+      extend U hrs L (body r hr (restrict U hrs K x)) = body s (hr.trans hrs) x) :
     CoherentVal U (.arr K L) where
   minRank := m
   slice r hr := body r hr
@@ -209,18 +229,17 @@ noncomputable def coherentLam (m : Nat)
     (body : ∀ r, m ≤ r → Slice U r K → Slice U r L) hr hres hext :
     (down U r (coherentLam U m body hres hext) hr).observe = body r hr := rfl
 
-def coherentAppAt (F : AtRank U r₁ (.arr K L)) (X : AtRank U r₂ K) :
+noncomputable def coherentAppAt (F : AtRank U r₁ (.arr K L)) (X : AtRank U r₂ K) :
     AtRank U (max r₁ r₂) L :=
   down U _ (coherentApp U F.whole X.whole)
     (max_le_max F.within X.within)
 
 theorem coherentAppAt_observe (F : AtRank U r₁ (.arr K L)) (X : AtRank U r₂ K) :
     (coherentAppAt U F X).observe = appMax U F.observe X.observe := by
-  change F.whole.slice (max r₁ r₂) _ (X.whole.slice (max r₁ r₂) _) =
-    extend U (Nat.le_max_left r₁ r₂) (.arr K L) F.observe
-      (extend U (Nat.le_max_right r₁ r₂) K X.observe)
-  rw [F.whole.extend_natural F.within (Nat.le_max_left r₁ r₂)]
-  rw [X.whole.extend_natural X.within (Nat.le_max_right r₁ r₂)]
+  change F.whole.slice (max r₁ r₂) _ (X.whole.slice (max r₁ r₂) _) = _
+  rw [← F.whole.extend_natural F.within (Nat.le_max_left r₁ r₂)]
+  rw [← X.whole.extend_natural X.within (Nat.le_max_right r₁ r₂)]
+  rfl
 
 /-- Every universe code yields a nonempty coherent base value, beginning at
 exactly its own rank. -/
@@ -240,7 +259,7 @@ noncomputable def coherentCode (c : U.Code) : CoherentVal U .star where
 
 /-- Constant higher-kind values show that the coherent domain is inhabited at
 every kind, not merely an interface whose laws might have no witnesses. -/
-noncomputable def coherentConst : (K : Kind) → CoherentVal U K
+noncomputable def coherentConst (U : Universe.{u}) : (K : Kind) → CoherentVal U K
   | .star => coherentCode U U.boolCode
   | .arr K L =>
       let out := coherentConst U L
@@ -257,7 +276,7 @@ noncomputable def coherentConst : (K : Kind) → CoherentVal U K
           simp only [extend]
           exact out.extend_natural hr hrs }
 
-instance coherentValInhabited (K : Kind) : Inhabited (CoherentVal U K) :=
+noncomputable instance coherentValInhabited (K : Kind) : Inhabited (CoherentVal U K) :=
   ⟨coherentConst U K⟩
 
 theorem coherentVal_nonempty (K : Kind) : Nonempty (CoherentVal U K) :=
@@ -270,7 +289,7 @@ theorem coherentVal_nonempty (K : Kind) : Nonempty (CoherentVal U K) :=
 
 /-- Coherent environments retain one whole value for every ranked binder,
 together with evidence that it is available at the binder's declared rank. -/
-def CoherentEnv : KindCtx → Type u
+def CoherentEnv (U : Universe.{u}) : KindCtx → Type u
   | [] => PUnit
   | RK :: Δ => AtRank U RK.rank RK.kind × CoherentEnv U Δ
 
@@ -287,7 +306,7 @@ def CoherentEnv.lookup {Δ : KindCtx} {n : Nat} {RK : RKind}
       exact ρ.1
     | succ n => exact ih (by simpa using h) ρ.2
 
-noncomputable def coherentEnvDefault : (Δ : KindCtx) → CoherentEnv U Δ
+noncomputable def coherentEnvDefault (U : Universe.{u}) : (Δ : KindCtx) → CoherentEnv U Δ
   | [] => PUnit.unit
   | RK :: Δ =>
       let x := coherentConst U RK.kind
