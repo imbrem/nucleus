@@ -80,6 +80,9 @@ inductive Expr (Base : Type u) : ExprSort → Type u
   | tyLam : RKind → Expr Base .ty → Expr Base .ty
   | tyApp : Expr Base .ty → Expr Base .ty → Expr Base .ty
   | tyAll : RKind → Expr Base .ty → Expr Base .ty
+  /-- Raw/store extension: primitive existential type.  This constructor has
+  no persisted store tag yet; see `crates/nucleus/src/hol/semantics.txt`. -/
+  | tyEx : RKind → Expr Base .ty → Expr Base .ty
   | tyBool : Expr Base .ty
   | tyArr : Expr Base .ty → Expr Base .ty → Expr Base .ty
   | tySub : Expr Base .ty → Expr Base .tm → Expr Base .ty
@@ -88,6 +91,12 @@ inductive Expr (Base : Type u) : ExprSort → Type u
   | tmLam : Expr Base .ty → Expr Base .tm → Expr Base .tm
   | tmTyApp : Expr Base .tm → Expr Base .ty → Expr Base .tm
   | tmTyLam : RKind → Expr Base .tm → Expr Base .tm
+  /-- Raw/store extension: package a witness type and payload for family `A`. -/
+  | tmPack : RKind → Expr Base .ty → Expr Base .ty → Expr Base .tm → Expr Base .tm
+  /-- Raw/store extension: eliminate a package with annotated family and
+  witness-independent answer type. -/
+  | tmUnpack : RKind → Expr Base .ty → Expr Base .ty → Expr Base .tm →
+      Expr Base .tm → Expr Base .tm
   | tmBool : Bool → Expr Base .tm
   | tmEq : Expr Base .ty → Expr Base .tm → Expr Base .tm → Expr Base .tm
   | tmEps : Expr Base .ty → Expr Base .tm → Expr Base .tm

@@ -34,6 +34,7 @@ def Expr.renameTy {Base : Type u} (ρ : Nat → Nat) :
   | _, .tyLam K A => .tyLam K (A.renameTy (liftRen ρ))
   | _, .tyApp F A => .tyApp (F.renameTy ρ) (A.renameTy ρ)
   | _, .tyAll K A => .tyAll K (A.renameTy (liftRen ρ))
+  | _, .tyEx K A => .tyEx K (A.renameTy (liftRen ρ))
   | _, .tyBool => .tyBool
   | _, .tyArr A B => .tyArr (A.renameTy ρ) (B.renameTy ρ)
   | _, .tySub A p => .tySub (A.renameTy ρ) (p.renameTy ρ)
@@ -42,6 +43,11 @@ def Expr.renameTy {Base : Type u} (ρ : Nat → Nat) :
   | _, .tmLam A t => .tmLam (A.renameTy ρ) (t.renameTy ρ)
   | _, .tmTyApp f A => .tmTyApp (f.renameTy ρ) (A.renameTy ρ)
   | _, .tmTyLam K t => .tmTyLam K (t.renameTy (liftRen ρ))
+  | _, .tmPack K A X t =>
+      .tmPack K (A.renameTy (liftRen ρ)) (X.renameTy ρ) (t.renameTy ρ)
+  | _, .tmUnpack K A B k p =>
+      .tmUnpack K (A.renameTy (liftRen ρ)) (B.renameTy ρ)
+        (k.renameTy (liftRen ρ)) (p.renameTy ρ)
   | _, .tmBool b => .tmBool b
   | _, .tmEq A x y => .tmEq (A.renameTy ρ) (x.renameTy ρ) (y.renameTy ρ)
   | _, .tmEps A p => .tmEps (A.renameTy ρ) (p.renameTy ρ)
@@ -61,6 +67,7 @@ def Expr.substTy {Base : Type u} (σ : Nat → Ty Base) :
   | _, .tyLam K A => .tyLam K (A.substTy (liftSub σ))
   | _, .tyApp F A => .tyApp (F.substTy σ) (A.substTy σ)
   | _, .tyAll K A => .tyAll K (A.substTy (liftSub σ))
+  | _, .tyEx K A => .tyEx K (A.substTy (liftSub σ))
   | _, .tyBool => .tyBool
   | _, .tyArr A B => .tyArr (A.substTy σ) (B.substTy σ)
   | _, .tySub A p => .tySub (A.substTy σ) (p.substTy σ)
@@ -69,6 +76,11 @@ def Expr.substTy {Base : Type u} (σ : Nat → Ty Base) :
   | _, .tmLam A t => .tmLam (A.substTy σ) (t.substTy σ)
   | _, .tmTyApp f A => .tmTyApp (f.substTy σ) (A.substTy σ)
   | _, .tmTyLam K t => .tmTyLam K (t.substTy (liftSub σ))
+  | _, .tmPack K A X t =>
+      .tmPack K (A.substTy (liftSub σ)) (X.substTy σ) (t.substTy σ)
+  | _, .tmUnpack K A B k p =>
+      .tmUnpack K (A.substTy (liftSub σ)) (B.substTy σ)
+        (k.substTy (liftSub σ)) (p.substTy σ)
   | _, .tmBool b => .tmBool b
   | _, .tmEq A x y => .tmEq (A.substTy σ) (x.substTy σ) (y.substTy σ)
   | _, .tmEps A p => .tmEps (A.substTy σ) (p.substTy σ)
@@ -83,6 +95,8 @@ def Expr.rename {Base : Type u} (ρ : Nat → Nat) : Tm Base → Tm Base
   | .tmLam A t => .tmLam A (t.rename (liftRen ρ))
   | .tmTyApp f A => .tmTyApp (f.rename ρ) A
   | .tmTyLam K t => .tmTyLam K (t.rename ρ)
+  | .tmPack K A X t => .tmPack K A X (t.rename ρ)
+  | .tmUnpack K A B k p => .tmUnpack K A B (k.rename (liftRen ρ)) (p.rename ρ)
   | .tmBool b => .tmBool b
   | .tmEq A x y => .tmEq A (x.rename ρ) (y.rename ρ)
   | .tmEps A p => .tmEps A (p.rename ρ)
@@ -101,6 +115,10 @@ def Expr.subst {Base : Type u} (σ : Nat → Tm Base) : Tm Base → Tm Base
   | .tmLam A t => .tmLam A (t.subst (liftTmSub σ))
   | .tmTyApp f A => .tmTyApp (f.subst σ) A
   | .tmTyLam K t => .tmTyLam K (t.subst fun n => (σ n).renameTy Nat.succ)
+  | .tmPack K A X t => .tmPack K A X (t.subst σ)
+  | .tmUnpack K A B k p =>
+      .tmUnpack K A B
+        (k.subst (liftTmSub fun n => (σ n).renameTy Nat.succ)) (p.subst σ)
   | .tmBool b => .tmBool b
   | .tmEq A x y => .tmEq A (x.subst σ) (y.subst σ)
   | .tmEps A p => .tmEps A (p.subst σ)
