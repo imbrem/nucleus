@@ -23,6 +23,33 @@ open Nucleus.Covalence
 
 abbrev Memory (Base : Type u) (Index : Type v) := Image Base Index
 
+/-- Runtime-facing lazy reference.  Constructing a cursor is O(1); it does
+not unfold or traverse memory. -/
+structure Cursor (Base : Type u) (Index : Type v) where
+  mem : Memory Base Index
+  index : Index
+  depth : Nat
+
+def Cursor.fetch (c : Cursor Base Index) : Option (Row Base Index) :=
+  match c.depth with
+  | 0 => none
+  | _ + 1 => c.mem c.index
+
+def Cursor.child (c : Cursor Base Index) : Option Index → Option (Cursor Base Index)
+  | none => none
+  | some i => match c.depth with
+    | 0 => none
+    | d + 1 => some ⟨c.mem, i, d⟩
+
+/-- A locally checked rule node stores only its direct fetch and child
+references.  No constructor recursively unfolds a child. -/
+structure LocalNode (Base : Type u) (Index : Type v) where
+  cursor : Cursor Base Index
+  row : Option (Row Base Index)
+  checked : row = cursor.fetch
+
+def Cursor.local (c : Cursor Base Index) : LocalNode Base Index := ⟨c, c.fetch, rfl⟩
+
 /-- The stable injection into the current persisted hole-name representation.
 It is kept explicit: unfolding never invents, shifts, or conflates names. -/
 structure Naming (Index : Type v) where
@@ -142,5 +169,10 @@ theorem cutoff_name (names : Naming Index) (mem : Memory Base Index) (i : Index)
 
 theorem distinct_cutoff_names (names : Naming Index) (hij : i ≠ j) :
     names.holeName i ≠ names.holeName j := fun h => hij (names.injective h)
+
+/-- The recursive specification is the semantics of a lazy cursor, never its
+runtime representation. -/
+def Cursor.denote (names : Naming Index) (c : Cursor Base Index) : Hol Base :=
+  unfold names c.mem c.depth c.index
 
 end Nucleus.Covalence.Memory
