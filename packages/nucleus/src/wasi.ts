@@ -148,7 +148,11 @@ export async function runShell(
       if (fd !== 0) return EBADF;
       const data = view();
       let total = 0;
-      for (let index = 0; index < count && stdinOffset < stdinBytes.length; index += 1) {
+      for (
+        let index = 0;
+        index < count && stdinOffset < stdinBytes.length;
+        index += 1
+      ) {
         const pointer = data.getUint32(iovs + index * 8, true);
         const length = data.getUint32(iovs + index * 8 + 4, true);
         const slice = stdinBytes.subarray(
@@ -227,7 +231,12 @@ export async function runShell(
     cas_length(handle: bigint): bigint {
       return BigInt(kernel.objectLength(Number(handle)));
     },
-    cas_read(handle: bigint, offset: bigint, length: number, out: number): number {
+    cas_read(
+      handle: bigint,
+      offset: bigint,
+      length: number,
+      out: number,
+    ): number {
       try {
         const data = kernel.readObject(Number(handle), Number(offset), length);
         bytes().set(data, out);
@@ -241,15 +250,16 @@ export async function runShell(
     },
   };
 
-  const source = wasm instanceof Response || wasm instanceof Promise
-    ? await WebAssembly.instantiateStreaming(wasm, {
-        wasi_snapshot_preview1: wasi,
-        "covalence:cas": cas,
-      })
-    : await WebAssembly.instantiate(wasm, {
-        wasi_snapshot_preview1: wasi,
-        "covalence:cas": cas,
-      });
+  const source =
+    wasm instanceof Response || wasm instanceof Promise
+      ? await WebAssembly.instantiateStreaming(wasm, {
+          wasi_snapshot_preview1: wasi,
+          "covalence:cas": cas,
+        })
+      : await WebAssembly.instantiate(wasm, {
+          wasi_snapshot_preview1: wasi,
+          "covalence:cas": cas,
+        });
 
   const instance = "instance" in source ? source.instance : source;
   memory = instance.exports.memory as WebAssembly.Memory;

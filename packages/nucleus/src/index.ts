@@ -63,9 +63,14 @@ export async function drive(
           args: step.arguments,
         });
         const trailer =
-          result.status === 0 ? "" : `\nshell exited with status ${result.status}`;
+          result.status === 0
+            ? ""
+            : `\nshell exited with status ${result.status}`;
         return {
-          output: `${result.stdout}${result.stderr}${trailer}`.replace(/\n+$/, ""),
+          output: `${result.stdout}${result.stderr}${trailer}`.replace(
+            /\n+$/,
+            "",
+          ),
           quit: false,
         };
       } catch (error) {
