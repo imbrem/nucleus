@@ -12,15 +12,15 @@ import Nucleus.HolOmega.Kernel
 import Nucleus.HolOmega.Model
 import Nucleus.HolOmega.Examples
 import Nucleus.HolOmega.ProofTyping
+import Nucleus.HolOmega.Semantics
+import Nucleus.HolOmega.SemanticSubstitution
+import Nucleus.HolOmega.Soundness
+import Nucleus.HolOmega.LogicalSoundness
+import Nucleus.HolOmega.Consistency
+import Nucleus.HolOmega.Spec
 import Nucleus.Hol.Universe
 import Nucleus.Hol.Syntax
 import Nucleus.Hol.Substitution
 import Nucleus.Hol.Typing
 import Nucleus.Hol.Kernel
 import Nucleus.Hol.Extension
-
--- `Semantics.lean`, `Soundness.lean` and `Spec.lean` are not imported yet.
--- They are written against a constant-domain `SoundModel` whose carrier
--- ignores the kind environment, which a real `TY_ALL` rules out: `tmTyApp`
--- would force one domain for every instantiation, collapsing the model to a
--- singleton. They are being rewritten to denote into `Kernel.Universe`.
