@@ -621,6 +621,22 @@ pub const fn __o256_from_hex(input: &str) -> O256 {
     }
 }
 
+#[doc(hidden)]
+pub const fn __assert_hash_eq(actual: &[u8], expected: &[u8]) {
+    assert!(
+        actual.len() == expected.len(),
+        "checked-in hash has the wrong width"
+    );
+    let mut index = 0;
+    while index < actual.len() {
+        assert!(
+            actual[index] == expected[index],
+            "checked-in hash does not match the derived value"
+        );
+        index += 1;
+    }
+}
+
 /// Constructs an [`O256`] from a hexadecimal literal at compile time.
 ///
 /// ```compile_fail
@@ -629,24 +645,104 @@ pub const fn __o256_from_hex(input: &str) -> O256 {
 /// ```
 #[macro_export]
 macro_rules! o256 {
-    ($hex:literal) => {{
-        const VALUE: $crate::O256 = $crate::__o256_from_hex($hex);
-        VALUE
-    }};
+    ($hex:literal) => {
+        const { $crate::__o256_from_hex($hex) }
+    };
 }
 
-/// Declares a checked-in BLAKE3 context key.
+/// Checks a derived object against a checked-in hexadecimal literal.
 ///
-/// The context expression documents what must be used to validate the
-/// precomputed value; validation is performed in a test because BLAKE3 is not
-/// const-evaluable.
+/// The value is derived by the compiler; the literal records it in the source
+/// and is asserted to be equal, so a derivation that changes fails the build
+/// rather than silently renaming everything below it. The expression must be
+/// const-evaluable, and the object 32 bytes wide.
+///
+/// ```
+/// use covalence_lib_hash::{O256, checked_o256};
+///
+/// const ABC: O256 = checked_o256!(
+///     O256::chash(b"abc"),
+///     "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85",
+/// );
+/// ```
+///
+/// ```compile_fail
+/// use covalence_lib_hash::{O256, checked_o256};
+///
+/// const WRONG: O256 = checked_o256!(
+///     O256::chash(b"abc"),
+///     "0000000000000000000000000000000000000000000000000000000000000000",
+/// );
+/// ```
+#[macro_export]
+macro_rules! checked_o256 {
+    ($value:expr, $hex:literal $(,)?) => {
+        const {
+            let value = $value;
+            $crate::__assert_hash_eq(value.as_bytes(), $crate::__o256_from_hex($hex).as_bytes());
+            value
+        }
+    };
+}
+
+/// Derives a BLAKE3 context key from a context string.
+///
+/// A leading `const` derives the key at compile time, where a checked-in
+/// hexadecimal literal may also follow it. The literal is redundant — the
+/// compiler derives the key either way — but it records the key in the source
+/// and is asserted equal to the derived value. Without `const` the key is
+/// derived at run time by the vectorized implementation, which is what a
+/// context computed at run time wants.
+///
+/// ```
+/// use covalence_lib_hash::{CtxKey, ctx_key};
+///
+/// const KEY: CtxKey = ctx_key!(const "covalence example context");
+/// const SAME: CtxKey = ctx_key!(
+///     const "covalence example context",
+///     "ea48a7bdc2c98b0bade3c8446aad5240aa149aa234cfe0b3ede897b7e278f05a",
+/// );
+/// # #[cfg(feature = "blake3")]
+/// # {
+/// let context = String::from("covalence example context");
+/// assert_eq!(ctx_key!(context.as_str()), KEY);
+/// # }
+/// ```
+///
+/// ```compile_fail
+/// use covalence_lib_hash::{CtxKey, ctx_key};
+///
+/// const WRONG: CtxKey = ctx_key!(
+///     const "covalence example context",
+///     "0000000000000000000000000000000000000000000000000000000000000000",
+/// );
+/// ```
 #[macro_export]
 macro_rules! ctx_key {
-    ($context:expr, $hex:literal) => {{
-        const _: &str = $context;
-        const VALUE: $crate::CtxKey = $crate::o256!($hex).coerce();
-        VALUE
-    }};
+    (const $context:expr $(,)?) => {
+        const { $crate::CtxKey::cderive($context) }
+    };
+    (const $context:expr, $hex:literal $(,)?) => {
+        $crate::checked_o256!($crate::CtxKey::cderive($context), $hex)
+    };
+    ($context:expr $(,)?) => {
+        $crate::CtxKey::derive($context)
+    };
+    ($context:expr, $hex:literal $(,)?) => {
+        compile_error!("a checked-in hash needs a compile-time key: `ctx_key!(const ..., \"..\")`")
+    };
+}
+
+#[doc(hidden)]
+#[must_use]
+pub const fn __as_ctx_key(value: CtxKey) -> CtxKey {
+    value
+}
+
+#[doc(hidden)]
+#[must_use]
+pub const fn __as_o256(value: O256) -> O256 {
+    value
 }
 
 #[doc(hidden)]
@@ -668,6 +764,9 @@ macro_rules! __o256_path_tail {
     ($value:ident;) => {
         $value
     };
+    ($value:ident; = $hex:literal) => {
+        compile_error!("a checked-in hash needs a compile-time path: `o256_path!(const ..)`")
+    };
     ($value:ident; . $next:ident $($tail:tt)*) => {{
         let value = $value.tag(stringify!($next));
         $crate::__o256_path_tail!(value; $($tail)*)
@@ -678,12 +777,63 @@ macro_rules! __o256_path_tail {
     }};
 }
 
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __o256_cpath {
+    (:: $($path:tt)+) => {
+        $crate::__o256_cpath_start!($crate::COV; $($path)+)
+    };
+    ($context:ident :: $($path:tt)+) => {
+        $crate::__o256_cpath_start!($crate::__as_ctx_key($context); $($path)+)
+    };
+    ({ $context:expr } :: $($path:tt)+) => {
+        $crate::__o256_cpath_start!($crate::__as_ctx_key($context); $($path)+)
+    };
+    ($root:ident . $($path:tt)+) => {
+        $crate::__o256_cpath_start!($crate::__as_o256($root); $($path)+)
+    };
+    ({ $root:expr } . $($path:tt)+) => {
+        $crate::__o256_cpath_start!($crate::__as_o256($root); $($path)+)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __o256_cpath_start {
+    ($root:expr; $first:ident $($tail:tt)*) => {
+        $crate::__o256_cpath_tail!($root.ctag(stringify!($first).as_bytes()); $($tail)*)
+    };
+    ($root:expr; { $first:expr } $($tail:tt)*) => {
+        $crate::__o256_cpath_tail!($root.ctag($first); $($tail)*)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __o256_cpath_tail {
+    ($value:expr;) => {
+        $value
+    };
+    ($value:expr; = $hex:literal) => {{
+        let value = $value;
+        $crate::__assert_hash_eq(value.as_bytes(), $crate::__o256_from_hex($hex).as_bytes());
+        value
+    }};
+    ($value:expr; . $next:ident $($tail:tt)*) => {
+        $crate::__o256_cpath_tail!($value.ctag(stringify!($next).as_bytes()); $($tail)*)
+    };
+    ($value:expr; . { $next:expr } $($tail:tt)*) => {
+        $crate::__o256_cpath_tail!($value.ctag($next); $($tail)*)
+    };
+}
+
 /// Derives an absolute or relative O256 path.
 ///
 /// Absolute paths begin with `::` and default to [`COV`]. A named context
 /// key may precede `::`. Relative paths start with a named O256 followed by
 /// `.`. Braced expressions may provide either a root or an interpolated path
-/// segment.
+/// segment. The path is derived at run time by the vectorized implementation,
+/// which is what an interpolated segment computed at run time wants.
 ///
 /// ```
 /// # #[cfg(feature = "blake3")] {
@@ -702,38 +852,69 @@ macro_rules! __o256_path_tail {
 /// );
 /// # }
 /// ```
+///
+/// A leading `const` derives the path at compile time instead, so a constant
+/// that is a path can be written as one. A checked-in hexadecimal literal may
+/// follow it after `=`; it records the derived object in the source and is
+/// asserted equal to it. Segments of a `const` path are byte slices, so
+/// interpolated text needs [`str::as_bytes`].
+///
+/// ```
+/// use covalence_lib_hash::{o256_path, COV, O256};
+///
+/// const LIST: O256 = o256_path!(const ::sexpr.list);
+/// const CHECKED: O256 = o256_path!(
+///     const ::sexpr.list = "b6bfaa583838f65a93c01f71b654481d7446764a9008f93dd0e3816ab9e33fd0"
+/// );
+///
+/// const SEGMENT: &str = "list";
+/// assert_eq!(o256_path!(const COV::sexpr.{SEGMENT.as_bytes()}), LIST);
+/// ```
+///
+/// ```compile_fail
+/// use covalence_lib_hash::{o256_path, O256};
+///
+/// const WRONG: O256 = o256_path!(
+///     const ::sexpr.list = "0000000000000000000000000000000000000000000000000000000000000000"
+/// );
+/// ```
+///
+/// A checked-in hash is asserted at compile time, so it needs a `const` path.
+///
+/// ```compile_fail
+/// use covalence_lib_hash::o256_path;
+///
+/// let path = o256_path!(
+///     ::sexpr.list = "b6bfaa583838f65a93c01f71b654481d7446764a9008f93dd0e3816ab9e33fd0"
+/// );
+/// ```
 #[macro_export]
 macro_rules! o256_path {
-    (:: $($path:tt)+) => {{
+    (const $($path:tt)+) => {
+        const { $crate::__o256_cpath!($($path)+) }
+    };
+    (:: $($path:tt)+) => {
         $crate::__o256_path_start!($crate::COV; $($path)+)
-    }};
-    ($context:ident :: $($path:tt)+) => {{
-        let context: $crate::CtxKey = $context;
-        $crate::__o256_path_start!(context; $($path)+)
-    }};
-    ({ $context:expr } :: $($path:tt)+) => {{
-        let context: $crate::CtxKey = $context;
-        $crate::__o256_path_start!(context; $($path)+)
-    }};
-    ($root:ident . $($path:tt)+) => {{
-        let root: $crate::O256 = $root;
-        $crate::__o256_path_start!(root; $($path)+)
-    }};
-    ({ $root:expr } . $($path:tt)+) => {{
-        let root: $crate::O256 = $root;
-        $crate::__o256_path_start!(root; $($path)+)
-    }};
-    // Legacy expression form for non-identifier path components.
-    ($root:expr, $first:expr $(, $rest:expr)* $(,)?) => {{
-        let value = $root.tag($first);
-        $(let value = value.tag($rest);)*
-        value
-    }};
+    };
+    ($context:ident :: $($path:tt)+) => {
+        $crate::__o256_path_start!($crate::__as_ctx_key($context); $($path)+)
+    };
+    ({ $context:expr } :: $($path:tt)+) => {
+        $crate::__o256_path_start!($crate::__as_ctx_key($context); $($path)+)
+    };
+    ($root:ident . $($path:tt)+) => {
+        $crate::__o256_path_start!($crate::__as_o256($root); $($path)+)
+    };
+    ({ $root:expr } . $($path:tt)+) => {
+        $crate::__o256_path_start!($crate::__as_o256($root); $($path)+)
+    };
 }
 
 /// Asserts that an O256 literal is the named path below a root.
 ///
-/// This is intended for tests accompanying checked-in protocol constants.
+/// This checks a value that is not itself derived from a path. A constant that
+/// is a path should be written as one: `o256_path!(const …)` derives it, and a
+/// checked-in literal after `=` asserts it at compile time.
 #[macro_export]
 macro_rules! assert_o256_path {
     ($expected:expr, $($path:tt)+) => {
@@ -926,16 +1107,17 @@ mod tests {
     fn literal_macros_are_const_and_paths_are_checked() {
         const VALUE: O256 =
             o256!("abababababababababababababababababababababababababababababababab");
-        const CONTEXT: CtxKey = ctx_key!(
-            "test context",
-            "abababababababababababababababababababababababababababababababab"
-        );
+        const CONTEXT: CtxKey = ctx_key!(const "test context");
+        const PATH: O256 = o256_path!(const ::test.leaf);
         assert_eq!(VALUE.as_bytes(), &[0xab; 32]);
-        assert_eq!(CONTEXT.as_bytes(), &[0xab; 32]);
+        assert_eq!(CONTEXT, CtxKey::cderive("test context"));
+        assert_eq!(PATH, COV.ctag(b"test").ctag(b"leaf"));
 
         #[cfg(feature = "blake3")]
         {
             let expected = COV.tag("test").tag("leaf");
+            assert_eq!(PATH, expected);
+            assert_eq!(CONTEXT, ctx_key!("test context"));
             assert_eq!(o256_path!(::test.leaf), expected);
             assert_eq!(o256_path!(COV::test.leaf), expected);
             assert_eq!(
@@ -944,6 +1126,7 @@ mod tests {
             );
             assert_o256_path!(expected, ::test.leaf);
             assert_o256_path!(expected, COV::test.leaf);
+            assert_o256_path!(expected, const ::test.leaf);
             assert_o256_path!(COV_ROOT.tag("test").tag("leaf"), COV_ROOT.test.leaf);
             let segment = "leaf";
             assert_eq!(o256_path!(COV::test.{segment}), expected);
@@ -953,5 +1136,42 @@ mod tests {
                 Cov::ROOT.tag("test").tag(segment)
             );
         }
+    }
+
+    #[test]
+    fn const_paths_take_the_same_roots_and_segments() {
+        const SEGMENT: &str = "leaf";
+        const EXPECTED: O256 = COV.ctag(b"test").ctag(b"leaf");
+
+        assert_eq!(o256_path!(const COV::test.leaf), EXPECTED);
+        assert_eq!(o256_path!(const { Cov::ROOT_CTX }::test.leaf), EXPECTED);
+        assert_eq!(o256_path!(const COV::test.{SEGMENT.as_bytes()}), EXPECTED);
+        assert_eq!(
+            o256_path!(const COV_ROOT.test.leaf),
+            COV_ROOT.ctag(b"test").ctag(b"leaf")
+        );
+        assert_eq!(
+            o256_path!(const { Cov::ROOT }.test.{SEGMENT.as_bytes()}),
+            COV_ROOT.ctag(b"test").ctag(b"leaf")
+        );
+    }
+
+    #[test]
+    fn checked_literals_are_derived_and_asserted_at_compile_time() {
+        const CONTEXT: CtxKey = ctx_key!(
+            const "test context",
+            "692c68910d09e12d9a0cee5c4821f6b61fee980a0780bdd3fa0d83804634fb20"
+        );
+        const PATH: O256 = o256_path!(
+            const ::test.leaf = "1d8d574f649a28af6b351f0b92f3eef75a91f8d504ed2d9db738ecc1087e0225"
+        );
+        const CHECKED: O256 = checked_o256!(
+            O256::chash(b"abc"),
+            "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85"
+        );
+
+        assert_eq!(CONTEXT, ctx_key!(const "test context"));
+        assert_eq!(PATH, o256_path!(const ::test.leaf));
+        assert_eq!(CHECKED, O256::chash(b"abc"));
     }
 }

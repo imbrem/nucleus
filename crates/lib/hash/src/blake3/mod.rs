@@ -1,9 +1,8 @@
 //! Covalence and BLAKE3-family namespaces and operations.
 
-#[cfg(feature = "blake3")]
 mod cv;
+mod konst;
 
-#[cfg(feature = "blake3")]
 pub use cv::{Blake3Cv, Blake3Merkle};
 
 use crate::{Namespace, O256, Obj, Opaque, RootedNamespace};
@@ -81,15 +80,21 @@ impl Cov {
     pub const ROOT_CTX_KEY: &'static str =
         "covalence 0.0.0 38d89420af90780c9e244ee03024ec81f62f4e68949152d64f0a8c5d8caede4e";
 
-    /// Precomputed BLAKE3 context key for [`Self::ROOT_CTX_KEY`].
+    /// BLAKE3 context key derived from [`Self::ROOT_CTX_KEY`].
+    ///
+    /// The hexadecimal literal is redundant: the compiler derives the key, and
+    /// the literal records the expected value and fails the build if the
+    /// hierarchy ever moves.
     pub const ROOT_CTX: CtxKey = crate::ctx_key!(
-        Cov::ROOT_CTX_KEY,
+        const Cov::ROOT_CTX_KEY,
         "9d4dd8ba210b01b0332a3481238222c990c6a7f6df58a1a63f2e741833793a96"
     );
 
     /// Context-keyed hash of the empty string under [`Self::ROOT_CTX`].
-    pub const ROOT: O256 =
-        crate::o256!("ca3ad8d7ae65099e3cc8caa64aff13976f6ba3863a77454dd8b37fb6efd1f783");
+    pub const ROOT: O256 = crate::checked_o256!(
+        Cov::ROOT_CTX.croot(),
+        "ca3ad8d7ae65099e3cc8caa64aff13976f6ba3863a77454dd8b37fb6efd1f783"
+    );
 }
 
 /// Standard Covalence BLAKE3 context key.
@@ -137,6 +142,27 @@ impl Obj<Blake3> {
     #[must_use]
     pub const fn into_o256(self) -> O256 {
         self.coerce()
+    }
+
+    /// Hashes bytes in a `const` context.
+    ///
+    /// This is the compile-time form of unkeyed BLAKE3. It agrees with the
+    /// runtime implementation on every input, but compresses one block at a
+    /// time; prefer the runtime form for anything but the short inputs that
+    /// appear in constants.
+    ///
+    /// ```
+    /// use covalence_lib_hash::Blake3Hash;
+    ///
+    /// const DIGEST: Blake3Hash = Blake3Hash::chash(b"abc");
+    /// assert_eq!(
+    ///     DIGEST.to_string(),
+    ///     "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85",
+    /// );
+    /// ```
+    #[must_use]
+    pub const fn chash(bytes: &[u8]) -> Self {
+        Obj::from_array(konst::hash(bytes))
     }
 }
 
@@ -226,6 +252,40 @@ impl Obj<CtxKeyNamespace> {
     }
 }
 
+impl Obj<CtxKeyNamespace> {
+    /// Derives a context key from a context string in a `const` context.
+    ///
+    /// This is the compile-time form of `derive`, and the way a checked-in
+    /// context key is now written.
+    ///
+    /// ```
+    /// use covalence_lib_hash::CtxKey;
+    ///
+    /// const KEY: CtxKey = CtxKey::cderive("covalence example context");
+    /// ```
+    #[must_use]
+    pub const fn cderive(context: &str) -> CtxKey {
+        Obj::from_array(konst::hash_derive_key_context(context))
+    }
+
+    /// Tags bytes under this context key in a `const` context.
+    ///
+    /// This is the compile-time form of [`tag`](Obj::tag).
+    #[must_use]
+    pub const fn ctag(&self, bytes: &[u8]) -> O256 {
+        O256::cctx(self, bytes)
+    }
+
+    /// Returns the empty-string root under this context key, in a `const`
+    /// context.
+    ///
+    /// This is the compile-time form of `root`.
+    #[must_use]
+    pub const fn croot(&self) -> O256 {
+        self.ctag(&[])
+    }
+}
+
 #[cfg(feature = "blake3")]
 impl O256 {
     /// Hashes bytes under a context key.
@@ -238,6 +298,74 @@ impl O256 {
     #[must_use]
     pub const fn root() -> Self {
         Cov::ROOT
+    }
+}
+
+impl O256 {
+    /// Hashes bytes in a `const` context.
+    ///
+    /// This is the compile-time form of [`from_bytes`](Obj::from_bytes), and
+    /// agrees with it on every input. Const evaluation is an interpreter, so
+    /// it is meant for the short inputs constants are built from: an input of
+    /// tens of kilobytes exceeds rustc's `long_running_const_eval` limit, and
+    /// at run time this is far slower than the vectorized implementation.
+    ///
+    /// ```
+    /// use covalence_lib_hash::O256;
+    ///
+    /// const DIGEST: O256 = O256::chash(b"abc");
+    /// assert_eq!(
+    ///     DIGEST.to_string(),
+    ///     "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85",
+    /// );
+    /// ```
+    #[must_use]
+    pub const fn chash(bytes: &[u8]) -> Self {
+        Obj::from_array(konst::hash(bytes))
+    }
+
+    /// Hashes bytes under a 256-bit key in a `const` context.
+    ///
+    /// This is the compile-time form of
+    /// [`with_key`](Obj::with_key)`::<O256>`.
+    #[must_use]
+    pub const fn ckeyed(key: &O256, bytes: &[u8]) -> Self {
+        Obj::from_array(konst::keyed_hash(key.as_bytes(), bytes))
+    }
+
+    /// Hashes bytes under a human-readable context string, in a `const`
+    /// context.
+    ///
+    /// This is the compile-time form of [`with_key`](Obj::with_key)`::<str>`.
+    /// It hashes the context on every call; deriving the key once with
+    /// [`CtxKey::cderive`] and calling [`cctx`](Self::cctx) reaches the same
+    /// object without repeating that work.
+    #[must_use]
+    pub const fn cderive_key(context: &str, bytes: &[u8]) -> Self {
+        Obj::from_array(konst::derive_key(context, bytes))
+    }
+
+    /// Hashes bytes under a context key in a `const` context.
+    ///
+    /// This is the compile-time form of `with_ctx`.
+    #[must_use]
+    pub const fn cctx(key: &CtxKey, bytes: &[u8]) -> Self {
+        Obj::from_array(konst::hash_from_context_key(key.as_bytes(), bytes))
+    }
+
+    /// Derives a child object by tagging bytes with this object, in a `const`
+    /// context.
+    ///
+    /// This is the compile-time form of [`tag`](Obj::tag).
+    ///
+    /// ```
+    /// use covalence_lib_hash::{COV_ROOT, O256};
+    ///
+    /// const LIST: O256 = COV_ROOT.ctag(b"sexpr").ctag(b"list");
+    /// ```
+    #[must_use]
+    pub const fn ctag(&self, bytes: &[u8]) -> Self {
+        Self::ckeyed(self, bytes)
     }
 }
 
@@ -310,9 +438,140 @@ impl TagNamespace for CtxKeyNamespace {
 #[cfg(feature = "random")]
 impl crate::RandomNamespace for Cov {}
 
+#[cfg(test)]
+mod const_tests {
+    use super::*;
+
+    /// Published BLAKE3 vectors, which the const implementation must
+    /// reproduce without the reference implementation being compiled in.
+    #[test]
+    fn const_hashing_reproduces_published_vectors() {
+        const EMPTY: O256 = O256::chash(b"");
+        const ABC: O256 = O256::chash(b"abc");
+        const DIGEST: Blake3Hash = Blake3Hash::chash(b"abc");
+
+        assert_eq!(
+            EMPTY.to_string(),
+            "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+        );
+        assert_eq!(
+            ABC.to_string(),
+            "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85"
+        );
+        assert_eq!(DIGEST.into_o256(), ABC);
+    }
+
+    /// The standard hierarchy is derived, not checked in, so evaluating these
+    /// constants at all exercises the derive-key context and context-key modes
+    /// against the values [`Cov`] records.
+    #[test]
+    fn the_standard_hierarchy_is_derived_at_compile_time() {
+        assert_eq!(Cov::ROOT_CTX, CtxKey::cderive(Cov::ROOT_CTX_KEY));
+        assert_eq!(Cov::ROOT, Cov::ROOT_CTX.croot());
+        assert_eq!(Cov::ROOT, COV.ctag(b""));
+        assert_eq!(
+            Cov::ROOT_CTX.to_string(),
+            "9d4dd8ba210b01b0332a3481238222c990c6a7f6df58a1a63f2e741833793a96"
+        );
+        assert_eq!(
+            Cov::ROOT.to_string(),
+            "ca3ad8d7ae65099e3cc8caa64aff13976f6ba3863a77454dd8b37fb6efd1f783"
+        );
+    }
+
+    /// Inputs long enough to build a tree still evaluate at compile time.
+    #[test]
+    fn multi_chunk_inputs_evaluate_at_compile_time() {
+        const INPUT: [u8; 2049] = [0x5a; 2049];
+        const DIGEST: O256 = O256::chash(&INPUT);
+        const TAGGED: O256 = COV_ROOT.ctag(&INPUT);
+
+        assert_ne!(DIGEST, O256::default());
+        assert_ne!(TAGGED, DIGEST);
+    }
+}
+
 #[cfg(all(test, any(feature = "blake3", feature = "sha256", feature = "random")))]
 mod tests {
     use super::*;
+
+    /// Lengths that straddle every block, chunk, and subtree boundary the tree
+    /// hasher distinguishes.
+    #[cfg(feature = "blake3")]
+    const BOUNDARY_LENGTHS: &[usize] = &[
+        0, 1, 2, 63, 64, 65, 127, 128, 129, 1023, 1024, 1025, 2047, 2048, 2049, 3072, 3073, 4096,
+        4097, 5120, 6144, 8192, 8193, 16_384, 16_385, 31_744, 65_536,
+    ];
+
+    #[cfg(feature = "blake3")]
+    fn boundary_input(length: usize) -> Vec<u8> {
+        (0..length)
+            .map(|index| u8::try_from(index % 251).expect("index modulo 251 is a byte"))
+            .collect()
+    }
+
+    #[cfg(feature = "blake3")]
+    #[test]
+    fn const_hashing_matches_the_reference_implementation_in_every_mode() {
+        let key = O256::from_array([7; 32]);
+        let context = "covalence 0.0.0 const hashing test context";
+        let context_key = CtxKey::derive(context);
+
+        assert_eq!(context_key, CtxKey::cderive(context));
+
+        for &length in BOUNDARY_LENGTHS {
+            let input = boundary_input(length);
+            assert_eq!(
+                O256::chash(&input),
+                O256::from_bytes(&input),
+                "unkeyed hash of {length} bytes"
+            );
+            assert_eq!(
+                Blake3Hash::chash(&input),
+                Blake3Hash::from_bytes(&input),
+                "unkeyed digest of {length} bytes"
+            );
+            assert_eq!(
+                O256::ckeyed(&key, &input),
+                O256::with_key(&key, &input),
+                "keyed hash of {length} bytes"
+            );
+            assert_eq!(key.ctag(&input), key.tag(&input), "tag of {length} bytes");
+            assert_eq!(
+                O256::cderive_key(context, &input),
+                O256::with_key(context, &input),
+                "derived key from {length} bytes"
+            );
+            assert_eq!(
+                O256::cctx(&context_key, &input),
+                O256::with_ctx(&context_key, &input),
+                "context-keyed hash of {length} bytes"
+            );
+            assert_eq!(
+                context_key.ctag(&input),
+                context_key.tag(&input),
+                "context tag of {length} bytes"
+            );
+        }
+    }
+
+    #[cfg(feature = "blake3")]
+    #[test]
+    fn const_subtree_hashing_matches_the_reference_implementation() {
+        for chunks in [1_u64, 2, 4, 8] {
+            for offset in [0_u64, 8, 16, 64] {
+                let length =
+                    usize::try_from(chunks).expect("chunk count fits") * ::blake3::CHUNK_LEN;
+                let input = boundary_input(length);
+                let input_offset = offset * ::blake3::CHUNK_LEN as u64;
+                assert_eq!(
+                    Blake3Cv::csubtree(input_offset, &input),
+                    Blake3Cv::from_subtree(input_offset, &input),
+                    "{chunks} chunks at chunk {offset}"
+                );
+            }
+        }
+    }
 
     #[cfg(feature = "blake3")]
     #[test]
