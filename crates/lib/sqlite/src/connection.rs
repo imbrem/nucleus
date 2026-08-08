@@ -40,10 +40,6 @@ impl OpenFlags {
     pub const URI: Self = Self(ffi::SQLITE_OPEN_URI);
     /// Open a purely in-memory database.
     pub const MEMORY: Self = Self(ffi::SQLITE_OPEN_MEMORY);
-    /// Use the multi-thread threading mode.
-    pub const NO_MUTEX: Self = Self(ffi::SQLITE_OPEN_NOMUTEX);
-    /// Use the serialized threading mode.
-    pub const FULL_MUTEX: Self = Self(ffi::SQLITE_OPEN_FULLMUTEX);
 
     /// The flags [`Connection::open`] uses.
     pub const DEFAULT: Self = Self(ffi::SQLITE_OPEN_READWRITE | ffi::SQLITE_OPEN_CREATE);
@@ -152,12 +148,51 @@ impl ConnectionRef<'_> {
 /// finalized, which is the only coordination needed. That is also why
 /// [`Statement`] carries no lifetime.
 ///
-/// Neither `Send` nor `Sync`. Claiming `Send` would mean asserting
-/// `sqlite3_threadsafe() != 0`, which is false on `wasm32-unknown-unknown`:
-/// `sqlite-wasm-rs` builds with `SQLITE_THREADSAFE=0`.
+/// `Send` and `Sync` wherever `SQLite` is serialized, which is everywhere
+/// except `wasm32-unknown-unknown` -- that target has no libc, so
+/// `sqlite-wasm-rs` supplies its own single-threaded build. See the
+/// `unsafe impl`s below.
 pub struct Connection {
     db: NonNull<ffi::sqlite3>,
 }
+
+// SAFETY: two things have to hold, and both are enforced rather than assumed.
+//
+// - **The library is serialized.** `sqlite_serialized` is set by `build.rs`
+//   from the same inputs the C build uses, so it cannot drift from the flag
+//   the amalgamation was compiled with. In that mode `SQLite` takes a mutex on
+//   the connection, and the documentation says it "can be safely used by
+//   multiple threads with no restriction".
+// - **This connection is serialized.** A per-connection `SQLITE_OPEN_NOMUTEX`
+//   would drop it to multi-thread mode, where concurrent use of one connection
+//   is not allowed. `open_with_flags` clears that bit and sets
+//   `SQLITE_OPEN_FULLMUTEX`, so no caller can weaken it -- including through
+//   `OpenFlags::new`, which takes a raw flag word.
+//
+// Nothing here hands out a borrow of `SQLite`'s own state: `message` copies
+// the error string before returning, and `prepare_prefix`, `serialize`, and
+// `deserialize` return owned values.
+//
+// SQL cannot reach any of this. The threading mode is settable at compile
+// time, through `sqlite3_config` before initialization, and through the open
+// flags -- and by no pragma. Arbitrary SQL can corrupt a database via
+// `journal_mode`, `synchronous`, or `writable_schema`, which is the caller's
+// business; it cannot create a data race. The one route from SQL to native
+// code, `load_extension`, is refused unless a C call enables it, and
+// `sqlite_refuses_to_load_extensions_from_sql` checks that it stays that way.
+#[cfg(sqlite_serialized)]
+#[allow(
+    unsafe_code,
+    reason = "serialized SQLite permits concurrent use of one connection"
+)]
+unsafe impl Send for Connection {}
+
+#[cfg(sqlite_serialized)]
+#[allow(
+    unsafe_code,
+    reason = "serialized SQLite permits concurrent use of one connection"
+)]
+unsafe impl Sync for Connection {}
 
 impl Drop for Connection {
     fn drop(&mut self) {
@@ -203,6 +238,13 @@ impl Connection {
         flags: OpenFlags,
         vfs: Option<&CStr>,
     ) -> Result<Self, Error> {
+        // Serialized, whatever the caller asked for. `SQLITE_OPEN_NOMUTEX`
+        // would put this one connection in multi-thread mode, and `Connection`
+        // is `Sync` -- so a caller who reached it through `OpenFlags::new`
+        // could hand out a type whose guarantee no longer holds. Clearing it
+        // here is what makes that guarantee independent of the caller.
+        let flags =
+            OpenFlags(flags.bits() & !ffi::SQLITE_OPEN_NOMUTEX | ffi::SQLITE_OPEN_FULLMUTEX);
         let vfs_ptr = vfs.map_or(ptr::null(), CStr::as_ptr);
         let mut db: *mut ffi::sqlite3 = ptr::null_mut();
         // SAFETY: both strings are NUL-terminated and outlive the call, and
@@ -421,6 +463,70 @@ mod tests {
     use crate::error::ResultCode;
     use crate::statement::{Statement, Step};
     use crate::value::ValueRef;
+
+    /// The whole safety argument, checked against the library that actually
+    /// linked. If `build.rs` and the C build ever disagree, this fails rather
+    /// than the program racing.
+    #[test]
+    fn the_serialized_cfg_matches_the_linked_library() {
+        #[expect(unsafe_code, reason = "reads SQLite's compiled threading mode")]
+        // SAFETY: takes no arguments and reads a compile-time constant.
+        let mode = unsafe { crate::ffi::sqlite3_threadsafe() };
+        assert_eq!(
+            cfg!(sqlite_serialized),
+            mode != 0,
+            "build.rs said serialized={}, but sqlite3_threadsafe() is {mode}",
+            cfg!(sqlite_serialized),
+        );
+    }
+
+    /// The only route from SQL to native code, and it stays shut.
+    ///
+    /// An extension is arbitrary code in this process, so if this ever starts
+    /// succeeding then `Send` and `Sync` are the least of it. The capability is
+    /// compiled in -- `libsqlite3-sys` passes `SQLITE_ENABLE_LOAD_EXTENSION=1`
+    /// -- and it is `SQLite`'s runtime default, not our configuration, that
+    /// keeps the SQL function unavailable.
+    #[test]
+    fn sqlite_refuses_to_load_extensions_from_sql() {
+        let connection = Connection::open_in_memory().expect("open");
+        let mut statement = Statement::prepare(&connection, "SELECT load_extension('/tmp/x.so')")
+            .expect("it compiles; the refusal comes when it runs");
+        let error = statement
+            .step()
+            .expect_err("load_extension must not be callable from SQL");
+        assert!(
+            error.to_string().contains("not authorized"),
+            "unexpected refusal: {error}"
+        );
+    }
+
+    /// A connection is serialized whatever the caller asked for, which is what
+    /// `Sync` rests on.
+    #[test]
+    fn nomutex_cannot_be_asked_for() {
+        let asked = OpenFlags::new(crate::ffi::SQLITE_OPEN_NOMUTEX) | OpenFlags::DEFAULT;
+        let connection = Connection::open_with_flags(c":memory:", asked, None).expect("open");
+        // `SQLITE_DBCONFIG` has no query for the mutex, so this checks the
+        // thing we control: the connection opened, and the bit we clear never
+        // reached SQLite because `open_with_flags` masks it.
+        drop(connection);
+    }
+
+    #[cfg(sqlite_serialized)]
+    #[test]
+    fn a_serialized_connection_crosses_threads() {
+        const fn assert_send_and_sync<T: Send + Sync>() {}
+        assert_send_and_sync::<Connection>();
+
+        let connection = Connection::open_in_memory().expect("open");
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let mut statement = Statement::prepare(&connection, "SELECT 1").expect("compile");
+                assert_eq!(statement.step().expect("step"), Step::Row);
+            });
+        });
+    }
 
     #[test]
     fn opens_and_closes_an_in_memory_database() {

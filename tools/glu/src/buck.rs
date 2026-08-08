@@ -21,9 +21,12 @@ _PACKAGE_FILES = glob(
     exclude = ["BUCK", "target/**"],
 )
 
+# Every file in the package, because `include_bytes!` and `include_str!` can
+# name any of them and a glob by extension silently misses the ones it did not
+# think of. Coarser invalidation than listing extensions, and correct.
 _RUST_SOURCES = glob(
-    ["**/*.rs", "**/*.sql"],
-    exclude = ["target/**"],
+    ["**"],
+    exclude = ["BUCK", "target/**"],
 )
 
 filegroup(
@@ -83,9 +86,9 @@ rust_test(
 {%- endfor %}
     ],
 {%- endif %}
-{%- if target.named_deps %}
+{%- if target.test_named_deps %}
     named_deps = {
-{%- for name, dependency in target.named_deps %}
+{%- for name, dependency in target.test_named_deps %}
         {{ name|tojson }}: {{ dependency|tojson }},
 {%- endfor %}
     },
@@ -132,9 +135,19 @@ struct RustTarget {
     edition: String,
     features: Vec<String>,
     named_deps: Vec<(String, String)>,
+    /// What the test rule links: the same plus `[dev-dependencies]`.
+    ///
+    /// Kept separate so a dev-dependency cannot leak into the library, which
+    /// is the whole reason Cargo distinguishes them.
+    test_named_deps: Vec<(String, String)>,
     proc_macro: bool,
     buildscript: Option<String>,
     env: Vec<(String, String)>,
+    /// What the test rule gets: the same plus `CARGO_BIN_EXE_*`.
+    ///
+    /// Separate from `env` because pointing the *library* at its package's
+    /// binary makes the library depend on the binary that depends on it.
+    test_env: Vec<(String, String)>,
     unit_test: bool,
 }
 
@@ -453,14 +466,74 @@ impl<'a> Graph<'a> {
             .to_string_lossy()
             .into_owned();
         let mut named_deps = self.dependencies(&package.id, DependencyKind::Normal, true);
+
+        // Anything that compiles test code also needs `[dev-dependencies]`.
+        // Leaving them out is invisible to `cargo test`, which has them, and
+        // shows up only as a Buck-only "unresolved import" for a crate that is
+        // plainly in `Cargo.toml`.
+        let mut test_named_deps = named_deps.clone();
+        test_named_deps.extend(self.dependencies(&package.id, DependencyKind::Development, true));
+        test_named_deps.sort();
+        test_named_deps.dedup();
+
         if target.kind.contains(&TargetKind::Test)
             && let Some(library) = package
                 .targets
                 .iter()
                 .find(|candidate| is_library(candidate))
         {
-            named_deps.push((library.name.replace('-', "_"), format!(":{}", library.name)));
+            let link = (library.name.replace('-', "_"), format!(":{}", library.name));
+            named_deps.push(link.clone());
             named_deps.sort();
+            test_named_deps.push(link);
+            test_named_deps.sort();
+            test_named_deps.dedup();
+        }
+
+        // An integration test *is* a test target, so it links the test set.
+        if target.kind.contains(&TargetKind::Test) {
+            named_deps.clone_from(&test_named_deps);
+        }
+
+        // A binary in a package that also has a library links that library,
+        // the way `cargo` does. Without this a `src/main.rs` calling into its
+        // own `src/lib.rs` builds under cargo and not under Buck.
+        if target.kind.contains(&TargetKind::Bin)
+            && let Some(library) = package
+                .targets
+                .iter()
+                .find(|candidate| is_library(candidate))
+        {
+            let link = (library.name.replace('-', "_"), format!(":{}", library.name));
+            named_deps.push(link.clone());
+            named_deps.sort();
+            named_deps.dedup();
+            // The binary's own unit tests compile the same `main.rs`.
+            test_named_deps.push(link);
+            test_named_deps.sort();
+            test_named_deps.dedup();
+        }
+
+        // `CARGO_BIN_EXE_<name>`, which cargo defines for test targets so an
+        // integration test can run the binary it is testing. Buck does not,
+        // so the test fails to *compile* on a missing environment variable.
+        // `$(location …)` is the Buck spelling of the same thing.
+        //
+        // Test targets only. A binary already links its package's library, so
+        // giving the library a `$(location)` on that binary would be a cycle.
+        let env = cargo_package_env(package);
+        let mut test_env = env.clone();
+        if !target.kind.contains(&TargetKind::Bin) {
+            for binary in package
+                .targets
+                .iter()
+                .filter(|candidate| candidate.kind.contains(&TargetKind::Bin))
+            {
+                test_env.push((
+                    format!("CARGO_BIN_EXE_{}", binary.name),
+                    format!("$(location :{})", binary.name),
+                ));
+            }
         }
         let mut features: Vec<String> = self
             .nodes
@@ -476,9 +549,15 @@ impl<'a> Graph<'a> {
             edition: package.edition.to_string(),
             features,
             named_deps,
+            test_named_deps,
             proc_macro: target.kind.contains(&TargetKind::ProcMacro),
             buildscript: None,
-            env: cargo_package_env(package),
+            env: if target.kind.contains(&TargetKind::Test) {
+                test_env.clone()
+            } else {
+                env
+            },
+            test_env,
             unit_test: is_library(target) || target.kind.contains(&TargetKind::Bin),
         }))
     }
