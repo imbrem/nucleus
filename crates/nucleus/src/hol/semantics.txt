@@ -188,17 +188,64 @@ are trusted only through an explicit trusted-import capability.
 
 Holes and Covalence
 -------------------
-A Covalence hole is typed and named.  It lowers to a fresh variable of its
-claimed type.  A malformed child, annotation, kind, or rank lowers to a hole;
-it does not add an axiom.  Soundness means every filling by well-formed
-HOL-omega syntax yields a derivation of the lowered judgement.  The canonical
-epsilon filling is merely a chosen member of this nonempty family.
+The persistent tree shape is exactly
 
-Covalence formation is total at every expected sort, including ranks, kinds,
-types, and terms-at-a-type: every tree has a repaired interpretation at every
-requested sort.  Failed kernel well-formedness premises (including freshness
-and context side conditions on
-eta rules) select typed holes at the offending positions instead of making the
+    (tag, optional lhs, optional rhs, optional type annotation).
+
+For a term, `.ty` is the one-layer projection of the fourth coordinate; it
+never traverses `lhs` or `rhs`.  The first sound Covalence calculus uses de
+Bruijn indices throughout, matching raw HOL-omega directly.  The locally
+nameless store-facing calculus is a later layer: bound variables are de Bruijn
+indices, free variables and holes have distinct stable names, and it must come
+with a proved lowering into the de-Bruijn Covalence calculus.
+
+Node-local Covalence operations should take O(1) time on their ordinary path.
+In particular, a rule must not traverse an entire term merely to discover its
+type, scope, or a malformed descendant: it inspects direct coordinates and
+cached annotations, and encounters malformed or missing information as a
+sorted hole.  O(1) is a design guideline rather than a bound on every rule;
+hypothesis lookup, explicit certificate checking, and deliberately indexed
+list operations may be linear.  Normalization, substitution, memory unfolding,
+and other recursive work are represented lazily where needed and justified by
+the specification's lowering relation and soundness proof.
+
+In the later locally nameless layer, `bound nt nv t` is the explicit
+scope-repair operation: its lowering replaces
+type-bound indices at least `nt` and term-bound indices at least `nv` by named
+holes.  Type binders increment only `nt`; term binders increment only `nv`.
+The shorthand `bound n t` sets both limits to `n`, so `bound 0 t` is locally
+closed in both namespaces.  Cached type- and term-depth annotations make the
+applicability check constant-time.  Those caches are validated from direct
+row data and are not trusted assertions.  A failed `cast t A`, including a
+scope failure, may produce one locally closed typed hole at `A` rather than
+recursively repairing `t` during rule application.
+
+A Covalence hole is typed and named.  Its initial lowering is a fresh variable
+of its claimed type.  Simultaneous well-typed substitutions for those fresh
+variables are exactly the filling family.  A malformed child, annotation,
+kind, or rank constraint triggers a hole at the enclosing syntactic sort; it
+does not introduce a rank hole or add an axiom.  The family is
+nonempty: at proper types a canonical member is Hilbert epsilon applied to the
+constantly-true predicate (and higher-sorted holes use the corresponding
+canonical type/kind repair).
+
+Entailment soundness is universal, never partial:
+
+    Covalence.Proves c
+      -> for every valid filling f, HOLOmega.Proves (lower f c).
+
+An unresolved proof node does not lower to `none`, and a term hole of Boolean
+type is not a theorem axiom.  Empty-context consistency specializes the
+universal lowering theorem to the canonical filling and then applies
+`raw_not_proves_false`.  The canonical filling witnesses nonemptiness; it does
+not define the meaning of a hole.
+
+Covalence formation is total at every expected sort: kinds-at-a-rank,
+types-at-a-kind, and terms-at-a-type.  Ranks remain immediate natural-number
+annotations, not a hole-bearing syntax sort.  Every tree has a repaired
+interpretation at every requested sort.  Failed kernel well-formedness
+premises (including freshness and context side conditions on eta rules) select
+typed holes at the offending positions instead of making the
 Covalence judgement fail.  The lowered HOL-omega derivation still contains and
 discharges the ordinary kernel side conditions.  “Everything is well-formed”
 therefore means total repair through holes, not that malformed raw HOL-omega

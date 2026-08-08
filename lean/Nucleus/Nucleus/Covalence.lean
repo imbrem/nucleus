@@ -35,25 +35,25 @@ structure HoleName where
 /-- Locally nameless identity. Constructor identity prevents equal numeric
 payloads in the free and hole namespaces from ever aliasing. -/
 inductive VarId where
-  | bound (index : Nat)
+  | bound (namespace : Bool) (index : Nat) -- `false` = type, `true` = term
   | free (name : FreeName)
   | hole (name : HoleName)
   deriving DecidableEq, Repr
 
-def VarId.shift (cutoff : Nat) : VarId → VarId
-  | .bound n => if cutoff ≤ n then .bound (n + 1) else .bound n
+def VarId.shift (namespace : Bool) (cutoff : Nat) : VarId → VarId
+  | .bound ns n => if ns = namespace ∧ cutoff ≤ n then .bound ns (n + 1) else .bound ns n
   | .free n => .free n
   | .hole n => .hole n
 
-def VarId.openAt (index : Nat) (with : VarId) : VarId → VarId
-  | .bound n => if n = index then with else .bound n
+def VarId.openAt (namespace : Bool) (index : Nat) (with : VarId) : VarId → VarId
+  | .bound ns n => if ns = namespace ∧ n = index then with else .bound ns n
   | .free n => .free n
   | .hole n => .hole n
 
-@[simp] theorem VarId.shift_free (c) (n) : shift c (.free n) = .free n := rfl
-@[simp] theorem VarId.shift_hole (c) (n) : shift c (.hole n) = .hole n := rfl
-@[simp] theorem VarId.open_free (k) (w) (n) : openAt k w (.free n) = .free n := rfl
-@[simp] theorem VarId.open_hole (k) (w) (n) : openAt k w (.hole n) = .hole n := rfl
+@[simp] theorem VarId.shift_free (s c) (n) : shift s c (.free n) = .free n := rfl
+@[simp] theorem VarId.shift_hole (s c) (n) : shift s c (.hole n) = .hole n := rfl
+@[simp] theorem VarId.open_free (s k) (w) (n) : openAt s k w (.free n) = .free n := rfl
+@[simp] theorem VarId.open_hole (s k) (w) (n) : openAt s k w (.hole n) = .hole n := rfl
 
 /-- Stored vocabulary tags. `cast` is intentionally absent: it is a dialect
 operation compiled during sorted repair, not a persisted schema row. -/
@@ -67,7 +67,8 @@ inductive HolTag (Base : Type u) where
 is cached metadata, so local-closure/cast applicability is O(1). -/
 structure AnnotatedTag (Base : Type u) where
   tag : HolTag Base
-  requiredDepth : Nat
+  requiredTyDepth : Nat
+  requiredTmDepth : Nat
 
 /-- The recursive, untyped tree is exactly the in-memory row shape: a tag and
 three optional child rows. For term rows the third child is the stored type
@@ -94,7 +95,7 @@ def Hol.viewEquiv : Hol Base ≃ Hol.View Base where
 named annotation hole; no other child is inspected. -/
 def Hol.ty (missingName : HoleName) : Hol Base → Hol Base
   | .node _ _ _ (some ty) => ty
-  | .node _ _ _ none => .node ⟨.hole missingName, 0⟩ none none none
+  | .node _ _ _ none => .node ⟨.hole missingName, 0, 0⟩ none none none
 
 /-- Exact persistent row and image types. Tree unfolding replaces each child
 tree in `Hol.View` by its content index without changing field order. -/
@@ -112,63 +113,117 @@ def HolTag.mapVar (f : VarId → VarId) : HolTag Base → HolTag Base
   | tag => tag
 
 def Hol.mapVar (f : VarId → VarId) : Hol Base → Hol Base
-  | .node tag lhs rhs ty => .node ⟨tag.tag.mapVar f, tag.requiredDepth⟩
+  | .node tag lhs rhs ty => .node ⟨tag.tag.mapVar f, tag.requiredTyDepth, tag.requiredTmDepth⟩
       (lhs.map (Hol.mapVar f))
       (rhs.map (Hol.mapVar f)) (ty.map (Hol.mapVar f))
 
-def Hol.shiftBound (cutoff : Nat) (h : Hol Base) : Hol Base := h.mapVar (.shift cutoff)
+def Hol.shiftBound (namespace : Bool) (cutoff : Nat) (h : Hol Base) : Hol Base :=
+  h.mapVar (.shift namespace cutoff)
 
-def Hol.openBound (index : Nat) (with : VarId) (h : Hol Base) : Hol Base :=
-  h.mapVar (.openAt index with)
+def Hol.openBound (namespace : Bool) (index : Nat) (with : VarId) (h : Hol Base) : Hol Base :=
+  h.mapVar (.openAt namespace index with)
 
-def Hol.requiredDepth : Hol Base → Nat
-  | .node tag _ _ _ => tag.requiredDepth
+def Hol.requiredTyDepth : Hol Base → Nat
+  | .node tag _ _ _ => tag.requiredTyDepth
 
-def Hol.LocallyClosed (h : Hol Base) : Prop := h.requiredDepth = 0
+def Hol.requiredTmDepth : Hol Base → Nat
+  | .node tag _ _ _ => tag.requiredTmDepth
 
-def HolTag.isBinder : HolTag Base → Bool
-  | .tyLam | .tmLam | .tmTyLam => true
-  | _ => false
+def Hol.LocallyClosed (h : Hol Base) : Prop :=
+  h.requiredTyDepth = 0 ∧ h.requiredTmDepth = 0
+
+def HolTag.binderNamespace : HolTag Base → Option Bool
+  | .tyLam | .tyAll | .tmTyLam => some false
+  | .tmLam => some true
+  | _ => none
+
+/-- Disjoint stable names for escaped type and term indices. -/
+def escapedName (namespace : Bool) (index : Nat) : HoleName :=
+  ⟨2 * index + if namespace then 1 else 0⟩
 
 /-- Compiling lazy `bound n`: out-of-scope indices become stable named holes;
 free variables and existing holes are untouched. -/
-def Hol.applyBound (n : Nat) : Hol Base → Hol Base
+def Hol.applyBound (tyLimit tmLimit : Nat) : Hol Base → Hol Base
   | .node tag lhs rhs ty =>
       let replace : VarId → VarId
-        | .bound k => if n ≤ k then .hole ⟨k⟩ else .bound k
+        | .bound false k => if tyLimit ≤ k then .hole (escapedName false k) else .bound false k
+        | .bound true k => if tmLimit ≤ k then .hole (escapedName true k) else .bound true k
         | .free x => .free x
         | .hole x => .hole x
-      let childN := if tag.tag.isBinder then n + 1 else n
-      .node ⟨tag.tag.mapVar replace, min tag.requiredDepth n⟩
-        (lhs.map (Hol.applyBound childN)) (rhs.map (Hol.applyBound childN))
-        (ty.map (Hol.applyBound n))
+      let childTy := if tag.tag.binderNamespace = some false then tyLimit + 1 else tyLimit
+      let childTm := if tag.tag.binderNamespace = some true then tmLimit + 1 else tmLimit
+      .node ⟨tag.tag.mapVar replace, min tag.requiredTyDepth tyLimit,
+          min tag.requiredTmDepth tmLimit⟩
+        (lhs.map (Hol.applyBound childTy childTm))
+        (rhs.map (Hol.applyBound childTy childTm))
+        (ty.map (Hol.applyBound tyLimit tmLimit))
 
-theorem Hol.applyBound_requiredDepth (n : Nat) (h : Hol Base) :
-    (h.applyBound n).requiredDepth ≤ n := by
+theorem Hol.applyBound_requiredTyDepth (tn mn : Nat) (h : Hol Base) :
+    (h.applyBound tn mn).requiredTyDepth ≤ tn := by
   cases h
   exact Nat.min_le_right _ _
 
-theorem Hol.applyBound_zero_closed (h : Hol Base) : (h.applyBound 0).LocallyClosed := by
+theorem Hol.applyBound_requiredTmDepth (tn mn : Nat) (h : Hol Base) :
+    (h.applyBound tn mn).requiredTmDepth ≤ mn := by
   cases h
-  rfl
+  exact Nat.min_le_right _ _
 
-theorem Hol.applyBound_depth_mono {n m : Nat} (h : Hol Base) (hnm : n ≤ m) :
-    (h.applyBound n).requiredDepth ≤ (h.applyBound m).requiredDepth := by
+theorem Hol.applyBound_zero_closed (h : Hol Base) : (h.applyBound 0 0).LocallyClosed := by
   cases h
-  simp only [applyBound, requiredDepth]
+  exact ⟨rfl, rfl⟩
+
+theorem Hol.applyBound_tyDepth_mono {n m q : Nat} (h : Hol Base) (hnm : n ≤ m) :
+    (h.applyBound n q).requiredTyDepth ≤ (h.applyBound m q).requiredTyDepth := by
+  cases h
+  simp only [applyBound, requiredTyDepth]
   exact Nat.min_le_min_left _ hnm
+
+def VarId.WellScoped (tyDepth tmDepth : Nat) : VarId → Prop
+  | .bound false k => k < tyDepth
+  | .bound true k => k < tmDepth
+  | .free _ | .hole _ => True
+
+def HolTag.WellScoped (tyDepth tmDepth : Nat) : HolTag Base → Prop
+  | .tyVar (.bound false k) => k < tyDepth
+  | .tyVar (.bound true _) => False
+  | .tmVar (.bound true k) => k < tmDepth
+  | .tmVar (.bound false _) => False
+  | .tyVar (.free _) | .tyVar (.hole _) | .tmVar (.free _) | .tmVar (.hole _) => True
+  | _ => True
+
+def Hol.WellScoped (tyDepth tmDepth : Nat) : Hol Base → Prop
+  | .node tag lhs rhs ty =>
+      tag.tag.WellScoped tyDepth tmDepth ∧
+      let childTy := if tag.tag.binderNamespace = some false then tyDepth + 1 else tyDepth
+      let childTm := if tag.tag.binderNamespace = some true then tmDepth + 1 else tmDepth
+      (∀ h ∈ lhs, h.WellScoped childTy childTm) ∧
+      (∀ h ∈ rhs, h.WellScoped childTy childTm) ∧
+      (∀ h ∈ ty, h.WellScoped tyDepth tmDepth)
+
+/-- Validation-boundary evidence tying fast cached closure metadata to the
+actual locally nameless tree. -/
+structure ScopeCheck (term : Hol Base) : Prop where
+  cachedClosed : term.LocallyClosed
+  actuallyClosed : term.WellScoped 0 0
+
+inductive CastCheck (term target : Hol Base) : Type u
+  | retain (missing : HoleName) (scope : ScopeCheck term)
+      (annotation : term.ty missing = target)
+  | reject (fallback : HoleName)
 
 /-- O(1) pre-store dialect operations. `cast` and `bound` are compiled before
 rows are persisted and therefore are not schema tags. -/
 inductive Dialect (Base : Type u) where
   | tree (term : Hol Base)
-  | bound (depth : Nat) (term : Hol Base)
-  | cast (term targetAnnotation : Hol Base) (oneLayerCompatible : Bool)
-      (fallback : HoleName)
+  | bound (tyDepth tmDepth : Nat) (term : Hol Base)
+  | cast (term targetAnnotation : Hol Base) (check : CastCheck term targetAnnotation)
+
+def Dialect.boundBoth (depth : Nat) (term : Hol Base) : Dialect Base :=
+  .bound depth depth term
 
 def Dialect.ty (missingName : HoleName) : Dialect Base → Hol Base
-  | .tree t | .bound _ t => t.ty missingName
-  | .cast _ target _ _ => target
+  | .tree t | .bound _ _ t => t.ty missingName
+  | .cast _ target _ => target
 
 def Hol.withTy (term target : Hol Base) : Hol Base :=
   match term with
@@ -176,18 +231,21 @@ def Hol.withTy (term target : Hol Base) : Hol Base :=
 
 def Dialect.compile : Dialect Base → Hol Base
   | .tree t => t
-  | .bound n t => t.applyBound n
-  | .cast t target compatible fallback =>
-      if compatible && decide (t.requiredDepth = 0) then t.withTy target
-      else .node ⟨.hole fallback, 0⟩ none none (some target)
+  | .bound tn mn t => t.applyBound tn mn
+  | .cast t target check => match check with
+      | .retain _ _ _ => t.withTy target
+      | .reject fallback => .node ⟨.hole fallback, 0, 0⟩ none none (some target)
 
-@[simp] theorem Dialect.ty_cast (t target : Hol Base) (ok fallback missing) :
-    (Dialect.cast t target ok fallback).ty missing = target := rfl
+@[simp] theorem Dialect.ty_cast (t target : Hol Base) (check missing) :
+    (Dialect.cast t target check).ty missing = target := rfl
 
 theorem Dialect.compile_cast_failure (t target : Hol Base) (fallback : HoleName) :
-    Dialect.compile (.cast t target false fallback) =
-      .node ⟨.hole fallback, 0⟩ none none (some target) := by
+    Dialect.compile (.cast t target (.reject fallback)) =
+      .node ⟨.hole fallback, 0, 0⟩ none none (some target) := by
   simp [Dialect.compile]
+
+theorem Dialect.compile_boundBoth_zero_closed (t : Hol Base) :
+    (Dialect.boundBoth 0 t).compile.LocallyClosed := Hol.applyBound_zero_closed t
 
 def canonicalTy : (K : Kind) → Nat → Ty Base
   | .star, _ => .tyBool
@@ -347,12 +405,6 @@ Producing this reference may require store traversal; applying `hyp` does not. -
 structure HypRef {Base : Type u} (H : Hyps Base) (p : Tm Base) : Prop where
   membership : p ∈ H
 
-/-- Uniform reference for theorem rules with nonlocal premise alignment. The
-conclusion and raw certificate vary over the shared hole environment. -/
-structure UniformProofRef {Base : Type u} (Δ : KindCtx) (Γ : TmCtx Base)
-    (H : Hyps Base) (n : TermNode Base Δ Γ .tyBool) where
-  certificate : ∀ f, Proves Δ Γ H (n.fill f).1
-
 /-- A sorted term node. Malformed nodes carry only the formation evidence of
 the expected type, which suffices to turn them into named holes. -/
 inductive TermNode (Base : Type u) (Δ : KindCtx) (Γ : TmCtx Base) (A : Ty Base)
@@ -385,6 +437,14 @@ def TermNode.fill (n : TermNode Base Δ Γ A) (f : FillingEnv Base Δ Γ) :
 
 def TermNode.repair (n : TermNode Base Δ Γ A) : {t : Tm Base // HasType Δ Γ t A} :=
   n.fill (canonicalFillingEnv Base Δ Γ)
+
+/-- Explicit import of an already checked raw proof family.  Its certificate
+is tied to the indexed node under the very same filling, so it cannot import a
+proof of an unrelated proposition.  Ordinary proof-rule constructors derive
+such certificates from their Covalence premises instead. -/
+structure UniformProofRef {Base : Type u} (Δ : KindCtx) (Γ : TmCtx Base)
+    (H : Hyps Base) (n : TermNode Base Δ Γ .tyBool) where
+  certificate : ∀ f, Proves Δ Γ H (n.fill f).1
 
 /-- Covalence entailment has actual logical constructors. Syntax holes may
 occur in their term arguments, but there is deliberately no hole-as-proof
