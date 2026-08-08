@@ -77,9 +77,7 @@ impl Runner {
                 "web",
             ],
         )?;
-        // The upstream SQLite shell, as its own module. It targets WASI
-        // because it needs real stdio, which `wasm32-unknown-unknown` does not
-        // have.
+        // The upstream shell needs WASI stdio.
         self.run(
             "compile the SQLite shell for WASI",
             "cargo",
@@ -102,10 +100,7 @@ impl Runner {
         )
         .wrap_err("could not stage the shell Wasm")?;
 
-        // Stage the package as a package, so its own `tsconfig.json` is what
-        // compiles it, and copy the whole `src` directory rather than naming
-        // files. Both are the same point: this build and `pnpm build` must not
-        // be able to disagree about the same source.
+        // Stage the package so this build uses its own configuration.
         let package = self.root().join("packages/nucleus");
         copy_dir(&package.join("src"), &staged.join("src"))?;
         fs::copy(package.join("tsconfig.json"), staged.join("tsconfig.json"))

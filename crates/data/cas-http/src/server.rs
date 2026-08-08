@@ -1,8 +1,4 @@
 //! A read-only HTTP service over a [`Cas`].
-//!
-//! Everything fiddly is a library's: `axum` routes, `headers` parses `Range`
-//! and formats `Content-Range`, `tower-http` does CORS. What is written here is
-//! the address lookup and the bounds.
 
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -52,15 +48,7 @@ impl Drop for Serving {
     }
 }
 
-/// Serves `cas` read-only on `address`.
-///
-/// The runtime lives in a thread of its own, so callers stay synchronous; the
-/// rest of this workspace has no async in it and does not acquire any by using
-/// this.
-///
-/// Reads run on the runtime's worker threads and the [`Cas`] interface is
-/// synchronous, so a slow store blocks a worker. That is fine for a resident
-/// store and would not be for a remote one.
+/// Serves `cas` on a runtime owned by a background thread.
 ///
 /// # Errors
 ///
@@ -103,8 +91,7 @@ where
     C: Cas + Send + Sync + 'static,
     C::Error: std::fmt::Display,
 {
-    // The demo page is served from a different origin than the kernel, and a
-    // ranged read needs `Range` to survive preflight.
+    // Allow browser range requests from the demo's origin.
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)

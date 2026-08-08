@@ -708,20 +708,7 @@ impl Runner {
         Ok(arguments)
     }
 
-    /// Builds the browser demo, starts a kernel behind it, and serves it.
-    ///
-    /// Three things have to line up for the demo to be interesting, and doing
-    /// them by hand is three chances to get one wrong: the wasm has to be
-    /// built, an HTTP kernel has to be holding a database, and the page has to
-    /// know that database's address. This does all three and prints the
-    /// address, so the only manual step left is pasting it.
-    ///
-    /// Both servers are children of this process and share its process group,
-    /// so Ctrl-C stops all three. The kernel is also killed explicitly when
-    /// the page server exits normally. A signal delivered to this process
-    /// alone rather than to the group would leave them running, which is a
-    /// limitation of not being able to use `prctl` here: this crate forbids
-    /// `unsafe`.
+    /// Builds and serves the browser demo with an HTTP kernel.
     ///
     /// # Errors
     ///
@@ -736,8 +723,7 @@ impl Runner {
         no_build: bool,
         tls: bool,
     ) -> Result<()> {
-        // The committed fixture, so `glu demo` with no arguments still shows
-        // something rather than an empty store.
+        // Default to the committed fixture.
         let default = self.root.join("packages/nucleus/test/fixture.sqlite");
         let files: Vec<PathBuf> = if files.is_empty() {
             vec![default]
@@ -780,7 +766,7 @@ impl Runner {
         eprintln!();
 
         if open {
-            // A failure here is not worth stopping for; the URL is printed.
+            // The printed URL remains usable if opening fails.
             let _ = self.run("open demo", "xdg-open", [page.as_str()]);
         }
 
@@ -798,28 +784,15 @@ impl Runner {
             &environment,
         );
 
-        // The kernel is a child of this process, so it must not outlive it.
+        // Do not leave the kernel running.
         let _ = kernel.kill();
         let _ = kernel.wait();
         served
     }
 
-    /// Returns the demo server's configuration and the environment it needs.
-    ///
-    /// The config is a file in the repository, not a string built here, and
-    /// that is the point: `packages/nucleus/test` runs the same one. A server
-    /// only the demo uses is a server only the demo has tested, and the
-    /// headers below are exactly the sort of thing that is wrong for weeks
-    /// without anyone noticing.
-    ///
-    /// `caddy file-server` alone is not enough, for three reasons that each
-    /// cost real debugging time when missing -- no caching, the REPL at the
-    /// root, and cross-origin isolation so `SharedArrayBuffer` exists. They
-    /// are spelled out in the config, next to the lines that implement them.
+    /// Returns the tested demo server configuration and environment.
     fn demo_config(&self, port: u16, tls: bool) -> (PathBuf, Vec<(&'static str, String)>) {
-        // `tls internal` uses Caddy's own CA. The certificate is not trusted
-        // by default, so a browser will warn; `caddy trust` installs it, and
-        // that needs privileges this tool should not assume.
+        // Trusting Caddy's internal CA remains an explicit user action.
         let (address, tls_directive) = if tls {
             (format!("https://localhost:{port}"), "tls internal")
         } else {
@@ -840,11 +813,7 @@ impl Runner {
         )
     }
 
-    /// Starts the HTTP kernel and reports the addresses it admitted.
-    ///
-    /// The kernel prints one `address path` line per file and then its base
-    /// URL, so reading until the URL both collects the addresses and confirms
-    /// it is listening.
+    /// Starts the HTTP kernel and collects its admitted addresses.
     fn start_kernel(&self, files: &[PathBuf], port: u16) -> Result<Child> {
         let binary = self.root.join("target/debug/covalence-cas-serve");
         let mut child = Command::new(&binary)
@@ -913,10 +882,7 @@ impl Runner {
         )?;
         expect_output("nucleus component smoke test", &output, "42")?;
 
-        // The CLI is a REPL, so with no input it prints its banner, prompts
-        // once, and reaches end of input. That is the whole of what this
-        // checks: the component starts, `SQLite` initializes, and the store
-        // mounts under the conventional name.
+        // EOF after startup checks component initialization and mounting.
         let cli = self.buck_output("//:cli-component")?;
         let output = self.command("test CLI component", "wasmtime", [cli.as_os_str()])?;
         expect_output(

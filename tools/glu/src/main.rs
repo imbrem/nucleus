@@ -100,14 +100,9 @@ enum Task {
     Loc,
     /// Show the project status headline.
     Status,
-    /// Build and serve the browser demo, with a kernel behind it.
-    ///
-    /// Builds both wasm modules, starts an HTTP kernel holding a database,
-    /// prints its address, and serves the page. Ctrl-C stops everything.
+    /// Build and serve the browser demo with an HTTP kernel.
     Demo {
         /// Databases the HTTP kernel should serve.
-        ///
-        /// Defaults to the committed fixture, so the demo works unattended.
         files: Vec<PathBuf>,
 
         /// Loopback port for the demo page.
@@ -115,9 +110,6 @@ enum Task {
         port: u16,
 
         /// Loopback port for the HTTP kernel.
-        ///
-        /// The page defaults to this, so changing it means changing the URL
-        /// on the page too.
         #[arg(long, default_value_t = 8080)]
         kernel_port: u16,
 
@@ -130,9 +122,6 @@ enum Task {
         no_build: bool,
 
         /// Serve over HTTPS with Caddy's internal CA.
-        ///
-        /// The certificate is not trusted by default, so a browser will warn
-        /// until `caddy trust` installs it.
         #[arg(long)]
         tls: bool,
     },

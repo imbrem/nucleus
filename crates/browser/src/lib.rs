@@ -1,29 +1,4 @@
-//! A content-addressed `SQLite` REPL, in the browser.
-//!
-//! The page runs the **same** [`Session`] the terminal does. Not a similar
-//! one: the same dispatch, the same commands, the same output. That is the
-//! only arrangement under which "the browser behaves like the CLI" survives
-//! the next change to either.
-//!
-//! A session performs no I/O of its own. It answers a line of input with a
-//! response, and a response may be a request — *fetch this URL*, *run the
-//! shell* — which the page carries out and hands back. That is what lets one
-//! dispatch serve a host that can read files and block on sockets and a host
-//! that can do neither.
-//!
-//! # Kernels
-//!
-//! `(connect "URL")` points the session at a kernel reachable over HTTP;
-//! `(local)` points it back at the one compiled into this page. Objects
-//! fetched from a remote kernel are verified against the address they were
-//! asked for before being admitted, so a wrong or hostile kernel is caught
-//! rather than believed.
-//!
-//! # Trust
-//!
-//! Nothing here is trusted. [`Repl::query`] runs arbitrary SQL, which is a
-//! convenience for a page; the shell is the real answer, and it runs here too
-//! in its own wasm instance.
+//! Browser host for the content-addressed `SQLite` REPL and shell.
 
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -35,18 +10,10 @@ use covalence_lib_sqlite::{Connection, Step as SqliteStep, ValueType};
 use covalence_repl::{Response, Session};
 use wasm_bindgen::prelude::*;
 
-/// Names handed to successive REPLs in one wasm instance.
-///
-/// `SQLite`'s VFS registry is process-global and permanent, so a second REPL
-/// cannot reuse the first's mount name. The first gets the conventional `cas`,
-/// because that is what a page will have in its URLs; later ones get a
-/// distinct name, which the session reports.
+/// Generates unique VFS names within one wasm instance.
 static NEXT_MOUNT: AtomicU64 = AtomicU64::new(0);
 
-/// What the page should do with a line of input.
-///
-/// Mirrors `covalence_repl::Response` across the wasm boundary, which cannot
-/// carry a Rust enum with payloads.
+/// A wasm-friendly form of `covalence_repl::Response`.
 #[wasm_bindgen]
 pub struct Step {
     kind: String,
@@ -110,11 +77,7 @@ impl Step {
 #[wasm_bindgen]
 pub struct Repl {
     session: Session,
-    /// Objects held open for a guest, such as the WASI shell.
-    ///
-    /// Holding them here is what gives the guest the same guarantee a local
-    /// caller gets: while it holds a handle, its reads keep working, whatever
-    /// happens to the address in the store.
+    /// Objects pinned for a guest such as the WASI shell.
     open: HashMap<u64, ResidentObject>,
     next_handle: u64,
 }
@@ -165,12 +128,8 @@ impl Repl {
     /// failed form is ordinary: show it and keep the prompt.
     pub fn eval(&mut self, line: &str) -> Result<Step, JsError> {
         Ok(match self.session.eval(line).map_err(to_js)? {
-            // `display` rather than `write`: the help text is a message, not
-            // a datum to be read back.
             Response::Value(value) => Step::output(value.display()),
             Response::Quit => Step::bare("quit"),
-            // A page has no filesystem, so `(put …)` cannot mean here what it
-            // means in a terminal. Say so rather than failing obscurely.
             Response::ReadFile(path) => Step::output(format!(
                 "no filesystem here: use the file picker to admit {path:?}"
             )),
@@ -265,14 +224,7 @@ impl Repl {
         result
     }
 
-    /// Opens an address, returning a handle, or `-1` when it does not resolve.
-    ///
-    /// This and the three below are `covalence:cas/store` in the shape a wasm
-    /// guest can call; the shell reaches its databases through them.
-    ///
-    /// Handles are `f64` because that is the number `JavaScript` has. They are
-    /// issued sequentially from 1, so they stay exactly representable for far
-    /// longer than a page will live.
+    /// Opens an address for a wasm guest, returning `-1` when absent.
     ///
     /// # Errors
     ///
