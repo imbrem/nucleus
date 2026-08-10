@@ -26,6 +26,7 @@ libsqlite3-sys = { version = "=0.38.1", features = ["bundled"] }
 [dev-dependencies]
 covalence-data-cas = { path = "../../data/cas" }
 covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["blake3"] }
+covalence-lib-sqlite = { path = "../../lib/sqlite" }
 
 [build-dependencies]
 cc = "1"
