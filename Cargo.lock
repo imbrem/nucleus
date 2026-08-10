@@ -186,7 +186,9 @@ name = "covalence-neutron"
 version = "0.0.0"
 dependencies = [
  "bytes",
+ "covalence-data-cas",
  "covalence-lib-error",
+ "covalence-lib-hash",
  "covalence-lib-sqlite",
 ]
 

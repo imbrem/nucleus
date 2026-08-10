@@ -8,11 +8,13 @@
 
 #![deny(unsafe_code)]
 
+mod cas_vfs;
 mod connection;
 mod image;
 pub mod sql;
 
 pub use bytes::Bytes;
+pub use cas_vfs::{CAS_VFS_NAME, CasFile, CasVfs, register_cas};
 pub use connection::{
     ATTACHED_DATABASES, ATTACHED_DATABASES_INTERPRETATION, CONNECTION_CATALOG,
     CONNECTION_CATALOG_INTERPRETATION, Connection, ConnectionError,
