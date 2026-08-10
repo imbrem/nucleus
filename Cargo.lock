@@ -120,7 +120,6 @@ dependencies = [
  "covalence-data-cas",
  "covalence-data-cas-wire",
  "covalence-lib-hash",
- "covalence-lib-sqlite",
  "covalence-neutron",
  "libsqlite3-sys",
 ]
