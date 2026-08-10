@@ -93,9 +93,9 @@ impl Repl {
     pub fn new() -> Result<Self, JsError> {
         let index = NEXT_MOUNT.fetch_add(1, Ordering::Relaxed);
         let mount = if index == 0 {
-            covalence_lib_sqlite::vfs::CAS_VFS_NAME.to_owned()
+            covalence_neutron::CAS_VFS_NAME.to_owned()
         } else {
-            format!("{}-{index}", covalence_lib_sqlite::vfs::CAS_VFS_NAME)
+            format!("{}-{index}", covalence_neutron::CAS_VFS_NAME)
         };
         Ok(Self {
             session: Session::with_mount_name(&mount).map_err(to_js)?,
