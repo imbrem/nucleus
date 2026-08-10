@@ -16,3 +16,4 @@ node_modules/
 .glu.json
 .buckconfig.local
 /buck-out/
+/lean/Nucleus/.lake/
