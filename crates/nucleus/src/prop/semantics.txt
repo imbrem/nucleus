@@ -151,6 +151,29 @@ SCRATCH / CONCLUDE      A scratch prop table layers over the main one:
                         takes solver proofs produced without RAT-
                         introducing preprocessing.
 
+EXPORT / TRUST_SIGNER / IMPORT_TABLE
+                        Export serializes the database, hashes the exact
+                        bytes, and signs the schema-qualified
+                        (schema_o256, image_o256) statement under the
+                        kernel identity. Trust is a connection-local,
+                        never-serialized signer set. Import runs the
+                        chain in order — authenticate the envelope,
+                        require a trusted signer (reject-before-trust),
+                        attach privately, recompute and match the
+                        attached schema manifest, check the source's own
+                        W1-W4 — and only then admits rows through an id
+                        offset placing every foreign proposition above
+                        everything local: the definitional layer and
+                        free declarations verbatim at model 0, universal
+                        rows at model = -import_id (provenance in
+                        prop_import). World rows and theory declarations
+                        are dropped: forgetting a constraint never
+                        strengthens the admitted universal layer.
+                        Offsetting preserves positivity, binding
+                        uniqueness, and acyclicity by construction, so
+                        the merged database satisfies W1-W4 whenever
+                        both sides did.
+
 Soundness invariant: every universal row is entailed by the definitional
 layer; every world-i row holds in some model of the definitional layer
 consistent with world i's prior rows. Rows are freely deletable without
