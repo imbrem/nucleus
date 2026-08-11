@@ -83,6 +83,13 @@
           nodejs_24
           pnpm
           python
+          # Builds the wheel and the editable install. `glu` does not use it —
+          # it stages the package itself, so CI needs no packaging tool — but
+          # it is how a developer installs Covalence into their own environment.
+          maturin
+          # Formatter and linter for the Python sources, driven by `glu fmt`
+          # and `glu lint`.
+          ruff
           rust
           scc
           wasm-bindgen-cli

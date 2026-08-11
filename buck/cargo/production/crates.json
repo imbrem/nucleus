@@ -84,6 +84,22 @@
       ]
     },
     {
+      "id": "workspace#covalence-ffi-python@0.0.0",
+      "name": "covalence-ffi-python",
+      "version": "0.0.0",
+      "path": "crates/ffi/python",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_ffi_python",
+          "kinds": [
+            "cdylib",
+            "rlib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-lib-crypto@0.0.0",
       "name": "covalence-lib-crypto",
       "version": "0.0.0",
@@ -322,6 +338,13 @@
     {
       "source": "workspace#covalence-data-cas@0.0.0",
       "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-ffi-python@0.0.0",
+      "target": "workspace#covalence-lib-python@0.0.0",
       "kinds": [
         "normal"
       ]

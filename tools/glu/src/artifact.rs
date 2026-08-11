@@ -110,6 +110,48 @@ impl Runner {
         copy_dir(&generated, &out.join("generated"))
     }
 
+    /// Stage the `covalence` Python package: hand-written sources plus the
+    /// compiled extension module beside them.
+    ///
+    /// Cargo compiles it rather than Buck. `rust_library` produces an rlib, so
+    /// there is no Rust rule that emits something an interpreter can import,
+    /// and `pyo3`'s build script needs `links` metadata Buck's prelude
+    /// discards. Same shape as `artifact_wasm`, for the same reason.
+    ///
+    /// Built with `extension-module`, which is what a wheel ships: no libpython
+    /// to link, Python symbols resolved by the interpreter doing the loading.
+    pub(crate) fn artifact_python(&self, out: &Path) -> Result<()> {
+        let out = absolute(out)?;
+        let target = artifact_temp(&out, "python-target")?;
+        self.run(
+            "build Python extension",
+            "cargo",
+            [
+                "--locked",
+                "build",
+                "--target-dir",
+                as_utf8(&target, "temporary target")?,
+                "-p",
+                "covalence-ffi-python",
+                "--features",
+                "extension-module",
+            ],
+        )?;
+
+        let package = out.join("covalence");
+        copy_dir(
+            &self.root().join("crates/ffi/python/python/covalence"),
+            &package,
+        )?;
+        // `.abi3.so` rather than a bare `.so`, because the stable ABI is what
+        // this is built against and the name is the only place that shows.
+        // CPython accepts the suffix on every platform that uses `.so`.
+        let (built, staged) = extension_names();
+        fs::copy(target.join("debug").join(built), package.join(staged))
+            .wrap_err("could not stage the compiled extension module")?;
+        Ok(())
+    }
+
     pub(crate) fn artifact_docs(
         &self,
         metadata: [(&Path, &str); 2],
@@ -224,6 +266,20 @@ impl Runner {
         fs::copy(target.join("wasm32-wasip2/debug/nucleus.wasm"), &out)
             .wrap_err("could not copy nucleus CLI component")?;
         Ok(())
+    }
+}
+
+/// What cargo calls the `cdylib`, and what it has to be called for an
+/// interpreter to find it as `covalence._covalence`.
+const fn extension_names() -> (&'static str, &'static str) {
+    if cfg!(target_os = "windows") {
+        ("covalence_ffi_python.dll", "_covalence.pyd")
+    } else if cfg!(target_os = "macos") {
+        // macOS builds a `.dylib`, which CPython will not consider; the
+        // extension has to be renamed, not just moved.
+        ("libcovalence_ffi_python.dylib", "_covalence.abi3.so")
+    } else {
+        ("libcovalence_ffi_python.so", "_covalence.abi3.so")
     }
 }
 

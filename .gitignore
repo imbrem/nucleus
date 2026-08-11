@@ -17,3 +17,7 @@ node_modules/
 .buckconfig.local
 /buck-out/
 /lean/Nucleus/.lake/
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/

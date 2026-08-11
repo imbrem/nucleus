@@ -150,6 +150,13 @@ name = "covalence-data-container"
 version = "0.0.0"
 
 [[package]]
+name = "covalence-ffi-python"
+version = "0.0.0"
+dependencies = [
+ "covalence-lib-python",
+]
+
+[[package]]
 name = "covalence-lib-crypto"
 version = "0.0.0"
 dependencies = [

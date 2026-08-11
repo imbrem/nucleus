@@ -4,7 +4,7 @@ mod cargo;
 mod loc;
 mod runner;
 
-use std::{env, path::PathBuf, process::ExitCode};
+use std::{env, ffi::OsString, path::PathBuf, process::ExitCode};
 
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::{Result, WrapErr};
@@ -45,6 +45,16 @@ enum Task {
         /// Artifact to build; defaults to everything.
         #[arg(value_enum, default_value_t = BuildTarget::All)]
         target: BuildTarget,
+    },
+    /// Run Python with the Covalence package importable.
+    ///
+    /// With no arguments this is a REPL that can `import covalence`. Anything
+    /// after it is passed to the interpreter, so `glu python -c …` and
+    /// `glu python script.py` work as they would with `python3`.
+    Python {
+        /// Arguments for the interpreter.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<OsString>,
     },
     /// Run local validation.
     Check,
@@ -119,6 +129,7 @@ enum BuildTarget {
     Native,
     Wasm,
     Component,
+    Python,
     Docs,
 }
 
@@ -184,6 +195,11 @@ enum ArtifactTask {
         #[arg(long)]
         out: PathBuf,
     },
+    /// Internal: stage the importable Python package.
+    Python {
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Internal: assemble the generated documentation site.
     Docs {
         #[arg(long)]
@@ -223,6 +239,7 @@ fn run() -> Result<()> {
         Task::Lint => runner.lint(),
         Task::Test { container, cargo } => runner.test(container, cargo),
         Task::Build { target } => runner.build(target),
+        Task::Python { args } => runner.python(args),
         Task::Check => runner.check(),
         Task::Ci => runner.ci(),
         Task::Deps => runner.deps_check(),
@@ -251,6 +268,7 @@ fn run() -> Result<()> {
                 runner.artifact_component_js(&component, &out)
             }
             ArtifactTask::CliComponent { out } => runner.artifact_cli_component(&out),
+            ArtifactTask::Python { out } => runner.artifact_python(&out),
             ArtifactTask::Docs {
                 production_crates,
                 production_dependencies,
