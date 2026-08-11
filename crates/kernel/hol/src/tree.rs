@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use covalence_lib_serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::{App, Arr, BoolTy, Bound, Eqn, Expr, Lam};
+use crate::{
+    Abs, App, Arr, Base, BoolLit, BoolTy, Bound, Eps, Eqn, Expr, Free, IndTy, Lam, Rep, Sub, Succ,
+    Zero,
+};
 
 /// A recursively shared HOL syntax tree.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -38,16 +41,40 @@ impl Tree {
         Self::new(Expr::BoolTy(BoolTy {}))
     }
 
+    /// Constructs a named primitive type.
+    #[must_use]
+    pub fn base(name: impl Into<String>) -> Self {
+        Self::new(Expr::Base(Base { name: name.into() }))
+    }
+
+    /// Constructs the distinguished infinite individual type.
+    #[must_use]
+    pub fn ind_ty() -> Self {
+        Self::new(Expr::IndTy(IndTy {}))
+    }
+
     /// Constructs a function type.
     #[must_use]
     pub fn arr(domain: Self, codomain: Self) -> Self {
         Self::new(Expr::Arr(Arr { domain, codomain }))
     }
 
+    /// Constructs a predicate subtype.
+    #[must_use]
+    pub fn subtype(carrier: Self, predicate: Self) -> Self {
+        Self::new(Expr::Sub(Sub { carrier, predicate }))
+    }
+
     /// Constructs a bound variable.
     #[must_use]
     pub fn bound(index: u64) -> Self {
         Self::new(Expr::Bound(Bound { index }))
+    }
+
+    /// Constructs a free variable.
+    #[must_use]
+    pub fn free(name: u64) -> Self {
+        Self::new(Expr::Free(Free { name }))
     }
 
     /// Constructs an application.
@@ -62,6 +89,24 @@ impl Tree {
         Self::new(Expr::Lam(Lam { domain, body }))
     }
 
+    /// Constructs a Boolean literal.
+    #[must_use]
+    pub fn bool(value: bool) -> Self {
+        Self::new(Expr::Bool(BoolLit { value }))
+    }
+
+    /// Constructs zero of the individual type.
+    #[must_use]
+    pub fn zero() -> Self {
+        Self::new(Expr::Zero(Zero {}))
+    }
+
+    /// Constructs successor.
+    #[must_use]
+    pub fn succ(value: Self) -> Self {
+        Self::new(Expr::Succ(Succ { value }))
+    }
+
     /// Constructs typed equality.
     #[must_use]
     pub fn eqn(r#type: Self, left: Self, right: Self) -> Self {
@@ -69,6 +114,32 @@ impl Tree {
             r#type,
             left,
             right,
+        }))
+    }
+
+    /// Constructs Hilbert choice.
+    #[must_use]
+    pub fn eps(r#type: Self, predicate: Self) -> Self {
+        Self::new(Expr::Eps(Eps { r#type, predicate }))
+    }
+
+    /// Constructs subtype abstraction.
+    #[must_use]
+    pub fn abs(carrier: Self, predicate: Self, value: Self) -> Self {
+        Self::new(Expr::Abs(Abs {
+            carrier,
+            predicate,
+            value,
+        }))
+    }
+
+    /// Constructs subtype representation.
+    #[must_use]
+    pub fn rep(carrier: Self, predicate: Self, value: Self) -> Self {
+        Self::new(Expr::Rep(Rep {
+            carrier,
+            predicate,
+            value,
         }))
     }
 }
@@ -123,14 +194,29 @@ mod tests {
     }
 
     #[test]
-    fn all_pilot_variants_round_trip() {
+    fn all_variants_round_trip() {
+        let predicate = Tree::eqn(Tree::ind_ty(), Tree::bound(0), Tree::zero());
         let nodes = [
+            Tree::base("atom"),
             Tree::bool_ty(),
+            Tree::ind_ty(),
             Tree::arr(Tree::bool_ty(), Tree::bool_ty()),
+            Tree::subtype(Tree::ind_ty(), predicate.clone()),
             Tree::bound(u64::MAX),
+            Tree::free(u64::MAX),
             Tree::app(Tree::bound(0), Tree::bound(1)),
             Tree::lam(Tree::bool_ty(), Tree::bound(0)),
+            Tree::bool(true),
+            Tree::zero(),
+            Tree::succ(Tree::zero()),
             Tree::eqn(Tree::bool_ty(), Tree::bound(0), Tree::bound(1)),
+            Tree::eps(Tree::ind_ty(), Tree::lam(Tree::ind_ty(), Tree::bool(true))),
+            Tree::abs(Tree::ind_ty(), predicate.clone(), Tree::zero()),
+            Tree::rep(
+                Tree::ind_ty(),
+                predicate.clone(),
+                Tree::abs(Tree::ind_ty(), predicate, Tree::zero()),
+            ),
         ];
 
         for node in nodes {
