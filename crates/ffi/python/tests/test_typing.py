@@ -11,6 +11,7 @@ import pathlib
 
 import covalence
 from covalence import _covalence
+from covalence import hash as public_hash
 
 PACKAGE = pathlib.Path(covalence.__path__[0])
 STUB = ast.parse((PACKAGE / "_covalence.pyi").read_text())
@@ -60,10 +61,10 @@ def test_every_declared_name_exists() -> None:
 
 
 def test_every_public_name_is_reexported() -> None:
-    """The stub describes the compiled module; `__init__` decides what is public."""
-    assert set(covalence.__all__) <= _exported_names()
-    for name in covalence.__all__:
-        assert getattr(covalence, name) is getattr(_covalence, name)
+    """The stub describes the compiled module; `hash` decides what is public."""
+    assert set(public_hash.__all__) <= _exported_names()
+    for name in public_hash.__all__:
+        assert getattr(public_hash, name) is getattr(_covalence, name)
 
 
 def test_declared_members_exist_on_each_class() -> None:

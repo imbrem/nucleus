@@ -92,7 +92,7 @@ fn exact<const BYTES: usize>(data: &[u8]) -> PyResult<[u8; BYTES]> {
 /// Ordering is bytewise and hashing agrees with equality, but both stop at the
 /// namespace boundary: comparing two namespaces is `False`, and ordering them
 /// against each other raises `TypeError`, however their bytes compare.
-#[pyclass(subclass, frozen, module = "covalence", name = "Obj")]
+#[pyclass(subclass, frozen, module = "covalence.hash", name = "Obj")]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 pub struct PyObj {
     /// Wide enough for every namespace, so a value costs no allocation.
@@ -202,7 +202,7 @@ macro_rules! object {
         #[pyclass(
             frozen,
             extends = PyObj,
-            module = "covalence",
+            module = "covalence.hash",
             name = $name,
             crate = "covalence_lib_python::pyo3"
         )]
@@ -476,18 +476,31 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyGitHash>()?;
 
     let python = module.py();
-    module.add(
-        "InvalidLengthError",
-        PyType::new::<InvalidLengthError>(python),
-    )?;
-    module.add("InvalidHexError", PyType::new::<InvalidHexError>(python))?;
-    module.add(
-        "InvalidBase64Error",
-        PyType::new::<InvalidBase64Error>(python),
-    )?;
+    for (name, exception) in [
+        (
+            "InvalidLengthError",
+            PyType::new::<InvalidLengthError>(python),
+        ),
+        ("InvalidHexError", PyType::new::<InvalidHexError>(python)),
+        (
+            "InvalidBase64Error",
+            PyType::new::<InvalidBase64Error>(python),
+        ),
+    ] {
+        // `create_exception!` accepts a Rust module identifier rather than a
+        // dotted Python path. Publish the public location explicitly: the
+        // native module is private and `covalence` no longer exports these.
+        exception.setattr("__module__", "covalence.hash")?;
+        module.add(name, exception)?;
+    }
 
-    module.add_function(wrap_pyfunction!(git_object_name, module)?)?;
-    module.add_function(wrap_pyfunction!(git_blob_name, module)?)?;
+    for function in [
+        wrap_pyfunction!(git_object_name, module)?,
+        wrap_pyfunction!(git_blob_name, module)?,
+    ] {
+        function.setattr("__module__", "covalence.hash")?;
+        module.add_function(function)?;
+    }
 
     // The checked-in roots of the standard hierarchy. `COV_ROOT_CTX_KEY` is
     // published alongside the key derived from it, so that the derivation can
