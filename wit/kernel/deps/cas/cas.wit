@@ -1,0 +1,88 @@
+// Component interface for content-addressed storage.
+
+package covalence:cas@0.1.0;
+
+interface types {
+    // A 32-byte content address.
+    type address = list<u8>;
+
+    // Operational failures; absence is represented by `none`.
+    variant error {
+        // The address was not 32 bytes.
+        malformed-address,
+        // The range lies outside the object.
+        invalid-range(range-error),
+        // The object exceeded a limit this provider enforces.
+        too-large(limit-error),
+        // Diagnostic provider failure.
+        backend(string),
+        // An opened object became unavailable.
+        withdrawn,
+    }
+
+    record range-error {
+        start: u64,
+        end: u64,
+        len: u64,
+    }
+
+    record limit-error {
+        len: u64,
+        limit: u64,
+    }
+
+    // Advisory store statistics.
+    record store-stats {
+        objects: u64,
+        bytes: u64,
+        largest: u64,
+    }
+}
+
+interface store {
+    use types.{address, error, store-stats};
+
+    // A pinned immutable object.
+    resource cas-object {
+        // The object's length.
+        len: func() -> u64;
+
+        // Returns exactly [start, end).
+        read: func(start: u64, end: u64) -> result<list<u8>, error>;
+
+        // The object's address.
+        address: func() -> address;
+    }
+
+    // Opens an address, or returns none when it does not resolve here.
+    open: func(addr: address) -> result<option<cas-object>, error>;
+
+    // Whether an address currently resolves.
+    has: func(addr: address) -> result<bool, error>;
+
+    // Summarises what this store holds.
+    stats: func() -> result<store-stats, error>;
+}
+
+// Admission is separate from read access.
+interface admit {
+    use types.{address, error};
+
+    // Hashes and admits bytes.
+    put: func(bytes: list<u8>) -> result<address, error>;
+
+    // Drops an address without invalidating open objects.
+    forget: func(addr: address) -> result<bool, error>;
+}
+
+// A store which serves objects and accepts them.
+world cas {
+    export store;
+    export admit;
+}
+
+// A store assembled from imported providers.
+world composing-store {
+    import store;
+    export store;
+}
