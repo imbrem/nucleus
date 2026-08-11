@@ -699,6 +699,11 @@ impl<'a> Graph<'a> {
         // Test targets only. A binary already links its package's library, so
         // giving the library a `$(location)` on that binary would be a cycle.
         let mut env = cargo_package_env(package);
+        // Cargo exposes the package directory to build-time code.
+        env.push((
+            "CARGO_MANIFEST_DIR".to_owned(),
+            "$(location :package_files)".to_owned(),
+        ));
         // What `include!(concat!(env!("OUT_DIR"), …))` reads. The rest of what
         // the script emitted arrives as `rustc_flags`, which the template adds
         // alongside this.

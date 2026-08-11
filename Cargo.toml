@@ -10,12 +10,15 @@ members = [
   "crates/lib/sqlite",
   "crates/data/basic",
   "crates/data/cas",
+  "crates/data/cas-http",
   "crates/data/container",
   "crates/ffi/python",
   "crates/proton",
   "crates/neutron",
   "crates/nucleus",
   "crates/repl",
+  "crates/browser",
+  "crates/bin/cas-serve",
   "crates/bin/cas-shell",
   "crates/bin/nucleus",
 ]
@@ -33,3 +36,18 @@ unsafe_code = "deny"
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
+
+# Wasm a browser has to download before anything runs. Size is the cost that
+# is actually paid, and the code being made smaller is a SQL shell over a
+# handful of objects, so trading throughput for bytes is the right way round.
+# A separate profile rather than `release` because native builds want the
+# opposite trade.
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+# The name section is 86 KiB of function names for C code nobody debugs from
+# the browser. This also drops `target_features`, which matters only to a
+# post-processing step this build does not have.
+strip = "symbols"

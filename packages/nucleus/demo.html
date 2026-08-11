@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>nucleus</title>
+    <script type="importmap">
+      {
+        "imports": {
+          "@bytecodealliance/preview2-shim/cli": "./node_modules/@bytecodealliance/preview2-shim/dist/browser/cli.js",
+          "@bytecodealliance/preview2-shim/clocks": "./node_modules/@bytecodealliance/preview2-shim/dist/browser/clocks.js",
+          "@bytecodealliance/preview2-shim/filesystem": "./node_modules/@bytecodealliance/preview2-shim/dist/browser/filesystem.js",
+          "@bytecodealliance/preview2-shim/io": "./node_modules/@bytecodealliance/preview2-shim/dist/browser/io.js",
+          "@bytecodealliance/preview2-shim/random": "./node_modules/@bytecodealliance/preview2-shim/dist/browser/random.js"
+        }
+      }
+    </script>
+    <style>
+      :root {
+        /* A terminal, so: dark, and not asking the OS about it. */
+        color-scheme: dark;
+        --bg: #0b0e14;
+        --fg: #c8d3e0;
+        --line: #1e2430;
+        --soft: #6b7a90;
+        --accent: #7aa2f7;
+        --good: #9ece6a;
+        --bad: #f7768e;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          13px/1.5 ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          monospace;
+      }
+      header {
+        padding: 0.6rem 1rem;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        gap: 1rem;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      header strong {
+        font-weight: 600;
+        color: var(--accent);
+      }
+      header .hint {
+        color: var(--soft);
+      }
+      header label {
+        color: var(--soft);
+        cursor: pointer;
+        text-decoration: underline dotted;
+      }
+      header input[type="file"] {
+        display: none;
+      }
+      #transcript {
+        flex: 1;
+        overflow-y: auto;
+        padding: 0.8rem 1rem;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      #transcript .echo {
+        color: var(--soft);
+      }
+      #transcript .bad {
+        color: var(--bad);
+      }
+      #transcript .ok {
+        color: var(--good);
+      }
+      form {
+        display: flex;
+        gap: 0.5rem;
+        padding: 0.6rem 1rem;
+        border-top: 1px solid var(--line);
+        align-items: baseline;
+      }
+      form span {
+        color: var(--accent);
+      }
+      input[type="text"] {
+        flex: 1;
+        border: 0;
+        background: transparent;
+        color: var(--fg);
+        font: inherit;
+        outline: none;
+        caret-color: var(--accent);
+      }
+      /* A cursor block, so the prompt reads as a terminal rather than a form. */
+      form::after {
+        content: "";
+        width: 0.55em;
+        height: 1.1em;
+        background: var(--accent);
+        opacity: 0.75;
+        animation: blink 1.1s step-end infinite;
+      }
+      form:focus-within::after {
+        opacity: 0;
+      }
+      @keyframes blink {
+        50% {
+          opacity: 0;
+        }
+      }
+      ::selection {
+        background: #2a3550;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>nucleus</strong>
+      <span class="hint">the same REPL the terminal runs, in a page</span>
+      <label for="file">admit a file…</label>
+      <input id="file" type="file" accept=".sqlite,.db,.sqlite3" />
+    </header>
+
+    <div id="transcript"></div>
+
+    <form id="prompt">
+      <span>nucleus&gt;</span>
+      <input
+        id="line"
+        type="text"
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+        autofocus
+      />
+    </form>
+
+    <script type="module">
+      import { init, Repl, drive } from "./dist/index.js";
+
+      await init();
+      const repl = new Repl();
+      const host = {};
+
+      const transcript = document.getElementById("transcript");
+      const line = document.getElementById("line");
+
+      function write(text, className) {
+        if (!text) return;
+        const node = document.createElement("div");
+        if (className) node.className = className;
+        node.textContent = text;
+        transcript.append(node);
+        transcript.scrollTop = transcript.scrollHeight;
+      }
+
+      write(repl.banner());
+
+      // A page has no filesystem, so an empty store means nothing to try.
+      // `(samples)` is a REPL form, not a page feature: the terminal has the
+      // same one, and both get their databases from the same place.
+      const samples = (await drive(repl, host, "(samples)")).output;
+      const demos = [...samples.matchAll(/\((\w+) ([0-9a-f]{64})\)/g)].map(
+        ([, name, address]) => ({ name, address }),
+      );
+      write(
+        [
+          "",
+          "In the store:",
+          ...demos.map(({ name, address }) => `  ${name.padEnd(10)}${address}`),
+          "",
+          "Try:",
+          "  (help)                            every form",
+          "  (objects)                         what the store holds",
+          "  (sqlite ADDRESS)                  the real sqlite3, in wasm",
+          '  (connect "http://127.0.0.1:8080") a kernel in another process',
+          "  (fetch ADDRESS)                   pull an object and verify it",
+          "",
+          "Paste an address from above wherever ADDRESS appears.",
+          "",
+          "Inside sqlite, every object in the store is one ATTACH away:",
+          `  ATTACH 'file:${demos[1].address}?vfs=cas' AS m;`,
+          "",
+          "`glu demo` starts a kernel and prints an address to paste.",
+          "",
+        ].join("\n"),
+        "echo",
+      );
+
+      // History, because a REPL without it is a form with extra steps.
+      const history = [];
+      let cursor = 0;
+
+      document
+        .getElementById("prompt")
+        .addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const text = line.value;
+          line.value = "";
+          if (!text.trim()) return;
+
+          history.push(text);
+          cursor = history.length;
+          write(`nucleus> ${text}`, "echo");
+
+          const result = await drive(repl, host, text);
+          write(
+            result.output,
+            result.output.startsWith("error:") ? "bad" : undefined,
+          );
+          if (result.quit) {
+            write("(a page cannot quit; reload to start over)", "echo");
+          }
+        });
+
+      line.addEventListener("keydown", (event) => {
+        if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+        event.preventDefault();
+        cursor += event.key === "ArrowUp" ? -1 : 1;
+        cursor = Math.max(0, Math.min(cursor, history.length));
+        line.value = history[cursor] ?? "";
+      });
+
+      // A page has no filesystem, so `(put …)` cannot work here. This is the
+      // affordance that replaces it.
+      document
+        .getElementById("file")
+        .addEventListener("change", async (event) => {
+          const file = event.target.files?.[0];
+          if (!file) return;
+          try {
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            write(`nucleus> (put ${JSON.stringify(file.name)})`, "echo");
+            write(repl.admit(bytes));
+          } catch (error) {
+            write(`error: ${error}`, "bad");
+          }
+          event.target.value = "";
+        });
+    </script>
+  </body>
+</html>
