@@ -487,6 +487,218 @@ dd {
   overflow-wrap: anywhere;
 }
 
+.notes {
+  display: grid;
+  grid-template-columns: minmax(12rem, 16rem) minmax(0, 1fr);
+  gap: clamp(1.5rem, 4vw, 3.5rem);
+  align-items: start;
+  padding-top: clamp(2.5rem, 8vh, 5rem);
+}
+
+.note-index {
+  position: sticky;
+  top: 1.5rem;
+  padding: 1.1rem;
+  border: 1px solid #d0cec4;
+  border-radius: 0.65rem;
+  background: #faf9f4;
+  font-size: 0.72rem;
+}
+
+.note-index h3 {
+  margin-bottom: 0.75rem;
+}
+
+.note-index a {
+  font-weight: 600;
+}
+
+.note-tree {
+  margin: 0;
+  padding-left: 0.9rem;
+  list-style: none;
+}
+
+.note-tree li {
+  margin: 0.45rem 0;
+  border-left: 1px solid #dedbd2;
+  padding-left: 0.7rem;
+}
+
+.note-tree a[aria-current="page"] {
+  font-weight: 700;
+  text-decoration-thickness: 2px;
+}
+
+.note-group {
+  color: #65716a;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 0.62rem;
+}
+
+.status {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.08rem 0.4rem;
+  border: 1px solid #c8ccc8;
+  border-radius: 0.28rem;
+  color: #4e5c54;
+  background: #eef0ec;
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  vertical-align: 0.08em;
+}
+
+.status-active {
+  border-color: #12634a;
+  color: #084631;
+  background: #b9ddce;
+}
+
+.status-research,
+.status-proposal {
+  border-color: #b0741f;
+  color: #6d4610;
+  background: #f3e2c6;
+}
+
+.status-superseded,
+.status-historical {
+  border-color: #9aa69f;
+  color: #5b665f;
+  background: #e6e8e3;
+}
+
+.crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.8rem;
+  color: #65716a;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.note-metadata {
+  max-width: 46rem;
+  margin: 1.4rem 0 2.4rem;
+  padding: 0.9rem 1.1rem;
+  border: 1px solid #d0cec4;
+  border-radius: 0.65rem;
+  background: #faf9f4;
+  font-size: 0.72rem;
+}
+
+.note-body,
+.note-children {
+  max-width: 46rem;
+  font-size: 0.86rem;
+  line-height: 1.65;
+}
+
+.note-body h2 {
+  margin: 2.6rem 0 0.9rem;
+  font-size: clamp(1.15rem, 2.4vw, 1.5rem);
+}
+
+.note-body h3 {
+  margin: 2rem 0 0.7rem;
+  color: #19231e;
+  font-size: 0.95rem;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.note-body h4 {
+  margin: 1.5rem 0 0.6rem;
+  font-size: 0.86rem;
+}
+
+.note-body code,
+.note-children code {
+  padding: 0.1rem 0.3rem;
+  border-radius: 0.25rem;
+  background: #e7e5db;
+  font-size: 0.92em;
+}
+
+.note-body pre {
+  overflow-x: auto;
+  margin: 1.1rem 0;
+  padding: 0.9rem 1rem;
+  border: 1px solid #d0cec4;
+  border-radius: 0.5rem;
+  background: #faf9f4;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.note-body pre code {
+  padding: 0;
+  background: none;
+}
+
+.note-body table {
+  display: block;
+  overflow-x: auto;
+  border-collapse: collapse;
+  margin: 1.2rem 0;
+  font-size: 0.76rem;
+}
+
+.note-body th,
+.note-body td {
+  padding: 0.4rem 0.7rem;
+  border: 1px solid #d0cec4;
+  text-align: left;
+  vertical-align: top;
+}
+
+.note-body th {
+  background: #eceade;
+}
+
+.note-body blockquote {
+  margin: 1.2rem 0;
+  padding-left: 1rem;
+  border-left: 3px solid #cbc9bf;
+  color: #4e5c54;
+}
+
+.note-body ul,
+.note-body ol {
+  padding-left: 1.3rem;
+}
+
+.note-body li {
+  margin: 0.3rem 0;
+}
+
+.note-body hr {
+  margin: 2.2rem 0;
+  border: 0;
+  border-top: 1px solid #cbc9bf;
+}
+
+.note-children ul {
+  padding-left: 0;
+  list-style: none;
+}
+
+.note-children li {
+  margin: 0.9rem 0;
+}
+
+.note-children p {
+  margin: 0.2rem 0 0;
+  color: #4e5c54;
+  font-size: 0.78rem;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -552,6 +764,14 @@ dd {
   .dependency-row {
     grid-template-columns: 1fr;
     gap: 0.45rem;
+  }
+
+  .notes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .note-index {
+    position: static;
   }
 
   footer {
