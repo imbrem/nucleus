@@ -204,6 +204,34 @@ def sqliteOfIpldScalar? : IpldJsonScalar → Option NullableSqliteValue
 @[simp] theorem sqlite_ipld_integer_roundtrip (value : Int64) :
     sqliteOfIpldScalar? (some (.int value)) = some (some (.integer value)) := rfl
 
+/-- Partially convert an entire SQLite JSON tree to RFC JSON. -/
+def sqliteJsonToRfc? (json : SqliteJson) : Option RfcJson :=
+  json.mapScalar? sqliteToRfcScalar?
+
+/-- Partially convert an RFC JSON tree to SQLite JSON. -/
+def rfcJsonToSqlite? (json : RfcJson) : Option SqliteJson :=
+  json.mapScalar? sqliteOfRfcScalar?
+
+/-- Partially convert an entire SQLite JSON tree to integer-only IPLD JSON. -/
+def sqliteJsonToIpld? (json : SqliteJson) : Option IpldJson :=
+  json.mapScalar? sqliteToIpldScalar?
+
+/-- Partially convert integer-only IPLD JSON to SQLite JSON. -/
+def ipldJsonToSqlite? (json : IpldJson) : Option SqliteJson :=
+  json.mapScalar? sqliteOfIpldScalar?
+
+@[simp] theorem sqliteJsonToRfc?_null :
+    sqliteJsonToRfc? (.scalar none) = some (.scalar none) := rfl
+
+@[simp] theorem rfcJsonToSqlite?_null :
+    rfcJsonToSqlite? (.scalar none) = some (.scalar none) := rfl
+
+@[simp] theorem sqliteJsonToIpld?_null :
+    sqliteJsonToIpld? (.scalar none) = some (.scalar none) := rfl
+
+@[simp] theorem ipldJsonToSqlite?_null :
+    ipldJsonToSqlite? (.scalar none) = some (.scalar none) := rfl
+
 /-- Lift an `Option`-returning parser into epistemic unknown information. -/
 def Unknown.ofOption {α : Type u} : Option α → Unknown α
   | none => .unknown
