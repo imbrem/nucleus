@@ -112,11 +112,44 @@ namespace JsonCas
 
 variable {Scalar Target : Type u} {Name : Type} [DecidableEq Name]
 
+/-- Apply an arbitrary partial interpretation to a fetched CAS output. This is
+the general operation used by parsers that consume the fetched JSON as a whole. -/
+def mapOutput (cas : JsonCas Scalar Name) (interpret : Json Scalar → Unknown Target)
+    (gas : Nat) (name : Name) : Unknown Target :=
+  (cas.fetch gas name).bind interpret
+
+/-- The function on names induced by partially interpreting fetched outputs. -/
+def mappedFunction (cas : JsonCas Scalar Name)
+    (interpret : Json Scalar → Unknown Target) (gas : Nat) : Name → Unknown Target :=
+  cas.mapOutput interpret gas
+
+theorem mapOutput_mono {a b : JsonCas Scalar Name}
+    {interpret₁ interpret₂ : Json Scalar → Unknown Target} (hab : a ≤ b)
+    (hinterpret : ∀ value, Unknown.Le (interpret₁ value) (interpret₂ value)) :
+    ∀ gas name, Unknown.Le (a.mapOutput interpret₁ gas name)
+      (b.mapOutput interpret₂ gas name) := by
+  intro gas name
+  exact Unknown.bind_mono (fetch_mono hab gas name) hinterpret
+
+theorem mappedFunction_mono {a b : JsonCas Scalar Name}
+    {interpret₁ interpret₂ : Json Scalar → Unknown Target} (hab : a ≤ b)
+    (hinterpret : ∀ value, Unknown.Le (interpret₁ value) (interpret₂ value)) (gas : Nat) :
+    ∀ name, Unknown.Le (a.mappedFunction interpret₁ gas name)
+      (b.mappedFunction interpret₂ gas name) :=
+  mapOutput_mono hab hinterpret gas
+
+theorem mapOutput_gas_mono (cas : JsonCas Scalar Name)
+    (interpret : Json Scalar → Unknown Target) {gas₁ gas₂ : Nat}
+    (hgas : gas₁ ≤ gas₂) (name : Name) :
+    Unknown.Le (cas.mapOutput interpret gas₁ name) (cas.mapOutput interpret gas₂ name) :=
+  Unknown.bind_mono (fetch_gas_mono cas hgas name)
+    (fun value => Unknown.le_refl (interpret value))
+
 /-- Fetch a value and partially interpret each scalar. Invalid input is
 reported as unknown information. -/
 def mapFetch (cas : JsonCas Scalar Name) (parse : Scalar → Unknown Target)
     (gas : Nat) (name : Name) : Unknown (Json Target) :=
-  (cas.fetch gas name).bind (Json.mapScalarPartial parse)
+  cas.mapOutput (Json.mapScalarPartial parse) gas name
 
 /-- The induced partially mapped dereference function. -/
 def mapDereference (cas : JsonCas Scalar Name) (parse : Scalar → Unknown Target)
