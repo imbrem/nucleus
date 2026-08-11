@@ -4,6 +4,13 @@ mod connection;
 
 pub use connection::{Connection, ConnectionError};
 
+mod hol_attestation;
+
+pub use hol_attestation::{
+    ExportError as HolExportError, ImportError as HolImportError, ImportedTheorem,
+    SignedClosedTheorem, TrustedSigners, closed_theorem_json_statement, sign_closed_theorem,
+};
+
 mod snapshot;
 
 pub use snapshot::{

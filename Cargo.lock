@@ -247,9 +247,12 @@ name = "covalence-nucleus"
 version = "0.0.0"
 dependencies = [
  "bytes",
+ "covalence-kernel-hol",
  "covalence-lib-crypto",
  "covalence-lib-error",
  "covalence-lib-hash",
+ "covalence-lib-json",
+ "covalence-lib-serde",
  "covalence-lib-sqlite",
  "covalence-neutron",
  "wasm-bindgen",
