@@ -28,6 +28,20 @@
           cargo = rust;
           rustc = rust;
         };
+        # The interpreter the Python bindings are built against and tested
+        # under. One environment for both: PyO3 links whichever interpreter it
+        # is compiled against, so building with one and testing under another
+        # is how ABI mismatches get in.
+        #
+        # Third-party packages the Python suite needs belong here, where
+        # flake.lock pins them — NumPy and SAT solvers are the ones coming.
+        # Anything nixpkgs does not carry can go in a local virtual environment
+        # created with `--system-site-packages`; `glu` runs whichever `python3`
+        # is on PATH, so an activated one layers on top of this without any
+        # further configuration.
+        python = pkgs.python3.withPackages (packages: with packages; [
+          pytest
+        ]);
         craneLib = (crane.mkLib pkgs).overrideToolchain rust;
         gluArgs = {
           pname = "glu";
@@ -46,6 +60,11 @@
           cargoLock.lockFile = ./Cargo.lock;
           cargoBuildFlags = [ "--workspace" "--all-targets" ];
           cargoTestFlags = [ "--workspace" ];
+          # `pyo3-build-config` interrogates an interpreter to decide how to
+          # link, and the test binaries then embed the one it found. Both
+          # phases need it, so it is a build input as well as a native one.
+          nativeBuildInputs = [ python ];
+          buildInputs = [ python ];
           installPhase = "mkdir -p $out";
         };
         tools = with pkgs; [
@@ -63,7 +82,7 @@
           glu
           nodejs_24
           pnpm
-          python3
+          python
           rust
           scc
           wasm-bindgen-cli

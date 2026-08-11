@@ -150,6 +150,27 @@
       ]
     },
     {
+      "id": "workspace#covalence-lib-python@0.0.0",
+      "name": "covalence-lib-python",
+      "version": "0.0.0",
+      "path": "crates/lib/python",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_lib_python",
+          "kinds": [
+            "lib"
+          ]
+        },
+        {
+          "name": "extension",
+          "kinds": [
+            "test"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-lib-rand@0.0.0",
       "name": "covalence-lib-rand",
       "version": "0.0.0",
