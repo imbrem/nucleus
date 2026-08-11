@@ -5,6 +5,7 @@ import Nucleus.Json.Validate
 import Nucleus.Json.Equiv
 import Nucleus.Json.Alternatives
 import Nucleus.Json.IJson
+import Nucleus.Json.Cas
 
 /-!
 # Key- and scalar-parametric JSON trees
