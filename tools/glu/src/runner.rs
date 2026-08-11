@@ -121,8 +121,24 @@ impl Runner {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
+        self.exec_with_env(phase, program, args, &[])
+    }
+
+    /// Run a program with this process's streams, so it can be interactive.
+    fn exec_with_env<I, S>(
+        &self,
+        phase: &str,
+        program: &str,
+        args: I,
+        environment: &[(&str, &OsStr)],
+    ) -> Result<()>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
         let status = Command::new(program)
             .args(args)
+            .envs(environment.iter().copied())
             .current_dir(&self.root)
             .status()
             .wrap_err_with(|| format!("{phase}: could not run {program}"))?;
@@ -178,6 +194,12 @@ impl Runner {
         };
         self.cargo("format production", cargo_args)?;
         self.tool_cargo("format glu", cargo_args)?;
+        let ruff_args = if check {
+            &["format", "--check", "."][..]
+        } else {
+            &["format", "."][..]
+        };
+        self.run("format Python", "ruff", ruff_args)?;
         self.pnpm(
             "format web",
             &[
@@ -206,6 +228,7 @@ impl Runner {
             &["clippy", "--all-targets", "--", "-D", "warnings"],
         )?;
         self.build(BuildTarget::Wasm)?;
+        self.run("lint Python", "ruff", ["check", "."])?;
         self.pnpm("lint web", &["run", "lint"])
     }
 
@@ -247,6 +270,7 @@ impl Runner {
         self.build(BuildTarget::Wasm)?;
         self.build(BuildTarget::Component)?;
         self.pnpm("test web", &["run", "test"])?;
+        self.test_python()?;
         self.test_components()?;
         let cli = self.buck_output("//crates/bin/nucleus:nucleus")?;
         let cli = cli.to_string_lossy();
@@ -274,6 +298,11 @@ impl Runner {
                 eprintln!("• build Wasm package… done");
                 Ok(())
             }
+            BuildTarget::Python => {
+                self.python_package()?;
+                eprintln!("• build Python package… done");
+                Ok(())
+            }
             BuildTarget::Component => {
                 self.buck_check()?;
                 let source = self.buck_output("//:component-js")?;
@@ -292,6 +321,7 @@ impl Runner {
             "//crates/...".to_owned(),
             "//:wasm".to_owned(),
             "//:component-js".to_owned(),
+            "//:python".to_owned(),
             "//:docs".to_owned(),
         ];
         arguments.extend(self.docs_config()?);
@@ -299,6 +329,10 @@ impl Runner {
         let outputs = self.buck_outputs("build all targets", &arguments)?;
         self.materialize_wasm(required_output(&outputs, "nucleus//:wasm")?)?;
         self.materialize_component_js(required_output(&outputs, "nucleus//:component-js")?)?;
+        replace_dir(
+            required_output(&outputs, "nucleus//:python")?,
+            &self.python_root(),
+        )?;
         replace_dir(
             required_output(&outputs, "nucleus//:docs")?,
             &self.root.join("apps/docs/build"),
@@ -325,6 +359,68 @@ impl Runner {
     /// replaces `generated` wholesale.
     fn materialize_component_js(&self, source: &Path) -> Result<()> {
         replace_dir(source, &self.root.join("packages/nucleus/component"))
+    }
+
+    /// Where the importable `covalence` package is staged.
+    ///
+    /// Outside the source tree deliberately. Dropping a built `.so` into
+    /// `crates/ffi/python/python/covalence` would put a build output inside a
+    /// directory Buck globs as a source.
+    fn python_root(&self) -> PathBuf {
+        self.root().join("target/python")
+    }
+
+    /// Build the Python package and return the directory to import it from.
+    fn python_package(&self) -> Result<PathBuf> {
+        let source = self.buck_output("//:python")?;
+        let root = self.python_root();
+        replace_dir(&source, &root)?;
+        Ok(root)
+    }
+
+    /// Run the interpreter with the Covalence package importable.
+    ///
+    /// `glu python` on its own is a REPL that can `import covalence`; anything
+    /// after it is passed through, so `glu python -c …` and `glu python
+    /// script.py` work as expected.
+    ///
+    /// This runs whichever `python3` is on `PATH` rather than a fixed one, so
+    /// that an activated virtual environment — the way to reach a package
+    /// nixpkgs does not carry — layers on top of the pinned interpreter
+    /// without any further configuration.
+    pub(crate) fn python<I, S>(&self, args: I) -> Result<()>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let root = self.python_package()?;
+        self.exec_with_env(
+            "run Python",
+            "python3",
+            args,
+            &[("PYTHONPATH", root.as_os_str())],
+        )
+    }
+
+    fn test_python(&self) -> Result<()> {
+        let root = self.python_package()?;
+        // `python3 -m pytest` rather than the `pytest` script, so the tests run
+        // under the same interpreter the extension was staged for.
+        self.run_with_env(
+            "test Python package",
+            "python3",
+            // `no:cacheprovider` because the run is disposable and the cache
+            // would otherwise land in the source tree.
+            [
+                "-m",
+                "pytest",
+                "crates/ffi/python/tests",
+                "-q",
+                "-p",
+                "no:cacheprovider",
+            ],
+            &[("PYTHONPATH", root.as_os_str())],
+        )
     }
 
     pub(crate) fn check(&self) -> Result<()> {
@@ -619,6 +715,8 @@ impl Runner {
             "pnpm",
             "pytest",
             "python3",
+            "maturin",
+            "ruff",
             "scc",
             "git",
             "wasm-bindgen",

@@ -51,9 +51,17 @@ genrule(
     labels = ["uses_undeclared_inputs"],
 )
 
+# Crates Buck's Rust rules do not build, and which therefore have no
+# `:package_files` to name. Globbed here so that `cargo doc --workspace` still
+# reruns when they change.
+_CARGO_ONLY_CRATE_SOURCES = glob([
+    "crates/ffi/python/**",
+    "crates/lib/python/**",
+])
+
 genrule(
     name = "rustdoc",
-    srcs = with_environment({
+    srcs = named_sources({
         "Cargo.lock": "Cargo.lock",
         "Cargo.toml": "Cargo.toml",
         "bin-nucleus": "//crates/bin/nucleus:package_files",
@@ -64,7 +72,7 @@ genrule(
         "neutron": "//crates/neutron:package_files",
         "nucleus": "//crates/nucleus:package_files",
         "proton": "//crates/proton:package_files",
-    }),
+    }, _CARGO_ONLY_CRATE_SOURCES),
     out = "rustdoc",
     cmd = "mkdir -p $OUT && $(exe //tools/glu:glu) artifact rustdoc --out $OUT",
     labels = ["uses_undeclared_inputs"],
@@ -134,6 +142,21 @@ genrule(
     }),
     out = "nucleus-cli-component.wasm",
     cmd = "$(exe //tools/glu:glu) artifact cli-component --out $OUT",
+    labels = ["uses_undeclared_inputs"],
+)
+
+# The importable `covalence` package: hand-written Python plus the compiled
+# extension module. Cargo compiles it rather than Buck's Rust rules, which
+# produce rlibs and cannot emit something an interpreter can load, so the crates
+# involved are globbed here rather than named through `:package_files`.
+genrule(
+    name = "python",
+    srcs = with_environment(_CARGO_ONLY_CRATE_SOURCES + [
+        "Cargo.lock",
+        "Cargo.toml",
+    ]),
+    out = "python",
+    cmd = "mkdir -p $OUT && $(exe //tools/glu:glu) artifact python --out $OUT",
     labels = ["uses_undeclared_inputs"],
 )
 

@@ -1,0 +1,70 @@
+# covalence
+
+Python bindings for Covalence.
+
+## Layout
+
+The package is a mixed one: hand-written Python in `python/covalence`, and the
+compiled extension module staged beside it as `covalence._covalence`. The
+compiled module is private, and `python/covalence/__init__.py` names what
+callers are meant to use, so the public surface is chosen rather than inherited
+from whatever the Rust module happens to export. It is also what gives the
+package somewhere to keep `py.typed` and the stubs.
+
+There is one extension module for the whole project, not one per Rust crate.
+`crates/ffi/python` is where Covalence crates are composed into a Python API;
+the crates being wrapped never depend on it.
+
+| Path                | Contents                                       |
+| ------------------- | ---------------------------------------------- |
+| `src/`              | The `#[pymodule]` and its bindings             |
+| `python/covalence/` | The importable package, `py.typed`, and `.pyi` |
+| `tests/`            | pytest suite, run against the staged package   |
+
+## Building and running
+
+```sh
+glu build python   # stage the package into target/python
+glu python         # a REPL that can import covalence
+glu python -c 'import covalence; print(covalence.__version__)'
+glu test           # among other things, runs the pytest suite
+```
+
+`glu build python` compiles the extension and stages the importable package
+into `target/python`, outside the source tree so that a build output never
+lands in a directory Buck globs as a source. `glu python` runs whichever
+`python3` is on `PATH` with that directory on `PYTHONPATH`.
+
+Cargo compiles this crate rather than Buck's Rust rules; `//:python` is the
+`genrule` that wraps it. `rust_library` produces an rlib, so no Rust rule here
+can emit something an interpreter loads, and `pyo3`'s build script needs
+`links` metadata Buck's prelude discards.
+
+## Installing into an environment
+
+`glu` stages the package rather than installing it, so nothing in CI needs a
+packaging tool. To get Covalence into an environment of your own, use maturin:
+
+```sh
+python3 -m venv --system-site-packages .venv
+. .venv/bin/activate
+maturin develop -m crates/ffi/python/Cargo.toml   # editable install
+maturin build   -m crates/ffi/python/Cargo.toml   # wheel into target/wheels
+```
+
+`--system-site-packages` keeps the pinned interpreter's packages — pytest, and
+whatever the test suite grows to need — visible inside the virtual
+environment, which is then the place for anything nixpkgs does not carry.
+Because `glu` uses the `python3` on `PATH`, an activated environment is picked
+up without further configuration.
+
+## Supported Python
+
+3.11 and later, on the stable ABI. PyO3 is built with `abi3-py311`, so one
+extension module loads into every interpreter in that range and a wheel does
+not have to be rebuilt per version. Widening the range means relaxing that
+feature in `covalence-lib-python`, which is also where the PyO3 version and the
+`extension-module` policy are pinned and explained.
+
+Wheels are built for whatever platform maturin is run on; there is no
+cross-platform release process yet.

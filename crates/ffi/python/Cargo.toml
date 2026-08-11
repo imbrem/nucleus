@@ -1,0 +1,31 @@
+[package]
+name = "covalence-ffi-python"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Python bindings for Covalence"
+publish = false
+
+# Cargo builds this crate, not Buck's Rust rules: `rust_library` produces an
+# rlib, and what this crate exists to produce is a Python extension module. It
+# reaches the Buck graph as the `//:python` artifact instead. See `buck_builds`
+# in `tools/glu/src/buck.rs`.
+[package.metadata.glu]
+buck = false
+
+[lib]
+# `cdylib` is the extension module an interpreter loads. `rlib` alongside it so
+# that rustdoc and `cargo test` have an ordinary library to work with.
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# Forwarded to PyO3 by the wheel build. Off by default so ordinary builds link
+# an interpreter and their test binaries resolve; see `covalence-lib-python`.
+extension-module = ["covalence-lib-python/extension-module"]
+
+[dependencies]
+covalence-lib-python = { path = "../../lib/python" }
+
+[lints]
+workspace = true
