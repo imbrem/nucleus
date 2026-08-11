@@ -123,6 +123,74 @@ inductive JsonSyn (Scalar : Type u) : JsonSynIx → Type u where
 
 namespace JsonSyn
 
+/-! ## Functor and monad structure
+
+Like the raw family, `JsonSyn` is a functor and a monad over its scalars —
+at every member of the family: substituting scalar leaves never touches keys
+or their bound proofs, so the sortedness index is preserved verbatim.  As with
+`RawSyn`, `pure` (a scalar leaf) exists only at the value sort, so the
+`pure_bind` law is `bind_scalar`; the `bind_pure` and `bind_assoc` laws hold
+at every sort, making the array and object tails modules over the value-sort
+monad.  A `Monad`/`LawfulMonad` instance for the value sort would mirror the
+one on `RawJson`; it is omitted from this prototype. -/
+
+/-- Apply `f` to every scalar leaf, at every sort of the family.  Keys and
+their ordering proofs are untouched. -/
+def mapScalar {T : Type u} (f : Scalar → T) :
+    ∀ {ix : JsonSynIx}, JsonSyn Scalar ix → JsonSyn T ix
+  | _, .scalar value => .scalar (f value)
+  | _, .list elems => .list (elems.mapScalar f)
+  | _, .map entries => .map (entries.mapScalar f)
+  | _, .nil => .nil
+  | _, .cons head tail => .cons (head.mapScalar f) (tail.mapScalar f)
+  | _, .empty => .empty
+  | _, .insert key bound value rest => .insert key bound (value.mapScalar f)
+      (rest.mapScalar f)
+
+/-- Substitute every scalar leaf by a value, at every sort of the family.  The
+sortedness index is preserved because keys are untouched. -/
+def bind {T : Type u} :
+    ∀ {ix : JsonSynIx}, JsonSyn Scalar ix → (Scalar → JsonSyn T .val) → JsonSyn T ix
+  | _, .scalar value, f => f value
+  | _, .list elems, f => .list (elems.bind f)
+  | _, .map entries, f => .map (entries.bind f)
+  | _, .nil, _ => .nil
+  | _, .cons head tail, f => .cons (head.bind f) (tail.bind f)
+  | _, .empty, _ => .empty
+  | _, .insert key bound value rest, f => .insert key bound (value.bind f) (rest.bind f)
+
+/-- Mapping the identity is the identity, at every sort. -/
+@[simp] theorem mapScalar_id {ix : JsonSynIx} (s : JsonSyn Scalar ix) :
+    s.mapScalar id = s := by
+  induction s <;> simp [mapScalar, *]
+
+/-- Mapping composes, at every sort. -/
+theorem mapScalar_comp {T U : Type u} (f : Scalar → T) (g : T → U) {ix : JsonSynIx}
+    (s : JsonSyn Scalar ix) : (s.mapScalar f).mapScalar g = s.mapScalar (g ∘ f) := by
+  induction s <;> simp [mapScalar, *]
+
+/-- Left identity (`pure_bind`), at the value sort where `pure` lives. -/
+@[simp] theorem bind_scalar {T : Type u} (value : Scalar) (f : Scalar → JsonSyn T .val) :
+    (JsonSyn.scalar value).bind f = f value := by
+  simp [bind]
+
+/-- Right identity: substituting each leaf by itself changes nothing, at every
+sort. -/
+@[simp] theorem bind_pure {ix : JsonSynIx} (s : JsonSyn Scalar ix) :
+    s.bind JsonSyn.scalar = s := by
+  induction s <;> simp [bind, *]
+
+/-- Associativity of substitution, at every sort. -/
+theorem bind_assoc {T U : Type u} {ix : JsonSynIx} (s : JsonSyn Scalar ix)
+    (f : Scalar → JsonSyn T .val) (g : T → JsonSyn U .val) :
+    (s.bind f).bind g = s.bind fun v => (f v).bind g := by
+  induction s <;> simp [bind, *]
+
+/-- `mapScalar` is the functorial action induced by `bind`. -/
+theorem mapScalar_eq_bind {T : Type u} (f : Scalar → T) {ix : JsonSynIx}
+    (s : JsonSyn Scalar ix) : s.mapScalar f = s.bind fun v => .scalar (f v) := by
+  induction s <;> simp [mapScalar, bind, *]
+
 mutual
 
 /-- Convert an indexed value to the main development's raw syntax tree.  The

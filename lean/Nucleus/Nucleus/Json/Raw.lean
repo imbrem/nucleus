@@ -306,6 +306,104 @@ theorem toList_mapScalar {T : Type u} (f : Scalar → T) :
   | .nil => by simp
   | .cons head tail => by simp [toList_mapScalar f tail]
 
+/-! ## Monad structure
+
+Substituting raw values for scalar leaves makes the value sort a monad — the
+free monad on the JSON container signature — with `RawSyn.scalar` as `pure`
+and `RawSyn.bind` as bind.  The tail sorts are modules over that monad: `bind`
+is defined at every sort, and the `bind_pure` and `bind_assoc` laws hold
+family-wide, while `pure` (and hence the `pure_bind` law) exists only at the
+value sort. -/
+
+/-- Substitute every scalar leaf by a raw JSON value, preserving structure,
+member order, and duplicate keys. -/
+def bind {T : Type u} {i : JsonIx} : RawSyn Scalar i → (Scalar → RawJson T) → RawSyn T i
+  | .scalar value, f => f value
+  | .list elems, f => .list (elems.bind f)
+  | .map entries, f => .map (entries.bind f)
+  | .nil, _ => .nil
+  | .cons head tail, f => .cons (head.bind f) (tail.bind f)
+  | .objNil, _ => .objNil
+  | .objCons key value tail, f => .objCons key (value.bind f) (tail.bind f)
+
+@[simp] theorem bind_scalar {T : Type u} (f : Scalar → RawJson T) (value : Scalar) :
+    (RawSyn.scalar value).bind f = f value := by
+  simp [bind]
+
+@[simp] theorem bind_list {T : Type u} (f : Scalar → RawJson T) (elems : RawSyn Scalar .arr) :
+    (RawSyn.list elems).bind f = .list (elems.bind f) := by
+  simp [bind]
+
+@[simp] theorem bind_map {T : Type u} (f : Scalar → RawJson T) (entries : RawSyn Scalar .obj) :
+    (RawSyn.map entries).bind f = .map (entries.bind f) := by
+  simp [bind]
+
+@[simp] theorem bind_nil {T : Type u} (f : Scalar → RawJson T) :
+    (RawSyn.nil : RawSyn Scalar .arr).bind f = .nil := by
+  simp [bind]
+
+@[simp] theorem bind_cons {T : Type u} (f : Scalar → RawJson T) (head : RawJson Scalar)
+    (tail : RawSyn Scalar .arr) :
+    (RawSyn.cons head tail).bind f = .cons (head.bind f) (tail.bind f) := by
+  simp [bind]
+
+@[simp] theorem bind_objNil {T : Type u} (f : Scalar → RawJson T) :
+    (RawSyn.objNil : RawSyn Scalar .obj).bind f = .objNil := by
+  simp [bind]
+
+@[simp] theorem bind_objCons {T : Type u} (f : Scalar → RawJson T) (key : String)
+    (value : RawJson Scalar) (tail : RawSyn Scalar .obj) :
+    (RawSyn.objCons key value tail).bind f
+      = .objCons key (value.bind f) (tail.bind f) := by
+  simp [bind]
+
+/-- Right identity: substituting each leaf by itself changes nothing.  Holds
+at every sort of the family. -/
+@[simp] theorem bind_pure {i : JsonIx} (r : RawSyn Scalar i) :
+    r.bind RawSyn.scalar = r := by
+  induction r <;> simp [*]
+
+/-- Associativity of substitution.  Holds at every sort of the family. -/
+theorem bind_assoc {T U : Type u} {i : JsonIx} (r : RawSyn Scalar i)
+    (f : Scalar → RawJson T) (g : T → RawJson U) :
+    (r.bind f).bind g = r.bind fun s => (f s).bind g := by
+  induction r <;> simp [*]
+
+/-- `mapScalar` is the functorial action induced by `bind`. -/
+theorem mapScalar_eq_bind {T : Type u} (f : Scalar → T) {i : JsonIx} (r : RawSyn Scalar i) :
+    r.mapScalar f = r.bind fun s => .scalar (f s) := by
+  induction r <;> simp [*]
+
+end RawSyn
+
+/-- Raw JSON values form a monad over their scalars: `pure` is a scalar leaf
+and `bind` substitutes leaves. -/
+instance : Monad (RawJson : Type u → Type u) where
+  pure := RawSyn.scalar
+  bind := RawSyn.bind
+
+instance : LawfulMonad (RawJson : Type u → Type u) :=
+  LawfulMonad.mk' _
+    (fun r => by
+      change r.bind (fun s => RawSyn.scalar (id s)) = r
+      simp)
+    (fun v f => by
+      change (RawSyn.scalar v).bind f = f v
+      simp)
+    (fun r f g => by
+      change (r.bind f).bind g = r.bind fun s => (f s).bind g
+      exact RawSyn.bind_assoc r f g)
+
+/-- The `Functor` map of `RawJson` is `RawSyn.mapScalar`. -/
+theorem RawJson.map_eq_mapScalar {S T : Type u} (f : S → T) (r : RawJson S) :
+    f <$> r = r.mapScalar f := by
+  change r.bind (fun s => RawSyn.scalar (f s)) = r.mapScalar f
+  exact (RawSyn.mapScalar_eq_bind f r).symm
+
+namespace RawSyn
+
+variable {Scalar : Type u}
+
 /-! ## Path lookup -/
 
 /-- Look up a node by path.  The empty path returns the node itself; `.index i` indexes

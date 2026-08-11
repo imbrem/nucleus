@@ -131,6 +131,69 @@ theorem mapScalar_comp {T U : Type u} (f : Scalar → T) (g : T → U) (j : Json
       congr 1
       exact funext ih
 
+/-- Monadic bind: substitute every scalar leaf by a JSON tree.  `Json` is the
+free monad on scalar leaves over the extensional JSON container signature. -/
+def bind {T : Type u} : Json Scalar → (Scalar → Json T) → Json T
+  | .scalar v, f => f v
+  | .list n elems, f => .list n fun i => (elems i).bind f
+  | .map keys vals, f => .map keys fun k => (vals k).bind f
+
+@[simp]
+theorem bind_scalar {T : Type u} (v : Scalar) (f : Scalar → Json T) :
+    (Json.scalar v).bind f = f v := rfl
+
+@[simp]
+theorem bind_list {T : Type u} (n : Nat) (elems : Fin n → Json Scalar)
+    (f : Scalar → Json T) :
+    (Json.list n elems).bind f = .list n fun i => (elems i).bind f := rfl
+
+@[simp]
+theorem bind_map {T : Type u} (keys : Finset String)
+    (vals : {k // k ∈ keys} → Json Scalar) (f : Scalar → Json T) :
+    (Json.map keys vals).bind f = .map keys fun k => (vals k).bind f := rfl
+
+/-- Right identity: substituting each leaf by itself changes nothing. -/
+@[simp]
+theorem bind_pure (j : Json Scalar) : j.bind Json.scalar = j := by
+  induction j with
+  | scalar v => rfl
+  | list n elems ih =>
+      simp only [bind_list]
+      congr 1
+      exact funext ih
+  | map keys vals ih =>
+      simp only [bind_map]
+      congr 1
+      exact funext ih
+
+/-- Associativity of substitution. -/
+theorem bind_assoc {T U : Type u} (j : Json Scalar) (f : Scalar → Json T)
+    (g : T → Json U) : (j.bind f).bind g = j.bind fun s => (f s).bind g := by
+  induction j with
+  | scalar v => rfl
+  | list n elems ih =>
+      simp only [bind_list]
+      congr 1
+      exact funext ih
+  | map keys vals ih =>
+      simp only [bind_map]
+      congr 1
+      exact funext ih
+
+/-- `mapScalar` is the functorial action induced by `bind`. -/
+theorem mapScalar_eq_bind {T : Type u} (f : Scalar → T) (j : Json Scalar) :
+    j.mapScalar f = j.bind fun s => .scalar (f s) := by
+  induction j with
+  | scalar v => rfl
+  | list n elems ih =>
+      simp only [mapScalar, bind_list]
+      congr 1
+      exact funext ih
+  | map keys vals ih =>
+      simp only [mapScalar, bind_map]
+      congr 1
+      exact funext ih
+
 /-- Build an object from an association list with duplicate-free keys; values
 are recovered by (unambiguous) key lookup. -/
 def ofEntries (entries : List (String × Json Scalar))
@@ -166,6 +229,30 @@ theorem toRaw_map (keys : Finset String) (vals : {k // k ∈ keys} → Json Scal
           (k.1, (vals ⟨k.1, (Finset.mem_sort _).mp k.2⟩).toRaw))) := rfl
 
 end Json
+
+/-- Extensional JSON values form a monad over their scalars: `pure` is a
+scalar leaf and `bind` substitutes leaves. -/
+instance : Monad (Json : Type u → Type u) where
+  pure := Json.scalar
+  bind := Json.bind
+
+instance : LawfulMonad (Json : Type u → Type u) :=
+  LawfulMonad.mk' _
+    (fun j => by
+      change j.bind (fun s => Json.scalar (id s)) = j
+      simp)
+    (fun v f => by
+      change (Json.scalar v).bind f = f v
+      simp)
+    (fun j f g => by
+      change (j.bind f).bind g = j.bind fun s => (f s).bind g
+      exact Json.bind_assoc j f g)
+
+/-- The `Functor` map of `Json` is `Json.mapScalar`. -/
+theorem Json.map_eq_mapScalar {S T : Type u} (f : S → T) (j : Json S) :
+    f <$> j = j.mapScalar f := by
+  change j.bind (fun s => Json.scalar (f s)) = j.mapScalar f
+  exact (Json.mapScalar_eq_bind f j).symm
 
 /-- On an association list with duplicate-free keys, `find?` at the key of a
 member returns exactly that member. -/
