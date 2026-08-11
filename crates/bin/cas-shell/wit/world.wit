@@ -1,0 +1,23 @@
+package covalence:sqlite-shell;
+
+interface read-only-vfs {
+    enum error {
+        not-found,
+        invalid-name,
+        invalid-range,
+        too-large,
+        backend,
+    }
+
+    resource file {
+        size: func() -> result<u64, error>;
+        read-at: func(offset: u64, length: u32) -> result<list<u8>, error>;
+    }
+
+    open: func(name: string) -> result<file, error>;
+}
+
+world shell {
+    import read-only-vfs;
+    export run: func(arguments: list<string>) -> s32;
+}
