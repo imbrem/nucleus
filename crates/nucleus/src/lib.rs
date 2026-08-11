@@ -1,8 +1,11 @@
 //! Portable trusted core for Nucleus.
 
 mod connection;
+pub mod manifest;
+pub mod prop;
 
-pub use connection::{Connection, ConnectionError};
+pub use connection::{Connection, ConnectionError, RawProtocol};
+pub use prop::Prop;
 
 mod snapshot;
 
