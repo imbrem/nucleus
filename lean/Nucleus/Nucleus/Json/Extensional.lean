@@ -1,0 +1,175 @@
+import Mathlib.Data.Finset.Sort
+import Mathlib.Data.String.Basic
+import Mathlib.Algebra.BigOperators.Group.Finset.Basic
+import Nucleus.Json.Raw
+
+/-!
+# Extensional JSON values
+
+`Json Scalar` is the extensional form of a JSON tree: arrays are finite indexed
+families `Fin n → Json Scalar` and objects are value families indexed by a
+`Finset String` of keys.  Object equality therefore ignores member ordering by
+construction — two maps are equal exactly when they have the same key set and
+propositionally equal value families (via function extensionality) — while
+duplicate keys are unrepresentable.
+
+Scalars stay generic: null/Boolean representation, string decoding, and exact
+numeral semantics are deliberately not fixed here (see the `Nucleus.Json`
+module documentation).  Object keys are fixed to `String`, matching RFC 8259;
+this does not constrain how string *values* are represented inside `Scalar`.
+
+`Json.toRaw` picks the canonical ordered data representative: it enumerates
+each object in strictly increasing key order.  This is a data-level choice
+only; it does not impose a canonical byte encoding, and equal extensional
+values are not required to have equal content hashes.
+-/
+
+namespace Nucleus
+
+universe u
+
+/-- An extensional JSON tree over scalar values `Scalar`, with object keys
+fixed to `String`.  Arrays are finite indexed families and objects are value
+families over a finite key set, so array/object contents are compared
+extensionally and duplicate keys cannot be represented. -/
+inductive Json (Scalar : Type u) : Type u where
+  /-- A scalar leaf. -/
+  | scalar (value : Scalar)
+  /-- An array of `n` children, as a finite indexed family. -/
+  | list (n : Nat) (elems : Fin n → Json Scalar)
+  /-- An object: a finite set of keys together with a value for each key. -/
+  | map (keys : Finset String) (vals : {k // k ∈ keys} → Json Scalar)
+
+namespace Json
+
+variable {Scalar : Type u}
+
+/-- Total node count. -/
+def size : Json Scalar → Nat
+  | .scalar _ => 1
+  | .list _n elems => 1 + ∑ i, (elems i).size
+  | .map _keys vals => 1 + ∑ k, (vals k).size
+
+/-- Nesting depth: scalars have depth `0`, arrays and objects are one deeper
+than their deepest child (`1` when empty). -/
+def depth : Json Scalar → Nat
+  | .scalar _ => 0
+  | .list _n elems => 1 + Finset.univ.sup fun i => (elems i).depth
+  | .map keys vals => 1 + keys.attach.sup fun k => (vals k).depth
+
+/-- The multiset of scalar leaves.  A multiset rather than a list: the
+extensional form has no canonical traversal order for object members. -/
+def scalars : Json Scalar → Multiset Scalar
+  | .scalar v => {v}
+  | .list _n elems => ∑ i, (elems i).scalars
+  | .map _keys vals => ∑ k, (vals k).scalars
+
+/-- Apply `f` to every scalar leaf, preserving the tree structure. -/
+def mapScalar {T : Type u} (f : Scalar → T) : Json Scalar → Json T
+  | .scalar v => .scalar (f v)
+  | .list n elems => .list n fun i => (elems i).mapScalar f
+  | .map keys vals => .map keys fun k => (vals k).mapScalar f
+
+/-- Look up a descendant by a path of array indices and object keys.  Returns
+`none` on any mismatch: an index step at a non-array, a key step at a
+non-object, an out-of-range index, or a missing key. -/
+def get? : Json Scalar → JsonPath → Option (Json Scalar)
+  | j, [] => some j
+  | .list n elems, .index i :: rest =>
+      if h : i < n then (elems ⟨i, h⟩).get? rest else none
+  | .map keys vals, .key k :: rest =>
+      if h : k ∈ keys then (vals ⟨k, h⟩).get? rest else none
+  | _, _ => none
+
+/-- Congruence for `Json.list` across an equality of lengths, avoiding direct
+`HEq` manipulation at use sites. -/
+theorem list_congr {n n' : Nat} (h : n = n')
+    {elems : Fin n → Json Scalar} {elems' : Fin n' → Json Scalar}
+    (hv : ∀ (i : Nat) (hi : i < n) (hi' : i < n'), elems ⟨i, hi⟩ = elems' ⟨i, hi'⟩) :
+    Json.list n elems = Json.list n' elems' := by
+  subst h
+  have : elems = elems' := funext fun i => by
+    obtain ⟨i, hi⟩ := i
+    exact hv i hi hi
+  rw [this]
+
+/-- Congruence for `Json.map` across an equality of key sets, avoiding direct
+`HEq` manipulation at use sites. -/
+theorem map_congr {keys keys' : Finset String} (hk : keys = keys')
+    {vals : {k // k ∈ keys} → Json Scalar} {vals' : {k // k ∈ keys'} → Json Scalar}
+    (hv : ∀ (k : String) (h : k ∈ keys) (h' : k ∈ keys'), vals ⟨k, h⟩ = vals' ⟨k, h'⟩) :
+    Json.map keys vals = Json.map keys' vals' := by
+  subst hk
+  have : vals = vals' := funext fun k => by
+    obtain ⟨k, h⟩ := k
+    exact hv k h h
+  rw [this]
+
+@[simp]
+theorem mapScalar_id (j : Json Scalar) : j.mapScalar id = j := by
+  induction j with
+  | scalar v => rfl
+  | list n elems ih =>
+      simp only [mapScalar]
+      congr 1
+      exact funext ih
+  | map keys vals ih =>
+      simp only [mapScalar]
+      congr 1
+      exact funext ih
+
+theorem mapScalar_comp {T U : Type u} (f : Scalar → T) (g : T → U) (j : Json Scalar) :
+    (j.mapScalar f).mapScalar g = j.mapScalar (g ∘ f) := by
+  induction j with
+  | scalar v => rfl
+  | list n elems ih =>
+      simp only [mapScalar]
+      congr 1
+      exact funext ih
+  | map keys vals ih =>
+      simp only [mapScalar]
+      congr 1
+      exact funext ih
+
+/-- The canonical ordered raw representative: arrays are enumerated in index
+order and objects in strictly increasing key order.  This is a data-level
+choice of representative, not a byte-encoding or hashing requirement. -/
+def toRaw : Json Scalar → RawJson Scalar
+  | .scalar v => .scalar v
+  | .list _n elems => .list (List.ofFn fun i => (elems i).toRaw)
+  | .map keys vals =>
+      .map ((keys.sort (· ≤ ·)).attach.map fun k =>
+        (k.1, (vals ⟨k.1, (Finset.mem_sort _).mp k.2⟩).toRaw))
+
+@[simp]
+theorem toRaw_scalar (v : Scalar) : (Json.scalar v).toRaw = .scalar v := rfl
+
+@[simp]
+theorem toRaw_list (n : Nat) (elems : Fin n → Json Scalar) :
+    (Json.list n elems).toRaw = .list (List.ofFn fun i => (elems i).toRaw) := rfl
+
+@[simp]
+theorem toRaw_map (keys : Finset String) (vals : {k // k ∈ keys} → Json Scalar) :
+    (Json.map keys vals).toRaw
+      = .map ((keys.sort (· ≤ ·)).attach.map fun k =>
+          (k.1, (vals ⟨k.1, (Finset.mem_sort _).mp k.2⟩).toRaw)) := rfl
+
+end Json
+
+/-- On an association list with duplicate-free keys, `find?` at the key of a
+member returns exactly that member. -/
+theorem find?_entry_of_nodup_keys {α : Type*} {entries : List (String × α)}
+    (hnd : (entries.map Prod.fst).Nodup) {e : String × α} (he : e ∈ entries) :
+    (entries.find? fun x => x.1 = e.1) = some e := by
+  induction entries with
+  | nil => cases he
+  | cons a rest ih =>
+      simp only [List.map_cons, List.nodup_cons] at hnd
+      rcases List.mem_cons.mp he with rfl | hmem
+      · simp
+      · have hne : ¬(a.1 = e.1) := fun hEq =>
+          hnd.1 (hEq ▸ List.mem_map.mpr ⟨e, hmem, rfl⟩)
+        rw [List.find?_cons_of_neg (by simpa using hne)]
+        exact ih hnd.2 hmem
+
+end Nucleus
