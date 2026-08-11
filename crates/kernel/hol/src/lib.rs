@@ -7,6 +7,7 @@ mod check;
 mod equality;
 mod expr;
 mod substitution;
+mod theorem;
 mod tree;
 
 pub use check::{CheckError, check_closed, check_type};
@@ -16,4 +17,5 @@ pub use expr::{
     Succ, Zero,
 };
 pub use substitution::{SubstError, open_bound, weaken};
+pub use theorem::{Theorem, TheoremError};
 pub use tree::Tree;
