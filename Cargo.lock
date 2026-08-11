@@ -163,12 +163,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "covalence-lib-json"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "covalence-lib-rand"
 version = "0.0.0"
 dependencies = [
  "getrandom 0.3.4",
  "rand",
  "wasm-bindgen-test",
+]
+
+[[package]]
+name = "covalence-lib-serde"
+version = "0.0.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
