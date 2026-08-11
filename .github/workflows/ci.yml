@@ -28,10 +28,6 @@ jobs:
       - uses: DeterminateSystems/determinate-nix-action@d96678350ffd6a456235832eb11e1c491589b7bb # v3
       - run: nix flake check
 
-  # The Lean developments under lean/ are a specification, not a build input,
-  # so they get their own job rather than joining `glu ci`. `glu lean` fetches
-  # Mathlib's prebuilt artifacts before building; without them this would
-  # compile Mathlib from source.
   # The Lean development is a specification, not a build input, so it gets its
   # own job rather than joining `glu ci`. This one uses the upstream action:
   # checking a Lean package is exactly what it is for, and it brings toolchain

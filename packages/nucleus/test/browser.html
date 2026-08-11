@@ -2,18 +2,28 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Nucleus browser smoke test</title>
+    <title>Nucleus REPL tests</title>
+    <script type="importmap">
+      {
+        "imports": {
+          "@bytecodealliance/preview2-shim/cli": "../node_modules/@bytecodealliance/preview2-shim/dist/browser/cli.js",
+          "@bytecodealliance/preview2-shim/clocks": "../node_modules/@bytecodealliance/preview2-shim/dist/browser/clocks.js",
+          "@bytecodealliance/preview2-shim/filesystem": "../node_modules/@bytecodealliance/preview2-shim/dist/browser/filesystem.js",
+          "@bytecodealliance/preview2-shim/io": "../node_modules/@bytecodealliance/preview2-shim/dist/browser/io.js",
+          "@bytecodealliance/preview2-shim/random": "../node_modules/@bytecodealliance/preview2-shim/dist/browser/random.js"
+        }
+      }
+    </script>
   </head>
   <body>
     <script type="module">
-      import init, { smoke } from "../generated/nucleus.js";
+      import { init, Repl, drive } from "../dist/index.js";
 
-      try {
-        await init();
-        document.body.dataset.result = String(smoke());
-      } catch (error) {
-        document.body.dataset.error = String(error);
-      }
+      await init();
+      const host = {};
+      // Exposed for the test driver; this page is not a demo.
+      window.nucleus = { Repl, drive, host };
+      document.body.dataset.ready = "yes";
     </script>
   </body>
 </html>

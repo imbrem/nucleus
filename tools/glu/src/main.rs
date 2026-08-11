@@ -110,6 +110,31 @@ enum Task {
     Loc,
     /// Show the project status headline.
     Status,
+    /// Build and serve the browser demo with an HTTP kernel.
+    Demo {
+        /// Databases the HTTP kernel should serve.
+        files: Vec<PathBuf>,
+
+        /// Loopback port for the demo page.
+        #[arg(long, default_value_t = 8000)]
+        port: u16,
+
+        /// Loopback port for the HTTP kernel.
+        #[arg(long, default_value_t = 8080)]
+        kernel_port: u16,
+
+        /// Open the demo in the default browser.
+        #[arg(long)]
+        open: bool,
+
+        /// Serve what is already built rather than rebuilding first.
+        #[arg(long)]
+        no_build: bool,
+
+        /// Serve over HTTPS with Caddy's internal CA.
+        #[arg(long)]
+        tls: bool,
+    },
     /// Build or serve the documentation site.
     Docs {
         #[command(subcommand)]
@@ -252,6 +277,14 @@ fn run() -> Result<()> {
         Task::Buck {
             command: BuckTask::Check,
         } => runner.buck_check(),
+        Task::Demo {
+            files,
+            port,
+            kernel_port,
+            open,
+            no_build,
+            tls,
+        } => runner.demo(&files, port, kernel_port, open, no_build, tls),
         Task::Docs { command: None } => runner.docs(),
         Task::Docs {
             command: Some(DocsTask::Serve { open, port }),

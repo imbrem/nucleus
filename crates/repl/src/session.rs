@@ -8,6 +8,24 @@ use covalence_lib_hash::{O256, o256};
 use crate::sexpr::{ReadError, Value, read};
 use crate::{ConnectionId, Repl, ReplError};
 
+/// Where a kernel is.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Endpoint {
+    /// The store inside this process.
+    Local,
+    /// A kernel reachable over HTTP, by base URL.
+    Http(String),
+}
+
+impl std::fmt::Display for Endpoint {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Local => formatter.write_str("local"),
+            Self::Http(url) => formatter.write_str(url),
+        }
+    }
+}
+
 /// What the host should do with a form.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Response {
@@ -15,6 +33,13 @@ pub enum Response {
     Value(Value),
     /// Ask the host to read a file for [`Session::admit`].
     ReadFile(String),
+    /// Fetch this URL and pass its bytes to [`Session::admit_verified`].
+    Fetch {
+        /// Where the bytes might be.
+        url: String,
+        /// What they must hash to.
+        address: O256,
+    },
     /// Ask the host to run the `SQLite` shell.
     Shell(Vec<String>),
     /// Leave.
@@ -53,6 +78,17 @@ pub enum SessionError {
     NotAnAddress(Value),
     /// Building a sample database failed.
     Sqlite(covalence_lib_sqlite::Error),
+    /// No kernel carries this handle.
+    UnknownKernel(i64),
+    /// The command needs a kernel of a different kind.
+    WrongKernel(&'static str),
+    /// Bytes did not hash to the address they were asked for.
+    NotWhatWasAskedFor {
+        /// The address requested.
+        expected: O256,
+        /// What arrived instead.
+        actual: O256,
+    },
     /// The store or a connection failed.
     Repl(ReplError),
 }
@@ -65,6 +101,14 @@ impl std::fmt::Display for SessionError {
             Self::Usage(usage) => write!(formatter, "usage: {usage}"),
             Self::NotAnAddress(value) => write!(formatter, "{value} is not an address"),
             Self::Sqlite(error) => write!(formatter, "{error}"),
+            Self::UnknownKernel(id) => write!(formatter, "no kernel {id}"),
+            Self::WrongKernel(message) => formatter.write_str(message),
+            Self::NotWhatWasAskedFor { expected, actual } => write!(
+                formatter,
+                "content does not match its address: asked for {}, received {}",
+                expected.hex(),
+                actual.hex()
+            ),
             Self::Repl(error) => write!(formatter, "{error}"),
         }
     }
@@ -97,6 +141,12 @@ pub const HELP: &str = "\
 (stats)             how much the store holds
 (objects [N])       up to N resident addresses (default 64)
 (samples)           admit the sample databases; returns name/address pairs
+
+(kernels)           every known kernel, as a list
+(connect \"URL\")     add an HTTP kernel and select it
+(kernel N)          select a kernel; (kernel) reports the current one
+(local)             select the kernel inside this process
+(fetch ADDRESS)     pull an object from the selected kernel and verify it
 
 (open)              open a private in-memory connection
 (open ADDRESS)      open a resident object read-only through the mount
@@ -181,6 +231,9 @@ fn pair(name: &str, value: i64) -> Value {
 /// One REPL, independent of how its input arrives.
 pub struct Session {
     repl: Repl,
+    /// Kernel 0 is always the one this session is running inside.
+    endpoints: Vec<Endpoint>,
+    selected: usize,
 }
 
 impl Session {
@@ -190,7 +243,7 @@ impl Session {
     ///
     /// Returns an error if the mount cannot be registered.
     pub fn new() -> Result<Self, ReplError> {
-        Ok(Self { repl: Repl::new()? })
+        Ok(Self::over(Repl::new()?))
     }
 
     /// Creates a session whose store is mounted under `name`.
@@ -199,9 +252,21 @@ impl Session {
     ///
     /// Returns an error if the mount cannot be registered.
     pub fn with_mount_name(name: &str) -> Result<Self, ReplError> {
-        Ok(Self {
-            repl: Repl::with_mount_name(name, false)?,
-        })
+        Ok(Self::over(Repl::with_mount_name(name, false)?))
+    }
+
+    fn over(repl: Repl) -> Self {
+        Self {
+            repl,
+            endpoints: vec![Endpoint::Local],
+            selected: 0,
+        }
+    }
+
+    /// Returns the selected kernel.
+    #[must_use]
+    pub fn endpoint(&self) -> &Endpoint {
+        &self.endpoints[self.selected]
     }
 
     /// Borrows the underlying REPL.
@@ -229,6 +294,24 @@ impl Session {
     /// Returns an error if the bytes exceed the store's admission limit.
     pub fn admit(&self, bytes: Vec<u8>) -> Result<Value, SessionError> {
         Ok(Value::Address(self.repl.put(bytes)?))
+    }
+
+    /// Admits bytes the host fetched, refusing any that do not match.
+    ///
+    /// This is what makes a remote kernel usable without trusting it. The URL
+    /// says where bytes might be; the address says whether they are the right
+    /// ones.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the bytes hash to something else, or exceed the
+    /// admission limit.
+    pub fn admit_verified(&self, expected: O256, bytes: Vec<u8>) -> Result<Value, SessionError> {
+        let actual = O256::from_bytes(&bytes);
+        if actual != expected {
+            return Err(SessionError::NotWhatWasAskedFor { expected, actual });
+        }
+        self.admit(bytes)
     }
 
     /// Reads and evaluates every form in `input`, returning the last response.
@@ -291,43 +374,71 @@ impl Session {
     /// Growing this into a Scheme means replacing this function, not
     /// unpicking it.
     fn apply(&mut self, name: &str, arguments: &[Value]) -> Result<Response, SessionError> {
+        // Grouped by what they act on, because that is how they are learned.
+        // Each group answers `None` for a name it does not have, so "unbound"
+        // is decided in exactly one place.
+        if let Some(response) = self.store_form(name, arguments)? {
+            return Ok(response);
+        }
+        if let Some(response) = self.connection_form(name, arguments)? {
+            return Ok(response);
+        }
+        if let Some(response) = self.kernel_form(name, arguments)? {
+            return Ok(response);
+        }
         match (name, arguments) {
             ("quit" | "exit", []) => Ok(Response::Quit),
             ("help", []) => Ok(Response::value(HELP.to_owned())),
+            ("sqlite", _) => Ok(Response::Shell(self.shell_arguments(arguments)?)),
+            _ => Err(SessionError::Unbound(name.to_owned())),
+        }
+    }
 
-            ("put", [path]) => path
-                .as_text()
-                .map(|path| Response::ReadFile(path.to_owned()))
-                .ok_or(SessionError::Usage("(put \"PATH\")")),
+    /// Forms acting on the content-addressed store.
+    fn store_form(
+        &self,
+        name: &str,
+        arguments: &[Value],
+    ) -> Result<Option<Response>, SessionError> {
+        Ok(Some(match (name, arguments) {
+            ("put", [path]) => Response::ReadFile(
+                path.as_text()
+                    .ok_or(SessionError::Usage("(put \"PATH\")"))?
+                    .to_owned(),
+            ),
             ("forget", [value]) => {
-                let address = Self::address(value)?;
-                Ok(Response::value(Value::Bool(self.repl.forget(address))))
+                Response::value(Value::Bool(self.repl.forget(Self::address(value)?)))
             }
             ("stats", []) => {
                 let stats = self.repl.stats();
-                Ok(Response::value(Value::List(vec![
+                Response::value(Value::List(vec![
                     pair("objects", count(stats.objects)),
                     pair("bytes", count(stats.bytes)),
                     pair("largest", count(stats.largest)),
-                ])))
+                ]))
             }
-            ("objects", []) => Ok(Response::value(self.objects(DEFAULT_OBJECTS))),
-            ("objects", [limit]) => {
-                let limit = limit
-                    .as_integer()
-                    .and_then(|limit| usize::try_from(limit).ok())
-                    .ok_or(SessionError::Usage("(objects [N])"))?;
-                Ok(Response::value(self.objects(limit)))
-            }
-            ("samples", []) => self.samples().map(Response::Value),
+            ("objects", []) => Response::value(self.objects(DEFAULT_OBJECTS)),
+            ("objects", [limit]) => Response::value(
+                self.objects(
+                    limit
+                        .as_integer()
+                        .and_then(|limit| usize::try_from(limit).ok())
+                        .ok_or(SessionError::Usage("(objects [N])"))?,
+                ),
+            ),
+            ("samples", []) => Response::Value(self.samples()?),
+            _ => return Ok(None),
+        }))
+    }
 
-            ("open", []) => Ok(Response::value(Value::Integer(
-                self.repl
-                    .open_memory()?
-                    .get()
-                    .try_into()
-                    .unwrap_or(i64::MAX),
-            ))),
+    /// Forms acting on open connections.
+    fn connection_form(
+        &mut self,
+        name: &str,
+        arguments: &[Value],
+    ) -> Result<Option<Response>, SessionError> {
+        Ok(Some(match (name, arguments) {
+            ("open", []) => Response::value(Value::Integer(count(self.repl.open_memory()?.get()))),
             ("open", [value]) => {
                 let id = match value.as_address() {
                     Some(address) => self.repl.open_address(address)?,
@@ -337,36 +448,113 @@ impl Session {
                             .ok_or(SessionError::Usage("(open ADDRESS)"))?,
                     )?,
                 };
-                Ok(Response::value(Value::Integer(
-                    id.get().try_into().unwrap_or(i64::MAX),
-                )))
+                Response::value(Value::Integer(count(id.get())))
             }
-            ("connections", []) => Ok(Response::value(Value::list(
+            ("connections", []) => Response::value(Value::list(
                 self.repl
                     .connections()
                     .into_iter()
                     .map(|info| {
                         Value::List(vec![
-                            Value::Integer(info.id.get().try_into().unwrap_or(i64::MAX)),
+                            Value::Integer(count(info.id.get())),
                             Value::Text(info.origin),
                             Value::Bool(info.selected),
                         ])
                     })
                     .collect(),
-            ))),
+            )),
             ("select", [value]) => {
                 self.repl.select(Self::connection(value)?)?;
-                Ok(Response::value(Value::Unspecified))
+                Response::value(Value::Unspecified)
             }
             ("close", [value]) => {
                 self.repl.close(Self::connection(value)?)?;
-                Ok(Response::value(Value::Unspecified))
+                Response::value(Value::Unspecified)
             }
+            _ => return Ok(None),
+        }))
+    }
 
-            ("sqlite", _) => Ok(Response::Shell(self.shell_arguments(arguments)?)),
+    /// Forms acting on kernels.
+    fn kernel_form(
+        &mut self,
+        name: &str,
+        arguments: &[Value],
+    ) -> Result<Option<Response>, SessionError> {
+        Ok(Some(match (name, arguments) {
+            ("kernels", []) => Response::value(Value::list(
+                self.endpoints
+                    .iter()
+                    .enumerate()
+                    .map(|(id, endpoint)| {
+                        Value::List(vec![
+                            Value::Integer(count(id)),
+                            Value::Text(endpoint.to_string()),
+                            Value::Bool(id == self.selected),
+                        ])
+                    })
+                    .collect(),
+            )),
+            ("connect", [url]) => self.connect(url)?,
+            ("local", []) => {
+                self.selected = 0;
+                Response::value(Value::Integer(0))
+            }
+            ("kernel", []) => Response::value(Value::Integer(count(self.selected))),
+            ("kernel", [value]) => {
+                let id = value
+                    .as_integer()
+                    .ok_or(SessionError::Usage("(kernel N)"))?;
+                let index = usize::try_from(id).map_err(|_| SessionError::UnknownKernel(id))?;
+                if index >= self.endpoints.len() {
+                    return Err(SessionError::UnknownKernel(id));
+                }
+                self.selected = index;
+                Response::value(Value::Integer(id))
+            }
+            ("fetch", [value]) => {
+                let address = Self::address(value)?;
+                match self.endpoint() {
+                    // Fetching from the store you are already inside is not a
+                    // fetch; saying so is more use than silently succeeding.
+                    Endpoint::Local => {
+                        return Err(SessionError::WrongKernel(
+                            "the local kernel is already here; (connect \"URL\") to a remote one first",
+                        ));
+                    }
+                    Endpoint::Http(base) => Response::Fetch {
+                        url: format!("{}/cas/{}", base.trim_end_matches('/'), address.hex()),
+                        address,
+                    },
+                }
+            }
+            _ => return Ok(None),
+        }))
+    }
 
-            _ => Err(SessionError::Unbound(name.to_owned())),
-        }
+    /// Records a kernel and selects it.
+    ///
+    /// Nothing is contacted here. A URL that does not answer is discovered by
+    /// the first `(fetch …)`, which is where the error belongs: connecting is
+    /// not a claim that anything is listening.
+    fn connect(&mut self, url: &Value) -> Result<Response, SessionError> {
+        let url = url
+            .as_text()
+            .filter(|url| url.starts_with("http://") || url.starts_with("https://"))
+            .ok_or(SessionError::Usage("(connect \"http://…\")"))?;
+        let endpoint = Endpoint::Http(url.to_owned());
+        let id = self
+            .endpoints
+            .iter()
+            .position(|known| *known == endpoint)
+            .unwrap_or_else(|| {
+                self.endpoints.push(endpoint);
+                self.endpoints.len() - 1
+            });
+        self.selected = id;
+        Ok(Response::value(Value::Integer(
+            i64::try_from(id).unwrap_or(i64::MAX),
+        )))
     }
 
     /// Lists at most `limit` resident addresses.
@@ -636,6 +824,71 @@ mod tests {
         assert!(arguments[0].contains("vfs="), "{arguments:?}");
         // A string with spaces arrives as one argument, with no splitter.
         assert_eq!(arguments[1], "SELECT * FROM t");
+    }
+
+    #[test]
+    fn the_local_kernel_is_always_kernel_zero() {
+        let mut session = session();
+        assert_eq!(say(&mut session, "(kernels)"), "((0 \"local\" #t))");
+        assert_eq!(say(&mut session, "(kernel)"), "0");
+    }
+
+    #[test]
+    fn connecting_adds_a_kernel_and_selects_it() {
+        let mut session = session();
+        assert_eq!(
+            say(&mut session, "(connect \"http://127.0.0.1:8080\")"),
+            "1"
+        );
+        assert!(say(&mut session, "(kernels)").contains("(1 \"http://127.0.0.1:8080\" #t)"));
+        // Connecting twice to the same place selects it rather than listing it
+        // twice.
+        assert_eq!(
+            say(&mut session, "(connect \"http://127.0.0.1:8080\")"),
+            "1"
+        );
+        assert_eq!(say(&mut session, "(kernels)").matches("http").count(), 1);
+        assert_eq!(say(&mut session, "(local)"), "0");
+    }
+
+    #[test]
+    fn a_url_that_is_not_a_url_is_refused() {
+        let mut session = session();
+        assert!(say(&mut session, "(connect \"ftp://nope\")").contains("usage"));
+        assert!(say(&mut session, "(kernel 7)").contains("no kernel 7"));
+    }
+
+    #[test]
+    fn fetching_asks_the_host_for_the_selected_kernels_url() {
+        let mut session = session();
+        // Nothing to fetch from the store you are standing in.
+        assert!(
+            say(
+                &mut session,
+                "(fetch 0000000000000000000000000000000000000000000000000000000000000000)"
+            )
+            .contains("already here")
+        );
+        say(&mut session, "(connect \"http://example.invalid/\")");
+        let Response::Fetch { url, address } = session
+            .eval("(fetch 0000000000000000000000000000000000000000000000000000000000000000)")
+            .expect("eval")
+        else {
+            panic!("expected a fetch")
+        };
+        assert_eq!(url, format!("http://example.invalid/cas/{}", address.hex()));
+    }
+
+    #[test]
+    fn fetched_bytes_are_checked_against_the_address_that_was_asked_for() {
+        let session = session();
+        let expected = O256::from_bytes(b"the real thing");
+        let error = session
+            .admit_verified(expected, b"something else".to_vec())
+            .expect_err("mismatch");
+        assert!(error.to_string().contains("does not match its address"));
+        // And the impostor is not in the store.
+        assert_eq!(session.repl().stats().objects, 0);
     }
 
     #[test]
