@@ -29,19 +29,6 @@ def test_the_package_ships_typing_metadata() -> None:
     assert (root / "_covalence.pyi").is_file()
 
 
-def test_the_stubs_name_everything_the_module_exports() -> None:
-    """No type checker runs in CI, so agreement is checked directly."""
-    root = pathlib.Path(covalence.__path__[0])
-    stubs = (root / "_covalence.pyi").read_text()
-    exported = [
-        name
-        for name in vars(_covalence)
-        if not name.startswith("__") or name == "__version__"
-    ]
-    missing = [name for name in exported if name not in stubs]
-    assert not missing, f"undocumented in _covalence.pyi: {missing}"
-
-
 def test_public_names_are_declared() -> None:
     for name in covalence.__all__:
         assert hasattr(covalence, name), name

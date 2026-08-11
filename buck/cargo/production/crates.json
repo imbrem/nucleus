@@ -279,6 +279,13 @@
     },
     {
       "source": "workspace#covalence-ffi-python@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-ffi-python@0.0.0",
       "target": "workspace#covalence-lib-python@0.0.0",
       "kinds": [
         "normal"

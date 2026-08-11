@@ -10,14 +10,18 @@
 //! import `covalence`; that package is assembled in `python/covalence`, and
 //! this module is the private `covalence._covalence` it re-exports from.
 //!
-//! The public API arrives in later changes. What is here now is the module
-//! itself and the metadata needed to tell one build from another.
+//! Everything here is a thin wrapper. Hashing, encoding, and derivation are
+//! implemented once, in the crate being wrapped, and nothing in this crate or
+//! in the Python beside it reimplements any of it.
 
 use covalence_lib_python::prelude::*;
+
+mod hash;
 
 /// `covalence._covalence`.
 #[pymodule]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 fn _covalence(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add("__version__", env!("CARGO_PKG_VERSION"))
+    module.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    hash::register(module)
 }

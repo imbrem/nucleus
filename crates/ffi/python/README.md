@@ -15,6 +15,29 @@ There is one extension module for the whole project, not one per Rust crate.
 `crates/ffi/python` is where Covalence crates are composed into a Python API;
 the crates being wrapped never depend on it.
 
+## What is exposed
+
+`covalence-lib-hash`: the fixed-width namespaces and the operations on them.
+Each namespace is its own class deriving from `Obj` — `O256`, `Blake3`,
+`Sha256`, `ContextKey`, `Sha1`, `GitHash` — so `isinstance(value, Obj)` asks
+the general question while two namespaces with matching bytes still compare
+unequal.
+
+```python
+>>> from covalence import O256, COV_ROOT, git_blob
+>>> O256.hash(b"abc")
+O256.from_hex('6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85')
+>>> COV_ROOT.tag(b"sexpr").tag(b"list")     # derive a child name
+O256.from_hex('...')
+>>> str(git_blob(b""))
+'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391'
+```
+
+Everything is a thin wrapper: hashing, encoding, and derivation are implemented
+once, in the crate being wrapped. Malformed input raises `InvalidLengthError`,
+`InvalidHexError`, or `InvalidBase64Error` — all `ValueError` — and anything
+that is not bytes-like raises `TypeError`.
+
 | Path                | Contents                                       |
 | ------------------- | ---------------------------------------------- |
 | `src/`              | The `#[pymodule]` and its bindings             |
