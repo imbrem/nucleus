@@ -1504,6 +1504,155 @@
       "buildscript": {}
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#pyo3@0.29.2",
+      "name": "pyo3",
+      "version": "0.29.2",
+      "checksum": "4688ddedf473e32662b9b067670129a8afb8c18e351482c70d62ba4a88171e8b",
+      "edition": "2021",
+      "features": [
+        "abi3",
+        "abi3-py311",
+        "abi3-py312",
+        "abi3-py313",
+        "abi3-py314",
+        "abi3-py315",
+        "auto-initialize",
+        "default",
+        "macros",
+        "pyo3-macros"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "PyO3 Project and Contributors <https://github.com/PyO3>",
+        "CARGO_PKG_DESCRIPTION": "Bindings to Python interpreter",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/pyo3/pyo3",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/pyo3/pyo3"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "libc": ":libc-0.2.189",
+            "once_cell": ":once_cell-1.21.4",
+            "pyo3_ffi": ":pyo3-ffi-0.29.2",
+            "pyo3_macros": ":pyo3-macros-0.29.2"
+          }
+        }
+      ],
+      "buildscript": {
+        "named_deps": {
+          "pyo3_build_config": ":pyo3-build-config-0.29.2"
+        }
+      }
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#pyo3-build-config@0.29.2",
+      "name": "pyo3-build-config",
+      "version": "0.29.2",
+      "checksum": "f41027e41b4bd03f6e60f9f417fe24a6341a6bb744edd62b6f709f2a52ea30e9",
+      "edition": "2021",
+      "features": [
+        "default"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "PyO3 Project and Contributors <https://github.com/PyO3>",
+        "CARGO_PKG_DESCRIPTION": "Build configuration for the PyO3 ecosystem",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/pyo3/pyo3",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/pyo3/pyo3"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "target_lexicon": ":target-lexicon-0.13.5"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#pyo3-ffi@0.29.2",
+      "name": "pyo3-ffi",
+      "version": "0.29.2",
+      "checksum": "e591a95526fead067432c3b3a33fc74770b87b1e04e73671090d9c2055a2b327",
+      "edition": "2021",
+      "features": [
+        "abi3",
+        "abi3-py311",
+        "abi3-py312",
+        "abi3-py313",
+        "abi3-py314",
+        "abi3-py315",
+        "default"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "PyO3 Project and Contributors <https://github.com/PyO3>",
+        "CARGO_PKG_DESCRIPTION": "Python-API bindings for the PyO3 ecosystem",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/pyo3/pyo3",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/pyo3/pyo3"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "libc": ":libc-0.2.189"
+          }
+        }
+      ],
+      "buildscript": {
+        "named_deps": {
+          "pyo3_build_config": ":pyo3-build-config-0.29.2"
+        }
+      }
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#pyo3-macros@0.29.2",
+      "name": "pyo3-macros",
+      "version": "0.29.2",
+      "checksum": "73225868fc1cd84eef2c3c230ddb91273bf1de46aeb8a4248da76d32a0924a1c",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "PyO3 Project and Contributors <https://github.com/PyO3>",
+        "CARGO_PKG_DESCRIPTION": "Proc macros for PyO3 package",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/pyo3/pyo3",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/pyo3/pyo3"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "proc_macro2": ":proc-macro2-1.0.107",
+            "pyo3_macros_backend": ":pyo3-macros-backend-0.29.2",
+            "quote": ":quote-1.0.47",
+            "syn": ":syn-2.0.119"
+          },
+          "proc_macro": true
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#pyo3-macros-backend@0.29.2",
+      "name": "pyo3-macros-backend",
+      "version": "0.29.2",
+      "checksum": "571575aa3749fa6216757dd47d2a3e7ef360f329a40f0666a9fbd14889024952",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "PyO3 Project and Contributors <https://github.com/PyO3>",
+        "CARGO_PKG_DESCRIPTION": "Code generation for PyO3 package",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/pyo3/pyo3",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/pyo3/pyo3"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "heck": ":heck-0.5.0",
+            "proc_macro2": ":proc-macro2-1.0.107",
+            "quote": ":quote-1.0.47",
+            "syn": ":syn-2.0.119"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
       "name": "quote",
       "version": "1.0.47",
@@ -2201,6 +2350,26 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#target-lexicon@0.13.5",
+      "name": "target-lexicon",
+      "version": "0.13.5",
+      "checksum": "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca",
+      "edition": "2018",
+      "features": [
+        "default"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Dan Gohman <sunfish@mozilla.com>",
+        "CARGO_PKG_DESCRIPTION": "LLVM target triple types",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/target-lexicon"
+      },
+      "targets": [
+        {}
+      ],
+      "buildscript": {}
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
       "name": "tokio",
       "version": "1.53.1",
@@ -2735,6 +2904,14 @@
       "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151"
+      ]
+    },
+    {
+      "id": "workspace#covalence-lib-python@0.0.0",
+      "name": "covalence-lib-python",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#pyo3@0.29.2"
       ]
     },
     {
@@ -3828,6 +4005,119 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
       "target": "registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#pyo3-build-config@0.29.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#target-lexicon@0.13.5",
+      "kinds": [
+        "build",
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#pyo3-ffi@0.29.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#pyo3-ffi@0.29.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#pyo3-build-config@0.29.2",
+      "kinds": [
+        "build"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#pyo3-macros-backend@0.29.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#heck@0.5.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#pyo3-macros-backend@0.29.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#pyo3-macros-backend@0.29.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#pyo3-macros-backend@0.29.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#pyo3-macros@0.29.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#pyo3-macros@0.29.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#pyo3-macros-backend@0.29.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#pyo3-macros@0.29.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#pyo3-macros@0.29.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#pyo3@0.29.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#pyo3@0.29.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#once_cell@1.21.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#pyo3@0.29.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#pyo3-build-config@0.29.2",
+      "kinds": [
+        "build"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#pyo3@0.29.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#pyo3-ffi@0.29.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#pyo3@0.29.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#pyo3-macros@0.29.2",
       "kinds": [
         "normal"
       ]

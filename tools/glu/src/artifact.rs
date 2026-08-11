@@ -151,9 +151,10 @@ impl Runner {
 
     fn artifact_shell(&self, generated: &Path) -> Result<()> {
         let temp = env::temp_dir();
-        let temp = if temp.is_absolute() {
+        let temp = if temp.is_absolute() && !temp.starts_with(self.root()) {
             temp
         } else {
+            // Buck may place TMPDIR on the workspace bind mount.
             PathBuf::from("/tmp")
         };
         let component_target = temp.join(format!("nucleus-component-target-{}", process::id()));
@@ -177,7 +178,10 @@ impl Runner {
                     "wasm32-wasip2",
                     "--lib",
                 ],
-                &[("TMPDIR", component_target.as_os_str())],
+                &[
+                    ("CARGO_TARGET_DIR", component_target.as_os_str()),
+                    ("TMPDIR", component_target.as_os_str()),
+                ],
             )?;
             self.run(
                 "generate SQLite shell bindings",
