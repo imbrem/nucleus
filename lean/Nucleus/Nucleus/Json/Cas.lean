@@ -16,37 +16,58 @@ universe u
 /-- A scalar value or a link to another object in a store. -/
 abbrev Link (Scalar : Type u) (Name : Type) := Scalar ⊕ Name
 
-/-- An absent value represents unknown information, rather than JSON `null`. -/
-abbrev Unknown (α : Type u) := Option α
+/-- Epistemically partial information. `unknown` is a bottom element and is
+deliberately distinct from `Option`, which remains available for data-level
+nullability (including JSON `null`). -/
+inductive Unknown (α : Type u) where
+  | unknown
+  | known (value : α)
+  deriving DecidableEq, Repr
+
+namespace Unknown
+
+def isKnown : Unknown α → Bool
+  | .unknown => false
+  | .known _ => true
+
+def get : (x : Unknown α) → x.isKnown → α
+  | .known value, _ => value
+
+def bind (x : Unknown α) (f : α → Unknown β) : Unknown β :=
+  match x with
+  | .unknown => .unknown
+  | .known value => f value
+
+end Unknown
 
 /-- A more fine-grained alternative result type, retaining known container
-structure and marking unknown scalar positions with `none`. -/
+structure and marking unknown scalar positions with `.unknown`. -/
 abbrev PartialJson (Scalar : Type u) := Json (Unknown Scalar)
 
 namespace PartialJson
 
 /-- The convention for a wholly unknown subtree in the partial-tree variant. -/
-def unknown {Scalar : Type u} : PartialJson Scalar := .scalar none
+def unknown {Scalar : Type u} : PartialJson Scalar := .scalar .unknown
 
 end PartialJson
 
 namespace Unknown
 
-/-- The flat information order: `none` is unknown and hence below every value;
+/-- The flat information order: `.unknown` is unknown and hence below every value;
 known values are comparable only when equal. -/
-def Le {α : Type u} (x y : Unknown α) : Prop := x = none ∨ x = y
+def Le {α : Type u} (x y : Unknown α) : Prop := x = .unknown ∨ x = y
 
 @[refl] theorem le_refl {α : Type u} (x : Unknown α) : Le x x := Or.inr rfl
 
-theorem none_le {α : Type u} (x : Unknown α) : Le none x := Or.inl rfl
+theorem unknown_le {α : Type u} (x : Unknown α) : Le .unknown x := Or.inl rfl
 
-theorem some_le_iff {α : Type u} {x : α} {y : Unknown α} :
-    Le (some x) y ↔ y = some x := by
+theorem known_le_iff {α : Type u} {x : α} {y : Unknown α} :
+    Le (.known x) y ↔ y = .known x := by
   simp [Le, eq_comm]
 
 theorem le_trans {α : Type u} {x y z : Unknown α} : Le x y → Le y z → Le x z := by
   rintro (rfl | rfl) h
-  · exact none_le z
+  · exact unknown_le z
   · exact h
 
 theorem le_antisymm {α : Type u} {x y : Unknown α} : Le x y → Le y x → x = y := by
@@ -56,16 +77,16 @@ theorem le_antisymm {α : Type u} {x y : Unknown α} : Le x y → Le y x → x =
     · exact h.symm
   · rfl
 
-theorem isSome_of_le {α : Type u} {x y : Unknown α} (hxy : Le x y)
-    (hx : x.isSome) : y.isSome := by
+theorem isKnown_of_le {α : Type u} {x y : Unknown α} (hxy : Le x y)
+    (hx : x.isKnown) : y.isKnown := by
   rcases hxy with rfl | rfl
-  · simp at hx
+  · simp [isKnown] at hx
   · exact hx
 
 theorem get_eq_get_of_le {α : Type u} {x y : Unknown α} (hxy : Le x y)
-    (hx : x.isSome) (hy : y.isSome) : x.get hx = y.get hy := by
+    (hx : x.isKnown) (hy : y.isKnown) : x.get hx = y.get hy := by
   rcases hxy with rfl | rfl
-  · simp at hx
+  · simp [isKnown] at hx
   · rfl
 
 end Unknown
@@ -83,28 +104,28 @@ variable {Scalar : Type u} {Name : Type} [DecidableEq Name]
 /-- Look up an encoded object by name. -/
 def get? (cas : JsonCas Scalar Name) (name : Name) :
     Unknown (Json (Link Scalar Name)) :=
-  if h : name ∈ cas.names then some (cas.values ⟨name, h⟩) else none
+  if h : name ∈ cas.names then .known (cas.values ⟨name, h⟩) else .unknown
 
 /-- Dereference every link in a JSON tree using `resolve`. Container shape and
 object keys are preserved; failure of any scalar position makes the result
 unknown. -/
 def derefWith (resolve : Name → Unknown (Json Scalar)) :
     Json (Link Scalar Name) → Unknown (Json Scalar)
-  | .scalar (.inl value) => some (.scalar value)
+  | .scalar (.inl value) => .known (.scalar value)
   | .scalar (.inr name) => resolve name
   | .list n elems =>
-      if h : ∀ i, (derefWith resolve (elems i)).isSome then
-        some (.list n fun i => (derefWith resolve (elems i)).get (h i))
-      else none
+      if h : ∀ i, (derefWith resolve (elems i)).isKnown then
+        .known (.list n fun i => (derefWith resolve (elems i)).get (h i))
+      else .unknown
   | .map keys vals =>
-      if h : ∀ k, (derefWith resolve (vals k)).isSome then
-        some (.map keys fun k => (derefWith resolve (vals k)).get (h k))
-      else none
+      if h : ∀ k, (derefWith resolve (vals k)).isKnown then
+        .known (.map keys fun k => (derefWith resolve (vals k)).get (h k))
+      else .unknown
 
 /-- Fetch and fully dereference a named object, consuming one unit of gas for
 each followed store entry. -/
 def fetch (cas : JsonCas Scalar Name) : Nat → Name → Unknown (Json Scalar)
-  | 0, _ => none
+  | 0, _ => .unknown
   | gas + 1, name => (cas.get? name).bind (derefWith (cas.fetch gas))
 
 /-- The induced partial dereference function at a fixed gas bound. -/
@@ -115,7 +136,7 @@ def dereference (cas : JsonCas Scalar Name) (gas : Nat) :
 
 `fetchPartial` explores the alternative `Json (Unknown Scalar)` encoding. It
 preserves container structure even when one link cannot be resolved, using
-`.scalar none` for an unknown subtree. This is strictly more fine-grained than
+`.scalar .unknown` for an unknown subtree. This is strictly more fine-grained than
 the primary all-or-nothing `Unknown (Json Scalar)` result, so it is exposed as
 a separate operation rather than silently changing `fetch` semantics.
 -/
@@ -123,7 +144,7 @@ a separate operation rather than silently changing `fetch` semantics.
 /-- Dereference into a partially known JSON tree. -/
 def derefPartialWith (resolve : Name → PartialJson Scalar) :
     Json (Link Scalar Name) → PartialJson Scalar
-  | .scalar (.inl value) => .scalar (some value)
+  | .scalar (.inl value) => .scalar (.known value)
   | .scalar (.inr name) => resolve name
   | .list n elems => .list n fun i => derefPartialWith resolve (elems i)
   | .map keys vals => .map keys fun k => derefPartialWith resolve (vals k)
@@ -133,8 +154,8 @@ def fetchPartial (cas : JsonCas Scalar Name) : Nat → Name → PartialJson Scal
   | 0, _ => PartialJson.unknown
   | gas + 1, name =>
       match cas.get? name with
-      | none => PartialJson.unknown
-      | some value => derefPartialWith (cas.fetchPartial gas) value
+      | .unknown => PartialJson.unknown
+      | .known value => derefPartialWith (cas.fetchPartial gas) value
 
 /-- Pointwise extension in the flat information order. Existing entries may
 not change, but previously absent names may become known. -/
@@ -187,42 +208,42 @@ theorem derefWith_mono {resolve₁ resolve₂ : Name → Unknown (Json Scalar)}
   | list n elems ih =>
       unfold derefWith
       split <;> rename_i h₁
-      · have h₂ : ∀ i, (derefWith resolve₂ (elems i)).isSome := by
+      · have h₂ : ∀ i, (derefWith resolve₂ (elems i)).isKnown := by
           intro i
-          exact Unknown.isSome_of_le (ih i) (h₁ i)
-        rw [dif_pos h₂, Unknown.some_le_iff]
+          exact Unknown.isKnown_of_le (ih i) (h₁ i)
+        rw [dif_pos h₂, Unknown.known_le_iff]
         congr 2
         funext i
         exact (Unknown.get_eq_get_of_le (ih i) (h₁ i) (h₂ i)).symm
-      · exact Unknown.none_le _
+      · exact Unknown.unknown_le _
   | map keys vals ih =>
       unfold derefWith
       split <;> rename_i h₁
-      · have h₂ : ∀ k, (derefWith resolve₂ (vals k)).isSome := by
+      · have h₂ : ∀ k, (derefWith resolve₂ (vals k)).isKnown := by
           intro k
-          exact Unknown.isSome_of_le (ih k) (h₁ k)
-        rw [dif_pos h₂, Unknown.some_le_iff]
+          exact Unknown.isKnown_of_le (ih k) (h₁ k)
+        rw [dif_pos h₂, Unknown.known_le_iff]
         congr 2
         funext k
         exact (Unknown.get_eq_get_of_le (ih k) (h₁ k) (h₂ k)).symm
-      · exact Unknown.none_le _
+      · exact Unknown.unknown_le _
 
 /-- Fetching is monotone in the store information order. -/
 theorem fetch_mono {a b : JsonCas Scalar Name} (hab : a ≤ b) :
     ∀ gas name, Unknown.Le (a.fetch gas name) (b.fetch gas name) := by
   intro gas
   induction gas with
-  | zero => intro name; exact Unknown.none_le _
+  | zero => intro name; exact Unknown.unknown_le _
   | succ gas ih =>
       intro name
       unfold fetch
       rcases hab name with hnone | heq
-      · simp [hnone, Unknown.Le]
+      · simp [hnone, Unknown.Le, Unknown.bind]
       · rw [heq]
         cases h : b.get? name with
-        | none => simp [Unknown.Le]
-        | some value =>
-            simp only [Option.bind_some]
+        | unknown => simp [Unknown.Le, Unknown.bind]
+        | known value =>
+            simp only [Unknown.bind]
             exact derefWith_mono ih value
 
 /-- Consequently, the induced functions are pointwise monotone. -/
@@ -235,14 +256,14 @@ theorem fetch_succ_mono (cas : JsonCas Scalar Name) :
     ∀ gas name, Unknown.Le (cas.fetch gas name) (cas.fetch (gas + 1) name) := by
   intro gas
   induction gas with
-  | zero => intro name; exact Unknown.none_le _
+  | zero => intro name; exact Unknown.unknown_le _
   | succ gas ih =>
       intro name
       unfold fetch
       cases h : cas.get? name with
-      | none => simp [Unknown.Le]
-      | some value =>
-          simp only [Option.bind_some]
+      | unknown => simp [Unknown.Le, Unknown.bind]
+      | known value =>
+          simp only [Unknown.bind]
           exact derefWith_mono ih value
 
 /-- Fetching is monotone as a function of gas. -/
@@ -298,7 +319,7 @@ theorem derefWith_congr {resolve₁ resolve₂ : Name → Unknown (Json Scalar)}
 
 /-- A linked name occurring in the stored value at `parent`. -/
 def DependsOn (cas : JsonCas Scalar Name) (child parent : Name) : Prop :=
-  ∃ value, cas.get? parent = some value ∧ Sum.inr child ∈ value.scalars
+  ∃ value, cas.get? parent = .known value ∧ Sum.inr child ∈ value.scalars
 
 /-- A finite CAS equipped with a decreasing rank for every link. This is a
 constructive acyclicity certificate and records a dereference-depth bound. -/
@@ -333,9 +354,9 @@ theorem fetch_stable_of_rank : ∀ name gas extra,
           rw [Nat.succ_add]
           simp only [fetch]
           cases hlookup : cas.toJsonCas.get? name with
-          | none => simp
-          | some value =>
-              simp only [Option.bind_some]
+          | unknown => simp [Unknown.bind]
+          | known value =>
+              simp only [Unknown.bind]
               apply derefWith_congr
               intro child hchild
               have hdep : cas.toJsonCas.DependsOn child name :=
@@ -357,7 +378,7 @@ theorem dereference_stable_at_maximum :
   · apply fetch_stable_of_rank cas
     exact Nat.lt_succ_of_le (Finset.le_sup (f := cas.rank) hname)
   · rw [Nat.succ_add]
-    simp [dereference, fetch, get?, hname]
+    simp [dereference, fetch, get?, hname, Unknown.bind]
 
 end Acyclic
 
