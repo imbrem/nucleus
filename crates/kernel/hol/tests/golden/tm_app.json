@@ -1,0 +1,25 @@
+{
+  "tag": "tm.app",
+  "children": [
+    {
+      "tag": "tm.lam",
+      "children": [
+        {
+          "tag": "ty.bool"
+        },
+        {
+          "tag": "tm.bound",
+          "data": {
+            "index": 0
+          }
+        }
+      ]
+    },
+    {
+      "tag": "tm.bool",
+      "data": {
+        "value": true
+      }
+    }
+  ]
+}

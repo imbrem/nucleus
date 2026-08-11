@@ -10,6 +10,7 @@ members = [
   "crates/data/basic",
   "crates/data/cas",
   "crates/data/container",
+  "crates/kernel/hol",
   "crates/proton",
   "crates/neutron",
   "crates/nucleus",
