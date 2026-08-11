@@ -158,6 +158,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "covalence-kernel-hol"
+version = "0.0.0"
+dependencies = [
+ "covalence-lib-json",
+ "covalence-lib-serde",
+]
+
+[[package]]
 name = "covalence-lib-crypto"
 version = "0.0.0"
 dependencies = [
