@@ -1,0 +1,17 @@
+[package]
+name = "covalence-kernel-hol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Representation-parametric HOL syntax for Nucleus"
+publish = false
+
+[dependencies]
+covalence-lib-serde = { path = "../../lib/serde" }
+
+[dev-dependencies]
+covalence-lib-json = { path = "../../lib/json" }
+
+[lints]
+workspace = true
