@@ -14,7 +14,9 @@ the `reviewed` date; where it describes intent rather than code, it says so.
 ## The short version
 
 Nucleus is a minimal kernel foundation intended eventually to host a rewritten
-Covalence. It is not required to preserve Covalence APIs or storage formats.
+Covalence. It is not required to preserve Covalence APIs or storage formats; see
+[the Covalence context](../covalence/README.md) for what that system built and
+which of it should carry over.
 
 The organising principle is a trust boundary: **serialization, imports,
 databases, resolvers, proof programs, and e-graphs do not mint theorem

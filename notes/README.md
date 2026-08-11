@@ -87,16 +87,15 @@ What exists today:
 notes/
   README.md          this file
   architecture/      how Nucleus is put together and where it currently stands
+  covalence/         curated context from the previous system
 ```
 
 Directories are created when the first real document needs one, not in advance,
 so this tree is short on purpose. The category names to reach for first, when a
-note does not belong in `architecture/`:
+note does not belong in either:
 
 - `plans/` — intended direction for a subsystem or workflow.
 - `research/` — investigation of something outside this repository.
-- `covalence/` — curated context from the previous system, expected from
-  [#570](https://github.com/imbrem/nucleus/issues/570).
 
 Placing a note is a judgement call with a simple tiebreak: ask what the note
 describes. Something in this repository, as it is, goes in `architecture/`.
@@ -146,4 +145,7 @@ selectively, and each note is meant to be readable on its own. Start from
 [the current status note](architecture/current-status.md) for where the
 repository actually is, and from
 [the notes pipeline](architecture/notes-pipeline.md) for how this directory
-reaches the published site.
+reaches the published site. Before working on the kernel, read
+[the Covalence context](covalence/README.md) and, if you are implementing rules,
+[the kernel lessons](covalence/kernel-lessons.md) — the previous system's
+confirmed soundness bug is in there.
