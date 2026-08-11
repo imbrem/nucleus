@@ -115,7 +115,10 @@ mod tests {
         let term = Tree::app(Tree::lam(Tree::bool_ty(), Tree::bound(0)), Tree::bound(0));
         let json = to_string(&term).expect("serialize tree");
 
-        assert_eq!(json, include_str!("../tests/app.json").trim());
+        let actual_json = from_str::<covalence_lib_json::Value>(&json).expect("parse output");
+        let golden_json = from_str::<covalence_lib_json::Value>(include_str!("../tests/app.json"))
+            .expect("parse golden");
+        assert_eq!(actual_json, golden_json);
         assert_eq!(from_str::<Tree>(&json).expect("deserialize tree"), term);
     }
 

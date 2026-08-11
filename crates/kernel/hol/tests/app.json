@@ -1,1 +1,9 @@
-{"tag":"tm.app","function":{"tag":"tm.lam","domain":{"tag":"ty.bool"},"body":{"tag":"tm.bound","index":0}},"argument":{"tag":"tm.bound","index":0}}
+{
+  "tag": "tm.app",
+  "function": {
+    "tag": "tm.lam",
+    "domain": { "tag": "ty.bool" },
+    "body": { "tag": "tm.bound", "index": 0 }
+  },
+  "argument": { "tag": "tm.bound", "index": 0 }
+}
