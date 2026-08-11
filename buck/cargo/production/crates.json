@@ -429,6 +429,13 @@
     },
     {
       "source": "workspace#covalence-nucleus@0.0.0",
+      "target": "workspace#covalence-kernel-hol@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus@0.0.0",
       "target": "workspace#covalence-lib-crypto@0.0.0",
       "kinds": [
         "normal"
@@ -444,6 +451,20 @@
     {
       "source": "workspace#covalence-nucleus@0.0.0",
       "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus@0.0.0",
+      "target": "workspace#covalence-lib-json@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus@0.0.0",
+      "target": "workspace#covalence-lib-serde@0.0.0",
       "kinds": [
         "normal"
       ]
