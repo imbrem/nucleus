@@ -112,6 +112,20 @@ CHOOSE (i, l)           gate: i a registered world; |l| free (declared
                         (Free choices on distinct free variables are
                         jointly satisfiable, so worlds built by CHOOSE
                         plus derivation are consistent.)
+SAT_WITNESS (f, cs, m)  gate: cs is the ordered clause matrix encoded by
+                        f's definition; m is bounded, assigns only free
+                        variables in that matrix, is consistent, and
+                        satisfies every clause. Atomically register a
+                        world and derive (0, f, i) from those witnesses.
+LRAT_REFUTATION          gate: f and cs have the same shape as above; a
+(f, cs, proof, n)       bounded ASCII or binary LRAT proof derives the
+                        empty clause from cs; n < 0. Insert (f, -f, n).
+                        RUP and RAT are checked against the exact ordered
+                        matrix read from kernel state.
+SCRATCH_IMPORT          RUP-only LRAT may instead be replayed through
+                        ordinary rules in a temporary conservative
+                        extension. Only the checked main-id conclusion is
+                        imported. Failure leaves no scratch or import row.
 
 Soundness invariant: every universal row is entailed by the definitional
 layer; every world-i row holds in some model of the definitional layer
@@ -126,6 +140,5 @@ SAT(p): a row (0, p) usable for some world i built only from CHOOSE and
 the rules above (a universal (0, p) row witnesses satisfiability in every
 world of the definitions).
 
-Deferred by this version: CNF export, DRAT/LRAT certificate checking
-(which would extend the universal layer), negative definitions, and
-theory-fact admission gates for externally interpreted worlds.
+Deferred by this version: CNF export, negative definitions, and theory-
+fact admission gates for externally interpreted worlds.
