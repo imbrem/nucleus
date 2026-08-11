@@ -148,6 +148,11 @@ instance : DecidablePred NoncharacterFree := fun s => by
   unfold NoncharacterFree
   infer_instance
 
+/-- Unlike surrogates, noncharacters are valid Unicode scalar values, so Lean
+strings can contain them: their exclusion is a genuine obligation on values,
+not a by-construction fact about `String`. -/
+example : ¬ NoncharacterFree (String.ofList [Char.ofNat 0xFFFF]) := by decide
+
 /-- The string obligations of RFC 7493 §2.1 that the types do not enforce:
 every string scalar and every object member name is free of noncharacters.
 Stated over whole values because member names live in the tree, not in the
