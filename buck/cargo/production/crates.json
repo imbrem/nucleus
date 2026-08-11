@@ -113,6 +113,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-lib-json@0.0.0",
+      "name": "covalence-lib-json",
+      "version": "0.0.0",
+      "path": "crates/lib/json",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_lib_json",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-lib-rand@0.0.0",
       "name": "covalence-lib-rand",
       "version": "0.0.0",
@@ -121,6 +136,21 @@
       "targets": [
         {
           "name": "covalence_lib_rand",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-lib-serde@0.0.0",
+      "name": "covalence-lib-serde",
+      "version": "0.0.0",
+      "path": "crates/lib/serde",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_lib_serde",
           "kinds": [
             "lib"
           ]

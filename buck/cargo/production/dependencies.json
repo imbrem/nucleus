@@ -608,6 +608,22 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#itoa@1.0.18",
+      "name": "itoa",
+      "version": "1.0.18",
+      "checksum": "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "David Tolnay <dtolnay@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Fast integer primitive to string conversion",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/dtolnay/itoa"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
       "name": "libc",
       "version": "0.2.189",
@@ -654,6 +670,27 @@
           "vcpkg": ":vcpkg-0.2.15"
         }
       }
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3",
+      "name": "memchr",
+      "version": "2.8.3",
+      "checksum": "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98",
+      "edition": "2021",
+      "features": [
+        "alloc",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Andrew Gallant <jamslam@gmail.com>:bluss",
+        "CARGO_PKG_DESCRIPTION": "Provides extremely fast (uses SIMD on x86_64, aarch64 and wasm32) routines for\n1, 2 or 3 byte search and single substring search.\n",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/BurntSushi/memchr",
+        "CARGO_PKG_LICENSE": "Unlicense OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/BurntSushi/memchr"
+      },
+      "targets": [
+        {}
+      ]
     },
     {
       "id": "registry+https://github.com/rust-lang/crates.io-index#miette@7.6.0",
@@ -973,6 +1010,7 @@
       "edition": "2021",
       "features": [
         "alloc",
+        "default",
         "derive",
         "serde_derive",
         "std"
@@ -1043,6 +1081,35 @@
           "proc_macro": true
         }
       ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151",
+      "name": "serde_json",
+      "version": "1.0.151",
+      "checksum": "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14",
+      "edition": "2021",
+      "features": [
+        "alloc",
+        "default",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Erick Tryzelaar <erick.tryzelaar@gmail.com>:David Tolnay <dtolnay@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "A JSON serialization file format",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/serde-rs/json"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "itoa": ":itoa-1.0.18",
+            "memchr": ":memchr-2.8.3",
+            "serde_core": ":serde_core-1.0.229",
+            "zmij": ":zmij-1.0.23"
+          }
+        }
+      ],
+      "buildscript": {}
     },
     {
       "id": "registry+https://github.com/rust-lang/crates.io-index#sha1@0.10.7",
@@ -1420,6 +1487,23 @@
       "targets": [
         {}
       ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#zmij@1.0.23",
+      "name": "zmij",
+      "version": "1.0.23",
+      "checksum": "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "David Tolnay <dtolnay@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "A double-to-string conversion algorithm based on Schubfach and xjb",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/dtolnay/zmij"
+      },
+      "targets": [
+        {}
+      ],
+      "buildscript": {}
     }
   ],
   "roots": [
@@ -1460,11 +1544,27 @@
       ]
     },
     {
+      "id": "workspace#covalence-lib-json@0.0.0",
+      "name": "covalence-lib-json",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151"
+      ]
+    },
+    {
       "id": "workspace#covalence-lib-rand@0.0.0",
       "name": "covalence-lib-rand",
       "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#rand@0.9.5"
+      ]
+    },
+    {
+      "id": "workspace#covalence-lib-serde@0.0.0",
+      "name": "covalence-lib-serde",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229"
       ]
     },
     {
@@ -1967,6 +2067,34 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#serde_derive@1.0.229",
       "target": "registry+https://github.com/rust-lang/crates.io-index#syn@3.0.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#itoa@1.0.18",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_core@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#zmij@1.0.23",
       "kinds": [
         "normal"
       ]
