@@ -1,10 +1,6 @@
-"""Python bindings for Covalence.
+"""Python bindings for Covalence."""
 
-The compiled module is private. Everything callers are meant to use is named
-here, so the public surface is a decision rather than whatever the Rust module
-happens to export.
-"""
-
+from . import hash
 from ._covalence import __version__
 
-__all__ = ["__version__"]
+__all__ = ["hash", "__version__"]

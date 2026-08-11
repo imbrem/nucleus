@@ -151,10 +151,16 @@ genrule(
 # involved are globbed here rather than named through `:package_files`.
 genrule(
     name = "python",
-    srcs = with_environment(_CARGO_ONLY_CRATE_SOURCES + [
-        "Cargo.lock",
-        "Cargo.toml",
-    ]),
+    srcs = named_sources(
+        {
+            "lib-error": "//crates/lib/error:package_files",
+            "lib-hash": "//crates/lib/hash:package_files",
+        },
+        _CARGO_ONLY_CRATE_SOURCES + [
+            "Cargo.lock",
+            "Cargo.toml",
+        ],
+    ),
     out = "python",
     cmd = "mkdir -p $OUT && $(exe //tools/glu:glu) artifact python --out $OUT",
     labels = ["uses_undeclared_inputs"],

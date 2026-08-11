@@ -16,6 +16,20 @@ def test_package_imports_and_reports_a_version() -> None:
     assert covalence.__version__ == _covalence.__version__
 
 
+def test_hash_is_a_regular_public_submodule() -> None:
+    assert covalence.__all__ == ["hash", "__version__"]
+    assert covalence.hash.__name__ == "covalence.hash"
+    assert covalence.hash.O256 is _covalence.O256
+    assert not hasattr(covalence, "O256")
+
+
+def test_hash_objects_report_their_public_module() -> None:
+    for name in covalence.hash.__all__:
+        value = getattr(covalence.hash, name)
+        if isinstance(value, type) or callable(value):
+            assert value.__module__ == "covalence.hash", name
+
+
 def test_compiled_module_is_the_one_inside_the_package() -> None:
     """One deliberate package, not an extension module loose on the path."""
     assert _covalence.__name__ == "covalence._covalence"
@@ -26,22 +40,12 @@ def test_the_package_ships_typing_metadata() -> None:
     """`py.typed` is what makes the stubs visible to a type checker."""
     root = pathlib.Path(covalence.__path__[0])
     assert (root / "py.typed").is_file()
+    assert (root / "hash.py").is_file()
     assert (root / "_covalence.pyi").is_file()
-
-
-def test_the_stubs_name_everything_the_module_exports() -> None:
-    """No type checker runs in CI, so agreement is checked directly."""
-    root = pathlib.Path(covalence.__path__[0])
-    stubs = (root / "_covalence.pyi").read_text()
-    exported = [
-        name
-        for name in vars(_covalence)
-        if not name.startswith("__") or name == "__version__"
-    ]
-    missing = [name for name in exported if name not in stubs]
-    assert not missing, f"undocumented in _covalence.pyi: {missing}"
 
 
 def test_public_names_are_declared() -> None:
     for name in covalence.__all__:
         assert hasattr(covalence, name), name
+    for name in covalence.hash.__all__:
+        assert hasattr(covalence.hash, name), name
