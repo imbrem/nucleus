@@ -8,9 +8,17 @@ use covalence_lib_hash::O256;
 /// A value: what the reader produces and what evaluation returns.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
-    /// The empty list, `()`. Also what a command returns when it has nothing
-    /// to say.
+    /// The empty list, `()`.
     Nil,
+    /// The result of something done for its effect.
+    ///
+    /// Scheme has this and it earns its place here for the same reason: `()`
+    /// is a value a caller might want — an empty `(objects)` really is the
+    /// empty list, and printing nothing for it would be a lie — while
+    /// `(select 1)` has no result at all. Collapsing the two means one of them
+    /// prints wrongly. It renders as nothing, which is why it is the one value
+    /// that does not read back.
+    Unspecified,
     /// `#t` or `#f`.
     Bool(bool),
     /// A signed 64-bit integer.
@@ -78,6 +86,7 @@ impl fmt::Display for Value {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Nil => formatter.write_str("()"),
+            Self::Unspecified => Ok(()),
             Self::Bool(true) => formatter.write_str("#t"),
             Self::Bool(false) => formatter.write_str("#f"),
             Self::Integer(value) => write!(formatter, "{value}"),
@@ -335,6 +344,12 @@ mod tests {
         assert_eq!(read("(a"), Err(ReadError::Unterminated));
         assert_eq!(read(")"), Err(ReadError::UnexpectedClose));
         assert_eq!(read(r#""open"#), Err(ReadError::Unterminated));
+    }
+
+    #[test]
+    fn the_empty_list_prints_and_the_unspecified_value_does_not() {
+        assert_eq!(Value::Nil.to_string(), "()");
+        assert_eq!(Value::Unspecified.to_string(), "");
     }
 
     #[test]

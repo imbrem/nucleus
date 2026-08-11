@@ -1,0 +1,32 @@
+[package]
+name = "covalence-bin-cas-shell"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The upstream SQLite shell as a WebAssembly component"
+publish = false
+build = "build.rs"
+
+[lib]
+name = "covalence_bin_cas_shell"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+covalence-lib-sqlite = { path = "../../lib/sqlite", features = ["vfs-register"] }
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+wit-bindgen-rt = { version = "=0.44.0", features = ["bitflags"] }
+
+[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
+libsqlite3-sys = { version = "=0.38.1", features = ["bundled"] }
+
+[build-dependencies]
+cc = "1"
+
+[package.metadata.component]
+package = "covalence:sqlite-shell"
+
+[lints]
+workspace = true

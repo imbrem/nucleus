@@ -1508,6 +1508,15 @@
   ],
   "roots": [
     {
+      "id": "workspace#covalence-bin-cas-shell@0.0.0",
+      "name": "covalence-bin-cas-shell",
+      "category": "product",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#cc@1.4.0",
+        "registry+https://github.com/rust-lang/crates.io-index#libsqlite3-sys@0.38.1"
+      ]
+    },
+    {
       "id": "workspace#covalence-data-cas@0.0.0",
       "name": "covalence-data-cas",
       "category": "tcb",

@@ -2,6 +2,22 @@
   "generatedBy": "glu 0.0.0",
   "crates": [
     {
+      "id": "workspace#covalence-bin-cas-shell@0.0.0",
+      "name": "covalence-bin-cas-shell",
+      "version": "0.0.0",
+      "path": "crates/bin/cas-shell",
+      "category": "product",
+      "targets": [
+        {
+          "name": "covalence_bin_cas_shell",
+          "kinds": [
+            "cdylib",
+            "rlib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-bin-nucleus@0.0.0",
       "name": "covalence-bin-nucleus",
       "version": "0.0.0",
@@ -12,6 +28,12 @@
           "name": "nucleus",
           "kinds": [
             "bin"
+          ]
+        },
+        {
+          "name": "repl",
+          "kinds": [
+            "test"
           ]
         }
       ]
@@ -242,10 +264,31 @@
   ],
   "edges": [
     {
+      "source": "workspace#covalence-bin-cas-shell@0.0.0",
+      "target": "workspace#covalence-lib-sqlite@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "workspace#covalence-bin-nucleus@0.0.0",
       "target": "workspace#covalence-lib-hash@0.0.0",
       "kinds": [
         "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-bin-nucleus@0.0.0",
+      "target": "workspace#covalence-lib-sqlite@0.0.0",
+      "kinds": [
+        "dev"
+      ]
+    },
+    {
+      "source": "workspace#covalence-bin-nucleus@0.0.0",
+      "target": "workspace#covalence-neutron@0.0.0",
+      "kinds": [
+        "dev"
       ]
     },
     {

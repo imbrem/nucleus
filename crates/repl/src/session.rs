@@ -11,10 +11,12 @@ use crate::{ConnectionId, Repl, ReplError};
 /// What the host should do with a form.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Response {
-    /// Show this value. [`Value::Nil`] means show nothing.
+    /// Show this value. [`Value::Unspecified`] means show nothing.
     Value(Value),
     /// Ask the host to read a file for [`Session::admit`].
     ReadFile(String),
+    /// Ask the host to run the `SQLite` shell.
+    Shell(Vec<String>),
     /// Leave.
     Quit,
 }
@@ -102,6 +104,11 @@ pub const HELP: &str = "\
 (connections)       every open connection, as a list
 (select N)          select a connection
 (close N)           close a connection
+
+(sqlite)            hand the terminal to the real SQLite shell
+(sqlite ADDRESS)    ... with that object already open
+(sqlite ADDRESS \"SELECT 1\")
+                    ... and run that instead of prompting
 
 (help)              this
 (quit)              leave
@@ -233,7 +240,7 @@ impl Session {
     ///
     /// Returns an error if the input does not read, names nothing, or fails.
     pub fn eval(&mut self, input: &str) -> Result<Response, SessionError> {
-        let mut last = Response::Value(Value::Nil);
+        let mut last = Response::Value(Value::Unspecified);
         for form in read(input)? {
             last = self.eval_form(&form)?;
             if !matches!(last, Response::Value(_)) {
@@ -349,12 +356,14 @@ impl Session {
             ))),
             ("select", [value]) => {
                 self.repl.select(Self::connection(value)?)?;
-                Ok(Response::value(Value::Nil))
+                Ok(Response::value(Value::Unspecified))
             }
             ("close", [value]) => {
                 self.repl.close(Self::connection(value)?)?;
-                Ok(Response::value(Value::Nil))
+                Ok(Response::value(Value::Unspecified))
             }
+
+            ("sqlite", _) => Ok(Response::Shell(self.shell_arguments(arguments)?)),
 
             _ => Err(SessionError::Unbound(name.to_owned())),
         }
@@ -397,6 +406,23 @@ impl Session {
             ]));
         }
         Ok(Value::list(admitted))
+    }
+
+    /// Turns arguments into a shell command line.
+    ///
+    /// A bare address becomes the URI which opens it, because typing the full
+    /// `file:…?vfs=cas` form every time is friction with no upside.
+    fn shell_arguments(&self, arguments: &[Value]) -> Result<Vec<String>, SessionError> {
+        arguments
+            .iter()
+            .map(|argument| match argument.as_address() {
+                Some(address) => Ok(self.repl.uri(address)),
+                None => argument
+                    .as_text()
+                    .map(str::to_owned)
+                    .ok_or(SessionError::Usage("(sqlite [ADDRESS | \"ARG\"]...)")),
+            })
+            .collect()
     }
 
     fn address(value: &Value) -> Result<O256, SessionError> {
@@ -579,6 +605,37 @@ mod tests {
         assert_eq!(say(&mut session, "(objects)").split_whitespace().count(), 5);
         // Which is how you find out whether you saw everything.
         assert!(say(&mut session, "(stats)").contains("(objects 5)"));
+    }
+
+    #[test]
+    fn a_bare_sqlite_form_asks_for_an_interactive_shell() {
+        let mut session = session();
+        assert_eq!(
+            session.eval("(sqlite)").expect("eval"),
+            Response::Shell(Vec::new())
+        );
+    }
+
+    #[test]
+    fn sqlite_expands_an_address_and_passes_strings_through() {
+        let mut session = session();
+        let Value::Address(address) = session.admit(b"x".to_vec()).expect("admit") else {
+            unreachable!("admit returns an address")
+        };
+        let Response::Shell(arguments) = session
+            .eval(&format!(r#"(sqlite {address} "SELECT * FROM t")"#))
+            .expect("eval")
+        else {
+            panic!("expected a shell response")
+        };
+        assert_eq!(arguments.len(), 2);
+        assert!(
+            arguments[0].contains(&address.hex().to_string()),
+            "{arguments:?}"
+        );
+        assert!(arguments[0].contains("vfs="), "{arguments:?}");
+        // A string with spaces arrives as one argument, with no splitter.
+        assert_eq!(arguments[1], "SELECT * FROM t");
     }
 
     #[test]
