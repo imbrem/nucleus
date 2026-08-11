@@ -3,15 +3,15 @@ import Nucleus.Json.Ordered
 /-!
 # Validation of raw JSON trees
 
-`RawJson.validate` converts a raw tree to its extensional `Json` value, rejecting any
+`RawSyn.validate` converts a raw tree to its extensional `Json` value, rejecting any
 tree that contains a duplicated object key.  Duplicate handling is an explicit,
 versioned policy decision: this library never collapses duplicates implicitly (neither
 first-wins nor last-wins), and the only policy currently provided is rejection, with
 the offending key reported via `JsonError.duplicateKey`.
 
-The kernel of the validator is `RawJson.dupWitness?`, which finds the first duplicated
-object key anywhere in the tree; `RawJson.dupWitness?_eq_none` identifies its success
-exactly with `RawJson.WellFormed`, giving the specification lemmas for `validate`.
+The kernel of the validator is `RawSyn.dupWitness?`, which finds the first duplicated
+object key anywhere in the tree; `RawSyn.dupWitness?_eq_none` identifies its success
+exactly with `RawSyn.WellFormed`, giving the specification lemmas for `validate`.
 -/
 
 namespace Nucleus
@@ -21,7 +21,7 @@ universe u
 variable {Scalar : Type u}
 
 /-- Structured validation errors; currently only duplicate object keys.  Duplicate
-handling is an explicit, versioned policy decision — `RawJson.validate` rejects. -/
+handling is an explicit, versioned policy decision — `RawSyn.validate` rejects. -/
 inductive JsonError where
   /-- The key `key` occurs more than once in a single object. -/
   | duplicateKey (key : String)
@@ -41,46 +41,34 @@ theorem firstDup?_eq_none {α : Type*} [DecidableEq α] {l : List α} :
     rw [firstDup?]
     by_cases h : a ∈ rest <;> simp [h, ih, List.nodup_cons]
 
-namespace RawJson
+namespace RawSyn
 
 /-- The first duplicated object key found anywhere in the tree, if any.  Used only for
-error reporting by `RawJson.validate`; the specification is
-`RawJson.dupWitness?_eq_none`. -/
-def dupWitness? : RawJson Scalar → Option String
-  | .scalar _ => none
-  | .list elems => (elems.map fun e => e.dupWitness?).findSome? id
-  | .map entries =>
-      (firstDup? (entries.map Prod.fst)).orElse fun _ =>
-        (entries.map fun e => e.2.dupWitness?).findSome? id
-termination_by r => sizeOf r
-decreasing_by
-  · exact sizeOf_mem_list ‹_›
-  · exact sizeOf_mem_map ‹_›
+error reporting by `RawSyn.validate`; the specification is
+`RawSyn.dupWitness?_eq_none`.  Recurses structurally over all three sorts. -/
+def dupWitness? : ∀ {i : JsonIx}, RawSyn Scalar i → Option String
+  | _, .scalar _ => none
+  | _, .list elems => elems.dupWitness?
+  | _, .map entries => (firstDup? entries.keys).orElse fun _ => entries.dupWitness?
+  | _, .nil => none
+  | _, .cons head tail => (head.dupWitness?).orElse fun _ => tail.dupWitness?
+  | _, .objNil => none
+  | _, .objCons _ value tail => (value.dupWitness?).orElse fun _ => tail.dupWitness?
 
 /-- `dupWitness?` finds nothing exactly when the tree is well-formed. -/
-theorem dupWitness?_eq_none {r : RawJson Scalar} : r.dupWitness? = none ↔ r.WellFormed := by
+theorem dupWitness?_eq_none {i : JsonIx} {r : RawSyn Scalar i} :
+    r.dupWitness? = none ↔ r.WellFormed := by
   induction r with
-  | scalar v =>
-    rw [dupWitness?]
-    exact ⟨fun _ => .scalar v, fun _ => rfl⟩
-  | list elems ih =>
-    rw [dupWitness?, List.findSome?_eq_none_iff]
-    constructor
-    · intro h
-      exact .list fun e he => (ih e he).mp (h _ (List.mem_map.mpr ⟨e, he, rfl⟩))
-    · intro h o ho
-      obtain ⟨e, he, rfl⟩ := List.mem_map.mp ho
-      exact (ih e he).mpr (h.list_elem e he)
+  | scalar value => simp [dupWitness?]
+  | list elems ih => simp [dupWitness?, ih]
   | map entries ih =>
-    rw [dupWitness?, Option.orElse_eq_or, Option.or_eq_none_iff, firstDup?_eq_none,
-      List.findSome?_eq_none_iff]
-    constructor
-    · rintro ⟨hnd, hall⟩
-      exact .map hnd fun e he => (ih e he).mp (hall _ (List.mem_map.mpr ⟨e, he, rfl⟩))
-    · intro h
-      refine ⟨h.map_nodup, fun o ho => ?_⟩
-      obtain ⟨e, he, rfl⟩ := List.mem_map.mp ho
-      exact (ih e he).mpr (h.map_elem e he)
+    simp [dupWitness?, Option.orElse_eq_or, Option.or_eq_none_iff, firstDup?_eq_none, ih]
+  | nil => simp [dupWitness?]
+  | cons head tail ih ih' =>
+    simp [dupWitness?, Option.orElse_eq_or, Option.or_eq_none_iff, ih, ih']
+  | objNil => simp [dupWitness?]
+  | objCons key value tail ih ih' =>
+    simp [dupWitness?, Option.orElse_eq_or, Option.or_eq_none_iff, ih, ih']
 
 /-- Explicit duplicate-key policy: reject.  Convert a raw tree to its extensional
 value, or report the first duplicated key.  Neither first-wins nor last-wins
@@ -134,6 +122,6 @@ theorem validate_ok_of_wellFormed {r : RawJson Scalar} (h : r.WellFormed) :
     r.validate = .ok (r.toJson h) :=
   validate_eq_ok_iff.mpr ⟨h, rfl⟩
 
-end RawJson
+end RawSyn
 
 end Nucleus

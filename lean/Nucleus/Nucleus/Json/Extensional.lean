@@ -131,28 +131,39 @@ theorem mapScalar_comp {T U : Type u} (f : Scalar → T) (g : T → U) (j : Json
       congr 1
       exact funext ih
 
+/-- Build an object from an association list with duplicate-free keys; values
+are recovered by (unambiguous) key lookup. -/
+def ofEntries (entries : List (String × Json Scalar))
+    (h : (entries.map Prod.fst).Nodup) : Json Scalar :=
+  .map ⟨(entries.map Prod.fst : List String), h⟩ fun k =>
+    ((entries.find? fun e => e.1 = k.1).get (by
+      rw [List.find?_isSome]
+      obtain ⟨e, he, hk⟩ := List.mem_map.mp (Multiset.mem_coe.mp k.2)
+      exact ⟨e, he, by simp [hk]⟩)).2
+
 /-- The canonical ordered raw representative: arrays are enumerated in index
 order and objects in strictly increasing key order.  This is a data-level
 choice of representative, not a byte-encoding or hashing requirement. -/
 def toRaw : Json Scalar → RawJson Scalar
   | .scalar v => .scalar v
-  | .list _n elems => .list (List.ofFn fun i => (elems i).toRaw)
+  | .list _n elems => .list (RawSyn.ofList (List.ofFn fun i => (elems i).toRaw))
   | .map keys vals =>
-      .map ((keys.sort (· ≤ ·)).attach.map fun k =>
-        (k.1, (vals ⟨k.1, (Finset.mem_sort _).mp k.2⟩).toRaw))
+      .map (RawSyn.ofEntries ((keys.sort (· ≤ ·)).attach.map fun k =>
+        (k.1, (vals ⟨k.1, (Finset.mem_sort _).mp k.2⟩).toRaw)))
 
 @[simp]
 theorem toRaw_scalar (v : Scalar) : (Json.scalar v).toRaw = .scalar v := rfl
 
 @[simp]
 theorem toRaw_list (n : Nat) (elems : Fin n → Json Scalar) :
-    (Json.list n elems).toRaw = .list (List.ofFn fun i => (elems i).toRaw) := rfl
+    (Json.list n elems).toRaw
+      = .list (RawSyn.ofList (List.ofFn fun i => (elems i).toRaw)) := rfl
 
 @[simp]
 theorem toRaw_map (keys : Finset String) (vals : {k // k ∈ keys} → Json Scalar) :
     (Json.map keys vals).toRaw
-      = .map ((keys.sort (· ≤ ·)).attach.map fun k =>
-          (k.1, (vals ⟨k.1, (Finset.mem_sort _).mp k.2⟩).toRaw)) := rfl
+      = .map (RawSyn.ofEntries ((keys.sort (· ≤ ·)).attach.map fun k =>
+          (k.1, (vals ⟨k.1, (Finset.mem_sort _).mp k.2⟩).toRaw))) := rfl
 
 end Json
 
@@ -171,5 +182,13 @@ theorem find?_entry_of_nodup_keys {α : Type*} {entries : List (String × α)}
           hnd.1 (hEq ▸ List.mem_map.mpr ⟨e, hmem, rfl⟩)
         rw [List.find?_cons_of_neg (by simpa using hne)]
         exact ih hnd.2 hmem
+
+/-- On an association list with duplicate-free keys, extracting the found
+entry at the key of a member yields exactly that member. -/
+theorem find?_get_entry_of_nodup_keys {α : Type*} {entries : List (String × α)}
+    (hnd : (entries.map Prod.fst).Nodup) {e : String × α} (he : e ∈ entries)
+    {p : (entries.find? fun x => x.1 = e.1).isSome = true} :
+    (entries.find? fun x => x.1 = e.1).get p = e := by
+  simp [find?_entry_of_nodup_keys hnd he]
 
 end Nucleus

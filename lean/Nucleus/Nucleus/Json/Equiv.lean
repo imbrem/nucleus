@@ -7,7 +7,7 @@ The two headline equivalences of issue #541:
 
 - `Σ n, Fin n → A ≃ List A` (`sigmaFinEquivList`, Mathlib's
   `List.equivSigmaTuple`), relating the finite indexed child families of
-  `Json` to the list children of `RawJson`;
+  `Json` to the sequence children of `RawJson`;
 - `Json Scalar ≃ OrderedJson Scalar` (`jsonEquivOrdered`): sorted
   duplicate-free syntax is a faithful data representative of the extensional
   form.  The forward map enumerates key sets in sorted order
@@ -53,11 +53,22 @@ theorem pmap_keys_eq {α : Type*} {p : String → Prop} :
       exact pmap_keys_eq g (fun k hk => H k (List.mem_cons_of_mem _ hk))
         (fun e' he' hk' => hg e' (List.mem_cons_of_mem _ he') hk')
 
-/-- `RawJson.toJson` only depends on the raw tree, not the well-formedness
+/-- `List.pmap` only depends on the underlying list, not the membership
+proofs. -/
+theorem pmap_congr_list {α β : Type*} {p : α → Prop} {l l' : List α} (h : l = l')
+    {f : ∀ a, p a → β} {H : ∀ a ∈ l, p a} {H' : ∀ a ∈ l', p a} :
+    l.pmap f H = l'.pmap f H' := by
+  subst h; rfl
+
+namespace RawSyn
+
+/-- `RawSyn.toJson` only depends on the raw tree, not the well-formedness
 proof (which is irrelevant). -/
-theorem RawJson.toJson_congr {r r' : RawJson Scalar} (h : r = r')
+theorem toJson_congr {r r' : RawJson Scalar} (h : r = r')
     (hr : r.WellFormed) (hr' : r'.WellFormed) : r.toJson hr = r'.toJson hr' := by
   subst h; rfl
+
+end RawSyn
 
 /-- Round trip: converting the canonical raw representative back to the
 extensional form is the identity. -/
@@ -67,91 +78,119 @@ theorem Json.toJson_toRaw :
   induction j with
   | scalar v =>
       intro h
-      rw [RawJson.toJson_congr (Json.toRaw_scalar v) h (by exact .scalar v),
-        RawJson.toJson.eq_def]
+      simp [RawSyn.toJson]
   | list n elems ih =>
       intro h
-      rw [RawJson.toJson_congr (Json.toRaw_list n elems) h (Json.toRaw_list n elems ▸ h),
-        RawJson.toJson.eq_def]
+      have hW : (RawSyn.list (RawSyn.ofList (List.ofFn fun i =>
+          (elems i).toRaw))).WellFormed := Json.toRaw_list n elems ▸ h
+      rw [RawSyn.toJson_congr (Json.toRaw_list n elems) h hW, RawSyn.toJson,
+        RawSyn.toJsonArr_eq]
       refine Json.list_congr (by simp) fun i hi hi' => ?_
+      simp only [List.get_eq_getElem, List.getElem_pmap]
       have hwf : (elems ⟨i, hi'⟩).toRaw.WellFormed := (Json.toRaw_sortedKeys _).wellFormed
-      have hEq : (List.ofFn fun j => (elems j).toRaw).get ⟨i, hi⟩ = (elems ⟨i, hi'⟩).toRaw := by
-        simp
-      exact (RawJson.toJson_congr hEq _ hwf).trans (ih ⟨i, hi'⟩ hwf)
+      refine (RawSyn.toJson_congr ?_ _ hwf).trans (ih ⟨i, hi'⟩ hwf)
+      simp [RawSyn.toList_ofList]
   | map keys vals ih =>
       intro h
-      rw [RawJson.toJson_congr (Json.toRaw_map keys vals) h (Json.toRaw_map keys vals ▸ h),
-        RawJson.toJson.eq_def]
-      have hfst : (((keys.sort (· ≤ ·)).attach.map fun k =>
-          (k.1, (vals ⟨k.1, (Finset.mem_sort _).mp k.2⟩).toRaw)).map Prod.fst)
-          = keys.sort (· ≤ ·) := by
-        simp [List.map_map, Function.comp_def]
+      have hW : (RawSyn.map (RawSyn.ofEntries ((keys.sort (· ≤ ·)).attach.map fun k =>
+          (k.1, (vals ⟨k.1, (Finset.mem_sort _).mp k.2⟩).toRaw)))).WellFormed :=
+        Json.toRaw_map keys vals ▸ h
+      rw [RawSyn.toJson_congr (Json.toRaw_map keys vals) h hW, RawSyn.toJson]
+      set E := (keys.sort (· ≤ ·)).attach.map fun k =>
+        (k.1, (vals ⟨k.1, (Finset.mem_sort _).mp k.2⟩).toRaw) with hE
+      set hWo := ((RawSyn.wellFormed_map_iff (RawSyn.ofEntries E)).mp hW).2 with hhWo
+      have hfst : E.map Prod.fst = keys.sort (· ≤ ·) := by
+        simp [hE, List.map_map, Function.comp_def]
+      have hobj : ((RawSyn.toJsonObj (RawSyn.ofEntries E) hWo).1).map Prod.fst
+          = E.map Prod.fst := by
+        rw [(RawSyn.toJsonObj _ _).2, RawSyn.toEntries_ofEntries]
+      simp only [Json.ofEntries]
       refine Json.map_congr ?_ ?_
       · apply Finset.val_inj.mp
         change (↑(_ : List String) : Multiset String) = keys.1
-        rw [hfst]
+        rw [hobj, hfst]
         exact Finset.sort_eq _ _
       · intro k hk hk'
         have hks : k ∈ keys.sort (· ≤ ·) := (Finset.mem_sort _).mpr hk'
-        have hmem : (k, (vals ⟨k, (Finset.mem_sort _).mp hks⟩).toRaw)
-            ∈ (keys.sort (· ≤ ·)).attach.map fun x =>
-              (x.1, (vals ⟨x.1, (Finset.mem_sort _).mp x.2⟩).toRaw) :=
+        have hmemE : (k, (vals ⟨k, (Finset.mem_sort _).mp hks⟩).toRaw) ∈ E :=
           List.mem_map.mpr ⟨⟨k, hks⟩, List.mem_attach _ _, rfl⟩
-        have hnd : (((keys.sort (· ≤ ·)).attach.map fun x =>
-            (x.1, (vals ⟨x.1, (Finset.mem_sort _).mp x.2⟩).toRaw)).map Prod.fst).Nodup := by
-          rw [hfst]; exact Finset.sort_nodup _ _
-        have hfind := find?_entry_of_nodup_keys hnd hmem
-        simp only [hfind, Option.get_some]
-        exact ih _ _
-
-/-- `List.pmap` only depends on the underlying list, not the membership
-proofs. -/
-theorem pmap_congr_list {α β : Type*} {p : α → Prop} {l l' : List α} (h : l = l')
-    {f : ∀ a, p a → β} {H : ∀ a ∈ l, p a} {H' : ∀ a ∈ l', p a} :
-    l.pmap f H = l'.pmap f H' := by
-  subst h; rfl
+        have hwf : (vals ⟨k, (Finset.mem_sort _).mp hks⟩).toRaw.WellFormed :=
+          (Json.toRaw_sortedKeys _).wellFormed
+        have hmem : (k, ((vals ⟨k, (Finset.mem_sort _).mp hks⟩).toRaw).toJson hwf)
+            ∈ (RawSyn.toJsonObj (RawSyn.ofEntries E) hWo).1 := by
+          rw [RawSyn.toJsonObj_eq]
+          refine List.mem_pmap.mpr
+            ⟨(k, (vals ⟨k, (Finset.mem_sort _).mp hks⟩).toRaw), ?_, rfl⟩
+          rw [RawSyn.toEntries_ofEntries]
+          exact hmemE
+        have hnd : (((RawSyn.toJsonObj (RawSyn.ofEntries E) hWo).1).map Prod.fst).Nodup := by
+          rw [hobj, hfst]
+          exact Finset.sort_nodup _ _
+        exact (congrArg Prod.snd (find?_get_entry_of_nodup_keys hnd hmem)).trans (ih _ hwf)
 
 /-- Round trip: an ordered raw tree is recovered from its extensional value by
 re-sorting. -/
-theorem RawJson.toRaw_toJson :
+theorem RawSyn.toRaw_toJson :
     ∀ (r : RawJson Scalar), r.SortedKeys → ∀ (h : r.WellFormed), (r.toJson h).toRaw = r := by
   intro r
   induction r with
   | scalar v =>
       intro _hs h
-      rw [RawJson.toJson.eq_def]
-      rfl
+      simp [RawSyn.toJson]
   | list elems ih =>
       intro hs h
-      rw [RawJson.toJson.eq_def, Json.toRaw_list]
-      refine congrArg RawJson.list (List.ext_getElem (by simp) fun i h1 h2 => ?_)
-      simp only [List.getElem_ofFn]
-      refine ((ih _ (List.get_mem _ _) (hs.list_elem _ (List.get_mem _ _)) _).trans ?_)
-      simp
+      rw [RawSyn.toJson, Json.toRaw_list]
+      refine congrArg RawSyn.list (RawSyn.toList_injective ?_)
+      rw [RawSyn.toList_ofList]
+      refine List.ext_getElem (by simp [RawSyn.toJsonArr_eq]) fun i h1 h2 => ?_
+      simp only [List.getElem_ofFn, RawSyn.toJsonArr_eq, List.get_eq_getElem,
+        List.getElem_pmap]
+      exact ih _ (List.getElem_mem _)
+        ((RawSyn.sortedKeys_arr_iff elems).mp hs _ (List.getElem_mem _)) _
   | map entries ih =>
       intro hs h
-      rw [RawJson.toJson.eq_def, Json.toRaw_map]
-      refine congrArg RawJson.map ?_
+      rw [RawSyn.toJson, Json.ofEntries, Json.toRaw_map]
+      refine congrArg RawSyn.map (RawSyn.toEntries_injective ?_)
+      rw [RawSyn.toEntries_ofEntries]
+      set hWo := ((RawSyn.wellFormed_map_iff entries).mp h).2 with hhWo
+      set L := (RawSyn.toJsonObj entries hWo).1 with hL
+      have hkeysL : L.map Prod.fst = entries.toEntries.map Prod.fst :=
+        (RawSyn.toJsonObj entries hWo).2
+      have hnd : (L.map Prod.fst).Nodup := by
+        rw [hkeysL, ← RawSyn.keys_eq_toEntries_fst]
+        exact ((RawSyn.wellFormed_map_iff entries).mp h).1
       have hsort : Finset.sort
-          (⟨(↑(entries.map Prod.fst) : Multiset String), _⟩ : Finset String) (· ≤ ·)
-          = entries.map Prod.fst :=
-        sort_mk_eq h.map_nodup (hs.map_pairwise.imp le_of_lt)
-      rw [List.map_attach_eq_pmap,
-        pmap_congr_list hsort (H' := fun a ha => by rw [hsort]; exact ha)]
+          (⟨(↑(L.map Prod.fst) : Multiset String), (Multiset.coe_nodup).mpr hnd⟩ :
+            Finset String) (· ≤ ·)
+          = entries.toEntries.map Prod.fst := by
+        rw [Finset.sort_mk]
+        conv_lhs => rw [hkeysL]
+        rw [Multiset.coe_sort]
+        refine List.mergeSort_eq_self _ ?_
+        rw [← RawSyn.keys_eq_toEntries_fst]
+        exact (((RawSyn.sortedKeys_map_iff entries).mp hs).1).imp le_of_lt
+      rw [List.map_attach_eq_pmap, pmap_congr_list hsort (H' := fun a ha => by
+        rw [hsort]; exact ha)]
       refine pmap_keys_eq _ _ fun e he hk => ?_
-      have hfind := find?_entry_of_nodup_keys h.map_nodup he
-      simp only [hfind, Option.get_some]
-      exact ih e he (hs.map_elem e he) _
+      have hwf : e.2.WellFormed := (RawSyn.wellFormed_obj_iff entries).mp
+        ((RawSyn.wellFormed_map_iff entries).mp h).2 e he
+      have hmem : (e.1, e.2.toJson hwf) ∈ L := by
+        rw [hL, RawSyn.toJsonObj_eq]
+        exact List.mem_pmap.mpr ⟨e, he, rfl⟩
+      refine (congrArg (fun j => Json.toRaw j.2)
+        (find?_get_entry_of_nodup_keys hnd hmem)).trans ?_
+      exact ih e he ((RawSyn.sortedKeys_obj_iff entries).mp
+        ((RawSyn.sortedKeys_map_iff entries).mp hs).2 e he) hwf
 
-/-- The two directions of `jsonEquivOrdered`, stated for the bundled
-`OrderedJson`. -/
+/-- Converting to the canonical ordered representative and back is the
+identity. -/
 theorem Json.toOrdered_toJson (j : Json Scalar) : j.toOrdered.toJson = j :=
   Json.toJson_toRaw j _
 
 /-- Converting an ordered tree to its extensional value and re-sorting is the
 identity. -/
 theorem OrderedJson.toOrdered_toJson (o : OrderedJson Scalar) : o.toJson.toOrdered = o :=
-  Subtype.ext (RawJson.toRaw_toJson o.1 o.2 _)
+  Subtype.ext (RawSyn.toRaw_toJson o.1 o.2 _)
 
 /-- Extensional JSON values and sorted duplicate-free syntax trees are
 equivalent: `OrderedJson` is a faithful data representative of `Json`.  This

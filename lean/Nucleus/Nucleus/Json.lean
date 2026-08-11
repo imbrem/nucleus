@@ -12,9 +12,13 @@ Core JSON inductives parametric over **scalar values only**, with object keys
 fixed to `String` (issue #541; the parent RFC-8259 formalization effort is
 issue #530).  Three related forms:
 
-1. `RawJson Scalar` — raw ordered syntax.  Objects are ordered member lists
-   that may contain duplicate names, exactly as RFC 8259 object syntax allows;
-   equality observes order and duplicates.  This is what a parser produces.
+1. `RawJson Scalar` — raw ordered syntax.  Objects are ordered member
+   sequences that may contain duplicate names, exactly as RFC 8259 object
+   syntax allows; equality observes order and duplicates.  This is what a
+   parser produces.  It is the value sort of the three-sorted indexed family
+   `RawSyn` (values, array tails, object tails), so every operation recurses
+   structurally; the tail sorts are isomorphic to lists
+   (`RawSyn.arrEquivList`, `RawSyn.objEquivList`).
 2. `Json Scalar` — the extensional value.  Arrays are finite indexed families
    `Fin n → Json Scalar`; objects are value families over a `Finset String`.
    Object equality ignores member ordering by construction, and duplicate keys
@@ -100,11 +104,11 @@ variable {Scalar : Type u}
 /-- The canonical raw representative validates back to its extensional value:
 round-tripping through raw syntax loses nothing. -/
 theorem Json.validate_toRaw (j : Json Scalar) : j.toRaw.validate = .ok j := by
-  rw [RawJson.validate_ok_of_wellFormed j.toRaw_sortedKeys.wellFormed, Json.toJson_toRaw]
+  rw [RawSyn.validate_ok_of_wellFormed j.toRaw_sortedKeys.wellFormed, Json.toJson_toRaw]
 
 /-- Ordered trees validate to their extensional value. -/
 theorem OrderedJson.validate_toRaw (o : OrderedJson Scalar) :
     o.toRaw.validate = .ok o.toJson :=
-  RawJson.validate_ok_of_wellFormed o.2.wellFormed
+  RawSyn.validate_ok_of_wellFormed o.2.wellFormed
 
 end Nucleus
