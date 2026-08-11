@@ -1,0 +1,37 @@
+[package]
+name = "covalence-lib-python"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "PyO3 support shared by Covalence's Python bindings"
+publish = false
+
+# Cargo builds this crate, not Buck's Rust rules. `pyo3`'s build script needs
+# the interpreter configuration `pyo3-ffi` publishes through cargo's `links`
+# metadata, which Buck's prelude discards. See `buck_builds` in
+# `tools/glu/src/buck.rs`.
+[package.metadata.glu]
+buck = false
+
+[features]
+# Build against Python's stable ABI without linking libpython, which is what a
+# distributable extension module needs and what `maturin` turns on.
+#
+# Off by default so that `cargo build`, `cargo test`, and Buck link an
+# interpreter and can therefore produce runnable test binaries. Turning it on
+# for the whole workspace would leave every Python symbol undefined at link
+# time, which a shared object resolves against its host process and an
+# executable does not.
+extension-module = ["pyo3/extension-module"]
+
+[dependencies]
+pyo3 = { version = "0.29", features = ["abi3-py311"] }
+
+[dev-dependencies]
+# Lets a test initialise the interpreter it links. Only test binaries embed
+# Python; the extension module is loaded by an interpreter that already exists.
+pyo3 = { version = "0.29", features = ["auto-initialize"] }
+
+[lints]
+workspace = true

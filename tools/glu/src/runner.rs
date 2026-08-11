@@ -617,6 +617,7 @@ impl Runner {
             "rustc",
             "node",
             "pnpm",
+            "pytest",
             "python3",
             "scc",
             "git",
