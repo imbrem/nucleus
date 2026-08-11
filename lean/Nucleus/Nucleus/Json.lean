@@ -7,26 +7,27 @@ import Nucleus.Json.Alternatives
 import Nucleus.Json.IJson
 
 /-!
-# Scalar-parametric JSON trees
+# Key- and scalar-parametric JSON trees
 
-Core JSON inductives parametric over **scalar values only**, with object keys
-fixed to `String` (issue #541; the parent RFC-8259 formalization effort is
-issue #530).  Three related forms:
+The core JSON inductives are parametric over object keys and scalar values.
+The ordinary one-parameter surfaces default keys to `String`. Three related
+forms:
 
-1. `RawJson Scalar` — raw ordered syntax.  Objects are ordered member
+1. `KeyedRawJson Key Scalar` (or `RawJson Scalar`) — raw ordered syntax. Objects are ordered member
    sequences that may contain duplicate names, exactly as RFC 8259 object
    syntax allows; equality observes order and duplicates.  This is what a
    parser produces.  It is the value sort of the three-sorted indexed family
    `RawSyn` (values, array tails, object tails), so every operation recurses
    structurally; the tail sorts are isomorphic to lists
    (`RawSyn.arrEquivList`, `RawSyn.objEquivList`).
-2. `Json Scalar` — the extensional value.  Arrays are finite indexed families
-   `Fin n → Json Scalar`; objects are value families over a `Finset String`.
+2. `KeyedJson Key Scalar` (or `Json Scalar`) — the extensional value. Arrays
+   are finite indexed families and objects are value families over a
+   `Finset Key`.
    Object equality ignores member ordering by construction, and duplicate keys
    are unrepresentable.
-3. `OrderedJson Scalar` — sorted duplicate-free syntax, the canonical data
-   representative of an extensional value: `jsonEquivOrdered : Json Scalar ≃
-   OrderedJson Scalar`.
+3. `KeyedOrderedJson Key Scalar` (or `OrderedJson Scalar`) — sorted
+   duplicate-free syntax, the canonical data representative of an extensional
+   value: `jsonEquivOrdered : Json Scalar ≃ OrderedJson Scalar`.
 
 Conversions: `RawJson.validate` (explicit duplicate-key rejection — building
 `Json` never silently chooses first-wins or last-wins semantics),
@@ -52,35 +53,11 @@ abbrev RfcJson := Json JsonScalar
 ```
 
 keeping `JsonNumber` explicit so #530 can settle exact numeral semantics
-without touching arrays and maps.  Object keys being `String` is independent
-of how string *values* are represented inside `Scalar`.
+without touching arrays and maps.
 
-The first such specialization is the I-JSON profile (RFC 7493):
-`IJson := Json IJsonScalar` with binary64-representable numbers; see
-`Nucleus.Json.IJson`.
-
-## Later key/container generalization
-
-If a struct/schema use case ever needs non-string field positions, the
-documented route is a generic
-
-```
-KeyedJson Scalar Key
-```
-
-(or a free tree over a container/polynomial signature whose shapes describe
-arrays, maps, structs, tuples, and list-only trees), introduced *behind* the
-current surface:
-
-```
-abbrev Json Scalar := KeyedJson Scalar String
-```
-
-Nothing in the present API leaks the key type, so the migration preserves the
-`Json Scalar` surface: constructors, `size`/`depth`/`scalars`, `get?`,
-`mapScalar`, and the equivalences specialize verbatim.  The generic type is
-deliberately **not** exposed now — the initial parser, schema, Serde, and HOL
-APIs should not carry a second parameter.
+The first such specialization is the I-JSON profile (RFC 7493). It uses the
+same refined `IJsonString` type for object keys and string scalar values, with
+binary64-representable numbers; see `Nucleus.Json.IJson`.
 
 ## Equality and hashing
 

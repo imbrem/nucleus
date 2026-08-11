@@ -26,7 +26,7 @@ namespace Nucleus
 
 universe u
 
-variable {Scalar : Type u}
+variable {Key : Type} {Scalar : Type u} [LinearOrder Key]
 
 namespace RawSyn
 
@@ -34,7 +34,7 @@ namespace RawSyn
 extensional `Json` value directly (`RawJson.toJson`); trees with duplicates
 must first go through an explicit duplicate-key policy (`RawJson.validate`
 rejects them). -/
-def WellFormed : ∀ {i : JsonIx}, RawSyn Scalar i → Prop
+def WellFormed : ∀ {i : JsonIx}, RawSyn Key Scalar i → Prop
   | _, .scalar _ => True
   | _, .list elems => elems.WellFormed
   | _, .map entries => entries.keys.Nodup ∧ entries.WellFormed
@@ -45,7 +45,7 @@ def WellFormed : ∀ {i : JsonIx}, RawSyn Scalar i → Prop
 
 /-- Every object in the tree lists its members in strictly increasing key
 order.  This is the canonical-representative invariant of `OrderedJson`. -/
-def SortedKeys : ∀ {i : JsonIx}, RawSyn Scalar i → Prop
+def SortedKeys : ∀ {i : JsonIx}, RawSyn Key Scalar i → Prop
   | _, .scalar _ => True
   | _, .list elems => elems.SortedKeys
   | _, .map entries => entries.keys.Pairwise (· < ·) ∧ entries.SortedKeys
@@ -54,75 +54,86 @@ def SortedKeys : ∀ {i : JsonIx}, RawSyn Scalar i → Prop
   | _, .objNil => True
   | _, .objCons _ value tail => value.SortedKeys ∧ tail.SortedKeys
 
+omit [LinearOrder Key] in
 @[simp] theorem wellFormed_scalar (value : Scalar) :
-    (RawSyn.scalar value).WellFormed := trivial
+    (RawSyn.scalar (Key := Key) value).WellFormed := trivial
 
-@[simp] theorem wellFormed_list_iff (elems : RawSyn Scalar .arr) :
+omit [LinearOrder Key] in
+@[simp] theorem wellFormed_list_iff (elems : RawSyn Key Scalar .arr) :
     (RawSyn.list elems).WellFormed ↔ elems.WellFormed := Iff.rfl
 
-@[simp] theorem wellFormed_map_iff (entries : RawSyn Scalar .obj) :
+omit [LinearOrder Key] in
+@[simp] theorem wellFormed_map_iff (entries : RawSyn Key Scalar .obj) :
     (RawSyn.map entries).WellFormed ↔ entries.keys.Nodup ∧ entries.WellFormed := Iff.rfl
 
-@[simp] theorem wellFormed_nil : (RawSyn.nil : RawSyn Scalar .arr).WellFormed := trivial
+omit [LinearOrder Key] in
+@[simp] theorem wellFormed_nil : (RawSyn.nil : RawSyn Key Scalar .arr).WellFormed := trivial
 
-@[simp] theorem wellFormed_cons_iff (head : RawJson Scalar) (tail : RawSyn Scalar .arr) :
+omit [LinearOrder Key] in
+@[simp] theorem wellFormed_cons_iff (head : KeyedRawJson Key Scalar)
+    (tail : RawSyn Key Scalar .arr) :
     (RawSyn.cons head tail).WellFormed ↔ head.WellFormed ∧ tail.WellFormed := Iff.rfl
 
-@[simp] theorem wellFormed_objNil : (RawSyn.objNil : RawSyn Scalar .obj).WellFormed := trivial
+omit [LinearOrder Key] in
+@[simp] theorem wellFormed_objNil : (RawSyn.objNil : RawSyn Key Scalar .obj).WellFormed := trivial
 
-@[simp] theorem wellFormed_objCons_iff (key : String) (value : RawJson Scalar)
-    (tail : RawSyn Scalar .obj) :
+omit [LinearOrder Key] in
+@[simp] theorem wellFormed_objCons_iff (key : Key) (value : KeyedRawJson Key Scalar)
+    (tail : RawSyn Key Scalar .obj) :
     (RawSyn.objCons key value tail).WellFormed
       ↔ value.WellFormed ∧ tail.WellFormed := Iff.rfl
 
 @[simp] theorem sortedKeys_scalar (value : Scalar) :
-    (RawSyn.scalar value).SortedKeys := trivial
+    (RawSyn.scalar (Key := Key) value).SortedKeys := trivial
 
-@[simp] theorem sortedKeys_list_iff (elems : RawSyn Scalar .arr) :
+@[simp] theorem sortedKeys_list_iff (elems : RawSyn Key Scalar .arr) :
     (RawSyn.list elems).SortedKeys ↔ elems.SortedKeys := Iff.rfl
 
-@[simp] theorem sortedKeys_map_iff (entries : RawSyn Scalar .obj) :
+@[simp] theorem sortedKeys_map_iff (entries : RawSyn Key Scalar .obj) :
     (RawSyn.map entries).SortedKeys
       ↔ entries.keys.Pairwise (· < ·) ∧ entries.SortedKeys := Iff.rfl
 
-@[simp] theorem sortedKeys_nil : (RawSyn.nil : RawSyn Scalar .arr).SortedKeys := trivial
+@[simp] theorem sortedKeys_nil : (RawSyn.nil : RawSyn Key Scalar .arr).SortedKeys := trivial
 
-@[simp] theorem sortedKeys_cons_iff (head : RawJson Scalar) (tail : RawSyn Scalar .arr) :
+@[simp] theorem sortedKeys_cons_iff (head : KeyedRawJson Key Scalar)
+    (tail : RawSyn Key Scalar .arr) :
     (RawSyn.cons head tail).SortedKeys ↔ head.SortedKeys ∧ tail.SortedKeys := Iff.rfl
 
-@[simp] theorem sortedKeys_objNil : (RawSyn.objNil : RawSyn Scalar .obj).SortedKeys := trivial
+@[simp] theorem sortedKeys_objNil : (RawSyn.objNil : RawSyn Key Scalar .obj).SortedKeys := trivial
 
-@[simp] theorem sortedKeys_objCons_iff (key : String) (value : RawJson Scalar)
-    (tail : RawSyn Scalar .obj) :
+@[simp] theorem sortedKeys_objCons_iff (key : Key) (value : KeyedRawJson Key Scalar)
+    (tail : RawSyn Key Scalar .obj) :
     (RawSyn.objCons key value tail).SortedKeys
       ↔ value.SortedKeys ∧ tail.SortedKeys := Iff.rfl
 
+omit [LinearOrder Key] in
 /-- An array tail is well-formed exactly when all its elements are. -/
-theorem wellFormed_arr_iff : ∀ (a : RawSyn Scalar .arr),
+theorem wellFormed_arr_iff : ∀ (a : RawSyn Key Scalar .arr),
     a.WellFormed ↔ ∀ e ∈ a.toList, e.WellFormed
   | .nil => by simp
   | .cons head tail => by simp [wellFormed_arr_iff tail]
 
+omit [LinearOrder Key] in
 /-- An object tail is well-formed exactly when all its entry values are. -/
-theorem wellFormed_obj_iff : ∀ (o : RawSyn Scalar .obj),
+theorem wellFormed_obj_iff : ∀ (o : RawSyn Key Scalar .obj),
     o.WellFormed ↔ ∀ e ∈ o.toEntries, e.2.WellFormed
   | .objNil => by simp
   | .objCons key value tail => by simp [wellFormed_obj_iff tail]
 
 /-- An array tail is sorted exactly when all its elements are. -/
-theorem sortedKeys_arr_iff : ∀ (a : RawSyn Scalar .arr),
+theorem sortedKeys_arr_iff : ∀ (a : RawSyn Key Scalar .arr),
     a.SortedKeys ↔ ∀ e ∈ a.toList, e.SortedKeys
   | .nil => by simp
   | .cons head tail => by simp [sortedKeys_arr_iff tail]
 
 /-- An object tail is sorted exactly when all its entry values are. -/
-theorem sortedKeys_obj_iff : ∀ (o : RawSyn Scalar .obj),
+theorem sortedKeys_obj_iff : ∀ (o : RawSyn Key Scalar .obj),
     o.SortedKeys ↔ ∀ e ∈ o.toEntries, e.2.SortedKeys
   | .objNil => by simp
   | .objCons key value tail => by simp [sortedKeys_obj_iff tail]
 
 /-- Strictly increasing keys are in particular duplicate-free. -/
-theorem SortedKeys.wellFormed {i : JsonIx} {r : RawSyn Scalar i}
+theorem SortedKeys.wellFormed {i : JsonIx} {r : RawSyn Key Scalar i}
     (h : r.SortedKeys) : r.WellFormed := by
   induction r with
   | scalar value => trivial
@@ -136,7 +147,7 @@ theorem SortedKeys.wellFormed {i : JsonIx} {r : RawSyn Scalar i}
 /-- Mapping over scalars preserves the ordering invariant: object keys are
 untouched. -/
 theorem SortedKeys.mapScalar {T : Type u} (f : Scalar → T) {i : JsonIx}
-    {r : RawSyn Scalar i} (h : r.SortedKeys) : (r.mapScalar f).SortedKeys := by
+    {r : RawSyn Key Scalar i} (h : r.SortedKeys) : (r.mapScalar f).SortedKeys := by
   induction r with
   | scalar value => trivial
   | list elems ih => exact ih h
@@ -160,7 +171,7 @@ mutual
 /-- Convert a well-formed raw value to its extensional form.  Object values
 are recovered by key lookup, which is unambiguous because keys are
 duplicate-free. -/
-def toJson : (r : RawJson Scalar) → r.WellFormed → Json Scalar
+def toJson : (r : KeyedRawJson Key Scalar) → r.WellFormed → Json Scalar Key
   | .scalar v, _ => .scalar v
   | .list elems, h =>
       .list (toJsonArr elems ((wellFormed_list_iff elems).mp h)).length
@@ -172,14 +183,14 @@ def toJson : (r : RawJson Scalar) → r.WellFormed → Json Scalar
         exact ((wellFormed_map_iff entries).mp h).1)
 
 /-- Convert the elements of a well-formed array tail. -/
-def toJsonArr : (a : RawSyn Scalar .arr) → a.WellFormed → List (Json Scalar)
+def toJsonArr : (a : RawSyn Key Scalar .arr) → a.WellFormed → List (Json Scalar Key)
   | .nil, _ => []
   | .cons head tail, h => toJson head h.1 :: toJsonArr tail h.2
 
 /-- Convert the entries of a well-formed object tail, keeping the fact that
 keys are preserved. -/
-def toJsonObj : (o : RawSyn Scalar .obj) → o.WellFormed →
-    {l : List (String × Json Scalar) // l.map Prod.fst = o.toEntries.map Prod.fst}
+def toJsonObj : (o : RawSyn Key Scalar .obj) → o.WellFormed →
+    {l : List (Key × Json Scalar Key) // l.map Prod.fst = o.toEntries.map Prod.fst}
   | .objNil, _ => ⟨[], by simp⟩
   | .objCons key value tail, h =>
       ⟨(key, toJson value h.1) :: (toJsonObj tail h.2).1, by
@@ -189,7 +200,7 @@ end
 
 /-- The converted array elements are the converted elements of the list view;
 membership proofs transport along `wellFormed_arr_iff`. -/
-theorem toJsonArr_eq : ∀ (a : RawSyn Scalar .arr) (h : a.WellFormed),
+theorem toJsonArr_eq : ∀ (a : RawSyn Key Scalar .arr) (h : a.WellFormed),
     toJsonArr a h = a.toList.pmap (fun e he => e.toJson he)
       (fun e he => (wellFormed_arr_iff a).mp h e he)
   | .nil, _ => by simp [toJsonArr]
@@ -198,7 +209,7 @@ theorem toJsonArr_eq : ∀ (a : RawSyn Scalar .arr) (h : a.WellFormed),
       exact congrArg _ (toJsonArr_eq tail h.2)
 
 /-- The converted object entries are the converted entries of the list view. -/
-theorem toJsonObj_eq : ∀ (o : RawSyn Scalar .obj) (h : o.WellFormed),
+theorem toJsonObj_eq : ∀ (o : RawSyn Key Scalar .obj) (h : o.WellFormed),
     (toJsonObj o h).1 = o.toEntries.pmap (fun e he => (e.1, e.2.toJson he))
       (fun e he => (wellFormed_obj_iff o).mp h e he)
   | .objNil, _ => by simp [toJsonObj]
@@ -210,7 +221,7 @@ end RawSyn
 
 /-- The canonical raw representative is sorted: `Json.toRaw` emits every
 object in strictly increasing key order. -/
-theorem Json.toRaw_sortedKeys (j : Json Scalar) : j.toRaw.SortedKeys := by
+theorem Json.toRaw_sortedKeys (j : Json Scalar Key) : j.toRaw.SortedKeys := by
   induction j with
   | scalar v => trivial
   | list n elems ih =>
@@ -240,29 +251,33 @@ every object lists its members in strictly increasing key order.  This is the
 canonical *data representative* of an extensional `Json` value
 (`Nucleus.jsonEquivOrdered`); it does not impose a canonical byte encoding or
 content hash. -/
-def OrderedJson (Scalar : Type u) : Type u := {r : RawJson Scalar // r.SortedKeys}
+def OrderedJson (Scalar : Type u) (Key : Type := String) [LinearOrder Key] : Type u :=
+  {r : KeyedRawJson Key Scalar // r.SortedKeys}
+
+abbrev KeyedOrderedJson (Key : Type) (Scalar : Type u) [LinearOrder Key] :=
+  OrderedJson Scalar Key
 
 namespace OrderedJson
 
 /-- The underlying raw syntax tree.  Injective: an `OrderedJson` is determined
 by its raw tree, the invariant being propositional. -/
-def toRaw (o : OrderedJson Scalar) : RawJson Scalar := o.1
+def toRaw (o : OrderedJson Scalar Key) : KeyedRawJson Key Scalar := o.1
 
-theorem toRaw_injective : Function.Injective (toRaw (Scalar := Scalar)) :=
+theorem toRaw_injective : Function.Injective (toRaw (Key := Key) (Scalar := Scalar)) :=
   Subtype.coe_injective
 
 /-- The extensional value an ordered tree represents. -/
-def toJson (o : OrderedJson Scalar) : Json Scalar := o.1.toJson o.2.wellFormed
+def toJson (o : OrderedJson Scalar Key) : Json Scalar Key := o.1.toJson o.2.wellFormed
 
 /-- Apply `f` to every scalar leaf. -/
-def mapScalar {T : Type u} (f : Scalar → T) (o : OrderedJson Scalar) : OrderedJson T :=
+def mapScalar {T : Type u} (f : Scalar → T) (o : OrderedJson Scalar Key) : OrderedJson T Key :=
   ⟨o.1.mapScalar f, o.2.mapScalar f⟩
 
 end OrderedJson
 
 /-- The canonical ordered representative of an extensional value, packaged
 with its ordering invariant. -/
-def Json.toOrdered (j : Json Scalar) : OrderedJson Scalar :=
+def Json.toOrdered (j : Json Scalar Key) : OrderedJson Scalar Key :=
   ⟨j.toRaw, j.toRaw_sortedKeys⟩
 
 end Nucleus

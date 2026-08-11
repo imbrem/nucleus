@@ -9,9 +9,8 @@ import Nucleus.Json.Validate
 
 I-JSON ("Internet JSON", [RFC 7493](https://www.rfc-editor.org/rfc/rfc7493))
 is the interoperable profile of RFC 8259 JSON.  Because the core trees are
-parametric over scalars, the profile is obtained by instantiation:
-`IJson := Json IJsonScalar`, where `IJsonScalar` fixes null, Booleans,
-binary64-representable numbers, and strings.
+parametric over keys and scalars, the profile is obtained by instantiation:
+`IJson := Json IJsonScalar IJsonString`.
 
 How each normative requirement of RFC 7493 is accounted for:
 
@@ -20,12 +19,8 @@ How each normative requirement of RFC 7493 is accounted for:
 - **No surrogates in strings (§2.1, MUST)** — holds by construction: Lean
   `Char`s are Unicode scalar values and can never be surrogates
   (`char_not_surrogate`).
-- **No noncharacters in strings (§2.1, MUST)** — captured by the
-  `IJson.Interoperable` predicate over whole values, since it constrains
-  object member *names* as well as string scalars, and member names live in
-  the tree structure rather than the scalar type.  (Enforcing it inside a
-  string type would still not cover keys without the `KeyedJson`
-  generalization documented in `Nucleus.Json`.)
+- **No noncharacters in strings (§2.1, MUST)** — holds by construction using
+  `IJsonString` for both object member names and string scalar values.
 - **Numbers within IEEE 754 binary64 (§2.2, SHOULD)** — enforced by
   construction: `IJsonNumber` carries exactly the rationals representable as
   finite binary64 values.  The RFC's interoperable integer range
@@ -88,39 +83,7 @@ theorem Binary64Representable.neg {q : ℚ} (h : Binary64Representable q) :
 /-- The upper end of the interoperable integer range, exactly. -/
 example : ((2 : ℤ) ^ 53 - 1) = 9007199254740991 := by norm_num
 
-/-! ## The I-JSON scalar type and profile -/
-
-/-- Scalars of the I-JSON profile: null, Booleans, binary64-representable
-numbers, and strings.  Object member names are `String` in the tree layer and
-are unaffected by this choice. -/
-inductive IJsonScalar : Type where
-  /-- The JSON `null` literal. -/
-  | null
-  /-- A JSON Boolean. -/
-  | bool (value : Bool)
-  /-- A number within binary64 magnitude and precision (RFC 7493 §2.2). -/
-  | number (value : IJsonNumber)
-  /-- A decoded Unicode string.  Surrogates are unrepresentable; freedom from
-  noncharacters is tracked by `IJson.Interoperable`. -/
-  | string (value : String)
-  deriving DecidableEq
-
-/-- Extensional I-JSON values: duplicate member names are unrepresentable
-(RFC 7493 §2.3) and member ordering carries no meaning. -/
-abbrev IJson := Json IJsonScalar
-
-/-- Raw I-JSON syntax: member order preserved, duplicates expressible;
-`RawSyn.validate` applies the profile's duplicate rejection. -/
-abbrev RawIJson := RawJson IJsonScalar
-
-/-- The canonical sorted representative of an extensional I-JSON value. -/
-abbrev OrderedIJson := OrderedJson IJsonScalar
-
-/-- I-JSON values and their sorted representatives are equivalent, by
-specializing `jsonEquivOrdered`. -/
-def iJsonEquivOrdered : IJson ≃ OrderedIJson := jsonEquivOrdered IJsonScalar
-
-/-! ## String obligations -/
+/-! ## I-JSON strings -/
 
 /-- RFC 7493 §2.1's surrogate exclusion holds by construction: every Lean
 `Char` is a Unicode scalar value, so its code point is never in the surrogate
@@ -153,16 +116,42 @@ strings can contain them: their exclusion is a genuine obligation on values,
 not a by-construction fact about `String`. -/
 example : ¬ NoncharacterFree (String.ofList [Char.ofNat 0xFFFF]) := by decide
 
-/-- The string obligations of RFC 7493 §2.1 that the types do not enforce:
-every string scalar and every object member name is free of noncharacters.
-Stated over whole values because member names live in the tree, not in the
-scalar type. -/
-def IJson.Interoperable : IJson → Prop
-  | .scalar (.string s) => NoncharacterFree s
-  | .scalar _ => True
-  | .list _n elems => ∀ i, IJson.Interoperable (elems i)
-  | .map keys vals =>
-      (∀ k ∈ keys, NoncharacterFree k) ∧ ∀ k, IJson.Interoperable (vals k)
+/-- An I-JSON string. Lean characters already exclude surrogates, while the
+subtype proof excludes Unicode noncharacters. The same type is used for
+object member names and string scalar values. -/
+abbrev IJsonString := {s : String // NoncharacterFree s}
+
+namespace IJsonString
+
+def toString (s : IJsonString) : String := s.1
+
+theorem toString_injective : Function.Injective toString := Subtype.coe_injective
+
+end IJsonString
+
+/-! ## The I-JSON scalar type and profile -/
+
+/-- Scalars of the I-JSON profile. String values use the same refined type as
+object member names, enforcing RFC 7493 §2.1 by construction in both places. -/
+inductive IJsonScalar : Type where
+  | null
+  | bool (value : Bool)
+  | number (value : IJsonNumber)
+  | string (value : IJsonString)
+  deriving DecidableEq
+
+/-- Extensional I-JSON values with refined I-JSON strings as object keys. -/
+abbrev IJson := Json IJsonScalar IJsonString
+
+/-- Raw I-JSON syntax: member order and duplicates remain observable. -/
+abbrev RawIJson := KeyedRawJson IJsonString IJsonScalar
+
+/-- The canonical sorted representative of an extensional I-JSON value. -/
+abbrev OrderedIJson := OrderedJson IJsonScalar IJsonString
+
+/-- I-JSON values and their sorted representatives are equivalent. -/
+def iJsonEquivOrdered : IJson ≃ OrderedIJson :=
+  jsonEquivOrdered IJsonScalar (Key := IJsonString)
 
 /-- RFC 7493 §4.1: top-level values SHOULD be objects or arrays. -/
 def IJson.IsMessage : IJson → Prop
