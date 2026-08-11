@@ -4,6 +4,7 @@ import Nucleus.Json.Ordered
 import Nucleus.Json.Validate
 import Nucleus.Json.Equiv
 import Nucleus.Json.Alternatives
+import Nucleus.Json.IJson
 
 /-!
 # Scalar-parametric JSON trees
@@ -53,6 +54,10 @@ abbrev RfcJson := Json JsonScalar
 keeping `JsonNumber` explicit so #530 can settle exact numeral semantics
 without touching arrays and maps.  Object keys being `String` is independent
 of how string *values* are represented inside `Scalar`.
+
+The first such specialization is the I-JSON profile (RFC 7493):
+`IJson := Json IJsonScalar` with binary64-representable numbers; see
+`Nucleus.Json.IJson`.
 
 ## Later key/container generalization
 
