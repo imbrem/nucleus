@@ -284,6 +284,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-logic-lrat@0.0.0",
+      "name": "covalence-logic-lrat",
+      "version": "0.0.0",
+      "path": "crates/logic/lrat",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_logic_lrat",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-logic-sat@0.0.0",
       "name": "covalence-logic-sat",
       "version": "0.0.0",
