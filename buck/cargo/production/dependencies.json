@@ -178,6 +178,61 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#base-x@0.2.11",
+      "name": "base-x",
+      "version": "0.2.11",
+      "checksum": "4cbbc9d0964165b47557570cce6c952866c2678457aca742aafc9fb771d30270",
+      "edition": "2015",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Alex R. <alexei.rudenko@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Encode/decode any base",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/OrKoN/base-x-rs",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/OrKoN/base-x-rs"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#base256emoji@1.0.2",
+      "name": "base256emoji",
+      "version": "1.0.2",
+      "checksum": "b5e9430d9a245a77c92176e649af6e275f20839a48389859d1661e9a128d077c",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "A multibase base256emoji implementation.",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/Jorropo/base256emoji",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/Jorropo/base256emoji/"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "const_str": ":const-str-0.4.3",
+            "match_lookup": ":match-lookup-0.1.2"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#base45@3.2.0",
+      "name": "base45",
+      "version": "3.2.0",
+      "checksum": "240e56f4d3c453c36faacb695c535a4d5f8c7d23dac175014f32eb0a71012a03",
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Rickard Natt och Dag <rickard@nattochdag.dev>",
+        "CARGO_PKG_DESCRIPTION": "Encoder/decoder for base45",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/opendevtools/base45",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/opendevtools/base45"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#base64@0.22.1",
       "name": "base64",
       "version": "0.22.1",
@@ -366,6 +421,33 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#cid@0.11.3",
+      "name": "cid",
+      "version": "0.11.3",
+      "checksum": "21a304f95f84d169a6f31c4d0a30d784643aaa0bbc9c1e449a2c23e963ec4971",
+      "edition": "2021",
+      "features": [
+        "alloc",
+        "default",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Friedel Ziegelmayer <dignifiedquire@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "CID in rust",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/multiformats/rust-cid"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "multibase": ":multibase-0.9.3",
+            "multihash": ":multihash-0.19.5",
+            "unsigned_varint": ":unsigned-varint-0.8.0"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#const-oid@0.9.6",
       "name": "const-oid",
       "version": "0.9.6",
@@ -376,6 +458,25 @@
         "CARGO_PKG_DESCRIPTION": "Const-friendly implementation of the ISO/IEC Object Identifier (OID) standard\nas defined in ITU X.660, with support for BER/DER encoding/decoding as well as\nheapless no_std (i.e. embedded) support\n",
         "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
         "CARGO_PKG_REPOSITORY": "https://github.com/RustCrypto/formats/tree/master/const-oid"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#const-str@0.4.3",
+      "name": "const-str",
+      "version": "0.4.3",
+      "checksum": "2f421161cb492475f1661ddc9815a745a1c894592070661180fdec3d4872e9c3",
+      "edition": "2021",
+      "features": [
+        "default"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Nugine <nugine@foxmail.com>",
+        "CARGO_PKG_DESCRIPTION": "compile-time string operations",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/Nugine/const-str"
       },
       "targets": [
         {}
@@ -511,6 +612,65 @@
             "proc_macro2": ":proc-macro2-1.0.107",
             "quote": ":quote-1.0.47",
             "syn": ":syn-2.0.119"
+          },
+          "proc_macro": true
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#data-encoding@2.11.1",
+      "name": "data-encoding",
+      "version": "2.11.1",
+      "checksum": "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06",
+      "edition": "2018",
+      "features": [
+        "alloc"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Efficient and customizable data-encoding functions like base64, base32, and hex",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/ia0/data-encoding"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#data-encoding-macro@0.1.21",
+      "name": "data-encoding-macro",
+      "version": "0.1.21",
+      "checksum": "c6a127ecbb3c4632e1525380e04c0c3fcf8dcb44d32a79ea290d8a36906edcd8",
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Macros for data-encoding",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/ia0/data-encoding"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "data_encoding": ":data-encoding-2.11.1",
+            "data_encoding_macro_internal": ":data-encoding-macro-internal-0.1.19"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#data-encoding-macro-internal@0.1.19",
+      "name": "data-encoding-macro-internal",
+      "version": "0.1.19",
+      "checksum": "c54e03a951783e8b327515db3f2a2fd0e3bed362a96b066f341ce66ed49b4ead",
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "Internal library for data-encoding-macro",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/ia0/data-encoding"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "data_encoding": ":data-encoding-2.11.1",
+            "syn": ":syn-3.0.3"
           },
           "proc_macro": true
         }
@@ -1224,6 +1384,29 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#match-lookup@0.1.2",
+      "name": "match-lookup",
+      "version": "0.1.2",
+      "checksum": "757aee279b8bdbb9f9e676796fd459e4207a1f986e87886700abf589f5abf771",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "mriise <me@mriise.net>",
+        "CARGO_PKG_DESCRIPTION": "proc macro for generating match block for alphabets, please dont use this. its slow and extremly likely to not be what you are looking for.",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/mriise/smol-base-x"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "proc_macro2": ":proc-macro2-1.0.107",
+            "quote": ":quote-1.0.47",
+            "syn": ":syn-2.0.119"
+          },
+          "proc_macro": true
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#matchit@0.8.4",
       "name": "matchit",
       "version": "0.8.4",
@@ -1351,6 +1534,55 @@
         {
           "named_deps": {
             "libc": ":libc-0.2.189"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#multibase@0.9.3",
+      "name": "multibase",
+      "version": "0.9.3",
+      "checksum": "7e0e4a371cbf1dfd666b658ba137763edb23c45beb43cfe369b5593cd6b437b6",
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Friedel Ziegelmayer <dignifiedquire@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "multibase in rust",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/multiformats/rust-multibase",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/multiformats/rust-multibase"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "base256emoji": ":base256emoji-1.0.2",
+            "base45": ":base45-3.2.0",
+            "base_x": ":base-x-0.2.11",
+            "data_encoding": ":data-encoding-2.11.1",
+            "data_encoding_macro": ":data-encoding-macro-0.1.21"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#multihash@0.19.5",
+      "name": "multihash",
+      "version": "0.19.5",
+      "checksum": "577c63b00ad74d57e8c9aa870b5fccebf2fd64a308a5aee9f1bb88e4aea19447",
+      "edition": "2021",
+      "features": [
+        "alloc",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "dignifiedquire <dignifiedquire@gmail.com>:David Craven <david@craven.ch>:Volker Mische <volker.mische@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Implementation of the multihash format",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/multiformats/rust-multihash"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "unsigned_varint": ":unsigned-varint-0.8.0"
           }
         }
       ]
@@ -2640,6 +2872,25 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#unsigned-varint@0.8.0",
+      "name": "unsigned-varint",
+      "version": "0.8.0",
+      "checksum": "eb066959b24b5196ae73cb057f45598450d2c5f71460e98c49b738086eff9c06",
+      "edition": "2018",
+      "features": [
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Parity Technologies <admin@parity.io>",
+        "CARGO_PKG_DESCRIPTION": "unsigned varint encoding",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/paritytech/unsigned-varint"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#vcpkg@0.2.15",
       "name": "vcpkg",
       "version": "0.2.15",
@@ -2894,6 +3145,9 @@
       "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#blake3@1.8.5",
+        "registry+https://github.com/rust-lang/crates.io-index#cid@0.11.3",
+        "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+        "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151",
         "registry+https://github.com/rust-lang/crates.io-index#sha1@0.10.7",
         "registry+https://github.com/rust-lang/crates.io-index#sha2@0.10.9"
       ]
@@ -3324,6 +3578,20 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#base256emoji@1.0.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#const-str@0.4.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#base256emoji@1.0.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#match-lookup@0.1.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#blake3@1.8.5",
       "target": "registry+https://github.com/rust-lang/crates.io-index#arrayref@0.3.9",
       "kinds": [
@@ -3382,6 +3650,27 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#cc@1.4.0",
       "target": "registry+https://github.com/rust-lang/crates.io-index#shlex@2.0.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cid@0.11.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#multibase@0.9.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cid@0.11.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#multihash@0.19.5",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#cid@0.11.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#unsigned-varint@0.8.0",
       "kinds": [
         "normal"
       ]
@@ -3466,6 +3755,34 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#curve25519-dalek@4.1.3",
       "target": "registry+https://github.com/rust-lang/crates.io-index#zeroize@1.9.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#data-encoding-macro-internal@0.1.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#data-encoding@2.11.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#data-encoding-macro-internal@0.1.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#syn@3.0.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#data-encoding-macro@0.1.21",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#data-encoding-macro-internal@0.1.19",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#data-encoding-macro@0.1.21",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#data-encoding@2.11.1",
       "kinds": [
         "normal"
       ]
@@ -3933,6 +4250,27 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#match-lookup@0.1.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#match-lookup@0.1.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#match-lookup@0.1.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#miette-derive@7.6.0",
       "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
       "kinds": [
@@ -3979,6 +4317,48 @@
       "target": "registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
       "kinds": [
         "normal (cfg(any(unix, target_os = \"hermit\", target_os = \"wasi\")))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#multibase@0.9.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#base-x@0.2.11",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#multibase@0.9.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#base256emoji@1.0.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#multibase@0.9.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#base45@3.2.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#multibase@0.9.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#data-encoding-macro@0.1.21",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#multibase@0.9.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#data-encoding@2.11.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#multihash@0.19.5",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#unsigned-varint@0.8.0",
+      "kinds": [
+        "normal"
       ]
     },
     {
