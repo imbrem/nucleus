@@ -28,7 +28,8 @@ rust_binary(
     srcs = _RUST_SOURCES,
     tests = [":nucleus-unit-test"],
     named_deps = {
-        "covalence_nucleus": "nucleus//crates/nucleus:covalence_nucleus",
+        "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
+        "covalence_repl": "nucleus//crates/repl:covalence_repl",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -45,6 +46,7 @@ rust_binary(
         "CARGO_PKG_VERSION_MINOR": "0",
         "CARGO_PKG_VERSION_PATCH": "0",
         "CARGO_PKG_VERSION_PRE": "",
+        "CARGO_MANIFEST_DIR": "$(location :package_files)",
     },
     visibility = ["PUBLIC"],
 )
@@ -56,7 +58,10 @@ rust_test(
     edition = "2024",
     srcs = _RUST_SOURCES,
     named_deps = {
-        "covalence_nucleus": "nucleus//crates/nucleus:covalence_nucleus",
+        "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
+        "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
+        "covalence_neutron": "nucleus//crates/neutron:covalence_neutron",
+        "covalence_repl": "nucleus//crates/repl:covalence_repl",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -73,6 +78,40 @@ rust_test(
         "CARGO_PKG_VERSION_MINOR": "0",
         "CARGO_PKG_VERSION_PATCH": "0",
         "CARGO_PKG_VERSION_PRE": "",
+        "CARGO_MANIFEST_DIR": "$(location :package_files)",
+    },
+    visibility = ["PUBLIC"],
+)
+
+rust_test(
+    name = "repl",
+    crate = "repl",
+    crate_root = "tests/repl.rs",
+    edition = "2024",
+    srcs = _RUST_SOURCES,
+    named_deps = {
+        "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
+        "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
+        "covalence_neutron": "nucleus//crates/neutron:covalence_neutron",
+        "covalence_repl": "nucleus//crates/repl:covalence_repl",
+    },
+    env = {
+        "CARGO_PKG_AUTHORS": "",
+        "CARGO_PKG_DESCRIPTION": "Command-line interface for Nucleus",
+        "CARGO_PKG_HOMEPAGE": "",
+        "CARGO_PKG_LICENSE": "CC0-1.0",
+        "CARGO_PKG_LICENSE_FILE": "",
+        "CARGO_PKG_NAME": "covalence-bin-nucleus",
+        "CARGO_PKG_README": "",
+        "CARGO_PKG_REPOSITORY": "",
+        "CARGO_PKG_RUST_VERSION": "",
+        "CARGO_PKG_VERSION": "0.0.0",
+        "CARGO_PKG_VERSION_MAJOR": "0",
+        "CARGO_PKG_VERSION_MINOR": "0",
+        "CARGO_PKG_VERSION_PATCH": "0",
+        "CARGO_PKG_VERSION_PRE": "",
+        "CARGO_MANIFEST_DIR": "$(location :package_files)",
+        "CARGO_BIN_EXE_nucleus": "$(location :nucleus)",
     },
     visibility = ["PUBLIC"],
 )

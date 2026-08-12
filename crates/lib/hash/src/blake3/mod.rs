@@ -46,6 +46,9 @@ impl Namespace for Blake3 {
 }
 
 /// An unkeyed BLAKE3 digest.
+///
+/// With the default `serde` feature, values use a DAG-JSON link containing a
+/// `CIDv1` with the `raw` codec and `blake3-256` multihash code.
 pub type Blake3Hash = Obj<Blake3>;
 
 /// SHA-256 digests.
@@ -58,6 +61,9 @@ impl Namespace for Sha256 {
 }
 
 /// A SHA-256 digest.
+///
+/// With the default `serde` feature, values use a DAG-JSON link containing a
+/// `CIDv1` with the `raw` codec and `sha2-256` multihash code.
 pub type Sha256Hash = Obj<Sha256>;
 
 /// BLAKE3 derive-key context keys.

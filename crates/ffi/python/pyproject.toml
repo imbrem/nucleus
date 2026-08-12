@@ -1,0 +1,33 @@
+[build-system]
+requires = ["maturin>=1.9,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "covalence"
+description = "Python bindings for Covalence"
+readme = "README.md"
+license = "CC0-1.0"
+requires-python = ">=3.11"
+# Taken from Cargo.toml, which is where every version in this repository lives.
+dynamic = ["version"]
+
+[tool.maturin]
+# A mixed layout: hand-written Python in `python/covalence`, and the compiled
+# module beside it as `covalence._covalence`. This is what gives the package a
+# place for `py.typed` and the stubs, and what lets the import surface be
+# chosen rather than inherited from whatever the Rust module happens to export.
+python-source = "python"
+module-name = "covalence._covalence"
+# The distributable form: no libpython to link, symbols resolved by the
+# interpreter that loads the module. See `covalence-lib-python` for why this is
+# not the default everywhere.
+features = ["extension-module"]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

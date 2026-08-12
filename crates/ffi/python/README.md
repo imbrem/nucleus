@@ -1,0 +1,95 @@
+# covalence
+
+Python bindings for Covalence.
+
+## Layout
+
+The package is a mixed one: hand-written Python in `python/covalence`, and the
+compiled extension module staged beside it as `covalence._covalence`. The
+compiled module is private; ordinary Python modules such as `covalence.hash`
+name the public surface. This keeps that surface independent of the Rust module
+and leaves room for later `covalence.cas` and `covalence.nucleus` modules.
+
+There is one extension module for the whole project, not one per Rust crate.
+`crates/ffi/python` is where Covalence crates are composed into a Python API;
+the crates being wrapped never depend on it.
+
+## What is exposed
+
+`covalence-lib-hash`: the fixed-width namespaces and the operations on them.
+Each namespace is its own class deriving from `Obj` — `O256`, `Blake3`,
+`Sha256`, `ContextKey`, `Sha1`, `GitHash` — so `isinstance(value, Obj)` asks
+the general question while two namespaces with matching bytes still compare
+unequal.
+
+```python
+>>> import covalence
+>>> from covalence.hash import O256, COV_ROOT, git_blob
+>>> covalence.hash is not None
+True
+>>> O256.hash(b"abc")
+O256.from_hex('6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85')
+>>> COV_ROOT.tag(b"sexpr").tag(b"list")     # derive a child name
+O256.from_hex('...')
+>>> str(git_blob(b""))
+'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391'
+```
+
+Everything is a thin wrapper: hashing, encoding, and derivation are implemented
+once, in the crate being wrapped. Malformed input raises `InvalidLengthError`,
+`InvalidHexError`, or `InvalidBase64Error` — all `ValueError` — and anything
+that is not bytes-like raises `TypeError`.
+
+| Path                | Contents                                       |
+| ------------------- | ---------------------------------------------- |
+| `src/`              | The `#[pymodule]` and its bindings             |
+| `python/covalence/` | The importable package, `py.typed`, and `.pyi` |
+| `tests/`            | pytest suite, run against the staged package   |
+
+## Building and running
+
+```sh
+glu build python   # stage the package into target/python
+glu python         # a REPL that can import covalence
+glu python -c 'import covalence; print(covalence.__version__)'
+glu test           # among other things, runs the pytest suite
+```
+
+`glu build python` compiles the extension and stages the importable package
+into `target/python`, outside the source tree so that a build output never
+lands in a directory Buck globs as a source. `glu python` runs whichever
+`python3` is on `PATH` with that directory on `PYTHONPATH`.
+
+Cargo compiles this crate rather than Buck's Rust rules; `//:python` is the
+`genrule` that wraps it. `rust_library` produces an rlib, so no Rust rule here
+can emit something an interpreter loads, and `pyo3`'s build script needs
+`links` metadata Buck's prelude discards.
+
+## Installing into an environment
+
+`glu` stages the package rather than installing it, so nothing in CI needs a
+packaging tool. To get Covalence into an environment of your own, use maturin:
+
+```sh
+python3 -m venv --system-site-packages .venv
+. .venv/bin/activate
+maturin develop -m crates/ffi/python/Cargo.toml   # editable install
+maturin build   -m crates/ffi/python/Cargo.toml   # wheel into target/wheels
+```
+
+`--system-site-packages` keeps the pinned interpreter's packages — pytest, and
+whatever the test suite grows to need — visible inside the virtual
+environment, which is then the place for anything nixpkgs does not carry.
+Because `glu` uses the `python3` on `PATH`, an activated environment is picked
+up without further configuration.
+
+## Supported Python
+
+3.11 and later, on the stable ABI. PyO3 is built with `abi3-py311`, so one
+extension module loads into every interpreter in that range and a wheel does
+not have to be rebuilt per version. Widening the range means relaxing that
+feature in `covalence-lib-python`, which is also where the PyO3 version and the
+`extension-module` policy are pinned and explained.
+
+Wheels are built for whatever platform maturin is run on; there is no
+cross-platform release process yet.

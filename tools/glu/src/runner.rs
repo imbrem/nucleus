@@ -4,13 +4,13 @@ use std::{
     env,
     ffi::{OsStr, OsString},
     fs,
-    io::{self, Write},
+    io::{self, BufRead, BufReader, Write},
     path::{Path, PathBuf},
-    process::{Command, Output, Stdio},
+    process::{Child, Command, Output, Stdio},
     time::Instant,
 };
 
-use color_eyre::eyre::{Result, WrapErr, bail};
+use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 
 use crate::{BuildTarget, buck, cargo, loc};
 
@@ -121,9 +121,51 @@ impl Runner {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
+        self.exec_with_env(phase, program, args, &[])
+    }
+
+    /// Run a program with this process's streams, so it can be interactive.
+    fn exec_with_env<I, S>(
+        &self,
+        phase: &str,
+        program: &str,
+        args: I,
+        environment: &[(&str, &OsStr)],
+    ) -> Result<()>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
         let status = Command::new(program)
             .args(args)
+            .envs(environment.iter().copied())
             .current_dir(&self.root)
+            .status()
+            .wrap_err_with(|| format!("{phase}: could not run {program}"))?;
+        if !status.success() {
+            bail!("{phase} failed with {status}");
+        }
+        Ok(())
+    }
+
+    /// Runs a program to completion with extra environment variables.
+    fn exec_with_environment<I, S>(
+        &self,
+        phase: &str,
+        program: &str,
+        args: I,
+        environment: &[(&str, String)],
+    ) -> Result<()>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let mut command = Command::new(program);
+        command.args(args).current_dir(&self.root);
+        for (name, value) in environment {
+            command.env(name, value);
+        }
+        let status = command
             .status()
             .wrap_err_with(|| format!("{phase}: could not run {program}"))?;
         if !status.success() {
@@ -178,6 +220,12 @@ impl Runner {
         };
         self.cargo("format production", cargo_args)?;
         self.tool_cargo("format glu", cargo_args)?;
+        let ruff_args = if check {
+            &["format", "--check", "."][..]
+        } else {
+            &["format", "."][..]
+        };
+        self.run("format Python", "ruff", ruff_args)?;
         self.pnpm(
             "format web",
             &[
@@ -206,6 +254,7 @@ impl Runner {
             &["clippy", "--all-targets", "--", "-D", "warnings"],
         )?;
         self.build(BuildTarget::Wasm)?;
+        self.run("lint Python", "ruff", ["check", "."])?;
         self.pnpm("lint web", &["run", "lint"])
     }
 
@@ -247,6 +296,7 @@ impl Runner {
         self.build(BuildTarget::Wasm)?;
         self.build(BuildTarget::Component)?;
         self.pnpm("test web", &["run", "test"])?;
+        self.test_python()?;
         self.test_components()?;
         let cli = self.buck_output("//crates/bin/nucleus:nucleus")?;
         let cli = cli.to_string_lossy();
@@ -254,7 +304,7 @@ impl Runner {
         expect_output(
             "nucleus CLI smoke test",
             &output,
-            "hello from nucleus: SQLite returned 42",
+            "nucleus: content-addressed SQLite. Store mounted as vfs=cas. (help) for commands.\nnucleus>",
         )?;
         eprintln!("• test nucleus CLI… done");
         Ok(())
@@ -272,6 +322,11 @@ impl Runner {
                 let source = self.buck_output("//:wasm")?;
                 self.materialize_wasm(&source)?;
                 eprintln!("• build Wasm package… done");
+                Ok(())
+            }
+            BuildTarget::Python => {
+                self.python_package()?;
+                eprintln!("• build Python package… done");
                 Ok(())
             }
             BuildTarget::Component => {
@@ -292,6 +347,7 @@ impl Runner {
             "//crates/...".to_owned(),
             "//:wasm".to_owned(),
             "//:component-js".to_owned(),
+            "//:python".to_owned(),
             "//:docs".to_owned(),
         ];
         arguments.extend(self.docs_config()?);
@@ -299,6 +355,10 @@ impl Runner {
         let outputs = self.buck_outputs("build all targets", &arguments)?;
         self.materialize_wasm(required_output(&outputs, "nucleus//:wasm")?)?;
         self.materialize_component_js(required_output(&outputs, "nucleus//:component-js")?)?;
+        replace_dir(
+            required_output(&outputs, "nucleus//:python")?,
+            &self.python_root(),
+        )?;
         replace_dir(
             required_output(&outputs, "nucleus//:docs")?,
             &self.root.join("apps/docs/build"),
@@ -325,6 +385,68 @@ impl Runner {
     /// replaces `generated` wholesale.
     fn materialize_component_js(&self, source: &Path) -> Result<()> {
         replace_dir(source, &self.root.join("packages/nucleus/component"))
+    }
+
+    /// Where the importable `covalence` package is staged.
+    ///
+    /// Outside the source tree deliberately. Dropping a built `.so` into
+    /// `crates/ffi/python/python/covalence` would put a build output inside a
+    /// directory Buck globs as a source.
+    fn python_root(&self) -> PathBuf {
+        self.root().join("target/python")
+    }
+
+    /// Build the Python package and return the directory to import it from.
+    fn python_package(&self) -> Result<PathBuf> {
+        let source = self.buck_output("//:python")?;
+        let root = self.python_root();
+        replace_dir(&source, &root)?;
+        Ok(root)
+    }
+
+    /// Run the interpreter with the Covalence package importable.
+    ///
+    /// `glu python` on its own is a REPL that can `import covalence`; anything
+    /// after it is passed through, so `glu python -c …` and `glu python
+    /// script.py` work as expected.
+    ///
+    /// This runs whichever `python3` is on `PATH` rather than a fixed one, so
+    /// that an activated virtual environment — the way to reach a package
+    /// nixpkgs does not carry — layers on top of the pinned interpreter
+    /// without any further configuration.
+    pub(crate) fn python<I, S>(&self, args: I) -> Result<()>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let root = self.python_package()?;
+        self.exec_with_env(
+            "run Python",
+            "python3",
+            args,
+            &[("PYTHONPATH", root.as_os_str())],
+        )
+    }
+
+    fn test_python(&self) -> Result<()> {
+        let root = self.python_package()?;
+        // `python3 -m pytest` rather than the `pytest` script, so the tests run
+        // under the same interpreter the extension was staged for.
+        self.run_with_env(
+            "test Python package",
+            "python3",
+            // `no:cacheprovider` because the run is disposable and the cache
+            // would otherwise land in the source tree.
+            [
+                "-m",
+                "pytest",
+                "crates/ffi/python/tests",
+                "-q",
+                "-p",
+                "no:cacheprovider",
+            ],
+            &[("PYTHONPATH", root.as_os_str())],
+        )
     }
 
     pub(crate) fn check(&self) -> Result<()> {
@@ -617,7 +739,10 @@ impl Runner {
             "rustc",
             "node",
             "pnpm",
+            "pytest",
             "python3",
+            "maturin",
+            "ruff",
             "scc",
             "git",
             "wasm-bindgen",
@@ -682,6 +807,144 @@ impl Runner {
         Ok(arguments)
     }
 
+    /// Builds and serves the browser demo with an HTTP kernel.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the build fails, no database can be served, or
+    /// either server cannot start.
+    pub(crate) fn demo(
+        &self,
+        files: &[PathBuf],
+        port: u16,
+        kernel_port: u16,
+        open: bool,
+        no_build: bool,
+        tls: bool,
+    ) -> Result<()> {
+        // Default to the committed fixture.
+        let default = self.root.join("packages/nucleus/test/fixture.sqlite");
+        let files: Vec<PathBuf> = if files.is_empty() {
+            vec![default]
+        } else {
+            files.to_vec()
+        };
+        for file in &files {
+            if !file.is_file() {
+                bail!("{} is not a file", file.display());
+            }
+        }
+
+        if !no_build {
+            self.pnpm(
+                "build browser demo",
+                &["--dir", "packages/nucleus", "build"],
+            )?;
+            self.cargo(
+                "build demo kernel",
+                &["build", "-p", "covalence-bin-cas-serve"],
+            )?;
+        }
+
+        let mut kernel = self.start_kernel(&files, kernel_port)?;
+        let scheme = if tls { "https" } else { "http" };
+        let host = if tls { "localhost" } else { "127.0.0.1" };
+        let page = format!("{scheme}://{host}:{port}/");
+
+        eprintln!();
+        eprintln!("  demo      {page}");
+        eprintln!("  kernel    http://127.0.0.1:{kernel_port}");
+        eprintln!();
+        eprintln!("  The page is a REPL. Try:");
+        eprintln!("    (help)");
+        eprintln!("    (connect \"http://127.0.0.1:{kernel_port}\")");
+        eprintln!("    (fetch ADDRESS)         (an address printed above)");
+        eprintln!("    (sqlite ADDRESS \"-batch\" \".schema\")");
+        eprintln!();
+        eprintln!("  Ctrl-C stops both servers.");
+        eprintln!();
+
+        if open {
+            // The printed URL remains usable if opening fails.
+            let _ = self.run("open demo", "xdg-open", [page.as_str()]);
+        }
+
+        let (config, environment) = self.demo_config(port, tls);
+        let served = self.exec_with_environment(
+            "serve demo",
+            "caddy",
+            [
+                OsStr::new("run"),
+                OsStr::new("--adapter"),
+                OsStr::new("caddyfile"),
+                OsStr::new("--config"),
+                config.as_os_str(),
+            ],
+            &environment,
+        );
+
+        // Do not leave the kernel running.
+        let _ = kernel.kill();
+        let _ = kernel.wait();
+        served
+    }
+
+    /// Returns the tested demo server configuration and environment.
+    fn demo_config(&self, port: u16, tls: bool) -> (PathBuf, Vec<(&'static str, String)>) {
+        // Trusting Caddy's internal CA remains an explicit user action.
+        let (address, tls_directive) = if tls {
+            (format!("https://localhost:{port}"), "tls internal")
+        } else {
+            (format!("http://127.0.0.1:{port}"), "")
+        };
+        let package = self.root.join("packages/nucleus");
+        (
+            package.join("demo.caddyfile"),
+            vec![
+                ("NUCLEUS_ADDRESS", address),
+                ("NUCLEUS_ROOT", package.display().to_string()),
+                (
+                    "NUCLEUS_SAMPLES",
+                    self.root.join("crates/repl/samples").display().to_string(),
+                ),
+                ("NUCLEUS_TLS", tls_directive.to_owned()),
+            ],
+        )
+    }
+
+    /// Starts the HTTP kernel and collects its admitted addresses.
+    fn start_kernel(&self, files: &[PathBuf], port: u16) -> Result<Child> {
+        let binary = self.root.join("target/debug/covalence-cas-serve");
+        let mut child = Command::new(&binary)
+            .arg("--port")
+            .arg(port.to_string())
+            .args(files)
+            .current_dir(&self.root)
+            .stdout(Stdio::piped())
+            .spawn()
+            .wrap_err_with(|| format!("could not start {}", binary.display()))?;
+
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| eyre!("demo kernel produced no output"))?;
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            if reader.read_line(&mut line)? == 0 {
+                let _ = child.kill();
+                bail!("demo kernel exited before it started listening");
+            }
+            let line = line.trim_end();
+            if line.starts_with("http://") {
+                break;
+            }
+            eprintln!("  {line}");
+        }
+        Ok(child)
+    }
+
     pub(crate) fn serve_docs(&self, port: u16, open: bool) -> Result<()> {
         let address = format!("127.0.0.1:{port}");
         if open {
@@ -718,12 +981,13 @@ impl Runner {
         )?;
         expect_output("nucleus component smoke test", &output, "42")?;
 
+        // EOF after startup checks component initialization and mounting.
         let cli = self.buck_output("//:cli-component")?;
         let output = self.command("test CLI component", "wasmtime", [cli.as_os_str()])?;
         expect_output(
             "CLI component smoke test",
             &output,
-            "hello from nucleus: SQLite returned 42",
+            "nucleus: content-addressed SQLite. Store mounted as vfs=cas. (help) for commands.\nnucleus>",
         )?;
         eprintln!("• test Wasm components… done");
         Ok(())

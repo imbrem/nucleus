@@ -1,0 +1,18 @@
+[package]
+name = "covalence-repl"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Content-addressed SQLite REPL orchestration"
+publish = false
+
+[dependencies]
+bytes = "1"
+covalence-data-cas = { path = "../data/cas" }
+covalence-lib-hash = { path = "../lib/hash", default-features = false, features = ["blake3"] }
+covalence-lib-sqlite = { path = "../lib/sqlite", features = ["vfs-register"] }
+covalence-neutron = { path = "../neutron" }
+
+[lints]
+workspace = true
