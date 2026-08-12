@@ -302,6 +302,34 @@ impl Repl {
             .map_err(to_js)
     }
 
+    /// Cancels and consumes the pending SAT job.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no SAT job is pending.
+    #[wasm_bindgen(js_name = cancelSat)]
+    pub fn cancel_sat(&mut self) -> Result<String, JsError> {
+        self.pending_sat = None;
+        self.session
+            .cancel_sat()
+            .map(|value| value.display())
+            .map_err(to_js)
+    }
+
+    /// Records a provider failure and consumes its pending SAT job.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no SAT job is pending.
+    #[wasm_bindgen(js_name = rejectSatProvider)]
+    pub fn reject_sat_provider(&mut self, reason: &str) -> Result<String, JsError> {
+        self.pending_sat = None;
+        self.session
+            .reject_sat_provider(reason)
+            .map(|value| value.display())
+            .map_err(to_js)
+    }
+
     /// Admits bytes the page read from a file picker.
     ///
     /// # Errors

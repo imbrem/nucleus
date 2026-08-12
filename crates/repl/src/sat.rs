@@ -67,6 +67,7 @@ pub enum Error {
     Prop(PropError),
     Continuation(ContinuationError),
     VerdictMismatch,
+    Image(covalence_neutron::ImageError),
 }
 
 impl std::fmt::Display for Error {
@@ -85,6 +86,7 @@ impl std::fmt::Display for Error {
             Self::VerdictMismatch => {
                 f.write_str("checked verdict does not match the active problem")
             }
+            Self::Image(error) => error.fmt(f),
         }
     }
 }
@@ -109,6 +111,19 @@ impl From<ContinuationError> for Error {
     fn from(value: ContinuationError) -> Self {
         Self::Continuation(value)
     }
+}
+impl From<covalence_neutron::ImageError> for Error {
+    fn from(value: covalence_neutron::ImageError) -> Self {
+        Self::Image(value)
+    }
+}
+
+enum Status {
+    Empty,
+    Operational,
+    Pending,
+    Rejected(String),
+    Checked,
 }
 
 struct Active {
@@ -139,6 +154,7 @@ pub(crate) struct State {
     continuation: Continuation,
     pending: Option<(JobId, SatProblem)>,
     result: Option<Outcome>,
+    status: Status,
 }
 
 impl State {
@@ -148,6 +164,7 @@ impl State {
             continuation: Continuation::new(),
             pending: None,
             result: None,
+            status: Status::Empty,
         }
     }
 
@@ -177,6 +194,7 @@ impl State {
             problem,
         });
         self.result = None;
+        self.status = Status::Operational;
         Ok(())
     }
 
@@ -228,6 +246,7 @@ impl State {
         )?;
         self.pending = Some((request.job(), retained));
         self.result = None;
+        self.status = Status::Pending;
         Ok(request)
     }
 
@@ -243,7 +262,13 @@ impl State {
         };
         let checked = self.continuation.complete(job, raw);
         let (_, pending) = self.pending.take().ok_or(Error::NoPending)?;
-        let checked = checked?;
+        let checked = match checked {
+            Ok(checked) => checked,
+            Err(error) => {
+                self.status = Status::Rejected(error.to_string());
+                return Err(error.into());
+            }
+        };
         self.result = Some(match checked {
             CheckedResult::Sat(model) => Outcome::Sat {
                 problem: model.problem(),
@@ -267,7 +292,44 @@ impl State {
                 reason,
             },
         });
+        self.status = Status::Checked;
         Ok(())
+    }
+
+    pub(crate) fn cancel(&mut self) -> Result<(), Error> {
+        let (job, _) = self.pending.as_ref().ok_or(Error::NoPending)?;
+        self.continuation.cancel(*job)?;
+        self.pending = None;
+        self.status = Status::Operational;
+        Ok(())
+    }
+
+    pub(crate) fn reject_provider(&mut self, reason: &str) -> Result<(), Error> {
+        let (job, _) = self.pending.as_ref().ok_or(Error::NoPending)?;
+        self.continuation.cancel(*job)?;
+        self.pending = None;
+        self.status = Status::Rejected(reason.to_owned());
+        Ok(())
+    }
+
+    pub(crate) fn status(&self) -> String {
+        match &self.status {
+            Status::Empty => "empty".to_owned(),
+            Status::Operational => "operational".to_owned(),
+            Status::Pending => "pending".to_owned(),
+            Status::Rejected(reason) => format!("rejected; reason={reason}"),
+            Status::Checked => "checked".to_owned(),
+        }
+    }
+
+    pub(crate) fn sqlite_image(&self) -> Result<Vec<u8>, Error> {
+        Ok(self
+            .active
+            .as_ref()
+            .ok_or(Error::NoActive)?
+            .table
+            .serialize()?
+            .to_vec())
     }
 
     pub(crate) fn result_summary(&self) -> Result<String, Error> {
@@ -526,7 +588,7 @@ fn full_adder_unsat() -> Vec<Vec<i64>> {
     c
 }
 
-fn hex(problem: ProblemId) -> String {
+pub(crate) fn hex(problem: ProblemId) -> String {
     problem
         .as_bytes()
         .iter()

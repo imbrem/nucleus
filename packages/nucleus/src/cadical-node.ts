@@ -295,6 +295,8 @@ export interface CadicalServerOptions {
   maxDimacsBytes?: number;
   maxModelLiterals?: number;
   maxProofBytes?: number;
+  /** Optional browser origin allowed to call this provider. */
+  corsOrigin?: string;
 }
 
 /** Creates an ordinary HTTP server for a supplied untrusted solver. */
@@ -306,6 +308,19 @@ export function createCadicalServer(options: CadicalServerOptions): Server {
   boundedInteger(maxModelLiterals, "model", MAX_MODEL_LITERALS);
   boundedInteger(maxProofBytes, "proof", MAX_BUFFER_BYTES);
   return createServer(async (request, response) => {
+    if (options.corsOrigin) {
+      response.setHeader("access-control-allow-origin", options.corsOrigin);
+      response.setHeader("vary", "Origin");
+    }
+    if (request.method === "OPTIONS" && options.corsOrigin) {
+      response
+        .writeHead(204, {
+          "access-control-allow-methods": "POST",
+          "access-control-allow-headers": "content-type",
+        })
+        .end();
+      return;
+    }
     if (request.method !== "POST") {
       response.writeHead(405, { allow: "POST" }).end();
       return;

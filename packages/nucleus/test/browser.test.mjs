@@ -5,6 +5,7 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import test from "node:test";
 import { chromium } from "playwright-core";
+import { CadicalSolver, createCadicalServer } from "../dist/cadical-node.js";
 
 const root = new URL("..", import.meta.url).pathname;
 const repository = new URL("../../..", import.meta.url).pathname;
@@ -120,6 +121,68 @@ async function openPage(context, origin) {
   await page.waitForFunction(() => document.body.dataset.ready === "yes");
   return page;
 }
+
+async function startSatProvider(context, origin, solver = new CadicalSolver()) {
+  const server = createCadicalServer({
+    solver,
+    corsOrigin: origin,
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  return `http://127.0.0.1:${server.address().port}/`;
+}
+
+test("Chromium cancels an HTTP SAT provider without wedging the REPL", async (context) => {
+  const origin = await servePackage(context);
+  const provider = await startSatProvider(context, origin, {
+    solve(_request, signal) {
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    },
+  });
+  const page = await openPage(context, origin);
+  const result = await page.evaluate(async (url) => {
+    const { Repl, drive, HttpSatSolver } = window.nucleus;
+    const repl = new Repl();
+    repl.eval("(sat-select and-sat)");
+    const controller = new AbortController();
+    const pending = drive(
+      repl,
+      { sat: new HttpSatSolver(url) },
+      "(sat-solve)",
+      controller.signal,
+    );
+    controller.abort();
+    return {
+      output: (await pending).output,
+      status: repl.eval("(sat-status)").text,
+    };
+  }, provider);
+  assert.match(result.output, /abort/i);
+  assert.equal(result.status, "operational");
+});
+
+test("Chromium checks SAT and binary LRAT from an HTTP provider", async (context) => {
+  const origin = await servePackage(context);
+  const provider = await startSatProvider(context, origin);
+  const page = await openPage(context, origin);
+  const result = await page.evaluate(async (url) => {
+    const { Repl, drive, HttpSatSolver } = window.nucleus;
+    const repl = new Repl();
+    const host = { sat: new HttpSatSolver(url) };
+    const outcomes = [];
+    for (const gate of ["and", "half-adder", "full-adder"]) {
+      repl.eval(`(sat-select ${gate}-sat)`);
+      outcomes.push((await drive(repl, host, "(sat-solve)")).output);
+      repl.eval(`(sat-select ${gate}-unsat)`);
+      outcomes.push((await drive(repl, host, "(sat-solve)")).output);
+    }
+    return outcomes;
+  }, provider);
+  assert.equal(result.filter((value) => /checked-model/.test(value)).length, 3);
+  assert.equal(result.filter((value) => /admitted=SatRefutation/.test(value)).length, 3);
+});
 
 test("the browser runs the same REPL as the CLI", async (context) => {
   const origin = await servePackage(context);

@@ -86,11 +86,43 @@ test("real CaDiCaL solves and refutes the circuit demos", async () => {
   const repl = new Repl();
   const host = { sat: new CadicalSolver() };
 
-  repl.eval("(sat-select and-sat)");
-  assert.match((await drive(repl, host, "(sat-solve)")).output, /checked-model/);
-
-  repl.eval("(sat-select and-unsat)");
-  assert.match((await drive(repl, host, "(sat-solve)")).output, /admitted=SatRefutation/);
+  for (const gate of ["and", "half-adder", "full-adder"]) {
+    repl.eval(`(sat-select ${gate}-sat)`);
+    assert.match(
+      (await drive(repl, host, "(sat-solve)")).output,
+      /checked-model/,
+    );
+    repl.eval(`(sat-select ${gate}-unsat)`);
+    assert.match(
+      (await drive(repl, host, "(sat-solve)")).output,
+      /admitted=SatRefutation/,
+    );
+  }
   assert.match(repl.eval("(sat-proof)").text, /binary-lrat/);
   assert.match(repl.eval("(sat-proof-text)").text, /^\d+ .* 0/m);
+});
+
+test("provider errors and cancellation consume the pending solve", async () => {
+  const repl = new Repl();
+  repl.eval("(sat-select and-sat)");
+  const failed = await drive(
+    repl,
+    { sat: { async solve() { throw new Error("provider unavailable"); } } },
+    "(sat-solve)",
+  );
+  assert.match(failed.output, /provider unavailable/);
+  assert.match(repl.eval("(sat-status)").text, /rejected/);
+
+  const controller = new AbortController();
+  const pending = drive(
+    repl,
+    { sat: { solve(_request, signal) { return new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    }); } } },
+    "(sat-solve)",
+    controller.signal,
+  );
+  controller.abort(new DOMException("cancelled", "AbortError"));
+  assert.match((await pending).output, /cancelled|AbortError/);
+  assert.equal(repl.eval("(sat-status)").text, "operational");
 });

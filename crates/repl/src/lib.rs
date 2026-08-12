@@ -6,6 +6,7 @@ mod sat;
 
 mod session;
 
+pub use covalence_logic_sat::continuation::{SolveRequest, SolveResult};
 pub use session::{HELP, Response, SAMPLES, Session, SessionError};
 pub use sexpr::Value;
 

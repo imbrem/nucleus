@@ -35,6 +35,7 @@ export async function drive(
   repl: Repl,
   host: Host,
   line: string,
+  signal?: AbortSignal,
 ): Promise<Line> {
   let step: Step;
   try {
@@ -83,6 +84,7 @@ export async function drive(
       }
 
     case "solve":
+      let completionAttempted = false;
       try {
         if (!host.sat) {
           throw new Error("no SAT provider is configured");
@@ -97,8 +99,9 @@ export async function drive(
           },
           proof: { format: "binary-lrat" as const },
         };
-        const result = await host.sat.solve(request);
+        const result = await host.sat.solve(request, signal);
         let output: string;
+        completionAttempted = true;
         switch (result.kind) {
           case "sat":
             output = repl.completeSatModel(
@@ -118,6 +121,18 @@ export async function drive(
         }
         return { output, quit: false };
       } catch (error) {
+        if (!completionAttempted) {
+          const reason = messageOf(error);
+          try {
+            if (signal?.aborted) {
+              repl.cancelSat();
+            } else {
+              repl.rejectSatProvider(reason);
+            }
+          } catch {
+            // A provider completion may already have consumed the continuation.
+          }
+        }
         return { output: `error: ${messageOf(error)}`, quit: false };
       }
 

@@ -44,7 +44,7 @@ pub enum Response {
     /// Ask the host to run the `SQLite` shell.
     Shell(Vec<String>),
     /// Ask the host's completely untrusted SAT provider to solve a problem.
-    Solve(covalence_logic_sat::continuation::SolveRequest),
+    Solve(crate::SolveRequest),
     /// Leave.
     Quit,
 }
@@ -181,6 +181,9 @@ pub const HELP: &str = "\
 (sat-dimacs)        show the exact solver input
 (sat-solve)         ask the host's untrusted solver
 (sat-verify)        inspect the locally checked result
+(sat-status)        show empty, operational, pending, rejected, or checked
+(sat-cancel)        cancel the pending solve
+(sat-sqlite)        admit the local proposition database for SQLite inspection
 (sat-model)         show the checked model
 (sat-proof)         inspect binary LRAT and admitted judgement metadata
 (sat-proof-text)    explicitly render binary LRAT as diagnostic ASCII
@@ -434,8 +437,12 @@ impl Session {
                 sat::DEMOS
                     .iter()
                     .map(|demo| {
+                        let id = SatState::demo_cnf(demo.name)
+                            .expect("built-in SAT demo must remain valid")
+                            .id();
                         Value::List(vec![
                             Value::Symbol(demo.name.to_owned()),
+                            Value::Text(sat::hex(id)),
                             Value::Text(demo.description.to_owned()),
                         ])
                     })
@@ -449,7 +456,13 @@ impl Session {
                     .iter()
                     .find(|demo| demo.name == name)
                     .ok_or_else(|| sat::Error::UnknownDemo(name.to_owned()))?;
-                Response::value(format!("{} — {}", demo.name, demo.description))
+                let id = SatState::demo_cnf(demo.name)?.id();
+                Response::value(format!(
+                    "{}; id={}; {}",
+                    demo.name,
+                    sat::hex(id),
+                    demo.description
+                ))
             }
             ("sat-show", [name]) => {
                 let name = name
@@ -476,6 +489,15 @@ impl Session {
             ("sat-id", []) => Response::value(self.sat.problem_id()?),
             ("sat-dimacs", []) => Response::value(self.sat.dimacs()?),
             ("sat-solve", []) => Response::Solve(self.sat.begin()?),
+            ("sat-status", []) => Response::value(self.sat.status()),
+            ("sat-cancel", []) => {
+                self.sat.cancel()?;
+                Response::value(self.sat.status())
+            }
+            ("sat-sqlite", []) => {
+                let image = self.sat.sqlite_image()?;
+                Response::value(self.repl.put(image)?)
+            }
             ("sat-verify" | "sat-result" | "sat-checked", []) => {
                 Response::value(self.sat.result_summary()?)
             }
@@ -504,6 +526,26 @@ impl Session {
     ) -> Result<Value, SessionError> {
         self.sat.complete(job, result)?;
         Ok(Value::Text(self.sat.result_summary()?))
+    }
+
+    /// Cancels and consumes the pending SAT continuation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no SAT job is pending.
+    pub fn cancel_sat(&mut self) -> Result<Value, SessionError> {
+        self.sat.cancel()?;
+        Ok(Value::Text(self.sat.status()))
+    }
+
+    /// Consumes a pending continuation after its provider failed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no SAT job is pending.
+    pub fn reject_sat_provider(&mut self, reason: &str) -> Result<Value, SessionError> {
+        self.sat.reject_provider(reason)?;
+        Ok(Value::Text(self.sat.status()))
     }
 
     /// Forms acting on the content-addressed store.
@@ -1077,6 +1119,34 @@ mod tests {
         let Response::Solve(_) = session.eval("(sat-solve)").expect("retry request") else {
             panic!("matching rejection must consume the failed job")
         };
+    }
+
+    #[test]
+    fn sat_status_cancel_and_sqlite_snapshot_are_inspectable() {
+        let mut session = session();
+        assert_eq!(say(&mut session, "(sat-status)"), "\"empty\"");
+        let catalog = say(&mut session, "(sat-demos)");
+        assert!(catalog.contains("and-sat"));
+        assert!(catalog.contains("AND gate"));
+        assert!(catalog.split_whitespace().any(|word| word.len() >= 64));
+
+        say(&mut session, "(sat-select and-unsat)");
+        assert_eq!(say(&mut session, "(sat-status)"), "\"operational\"");
+        let address = say(&mut session, "(sat-sqlite)");
+        assert_eq!(address.len(), 64);
+        assert!(
+            say(
+                &mut session,
+                &format!("(sqlite {address} \"SELECT count(*) FROM facts\")")
+            )
+            .contains('0')
+        );
+
+        let Response::Solve(_) = session.eval("(sat-solve)").expect("solve") else {
+            panic!("expected solve request")
+        };
+        assert_eq!(say(&mut session, "(sat-status)"), "\"pending\"");
+        assert_eq!(say(&mut session, "(sat-cancel)"), "\"operational\"");
     }
 
     #[test]
