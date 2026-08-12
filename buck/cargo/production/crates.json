@@ -152,6 +152,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-kernel-hol@0.0.0",
+      "name": "covalence-kernel-hol",
+      "version": "0.0.0",
+      "path": "crates/kernel/hol",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_kernel_hol",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-lib-crypto@0.0.0",
       "name": "covalence-lib-crypto",
       "version": "0.0.0",
@@ -467,6 +482,20 @@
     {
       "source": "workspace#covalence-ffi-python@0.0.0",
       "target": "workspace#covalence-lib-python@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-kernel-hol@0.0.0",
+      "target": "workspace#covalence-lib-json@0.0.0",
+      "kinds": [
+        "dev"
+      ]
+    },
+    {
+      "source": "workspace#covalence-kernel-hol@0.0.0",
+      "target": "workspace#covalence-lib-serde@0.0.0",
       "kinds": [
         "normal"
       ]

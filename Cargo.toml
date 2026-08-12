@@ -13,6 +13,7 @@ members = [
   "crates/data/cas-http",
   "crates/data/container",
   "crates/ffi/python",
+  "crates/kernel/hol",
   "crates/proton",
   "crates/neutron",
   "crates/nucleus",
