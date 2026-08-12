@@ -431,6 +431,13 @@
     },
     {
       "source": "workspace#covalence-browser@0.0.0",
+      "target": "workspace#covalence-nucleus@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-browser@0.0.0",
       "target": "workspace#covalence-repl@0.0.0",
       "kinds": [
         "normal"
@@ -572,6 +579,13 @@
     {
       "source": "workspace#covalence-repl@0.0.0",
       "target": "workspace#covalence-neutron@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-repl@0.0.0",
+      "target": "workspace#covalence-nucleus@0.0.0",
       "kinds": [
         "normal"
       ]

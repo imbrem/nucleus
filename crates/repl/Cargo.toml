@@ -13,6 +13,7 @@ covalence-data-cas = { path = "../data/cas" }
 covalence-lib-hash = { path = "../lib/hash", default-features = false, features = ["blake3"] }
 covalence-lib-sqlite = { path = "../lib/sqlite", features = ["vfs-register"] }
 covalence-neutron = { path = "../neutron" }
+covalence-nucleus = { path = "../nucleus" }
 
 [lints]
 workspace = true

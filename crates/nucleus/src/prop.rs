@@ -1,5 +1,8 @@
 //! Propositional kernel state governed by `prop/semantics.txt`.
 
+use std::fmt::Write as _;
+use std::sync::Arc;
+
 use covalence_lib_error::snafu::{ResultExt, Snafu};
 use covalence_lib_hash::{O256, o256_path};
 use covalence_lib_sqlite::Error as SqliteError;
@@ -404,6 +407,56 @@ impl<P: Policy> Connection<Prop<P>> {
         PropView { connection: self }
     }
 
+    /// Prepares one canonical problem for an untrusted SAT solver.
+    ///
+    /// The returned continuation owns this connection so it remains valid
+    /// across an asynchronous host call.  Completing it re-runs the bounded
+    /// state checks before admitting anything.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the formula is malformed, policy denies reading,
+    /// or preparation exceeds a configured bound.
+    pub fn prepare_sat(
+        self: &Arc<Self>,
+        formula: PropId,
+        clauses: &[PropId],
+        cnf_limits: CnfLimits,
+        model_literals: usize,
+        proof_limits: lrat::Limits,
+    ) -> Result<PreparedSat<P>, PropError> {
+        let view = self.view();
+        view.authorize(Operation::Read)?;
+        let _operation = self.lock_operation();
+        let prepared = view.prepare_cnf(formula, clauses, cnf_limits)?;
+        let max_variable = prepared
+            .matrix
+            .iter()
+            .flatten()
+            .map(|literal| literal.unsigned_abs())
+            .max()
+            .unwrap_or(0);
+        let mut dimacs = String::new();
+        writeln!(dimacs, "p cnf {max_variable} {}", prepared.matrix.len())
+            .expect("writing to a String cannot fail");
+        for clause in &prepared.matrix {
+            for literal in clause {
+                write!(dimacs, "{literal} ").expect("writing to a String cannot fail");
+            }
+            dimacs.push_str("0\n");
+        }
+        Ok(PreparedSat {
+            connection: Arc::clone(self),
+            formula,
+            clauses: clauses.to_vec(),
+            id: prepared.id,
+            dimacs: dimacs.into_bytes(),
+            cnf_limits,
+            model_literals,
+            proof_limits,
+        })
+    }
+
     /// Returns the composite schema identity of this connection's database.
     ///
     /// # Errors
@@ -441,6 +494,90 @@ pub(crate) struct PreparedCnf {
     pub(crate) matrix: Vec<Vec<i64>>,
     variables: std::collections::BTreeSet<i64>,
     pub(crate) total_literals: usize,
+}
+
+/// One canonical SAT problem retained while an untrusted solver runs.
+///
+/// The solver receives only [`Self::dimacs`].  Formula identity, clause order,
+/// limits, and the connection which may admit a checked result remain here.
+pub struct PreparedSat<P: Policy> {
+    connection: Arc<Connection<Prop<P>>>,
+    formula: PropId,
+    clauses: Vec<PropId>,
+    id: O256,
+    dimacs: Vec<u8>,
+    cnf_limits: CnfLimits,
+    model_literals: usize,
+    proof_limits: lrat::Limits,
+}
+
+impl<P: Policy> PreparedSat<P> {
+    /// Identity of the ordered canonical clause matrix.
+    #[must_use]
+    pub const fn id(&self) -> O256 {
+        self.id
+    }
+
+    /// Canonical DIMACS bytes to give an untrusted solver.
+    #[must_use]
+    pub fn dimacs(&self) -> &[u8] {
+        &self.dimacs
+    }
+
+    /// Largest proof response accepted by the trusted checker.
+    #[must_use]
+    pub const fn max_proof_bytes(&self) -> usize {
+        self.proof_limits.proof_bytes
+    }
+
+    /// Largest model response accepted by the trusted checker.
+    #[must_use]
+    pub const fn max_model_literals(&self) -> usize {
+        self.model_literals
+    }
+
+    /// Checks a solver model and admits its world atomically.
+    ///
+    /// Consuming the continuation makes retry policy explicit at the caller.
+    /// The kernel reconstructs the CNF before committing, so the retained
+    /// identity cannot be detached from the state it described.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the model is malformed, exceeds its bound, no
+    /// longer describes this kernel state, or cannot be committed atomically.
+    pub fn certify_model(self, model: &[Lit]) -> Result<WorldId, PropError> {
+        self.connection.view().certify_model_bounded(
+            self.formula,
+            &self.clauses,
+            model,
+            ModelLimits {
+                literals: self.model_literals,
+                cnf: self.cnf_limits,
+            },
+        )
+    }
+
+    /// Checks an ASCII or binary LRAT proof and admits UNSAT atomically.
+    ///
+    /// `metadata` remains caller-selected provenance and must be negative.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the proof is malformed, exceeds a bound, fails
+    /// verification, or cannot be committed.
+    pub fn certify_lrat(self, proof: &[u8], metadata: i64) -> Result<(), PropError> {
+        self.connection.view().certify_lrat(
+            self.formula,
+            &self.clauses,
+            proof,
+            RefutationLimits {
+                cnf: self.cnf_limits,
+                proof: self.proof_limits,
+            },
+            metadata,
+        )
+    }
 }
 
 impl<P: Policy> PropView<'_, P> {

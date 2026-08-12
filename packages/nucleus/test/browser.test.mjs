@@ -357,3 +357,70 @@ test("the shell in the browser has no filesystem to reach", async (context) => {
   // Its databases arrive by address or not at all.
   assert.match(result.output, /exited with status/);
 });
+
+test("the browser awaits an asynchronous injected SAT provider", async (context) => {
+  const origin = await servePackage(context);
+  const page = await openPage(context, origin);
+
+  const result = await page.evaluate(async () => {
+    const { drive } = window.nucleus;
+    let pending = "1";
+    let timerFired = false;
+    const repl = {
+      eval() {
+        return {
+          kind: "solve",
+          text: "",
+          address: "",
+          arguments: [],
+          job: "1",
+          dimacs: new TextEncoder().encode("p cnf 1 1\n1 0\n"),
+          maxModelLiterals: 1,
+          maxProofBytes: 1024,
+        };
+      },
+      completeSat(job, model) {
+        if (job !== pending) throw new Error("stale job");
+        pending = undefined;
+        return model[0] === 1n ? "(sat 1)" : "bad model";
+      },
+      abandonSat(job) {
+        if (job !== pending) throw new Error("stale job");
+        pending = undefined;
+      },
+    };
+    const line = await drive(
+      repl,
+      {
+        sat: {
+          async solve(request) {
+            await new Promise((resolve) =>
+              setTimeout(() => {
+                timerFired = true;
+                resolve();
+              }, 1),
+            );
+            return request.limits.maxModelLiterals === 1
+              ? { kind: "sat", model: [1n] }
+              : { kind: "unknown" };
+          },
+        },
+      },
+      "ignored",
+    );
+    return { line, timerFired, pending };
+  });
+
+  assert.equal(result.line.output, "(sat 1)");
+  assert.equal(result.timerFired, true);
+  assert.equal(result.pending, undefined);
+});
+
+test("binary LRAT can be rendered for display without certifying it", async (context) => {
+  const origin = await servePackage(context);
+  const page = await openPage(context, origin);
+  const text = await page.evaluate(() =>
+    window.nucleus.lratToText(Uint8Array.of("a".charCodeAt(0), 6, 0, 2, 4, 0)),
+  );
+  assert.equal(text, "3 0 1 2 0\n");
+});
