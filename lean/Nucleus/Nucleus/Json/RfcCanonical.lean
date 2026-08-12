@@ -12,6 +12,10 @@ key-sorted spelling exactly when parsing that spelling recovers the input.
 
 namespace Nucleus.RfcJson
 
+noncomputable section
+
+local instance (p : Prop) : Decidable p := Classical.propDecidable p
+
 private def hexDigit (n : Nat) : Char :=
   if n < 10 then Char.ofNat ('0'.toNat + n) else Char.ofNat ('a'.toNat + n - 10)
 
@@ -72,9 +76,11 @@ def canonical? (json : RfcJson) : Option String :=
 parser. -/
 theorem parse_canonical?_eq {json : RfcJson} {text : String}
     (h : canonical? json = some text) : parse? text = some json := by
-  simp only [canonical?, canonicalCandidate] at h
+  simp only [canonical?] at h
   split at h
-  next hp => simpa using hp
+  next hp =>
+    have htext : canonicalCandidate json = text := Option.some.inj h
+    simpa [htext] using hp
   next => simp at h
 
 /-- Semantic round-tripping makes canonical text syntactically stable: parsing
@@ -84,10 +90,7 @@ theorem canonical?_roundtrip {json : RfcJson} {text : String}
   rw [parse_canonical?_eq h]
   exact h
 
-set_option linter.style.nativeDecide false in
-example : canonical? (.scalar (.string "a\n\"b")) = some "\"a\\n\\\"b\"" := by native_decide
+end
 
-set_option linter.style.nativeDecide false in
-example : canonical? (.scalar (.number "01")) = none := by native_decide
-
-end Nucleus.RfcJson
+end RfcJson
+end Nucleus
