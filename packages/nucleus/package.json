@@ -6,6 +6,7 @@
   "type": "module",
   "files": [
     "component",
+    "CADICAL.md",
     "dist",
     "generated",
     "demo.html"
@@ -23,6 +24,14 @@
     "./shell": {
       "types": "./generated/shell/shell.d.ts",
       "import": "./generated/shell/shell.js"
+    },
+    "./sat-http": {
+      "types": "./dist/sat-http.d.ts",
+      "import": "./dist/sat-http.js"
+    },
+    "./cadical-node": {
+      "types": "./dist/cadical-node.d.ts",
+      "import": "./dist/cadical-node.js"
     }
   },
   "scripts": {
@@ -36,6 +45,7 @@
     "@bytecodealliance/preview2-shim": "0.20.1"
   },
   "devDependencies": {
+    "@types/node": "24.13.3",
     "@bytecodealliance/jco": "1.27.0",
     "playwright-core": "1.61.1",
     "typescript": "5.9.2"
