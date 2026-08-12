@@ -211,6 +211,7 @@ impl Runner {
                     "covalence:sqlite-shell/read-only-vfs#open",
                     "covalence:sqlite-shell/read-only-vfs#[method]file.size",
                     "covalence:sqlite-shell/read-only-vfs#[method]file.read-at",
+                    "wasi:io/streams#[method]input-stream.blocking-read",
                     "--async-exports",
                     "run",
                     "--map",
