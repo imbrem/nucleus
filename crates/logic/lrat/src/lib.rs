@@ -24,11 +24,15 @@ pub struct RatGroup {
 #[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Call {
+    /// Introduces both a fresh identifier and the clause justified by RUP.
+    /// The clause is data, not metadata: it is not present in the kernel
+    /// before this atomic operation.
     LearnRup {
         id: ClauseId,
         clause: Clause,
         ordered_hints: Vec<ClauseId>,
     },
+    /// Introduces both a fresh identifier and the clause justified by RAT.
     LearnRat {
         id: ClauseId,
         clause: Clause,
@@ -119,60 +123,110 @@ impl Kernel {
     /// Returns a semantic rejection and leaves `self` byte-for-byte equal to
     /// its prior value.
     pub fn apply(&mut self, call: &Call) -> Result<(), Error> {
-        let mut candidate = self.clone();
-        candidate.apply_inner(call)?;
-        *self = candidate;
-        Ok(())
-    }
-
-    fn apply_inner(&mut self, call: &Call) -> Result<(), Error> {
         match call {
             Call::LearnRup {
                 id,
                 clause,
                 ordered_hints,
-            } => {
-                self.check_learn(*id, clause)?;
-                let mut trail = falsifying_trail(clause)?;
-                if !self.propagate(*id, &mut trail, ordered_hints)? {
-                    return Err(Error::NoConflict { step: *id });
-                }
-                self.commit(*id, clause);
-            }
+            } => self.learn_rup(*id, clause, ordered_hints),
             Call::LearnRat {
                 id,
                 clause,
                 pivot,
                 prefix_rup_hints,
                 groups,
-            } => {
-                self.check_learn(*id, clause)?;
-                if clause.first() != Some(pivot) {
-                    return Err(Error::BadPivot { step: *id });
-                }
-                let mut trail = falsifying_trail(clause)?;
-                if self.propagate(*id, &mut trail, prefix_rup_hints)? {
-                    self.commit(*id, clause);
-                    return Ok(());
-                }
-                self.check_rat(*id, *pivot, &trail, groups)?;
-                self.commit(*id, clause);
-            }
-            Call::Forget { ids } => {
-                let mut seen = BTreeSet::new();
-                for id in ids {
-                    if !seen.insert(*id) || !self.live.contains_key(id) {
-                        return Err(Error::UnknownClause {
-                            step: self.high_water,
-                            clause: *id,
-                        });
-                    }
-                }
-                for id in ids {
-                    self.live.remove(id);
-                }
-            }
+            } => self.learn_rat(*id, clause, *pivot, prefix_rup_hints, groups),
+            Call::Forget { ids } => self.forget(ids),
         }
+    }
+
+    /// Learns `clause` under a fresh `id` by ordered reverse unit propagation.
+    ///
+    /// The clause is required because `id` names no live clause before this
+    /// operation. Keeping declaration and validation together makes admission
+    /// atomic and prevents an unchecked external clause table from entering
+    /// the semantic boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns a semantic rejection and leaves `self` unchanged.
+    pub fn learn_rup(
+        &mut self,
+        id: ClauseId,
+        clause: &[Literal],
+        ordered_hints: &[ClauseId],
+    ) -> Result<(), Error> {
+        self.transaction(|candidate| {
+            candidate.check_learn(id, clause)?;
+            let mut trail = falsifying_trail(clause)?;
+            if !candidate.propagate(id, &mut trail, ordered_hints)? {
+                return Err(Error::NoConflict { step: id });
+            }
+            candidate.commit(id, clause);
+            Ok(())
+        })
+    }
+
+    /// Learns `clause` under a fresh `id` by explicit RAT groups.
+    ///
+    /// # Errors
+    ///
+    /// Returns a semantic rejection and leaves `self` unchanged.
+    pub fn learn_rat(
+        &mut self,
+        id: ClauseId,
+        clause: &[Literal],
+        pivot: Literal,
+        prefix_rup_hints: &[ClauseId],
+        groups: &[RatGroup],
+    ) -> Result<(), Error> {
+        self.transaction(|candidate| {
+            candidate.check_learn(id, clause)?;
+            if clause.first() != Some(&pivot) {
+                return Err(Error::BadPivot { step: id });
+            }
+            let mut trail = falsifying_trail(clause)?;
+            if candidate.propagate(id, &mut trail, prefix_rup_hints)? {
+                candidate.commit(id, clause);
+                return Ok(());
+            }
+            candidate.check_rat(id, pivot, &trail, groups)?;
+            candidate.commit(id, clause);
+            Ok(())
+        })
+    }
+
+    /// Deletes live clauses without lowering the identifier high-water mark.
+    ///
+    /// # Errors
+    ///
+    /// Unknown or duplicate identifiers reject the entire operation and leave
+    /// `self` unchanged.
+    pub fn forget(&mut self, ids: &[ClauseId]) -> Result<(), Error> {
+        self.transaction(|candidate| {
+            let mut seen = BTreeSet::new();
+            for id in ids {
+                if !seen.insert(*id) || !candidate.live.contains_key(id) {
+                    return Err(Error::UnknownClause {
+                        step: candidate.high_water,
+                        clause: *id,
+                    });
+                }
+            }
+            for id in ids {
+                candidate.live.remove(id);
+            }
+            Ok(())
+        })
+    }
+
+    fn transaction(
+        &mut self,
+        operation: impl FnOnce(&mut Self) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        let mut candidate = self.clone();
+        operation(&mut candidate)?;
+        *self = candidate;
         Ok(())
     }
 
