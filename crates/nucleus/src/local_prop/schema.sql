@@ -9,6 +9,7 @@ CREATE TABLE prop_row (
         conclusion BETWEEN -4294967295 AND 4294967295 AND conclusion != 0
     ),
     reason INTEGER NOT NULL CHECK (reason >= 0),
+    CHECK (reason != 0 OR premise > 0),
     PRIMARY KEY (premise, source, conclusion)
 ) STRICT, WITHOUT ROWID;
 

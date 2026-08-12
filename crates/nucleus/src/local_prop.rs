@@ -971,6 +971,7 @@ mod tests {
         for sql in [
             "INSERT INTO prop_row VALUES (1,1,2,1)",
             "INSERT INTO prop_row VALUES (1,0,2,-1)",
+            "INSERT INTO prop_row VALUES (-1,0,2,0)",
         ] {
             assert!(table.connection.execute_batch(sql).is_err());
         }
