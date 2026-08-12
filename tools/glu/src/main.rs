@@ -289,15 +289,7 @@ fn run() -> Result<()> {
             open,
             no_build,
             tls,
-        } => runner.demo(
-            &files,
-            port,
-            kernel_port,
-            sat_port,
-            open,
-            no_build,
-            tls,
-        ),
+        } => runner.demo(&files, port, kernel_port, sat_port, open, no_build, tls),
         Task::Docs { command: None } => runner.docs(),
         Task::Docs {
             command: Some(DocsTask::Serve { open, port }),
