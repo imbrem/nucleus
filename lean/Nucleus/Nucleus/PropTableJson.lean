@@ -65,6 +65,17 @@ structure WireTable where
   dependencies : List Dependency
   rows : List WireRow
 
+def WireRow.key (row : WireRow) : RowKey String Nat :=
+  ⟨row.premise, row.source, row.conclusion⟩
+
+/-- The wire document is classified when no logical triple carries two reasons. -/
+def WireTable.UniqueReasons (table : WireTable) : Prop :=
+  (table.rows.map WireRow.key).Nodup
+
+structure CheckedWireTable where
+  table : WireTable
+  uniqueReasons : table.UniqueReasons
+
 def WireRow.ofLogical (row : Row String Nat Int) : WireRow :=
   { premise := row.premise
     source := row.source
@@ -72,6 +83,11 @@ def WireRow.ofLogical (row : Row String Nat Int) : WireRow :=
     reason := match row.reason with
       | .definition => 0
       | .theorem reason => reason }
+
+@[simp] theorem WireRow.key_ofLogical (row : Row String Nat Int) :
+    (WireRow.ofLogical row).key = row.key := by
+  cases row
+  rfl
 
 def WireRow.toLogical (row : WireRow) : Row String Nat Int :=
   { premise := row.premise
