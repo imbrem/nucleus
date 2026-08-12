@@ -1,3 +1,4 @@
+import Mathlib.Data.Finset.Sort
 import Mathlib.Data.List.Defs
 
 /-!
@@ -278,6 +279,63 @@ def join (related : α → β → Bool) (left : List α) (right : List β) : Lis
 
 end Rel
 
+/-! ## Canonical physical relations
+
+`Canonical` is the storage layer above raw lists.  The order remains a
+parameter: concrete SQLite formats choose the lexicographic order matching
+their primary key.  Normalization is executable sorting plus deduplication,
+while the resulting value carries both properties as proof fields.
+-/
+
+structure Canonical (α : Type u) [Preorder α] where
+  rows : List α
+  sorted : rows.SortedLT
+  unique : rows.Nodup
+
+namespace Canonical
+
+def normalize [LinearOrder α] (rows : List α) : Canonical α :=
+  { rows := rows.toFinset.sort (· ≤ ·)
+    sorted := Finset.sortedLT_sort rows.toFinset
+    unique := Finset.sort_nodup rows.toFinset (· ≤ ·) }
+
+def dedup [LinearOrder α] (rows : List α) : Canonical α := normalize rows
+
+def insert [LinearOrder α] (row : α) (table : Canonical α) : Canonical α :=
+  normalize (row :: table.rows)
+
+def union [LinearOrder α] (left right : Canonical α) : Canonical α :=
+  normalize (left.rows ++ right.rows)
+
+def select [LinearOrder α] (predicate : α → Bool) (table : Canonical α) : Canonical α :=
+  normalize (Rel.select predicate table.rows)
+
+def project [LinearOrder α] [LinearOrder β] (f : α → β)
+    (table : Canonical α) : Canonical β :=
+  normalize (Rel.project f table.rows)
+
+@[simp] theorem mem_normalize [LinearOrder α] (row : α) (rows : List α) :
+    row ∈ (normalize rows).rows ↔ row ∈ rows := by
+  simp [normalize]
+
+@[simp] theorem mem_dedup [LinearOrder α] (row : α) (rows : List α) :
+    row ∈ (dedup rows).rows ↔ row ∈ rows := mem_normalize row rows
+
+@[simp] theorem mem_insert [LinearOrder α] (candidate row : α) (table : Canonical α) :
+    candidate ∈ (insert row table).rows ↔ candidate = row ∨ candidate ∈ table.rows := by
+  simp [insert]
+
+@[simp] theorem mem_union [LinearOrder α] (row : α)
+    (left right : Canonical α) :
+    row ∈ (union left right).rows ↔ row ∈ left.rows ∨ row ∈ right.rows := by
+  simp [union]
+
+end Canonical
+
+structure CanonicalLocalTables (α : Type u) [Preorder (LocalRow α)] where
+  definitions : Canonical (LocalRow α)
+  theorems : Canonical (LocalRow α)
+
 namespace LocalTables
 
 variable [DecidableEq α]
@@ -321,7 +379,136 @@ def holds (tables : LocalTables α) (valuation : α → Bool) : Bool :=
   let premises := tables.definitions.map LocalRow.premise
   premises.all (tables.definitionHolds valuation) && tables.theorems.all (theoremHolds valuation)
 
+theorem theorem_sound (tables : LocalTables α) (valuation : α → Bool)
+    (row : LocalRow α) (valid : tables.holds valuation = true)
+    (present : row ∈ tables.theorems) : theoremHolds valuation row = true := by
+  simp only [holds, Bool.and_eq_true, List.all_eq_true] at valid
+  exact valid.2 row present
+
+theorem definition_sound (tables : LocalTables α) (valuation : α → Bool)
+    (row : LocalRow α) (valid : tables.holds valuation = true)
+    (present : row ∈ tables.definitions) :
+    tables.definitionHolds valuation row.premise = true := by
+  simp only [holds, Bool.and_eq_true, List.all_eq_true] at valid
+  exact valid.1 row.premise (List.mem_map.mpr ⟨row, present, rfl⟩)
+
+theorem tautology_row_sound (tables : LocalTables α) (valuation : α → Bool) (p : α)
+    (valid : tables.holds valuation = true)
+    (present : (⟨.neg p, .pos p⟩ : LocalRow α) ∈ tables.theorems) :
+    valuation p = true := by
+  have sound := tables.theorem_sound valuation _ valid present
+  cases value : valuation p <;> simp [theoremHolds, Lit.eval, value] at sound ⊢
+
+theorem unsatisfiable_row_sound (tables : LocalTables α) (valuation : α → Bool) (p : α)
+    (valid : tables.holds valuation = true)
+    (present : (⟨.pos p, .neg p⟩ : LocalRow α) ∈ tables.theorems) :
+    valuation p = false := by
+  have sound := tables.theorem_sound valuation _ valid present
+  cases value : valuation p <;> simp [theoremHolds, Lit.eval, value] at sound ⊢
+
 end LocalTables
+
+namespace CanonicalLocalTables
+
+def normalize [LinearOrder (LocalRow α)] (tables : LocalTables α) :
+    CanonicalLocalTables α :=
+  ⟨Canonical.normalize tables.definitions, Canonical.normalize tables.theorems⟩
+
+def raw [Preorder (LocalRow α)] (tables : CanonicalLocalTables α) : LocalTables α :=
+  ⟨tables.definitions.rows, tables.theorems.rows⟩
+
+variable [LinearOrder (LocalRow α)] [DecidableEq α]
+
+def definition (tables : CanonicalLocalTables α) (premise : Lit α) : List (Lit α) :=
+  tables.raw.definition premise
+
+def impliedBy (tables : CanonicalLocalTables α) (premise : Lit α) : List (Lit α) :=
+  tables.raw.impliedBy premise
+
+def implying (tables : CanonicalLocalTables α) (conclusion : Lit α) : List (Lit α) :=
+  tables.raw.implying conclusion
+
+def equivalent (tables : CanonicalLocalTables α) (left right : Lit α) : Bool :=
+  tables.raw.equivalent left right
+
+def tautologies (tables : CanonicalLocalTables α) : List α := tables.raw.tautologies
+
+def unsatisfiable (tables : CanonicalLocalTables α) : List α := tables.raw.unsatisfiable
+
+def definitionHolds (tables : CanonicalLocalTables α) (valuation : α → Bool)
+    (premise : Lit α) : Bool := tables.raw.definitionHolds valuation premise
+
+def holds (tables : CanonicalLocalTables α) (valuation : α → Bool) : Bool :=
+  tables.raw.holds valuation
+
+end CanonicalLocalTables
+
+/-! ## Setwise logical semantics
+
+Unlike the executable `Bool` checker above, this specification depends only on
+row membership.  Consequently physical order and duplicate rows are provably
+irrelevant.  A nonempty family `(p, qᵢ)` defines `p ↔ ∧qᵢ`; theorem rows mean
+ordinary implication.
+-/
+
+namespace Semantics
+
+variable {tables : LocalTables α} {valuation : α → Bool} {row : LocalRow α}
+variable {premise conclusion : Lit α} {p : α}
+
+def DefinitionsValid (tables : LocalTables α) (valuation : α → Bool) : Prop :=
+  ∀ premise,
+    (∃ conclusion, (⟨premise, conclusion⟩ : LocalRow α) ∈ tables.definitions) →
+    (Lit.eval valuation premise = true ↔
+      ∀ conclusion, (⟨premise, conclusion⟩ : LocalRow α) ∈ tables.definitions →
+        Lit.eval valuation conclusion = true)
+
+def TheoremsValid (tables : LocalTables α) (valuation : α → Bool) : Prop :=
+  ∀ row ∈ tables.theorems,
+    Lit.eval valuation row.premise = true → Lit.eval valuation row.conclusion = true
+
+def Valid (tables : LocalTables α) (valuation : α → Bool) : Prop :=
+  DefinitionsValid tables valuation ∧ TheoremsValid tables valuation
+
+theorem theorem_sound (valid : Valid tables valuation) (present : row ∈ tables.theorems)
+    (premiseTrue : Lit.eval valuation row.premise = true) :
+    Lit.eval valuation row.conclusion = true :=
+  valid.2 row present premiseTrue
+
+theorem definition_sound (valid : Valid tables valuation)
+    (present : (⟨premise, conclusion⟩ : LocalRow α) ∈ tables.definitions) :
+    Lit.eval valuation premise = true ↔
+      ∀ rhs, (⟨premise, rhs⟩ : LocalRow α) ∈ tables.definitions →
+        Lit.eval valuation rhs = true :=
+  valid.1 premise ⟨conclusion, present⟩
+
+theorem normalize_valid_iff [LinearOrder (LocalRow α)] (tables : LocalTables α) :
+    Valid (CanonicalLocalTables.normalize tables).raw valuation ↔ Valid tables valuation := by
+  simp only [Valid, DefinitionsValid, TheoremsValid, CanonicalLocalTables.raw,
+    CanonicalLocalTables.normalize, Canonical.mem_normalize]
+
+theorem dedup_preserves_validity [LinearOrder (LocalRow α)] (tables : LocalTables α)
+    (valid : Valid tables valuation) :
+    Valid (CanonicalLocalTables.normalize tables).raw valuation :=
+  (normalize_valid_iff tables).2 valid
+
+theorem tautology_sound (valid : Valid tables valuation)
+    (present : (⟨.neg p, .pos p⟩ : LocalRow α) ∈ tables.theorems) :
+    valuation p = true := by
+  cases value : valuation p
+  · have := theorem_sound valid present (by simp [Lit.eval, value])
+    simp [Lit.eval, value] at this
+  · rfl
+
+theorem unsatisfiable_sound (valid : Valid tables valuation)
+    (present : (⟨.pos p, .neg p⟩ : LocalRow α) ∈ tables.theorems) :
+    valuation p = false := by
+  cases value : valuation p
+  · rfl
+  · have := theorem_sound valid present (by simp [Lit.eval, value])
+    simp [Lit.eval, value] at this
+
+end Semantics
 
 namespace SourcedTables
 
@@ -368,6 +555,46 @@ def definitionHolds (tables : SourcedTables σ α) (localValuation : α → Bool
     (tables.definition premise).all (evalRef localValuation foreign)
 
 end SourcedTables
+
+structure CanonicalSourcedTables (σ : Type v) (α : Type u) [Preorder (SourcedRow σ α)] where
+  definitions : Canonical (SourcedRow σ α)
+  theorems : Canonical (SourcedRow σ α)
+
+namespace CanonicalSourcedTables
+
+def normalize [LinearOrder (SourcedRow σ α)] (tables : SourcedTables σ α) :
+    CanonicalSourcedTables σ α :=
+  ⟨Canonical.normalize tables.definitions, Canonical.normalize tables.theorems⟩
+
+def raw [Preorder (SourcedRow σ α)]
+    (tables : CanonicalSourcedTables σ α) : SourcedTables σ α :=
+  ⟨tables.definitions.rows, tables.theorems.rows⟩
+
+variable [LinearOrder (SourcedRow σ α)] [DecidableEq σ] [DecidableEq α]
+
+def definition (tables : CanonicalSourcedTables σ α)
+    (premise : Lit α) : List (Ref σ α) := tables.raw.definition premise
+
+def impliedBy (tables : CanonicalSourcedTables σ α)
+    (premise : Lit α) : List (Ref σ α) := tables.raw.impliedBy premise
+
+def implying (tables : CanonicalSourcedTables σ α)
+    (conclusion : Ref σ α) : List (Lit α) := tables.raw.implying conclusion
+
+def equivalentLocal (tables : CanonicalSourcedTables σ α)
+    (left right : Lit α) : Bool := tables.raw.equivalentLocal left right
+
+def tautologies (tables : CanonicalSourcedTables σ α) : List α := tables.raw.tautologies
+
+def unsatisfiable (tables : CanonicalSourcedTables σ α) : List α :=
+  tables.raw.unsatisfiable
+
+def definitionHolds (tables : CanonicalSourcedTables σ α)
+    (localValuation : α → Bool) (foreign : σ → α → Bool)
+    (premise : Lit α) : Bool :=
+  tables.raw.definitionHolds localValuation foreign premise
+
+end CanonicalSourcedTables
 
 /-! ## CNF and DNF embeddings -/
 
