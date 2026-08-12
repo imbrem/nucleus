@@ -1,6 +1,7 @@
 //! Portable trusted core for Nucleus.
 
 mod connection;
+pub mod local_prop;
 
 pub use connection::{Connection, ConnectionError};
 
