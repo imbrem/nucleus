@@ -27,7 +27,7 @@ const fixture = new URL("./fixture.sqlite", import.meta.url).pathname;
  * CAS-aware code anywhere. Anything that serves a directory -- nginx, S3,
  * GitHub Pages -- is a read-only kernel by that fact alone.
  */
-async function servePackage(context) {
+async function servePackage(context, sat = "127.0.0.1:9") {
   const port = await freePort();
   const origin = `http://127.0.0.1:${port}`;
   const caddy = spawn(
@@ -40,6 +40,7 @@ async function servePackage(context) {
         NUCLEUS_ADDRESS: origin,
         NUCLEUS_ROOT: root,
         NUCLEUS_SAMPLES: join(repository, "crates/repl/samples"),
+        NUCLEUS_SAT: sat,
         NUCLEUS_TLS: "",
       },
     },
@@ -183,6 +184,23 @@ test("the demo queries a CAS database in interactive SQLite", async (context) =>
   assert.match(transcript, /sqlite> SELECT name FROM planets/);
   assert.match(transcript, /│ Saturn │\n/);
   assert.match(transcript, /sqlite> \.quit\n/);
+});
+
+test("the demo checks CaDiCaL over ordinary HTTP", async (context) => {
+  const provider = await startSatProvider(context, "http://127.0.0.1");
+  const origin = await servePackage(context, new URL(provider).host);
+  const page = await openDemo(context, origin);
+  const input = page.locator("#line");
+
+  await input.fill("(sat-select full-adder-unsat)");
+  await input.press("Enter");
+  await input.fill("(sat-solve)");
+  await input.press("Enter");
+  await page.waitForFunction(() =>
+    document
+      .querySelector("#transcript")
+      ?.textContent?.includes("admitted=SatRefutation"),
+  );
 });
 
 test("Chromium cancels an HTTP SAT provider without wedging the REPL", async (context) => {

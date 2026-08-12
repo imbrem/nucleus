@@ -149,6 +149,7 @@
     <script type="module">
       import {
         init,
+        HttpSatSolver,
         Repl,
         drive,
         driveStep,
@@ -157,7 +158,7 @@
 
       await init();
       const repl = new Repl();
-      const host = {};
+      const host = { sat: new HttpSatSolver("/sat") };
 
       const transcript = document.getElementById("transcript");
       const line = document.getElementById("line");
@@ -261,6 +262,9 @@
           "  (help)                            every form",
           "  (objects)                         what the store holds",
           "  (sqlite ADDRESS)                  the real sqlite3, in wasm",
+          "  (sat-demos)                       reusable circuit problems",
+          "  (sat-select full-adder-unsat)     select one",
+          "  (sat-solve)                       ask untrusted CaDiCaL, then check",
           '  (connect "http://127.0.0.1:8080") a kernel in another process',
           "  (fetch ADDRESS)                   pull an object and verify it",
           "",

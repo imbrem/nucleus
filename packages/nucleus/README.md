@@ -23,3 +23,5 @@ the Rust component toolchain supports it reliably.
 In the browser demo, `(sqlite [ADDRESS])` switches the prompt to `sqlite>` and
 keeps that shell invocation alive. Enter `.quit` or `.exit` to return to the
 `nucleus>` prompt. SQLite's stdout and stderr are displayed without rewriting.
+`glu demo` also starts the untrusted CaDiCaL adapter and exposes it through the
+page's same-origin `/sat` HTTP route; solver output is checked in the browser.

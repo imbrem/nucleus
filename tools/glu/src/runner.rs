@@ -818,6 +818,7 @@ impl Runner {
         files: &[PathBuf],
         port: u16,
         kernel_port: u16,
+        sat_port: u16,
         open: bool,
         no_build: bool,
         tls: bool,
@@ -850,18 +851,29 @@ impl Runner {
         let scheme = if tls { "https" } else { "http" };
         let host = if tls { "localhost" } else { "127.0.0.1" };
         let page = format!("{scheme}://{host}:{port}/");
+        let mut sat = match self.start_sat_provider(sat_port) {
+            Ok(sat) => sat,
+            Err(error) => {
+                let _ = kernel.kill();
+                let _ = kernel.wait();
+                return Err(error);
+            }
+        };
 
         eprintln!();
         eprintln!("  demo      {page}");
         eprintln!("  kernel    http://127.0.0.1:{kernel_port}");
+        eprintln!("  SAT       http://127.0.0.1:{sat_port}");
         eprintln!();
         eprintln!("  The page is a REPL. Try:");
         eprintln!("    (help)");
         eprintln!("    (connect \"http://127.0.0.1:{kernel_port}\")");
         eprintln!("    (fetch ADDRESS)         (an address printed above)");
         eprintln!("    (sqlite ADDRESS \"-batch\" \".schema\")");
+        eprintln!("    (sat-select full-adder-unsat)");
+        eprintln!("    (sat-solve)");
         eprintln!();
-        eprintln!("  Ctrl-C stops both servers.");
+        eprintln!("  Ctrl-C stops the page, kernel, and SAT provider.");
         eprintln!();
 
         if open {
@@ -869,7 +881,7 @@ impl Runner {
             let _ = self.run("open demo", "xdg-open", [page.as_str()]);
         }
 
-        let (config, environment) = self.demo_config(port, tls);
+        let (config, environment) = self.demo_config(port, sat_port, tls);
         let served = self.exec_with_environment(
             "serve demo",
             "caddy",
@@ -886,11 +898,18 @@ impl Runner {
         // Do not leave the kernel running.
         let _ = kernel.kill();
         let _ = kernel.wait();
+        let _ = sat.kill();
+        let _ = sat.wait();
         served
     }
 
     /// Returns the tested demo server configuration and environment.
-    fn demo_config(&self, port: u16, tls: bool) -> (PathBuf, Vec<(&'static str, String)>) {
+    fn demo_config(
+        &self,
+        port: u16,
+        sat_port: u16,
+        tls: bool,
+    ) -> (PathBuf, Vec<(&'static str, String)>) {
         // Trusting Caddy's internal CA remains an explicit user action.
         let (address, tls_directive) = if tls {
             (format!("https://localhost:{port}"), "tls internal")
@@ -902,6 +921,7 @@ impl Runner {
             package.join("demo.caddyfile"),
             vec![
                 ("NUCLEUS_ADDRESS", address),
+                ("NUCLEUS_SAT", format!("127.0.0.1:{sat_port}")),
                 ("NUCLEUS_ROOT", package.display().to_string()),
                 (
                     "NUCLEUS_SAMPLES",
@@ -941,6 +961,31 @@ impl Runner {
                 break;
             }
             eprintln!("  {line}");
+        }
+        Ok(child)
+    }
+
+    /// Starts the ordinary HTTP adapter around the untrusted CaDiCaL process.
+    fn start_sat_provider(&self, port: u16) -> Result<Child> {
+        let script = self.root.join("packages/nucleus/dist/demo-sat.js");
+        let mut child = Command::new("node")
+            .arg(&script)
+            .arg(port.to_string())
+            .current_dir(&self.root)
+            .stdout(Stdio::piped())
+            .spawn()
+            .wrap_err_with(|| format!("could not start {}", script.display()))?;
+
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| eyre!("SAT provider produced no output"))?;
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        if reader.read_line(&mut line)? == 0 || !line.starts_with("http://") {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!("SAT provider exited before it started listening");
         }
         Ok(child)
     }

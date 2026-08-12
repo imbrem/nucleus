@@ -123,6 +123,10 @@ enum Task {
         #[arg(long, default_value_t = 8080)]
         kernel_port: u16,
 
+        /// Loopback port for the untrusted HTTP SAT provider.
+        #[arg(long, default_value_t = 8090)]
+        sat_port: u16,
+
         /// Open the demo in the default browser.
         #[arg(long)]
         open: bool,
@@ -281,10 +285,19 @@ fn run() -> Result<()> {
             files,
             port,
             kernel_port,
+            sat_port,
             open,
             no_build,
             tls,
-        } => runner.demo(&files, port, kernel_port, open, no_build, tls),
+        } => runner.demo(
+            &files,
+            port,
+            kernel_port,
+            sat_port,
+            open,
+            no_build,
+            tls,
+        ),
         Task::Docs { command: None } => runner.docs(),
         Task::Docs {
             command: Some(DocsTask::Serve { open, port }),

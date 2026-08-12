@@ -1,7 +1,8 @@
 import init, { Repl, Step } from "../generated/nucleus.js";
 import { runShell, startShell } from "./shell.js";
+import { HttpSatSolver } from "./sat-http.js";
 
-export { init, Repl, runShell, startShell };
+export { HttpSatSolver, init, Repl, runShell, startShell };
 export type { Step };
 export type {
   InteractiveShell,
