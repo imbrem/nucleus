@@ -21,22 +21,24 @@ filegroup(
 )
 
 rust_library(
-    name = "covalence_lib_crypto",
-    crate = "covalence_lib_crypto",
+    name = "covalence_data_json",
+    crate = "covalence_data_json",
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
-    tests = [":covalence_lib_crypto-unit-test"],
+    tests = [":covalence_data_json-unit-test"],
     named_deps = {
-        "ed25519_dalek": "nucleus//buck/cargo/production:ed25519-dalek-2.2.0",
+        "covalence_lib_json": "nucleus//crates/lib/json:covalence_lib_json",
+        "covalence_lib_serde": "nucleus//crates/lib/serde:covalence_lib_serde",
+        "smol_str": "nucleus//buck/cargo/production:smol_str-0.3.6",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "Cryptographic primitives for Nucleus",
+        "CARGO_PKG_DESCRIPTION": "Immutable JSON values for Covalence",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",
-        "CARGO_PKG_NAME": "covalence-lib-crypto",
+        "CARGO_PKG_NAME": "covalence-data-json",
         "CARGO_PKG_README": "",
         "CARGO_PKG_REPOSITORY": "",
         "CARGO_PKG_RUST_VERSION": "",
@@ -50,21 +52,23 @@ rust_library(
 )
 
 rust_test(
-    name = "covalence_lib_crypto-unit-test",
-    crate = "covalence_lib_crypto",
+    name = "covalence_data_json-unit-test",
+    crate = "covalence_data_json",
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
     named_deps = {
-        "ed25519_dalek": "nucleus//buck/cargo/production:ed25519-dalek-2.2.0",
+        "covalence_lib_json": "nucleus//crates/lib/json:covalence_lib_json",
+        "covalence_lib_serde": "nucleus//crates/lib/serde:covalence_lib_serde",
+        "smol_str": "nucleus//buck/cargo/production:smol_str-0.3.6",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "Cryptographic primitives for Nucleus",
+        "CARGO_PKG_DESCRIPTION": "Immutable JSON values for Covalence",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",
-        "CARGO_PKG_NAME": "covalence-lib-crypto",
+        "CARGO_PKG_NAME": "covalence-data-json",
         "CARGO_PKG_README": "",
         "CARGO_PKG_REPOSITORY": "",
         "CARGO_PKG_RUST_VERSION": "",
@@ -78,22 +82,24 @@ rust_test(
 )
 
 rust_test(
-    name = "ed25519",
-    crate = "ed25519",
-    crate_root = "tests/ed25519.rs",
+    name = "json",
+    crate = "json",
+    crate_root = "tests/json.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
     named_deps = {
-        "covalence_lib_crypto": ":covalence_lib_crypto",
-        "ed25519_dalek": "nucleus//buck/cargo/production:ed25519-dalek-2.2.0",
+        "covalence_data_json": ":covalence_data_json",
+        "covalence_lib_json": "nucleus//crates/lib/json:covalence_lib_json",
+        "covalence_lib_serde": "nucleus//crates/lib/serde:covalence_lib_serde",
+        "smol_str": "nucleus//buck/cargo/production:smol_str-0.3.6",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "Cryptographic primitives for Nucleus",
+        "CARGO_PKG_DESCRIPTION": "Immutable JSON values for Covalence",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",
-        "CARGO_PKG_NAME": "covalence-lib-crypto",
+        "CARGO_PKG_NAME": "covalence-data-json",
         "CARGO_PKG_README": "",
         "CARGO_PKG_REPOSITORY": "",
         "CARGO_PKG_RUST_VERSION": "",

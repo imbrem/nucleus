@@ -1,0 +1,16 @@
+[package]
+name = "covalence-data-json"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Immutable JSON values for Covalence"
+publish = false
+
+[dependencies]
+covalence-lib-json = { path = "../../lib/json" }
+covalence-lib-serde = { path = "../../lib/serde" }
+smol_str = "0.3"
+
+[lints]
+workspace = true

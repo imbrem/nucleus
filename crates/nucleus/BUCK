@@ -50,7 +50,6 @@ rust_library(
         "CARGO_PKG_VERSION_MINOR": "0",
         "CARGO_PKG_VERSION_PATCH": "0",
         "CARGO_PKG_VERSION_PRE": "",
-        "CARGO_MANIFEST_DIR": "$(location :package_files)",
     },
     visibility = ["PUBLIC"],
 )
@@ -84,7 +83,6 @@ rust_test(
         "CARGO_PKG_VERSION_MINOR": "0",
         "CARGO_PKG_VERSION_PATCH": "0",
         "CARGO_PKG_VERSION_PRE": "",
-        "CARGO_MANIFEST_DIR": "$(location :package_files)",
     },
     visibility = ["PUBLIC"],
 )
@@ -119,7 +117,6 @@ rust_test(
         "CARGO_PKG_VERSION_MINOR": "0",
         "CARGO_PKG_VERSION_PATCH": "0",
         "CARGO_PKG_VERSION_PRE": "",
-        "CARGO_MANIFEST_DIR": "$(location :package_files)",
     },
     visibility = ["PUBLIC"],
 )

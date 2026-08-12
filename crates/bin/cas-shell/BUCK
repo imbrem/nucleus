@@ -120,7 +120,6 @@ rust_library(
         "CARGO_PKG_VERSION_MINOR": "0",
         "CARGO_PKG_VERSION_PATCH": "0",
         "CARGO_PKG_VERSION_PRE": "",
-        "CARGO_MANIFEST_DIR": "$(location :package_files)",
         "OUT_DIR": "$(location :covalence-bin-cas-shell-build-script-run[out_dir])",
     },
     rustc_flags = [
@@ -154,7 +153,6 @@ rust_test(
         "CARGO_PKG_VERSION_MINOR": "0",
         "CARGO_PKG_VERSION_PATCH": "0",
         "CARGO_PKG_VERSION_PRE": "",
-        "CARGO_MANIFEST_DIR": "$(location :package_files)",
         "OUT_DIR": "$(location :covalence-bin-cas-shell-build-script-run[out_dir])",
     },
     rustc_flags = [

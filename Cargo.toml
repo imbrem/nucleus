@@ -12,6 +12,7 @@ members = [
   "crates/data/cas",
   "crates/data/cas-http",
   "crates/data/container",
+  "crates/data/json",
   "crates/ffi/python",
   "crates/proton",
   "crates/neutron",
