@@ -786,8 +786,10 @@ impl LocalPropTable {
     /// # Errors
     ///
     /// Rejects invalid metadata or a key with no authoritative row.
-    pub fn add_metadata(&self, row: Candidate, kind: &str, payload: &[u8]) -> Result<(), Error> {
-        self.check_candidate(&row)?;
+    pub fn add_metadata(&self, row: &Fact, kind: &str, payload: &[u8]) -> Result<(), Error> {
+        if let Some(error) = self.fact_snapshot_error(row) {
+            return Err(error);
+        }
         self.connection.execute(
             "INSERT INTO prop_metadata(premise,source,conclusion,kind,payload) VALUES (?1,0,?2,?3,?4)",
             &[row.premise.encoded().into(), row.conclusion.encoded().into(), Param::Text(kind), Param::Blob(payload)])?;
@@ -1113,11 +1115,14 @@ mod tests {
         table
             .introduce(lit(1), atom(1), std::slice::from_ref(&old))
             .expect("proved row");
-        let proved = table
+        let proved_candidate = table
             .direct_implications_from(lit(1))
             .expect("proved candidates")[0];
+        let proved = table
+            .check_candidate(&proved_candidate)
+            .expect("checked stored row");
         table
-            .add_metadata(proved, "proof", b"opaque")
+            .add_metadata(&proved, "proof", b"opaque")
             .expect("metadata");
         assert!(matches!(
             table.replace_definition(definition(1, &[lit(1)])),
