@@ -32,8 +32,9 @@ false while the partial group left after deleting `1 -> 3` is true. Consumers
 must therefore replace or delete a definition as one complete atomic group.
 
 Rust tests load all three fixtures through the checked schema and semantic
-validator. A Lean consumer can parse the same records without depending on
-SQLite or Rust. Agreement is differential evidence, not a refinement proof.
+validator. `Nucleus.PropTable.Fixture` embeds and parses those same files as a
+Lean build input without depending on SQLite or Rust. Agreement is
+differential evidence, not a refinement proof.
 
 Demo-facing SAT integration belongs above this authority layer. Its seam is:
 list/get/show named problems; select canonical DIMACS; verify a model or binary
