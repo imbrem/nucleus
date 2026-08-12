@@ -222,6 +222,8 @@ private theorem eliminateEmptyUnknown_derefWith
         have hc : (eliminateEmptyUnknown
             (JsonCas.derefWith mixed ((elems i).mapScalar widenLink))).isKnown := by
           simpa using hm i
+        change eliminateEmpty
+            ((JsonCas.derefWith mixed ((elems i).mapScalar widenLink)).get _) = _
         rw [← eliminateEmptyUnknown_get _ (hm i)]
         exact Unknown.get_eq_get_of_le (Or.inr heq) hc (hp i)
       · have hp : ¬∀ i, (JsonCas.derefWith plain (elems i)).isKnown := by
@@ -248,6 +250,8 @@ private theorem eliminateEmptyUnknown_derefWith
         have hc : (eliminateEmptyUnknown
             (JsonCas.derefWith mixed ((vals k).mapScalar widenLink))).isKnown := by
           simpa using hm k
+        change eliminateEmpty
+            ((JsonCas.derefWith mixed ((vals k).mapScalar widenLink)).get _) = _
         rw [← eliminateEmptyUnknown_get _ (hm k)]
         exact Unknown.get_eq_get_of_le (Or.inr heq) hc (hp k)
       · have hp : ¬∀ k, (JsonCas.derefWith plain (vals k)).isKnown := by
