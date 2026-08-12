@@ -178,6 +178,7 @@ genrule(
         {
             "production-crates": "//buck/cargo/production:crates-json",
             "production-dependencies": "//buck/cargo/production:dependencies-json",
+            "wasm": ":wasm",
         },
         _DOCS_SOURCES +
         [
@@ -189,7 +190,7 @@ genrule(
         ],
     ),
     out = "docs",
-    cmd = "mkdir -p $OUT && BASE_PATH='{}' BUILD_COMMIT='{}' BUILD_DIRTY='{}' $(exe //tools/glu:glu) artifact docs --production-crates $(location //buck/cargo/production:crates-json) --production-dependencies $(location //buck/cargo/production:dependencies-json) --loc $(location :loc) --rustdoc $(location :rustdoc) --out $OUT".format(
+    cmd = "mkdir -p $OUT && BASE_PATH='{}' BUILD_COMMIT='{}' BUILD_DIRTY='{}' $(exe //tools/glu:glu) artifact docs --production-crates $(location //buck/cargo/production:crates-json) --production-dependencies $(location //buck/cargo/production:dependencies-json) --loc $(location :loc) --rustdoc $(location :rustdoc) --wasm $(location :wasm) --out $OUT".format(
         _DOCS_BASE_PATH,
         _DOCS_COMMIT,
         _DOCS_DIRTY,
