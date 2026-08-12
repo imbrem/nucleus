@@ -1,4 +1,5 @@
 import Nucleus.HolJson.Syntax
+import Nucleus.HolJson.Codec
 
 /-!
 # HOL JSON interchange
