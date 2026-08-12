@@ -68,6 +68,16 @@ test("native provider returns bounded binary LRAT", async () => {
   assert.deepEqual([...result.proof], [97, 6, 0, 2, 4, 0]);
 });
 
+test("native provider never substitutes diagnostic text for binary LRAT", async () => {
+  await assert.rejects(
+    new CadicalSolver().solve({
+      ...request,
+      proof: { format: "binary-lrat", diagnosticAsciiLrat: true },
+    }),
+    /render checked proofs separately/,
+  );
+});
+
 test("real CaDiCaL emits a binary LRAT artifact", async () => {
   const result = await new CadicalSolver().solve({
     ...request,

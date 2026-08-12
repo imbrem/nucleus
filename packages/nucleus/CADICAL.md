@@ -3,8 +3,9 @@
 `CadicalSolver` is an untrusted Node adapter. It invokes `cadical` directly
 without a shell, gives each run a private temporary directory, and caps the
 model, proof, standard output, and standard error. Cancellation, timeout, or a
-limit violation kills and reaps the process before cleanup. Binary LRAT is the
-default; `asciiProof: true` exists only for explicit debugging.
+limit violation kills and reaps the process before cleanup. It always requests
+binary LRAT. Render a checked binary proof as text separately when debugging;
+the provider never substitutes diagnostic text for the checked artifact.
 
 The native adapter uses POSIX process groups and is not available on Windows;
 Windows and browser clients use `HttpSatSolver`. Process groups provide bounded

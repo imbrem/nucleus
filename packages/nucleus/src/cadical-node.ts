@@ -18,8 +18,6 @@ export interface CadicalOptions {
   maxStdoutBytes?: number;
   maxStderrBytes?: number;
   maxProofBytes?: number;
-  /** Debug-only human-readable proof output. Binary LRAT is the default. */
-  asciiProof?: boolean;
 }
 
 const MAX_BUFFER_BYTES = 256 * 1024 * 1024;
@@ -37,7 +35,6 @@ export class CadicalSolver implements SatSolver {
       maxStdoutBytes: options.maxStdoutBytes ?? 8 * 1024 * 1024,
       maxStderrBytes: options.maxStderrBytes ?? 1024 * 1024,
       maxProofBytes: options.maxProofBytes ?? 64 * 1024 * 1024,
-      asciiProof: options.asciiProof ?? false,
     };
     boundedInteger(this.#options.timeoutMs, "timeout", MAX_TIMEOUT_MS, true);
     boundedInteger(this.#options.maxStdoutBytes, "stdout", MAX_BUFFER_BYTES);
@@ -49,8 +46,10 @@ export class CadicalSolver implements SatSolver {
     const problem = problemId(request.problem);
     if (request.proof.format !== "binary-lrat")
       throw new Error("unsupported SAT proof format");
-    const asciiProof =
-      this.#options.asciiProof || request.proof.diagnosticAsciiLrat === true;
+    if (request.proof.diagnosticAsciiLrat === true)
+      throw new Error(
+        "CaDiCaL provider returns binary LRAT; render checked proofs separately",
+      );
     if (process.platform === "win32") {
       throw new Error(
         "the native CaDiCaL adapter requires POSIX process groups; use HttpSatSolver on Windows",
@@ -68,13 +67,7 @@ export class CadicalSolver implements SatSolver {
     const proof = join(directory, "proof.lrat");
     try {
       await writeFile(input, request.dimacs, { flag: "wx", mode: 0o600 });
-      const args = [
-        "--quiet",
-        "--lrat",
-        asciiProof ? "--no-binary" : "--binary",
-        input,
-        proof,
-      ];
+      const args = ["--quiet", "--lrat", "--binary", input, proof];
       const run = await runBounded(
         this.#options.executable,
         args,
@@ -97,7 +90,7 @@ export class CadicalSolver implements SatSolver {
             proof,
             Math.min(request.limits.maxProofBytes, this.#options.maxProofBytes),
           ),
-          format: asciiProof ? "ascii-lrat" : "binary-lrat",
+          format: "binary-lrat",
         };
       }
       throw new Error(`CaDiCaL returned inconsistent exit status ${run.code}`);
