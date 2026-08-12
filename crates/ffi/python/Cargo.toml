@@ -26,6 +26,7 @@ extension-module = ["covalence-lib-python/extension-module"]
 
 [dependencies]
 covalence-lib-python = { path = "../../lib/python" }
+covalence-data-json = { path = "../../data/json" }
 # `random` is left off: drawing an object needs a caller-supplied CSPRNG, and
 # there is no Python binding for one to supply. The rest of the crate's
 # functionality is enabled and wrapped.

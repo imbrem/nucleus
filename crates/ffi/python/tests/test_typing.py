@@ -108,7 +108,16 @@ def _runtime_members(cls: type) -> set[str]:
 
 
 def test_the_stub_does_not_omit_class_members() -> None:
-    for name in ("Obj", "O256", "Blake3", "Sha256", "ContextKey", "Sha1", "GitHash"):
+    for name in (
+        "Obj",
+        "O256",
+        "Blake3",
+        "Sha256",
+        "ContextKey",
+        "Sha1",
+        "GitHash",
+        "Json",
+    ):
         missing = sorted(
             _runtime_members(getattr(_covalence, name)) - _declared_members(name)
         )

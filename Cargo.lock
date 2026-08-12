@@ -299,6 +299,7 @@ dependencies = [
 name = "covalence-ffi-python"
 version = "0.0.0"
 dependencies = [
+ "covalence-data-json",
  "covalence-lib-hash",
  "covalence-lib-python",
 ]

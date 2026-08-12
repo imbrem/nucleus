@@ -17,10 +17,17 @@ def test_package_imports_and_reports_a_version() -> None:
 
 
 def test_hash_is_a_regular_public_submodule() -> None:
-    assert covalence.__all__ == ["hash", "__version__"]
+    assert covalence.__all__ == ["data", "hash", "__version__"]
     assert covalence.hash.__name__ == "covalence.hash"
     assert covalence.hash.O256 is _covalence.O256
     assert not hasattr(covalence, "O256")
+
+
+def test_data_json_is_a_regular_public_submodule() -> None:
+    assert covalence.data.__all__ == ["json"]
+    assert covalence.data.json.__name__ == "covalence.data.json"
+    assert covalence.data.json.Json is _covalence.Json
+    assert not hasattr(covalence, "Json")
 
 
 def test_hash_objects_report_their_public_module() -> None:
@@ -41,6 +48,7 @@ def test_the_package_ships_typing_metadata() -> None:
     root = pathlib.Path(covalence.__path__[0])
     assert (root / "py.typed").is_file()
     assert (root / "hash.py").is_file()
+    assert (root / "data" / "json.py").is_file()
     assert (root / "_covalence.pyi").is_file()
 
 
