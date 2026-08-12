@@ -21,17 +21,23 @@ syntax "fixture_str% " str : term
 
 elab_rules : term
   | `(fixture_str% $path:str) => do
-      let contents ← IO.FS.readFile path.getString
+      let source := System.FilePath.mk (← getFileName)
+      let propTable := source.parent.getD source
+      let namespaceDir := propTable.parent.getD propTable
+      let project := namespaceDir.parent.getD namespaceDir
+      let lean := project.parent.getD project
+      let root := lean.parent.getD lean
+      let contents ← IO.FS.readFile (root / path.getString)
       elabTerm (Syntax.mkStrLit contents) none
 
 private def corpus : String :=
-  fixture_str% "../../crates/nucleus/fixtures/local_prop_v1.tsv"
+  fixture_str% "crates/nucleus/fixtures/local_prop_v1.tsv"
 
 private def queryCorpus : String :=
-  fixture_str% "../../crates/nucleus/fixtures/local_prop_queries_v1.tsv"
+  fixture_str% "crates/nucleus/fixtures/local_prop_queries_v1.tsv"
 
 private def deletionCorpus : String :=
-  fixture_str% "../../crates/nucleus/fixtures/local_prop_deletion_v1.tsv"
+  fixture_str% "crates/nucleus/fixtures/local_prop_deletion_v1.tsv"
 
 private def dataLines (contents : String) : List String :=
   (contents.splitOn "\n").filter fun line =>
