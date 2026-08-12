@@ -10,7 +10,11 @@ import { HttpSatSolver, LRAT_CONTENT_TYPE } from "../dist/sat-http.js";
 const request = {
   problem: new Uint8Array(32).fill(7),
   dimacs: new TextEncoder().encode("p cnf 1 1\n1 0\n"),
-  limits: { maxModelLiterals: 4, maxProofBytes: 1024 },
+  limits: {
+    maxModelLiterals: 4,
+    maxProofBytes: 1024,
+    maxDiagnosticBytes: 1024,
+  },
   proof: { format: "binary-lrat" },
 };
 const localProblem = new Uint8Array(32);

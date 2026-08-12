@@ -340,7 +340,11 @@ export function createCadicalServer(options: CadicalServerOptions): Server {
             // server-local token only prevents provider-result mixups here.
             problem: new Uint8Array(32),
             dimacs: Uint8Array.from(Buffer.concat(chunks, size)),
-            limits: { maxModelLiterals, maxProofBytes },
+            limits: {
+              maxModelLiterals,
+              maxProofBytes,
+              maxDiagnosticBytes: maxProofBytes,
+            },
             proof: { format: "binary-lrat" },
           },
           controller.signal,

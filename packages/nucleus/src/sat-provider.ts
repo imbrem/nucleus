@@ -6,6 +6,7 @@ export interface SatRequest {
   readonly limits: {
     readonly maxModelLiterals: number;
     readonly maxProofBytes: number;
+    readonly maxDiagnosticBytes: number;
   };
   readonly proof: {
     readonly format: "binary-lrat";
