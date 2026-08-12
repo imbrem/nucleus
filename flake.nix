@@ -69,6 +69,7 @@
         };
         tools = with pkgs; [
           buck2
+          cadical
           cargo-component
           caddy
           clang
