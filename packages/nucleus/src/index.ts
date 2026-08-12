@@ -19,6 +19,8 @@ export interface Line {
 export interface Host {
   /** Optional alternate store for `(sqlite …)`; the local REPL is the default. */
   vfs?: import("./vfs-host.js").ReadOnlyVfs;
+  /** Completely untrusted SAT provider; Rust checks every mathematical claim. */
+  sat?: import("./sat-provider.js").SatSolver;
 }
 
 /**
@@ -76,6 +78,45 @@ export async function drive(
           ),
           quit: false,
         };
+      } catch (error) {
+        return { output: `error: ${messageOf(error)}`, quit: false };
+      }
+
+    case "solve":
+      try {
+        if (!host.sat) {
+          throw new Error("no SAT provider is configured");
+        }
+        const request = {
+          problem: step.problem,
+          dimacs: step.dimacs,
+          limits: {
+            maxModelLiterals: step.maxModelLiterals,
+            maxProofBytes: step.maxProofBytes,
+            maxDiagnosticBytes: step.maxDiagnosticBytes,
+          },
+          proof: { format: "binary-lrat" as const },
+        };
+        const result = await host.sat.solve(request);
+        let output: string;
+        switch (result.kind) {
+          case "sat":
+            output = repl.completeSatModel(
+              result.problem,
+              BigInt64Array.from(result.model),
+            );
+            break;
+          case "unsat":
+            if (result.format !== "binary-lrat") {
+              throw new Error("trusted admission requires binary LRAT");
+            }
+            output = repl.completeSatUnsat(result.problem, result.proof);
+            break;
+          case "unknown":
+            output = repl.completeSatUnknown(result.problem, result.reason);
+            break;
+        }
+        return { output, quit: false };
       } catch (error) {
         return { output: `error: ${messageOf(error)}`, quit: false };
       }

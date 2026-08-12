@@ -5,6 +5,7 @@
 use covalence_data_cas::MemoryCas;
 use covalence_lib_hash::{O256, o256};
 
+use crate::sat::{self, State as SatState};
 use crate::sexpr::{ReadError, Value, read};
 use crate::{ConnectionId, Repl, ReplError};
 
@@ -42,6 +43,8 @@ pub enum Response {
     },
     /// Ask the host to run the `SQLite` shell.
     Shell(Vec<String>),
+    /// Ask the host's completely untrusted SAT provider to solve a problem.
+    Solve(covalence_logic_sat::continuation::SolveRequest),
     /// Leave.
     Quit,
 }
@@ -91,6 +94,8 @@ pub enum SessionError {
     },
     /// The store or a connection failed.
     Repl(ReplError),
+    /// A SAT demo, checker, or continuation operation failed.
+    Sat(sat::Error),
 }
 
 impl std::fmt::Display for SessionError {
@@ -110,6 +115,7 @@ impl std::fmt::Display for SessionError {
                 actual.hex()
             ),
             Self::Repl(error) => write!(formatter, "{error}"),
+            Self::Sat(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -131,6 +137,12 @@ impl From<covalence_lib_sqlite::Error> for SessionError {
 impl From<ReadError> for SessionError {
     fn from(error: ReadError) -> Self {
         Self::Read(error)
+    }
+}
+
+impl From<sat::Error> for SessionError {
+    fn from(error: sat::Error) -> Self {
+        Self::Sat(error)
     }
 }
 
@@ -159,6 +171,19 @@ pub const HELP: &str = "\
 (sqlite ADDRESS)    ... with that object already open
 (sqlite ADDRESS \"SELECT 1\")
                     ... and run that instead of prompting
+
+(sat-demos)         list reusable circuit problems
+(sat-get NAME)      describe a named problem
+(sat-show NAME)     show its canonical DIMACS
+(sat-select NAME)   select a named problem
+(sat-set \"DIMACS\")  select a custom DIMACS problem
+(sat-problem)       inspect the active problem and identity
+(sat-dimacs)        show the exact solver input
+(sat-solve)         ask the host's untrusted solver
+(sat-verify)        inspect the locally checked result
+(sat-model)         show the checked model
+(sat-proof)         inspect binary LRAT and admitted judgement metadata
+(sat-proof-text)    explicitly render binary LRAT as diagnostic ASCII
 
 (help)              this
 (quit)              leave
@@ -234,6 +259,7 @@ pub struct Session {
     /// Kernel 0 is always the one this session is running inside.
     endpoints: Vec<Endpoint>,
     selected: usize,
+    sat: SatState,
 }
 
 impl Session {
@@ -260,6 +286,7 @@ impl Session {
             repl,
             endpoints: vec![Endpoint::Local],
             selected: 0,
+            sat: SatState::new(),
         }
     }
 
@@ -386,12 +413,97 @@ impl Session {
         if let Some(response) = self.kernel_form(name, arguments)? {
             return Ok(response);
         }
+        if let Some(response) = self.sat_form(name, arguments)? {
+            return Ok(response);
+        }
         match (name, arguments) {
             ("quit" | "exit", []) => Ok(Response::Quit),
             ("help", []) => Ok(Response::value(HELP.to_owned())),
             ("sqlite", _) => Ok(Response::Shell(self.shell_arguments(arguments)?)),
             _ => Err(SessionError::Unbound(name.to_owned())),
         }
+    }
+
+    fn sat_form(
+        &mut self,
+        name: &str,
+        arguments: &[Value],
+    ) -> Result<Option<Response>, SessionError> {
+        Ok(Some(match (name, arguments) {
+            ("sat-demos", []) => Response::value(Value::list(
+                sat::DEMOS
+                    .iter()
+                    .map(|demo| {
+                        Value::List(vec![
+                            Value::Symbol(demo.name.to_owned()),
+                            Value::Text(demo.description.to_owned()),
+                        ])
+                    })
+                    .collect(),
+            )),
+            ("sat-get", [name]) => {
+                let name = name
+                    .as_text()
+                    .ok_or(SessionError::Usage("(sat-get NAME)"))?;
+                let demo = sat::DEMOS
+                    .iter()
+                    .find(|demo| demo.name == name)
+                    .ok_or_else(|| sat::Error::UnknownDemo(name.to_owned()))?;
+                Response::value(format!("{} — {}", demo.name, demo.description))
+            }
+            ("sat-show", [name]) => {
+                let name = name
+                    .as_text()
+                    .ok_or(SessionError::Usage("(sat-show NAME)"))?;
+                let cnf = SatState::demo_cnf(name)?;
+                Response::value(String::from_utf8_lossy(cnf.dimacs()).into_owned())
+            }
+            ("sat-select", [name]) => {
+                self.sat.select_demo(
+                    name.as_text()
+                        .ok_or(SessionError::Usage("(sat-select NAME)"))?,
+                )?;
+                Response::value(self.sat.active_summary()?)
+            }
+            ("sat-set", [text]) => {
+                self.sat.set_dimacs(
+                    text.as_text()
+                        .ok_or(SessionError::Usage("(sat-set \"DIMACS\")"))?,
+                )?;
+                Response::value(self.sat.active_summary()?)
+            }
+            ("sat-problem", []) => Response::value(self.sat.active_summary()?),
+            ("sat-id", []) => Response::value(self.sat.problem_id()?),
+            ("sat-dimacs", []) => Response::value(self.sat.dimacs()?),
+            ("sat-solve", []) => Response::Solve(self.sat.begin()?),
+            ("sat-verify" | "sat-result" | "sat-checked", []) => {
+                Response::value(self.sat.result_summary()?)
+            }
+            ("sat-model", []) => Response::value(self.sat.model()?),
+            ("sat-proof", []) => Response::value(self.sat.proof_metadata()?),
+            ("sat-proof-text", []) => Response::value(self.sat.proof_text()?),
+            _ if name.starts_with("sat-") => {
+                return Err(SessionError::Usage(
+                    "(sat-demos), (sat-get NAME), (sat-show NAME), (sat-select NAME), (sat-set \"DIMACS\"), (sat-problem), (sat-dimacs), (sat-solve), or (sat-verify)",
+                ));
+            }
+            _ => return Ok(None),
+        }))
+    }
+
+    /// Completes the current SAT provider continuation and checks its claim.
+    ///
+    /// # Errors
+    ///
+    /// Rejects stale jobs, wrong problems, malformed models, invalid LRAT, or
+    /// obsolete proposition snapshots.
+    pub fn complete_sat(
+        &mut self,
+        job: covalence_logic_sat::continuation::JobId,
+        result: covalence_logic_sat::continuation::SolveResult,
+    ) -> Result<Value, SessionError> {
+        self.sat.complete(job, result)?;
+        Ok(Value::Text(self.sat.result_summary()?))
     }
 
     /// Forms acting on the content-addressed store.
@@ -906,6 +1018,65 @@ mod tests {
                 .count(),
             3
         );
+    }
+
+    #[test]
+    fn sat_catalog_and_custom_problem_are_inspectable_and_checked() {
+        use covalence_logic_sat::continuation::SolveResult;
+
+        let mut session = session();
+        let demos = say(&mut session, "(sat-demos)");
+        assert!(demos.contains("and-sat"));
+        assert!(demos.contains("half-adder-unsat"));
+        assert!(demos.contains("full-adder-sat"));
+        assert!(say(&mut session, "(sat-show and-sat)").contains("p cnf 3 6"));
+
+        let selected = say(&mut session, "(sat-set \"p cnf 1 1\\n1 0\\n\")");
+        assert!(selected.contains("custom"), "{selected}");
+        assert!(say(&mut session, "(sat-problem)").contains("problem="));
+        assert!(say(&mut session, "(sat-dimacs)").contains("p cnf 3"));
+
+        let Response::Solve(request) = session.eval("(sat-solve)").expect("solve request") else {
+            panic!("expected solve request");
+        };
+        let status = session
+            .complete_sat(
+                request.job(),
+                SolveResult::Sat {
+                    problem: request.problem(),
+                    model: vec![1, -2, 3].into_boxed_slice(),
+                },
+            )
+            .expect("checked model")
+            .display();
+        assert!(status.contains("checked-model"), "{status}");
+        assert_eq!(say(&mut session, "(sat-model)"), "\"1 -2 3\"");
+    }
+
+    #[test]
+    fn invalid_solver_claim_is_consumed_without_authority() {
+        use covalence_logic_sat::continuation::SolveResult;
+
+        let mut session = session();
+        say(&mut session, "(sat-select and-sat)");
+        let Response::Solve(request) = session.eval("(sat-solve)").expect("request") else {
+            panic!("expected solve request");
+        };
+        let error = session
+            .complete_sat(
+                request.job(),
+                SolveResult::Sat {
+                    problem: request.problem(),
+                    model: Box::new([]),
+                },
+            )
+            .expect_err("lying solver rejected");
+        assert!(error.to_string().contains("model rejected"));
+        assert!(say(&mut session, "(sat-verify)").contains("no checked SAT result"));
+
+        let Response::Solve(_) = session.eval("(sat-solve)").expect("retry request") else {
+            panic!("matching rejection must consume the failed job")
+        };
     }
 
     #[test]
