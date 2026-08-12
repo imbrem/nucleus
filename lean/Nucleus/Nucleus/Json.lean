@@ -13,6 +13,7 @@ import Nucleus.Json.RfcCanonical
 import Nucleus.Json.Ipld
 import Nucleus.Json.Sqlite
 import Nucleus.Json.IpldStore
+import Nucleus.Json.HeterogeneousCas
 
 /-!
 # Key- and scalar-parametric JSON trees
