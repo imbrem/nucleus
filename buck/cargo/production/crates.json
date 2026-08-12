@@ -136,6 +136,27 @@
       ]
     },
     {
+      "id": "workspace#covalence-data-json@0.0.0",
+      "name": "covalence-data-json",
+      "version": "0.0.0",
+      "path": "crates/data/json",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_data_json",
+          "kinds": [
+            "lib"
+          ]
+        },
+        {
+          "name": "json",
+          "kinds": [
+            "test"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-ffi-python@0.0.0",
       "name": "covalence-ffi-python",
       "version": "0.0.0",
@@ -453,6 +474,20 @@
     {
       "source": "workspace#covalence-data-cas@0.0.0",
       "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-json@0.0.0",
+      "target": "workspace#covalence-lib-json@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-json@0.0.0",
+      "target": "workspace#covalence-lib-serde@0.0.0",
       "kinds": [
         "normal"
       ]
