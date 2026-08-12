@@ -9,7 +9,7 @@ use std::{env, ffi::OsString, path::PathBuf, process::ExitCode};
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::{Result, WrapErr};
 
-use runner::Runner;
+use runner::{DemoOptions, Runner};
 
 #[derive(Debug, Parser)]
 #[command(version, about = "Nucleus repository tasks", propagate_version = true)]
@@ -289,7 +289,17 @@ fn run() -> Result<()> {
             open,
             no_build,
             tls,
-        } => runner.demo(&files, port, kernel_port, sat_port, open, no_build, tls),
+        } => runner.demo(
+            &files,
+            DemoOptions {
+                port,
+                kernel_port,
+                sat_port,
+                open,
+                no_build,
+                tls,
+            },
+        ),
         Task::Docs { command: None } => runner.docs(),
         Task::Docs {
             command: Some(DocsTask::Serve { open, port }),
