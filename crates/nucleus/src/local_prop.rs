@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use covalence_lib_hash::O256;
 use covalence_neutron::sql::{Param, Transaction};
 
+pub mod realization;
 pub mod sat;
 
 const SCHEMA: &str = include_str!("local_prop/schema.sql");
