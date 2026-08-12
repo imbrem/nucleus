@@ -7,6 +7,9 @@ use covalence_neutron::sql::{Param, Transaction};
 
 use crate::Connection;
 
+pub mod lrat;
+pub mod scratch;
+
 fn missing_result_row() -> SqliteError {
     SqliteError::with_message(
         covalence_lib_sqlite::ResultCode::MISUSE,
@@ -36,8 +39,13 @@ pub enum Operation {
     Trans,
     Contra,
     Fold,
+    Unfold,
+    Weaken,
     Cases,
     Choose,
+    SatWitness,
+    ScratchImport,
+    LratRefutation,
     Read,
 }
 
@@ -60,6 +68,93 @@ impl Policy for AllowAll {
 /// Protocol state for a propositional kernel-state connection.
 pub struct Prop<P: Policy> {
     policy: P,
+}
+
+/// Resource bounds for an untrusted SAT assignment.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ModelLimits {
+    /// Maximum literals accepted from the solver.
+    pub literals: usize,
+    /// Bounds for reconstructing the CNF from kernel state.
+    pub cnf: CnfLimits,
+}
+
+impl Default for ModelLimits {
+    fn default() -> Self {
+        Self {
+            literals: 1_000_000,
+            cnf: CnfLimits::default(),
+        }
+    }
+}
+
+/// Bounds for reconstructing a CNF from kernel state.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CnfLimits {
+    /// Maximum distinct proposition ids.
+    pub variables: usize,
+    /// Maximum number of clauses.
+    pub clauses: usize,
+    /// Maximum literals in one clause.
+    pub literals_per_clause: usize,
+    /// Maximum literals across the matrix.
+    pub total_literals: usize,
+    /// Maximum work spent preparing the matrix and identity.
+    pub work_units: usize,
+}
+
+impl Default for CnfLimits {
+    fn default() -> Self {
+        Self {
+            variables: 1_000_000,
+            clauses: 1_000_000,
+            literals_per_clause: 1_000_000,
+            total_literals: 16_000_000,
+            work_units: 32_000_000,
+        }
+    }
+}
+
+/// Bounds for CNF preparation and LRAT verification.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RefutationLimits {
+    /// Bounds for reconstructing the trusted initial clauses.
+    pub cnf: CnfLimits,
+    /// Bounds for decoding and checking the untrusted proof.
+    pub proof: lrat::Limits,
+}
+
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CnfError {
+    /// A configured bound was exceeded.
+    Limit {
+        /// Name of the exhausted budget.
+        resource: &'static str,
+        /// Configured maximum.
+        limit: usize,
+    },
+}
+
+/// Why an untrusted SAT assignment was rejected.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ModelError {
+    /// The assignment exceeded its literal budget.
+    TooLarge,
+    /// The assignment mentioned a proposition outside the CNF.
+    UnrelatedProposition,
+    /// Both polarities of a proposition were supplied.
+    ContradictoryLiterals,
+    /// The assignment tried to choose a defined or theory-bound proposition.
+    BoundProposition,
+    /// The same literal appeared more than once.
+    DuplicateLiteral,
+    /// No supplied literal satisfied one of the clauses.
+    UnsatisfiedClause,
 }
 
 /// A proposition id: always positive.
@@ -231,6 +326,33 @@ pub enum PropError {
     /// A choice contradicts an existing fact usable in the same world.
     #[snafu(display("the opposite literal already holds in this world"))]
     ContradictoryChoice,
+    /// A SAT assignment does not certify the formula.
+    #[snafu(display("SAT model rejected: {reason:?}"))]
+    InvalidModel {
+        /// Typed reason for the rejection.
+        reason: ModelError,
+    },
+    /// An LRAT proof was rejected.
+    #[snafu(display("LRAT proof rejected: {reason:?}"))]
+    LratRejected {
+        /// The checker's verdict.
+        reason: lrat::LratError,
+    },
+    /// The formula does not match the ordered clause list.
+    #[snafu(display("formula shape does not match the supplied clauses"))]
+    MalformedFormula,
+    /// Reconstructing the CNF exceeded a resource bound.
+    #[snafu(display("CNF rejected: {reason:?}"))]
+    InvalidCnf {
+        /// Typed reason for rejection.
+        reason: CnfError,
+    },
+    /// Scratch import metadata was empty or too large.
+    #[snafu(display("scratch meaning must contain 1..={limit} UTF-8 bytes"))]
+    InvalidScratchMeaning {
+        /// Maximum encoded length.
+        limit: usize,
+    },
     /// The implication pair is already held by a different world.
     #[snafu(display("{lhs} => {rhs} is already held with model {model}"))]
     PairClaimed {
@@ -314,12 +436,19 @@ pub struct PropView<'v, P: Policy> {
     connection: &'v Connection<Prop<P>>,
 }
 
+pub(crate) struct PreparedCnf {
+    pub(crate) id: O256,
+    pub(crate) matrix: Vec<Vec<i64>>,
+    variables: std::collections::BTreeSet<i64>,
+    pub(crate) total_literals: usize,
+}
+
 impl<P: Policy> PropView<'_, P> {
-    fn storage(&self) -> &covalence_neutron::Connection {
+    pub(crate) fn storage(&self) -> &covalence_neutron::Connection {
         self.connection.parts().0
     }
 
-    fn authorize(&self, operation: Operation) -> Result<(), PropError> {
+    pub(crate) fn authorize(&self, operation: Operation) -> Result<(), PropError> {
         if self.connection.parts().1.policy.allows(operation) {
             Ok(())
         } else {
@@ -349,7 +478,12 @@ impl<P: Policy> PropView<'_, P> {
             .context(StorageSnafu)
     }
 
-    fn insert_for_target(&self, lhs: i64, rhs: i64, target: Target) -> Result<(), PropError> {
+    pub(crate) fn insert_for_target(
+        &self,
+        lhs: i64,
+        rhs: i64,
+        target: Target,
+    ) -> Result<(), PropError> {
         let stored = self.insert_row(lhs, rhs, target.model())?;
         match target {
             Target::Universal(_) => Ok(()),
@@ -720,6 +854,370 @@ impl<P: Policy> PropView<'_, P> {
             .map(|found| found.is_some())
     }
 
+    fn conjuncts_of(&self, id: i64) -> Result<Vec<i64>, PropError> {
+        self.storage()
+            .query_all(
+                "SELECT rhs FROM prop_row
+                 WHERE lhs = ?1 AND model = 0 AND rhs != 0 ORDER BY rhs",
+                &[id.into()],
+                |row| row.integer(0),
+            )
+            .context(StorageSnafu)
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        reason = "all allocation gates remain in one path"
+    )]
+    pub(crate) fn prepare_cnf(
+        &self,
+        formula: PropId,
+        clauses: &[PropId],
+        limits: CnfLimits,
+    ) -> Result<PreparedCnf, PropError> {
+        fn limit(resource: &'static str, limit: usize) -> PropError {
+            InvalidCnfSnafu {
+                reason: CnfError::Limit { resource, limit },
+            }
+            .build()
+        }
+        if clauses.len() > limits.clauses {
+            return Err(limit("clauses", limits.clauses));
+        }
+        if clauses.len() > limits.work_units {
+            return Err(limit("CNF work", limits.work_units));
+        }
+        if clauses.is_empty() {
+            return MalformedFormulaSnafu.fail();
+        }
+        let formula_terms = self
+            .storage()
+            .query_row(
+                "SELECT count(*) FROM prop_row WHERE lhs = ?1 AND model = 0 AND rhs != 0",
+                &[formula.get().into()],
+                |row| row.integer(0),
+            )
+            .context(StorageSnafu)?
+            .ok_or_else(missing_result_row)
+            .context(StorageSnafu)?;
+        if usize::try_from(formula_terms).ok() != Some(clauses.len()) {
+            return MalformedFormulaSnafu.fail();
+        }
+        let actual: std::collections::BTreeSet<_> =
+            self.conjuncts_of(formula.get())?.into_iter().collect();
+        let expected: std::collections::BTreeSet<_> =
+            clauses.iter().map(|clause| -clause.get()).collect();
+        if actual != expected || clauses.len() != expected.len() {
+            return MalformedFormulaSnafu.fail();
+        }
+        let mut counts = Vec::with_capacity(clauses.len());
+        let mut total = 0usize;
+        for clause in clauses {
+            let count = self
+                .storage()
+                .query_row(
+                    "SELECT count(*) FROM prop_row WHERE lhs = ?1 AND model = 0 AND rhs != 0",
+                    &[clause.get().into()],
+                    |row| row.integer(0),
+                )
+                .context(StorageSnafu)?
+                .ok_or_else(missing_result_row)
+                .context(StorageSnafu)?;
+            let count = usize::try_from(count)
+                .map_err(|_| limit("total literals", limits.total_literals))?;
+            if count == 0 {
+                return MalformedFormulaSnafu.fail();
+            }
+            if count > limits.literals_per_clause {
+                return Err(limit("literals per clause", limits.literals_per_clause));
+            }
+            total = total
+                .checked_add(count)
+                .ok_or_else(|| limit("total literals", limits.total_literals))?;
+            if total > limits.total_literals {
+                return Err(limit("total literals", limits.total_literals));
+            }
+            counts.push(count);
+        }
+        let work = clauses
+            .len()
+            .checked_add(total)
+            .and_then(|value| value.checked_add(total))
+            // Distinct-variable tracking performs at most one tree operation
+            // per literal, so charge its conservative upper bound up front.
+            .and_then(|value| value.checked_add(total))
+            .and_then(|value| value.checked_add(total))
+            .and_then(|value| value.checked_add(clauses.len()))
+            .ok_or_else(|| limit("CNF work", limits.work_units))?;
+        if work > limits.work_units {
+            return Err(limit("CNF work", limits.work_units));
+        }
+
+        let mut matrix = Vec::with_capacity(clauses.len());
+        let mut variables = std::collections::BTreeSet::new();
+        for (clause, count) in clauses.iter().zip(counts) {
+            let mut literals = self.conjuncts_of(clause.get())?;
+            if literals.len() != count {
+                return MalformedFormulaSnafu.fail();
+            }
+            for literal in &mut literals {
+                *literal = -*literal;
+                variables.insert(literal.abs());
+                if variables.len() > limits.variables {
+                    return Err(limit("variables", limits.variables));
+                }
+            }
+            matrix.push(literals);
+        }
+        let mut bytes = Vec::with_capacity(
+            8usize
+                .checked_add(
+                    matrix
+                        .len()
+                        .checked_mul(8)
+                        .ok_or_else(|| limit("CNF identity", limits.work_units))?,
+                )
+                .and_then(|size| size.checked_add(total.checked_mul(8)?))
+                .ok_or_else(|| limit("CNF identity", limits.work_units))?,
+        );
+        bytes.extend_from_slice(&(matrix.len() as u64).to_le_bytes());
+        for clause in &matrix {
+            bytes.extend_from_slice(&(clause.len() as u64).to_le_bytes());
+            for literal in clause {
+                bytes.extend_from_slice(&literal.to_le_bytes());
+            }
+        }
+        Ok(PreparedCnf {
+            id: o256_path!(::nucleus.prop.cnf.v1).tag(bytes),
+            matrix,
+            variables,
+            total_literals: total,
+        })
+    }
+
+    /// Returns the identity of the canonical ordered CNF in kernel state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a malformed formula or storage failure.
+    pub fn cnf_id(&self, formula: PropId, clauses: &[PropId]) -> Result<O256, PropError> {
+        self.cnf_id_bounded(formula, clauses, CnfLimits::default())
+    }
+
+    /// Returns the CNF identity under explicit reconstruction bounds.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a malformed or oversized formula or storage failure.
+    pub fn cnf_id_bounded(
+        &self,
+        formula: PropId,
+        clauses: &[PropId],
+        limits: CnfLimits,
+    ) -> Result<O256, PropError> {
+        self.authorize(Operation::Read)?;
+        let _operation = self.connection.lock_operation();
+        Ok(self.prepare_cnf(formula, clauses, limits)?.id)
+    }
+
+    /// Checks and records a satisfying assignment atomically.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a malformed formula, invalid model, or storage failure.
+    pub fn certify_model(
+        &self,
+        formula: PropId,
+        clauses: &[PropId],
+        model: &[Lit],
+    ) -> Result<WorldId, PropError> {
+        self.certify_model_bounded(formula, clauses, model, ModelLimits::default())
+    }
+
+    /// Checks a satisfying assignment under an explicit size bound.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a malformed formula, invalid model, or storage failure.
+    pub fn certify_model_bounded(
+        &self,
+        formula: PropId,
+        clauses: &[PropId],
+        model: &[Lit],
+        limits: ModelLimits,
+    ) -> Result<WorldId, PropError> {
+        self.authorize(Operation::SatWitness)?;
+        let _operation = self.connection.lock_operation();
+        if model.len() > limits.literals {
+            return InvalidModelSnafu {
+                reason: ModelError::TooLarge,
+            }
+            .fail();
+        }
+        let prepared = self.prepare_cnf(formula, clauses, limits.cnf)?;
+        let mut assignment = std::collections::BTreeSet::new();
+        for literal in model {
+            if !prepared.variables.contains(&literal.proposition().get()) {
+                return InvalidModelSnafu {
+                    reason: ModelError::UnrelatedProposition,
+                }
+                .fail();
+            }
+            if assignment.contains(&-literal.get()) {
+                return InvalidModelSnafu {
+                    reason: ModelError::ContradictoryLiterals,
+                }
+                .fail();
+            }
+            if !self.is_free(literal.proposition())? {
+                return InvalidModelSnafu {
+                    reason: ModelError::BoundProposition,
+                }
+                .fail();
+            }
+            if !assignment.insert(literal.get()) {
+                return InvalidModelSnafu {
+                    reason: ModelError::DuplicateLiteral,
+                }
+                .fail();
+            }
+        }
+        let witnesses: Vec<i64> = prepared
+            .matrix
+            .iter()
+            .map(|clause| {
+                clause
+                    .iter()
+                    .copied()
+                    .find(|literal| assignment.contains(literal))
+                    .ok_or_else(|| {
+                        InvalidModelSnafu {
+                            reason: ModelError::UnsatisfiedClause,
+                        }
+                        .build()
+                    })
+            })
+            .collect::<Result<_, _>>()?;
+
+        let transaction = Transaction::begin(self.storage()).context(StorageSnafu)?;
+        let world = transaction
+            .connection()
+            .query_row(
+                "INSERT INTO prop_world(meaning) VALUES (NULL) RETURNING world_id",
+                &[],
+                |row| row.integer(0),
+            )
+            .context(StorageSnafu)?
+            .ok_or_else(missing_result_row)
+            .context(StorageSnafu)?;
+        for literal in assignment {
+            transaction
+                .connection()
+                .execute(
+                    "INSERT INTO prop_row(lhs, rhs, model) VALUES (0, ?1, ?2)",
+                    &[literal.into(), world.into()],
+                )
+                .context(StorageSnafu)?;
+        }
+        for (index, witness) in witnesses.into_iter().enumerate() {
+            let clause = clauses[index].get();
+            for (lhs, rhs) in [(witness, -clause), (0, -clause)] {
+                transaction
+                    .connection()
+                    .execute(
+                        "INSERT INTO prop_row(lhs, rhs, model) VALUES (?1, ?2, ?3)",
+                        &[lhs.into(), rhs.into(), world.into()],
+                    )
+                    .context(StorageSnafu)?;
+            }
+        }
+        transaction
+            .connection()
+            .execute(
+                "INSERT INTO prop_row(lhs, rhs, model) VALUES (0, ?1, ?2)",
+                &[formula.get().into(), world.into()],
+            )
+            .context(StorageSnafu)?;
+        transaction.commit().context(StorageSnafu)?;
+        Ok(WorldId(world))
+    }
+
+    /// Checks a bounded LRAT certificate and records UNSAT atomically.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a malformed formula, rejected proof, or storage failure.
+    pub fn certify_lrat(
+        &self,
+        formula: PropId,
+        clauses: &[PropId],
+        proof: &[u8],
+        limits: RefutationLimits,
+        metadata: i64,
+    ) -> Result<(), PropError> {
+        self.authorize(Operation::LratRefutation)?;
+        let _operation = self.connection.lock_operation();
+        if metadata >= 0 {
+            return InvalidTargetSnafu { metadata }.fail();
+        }
+        let prepared = self.prepare_cnf(formula, clauses, limits.cnf)?;
+        let instructions = lrat::parse_bounded(proof, limits.proof)
+            .map_err(|reason| LratRejectedSnafu { reason }.build())?;
+        lrat::check_bounded(&prepared.matrix, &instructions, limits.proof)
+            .map_err(|reason| LratRejectedSnafu { reason }.build())?;
+        self.insert_row(formula.get(), -formula.get(), metadata)
+            .map(|_| ())
+    }
+
+    pub(crate) fn unfold_unlocked(
+        &self,
+        target: Target,
+        x: Ant,
+        d: PropId,
+        keep: Lit,
+    ) -> Result<(), PropError> {
+        self.require_target(target)?;
+        let conjuncts = self.conjuncts_of(d.get())?;
+        if !conjuncts.contains(&keep.get()) {
+            return MissingPremiseSnafu {
+                lhs: d.get(),
+                rhs: keep.get(),
+            }
+            .fail();
+        }
+        self.require_usable(x.get(), -d.get(), target)?;
+        for conjunct in conjuncts {
+            if conjunct != keep.get() {
+                self.require_usable(x.get(), conjunct, target)?;
+            }
+        }
+        self.insert_for_target(x.get(), -keep.get(), target)
+    }
+
+    /// Eliminates one conjunct from a negated definition.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a premise, target, policy, or storage operation fails.
+    pub fn unfold(&self, target: Target, x: Ant, d: PropId, keep: Lit) -> Result<(), PropError> {
+        self.authorize(Operation::Unfold)?;
+        let _operation = self.connection.lock_operation();
+        self.unfold_unlocked(target, x, d, keep)
+    }
+
+    /// Weakens a truth into an implication.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the premise, target, policy, or storage operation fails.
+    pub fn weaken(&self, target: Target, x: Lit, y: Lit) -> Result<(), PropError> {
+        self.authorize(Operation::Weaken)?;
+        let _operation = self.connection.lock_operation();
+        self.require_target(target)?;
+        self.require_usable(0, y.get(), target)?;
+        self.insert_for_target(x.get(), y.get(), target)
+    }
+
     /// Runs the decidable well-formedness assertions (W1-W4) and returns
     /// human-readable violations; empty means the definitional layer has
     /// a model. Intended both as a self-audit and as the structural check
@@ -833,7 +1331,7 @@ mod tests {
     fn semantics_identity_matches_fixed_vector() {
         assert_eq!(
             prop_semantics_id(),
-            o256!("1363a100fb8e0c7a442e34222ac459102d89158a9c9a7196dd3ae8ac0012476b")
+            o256!("8a0c34309707bdb5a74bc3389eee687d80a7ca4d37390b91e956af87520d8e1e")
         );
     }
 
@@ -1120,11 +1618,415 @@ mod tests {
             .expect("universal premise serves any world");
     }
 
+    fn unit_contradiction(view: &PropView<'_, AllowAll>) -> (PropId, [PropId; 2]) {
+        view.declare_free(prop(1)).expect("declare");
+        view.define(prop(2), &[lit(-1)]).expect("clause one");
+        view.define(prop(3), &[lit(1)]).expect("clause two");
+        view.define(prop(4), &[lit(-2), lit(-3)]).expect("formula");
+        (prop(4), [prop(2), prop(3)])
+    }
+
+    #[test]
+    fn cnf_identity_and_certificates_bind_to_kernel_state() {
+        let connection = open();
+        let view = connection.view();
+        let (formula, clauses) = unit_contradiction(&view);
+        let first = view.cnf_id(formula, &clauses).expect("identity");
+        assert_ne!(
+            first,
+            view.cnf_id(formula, &[clauses[1], clauses[0]])
+                .expect("reordered")
+        );
+
+        let proof = b"3 0 1 2 0\n";
+        view.certify_lrat(formula, &clauses, proof, RefutationLimits::default(), -1)
+            .expect("certificate");
+        assert!(view.unsat(formula.lit()).expect("unsat"));
+    }
+
+    #[test]
+    fn every_certificate_path_uses_prepared_cnf_bounds() {
+        let connection = open();
+        let view = connection.view();
+        let (formula, clauses) = unit_contradiction(&view);
+
+        for limits in [
+            CnfLimits {
+                clauses: 1,
+                ..CnfLimits::default()
+            },
+            CnfLimits {
+                variables: 0,
+                ..CnfLimits::default()
+            },
+            CnfLimits {
+                literals_per_clause: 0,
+                ..CnfLimits::default()
+            },
+            CnfLimits {
+                total_literals: 1,
+                ..CnfLimits::default()
+            },
+            CnfLimits {
+                work_units: 1,
+                ..CnfLimits::default()
+            },
+        ] {
+            assert!(matches!(
+                view.cnf_id_bounded(formula, &clauses, limits),
+                Err(PropError::InvalidCnf { .. })
+            ));
+        }
+
+        let cnf = CnfLimits {
+            total_literals: 1,
+            ..CnfLimits::default()
+        };
+        let model_limits = ModelLimits { literals: 4, cnf };
+        assert!(matches!(
+            view.certify_model_bounded(formula, &clauses, &[lit(1)], model_limits),
+            Err(PropError::InvalidCnf { .. })
+        ));
+        let proof_limits = RefutationLimits {
+            cnf,
+            ..RefutationLimits::default()
+        };
+        assert!(matches!(
+            view.certify_lrat(formula, &clauses, b"3 0 1 2 0\n", proof_limits, -1),
+            Err(PropError::InvalidCnf { .. })
+        ));
+        let instructions = lrat::parse_text("3 0 1 2 0\n").expect("parse");
+        assert!(matches!(
+            scratch::lrat_replay_scratch_bounded(
+                &view,
+                formula,
+                &clauses,
+                &instructions,
+                "bounded",
+                proof_limits,
+            ),
+            Err(PropError::InvalidCnf { .. })
+        ));
+        let scratch_terms = RefutationLimits {
+            proof: lrat::Limits {
+                total_terms: 2,
+                ..lrat::Limits::default()
+            },
+            ..RefutationLimits::default()
+        };
+        assert!(matches!(
+            scratch::lrat_replay_scratch_bounded(
+                &view,
+                formula,
+                &clauses,
+                &instructions,
+                "initial terms count",
+                scratch_terms,
+            ),
+            Err(PropError::LratRejected {
+                reason: lrat::LratError::Limit { .. }
+            })
+        ));
+    }
+
+    #[test]
+    fn rejected_model_leaves_no_world_or_rows() {
+        let connection = open();
+        let view = connection.view();
+        view.declare_free(prop(1)).expect("declare");
+        view.define(prop(2), &[lit(-1)]).expect("clause negation");
+        view.define(prop(3), &[lit(-2)]).expect("formula");
+        let before = view
+            .storage()
+            .query_row("SELECT count(*) FROM prop_row", &[], |row| row.integer(0))
+            .expect("count")
+            .expect("row");
+        assert!(matches!(
+            view.certify_model(prop(3), &[prop(2)], &[lit(-1)]),
+            Err(PropError::InvalidModel { .. })
+        ));
+        let after = view
+            .storage()
+            .query_row("SELECT count(*) FROM prop_row", &[], |row| row.integer(0))
+            .expect("count")
+            .expect("row");
+        let worlds = view
+            .storage()
+            .query_row("SELECT count(*) FROM prop_world", &[], |row| row.integer(0))
+            .expect("count")
+            .expect("row");
+        assert_eq!((after, worlds), (before, 0));
+    }
+
+    #[test]
+    fn model_certification_succeeds_or_rolls_back_as_one_unit() {
+        let connection = open();
+        let view = connection.view();
+        view.declare_free(prop(1)).expect("declare");
+        view.define(prop(2), &[lit(-1)]).expect("clause negation");
+        view.define(prop(3), &[lit(-2)]).expect("formula");
+        let world = view
+            .certify_model(prop(3), &[prop(2)], &[lit(1)])
+            .expect("model");
+        assert!(view.world_holds(world, prop(3).lit()).expect("witness"));
+
+        let worlds_before = view
+            .storage()
+            .query_row("SELECT count(*) FROM prop_world", &[], |row| row.integer(0))
+            .expect("count")
+            .expect("row");
+        assert!(view.certify_model(prop(3), &[prop(2)], &[lit(1)]).is_err());
+        let worlds_after = view
+            .storage()
+            .query_row("SELECT count(*) FROM prop_world", &[], |row| row.integer(0))
+            .expect("count")
+            .expect("row");
+        assert_eq!(worlds_after, worlds_before);
+    }
+
+    #[test]
+    fn model_commit_failure_rolls_back_and_leaves_connection_usable() {
+        let connection = open();
+        let view = connection.view();
+        view.declare_free(prop(1)).expect("declare");
+        view.define(prop(2), &[lit(-1)]).expect("clause negation");
+        view.define(prop(3), &[lit(-2)]).expect("formula");
+        view.storage()
+            .execute_batch(
+                "PRAGMA foreign_keys = ON;
+                 CREATE TABLE commit_parent (id INTEGER PRIMARY KEY);
+                 CREATE TABLE commit_child (
+                     id INTEGER PRIMARY KEY,
+                     parent_id INTEGER NOT NULL REFERENCES commit_parent(id)
+                         DEFERRABLE INITIALLY DEFERRED
+                 );
+                 CREATE TEMP TRIGGER fail_model_commit AFTER INSERT ON prop_world
+                 BEGIN INSERT INTO commit_child VALUES (NEW.world_id, -1); END;",
+            )
+            .expect("fault setup");
+        let rows_before = view
+            .storage()
+            .query_row("SELECT count(*) FROM prop_row", &[], |row| row.integer(0))
+            .expect("count")
+            .expect("row");
+
+        assert!(view.certify_model(prop(3), &[prop(2)], &[lit(1)]).is_err());
+        let counts = view
+            .storage()
+            .query_row(
+                "SELECT (SELECT count(*) FROM prop_row),
+                        (SELECT count(*) FROM prop_world),
+                        (SELECT count(*) FROM commit_child)",
+                &[],
+                |row| Ok((row.integer(0)?, row.integer(1)?, row.integer(2)?)),
+            )
+            .expect("counts")
+            .expect("row");
+        assert_eq!(counts, (rows_before, 0, 0));
+
+        view.storage()
+            .execute_batch("DROP TRIGGER fail_model_commit")
+            .expect("usable connection");
+        view.certify_model(prop(3), &[prop(2)], &[lit(1)])
+            .expect("later transaction");
+    }
+
+    #[test]
+    fn failed_scratch_replay_cleans_temporary_state() {
+        let connection = open();
+        let view = connection.view();
+        let (formula, clauses) = unit_contradiction(&view);
+        let bad = lrat::parse_text("3 0 1 1 0\n").expect("parse");
+        assert!(
+            scratch::lrat_replay_scratch(&view, formula, &clauses, &bad, "rejected proof").is_err()
+        );
+        let imports = view
+            .storage()
+            .query_row("SELECT count(*) FROM prop_import", &[], |row| {
+                row.integer(0)
+            })
+            .expect("count")
+            .expect("row");
+        let temporary = view
+            .storage()
+            .query_row(
+                "SELECT count(*) FROM sqlite_temp_schema WHERE name = 'prop_scratch'",
+                &[],
+                |row| row.integer(0),
+            )
+            .expect("count")
+            .expect("row");
+        assert_eq!((imports, temporary), (0, 0));
+        assert!(!view.unsat(formula.lit()).expect("no judgement"));
+
+        let valid = lrat::parse_text("3 0 1 2 0\n").expect("parse");
+        assert!(scratch::lrat_replay_scratch(&view, formula, &clauses, &valid, "").is_err());
+        let temporary = view
+            .storage()
+            .query_row(
+                "SELECT count(*) FROM sqlite_temp_schema WHERE name = 'prop_scratch'",
+                &[],
+                |row| row.integer(0),
+            )
+            .expect("count")
+            .expect("row");
+        assert_eq!(temporary, 0);
+    }
+
+    #[test]
+    fn scratch_replay_commits_only_its_checked_conclusion() {
+        let connection = open();
+        let view = connection.view();
+        let (formula, clauses) = unit_contradiction(&view);
+        let proof = lrat::parse_text("3 0 1 2 0\n").expect("parse");
+        scratch::lrat_replay_scratch(&view, formula, &clauses, &proof, "checked replay")
+            .expect("replay");
+        assert!(view.unsat(formula.lit()).expect("unsat"));
+        let imports = view
+            .storage()
+            .query_row("SELECT count(*) FROM prop_import", &[], |row| {
+                row.integer(0)
+            })
+            .expect("count")
+            .expect("row");
+        let temporary = view
+            .storage()
+            .query_row(
+                "SELECT count(*) FROM sqlite_temp_schema WHERE name = 'prop_scratch'",
+                &[],
+                |row| row.integer(0),
+            )
+            .expect("count")
+            .expect("row");
+        assert_eq!((imports, temporary), (1, 0));
+    }
+
+    #[test]
+    fn scratch_conclusion_fault_rolls_back_import_and_replay() {
+        let connection = open();
+        let view = connection.view();
+        let (formula, clauses) = unit_contradiction(&view);
+        view.storage()
+            .execute_batch(
+                "CREATE TEMP TRIGGER fail_scratch_import
+                 BEFORE INSERT ON prop_row
+                 WHEN NEW.lhs = 4 AND NEW.rhs = -4
+                 BEGIN SELECT RAISE(ABORT, 'injected conclusion fault'); END",
+            )
+            .expect("fault trigger");
+        let proof = lrat::parse_text("3 0 1 2 0\n").expect("parse");
+        assert!(
+            scratch::lrat_replay_scratch(&view, formula, &clauses, &proof, "faulted replay")
+                .is_err()
+        );
+        let imports = view
+            .storage()
+            .query_row("SELECT count(*) FROM prop_import", &[], |row| {
+                row.integer(0)
+            })
+            .expect("count")
+            .expect("row");
+        let temporary = view
+            .storage()
+            .query_row(
+                "SELECT count(*) FROM sqlite_temp_schema WHERE name = 'prop_scratch'",
+                &[],
+                |row| row.integer(0),
+            )
+            .expect("count")
+            .expect("row");
+        assert_eq!((imports, temporary), (0, 0));
+        assert!(!view.unsat(formula.lit()).expect("no judgement"));
+    }
+
+    #[test]
+    fn scratch_commit_failure_rolls_back_and_leaves_connection_usable() {
+        let connection = open();
+        let view = connection.view();
+        let (formula, clauses) = unit_contradiction(&view);
+        view.storage()
+            .execute_batch(
+                "PRAGMA foreign_keys = ON;
+                 CREATE TABLE commit_parent (id INTEGER PRIMARY KEY);
+                 CREATE TABLE commit_child (
+                     id INTEGER PRIMARY KEY,
+                     parent_id INTEGER NOT NULL REFERENCES commit_parent(id)
+                         DEFERRABLE INITIALLY DEFERRED
+                 );
+                 CREATE TEMP TRIGGER fail_scratch_commit AFTER INSERT ON prop_import
+                 BEGIN INSERT INTO commit_child VALUES (NEW.import_id, -1); END;",
+            )
+            .expect("fault setup");
+        let proof = lrat::parse_text("3 0 1 2 0\n").expect("parse");
+        assert!(
+            scratch::lrat_replay_scratch(&view, formula, &clauses, &proof, "faulted commit")
+                .is_err()
+        );
+        let counts = view
+            .storage()
+            .query_row(
+                "SELECT (SELECT count(*) FROM prop_import),
+                        (SELECT count(*) FROM commit_child),
+                        (SELECT count(*) FROM sqlite_temp_schema
+                         WHERE name = 'prop_scratch')",
+                &[],
+                |row| Ok((row.integer(0)?, row.integer(1)?, row.integer(2)?)),
+            )
+            .expect("counts")
+            .expect("row");
+        assert_eq!(counts, (0, 0, 0));
+        assert!(!view.unsat(formula.lit()).expect("no judgement"));
+
+        view.storage()
+            .execute_batch("DROP TRIGGER fail_scratch_commit")
+            .expect("usable connection");
+        scratch::lrat_replay_scratch(&view, formula, &clauses, &proof, "later replay")
+            .expect("later transaction");
+    }
+
+    #[test]
+    fn scratch_rejects_metadata_and_large_hint_tail_before_replay() {
+        let connection = open();
+        let view = connection.view();
+        let (formula, clauses) = unit_contradiction(&view);
+        let proof = [lrat::LratInstr::Learn {
+            id: 3,
+            clause: Vec::new(),
+            hints: vec![1; 100_000],
+        }];
+        let limits = RefutationLimits {
+            proof: lrat::Limits {
+                terms_per_instruction: 100_000,
+                total_terms: 100_002,
+                work_units: 2,
+                ..lrat::Limits::default()
+            },
+            ..RefutationLimits::default()
+        };
+        assert!(matches!(
+            scratch::lrat_replay_scratch_bounded(
+                &view, formula, &clauses, &proof, "bounded", limits,
+            ),
+            Err(PropError::LratRejected {
+                reason: lrat::LratError::Limit {
+                    resource: "scratch work",
+                    ..
+                }
+            })
+        ));
+
+        let oversized = "x".repeat(scratch::SCRATCH_MEANING_BYTES + 1);
+        assert!(matches!(
+            scratch::lrat_replay_scratch(&view, formula, &clauses, &[], &oversized,),
+            Err(PropError::InvalidScratchMeaning { .. })
+        ));
+    }
+
     #[test]
     fn schema_identity_matches_fixed_vector() {
         assert_eq!(
             open().schema_id().expect("schema id"),
-            o256!("89482a630589fa0d693a5a58d62607d338d0ccc4fcd64fa1f21ccf9509baaddb")
+            o256!("09a2f43cdef21ee61fb1b0cc7062e42acbdde05bd6c605f223929d751133cc58")
         );
     }
 }

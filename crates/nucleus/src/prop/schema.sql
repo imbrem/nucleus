@@ -20,6 +20,11 @@ CREATE TABLE prop_row (
     PRIMARY KEY (lhs, rhs)
 ) STRICT, WITHOUT ROWID;
 
+CREATE TABLE prop_import (
+    import_id INTEGER PRIMARY KEY CHECK (import_id > 0),
+    meaning   TEXT NOT NULL CHECK (length(meaning) > 0)
+) STRICT;
+
 CREATE TABLE prop_world (
     world_id INTEGER PRIMARY KEY CHECK (world_id > 0),
     meaning  TEXT CHECK (meaning IS NULL OR length(meaning) > 0)

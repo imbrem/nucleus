@@ -331,12 +331,23 @@ impl<'a> Transaction<'a> {
     ///
     /// # Errors
     ///
-    /// Returns an error when `COMMIT` fails. The transaction is considered
-    /// finished either way: `SQLite` has already decided its fate, and
-    /// rolling back afterwards would be a second, wrong decision.
+    /// Returns the `COMMIT` error when committing fails, after attempting to
+    /// roll the transaction back.
     pub fn commit(mut self) -> Result<(), Error> {
-        self.finished = true;
-        self.connection.execute_batch("COMMIT")
+        match self.connection.execute_batch("COMMIT") {
+            Ok(()) => {
+                self.finished = true;
+                Ok(())
+            }
+            Err(error) => {
+                // A deferred constraint can reject COMMIT while leaving the
+                // transaction open. Preserve that primary error and clean up.
+                if self.connection.execute_batch("ROLLBACK").is_ok() {
+                    self.finished = true;
+                }
+                Err(error)
+            }
+        }
     }
 
     /// Rolls back explicitly.
@@ -512,5 +523,41 @@ mod tests {
             .query_row("SELECT count(*) FROM t", &[], |row| row.integer(0))
             .unwrap();
         assert_eq!(count, Some(0));
+    }
+
+    #[test]
+    fn a_failed_commit_rolls_back_and_preserves_its_error() {
+        let connection = connection();
+        connection
+            .execute_batch(
+                "PRAGMA foreign_keys = ON;
+                 CREATE TABLE parent (id INTEGER PRIMARY KEY);
+                 CREATE TABLE child (
+                     id INTEGER PRIMARY KEY,
+                     parent_id INTEGER NOT NULL REFERENCES parent(id)
+                         DEFERRABLE INITIALLY DEFERRED
+                 );",
+            )
+            .unwrap();
+
+        let transaction = Transaction::begin(&connection).unwrap();
+        transaction
+            .connection()
+            .execute("INSERT INTO child VALUES (1, 99)", &[])
+            .unwrap();
+        let error = transaction.commit().unwrap_err();
+        assert!(error.to_string().contains("FOREIGN KEY"), "{error}");
+
+        let child_count = connection
+            .query_row("SELECT count(*) FROM child", &[], |row| row.integer(0))
+            .unwrap();
+        assert_eq!(child_count, Some(0));
+
+        let transaction = Transaction::begin(&connection).unwrap();
+        transaction
+            .connection()
+            .execute("INSERT INTO parent VALUES (99)", &[])
+            .unwrap();
+        transaction.commit().unwrap();
     }
 }
