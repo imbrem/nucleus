@@ -1,4 +1,4 @@
-import type { SatRequest, SatResult, SatSolver } from "./index.js";
+import type { SatRequest, SatResult, SatSolver } from "./sat-provider.js";
 
 export const DIMACS_CONTENT_TYPE = "application/dimacs";
 export const MODEL_CONTENT_TYPE = "application/vnd.nucleus.sat-model";
@@ -15,6 +15,12 @@ export class HttpSatSolver implements SatSolver {
   }
 
   async solve(request: SatRequest, signal?: AbortSignal): Promise<SatResult> {
+    const problem = problemId(request.problem);
+    if (
+      request.proof.format !== "binary-lrat" ||
+      request.proof.diagnosticAsciiLrat === true
+    )
+      throw new Error("HTTP SAT provider supports binary LRAT only");
     boundedLimit(request.limits.maxModelLiterals, MAX_MODEL_LITERALS, "model");
     boundedLimit(request.limits.maxProofBytes, MAX_RESPONSE_BYTES, "proof");
     const response = await fetch(this.#url, {
@@ -34,12 +40,14 @@ export class HttpSatSolver implements SatSolver {
     const type = response.headers.get("content-type")?.split(";", 1)[0];
     if (type === MODEL_CONTENT_TYPE) {
       const bytes = await readBounded(response, modelByteLimit(request));
-      return { kind: "sat", model: parseModel(bytes, request) };
+      return { kind: "sat", problem, model: parseModel(bytes, request) };
     }
     if (type === LRAT_CONTENT_TYPE) {
       return {
         kind: "unsat",
+        problem,
         proof: await readBounded(response, request.limits.maxProofBytes),
+        format: "binary-lrat",
       };
     }
     await response.body?.cancel();
@@ -47,6 +55,12 @@ export class HttpSatSolver implements SatSolver {
       `SAT service returned unsupported content type ${type ?? ""}`,
     );
   }
+}
+
+function problemId(value: Uint8Array): Uint8Array {
+  if (!(value instanceof Uint8Array) || value.byteLength !== 32)
+    throw new Error("invalid SAT problem identity");
+  return Uint8Array.from(value);
 }
 
 function boundedLimit(value: number, maximum: number, name: string): void {

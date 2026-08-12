@@ -5,7 +5,7 @@ import { mkdtemp, open, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { SatRequest, SatResult, SatSolver } from "./index.js";
+import type { SatRequest, SatResult, SatSolver } from "./sat-provider.js";
 import {
   DIMACS_CONTENT_TYPE,
   LRAT_CONTENT_TYPE,
@@ -46,6 +46,11 @@ export class CadicalSolver implements SatSolver {
   }
 
   async solve(request: SatRequest, signal?: AbortSignal): Promise<SatResult> {
+    const problem = problemId(request.problem);
+    if (request.proof.format !== "binary-lrat")
+      throw new Error("unsupported SAT proof format");
+    const asciiProof =
+      this.#options.asciiProof || request.proof.diagnosticAsciiLrat === true;
     if (process.platform === "win32") {
       throw new Error(
         "the native CaDiCaL adapter requires POSIX process groups; use HttpSatSolver on Windows",
@@ -66,7 +71,7 @@ export class CadicalSolver implements SatSolver {
       const args = [
         "--quiet",
         "--lrat",
-        this.#options.asciiProof ? "--no-binary" : "--binary",
+        asciiProof ? "--no-binary" : "--binary",
         input,
         proof,
       ];
@@ -82,14 +87,17 @@ export class CadicalSolver implements SatSolver {
         throw new Error(`CaDiCaL exited with status ${run.code}`);
       }
       const status = parseStatus(run.stdout, request.limits.maxModelLiterals);
-      if (run.code === 10 && status.kind === "sat") return status;
+      if (run.code === 10 && status.kind === "sat")
+        return { ...status, problem };
       if (run.code === 20 && status.kind === "unsat") {
         return {
           kind: "unsat",
+          problem,
           proof: await readProofBounded(
             proof,
             Math.min(request.limits.maxProofBytes, this.#options.maxProofBytes),
           ),
+          format: asciiProof ? "ascii-lrat" : "binary-lrat",
         };
       }
       throw new Error(`CaDiCaL returned inconsistent exit status ${run.code}`);
@@ -97,6 +105,12 @@ export class CadicalSolver implements SatSolver {
       await rm(directory, { recursive: true, force: true });
     }
   }
+}
+
+function problemId(value: Uint8Array): Uint8Array {
+  if (!(value instanceof Uint8Array) || value.byteLength !== 32)
+    throw new Error("invalid SAT problem identity");
+  return Uint8Array.from(value);
 }
 
 async function readProofBounded(
@@ -321,13 +335,20 @@ export function createCadicalServer(options: CadicalServerOptions): Server {
       const result = await abortable(
         options.solver.solve(
           {
+            // HTTP transports canonical DIMACS directly. The client-side
+            // continuation retains the authoritative problem identity; this
+            // server-local token only prevents provider-result mixups here.
+            problem: new Uint8Array(32),
             dimacs: Uint8Array.from(Buffer.concat(chunks, size)),
             limits: { maxModelLiterals, maxProofBytes },
+            proof: { format: "binary-lrat" },
           },
           controller.signal,
         ),
         controller.signal,
       );
+      if (!sameProblem(result.problem, new Uint8Array(32)))
+        throw new HttpError(502, "solver returned another problem's result");
       if (result.kind === "unknown")
         throw new HttpError(503, result.reason ?? "unknown");
       if (result.kind === "sat") {
@@ -344,6 +365,8 @@ export function createCadicalServer(options: CadicalServerOptions): Server {
           throw new HttpError(502, "solver returned a non-byte proof");
         if (result.proof.byteLength > maxProofBytes)
           throw new HttpError(502, "solver proof exceeds server bound");
+        if (result.format !== "binary-lrat")
+          throw new HttpError(502, "HTTP solver must return binary LRAT");
         response.writeHead(200, {
           "content-type": LRAT_CONTENT_TYPE,
           "content-length": result.proof.byteLength,
@@ -363,6 +386,14 @@ export function createCadicalServer(options: CadicalServerOptions): Server {
       response.end(error instanceof Error ? error.message : String(error));
     }
   });
+}
+
+function sameProblem(left: unknown, right: Uint8Array): boolean {
+  return (
+    left instanceof Uint8Array &&
+    left.byteLength === right.byteLength &&
+    left.every((value, index) => value === right[index])
+  );
 }
 
 function serializeModel(model: unknown, limit: number): string {

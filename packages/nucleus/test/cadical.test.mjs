@@ -8,9 +8,12 @@ import { CadicalSolver, createCadicalServer } from "../dist/cadical-node.js";
 import { HttpSatSolver, LRAT_CONTENT_TYPE } from "../dist/sat-http.js";
 
 const request = {
+  problem: new Uint8Array(32).fill(7),
   dimacs: new TextEncoder().encode("p cnf 1 1\n1 0\n"),
   limits: { maxModelLiterals: 4, maxProofBytes: 1024 },
+  proof: { format: "binary-lrat" },
 };
+const localProblem = new Uint8Array(32);
 
 async function fixture(source) {
   const directory = await mkdtemp(join(tmpdir(), "nucleus-cadical-test-"));
@@ -38,7 +41,11 @@ test("native provider parses SAT and uses fixed binary-LRAT arguments", async ()
   const result = await new CadicalSolver({ executable: fake.executable }).solve(
     request,
   );
-  assert.deepEqual(result, { kind: "sat", model: [1n] });
+  assert.deepEqual(result, {
+    kind: "sat",
+    problem: request.problem,
+    model: [1n],
+  });
 });
 
 test("native provider returns bounded binary LRAT", async () => {
@@ -52,6 +59,8 @@ test("native provider returns bounded binary LRAT", async () => {
     request,
   );
   assert.equal(result.kind, "unsat");
+  assert.deepEqual(result.problem, request.problem);
+  assert.equal(result.format, "binary-lrat");
   assert.deepEqual([...result.proof], [97, 6, 0, 2, 4, 0]);
 });
 
@@ -146,7 +155,7 @@ test("native provider accepts CRLF status output and validates bounds", async ()
   `);
   assert.deepEqual(
     await new CadicalSolver({ executable: fake.executable }).solve(request),
-    { kind: "sat", model: [1n] },
+    { kind: "sat", problem: request.problem, model: [1n] },
   );
   assert.throws(() => new CadicalSolver({ timeoutMs: 0 }), /invalid/);
   assert.throws(
@@ -172,7 +181,7 @@ test("native provider reaps inherited pipes after a successful parent exit", asy
       executable: fake.executable,
       timeoutMs: 500,
     }).solve(request),
-    { kind: "sat", model: [1n] },
+    { kind: "sat", problem: request.problem, model: [1n] },
   );
 });
 
@@ -182,7 +191,12 @@ test("HTTP adapter and server preserve the injected solver boundary", async () =
     solver: {
       solve: async (received) => {
         assert.deepEqual(received.dimacs, request.dimacs);
-        return { kind: "unsat", proof };
+        return {
+          kind: "unsat",
+          problem: localProblem,
+          proof,
+          format: "binary-lrat",
+        };
       },
     },
   });
@@ -192,7 +206,12 @@ test("HTTP adapter and server preserve the injected solver boundary", async () =
     const result = await new HttpSatSolver(
       `http://127.0.0.1:${address.port}/`,
     ).solve(request);
-    assert.deepEqual(result, { kind: "unsat", proof });
+    assert.deepEqual(result, {
+      kind: "unsat",
+      problem: request.problem,
+      proof,
+      format: "binary-lrat",
+    });
   } finally {
     await new Promise((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
@@ -226,6 +245,7 @@ test("HTTP server validates hostile solver results before serialization", async 
   const hostile = [
     {
       kind: "sat",
+      problem: localProblem,
       model: {
         length: 0,
         *[Symbol.iterator]() {
@@ -233,10 +253,15 @@ test("HTTP server validates hostile solver results before serialization", async 
         },
       },
     },
-    { kind: "sat", model: [0n] },
-    { kind: "sat", model: [1n << 100n] },
-    { kind: "unsat", proof: "not bytes" },
-    { kind: "invalid", proof: Uint8Array.of(1) },
+    { kind: "sat", problem: localProblem, model: [0n] },
+    { kind: "sat", problem: localProblem, model: [1n << 100n] },
+    {
+      kind: "unsat",
+      problem: localProblem,
+      proof: "not bytes",
+      format: "binary-lrat",
+    },
+    { kind: "invalid", problem: localProblem, proof: Uint8Array.of(1) },
   ];
   for (const result of hostile) {
     const server = createCadicalServer({
@@ -258,6 +283,31 @@ test("HTTP server validates hostile solver results before serialization", async 
   }
 });
 
+test("HTTP server rejects a result replayed from another problem", async () => {
+  const server = createCadicalServer({
+    solver: {
+      solve: async () => ({
+        kind: "unsat",
+        problem: new Uint8Array(32).fill(9),
+        proof: Uint8Array.of(97, 6, 0, 2, 4, 0),
+        format: "binary-lrat",
+      }),
+    },
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    await assert.rejects(
+      new HttpSatSolver(`http://127.0.0.1:${address.port}/`).solve(request),
+      /HTTP 502/,
+    );
+  } finally {
+    await new Promise((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});
+
 test("HTTP server snapshots an untrusted model length", async () => {
   let reads = 0;
   const model = new Proxy([1n], {
@@ -270,7 +320,9 @@ test("HTTP server snapshots an untrusted model length", async () => {
     },
   });
   const server = createCadicalServer({
-    solver: { solve: async () => ({ kind: "sat", model }) },
+    solver: {
+      solve: async () => ({ kind: "sat", problem: localProblem, model }),
+    },
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
@@ -279,7 +331,7 @@ test("HTTP server snapshots an untrusted model length", async () => {
       await new HttpSatSolver(`http://127.0.0.1:${address.port}/`).solve(
         request,
       ),
-      { kind: "sat", model: [1n] },
+      { kind: "sat", problem: request.problem, model: [1n] },
     );
     assert.equal(reads, 1);
   } finally {
@@ -301,7 +353,7 @@ test("HTTP cancellation reaches the injected server capability", async () => {
           signal.addEventListener("abort", resolve, { once: true }),
         );
         observeAbort();
-        return { kind: "unknown" };
+        return { kind: "unknown", problem: localProblem };
       },
     },
   });
@@ -350,7 +402,7 @@ test("HTTP server owns cancellation when the solver ignores its signal", async (
   controller.abort();
   await assert.rejects(pending, /abort/i);
   await new Promise((resolve) => setTimeout(resolve, 10));
-  finish({ kind: "sat", model: [1n] });
+  finish({ kind: "sat", problem: localProblem, model: [1n] });
   await new Promise((resolve, reject) =>
     server.close((error) => (error ? reject(error) : resolve())),
   );

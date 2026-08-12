@@ -18,8 +18,9 @@ capability over ordinary HTTP. The endpoint accepts `POST` with
 zero) or `application/vnd.nucleus.lrat` (raw LRAT bytes). Request and response
 bodies are streamed and bounded. There is no WIT or solver-specific transport.
 
-The provider's answer remains untrusted. Only `Repl.completeSat` or
-`Repl.completeUnsat` can admit it, using the local model/LRAT checker.
+The provider's answer remains untrusted. A consuming SAT continuation checks
+the job and problem identities before the local model/LRAT checker may produce
+a witness or admit a fact. Transporting a result never grants authority.
 
 A browser-local CaDiCaL/Wasm artifact is deliberately deferred. Browsers use
 the same `HttpSatSolver` capability for now; adding a local implementation does
