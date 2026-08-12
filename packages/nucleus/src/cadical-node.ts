@@ -246,7 +246,14 @@ async function runBounded(
   }
 }
 
-function parseStatus(stdout: Uint8Array, maxModelLiterals: number): SatResult {
+type ParsedStatus =
+  | { readonly kind: "sat"; readonly model: readonly bigint[] }
+  | { readonly kind: "unsat" };
+
+function parseStatus(
+  stdout: Uint8Array,
+  maxModelLiterals: number,
+): ParsedStatus {
   const text = new TextDecoder("utf-8", { fatal: true }).decode(stdout);
   const lines = text.split(/\r?\n/);
   const statuses = lines.filter(
@@ -255,7 +262,7 @@ function parseStatus(stdout: Uint8Array, maxModelLiterals: number): SatResult {
   if (statuses.length !== 1)
     throw new Error("CaDiCaL returned no unique status line");
   if (statuses[0] === "s UNSATISFIABLE")
-    return { kind: "unsat", proof: new Uint8Array() };
+    return { kind: "unsat" };
   const model: bigint[] = [];
   let terminated = false;
   for (const line of lines) {
