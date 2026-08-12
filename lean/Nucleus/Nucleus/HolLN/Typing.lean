@@ -114,11 +114,11 @@ theorem HasType.unique {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
       cases second with
       | app hf' hx' =>
           have h := hf.unique hf'
-          exact Hol.arr.inj h |>.2
+          exact HolF.arr.inj h |>.2
   | lam body hA bodyTyping =>
       cases second with
       | lam _ _ bodyTyping' =>
-          exact congrArg (Hol.arr _) (bodyTyping.unique bodyTyping')
+          exact congrArg (HolF.arr _) (bodyTyping.unique bodyTyping')
   | bool value => cases second; rfl
   | zero => cases second; rfl
   | succ valueTyping => cases second; rfl
