@@ -11,6 +11,15 @@ use super::{
     CheckerVersion, Error, Fact, Judgement, Literal, LocalPropTable, SnapshotId, has_cycle,
 };
 
+/// Versioned lowering from a local implication query to canonical CNF.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LoweringVersion {
+    /// Negate the implication and include both directions of every current
+    /// local grouped definition.
+    LocalDefinitionsImplicationV1,
+}
+
 /// Failure while deriving a canonical SAT problem from a local table.
 #[derive(Debug)]
 pub enum PrepareError {
@@ -47,6 +56,7 @@ pub struct SatProblem {
     snapshot: SnapshotId,
     premise: Literal,
     conclusion: Literal,
+    lowering: LoweringVersion,
     cnf: Cnf,
 }
 
@@ -69,6 +79,12 @@ impl SatProblem {
         self.cnf.id()
     }
 
+    /// Returns the exact proposition-to-CNF lowering profile.
+    #[must_use]
+    pub const fn lowering(&self) -> LoweringVersion {
+        self.lowering
+    }
+
     /// Checks the solver's binary LRAT response.
     ///
     /// # Errors
@@ -84,6 +100,7 @@ impl SatProblem {
             snapshot: self.snapshot,
             premise: self.premise,
             conclusion: self.conclusion,
+            lowering: self.lowering,
             verdict,
         })
     }
@@ -113,6 +130,7 @@ pub struct CheckedRefutation {
     snapshot: SnapshotId,
     premise: Literal,
     conclusion: Literal,
+    lowering: LoweringVersion,
     verdict: VerifiedUnsat,
 }
 
@@ -207,6 +225,7 @@ impl LocalPropTable {
             snapshot: self.snapshot(),
             premise,
             conclusion,
+            lowering: LoweringVersion::LocalDefinitionsImplicationV1,
             cnf,
         })
     }
@@ -228,6 +247,7 @@ impl LocalPropTable {
             snapshot,
             premise,
             conclusion,
+            lowering,
             verdict,
         } = checked;
         consume_verdict(verdict);
@@ -236,6 +256,9 @@ impl LocalPropTable {
         }
         if snapshot.generation != self.generation {
             return Err(Error::StaleSnapshot);
+        }
+        if lowering != LoweringVersion::LocalDefinitionsImplicationV1 {
+            return Err(Error::InvalidState);
         }
         self.insert_proved(premise, conclusion)?;
         Ok(Fact {
@@ -246,7 +269,7 @@ impl LocalPropTable {
             source: super::SourceId::LOCAL,
             context: super::ContextId::EMPTY,
             judgement: Judgement::SatRefutation,
-            checker: CheckerVersion::BinaryLratV1,
+            checker: CheckerVersion::LocalImplicationBinaryLratV1,
         })
     }
 }
@@ -286,7 +309,7 @@ mod tests {
         assert_eq!(fact.premise(), proposition);
         assert_eq!(fact.conclusion(), proposition);
         assert_eq!(fact.judgement(), Judgement::SatRefutation);
-        assert_eq!(fact.checker(), CheckerVersion::BinaryLratV1);
+        assert_eq!(fact.checker(), CheckerVersion::LocalImplicationBinaryLratV1);
     }
 
     #[test]

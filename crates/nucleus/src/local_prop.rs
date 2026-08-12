@@ -253,7 +253,7 @@ pub enum CheckerVersion {
     /// The local, acyclic, empty-context rules in this module.
     LocalV1,
     /// Binary LRAT checked by the bounded SAT checker, version 1.
-    BinaryLratV1,
+    LocalImplicationBinaryLratV1,
 }
 
 /// The baseline source identity.

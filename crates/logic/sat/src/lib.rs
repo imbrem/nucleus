@@ -32,6 +32,8 @@ pub struct CnfLimits {
     pub literals_per_clause: usize,
     /// Maximum literals across the input matrix.
     pub total_literals: usize,
+    /// Maximum bytes in the rendered canonical DIMACS problem.
+    pub dimacs_bytes: usize,
 }
 
 impl Default for CnfLimits {
@@ -41,6 +43,7 @@ impl Default for CnfLimits {
             clauses: 1_000_000,
             literals_per_clause: 1_000_000,
             total_literals: 16_000_000,
+            dimacs_bytes: 256 * 1024 * 1024,
         }
     }
 }
@@ -216,23 +219,11 @@ impl Cnf {
             }
         }
         let id = ProblemId(*blake3::hash(&identity).as_bytes());
-        let max_variable = canonical
-            .iter()
-            .flatten()
-            .map(|literal| literal.unsigned_abs())
-            .max()
-            .unwrap_or(0);
-        let mut dimacs = format!("p cnf {max_variable} {}\n", canonical.len());
-        for clause in &canonical {
-            for literal in clause {
-                write!(dimacs, "{literal} ").expect("writing to String cannot fail");
-            }
-            dimacs.push_str("0\n");
-        }
+        let dimacs = render_dimacs(&canonical, limits.dimacs_bytes)?;
         Ok(Self {
             clauses: canonical.into_boxed_slice(),
             id,
-            dimacs: dimacs.into_bytes().into_boxed_slice(),
+            dimacs,
         })
     }
 
@@ -246,6 +237,12 @@ impl Cnf {
     #[must_use]
     pub fn dimacs(&self) -> &[u8] {
         &self.dimacs
+    }
+
+    /// Returns the canonical clause matrix in DIMACS clause order.
+    #[must_use]
+    pub fn clauses(&self) -> &[Vec<i64>] {
+        &self.clauses
     }
 
     /// Checks a complete satisfying assignment for this problem.
@@ -271,6 +268,55 @@ impl Cnf {
         check_clauses_bounded(&self.clauses, &instructions, limits)?;
         Ok(VerifiedUnsat { problem: self.id })
     }
+}
+
+fn render_dimacs(canonical: &[Vec<i64>], limit: usize) -> Result<Box<[u8]>, CnfError> {
+    let max_variable = canonical
+        .iter()
+        .flatten()
+        .map(|literal| literal.unsigned_abs())
+        .max()
+        .unwrap_or(0);
+    let header = format!("p cnf {max_variable} {}\n", canonical.len());
+    let dimacs_len = canonical.iter().try_fold(header.len(), |total, clause| {
+        clause
+            .iter()
+            .try_fold(total, |total, literal| {
+                total
+                    .checked_add(decimal_len(*literal))
+                    .and_then(|value| value.checked_add(1))
+                    .ok_or(CnfError::Limit {
+                        resource: "DIMACS bytes",
+                        limit,
+                    })
+            })
+            .and_then(|value| {
+                value.checked_add(2).ok_or(CnfError::Limit {
+                    resource: "DIMACS bytes",
+                    limit,
+                })
+            })
+    })?;
+    if dimacs_len > limit {
+        return Err(CnfError::Limit {
+            resource: "DIMACS bytes",
+            limit,
+        });
+    }
+    let mut dimacs = String::with_capacity(dimacs_len);
+    dimacs.push_str(&header);
+    for clause in canonical {
+        for literal in clause {
+            write!(dimacs, "{literal} ").expect("writing to String cannot fail");
+        }
+        dimacs.push_str("0\n");
+    }
+    Ok(dimacs.into_bytes().into_boxed_slice())
+}
+
+fn decimal_len(value: i64) -> usize {
+    let digits = value.unsigned_abs().ilog10() as usize + 1;
+    digits + usize::from(value < 0)
 }
 
 /// One LRAT instruction.
@@ -521,9 +567,11 @@ fn verify_model_for(
     {
         return Err(ModelError::UnsatisfiedClause);
     }
+    let mut literals = model.to_vec();
+    literals.sort_unstable_by_key(|literal| literal.unsigned_abs());
     Ok(VerifiedModel {
         problem: cnf.id,
-        literals: model.to_vec().into_boxed_slice(),
+        literals: literals.into_boxed_slice(),
     })
 }
 
@@ -718,10 +766,20 @@ impl LratKernel {
     }
 
     /// The `forget` rule: dropping clauses only ever weakens the kernel.
-    pub(crate) fn forget(&mut self, ids: &[u64]) {
+    pub(crate) fn forget(&mut self, ids: &[u64]) -> Result<(), LratError> {
+        let mut seen = BTreeSet::new();
+        for id in ids {
+            if !seen.insert(*id) || !self.live.contains_key(id) {
+                return Err(LratError::UnknownClause {
+                    step: self.last_id,
+                    clause: *id,
+                });
+            }
+        }
         for id in ids {
             self.live.remove(id);
         }
+        Ok(())
     }
 
     /// Whether the empty clause has been established.
@@ -738,10 +796,7 @@ impl LratKernel {
     pub(crate) fn apply(&mut self, instruction: &LratInstr) -> Result<(), LratError> {
         match instruction {
             LratInstr::Learn { id, clause, hints } => self.learn(*id, clause, hints),
-            LratInstr::Forget { ids } => {
-                self.forget(ids);
-                Ok(())
-            }
+            LratInstr::Forget { ids } => self.forget(ids),
         }
     }
 }
@@ -1227,21 +1282,30 @@ fn charge_instructions(current: usize, limits: Limits) -> Result<(), LratError> 
     }
 }
 
-/// Reads one MSB-continuation varint.
+/// Reads one canonical MSB-continuation `u64` varint.
 fn read_varint(bytes: &[u8], position: &mut usize) -> Result<u64, LratError> {
     let mut value = 0_u64;
     let mut shift = 0_u32;
+    let mut bytes_read = 0_u32;
     loop {
         let byte = *bytes
             .get(*position)
             .ok_or(LratError::Parse { at: *position })?;
         *position += 1;
-        if shift >= 63 {
+        bytes_read += 1;
+        let payload = byte & 0x7f;
+        if shift == 63 && payload > 1 {
             return Err(LratError::Parse { at: *position });
         }
-        value |= u64::from(byte & 0x7f) << shift;
+        value |= u64::from(payload) << shift;
         if byte & 0x80 == 0 {
+            if bytes_read > 1 && payload == 0 {
+                return Err(LratError::Parse { at: *position });
+            }
             return Ok(value);
+        }
+        if bytes_read == 10 {
+            return Err(LratError::Parse { at: *position });
         }
         shift += 7;
     }
@@ -1300,6 +1364,7 @@ mod tests {
             clauses: 2,
             literals_per_clause: 2,
             total_literals: 3,
+            dimacs_bytes: 128,
         };
         assert_eq!(
             Cnf::new(Vec::<Vec<i64>>::new(), limits, strict),
@@ -1347,6 +1412,27 @@ mod tests {
         assert_eq!(
             cnf.verify_model(&[1, -1, 2], 3),
             Err(ModelError::ContradictoryLiterals)
+        );
+        assert_eq!(
+            cnf.verify_model(&[2, 1], 2)
+                .expect("canonical model")
+                .literals(),
+            &[1, 2]
+        );
+    }
+
+    #[test]
+    fn dimacs_size_is_bounded_before_rendering() {
+        let limits = CnfLimits {
+            dimacs_bytes: 12,
+            ..CnfLimits::default()
+        };
+        assert_eq!(
+            Cnf::new(vec![vec![i64::MAX]], limits, CnfPolicy::default()),
+            Err(CnfError::Limit {
+                resource: "DIMACS bytes",
+                limit: 12,
+            })
         );
     }
 
@@ -1403,6 +1489,30 @@ mod tests {
     }
 
     #[test]
+    fn deletions_reject_unknown_and_repeated_ids_without_mutation() {
+        let mut kernel = LratKernel::new(&[vec![1], vec![-1]]);
+        assert_eq!(
+            kernel.forget(&[1, 99]),
+            Err(LratError::UnknownClause {
+                step: 2,
+                clause: 99,
+            })
+        );
+        assert!(kernel.live.contains_key(&1));
+        assert!(kernel.live.contains_key(&2));
+        assert_eq!(
+            kernel.forget(&[1, 1]),
+            Err(LratError::UnknownClause { step: 2, clause: 1 })
+        );
+        assert!(kernel.live.contains_key(&1));
+        kernel.forget(&[1]).expect("first deletion");
+        assert_eq!(
+            kernel.forget(&[1]),
+            Err(LratError::UnknownClause { step: 2, clause: 1 })
+        );
+    }
+
+    #[test]
     fn binary_diagnostics_roundtrip_and_remain_bounded() {
         let binary = [b'a', 6, 0, 2, 4, 0, b'd', 6, 0];
         let text = binary_lrat_to_text(&binary, Limits::default()).expect("diagnostic text");
@@ -1424,6 +1534,42 @@ mod tests {
         let mut trailing = binary.to_vec();
         trailing.push(0xff);
         assert!(parse_binary(&trailing).is_err());
+    }
+
+    #[test]
+    fn binary_numbers_cover_the_cnf_domain_and_reject_nonminimal_varints() {
+        fn encode(mut value: u64) -> Vec<u8> {
+            let mut bytes = Vec::new();
+            loop {
+                let payload = (value & 0x7f) as u8;
+                value >>= 7;
+                bytes.push(if value == 0 { payload } else { payload | 0x80 });
+                if value == 0 {
+                    return bytes;
+                }
+            }
+        }
+
+        let mut proof = vec![b'a', 2];
+        proof.extend(encode((i64::MAX as u64) << 1));
+        proof.extend([0, 0]);
+        assert_eq!(
+            parse_binary(&proof).expect("maximum signed literal"),
+            vec![LratInstr::Learn {
+                id: 1,
+                clause: vec![i64::MAX],
+                hints: vec![],
+            }]
+        );
+
+        assert!(parse_binary(&[b'a', 2, 0x80, 0, 0]).is_err());
+        assert!(parse_binary(&[b'a', 2, 0, 0x80, 0]).is_err());
+        assert!(
+            parse_binary(&[
+                b'a', 2, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 2
+            ])
+            .is_err()
+        );
     }
 
     #[test]
