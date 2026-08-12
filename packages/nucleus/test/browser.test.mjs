@@ -137,7 +137,9 @@ test("Chromium cancels an HTTP SAT provider without wedging the REPL", async (co
   const provider = await startSatProvider(context, origin, {
     solve(_request, signal) {
       return new Promise((_resolve, reject) => {
-        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
       });
     },
   });
@@ -181,7 +183,10 @@ test("Chromium checks SAT and binary LRAT from an HTTP provider", async (context
     return outcomes;
   }, provider);
   assert.equal(result.filter((value) => /checked-model/.test(value)).length, 3);
-  assert.equal(result.filter((value) => /admitted=SatRefutation/.test(value)).length, 3);
+  assert.equal(
+    result.filter((value) => /admitted=SatRefutation/.test(value)).length,
+    3,
+  );
 });
 
 test("the browser runs the same REPL as the CLI", async (context) => {

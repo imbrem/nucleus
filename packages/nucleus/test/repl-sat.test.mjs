@@ -14,10 +14,7 @@ await init({
 test("the browser REPL checks an untrusted SAT model", async () => {
   const repl = new Repl();
   assert.match(repl.eval("(sat-demos)").text, /full-adder-unsat/);
-  assert.match(
-    repl.eval('(sat-set "p cnf 1 1\\n1 0\\n")').text,
-    /custom/,
-  );
+  assert.match(repl.eval('(sat-set "p cnf 1 1\\n1 0\\n")').text, /custom/);
 
   const host = {
     sat: {
@@ -76,10 +73,7 @@ test("a wrong identity does not consume the pending solve", async () => {
     "(sat-solve)",
   );
   assert.match(result.output, /wrong problem/);
-  assert.match(
-    repl.completeSatUnknown(request.problem, "retry"),
-    /unknown/,
-  );
+  assert.match(repl.completeSatUnknown(request.problem, "retry"), /unknown/);
 });
 
 test("real CaDiCaL solves and refutes the circuit demos", async () => {
@@ -107,7 +101,13 @@ test("provider errors and cancellation consume the pending solve", async () => {
   repl.eval("(sat-select and-sat)");
   const failed = await drive(
     repl,
-    { sat: { async solve() { throw new Error("provider unavailable"); } } },
+    {
+      sat: {
+        async solve() {
+          throw new Error("provider unavailable");
+        },
+      },
+    },
     "(sat-solve)",
   );
   assert.match(failed.output, /provider unavailable/);
@@ -116,9 +116,17 @@ test("provider errors and cancellation consume the pending solve", async () => {
   const controller = new AbortController();
   const pending = drive(
     repl,
-    { sat: { solve(_request, signal) { return new Promise((_resolve, reject) => {
-      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-    }); } } },
+    {
+      sat: {
+        solve(_request, signal) {
+          return new Promise((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), {
+              once: true,
+            });
+          });
+        },
+      },
+    },
     "(sat-solve)",
     controller.signal,
   );
