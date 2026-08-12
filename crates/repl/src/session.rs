@@ -4,8 +4,9 @@
 
 use covalence_data_cas::MemoryCas;
 use covalence_lib_hash::{O256, o256};
-use covalence_nucleus::prop::{AllowAll, Lit, PreparedSat};
+use covalence_nucleus::prop::{AllowAll, Lit, PreparedSat, WorldId};
 
+use crate::sat::{SAT_DEMOS, SatProblem};
 use crate::sexpr::{ReadError, Value, read};
 use crate::{ConnectionId, Repl, ReplError};
 
@@ -34,6 +35,8 @@ pub enum Response {
     Value(Value),
     /// Ask the host to read a file for [`Session::admit`].
     ReadFile(String),
+    /// Ask the host to read a DIMACS file for [`Session::load_sat`].
+    ReadSatFile(String),
     /// Fetch this URL and pass its bytes to [`Session::admit_verified`].
     Fetch {
         /// Where the bytes might be.
@@ -131,6 +134,12 @@ pub enum SessionError {
     UnknownSatJob(String),
     /// An untrusted model contained an invalid literal.
     InvalidSatLiteral(i64),
+    /// A DIMACS problem is malformed or unavailable.
+    SatProblem(String),
+    /// No SAT problem is selected.
+    NoSatProblem,
+    /// No checked SAT result is available.
+    NoSatResult,
     /// The checked propositional kernel rejected preparation or completion.
     Prop(covalence_nucleus::prop::PropError),
     /// The store or a connection failed.
@@ -159,6 +168,11 @@ impl std::fmt::Display for SessionError {
             Self::InvalidSatLiteral(literal) => {
                 write!(formatter, "invalid SAT model literal {literal}")
             }
+            Self::SatProblem(message) => formatter.write_str(message),
+            Self::NoSatProblem => {
+                formatter.write_str("no SAT problem is selected; try (sat-demos)")
+            }
+            Self::NoSatResult => formatter.write_str("no checked SAT result is available"),
             Self::Prop(error) => write!(formatter, "{error}"),
             Self::Repl(error) => write!(formatter, "{error}"),
         }
@@ -216,6 +230,21 @@ pub const HELP: &str = "\
 (sqlite ADDRESS)    ... with that object already open
 (sqlite ADDRESS \"SELECT 1\")
                     ... and run that instead of prompting
+
+(sat-demos)         list built-in gate and adder problems
+(sat-demo NAME)     select a built-in problem
+(sat-set \"DIMACS\")  select an inline problem
+(sat-load \"PATH\")   select a DIMACS file
+(sat-problem)       describe the selected problem
+(sat-dimacs)        show its canonical DIMACS
+(sat-solve)         ask the configured untrusted solver
+(sat-status)        show selected, pending, operational, or checked state
+(sat-result)        show the last checked result
+(sat-model)         show the checked model
+(sat-proof)         show checked proof metadata
+(sat-proof-text)    render the retained LRAT proof for inspection
+(sat-checked)       query the locally admitted judgement
+(sat-database)      snapshot the selected kernel into the local store
 
 (help)              this
 (quit)              leave
@@ -292,7 +321,38 @@ pub struct Session {
     endpoints: Vec<Endpoint>,
     selected: usize,
     next_sat_job: u64,
-    pending_sat: Option<(SatJobId, PreparedSat<AllowAll>)>,
+    pending_sat: Option<PendingSat>,
+    sat_problem: Option<SatProblem>,
+    sat_result: Option<CheckedSat>,
+    sat_status: Option<SatStatus>,
+}
+
+struct PendingSat {
+    job: SatJobId,
+    problem: O256,
+    prepared: PreparedSat<AllowAll>,
+}
+
+enum CheckedSat {
+    Sat {
+        problem: O256,
+        world: WorldId,
+        model: Vec<i64>,
+    },
+    Unsat {
+        problem: O256,
+        proof: O256,
+        bytes: usize,
+        binary: bool,
+    },
+}
+
+enum SatStatus {
+    Ready,
+    Pending(SatJobId),
+    Checked(&'static str),
+    Operational(&'static str, Option<String>),
+    Rejected(String),
 }
 
 impl Session {
@@ -321,6 +381,9 @@ impl Session {
             selected: 0,
             next_sat_job: 1,
             pending_sat: None,
+            sat_problem: None,
+            sat_result: None,
+            sat_status: None,
         }
     }
 
@@ -346,7 +409,12 @@ impl Session {
             max_model_literals: prepared.max_model_literals(),
             max_proof_bytes: prepared.max_proof_bytes(),
         };
-        self.pending_sat = Some((job, prepared));
+        self.pending_sat = Some(PendingSat {
+            job,
+            problem: prepared.id(),
+            prepared,
+        });
+        self.sat_status = Some(SatStatus::Pending(job));
         Ok(response)
     }
 
@@ -357,13 +425,38 @@ impl Session {
     /// Returns an error for a stale job, malformed model, failed check, or
     /// atomic commit failure. A matching job is consumed on every outcome.
     pub fn complete_sat(&mut self, job: SatJobId, model: &[i64]) -> Result<Value, SessionError> {
-        let prepared = self.take_sat(job)?;
-        let model = model
+        let pending = self.take_sat(job)?;
+        let model = match model
             .iter()
             .copied()
             .map(|literal| Lit::new(literal).ok_or(SessionError::InvalidSatLiteral(literal)))
-            .collect::<Result<Vec<_>, _>>()?;
-        let world = prepared.certify_model(&model)?;
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(model) => model,
+            Err(error) => {
+                self.sat_status = Some(SatStatus::Rejected(error.to_string()));
+                return Err(error);
+            }
+        };
+        let world = match pending.prepared.certify_model(&model) {
+            Ok(world) => world,
+            Err(error) => {
+                self.sat_status = Some(SatStatus::Rejected(error.to_string()));
+                return Err(error.into());
+            }
+        };
+        if self
+            .sat_problem
+            .as_ref()
+            .is_some_and(|problem| problem.identity == pending.problem)
+        {
+            self.sat_result = Some(CheckedSat::Sat {
+                problem: pending.problem,
+                world,
+                model: model.iter().map(|literal| literal.get()).collect(),
+            });
+        }
+        self.sat_status = Some(SatStatus::Checked("sat"));
         Ok(Value::List(vec![
             Value::Symbol("sat".to_owned()),
             Value::Integer(world.get()),
@@ -377,7 +470,27 @@ impl Session {
     /// Returns an error for a stale job, malformed or invalid proof, exhausted
     /// bound, or commit failure.
     pub fn complete_unsat(&mut self, job: SatJobId, proof: &[u8]) -> Result<Value, SessionError> {
-        self.take_sat(job)?.certify_lrat(proof, -1)?;
+        let pending = self.take_sat(job)?;
+        if let Err(error) = pending.prepared.certify_lrat(proof, -1) {
+            self.sat_status = Some(SatStatus::Rejected(error.to_string()));
+            return Err(error.into());
+        }
+        if self
+            .sat_problem
+            .as_ref()
+            .is_some_and(|problem| problem.identity == pending.problem)
+        {
+            let address = self.repl.put(proof.to_vec())?;
+            self.sat_result = Some(CheckedSat::Unsat {
+                problem: pending.problem,
+                proof: address,
+                bytes: proof.len(),
+                binary: proof
+                    .first()
+                    .is_some_and(|byte| matches!(byte, b'a' | b'd')),
+            });
+        }
+        self.sat_status = Some(SatStatus::Checked("unsat"));
         Ok(Value::Symbol("unsat".to_owned()))
     }
 
@@ -387,17 +500,34 @@ impl Session {
     ///
     /// Returns an error if `job` is not the retained pending job.
     pub fn abandon_sat(&mut self, job: SatJobId) -> Result<(), SessionError> {
-        self.take_sat(job).map(drop)
+        self.finish_sat_operational(job, "abandoned", None)
     }
 
-    fn take_sat(&mut self, job: SatJobId) -> Result<PreparedSat<AllowAll>, SessionError> {
-        let Some((pending, _)) = self.pending_sat.as_ref() else {
+    /// Consumes a job with a non-authoritative operational outcome.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `job` is not the retained pending job.
+    pub fn finish_sat_operational(
+        &mut self,
+        job: SatJobId,
+        state: &'static str,
+        detail: Option<&str>,
+    ) -> Result<(), SessionError> {
+        self.take_sat(job)?;
+        let detail = detail.map(|text| text.chars().take(512).collect());
+        self.sat_status = Some(SatStatus::Operational(state, detail));
+        Ok(())
+    }
+
+    fn take_sat(&mut self, job: SatJobId) -> Result<PendingSat, SessionError> {
+        let Some(pending) = self.pending_sat.as_ref() else {
             return Err(SessionError::UnknownSatJob(job.to_string()));
         };
-        if *pending != job {
+        if pending.job != job {
             return Err(SessionError::UnknownSatJob(job.to_string()));
         }
-        Ok(self.pending_sat.take().expect("checked above").1)
+        Ok(self.pending_sat.take().expect("checked above"))
     }
 
     /// Returns the selected kernel.
@@ -449,6 +579,19 @@ impl Session {
             return Err(SessionError::NotWhatWasAskedFor { expected, actual });
         }
         self.admit(bytes)
+    }
+
+    /// Selects DIMACS bytes read by the host.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed input or while a solve is pending.
+    pub fn load_sat(
+        &mut self,
+        bytes: &[u8],
+        source: impl Into<String>,
+    ) -> Result<Value, SessionError> {
+        self.select_sat(bytes, source.into(), None)
     }
 
     /// Reads and evaluates every form in `input`, returning the last response.
@@ -521,6 +664,9 @@ impl Session {
             return Ok(response);
         }
         if let Some(response) = self.kernel_form(name, arguments)? {
+            return Ok(response);
+        }
+        if let Some(response) = self.sat_form(name, arguments)? {
             return Ok(response);
         }
         match (name, arguments) {
@@ -667,6 +813,266 @@ impl Session {
             }
             _ => return Ok(None),
         }))
+    }
+
+    /// Forms for selecting and checking a DIMACS problem.
+    fn sat_form(
+        &mut self,
+        name: &str,
+        arguments: &[Value],
+    ) -> Result<Option<Response>, SessionError> {
+        Ok(Some(match (name, arguments) {
+            ("sat-demos", []) => Response::value(Value::list(
+                SAT_DEMOS
+                    .iter()
+                    .map(|demo| {
+                        Value::List(vec![
+                            Value::Symbol(demo.name.to_owned()),
+                            Value::Symbol(demo.expected.to_owned()),
+                            Value::Text(demo.description.to_owned()),
+                        ])
+                    })
+                    .collect(),
+            )),
+            ("sat-demo", [name]) => {
+                let name = name
+                    .as_text()
+                    .ok_or(SessionError::Usage("(sat-demo NAME)"))?;
+                let demo = SAT_DEMOS
+                    .iter()
+                    .find(|demo| demo.name == name)
+                    .ok_or_else(|| SessionError::SatProblem(format!("no SAT demo {name}")))?;
+                Response::value(self.select_sat(
+                    demo.dimacs.as_bytes(),
+                    demo.name.to_owned(),
+                    Some(demo.expected),
+                )?)
+            }
+            ("sat-set", [text]) => {
+                let text = text
+                    .as_text()
+                    .ok_or(SessionError::Usage("(sat-set \"DIMACS\")"))?;
+                Response::value(self.select_sat(text.as_bytes(), "inline".to_owned(), None)?)
+            }
+            ("sat-load", [path]) => {
+                if self.pending_sat.is_some() {
+                    return Err(SessionError::SatPending);
+                }
+                Response::ReadSatFile(
+                    path.as_text()
+                        .ok_or(SessionError::Usage("(sat-load \"PATH\")"))?
+                        .to_owned(),
+                )
+            }
+            ("sat-problem", []) => Response::value(self.sat_problem_value()?),
+            ("sat-dimacs", []) => Response::value(Value::Text(
+                String::from_utf8(self.problem()?.dimacs.clone())
+                    .expect("canonical DIMACS is ASCII"),
+            )),
+            ("sat-solve", []) => {
+                let prepared = self
+                    .problem()?
+                    .prepare()
+                    .map_err(SessionError::SatProblem)?;
+                let response = self.begin_sat(prepared)?;
+                self.sat_result = None;
+                response
+            }
+            ("sat-status", []) => Response::value(self.sat_status_value()),
+            ("sat-result", []) => Response::value(self.sat_result_value()?),
+            ("sat-model", []) => Response::value(self.sat_model_value()?),
+            ("sat-proof", []) => Response::value(self.sat_proof_value()?),
+            ("sat-proof-text", []) => Response::value(self.sat_proof_text_value()?),
+            ("sat-checked", []) => Response::value(self.sat_checked_value()?),
+            ("sat-database", []) => {
+                let image = self
+                    .problem()?
+                    .snapshot()
+                    .map_err(SessionError::SatProblem)?;
+                Response::value(Value::Address(self.repl.put(image)?))
+            }
+            _ if name.starts_with("sat-") => {
+                return Err(SessionError::Usage("a documented sat-* command"));
+            }
+            _ => return Ok(None),
+        }))
+    }
+
+    fn select_sat(
+        &mut self,
+        bytes: &[u8],
+        source: String,
+        expected: Option<&'static str>,
+    ) -> Result<Value, SessionError> {
+        if self.pending_sat.is_some() {
+            return Err(SessionError::SatPending);
+        }
+        let problem =
+            SatProblem::parse(bytes, source, expected).map_err(SessionError::SatProblem)?;
+        self.sat_problem = Some(problem);
+        self.sat_result = None;
+        self.sat_status = Some(SatStatus::Ready);
+        self.sat_problem_value()
+    }
+
+    fn problem(&self) -> Result<&SatProblem, SessionError> {
+        self.sat_problem.as_ref().ok_or(SessionError::NoSatProblem)
+    }
+
+    fn sat_problem_value(&self) -> Result<Value, SessionError> {
+        let problem = self.problem()?;
+        let mut fields = vec![
+            Value::List(vec![
+                Value::Symbol("source".to_owned()),
+                Value::Text(problem.source.clone()),
+            ]),
+            Value::List(vec![
+                Value::Symbol("id".to_owned()),
+                Value::Address(problem.identity),
+            ]),
+            pair("variables", count(problem.variables)),
+            pair("clauses", count(problem.clauses)),
+        ];
+        if let Some(expected) = problem.expected {
+            fields.push(Value::List(vec![
+                Value::Symbol("expected".to_owned()),
+                Value::Symbol(expected.to_owned()),
+            ]));
+        }
+        Ok(Value::List(fields))
+    }
+
+    fn current_result(&self) -> Result<(&SatProblem, &CheckedSat), SessionError> {
+        let problem = self.problem()?;
+        let result = self.sat_result.as_ref().ok_or(SessionError::NoSatResult)?;
+        let identity = match result {
+            CheckedSat::Sat { problem, .. } | CheckedSat::Unsat { problem, .. } => *problem,
+        };
+        if identity != problem.identity {
+            return Err(SessionError::NoSatResult);
+        }
+        Ok((problem, result))
+    }
+
+    fn sat_result_value(&self) -> Result<Value, SessionError> {
+        let (_, result) = self.current_result()?;
+        Ok(match result {
+            CheckedSat::Sat { world, model, .. } => Value::List(vec![
+                Value::Symbol("sat".to_owned()),
+                pair("world", world.get()),
+                pair("model-literals", count(model.len())),
+            ]),
+            CheckedSat::Unsat {
+                proof,
+                bytes,
+                binary,
+                ..
+            } => Value::List(vec![
+                Value::Symbol("unsat".to_owned()),
+                Value::List(vec![
+                    Value::Symbol("proof".to_owned()),
+                    Value::Address(*proof),
+                ]),
+                pair("bytes", count(*bytes)),
+                Value::List(vec![
+                    Value::Symbol("encoding".to_owned()),
+                    Value::Symbol(if *binary { "binary" } else { "ascii" }.to_owned()),
+                ]),
+            ]),
+        })
+    }
+
+    fn sat_status_value(&self) -> Value {
+        if self.sat_problem.is_none() {
+            return Value::Symbol("idle".to_owned());
+        }
+        match self.sat_status.as_ref().unwrap_or(&SatStatus::Ready) {
+            SatStatus::Ready => Value::Symbol("selected".to_owned()),
+            SatStatus::Pending(job) => Value::List(vec![
+                Value::Symbol("pending".to_owned()),
+                Value::Text(job.to_string()),
+            ]),
+            SatStatus::Checked(state) | SatStatus::Operational(state, None) => {
+                Value::Symbol((*state).to_owned())
+            }
+            SatStatus::Operational(state, Some(detail)) => Value::List(vec![
+                Value::Symbol((*state).to_owned()),
+                Value::Text(detail.clone()),
+            ]),
+            SatStatus::Rejected(detail) => Value::List(vec![
+                Value::Symbol("rejected".to_owned()),
+                Value::Text(detail.clone()),
+            ]),
+        }
+    }
+
+    fn sat_model_value(&self) -> Result<Value, SessionError> {
+        let (_, CheckedSat::Sat { model, .. }) = self.current_result()? else {
+            return Err(SessionError::NoSatResult);
+        };
+        Ok(Value::list(
+            model.iter().copied().map(Value::Integer).collect(),
+        ))
+    }
+
+    fn sat_proof_value(&self) -> Result<Value, SessionError> {
+        let (
+            _,
+            CheckedSat::Unsat {
+                proof,
+                bytes,
+                binary,
+                ..
+            },
+        ) = self.current_result()?
+        else {
+            return Err(SessionError::NoSatResult);
+        };
+        Ok(Value::List(vec![
+            Value::Address(*proof),
+            Value::Symbol(if *binary { "binary" } else { "ascii" }.to_owned()),
+            Value::Integer(count(*bytes)),
+        ]))
+    }
+
+    fn sat_proof_text_value(&self) -> Result<Value, SessionError> {
+        let (_, CheckedSat::Unsat { proof, .. }) = self.current_result()? else {
+            return Err(SessionError::NoSatResult);
+        };
+        let bytes = self
+            .repl
+            .cas()
+            .get(*proof)
+            .ok_or(SessionError::NoSatResult)?;
+        let text = covalence_nucleus::prop::lrat::to_text_bounded(
+            &bytes,
+            covalence_nucleus::prop::lrat::Limits::default(),
+            8 * 1024 * 1024,
+        )
+        .map_err(|error| SessionError::SatProblem(format!("LRAT display rejected: {error:?}")))?;
+        Ok(Value::Text(text))
+    }
+
+    fn sat_checked_value(&self) -> Result<Value, SessionError> {
+        let (problem, result) = self.current_result()?;
+        match result {
+            CheckedSat::Sat { world, .. }
+                if problem
+                    .sat_holds(*world)
+                    .map_err(SessionError::SatProblem)? =>
+            {
+                Ok(Value::List(vec![
+                    Value::Symbol("sat".to_owned()),
+                    pair("world", world.get()),
+                ]))
+            }
+            CheckedSat::Unsat { .. }
+                if problem.unsat_holds().map_err(SessionError::SatProblem)? =>
+            {
+                Ok(Value::Symbol("unsat".to_owned()))
+            }
+            _ => Err(SessionError::NoSatResult),
+        }
     }
 
     /// Records a kernel and selects it.
@@ -1157,5 +1563,137 @@ mod tests {
         session
             .complete_unsat(job, b"3 0 1 2 0\n")
             .expect("ASCII LRAT");
+    }
+
+    #[test]
+    fn sat_demos_are_small_canonical_gate_problems() {
+        let mut session = session();
+        let demos = say(&mut session, "(sat-demos)");
+        assert!(demos.contains("and-sat"), "{demos}");
+        assert!(demos.contains("half-adder-unsat"), "{demos}");
+
+        let first = say(&mut session, "(sat-demo and-sat)");
+        assert!(first.contains("(variables 3)"), "{first}");
+        assert!(first.contains("(expected sat)"), "{first}");
+        let identity = session.problem().expect("selected").identity;
+        assert_eq!(
+            say(&mut session, "(sat-dimacs)"),
+            r#""p cnf 3 4\n3 -1 -2 0\n1 -3 0\n2 -3 0\n3 0\n""#
+        );
+        say(&mut session, "(sat-demo and-sat)");
+        assert_eq!(
+            session.problem().expect("selected again").identity,
+            identity
+        );
+    }
+
+    #[test]
+    fn sat_demo_checks_a_model_and_queries_the_admitted_world() {
+        let mut session = session();
+        say(&mut session, "(sat-demo and-sat)");
+        let Response::Solve { job, dimacs, .. } = session.eval("(sat-solve)").expect("solve")
+        else {
+            panic!("expected solve request");
+        };
+        assert_eq!(dimacs, b"p cnf 3 4\n3 -1 -2 0\n1 -3 0\n2 -3 0\n3 0\n");
+        session
+            .complete_sat(job, &[1, 2, 3])
+            .expect("checked model");
+        assert_eq!(say(&mut session, "(sat-model)"), "(1 2 3)");
+        assert!(say(&mut session, "(sat-result)").starts_with("(sat "));
+        assert!(say(&mut session, "(sat-checked)").starts_with("(sat "));
+    }
+
+    #[test]
+    fn sat_demo_keeps_a_checked_binary_proof_as_an_artifact() {
+        let mut session = session();
+        say(&mut session, "(sat-demo and-unsat)");
+        let Response::Solve { job, .. } = session.eval("(sat-solve)").expect("solve") else {
+            panic!("expected solve request");
+        };
+        let proof = [
+            97, 12, 2, 0, 8, 4, 0, 97, 14, 4, 0, 8, 6, 0, 97, 16, 0, 12, 10, 0,
+        ];
+        session.complete_unsat(job, &proof).expect("checked proof");
+        assert_eq!(say(&mut session, "(sat-checked)"), "unsat");
+        let rendered = say(&mut session, "(sat-proof)");
+        assert!(rendered.contains("binary"), "{rendered}");
+        assert!(rendered.ends_with(" 20)"), "{rendered}");
+        assert_eq!(session.repl().stats().objects, 1);
+    }
+
+    #[test]
+    fn malformed_dimacs_does_not_replace_the_selected_problem() {
+        let mut session = session();
+        say(&mut session, "(sat-demo and-sat)");
+        let identity = session.problem().expect("selected").identity;
+        let error = say(&mut session, r#"(sat-set "p cnf 1 2\n1 0\n")"#);
+        assert!(error.contains("declares 2 clauses"), "{error}");
+        assert_eq!(
+            session.problem().expect("still selected").identity,
+            identity
+        );
+
+        for bad in [
+            "1 0\np cnf 1 1\n",
+            "p cnf 1 1\n2 0\n",
+            "p cnf 1 1\n1\n",
+            "p cnf 1 1\n1 0\n0\n",
+        ] {
+            assert!(
+                SatProblem::parse(bad.as_bytes(), "bad".to_owned(), None).is_err(),
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn loading_uses_the_host_file_pattern_and_pending_jobs_pin_selection() {
+        let mut session = session();
+        assert_eq!(
+            session.eval(r#"(sat-load "problem.cnf")"#).expect("load"),
+            Response::ReadSatFile("problem.cnf".to_owned())
+        );
+        session
+            .load_sat(b"p cnf 1 1\n1 0\n", "problem.cnf")
+            .expect("loaded");
+        let Response::Solve { job, .. } = session.eval("(sat-solve)").expect("solve") else {
+            panic!("expected solve request");
+        };
+        assert!(matches!(
+            session.eval(r#"(sat-load "replacement.cnf")"#),
+            Err(SessionError::SatPending)
+        ));
+        assert!(matches!(
+            session.load_sat(b"p cnf 1 1\n-1 0\n", "replacement.cnf"),
+            Err(SessionError::SatPending)
+        ));
+        session.abandon_sat(job).expect("abandon");
+        session
+            .load_sat(b"p cnf 1 1\n-1 0\n", "replacement.cnf")
+            .expect("replace after completion");
+    }
+
+    #[test]
+    fn sat_status_records_non_authoritative_terminal_outcomes() {
+        let mut session = session();
+        say(&mut session, "(sat-demo and-sat)");
+        assert_eq!(say(&mut session, "(sat-status)"), "selected");
+        let Response::Solve { job, .. } = session.eval("(sat-solve)").expect("solve") else {
+            panic!("expected solve request");
+        };
+        assert!(say(&mut session, "(sat-status)").starts_with("(pending "));
+        session
+            .finish_sat_operational(job, "unknown", Some("solver declined"))
+            .expect("unknown");
+        assert_eq!(
+            say(&mut session, "(sat-status)"),
+            "(unknown \"solver declined\")"
+        );
+        assert!(say(&mut session, "(sat-checked)").starts_with("error:"));
+        assert!(matches!(
+            session.finish_sat_operational(job, "failed", None),
+            Err(SessionError::UnknownSatJob(_))
+        ));
     }
 }

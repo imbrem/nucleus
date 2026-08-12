@@ -386,6 +386,12 @@ pub enum PropError {
         /// Underlying `SQLite` failure.
         source: SqliteError,
     },
+    /// Serializing a database snapshot failed.
+    #[snafu(display("propositional snapshot failure"))]
+    Snapshot {
+        /// Underlying image failure.
+        source: covalence_neutron::ImageError,
+    },
 }
 
 impl<P: Policy> Connection<Prop<P>> {
@@ -466,6 +472,21 @@ impl<P: Policy> Connection<Prop<P>> {
         let _operation = self.lock_operation();
         let physical = crate::manifest::schema_manifest_id(self.parts().0).context(StorageSnafu)?;
         Ok(prop_schema_id(physical))
+    }
+
+    /// Serializes a read-authorized, operation-boundary snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when policy denies reading or `SQLite` cannot serialize.
+    pub fn snapshot(&self) -> Result<Vec<u8>, PropError> {
+        self.view().authorize(Operation::Read)?;
+        let _operation = self.lock_operation();
+        self.parts()
+            .0
+            .serialize()
+            .map(|bytes| bytes.as_ref().to_vec())
+            .map_err(|source| PropError::Snapshot { source })
     }
 }
 

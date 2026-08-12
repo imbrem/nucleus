@@ -19,6 +19,7 @@ class FakeRepl {
     this.step = step;
     this.pending = step.job;
     this.completions = 0;
+    this.terminals = [];
   }
 
   eval() {
@@ -29,6 +30,7 @@ class FakeRepl {
   }
 
   completeSat(job, model) {
+    this.terminals.push("sat");
     this.#take(job);
     assert.ok(model instanceof BigInt64Array);
     assert.deepEqual([...model], [1n]);
@@ -36,12 +38,29 @@ class FakeRepl {
   }
 
   completeUnsat(job, proof) {
+    this.terminals.push("unsat");
     this.#take(job);
     assert.deepEqual([...proof], [1, 2, 3]);
     return "unsat";
   }
 
   abandonSat(job) {
+    this.terminals.push("abandoned");
+    this.#take(job);
+  }
+
+  completeSatUnknown(job) {
+    this.terminals.push("unknown");
+    this.#take(job);
+  }
+
+  completeSatFailure(job) {
+    this.terminals.push("failed");
+    this.#take(job);
+  }
+
+  cancelSat(job) {
+    this.terminals.push("cancelled");
     this.#take(job);
   }
 
@@ -86,16 +105,20 @@ test("drive awaits an injected SAT solver and completes exactly once", async () 
 });
 
 test("unknown and provider failure abandon the retained job", async () => {
-  for (const solve of [
-    async () => ({ kind: "unknown", reason: "gave up" }),
-    async () => {
-      throw new Error("solver crashed");
-    },
+  for (const [solve, terminal] of [
+    [async () => ({ kind: "unknown", reason: "gave up" }), "unknown"],
+    [
+      async () => {
+        throw new Error("solver crashed");
+      },
+      "failed",
+    ],
   ]) {
     const repl = new FakeRepl();
     const result = await drive(repl, { sat: { solve } }, "ignored");
     assert.equal(repl.pending, undefined);
     assert.equal(repl.completions, 1);
+    assert.deepEqual(repl.terminals, [terminal]);
     assert.match(result.output, /gave up|solver crashed/);
   }
 });
@@ -144,6 +167,7 @@ test("an already-aborted solve never invokes the provider", async () => {
   assert.equal(calls, 0);
   assert.match(line.output, /aborted/);
   assert.equal(repl.pending, undefined);
+  assert.deepEqual(repl.terminals, ["cancelled"]);
 });
 
 test("abort abandons a job even when the provider ignores its signal", async () => {
@@ -176,6 +200,7 @@ test("abort abandons a job even when the provider ignores its signal", async () 
   assert.match(line.output, /aborted/);
   assert.equal(repl.pending, undefined);
   assert.equal(repl.completions, 1);
+  assert.deepEqual(repl.terminals, ["cancelled"]);
 
   finish({ kind: "sat", model: [1n] });
   await Promise.resolve();

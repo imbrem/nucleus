@@ -279,6 +279,7 @@ function parseStatus(stdout: Uint8Array, maxModelLiterals: number): SatResult {
 
 export interface CadicalServerOptions {
   solver: SatSolver;
+  allowedOrigins?: readonly string[];
   maxDimacsBytes?: number;
   maxModelLiterals?: number;
   maxProofBytes?: number;
@@ -289,12 +290,32 @@ export function createCadicalServer(options: CadicalServerOptions): Server {
   const maxDimacsBytes = options.maxDimacsBytes ?? 16 * 1024 * 1024;
   const maxModelLiterals = options.maxModelLiterals ?? 1_000_000;
   const maxProofBytes = options.maxProofBytes ?? 64 * 1024 * 1024;
+  const allowedOrigins = new Set(options.allowedOrigins ?? []);
   boundedInteger(maxDimacsBytes, "DIMACS", MAX_BUFFER_BYTES);
   boundedInteger(maxModelLiterals, "model", MAX_MODEL_LITERALS);
   boundedInteger(maxProofBytes, "proof", MAX_BUFFER_BYTES);
   return createServer(async (request, response) => {
+    const origin = request.headers.origin;
+    if (origin !== undefined) {
+      response.setHeader("vary", "Origin");
+      if (!allowedOrigins.has(origin)) {
+        response.writeHead(403).end();
+        return;
+      }
+      response.setHeader("access-control-allow-origin", origin);
+    }
+    if (request.method === "OPTIONS") {
+      if (origin === undefined) {
+        response.writeHead(400).end();
+        return;
+      }
+      response.setHeader("access-control-allow-methods", "POST");
+      response.setHeader("access-control-allow-headers", "content-type");
+      response.writeHead(204).end();
+      return;
+    }
     if (request.method !== "POST") {
-      response.writeHead(405, { allow: "POST" }).end();
+      response.writeHead(405, { allow: "POST, OPTIONS" }).end();
       return;
     }
     if (
