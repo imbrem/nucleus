@@ -261,8 +261,7 @@ function parseStatus(
   );
   if (statuses.length !== 1)
     throw new Error("CaDiCaL returned no unique status line");
-  if (statuses[0] === "s UNSATISFIABLE")
-    return { kind: "unsat" };
+  if (statuses[0] === "s UNSATISFIABLE") return { kind: "unsat" };
   const model: bigint[] = [];
   let terminated = false;
   for (const line of lines) {
