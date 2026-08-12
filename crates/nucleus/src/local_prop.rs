@@ -384,6 +384,8 @@ pub enum Error {
     PremiseMismatch,
     /// A long-running check targeted an obsolete table snapshot.
     StaleSnapshot,
+    /// A long-running check targeted another table's snapshot.
+    ForeignSnapshot,
 }
 
 impl std::fmt::Display for Error {
@@ -413,6 +415,7 @@ impl std::fmt::Display for Error {
             }
             Self::PremiseMismatch => f.write_str("facts do not justify the requested inference"),
             Self::StaleSnapshot => f.write_str("checked result targets an obsolete snapshot"),
+            Self::ForeignSnapshot => f.write_str("checked result targets another kernel"),
         }
     }
 }

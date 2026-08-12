@@ -104,6 +104,23 @@ pub enum CnfError {
     DuplicateClause,
 }
 
+impl std::fmt::Display for CnfError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Limit { resource, limit } => write!(f, "CNF {resource} exceeds limit {limit}"),
+            Self::InvalidLiteral => f.write_str("CNF contains an invalid literal"),
+            Self::VariableOutOfRange => f.write_str("CNF variable is outside the allowed range"),
+            Self::EmptyClause => f.write_str("CNF policy rejects empty clauses"),
+            Self::EmptyCnf => f.write_str("CNF policy rejects an empty matrix"),
+            Self::TautologicalClause => f.write_str("CNF policy rejects tautological clauses"),
+            Self::DuplicateLiteral => f.write_str("CNF policy rejects duplicate literals"),
+            Self::DuplicateClause => f.write_str("CNF policy rejects duplicate clauses"),
+        }
+    }
+}
+
+impl std::error::Error for CnfError {}
+
 /// An owned, validated canonical CNF problem.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Cnf {
@@ -342,6 +359,35 @@ pub enum LratError {
     },
 }
 
+impl std::fmt::Display for LratError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Limit { resource, limit } => write!(f, "LRAT {resource} exceeds limit {limit}"),
+            Self::Parse { at } => write!(f, "malformed LRAT at {at}"),
+            Self::UnknownClause { step, clause } => {
+                write!(f, "LRAT step {step} references unknown clause {clause}")
+            }
+            Self::UselessHint { step, clause } => {
+                write!(f, "LRAT hint {clause} does not advance step {step}")
+            }
+            Self::NoConflict { step } => write!(f, "LRAT step {step} reaches no conflict"),
+            Self::IncompleteRat { step, clause } => {
+                write!(f, "LRAT step {step} omits RAT clause {clause}")
+            }
+            Self::DuplicateRatGroup { step, clause } => {
+                write!(f, "LRAT step {step} repeats RAT clause {clause}")
+            }
+            Self::RatUnsupported { step } => write!(f, "LRAT step {step} uses unsupported RAT"),
+            Self::NoRefutation => f.write_str("LRAT proof derives no refutation"),
+            Self::NonFreshClauseId { step } => {
+                write!(f, "LRAT learned clause id {step} is not fresh")
+            }
+        }
+    }
+}
+
+impl std::error::Error for LratError {}
+
 /// Resource bounds for untrusted certificates.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -412,6 +458,22 @@ pub enum ModelError {
     /// At least one clause was not satisfied.
     UnsatisfiedClause,
 }
+
+impl std::fmt::Display for ModelError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TooLarge => f.write_str("SAT model exceeds its literal limit"),
+            Self::InvalidLiteral => f.write_str("SAT model contains an invalid literal"),
+            Self::UnrelatedVariable => f.write_str("SAT model mentions an unrelated variable"),
+            Self::ContradictoryLiterals => f.write_str("SAT model assigns both polarities"),
+            Self::DuplicateLiteral => f.write_str("SAT model repeats a literal"),
+            Self::Incomplete => f.write_str("SAT model does not assign every variable"),
+            Self::UnsatisfiedClause => f.write_str("SAT model leaves a clause unsatisfied"),
+        }
+    }
+}
+
+impl std::error::Error for ModelError {}
 
 /// Checks a complete model for a CNF under an explicit response bound.
 ///

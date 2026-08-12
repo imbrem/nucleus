@@ -24,7 +24,7 @@ impl std::fmt::Display for PrepareError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Table(error) => write!(f, "cannot derive SAT problem: {error}"),
-            Self::Cnf(error) => write!(f, "derived CNF rejected: {error:?}"),
+            Self::Cnf(error) => write!(f, "derived CNF rejected: {error}"),
         }
     }
 }
@@ -231,7 +231,10 @@ impl LocalPropTable {
             verdict,
         } = checked;
         consume_verdict(verdict);
-        if !self.is_current(snapshot) {
+        if snapshot.kernel != self.kernel {
+            return Err(Error::ForeignSnapshot);
+        }
+        if snapshot.generation != self.generation {
             return Err(Error::StaleSnapshot);
         }
         self.insert_proved(premise, conclusion)?;
@@ -308,5 +311,45 @@ mod tests {
             .expect("define");
         // New definitions change the lowering and must obsolete old witnesses.
         assert!(!table.is_current(witness.snapshot()));
+    }
+
+    #[test]
+    fn admission_distinguishes_foreign_and_stale_snapshots() {
+        let mut table = LocalPropTable::open_in_memory().expect("table");
+        let proposition = literal(1);
+        let proof = [b'a', 6, 0, 2, 4, 0];
+        let checked = table
+            .prepare_sat_refutation(
+                proposition,
+                proposition,
+                CnfLimits::default(),
+                CnfPolicy::default(),
+            )
+            .expect("problem")
+            .check_binary_lrat(&proof, Limits::default())
+            .expect("checked");
+        let mut foreign = LocalPropTable::open_in_memory().expect("foreign table");
+        assert!(matches!(
+            foreign.admit_sat_refutation(checked),
+            Err(Error::ForeignSnapshot)
+        ));
+
+        let checked = table
+            .prepare_sat_refutation(
+                proposition,
+                proposition,
+                CnfLimits::default(),
+                CnfPolicy::default(),
+            )
+            .expect("problem")
+            .check_binary_lrat(&proof, Limits::default())
+            .expect("checked");
+        table
+            .define(Definition::new(AtomId::new(2).expect("atom"), vec![proposition]).expect("def"))
+            .expect("define");
+        assert!(matches!(
+            table.admit_sat_refutation(checked),
+            Err(Error::StaleSnapshot)
+        ));
     }
 }
