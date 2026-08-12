@@ -149,6 +149,7 @@ pub struct Candidate {
     premise: Literal,
     /// Implication conclusion.
     conclusion: Literal,
+    snapshot: SnapshotId,
 }
 
 impl Candidate {
@@ -162,6 +163,12 @@ impl Candidate {
     #[must_use]
     pub const fn conclusion(self) -> Literal {
         self.conclusion
+    }
+
+    /// Returns the snapshot in which this candidate was discovered.
+    #[must_use]
+    pub const fn snapshot(self) -> SnapshotId {
+        self.snapshot
     }
 }
 
@@ -181,16 +188,18 @@ impl Definition {
     ///
     /// Rejects empty definitions and repeated conjuncts.
     pub fn new(atom: AtomId, conjuncts: impl Into<Box<[Literal]>>) -> Result<Self, Error> {
-        let conjuncts = conjuncts.into();
+        let mut conjuncts = conjuncts.into().into_vec();
         if conjuncts.is_empty() {
             return Err(Error::EmptyDefinition);
         }
-        for (index, conjunct) in conjuncts.iter().enumerate() {
-            if conjuncts[..index].contains(conjunct) {
-                return Err(Error::DuplicateConjunct);
-            }
+        conjuncts.sort_unstable_by_key(|literal| literal.encoded());
+        if conjuncts.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(Error::DuplicateConjunct);
         }
-        Ok(Self { atom, conjuncts })
+        Ok(Self {
+            atom,
+            conjuncts: conjuncts.into_boxed_slice(),
+        })
     }
 
     /// Returns the atom defined by the complete group.
@@ -218,12 +227,16 @@ pub enum GroupedDefinition {
 /// The checked rule which minted a [`Fact`].
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Judgement {
+    /// A literal implies itself.
+    Reflexivity,
     /// A defined atom implies one member of its complete definition.
     DefinitionElimination,
     /// All members of a complete definition imply its atom.
     DefinitionIntroduction,
     /// Two implications were composed through their common literal.
     Transitivity,
+    /// A previously admitted positive row was checked in the current table.
+    StoredImplication,
 }
 
 /// The semantics used to check a [`Fact`].
@@ -239,20 +252,26 @@ pub enum CheckerVersion {
 
 /// The baseline source identity.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct SourceId(u32);
+pub enum SourceId {
+    /// This local proposition table.
+    Local,
+}
 
 impl SourceId {
     /// The only source accepted by this local profile.
-    pub const LOCAL: Self = Self(0);
+    pub const LOCAL: Self = Self::Local;
 }
 
 /// The baseline proof-context identity.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct ContextId(u32);
+pub enum ContextId {
+    /// No assumptions.
+    Empty,
+}
 
 impl ContextId {
     /// The only context accepted by this local profile.
-    pub const EMPTY: Self = Self(0);
+    pub const EMPTY: Self = Self::Empty;
 }
 
 /// Opaque identity of one immutable logical view of a kernel.
@@ -345,6 +364,16 @@ pub enum Error {
     InvalidState,
     /// A fact belongs to another kernel generation.
     ForeignFact,
+    /// A fact belongs to an earlier generation of this kernel.
+    StaleFact,
+    /// A candidate belongs to another kernel.
+    ForeignCandidate,
+    /// A candidate belongs to an earlier generation of this kernel.
+    StaleCandidate,
+    /// The candidate no longer names an admitted positive row.
+    CandidateAbsent,
+    /// No more process-local kernel identities can be allocated safely.
+    KernelIdentityExhausted,
     /// Facts do not justify the requested inference.
     PremiseMismatch,
 }
@@ -365,6 +394,15 @@ impl std::fmt::Display for Error {
             Self::Cycle => f.write_str("definition would create a local cycle"),
             Self::InvalidState => f.write_str("stored proposition table is invalid"),
             Self::ForeignFact => f.write_str("fact belongs to another kernel generation"),
+            Self::StaleFact => f.write_str("fact belongs to an earlier kernel generation"),
+            Self::ForeignCandidate => f.write_str("candidate belongs to another kernel"),
+            Self::StaleCandidate => {
+                f.write_str("candidate belongs to an earlier kernel generation")
+            }
+            Self::CandidateAbsent => f.write_str("candidate is not an admitted implication"),
+            Self::KernelIdentityExhausted => {
+                f.write_str("process-local kernel identity space is exhausted")
+            }
             Self::PremiseMismatch => f.write_str("facts do not justify the requested inference"),
         }
     }
@@ -405,8 +443,12 @@ impl LocalPropTable {
     pub fn open_in_memory() -> Result<Self, Error> {
         let connection = covalence_neutron::Connection::open_in_memory()?;
         connection.execute_batch(SCHEMA)?;
-        let raw = NEXT_KERNEL.fetch_add(1, Ordering::Relaxed);
-        let kernel = NonZeroU64::new(raw).ok_or(Error::ForeignFact)?;
+        let raw = NEXT_KERNEL
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                next.checked_add(1)
+            })
+            .map_err(|_| Error::KernelIdentityExhausted)?;
+        let kernel = NonZeroU64::new(raw).ok_or(Error::KernelIdentityExhausted)?;
         Ok(Self {
             connection,
             kernel,
@@ -427,6 +469,12 @@ impl LocalPropTable {
     #[must_use]
     pub fn is_current(&self, snapshot: SnapshotId) -> bool {
         self.kernel == snapshot.kernel && self.generation == snapshot.generation
+    }
+
+    /// `LP-REFL`: proves that a literal implies itself.
+    #[must_use]
+    pub fn reflexivity(&self, literal: Literal) -> Fact {
+        self.fact(literal, literal, Judgement::Reflexivity)
     }
 
     /// `LP-DEF`: inserts a new grouped definition atomically.
@@ -452,6 +500,10 @@ impl LocalPropTable {
         definition: Definition,
         replace: bool,
     ) -> Result<Vec<Fact>, Error> {
+        let next_generation = self
+            .generation
+            .checked_add(1)
+            .ok_or(Error::KernelIdentityExhausted)?;
         let atom = definition.atom;
         let conjuncts = definition.conjuncts;
         let premise = Literal::positive(atom);
@@ -503,9 +555,7 @@ impl LocalPropTable {
             return Err(Error::Cycle);
         }
         transaction.commit()?;
-        if replace {
-            self.generation = self.generation.checked_add(1).ok_or(Error::ForeignFact)?;
-        }
+        self.generation = next_generation;
         Ok(conjuncts
             .iter()
             .map(|&conclusion| self.fact(premise, conclusion, Judgement::DefinitionElimination))
@@ -550,7 +600,17 @@ impl LocalPropTable {
     ///
     /// Rejects foreign, noncomposable, or unstoreable facts.
     pub fn trans(&mut self, left: &Fact, right: &Fact) -> Result<Fact, Error> {
-        if !self.valid_fact(left) || !self.valid_fact(right) {
+        if let Some(error) = self
+            .fact_snapshot_error(left)
+            .or_else(|| self.fact_snapshot_error(right))
+        {
+            return Err(error);
+        }
+        if left.source != SourceId::LOCAL
+            || right.source != SourceId::LOCAL
+            || left.context != ContextId::EMPTY
+            || right.context != ContextId::EMPTY
+        {
             return Err(Error::ForeignFact);
         }
         if left.conclusion != right.premise {
@@ -597,9 +657,19 @@ impl LocalPropTable {
     }
 
     fn valid_fact(&self, fact: &Fact) -> bool {
-        self.is_current(fact.snapshot())
+        self.fact_snapshot_error(fact).is_none()
             && fact.source == SourceId::LOCAL
             && fact.context == ContextId::EMPTY
+    }
+
+    fn fact_snapshot_error(&self, fact: &Fact) -> Option<Error> {
+        if fact.kernel != self.kernel {
+            Some(Error::ForeignFact)
+        } else if fact.generation != self.generation {
+            Some(Error::StaleFact)
+        } else {
+            None
+        }
     }
 
     /// `LP-QUERY-DEF`: returns defining conjunct candidates.
@@ -672,9 +742,43 @@ impl LocalPropTable {
                 Ok(Candidate {
                     premise,
                     conclusion,
+                    snapshot: self.snapshot(),
                 })
             })
             .map_err(Into::into)
+    }
+
+    /// Checks that a discovered direct implication remains admitted now.
+    ///
+    /// This is the only recovery path from stored/query state to authority;
+    /// endpoints or raw positive reasons alone never mint a fact.
+    ///
+    /// # Errors
+    ///
+    /// Distinguishes foreign, stale, absent, malformed, and storage failures.
+    pub fn check_candidate(&self, candidate: &Candidate) -> Result<Fact, Error> {
+        if candidate.snapshot.kernel != self.kernel {
+            return Err(Error::ForeignCandidate);
+        }
+        if candidate.snapshot.generation != self.generation {
+            return Err(Error::StaleCandidate);
+        }
+        let reason = self.connection.query_row(
+            "SELECT reason FROM prop_row WHERE premise=?1 AND source=0 AND conclusion=?2",
+            &[
+                candidate.premise.encoded().into(),
+                candidate.conclusion.encoded().into(),
+            ],
+            |row| row.integer(0),
+        )?;
+        if reason.is_none_or(|reason| reason <= 0) {
+            return Err(Error::CandidateAbsent);
+        }
+        Ok(self.fact(
+            candidate.premise,
+            candidate.conclusion,
+            Judgement::StoredImplication,
+        ))
     }
 
     /// Adds non-authoritative metadata to an existing row.
@@ -683,6 +787,7 @@ impl LocalPropTable {
     ///
     /// Rejects invalid metadata or a key with no authoritative row.
     pub fn add_metadata(&self, row: Candidate, kind: &str, payload: &[u8]) -> Result<(), Error> {
+        self.check_candidate(&row)?;
         self.connection.execute(
             "INSERT INTO prop_metadata(premise,source,conclusion,kind,payload) VALUES (?1,0,?2,?3,?4)",
             &[row.premise.encoded().into(), row.conclusion.encoded().into(), Param::Text(kind), Param::Blob(payload)])?;
@@ -854,6 +959,10 @@ mod tests {
             Definition::new(atom(1), vec![lit(2), lit(2)]),
             Err(Error::DuplicateConjunct)
         ));
+        assert_eq!(
+            Definition::new(atom(1), vec![lit(3), lit(2)]).expect("canonical left"),
+            Definition::new(atom(1), vec![lit(2), lit(3)]).expect("canonical right")
+        );
 
         let negative = lit(1).complement();
         assert_eq!(negative.map(|_| atom(2)), lit(2).complement());
@@ -999,6 +1108,8 @@ mod tests {
             .define(definition(1, &[lit(2)]))
             .expect("define")
             .remove(0);
+        assert!(!table.is_current(initial_snapshot));
+        let defined_snapshot = table.snapshot();
         table
             .introduce(lit(1), atom(1), std::slice::from_ref(&old))
             .expect("proved row");
@@ -1012,6 +1123,7 @@ mod tests {
             table.replace_definition(definition(1, &[lit(1)])),
             Err(Error::Cycle)
         ));
+        assert!(table.is_current(defined_snapshot));
         assert_eq!(
             table.grouped_definition(atom(1)).expect("unchanged"),
             GroupedDefinition::Present(definition(1, &[lit(2)]))
@@ -1026,7 +1138,7 @@ mod tests {
         table
             .replace_definition(definition(1, &[lit(3)]))
             .expect("replace");
-        assert!(!table.is_current(initial_snapshot));
+        assert!(!table.is_current(defined_snapshot));
         assert!(table.is_current(table.snapshot()));
         assert!(
             !LocalPropTable::open_in_memory()
@@ -1047,7 +1159,7 @@ mod tests {
             .expect("metadata query")
             .expect("count");
         assert_eq!(metadata, 0);
-        assert!(matches!(table.trans(&old, &old), Err(Error::ForeignFact)));
+        assert!(matches!(table.trans(&old, &old), Err(Error::StaleFact)));
     }
 
     #[test]
@@ -1096,5 +1208,33 @@ mod tests {
             .introduce(lit(3), atom(3), &eliminated)
             .expect("idempotent rederivation");
         assert_eq!(first, second);
+
+        let reflexive = table.reflexivity(lit(99));
+        assert_eq!(reflexive.judgement(), Judgement::Reflexivity);
+        assert_eq!(
+            (reflexive.premise(), reflexive.conclusion()),
+            (lit(99), lit(99))
+        );
+
+        let candidate = table
+            .direct_implications_from(lit(3))
+            .expect("query")
+            .into_iter()
+            .find(|candidate| candidate.conclusion() == lit(3))
+            .expect("stored implication");
+        let recovered = table.check_candidate(&candidate).expect("recover fact");
+        assert_eq!(recovered.judgement(), Judgement::StoredImplication);
+        table
+            .define(definition(10, &[lit(11)]))
+            .expect("mutate definitions");
+        assert!(matches!(
+            table.check_candidate(&candidate),
+            Err(Error::StaleCandidate)
+        ));
+        let foreign = LocalPropTable::open_in_memory().expect("foreign");
+        assert!(matches!(
+            foreign.check_candidate(&candidate),
+            Err(Error::ForeignCandidate)
+        ));
     }
 }
