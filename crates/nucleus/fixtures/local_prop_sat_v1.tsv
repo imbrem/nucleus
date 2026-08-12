@@ -1,0 +1,20 @@
+# local-prop-sat-v1 case record values
+# `problem` values: premise conclusion expected-problem-id-hex
+# `clause` values: canonical clause literals joined by commas; dot is empty.
+# `reject` values name capability/certificate rejection classes.
+free-reflexive	problem	1	1	8e2be9d85aafb96248141e9c15f06c61da7377c6f7f271912dd5535bf58dceec
+free-reflexive	clause	-1	.	.
+free-reflexive	clause	1	.	.
+signed-endpoints	problem	-1	-2	.
+signed-endpoints	clause	-1	.	.
+signed-endpoints	clause	2	.	.
+grouped-definition	definition	3	1,-2	.
+grouped-definition	problem	3	1	.
+grouped-definition	clause	-3,-2	.	.
+grouped-definition	clause	-3,1	.	.
+grouped-definition	clause	-1	.	.
+grouped-definition	clause	-1,2,3	.	.
+grouped-definition	clause	3	.	.
+stale-snapshot	reject	stale-snapshot	.	.
+foreign-snapshot	reject	foreign-snapshot	.	.
+wrong-proof	reject	invalid-lrat	.	.

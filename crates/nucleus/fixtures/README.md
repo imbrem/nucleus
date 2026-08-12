@@ -41,3 +41,11 @@ list/get/show named problems; select canonical DIMACS; verify a model or binary
 LRAT artifact; admit only resulting checked `Fact`s; inspect judgement and
 certificate metadata separately. Initial host fixtures should include a small
 bitblasted AND family. ASCII LRAT is an explicit pretty-print mode only.
+
+`local_prop_sat_v1.tsv` names the `LP-SAT-REFUTE` differential corpus. It
+records endpoint queries, complete grouped definitions, expected canonical CNF
+clauses/problem identities, and stale/foreign/invalid-proof rejection classes.
+Rust consumes these records through the production lowering and checker,
+including the rejection cases. Lean embeds and validates the same record
+shape as a build input. This remains differential evidence, not a soundness
+proof for the lowering.

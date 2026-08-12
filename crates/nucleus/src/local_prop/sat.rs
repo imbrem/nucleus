@@ -278,9 +278,159 @@ impl LocalPropTable {
 mod tests {
     use super::*;
     use crate::local_prop::{AtomId, Definition};
+    use std::collections::BTreeMap;
+    use std::fmt::Write;
 
     fn literal(value: u32) -> Literal {
         Literal::positive(AtomId::new(value).expect("atom"))
+    }
+
+    fn fixture_lines() -> impl Iterator<Item = &'static str> {
+        include_str!("../../fixtures/local_prop_sat_v1.tsv")
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+    }
+
+    fn signed_literal(value: i64) -> Literal {
+        let atom = AtomId::new(u32::try_from(value.unsigned_abs()).expect("fixture atom"))
+            .expect("nonzero fixture atom");
+        if value < 0 {
+            Literal::negative(atom)
+        } else {
+            Literal::positive(atom)
+        }
+    }
+
+    fn problem_id_hex(id: ProblemId) -> String {
+        id.as_bytes().iter().fold(String::new(), |mut text, byte| {
+            write!(text, "{byte:02x}").expect("writing to a string cannot fail");
+            text
+        })
+    }
+
+    fn check_rejection_fixture(rejection: &str) {
+        let mut table = LocalPropTable::open_in_memory().expect("table");
+        let proposition = literal(1);
+        let problem = table
+            .prepare_sat_refutation(
+                proposition,
+                proposition,
+                CnfLimits::default(),
+                CnfPolicy::default(),
+            )
+            .expect("problem");
+        let proof = [b'a', 6, 0, 2, 4, 0];
+        match rejection {
+            "invalid-lrat" => assert!(
+                problem.check_binary_lrat(&[], Limits::default()).is_err(),
+                "SAT fixture {rejection}"
+            ),
+            "foreign-snapshot" => {
+                let checked = problem
+                    .check_binary_lrat(&proof, Limits::default())
+                    .expect("checked proof");
+                let mut foreign = LocalPropTable::open_in_memory().expect("foreign table");
+                assert!(matches!(
+                    foreign.admit_sat_refutation(checked),
+                    Err(Error::ForeignSnapshot)
+                ));
+            }
+            "stale-snapshot" => {
+                let checked = problem
+                    .check_binary_lrat(&proof, Limits::default())
+                    .expect("checked proof");
+                table
+                    .define(
+                        Definition::new(AtomId::new(2).expect("atom"), vec![proposition])
+                            .expect("definition"),
+                    )
+                    .expect("define");
+                assert!(matches!(
+                    table.admit_sat_refutation(checked),
+                    Err(Error::StaleSnapshot)
+                ));
+            }
+            other => panic!("unknown SAT rejection fixture: {other}"),
+        }
+    }
+
+    #[test]
+    fn sat_lowering_matches_the_shared_conformance_corpus() {
+        let mut definitions = BTreeMap::<String, (u32, Vec<Literal>)>::new();
+        let mut problems = BTreeMap::<String, (Literal, Literal, Option<&str>)>::new();
+        let mut clauses = BTreeMap::<String, Vec<Vec<i64>>>::new();
+        let mut rejections = Vec::new();
+        for line in fixture_lines() {
+            let fields = line.split('\t').collect::<Vec<_>>();
+            assert_eq!(fields.len(), 5, "invalid SAT fixture record: {line}");
+            match fields[1] {
+                "definition" => {
+                    let atom = fields[2].parse().expect("definition atom");
+                    let conjuncts = fields[3]
+                        .split(',')
+                        .map(|value| signed_literal(value.parse().expect("conjunct")))
+                        .collect();
+                    definitions.insert(fields[0].to_owned(), (atom, conjuncts));
+                }
+                "problem" => {
+                    problems.insert(
+                        fields[0].to_owned(),
+                        (
+                            signed_literal(fields[2].parse().expect("premise")),
+                            signed_literal(fields[3].parse().expect("conclusion")),
+                            (fields[4] != ".").then_some(fields[4]),
+                        ),
+                    );
+                }
+                "clause" => {
+                    let clause = if fields[2] == "." {
+                        Vec::new()
+                    } else {
+                        fields[2]
+                            .split(',')
+                            .map(|value| value.parse().expect("clause literal"))
+                            .collect()
+                    };
+                    clauses
+                        .entry(fields[0].to_owned())
+                        .or_default()
+                        .push(clause);
+                }
+                "reject" => rejections.push(fields[2]),
+                other => panic!("unknown SAT fixture record: {other}"),
+            }
+        }
+        for (name, (premise, conclusion, expected_id)) in problems {
+            let mut table = LocalPropTable::open_in_memory().expect("table");
+            if let Some((atom, conjuncts)) = definitions.remove(&name) {
+                table
+                    .define(
+                        Definition::new(AtomId::new(atom).expect("atom"), conjuncts)
+                            .expect("definition"),
+                    )
+                    .expect("admit definition");
+            }
+            let problem = table
+                .prepare_sat_refutation(
+                    premise,
+                    conclusion,
+                    CnfLimits::default(),
+                    CnfPolicy::default(),
+                )
+                .expect("prepare problem");
+            assert_eq!(problem.cnf.clauses(), clauses[&name], "SAT fixture {name}");
+            if let Some(expected_id) = expected_id {
+                assert_eq!(
+                    problem_id_hex(problem.id()),
+                    expected_id,
+                    "SAT fixture {name}"
+                );
+            }
+        }
+        for rejection in rejections {
+            check_rejection_fixture(rejection);
+        }
     }
 
     #[test]
