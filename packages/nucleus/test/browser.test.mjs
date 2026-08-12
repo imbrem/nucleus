@@ -164,9 +164,7 @@ test("the demo queries a CAS database in interactive SQLite", async (context) =>
   );
   assert.match(await mode.getAttribute("title"), /\.quit.*\.exit/);
 
-  await input.fill(
-    "SELECT name FROM planets ORDER BY moons DESC LIMIT 1;",
-  );
+  await input.fill("SELECT name FROM planets ORDER BY moons DESC LIMIT 1;");
   await input.press("Enter");
   await page.waitForFunction(() =>
     document

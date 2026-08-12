@@ -187,7 +187,8 @@
       function setMode(name) {
         if (name === "sqlite") {
           mode.textContent = "sqlite>";
-          mode.title = "SQLite shell; enter .quit or .exit to return to nucleus";
+          mode.title =
+            "SQLite shell; enter .quit or .exit to return to nucleus";
           line.placeholder = "Enter .quit or .exit to return to nucleus";
           line.disabled = false;
           line.focus();

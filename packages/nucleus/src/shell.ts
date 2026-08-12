@@ -126,16 +126,18 @@ async function runShellExclusive(
   _setStdout(output(stdout, stdoutDecoder, options.onStdout));
   _setStderr(output(stderr, stderrDecoder, options.onStderr));
   const stdin = interactiveInput
-    ? { blockingRead: (length: bigint) => interactiveInput.blockingRead(length) }
+    ? {
+        blockingRead: (length: bigint) => interactiveInput.blockingRead(length),
+      }
     : {
-      blockingRead(length: bigint) {
-        const remaining = input.length - inputOffset;
-        const count = Number(length < BigInt(remaining) ? length : remaining);
-        const chunk = input.slice(inputOffset, inputOffset + count);
-        inputOffset += chunk.length;
-        return chunk;
-      },
-    };
+        blockingRead(length: bigint) {
+          const remaining = input.length - inputOffset;
+          const count = Number(length < BigInt(remaining) ? length : remaining);
+          const chunk = input.slice(inputOffset, inputOffset + count);
+          inputOffset += chunk.length;
+          return chunk;
+        },
+      };
   // The shim types describe the synchronous WIT surface. Jco lowers this
   // particular import through JSPI, so the interactive implementation may
   // return a Promise at runtime.
