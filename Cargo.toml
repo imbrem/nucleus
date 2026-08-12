@@ -8,6 +8,7 @@ members = [
   "crates/lib/rand",
   "crates/lib/serde",
   "crates/lib/sqlite",
+  "crates/logic/sat",
   "crates/data/basic",
   "crates/data/cas",
   "crates/data/cas-http",

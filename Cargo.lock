@@ -387,6 +387,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "covalence-logic-sat"
+version = "0.0.0"
+
+[[package]]
 name = "covalence-neutron"
 version = "0.0.0"
 dependencies = [
@@ -406,6 +410,7 @@ dependencies = [
  "covalence-lib-error",
  "covalence-lib-hash",
  "covalence-lib-sqlite",
+ "covalence-logic-sat",
  "covalence-neutron",
  "wasm-bindgen",
  "wit-bindgen-rt",
