@@ -284,6 +284,36 @@
       ]
     },
     {
+      "id": "workspace#covalence-logic-lrat@0.0.0",
+      "name": "covalence-logic-lrat",
+      "version": "0.0.0",
+      "path": "crates/logic/lrat",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_logic_lrat",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-logic-sat@0.0.0",
+      "name": "covalence-logic-sat",
+      "version": "0.0.0",
+      "path": "crates/logic/sat",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_logic_sat",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-neutron@0.0.0",
       "name": "covalence-neutron",
       "version": "0.0.0",
@@ -486,6 +516,13 @@
       ]
     },
     {
+      "source": "workspace#covalence-logic-sat@0.0.0",
+      "target": "workspace#covalence-logic-lrat@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "workspace#covalence-neutron@0.0.0",
       "target": "workspace#covalence-data-cas@0.0.0",
       "kinds": [
@@ -537,6 +574,13 @@
     {
       "source": "workspace#covalence-nucleus@0.0.0",
       "target": "workspace#covalence-lib-sqlite@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus@0.0.0",
+      "target": "workspace#covalence-logic-sat@0.0.0",
       "kinds": [
         "normal"
       ]

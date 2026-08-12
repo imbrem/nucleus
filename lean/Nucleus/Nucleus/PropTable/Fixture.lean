@@ -39,6 +39,9 @@ private def queryCorpus : String :=
 private def deletionCorpus : String :=
   fixture_str% "crates/nucleus/fixtures/local_prop_deletion_v1.tsv"
 
+private def satCorpus : String :=
+  fixture_str% "crates/nucleus/fixtures/local_prop_sat_v1.tsv"
+
 private def dataLines (contents : String) : List String :=
   (contents.splitOn "\n").filter fun line =>
     !line.isEmpty && !(line.startsWith "#")
@@ -75,6 +78,16 @@ example : (dataLines queryCorpus).all fun line => (line.splitOn "\t").length == 
 example : (dataLines deletionCorpus).length = 8 := by native_decide
 
 example : (dataLines deletionCorpus).all fun line => (line.splitOn "\t").length == 4 := by
+  native_decide
+
+example : (dataLines satCorpus).length = 16 := by native_decide
+
+example : (dataLines satCorpus).all fun line => (line.splitOn "\t").length == 5 := by
+  native_decide
+
+example : (dataLines satCorpus).all fun line =>
+    ["definition", "problem", "clause", "reject"].contains
+      ((line.splitOn "\t").getD 1 "") := by
   native_decide
 
 end
