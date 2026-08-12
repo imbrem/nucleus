@@ -255,6 +255,17 @@ impl ContextId {
     pub const EMPTY: Self = Self(0);
 }
 
+/// Opaque identity of one immutable logical view of a kernel.
+///
+/// Long-running checks bind their input to this value and must compare it with
+/// the current snapshot before admission. It is process-local authority
+/// metadata, not a serializable table or formula identity.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct SnapshotId {
+    kernel: NonZeroU64,
+    generation: u64,
+}
+
 /// An authoritative checked implication.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Fact {
@@ -298,6 +309,14 @@ impl Fact {
     #[must_use]
     pub const fn checker(&self) -> CheckerVersion {
         self.checker
+    }
+    /// Returns the kernel snapshot against which this fact was checked.
+    #[must_use]
+    pub const fn snapshot(&self) -> SnapshotId {
+        SnapshotId {
+            kernel: self.kernel,
+            generation: self.generation,
+        }
     }
 }
 
@@ -393,6 +412,21 @@ impl LocalPropTable {
             kernel,
             generation: 0,
         })
+    }
+
+    /// Returns the current opaque logical snapshot identity.
+    #[must_use]
+    pub const fn snapshot(&self) -> SnapshotId {
+        SnapshotId {
+            kernel: self.kernel,
+            generation: self.generation,
+        }
+    }
+
+    /// Tests whether a process-local snapshot is still current for this table.
+    #[must_use]
+    pub fn is_current(&self, snapshot: SnapshotId) -> bool {
+        self.kernel == snapshot.kernel && self.generation == snapshot.generation
     }
 
     /// `LP-DEF`: inserts a new grouped definition atomically.
@@ -563,8 +597,7 @@ impl LocalPropTable {
     }
 
     fn valid_fact(&self, fact: &Fact) -> bool {
-        fact.kernel == self.kernel
-            && fact.generation == self.generation
+        self.is_current(fact.snapshot())
             && fact.source == SourceId::LOCAL
             && fact.context == ContextId::EMPTY
     }
@@ -961,6 +994,7 @@ mod tests {
     #[test]
     fn replacement_is_atomic_and_invalidates_facts() {
         let mut table = LocalPropTable::open_in_memory().expect("open");
+        let initial_snapshot = table.snapshot();
         let old = table
             .define(definition(1, &[lit(2)]))
             .expect("define")
@@ -992,6 +1026,13 @@ mod tests {
         table
             .replace_definition(definition(1, &[lit(3)]))
             .expect("replace");
+        assert!(!table.is_current(initial_snapshot));
+        assert!(table.is_current(table.snapshot()));
+        assert!(
+            !LocalPropTable::open_in_memory()
+                .expect("other kernel")
+                .is_current(table.snapshot())
+        );
         assert!(
             table
                 .direct_implications_from(lit(1))
