@@ -1,0 +1,11 @@
+# local-prop-query-v1 case mode literal expected
+# Lists are in canonical SQLite key order. A dot means no result.
+grouped-definition	definition	1	-3,2
+grouped-definition	definition	2	.
+grouped-definition	implied-by	4	4>2
+grouped-definition	implied-by	1	.
+grouped-definition	implying	2	4>2
+grouped-definition	implying	-3	.
+theorems-only	definition	-8	.
+theorems-only	implied-by	-8	-8>9
+theorems-only	implying	-10	9>-10

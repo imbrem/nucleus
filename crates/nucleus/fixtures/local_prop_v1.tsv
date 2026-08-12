@@ -1,0 +1,21 @@
+# local-prop-v1 case outcome premise source conclusion reason
+# A dot conclusion records an attempted empty definition for its premise.
+grouped-definition	accept	1	0	2	0
+grouped-definition	accept	1	0	-3	0
+grouped-definition	accept	4	0	2	7
+theorems-only	accept	-8	0	9	1
+theorems-only	accept	9	0	-10	4294967295
+empty-definition	reject-empty	5	0	.	0
+direct-cycle	reject-cycle	1	0	1	0
+signed-direct-cycle	reject-cycle	1	0	-1	0
+mutual-cycle	reject-cycle	1	0	-2	0
+mutual-cycle	reject-cycle	2	0	3	0
+mutual-cycle	reject-cycle	3	0	1	0
+zero-premise	reject-storage	0	0	2	0
+zero-conclusion	reject-storage	1	0	0	0
+foreign-source	reject-storage	1	1	2	0
+negative-reason	reject-storage	1	0	2	-1
+wide-premise	reject-storage	4294967296	0	2	0
+wide-conclusion	reject-storage	1	0	-4294967296	0
+reason-conflict	reject-storage	1	0	2	0
+reason-conflict	reject-storage	1	0	2	9

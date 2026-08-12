@@ -1,6 +1,7 @@
 import Nucleus.HolLN
 import Nucleus.Json
 import Nucleus.PropTable
+import Nucleus.PropTable.Fixture
 
 /-!
 # Nucleus
