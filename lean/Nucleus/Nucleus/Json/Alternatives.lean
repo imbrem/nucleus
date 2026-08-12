@@ -13,8 +13,8 @@ The transcription in the issue's text represents container children as `List`s:
 ```
 inductive RawJson (Scalar : Type u) : Type u where
   | scalar (value : Scalar)
-  | list (elems : List (RawJson Scalar))
-  | map (entries : List (String × RawJson Scalar))
+  | list (elems : List (KeyedRawJson String Scalar))
+  | map (entries : List (String × KeyedRawJson String Scalar))
 ```
 
 This works as a plain type, but on this toolchain structural recursion is not inferred
@@ -62,7 +62,7 @@ bound avoids assuming `String` has a bottom sentinel, which a last-key index ove
 
 ## (d) Subtype of the raw syntax — the adopted ordered representation
 
-`Nucleus.OrderedJson Scalar := {r : RawJson Scalar // r.SortedKeys}` (see
+`Nucleus.OrderedJson Scalar := {r : KeyedRawJson String Scalar // r.SortedKeys}` (see
 `Nucleus.Json.Ordered`): a raw tree plus a propositional invariant.  It reuses all of
 `RawSyn`'s operations and recursion, `toRaw` is `Subtype.val` (trivially injective), and
 proofs transport by proof irrelevance.
@@ -196,18 +196,18 @@ mutual
 /-- Convert an indexed value to the main development's raw syntax tree.  The
 conversion is sort-by-sort, so each constructor maps directly onto its `RawSyn`
 counterpart. -/
-def toRaw : JsonSyn Scalar .val → RawJson Scalar
+def toRaw : JsonSyn Scalar .val → KeyedRawJson String Scalar
   | .scalar value => .scalar value
   | .list elems => .list (toRawArr elems)
   | .map entries => .map (toRawObj entries)
 
 /-- Convert an array tail to a raw array tail. -/
-def toRawArr : JsonSyn Scalar .arr → RawSyn Scalar .arr
+def toRawArr : JsonSyn Scalar .arr → RawSyn String Scalar .arr
   | .nil => .nil
   | .cons head tail => .cons (toRaw head) (toRawArr tail)
 
 /-- Convert an object tail to a raw object tail, forgetting the lower-bound index. -/
-def toRawObj : {low : Option String} → JsonSyn Scalar (.obj low) → RawSyn Scalar .obj
+def toRawObj : {low : Option String} → JsonSyn Scalar (.obj low) → RawSyn String Scalar .obj
   | _, .empty => .objNil
   | _, .insert key _bound value rest => .objCons key (toRaw value) (toRawObj rest)
 

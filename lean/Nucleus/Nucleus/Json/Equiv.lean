@@ -8,7 +8,7 @@ The two headline equivalences of issue #541:
 - `Σ n, Fin n → A ≃ List A` (`sigmaFinEquivList`, Mathlib's
   `List.equivSigmaTuple`), relating the finite indexed child families of
   `Json` to the sequence children of `RawJson`;
-- `Json Scalar ≃ OrderedJson Scalar` (`jsonEquivOrdered`): sorted
+- `Json Scalar Key ≃ OrderedJson Scalar Key Key` (`jsonEquivOrdered`): sorted
   duplicate-free syntax is a faithful data representative of the extensional
   form.  The forward map enumerates key sets in sorted order
   (`Json.toOrdered`); the inverse rebuilds the finite key set and value family
@@ -24,7 +24,7 @@ namespace Nucleus
 
 universe u
 
-variable {Scalar : Type u}
+variable {Key : Type} {Scalar : Type u} [LinearOrder Key]
 
 /-- Arrays-as-families and arrays-as-lists are equivalent; this is Mathlib's
 `List.equivSigmaTuple`, restated in the direction used by issue #541. -/
@@ -33,16 +33,17 @@ def sigmaFinEquivList (α : Type u) : (Σ n, Fin n → α) ≃ List α :=
 
 /-- Sorting the `Finset` carried by an already sorted duplicate-free list
 returns that list. -/
-theorem sort_mk_eq {l : List String} (hnd : l.Nodup) (hp : l.Pairwise (· ≤ ·)) :
-    Finset.sort (⟨(↑l : Multiset String), (Multiset.coe_nodup).mpr hnd⟩ : Finset String)
+theorem sort_mk_eq {l : List Key} (hnd : l.Nodup) (hp : l.Pairwise (· ≤ ·)) :
+    Finset.sort (⟨(↑l : Multiset Key), (Multiset.coe_nodup).mpr hnd⟩ : Finset Key)
       (· ≤ ·) = l := by
   rw [Finset.sort_mk, Multiset.coe_sort]
   exact List.mergeSort_eq_self _ hp
 
+omit [LinearOrder Key] in
 /-- An association list is recovered from its key list and a lookup function
 that agrees with it on members. -/
-theorem pmap_keys_eq {α : Type*} {p : String → Prop} :
-    ∀ {entries : List (String × α)} (g : ∀ k, p k → α)
+theorem pmap_keys_eq {α : Type*} {p : Key → Prop} :
+    ∀ {entries : List (Key × α)} (g : ∀ k, p k → α)
       (H : ∀ k ∈ entries.map Prod.fst, p k),
       (∀ e ∈ entries, ∀ hk, g e.1 hk = e.2) →
       (entries.map Prod.fst).pmap (fun k hk => (k, g k hk)) H = entries
@@ -64,7 +65,7 @@ namespace RawSyn
 
 /-- `RawSyn.toJson` only depends on the raw tree, not the well-formedness
 proof (which is irrelevant). -/
-theorem toJson_congr {r r' : RawJson Scalar} (h : r = r')
+theorem toJson_congr {r r' : KeyedRawJson Key Scalar} (h : r = r')
     (hr : r.WellFormed) (hr' : r'.WellFormed) : r.toJson hr = r'.toJson hr' := by
   subst h; rfl
 
@@ -73,7 +74,7 @@ end RawSyn
 /-- Round trip: converting the canonical raw representative back to the
 extensional form is the identity. -/
 theorem Json.toJson_toRaw :
-    ∀ (j : Json Scalar) (h : j.toRaw.WellFormed), j.toRaw.toJson h = j := by
+    ∀ (j : Json Scalar Key) (h : j.toRaw.WellFormed), j.toRaw.toJson h = j := by
   intro j
   induction j with
   | scalar v =>
@@ -107,7 +108,7 @@ theorem Json.toJson_toRaw :
       simp only [Json.ofEntries]
       refine Json.map_congr ?_ ?_
       · apply Finset.val_inj.mp
-        change (↑(_ : List String) : Multiset String) = keys.1
+        change (↑(_ : List Key) : Multiset Key) = keys.1
         rw [hobj, hfst]
         exact Finset.sort_eq _ _
       · intro k hk hk'
@@ -131,7 +132,8 @@ theorem Json.toJson_toRaw :
 /-- Round trip: an ordered raw tree is recovered from its extensional value by
 re-sorting. -/
 theorem RawSyn.toRaw_toJson :
-    ∀ (r : RawJson Scalar), r.SortedKeys → ∀ (h : r.WellFormed), (r.toJson h).toRaw = r := by
+    ∀ (r : KeyedRawJson Key Scalar), r.SortedKeys →
+      ∀ (h : r.WellFormed), (r.toJson h).toRaw = r := by
   intro r
   induction r with
   | scalar v =>
@@ -160,8 +162,8 @@ theorem RawSyn.toRaw_toJson :
         rw [hkeysL, ← RawSyn.keys_eq_toEntries_fst]
         exact ((RawSyn.wellFormed_map_iff entries).mp h).1
       have hsort : Finset.sort
-          (⟨(↑(L.map Prod.fst) : Multiset String), (Multiset.coe_nodup).mpr hnd⟩ :
-            Finset String) (· ≤ ·)
+          (⟨(↑(L.map Prod.fst) : Multiset Key), (Multiset.coe_nodup).mpr hnd⟩ :
+            Finset Key) (· ≤ ·)
           = entries.toEntries.map Prod.fst := by
         rw [Finset.sort_mk]
         conv_lhs => rw [hkeysL]
@@ -184,26 +186,28 @@ theorem RawSyn.toRaw_toJson :
 
 /-- Converting to the canonical ordered representative and back is the
 identity. -/
-theorem Json.toOrdered_toJson (j : Json Scalar) : j.toOrdered.toJson = j :=
+theorem Json.toOrdered_toJson (j : Json Scalar Key) : j.toOrdered.toJson = j :=
   Json.toJson_toRaw j _
 
 /-- Converting an ordered tree to its extensional value and re-sorting is the
 identity. -/
-theorem OrderedJson.toOrdered_toJson (o : OrderedJson Scalar) : o.toJson.toOrdered = o :=
+theorem OrderedJson.toOrdered_toJson (o : OrderedJson Scalar Key) : o.toJson.toOrdered = o :=
   Subtype.ext (RawSyn.toRaw_toJson o.1 o.2 _)
 
 /-- Extensional JSON values and sorted duplicate-free syntax trees are
 equivalent: `OrderedJson` is a faithful data representative of `Json`.  This
 is a data-level isomorphism only — it imposes no canonical byte encoding, and
 equal extensional values need not have equal content hashes. -/
-def jsonEquivOrdered (Scalar : Type u) : Json Scalar ≃ OrderedJson Scalar where
+def jsonEquivOrdered (Scalar : Type u) (Key : Type := String) [LinearOrder Key] :
+    Json Scalar Key ≃ OrderedJson Scalar Key where
   toFun := Json.toOrdered
   invFun := OrderedJson.toJson
   left_inv := Json.toOrdered_toJson
   right_inv := OrderedJson.toOrdered_toJson
 
 /-- The canonical raw representative determines the extensional value. -/
-theorem Json.toRaw_injective : Function.Injective (Json.toRaw (Scalar := Scalar)) :=
+theorem Json.toRaw_injective :
+    Function.Injective (Json.toRaw (Key := Key) (Scalar := Scalar)) :=
   fun a b h => by
     rw [← Json.toOrdered_toJson a, ← Json.toOrdered_toJson b]
     exact congrArg OrderedJson.toJson (Subtype.ext h)

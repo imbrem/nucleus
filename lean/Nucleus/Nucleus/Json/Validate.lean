@@ -18,13 +18,13 @@ namespace Nucleus
 
 universe u
 
-variable {Scalar : Type u}
+variable {Key : Type} {Scalar : Type u} [LinearOrder Key]
 
 /-- Structured validation errors; currently only duplicate object keys.  Duplicate
 handling is an explicit, versioned policy decision — `RawSyn.validate` rejects. -/
-inductive JsonError where
+inductive JsonError (Key : Type := String) where
   /-- The key `key` occurs more than once in a single object. -/
-  | duplicateKey (key : String)
+  | duplicateKey (key : Key)
   deriving DecidableEq, Repr
 
 /-- The first element of the list that also occurs later in the list, if any. -/
@@ -46,7 +46,7 @@ namespace RawSyn
 /-- The first duplicated object key found anywhere in the tree, if any.  Used only for
 error reporting by `RawSyn.validate`; the specification is
 `RawSyn.dupWitness?_eq_none`.  Recurses structurally over all three sorts. -/
-def dupWitness? : ∀ {i : JsonIx}, RawSyn Scalar i → Option String
+def dupWitness? : ∀ {i : JsonIx}, RawSyn Key Scalar i → Option Key
   | _, .scalar _ => none
   | _, .list elems => elems.dupWitness?
   | _, .map entries => (firstDup? entries.keys).orElse fun _ => entries.dupWitness?
@@ -56,7 +56,7 @@ def dupWitness? : ∀ {i : JsonIx}, RawSyn Scalar i → Option String
   | _, .objCons _ value tail => (value.dupWitness?).orElse fun _ => tail.dupWitness?
 
 /-- `dupWitness?` finds nothing exactly when the tree is well-formed. -/
-theorem dupWitness?_eq_none {i : JsonIx} {r : RawSyn Scalar i} :
+theorem dupWitness?_eq_none {i : JsonIx} {r : RawSyn Key Scalar i} :
     r.dupWitness? = none ↔ r.WellFormed := by
   induction r with
   | scalar value => simp [dupWitness?]
@@ -73,14 +73,14 @@ theorem dupWitness?_eq_none {i : JsonIx} {r : RawSyn Scalar i} :
 /-- Explicit duplicate-key policy: reject.  Convert a raw tree to its extensional
 value, or report the first duplicated key.  Neither first-wins nor last-wins
 collapsing is performed implicitly anywhere in this library. -/
-def validate (r : RawJson Scalar) : Except JsonError (Json Scalar) :=
+def validate (r : KeyedRawJson Key Scalar) : Except (JsonError Key) (Json Scalar Key) :=
   match h : r.dupWitness? with
   | some k => .error (.duplicateKey k)
   | none => .ok (r.toJson (dupWitness?_eq_none.mp h))
 
 /-- `validate` succeeds with `j` exactly when the tree is well-formed and `j` is its
 extensional value. -/
-theorem validate_eq_ok_iff {r : RawJson Scalar} {j : Json Scalar} :
+theorem validate_eq_ok_iff {r : KeyedRawJson Key Scalar} {j : Json Scalar Key} :
     r.validate = .ok j ↔ ∃ h : r.WellFormed, r.toJson h = j := by
   unfold validate
   split
@@ -99,7 +99,7 @@ theorem validate_eq_ok_iff {r : RawJson Scalar} {j : Json Scalar} :
       rfl
 
 /-- `validate` fails exactly when the tree is not well-formed. -/
-theorem validate_eq_error_iff {r : RawJson Scalar} :
+theorem validate_eq_error_iff {r : KeyedRawJson Key Scalar} :
     (∃ e, r.validate = .error e) ↔ ¬ r.WellFormed := by
   unfold validate
   split
@@ -118,7 +118,7 @@ theorem validate_eq_error_iff {r : RawJson Scalar} :
       exact absurd (dupWitness?_eq_none.mp hnone) hn
 
 /-- On a well-formed tree, `validate` succeeds with the extensional value. -/
-theorem validate_ok_of_wellFormed {r : RawJson Scalar} (h : r.WellFormed) :
+theorem validate_ok_of_wellFormed {r : KeyedRawJson Key Scalar} (h : r.WellFormed) :
     r.validate = .ok (r.toJson h) :=
   validate_eq_ok_iff.mpr ⟨h, rfl⟩
 
