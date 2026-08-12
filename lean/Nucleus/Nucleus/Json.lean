@@ -9,6 +9,7 @@ import Nucleus.Json.Cas
 import Nucleus.Json.CasMap
 import Nucleus.Json.Rfc
 import Nucleus.Json.RfcParser
+import Nucleus.Json.RfcCanonical
 import Nucleus.Json.Ipld
 import Nucleus.Json.Sqlite
 import Nucleus.Json.IpldStore
