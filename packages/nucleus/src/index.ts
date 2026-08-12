@@ -5,6 +5,7 @@ export { init, Repl, runShell };
 export type { Step };
 export type { ShellOptions, ShellResult } from "./shell.js";
 export type { ReadOnlyVfs, VfsError, VfsFile } from "./vfs-host.js";
+export type { SatRequest, SatResult, SatSolver } from "./sat-provider.js";
 
 /** What a driven line produced. */
 export interface Line {

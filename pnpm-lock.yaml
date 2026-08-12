@@ -57,6 +57,9 @@ importers:
       '@bytecodealliance/jco':
         specifier: 1.27.0
         version: 1.27.0
+      '@types/node':
+        specifier: 24.13.3
+        version: 24.13.3
       playwright-core:
         specifier: 1.61.1
         version: 1.61.1
