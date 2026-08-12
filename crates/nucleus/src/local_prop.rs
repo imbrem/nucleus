@@ -316,6 +316,8 @@ pub enum Error {
     DuplicateConjunct,
     /// The atom is already defined.
     AlreadyDefined,
+    /// A logical row already exists with another definition/theorem class.
+    ClassificationConflict,
     /// Replacement requires an existing definition.
     Undefined,
     /// The proposed definition is cyclic.
@@ -330,10 +332,33 @@ pub enum Error {
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
+        match self {
+            Self::Storage(error) => write!(f, "local proposition storage failed: {error}"),
+            Self::Connection(error) => write!(f, "local proposition connection failed: {error}"),
+            Self::InvalidLiteral => f.write_str("literal is outside the local atom domain"),
+            Self::EmptyDefinition => f.write_str("definition must contain a conjunct"),
+            Self::DuplicateConjunct => f.write_str("definition contains a repeated conjunct"),
+            Self::AlreadyDefined => f.write_str("atom already has a complete definition"),
+            Self::ClassificationConflict => {
+                f.write_str("logical row already has another classification")
+            }
+            Self::Undefined => f.write_str("atom has no definition to replace"),
+            Self::Cycle => f.write_str("definition would create a local cycle"),
+            Self::InvalidState => f.write_str("stored proposition table is invalid"),
+            Self::ForeignFact => f.write_str("fact belongs to another kernel generation"),
+            Self::PremiseMismatch => f.write_str("facts do not justify the requested inference"),
+        }
     }
 }
-impl std::error::Error for Error {}
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Storage(error) => Some(error),
+            Self::Connection(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 impl From<covalence_lib_sqlite::Error> for Error {
     fn from(e: covalence_lib_sqlite::Error) -> Self {
         Self::Storage(e)
@@ -427,6 +452,14 @@ impl LocalPropTable {
             )?;
         }
         for conjunct in &conjuncts {
+            let classification = transaction.connection().query_row(
+                "SELECT reason FROM prop_row WHERE premise=?1 AND source=0 AND conclusion=?2",
+                &[premise.encoded().into(), conjunct.encoded().into()],
+                |row| row.integer(0),
+            )?;
+            if classification.is_some_and(|reason| reason != 0) {
+                return Err(Error::ClassificationConflict);
+            }
             transaction.connection().execute(
                 "INSERT INTO prop_row(premise,source,conclusion,reason) VALUES (?1,0,?2,0)",
                 &[premise.encoded().into(), conjunct.encoded().into()],
@@ -494,6 +527,17 @@ impl LocalPropTable {
     }
 
     fn insert_proved(&self, premise: Literal, conclusion: Literal) -> Result<(), Error> {
+        let classification = self.connection.query_row(
+            "SELECT reason FROM prop_row WHERE premise=?1 AND source=0 AND conclusion=?2",
+            &[premise.encoded().into(), conclusion.encoded().into()],
+            |row| row.integer(0),
+        )?;
+        if classification == Some(0) {
+            return Err(Error::ClassificationConflict);
+        }
+        if classification.is_some() {
+            return Ok(());
+        }
         self.connection.execute(
             "INSERT INTO prop_row(premise,source,conclusion,reason) VALUES (?1,0,?2,?3)",
             &[
@@ -985,5 +1029,31 @@ mod tests {
                 .execute_batch("INSERT INTO prop_row VALUES (1,0,2,9)")
                 .is_err()
         );
+    }
+
+    #[test]
+    fn checked_rules_reject_reclassification_and_allow_rederivation() {
+        let mut table = LocalPropTable::open_in_memory().expect("open");
+        table
+            .connection
+            .execute_batch("INSERT INTO prop_row VALUES (1,0,2,1)")
+            .expect("theorem candidate");
+        assert!(matches!(
+            table.define(definition(1, &[lit(2)])),
+            Err(Error::ClassificationConflict)
+        ));
+
+        let eliminated = table.define(definition(3, &[lit(4)])).expect("definition");
+        assert!(matches!(
+            table.introduce(lit(3), atom(4), &eliminated),
+            Err(Error::Undefined)
+        ));
+        let first = table
+            .introduce(lit(3), atom(3), &eliminated)
+            .expect("first derivation");
+        let second = table
+            .introduce(lit(3), atom(3), &eliminated)
+            .expect("idempotent rederivation");
+        assert_eq!(first, second);
     }
 }
