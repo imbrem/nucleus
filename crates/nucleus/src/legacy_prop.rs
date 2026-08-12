@@ -7,7 +7,7 @@
 
 use std::num::NonZeroU32;
 
-use crate::local_prop::{AtomId, Literal};
+use crate::local_prop::{AtomId, Literal, SourceId};
 
 /// The positive reason class assigned to former universal consequences.
 pub const LEGACY_UNIVERSAL_REASON: NonZeroU32 = NonZeroU32::MIN;
@@ -45,6 +45,41 @@ pub enum MigratedRow {
         /// Fixed legacy provenance class; never the old arbitrary metadata.
         reason: NonZeroU32,
     },
+}
+
+impl MigratedRow {
+    /// Returns the source assigned by this local-only migration.
+    #[must_use]
+    pub const fn source(self) -> SourceId {
+        SourceId::LOCAL
+    }
+
+    /// Returns the implication premise represented by the new row.
+    #[must_use]
+    pub const fn premise(self) -> Literal {
+        match self {
+            Self::Definition { atom, .. } => Literal::positive(atom),
+            Self::Theorem { premise, .. } => premise,
+        }
+    }
+
+    /// Returns the implication conclusion represented by the new row.
+    #[must_use]
+    pub const fn conclusion(self) -> Literal {
+        match self {
+            Self::Definition { conjunct, .. } => conjunct,
+            Self::Theorem { conclusion, .. } => conclusion,
+        }
+    }
+
+    /// Returns zero for definitions or the positive theorem reason.
+    #[must_use]
+    pub const fn reason(self) -> u32 {
+        match self {
+            Self::Definition { .. } => 0,
+            Self::Theorem { reason, .. } => reason.get(),
+        }
+    }
 }
 
 /// Why a former row has no faithful local-table representation.
@@ -155,19 +190,15 @@ mod tests {
                 model: fields[3].parse().expect("model"),
             };
             let actual = match migrate_row(row) {
-                Ok(MigratedRow::Definition { atom, conjunct }) => {
-                    format!("def:{}>{}@0", atom.get(), encode(conjunct))
+                Ok(migrated) => {
+                    assert_eq!(migrated.source(), SourceId::LOCAL);
+                    format!(
+                        "row:{},0,{},{}",
+                        encode(migrated.premise()),
+                        encode(migrated.conclusion()),
+                        migrated.reason()
+                    )
                 }
-                Ok(MigratedRow::Theorem {
-                    premise,
-                    conclusion,
-                    reason,
-                }) => format!(
-                    "theorem:{}>{}@{}",
-                    encode(premise),
-                    encode(conclusion),
-                    reason
-                ),
                 Err(MigrationError::WorldRow) => "reject-world".to_owned(),
                 Err(MigrationError::TruthAntecedent) => "reject-truth".to_owned(),
                 Err(MigrationError::Declaration) => "reject-declaration".to_owned(),

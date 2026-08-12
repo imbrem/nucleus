@@ -1,8 +1,8 @@
 # legacy-prop-migration-v1 case lhs rhs model outcome
-definition-positive	1	2	0	def:1>2@0
-definition-negative-conjunct	1	-2	0	def:1>-2@0
-universal	1	2	-1	theorem:1>2@1
-universal-metadata-discarded	-1	-2	-99	theorem:-1>-2@1
+definition-positive	1	2	0	row:1,0,2,0
+definition-negative-conjunct	1	-2	0	row:1,0,-2,0
+universal	1	2	-1	row:1,0,2,1
+universal-metadata-discarded	-1	-2	-99	row:-1,0,-2,1
 world	1	2	1	reject-world
 truth-universal	0	1	-1	reject-truth
 truth-world	0	1	1	reject-world

@@ -1,0 +1,10 @@
+# local-prop-deletion-v1 record premise conclusion value
+# The complete group defines 1 as (2 and 3). Deleting only 1->3 changes it.
+row	1	2	.
+row	1	3	.
+delete	1	3	.
+valuation	1	.	1
+valuation	2	.	1
+valuation	3	.	0
+expect-complete	.	.	0
+expect-after-delete	.	.	1
