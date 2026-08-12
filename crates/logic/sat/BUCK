@@ -29,6 +29,7 @@ rust_library(
     tests = [":covalence_logic_sat-unit-test"],
     named_deps = {
         "blake3": "nucleus//buck/cargo/production:blake3-1.8.5",
+        "covalence_logic_lrat": "nucleus//crates/logic/lrat:covalence_logic_lrat",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -58,6 +59,7 @@ rust_test(
     srcs = _RUST_SOURCES,
     named_deps = {
         "blake3": "nucleus//buck/cargo/production:blake3-1.8.5",
+        "covalence_logic_lrat": "nucleus//crates/logic/lrat:covalence_logic_lrat",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",

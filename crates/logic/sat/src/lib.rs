@@ -268,6 +268,19 @@ impl Cnf {
         check_clauses_bounded(&self.clauses, &instructions, limits)?;
         Ok(VerifiedUnsat { problem: self.id })
     }
+
+    /// Checks parser-independent typed LRAT calls against this exact problem.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first semantic call rejection or a missing-refutation error.
+    pub fn verify_typed(
+        &self,
+        calls: &[covalence_logic_lrat::Call],
+    ) -> Result<VerifiedUnsat, covalence_logic_lrat::Error> {
+        covalence_logic_lrat::check(&self.clauses, calls)?;
+        Ok(VerifiedUnsat { problem: self.id })
+    }
 }
 
 fn render_dimacs(canonical: &[Vec<i64>], limit: usize) -> Result<Box<[u8]>, CnfError> {
@@ -1451,6 +1464,19 @@ mod tests {
         let model = other.verify_model(&[1], 1).expect("model");
         assert_eq!(model.problem(), other.id());
         assert_ne!(model.problem(), contradiction.id());
+    }
+
+    #[test]
+    fn typed_lrat_verdict_is_bound_to_the_exact_problem() {
+        let contradiction = cnf(vec![vec![1], vec![-1]]);
+        let calls = [covalence_logic_lrat::Call::LearnRup {
+            id: 3,
+            clause: vec![],
+            ordered_hints: vec![1, 2],
+        }];
+        let verdict = contradiction.verify_typed(&calls).expect("refutation");
+        assert_eq!(verdict.problem(), contradiction.id());
+        assert!(cnf(vec![vec![1]]).verify_typed(&calls).is_err());
     }
 
     #[test]

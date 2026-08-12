@@ -58,6 +58,7 @@ pub enum Error {
     WrongOpposingClause { step: ClauseId, clause: ClauseId },
     DuplicateRatGroup { step: ClauseId, clause: ClauseId },
     IncompleteRat { step: ClauseId, clause: ClauseId },
+    NoRefutation,
 }
 
 impl std::fmt::Display for Error {
@@ -336,6 +337,25 @@ fn falsifying_trail(clause: &[Literal]) -> Result<BTreeSet<Literal>, Error> {
     Ok(trail)
 }
 
+/// Replays a complete typed trace and requires an admitted empty clause.
+///
+/// # Errors
+///
+/// Returns the first transactional call rejection or [`Error::NoRefutation`].
+pub fn check(initial: &[Clause], calls: &[Call]) -> Result<(), Error> {
+    let mut kernel = Kernel::open(initial)?;
+    if kernel.refuted() {
+        return Ok(());
+    }
+    for call in calls {
+        kernel.apply(call)?;
+        if kernel.refuted() {
+            return Ok(());
+        }
+    }
+    Err(Error::NoRefutation)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -415,5 +435,10 @@ mod tests {
             Err(Error::IncompleteRat { step: 4, clause: 3 })
         );
         assert_eq!(kernel, before);
+    }
+
+    #[test]
+    fn an_initial_empty_clause_is_already_a_refutation() {
+        check(&[vec![]], &[]).expect("initial empty clause");
     }
 }

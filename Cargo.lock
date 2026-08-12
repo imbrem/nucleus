@@ -395,6 +395,7 @@ name = "covalence-logic-sat"
 version = "0.0.0"
 dependencies = [
  "blake3",
+ "covalence-logic-lrat",
 ]
 
 [[package]]
