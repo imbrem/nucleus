@@ -8,6 +8,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
+pub mod continuation;
+
 /// Stable identity of one canonical CNF matrix.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ProblemId([u8; 32]);
