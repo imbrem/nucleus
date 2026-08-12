@@ -40,6 +40,26 @@ once, in the crate being wrapped. Malformed input raises `InvalidLengthError`,
 `InvalidHexError`, or `InvalidBase64Error` — all `ValueError` — and anything
 that is not bytes-like raises `TypeError`.
 
+`covalence-data-json`: `covalence.data.json.Json`, an immutable JSON document
+over the `Arc`-backed tree. It acts like the stdlib's pile of dicts — indexing,
+iteration, `in`, `len` — while enforcing what `json` leaves to convention:
+string keys, finite 64-bit numbers, duplicate keys as errors, sorted compact
+output. Access unwraps leaves and wraps containers, so a subtree is a
+reference-count bump rather than a copy.
+
+```python
+>>> from covalence.data.json import loads
+>>> doc = loads('{"zeta": 1, "alpha": {"nested": true}}')
+>>> doc.dumps()
+'{"alpha":{"nested":true},"zeta":1}'
+>>> doc["alpha"] == {"nested": True}
+True
+>>> loads('{"k": 1, "k": 2}')
+Traceback (most recent call last):
+    ...
+covalence.data.json.InvalidJsonError: duplicate object key "k" ...
+```
+
 | Path                | Contents                                       |
 | ------------------- | ---------------------------------------------- |
 | `src/`              | The `#[pymodule]` and its bindings             |

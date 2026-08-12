@@ -17,11 +17,13 @@
 use covalence_lib_python::prelude::*;
 
 mod hash;
+mod json;
 
 /// `covalence._covalence`.
 #[pymodule]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 fn _covalence(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("__version__", env!("CARGO_PKG_VERSION"))?;
-    hash::register(module)
+    hash::register(module)?;
+    json::register(module)
 }

@@ -82,7 +82,7 @@ pub use bytes::Bytes;
 /// exceptions the bindings are allowed to raise is a policy decision, and
 /// keeping it here is what makes that policy reviewable in one place.
 pub mod exceptions {
-    pub use pyo3::exceptions::{PyTypeError, PyValueError};
+    pub use pyo3::exceptions::{PyIndexError, PyKeyError, PyTypeError, PyValueError};
 
     /// Declares a module-specific exception class.
     ///
