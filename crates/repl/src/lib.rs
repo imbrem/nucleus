@@ -2,6 +2,7 @@
 
 pub mod sexpr;
 
+mod sat;
 mod session;
 
 pub use session::{HELP, Response, SAMPLES, SatJobId, Session, SessionError};

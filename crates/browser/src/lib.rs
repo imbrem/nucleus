@@ -191,6 +191,9 @@ impl Repl {
             Response::ReadFile(path) => Step::output(format!(
                 "no filesystem here: use the file picker to admit {path:?}"
             )),
+            Response::ReadSatFile(path) => Step::output(format!(
+                "no filesystem here: use the file picker to load {path:?}"
+            )),
             Response::Fetch { url, address } => Step {
                 kind: "fetch".to_owned(),
                 text: url,
@@ -273,6 +276,47 @@ impl Repl {
         self.session.abandon_sat(sat_job(job)?).map_err(to_js)
     }
 
+    /// Records an untrusted solver's unknown outcome.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `job` is stale or malformed.
+    #[wasm_bindgen(js_name = completeSatUnknown)]
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn complete_sat_unknown(
+        &mut self,
+        job: &str,
+        reason: Option<String>,
+    ) -> Result<(), JsError> {
+        self.session
+            .finish_sat_operational(sat_job(job)?, "unknown", reason.as_deref())
+            .map_err(to_js)
+    }
+
+    /// Records a provider failure without admitting a logical result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `job` is stale or malformed.
+    #[wasm_bindgen(js_name = completeSatFailure)]
+    pub fn complete_sat_failure(&mut self, job: &str, message: &str) -> Result<(), JsError> {
+        self.session
+            .finish_sat_operational(sat_job(job)?, "failed", Some(message))
+            .map_err(to_js)
+    }
+
+    /// Records cancellation without admitting a logical result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `job` is stale or malformed.
+    #[wasm_bindgen(js_name = cancelSat)]
+    pub fn cancel_sat(&mut self, job: &str) -> Result<(), JsError> {
+        self.session
+            .finish_sat_operational(sat_job(job)?, "cancelled", None)
+            .map_err(to_js)
+    }
+
     /// Admits bytes the page read from a file picker.
     ///
     /// # Errors
@@ -281,6 +325,19 @@ impl Repl {
     pub fn admit(&self, bytes: &[u8]) -> Result<String, JsError> {
         self.session
             .admit(bytes.to_vec())
+            .map(|value| value.display())
+            .map_err(to_js)
+    }
+
+    /// Selects DIMACS bytes supplied by the page.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the problem is malformed or a solve is pending.
+    #[wasm_bindgen(js_name = loadSat)]
+    pub fn load_sat(&mut self, bytes: &[u8], source: &str) -> Result<String, JsError> {
+        self.session
+            .load_sat(bytes, source)
             .map(|value| value.display())
             .map_err(to_js)
     }

@@ -68,6 +68,10 @@ fn step(
             let bytes = std::fs::read(&path)?;
             writeln!(out, "{}", session.admit(bytes)?)?;
         }
+        Response::ReadSatFile(path) => {
+            let bytes = std::fs::read(&path)?;
+            writeln!(out, "{}", session.load_sat(&bytes, path)?)?;
+        }
         Response::Fetch { url, address } => {
             let bytes = fetch(&url)?;
             writeln!(out, "{}", session.admit_verified(address, bytes)?)?;

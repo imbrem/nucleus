@@ -355,3 +355,34 @@ test("HTTP server owns cancellation when the solver ignores its signal", async (
     server.close((error) => (error ? reject(error) : resolve())),
   );
 });
+
+test("HTTP CORS requires an explicitly allowed exact origin", async () => {
+  const server = createCadicalServer({
+    solver: { solve: async () => ({ kind: "sat", model: [1n] }) },
+    allowedOrigins: ["https://allowed.example"],
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const url = `http://127.0.0.1:${address.port}/`;
+    const denied = await fetch(url, {
+      method: "OPTIONS",
+      headers: { origin: "https://denied.example" },
+    });
+    assert.equal(denied.status, 403);
+    const allowed = await fetch(url, {
+      method: "OPTIONS",
+      headers: { origin: "https://allowed.example" },
+    });
+    assert.equal(allowed.status, 204);
+    assert.equal(
+      allowed.headers.get("access-control-allow-origin"),
+      "https://allowed.example",
+    );
+    assert.equal(allowed.headers.get("vary"), "Origin");
+  } finally {
+    await new Promise((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
+});

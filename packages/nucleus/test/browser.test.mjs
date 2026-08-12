@@ -5,6 +5,7 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import test from "node:test";
 import { chromium } from "playwright-core";
+import { CadicalSolver, createCadicalServer } from "../dist/cadical-node.js";
 
 const root = new URL("..", import.meta.url).pathname;
 const repository = new URL("../../..", import.meta.url).pathname;
@@ -102,6 +103,22 @@ async function startKernel(context) {
   return { address: lines[0].split(" ")[0], baseUrl: lines[lines.length - 1] };
 }
 
+async function startSatServer(context, allowedOrigin) {
+  const server = createCadicalServer({
+    solver: new CadicalSolver(),
+    allowedOrigins: [allowedOrigin],
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(
+    () =>
+      new Promise((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      ),
+  );
+  const { port } = server.address();
+  return `http://127.0.0.1:${port}/`;
+}
+
 async function openPage(context, origin) {
   const executablePath = process.env.CHROMIUM_PATH;
   assert.ok(executablePath, "CHROMIUM_PATH is set by the Nix shell");
@@ -148,6 +165,86 @@ test("the browser runs the same REPL as the CLI", async (context) => {
   assert.equal(result.objects, `(${result.address})`);
   assert.equal(result.kernels, '((0 "local" #t))');
   assert.match(result.help, /\(connect "URL"\)/);
+});
+
+test("the browser checks SAT and binary LRAT from CaDiCaL over HTTP", async (context) => {
+  const origin = await servePackage(context);
+  const solverUrl = await startSatServer(context, origin);
+  const page = await openPage(context, origin);
+
+  const result = await page.evaluate(async (url) => {
+    const { HttpSatSolver, Repl, drive } = window.nucleus;
+    const repl = new Repl();
+    const host = { sat: new HttpSatSolver(url) };
+    const say = async (line) => (await drive(repl, host, line)).output;
+
+    const satDemo = await say("(sat-demo and-sat)");
+    const sat = await say("(sat-solve)");
+    const model = await say("(sat-model)");
+    const satChecked = await say("(sat-checked)");
+    const unsatDemo = await say("(sat-demo and-unsat)");
+    const unsat = await say("(sat-solve)");
+    const proof = await say("(sat-proof)");
+    const proofText = await say("(sat-proof-text)");
+    const result = await say("(sat-result)");
+    const unsatChecked = await say("(sat-checked)");
+    const database = await say("(sat-database)");
+    const rows = await say(
+      `(sqlite ${database} "-batch" "SELECT (SELECT count(*) FROM prop_row), (SELECT count(*) FROM prop_world);")`,
+    );
+    await say("(sat-demo and-unsat)");
+    const before = await say("(sat-database)");
+    const beforeRows = await say(
+      `(sqlite ${before} "-batch" "SELECT count(*) FROM prop_row;")`,
+    );
+    const rejected = await drive(
+      repl,
+      { sat: { solve: async () => ({ kind: "sat", model: [1n, 2n, 3n] }) } },
+      "(sat-solve)",
+    );
+    const rejectedStatus = await say("(sat-status)");
+    const after = await say("(sat-database)");
+    const afterRows = await say(
+      `(sqlite ${after} "-batch" "SELECT count(*) FROM prop_row;")`,
+    );
+    return {
+      satDemo,
+      sat,
+      model,
+      satChecked,
+      unsatDemo,
+      unsat,
+      proof,
+      proofText,
+      result,
+      unsatChecked,
+      database,
+      rows,
+      before,
+      beforeRows,
+      rejected: rejected.output,
+      rejectedStatus,
+      after,
+      afterRows,
+    };
+  }, solverUrl);
+
+  assert.match(result.satDemo, /expected sat/);
+  assert.match(result.sat, /^\(sat /);
+  assert.equal(result.model, "(1 2 3)");
+  assert.match(result.satChecked, /^\(sat /);
+  assert.match(result.unsatDemo, /expected unsat/);
+  assert.equal(result.unsat, "unsat");
+  assert.match(result.proof, /^\([0-9a-f]{64} binary [1-9][0-9]*\)$/);
+  assert.match(result.proofText, / 0/);
+  assert.match(result.result, /^\(unsat /);
+  assert.equal(result.unsatChecked, "unsat");
+  assert.match(result.database, /^[0-9a-f]{64}$/);
+  assert.match(result.rows, /^[1-9][0-9]*\|0$/);
+  assert.match(result.rejected, /^error:/);
+  assert.match(result.rejectedStatus, /^\(rejected /);
+  assert.equal(result.after, result.before);
+  assert.equal(result.afterRows, result.beforeRows);
 });
 
 test("the REPL connects to a kernel over HTTP and fetches from it", async (context) => {

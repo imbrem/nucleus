@@ -163,7 +163,7 @@ async function solve(
         };
       }
       case "unknown":
-        repl.abandonSat(step.job);
+        repl.completeSatUnknown(step.job, result.reason);
         consumed = true;
         return {
           output: result.reason ? `unknown: ${result.reason}` : "unknown",
@@ -175,7 +175,12 @@ async function solve(
   } catch (error) {
     if (!consumed) {
       try {
-        repl.abandonSat(step.job);
+        const message = messageOf(error);
+        if (signal?.aborted || message === "SAT solve aborted") {
+          repl.cancelSat(step.job);
+        } else {
+          repl.completeSatFailure(step.job, message);
+        }
       } catch {
         // Preserve the provider or checker error which caused cleanup.
       }
