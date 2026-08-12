@@ -1,9 +1,14 @@
 import init, { Repl, Step } from "../generated/nucleus.js";
-import { runShell } from "./shell.js";
+import { runShell, startShell } from "./shell.js";
 
-export { init, Repl, runShell };
+export { init, Repl, runShell, startShell };
 export type { Step };
-export type { ShellOptions, ShellResult } from "./shell.js";
+export type {
+  InteractiveShell,
+  InteractiveShellOptions,
+  ShellOptions,
+  ShellResult,
+} from "./shell.js";
 export type { ReadOnlyVfs, VfsError, VfsFile } from "./vfs-host.js";
 export type { SatRequest, SatResult, SatSolver } from "./sat-provider.js";
 
@@ -44,6 +49,16 @@ export async function drive(
     return { output: `error: ${messageOf(error)}`, quit: false };
   }
 
+  return driveStep(repl, host, step, signal);
+}
+
+/** Carries out a step already read by `Repl.eval`. */
+export async function driveStep(
+  repl: Repl,
+  host: Host,
+  step: Step,
+  signal?: AbortSignal,
+): Promise<Line> {
   switch (step.kind) {
     case "quit":
       return { output: "", quit: true };

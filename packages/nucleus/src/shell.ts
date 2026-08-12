@@ -20,6 +20,21 @@ export interface ShellOptions {
   args: string[];
   stdin?: string;
   vfs?: ReadOnlyVfs;
+  onStdout?: (text: string) => void;
+  onStderr?: (text: string) => void;
+}
+
+export interface InteractiveShellOptions {
+  args: string[];
+  vfs?: ReadOnlyVfs;
+  onStdout?: (text: string) => void;
+  onStderr?: (text: string) => void;
+}
+
+export interface InteractiveShell {
+  write(text: string): void;
+  close(): void;
+  readonly done: Promise<ShellResult>;
 }
 
 class ReplVfs implements ReadOnlyVfs {
@@ -61,9 +76,31 @@ export function runShell(
   return result;
 }
 
+/** Starts one SQLite process whose stdin remains open until `close`. */
+export async function startShell(
+  repl: Repl,
+  options: InteractiveShellOptions,
+): Promise<InteractiveShell> {
+  let release!: () => void;
+  const turn = shellQueue;
+  shellQueue = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await turn;
+
+  const stdin = new ShellInput();
+  const done = runShellExclusive(repl, options, stdin).finally(release);
+  return {
+    write: (text) => stdin.write(text),
+    close: () => stdin.close(),
+    done,
+  };
+}
+
 async function runShellExclusive(
   repl: Repl,
   options: ShellOptions,
+  interactiveInput?: ShellInput,
 ): Promise<ShellResult> {
   const database = options.args.find((argument) => !argument.startsWith("-"));
   if (
@@ -86,17 +123,23 @@ async function runShellExclusive(
   const input = encoder.encode(options.stdin ?? "");
   let inputOffset = 0;
 
-  _setStdout(output(stdout, stdoutDecoder));
-  _setStderr(output(stderr, stderrDecoder));
-  _setStdin({
-    blockingRead(length: bigint) {
-      const remaining = input.length - inputOffset;
-      const count = Number(length < BigInt(remaining) ? length : remaining);
-      const chunk = input.slice(inputOffset, inputOffset + count);
-      inputOffset += chunk.length;
-      return chunk;
-    },
-  });
+  _setStdout(output(stdout, stdoutDecoder, options.onStdout));
+  _setStderr(output(stderr, stderrDecoder, options.onStderr));
+  const stdin = interactiveInput
+    ? { blockingRead: (length: bigint) => interactiveInput.blockingRead(length) }
+    : {
+      blockingRead(length: bigint) {
+        const remaining = input.length - inputOffset;
+        const count = Number(length < BigInt(remaining) ? length : remaining);
+        const chunk = input.slice(inputOffset, inputOffset + count);
+        inputOffset += chunk.length;
+        return chunk;
+      },
+    };
+  // The shim types describe the synchronous WIT surface. Jco lowers this
+  // particular import through JSPI, so the interactive implementation may
+  // return a Promise at runtime.
+  _setStdin(stdin as unknown as Parameters<typeof _setStdin>[0]);
 
   let status = 1;
   try {
@@ -114,18 +157,82 @@ async function runShellExclusive(
     else throw error;
   }
 
-  stdout.push(stdoutDecoder.decode());
-  stderr.push(stderrDecoder.decode());
+  finishOutput(stdout, stdoutDecoder, options.onStdout);
+  finishOutput(stderr, stderrDecoder, options.onStderr);
   return { status, stdout: stdout.join(""), stderr: stderr.join("") };
 }
 
-function output(parts: string[], decoder: TextDecoder) {
+function output(
+  parts: string[],
+  decoder: TextDecoder,
+  emit?: (text: string) => void,
+) {
   return {
     write(bytes: Uint8Array) {
-      parts.push(decoder.decode(bytes, { stream: true }));
+      const text = decoder.decode(bytes, { stream: true });
+      parts.push(text);
+      emit?.(text);
     },
     blockingFlush() {},
   };
+}
+
+function finishOutput(
+  parts: string[],
+  decoder: TextDecoder,
+  emit?: (text: string) => void,
+) {
+  const text = decoder.decode();
+  parts.push(text);
+  emit?.(text);
+}
+
+class ShellInput {
+  private readonly encoder = new TextEncoder();
+  private readonly queued: Uint8Array[] = [];
+  private waiting?: { length: bigint; resolve: (bytes: Uint8Array) => void };
+  private closed = false;
+
+  blockingRead(length: bigint): Promise<Uint8Array> {
+    if (this.waiting) throw new Error("SQLite issued overlapping stdin reads");
+    const ready = this.take(length);
+    if (ready) return Promise.resolve(ready);
+    if (this.closed) return Promise.resolve(new Uint8Array());
+    return new Promise((resolve) => {
+      this.waiting = { length, resolve };
+    });
+  }
+
+  write(text: string) {
+    if (this.closed) throw new Error("SQLite stdin is closed");
+    const bytes = this.encoder.encode(text);
+    if (bytes.length !== 0) this.queued.push(bytes);
+    this.wake();
+  }
+
+  close() {
+    this.closed = true;
+    this.wake();
+  }
+
+  private wake() {
+    const waiting = this.waiting;
+    if (!waiting) return;
+    const bytes = this.take(waiting.length);
+    if (!bytes && !this.closed) return;
+    this.waiting = undefined;
+    waiting.resolve(bytes ?? new Uint8Array());
+  }
+
+  private take(length: bigint): Uint8Array | undefined {
+    const first = this.queued[0];
+    if (!first) return undefined;
+    const count = Math.min(first.length, Number(length));
+    const bytes = first.slice(0, count);
+    if (count === first.length) this.queued.shift();
+    else this.queued[0] = first.slice(count);
+    return bytes;
+  }
 }
 
 function isComponentExit(error: unknown): error is Error & { code: number } {

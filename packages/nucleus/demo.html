@@ -91,6 +91,7 @@
       }
       form span {
         color: var(--accent);
+        cursor: help;
       }
       input[type="text"] {
         flex: 1;
@@ -134,7 +135,7 @@
     <div id="transcript"></div>
 
     <form id="prompt">
-      <span>nucleus&gt;</span>
+      <span id="mode" title="Nucleus REPL">nucleus&gt;</span>
       <input
         id="line"
         type="text"
@@ -146,7 +147,13 @@
     </form>
 
     <script type="module">
-      import { init, Repl, drive } from "./dist/index.js";
+      import {
+        init,
+        Repl,
+        drive,
+        driveStep,
+        startShell,
+      } from "./dist/index.js";
 
       await init();
       const repl = new Repl();
@@ -154,6 +161,8 @@
 
       const transcript = document.getElementById("transcript");
       const line = document.getElementById("line");
+      const mode = document.getElementById("mode");
+      let shell;
 
       function write(text, className) {
         if (!text) return;
@@ -162,6 +171,75 @@
         node.textContent = text;
         transcript.append(node);
         transcript.scrollTop = transcript.scrollHeight;
+      }
+
+      // SQLite owns these bytes. Do not trim, join, or add line breaks.
+      function writeShell(text, className) {
+        if (!text) return;
+        const node = document.createElement("span");
+        if (className) node.className = className;
+        node.textContent = text;
+        transcript.append(node);
+        transcript.scrollTop = transcript.scrollHeight;
+      }
+
+      function setMode(name) {
+        if (name === "sqlite") {
+          mode.textContent = "sqlite>";
+          mode.title = "SQLite shell; enter .quit or .exit to return to nucleus";
+          line.placeholder = "Enter .quit or .exit to return to nucleus";
+          line.disabled = false;
+          line.focus();
+        } else if (name === "starting") {
+          mode.textContent = "sqlite…";
+          mode.title = "Starting SQLite";
+          line.placeholder = "Starting SQLite…";
+          line.disabled = true;
+        } else {
+          mode.textContent = "nucleus>";
+          mode.title = "Nucleus REPL";
+          line.placeholder = "";
+          line.disabled = false;
+          line.focus();
+        }
+      }
+
+      async function enterShell(step) {
+        setMode("starting");
+        let ready;
+        const firstOutput = new Promise((resolve) => {
+          ready = resolve;
+        });
+        try {
+          shell = await startShell(repl, {
+            args: step.arguments,
+            onStdout: (text) => {
+              writeShell(text);
+              ready();
+            },
+            onStderr: (text) => {
+              writeShell(text, "bad");
+              ready();
+            },
+          });
+          const current = shell;
+          const opened = await Promise.race([
+            firstOutput.then(() => true),
+            current.done.then(() => false),
+          ]);
+          if (opened && shell === current) setMode("sqlite");
+          const result = await current.done;
+          if (shell !== current) return;
+          shell = undefined;
+          setMode("nucleus");
+          if (result.status !== 0) {
+            write(`shell exited with status ${result.status}`, "bad");
+          }
+        } catch (error) {
+          shell = undefined;
+          setMode("nucleus");
+          write(`error: ${error}`, "bad");
+        }
       }
 
       write(repl.banner());
@@ -211,9 +289,34 @@
 
           history.push(text);
           cursor = history.length;
+
+          if (shell) {
+            // SQLite already emitted its own prompt. Append only what a
+            // terminal would echo after it, without rewriting shell output.
+            writeShell(`${text}\n`, "echo");
+            try {
+              shell.write(`${text}\n`);
+            } catch (error) {
+              write(`error: ${error}`, "bad");
+            }
+            return;
+          }
+
           write(`nucleus> ${text}`, "echo");
 
-          const result = await drive(repl, host, text);
+          let step;
+          try {
+            step = repl.eval(text);
+          } catch (error) {
+            write(`error: ${error}`, "bad");
+            return;
+          }
+          if (step.kind === "shell") {
+            void enterShell(step);
+            return;
+          }
+
+          const result = await driveStep(repl, host, step);
           write(
             result.output,
             result.output.startsWith("error:") ? "bad" : undefined,

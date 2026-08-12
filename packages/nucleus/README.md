@@ -19,3 +19,7 @@ The WIT interface remains synchronous for current toolchain compatibility. Jco
 selectively lowers its VFS imports and shell export through JSPI, so JavaScript
 implementations may suspend on Promises. This can become native async WIT once
 the Rust component toolchain supports it reliably.
+
+In the browser demo, `(sqlite [ADDRESS])` switches the prompt to `sqlite>` and
+keeps that shell invocation alive. Enter `.quit` or `.exit` to return to the
+`nucleus>` prompt. SQLite's stdout and stderr are displayed without rewriting.

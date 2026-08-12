@@ -122,6 +122,22 @@ async function openPage(context, origin) {
   return page;
 }
 
+async function openDemo(context, origin) {
+  const executablePath = process.env.CHROMIUM_PATH;
+  assert.ok(executablePath, "CHROMIUM_PATH is set by the Nix shell");
+  const browser = await chromium.launch({
+    executablePath,
+    headless: true,
+    args: ["--no-sandbox"],
+  });
+  context.after(() => browser.close());
+  const page = await browser.newPage();
+  page.on("pageerror", (error) => console.error("page error:", error));
+  await page.goto(`${origin}/demo.html`);
+  await page.waitForSelector("#line");
+  return page;
+}
+
 async function startSatProvider(context, origin, solver = new CadicalSolver()) {
   const server = createCadicalServer({
     solver,
@@ -131,6 +147,43 @@ async function startSatProvider(context, origin, solver = new CadicalSolver()) {
   context.after(() => server.close());
   return `http://127.0.0.1:${server.address().port}/`;
 }
+
+test("the demo queries a CAS database in interactive SQLite", async (context) => {
+  const origin = await servePackage(context);
+  const page = await openDemo(context, origin);
+  const input = page.locator("#line");
+  const mode = page.locator("#mode");
+  const initial = await page.locator("#transcript").textContent();
+  const [, address] = /planets\s+([0-9a-f]{64})/.exec(initial);
+
+  await input.fill(`(sqlite ${address})`);
+  await input.press("Enter");
+  await page.waitForFunction(
+    () => document.querySelector("#mode")?.textContent === "sqlite>",
+  );
+  assert.match(await mode.getAttribute("title"), /\.quit.*\.exit/);
+
+  await input.fill(
+    "SELECT name FROM planets ORDER BY moons DESC LIMIT 1;",
+  );
+  await input.press("Enter");
+  await page.waitForFunction(() =>
+    document
+      .querySelector("#transcript")
+      ?.textContent?.includes("│ Saturn │\n"),
+  );
+
+  await input.fill(".quit");
+  await input.press("Enter");
+  await page.waitForFunction(
+    () => document.querySelector("#mode")?.textContent === "nucleus>",
+  );
+  const transcript = await page.locator("#transcript").textContent();
+  assert.match(transcript, new RegExp(`nucleus> \\(sqlite ${address}\\)`));
+  assert.match(transcript, /sqlite> SELECT name FROM planets/);
+  assert.match(transcript, /│ Saturn │\n/);
+  assert.match(transcript, /sqlite> \.quit\n/);
+});
 
 test("Chromium cancels an HTTP SAT provider without wedging the REPL", async (context) => {
   const origin = await servePackage(context);
