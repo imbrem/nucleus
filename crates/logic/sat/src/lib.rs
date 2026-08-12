@@ -891,6 +891,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn model_verdict_is_complete_and_non_contradictory() {
+        let cnf = vec![vec![1, 2], vec![-1, 2]];
+        assert_eq!(
+            verify_model(&cnf, &[1, 2], 2).expect("model").literals(),
+            &[1, 2]
+        );
+        assert_eq!(verify_model(&cnf, &[2], 2), Err(ModelError::Incomplete));
+        assert_eq!(
+            verify_model(&cnf, &[1, -1, 2], 3),
+            Err(ModelError::ContradictoryLiterals)
+        );
+    }
+
+    #[test]
     fn parses_additions_and_deletions() {
         let instructions = parse_text("3 1 -2 0 1 2 0\n4 d 1 2 0\n5 0 3 4 0\n").expect("parse");
         assert_eq!(

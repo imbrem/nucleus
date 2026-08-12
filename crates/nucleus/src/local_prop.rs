@@ -15,6 +15,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use covalence_lib_hash::O256;
 use covalence_neutron::sql::{Param, Transaction};
 
+pub mod sat;
+
 const SCHEMA: &str = include_str!("local_prop/schema.sql");
 static NEXT_KERNEL: AtomicU64 = AtomicU64::new(1);
 
@@ -237,6 +239,8 @@ pub enum Judgement {
     Transitivity,
     /// A previously admitted positive row was checked in the current table.
     StoredImplication,
+    /// Unsatisfiability of the negated implication was checked by LRAT.
+    SatRefutation,
 }
 
 /// The semantics used to check a [`Fact`].
@@ -248,6 +252,8 @@ pub enum Judgement {
 pub enum CheckerVersion {
     /// The local, acyclic, empty-context rules in this module.
     LocalV1,
+    /// Binary LRAT checked by the bounded SAT checker, version 1.
+    BinaryLratV1,
 }
 
 /// The baseline source identity.
@@ -376,6 +382,8 @@ pub enum Error {
     KernelIdentityExhausted,
     /// Facts do not justify the requested inference.
     PremiseMismatch,
+    /// A long-running check targeted an obsolete table snapshot.
+    StaleSnapshot,
 }
 
 impl std::fmt::Display for Error {
@@ -404,6 +412,7 @@ impl std::fmt::Display for Error {
                 f.write_str("process-local kernel identity space is exhausted")
             }
             Self::PremiseMismatch => f.write_str("facts do not justify the requested inference"),
+            Self::StaleSnapshot => f.write_str("checked result targets an obsolete snapshot"),
         }
     }
 }
