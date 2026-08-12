@@ -389,6 +389,9 @@ dependencies = [
 [[package]]
 name = "covalence-logic-sat"
 version = "0.0.0"
+dependencies = [
+ "blake3",
+]
 
 [[package]]
 name = "covalence-neutron"

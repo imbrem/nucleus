@@ -1,13 +1,42 @@
 //! Snapshot-bound adapter from the reusable SAT checker to local facts.
 
 use std::collections::BTreeMap;
-use std::fmt::Write as _;
 
-use covalence_logic_sat::{Limits, LratError, ModelError, VerifiedModel, VerifiedUnsat};
+use covalence_logic_sat::{
+    Cnf, CnfError, CnfLimits, CnfPolicy, Limits, LratError, ModelError, ProblemId, VerifiedModel,
+    VerifiedUnsat,
+};
 
 use super::{
     CheckerVersion, Error, Fact, Judgement, Literal, LocalPropTable, SnapshotId, has_cycle,
 };
+
+/// Failure while deriving a canonical SAT problem from a local table.
+#[derive(Debug)]
+pub enum PrepareError {
+    /// The local table could not be read or was invalid.
+    Table(Error),
+    /// The derived matrix violated the requested CNF bounds or policy.
+    Cnf(CnfError),
+}
+
+impl std::fmt::Display for PrepareError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Table(error) => write!(f, "cannot derive SAT problem: {error}"),
+            Self::Cnf(error) => write!(f, "derived CNF rejected: {error:?}"),
+        }
+    }
+}
+
+impl std::error::Error for PrepareError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Table(error) => Some(error),
+            Self::Cnf(_) => None,
+        }
+    }
+}
 
 /// A canonical SAT problem for the negation of one local implication.
 ///
@@ -18,8 +47,7 @@ pub struct SatProblem {
     snapshot: SnapshotId,
     premise: Literal,
     conclusion: Literal,
-    clauses: Box<[Vec<i64>]>,
-    dimacs: Box<[u8]>,
+    cnf: Cnf,
 }
 
 impl SatProblem {
@@ -32,7 +60,13 @@ impl SatProblem {
     /// Returns canonical DIMACS for an untrusted solver.
     #[must_use]
     pub fn dimacs(&self) -> &[u8] {
-        &self.dimacs
+        self.cnf.dimacs()
+    }
+
+    /// Returns the exact canonical SAT problem identity.
+    #[must_use]
+    pub const fn id(&self) -> ProblemId {
+        self.cnf.id()
     }
 
     /// Checks the solver's binary LRAT response.
@@ -45,7 +79,7 @@ impl SatProblem {
         proof: &[u8],
         limits: Limits,
     ) -> Result<CheckedRefutation, LratError> {
-        let verdict = covalence_logic_sat::verify_binary(&self.clauses, proof, limits)?;
+        let verdict = self.cnf.verify_binary(proof, limits)?;
         Ok(CheckedRefutation {
             snapshot: self.snapshot,
             premise: self.premise,
@@ -64,7 +98,7 @@ impl SatProblem {
         model: &[i64],
         max_literals: usize,
     ) -> Result<ModelWitness, ModelError> {
-        let model = covalence_logic_sat::verify_model(&self.clauses, model, max_literals)?;
+        let model = self.cnf.verify_model(model, max_literals)?;
         Ok(ModelWitness {
             snapshot: self.snapshot,
             premise: self.premise,
@@ -96,6 +130,12 @@ pub struct ModelWitness {
 }
 
 impl ModelWitness {
+    /// Returns the exact canonical problem satisfied by this witness.
+    #[must_use]
+    pub const fn problem(&self) -> ProblemId {
+        self.model.problem()
+    }
+
     /// Returns the snapshot whose problem was satisfied.
     #[must_use]
     pub const fn snapshot(&self) -> SnapshotId {
@@ -132,19 +172,23 @@ impl LocalPropTable {
         &self,
         premise: Literal,
         conclusion: Literal,
-    ) -> Result<SatProblem, Error> {
-        if has_cycle(&self.connection)? {
-            return Err(Error::InvalidState);
+        limits: CnfLimits,
+        policy: CnfPolicy,
+    ) -> Result<SatProblem, PrepareError> {
+        if has_cycle(&self.connection).map_err(PrepareError::Table)? {
+            return Err(PrepareError::Table(Error::InvalidState));
         }
         let rows = self.connection.query_all(
             "SELECT premise, conclusion FROM prop_row WHERE source=0 AND reason=0 ORDER BY premise, conclusion",
             &[],
             |row| Ok((row.integer(0)?, row.integer(1)?)),
-        )?;
+        )
+        .map_err(Error::from)
+        .map_err(PrepareError::Table)?;
         let mut definitions: BTreeMap<i64, Vec<i64>> = BTreeMap::new();
         for (atom, conjunct) in rows {
             if atom <= 0 || conjunct == 0 || conjunct == i64::MIN {
-                return Err(Error::InvalidState);
+                return Err(PrepareError::Table(Error::InvalidState));
             }
             definitions.entry(atom).or_default().push(conjunct);
         }
@@ -158,27 +202,12 @@ impl LocalPropTable {
             introduction.extend(conjuncts.into_iter().map(|conjunct| -conjunct));
             clauses.push(introduction);
         }
-        let max_variable = clauses
-            .iter()
-            .flatten()
-            .map(|literal| literal.unsigned_abs())
-            .max()
-            .unwrap_or(0);
-        let mut dimacs = String::new();
-        writeln!(dimacs, "p cnf {max_variable} {}", clauses.len())
-            .expect("writing to a String cannot fail");
-        for clause in &clauses {
-            for literal in clause {
-                write!(dimacs, "{literal} ").expect("writing to a String cannot fail");
-            }
-            dimacs.push_str("0\n");
-        }
+        let cnf = Cnf::new(clauses, limits, policy).map_err(PrepareError::Cnf)?;
         Ok(SatProblem {
             snapshot: self.snapshot(),
             premise,
             conclusion,
-            clauses: clauses.into_boxed_slice(),
-            dimacs: dimacs.into_bytes().into_boxed_slice(),
+            cnf,
         })
     }
 
@@ -233,7 +262,12 @@ mod tests {
         let mut table = LocalPropTable::open_in_memory().expect("table");
         let proposition = literal(1);
         let problem = table
-            .prepare_sat_refutation(proposition, proposition)
+            .prepare_sat_refutation(
+                proposition,
+                proposition,
+                CnfLimits::default(),
+                CnfPolicy::default(),
+            )
             .expect("problem");
         assert!(
             std::str::from_utf8(problem.dimacs())
@@ -258,7 +292,12 @@ mod tests {
         let premise = literal(1);
         let conclusion = literal(2);
         let problem = table
-            .prepare_sat_refutation(premise, conclusion)
+            .prepare_sat_refutation(
+                premise,
+                conclusion,
+                CnfLimits::default(),
+                CnfPolicy::default(),
+            )
             .expect("problem");
         let witness = problem.check_model(&[1, -2], 2).expect("model");
         assert_eq!(witness.literals(), &[1, -2]);

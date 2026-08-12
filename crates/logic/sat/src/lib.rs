@@ -6,6 +6,255 @@
 //! check may confer.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
+
+/// Stable identity of one canonical CNF matrix.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ProblemId([u8; 32]);
+
+impl ProblemId {
+    /// Returns the digest bytes.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+/// Resource bounds applied while canonicalizing an untrusted CNF.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CnfLimits {
+    /// Largest variable number.
+    pub max_variable: u64,
+    /// Maximum clauses before or after canonicalization.
+    pub clauses: usize,
+    /// Maximum literals in one input clause.
+    pub literals_per_clause: usize,
+    /// Maximum literals across the input matrix.
+    pub total_literals: usize,
+}
+
+impl Default for CnfLimits {
+    fn default() -> Self {
+        Self {
+            max_variable: i64::MAX as u64,
+            clauses: 1_000_000,
+            literals_per_clause: 1_000_000,
+            total_literals: 16_000_000,
+        }
+    }
+}
+
+/// Policy for structurally redundant CNF input.
+#[non_exhaustive]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent canonicalization choices are the explicit policy"
+)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CnfPolicy {
+    /// Whether a matrix with no effective clauses is accepted.
+    pub allow_empty_cnf: bool,
+    /// Whether an empty clause is a valid immediate contradiction.
+    pub allow_empty_clause: bool,
+    /// Whether tautological clauses are dropped instead of rejected.
+    pub drop_tautologies: bool,
+    /// Whether duplicate literals are canonicalized instead of rejected.
+    pub canonicalize_duplicate_literals: bool,
+    /// Whether duplicate clauses are canonicalized instead of rejected.
+    pub canonicalize_duplicate_clauses: bool,
+}
+
+impl Default for CnfPolicy {
+    fn default() -> Self {
+        Self {
+            allow_empty_cnf: true,
+            allow_empty_clause: true,
+            drop_tautologies: true,
+            canonicalize_duplicate_literals: true,
+            canonicalize_duplicate_clauses: true,
+        }
+    }
+}
+
+/// Failure to validate and canonicalize a CNF matrix.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CnfError {
+    /// A configured bound was exceeded.
+    Limit {
+        /// Name of the exhausted resource.
+        resource: &'static str,
+        /// Configured maximum.
+        limit: usize,
+    },
+    /// Zero and the minimum signed integer cannot encode literals.
+    InvalidLiteral,
+    /// A variable exceeded the configured range.
+    VariableOutOfRange,
+    /// Policy rejected an empty clause.
+    EmptyClause,
+    /// Policy rejected a matrix with no effective clauses.
+    EmptyCnf,
+    /// Policy rejected a tautological clause.
+    TautologicalClause,
+    /// Policy rejected a repeated literal.
+    DuplicateLiteral,
+    /// Policy rejected a repeated clause.
+    DuplicateClause,
+}
+
+/// An owned, validated canonical CNF problem.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Cnf {
+    clauses: Box<[Vec<i64>]>,
+    id: ProblemId,
+    dimacs: Box<[u8]>,
+}
+
+impl Cnf {
+    /// Validates, canonicalizes, identifies, and renders a CNF matrix.
+    ///
+    /// # Errors
+    ///
+    /// Rejects invalid, policy-forbidden, or oversized matrices.
+    pub fn new(
+        clauses: impl IntoIterator<Item = Vec<i64>>,
+        limits: CnfLimits,
+        policy: CnfPolicy,
+    ) -> Result<Self, CnfError> {
+        let mut canonical = Vec::new();
+        let mut total = 0usize;
+        let mut input_clauses = 0usize;
+        for mut clause in clauses {
+            input_clauses = input_clauses.checked_add(1).ok_or(CnfError::Limit {
+                resource: "clauses",
+                limit: limits.clauses,
+            })?;
+            if input_clauses > limits.clauses {
+                return Err(CnfError::Limit {
+                    resource: "clauses",
+                    limit: limits.clauses,
+                });
+            }
+            if clause.len() > limits.literals_per_clause {
+                return Err(CnfError::Limit {
+                    resource: "literals per clause",
+                    limit: limits.literals_per_clause,
+                });
+            }
+            total = total.checked_add(clause.len()).ok_or(CnfError::Limit {
+                resource: "total literals",
+                limit: limits.total_literals,
+            })?;
+            if total > limits.total_literals {
+                return Err(CnfError::Limit {
+                    resource: "total literals",
+                    limit: limits.total_literals,
+                });
+            }
+            if clause.is_empty() && !policy.allow_empty_clause {
+                return Err(CnfError::EmptyClause);
+            }
+            for &literal in &clause {
+                if literal == 0 || literal == i64::MIN {
+                    return Err(CnfError::InvalidLiteral);
+                }
+                if literal.unsigned_abs() > limits.max_variable {
+                    return Err(CnfError::VariableOutOfRange);
+                }
+            }
+            clause.sort_unstable();
+            let duplicate = clause.windows(2).any(|pair| pair[0] == pair[1]);
+            if duplicate && !policy.canonicalize_duplicate_literals {
+                return Err(CnfError::DuplicateLiteral);
+            }
+            clause.dedup();
+            let literals: BTreeSet<i64> = clause.iter().copied().collect();
+            let tautological = clause.iter().any(|literal| literals.contains(&-*literal));
+            if tautological {
+                if policy.drop_tautologies {
+                    continue;
+                }
+                return Err(CnfError::TautologicalClause);
+            }
+            canonical.push(clause);
+        }
+        canonical.sort();
+        let duplicate = canonical.windows(2).any(|pair| pair[0] == pair[1]);
+        if duplicate && !policy.canonicalize_duplicate_clauses {
+            return Err(CnfError::DuplicateClause);
+        }
+        canonical.dedup();
+        if canonical.is_empty() && !policy.allow_empty_cnf {
+            return Err(CnfError::EmptyCnf);
+        }
+
+        let mut identity = b"covalence.logic.sat.cnf/v1\0".to_vec();
+        identity.extend_from_slice(&(canonical.len() as u64).to_le_bytes());
+        for clause in &canonical {
+            identity.extend_from_slice(&(clause.len() as u64).to_le_bytes());
+            for literal in clause {
+                identity.extend_from_slice(&literal.to_le_bytes());
+            }
+        }
+        let id = ProblemId(*blake3::hash(&identity).as_bytes());
+        let max_variable = canonical
+            .iter()
+            .flatten()
+            .map(|literal| literal.unsigned_abs())
+            .max()
+            .unwrap_or(0);
+        let mut dimacs = format!("p cnf {max_variable} {}\n", canonical.len());
+        for clause in &canonical {
+            for literal in clause {
+                write!(dimacs, "{literal} ").expect("writing to String cannot fail");
+            }
+            dimacs.push_str("0\n");
+        }
+        Ok(Self {
+            clauses: canonical.into_boxed_slice(),
+            id,
+            dimacs: dimacs.into_bytes().into_boxed_slice(),
+        })
+    }
+
+    /// Returns this exact canonical problem's identity.
+    #[must_use]
+    pub const fn id(&self) -> ProblemId {
+        self.id
+    }
+
+    /// Returns canonical DIMACS bytes.
+    #[must_use]
+    pub fn dimacs(&self) -> &[u8] {
+        &self.dimacs
+    }
+
+    /// Checks a complete satisfying assignment for this problem.
+    ///
+    /// # Errors
+    ///
+    /// Rejects malformed, partial, unrelated, contradictory, or false models.
+    pub fn verify_model(
+        &self,
+        model: &[i64],
+        max_literals: usize,
+    ) -> Result<VerifiedModel, ModelError> {
+        verify_model_for(self, model, max_literals)
+    }
+
+    /// Checks a binary LRAT refutation of this exact problem.
+    ///
+    /// # Errors
+    ///
+    /// Rejects malformed, oversized, or invalid proofs.
+    pub fn verify_binary(&self, proof: &[u8], limits: Limits) -> Result<VerifiedUnsat, LratError> {
+        let instructions = parse_binary_bounded(proof, limits)?;
+        check_clauses_bounded(&self.clauses, &instructions, limits)?;
+        Ok(VerifiedUnsat { problem: self.id })
+    }
+}
 
 /// One LRAT instruction.
 #[non_exhaustive]
@@ -86,6 +335,11 @@ pub enum LratError {
     },
     /// The instruction stream ended without deriving the empty clause.
     NoRefutation,
+    /// A learned clause id was not strictly newer than every prior id.
+    NonFreshClauseId {
+        /// The rejected instruction id.
+        step: u64,
+    },
 }
 
 /// Resource bounds for untrusted certificates.
@@ -104,17 +358,34 @@ pub struct Limits {
 ///
 /// Fields are private so callers cannot manufacture a verifier verdict.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct VerifiedUnsat(());
+pub struct VerifiedUnsat {
+    problem: ProblemId,
+}
+
+impl VerifiedUnsat {
+    /// Returns the exact canonical problem which was refuted.
+    #[must_use]
+    pub const fn problem(&self) -> ProblemId {
+        self.problem
+    }
+}
 
 /// Successful bounded verification of a satisfying assignment.
 ///
 /// This is evidence returned by a checker, not logical authority.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VerifiedModel {
+    problem: ProblemId,
     literals: Box<[i64]>,
 }
 
 impl VerifiedModel {
+    /// Returns the exact canonical problem satisfied by the assignment.
+    #[must_use]
+    pub const fn problem(&self) -> ProblemId {
+        self.problem
+    }
+
     /// Returns the checked assignment.
     #[must_use]
     pub fn literals(&self) -> &[i64] {
@@ -148,8 +419,8 @@ pub enum ModelError {
 ///
 /// Rejects malformed, partial, unrelated, contradictory, or non-satisfying
 /// assignments.
-pub fn verify_model(
-    initial: &[Vec<i64>],
+fn verify_model_for(
+    cnf: &Cnf,
     model: &[i64],
     max_literals: usize,
 ) -> Result<VerifiedModel, ModelError> {
@@ -157,7 +428,7 @@ pub fn verify_model(
         return Err(ModelError::TooLarge);
     }
     let mut variables = BTreeSet::new();
-    for &literal in initial.iter().flatten() {
+    for &literal in cnf.clauses.iter().flatten() {
         if literal == 0 || literal == i64::MIN {
             return Err(ModelError::InvalidLiteral);
         }
@@ -181,13 +452,15 @@ pub fn verify_model(
     if assignment.len() != variables.len() {
         return Err(ModelError::Incomplete);
     }
-    if initial
+    if cnf
+        .clauses
         .iter()
         .any(|clause| !clause.iter().any(|literal| assignment.contains(literal)))
     {
         return Err(ModelError::UnsatisfiedClause);
     }
     Ok(VerifiedModel {
+        problem: cnf.id,
         literals: model.to_vec().into_boxed_slice(),
     })
 }
@@ -213,6 +486,7 @@ impl Default for Limits {
 pub(crate) struct LratKernel {
     live: BTreeMap<u64, Vec<i64>>,
     refuted: bool,
+    last_id: u64,
 }
 
 impl LratKernel {
@@ -226,6 +500,7 @@ impl LratKernel {
                 .map(|(index, clause)| (index as u64 + 1, clause.clone()))
                 .collect(),
             refuted: false,
+            last_id: initial.len() as u64,
         }
     }
 
@@ -246,6 +521,9 @@ impl LratKernel {
         clause: &[i64],
         hints: &[i64],
     ) -> Result<(), LratError> {
+        if id <= self.last_id {
+            return Err(LratError::NonFreshClauseId { step: id });
+        }
         let split = hints
             .iter()
             .position(|hint| *hint < 0)
@@ -262,6 +540,7 @@ impl LratKernel {
             self.refuted = true;
         }
         self.live.insert(id, clause.to_vec());
+        self.last_id = id;
         Ok(())
     }
 
@@ -412,23 +691,8 @@ impl LratKernel {
 ///
 /// Fails on the first uncertified instruction, or if the stream ends
 /// without deriving the empty clause.
-pub fn check(initial: &[Vec<i64>], instructions: &[LratInstr]) -> Result<(), LratError> {
-    check_bounded(initial, instructions, Limits::default())
-}
-
-/// Decodes and checks a binary LRAT refutation under explicit bounds.
-///
-/// # Errors
-///
-/// Rejects malformed, oversized, or logically invalid proofs.
-pub fn verify_binary(
-    initial: &[Vec<i64>],
-    proof: &[u8],
-    limits: Limits,
-) -> Result<VerifiedUnsat, LratError> {
-    let instructions = parse_binary_bounded(proof, limits)?;
-    check_bounded(initial, &instructions, limits)?;
-    Ok(VerifiedUnsat(()))
+pub fn check(cnf: &Cnf, instructions: &[LratInstr]) -> Result<(), LratError> {
+    check_bounded(cnf, instructions, Limits::default())
 }
 
 /// Checks a decoded proof under explicit work and live-state bounds.
@@ -436,11 +700,19 @@ pub fn verify_binary(
 /// # Errors
 ///
 /// Returns the first failed bound or proof step.
+pub fn check_bounded(
+    cnf: &Cnf,
+    instructions: &[LratInstr],
+    limits: Limits,
+) -> Result<(), LratError> {
+    check_clauses_bounded(&cnf.clauses, instructions, limits)
+}
+
 #[expect(
     clippy::too_many_lines,
     reason = "validation and replay share one work budget"
 )]
-pub fn check_bounded(
+fn check_clauses_bounded(
     initial: &[Vec<i64>],
     instructions: &[LratInstr],
     limits: Limits,
@@ -755,6 +1027,49 @@ pub fn parse_binary(bytes: &[u8]) -> Result<Vec<LratInstr>, LratError> {
     parse_binary_bounded(bytes, Limits::default())
 }
 
+/// Renders strict binary LRAT as canonical ASCII for diagnostics.
+///
+/// This function does not check a proof and confers no authority. Deletion
+/// command numbers are synthetic because binary LRAT does not encode them.
+///
+/// # Errors
+///
+/// Rejects malformed or oversized binary input, or diagnostic output larger
+/// than `limits.proof_bytes`.
+pub fn binary_lrat_to_text(bytes: &[u8], limits: Limits) -> Result<String, LratError> {
+    let instructions = parse_binary_bounded(bytes, limits)?;
+    let mut output = String::new();
+    for (index, instruction) in instructions.iter().enumerate() {
+        match instruction {
+            LratInstr::Learn { id, clause, hints } => {
+                write!(output, "{id}").expect("writing to String cannot fail");
+                for literal in clause {
+                    write!(output, " {literal}").expect("writing to String cannot fail");
+                }
+                output.push_str(" 0");
+                for hint in hints {
+                    write!(output, " {hint}").expect("writing to String cannot fail");
+                }
+                output.push_str(" 0\n");
+            }
+            LratInstr::Forget { ids } => {
+                write!(output, "{} d", index + 1).expect("writing to String cannot fail");
+                for id in ids {
+                    write!(output, " {id}").expect("writing to String cannot fail");
+                }
+                output.push_str(" 0\n");
+            }
+        }
+        if output.len() > limits.proof_bytes {
+            return Err(LratError::Limit {
+                resource: "diagnostic bytes",
+                limit: limits.proof_bytes,
+            });
+        }
+    }
+    Ok(output)
+}
+
 fn parse_binary_bounded(bytes: &[u8], limits: Limits) -> Result<Vec<LratInstr>, LratError> {
     if bytes.len() > limits.proof_bytes {
         return Err(LratError::Limit {
@@ -890,18 +1205,163 @@ fn read_signed(bytes: &[u8], position: &mut usize) -> Result<i64, LratError> {
 mod tests {
     use super::*;
 
+    fn cnf(clauses: Vec<Vec<i64>>) -> Cnf {
+        Cnf::new(clauses, CnfLimits::default(), CnfPolicy::default()).expect("CNF")
+    }
+
+    #[test]
+    fn canonical_cnf_has_stable_identity_and_dimacs() {
+        let first = cnf(vec![vec![2, 1, 1], vec![-3, 2], vec![4, -4]]);
+        let second = cnf(vec![vec![2, -3], vec![1, 2]]);
+        assert_eq!(first, second);
+        assert_eq!(first.dimacs(), b"p cnf 3 2\n-3 2 0\n1 2 0\n");
+        assert_eq!(
+            first.id().as_bytes(),
+            &[
+                45, 138, 29, 167, 97, 0, 86, 101, 238, 111, 17, 157, 34, 60, 14, 180, 93, 84, 239,
+                104, 156, 95, 40, 111, 235, 243, 14, 127, 207, 155, 88, 142,
+            ]
+        );
+    }
+
+    #[test]
+    fn cnf_policy_rejects_each_noncanonical_input_when_requested() {
+        let strict = CnfPolicy {
+            allow_empty_cnf: false,
+            allow_empty_clause: false,
+            drop_tautologies: false,
+            canonicalize_duplicate_literals: false,
+            canonicalize_duplicate_clauses: false,
+        };
+        let limits = CnfLimits {
+            max_variable: 3,
+            clauses: 2,
+            literals_per_clause: 2,
+            total_literals: 3,
+        };
+        assert_eq!(
+            Cnf::new(Vec::<Vec<i64>>::new(), limits, strict),
+            Err(CnfError::EmptyCnf)
+        );
+        assert_eq!(
+            Cnf::new(vec![vec![]], limits, strict),
+            Err(CnfError::EmptyClause)
+        );
+        assert_eq!(
+            Cnf::new(vec![vec![1, -1]], limits, strict),
+            Err(CnfError::TautologicalClause)
+        );
+        assert_eq!(
+            Cnf::new(vec![vec![1, 1]], limits, strict),
+            Err(CnfError::DuplicateLiteral)
+        );
+        assert_eq!(
+            Cnf::new(vec![vec![1], vec![1]], limits, strict),
+            Err(CnfError::DuplicateClause)
+        );
+        assert_eq!(
+            Cnf::new(vec![vec![4]], limits, strict),
+            Err(CnfError::VariableOutOfRange)
+        );
+        assert_eq!(
+            Cnf::new(vec![vec![0]], limits, strict),
+            Err(CnfError::InvalidLiteral)
+        );
+    }
+
     #[test]
     fn model_verdict_is_complete_and_non_contradictory() {
-        let cnf = vec![vec![1, 2], vec![-1, 2]];
+        let cnf = Cnf::new(
+            vec![vec![1, 2], vec![-1, 2]],
+            CnfLimits::default(),
+            CnfPolicy::default(),
+        )
+        .expect("CNF");
         assert_eq!(
-            verify_model(&cnf, &[1, 2], 2).expect("model").literals(),
+            cnf.verify_model(&[1, 2], 2).expect("model").literals(),
             &[1, 2]
         );
-        assert_eq!(verify_model(&cnf, &[2], 2), Err(ModelError::Incomplete));
+        assert_eq!(cnf.verify_model(&[2], 2), Err(ModelError::Incomplete));
         assert_eq!(
-            verify_model(&cnf, &[1, -1, 2], 3),
+            cnf.verify_model(&[1, -1, 2], 3),
             Err(ModelError::ContradictoryLiterals)
         );
+    }
+
+    #[test]
+    fn verdicts_are_bound_to_the_exact_problem() {
+        let contradiction = cnf(vec![vec![1], vec![-1]]);
+        let other = cnf(vec![vec![1]]);
+        let proof = [b'a', 6, 0, 2, 4, 0];
+        let verdict = contradiction
+            .verify_binary(&proof, Limits::default())
+            .expect("refutation");
+        assert_eq!(verdict.problem(), contradiction.id());
+        assert_ne!(verdict.problem(), other.id());
+        assert!(other.verify_binary(&proof, Limits::default()).is_err());
+
+        let model = other.verify_model(&[1], 1).expect("model");
+        assert_eq!(model.problem(), other.id());
+        assert_ne!(model.problem(), contradiction.id());
+    }
+
+    #[test]
+    fn learned_clause_ids_are_strictly_monotone_even_after_deletion() {
+        let initial = vec![vec![1], vec![-1]];
+        assert_eq!(
+            check(
+                &cnf(initial.clone()),
+                &[LratInstr::Learn {
+                    id: 2,
+                    clause: vec![],
+                    hints: vec![1, 2],
+                }]
+            ),
+            Err(LratError::NonFreshClauseId { step: 2 })
+        );
+        assert_eq!(
+            check(
+                &cnf(initial.clone()),
+                &[
+                    LratInstr::Learn {
+                        id: 3,
+                        clause: vec![1],
+                        hints: vec![2],
+                    },
+                    LratInstr::Forget { ids: vec![3] },
+                    LratInstr::Learn {
+                        id: 3,
+                        clause: vec![1],
+                        hints: vec![1],
+                    },
+                ]
+            ),
+            Err(LratError::NonFreshClauseId { step: 3 })
+        );
+    }
+
+    #[test]
+    fn binary_diagnostics_roundtrip_and_remain_bounded() {
+        let binary = [b'a', 6, 0, 2, 4, 0, b'd', 6, 0];
+        let text = binary_lrat_to_text(&binary, Limits::default()).expect("diagnostic text");
+        assert_eq!(
+            parse_binary(&binary).expect("binary"),
+            parse_text(&text).expect("text")
+        );
+        let tight = Limits {
+            proof_bytes: binary.len(),
+            ..Limits::default()
+        };
+        assert_eq!(
+            binary_lrat_to_text(&binary, tight),
+            Err(LratError::Limit {
+                resource: "diagnostic bytes",
+                limit: binary.len(),
+            })
+        );
+        let mut trailing = binary.to_vec();
+        trailing.push(0xff);
+        assert!(parse_binary(&trailing).is_err());
     }
 
     #[test]
@@ -961,22 +1421,28 @@ mod tests {
     fn checks_the_unit_contradiction() {
         let initial = vec![vec![1], vec![-1]];
         let instructions = parse_text("3 0 1 2 0\n").expect("parse");
-        check(&initial, &instructions).expect("refutation");
+        check(&cnf(initial), &instructions).expect("refutation");
     }
 
     #[test]
     fn rejects_bogus_hints_and_missing_refutations() {
         let initial = vec![vec![1], vec![-1]];
         assert_eq!(
-            check(&initial, &parse_text("3 0 1 1 0\n").expect("parse")),
+            check(
+                &cnf(initial.clone()),
+                &parse_text("3 0 1 1 0\n").expect("parse")
+            ),
             Err(LratError::UselessHint { step: 3, clause: 1 })
         );
         // A valid but non-refuting instruction stream is not a refutation.
         assert_eq!(
-            check(&initial, &parse_text("3 -1 0 2 0\n").expect("parse")),
+            check(
+                &cnf(initial.clone()),
+                &parse_text("3 -1 0 1 0\n").expect("parse")
+            ),
             Err(LratError::NoRefutation)
         );
-        assert_eq!(check(&initial, &[]), Err(LratError::NoRefutation));
+        assert_eq!(check(&cnf(initial), &[]), Err(LratError::NoRefutation));
     }
 
     #[test]
@@ -1011,8 +1477,8 @@ mod tests {
     #[test]
     fn checks_a_three_variable_pigeonhole_style_proof() {
         let initial = vec![vec![1, 2], vec![-1, 2], vec![1, -2], vec![-1, -2]];
-        let instructions = parse_text("5 2 0 1 2 0\n6 -2 0 3 4 0\n7 0 5 6 0\n").expect("parse");
-        check(&initial, &instructions).expect("refutation");
+        let instructions = parse_text("5 2 0 3 4 0\n6 -2 0 1 2 0\n7 0 5 6 0\n").expect("parse");
+        check(&cnf(initial), &instructions).expect("refutation");
     }
 
     #[test]
@@ -1054,7 +1520,7 @@ mod tests {
             hints: vec![1],
         }];
         assert!(matches!(
-            check_bounded(&[vec![1]], &hostile, Limits::default()),
+            check_bounded(&cnf(vec![vec![1]]), &hostile, Limits::default()),
             Err(LratError::Parse { .. })
         ));
         let initial_limit = Limits {
@@ -1062,7 +1528,7 @@ mod tests {
             ..Limits::default()
         };
         assert!(matches!(
-            check_bounded(&[vec![1, 2], vec![3]], &[], initial_limit),
+            check_bounded(&cnf(vec![vec![1, 2], vec![3]]), &[], initial_limit),
             Err(LratError::Limit {
                 resource: "total terms",
                 ..
@@ -1081,7 +1547,7 @@ mod tests {
             ..Limits::default()
         };
         assert!(matches!(
-            check_bounded(&[vec![1]], &long_tail, early_work_limit),
+            check_bounded(&cnf(vec![vec![1]]), &long_tail, early_work_limit),
             Err(LratError::Limit {
                 resource: "checker work",
                 ..
