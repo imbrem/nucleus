@@ -1,0 +1,21 @@
+[package]
+name = "covalence-logic-lrat-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+covalence-logic-sat = { path = "../../sat" }
+
+[[bin]]
+name = "binary_lrat"
+path = "fuzz_targets/binary_lrat.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]

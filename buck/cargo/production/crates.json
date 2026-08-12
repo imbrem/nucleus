@@ -516,6 +516,13 @@
       ]
     },
     {
+      "source": "workspace#covalence-logic-sat@0.0.0",
+      "target": "workspace#covalence-logic-lrat@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "workspace#covalence-neutron@0.0.0",
       "target": "workspace#covalence-data-cas@0.0.0",
       "kinds": [
