@@ -17,7 +17,7 @@ codec.
 
 namespace Nucleus.HolLN.Json
 
-universe u
+universe u v
 
 /-- Object member names used by a HOL JSON dialect. -/
 structure Fields where
@@ -106,34 +106,38 @@ class SchemaProvider where
   schema : Schema := Schema.v0
 
 /-- Scalar leaves required by the logical HOL codec. -/
-inductive Scalar (Base : Type u) where
+inductive Scalar (Base : Type u) (Free : Type v) where
   | string (value : String)
-  | nat (value : Nat)
+  | index (value : Nat)
+  | free (value : Free)
   | bool (value : Bool)
   | base (value : Base)
   deriving Repr
 
-abbrev Tree (Base : Type u) := RawJson (Scalar Base)
+abbrev TreeF (Base : Type u) (Free : Type v) := RawJson (Scalar Base Free)
+abbrev Tree (Base : Type u) := TreeF Base Nat
 
 namespace Codec
 
-variable {Base : Type u} {sort : HolSort} {depth : Nat}
+variable {Base : Type u} {Free : Type v} {sort : HolSort} {depth : Nat}
 
-private def string (value : String) : Tree Base := .scalar (.string value)
-private def nat (value : Nat) : Tree Base := .scalar (.nat value)
-private def bool (value : Bool) : Tree Base := .scalar (.bool value)
-private def base (value : Base) : Tree Base := .scalar (.base value)
+private def string (value : String) : TreeF Base Free := .scalar (.string value)
+private def indexScalar (value : Nat) : TreeF Base Free := .scalar (.index value)
+private def free (value : Free) : TreeF Base Free := .scalar (.free value)
+private def bool (value : Bool) : TreeF Base Free := .scalar (.bool value)
+private def base (value : Base) : TreeF Base Free := .scalar (.base value)
 
-private def field (key : String) (value : Tree Base) (tail : RawSyn String (Scalar Base) .obj) :
-    RawSyn String (Scalar Base) .obj := .objCons key value tail
+private def field (key : String) (value : TreeF Base Free)
+    (tail : RawSyn String (Scalar Base Free) .obj) : RawSyn String (Scalar Base Free) .obj :=
+  .objCons key value tail
 
 private def tagged (schema : Schema) (tag : String)
-    (fields : RawSyn String (Scalar Base) .obj := .objNil) : Tree Base :=
+    (fields : RawSyn String (Scalar Base Free) .obj := .objNil) : TreeF Base Free :=
   .map (.objCons schema.fields.tag (string tag) fields)
 
 /-- Serialize an intrinsically scoped HOL type or term as a nested JSON tree. -/
 def encodeWith (schema : Schema) : {sort : HolSort} → {depth : Nat} →
-    Hol Base sort depth → Tree Base
+    HolF Base Free sort depth → TreeF Base Free
   | _, _, .base name =>
       tagged schema schema.tags.tyBase
         (field schema.fields.name (base name) .objNil)
@@ -149,10 +153,10 @@ def encodeWith (schema : Schema) : {sort : HolSort} → {depth : Nat} →
           (field schema.fields.predicate (encodeWith schema predicate) .objNil))
   | _, _, .bound index =>
       tagged schema schema.tags.tmBound
-        (field schema.fields.index (nat index) .objNil)
+        (field schema.fields.index (indexScalar index) .objNil)
   | _, _, .free name =>
       tagged schema schema.tags.tmFree
-        (field schema.fields.name (nat name) .objNil)
+        (field schema.fields.name (free name) .objNil)
   | _, _, .app function argument =>
       tagged schema schema.tags.tmApp
         (field schema.fields.function (encodeWith schema function)
@@ -194,7 +198,7 @@ def encode (term : Hol Base sort depth) : Tree Base := encodeWith Schema.v0 term
 /-- Decode at the expected HOL sort and binder depth. Recursion follows strict
 JSON subtrees, so no operational fuel or artificial size limit is exposed. -/
 def decodeOpenWith (schema : Schema) (sort : HolSort) (depth : Nat) :
-    Tree Base → Option (Hol Base sort depth)
+    TreeF Base Free → Option (HolF Base Free sort depth)
   | .map (.objCons key (.scalar (.string tag)) fields) =>
       if key != schema.fields.tag then none
       else match sort, depth with
@@ -229,14 +233,14 @@ def decodeOpenWith (schema : Schema) (sort : HolSort) (depth : Nat) :
       | .tm, depth =>
         if tag = schema.tags.tmBound then
           match fields with
-          | .objCons key (.scalar (.nat index)) .objNil =>
+          | .objCons key (.scalar (.index index)) .objNil =>
               if key = schema.fields.index then
                 if h : index < depth then some (.bound ⟨index, h⟩) else none
               else none
           | _ => none
         else if tag = schema.tags.tmFree then
           match fields with
-          | .objCons key (.scalar (.nat name)) .objNil =>
+          | .objCons key (.scalar (.free name)) .objNil =>
               if key = schema.fields.name then some (.free name) else none
           | _ => none
         else if tag = schema.tags.tmApp then
@@ -318,15 +322,15 @@ def decodeOpenWith (schema : Schema) (sort : HolSort) (depth : Nat) :
 Most callers should use `decodeTy` or `decodeTm`, which return closed values. -/
 def decodeOpen (sort : HolSort) (depth : Nat) (json : Tree Base) :
     Option (Hol Base sort depth) :=
-  decodeOpenWith Schema.v0 sort depth json
+  decodeOpenWith (Base := Base) (Free := Nat) Schema.v0 sort depth json
 
 /-- Decode a closed HOL type with an explicitly selected vocabulary. -/
 def decodeTyWith (schema : Schema) (json : Tree Base) : Option (Ty Base) :=
-  decodeOpenWith schema .ty 0 json
+  decodeOpenWith (Base := Base) (Free := Nat) schema .ty 0 json
 
 /-- Decode a closed HOL term with an explicitly selected vocabulary. -/
 def decodeTmWith (schema : Schema) (json : Tree Base) : Option (ClosedTm Base) :=
-  decodeOpenWith schema .tm 0 json
+  decodeOpenWith (Base := Base) (Free := Nat) schema .tm 0 json
 
 /-- Decode a closed HOL type with the initial vocabulary. -/
 def decodeTy (json : Tree Base) : Option (Ty Base) := decodeTyWith Schema.v0 json
@@ -355,8 +359,8 @@ def decodeTm (json : Tree Base) : Option (ClosedTm Base) := decodeTmWith Schema.
     rw [ih]
     rw [if_pos rfl]
   all_goals
-    simp_all [decodeOpen, encode, Schema.v0, encodeWith, tagged, field, string, nat,
-      bool, base, decodeOpenWith]
+    simp_all [decodeOpen, encode, Schema.v0, encodeWith, tagged, field, string, indexScalar,
+      free, bool, base, decodeOpenWith]
 
 /-- Closed-type round trip for the initial vocabulary. -/
 @[simp] theorem decodeTy_encode (type : Ty Base) : decodeTy (encode type) = some type :=

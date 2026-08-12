@@ -266,7 +266,7 @@ theorem substFree_comp {Base : Type u} {n : Nat} {first second : Nat}
           (fresh_weaken_iff second replacement |>.2 freshReplacement)
           (weaken secondReplacement) body
       rw [substFree_weaken] at ih
-      exact congrArg (Hol.lam A) ih
+      exact congrArg (HolF.lam A) ih
   | .bool value => by simp [substFree]
   | .zero => by simp [substFree]
   | .succ value => by
