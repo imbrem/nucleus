@@ -85,6 +85,29 @@ structure RatGroup where
   resolventRupHints : List ClauseId
   deriving DecidableEq, Repr
 
+def resolvent (clause opposing : Clause) (pivot : Literal) : Clause :=
+  (clause.filter (· != pivot)) ++ (opposing.filter (· != pivot.negate))
+
+def Tautological (clause : Clause) : Prop :=
+  ∃ literal ∈ clause, literal.negate ∈ clause
+
+def tautological (clause : Clause) : Bool :=
+  clause.any fun literal => clause.contains literal.negate
+
+theorem tautological_iff (clause : Clause) :
+    tautological clause = true ↔ Tautological clause := by
+  simp [tautological, Tautological]
+
+def opposingClauseIds (database : Database) (pivot : Literal) : List ClauseId :=
+  (database.filter fun entry => entry.2.contains pivot.negate).map Prod.fst
+
+/-- Every opposing live clause occurs in exactly one explicit RAT group. -/
+def exactRatCoverage (database : Database) (pivot : Literal) (groups : List RatGroup) : Bool :=
+  let supplied := groups.map RatGroup.opposingClauseId
+  supplied.Nodup &&
+    (opposingClauseIds database pivot).all supplied.contains &&
+    supplied.all (opposingClauseIds database pivot).contains
+
 /-- The versioned parser-independent vocabulary shared with Rust. -/
 inductive ValidatorCall where
   | learnRup (id : ClauseId) (clause : Clause) (orderedHints : List ClauseId)
