@@ -4,7 +4,7 @@ pub mod sexpr;
 
 mod session;
 
-pub use session::{HELP, Response, SAMPLES, Session, SessionError};
+pub use session::{HELP, Response, SAMPLES, SatJobId, Session, SessionError};
 pub use sexpr::Value;
 
 use std::sync::Arc;

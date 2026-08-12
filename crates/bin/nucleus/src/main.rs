@@ -80,6 +80,12 @@ fn step(
             )
             .into());
         }
+        Response::Solve { job, .. } => {
+            session.abandon_sat(job)?;
+            return Err(
+                io::Error::new(io::ErrorKind::Unsupported, "no SAT solver is configured").into(),
+            );
+        }
     }
     Ok(false)
 }

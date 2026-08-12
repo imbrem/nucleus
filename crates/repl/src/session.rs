@@ -4,6 +4,7 @@
 
 use covalence_data_cas::MemoryCas;
 use covalence_lib_hash::{O256, o256};
+use covalence_nucleus::prop::{AllowAll, Lit, PreparedSat};
 
 use crate::sexpr::{ReadError, Value, read};
 use crate::{ConnectionId, Repl, ReplError};
@@ -42,8 +43,41 @@ pub enum Response {
     },
     /// Ask the host to run the `SQLite` shell.
     Shell(Vec<String>),
+    /// Ask an untrusted host capability to solve canonical DIMACS.
+    Solve {
+        /// Opaque correlation token for the retained trusted continuation.
+        job: SatJobId,
+        /// Canonical problem bytes. The retained continuation owns identity.
+        dimacs: Vec<u8>,
+        /// Largest model response the trusted checker accepts.
+        max_model_literals: usize,
+        /// Largest proof response the trusted checker accepts.
+        max_proof_bytes: usize,
+    },
     /// Leave.
     Quit,
+}
+
+/// Opaque identity of one pending SAT request.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct SatJobId(u64);
+
+impl std::fmt::Display for SatJobId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}", self.0)
+    }
+}
+
+impl std::str::FromStr for SatJobId {
+    type Err = ();
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let value: u64 = text.parse().map_err(|_| ())?;
+        if value == 0 || value.to_string() != text {
+            return Err(());
+        }
+        Ok(Self(value))
+    }
 }
 
 impl Response {
@@ -89,6 +123,16 @@ pub enum SessionError {
         /// What arrived instead.
         actual: O256,
     },
+    /// A solve is already waiting for its one completion.
+    SatPending,
+    /// The session has issued every representable job identity.
+    SatJobExhausted,
+    /// A completion did not name the retained solve job.
+    UnknownSatJob(String),
+    /// An untrusted model contained an invalid literal.
+    InvalidSatLiteral(i64),
+    /// The checked propositional kernel rejected preparation or completion.
+    Prop(covalence_nucleus::prop::PropError),
     /// The store or a connection failed.
     Repl(ReplError),
 }
@@ -109,6 +153,13 @@ impl std::fmt::Display for SessionError {
                 expected.hex(),
                 actual.hex()
             ),
+            Self::SatPending => formatter.write_str("a SAT solve is already pending"),
+            Self::SatJobExhausted => formatter.write_str("SAT job identities are exhausted"),
+            Self::UnknownSatJob(job) => write!(formatter, "no pending SAT job {job}"),
+            Self::InvalidSatLiteral(literal) => {
+                write!(formatter, "invalid SAT model literal {literal}")
+            }
+            Self::Prop(error) => write!(formatter, "{error}"),
             Self::Repl(error) => write!(formatter, "{error}"),
         }
     }
@@ -131,6 +182,12 @@ impl From<covalence_lib_sqlite::Error> for SessionError {
 impl From<ReadError> for SessionError {
     fn from(error: ReadError) -> Self {
         Self::Read(error)
+    }
+}
+
+impl From<covalence_nucleus::prop::PropError> for SessionError {
+    fn from(error: covalence_nucleus::prop::PropError) -> Self {
+        Self::Prop(error)
     }
 }
 
@@ -234,6 +291,8 @@ pub struct Session {
     /// Kernel 0 is always the one this session is running inside.
     endpoints: Vec<Endpoint>,
     selected: usize,
+    next_sat_job: u64,
+    pending_sat: Option<(SatJobId, PreparedSat<AllowAll>)>,
 }
 
 impl Session {
@@ -260,7 +319,85 @@ impl Session {
             repl,
             endpoints: vec![Endpoint::Local],
             selected: 0,
+            next_sat_job: 1,
+            pending_sat: None,
         }
+    }
+
+    /// Retains a checked problem description and asks the host to solve it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error while another solve is pending or job ids are
+    /// exhausted. Textual propositional forms are deliberately left to #584.
+    pub fn begin_sat(&mut self, prepared: PreparedSat<AllowAll>) -> Result<Response, SessionError> {
+        if self.pending_sat.is_some() {
+            return Err(SessionError::SatPending);
+        }
+        let raw = self.next_sat_job;
+        self.next_sat_job = self
+            .next_sat_job
+            .checked_add(1)
+            .ok_or(SessionError::SatJobExhausted)?;
+        let job = SatJobId(raw);
+        let response = Response::Solve {
+            job,
+            dimacs: prepared.dimacs().to_vec(),
+            max_model_literals: prepared.max_model_literals(),
+            max_proof_bytes: prepared.max_proof_bytes(),
+        };
+        self.pending_sat = Some((job, prepared));
+        Ok(response)
+    }
+
+    /// Consumes a matching job and checks an untrusted SAT assignment.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a stale job, malformed model, failed check, or
+    /// atomic commit failure. A matching job is consumed on every outcome.
+    pub fn complete_sat(&mut self, job: SatJobId, model: &[i64]) -> Result<Value, SessionError> {
+        let prepared = self.take_sat(job)?;
+        let model = model
+            .iter()
+            .copied()
+            .map(|literal| Lit::new(literal).ok_or(SessionError::InvalidSatLiteral(literal)))
+            .collect::<Result<Vec<_>, _>>()?;
+        let world = prepared.certify_model(&model)?;
+        Ok(Value::List(vec![
+            Value::Symbol("sat".to_owned()),
+            Value::Integer(world.get()),
+        ]))
+    }
+
+    /// Consumes a matching job and checks ASCII or binary LRAT.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a stale job, malformed or invalid proof, exhausted
+    /// bound, or commit failure.
+    pub fn complete_unsat(&mut self, job: SatJobId, proof: &[u8]) -> Result<Value, SessionError> {
+        self.take_sat(job)?.certify_lrat(proof, -1)?;
+        Ok(Value::Symbol("unsat".to_owned()))
+    }
+
+    /// Consumes a matching job without admitting a logical result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `job` is not the retained pending job.
+    pub fn abandon_sat(&mut self, job: SatJobId) -> Result<(), SessionError> {
+        self.take_sat(job).map(drop)
+    }
+
+    fn take_sat(&mut self, job: SatJobId) -> Result<PreparedSat<AllowAll>, SessionError> {
+        let Some((pending, _)) = self.pending_sat.as_ref() else {
+            return Err(SessionError::UnknownSatJob(job.to_string()));
+        };
+        if *pending != job {
+            return Err(SessionError::UnknownSatJob(job.to_string()));
+        }
+        Ok(self.pending_sat.take().expect("checked above").1)
     }
 
     /// Returns the selected kernel.
@@ -630,9 +767,12 @@ impl Session {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use covalence_data_cas::Cas;
+    use covalence_nucleus::Connection as NucleusConnection;
+    use covalence_nucleus::prop::{CnfLimits, Prop, PropId, lrat};
 
     use super::*;
 
@@ -646,6 +786,37 @@ mod tests {
             NEXT.fetch_add(1, Ordering::Relaxed)
         );
         Session::with_mount_name(&name).expect("mount")
+    }
+
+    fn contradiction() -> PreparedSat<AllowAll> {
+        let connection = Arc::new(
+            NucleusConnection::<Prop<AllowAll>>::open_prop_in_memory(AllowAll)
+                .expect("prop connection"),
+        );
+        let view = connection.view();
+        let id = |value| PropId::new(value).expect("positive id");
+        view.declare_free(id(1)).expect("variable");
+        view.define(id(2), &[Lit::new(-1).expect("literal")])
+            .expect("positive unit clause");
+        view.define(id(3), &[Lit::new(1).expect("literal")])
+            .expect("negative unit clause");
+        view.define(
+            id(4),
+            &[
+                Lit::new(-2).expect("literal"),
+                Lit::new(-3).expect("literal"),
+            ],
+        )
+        .expect("formula");
+        connection
+            .prepare_sat(
+                id(4),
+                &[id(2), id(3)],
+                CnfLimits::default(),
+                16,
+                lrat::Limits::default(),
+            )
+            .expect("prepare")
     }
 
     /// Evaluates and renders, the way a front end would.
@@ -912,5 +1083,79 @@ mod tests {
     fn quitting_is_a_response_rather_than_a_value() {
         let mut session = session();
         assert_eq!(session.eval("(quit)").expect("eval"), Response::Quit);
+    }
+
+    #[test]
+    fn sat_jobs_are_exactly_once_and_wrong_tokens_do_not_consume() {
+        let mut session = session();
+        let Response::Solve { job, dimacs, .. } =
+            session.begin_sat(contradiction()).expect("begin first job")
+        else {
+            panic!("expected solve response");
+        };
+        assert_eq!(dimacs, b"p cnf 1 2\n1 0\n-1 0\n");
+        assert!(matches!(
+            session.begin_sat(contradiction()),
+            Err(SessionError::SatPending)
+        ));
+
+        let wrong = (job.0 + 1).to_string().parse().expect("job");
+        assert!(matches!(
+            session.complete_unsat(wrong, &[b'a', 6, 0, 2, 4, 0]),
+            Err(SessionError::UnknownSatJob(_))
+        ));
+        assert_eq!(
+            session
+                .complete_unsat(job, &[b'a', 6, 0, 2, 4, 0])
+                .expect("checked LRAT")
+                .display(),
+            "unsat"
+        );
+        assert!(matches!(
+            session.complete_unsat(job, &[b'a', 6, 0, 2, 4, 0]),
+            Err(SessionError::UnknownSatJob(_))
+        ));
+    }
+
+    #[test]
+    fn rejected_and_abandoned_jobs_are_consumed() {
+        let mut session = session();
+        let Response::Solve { job, .. } = session.begin_sat(contradiction()).expect("begin") else {
+            panic!("expected solve response");
+        };
+        assert!(session.complete_unsat(job, b"not LRAT").is_err());
+        assert!(matches!(
+            session.abandon_sat(job),
+            Err(SessionError::UnknownSatJob(_))
+        ));
+
+        let Response::Solve { job, .. } = session.begin_sat(contradiction()).expect("begin") else {
+            panic!("expected solve response");
+        };
+        session.abandon_sat(job).expect("abandon");
+        assert!(matches!(
+            session.abandon_sat(job),
+            Err(SessionError::UnknownSatJob(_))
+        ));
+    }
+
+    #[test]
+    fn both_lrat_encodings_complete_the_same_kind_of_job() {
+        let mut session = session();
+        let Response::Solve { job, .. } = session.begin_sat(contradiction()).expect("binary job")
+        else {
+            panic!("expected solve response");
+        };
+        session
+            .complete_unsat(job, &[b'a', 6, 0, 2, 4, 0])
+            .expect("binary LRAT");
+
+        let Response::Solve { job, .. } = session.begin_sat(contradiction()).expect("ASCII job")
+        else {
+            panic!("expected solve response");
+        };
+        session
+            .complete_unsat(job, b"3 0 1 2 0\n")
+            .expect("ASCII LRAT");
     }
 }

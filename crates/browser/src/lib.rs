@@ -7,11 +7,29 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use covalence_data_cas::{Cas, CasObject, ResidentObject};
 use covalence_lib_hash::O256;
 use covalence_lib_sqlite::{Connection, Step as SqliteStep, ValueType};
-use covalence_repl::{Response, Session};
+use covalence_repl::{Response, SatJobId, Session};
 use wasm_bindgen::prelude::*;
 
 /// Generates unique VFS names within one wasm instance.
 static NEXT_MOUNT: AtomicU64 = AtomicU64::new(0);
+
+/// Converts ASCII or binary LRAT to text for display.
+///
+/// This does not certify the proof; admission checks the original bytes.
+///
+/// # Errors
+///
+/// Returns an error for malformed or oversized LRAT.
+#[wasm_bindgen(js_name = lratToText)]
+pub fn lrat_to_text(proof: &[u8]) -> Result<String, JsError> {
+    const MAX_DISPLAY_BYTES: usize = 8 * 1024 * 1024;
+    covalence_nucleus::prop::lrat::to_text_bounded(
+        proof,
+        covalence_nucleus::prop::lrat::Limits::default(),
+        MAX_DISPLAY_BYTES,
+    )
+    .map_err(|error| JsError::new(&format!("{error:?}")))
+}
 
 /// A wasm-friendly form of `covalence_repl::Response`.
 #[wasm_bindgen]
@@ -20,6 +38,10 @@ pub struct Step {
     text: String,
     address: String,
     arguments: Vec<String>,
+    job: String,
+    dimacs: Vec<u8>,
+    max_model_literals: u32,
+    max_proof_bytes: u32,
 }
 
 #[wasm_bindgen]
@@ -51,6 +73,34 @@ impl Step {
     pub fn arguments(&self) -> Vec<String> {
         self.arguments.clone()
     }
+
+    /// Opaque token for a `solve` request.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn job(&self) -> String {
+        self.job.clone()
+    }
+
+    /// Canonical DIMACS for a `solve` request.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn dimacs(&self) -> Vec<u8> {
+        self.dimacs.clone()
+    }
+
+    /// Largest model response accepted for a `solve` request.
+    #[wasm_bindgen(getter, js_name = maxModelLiterals)]
+    #[must_use]
+    pub fn max_model_literals(&self) -> u32 {
+        self.max_model_literals
+    }
+
+    /// Largest proof response accepted for a `solve` request.
+    #[wasm_bindgen(getter, js_name = maxProofBytes)]
+    #[must_use]
+    pub fn max_proof_bytes(&self) -> u32 {
+        self.max_proof_bytes
+    }
 }
 
 impl Step {
@@ -60,6 +110,10 @@ impl Step {
             text: text.into(),
             address: String::new(),
             arguments: Vec::new(),
+            job: String::new(),
+            dimacs: Vec::new(),
+            max_model_literals: 0,
+            max_proof_bytes: 0,
         }
     }
 
@@ -69,6 +123,10 @@ impl Step {
             text: String::new(),
             address: String::new(),
             arguments: Vec::new(),
+            job: String::new(),
+            dimacs: Vec::new(),
+            max_model_literals: 0,
+            max_proof_bytes: 0,
         }
     }
 }
@@ -138,14 +196,81 @@ impl Repl {
                 text: url,
                 address: address.hex().to_string(),
                 arguments: Vec::new(),
+                job: String::new(),
+                dimacs: Vec::new(),
+                max_model_literals: 0,
+                max_proof_bytes: 0,
             },
             Response::Shell(arguments) => Step {
                 kind: "shell".to_owned(),
                 text: String::new(),
                 address: String::new(),
                 arguments,
+                job: String::new(),
+                dimacs: Vec::new(),
+                max_model_literals: 0,
+                max_proof_bytes: 0,
             },
+            Response::Solve {
+                job,
+                dimacs,
+                max_model_literals,
+                max_proof_bytes,
+            } => {
+                let bounds = u32::try_from(max_model_literals)
+                    .and_then(|model| u32::try_from(max_proof_bytes).map(|proof| (model, proof)));
+                let Ok((max_model_literals, max_proof_bytes)) = bounds else {
+                    self.session.abandon_sat(job).map_err(to_js)?;
+                    return Err(JsError::new("SAT response bound exceeds browser capacity"));
+                };
+                Step {
+                    kind: "solve".to_owned(),
+                    text: String::new(),
+                    address: String::new(),
+                    arguments: Vec::new(),
+                    job: job.to_string(),
+                    dimacs,
+                    max_model_literals,
+                    max_proof_bytes,
+                }
+            }
         })
+    }
+
+    /// Completes one pending solve with an untrusted assignment.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a stale job or rejected assignment.
+    #[wasm_bindgen(js_name = completeSat)]
+    pub fn complete_sat(&mut self, job: &str, model: &[i64]) -> Result<String, JsError> {
+        self.session
+            .complete_sat(sat_job(job)?, model)
+            .map(|value| value.display())
+            .map_err(to_js)
+    }
+
+    /// Completes one pending solve with binary LRAT (ASCII is also accepted).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a stale job or rejected proof.
+    #[wasm_bindgen(js_name = completeUnsat)]
+    pub fn complete_unsat(&mut self, job: &str, proof: &[u8]) -> Result<String, JsError> {
+        self.session
+            .complete_unsat(sat_job(job)?, proof)
+            .map(|value| value.display())
+            .map_err(to_js)
+    }
+
+    /// Consumes one pending solve without admitting a result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `job` is stale or malformed.
+    #[wasm_bindgen(js_name = abandonSat)]
+    pub fn abandon_sat(&mut self, job: &str) -> Result<(), JsError> {
+        self.session.abandon_sat(sat_job(job)?).map_err(to_js)
     }
 
     /// Admits bytes the page read from a file picker.
@@ -308,6 +433,10 @@ fn handle_from_js(value: f64) -> u64 {
 fn address(text: &str) -> Result<O256, JsError> {
     O256::from_str(text.trim())
         .map_err(|error| JsError::new(&format!("{text:?} is not an address: {error}")))
+}
+
+fn sat_job(text: &str) -> Result<SatJobId, JsError> {
+    SatJobId::from_str(text).map_err(|()| JsError::new("invalid SAT job"))
 }
 
 fn to_js(error: impl std::fmt::Display) -> JsError {

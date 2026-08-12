@@ -4,6 +4,22 @@
 //! `prop::scratch` provides the slower rule-level replay.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
+
+struct BoundedOutput {
+    text: String,
+    limit: usize,
+}
+
+impl std::fmt::Write for BoundedOutput {
+    fn write_str(&mut self, text: &str) -> std::fmt::Result {
+        if self.text.len().saturating_add(text.len()) > self.limit {
+            return Err(std::fmt::Error);
+        }
+        self.text.push_str(text);
+        Ok(())
+    }
+}
 
 /// One LRAT instruction.
 #[non_exhaustive]
@@ -538,6 +554,54 @@ pub fn parse_bounded(bytes: &[u8], limits: Limits) -> Result<Vec<LratInstr>, Lra
     }
 }
 
+/// Renders ASCII LRAT for inspection, accepting either encoded form.
+///
+/// This is a presentation helper, not part of proof admission. The trusted
+/// checker parses and checks the original artifact independently.
+///
+/// # Errors
+///
+/// Returns an error when decoding fails, exceeds `limits`, or would produce
+/// more than `max_output_bytes` of text.
+pub fn to_text_bounded(
+    bytes: &[u8],
+    limits: Limits,
+    max_output_bytes: usize,
+) -> Result<String, LratError> {
+    let instructions = parse_bounded(bytes, limits)?;
+    let mut output = BoundedOutput {
+        text: String::new(),
+        limit: max_output_bytes,
+    };
+    let display_limit = || LratError::Limit {
+        resource: "display bytes",
+        limit: max_output_bytes,
+    };
+    for instruction in instructions {
+        match instruction {
+            LratInstr::Learn { id, clause, hints } => {
+                write!(output, "{id}").map_err(|_| display_limit())?;
+                for literal in clause {
+                    write!(output, " {literal}").map_err(|_| display_limit())?;
+                }
+                write!(output, " 0").map_err(|_| display_limit())?;
+                for hint in hints {
+                    write!(output, " {hint}").map_err(|_| display_limit())?;
+                }
+                writeln!(output, " 0").map_err(|_| display_limit())?;
+            }
+            LratInstr::Forget { ids } => {
+                write!(output, "d").map_err(|_| display_limit())?;
+                for id in ids {
+                    write!(output, " {id}").map_err(|_| display_limit())?;
+                }
+                writeln!(output, " 0").map_err(|_| display_limit())?;
+            }
+        }
+    }
+    Ok(output.text)
+}
+
 /// Parses the ASCII LRAT format.
 ///
 /// # Errors
@@ -818,6 +882,26 @@ mod tests {
         assert_eq!(
             parse(binary).expect("binary"),
             parse_text(text).expect("text")
+        );
+    }
+
+    #[test]
+    fn binary_proofs_can_be_rendered_for_inspection() {
+        let binary = [b'a', 6, 0, 2, 4, 0];
+        assert_eq!(
+            to_text_bounded(&binary, Limits::default(), 1024).expect("render"),
+            "3 0 1 2 0\n"
+        );
+        assert_eq!(
+            to_text_bounded(b"3 0 1 2 0\n", Limits::default(), 1024).expect("already text"),
+            "3 0 1 2 0\n"
+        );
+        assert_eq!(
+            to_text_bounded(&binary, Limits::default(), 9),
+            Err(LratError::Limit {
+                resource: "display bytes",
+                limit: 9,
+            })
         );
     }
 
