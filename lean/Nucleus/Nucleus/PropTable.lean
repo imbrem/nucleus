@@ -181,6 +181,33 @@ def split (rows : List (Row σ α ρ)) : SourcedTables σ α :=
       | .definition => none
       | .theorem _ => some row.relationRow }
 
+/-- Materialize only theorem reasons accepted by an explicit soundness policy. -/
+def splitWithPolicy (sound : ρ → Bool) (rows : List (Row σ α ρ)) : SourcedTables σ α :=
+  { definitions := rows.filterMap fun row => match row.reason with
+      | .definition => some row.relationRow
+      | .theorem _ => none
+    theorems := rows.filterMap fun row => match row.reason with
+      | .definition => none
+      | .theorem reason => if sound reason then some row.relationRow else none }
+
+theorem splitWithPolicy_definitions (sound : ρ → Bool) (rows : List (Row σ α ρ)) :
+    (splitWithPolicy sound rows).definitions = (split rows).definitions := by
+  simp only [splitWithPolicy, split]
+
+theorem splitWithPolicy_theorems_subset (sound : ρ → Bool) (rows : List (Row σ α ρ)) :
+    ∀ theoremRow ∈ (splitWithPolicy sound rows).theorems,
+      theoremRow ∈ (split rows).theorems := by
+  intro theoremRow membership
+  simp only [splitWithPolicy, List.mem_filterMap] at membership
+  obtain ⟨row, rowIn, accepted⟩ := membership
+  simp only [split, List.mem_filterMap]
+  refine ⟨row, rowIn, ?_⟩
+  split at accepted
+  · contradiction
+  · split at accepted
+    · exact accepted
+    · contradiction
+
 @[simp] theorem split_definition (row : Row σ α ρ) :
     split [row.asDefinition] =
       ⟨[row.relationRow], []⟩ := by
@@ -192,6 +219,42 @@ def split (rows : List (Row σ α ρ)) : SourcedTables σ α :=
   simp [split, asTheorem, relationRow]
 
 end Row
+
+/-! ## Experimental signed-reason convention
+
+This adapter studies a possible SQLite encoding without selecting it as the
+default design: zero means definition, positive integers are admitted theorem
+reasons, and negative integers remain present as unverified provenance but are
+filtered from queries for established facts.
+-/
+
+namespace SignedReason
+
+def row (premise : Lit α) (source : Option σ) (conclusion : Lit α)
+    (reason : Int) : Row σ α Int :=
+  if reason = 0 then ⟨premise, source, conclusion, .definition⟩
+  else ⟨premise, source, conclusion, .theorem reason⟩
+
+def trusted (reason : Int) : Bool := decide (0 < reason)
+
+def materialize (rows : List (Row σ α Int)) : SourcedTables σ α :=
+  Row.splitWithPolicy trusted rows
+
+example (premise conclusion : Lit α) (source : Option σ) :
+    (materialize [row premise source conclusion 0]).definitions =
+      [⟨premise, ⟨source, conclusion⟩⟩] := by
+  simp [materialize, row, Row.splitWithPolicy, Row.relationRow]
+
+example (premise conclusion : Lit α) (source : Option σ) :
+    (materialize [row premise source conclusion 1]).theorems =
+      [⟨premise, ⟨source, conclusion⟩⟩] := by
+  simp [materialize, row, trusted, Row.splitWithPolicy, Row.relationRow]
+
+example (premise conclusion : Lit α) (source : Option σ) :
+    (materialize [row premise source conclusion (-1)]).theorems = [] := by
+  simp [materialize, row, trusted, Row.splitWithPolicy]
+
+end SignedReason
 
 def LocalRow.withLocalSource (row : LocalRow α) : SourcedRow σ α :=
   ⟨row.premise, ⟨none, row.conclusion⟩⟩
@@ -280,6 +343,24 @@ def impliedBy (tables : SourcedTables σ α) (premise : Lit α) : List (Ref σ �
 def implying (tables : SourcedTables σ α) (conclusion : Ref σ α) : List (Lit α) :=
   Rel.project SourcedRow.premise <|
     Rel.select (fun row => decide (row.conclusion = conclusion)) tables.theorems
+
+def hasTheorem (tables : SourcedTables σ α) (premise : Lit α)
+    (conclusion : Ref σ α) : Bool :=
+  tables.theorems.any fun row => decide (row = ⟨premise, conclusion⟩)
+
+/-- Equivalence inside the current table; foreign equivalence requires an import bridge. -/
+def equivalentLocal (tables : SourcedTables σ α) (left right : Lit α) : Bool :=
+  tables.hasTheorem left ⟨none, right⟩ && tables.hasTheorem right ⟨none, left⟩
+
+def tautologies (tables : SourcedTables σ α) : List α :=
+  tables.theorems.filterMap fun row => match row with
+    | ⟨.neg p, ⟨none, .pos q⟩⟩ => if p = q then some p else none
+    | _ => none
+
+def unsatisfiable (tables : SourcedTables σ α) : List α :=
+  tables.theorems.filterMap fun row => match row with
+    | ⟨.pos p, ⟨none, .neg q⟩⟩ => if p = q then some p else none
+    | _ => none
 
 def definitionHolds (tables : SourcedTables σ α) (localValuation : α → Bool)
     (foreign : σ → α → Bool) (premise : Lit α) : Bool :=
