@@ -86,6 +86,10 @@ impl Runner {
             &package.join("node_modules/@bytecodealliance/preview2-shim"),
             &staged.join("node_modules/@bytecodealliance/preview2-shim"),
         )?;
+        copy_dir(
+            &package.join("node_modules/@types/node"),
+            &staged.join("node_modules/@types/node"),
+        )?;
         fs::copy(package.join("tsconfig.json"), staged.join("tsconfig.json"))
             .wrap_err("could not stage tsconfig.json")?;
         let dist = out.join("dist");
