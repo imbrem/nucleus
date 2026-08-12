@@ -161,9 +161,41 @@ structure Row (σ : Type v) (α : Type u) (ρ : Type w) where
   reason : Reason ρ
   deriving DecidableEq, Repr
 
+/-- The authoritative logical key deliberately excludes the row's reason. -/
+structure RowKey (σ : Type v) (α : Type u) where
+  premise : Lit α
+  source : Option σ
+  conclusion : Lit α
+  deriving DecidableEq, Repr
+
 abbrev UnsourcedRow (α : Type u) (ρ : Type w) := Row Empty α ρ
 
 namespace Row
+
+def key (row : Row σ α ρ) : RowKey σ α :=
+  ⟨row.premise, row.source, row.conclusion⟩
+
+/-- A logical edge has at most one authoritative definition/proof classification. -/
+def UniqueReasons (rows : List (Row σ α ρ)) : Prop :=
+  (rows.map key).Nodup
+
+theorem uniqueReasons_iff (rows : List (Row σ α ρ)) :
+    UniqueReasons rows ↔ (rows.map key).Nodup := Iff.rfl
+
+theorem uniqueReasons_pair (left right : Row σ α ρ) :
+    UniqueReasons [left, right] ↔ left.key ≠ right.key := by
+  simp [UniqueReasons, key]
+
+structure ClassifiedRows (σ : Type v) (α : Type u) (ρ : Type w) where
+  rows : List (Row σ α ρ)
+  uniqueReasons : UniqueReasons rows
+
+/-- Metadata may contain many records per key because it confers no authority. -/
+structure Metadata (σ : Type v) (α : Type u) (Payload : Type w) where
+  key : RowKey σ α
+  kind : String
+  payload : Payload
+  deriving Repr
 
 def relationRow (row : Row σ α ρ) : SourcedRow σ α :=
   ⟨row.premise, ⟨row.source, row.conclusion⟩⟩
