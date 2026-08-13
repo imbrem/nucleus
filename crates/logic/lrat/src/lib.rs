@@ -6,10 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-/// A signed, nonzero propositional literal.
-pub type Literal = i64;
-/// A disjunction of literals.
-pub type Clause = Vec<Literal>;
+pub use covalence_logic_sat::cnf::{Clause, Formula, Literal};
 /// A monotonically allocated clause identifier.
 pub type ClauseId = u64;
 
@@ -49,7 +46,6 @@ pub enum Call {
 #[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Error {
-    InvalidLiteral,
     NonFreshId { id: ClauseId },
     UnknownClause { step: ClauseId, clause: ClauseId },
     UselessHint { step: ClauseId, clause: ClauseId },
@@ -77,28 +73,19 @@ pub struct Kernel {
 }
 
 impl Kernel {
-    /// Opens initial clauses numbered `1..=n`.
-    ///
-    /// # Errors
-    ///
-    /// Rejects zero and `i64::MIN`, whose negation is not representable.
-    pub fn open(initial: &[Clause]) -> Result<Self, Error> {
-        if initial
-            .iter()
-            .flatten()
-            .any(|literal| *literal == 0 || *literal == i64::MIN)
-        {
-            return Err(Error::InvalidLiteral);
-        }
-        Ok(Self {
+    /// Opens a CNF formula with initial clauses numbered `1..=n`.
+    #[must_use]
+    pub fn open(initial: &Formula) -> Self {
+        Self {
             live: initial
+                .clauses()
                 .iter()
                 .enumerate()
                 .map(|(index, clause)| (index as ClauseId + 1, clause.clone()))
                 .collect(),
             high_water: initial.len() as ClauseId,
-            refuted: initial.iter().any(Vec::is_empty),
-        })
+            refuted: initial.clauses().iter().any(Clause::is_empty),
+        }
     }
 
     #[must_use]
@@ -112,8 +99,8 @@ impl Kernel {
     }
 
     #[must_use]
-    pub fn clause(&self, id: ClauseId) -> Option<&[Literal]> {
-        self.live.get(&id).map(Vec::as_slice)
+    pub fn clause(&self, id: ClauseId) -> Option<&Clause> {
+        self.live.get(&id)
     }
 
     /// Applies one typed call transactionally.
@@ -153,12 +140,12 @@ impl Kernel {
     pub fn learn_rup(
         &mut self,
         id: ClauseId,
-        clause: &[Literal],
+        clause: &Clause,
         ordered_hints: &[ClauseId],
     ) -> Result<(), Error> {
         self.transaction(|candidate| {
             candidate.check_learn(id, clause)?;
-            let mut trail = falsifying_trail(clause)?;
+            let mut trail = falsifying_trail(clause);
             if !candidate.propagate(id, &mut trail, ordered_hints)? {
                 return Err(Error::NoConflict { step: id });
             }
@@ -175,17 +162,17 @@ impl Kernel {
     pub fn learn_rat(
         &mut self,
         id: ClauseId,
-        clause: &[Literal],
+        clause: &Clause,
         pivot: Literal,
         prefix_rup_hints: &[ClauseId],
         groups: &[RatGroup],
     ) -> Result<(), Error> {
         self.transaction(|candidate| {
             candidate.check_learn(id, clause)?;
-            if clause.first() != Some(&pivot) {
+            if clause.first() != Some(pivot) {
                 return Err(Error::BadPivot { step: id });
             }
-            let mut trail = falsifying_trail(clause)?;
+            let mut trail = falsifying_trail(clause);
             if candidate.propagate(id, &mut trail, prefix_rup_hints)? {
                 candidate.commit(id, clause);
                 return Ok(());
@@ -230,22 +217,16 @@ impl Kernel {
         Ok(())
     }
 
-    fn check_learn(&self, id: ClauseId, clause: &[Literal]) -> Result<(), Error> {
+    fn check_learn(&self, id: ClauseId, _clause: &Clause) -> Result<(), Error> {
         if id <= self.high_water {
             return Err(Error::NonFreshId { id });
-        }
-        if clause
-            .iter()
-            .any(|literal| *literal == 0 || *literal == i64::MIN)
-        {
-            return Err(Error::InvalidLiteral);
         }
         Ok(())
     }
 
-    fn commit(&mut self, id: ClauseId, clause: &[Literal]) {
+    fn commit(&mut self, id: ClauseId, clause: &Clause) {
         self.refuted |= clause.is_empty();
-        self.live.insert(id, clause.to_vec());
+        self.live.insert(id, clause.clone());
         self.high_water = id;
     }
 
@@ -260,14 +241,14 @@ impl Kernel {
                 .live
                 .get(id)
                 .ok_or(Error::UnknownClause { step, clause: *id })?;
-            if clause.iter().any(|literal| trail.contains(literal)) {
+            if clause.iter().any(|literal| trail.contains(&literal)) {
                 return Err(Error::UselessHint { step, clause: *id });
             }
-            let mut open = clause.iter().filter(|literal| !trail.contains(&-**literal));
+            let mut open = clause.iter().filter(|literal| !trail.contains(&-*literal));
             match (open.next(), open.next()) {
                 (None, _) => return Ok(true),
                 (Some(unit), None) => {
-                    trail.insert(*unit);
+                    trail.insert(unit);
                 }
                 _ => return Err(Error::UselessHint { step, clause: *id }),
             }
@@ -297,7 +278,7 @@ impl Kernel {
                         step,
                         clause: group.opposing_clause_id,
                     })?;
-            if !opposing.contains(&-pivot) {
+            if !opposing.contains(-pivot) {
                 return Err(Error::WrongOpposingClause {
                     step,
                     clause: group.opposing_clause_id,
@@ -305,19 +286,19 @@ impl Kernel {
             }
             let mut trail = prefix_trail.clone();
             let mut tautological = false;
-            for literal in opposing.iter().filter(|literal| **literal != -pivot) {
-                if trail.contains(literal) {
+            for literal in opposing.iter().filter(|literal| *literal != -pivot) {
+                if trail.contains(&literal) {
                     tautological = true;
                     break;
                 }
-                trail.insert(-*literal);
+                trail.insert(-literal);
             }
             if !tautological && !self.propagate(step, &mut trail, &group.resolvent_rup_hints)? {
                 return Err(Error::NoConflict { step });
             }
         }
         for (id, clause) in &self.live {
-            if clause.contains(&-pivot) && !covered.contains(id) {
+            if clause.contains(-pivot) && !covered.contains(id) {
                 return Err(Error::IncompleteRat { step, clause: *id });
             }
         }
@@ -325,28 +306,29 @@ impl Kernel {
     }
 }
 
-fn falsifying_trail(clause: &[Literal]) -> Result<BTreeSet<Literal>, Error> {
-    let mut trail = BTreeSet::new();
-    for literal in clause {
-        if *literal == 0 || *literal == i64::MIN {
-            return Err(Error::InvalidLiteral);
-        }
-        trail.insert(-*literal);
-    }
-    Ok(trail)
+fn falsifying_trail(clause: &Clause) -> BTreeSet<Literal> {
+    clause.iter().map(std::ops::Neg::neg).collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn clause(literals: impl IntoIterator<Item = i64>) -> Clause {
+        Clause::from_signed(literals).unwrap()
+    }
+
+    fn kernel(clauses: impl IntoIterator<Item = Vec<i64>>) -> Kernel {
+        Kernel::open(&Formula::from_signed(clauses).unwrap())
+    }
+
     #[test]
     fn rup_refutes_a_unit_contradiction() {
-        let mut kernel = Kernel::open(&[vec![1], vec![-1]]).expect("initial clauses");
+        let mut kernel = kernel([vec![1], vec![-1]]);
         kernel
             .apply(&Call::LearnRup {
                 id: 3,
-                clause: vec![],
+                clause: clause([]),
                 ordered_hints: vec![1, 2],
             })
             .expect("RUP");
@@ -355,12 +337,12 @@ mod tests {
 
     #[test]
     fn every_rejection_is_transactional_and_deletion_keeps_high_water() {
-        let mut kernel = Kernel::open(&[vec![1], vec![-1]]).expect("initial clauses");
+        let mut kernel = kernel([vec![1], vec![-1]]);
         let before = kernel.clone();
         assert_eq!(
             kernel.apply(&Call::LearnRup {
                 id: 3,
-                clause: vec![],
+                clause: clause([]),
                 ordered_hints: vec![99],
             }),
             Err(Error::UnknownClause {
@@ -373,7 +355,7 @@ mod tests {
         kernel
             .apply(&Call::LearnRup {
                 id: 3,
-                clause: vec![1],
+                clause: clause([1]),
                 ordered_hints: vec![1],
             })
             .expect("learn");
@@ -384,7 +366,7 @@ mod tests {
         assert_eq!(
             kernel.apply(&Call::LearnRup {
                 id: 3,
-                clause: vec![1],
+                clause: clause([1]),
                 ordered_hints: vec![1],
             }),
             Err(Error::NonFreshId { id: 3 })
@@ -393,12 +375,12 @@ mod tests {
 
     #[test]
     fn rat_requires_exact_opposing_coverage() {
-        let mut kernel = Kernel::open(&[vec![1, 2], vec![-1, 2]]).expect("initial clauses");
+        let mut kernel = kernel([vec![1, 2], vec![-1, 2]]);
         kernel
             .apply(&Call::LearnRat {
                 id: 3,
-                clause: vec![3, -2],
-                pivot: 3,
+                clause: clause([3, -2]),
+                pivot: Literal::new(3).unwrap(),
                 prefix_rup_hints: vec![],
                 groups: vec![],
             })
@@ -407,8 +389,8 @@ mod tests {
         assert_eq!(
             kernel.apply(&Call::LearnRat {
                 id: 4,
-                clause: vec![-3, 2],
-                pivot: -3,
+                clause: clause([-3, 2]),
+                pivot: Literal::new(-3).unwrap(),
                 prefix_rup_hints: vec![],
                 groups: vec![],
             }),

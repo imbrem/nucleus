@@ -1,14 +1,11 @@
 [package]
-name = "covalence-logic-lrat"
+name = "covalence-logic-sat"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Parser-independent typed LRAT clause validation"
+description = "Typed propositional logic and SAT problems"
 publish = false
-
-[dependencies]
-covalence-logic-sat = { path = "../sat" }
 
 [lints]
 workspace = true

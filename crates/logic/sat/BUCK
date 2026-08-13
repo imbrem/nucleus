@@ -21,22 +21,19 @@ filegroup(
 )
 
 rust_library(
-    name = "covalence_logic_lrat",
-    crate = "covalence_logic_lrat",
+    name = "covalence_logic_sat",
+    crate = "covalence_logic_sat",
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
-    tests = [":covalence_logic_lrat-unit-test"],
-    named_deps = {
-        "covalence_logic_sat": "nucleus//crates/logic/sat:covalence_logic_sat",
-    },
+    tests = [":covalence_logic_sat-unit-test"],
     env = {
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "Parser-independent typed LRAT clause validation",
+        "CARGO_PKG_DESCRIPTION": "Typed propositional logic and SAT problems",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",
-        "CARGO_PKG_NAME": "covalence-logic-lrat",
+        "CARGO_PKG_NAME": "covalence-logic-sat",
         "CARGO_PKG_README": "",
         "CARGO_PKG_REPOSITORY": "",
         "CARGO_PKG_RUST_VERSION": "",
@@ -51,21 +48,18 @@ rust_library(
 )
 
 rust_test(
-    name = "covalence_logic_lrat-unit-test",
-    crate = "covalence_logic_lrat",
+    name = "covalence_logic_sat-unit-test",
+    crate = "covalence_logic_sat",
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
-    named_deps = {
-        "covalence_logic_sat": "nucleus//crates/logic/sat:covalence_logic_sat",
-    },
     env = {
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "Parser-independent typed LRAT clause validation",
+        "CARGO_PKG_DESCRIPTION": "Typed propositional logic and SAT problems",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",
-        "CARGO_PKG_NAME": "covalence-logic-lrat",
+        "CARGO_PKG_NAME": "covalence-logic-sat",
         "CARGO_PKG_README": "",
         "CARGO_PKG_REPOSITORY": "",
         "CARGO_PKG_RUST_VERSION": "",

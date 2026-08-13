@@ -316,6 +316,8 @@ dependencies = [
  "cid",
  "covalence-lib-hash",
  "covalence-lib-python",
+ "covalence-logic-lrat",
+ "covalence-logic-sat",
 ]
 
 [[package]]
@@ -389,6 +391,13 @@ dependencies = [
 
 [[package]]
 name = "covalence-logic-lrat"
+version = "0.0.0"
+dependencies = [
+ "covalence-logic-sat",
+]
+
+[[package]]
+name = "covalence-logic-sat"
 version = "0.0.0"
 
 [[package]]
