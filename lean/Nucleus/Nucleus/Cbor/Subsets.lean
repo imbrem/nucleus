@@ -1,5 +1,6 @@
 import Nucleus.Cbor.General
 import Nucleus.Json.Ordered
+import Nucleus.Json.Validate
 
 /-!
 # CBOR subset embeddings
@@ -41,6 +42,49 @@ private def rawOfStringKey : {i : JsonIx} →
 /-- Total embedding of string-key CBOR into general CBOR. -/
 noncomputable def ofStringKey : StringKeyCbor → Cbor
   | value => rawOfStringKey value.toRaw
+
+private def scalarOfPrimitive? : CborPrimitive → Option StringKeyCborScalar
+  | .integer value => some (.integer value)
+  | .bytes value => some (.bytes value)
+  | .text value => some (.text value)
+  | .simple 20 => some (.bool false)
+  | .simple 21 => some (.bool true)
+  | .simple 22 => some .null
+  | .float64 bits => some (.float64 bits)
+  | _ => none
+
+mutual
+
+private def rawStringKeyValue? : Cbor → Option
+    (RawSyn String StringKeyCborScalar .val)
+  | .primitive primitive => .scalar <$> scalarOfPrimitive? primitive
+  | .array items => .list <$> rawStringKeyArray? items
+  | .map entries => .map <$> rawStringKeyMap? entries
+  | .tag _ _ => none
+
+private def rawStringKeyArray? : CborSyn .array → Option
+    (RawSyn String StringKeyCborScalar .arr)
+  | .arrayNil => some .nil
+  | .arrayCons head tail =>
+      .cons <$> rawStringKeyValue? head <*> rawStringKeyArray? tail
+
+private def rawStringKeyMap? : CborSyn .map → Option
+    (RawSyn String StringKeyCborScalar .obj)
+  | .mapNil => some .objNil
+  | .mapCons (.primitive (.text key)) value tail =>
+      .objCons key <$> rawStringKeyValue? value <*> rawStringKeyMap? tail
+  | .mapCons _ _ _ => none
+
+end
+
+/-- Partial projection from general CBOR to the string-key JSON-shaped
+profile. It rejects tags, non-text keys, unsupported primitives, and duplicate
+map keys rather than silently losing information. -/
+def toStringKey? (value : Cbor) : Option StringKeyCbor := do
+  let raw ← rawStringKeyValue? value
+  match raw.validate with
+  | .ok result => some result
+  | .error _ => none
 
 @[simp] theorem ofStringKey_scalar (scalar : StringKeyCborScalar) :
     ofStringKey (.scalar scalar) = .primitive (primitiveOfScalar scalar) := by
