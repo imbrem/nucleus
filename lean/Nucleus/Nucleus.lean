@@ -2,6 +2,8 @@ import Nucleus.HolLN
 import Nucleus.HolLN.Array
 import Nucleus.HolLN.Json
 import Nucleus.Json
+import Nucleus.Cbor
+import Nucleus.Encoding.Base128
 import Nucleus.Lrat
 
 /-!
@@ -9,5 +11,6 @@ import Nucleus.Lrat
 
 The root of the Lean development. It currently exports the self-contained,
 locally nameless monomorphic HOL specification, its JSON tree and flat-array
-codecs, and the scalar-parametric JSON trees.
+codecs, the scalar-parametric JSON trees, CBOR data models, and LRAT proof
+checker.
 -/
