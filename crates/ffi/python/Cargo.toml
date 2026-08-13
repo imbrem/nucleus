@@ -33,6 +33,7 @@ covalence-lib-hash = { path = "../../lib/hash", default-features = false, featur
   "blake3",
   "sha256",
   "git-sha1",
+  "multiformats",
 ] }
 
 [lints]

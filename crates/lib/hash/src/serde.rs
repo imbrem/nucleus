@@ -106,7 +106,67 @@ macro_rules! impl_serde {
     };
 }
 
-impl_serde!(Cov, "O256", RAW, BLAKE3_256);
+impl Serialize for Obj<Cov> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_bytes(self.as_ref())
+    }
+}
+
+impl<'de> Deserialize<'de> for Obj<Cov> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct O256Visitor;
+
+        impl<'de> de::Visitor<'de> for O256Visitor {
+            type Value = Obj<Cov>;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("exactly 32 bytes")
+            }
+
+            fn visit_bytes<E>(self, bytes: &[u8]) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                let bytes = bytes
+                    .try_into()
+                    .map_err(|_| E::invalid_length(bytes.len(), &self))?;
+                Ok(Obj::from_array(bytes))
+            }
+
+            fn visit_byte_buf<E>(self, bytes: Vec<u8>) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                self.visit_bytes(&bytes)
+            }
+
+            fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+            where
+                A: de::SeqAccess<'de>,
+            {
+                let mut bytes = [0; 32];
+                for (index, byte) in bytes.iter_mut().enumerate() {
+                    *byte = sequence
+                        .next_element()?
+                        .ok_or_else(|| de::Error::invalid_length(index, &self))?;
+                }
+                if sequence.next_element::<u8>()?.is_some() {
+                    return Err(de::Error::invalid_length(33, &self));
+                }
+                Ok(Obj::from_array(bytes))
+            }
+        }
+
+        deserializer.deserialize_bytes(O256Visitor)
+    }
+}
+
 impl_serde!(Blake3, "Blake3Hash", RAW, BLAKE3_256);
 impl_serde!(Sha256, "Sha256Hash", RAW, SHA2_256);
 impl_serde!(Git, "GitHash", GIT_RAW, SHA1);
@@ -126,11 +186,14 @@ mod tests {
     }
 
     #[test]
-    fn hashes_round_trip_as_dag_json_links() {
-        assert_round_trip(
-            O256::from_array([0xab; 32]),
-            r#"{"/":"bafkr4iflvov2xk5lvov2xk5lvov2xk5lvov2xk5lvov2xk5lvov2xk5lvm"}"#,
-        );
+    fn o256_round_trips_as_bytes() {
+        let value = O256::from_array([0xab; 32]);
+        let expected = format!("[{}]", ["171"; 32].join(","));
+        assert_round_trip(value, &expected);
+    }
+
+    #[test]
+    fn algorithm_hashes_round_trip_as_dag_json_links() {
         assert_round_trip(
             Blake3Hash::from_array([0xab; 32]),
             r#"{"/":"bafkr4iflvov2xk5lvov2xk5lvov2xk5lvov2xk5lvov2xk5lvov2xk5lvm"}"#,
@@ -157,12 +220,7 @@ mod tests {
     #[test]
     fn malformed_or_noncanonical_links_are_rejected() {
         assert!(serde_json::from_str::<O256>(r#""abab""#).is_err());
-        assert!(serde_json::from_str::<O256>(r#"{"/":"not a cid"}"#).is_err());
-        assert!(
-            serde_json::from_str::<O256>(
-                r#"{"/":"bafkr4iflvov2xk5lvov2xk5lvov2xk5lvov2xk5lvov2xk5lvov2xk5lvm","extra":true}"#,
-            )
-            .is_err()
-        );
+        assert!(serde_json::from_str::<O256>("[0,1]").is_err());
+        assert!(serde_json::from_str::<O256>(&format!("[{},0]", ["171"; 32].join(",")),).is_err());
     }
 }

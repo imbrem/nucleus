@@ -28,11 +28,12 @@
 use std::{
     fmt::Write as _,
     hash::{DefaultHasher, Hash, Hasher},
+    str::FromStr,
 };
 
 use covalence_lib_hash::{
-    Blake3, COV, COV_ROOT, Cov, CtxKey, CtxKeyNamespace, Git, O256, Obj, ParseBase64Error,
-    ParseHexError, RootedNamespace, Sha1, Sha256, git_blob, git_object,
+    Blake3, COV, COV_ROOT, Cov, CtxKey, CtxKeyNamespace, Git, HashCid, HashMultihash, O256, Obj,
+    ParseBase64Error, ParseHexError, RootedNamespace, Sha1, Sha256, git_blob, git_object,
 };
 use covalence_lib_python::exceptions::create_exception;
 use covalence_lib_python::prelude::*;
@@ -255,6 +256,37 @@ macro_rules! object {
                 let value = Obj::<$namespace>::from_base64::<$bytes>(text)
                     .map_err(base64_error)?;
                 Self::wrap(python, value)
+            }
+
+            /// Extracts a value from its standard binary multihash.
+            #[staticmethod]
+            fn from_multihash(python: Python<'_>, data: Bytes) -> PyResult<Py<Self>> {
+                let hash = HashMultihash::from_bytes(data.as_slice())
+                    .map_err(|error| PyValueError::new_err(error.to_string()))?;
+                let value = Obj::<$namespace>::from_multihash(&hash)
+                    .map_err(|error| PyValueError::new_err(error.to_string()))?;
+                Self::wrap(python, value)
+            }
+
+            /// Returns the standard binary multihash for this value.
+            fn to_multihash<'py>(slf: PyRef<'_, Self>, python: Python<'py>) -> Bound<'py, PyBytes> {
+                let hash = Self::value(&slf).to_multihash();
+                PyBytes::new(python, &hash.to_bytes())
+            }
+
+            /// Extracts a value from its standard raw CID.
+            #[staticmethod]
+            fn from_raw_cid(python: Python<'_>, text: &str) -> PyResult<Py<Self>> {
+                let cid = HashCid::from_str(text)
+                    .map_err(|error| PyValueError::new_err(error.to_string()))?;
+                let value = Obj::<$namespace>::from_raw_cid(&cid)
+                    .map_err(|error| PyValueError::new_err(error.to_string()))?;
+                Self::wrap(python, value)
+            }
+
+            /// Returns the standard raw CID for this value.
+            fn to_raw_cid(slf: PyRef<'_, Self>) -> String {
+                Self::value(&slf).to_raw_cid().to_string()
             }
 
             $($extra)*
