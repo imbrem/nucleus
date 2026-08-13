@@ -24,13 +24,14 @@ universe u v w
 
 /-- A single array row. `Ref` selects the physical/reference representation. -/
 inductive Row (Base : Type u) (Ref : Type v) : Type (max u v) where
-  | tyBase (name : Base)
+  | tyBase (kind : Kind) (name : Base)
   | tyBool
   | tyInd
   | tyArr (domain codomain : Ref)
+  | tyApp (domain codomain : Kind) (function argument : Ref)
   | tySub (carrier predicate : Ref)
-  | tmBound (index : Nat)
-  | tmFree (name : Nat) (type : Ref)
+  | tmBv (index : Nat)
+  | tmFv (name : Nat) (type : Ref)
   | tmApp (function argument : Ref)
   | tmLam (domain body : Ref)
   | tmBool (value : Bool)
@@ -45,13 +46,14 @@ inductive Row (Base : Type u) (Ref : Type v) : Type (max u v) where
 /-- Apply a representation change uniformly to every child reference. -/
 def Row.map {Base : Type u} {R : Type v} {S : Type w} (f : R → S) :
     Row Base R → Row Base S
-  | .tyBase name => .tyBase name
+  | .tyBase kind name => .tyBase kind name
   | .tyBool => .tyBool
   | .tyInd => .tyInd
   | .tyArr domain codomain => .tyArr (f domain) (f codomain)
+  | .tyApp domain codomain function argument => .tyApp domain codomain (f function) (f argument)
   | .tySub carrier predicate => .tySub (f carrier) (f predicate)
-  | .tmBound index => .tmBound index
-  | .tmFree name type => .tmFree name (f type)
+  | .tmBv index => .tmBv index
+  | .tmFv name type => .tmFv name (f type)
   | .tmApp function argument => .tmApp (f function) (f argument)
   | .tmLam domain body => .tmLam (f domain) (f body)
   | .tmBool value => .tmBool value
@@ -64,10 +66,11 @@ def Row.map {Base : Type u} {R : Type v} {S : Type w} (f : R → S) :
 
 /-- Child references in their stable, constructor-specific order. -/
 def Row.children {Base : Type u} {Ref : Type v} : Row Base Ref → List Ref
-  | .tyBase _ | .tyBool | .tyInd | .tmBound _ | .tmBool _ | .tmZero => []
-  | .tmFree _ type => [type]
+  | .tyBase _ _ | .tyBool | .tyInd | .tmBv _ | .tmBool _ | .tmZero => []
+  | .tmFv _ type => [type]
   | .tmSucc value => [value]
-  | .tyArr domain codomain | .tySub domain codomain | .tmApp domain codomain |
+  | .tyArr domain codomain | .tyApp _ _ domain codomain |
+      .tySub domain codomain | .tmApp domain codomain |
       .tmLam domain codomain | .tmEps domain codomain => [domain, codomain]
   | .tmEq type left right | .tmAbs type left right | .tmRep type left right =>
       [type, left, right]
@@ -104,14 +107,17 @@ structure PackedTm (Base : Type u) where
   value : Tm Base depth
   deriving Repr
 
-def Packed.ofTy {Base : Type u} (type : Ty Base) : Packed Base := ⟨.ty, 0, type⟩
+def Packed.ofFam {Base : Type u} {kind : Kind} (family : Fam Base kind) : Packed Base :=
+  ⟨.kind kind, 0, family⟩
+
+def Packed.ofTy {Base : Type u} (type : Ty Base) : Packed Base := Packed.ofFam type
 
 def Packed.ofTm {Base : Type u} {depth : Nat} (term : Tm Base depth) : Packed Base :=
   ⟨.tm, depth, term⟩
 
 /-- Project a packed entry as a type. -/
 def Packed.toTy? {Base : Type u} : Packed Base → Option (Ty Base)
-  | ⟨.ty, 0, type⟩ => some type
+  | ⟨.kind .star, 0, type⟩ => some type
   | _ => none
 
 /-- Project a packed entry as a term while retaining its binder depth. -/
@@ -147,21 +153,25 @@ private def PackedTm.align3 {Base : Type u} (first second third : PackedTm Base)
 
 private def validateRow {Base : Type u} (n : Nat) :
     Row Base Nat → Option (Row Base (Fin n))
-  | .tyBase name => some (.tyBase name)
+  | .tyBase kind name => some (.tyBase kind name)
   | .tyBool => some .tyBool
   | .tyInd => some .tyInd
   | .tyArr domain codomain =>
       match ref domain, ref codomain with
       | some domain, some codomain => some (.tyArr domain codomain)
       | _, _ => none
+  | .tyApp domain codomain function argument =>
+      match ref function, ref argument with
+      | some function, some argument => some (.tyApp domain codomain function argument)
+      | _, _ => none
   | .tySub carrier predicate =>
       match ref carrier, ref predicate with
       | some carrier, some predicate => some (.tySub carrier predicate)
       | _, _ => none
-  | .tmBound index => some (.tmBound index)
-  | .tmFree name type =>
+  | .tmBv index => some (.tmBv index)
+  | .tmFv name type =>
       match ref type with
-      | some type => some (.tmFree name type)
+      | some type => some (.tmFv name type)
       | none => none
   | .tmApp function argument =>
       match ref function, ref argument with
@@ -208,16 +218,22 @@ def RawArena.validate {Base : Type u} (rows : RawArena Base) : Option (SomeArena
 private def elaborateRow {Base : Type u} {n : Nat}
     (decode : {sort : HolSort} → {depth : Nat} → Fin n → Option (Hol Base sort depth)) :
     Row Base (Fin n) → (sort : HolSort) → (depth : Nat) → Option (Hol Base sort depth)
-  | .tyBase name, .ty, 0 => some (.base name)
-  | .tyBool, .ty, 0 => some .boolTy
-  | .tyInd, .ty, 0 => some .natTy
-  | .tyArr domain codomain, .ty, 0 =>
+  | .tyBase actual name, .kind expected, 0 =>
+      if equality : actual = expected then some (equality ▸ .base name) else none
+  | .tyBool, .kind .star, 0 => some .boolTy
+  | .tyInd, .kind .star, 0 => some .natTy
+  | .tyArr domain codomain, .kind .star, 0 =>
       return .arr (← decode domain) (← decode codomain)
-  | .tySub carrier predicate, .ty, 0 =>
+  | .tyApp domain codomain function argument, .kind expected, 0 =>
+      if equality : codomain = expected then
+        return equality ▸ .tyApp (← decode (sort := .kind (.arr domain codomain)) function)
+          (← decode (sort := .kind domain) argument)
+      else none
+  | .tySub carrier predicate, .kind .star, 0 =>
       return .sub (← decode carrier) (← decode (depth := 1) predicate)
-  | .tmBound index, .tm, depth =>
-      if h : index < depth then some (.bound ⟨index, h⟩) else none
-  | .tmFree name type, .tm, _ => return .free name (← decode type)
+  | .tmBv index, .tm, depth =>
+      if h : index < depth then some (.bv ⟨index, h⟩) else none
+  | .tmFv name type, .tm, _ => return .fv name (← decode (sort := .kind .star) type)
   | .tmApp function argument, .tm, depth =>
       return .app (← decode (depth := depth) function) (← decode (depth := depth) argument)
   | .tmLam domain body, .tm, depth =>
@@ -252,7 +268,7 @@ def Arena.decodeOpen {Base : Type u} : {n : Nat} → Arena Base n →
 
 /-- Decode a closed type root. -/
 def Arena.decodeTy {Base : Type u} {n : Nat} (arena : Arena Base n) (root : Fin n) :
-    Option (Ty Base) := arena.decodeOpen root .ty 0
+    Option (Ty Base) := arena.decodeOpen root (.kind .star) 0
 
 /-- Decode a closed term root. -/
 def Arena.decodeTm {Base : Type u} {n : Nat} (arena : Arena Base n) (root : Fin n) :
@@ -268,7 +284,7 @@ def RawArena.decodeOpen {Base : Type u} (rows : RawArena Base) (root : Nat)
 
 /-- Validate a raw array and decode a selected closed type root. -/
 def RawArena.decodeTy {Base : Type u} (rows : RawArena Base) (root : Nat) : Option (Ty Base) :=
-  rows.decodeOpen root .ty 0
+  rows.decodeOpen root (.kind .star) 0
 
 /-- Validate a raw array and decode a selected closed term root. -/
 def RawArena.decodeTm {Base : Type u} (rows : RawArena Base) (root : Nat) :
@@ -278,6 +294,14 @@ private def packedTy {Base : Type u} (get : Nat → Option (Packed Base)) (index
     Option (Ty Base) := do
   (← get index).toTy?
 
+private def packedFam {Base : Type u} (get : Nat → Option (Packed Base))
+    (kind : Kind) (index : Nat) : Option (Fam Base kind) := do
+  let entry ← get index
+  match entry with
+  | ⟨.kind actual, 0, family⟩ =>
+      if equality : actual = kind then some (equality ▸ family) else none
+  | _ => none
+
 private def packedTm {Base : Type u} (get : Nat → Option (Packed Base)) (index : Nat) :
     Option (PackedTm Base) := do
   (← get index).toTm?
@@ -286,20 +310,23 @@ private def packedTm {Base : Type u} (get : Nat → Option (Packed Base)) (index
 uses the least binder depth required by its children. -/
 private def elaboratePackedRow {Base : Type u} (get : Nat → Option (Packed Base)) :
     Row Base Nat → Option (Packed Base)
-  | .tyBase name => some (Packed.ofTy (.base name))
+  | .tyBase kind name => some (Packed.ofFam (.base name : Fam Base kind))
   | .tyBool => some (Packed.ofTy .boolTy)
   | .tyInd => some (Packed.ofTy .natTy)
   | .tyArr domain codomain =>
       return Packed.ofTy (.arr (← packedTy get domain) (← packedTy get codomain))
+  | .tyApp domain codomain function argument =>
+      return Packed.ofFam (.tyApp (← packedFam get (.arr domain codomain) function)
+        (← packedFam get domain argument))
   | .tySub carrier predicate => do
       let carrier ← packedTy get carrier
       let predicate ← packedTm get predicate
       if scope : predicate.depth ≤ 1 then
         some (Packed.ofTy (.sub carrier (predicate.raiseTo 1 scope)))
       else none
-  | .tmBound index =>
-      some (Packed.ofTm (.bound ⟨index, Nat.lt_succ_self index⟩))
-  | .tmFree name type => return Packed.ofTm (.free name (← packedTy get type) : Tm Base 0)
+  | .tmBv index =>
+      some (Packed.ofTm (.bv ⟨index, Nat.lt_succ_self index⟩))
+  | .tmFv name type => return Packed.ofTm (.fv name (← packedTy get type) : Tm Base 0)
   | .tmApp function argument => do
       let function ← packedTm get function
       let argument ← packedTm get argument
@@ -373,6 +400,9 @@ private def nat {Base : Type u} (value : Nat) : Tree Base :=
 private def bool {Base : Type u} (value : Bool) : Tree Base :=
   .scalar (.bool value)
 
+private def kind {Base : Type u} (value : Kind) : Tree Base :=
+  .scalar (.kind value)
+
 private def base {Base : Type u} (value : Base) : Tree Base :=
   .scalar (.base value)
 
@@ -381,13 +411,15 @@ private def array {Base : Type u} (values : List (Tree Base)) : Tree Base :=
 
 /-- Encode one parsed row as a compact positional JSON array. -/
 def encodeRow {Base : Type u} : Row Base Nat → Tree Base
-  | .tyBase name => array [string "ty.base", base name]
+  | .tyBase familyKind name => array [string "ty.base", kind familyKind, base name]
   | .tyBool => array [string "ty.bool"]
   | .tyInd => array [string "ty.ind"]
   | .tyArr domain codomain => array [string "ty.arr", nat domain, nat codomain]
+  | .tyApp domain codomain function argument =>
+      array [string "ty.app", kind domain, kind codomain, nat function, nat argument]
   | .tySub carrier predicate => array [string "ty.sub", nat carrier, nat predicate]
-  | .tmBound index => array [string "tm.bound", nat index]
-  | .tmFree name type => array [string "tm.free", nat name, nat type]
+  | .tmBv index => array [string "tm.bv", nat index]
+  | .tmFv name type => array [string "tm.fv", nat name, nat type]
   | .tmApp function argument => array [string "tm.app", nat function, nat argument]
   | .tmLam domain body => array [string "tm.lam", nat domain, nat body]
   | .tmBool value => array [string "tm.bool", bool value]
@@ -404,16 +436,20 @@ def encodeRow {Base : Type u} : Row Base Nat → Tree Base
 def decodeRow {Base : Type u} : Tree Base → Option (Row Base Nat)
   | .list values =>
       match values.toList with
-      | [.scalar (.string "ty.base"), .scalar (.base name)] => some (.tyBase name)
+      | [.scalar (.string "ty.base"), .scalar (.kind familyKind), .scalar (.base name)] =>
+          some (.tyBase familyKind name)
       | [.scalar (.string "ty.bool")] => some .tyBool
       | [.scalar (.string "ty.ind")] => some .tyInd
       | [.scalar (.string "ty.arr"), .scalar (.nat domain), .scalar (.nat codomain)] =>
           some (.tyArr domain codomain)
+      | [.scalar (.string "ty.app"), .scalar (.kind domain), .scalar (.kind codomain),
+          .scalar (.nat function), .scalar (.nat argument)] =>
+          some (.tyApp domain codomain function argument)
       | [.scalar (.string "ty.sub"), .scalar (.nat carrier), .scalar (.nat predicate)] =>
           some (.tySub carrier predicate)
-      | [.scalar (.string "tm.bound"), .scalar (.nat index)] => some (.tmBound index)
-      | [.scalar (.string "tm.free"), .scalar (.nat name), .scalar (.nat type)] =>
-          some (.tmFree name type)
+      | [.scalar (.string "tm.bv"), .scalar (.nat index)] => some (.tmBv index)
+      | [.scalar (.string "tm.fv"), .scalar (.nat name), .scalar (.nat type)] =>
+          some (.tmFv name type)
       | [.scalar (.string "tm.app"), .scalar (.nat function), .scalar (.nat argument)] =>
           some (.tmApp function argument)
       | [.scalar (.string "tm.lam"), .scalar (.nat domain), .scalar (.nat body)] =>
@@ -434,7 +470,7 @@ def decodeRow {Base : Type u} : Tree Base → Option (Row Base Nat)
 
 @[simp] theorem decodeRow_encodeRow {Base : Type u} (row : Row Base Nat) :
     decodeRow (encodeRow row) = some row := by
-  cases row <;> simp [encodeRow, decodeRow, array, string, nat, bool, base]
+  cases row <;> simp [encodeRow, decodeRow, array, string, nat, bool, kind, base]
 
 theorem encodeRow_injective {Base : Type u} :
     Function.Injective (encodeRow (Base := Base)) := by
@@ -482,7 +518,7 @@ def decodeOpen {Base : Type u} (json : Tree Base) (root : Nat)
 
 /-- Parse JSON, validate it, and decode a selected closed type. -/
 def decodeTy {Base : Type u} (json : Tree Base) (root : Nat) : Option (Ty Base) :=
-  decodeOpen json root .ty 0
+  decodeOpen json root (.kind .star) 0
 
 /-- Parse JSON, validate it, and decode a selected closed term. -/
 def decodeTm {Base : Type u} (json : Tree Base) (root : Nat) : Option (ClosedTm Base) :=

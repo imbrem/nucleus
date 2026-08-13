@@ -20,7 +20,7 @@ abbrev ClosedChecked (Base : Type u) (A : Ty Base) :=
 
 def ProvablyEq {Base : Type u} {A : Ty Base}
     (left right : ClosedChecked Base A) : Prop :=
-  Nonempty (Nucleus.HolLN.EqTm (emptyBound : BoundCtx Base 0) left.term right.term A)
+  Nonempty (Nucleus.HolLN.EqTm (emptyBound : BoundCtx Base 0) left.tm right.tm A)
 
 instance termSetoid (Base : Type u) (A : Ty Base) : Setoid (ClosedChecked Base A) where
   r := ProvablyEq
@@ -45,12 +45,12 @@ def quoteNat {Base : Type u} (value : Nat) : NatTermModel Base :=
 
 private theorem evalBoolLiteral {Base : Type u} (value : Bool) :
     Eval (emptyBound : BoundCtx Base 0) defaultFreeEnv emptyBoundEnv
-      (Checked.boolean (Γ := emptyBound) value).term .boolTy value :=
+      (Checked.boolean (Γ := emptyBound) value).tm .boolTy value :=
   .boolean value
 
 private theorem evalNatLiteral {Base : Type u} : (value : Nat) ->
     Eval (emptyBound : BoundCtx Base 0) defaultFreeEnv emptyBoundEnv
-      (Checked.natural (Γ := emptyBound) value).term .natTy value
+      (Checked.natural (Γ := emptyBound) value).tm .natTy value
   | 0 => .naturalZero
   | n + 1 => .naturalSucc (evalNatLiteral n)
 

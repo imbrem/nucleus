@@ -39,8 +39,8 @@ inductive EqTm {Base : Type u} : {depth : Nat} -> BoundCtx Base depth ->
       EqTm Γ (.app (.lam A body) x) (openBound body x) B
   | eta (name : Nat) (fresh : Fresh name f)
       (functionTyping : HasType Γ f (.arr A B))
-      (etaTyping : HasType Γ (.lam A (.app (weaken f) (.bound 0))) (.arr A B)) :
-      EqTm Γ (.lam A (.app (weaken f) (.bound 0))) f (.arr A B)
+      (etaTyping : HasType Γ (.lam A (.app (weaken f) (.bv 0))) (.arr A B)) :
+      EqTm Γ (.lam A (.app (weaken f) (.bv 0))) f (.arr A B)
 
 def TypedHyps {Base : Type u} {depth : Nat}
     (Γ : BoundCtx Base depth) (hypotheses : List (Tm Base depth)) : Prop :=

@@ -14,12 +14,12 @@ universe u
 
 def liftSub {Base : Type u} {m n : Nat} (σ : Fin m -> Tm Base n) :
     Fin (m + 1) -> Tm Base (n + 1) :=
-  Fin.cases (.bound 0) (fun i => weaken (σ i))
+  Fin.cases (.bv 0) (fun i => weaken (σ i))
 
 def instantiate {Base : Type u} {m n : Nat} (σ : Fin m -> Tm Base n) :
     Tm Base m -> Tm Base n
-  | .bound i => σ i
-  | .free name A => .free name A
+  | .bv i => σ i
+  | .fv name A => .fv name A
   | .app f x => .app (instantiate σ f) (instantiate σ x)
   | .lam A body => .lam A (instantiate (liftSub σ) body)
   | .bool b => .bool b
@@ -32,11 +32,11 @@ def instantiate {Base : Type u} {m n : Nat} (σ : Fin m -> Tm Base n) :
 
 def openBound {Base : Type u} {n : Nat} (body : Tm Base (n + 1))
     (replacement : Tm Base n) : Tm Base n :=
-  instantiate (Fin.cases replacement .bound) body
+  instantiate (Fin.cases replacement .bv) body
 
 def openFree {Base : Type u} {n : Nat} (body : Tm Base (n + 1))
     (name : Nat) (A : Ty Base) : Tm Base n :=
-  openBound body (.free name A)
+  openBound body (.fv name A)
 
 /-- Instantiate a predicate from its fixed one-variable context at any depth. -/
 def instantiateOne {Base : Type u} {n : Nat} (predicate : Tm Base 1)
@@ -45,8 +45,8 @@ def instantiateOne {Base : Type u} {n : Nat} (predicate : Tm Base 1)
 
 def substFree {Base : Type u} {n : Nat} (name : Nat) (replacement : Tm Base n) :
     Tm Base n -> Tm Base n
-  | .bound i => .bound i
-  | .free other A => if other = name then replacement else .free other A
+  | .bv i => .bv i
+  | .fv other A => if other = name then replacement else .fv other A
   | .app f x => .app (substFree name replacement f) (substFree name replacement x)
   | .lam A body => .lam A (substFree name (weaken replacement) body)
   | .bool b => .bool b
@@ -61,8 +61,8 @@ def substFree {Base : Type u} {n : Nat} (name : Nat) (replacement : Tm Base n) :
 embeds the bound variables already present in the source. -/
 def closeAux {Base : Type u} {m n : Nat} (name : Nat) (fresh : Fin n)
     (ρ : Fin m -> Fin n) : Tm Base m -> Tm Base n
-  | .bound i => .bound (ρ i)
-  | .free other A => if other = name then .bound fresh else .free other A
+  | .bv i => .bv (ρ i)
+  | .fv other A => if other = name then .bv fresh else .fv other A
   | .app f x => .app (closeAux name fresh ρ f) (closeAux name fresh ρ x)
   | .lam A body => .lam A (closeAux name fresh.succ (liftRen ρ) body)
   | .bool b => .bool b
@@ -84,8 +84,8 @@ theorem liftRen_id (n : Nat) : liftRen (fun i : Fin n => i) = fun i => i := by
 
 theorem rename_id {Base : Type u} : {n : Nat} -> (t : Tm Base n) ->
     rename (fun i => i) t = t
-  | _, .bound _ => by simp [rename]
-  | _, .free _ _ => by simp [rename]
+  | _, .bv _ => by simp [rename]
+  | _, .fv _ _ => by simp [rename]
   | _, .app f x => by simp [rename, rename_id f, rename_id x]
   | _, .lam A body => by
       simp [rename, liftRen_id, rename_id body]
@@ -100,8 +100,8 @@ theorem rename_id {Base : Type u} : {n : Nat} -> (t : Tm Base n) ->
 theorem rename_comp {Base : Type u} {m n q : Nat}
     (ρ : Fin m -> Fin n) (τ : Fin n -> Fin q) : (t : Tm Base m) ->
     rename τ (rename ρ t) = rename (fun i => τ (ρ i)) t
-  | .bound _ => by simp [rename]
-  | .free _ _ => by simp [rename]
+  | .bv _ => by simp [rename]
+  | .fv _ _ => by simp [rename]
   | .app f x => by simp [rename, rename_comp ρ τ f, rename_comp ρ τ x]
   | .lam A body => by
       simp only [rename]
@@ -118,8 +118,8 @@ theorem rename_comp {Base : Type u} {m n q : Nat}
   | .rep A p x => by simp [rename, rename_comp ρ τ x]
 
 theorem liftSub_bound {Base : Type u} (n : Nat) :
-    liftSub (fun i : Fin n => (.bound i : Tm Base n)) =
-      fun i => (.bound i : Tm Base (n + 1)) := by
+    liftSub (fun i : Fin n => (.bv i : Tm Base n)) =
+      fun i => (.bv i : Tm Base (n + 1)) := by
   funext i
   refine Fin.cases ?_ (fun j => ?_) i
   · rfl
@@ -127,9 +127,9 @@ theorem liftSub_bound {Base : Type u} (n : Nat) :
 
 /-- Simultaneous bound instantiation by the original variables is identity. -/
 theorem instantiate_identity {Base : Type u} : {n : Nat} -> (term : Tm Base n) ->
-    instantiate (fun i => .bound i) term = term
-  | _, .bound i => by simp [instantiate]
-  | _, .free name A => by simp [instantiate]
+    instantiate (fun i => .bv i) term = term
+  | _, .bv i => by simp [instantiate]
+  | _, .fv name A => by simp [instantiate]
   | _, .app f x => by
       simp [instantiate, instantiate_identity f, instantiate_identity x]
   | n, .lam A body => by
@@ -146,14 +146,14 @@ theorem instantiate_identity {Base : Type u} : {n : Nat} -> (term : Tm Base n) -
   | _, .rep A p x => by simp [instantiate, instantiate_identity x]
 
 theorem weaken_free {Base : Type u} {n : Nat} (name : Nat) (A : Ty Base) :
-    weaken (.free name A : Tm Base n) = (.free name A : Tm Base (n + 1)) := by
+    weaken (.fv name A : Tm Base n) = (.fv name A : Tm Base (n + 1)) := by
   simp [weaken, rename]
 
 theorem substFree_fresh {Base : Type u} (name : Nat) {n : Nat}
     (replacement : Tm Base n) : (term : Tm Base n) -> Fresh name term ->
       substFree name replacement term = term
-  | .bound i, _ => by simp [substFree]
-  | .free other A, freshness => by
+  | .bv i, _ => by simp [substFree]
+  | .fv other A, freshness => by
       have h : other ≠ name := by
         intro equality
         exact freshness (Or.inl equality)
@@ -190,8 +190,8 @@ theorem substFree_rename {Base : Type u} (name : Nat) :
       (term : Tm Base m) ->
       substFree name (rename ρ replacement) (rename ρ term) =
         rename ρ (substFree name replacement term)
-  | _, _, replacement, ρ, .bound i => by simp [substFree, rename]
-  | _, _, replacement, ρ, .free other A => by
+  | _, _, replacement, ρ, .bv i => by simp [substFree, rename]
+  | _, _, replacement, ρ, .fv other A => by
       by_cases h : other = name <;> simp [substFree, rename, h]
   | _, _, replacement, ρ, .app f x => by
       simp [substFree, rename, substFree_rename name replacement ρ f,
@@ -232,8 +232,8 @@ theorem substFree_comp {Base : Type u} {n : Nat} {first second : Nat}
       substFree first replacement (substFree second secondReplacement term) =
         substFree second (substFree first replacement secondReplacement)
           (substFree first replacement term)
-  | .bound i => by simp [substFree]
-  | .free name A => by
+  | .bv i => by simp [substFree]
+  | .fv name A => by
       by_cases hfirst : name = first
       · subst name
         have hsecond : first ≠ second := different
@@ -274,16 +274,16 @@ theorem substFree_comp {Base : Type u} {n : Nat} {first second : Nat}
 
 /-- Opening the newest binder itself returns the supplied argument. -/
 @[simp] theorem openBound_zero {Base : Type u} {n : Nat} (replacement : Tm Base n) :
-    openBound (.bound 0 : Tm Base (n + 1)) replacement = replacement := by
+    openBound (.bv 0 : Tm Base (n + 1)) replacement = replacement := by
   simp [openBound, instantiate]
 
 /-- Opening ignores an outer binder that a term does not use. -/
 theorem instantiate_rename_leftInverse {Base : Type u} {m n : Nat}
     (ρ : Fin m -> Fin n) (σ : Fin n -> Tm Base m)
-    (restores : ∀ i, σ (ρ i) = .bound i) : (term : Tm Base m) ->
+    (restores : ∀ i, σ (ρ i) = .bv i) : (term : Tm Base m) ->
       instantiate σ (rename ρ term) = term
-  | .bound i => by simp [rename, instantiate, restores]
-  | .free name A => by simp [rename, instantiate]
+  | .bv i => by simp [rename, instantiate, restores]
+  | .fv name A => by simp [rename, instantiate]
   | .app f x => by
       simp [rename, instantiate, instantiate_rename_leftInverse ρ σ restores f,
         instantiate_rename_leftInverse ρ σ restores x]
@@ -312,7 +312,7 @@ theorem instantiate_rename_leftInverse {Base : Type u} {m n : Nat}
 @[simp] theorem openBound_weaken {Base : Type u} :
     {n : Nat} -> (term replacement : Tm Base n) -> openBound (weaken term) replacement = term
   | _, term, replacement => by
-      apply instantiate_rename_leftInverse Fin.succ (Fin.cases replacement .bound)
+      apply instantiate_rename_leftInverse Fin.succ (Fin.cases replacement .bv)
       intro i
       rfl
 
@@ -322,8 +322,8 @@ theorem closeAux_rename {Base : Type u} {m m' n n' : Nat} (name : Nat)
     (commutes : ∀ i, ρ' (κ i) = τ (ρ i)) : (term : Tm Base m) ->
     closeAux name (τ fresh) ρ' (rename κ term) =
       rename τ (closeAux name fresh ρ term)
-  | .bound i => by simp [rename, closeAux, commutes]
-  | .free other A => by
+  | .bv i => by simp [rename, closeAux, commutes]
+  | .fv other A => by
       by_cases h : other = name <;> simp [rename, closeAux, h]
   | .app f x => by
       simp [rename, closeAux,
@@ -367,11 +367,11 @@ theorem closeAux_weaken {Base : Type u} {m n : Nat} (name : Nat)
 
 theorem closeAux_instantiate {Base : Type u} {m n : Nat} (name : Nat)
     (fresh : Fin n) (ρ : Fin m -> Fin n) (σ : Fin n -> Tm Base m)
-    (roundTrip : ∀ i, closeAux name fresh ρ (σ i) = .bound i) :
+    (roundTrip : ∀ i, closeAux name fresh ρ (σ i) = .bv i) :
     (term : Tm Base n) -> Fresh name term ->
       closeAux name fresh ρ (instantiate σ term) = term
-  | .bound i, _ => by simpa [instantiate] using roundTrip i
-  | .free other A, freshness => by
+  | .bv i, _ => by simpa [instantiate] using roundTrip i
+  | .fv other A, freshness => by
       have h : other ≠ name := by
         intro equality
         exact freshness (Or.inl equality)
@@ -421,7 +421,7 @@ theorem close_openFree {Base : Type u} (name : Nat) {n : Nat}
     (A : Ty Base) (body : Tm Base (n + 1)) (freshness : Fresh name body) :
     close name (openFree body name A) = body := by
   apply closeAux_instantiate name (0 : Fin (n + 1)) Fin.succ
-      (Fin.cases (.free name A) .bound) _ body freshness
+      (Fin.cases (.fv name A) .bv) _ body freshness
   intro i
   refine Fin.cases ?_ (fun j => ?_) i
   · simp [closeAux]

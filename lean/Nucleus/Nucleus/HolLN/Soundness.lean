@@ -20,11 +20,11 @@ theorem EqTm.typing {Base : Type u} {depth : Nat}
   | refl typing => exact ⟨typing, typing⟩
   | symm _ ih => exact ih.symm
   | trans _ _ ih₁ ih₂ => exact ⟨ih₁.1, ih₂.2⟩
-  | app _ _ ihf ihx => exact ⟨.app ihf.1 ihx.1, .app ihf.2 ihx.2⟩
-  | succ _ ih => exact ⟨.succ ih.1, .succ ih.2⟩
-  | lam hA _ ih => exact ⟨.lam _ hA ih.1, .lam _ hA ih.2⟩
+  | app _ _ ihf ihx => exact ⟨.tmApp ihf.1 ihx.1, .tmApp ihf.2 ihx.2⟩
+  | succ _ ih => exact ⟨.tmSucc ih.1, .tmSucc ih.2⟩
+  | lam hA _ ih => exact ⟨.tmLam _ hA ih.1, .tmLam _ hA ih.2⟩
   | beta body x hA bodyTyping argumentTyping resultTyping =>
-      exact ⟨.app (.lam _ hA bodyTyping) argumentTyping, resultTyping⟩
+      exact ⟨.tmApp (.tmLam _ hA bodyTyping) argumentTyping, resultTyping⟩
   | eta name fresh functionTyping etaTyping => exact ⟨etaTyping, functionTyping⟩
 
 set_option maxHeartbeats 1000000 in
@@ -78,13 +78,13 @@ theorem EqTm.sound {Base : Type u} {depth : Nat}
               have argumentValue := chosenArgument.unique argumentEval
               subst argumentValue
               have substitutions : EnvSubstitution _ _
-                  (Fin.cases x .bound) freeEnv sourceEnv boundEnv := by
+                  (Fin.cases x .bv) freeEnv sourceEnv boundEnv := by
                 intro i
                 refine Fin.cases ?_ (fun j => ?_) i
                 · intro hi
                   convert argumentEval using 1 <;> rfl
                 · intro hi
-                  exact .bound freeEnv boundEnv hi rfl
+                  exact .bv freeEnv boundEnv hi rfl
               have opened := bodyTyping.eval_instantiate
                 (bodyEval (Classical.choose (argumentTyping.eval_exists freeEnv boundEnv)))
                 substitutions
@@ -97,12 +97,12 @@ theorem EqTm.sound {Base : Type u} {depth : Nat}
             (target := extendBoundEnv argument boundEnv) (fun _ => rfl) (by
               intro i B lookup
               rfl)
-          have argumentEval := Eval.bound  freeEnv
+          have argumentEval := Eval.bv  freeEnv
             (i := 0) (extendBoundEnv argument boundEnv)
               (by
                 have regular := functionTyping.regularity
                 cases regular with
-                | arr hA _ => exact hA) rfl
+                | kindArr hA _ => exact hA) rfl
           obtain ⟨domain, bodyFunctionValue, bodyArgumentValue,
               bodyFunction, bodyArgument, output⟩ := (etaBody argument).app_inv
           have domainEquality := weakened.typing.unique bodyFunction.typing
@@ -189,10 +189,10 @@ theorem Proves.sound {Base : Type u} {depth : Nat}
             · subst r; exact leftEval
             · exact hypotheses _ member)
           exact False.elim (Bool.noConfusion (impossible.unique rightEval))
-      exact .eqTrue .bool leftEval rightEval equal
+      exact .eqTrue .kindBool leftEval rightEval equal
   | absRep typed hA hp hx =>
       obtain ⟨value, valueEval⟩ := hx.eval_exists freeEnv boundEnv
-      exact .eqTrue (.sub hA hp) (.abs hA hp (.rep hA hp valueEval)) valueEval rfl
+      exact .eqTrue (.kindSub hA hp) (.abs hA hp (.rep hA hp valueEval)) valueEval rfl
   | repAbs typed hA hp hx predicateTyping predicateProof ih =>
       obtain ⟨value, valueEval⟩ := hx.eval_exists freeEnv boundEnv
       exact .eqTrue hA (.rep hA hp (.abs hA hp valueEval)) valueEval rfl
@@ -203,12 +203,12 @@ theorem Proves.sound {Base : Type u} {depth : Nat}
       | naturalSucc leftValue =>
           cases rightEval with
           | naturalSucc rightValue =>
-              exact .eqTrue .nat leftValue rightValue (natSucc_injective equal)
+              exact .eqTrue .kindNat leftValue rightValue (natSucc_injective equal)
   | zeroNotSucc typed hx =>
       obtain ⟨value, valueEval⟩ := hx.eval_exists freeEnv boundEnv
       have inner : Eval Γ freeEnv boundEnv (.eq .natTy .zero (.succ _))
           .boolTy false :=
-        .eqFalse .nat .naturalZero (.naturalSucc valueEval) (natZero_ne_natSucc value)
-      exact .eqTrue .bool inner (.boolean false) rfl
+        .eqFalse .kindNat .naturalZero (.naturalSucc valueEval) (natZero_ne_natSucc value)
+      exact .eqTrue .kindBool inner (.boolean false) rfl
 
 end Nucleus.HolLN

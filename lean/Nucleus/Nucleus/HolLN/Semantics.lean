@@ -16,15 +16,37 @@ namespace Nucleus.HolLN
 
 universe u
 
-def DenoteHol {Base : Type u} : {sort : HolSort} -> {depth : Nat} ->
-    Hol Base sort depth -> Type
-  | _, _, .base _ => Unit
+structure Pointed where
+  carrier : Type
+  point : carrier
+
+def DenoteKind : Kind → Type 1
+  | .star => Pointed
+  | .arr domain codomain => DenoteKind domain → DenoteKind codomain
+
+def defaultFamily : (kind : Kind) → DenoteKind kind
+  | .star => ⟨Unit, ()⟩
+  | .arr _ codomain => fun _ => defaultFamily codomain
+
+def DenoteFam {Base : Type u} : {kind : Kind} → Fam Base kind → DenoteKind kind
+  | kind, .base _ => defaultFamily kind
+  | .star, .boolTy => ⟨Bool, false⟩
+  | .star, .natTy => ⟨Nat, 0⟩
+  | .star, .arr A B =>
+      ⟨(DenoteFam A).carrier → (DenoteFam B).carrier, fun _ => (DenoteFam B).point⟩
+  | codomain, .tyApp function argument => DenoteFam function (DenoteFam argument)
+  | .star, .sub A _ => DenoteFam A
+
+def DenoteHol {Base : Type u} : {sort : HolSort} → {depth : Nat} →
+    Hol Base sort depth → Type
   | _, _, .boolTy => Bool
   | _, _, .natTy => Nat
-  | _, _, .arr A B => DenoteHol A -> DenoteHol B
+  | _, _, .arr A B => DenoteHol A → DenoteHol B
+  | _, _, .tyApp _ _ => Unit
   | _, _, .sub A _ => DenoteHol A
-  | _, _, .bound _ => Unit
-  | _, _, .free _ _ => Unit
+  | _, _, .base _ => Unit
+  | _, _, .bv _ => Unit
+  | _, _, .fv _ _ => Unit
   | _, _, .app _ _ => Unit
   | _, _, .lam _ _ => Unit
   | _, _, .bool _ => Unit
@@ -47,12 +69,13 @@ def natSucc {Base : Type u} (value : DenoteTy (.natTy : Ty Base)) :
     DenoteTy (.natTy : Ty Base) :=
   denoteTy_nat.symm ▸ ((denoteTy_nat ▸ value) + 1)
 
-def defaultValue {Base : Type u} : (A : Ty Base) -> DenoteTy A
-  | .base _ => by change Unit; exact ()
-  | .boolTy => by change Bool; exact false
-  | .natTy => by change Nat; exact 0
-  | .arr _ B => by change DenoteTy _ -> DenoteTy B; exact fun _ => defaultValue B
-  | .sub A _ => by change DenoteTy A; exact defaultValue A
+def defaultValue {Base : Type u} : (A : Ty Base) → DenoteTy A
+  | .base _ => ()
+  | .boolTy => false
+  | .natTy => denoteTy_nat.symm ▸ (0 : Nat)
+  | .arr _ B => fun _ => defaultValue B
+  | .tyApp _ _ => ()
+  | .sub A _ => defaultValue A
 
 abbrev FreeEnv (Base : Type u) :=
   ∀ (_name : Nat) (A : Ty Base), DenoteTy A
@@ -118,14 +141,14 @@ inductive Eval {Base : Type u} :
     {depth : Nat} -> (Γ : BoundCtx Base depth) ->
     FreeEnv Base -> BoundEnv Γ ->
     (t : Tm Base depth) -> (A : Ty Base) -> DenoteTy A -> Prop where
-  | bound {depth : Nat} {Γ : BoundCtx Base depth} {A : Ty Base} {i : Fin depth}
+  | bv {depth : Nat} {Γ : BoundCtx Base depth} {A : Ty Base} {i : Fin depth}
       (freeEnv : FreeEnv Base) (boundEnv : BoundEnv Γ) (hA : Kinded A)
       (lookup : Γ i = A) :
-      Eval Γ freeEnv boundEnv (.bound i) A (boundEnv i A lookup)
-  | free {depth : Nat} {Γ : BoundCtx Base depth} {A : Ty Base} (name : Nat)
+      Eval Γ freeEnv boundEnv (.bv i) A (boundEnv i A lookup)
+  | fv {depth : Nat} {Γ : BoundCtx Base depth} {A : Ty Base} (name : Nat)
       (freeEnv : FreeEnv Base) (boundEnv : BoundEnv Γ)
       (hA : Kinded A) :
-      Eval Γ freeEnv boundEnv (.free name A) A (freeEnv name A)
+      Eval Γ freeEnv boundEnv (.fv name A) A (freeEnv name A)
   | app {depth : Nat} {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Base}
       {boundEnv : BoundEnv Γ} {A B : Ty Base} {f x : Tm Base depth}
       {function : DenoteTy (.arr A B)} {argument : DenoteTy A} :
@@ -185,70 +208,70 @@ theorem HasType.eval_exists {Base : Type u} {depth : Nat}
     ∃ value, Eval Γ freeEnv boundEnv t A value := by
   classical
   cases typing with
-  | bound hA lookup => exact ⟨_, .bound freeEnv boundEnv hA lookup⟩
-  | free name hA => exact ⟨_, .free name freeEnv boundEnv hA⟩
-  | app hf hx =>
-      obtain ⟨function, hfunction⟩ := hf.eval_exists freeEnv boundEnv
-      obtain ⟨argument, hargument⟩ := hx.eval_exists freeEnv boundEnv
+  | tmBv hA lookup => exact ⟨_, .bv freeEnv boundEnv hA lookup⟩
+  | tmFv name hA => exact ⟨_, .fv name freeEnv boundEnv hA⟩
+  | tmApp hf hx =>
+      obtain ⟨function, hfunction⟩ := HasType.eval_exists hf freeEnv boundEnv
+      obtain ⟨argument, hargument⟩ := HasType.eval_exists hx freeEnv boundEnv
       exact ⟨function argument, .app hfunction hargument⟩
-  | lam body hA bodyTyping =>
+  | tmLam body hA bodyTyping =>
       let function := fun argument =>
-        Classical.choose (bodyTyping.eval_exists freeEnv
+        Classical.choose (HasType.eval_exists bodyTyping freeEnv
           (extendBoundEnv argument boundEnv))
       refine ⟨function, .lam hA ?_⟩
       intro argument
-      exact Classical.choose_spec (bodyTyping.eval_exists freeEnv
+      exact Classical.choose_spec (HasType.eval_exists bodyTyping freeEnv
         (extendBoundEnv argument boundEnv))
-  | bool literal => exact ⟨literal, .boolean literal⟩
-  | zero => exact ⟨_, .naturalZero⟩
-  | succ valueTyping =>
-      obtain ⟨value, hvalue⟩ := valueTyping.eval_exists freeEnv boundEnv
+  | tmBool literal => exact ⟨literal, .boolean literal⟩
+  | tmZero => exact ⟨_, .naturalZero⟩
+  | tmSucc valueTyping =>
+      obtain ⟨value, hvalue⟩ := HasType.eval_exists valueTyping freeEnv boundEnv
       exact ⟨natSucc value, .naturalSucc hvalue⟩
-  | eq hA hx hy =>
-      obtain ⟨left, hleft⟩ := hx.eval_exists freeEnv boundEnv
-      obtain ⟨right, hright⟩ := hy.eval_exists freeEnv boundEnv
+  | tmEq hA hx hy =>
+      obtain ⟨left, hleft⟩ := HasType.eval_exists hx freeEnv boundEnv
+      obtain ⟨right, hright⟩ := HasType.eval_exists hy freeEnv boundEnv
       by_cases equal : left = right
       · exact ⟨true, .eqTrue hA hleft hright equal⟩
       · exact ⟨false, .eqFalse hA hleft hright equal⟩
-  | eps hA hp =>
-      obtain ⟨predicate, hpredicate⟩ := hp.eval_exists freeEnv boundEnv
+  | tmEps hA hp =>
+      obtain ⟨predicate, hpredicate⟩ := HasType.eval_exists hp freeEnv boundEnv
       exact ⟨chooseValue _ predicate, .eps hA hpredicate⟩
-  | abs hA hp hx =>
-      obtain ⟨value, hvalue⟩ := hx.eval_exists freeEnv boundEnv
+  | tmAbs hA hp hx =>
+      obtain ⟨value, hvalue⟩ := HasType.eval_exists hx freeEnv boundEnv
       exact ⟨value, .abs hA hp hvalue⟩
-  | rep hA hp hx =>
-      obtain ⟨value, hvalue⟩ := hx.eval_exists freeEnv boundEnv
+  | tmRep hA hp hx =>
+      obtain ⟨value, hvalue⟩ := HasType.eval_exists hx freeEnv boundEnv
       exact ⟨value, .rep hA hp hvalue⟩
 
 noncomputable def HasType.value {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} {t : Tm Base depth} {A : Ty Base}
     (typing : HasType Γ t A) (freeEnv : FreeEnv Base) (boundEnv : BoundEnv Γ) :
     DenoteTy A :=
-  Classical.choose (typing.eval_exists freeEnv boundEnv)
+  Classical.choose (HasType.eval_exists typing freeEnv boundEnv)
 
 theorem HasType.value_spec {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} {t : Tm Base depth} {A : Ty Base}
     (typing : HasType Γ t A) (freeEnv : FreeEnv Base) (boundEnv : BoundEnv Γ) :
     Eval Γ freeEnv boundEnv t A (typing.value freeEnv boundEnv) :=
-  Classical.choose_spec (typing.eval_exists freeEnv boundEnv)
+  Classical.choose_spec (HasType.eval_exists typing freeEnv boundEnv)
 
 theorem Eval.typing {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Base} {boundEnv : BoundEnv Γ}
     {t : Tm Base depth} {A : Ty Base} {value : DenoteTy A}
     (evaluation : Eval Γ freeEnv boundEnv t A value) : HasType Γ t A := by
   induction evaluation with
-  | bound _ _ hA lookup => exact .bound hA lookup
-  | free name _ _ hA => exact .free name hA
-  | app _ _ ihf ihx => exact .app ihf ihx
-  | lam hA _ ih => exact .lam _ hA (ih (defaultValue _))
-  | boolean literal => exact .bool literal
-  | naturalZero => exact .zero
-  | naturalSucc _ ih => exact .succ ih
-  | eqTrue hA _ _ _ ihx ihy => exact .eq hA ihx ihy
-  | eqFalse hA _ _ _ ihx ihy => exact .eq hA ihx ihy
-  | eps hA _ ih => exact .eps hA ih
-  | abs hA hp _ ih => exact .abs hA hp ih
-  | rep hA hp _ ih => exact .rep hA hp ih
+  | bv _ _ hA lookup => exact .tmBv hA lookup
+  | fv name _ _ hA => exact .tmFv name hA
+  | app _ _ ihf ihx => exact .tmApp ihf ihx
+  | lam hA _ ih => exact .tmLam _ hA (ih (defaultValue _))
+  | boolean literal => exact .tmBool literal
+  | naturalZero => exact .tmZero
+  | naturalSucc _ ih => exact .tmSucc ih
+  | eqTrue hA _ _ _ ihx ihy => exact .tmEq hA ihx ihy
+  | eqFalse hA _ _ _ ihx ihy => exact .tmEq hA ihx ihy
+  | eps hA _ ih => exact .tmEps hA ih
+  | abs hA hp _ ih => exact .tmAbs hA hp ih
+  | rep hA hp _ ih => exact .tmRep hA hp ih
 
 set_option maxHeartbeats 1000000 in
 -- Dependent elimination over two relational evaluations generates a large proof term.
@@ -261,8 +284,8 @@ theorem Eval.unique {Base : Type u} {depth : Nat}
     (second : Eval Γ freeEnv boundEnv t A secondValue) :
     firstValue = secondValue := by
   cases first with
-  | bound => cases second; rfl
-  | free => cases second; rfl
+  | bv => cases second; rfl
+  | fv => cases second; rfl
   | app hfunction hargument =>
       cases second with
       | app hfunction' hargument' =>
@@ -370,16 +393,16 @@ theorem Eval.rename {Base : Type u} {m : Nat}
       EnvRenaming relation source target ->
       Eval Γ' freeEnv target (Nucleus.HolLN.rename ρ t) A value := by
   induction evaluation with
-  | bound sourceFree sourceBound hA lookup =>
+  | bv sourceFree sourceBound hA lookup =>
       intro n Γ' ρ target relation environments
       rename_i i
       let lookup' := (relation i).trans lookup
       have values := environments i _ lookup
       simpa [Nucleus.HolLN.rename, values] using
-        Eval.bound sourceFree target hA lookup'
-  | free name sourceFree sourceBound hA =>
+        Eval.bv sourceFree target hA lookup'
+  | fv name sourceFree sourceBound hA =>
       intro n Γ' ρ target relation environments
-      simpa [Nucleus.HolLN.rename] using Eval.free name sourceFree target hA
+      simpa [Nucleus.HolLN.rename] using Eval.fv name sourceFree target hA
   | app hfunction hargument ihfunction ihargument =>
       intro n Γ' ρ target relation environments
       simpa [Nucleus.HolLN.rename] using
@@ -438,7 +461,7 @@ theorem liftSub_env {Base : Type u} {m n : Nat}
   intro i
   refine Fin.cases ?_ (fun j => ?_) i
   · intro hi
-    have evaluation := Eval.bound freeEnv
+    have evaluation := Eval.bv freeEnv
       (extendBoundEnv argument targetEnv) hA
       (show extendBound A targetContext 0 = A from rfl)
     convert evaluation using 1 <;> rfl
@@ -464,7 +487,7 @@ theorem HasType.eval_instantiate {Base : Type u} {m : Nat}
       EnvSubstitution sourceContext targetContext σ freeEnv sourceEnv targetEnv ->
       Eval targetContext freeEnv targetEnv (Nucleus.HolLN.instantiate σ t) A value := by
   cases typing with
-  | bound hA lookup =>
+  | tmBv hA lookup =>
       intro n targetContext σ targetEnv environments
       rename_i i
       cases evaluation
@@ -472,78 +495,78 @@ theorem HasType.eval_instantiate {Base : Type u} {m : Nat}
       have result := environments i hi
       cases lookup
       simpa [Nucleus.HolLN.instantiate] using result
-  | free name hA =>
+  | tmFv name hA =>
       intro n targetContext σ targetEnv environments
       cases evaluation
       simpa [Nucleus.HolLN.instantiate] using
-        Eval.free name freeEnv targetEnv hA
-  | app hf hx =>
+        Eval.fv name freeEnv targetEnv hA
+  | tmApp hf hx =>
       intro n targetContext σ targetEnv environments
       cases evaluation with
       | app hfunction hargument =>
-          have typeEquality := hf.unique hfunction.typing
+          have typeEquality := HasType.unique hf hfunction.typing
           cases typeEquality
           simpa [Nucleus.HolLN.instantiate] using
-          Eval.app (hf.eval_instantiate hfunction environments)
-            (hx.eval_instantiate hargument environments)
-  | lam body hA bodyTyping =>
+          Eval.app (HasType.eval_instantiate hf hfunction environments)
+            (HasType.eval_instantiate hx hargument environments)
+  | tmLam body hA bodyTyping =>
       intro n targetContext σ targetEnv environments
       cases evaluation with
       | lam _ hbody =>
           simpa [Nucleus.HolLN.instantiate] using Eval.lam hA (fun argument =>
-            bodyTyping.eval_instantiate (hbody argument)
+            HasType.eval_instantiate bodyTyping (hbody argument)
               (liftSub_env environments hA argument))
-  | bool literal =>
+  | tmBool literal =>
       intro n targetContext σ targetEnv environments
       cases evaluation
       simp only [Nucleus.HolLN.instantiate]
       exact .boolean literal
-  | zero =>
+  | tmZero =>
       intro n targetContext σ targetEnv environments
       cases evaluation
       simp only [Nucleus.HolLN.instantiate]
       exact .naturalZero
-  | succ valueTyping =>
+  | tmSucc valueTyping =>
       intro n targetContext σ targetEnv environments
       cases evaluation with
       | naturalSucc hvalue =>
           simp only [Nucleus.HolLN.instantiate]
-          exact .naturalSucc (valueTyping.eval_instantiate hvalue environments)
-  | eq hA hx hy =>
+          exact .naturalSucc (HasType.eval_instantiate valueTyping hvalue environments)
+  | tmEq hA hx hy =>
       intro n targetContext σ targetEnv environments
       cases evaluation with
       | eqTrue _ hleft hright equal =>
-          have typeEquality := hx.unique hleft.typing
+          have typeEquality := HasType.unique hx hleft.typing
           cases typeEquality
           simp only [Nucleus.HolLN.instantiate]
-          exact .eqTrue hA (hx.eval_instantiate hleft environments)
-            (hy.eval_instantiate hright environments) equal
+          exact .eqTrue hA (HasType.eval_instantiate hx hleft environments)
+            (HasType.eval_instantiate hy hright environments) equal
       | eqFalse _ hleft hright notEqual =>
-          have typeEquality := hx.unique hleft.typing
+          have typeEquality := HasType.unique hx hleft.typing
           cases typeEquality
           simp only [Nucleus.HolLN.instantiate]
-          exact .eqFalse hA (hx.eval_instantiate hleft environments)
-            (hy.eval_instantiate hright environments) notEqual
-  | eps hA hp =>
+          exact .eqFalse hA (HasType.eval_instantiate hx hleft environments)
+            (HasType.eval_instantiate hy hright environments) notEqual
+  | tmEps hA hp =>
       intro n targetContext σ targetEnv environments
       cases evaluation with
       | eps _ hpredicate =>
-          have typeEquality := hp.unique hpredicate.typing
+          have typeEquality := HasType.unique hp hpredicate.typing
           cases typeEquality
           simp only [Nucleus.HolLN.instantiate]
-          exact .eps hA (hp.eval_instantiate hpredicate environments)
-  | abs hA hp hx =>
+          exact .eps hA (HasType.eval_instantiate hp hpredicate environments)
+  | tmAbs hA hp hx =>
       intro n targetContext σ targetEnv environments
       cases evaluation with
       | abs _ _ hvalue =>
           simp only [Nucleus.HolLN.instantiate]
-          exact .abs hA hp (hx.eval_instantiate hvalue environments)
-  | rep hA hp hx =>
+          exact .abs hA hp (HasType.eval_instantiate hx hvalue environments)
+  | tmRep hA hp hx =>
       intro n targetContext σ targetEnv environments
       cases evaluation with
       | rep _ _ hvalue =>
           simp only [Nucleus.HolLN.instantiate]
-          exact .rep hA hp (hx.eval_instantiate hvalue environments)
+          exact .rep hA hp (HasType.eval_instantiate hx hvalue environments)
 
 def defaultFreeEnv {Base : Type u} : FreeEnv Base :=
   fun _ A => defaultValue A

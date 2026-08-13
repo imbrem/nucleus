@@ -47,7 +47,7 @@ def EqTm.substTy {Base : Type u} {Target : Type v} {σ : TypeSub Base Target}
       simpa [substTm, Nucleus.HolLN.substTy, substHol, substTm_openBound] using result
   | _, _, _, _, _, .eta name fresh functionTyping etaTyping => by
       have result := EqTm.eta name
-        (substHol_fresh σ name (fun base => admissible.closed base name) _ fresh)
+        (substHol_fresh σ name (fun kind base => admissible.closed kind base name) _ fresh)
         (functionTyping.substTy admissible.wellKinded)
         (by simpa [substTm, Nucleus.HolLN.substTy, substHol, substTm_weaken] using
           etaTyping.substTy admissible.wellKinded)
