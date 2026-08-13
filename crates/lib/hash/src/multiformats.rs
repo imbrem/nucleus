@@ -11,12 +11,6 @@ const SHA1: u64 = 0x11;
 const SHA2_256: u64 = 0x12;
 const BLAKE3_256: u64 = 0x1e;
 
-/// A multihash with capacity for a digest up to 256 bits.
-pub type M256 = Multihash<32>;
-
-/// A CID with capacity for a digest up to 256 bits.
-pub type C256 = CidGeneric<32>;
-
 /// A multihash or CID does not describe the requested object namespace.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InvalidMultiformat(&'static str);
@@ -68,8 +62,8 @@ impl<N: MultiformatNamespace> Obj<N> {
     ///
     /// Panics if `N` violates [`MultiformatNamespace`]'s 32-byte width requirement.
     #[must_use]
-    pub fn to_multihash(self) -> M256 {
-        M256::wrap(N::MULTIHASH_CODE, self.as_ref())
+    pub fn to_multihash(self) -> Multihash<32> {
+        Multihash::wrap(N::MULTIHASH_CODE, self.as_ref())
             .expect("standard object identifiers fit in a 32-byte multihash")
     }
 
@@ -78,7 +72,7 @@ impl<N: MultiformatNamespace> Obj<N> {
     /// # Errors
     ///
     /// Returns an error when the code or digest width does not match this namespace.
-    pub fn from_multihash(hash: &M256) -> Result<Self, InvalidMultiformat> {
+    pub fn from_multihash(hash: &Multihash<32>) -> Result<Self, InvalidMultiformat> {
         if hash.code() != N::MULTIHASH_CODE {
             return Err(InvalidMultiformat("wrong multihash code"));
         }
@@ -92,8 +86,8 @@ impl<N: MultiformatNamespace> Obj<N> {
 
     /// Wraps this identifier in a raw `CIDv1`.
     #[must_use]
-    pub fn to_raw_cid(self) -> C256 {
-        C256::new_v1(RAW, self.to_multihash())
+    pub fn to_raw_cid(self) -> CidGeneric<32> {
+        CidGeneric::new_v1(RAW, self.to_multihash())
     }
 
     /// Extracts an identifier from a raw CID using its standard multihash.
@@ -101,7 +95,7 @@ impl<N: MultiformatNamespace> Obj<N> {
     /// # Errors
     ///
     /// Returns an error when the codec, hash code, or digest width does not match.
-    pub fn from_raw_cid(cid: &C256) -> Result<Self, InvalidMultiformat> {
+    pub fn from_raw_cid(cid: &CidGeneric<32>) -> Result<Self, InvalidMultiformat> {
         if cid.codec() != RAW {
             return Err(InvalidMultiformat("wrong CID codec"));
         }

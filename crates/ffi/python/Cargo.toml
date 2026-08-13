@@ -25,6 +25,7 @@ crate-type = ["cdylib", "rlib"]
 extension-module = ["covalence-lib-python/extension-module"]
 
 [dependencies]
+cid = "0.11"
 covalence-lib-python = { path = "../../lib/python" }
 # `random` is left off: drawing an object needs a caller-supplied CSPRNG, and
 # there is no Python binding for one to supply. The rest of the crate's
