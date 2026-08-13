@@ -17,6 +17,7 @@ import Nucleus.Json.HeterogeneousCas
 import Nucleus.Json.Path
 import Nucleus.Json.Patch
 import Nucleus.Json.Holes
+import Nucleus.Json.Dag
 
 /-!
 # Key- and scalar-parametric JSON trees
