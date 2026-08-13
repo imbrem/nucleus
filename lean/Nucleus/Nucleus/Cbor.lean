@@ -2,6 +2,7 @@ import Nucleus.Cbor.Bytes
 import Nucleus.Cbor.Basic
 import Nucleus.Cbor.General
 import Nucleus.Cbor.Integers
+import Nucleus.Cbor.Fractions
 import Nucleus.Cbor.Profiles
 import Nucleus.Cbor.Subsets
 import Nucleus.Cbor.Reasonable
