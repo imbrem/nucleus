@@ -37,6 +37,7 @@ inductive CborSyn : CborIx → Type where
   | arrayCons (head : CborSyn .value) (tail : CborSyn .array) : CborSyn .array
   | mapNil : CborSyn .map
   | mapCons (key value : CborSyn .value) (tail : CborSyn .map) : CborSyn .map
+  deriving DecidableEq
 
 /-- A complete CBOR value. -/
 abbrev Cbor := CborSyn .value

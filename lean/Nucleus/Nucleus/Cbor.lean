@@ -9,6 +9,7 @@ import Nucleus.Cbor.Reasonable
 import Nucleus.Cbor.Dag
 import Nucleus.Cbor.Json
 import Nucleus.Cbor.Cas
+import Nucleus.Cbor.Wire
 
 /-!
 # CBOR
