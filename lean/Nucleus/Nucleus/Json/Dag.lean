@@ -11,23 +11,31 @@ identity, while their text/byte representations differ.
 
 namespace Nucleus
 
-/-- A link name has a canonical textual spelling and parser. CIDs can later
-instantiate this class with their CIDv0/CIDv1 textual rules. -/
+/-- A link name has canonical injective textual and binary spellings, with
+partial decoders. CIDs can later instantiate this class with CIDv0/CIDv1 text
+and raw binary CID rules; arbitrary strings and bytes need not be valid links. -/
 class LinkString (Name : Type) where
-  equiv : Name ≃ String
+  toString : Name ↪ String
+  ofString? : String → Option Name
+  ofString_toString : ∀ name, ofString? (toString name) = some name
+  toBytes : Name ↪ Bytes
+  ofBytes? : Bytes → Option Name
+  ofBytes_toBytes : ∀ name, ofBytes? (toBytes name) = some name
 
 namespace LinkString
 
 variable {Name : Type}
 
-def print [LinkString Name] (name : Name) : String := LinkString.equiv name
-def parse [LinkString Name] (text : String) : Name := LinkString.equiv.symm text
+def print [LinkString Name] (name : Name) : String := LinkString.toString name
+def parse? [LinkString Name] (text : String) : Option Name := LinkString.ofString? text
+def bytes [LinkString Name] (name : Name) : Bytes := LinkString.toBytes name
+def parseBytes? [LinkString Name] (value : Bytes) : Option Name := LinkString.ofBytes? value
 
-@[simp] theorem parse_print [LinkString Name] (name : Name) : parse (print name) = name :=
-  LinkString.equiv.left_inv name
+@[simp] theorem parse_print [LinkString Name] (name : Name) :
+    parse? (print name) = some name := LinkString.ofString_toString name
 
-@[simp] theorem print_parse [LinkString Name] (text : String) : print (parse text : Name) = text :=
-  LinkString.equiv.right_inv text
+@[simp] theorem parseBytes_bytes [LinkString Name] (name : Name) :
+    parseBytes? (bytes name) = some name := LinkString.ofBytes_toBytes name
 
 end LinkString
 
@@ -53,7 +61,7 @@ def parseLinkText? [DecidableEq String] [LinkString Name] : RfcJson → Option N
   | .map keys values =>
       if h : keys = {"/"} then
         match values ⟨"/", h.symm ▸ Finset.mem_singleton_self "/"⟩ with
-        | .scalar (some (.string text)) => some (LinkString.parse text)
+        | .scalar (some (.string text)) => LinkString.parse? text
         | _ => none
       else none
   | _ => none
