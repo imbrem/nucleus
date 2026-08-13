@@ -29,67 +29,85 @@ impl fmt::Display for InvalidMultiformat {
 
 impl std::error::Error for InvalidMultiformat {}
 
-fn from_multihash<N: Namespace>(
-    hash: &HashMultihash,
-    code: u64,
-) -> Result<Obj<N>, InvalidMultiformat> {
-    if hash.code() != code {
-        return Err(InvalidMultiformat("wrong multihash code"));
-    }
-    if hash.digest().len() != N::BYTES {
-        return Err(InvalidMultiformat("wrong multihash digest length"));
-    }
-    let mut bytes = N::Bytes::default();
-    bytes.as_mut().copy_from_slice(hash.digest());
-    Ok(Obj::from_array(bytes))
+/// A namespace with a standard multihash code.
+///
+/// Implementations must use a byte representation no wider than 32 bytes.
+pub trait MultiformatNamespace: Namespace {
+    /// The multicodec code used to identify this namespace's hash algorithm.
+    const MULTIHASH_CODE: u64;
 }
 
-macro_rules! impl_multiformats {
-    ($namespace:ty, $hash:expr) => {
-        impl Obj<$namespace> {
-            /// Wraps this identifier in its standard multihash representation.
-            #[must_use]
-            pub fn to_multihash(self) -> HashMultihash {
-                HashMultihash::wrap($hash, self.as_ref())
-                    .expect("standard object identifiers fit in a 32-byte multihash")
-            }
+impl MultiformatNamespace for Cov {
+    const MULTIHASH_CODE: u64 = BLAKE3_256;
+}
 
-            /// Extracts an identifier from its standard multihash representation.
-            ///
-            /// # Errors
-            ///
-            /// Returns an error when the code or digest width does not match this namespace.
-            pub fn from_multihash(hash: &HashMultihash) -> Result<Self, InvalidMultiformat> {
-                from_multihash(hash, $hash)
-            }
+impl MultiformatNamespace for Blake3 {
+    const MULTIHASH_CODE: u64 = BLAKE3_256;
+}
 
-            /// Wraps this identifier in a `CIDv1` using its standard codec.
-            #[must_use]
-            pub fn to_raw_cid(self) -> HashCid {
-                HashCid::new_v1(RAW, self.to_multihash())
-            }
+impl MultiformatNamespace for Sha256 {
+    const MULTIHASH_CODE: u64 = SHA2_256;
+}
 
-            /// Extracts an identifier from a CID using its standard codec and multihash.
-            ///
-            /// # Errors
-            ///
-            /// Returns an error when the codec, hash code, or digest width does not match.
-            pub fn from_raw_cid(cid: &HashCid) -> Result<Self, InvalidMultiformat> {
-                if cid.codec() != RAW {
-                    return Err(InvalidMultiformat("wrong CID codec"));
-                }
-                Self::from_multihash(cid.hash())
-            }
+impl MultiformatNamespace for CtxKeyNamespace {
+    const MULTIHASH_CODE: u64 = BLAKE3_256;
+}
+
+impl MultiformatNamespace for Sha1 {
+    const MULTIHASH_CODE: u64 = SHA1;
+}
+
+impl MultiformatNamespace for Git {
+    const MULTIHASH_CODE: u64 = SHA1;
+}
+
+impl<N: MultiformatNamespace> Obj<N> {
+    /// Wraps this identifier in its standard multihash representation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `N` violates [`MultiformatNamespace`]'s 32-byte width requirement.
+    #[must_use]
+    pub fn to_multihash(self) -> HashMultihash {
+        HashMultihash::wrap(N::MULTIHASH_CODE, self.as_ref())
+            .expect("standard object identifiers fit in a 32-byte multihash")
+    }
+
+    /// Extracts an identifier from its standard multihash representation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the code or digest width does not match this namespace.
+    pub fn from_multihash(hash: &HashMultihash) -> Result<Self, InvalidMultiformat> {
+        if hash.code() != N::MULTIHASH_CODE {
+            return Err(InvalidMultiformat("wrong multihash code"));
         }
-    };
-}
+        if hash.digest().len() != N::BYTES {
+            return Err(InvalidMultiformat("wrong multihash digest length"));
+        }
+        let mut bytes = N::Bytes::default();
+        bytes.as_mut().copy_from_slice(hash.digest());
+        Ok(Obj::from_array(bytes))
+    }
 
-impl_multiformats!(Cov, BLAKE3_256);
-impl_multiformats!(Blake3, BLAKE3_256);
-impl_multiformats!(Sha256, SHA2_256);
-impl_multiformats!(CtxKeyNamespace, BLAKE3_256);
-impl_multiformats!(Sha1, SHA1);
-impl_multiformats!(Git, SHA1);
+    /// Wraps this identifier in a raw `CIDv1`.
+    #[must_use]
+    pub fn to_raw_cid(self) -> HashCid {
+        HashCid::new_v1(RAW, self.to_multihash())
+    }
+
+    /// Extracts an identifier from a raw CID using its standard multihash.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the codec, hash code, or digest width does not match.
+    pub fn from_raw_cid(cid: &HashCid) -> Result<Self, InvalidMultiformat> {
+        if cid.codec() != RAW {
+            return Err(InvalidMultiformat("wrong CID codec"));
+        }
+        Self::from_multihash(cid.hash())
+    }
+}
 
 #[cfg(test)]
 mod tests {
