@@ -108,7 +108,20 @@ impl Runner {
                 as_utf8(&dist, "TypeScript output")?,
             ],
         )?;
-        copy_dir(&generated, &out.join("generated"))
+        copy_dir(&generated, &out.join("generated"))?;
+
+        // Keep the browser demo as a self-contained static tree. The docs site
+        // embeds this exact package rather than maintaining another REPL.
+        let demo = out.join("demo");
+        fs::create_dir_all(&demo).wrap_err("could not create browser demo output")?;
+        fs::copy(package.join("demo.html"), demo.join("demo.html"))
+            .wrap_err("could not stage browser demo page")?;
+        copy_dir(&out.join("dist"), &demo.join("dist"))?;
+        copy_dir(&out.join("generated"), &demo.join("generated"))?;
+        copy_dir(
+            &staged.join("node_modules/@bytecodealliance/preview2-shim/dist"),
+            &demo.join("node_modules/@bytecodealliance/preview2-shim/dist"),
+        )
     }
 
     /// Stage the `covalence` Python package: hand-written sources plus the
@@ -229,6 +242,7 @@ impl Runner {
         metadata: [(&Path, &str); 2],
         loc: &Path,
         rustdoc: &Path,
+        wasm: &Path,
         out: &Path,
     ) -> Result<()> {
         let metadata = metadata
@@ -237,6 +251,7 @@ impl Runner {
             .collect::<Result<Vec<_>>>()?;
         let loc = absolute(loc)?;
         let rustdoc = absolute(rustdoc)?;
+        let wasm = absolute(wasm)?;
         let out = absolute(out)?;
 
         let kit = self.root().join("apps/docs/.svelte-kit");
@@ -259,7 +274,8 @@ impl Runner {
                 .wrap_err_with(|| format!("could not publish {name}"))?;
         }
         fs::copy(loc, out.join("generated/loc.json")).wrap_err("could not publish line counts")?;
-        copy_dir(&rustdoc, &out.join("api"))
+        copy_dir(&rustdoc, &out.join("api"))?;
+        copy_dir(&wasm.join("demo"), &out.join("repl-app"))
     }
 
     pub(crate) fn artifact_component(&self, out: &Path) -> Result<()> {

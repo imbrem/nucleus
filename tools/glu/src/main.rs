@@ -240,6 +240,8 @@ enum ArtifactTask {
         #[arg(long)]
         rustdoc: PathBuf,
         #[arg(long)]
+        wasm: PathBuf,
+        #[arg(long)]
         out: PathBuf,
     },
 }
@@ -322,6 +324,7 @@ fn run() -> Result<()> {
                 production_dependencies,
                 loc,
                 rustdoc,
+                wasm,
                 out,
             } => runner.artifact_docs(
                 [
@@ -330,6 +333,7 @@ fn run() -> Result<()> {
                 ],
                 &loc,
                 &rustdoc,
+                &wasm,
                 &out,
             ),
         },

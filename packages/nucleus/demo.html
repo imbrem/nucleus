@@ -142,7 +142,6 @@
         autocomplete="off"
         autocapitalize="off"
         spellcheck="false"
-        autofocus
       />
     </form>
 
@@ -164,6 +163,9 @@
       const line = document.getElementById("line");
       const mode = document.getElementById("mode");
       let shell;
+
+      // Do not scroll an embedding page on load.
+      if (window.top === window) line.focus();
 
       function write(text, className) {
         if (!text) return;
