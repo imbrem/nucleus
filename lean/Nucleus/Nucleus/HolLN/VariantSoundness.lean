@@ -17,23 +17,23 @@ set_option linter.style.longLine false
 
 variable {Base : Type u} {depth : Nat}
 
-namespace NoDepth
+namespace Tree.Sorted
 
 def Proves (Δ : FreeCtx Base) (Γ : BoundCtx Base depth)
-    (H : List (NoDepth Base .tm)) (p : NoDepth Base .tm) : Prop :=
+    (H : List (Tree.Sorted Base .tm)) (p : Tree.Sorted Base .tm) : Prop :=
   ∃ H₀ p₀, Nonempty (Nucleus.HolLN.Proves Δ Γ H₀ p₀) ∧
-    H₀.map Erasure.noDepth = H ∧ Erasure.noDepth p₀ = p
+    H₀.map Erasure.toSorted = H ∧ Erasure.toSorted p₀ = p
 
 theorem HasType.sound (h : HasType Δ Γ t A) :
-    ∃ t₀ A₀, Nucleus.HolLN.HasType Δ Γ t₀ A₀ ∧ Erasure.noDepth t₀ = t ∧
-      Erasure.noDepth A₀ = A ∧ ∀ (freeEnv : FreeEnv Δ) (boundEnv : BoundEnv Γ),
+    ∃ t₀ A₀, Nucleus.HolLN.HasType Δ Γ t₀ A₀ ∧ Erasure.toSorted t₀ = t ∧
+      Erasure.toSorted A₀ = A ∧ ∀ (freeEnv : FreeEnv Δ) (boundEnv : BoundEnv Γ),
         ∃ value : DenoteTy A₀, Eval Δ Γ freeEnv boundEnv t₀ A₀ value := by
   rcases h with ⟨t₀, A₀, typing, rfl, rfl⟩
   exact ⟨t₀, A₀, typing, rfl, rfl, typing.eval_exists⟩
 
 theorem EqTm.sound (h : EqTm Δ Γ t u A) :
     ∃ t₀ u₀ A₀, Nonempty (Nucleus.HolLN.EqTm Δ Γ t₀ u₀ A₀) ∧
-      Erasure.noDepth t₀ = t ∧ Erasure.noDepth u₀ = u ∧ Erasure.noDepth A₀ = A ∧
+      Erasure.toSorted t₀ = t ∧ Erasure.toSorted u₀ = u ∧ Erasure.toSorted A₀ = A ∧
       ∀ (freeEnv : FreeEnv Δ) (boundEnv : BoundEnv Γ) {left right : DenoteTy A₀},
         Eval Δ Γ freeEnv boundEnv t₀ A₀ left →
         Eval Δ Γ freeEnv boundEnv u₀ A₀ right → left = right := by
@@ -42,7 +42,7 @@ theorem EqTm.sound (h : EqTm Δ Γ t u A) :
 
 theorem Proves.sound (h : Proves Δ Γ H p) :
     ∃ H₀ p₀, Nonempty (Nucleus.HolLN.Proves Δ Γ H₀ p₀) ∧
-      H₀.map Erasure.noDepth = H ∧ Erasure.noDepth p₀ = p ∧
+      H₀.map Erasure.toSorted = H ∧ Erasure.toSorted p₀ = p ∧
       Nucleus.HolLN.Entails (Δ := Δ) (Γ := Γ) H₀ p₀ := by
   rcases h with ⟨H₀, p₀, ⟨proof⟩, rfl, rfl⟩
   exact ⟨H₀, p₀, ⟨proof⟩, rfl, rfl, proof.sound⟩
@@ -54,29 +54,29 @@ theorem empty_not_proves_false :
   have hH : H = [] := List.eq_nil_of_map_eq_nil mapped
   subst H
   have hp : p = (.bool false : ClosedTm Base) :=
-    Erasure.noDepth_injective erased
+    Erasure.toSorted_injective erased
   subst p
   exact Nucleus.HolLN.empty_not_proves_false proof
 
-end NoDepth
+end Tree.Sorted
 
-namespace NoSort
+namespace Tree.Scoped
 
 def Proves (Δ : FreeCtx Base) (Γ : BoundCtx Base depth)
-    (H : List (NoSort Base depth)) (p : NoSort Base depth) : Prop :=
+    (H : List (Tree.Scoped Base depth)) (p : Tree.Scoped Base depth) : Prop :=
   ∃ H₀ p₀, Nonempty (Nucleus.HolLN.Proves Δ Γ H₀ p₀) ∧
-    H₀.map Erasure.noSort = H ∧ Erasure.noSort p₀ = p
+    H₀.map Erasure.toScoped = H ∧ Erasure.toScoped p₀ = p
 
 theorem HasType.sound (h : HasType Δ Γ t A) :
-    ∃ t₀ A₀, Nucleus.HolLN.HasType Δ Γ t₀ A₀ ∧ Erasure.noSort t₀ = t ∧
-      Erasure.noSort A₀ = A ∧ ∀ (freeEnv : FreeEnv Δ) (boundEnv : BoundEnv Γ),
+    ∃ t₀ A₀, Nucleus.HolLN.HasType Δ Γ t₀ A₀ ∧ Erasure.toScoped t₀ = t ∧
+      Erasure.toScoped A₀ = A ∧ ∀ (freeEnv : FreeEnv Δ) (boundEnv : BoundEnv Γ),
         ∃ value : DenoteTy A₀, Eval Δ Γ freeEnv boundEnv t₀ A₀ value := by
   rcases h with ⟨t₀, A₀, typing, rfl, rfl⟩
   exact ⟨t₀, A₀, typing, rfl, rfl, typing.eval_exists⟩
 
 theorem EqTm.sound (h : EqTm Δ Γ t u A) :
     ∃ t₀ u₀ A₀, Nonempty (Nucleus.HolLN.EqTm Δ Γ t₀ u₀ A₀) ∧
-      Erasure.noSort t₀ = t ∧ Erasure.noSort u₀ = u ∧ Erasure.noSort A₀ = A ∧
+      Erasure.toScoped t₀ = t ∧ Erasure.toScoped u₀ = u ∧ Erasure.toScoped A₀ = A ∧
       ∀ (freeEnv : FreeEnv Δ) (boundEnv : BoundEnv Γ) {left right : DenoteTy A₀},
         Eval Δ Γ freeEnv boundEnv t₀ A₀ left →
         Eval Δ Γ freeEnv boundEnv u₀ A₀ right → left = right := by
@@ -85,7 +85,7 @@ theorem EqTm.sound (h : EqTm Δ Γ t u A) :
 
 theorem Proves.sound (h : Proves Δ Γ H p) :
     ∃ H₀ p₀, Nonempty (Nucleus.HolLN.Proves Δ Γ H₀ p₀) ∧
-      H₀.map Erasure.noSort = H ∧ Erasure.noSort p₀ = p ∧
+      H₀.map Erasure.toScoped = H ∧ Erasure.toScoped p₀ = p ∧
       Nucleus.HolLN.Entails (Δ := Δ) (Γ := Γ) H₀ p₀ := by
   rcases h with ⟨H₀, p₀, ⟨proof⟩, rfl, rfl⟩
   exact ⟨H₀, p₀, ⟨proof⟩, rfl, rfl, proof.sound⟩
@@ -96,29 +96,29 @@ theorem empty_not_proves_false :
   rintro ⟨H, p, proof, mapped, erased⟩
   have hH : H = [] := List.eq_nil_of_map_eq_nil mapped
   subst H
-  have hp : p = (.bool false : ClosedTm Base) := Erasure.noSort_injective erased
+  have hp : p = (.bool false : ClosedTm Base) := Erasure.toScoped_injective erased
   subst p
   exact Nucleus.HolLN.empty_not_proves_false proof
 
-end NoSort
+end Tree.Scoped
 
-namespace Unindexed
+namespace Tree.Raw
 
 def Proves (Δ : FreeCtx Base) (Γ : BoundCtx Base depth)
-    (H : List (Unindexed Base)) (p : Unindexed Base) : Prop :=
+    (H : List (Tree.Raw Base)) (p : Tree.Raw Base) : Prop :=
   ∃ H₀ p₀, Nonempty (Nucleus.HolLN.Proves Δ Γ H₀ p₀) ∧
-    H₀.map Erasure.unindexed = H ∧ Erasure.unindexed p₀ = p
+    H₀.map Erasure.toRaw = H ∧ Erasure.toRaw p₀ = p
 
 theorem HasType.sound (h : HasType Δ Γ t A) :
-    ∃ t₀ A₀, Nucleus.HolLN.HasType Δ Γ t₀ A₀ ∧ Erasure.unindexed t₀ = t ∧
-      Erasure.unindexed A₀ = A ∧ ∀ (freeEnv : FreeEnv Δ) (boundEnv : BoundEnv Γ),
+    ∃ t₀ A₀, Nucleus.HolLN.HasType Δ Γ t₀ A₀ ∧ Erasure.toRaw t₀ = t ∧
+      Erasure.toRaw A₀ = A ∧ ∀ (freeEnv : FreeEnv Δ) (boundEnv : BoundEnv Γ),
         ∃ value : DenoteTy A₀, Eval Δ Γ freeEnv boundEnv t₀ A₀ value := by
   rcases h with ⟨t₀, A₀, typing, rfl, rfl⟩
   exact ⟨t₀, A₀, typing, rfl, rfl, typing.eval_exists⟩
 
 theorem EqTm.sound (h : EqTm Δ Γ t u A) :
     ∃ t₀ u₀ A₀, Nonempty (Nucleus.HolLN.EqTm Δ Γ t₀ u₀ A₀) ∧
-      Erasure.unindexed t₀ = t ∧ Erasure.unindexed u₀ = u ∧ Erasure.unindexed A₀ = A ∧
+      Erasure.toRaw t₀ = t ∧ Erasure.toRaw u₀ = u ∧ Erasure.toRaw A₀ = A ∧
       ∀ (freeEnv : FreeEnv Δ) (boundEnv : BoundEnv Γ) {left right : DenoteTy A₀},
         Eval Δ Γ freeEnv boundEnv t₀ A₀ left →
         Eval Δ Γ freeEnv boundEnv u₀ A₀ right → left = right := by
@@ -127,7 +127,7 @@ theorem EqTm.sound (h : EqTm Δ Γ t u A) :
 
 theorem Proves.sound (h : Proves Δ Γ H p) :
     ∃ H₀ p₀, Nonempty (Nucleus.HolLN.Proves Δ Γ H₀ p₀) ∧
-      H₀.map Erasure.unindexed = H ∧ Erasure.unindexed p₀ = p ∧
+      H₀.map Erasure.toRaw = H ∧ Erasure.toRaw p₀ = p ∧
       Nucleus.HolLN.Entails (Δ := Δ) (Γ := Γ) H₀ p₀ := by
   rcases h with ⟨H₀, p₀, ⟨proof⟩, rfl, rfl⟩
   exact ⟨H₀, p₀, ⟨proof⟩, rfl, rfl, proof.sound⟩
@@ -138,10 +138,10 @@ theorem empty_not_proves_false :
   rintro ⟨H, p, proof, mapped, erased⟩
   have hH : H = [] := List.eq_nil_of_map_eq_nil mapped
   subst H
-  have hp : p = (.bool false : ClosedTm Base) := Erasure.unindexed_injective erased
+  have hp : p = (.bool false : ClosedTm Base) := Erasure.toRaw_injective erased
   subst p
   exact Nucleus.HolLN.empty_not_proves_false proof
 
-end Unindexed
+end Tree.Raw
 
 end Nucleus.HolLN
