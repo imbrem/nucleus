@@ -7,6 +7,7 @@ from covalence.logic.lrat import (
     LratError,
     RatGroup,
     RupStep,
+    Step,
     parse_binary,
     parse_text,
 )
@@ -82,6 +83,7 @@ def test_parsers_expose_typed_steps() -> None:
     binary = parse_binary(bytes([ord("a"), 6, 0, 2, 4, 0, ord("d"), 2, 4, 0]))
 
     assert isinstance(text[0], RupStep)
+    assert isinstance(text[0], Step)
     assert text[0].clause == Clause([])
     assert text[0].ordered_hints == [1, 2]
     assert isinstance(text[1], ForgetStep)

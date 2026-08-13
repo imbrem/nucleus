@@ -1,6 +1,9 @@
 //! Untrusted text and binary LRAT parsing.
 
-use super::{Call, Clause, RatGroup};
+use covalence_logic_lrat::RatGroup;
+use covalence_logic_sat::cnf::Clause;
+
+use crate::lrat::ParsedStep;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ParseError {
@@ -19,7 +22,12 @@ fn error(at: usize) -> ParseError {
     ParseError { at }
 }
 
-fn learn(id: u64, signed_clause: Vec<i64>, hints: Vec<i64>, at: usize) -> Result<Call, ParseError> {
+fn learn(
+    id: u64,
+    signed_clause: Vec<i64>,
+    hints: Vec<i64>,
+    at: usize,
+) -> Result<ParsedStep, ParseError> {
     if id == 0 {
         return Err(error(at));
     }
@@ -30,7 +38,7 @@ fn learn(id: u64, signed_clause: Vec<i64>, hints: Vec<i64>, at: usize) -> Result
             .into_iter()
             .map(|hint| u64::try_from(hint).map_err(|_| error(at)))
             .collect::<Result<_, _>>()?;
-        return Ok(Call::LearnRup {
+        return Ok(ParsedStep::LearnRup {
             id,
             clause,
             ordered_hints,
@@ -62,7 +70,7 @@ fn learn(id: u64, signed_clause: Vec<i64>, hints: Vec<i64>, at: usize) -> Result
             resolvent_rup_hints,
         });
     }
-    Ok(Call::LearnRat {
+    Ok(ParsedStep::LearnRat {
         id,
         clause,
         pivot,
@@ -76,7 +84,7 @@ fn learn(id: u64, signed_clause: Vec<i64>, hints: Vec<i64>, at: usize) -> Result
 /// # Errors
 ///
 /// Returns the line containing malformed syntax or an invalid typed value.
-pub fn parse_text(text: &str) -> Result<Vec<Call>, ParseError> {
+pub fn parse_text(text: &str) -> Result<Vec<ParsedStep>, ParseError> {
     let mut calls = Vec::new();
     for (line_index, raw_line) in text.lines().enumerate() {
         let at = line_index + 1;
@@ -98,7 +106,7 @@ pub fn parse_text(text: &str) -> Result<Vec<Call>, ParseError> {
             if tokens.next().is_some() {
                 return Err(error(at));
             }
-            calls.push(Call::Forget { ids });
+            calls.push(ParsedStep::Forget { ids });
             continue;
         }
         let values = std::iter::once(first)
@@ -147,7 +155,7 @@ fn terminated_unsigned<'a>(
 /// # Errors
 ///
 /// Returns the byte offset containing malformed or truncated data.
-pub fn parse_binary(bytes: &[u8]) -> Result<Vec<Call>, ParseError> {
+pub fn parse_binary(bytes: &[u8]) -> Result<Vec<ParsedStep>, ParseError> {
     let mut calls = Vec::new();
     let mut position = 0;
     while position < bytes.len() {
@@ -167,7 +175,7 @@ pub fn parse_binary(bytes: &[u8]) -> Result<Vec<Call>, ParseError> {
                     .into_iter()
                     .map(|id| u64::try_from(id).map_err(|_| error(position)))
                     .collect::<Result<_, _>>()?;
-                calls.push(Call::Forget { ids });
+                calls.push(ParsedStep::Forget { ids });
             }
             _ => return Err(error(marker_at)),
         }
@@ -239,7 +247,7 @@ mod tests {
     #[test]
     fn rat_hints_become_explicit_groups() {
         let calls = parse_text("4 -3 2 0 1 -3 2 -7 5 0\n").unwrap();
-        let Call::LearnRat {
+        let ParsedStep::LearnRat {
             pivot,
             prefix_rup_hints,
             groups,

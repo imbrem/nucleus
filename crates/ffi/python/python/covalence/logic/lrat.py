@@ -11,6 +11,7 @@ from .._covalence import (
     RatGroup,
     RatStep,
     RupStep,
+    Step,
     parse_binary,
     parse_text,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "RatGroup",
     "RatStep",
     "RupStep",
+    "Step",
     "parse_binary",
     "parse_text",
 ]

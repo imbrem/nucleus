@@ -1,15 +1,13 @@
 //! Parser-independent typed LRAT clause validation.
 //!
 //! This crate knows nothing about DIMACS, proof bytes, problem identities,
-//! snapshots, solvers, or authority. Format and admission layers translate
-//! into [`Call`] values and may act only on a successful [`Kernel`] result.
+//! snapshots, solvers, or authority. Format and admission layers call the
+//! narrow [`Kernel`] operations and may act only on successful results.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 pub use covalence_logic_sat::cnf::{Clause, Formula, Literal};
 
-mod parse;
-pub use parse::{ParseError, parse_binary, parse_text};
 /// A monotonically allocated clause identifier.
 pub type ClauseId = u64;
 
@@ -18,31 +16,6 @@ pub type ClauseId = u64;
 pub struct RatGroup {
     pub opposing_clause_id: ClauseId,
     pub resolvent_rup_hints: Vec<ClauseId>,
-}
-
-/// Parser-independent vocabulary corresponding to `Nucleus.Lrat.ValidatorCall`.
-#[non_exhaustive]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Call {
-    /// Introduces both a fresh identifier and the clause justified by RUP.
-    /// The clause is data, not metadata: it is not present in the kernel
-    /// before this atomic operation.
-    LearnRup {
-        id: ClauseId,
-        clause: Clause,
-        ordered_hints: Vec<ClauseId>,
-    },
-    /// Introduces both a fresh identifier and the clause justified by RAT.
-    LearnRat {
-        id: ClauseId,
-        clause: Clause,
-        pivot: Literal,
-        prefix_rup_hints: Vec<ClauseId>,
-        groups: Vec<RatGroup>,
-    },
-    Forget {
-        ids: Vec<ClauseId>,
-    },
 }
 
 /// A semantic rejection category. Rejection never changes kernel state.
@@ -67,25 +40,6 @@ impl std::fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
-
-/// Replays a complete typed proof and requires a refutation.
-///
-/// # Errors
-///
-/// Returns the first rejected step or [`Error::NoRefutation`].
-pub fn check(initial: &Formula, calls: &[Call]) -> Result<(), Error> {
-    let mut kernel = Kernel::open(initial);
-    if kernel.refuted() {
-        return Ok(());
-    }
-    for call in calls {
-        kernel.apply(call)?;
-        if kernel.refuted() {
-            return Ok(());
-        }
-    }
-    Err(Error::NoRefutation)
-}
 
 /// The standalone clause kernel.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -124,30 +78,6 @@ impl Kernel {
     #[must_use]
     pub fn clause(&self, id: ClauseId) -> Option<&Clause> {
         self.live.get(&id)
-    }
-
-    /// Applies one typed call transactionally.
-    ///
-    /// # Errors
-    ///
-    /// Returns a semantic rejection and leaves `self` byte-for-byte equal to
-    /// its prior value.
-    pub fn apply(&mut self, call: &Call) -> Result<(), Error> {
-        match call {
-            Call::LearnRup {
-                id,
-                clause,
-                ordered_hints,
-            } => self.learn_rup(*id, clause, ordered_hints),
-            Call::LearnRat {
-                id,
-                clause,
-                pivot,
-                prefix_rup_hints,
-                groups,
-            } => self.learn_rat(*id, clause, *pivot, prefix_rup_hints, groups),
-            Call::Forget { ids } => self.forget(ids),
-        }
     }
 
     /// Learns `clause` under a fresh `id` by ordered reverse unit propagation.
@@ -348,13 +278,7 @@ mod tests {
     #[test]
     fn rup_refutes_a_unit_contradiction() {
         let mut kernel = kernel([vec![1], vec![-1]]);
-        kernel
-            .apply(&Call::LearnRup {
-                id: 3,
-                clause: clause([]),
-                ordered_hints: vec![1, 2],
-            })
-            .expect("RUP");
+        kernel.learn_rup(3, &clause([]), &[1, 2]).expect("RUP");
         assert!(kernel.refuted());
     }
 
@@ -363,11 +287,7 @@ mod tests {
         let mut kernel = kernel([vec![1], vec![-1]]);
         let before = kernel.clone();
         assert_eq!(
-            kernel.apply(&Call::LearnRup {
-                id: 3,
-                clause: clause([]),
-                ordered_hints: vec![99],
-            }),
+            kernel.learn_rup(3, &clause([]), &[99]),
             Err(Error::UnknownClause {
                 step: 3,
                 clause: 99
@@ -375,23 +295,11 @@ mod tests {
         );
         assert_eq!(kernel, before);
 
-        kernel
-            .apply(&Call::LearnRup {
-                id: 3,
-                clause: clause([1]),
-                ordered_hints: vec![1],
-            })
-            .expect("learn");
-        kernel
-            .apply(&Call::Forget { ids: vec![3] })
-            .expect("forget");
+        kernel.learn_rup(3, &clause([1]), &[1]).expect("learn");
+        kernel.forget(&[3]).expect("forget");
         assert_eq!(kernel.high_water(), 3);
         assert_eq!(
-            kernel.apply(&Call::LearnRup {
-                id: 3,
-                clause: clause([1]),
-                ordered_hints: vec![1],
-            }),
+            kernel.learn_rup(3, &clause([1]), &[1]),
             Err(Error::NonFreshId { id: 3 })
         );
     }
@@ -400,23 +308,11 @@ mod tests {
     fn rat_requires_exact_opposing_coverage() {
         let mut kernel = kernel([vec![1, 2], vec![-1, 2]]);
         kernel
-            .apply(&Call::LearnRat {
-                id: 3,
-                clause: clause([3, -2]),
-                pivot: Literal::new(3).unwrap(),
-                prefix_rup_hints: vec![],
-                groups: vec![],
-            })
+            .learn_rat(3, &clause([3, -2]), Literal::new(3).unwrap(), &[], &[])
             .expect("blocked clause");
         let before = kernel.clone();
         assert_eq!(
-            kernel.apply(&Call::LearnRat {
-                id: 4,
-                clause: clause([-3, 2]),
-                pivot: Literal::new(-3).unwrap(),
-                prefix_rup_hints: vec![],
-                groups: vec![],
-            }),
+            kernel.learn_rat(4, &clause([-3, 2]), Literal::new(-3).unwrap(), &[], &[],),
             Err(Error::IncompleteRat { step: 4, clause: 3 })
         );
         assert_eq!(kernel, before);

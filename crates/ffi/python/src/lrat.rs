@@ -6,11 +6,53 @@
 
 use covalence_lib_python::exceptions::create_exception;
 use covalence_lib_python::prelude::*;
-use covalence_lib_python::pyo3::{exceptions::PyRuntimeError, types::PyType};
-use covalence_logic_lrat::{Call, Error, Kernel, RatGroup, parse_binary, parse_text};
+use covalence_lib_python::pyo3::{PyClassInitializer, types::PyType};
+use covalence_logic_lrat::{Error, Kernel, RatGroup};
 use covalence_logic_sat::cnf::Literal;
 
+use crate::lrat_parse::{parse_binary, parse_text};
 use crate::sat::{PyClause, PyFormula, PyLiteral};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ParsedStep {
+    LearnRup {
+        id: u64,
+        clause: covalence_logic_sat::cnf::Clause,
+        ordered_hints: Vec<u64>,
+    },
+    LearnRat {
+        id: u64,
+        clause: covalence_logic_sat::cnf::Clause,
+        pivot: Literal,
+        prefix_rup_hints: Vec<u64>,
+        groups: Vec<RatGroup>,
+    },
+    Forget {
+        ids: Vec<u64>,
+    },
+}
+
+fn apply(kernel: &mut Kernel, step: &ParsedStep) -> Result<(), Error> {
+    match step {
+        ParsedStep::LearnRup {
+            id,
+            clause,
+            ordered_hints,
+        } => kernel.learn_rup(*id, clause, ordered_hints),
+        ParsedStep::LearnRat {
+            id,
+            clause,
+            pivot,
+            prefix_rup_hints,
+            groups,
+        } => kernel.learn_rat(*id, clause, *pivot, prefix_rup_hints, groups),
+        ParsedStep::Forget { ids } => kernel.forget(ids),
+    }
+}
+
+#[pyclass(subclass, frozen, module = "covalence.logic.lrat", name = "Step")]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+pub struct PyStep;
 
 create_exception!(
     covalence,
@@ -40,7 +82,7 @@ fn rat_group(group: &PyRatGroup) -> RatGroup {
     }
 }
 
-#[pyclass(frozen, module = "covalence.logic.lrat", name = "RupStep")]
+#[pyclass(frozen, extends = PyStep, module = "covalence.logic.lrat", name = "RupStep")]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 pub struct PyRupStep {
     id: u64,
@@ -52,12 +94,16 @@ pub struct PyRupStep {
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 impl PyRupStep {
     #[new]
-    fn new(id: u64, clause: PyRef<'_, PyClause>, ordered_hints: Vec<u64>) -> Self {
-        Self {
+    fn new(
+        id: u64,
+        clause: PyRef<'_, PyClause>,
+        ordered_hints: Vec<u64>,
+    ) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyStep).add_subclass(Self {
             id,
             clause: clause.0.clone(),
             ordered_hints,
-        }
+        })
     }
 
     #[getter]
@@ -76,7 +122,7 @@ impl PyRupStep {
     }
 }
 
-#[pyclass(frozen, module = "covalence.logic.lrat", name = "RatStep")]
+#[pyclass(frozen, extends = PyStep, module = "covalence.logic.lrat", name = "RatStep")]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 pub struct PyRatStep {
     id: u64,
@@ -96,14 +142,14 @@ impl PyRatStep {
         pivot: PyRef<'_, PyLiteral>,
         prefix_rup_hints: Vec<u64>,
         groups: Vec<PyRef<'_, PyRatGroup>>,
-    ) -> Self {
-        Self {
+    ) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyStep).add_subclass(Self {
             id,
             clause: clause.0.clone(),
             pivot: pivot.0,
             prefix_rup_hints,
             groups: groups.iter().map(|group| rat_group(group)).collect(),
-        }
+        })
     }
 
     #[getter]
@@ -143,7 +189,7 @@ impl PyRatStep {
     }
 }
 
-#[pyclass(frozen, module = "covalence.logic.lrat", name = "ForgetStep")]
+#[pyclass(frozen, extends = PyStep, module = "covalence.logic.lrat", name = "ForgetStep")]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 pub struct PyForgetStep {
     ids: Vec<u64>,
@@ -153,8 +199,8 @@ pub struct PyForgetStep {
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 impl PyForgetStep {
     #[new]
-    fn new(ids: Vec<u64>) -> Self {
-        Self { ids }
+    fn new(ids: Vec<u64>) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyStep).add_subclass(Self { ids })
     }
 
     #[getter]
@@ -163,16 +209,16 @@ impl PyForgetStep {
     }
 }
 
-fn call_from_python(value: &Bound<'_, PyAny>) -> PyResult<Call> {
+fn step_from_python(value: &Bound<'_, PyAny>) -> PyResult<ParsedStep> {
     if let Ok(step) = value.extract::<PyRef<'_, PyRupStep>>() {
-        return Ok(Call::LearnRup {
+        return Ok(ParsedStep::LearnRup {
             id: step.id,
             clause: step.clause.clone(),
             ordered_hints: step.ordered_hints.clone(),
         });
     }
     if let Ok(step) = value.extract::<PyRef<'_, PyRatStep>>() {
-        return Ok(Call::LearnRat {
+        return Ok(ParsedStep::LearnRat {
             id: step.id,
             clause: step.clause.clone(),
             pivot: step.pivot,
@@ -181,7 +227,7 @@ fn call_from_python(value: &Bound<'_, PyAny>) -> PyResult<Call> {
         });
     }
     if let Ok(step) = value.extract::<PyRef<'_, PyForgetStep>>() {
-        return Ok(Call::Forget {
+        return Ok(ParsedStep::Forget {
             ids: step.ids.clone(),
         });
     }
@@ -190,22 +236,25 @@ fn call_from_python(value: &Bound<'_, PyAny>) -> PyResult<Call> {
     ))
 }
 
-fn wrap_call(python: Python<'_>, call: Call) -> PyResult<Py<PyAny>> {
-    match call {
-        Call::LearnRup {
+fn wrap_step(python: Python<'_>, step: ParsedStep) -> PyResult<Py<PyAny>> {
+    match step {
+        ParsedStep::LearnRup {
             id,
             clause,
             ordered_hints,
         } => Ok(Py::new(
             python,
-            PyRupStep {
-                id,
-                clause,
-                ordered_hints,
-            },
+            (
+                PyRupStep {
+                    id,
+                    clause,
+                    ordered_hints,
+                },
+                PyStep,
+            ),
         )?
         .into_any()),
-        Call::LearnRat {
+        ParsedStep::LearnRat {
             id,
             clause,
             pivot,
@@ -213,31 +262,35 @@ fn wrap_call(python: Python<'_>, call: Call) -> PyResult<Py<PyAny>> {
             groups,
         } => Ok(Py::new(
             python,
-            PyRatStep {
-                id,
-                clause,
-                pivot,
-                prefix_rup_hints,
-                groups,
-            },
+            (
+                PyRatStep {
+                    id,
+                    clause,
+                    pivot,
+                    prefix_rup_hints,
+                    groups,
+                },
+                PyStep,
+            ),
         )?
         .into_any()),
-        Call::Forget { ids } => Ok(Py::new(python, PyForgetStep { ids })?.into_any()),
-        _ => Err(PyRuntimeError::new_err("unsupported LRAT call variant")),
+        ParsedStep::Forget { ids } => {
+            Ok(Py::new(python, (PyForgetStep { ids }, PyStep))?.into_any())
+        }
     }
 }
 
-fn wrap_calls(python: Python<'_>, calls: Vec<Call>) -> PyResult<Vec<Py<PyAny>>> {
-    calls
+fn wrap_steps(python: Python<'_>, steps: Vec<ParsedStep>) -> PyResult<Vec<Py<PyAny>>> {
+    steps
         .into_iter()
-        .map(|call| wrap_call(python, call))
+        .map(|step| wrap_step(python, step))
         .collect()
 }
 
 #[pyfunction]
 #[pyo3(crate = "covalence_lib_python::pyo3", name = "parse_text")]
 fn parse_text_python(python: Python<'_>, text: &str) -> PyResult<Vec<Py<PyAny>>> {
-    wrap_calls(
+    wrap_steps(
         python,
         parse_text(text).map_err(|error| LratError::new_err(error.to_string()))?,
     )
@@ -246,7 +299,7 @@ fn parse_text_python(python: Python<'_>, text: &str) -> PyResult<Vec<Py<PyAny>>>
 #[pyfunction]
 #[pyo3(crate = "covalence_lib_python::pyo3", name = "parse_binary")]
 fn parse_binary_python(python: Python<'_>, proof: Bytes) -> PyResult<Vec<Py<PyAny>>> {
-    wrap_calls(
+    wrap_steps(
         python,
         parse_binary(proof.as_slice()).map_err(|error| LratError::new_err(error.to_string()))?,
     )
@@ -354,8 +407,8 @@ impl PyKernel {
         }
         if let Ok(text) = proof.extract::<String>() {
             let calls = parse_text(&text).map_err(|error| LratError::new_err(error.to_string()))?;
-            for call in &calls {
-                candidate.apply(call).map_err(rejection)?;
+            for step in &calls {
+                apply(&mut candidate, step).map_err(rejection)?;
                 if candidate.refuted() {
                     break;
                 }
@@ -363,17 +416,15 @@ impl PyKernel {
         } else if let Ok(bytes) = proof.extract::<Bytes>() {
             let calls = parse_binary(bytes.as_slice())
                 .map_err(|error| LratError::new_err(error.to_string()))?;
-            for call in &calls {
-                candidate.apply(call).map_err(rejection)?;
+            for step in &calls {
+                apply(&mut candidate, step).map_err(rejection)?;
                 if candidate.refuted() {
                     break;
                 }
             }
         } else {
             for item in proof.try_iter()? {
-                candidate
-                    .apply(&call_from_python(&item?)?)
-                    .map_err(rejection)?;
+                apply(&mut candidate, &step_from_python(&item?)?).map_err(rejection)?;
                 if candidate.refuted() {
                     break;
                 }
@@ -390,6 +441,7 @@ impl PyKernel {
 pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyKernel>()?;
     module.add_class::<PyRatGroup>()?;
+    module.add_class::<PyStep>()?;
     module.add_class::<PyRupStep>()?;
     module.add_class::<PyRatStep>()?;
     module.add_class::<PyForgetStep>()?;

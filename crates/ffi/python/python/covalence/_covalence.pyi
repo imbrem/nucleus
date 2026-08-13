@@ -73,7 +73,10 @@ class RatGroup:
     ) -> None: ...
     def __repr__(self) -> str: ...
 
-class RupStep:
+class Step:
+    """The common base of typed LRAT proof steps."""
+
+class RupStep(Step):
     id: int
     clause: Clause
     ordered_hints: list[int]
@@ -82,7 +85,7 @@ class RupStep:
         self, id: int, clause: Clause, ordered_hints: Sequence[int], /
     ) -> None: ...
 
-class RatStep:
+class RatStep(Step):
     id: int
     clause: Clause
     pivot: Literal
@@ -99,7 +102,7 @@ class RatStep:
         /,
     ) -> None: ...
 
-class ForgetStep:
+class ForgetStep(Step):
     ids: list[int]
 
     def __init__(self, ids: Sequence[int], /) -> None: ...
@@ -128,12 +131,12 @@ class Kernel:
     def forget(self, ids: Sequence[int], /) -> None: ...
     def verify(
         self,
-        proof: str | Buffer | Iterable[RupStep | RatStep | ForgetStep],
+        proof: str | Buffer | Iterable[Step],
         /,
     ) -> None: ...
 
-def parse_text(text: str, /) -> list[RupStep | RatStep | ForgetStep]: ...
-def parse_binary(proof: Buffer, /) -> list[RupStep | RatStep | ForgetStep]: ...
+def parse_text(text: str, /) -> list[Step]: ...
+def parse_binary(proof: Buffer, /) -> list[Step]: ...
 
 class Obj:
     """A fixed-width Covalence identifier, of no particular namespace.

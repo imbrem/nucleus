@@ -18,6 +18,7 @@ use covalence_lib_python::prelude::*;
 
 mod hash;
 mod lrat;
+mod lrat_parse;
 mod sat;
 
 /// `covalence._covalence`.
