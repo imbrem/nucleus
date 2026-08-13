@@ -7,6 +7,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 pub use covalence_logic_sat::cnf::{Clause, Formula, Literal};
+
+mod parse;
+pub use parse::{ParseError, parse_binary, parse_text};
 /// A monotonically allocated clause identifier.
 pub type ClauseId = u64;
 
@@ -54,6 +57,7 @@ pub enum Error {
     WrongOpposingClause { step: ClauseId, clause: ClauseId },
     DuplicateRatGroup { step: ClauseId, clause: ClauseId },
     IncompleteRat { step: ClauseId, clause: ClauseId },
+    NoRefutation,
 }
 
 impl std::fmt::Display for Error {
@@ -63,6 +67,25 @@ impl std::fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
+
+/// Replays a complete typed proof and requires a refutation.
+///
+/// # Errors
+///
+/// Returns the first rejected step or [`Error::NoRefutation`].
+pub fn check(initial: &Formula, calls: &[Call]) -> Result<(), Error> {
+    let mut kernel = Kernel::open(initial);
+    if kernel.refuted() {
+        return Ok(());
+    }
+    for call in calls {
+        kernel.apply(call)?;
+        if kernel.refuted() {
+            return Ok(());
+        }
+    }
+    Err(Error::NoRefutation)
+}
 
 /// The standalone clause kernel.
 #[derive(Clone, Debug, Eq, PartialEq)]

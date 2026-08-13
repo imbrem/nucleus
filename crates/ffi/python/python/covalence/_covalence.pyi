@@ -7,7 +7,7 @@
 # Buffer intentionally accepts bytes, bytearray, memoryview, and other
 # contiguous buffer exporters.
 
-from collections.abc import Buffer, Sequence
+from collections.abc import Buffer, Iterable, Sequence
 
 __version__: str
 
@@ -73,6 +73,37 @@ class RatGroup:
     ) -> None: ...
     def __repr__(self) -> str: ...
 
+class RupStep:
+    id: int
+    clause: Clause
+    ordered_hints: list[int]
+
+    def __init__(
+        self, id: int, clause: Clause, ordered_hints: Sequence[int], /
+    ) -> None: ...
+
+class RatStep:
+    id: int
+    clause: Clause
+    pivot: Literal
+    prefix_rup_hints: list[int]
+    groups: list[RatGroup]
+
+    def __init__(
+        self,
+        id: int,
+        clause: Clause,
+        pivot: Literal,
+        prefix_rup_hints: Sequence[int],
+        groups: Sequence[RatGroup],
+        /,
+    ) -> None: ...
+
+class ForgetStep:
+    ids: list[int]
+
+    def __init__(self, ids: Sequence[int], /) -> None: ...
+
 class Kernel:
     """A parser-independent typed LRAT clause kernel."""
 
@@ -95,6 +126,14 @@ class Kernel:
         /,
     ) -> None: ...
     def forget(self, ids: Sequence[int], /) -> None: ...
+    def verify(
+        self,
+        proof: str | Buffer | Iterable[RupStep | RatStep | ForgetStep],
+        /,
+    ) -> None: ...
+
+def parse_text(text: str, /) -> list[RupStep | RatStep | ForgetStep]: ...
+def parse_binary(proof: Buffer, /) -> list[RupStep | RatStep | ForgetStep]: ...
 
 class Obj:
     """A fixed-width Covalence identifier, of no particular namespace.

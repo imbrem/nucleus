@@ -124,6 +124,9 @@ def test_the_stub_does_not_omit_class_members() -> None:
         "Literal",
         "Clause",
         "Formula",
+        "RupStep",
+        "RatStep",
+        "ForgetStep",
     ):
         missing = sorted(
             _runtime_members(getattr(_covalence, name)) - _declared_members(name)
