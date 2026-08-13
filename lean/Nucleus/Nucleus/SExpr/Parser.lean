@@ -4,6 +4,19 @@ import Nucleus.SExpr.Tagged
 
 namespace Nucleus.SExprParser
 
+/-- Lexical distinction retained by the richer parsers. -/
+inductive Lexeme where
+  | symbol (value : String)
+  | string (value : String)
+  deriving DecidableEq, Repr
+
+namespace Lexeme
+
+def value : Lexeme → String
+  | .symbol value | .string value => value
+
+end Lexeme
+
 private structure Input where
   source : String
   pos : String.Pos.Raw
@@ -44,7 +57,14 @@ private def quoted : Nat → Input → Option (List Char × Input)
           | none => none
           | some c => do
               let (tail, rest) ← quoted fuel input.next
-              some (c :: tail, rest)
+              let decoded := match c with
+                | 'n' => '\n'
+                | 'r' => '\r'
+                | 't' => '\t'
+                | 'b' => Char.ofNat 8
+                | 'f' => Char.ofNat 12
+                | c => c
+              some (decoded :: tail, rest)
       | some c => do
           let (tail, rest) ← quoted fuel input.next
           some (c :: tail, rest)
@@ -69,7 +89,7 @@ where
             (c :: token, rest)
 
 mutual
-  private def expr : Nat → Input → Option (SExpr2 String × Input)
+  private def expr : Nat → Input → Option (SExpr2 Lexeme × Input)
     | 0, _ => none
     | fuel + 1, input =>
         let input := ws input
@@ -78,13 +98,13 @@ mutual
         | some '(' => list fuel [] input.next
         | some '"' => do
             let (token, rest) ← quoted fuel input.next
-            some (.atom (String.ofList token), rest)
+            some (.atom (.string (String.ofList token)), rest)
         | some _ =>
             let (token, rest) := bare input
-            if token.isEmpty then none else some (.atom (String.ofList token), rest)
+            if token.isEmpty then none else some (.atom (.symbol (String.ofList token)), rest)
 
-  private def list : Nat → List (SExpr2 String) → Input →
-      Option (SExpr2 String × Input)
+  private def list : Nat → List (SExpr2 Lexeme) → Input →
+      Option (SExpr2 Lexeme × Input)
     | 0, _, _ => none
     | fuel + 1, acc, input =>
         let input := ws input
@@ -106,11 +126,84 @@ mutual
             list fuel (acc ++ [head]) rest
 end
 
-/-- Parse one complete dotted or proper Lisp S-expression. Quoted atoms have
-their escapes removed; semicolon comments and standard whitespace are skipped. -/
-def parseSExpr2? (text : String) : Option (SExpr2 String) := do
+/-- Parse one complete expression while retaining whether an atom was a quoted
+string literal or an unquoted symbol. -/
+def parseLexemes? (text : String) : Option (SExpr2 Lexeme) := do
   let (value, rest) ← expr (text.length + 1) ⟨text, 0⟩
   if (ws rest).current.isNone then some value else none
+
+/-- Parse one complete dotted or proper Lisp S-expression. This compatibility
+view deliberately erases the symbol/string lexical distinction. -/
+def parseSExpr2? (text : String) : Option (SExpr2 String) :=
+  SExpr2.map Lexeme.value <$> parseLexemes? text
+
+/-! POSE has a deliberately smaller string escape language and only proper
+lists, so its syntax is recognized separately while reusing the same String
+cursor, whitespace/comment scanner, and bare-token scanner. -/
+
+private def poseQuoted : Nat → Input → Option (String × Input)
+  | 0, _ => none
+  | fuel + 1, input =>
+      match input.current with
+      | none => none
+      | some '"' => some ("", input.next)
+      | some '\\' =>
+          let input := input.next
+          match input.current with
+          | some '\\' | some '"' => do
+              let (tail, rest) ← poseQuoted fuel input.next
+              some (String.singleton input.current.get! ++ tail, rest)
+          | _ => none
+      | some c => do
+          let (tail, rest) ← poseQuoted fuel input.next
+          some (String.singleton c ++ tail, rest)
+
+mutual
+  private def poseExpr : Nat → Input → Option (SExpr Lexeme × Input)
+    | 0, _ => none
+    | fuel + 1, input =>
+        let input := ws input
+        match input.current with
+        | none | some ')' => none
+        | some '(' => do
+            let (children, rest) ← poseList fuel [] input.next
+            some (SExpr.ofList children, rest)
+        | some '"' => do
+            let (value, rest) ← poseQuoted fuel input.next
+            some (.atom (.string value), rest)
+        | some _ =>
+            let (token, rest) := bare input
+            if token.isEmpty then none else
+              some (.atom (.symbol (String.ofList token)), rest)
+
+  private def poseList : Nat → List (SExpr Lexeme) → Input →
+      Option (List (SExpr Lexeme) × Input)
+    | 0, _, _ => none
+    | fuel + 1, acc, input =>
+        let input := ws input
+        match input.current with
+        | none => none
+        | some ')' => some (acc, input.next)
+        | some _ => do
+            let (head, rest) ← poseExpr fuel input
+            poseList fuel (acc ++ [head]) rest
+end
+
+private def poseMany : Nat → List (SExpr Lexeme) → Input →
+    Option (List (SExpr Lexeme))
+  | 0, _, _ => none
+  | fuel + 1, acc, input =>
+      let input := ws input
+      match input.current with
+      | none => some acc
+      | some _ => do
+          let (head, rest) ← poseExpr fuel input
+          poseMany fuel (acc ++ [head]) rest
+
+/-- Parse the lexical and proper-list layer of a complete POSE document. Atom
+validation and number/symbol classification are performed by `Pose.parse?`. -/
+def parsePoseLexemes? (text : String) : Option (List (SExpr Lexeme)) :=
+  poseMany (text.length + 1) [] ⟨text, 0⟩
 
 mutual
   private def toProper : Nat → SExpr2 α → Option (SExpr α)
