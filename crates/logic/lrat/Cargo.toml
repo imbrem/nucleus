@@ -7,6 +7,10 @@ license.workspace = true
 description = "Parser-independent typed LRAT clause validation"
 publish = false
 
+[features]
+default = ["parse"]
+parse = []
+
 [dependencies]
 covalence-logic-sat = { path = "../sat" }
 

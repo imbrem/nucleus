@@ -5,24 +5,18 @@ steps raise :class:`LratError` and leave the kernel unchanged.
 """
 
 from .._covalence import (
-    ForgetStep,
     Kernel,
     LratError,
     RatGroup,
-    RatStep,
-    RupStep,
     Step,
     parse_binary,
     parse_text,
 )
 
 __all__ = [
-    "ForgetStep",
     "Kernel",
     "LratError",
     "RatGroup",
-    "RatStep",
-    "RupStep",
     "Step",
     "parse_binary",
     "parse_text",

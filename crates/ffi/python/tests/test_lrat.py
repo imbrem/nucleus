@@ -2,11 +2,9 @@
 
 import pytest
 from covalence.logic.lrat import (
-    ForgetStep,
     Kernel,
     LratError,
     RatGroup,
-    RupStep,
     Step,
     parse_binary,
     parse_text,
@@ -67,7 +65,7 @@ def test_invalid_literals_are_rejected() -> None:
     [
         "3 0 1 2 0\n",
         bytes([ord("a"), 6, 0, 2, 4, 0]),
-        iter([RupStep(3, Clause([]), [1, 2])]),
+        iter([Step.rup(3, Clause([]), [1, 2])]),
     ],
 )
 def test_verify_accepts_text_binary_and_step_iterators(proof: object) -> None:
@@ -82,11 +80,10 @@ def test_parsers_expose_typed_steps() -> None:
     text = parse_text("3 0 1 2 0\n4 d 1 2 0\n")
     binary = parse_binary(bytes([ord("a"), 6, 0, 2, 4, 0, ord("d"), 2, 4, 0]))
 
-    assert isinstance(text[0], RupStep)
     assert isinstance(text[0], Step)
     assert text[0].clause == Clause([])
     assert text[0].ordered_hints == [1, 2]
-    assert isinstance(text[1], ForgetStep)
+    assert isinstance(text[1], Step)
     assert text[1].ids == [1, 2]
     assert len(binary) == 2
 
@@ -95,7 +92,7 @@ def test_verify_is_transactional_over_the_complete_proof() -> None:
     kernel = Kernel(Formula([Clause([1]), Clause([-1])]))
 
     with pytest.raises(LratError, match="NoRefutation"):
-        kernel.verify(iter([RupStep(3, Clause([1]), [1])]))
+        kernel.verify(iter([Step.rup(3, Clause([1]), [1])]))
 
     assert kernel.high_water == 2
     assert kernel.clause(3) is None

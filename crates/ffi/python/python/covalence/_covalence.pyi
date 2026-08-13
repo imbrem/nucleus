@@ -74,38 +74,27 @@ class RatGroup:
     def __repr__(self) -> str: ...
 
 class Step:
-    """The common base of typed LRAT proof steps."""
+    """One typed LRAT proof step."""
 
-class RupStep(Step):
-    id: int
-    clause: Clause
-    ordered_hints: list[int]
+    kind: str
+    id: int | None
+    clause: Clause | None
+    ids: list[int] | None
+    ordered_hints: list[int] | None
 
-    def __init__(
-        self, id: int, clause: Clause, ordered_hints: Sequence[int], /
-    ) -> None: ...
-
-class RatStep(Step):
-    id: int
-    clause: Clause
-    pivot: Literal
-    prefix_rup_hints: list[int]
-    groups: list[RatGroup]
-
-    def __init__(
-        self,
+    @staticmethod
+    def rup(id: int, clause: Clause, ordered_hints: Sequence[int], /) -> Step: ...
+    @staticmethod
+    def rat(
         id: int,
         clause: Clause,
         pivot: Literal,
         prefix_rup_hints: Sequence[int],
         groups: Sequence[RatGroup],
         /,
-    ) -> None: ...
-
-class ForgetStep(Step):
-    ids: list[int]
-
-    def __init__(self, ids: Sequence[int], /) -> None: ...
+    ) -> Step: ...
+    @staticmethod
+    def forget(ids: Sequence[int], /) -> Step: ...
 
 class Kernel:
     """A parser-independent typed LRAT clause kernel."""

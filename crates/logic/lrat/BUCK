@@ -26,6 +26,10 @@ rust_library(
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
+    features = [
+        "default",
+        "parse",
+    ],
     tests = [":covalence_logic_lrat-unit-test"],
     named_deps = {
         "covalence_logic_sat": "nucleus//crates/logic/sat:covalence_logic_sat",
@@ -56,6 +60,10 @@ rust_test(
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
+    features = [
+        "default",
+        "parse",
+    ],
     named_deps = {
         "covalence_logic_sat": "nucleus//crates/logic/sat:covalence_logic_sat",
     },
