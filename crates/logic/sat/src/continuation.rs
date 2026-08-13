@@ -16,6 +16,14 @@ use crate::{Cnf, Limits, LratError, ModelError, ProblemId, VerifiedModel, Verifi
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct JobId(NonZeroU64);
 
+impl JobId {
+    /// Returns the process-local correlation number.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0.get()
+    }
+}
+
 /// Provider response bounds repeated at the untrusted boundary.
 ///
 /// These help hosts reject oversized responses early. The checker independently
@@ -111,7 +119,9 @@ pub enum SolveResult {
 }
 
 impl SolveResult {
-    const fn problem(&self) -> ProblemId {
+    /// Returns the canonical problem identity echoed by the provider.
+    #[must_use]
+    pub const fn problem(&self) -> ProblemId {
         match self {
             Self::Sat { problem, .. }
             | Self::Unsat { problem, .. }

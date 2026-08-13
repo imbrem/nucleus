@@ -14,6 +14,7 @@ crate-type = ["cdylib", "rlib"]
 covalence-data-cas = { path = "../data/cas" }
 covalence-lib-hash = { path = "../lib/hash", default-features = false, features = ["blake3"] }
 covalence-lib-sqlite = { path = "../lib/sqlite", features = ["vfs-register"] }
+covalence-logic-sat = { path = "../logic/sat" }
 covalence-neutron = { path = "../neutron" }
 covalence-repl = { path = "../repl" }
 wasm-bindgen = "=0.2.121"

@@ -5,6 +5,7 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import test from "node:test";
 import { chromium } from "playwright-core";
+import { CadicalSolver, createCadicalServer } from "../dist/cadical-node.js";
 
 const root = new URL("..", import.meta.url).pathname;
 const repository = new URL("../../..", import.meta.url).pathname;
@@ -26,7 +27,7 @@ const fixture = new URL("./fixture.sqlite", import.meta.url).pathname;
  * CAS-aware code anywhere. Anything that serves a directory -- nginx, S3,
  * GitHub Pages -- is a read-only kernel by that fact alone.
  */
-async function servePackage(context) {
+async function servePackage(context, sat = "127.0.0.1:9") {
   const port = await freePort();
   const origin = `http://127.0.0.1:${port}`;
   const caddy = spawn(
@@ -39,6 +40,7 @@ async function servePackage(context) {
         NUCLEUS_ADDRESS: origin,
         NUCLEUS_ROOT: root,
         NUCLEUS_SAMPLES: join(repository, "crates/repl/samples"),
+        NUCLEUS_SAT: sat,
         NUCLEUS_TLS: "",
       },
     },
@@ -120,6 +122,141 @@ async function openPage(context, origin) {
   await page.waitForFunction(() => document.body.dataset.ready === "yes");
   return page;
 }
+
+async function openDemo(context, origin) {
+  const executablePath = process.env.CHROMIUM_PATH;
+  assert.ok(executablePath, "CHROMIUM_PATH is set by the Nix shell");
+  const browser = await chromium.launch({
+    executablePath,
+    headless: true,
+    args: ["--no-sandbox"],
+  });
+  context.after(() => browser.close());
+  const page = await browser.newPage();
+  page.on("pageerror", (error) => console.error("page error:", error));
+  await page.goto(`${origin}/demo.html`);
+  await page.waitForSelector("#line");
+  return page;
+}
+
+async function startSatProvider(context, origin, solver = new CadicalSolver()) {
+  const server = createCadicalServer({
+    solver,
+    corsOrigin: origin,
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  return `http://127.0.0.1:${server.address().port}/`;
+}
+
+test("the demo queries a CAS database in interactive SQLite", async (context) => {
+  const origin = await servePackage(context);
+  const page = await openDemo(context, origin);
+  const input = page.locator("#line");
+  const mode = page.locator("#mode");
+  const initial = await page.locator("#transcript").textContent();
+  const [, address] = /planets\s+([0-9a-f]{64})/.exec(initial);
+
+  await input.fill(`(sqlite ${address})`);
+  await input.press("Enter");
+  await page.waitForFunction(
+    () => document.querySelector("#mode")?.textContent === "sqlite>",
+  );
+  assert.match(await mode.getAttribute("title"), /\.quit.*\.exit/);
+
+  await input.fill("SELECT name FROM planets ORDER BY moons DESC LIMIT 1;");
+  await input.press("Enter");
+  await page.waitForFunction(() =>
+    document
+      .querySelector("#transcript")
+      ?.textContent?.includes("│ Saturn │\n"),
+  );
+
+  await input.fill(".quit");
+  await input.press("Enter");
+  await page.waitForFunction(
+    () => document.querySelector("#mode")?.textContent === "nucleus>",
+  );
+  const transcript = await page.locator("#transcript").textContent();
+  assert.match(transcript, new RegExp(`nucleus> \\(sqlite ${address}\\)`));
+  assert.match(transcript, /sqlite> SELECT name FROM planets/);
+  assert.match(transcript, /│ Saturn │\n/);
+  assert.match(transcript, /sqlite> \.quit\n/);
+});
+
+test("the demo checks CaDiCaL over ordinary HTTP", async (context) => {
+  const provider = await startSatProvider(context, "http://127.0.0.1");
+  const origin = await servePackage(context, new URL(provider).host);
+  const page = await openDemo(context, origin);
+  const input = page.locator("#line");
+
+  await input.fill("(sat-select full-adder-unsat)");
+  await input.press("Enter");
+  await input.fill("(sat-solve)");
+  await input.press("Enter");
+  await page.waitForFunction(() =>
+    document
+      .querySelector("#transcript")
+      ?.textContent?.includes("admitted=SatRefutation"),
+  );
+});
+
+test("Chromium cancels an HTTP SAT provider without wedging the REPL", async (context) => {
+  const origin = await servePackage(context);
+  const provider = await startSatProvider(context, origin, {
+    solve(_request, signal) {
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+      });
+    },
+  });
+  const page = await openPage(context, origin);
+  const result = await page.evaluate(async (url) => {
+    const { Repl, drive, HttpSatSolver } = window.nucleus;
+    const repl = new Repl();
+    repl.eval("(sat-select and-sat)");
+    const controller = new AbortController();
+    const pending = drive(
+      repl,
+      { sat: new HttpSatSolver(url) },
+      "(sat-solve)",
+      controller.signal,
+    );
+    controller.abort();
+    return {
+      output: (await pending).output,
+      status: repl.eval("(sat-status)").text,
+    };
+  }, provider);
+  assert.match(result.output, /abort/i);
+  assert.equal(result.status, "operational");
+});
+
+test("Chromium checks SAT and binary LRAT from an HTTP provider", async (context) => {
+  const origin = await servePackage(context);
+  const provider = await startSatProvider(context, origin);
+  const page = await openPage(context, origin);
+  const result = await page.evaluate(async (url) => {
+    const { Repl, drive, HttpSatSolver } = window.nucleus;
+    const repl = new Repl();
+    const host = { sat: new HttpSatSolver(url) };
+    const outcomes = [];
+    for (const gate of ["and", "half-adder", "full-adder"]) {
+      repl.eval(`(sat-select ${gate}-sat)`);
+      outcomes.push((await drive(repl, host, "(sat-solve)")).output);
+      repl.eval(`(sat-select ${gate}-unsat)`);
+      outcomes.push((await drive(repl, host, "(sat-solve)")).output);
+    }
+    return outcomes;
+  }, provider);
+  assert.equal(result.filter((value) => /checked-model/.test(value)).length, 3);
+  assert.equal(
+    result.filter((value) => /admitted=SatRefutation/.test(value)).length,
+    3,
+  );
+});
 
 test("the browser runs the same REPL as the CLI", async (context) => {
   const origin = await servePackage(context);

@@ -15,6 +15,11 @@ pub mod continuation;
 pub struct ProblemId([u8; 32]);
 
 impl ProblemId {
+    /// Constructs an identity echoed across an untrusted provider boundary.
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
     /// Returns the digest bytes.
     #[must_use]
     pub const fn as_bytes(&self) -> &[u8; 32] {

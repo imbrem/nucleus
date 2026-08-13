@@ -32,7 +32,9 @@ rust_library(
         "covalence_data_cas": "nucleus//crates/data/cas:covalence_data_cas",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
+        "covalence_logic_sat": "nucleus//crates/logic/sat:covalence_logic_sat",
         "covalence_neutron": "nucleus//crates/neutron:covalence_neutron",
+        "covalence_nucleus": "nucleus//crates/nucleus:covalence_nucleus",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -65,7 +67,9 @@ rust_test(
         "covalence_data_cas": "nucleus//crates/data/cas:covalence_data_cas",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
+        "covalence_logic_sat": "nucleus//crates/logic/sat:covalence_logic_sat",
         "covalence_neutron": "nucleus//crates/neutron:covalence_neutron",
+        "covalence_nucleus": "nucleus//crates/nucleus:covalence_nucleus",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",

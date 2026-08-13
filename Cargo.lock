@@ -273,6 +273,7 @@ dependencies = [
  "covalence-data-cas",
  "covalence-lib-hash",
  "covalence-lib-sqlite",
+ "covalence-logic-sat",
  "covalence-neutron",
  "covalence-repl",
  "wasm-bindgen",
@@ -431,7 +432,9 @@ dependencies = [
  "covalence-data-cas",
  "covalence-lib-hash",
  "covalence-lib-sqlite",
+ "covalence-logic-sat",
  "covalence-neutron",
+ "covalence-nucleus",
 ]
 
 [[package]]

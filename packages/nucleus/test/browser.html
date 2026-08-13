@@ -18,11 +18,12 @@
   <body>
     <script type="module">
       import { init, Repl, drive } from "../dist/index.js";
+      import { HttpSatSolver } from "../dist/sat-http.js";
 
       await init();
       const host = {};
       // Exposed for the test driver; this page is not a demo.
-      window.nucleus = { Repl, drive, host };
+      window.nucleus = { Repl, drive, host, HttpSatSolver };
       document.body.dataset.ready = "yes";
     </script>
   </body>

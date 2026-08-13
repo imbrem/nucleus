@@ -1,9 +1,15 @@
 import init, { Repl, Step } from "../generated/nucleus.js";
-import { runShell } from "./shell.js";
+import { runShell, startShell } from "./shell.js";
+import { HttpSatSolver } from "./sat-http.js";
 
-export { init, Repl, runShell };
+export { HttpSatSolver, init, Repl, runShell, startShell };
 export type { Step };
-export type { ShellOptions, ShellResult } from "./shell.js";
+export type {
+  InteractiveShell,
+  InteractiveShellOptions,
+  ShellOptions,
+  ShellResult,
+} from "./shell.js";
 export type { ReadOnlyVfs, VfsError, VfsFile } from "./vfs-host.js";
 export type { SatRequest, SatResult, SatSolver } from "./sat-provider.js";
 
@@ -19,6 +25,8 @@ export interface Line {
 export interface Host {
   /** Optional alternate store for `(sqlite …)`; the local REPL is the default. */
   vfs?: import("./vfs-host.js").ReadOnlyVfs;
+  /** Completely untrusted SAT provider; Rust checks every mathematical claim. */
+  sat?: import("./sat-provider.js").SatSolver;
 }
 
 /**
@@ -33,6 +41,7 @@ export async function drive(
   repl: Repl,
   host: Host,
   line: string,
+  signal?: AbortSignal,
 ): Promise<Line> {
   let step: Step;
   try {
@@ -41,6 +50,16 @@ export async function drive(
     return { output: `error: ${messageOf(error)}`, quit: false };
   }
 
+  return driveStep(repl, host, step, signal);
+}
+
+/** Carries out a step already read by `Repl.eval`. */
+export async function driveStep(
+  repl: Repl,
+  host: Host,
+  step: Step,
+  signal?: AbortSignal,
+): Promise<Line> {
   switch (step.kind) {
     case "quit":
       return { output: "", quit: true };
@@ -77,6 +96,59 @@ export async function drive(
           quit: false,
         };
       } catch (error) {
+        return { output: `error: ${messageOf(error)}`, quit: false };
+      }
+
+    case "solve":
+      let completionAttempted = false;
+      try {
+        if (!host.sat) {
+          throw new Error("no SAT provider is configured");
+        }
+        const request = {
+          problem: step.problem,
+          dimacs: step.dimacs,
+          limits: {
+            maxModelLiterals: step.maxModelLiterals,
+            maxProofBytes: step.maxProofBytes,
+            maxDiagnosticBytes: step.maxDiagnosticBytes,
+          },
+          proof: { format: "binary-lrat" as const },
+        };
+        const result = await host.sat.solve(request, signal);
+        let output: string;
+        completionAttempted = true;
+        switch (result.kind) {
+          case "sat":
+            output = repl.completeSatModel(
+              result.problem,
+              BigInt64Array.from(result.model),
+            );
+            break;
+          case "unsat":
+            if (result.format !== "binary-lrat") {
+              throw new Error("trusted admission requires binary LRAT");
+            }
+            output = repl.completeSatUnsat(result.problem, result.proof);
+            break;
+          case "unknown":
+            output = repl.completeSatUnknown(result.problem, result.reason);
+            break;
+        }
+        return { output, quit: false };
+      } catch (error) {
+        if (!completionAttempted) {
+          const reason = messageOf(error);
+          try {
+            if (signal?.aborted) {
+              repl.cancelSat();
+            } else {
+              repl.rejectSatProvider(reason);
+            }
+          } catch {
+            // A provider completion may already have consumed the continuation.
+          }
+        }
         return { output: `error: ${messageOf(error)}`, quit: false };
       }
 

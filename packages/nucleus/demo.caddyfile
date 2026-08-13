@@ -27,6 +27,12 @@
 	@wasm path *.wasm
 	header @wasm Content-Type "application/wasm"
 
+	# The solver is a separate, untrusted process. The browser uses ordinary
+	# same-origin HTTP; every returned model or proof is still checked locally.
+	handle /sat {
+		reverse_proxy {$NUCLEUS_SAT}
+	}
+
 	# The sample databases, served as a kernel -- which takes no kernel. Each
 	# file is named by its own address, so a file server already answers
 	# `GET /cas/<address>` correctly, ranges included. `(connect "<origin>")`

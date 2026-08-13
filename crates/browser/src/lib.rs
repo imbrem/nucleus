@@ -7,6 +7,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use covalence_data_cas::{Cas, CasObject, ResidentObject};
 use covalence_lib_hash::O256;
 use covalence_lib_sqlite::{Connection, Step as SqliteStep, ValueType};
+use covalence_logic_sat::ProblemId;
+use covalence_logic_sat::continuation::{JobId, SolveResult};
 use covalence_repl::{Response, Session};
 use wasm_bindgen::prelude::*;
 
@@ -20,6 +22,11 @@ pub struct Step {
     text: String,
     address: String,
     arguments: Vec<String>,
+    problem: Vec<u8>,
+    dimacs: Vec<u8>,
+    max_model_literals: usize,
+    max_proof_bytes: usize,
+    max_diagnostic_bytes: usize,
 }
 
 #[wasm_bindgen]
@@ -51,6 +58,41 @@ impl Step {
     pub fn arguments(&self) -> Vec<String> {
         self.arguments.clone()
     }
+
+    /// Exact canonical SAT problem identity for a `solve` step.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn problem(&self) -> Vec<u8> {
+        self.problem.clone()
+    }
+
+    /// Canonical DIMACS for a `solve` step.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn dimacs(&self) -> Vec<u8> {
+        self.dimacs.clone()
+    }
+
+    /// Maximum model literals accepted by the retained checker.
+    #[wasm_bindgen(getter, js_name = maxModelLiterals)]
+    #[must_use]
+    pub fn max_model_literals(&self) -> usize {
+        self.max_model_literals
+    }
+
+    /// Maximum binary LRAT bytes accepted by the retained checker.
+    #[wasm_bindgen(getter, js_name = maxProofBytes)]
+    #[must_use]
+    pub fn max_proof_bytes(&self) -> usize {
+        self.max_proof_bytes
+    }
+
+    /// Maximum untrusted diagnostic bytes accepted by the continuation.
+    #[wasm_bindgen(getter, js_name = maxDiagnosticBytes)]
+    #[must_use]
+    pub fn max_diagnostic_bytes(&self) -> usize {
+        self.max_diagnostic_bytes
+    }
 }
 
 impl Step {
@@ -60,6 +102,11 @@ impl Step {
             text: text.into(),
             address: String::new(),
             arguments: Vec::new(),
+            problem: Vec::new(),
+            dimacs: Vec::new(),
+            max_model_literals: 0,
+            max_proof_bytes: 0,
+            max_diagnostic_bytes: 0,
         }
     }
 
@@ -69,6 +116,11 @@ impl Step {
             text: String::new(),
             address: String::new(),
             arguments: Vec::new(),
+            problem: Vec::new(),
+            dimacs: Vec::new(),
+            max_model_literals: 0,
+            max_proof_bytes: 0,
+            max_diagnostic_bytes: 0,
         }
     }
 }
@@ -80,6 +132,13 @@ pub struct Repl {
     /// Objects pinned for a guest such as the WASI shell.
     open: HashMap<u64, ResidentObject>,
     next_handle: u64,
+    pending_sat: Option<PendingSat>,
+}
+
+#[derive(Clone, Copy)]
+struct PendingSat {
+    job: JobId,
+    problem: ProblemId,
 }
 
 #[wasm_bindgen]
@@ -101,6 +160,7 @@ impl Repl {
             session: Session::with_mount_name(&mount).map_err(to_js)?,
             open: HashMap::new(),
             next_handle: 1,
+            pending_sat: None,
         })
     }
 
@@ -138,14 +198,136 @@ impl Repl {
                 text: url,
                 address: address.hex().to_string(),
                 arguments: Vec::new(),
+                problem: Vec::new(),
+                dimacs: Vec::new(),
+                max_model_literals: 0,
+                max_proof_bytes: 0,
+                max_diagnostic_bytes: 0,
             },
             Response::Shell(arguments) => Step {
                 kind: "shell".to_owned(),
                 text: String::new(),
                 address: String::new(),
                 arguments,
+                problem: Vec::new(),
+                dimacs: Vec::new(),
+                max_model_literals: 0,
+                max_proof_bytes: 0,
+                max_diagnostic_bytes: 0,
             },
+            Response::Solve(request) => {
+                self.pending_sat = Some(PendingSat {
+                    job: request.job(),
+                    problem: request.problem(),
+                });
+                let limits = request.limits();
+                Step {
+                    kind: "solve".to_owned(),
+                    text: String::new(),
+                    address: String::new(),
+                    arguments: Vec::new(),
+                    problem: request.problem().as_bytes().to_vec(),
+                    dimacs: request.dimacs().to_vec(),
+                    max_model_literals: limits.max_model_literals,
+                    max_proof_bytes: limits.max_proof_bytes,
+                    max_diagnostic_bytes: limits.max_diagnostic_bytes,
+                }
+            }
         })
+    }
+
+    /// Completes a SAT provider claim with a model and returns checked status.
+    ///
+    /// # Errors
+    ///
+    /// Rejects missing jobs, wrong problem identities, and invalid models.
+    #[wasm_bindgen(js_name = completeSatModel)]
+    pub fn complete_sat_model(
+        &mut self,
+        problem: &[u8],
+        model: Vec<i64>,
+    ) -> Result<String, JsError> {
+        let problem = problem_id(problem)?;
+        let job = self.take_matching_sat(problem)?;
+        self.session
+            .complete_sat(
+                job,
+                SolveResult::Sat {
+                    problem,
+                    model: model.into_boxed_slice(),
+                },
+            )
+            .map(|value| value.display())
+            .map_err(to_js)
+    }
+
+    /// Completes a SAT provider claim with binary LRAT and returns checked status.
+    ///
+    /// # Errors
+    ///
+    /// Rejects missing jobs, wrong identities, invalid proofs, or stale state.
+    #[wasm_bindgen(js_name = completeSatUnsat)]
+    pub fn complete_sat_unsat(&mut self, problem: &[u8], proof: &[u8]) -> Result<String, JsError> {
+        let problem = problem_id(problem)?;
+        let job = self.take_matching_sat(problem)?;
+        self.session
+            .complete_sat(
+                job,
+                SolveResult::Unsat {
+                    problem,
+                    proof: proof.into(),
+                    diagnostic_ascii_lrat: None,
+                },
+            )
+            .map(|value| value.display())
+            .map_err(to_js)
+    }
+
+    /// Completes a SAT provider without a mathematical claim.
+    ///
+    /// # Errors
+    ///
+    /// Rejects missing jobs, wrong identities, or oversized diagnostics.
+    #[wasm_bindgen(js_name = completeSatUnknown)]
+    pub fn complete_sat_unknown(
+        &mut self,
+        problem: &[u8],
+        reason: Option<String>,
+    ) -> Result<String, JsError> {
+        let problem = problem_id(problem)?;
+        let job = self.take_matching_sat(problem)?;
+        self.session
+            .complete_sat(job, SolveResult::Unknown { problem, reason })
+            .map(|value| value.display())
+            .map_err(to_js)
+    }
+
+    /// Cancels and consumes the pending SAT job.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no SAT job is pending.
+    #[wasm_bindgen(js_name = cancelSat)]
+    pub fn cancel_sat(&mut self) -> Result<String, JsError> {
+        self.pending_sat = None;
+        self.session
+            .cancel_sat()
+            .map(|value| value.display())
+            .map_err(to_js)
+    }
+
+    /// Records a provider failure and consumes its pending SAT job.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no SAT job is pending.
+    #[wasm_bindgen(js_name = rejectSatProvider)]
+    pub fn reject_sat_provider(&mut self, reason: &str) -> Result<String, JsError> {
+        self.pending_sat = None;
+        self.session
+            .reject_sat_provider(reason)
+            .map(|value| value.display())
+            .map_err(to_js)
     }
 
     /// Admits bytes the page read from a file picker.
@@ -275,6 +457,19 @@ impl Repl {
     }
 }
 
+impl Repl {
+    fn take_matching_sat(&mut self, problem: ProblemId) -> Result<JobId, JsError> {
+        let pending = self
+            .pending_sat
+            .ok_or_else(|| JsError::new("no SAT solve is pending"))?;
+        if pending.problem != problem {
+            return Err(JsError::new("SAT result names the wrong problem"));
+        }
+        self.pending_sat = None;
+        Ok(pending.job)
+    }
+}
+
 /// Converts a handle or length for `JavaScript`.
 ///
 /// Saturates rather than wrapping: a value past `f64`'s exact range would be a
@@ -308,6 +503,13 @@ fn handle_from_js(value: f64) -> u64 {
 fn address(text: &str) -> Result<O256, JsError> {
     O256::from_str(text.trim())
         .map_err(|error| JsError::new(&format!("{text:?} is not an address: {error}")))
+}
+
+fn problem_id(bytes: &[u8]) -> Result<ProblemId, JsError> {
+    let bytes: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| JsError::new("SAT problem identity must contain 32 bytes"))?;
+    Ok(ProblemId::from_bytes(bytes))
 }
 
 fn to_js(error: impl std::fmt::Display) -> JsError {

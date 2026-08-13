@@ -9,7 +9,7 @@ use std::{env, ffi::OsString, path::PathBuf, process::ExitCode};
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::{Result, WrapErr};
 
-use runner::Runner;
+use runner::{DemoOptions, Runner};
 
 #[derive(Debug, Parser)]
 #[command(version, about = "Nucleus repository tasks", propagate_version = true)]
@@ -122,6 +122,10 @@ enum Task {
         /// Loopback port for the HTTP kernel.
         #[arg(long, default_value_t = 8080)]
         kernel_port: u16,
+
+        /// Loopback port for the untrusted HTTP SAT provider.
+        #[arg(long, default_value_t = 8090)]
+        sat_port: u16,
 
         /// Open the demo in the default browser.
         #[arg(long)]
@@ -281,10 +285,21 @@ fn run() -> Result<()> {
             files,
             port,
             kernel_port,
+            sat_port,
             open,
             no_build,
             tls,
-        } => runner.demo(&files, port, kernel_port, open, no_build, tls),
+        } => runner.demo(
+            &files,
+            DemoOptions {
+                port,
+                kernel_port,
+                sat_port,
+                open,
+                no_build,
+                tls,
+            },
+        ),
         Task::Docs { command: None } => runner.docs(),
         Task::Docs {
             command: Some(DocsTask::Serve { open, port }),

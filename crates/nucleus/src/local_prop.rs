@@ -447,6 +447,15 @@ pub struct LocalPropTable {
 }
 
 impl LocalPropTable {
+    /// Serializes the proposition table as an owned `SQLite` database image.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `SQLite` cannot serialize the database.
+    pub fn serialize(&self) -> Result<covalence_neutron::Bytes, covalence_neutron::ImageError> {
+        self.connection.serialize()
+    }
+
     /// Opens a fresh local table.
     ///
     /// # Errors

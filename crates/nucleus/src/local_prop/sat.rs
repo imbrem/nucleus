@@ -29,6 +29,18 @@ pub enum PrepareError {
     Cnf(CnfError),
 }
 
+/// A checked SAT verdict was produced for another canonical problem.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProblemMismatch;
+
+impl std::fmt::Display for ProblemMismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("checked SAT verdict names another canonical problem")
+    }
+}
+
+impl std::error::Error for ProblemMismatch {}
+
 impl std::fmt::Display for PrepareError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -83,6 +95,33 @@ impl SatProblem {
     #[must_use]
     pub const fn lowering(&self) -> LoweringVersion {
         self.lowering
+    }
+
+    /// Returns an authority-free copy for a solver continuation.
+    #[must_use]
+    pub fn canonical_cnf(&self) -> Cnf {
+        self.cnf.clone()
+    }
+
+    /// Binds an independently checked verdict back to this exact lowering.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a verdict for different canonical clause bytes.
+    pub fn bind_verified_unsat(
+        self,
+        verdict: VerifiedUnsat,
+    ) -> Result<CheckedRefutation, ProblemMismatch> {
+        if verdict.problem() != self.cnf.id() {
+            return Err(ProblemMismatch);
+        }
+        Ok(CheckedRefutation {
+            snapshot: self.snapshot,
+            premise: self.premise,
+            conclusion: self.conclusion,
+            lowering: self.lowering,
+            verdict,
+        })
     }
 
     /// Checks the solver's binary LRAT response.
