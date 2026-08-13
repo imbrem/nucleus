@@ -4,11 +4,10 @@ import Mathlib.Tactic.Ring
 /-!
 # Exact radix-scaled integers
 
-`RadixNumber r` represents `mantissa * r ^ exponent` exactly. It is a reusable
-representation layer for decimal fractions (`r = 10`) and dyadic/binary
-fractions (`r = 2`), independent of CBOR. Representations are intentionally
-not normalized: equality of representations and equality of values are kept
-separate, which is essential when reasoning about parsing and pretty-printing.
+`RadixNumber r` represents `mantissa * r ^ exponent` exactly. `ExactRadix r`
+adds an IEEE-like normal-form invariant: zero has exponent zero, and a nonzero
+mantissa has no trailing radix factor. Raw representations remain available
+because parsers may need to preserve non-preferred syntax.
 -/
 
 namespace Nucleus
@@ -18,12 +17,6 @@ structure RadixNumber (radix : Nat) where
   exponent : Int
   mantissa : Int
   deriving DecidableEq, Repr
-
-/-- Exact decimal fraction representation. -/
-abbrev DecimalFraction := RadixNumber 10
-
-/-- Exact binary fraction, traditionally called a dyadic number. -/
-abbrev Dyadic := RadixNumber 2
 
 namespace RadixNumber
 
@@ -70,5 +63,52 @@ def add (a b : RadixNumber radix) : RadixNumber radix :=
   ring
 
 end RadixNumber
+
+/-- IEEE-like normal form for an unbounded radix number. Zero has a unique
+representation; every nonzero significand has had all trailing radix factors
+removed. The `1 < radix` premise excludes degenerate bases. -/
+def RadixNormal (radix : Nat) (number : RadixNumber radix) : Prop :=
+  1 < radix ∧
+    if number.mantissa = 0 then number.exponent = 0
+    else number.mantissa % (radix : Int) ≠ 0
+
+/-- A canonical exact radix number: representation plus normal-form proof. -/
+structure ExactRadix (radix : Nat) extends RadixNumber radix where
+  normal : RadixNormal radix toRadixNumber
+
+namespace ExactRadix
+
+variable {radix : Nat}
+
+/-- Forget normality and expose the exponent/mantissa representation. -/
+def rep (number : ExactRadix radix) : RadixNumber radix := number.toRadixNumber
+
+/-- Exact rational denotation. -/
+def toRat (number : ExactRadix radix) : ℚ := number.rep.value
+
+@[simp] theorem toRat_def (number : ExactRadix radix) :
+    number.toRat = number.mantissa * (radix : ℚ) ^ number.exponent := rfl
+
+/-- Canonical zero. -/
+def zero (hradix : 1 < radix) : ExactRadix radix where
+  exponent := 0
+  mantissa := 0
+  normal := ⟨hradix, by simp⟩
+
+end ExactRadix
+
+/-- Concrete decimal exponent/mantissa representation, including non-normal
+forms preserved from syntax. -/
+abbrev DecimalFractionRep := RadixNumber 10
+
+/-- Decimal values modulo representation choices. -/
+abbrev DecimalFraction := ExactRadix 10
+
+/-- Concrete binary exponent/mantissa representation, including non-normal
+forms preserved from syntax. -/
+abbrev DyadicRep := RadixNumber 2
+
+/-- Dyadic values modulo representation choices. -/
+abbrev Dyadic := ExactRadix 2
 
 end Nucleus

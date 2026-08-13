@@ -16,8 +16,8 @@ inductive FractionCborScalar where
   | null
   | bool (value : Bool)
   | integer (value : Int)
-  | decimal (value : DecimalFraction)
-  | dyadic (value : Dyadic)
+  | decimal (value : DecimalFractionRep)
+  | dyadic (value : DyadicRep)
   | float64 (bits : UInt64)
   | text (value : String)
   | bytes (value : Bytes)
@@ -41,13 +41,13 @@ private def pair (first second : Cbor) : Cbor :=
 
 /-- Valid tag-4 representation. Failure means only that the exponent is
 outside the basic CBOR integer range; the mantissa is unrestricted. -/
-def ofDecimal? (number : DecimalFraction) : Option Cbor := do
+def ofDecimal? (number : DecimalFractionRep) : Option Cbor := do
   let exponent ← basicInteger? number.exponent
   some (.tag 4 (pair (.primitive (.integer exponent)) (ofInt number.mantissa)))
 
 /-- Valid tag-5 representation. Failure means only that the exponent is
 outside the basic CBOR integer range; the mantissa is unrestricted. -/
-def ofDyadic? (number : Dyadic) : Option Cbor := do
+def ofDyadic? (number : DyadicRep) : Option Cbor := do
   let exponent ← basicInteger? number.exponent
   some (.tag 5 (pair (.primitive (.integer exponent)) (ofInt number.mantissa)))
 
