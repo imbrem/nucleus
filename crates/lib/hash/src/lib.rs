@@ -19,6 +19,8 @@ use snafu::Snafu;
 
 pub mod blake3;
 mod git;
+#[cfg(feature = "multiformats")]
+mod multiformats;
 #[cfg(feature = "serde")]
 mod serde;
 
@@ -26,6 +28,8 @@ pub use blake3::{
     Blake3, Blake3Hash, COV, COV_ROOT, Cov, CtxKey, CtxKeyNamespace, Sha256, Sha256Hash,
 };
 pub use git::{Git, GitHash, Sha1};
+#[cfg(feature = "multiformats")]
+pub use multiformats::{InvalidMultiformat, MultiformatNamespace};
 
 #[cfg(feature = "git-sha1")]
 pub use git::{git_blob, git_object, sha1};
@@ -112,8 +116,7 @@ pub struct Obj<N: Namespace> {
 
 /// The standard 256-bit Covalence object namespace.
 ///
-/// With the default `serde` feature, values use a DAG-JSON link containing a
-/// `CIDv1` with the `raw` codec and provisional `blake3-256` multihash code.
+/// With the default `serde` feature, values serialize as their 32 raw bytes.
 pub type O256 = Obj<Cov>;
 
 /// An opaque object with width `W`.

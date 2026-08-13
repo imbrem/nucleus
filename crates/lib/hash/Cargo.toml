@@ -8,12 +8,13 @@ description = "Hashing primitives for Nucleus"
 publish = false
 
 [features]
-default = ["blake3", "sha256", "git-sha1", "random", "serde"]
+default = ["blake3", "sha256", "git-sha1", "random", "serde", "multiformats"]
 blake3 = ["dep:blake3"]
 sha256 = ["dep:sha2"]
 git-sha1 = ["dep:sha1"]
 random = ["dep:covalence-lib-rand"]
 serde = ["dep:cid", "dep:serde"]
+multiformats = ["dep:cid"]
 
 [dependencies]
 blake3 = { version = "1", optional = true }

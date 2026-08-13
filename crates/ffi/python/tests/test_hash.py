@@ -48,6 +48,25 @@ def sample(cls: type) -> object:
     return cls(bytes(range(cls.BYTES)))
 
 
+def test_multiformat_conversions_round_trip() -> None:
+    for cls in EVERY:
+        value = sample(cls)
+        assert cls.from_multihash(value.to_multihash()) == value
+        assert cls.from_raw_cid(value.to_raw_cid()) == value
+
+    assert O256(bytes([0xAB]) * 32).to_raw_cid() == (
+        "bafkr4iflvov2xk5lvov2xk5lvov2xk5lvov2xk5lvov2xk5lvov2xk5lvm"
+    )
+
+
+def test_multiformat_conversions_preserve_namespaces() -> None:
+    git = GitHash(bytes(20))
+    with pytest.raises(ValueError):
+        O256.from_multihash(git.to_multihash())
+    with pytest.raises(ValueError):
+        O256.from_raw_cid(git.to_raw_cid())
+
+
 # Published vectors.
 
 

@@ -313,6 +313,7 @@ version = "0.0.0"
 name = "covalence-ffi-python"
 version = "0.0.0"
 dependencies = [
+ "cid",
  "covalence-lib-hash",
  "covalence-lib-python",
 ]
