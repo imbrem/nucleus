@@ -3123,6 +3123,14 @@
       ]
     },
     {
+      "id": "workspace#covalence-ffi-python@0.0.0",
+      "name": "covalence-ffi-python",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#cid@0.11.3"
+      ]
+    },
+    {
       "id": "workspace#covalence-lib-crypto@0.0.0",
       "name": "covalence-lib-crypto",
       "category": "tcb",
