@@ -61,11 +61,55 @@ inductive Reasonable : {i : CborIx} → CborSyn i → Prop where
       (keyReasonable : Reasonable key) (valueReasonable : Reasonable value)
       (tailReasonable : Reasonable tail) : Reasonable (.mapCons key value tail)
 
-/-- The refinement can be enforced at API boundaries. A later executable
-encoder will supply the structurally recursive Boolean decision procedure
-alongside its wire implementation; the data-model layer needs no evaluator. -/
-noncomputable instance reasonableDecidable {i : CborIx} (value : CborSyn i) :
-    Decidable (Reasonable value) := Classical.propDecidable _
+/-- Structural decision procedure, so the refinement can be enforced at
+executable API boundaries. -/
+def reasonableDecidable : {i : CborIx} → (value : CborSyn i) →
+    Decidable (Reasonable value)
+  | _, .primitive (.integer value) => isTrue (.integer value)
+  | _, .primitive (.bytes value) =>
+      if h : value.length ≤ Bytes.maxDefiniteLength then isTrue (.bytes value h)
+      else isFalse fun proof => by cases proof; contradiction
+  | _, .primitive (.text value) =>
+      if h : value.toUTF8.size ≤ Bytes.maxDefiniteLength then isTrue (.text value h)
+      else isFalse fun proof => by cases proof; contradiction
+  | _, .primitive (.simple value) => isTrue (.simple value)
+  | _, .primitive (.float16 bits) => isTrue (.float16 bits)
+  | _, .primitive (.float32 bits) => isTrue (.float32 bits)
+  | _, .primitive (.float64 bits) => isTrue (.float64 bits)
+  | _, .array items =>
+      if h : items.arrayLength ≤ Bytes.maxDefiniteLength then
+        match reasonableDecidable items with
+        | isTrue hi => isTrue (.array items h hi)
+        | isFalse hi => isFalse fun proof => by cases proof; contradiction
+      else isFalse fun proof => by cases proof; contradiction
+  | _, .map entries =>
+      if h : entries.mapLength ≤ Bytes.maxDefiniteLength then
+        match reasonableDecidable entries with
+        | isTrue hi => isTrue (.map entries h hi)
+        | isFalse hi => isFalse fun proof => by cases proof; contradiction
+      else isFalse fun proof => by cases proof; contradiction
+  | _, .tag number content =>
+      match reasonableDecidable content with
+      | isTrue hi => isTrue (.tag number content hi)
+      | isFalse hi => isFalse fun proof => by cases proof; contradiction
+  | _, .arrayNil => isTrue .arrayNil
+  | _, .arrayCons head tail =>
+      match reasonableDecidable head, reasonableDecidable tail with
+      | isTrue hh, isTrue ht => isTrue (.arrayCons head tail hh ht)
+      | isFalse hh, _ => isFalse fun proof => by cases proof; contradiction
+      | _, isFalse ht => isFalse fun proof => by cases proof; contradiction
+  | _, .mapNil => isTrue .mapNil
+  | _, .mapCons key value tail =>
+      match reasonableDecidable key, reasonableDecidable value,
+          reasonableDecidable tail with
+      | isTrue hk, isTrue hv, isTrue ht =>
+          isTrue (.mapCons key value tail hk hv ht)
+      | isFalse hk, _, _ => isFalse fun proof => by cases proof; contradiction
+      | _, isFalse hv, _ => isFalse fun proof => by cases proof; contradiction
+      | _, _, isFalse ht => isFalse fun proof => by cases proof; contradiction
+
+instance {i : CborIx} (value : CborSyn i) : Decidable (Reasonable value) :=
+  reasonableDecidable value
 
 end CborSyn
 
