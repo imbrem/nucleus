@@ -16,12 +16,11 @@ namespace Nucleus.HolLN.Intrinsic
 universe u
 
 abbrev ClosedChecked (Base : Type u) (A : Ty Base) :=
-  Checked (emptyContext : FreeCtx Base) (emptyBound : BoundCtx Base 0) A
+  Checked (emptyBound : BoundCtx Base 0) A
 
 def ProvablyEq {Base : Type u} {A : Ty Base}
     (left right : ClosedChecked Base A) : Prop :=
-  Nonempty (Nucleus.HolLN.EqTm (emptyContext : FreeCtx Base)
-    (emptyBound : BoundCtx Base 0) left.term right.term A)
+  Nonempty (Nucleus.HolLN.EqTm (emptyBound : BoundCtx Base 0) left.term right.term A)
 
 instance termSetoid (Base : Type u) (A : Ty Base) : Setoid (ClosedChecked Base A) where
   r := ProvablyEq
@@ -45,15 +44,13 @@ def quoteNat {Base : Type u} (value : Nat) : NatTermModel Base :=
   Quotient.mk _ (Checked.natural value)
 
 private theorem evalBoolLiteral {Base : Type u} (value : Bool) :
-    Eval (emptyContext : FreeCtx Base) (emptyBound : BoundCtx Base 0)
-      emptyFreeEnv emptyBoundEnv
-      (Checked.boolean (Δ := emptyContext) (Γ := emptyBound) value).term .boolTy value :=
+    Eval (emptyBound : BoundCtx Base 0) defaultFreeEnv emptyBoundEnv
+      (Checked.boolean (Γ := emptyBound) value).term .boolTy value :=
   .boolean value
 
 private theorem evalNatLiteral {Base : Type u} : (value : Nat) ->
-    Eval (emptyContext : FreeCtx Base) (emptyBound : BoundCtx Base 0)
-      emptyFreeEnv emptyBoundEnv
-      (Checked.natural (Δ := emptyContext) (Γ := emptyBound) value).term .natTy value
+    Eval (emptyBound : BoundCtx Base 0) defaultFreeEnv emptyBoundEnv
+      (Checked.natural (Γ := emptyBound) value).term .natTy value
   | 0 => .naturalZero
   | n + 1 => .naturalSucc (evalNatLiteral n)
 
@@ -61,14 +58,14 @@ theorem quoteBool_injective {Base : Type u} :
     Function.Injective (@quoteBool Base) := by
   intro left right equality
   obtain ⟨proof⟩ := Quotient.exact equality
-  exact proof.sound emptyFreeEnv emptyBoundEnv
+  exact proof.sound defaultFreeEnv emptyBoundEnv
     (evalBoolLiteral left) (evalBoolLiteral right)
 
 theorem quoteNat_injective {Base : Type u} :
     Function.Injective (@quoteNat Base) := by
   intro left right equality
   obtain ⟨proof⟩ := Quotient.exact equality
-  exact proof.sound emptyFreeEnv emptyBoundEnv
+  exact proof.sound defaultFreeEnv emptyBoundEnv
     (evalNatLiteral left) (evalNatLiteral right)
 
 /-- The part of the Boolean term model represented by Boolean literals. -/

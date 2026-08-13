@@ -18,7 +18,7 @@ def liftRen {m n : Nat} (ρ : Fin m -> Fin n) : Fin (m + 1) -> Fin (n + 1) :=
 
 def rename {Base : Type u} {m n : Nat} (ρ : Fin m -> Fin n) : Tm Base m -> Tm Base n
   | .bound i => .bound (ρ i)
-  | .free a => .free a
+  | .free name A => .free name A
   | .app f x => .app (rename ρ f) (rename ρ x)
   | .lam A body => .lam A (rename (liftRen ρ) body)
   | .bool b => .bool b
@@ -40,7 +40,7 @@ def FreeIn {Base : Type u} (name : Nat) : {s : HolSort} -> {n : Nat} ->
   | _, _, .arr A B => FreeIn name A ∨ FreeIn name B
   | _, _, .sub A p => FreeIn name A ∨ FreeIn name p
   | _, _, .bound _ => False
-  | _, _, .free a => a = name
+  | _, _, .free freeName A => freeName = name ∨ FreeIn name A
   | _, _, .app f x => FreeIn name f ∨ FreeIn name x
   | _, _, .lam A body => FreeIn name A ∨ FreeIn name body
   | _, _, .bool _ => False
@@ -59,7 +59,7 @@ theorem freeIn_rename_iff {Base : Type u} (name : Nat) {m n : Nat}
     (ρ : Fin m -> Fin n) : (term : Tm Base m) ->
       FreeIn name (rename ρ term) ↔ FreeIn name term
   | .bound i => by simp [rename, FreeIn]
-  | .free other => by simp [rename, FreeIn]
+  | .free other A => by simp [rename, FreeIn]
   | .app f x => by
       simp [rename, FreeIn, freeIn_rename_iff name ρ f, freeIn_rename_iff name ρ x]
   | .lam A body => by
@@ -88,7 +88,7 @@ theorem fresh_weaken_iff {Base : Type u} (name : Nat) {n : Nat} (term : Tm Base 
 
 def RequiredDepth {Base : Type u} : {n : Nat} -> Tm Base n -> Nat
   | _, .bound i => i.val + 1
-  | _, .free _ => 0
+  | _, .free _ _ => 0
   | _, .app f x => max (RequiredDepth f) (RequiredDepth x)
   | _, .lam _ body => (RequiredDepth body).pred
   | _, .bool _ => 0
@@ -104,7 +104,7 @@ def ScopedAt {Base : Type u} (depth : Nat) {n : Nat} (term : Tm Base n) : Prop :
 
 def RecursiveScopedAt {Base : Type u} (depth : Nat) : {n : Nat} -> Tm Base n -> Prop
   | _, .bound i => i.val < depth
-  | _, .free _ => True
+  | _, .free _ _ => True
   | _, .app f x => RecursiveScopedAt depth f ∧ RecursiveScopedAt depth x
   | _, .lam _ body => RecursiveScopedAt (depth + 1) body
   | _, .bool _ => True
@@ -118,7 +118,7 @@ def RecursiveScopedAt {Base : Type u} (depth : Nat) : {n : Nat} -> Tm Base n -> 
 theorem requiredDepth_le_index {Base : Type u} : {n : Nat} -> (t : Tm Base n) ->
     RequiredDepth t ≤ n
   | _, .bound i => by simpa [RequiredDepth] using Nat.succ_le_of_lt i.isLt
-  | _, .free _ => by simp [RequiredDepth]
+  | _, .free _ _ => by simp [RequiredDepth]
   | _, .app f x => by
       simp only [RequiredDepth]
       exact Nat.max_le.mpr ⟨requiredDepth_le_index f, requiredDepth_le_index x⟩
@@ -143,7 +143,7 @@ theorem recursiveScopedAt_iff {Base : Type u} (depth : Nat) :
     {n : Nat} -> (t : Tm Base n) ->
     RecursiveScopedAt depth t ↔ ScopedAt depth t
   | _, .bound i => by simp [RecursiveScopedAt, ScopedAt, RequiredDepth, Nat.succ_le_iff]
-  | _, .free _ => by simp [RecursiveScopedAt, ScopedAt, RequiredDepth]
+  | _, .free _ _ => by simp [RecursiveScopedAt, ScopedAt, RequiredDepth]
   | _, .app f x => by
       simp [RecursiveScopedAt, ScopedAt, RequiredDepth, recursiveScopedAt_iff depth f,
         recursiveScopedAt_iff depth x, Nat.max_le]

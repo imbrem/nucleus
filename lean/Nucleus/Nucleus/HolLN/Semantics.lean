@@ -24,7 +24,7 @@ def DenoteHol {Base : Type u} : {sort : HolSort} -> {depth : Nat} ->
   | _, _, .arr A B => DenoteHol A -> DenoteHol B
   | _, _, .sub A _ => DenoteHol A
   | _, _, .bound _ => Unit
-  | _, _, .free _ => Unit
+  | _, _, .free _ _ => Unit
   | _, _, .app _ _ => Unit
   | _, _, .lam _ _ => Unit
   | _, _, .bool _ => Unit
@@ -54,8 +54,8 @@ def defaultValue {Base : Type u} : (A : Ty Base) -> DenoteTy A
   | .arr _ B => by change DenoteTy _ -> DenoteTy B; exact fun _ => defaultValue B
   | .sub A _ => by change DenoteTy A; exact defaultValue A
 
-abbrev FreeEnv {Base : Type u} (Δ : FreeCtx Base) :=
-  ∀ (name : Nat) (A : Ty Base), Δ name = some A -> DenoteTy A
+abbrev FreeEnv (Base : Type u) :=
+  ∀ (_name : Nat) (A : Ty Base), DenoteTy A
 
 abbrev BoundEnv {Base : Type u} {depth : Nat} (Γ : BoundCtx Base depth) :=
   ∀ (i : Fin depth) (A : Ty Base), Γ i = A -> DenoteTy A
@@ -114,79 +114,79 @@ theorem infinite_ind_model {Base : Type u} :
     obtain ⟨x, equality⟩ := surjective (@natZero Base)
     exact natZero_ne_natSucc x equality.symm
 
-inductive Eval {Base : Type u} (Δ : FreeCtx Base) :
+inductive Eval {Base : Type u} :
     {depth : Nat} -> (Γ : BoundCtx Base depth) ->
-    FreeEnv Δ -> BoundEnv Γ ->
+    FreeEnv Base -> BoundEnv Γ ->
     (t : Tm Base depth) -> (A : Ty Base) -> DenoteTy A -> Prop where
   | bound {depth : Nat} {Γ : BoundCtx Base depth} {A : Ty Base} {i : Fin depth}
-      (freeEnv : FreeEnv Δ) (boundEnv : BoundEnv Γ) (hA : Kinded A)
+      (freeEnv : FreeEnv Base) (boundEnv : BoundEnv Γ) (hA : Kinded A)
       (lookup : Γ i = A) :
-      Eval Δ Γ freeEnv boundEnv (.bound i) A (boundEnv i A lookup)
+      Eval Γ freeEnv boundEnv (.bound i) A (boundEnv i A lookup)
   | free {depth : Nat} {Γ : BoundCtx Base depth} {A : Ty Base} (name : Nat)
-      (freeEnv : FreeEnv Δ) (boundEnv : BoundEnv Γ)
-      (hA : Kinded A) (lookup : Δ name = some A) :
-      Eval Δ Γ freeEnv boundEnv (.free name) A (freeEnv name A lookup)
-  | app {depth : Nat} {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Δ}
+      (freeEnv : FreeEnv Base) (boundEnv : BoundEnv Γ)
+      (hA : Kinded A) :
+      Eval Γ freeEnv boundEnv (.free name A) A (freeEnv name A)
+  | app {depth : Nat} {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Base}
       {boundEnv : BoundEnv Γ} {A B : Ty Base} {f x : Tm Base depth}
       {function : DenoteTy (.arr A B)} {argument : DenoteTy A} :
-      Eval Δ Γ freeEnv boundEnv f (.arr A B) function ->
-      Eval Δ Γ freeEnv boundEnv x A argument ->
-      Eval Δ Γ freeEnv boundEnv (.app f x) B (function argument)
-  | lam {depth : Nat} {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Δ}
+      Eval Γ freeEnv boundEnv f (.arr A B) function ->
+      Eval Γ freeEnv boundEnv x A argument ->
+      Eval Γ freeEnv boundEnv (.app f x) B (function argument)
+  | lam {depth : Nat} {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Base}
       {boundEnv : BoundEnv Γ} {A B : Ty Base} {body : Tm Base (depth + 1)}
       {function : DenoteTy (.arr A B)} :
-      (hA : Kinded A) -> (∀ argument, Eval Δ (extendBound A Γ) freeEnv
+      (hA : Kinded A) -> (∀ argument, Eval (extendBound A Γ) freeEnv
       (extendBoundEnv argument boundEnv) body B (function argument)) ->
-      Eval Δ Γ freeEnv boundEnv (.lam A body) (.arr A B) function
-  | boolean {depth : Nat} {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Δ}
+      Eval Γ freeEnv boundEnv (.lam A body) (.arr A B) function
+  | boolean {depth : Nat} {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Base}
       {boundEnv : BoundEnv Γ} (literal : Bool) :
-      Eval Δ Γ freeEnv boundEnv (.bool literal) .boolTy literal
-  | naturalZero {depth : Nat} {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Δ}
+      Eval Γ freeEnv boundEnv (.bool literal) .boolTy literal
+  | naturalZero {depth : Nat} {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Base}
       {boundEnv : BoundEnv Γ} :
-      Eval Δ Γ freeEnv boundEnv .zero .natTy natZero
-  | naturalSucc {depth : Nat} {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Δ}
+      Eval Γ freeEnv boundEnv .zero .natTy natZero
+  | naturalSucc {depth : Nat} {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Base}
       {boundEnv : BoundEnv Γ} {x : Tm Base depth}
       {value : DenoteTy (.natTy : Ty Base)} :
-      Eval Δ Γ freeEnv boundEnv x .natTy value ->
-      Eval Δ Γ freeEnv boundEnv (.succ x) .natTy (natSucc value)
-  | eqTrue {depth : Nat} {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Δ}
+      Eval Γ freeEnv boundEnv x .natTy value ->
+      Eval Γ freeEnv boundEnv (.succ x) .natTy (natSucc value)
+  | eqTrue {depth : Nat} {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Base}
       {boundEnv : BoundEnv Γ} {A : Ty Base} {x y : Tm Base depth}
       {left right : DenoteTy A}
-      (hA : Kinded A) (hleft : Eval Δ Γ freeEnv boundEnv x A left)
-      (hright : Eval Δ Γ freeEnv boundEnv y A right) (equal : left = right) :
-      Eval Δ Γ freeEnv boundEnv (.eq A x y) .boolTy true
-  | eqFalse {depth : Nat} {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Δ}
+      (hA : Kinded A) (hleft : Eval Γ freeEnv boundEnv x A left)
+      (hright : Eval Γ freeEnv boundEnv y A right) (equal : left = right) :
+      Eval Γ freeEnv boundEnv (.eq A x y) .boolTy true
+  | eqFalse {depth : Nat} {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Base}
       {boundEnv : BoundEnv Γ} {A : Ty Base} {x y : Tm Base depth}
       {left right : DenoteTy A}
-      (hA : Kinded A) (hleft : Eval Δ Γ freeEnv boundEnv x A left)
-      (hright : Eval Δ Γ freeEnv boundEnv y A right) (notEqual : left ≠ right) :
-      Eval Δ Γ freeEnv boundEnv (.eq A x y) .boolTy false
-  | eps {depth : Nat} {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Δ}
+      (hA : Kinded A) (hleft : Eval Γ freeEnv boundEnv x A left)
+      (hright : Eval Γ freeEnv boundEnv y A right) (notEqual : left ≠ right) :
+      Eval Γ freeEnv boundEnv (.eq A x y) .boolTy false
+  | eps {depth : Nat} {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Base}
       {boundEnv : BoundEnv Γ} {A : Ty Base} {p : Tm Base depth}
       {predicate : DenoteTy A -> Bool}
-      (hA : Kinded A) (hp : Eval Δ Γ freeEnv boundEnv p (.arr A .boolTy) predicate) :
-      Eval Δ Γ freeEnv boundEnv (.eps A p) A (chooseValue A predicate)
-  | abs {depth : Nat} {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Δ}
+      (hA : Kinded A) (hp : Eval Γ freeEnv boundEnv p (.arr A .boolTy) predicate) :
+      Eval Γ freeEnv boundEnv (.eps A p) A (chooseValue A predicate)
+  | abs {depth : Nat} {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Base}
       {boundEnv : BoundEnv Γ} {A : Ty Base} {p : Tm Base 1} {x : Tm Base depth}
       {value : DenoteTy A} (hA : Kinded A)
-      (hp : HasType emptyContext (extendBound A emptyBound) p .boolTy)
-      (hx : Eval Δ Γ freeEnv boundEnv x A value) :
-      Eval Δ Γ freeEnv boundEnv (.abs A p x) (.sub A p) value
-  | rep {depth : Nat} {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Δ}
+      (hp : HasType (extendBound A emptyBound) p .boolTy)
+      (hx : Eval Γ freeEnv boundEnv x A value) :
+      Eval Γ freeEnv boundEnv (.abs A p x) (.sub A p) value
+  | rep {depth : Nat} {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Base}
       {boundEnv : BoundEnv Γ} {A : Ty Base} {p : Tm Base 1} {x : Tm Base depth}
       {value : DenoteTy A} (hA : Kinded A)
-      (hp : HasType emptyContext (extendBound A emptyBound) p .boolTy)
-      (hx : Eval Δ Γ freeEnv boundEnv x (.sub A p) value) :
-      Eval Δ Γ freeEnv boundEnv (.rep A p x) A value
+      (hp : HasType (extendBound A emptyBound) p .boolTy)
+      (hx : Eval Γ freeEnv boundEnv x (.sub A p) value) :
+      Eval Γ freeEnv boundEnv (.rep A p x) A value
 
-theorem HasType.eval_exists {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
+theorem HasType.eval_exists {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} {t : Tm Base depth} {A : Ty Base}
-    (typing : HasType Δ Γ t A) (freeEnv : FreeEnv Δ) (boundEnv : BoundEnv Γ) :
-    ∃ value, Eval Δ Γ freeEnv boundEnv t A value := by
+    (typing : HasType Γ t A) (freeEnv : FreeEnv Base) (boundEnv : BoundEnv Γ) :
+    ∃ value, Eval Γ freeEnv boundEnv t A value := by
   classical
   cases typing with
   | bound hA lookup => exact ⟨_, .bound freeEnv boundEnv hA lookup⟩
-  | free name hA lookup => exact ⟨_, .free name freeEnv boundEnv hA lookup⟩
+  | free name hA => exact ⟨_, .free name freeEnv boundEnv hA⟩
   | app hf hx =>
       obtain ⟨function, hfunction⟩ := hf.eval_exists freeEnv boundEnv
       obtain ⟨argument, hargument⟩ := hx.eval_exists freeEnv boundEnv
@@ -220,25 +220,25 @@ theorem HasType.eval_exists {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
       obtain ⟨value, hvalue⟩ := hx.eval_exists freeEnv boundEnv
       exact ⟨value, .rep hA hp hvalue⟩
 
-noncomputable def HasType.value {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
+noncomputable def HasType.value {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} {t : Tm Base depth} {A : Ty Base}
-    (typing : HasType Δ Γ t A) (freeEnv : FreeEnv Δ) (boundEnv : BoundEnv Γ) :
+    (typing : HasType Γ t A) (freeEnv : FreeEnv Base) (boundEnv : BoundEnv Γ) :
     DenoteTy A :=
   Classical.choose (typing.eval_exists freeEnv boundEnv)
 
-theorem HasType.value_spec {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
+theorem HasType.value_spec {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} {t : Tm Base depth} {A : Ty Base}
-    (typing : HasType Δ Γ t A) (freeEnv : FreeEnv Δ) (boundEnv : BoundEnv Γ) :
-    Eval Δ Γ freeEnv boundEnv t A (typing.value freeEnv boundEnv) :=
+    (typing : HasType Γ t A) (freeEnv : FreeEnv Base) (boundEnv : BoundEnv Γ) :
+    Eval Γ freeEnv boundEnv t A (typing.value freeEnv boundEnv) :=
   Classical.choose_spec (typing.eval_exists freeEnv boundEnv)
 
-theorem Eval.typing {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
-    {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Δ} {boundEnv : BoundEnv Γ}
+theorem Eval.typing {Base : Type u} {depth : Nat}
+    {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Base} {boundEnv : BoundEnv Γ}
     {t : Tm Base depth} {A : Ty Base} {value : DenoteTy A}
-    (evaluation : Eval Δ Γ freeEnv boundEnv t A value) : HasType Δ Γ t A := by
+    (evaluation : Eval Γ freeEnv boundEnv t A value) : HasType Γ t A := by
   induction evaluation with
   | bound _ _ hA lookup => exact .bound hA lookup
-  | free name _ _ hA lookup => exact .free name hA lookup
+  | free name _ _ hA => exact .free name hA
   | app _ _ ihf ihx => exact .app ihf ihx
   | lam hA _ ih => exact .lam _ hA (ih (defaultValue _))
   | boolean literal => exact .bool literal
@@ -254,11 +254,11 @@ set_option maxHeartbeats 1000000 in
 -- Dependent elimination over two relational evaluations generates a large proof term.
 set_option maxRecDepth 2000 in
 /-- The relational interpretation is deterministic. -/
-theorem Eval.unique {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
-    {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Δ} {boundEnv : BoundEnv Γ}
+theorem Eval.unique {Base : Type u} {depth : Nat}
+    {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Base} {boundEnv : BoundEnv Γ}
     {t : Tm Base depth} {A : Ty Base} {firstValue secondValue : DenoteTy A}
-    (first : Eval Δ Γ freeEnv boundEnv t A firstValue)
-    (second : Eval Δ Γ freeEnv boundEnv t A secondValue) :
+    (first : Eval Γ freeEnv boundEnv t A firstValue)
+    (second : Eval Γ freeEnv boundEnv t A secondValue) :
     firstValue = secondValue := by
   cases first with
   | bound => cases second; rfl
@@ -310,30 +310,30 @@ theorem Eval.unique {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
       cases second with
       | rep _ _ hx' => exact hx.unique hx'
 
-theorem Eval.eq_value {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
-    {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Δ} {boundEnv : BoundEnv Γ}
+theorem Eval.eq_value {Base : Type u} {depth : Nat}
+    {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Base} {boundEnv : BoundEnv Γ}
     {t : Tm Base depth} {A : Ty Base} {value : DenoteTy A}
-    (evaluation : Eval Δ Γ freeEnv boundEnv t A value)
-    (typing : HasType Δ Γ t A) :
+    (evaluation : Eval Γ freeEnv boundEnv t A value)
+    (typing : HasType Γ t A) :
     value = typing.value freeEnv boundEnv :=
   evaluation.unique (typing.value_spec freeEnv boundEnv)
 
-theorem Eval.app_inv {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
-    {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Δ} {boundEnv : BoundEnv Γ}
+theorem Eval.app_inv {Base : Type u} {depth : Nat}
+    {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Base} {boundEnv : BoundEnv Γ}
     {f x : Tm Base depth} {B : Ty Base} {value : DenoteTy B}
-    (evaluation : Eval Δ Γ freeEnv boundEnv (.app f x) B value) :
+    (evaluation : Eval Γ freeEnv boundEnv (.app f x) B value) :
     ∃ (A : Ty Base) (function : DenoteTy (.arr A B)) (argument : DenoteTy A),
-      Eval Δ Γ freeEnv boundEnv f (.arr A B) function ∧
-      Eval Δ Γ freeEnv boundEnv x A argument ∧ value = function argument := by
+      Eval Γ freeEnv boundEnv f (.arr A B) function ∧
+      Eval Γ freeEnv boundEnv x A argument ∧ value = function argument := by
   cases evaluation with
   | app hfunction hargument => exact ⟨_, _, _, hfunction, hargument, rfl⟩
 
-theorem Eval.eq_true_inv {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
-    {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Δ} {boundEnv : BoundEnv Γ}
+theorem Eval.eq_true_inv {Base : Type u} {depth : Nat}
+    {Γ : BoundCtx Base depth} {freeEnv : FreeEnv Base} {boundEnv : BoundEnv Γ}
     {A : Ty Base} {x y : Tm Base depth}
-    (evaluation : Eval Δ Γ freeEnv boundEnv (.eq A x y) .boolTy true) :
-    ∃ (left right : DenoteTy A), Eval Δ Γ freeEnv boundEnv x A left ∧
-      Eval Δ Γ freeEnv boundEnv y A right ∧ left = right := by
+    (evaluation : Eval Γ freeEnv boundEnv (.eq A x y) .boolTy true) :
+    ∃ (left right : DenoteTy A), Eval Γ freeEnv boundEnv x A left ∧
+      Eval Γ freeEnv boundEnv y A right ∧ left = right := by
   cases evaluation with
   | eqTrue _ hleft hright equal => exact ⟨_, _, hleft, hright, equal⟩
 
@@ -360,15 +360,15 @@ theorem liftRen_env {Base : Type u} {m n : Nat} {Γ : BoundCtx Base m}
     exact environments j B lookup
 
 set_option maxRecDepth 2000 in
-theorem Eval.rename {Base : Type u} {Δ : FreeCtx Base} {m : Nat}
-    {Γ : BoundCtx Base m} {freeEnv : FreeEnv Δ} {source : BoundEnv Γ}
+theorem Eval.rename {Base : Type u} {m : Nat}
+    {Γ : BoundCtx Base m} {freeEnv : FreeEnv Base} {source : BoundEnv Γ}
     {t : Tm Base m} {A : Ty Base} {value : DenoteTy A}
-    (evaluation : Eval Δ Γ freeEnv source t A value) :
+    (evaluation : Eval Γ freeEnv source t A value) :
     ∀ {n : Nat} {Γ' : BoundCtx Base n} {ρ : Fin m -> Fin n}
       {target : BoundEnv Γ'},
       (relation : ContextRenaming Γ Γ' ρ) ->
       EnvRenaming relation source target ->
-      Eval Δ Γ' freeEnv target (Nucleus.HolLN.rename ρ t) A value := by
+      Eval Γ' freeEnv target (Nucleus.HolLN.rename ρ t) A value := by
   induction evaluation with
   | bound sourceFree sourceBound hA lookup =>
       intro n Γ' ρ target relation environments
@@ -376,10 +376,10 @@ theorem Eval.rename {Base : Type u} {Δ : FreeCtx Base} {m : Nat}
       let lookup' := (relation i).trans lookup
       have values := environments i _ lookup
       simpa [Nucleus.HolLN.rename, values] using
-        Eval.bound (Δ := Δ) sourceFree target hA lookup'
-  | free name sourceFree sourceBound hA lookup =>
+        Eval.bound sourceFree target hA lookup'
+  | free name sourceFree sourceBound hA =>
       intro n Γ' ρ target relation environments
-      simpa [Nucleus.HolLN.rename] using Eval.free name sourceFree target hA lookup
+      simpa [Nucleus.HolLN.rename] using Eval.free name sourceFree target hA
   | app hfunction hargument ihfunction ihargument =>
       intro n Γ' ρ target relation environments
       simpa [Nucleus.HolLN.rename] using
@@ -418,17 +418,17 @@ theorem Eval.rename {Base : Type u} {Δ : FreeCtx Base} {m : Nat}
       intro n Γ' ρ target relation environments
       simpa [Nucleus.HolLN.rename] using Eval.rep hA hp (ih relation environments)
 
-def EnvSubstitution {Base : Type u} {Δ : FreeCtx Base} {m n : Nat}
+def EnvSubstitution {Base : Type u} {m n : Nat}
     (sourceContext : BoundCtx Base m) (targetContext : BoundCtx Base n)
-    (σ : Fin m -> Tm Base n) (freeEnv : FreeEnv Δ)
+    (σ : Fin m -> Tm Base n) (freeEnv : FreeEnv Base)
     (sourceEnv : BoundEnv sourceContext) (targetEnv : BoundEnv targetContext) : Prop :=
   ∀ i, Kinded (sourceContext i) ->
-    Eval Δ targetContext freeEnv targetEnv (σ i) (sourceContext i)
+    Eval targetContext freeEnv targetEnv (σ i) (sourceContext i)
     (sourceEnv i (sourceContext i) rfl)
 
-theorem liftSub_env {Base : Type u} {Δ : FreeCtx Base} {m n : Nat}
+theorem liftSub_env {Base : Type u} {m n : Nat}
     {sourceContext : BoundCtx Base m} {targetContext : BoundCtx Base n}
-    {σ : Fin m -> Tm Base n} {freeEnv : FreeEnv Δ}
+    {σ : Fin m -> Tm Base n} {freeEnv : FreeEnv Base}
     {sourceEnv : BoundEnv sourceContext} {targetEnv : BoundEnv targetContext}
     (environments : EnvSubstitution sourceContext targetContext σ freeEnv sourceEnv targetEnv)
     {A : Ty Base} (hA : Kinded A) (argument : DenoteTy A) :
@@ -438,7 +438,7 @@ theorem liftSub_env {Base : Type u} {Δ : FreeCtx Base} {m n : Nat}
   intro i
   refine Fin.cases ?_ (fun j => ?_) i
   · intro hi
-    have evaluation := Eval.bound (Δ := Δ) freeEnv
+    have evaluation := Eval.bound freeEnv
       (extendBoundEnv argument targetEnv) hA
       (show extendBound A targetContext 0 = A from rfl)
     convert evaluation using 1 <;> rfl
@@ -454,15 +454,15 @@ theorem liftSub_env {Base : Type u} {Δ : FreeCtx Base} {m n : Nat}
 set_option maxHeartbeats 1000000 in
 -- Substitution traverses typing and evaluation derivations simultaneously.
 set_option maxRecDepth 2000 in
-theorem HasType.eval_instantiate {Base : Type u} {Δ : FreeCtx Base} {m : Nat}
-    {sourceContext : BoundCtx Base m} {freeEnv : FreeEnv Δ}
+theorem HasType.eval_instantiate {Base : Type u} {m : Nat}
+    {sourceContext : BoundCtx Base m} {freeEnv : FreeEnv Base}
     {sourceEnv : BoundEnv sourceContext} {t : Tm Base m} {A : Ty Base}
-    (typing : HasType Δ sourceContext t A) {value : DenoteTy A}
-    (evaluation : Eval Δ sourceContext freeEnv sourceEnv t A value) :
+    (typing : HasType sourceContext t A) {value : DenoteTy A}
+    (evaluation : Eval sourceContext freeEnv sourceEnv t A value) :
     ∀ {n : Nat} {targetContext : BoundCtx Base n} {σ : Fin m -> Tm Base n}
       {targetEnv : BoundEnv targetContext},
       EnvSubstitution sourceContext targetContext σ freeEnv sourceEnv targetEnv ->
-      Eval Δ targetContext freeEnv targetEnv (Nucleus.HolLN.instantiate σ t) A value := by
+      Eval targetContext freeEnv targetEnv (Nucleus.HolLN.instantiate σ t) A value := by
   cases typing with
   | bound hA lookup =>
       intro n targetContext σ targetEnv environments
@@ -472,11 +472,11 @@ theorem HasType.eval_instantiate {Base : Type u} {Δ : FreeCtx Base} {m : Nat}
       have result := environments i hi
       cases lookup
       simpa [Nucleus.HolLN.instantiate] using result
-  | free name hA lookup =>
+  | free name hA =>
       intro n targetContext σ targetEnv environments
       cases evaluation
       simpa [Nucleus.HolLN.instantiate] using
-        Eval.free name freeEnv targetEnv hA lookup
+        Eval.free name freeEnv targetEnv hA
   | app hf hx =>
       intro n targetContext σ targetEnv environments
       cases evaluation with
@@ -545,9 +545,8 @@ theorem HasType.eval_instantiate {Base : Type u} {Δ : FreeCtx Base} {m : Nat}
           simp only [Nucleus.HolLN.instantiate]
           exact .rep hA hp (hx.eval_instantiate hvalue environments)
 
-def emptyFreeEnv {Base : Type u} : FreeEnv (emptyContext : FreeCtx Base) := by
-  intro name A impossible
-  contradiction
+def defaultFreeEnv {Base : Type u} : FreeEnv Base :=
+  fun _ A => defaultValue A
 
 def emptyBoundEnv {Base : Type u} : BoundEnv (emptyBound : BoundCtx Base 0) := by
   intro i A lookup

@@ -150,9 +150,10 @@ def encodeWith (schema : Schema) : {sort : HolSort} → {depth : Nat} →
   | _, _, .bound index =>
       tagged schema schema.tags.tmBound
         (field schema.fields.index (nat index) .objNil)
-  | _, _, .free name =>
+  | _, _, .free name type =>
       tagged schema schema.tags.tmFree
-        (field schema.fields.name (nat name) .objNil)
+        (field schema.fields.name (nat name)
+          (field schema.fields.type (encodeWith schema type) .objNil))
   | _, _, .app function argument =>
       tagged schema schema.tags.tmApp
         (field schema.fields.function (encodeWith schema function)
@@ -236,8 +237,10 @@ def decodeOpenWith (schema : Schema) (sort : HolSort) (depth : Nat) :
           | _ => none
         else if tag = schema.tags.tmFree then
           match fields with
-          | .objCons key (.scalar (.nat name)) .objNil =>
-              if key = schema.fields.name then some (.free name) else none
+          | .objCons first (.scalar (.nat name)) (.objCons second type .objNil) =>
+              if first = schema.fields.name ∧ second = schema.fields.type then
+                return .free name (← decodeOpenWith schema .ty 0 type)
+              else none
           | _ => none
         else if tag = schema.tags.tmApp then
           match fields with
@@ -354,9 +357,27 @@ def decodeTm (json : Tree Base) : Option (ClosedTm Base) := decodeTmWith Schema.
     simp only [decodeOpen, encode, Schema.v0] at ih
     rw [ih]
     rw [if_pos rfl]
+  case app function argument function_ih argument_ih =>
+    simp only [decodeOpen, encode, Schema.v0] at function_ih argument_ih
+    simp only [decodeOpen, encode, Schema.v0, encodeWith, tagged, field, string]
+    unfold decodeOpenWith
+    dsimp only [Schema.v0]
+    simp [function_ih, argument_ih]
+  case lam domain body domain_ih body_ih =>
+    simp only [decodeOpen, encode, Schema.v0] at domain_ih body_ih
+    simp only [decodeOpen, encode, Schema.v0, encodeWith, tagged, field, string]
+    unfold decodeOpenWith
+    dsimp only [Schema.v0]
+    simp [domain_ih, body_ih]
+  case eps type predicate type_ih predicate_ih =>
+    simp only [decodeOpen, encode, Schema.v0] at type_ih predicate_ih
+    simp only [decodeOpen, encode, Schema.v0, encodeWith, tagged, field, string]
+    unfold decodeOpenWith
+    dsimp only [Schema.v0]
+    simp [type_ih, predicate_ih]
   all_goals
     simp_all [decodeOpen, encode, Schema.v0, encodeWith, tagged, field, string, nat,
-      bool, base, decodeOpenWith]
+      bool, base, decodeOpenWith, Option.bind]
 
 /-- Closed-type round trip for the initial vocabulary. -/
 @[simp] theorem decodeTy_encode (type : Ty Base) : decodeTy (encode type) = some type :=

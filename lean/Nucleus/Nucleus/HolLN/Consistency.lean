@@ -14,19 +14,17 @@ universe u
 
 abbrev ClosedProves {Base : Type u} (hypotheses : List (ClosedTm Base))
     (conclusion : ClosedTm Base) : Type u :=
-  Proves (emptyContext : FreeCtx Base) (emptyBound : BoundCtx Base 0)
-    hypotheses conclusion
+  Proves (emptyBound : BoundCtx Base 0) hypotheses conclusion
 
 theorem empty_not_proves_false {Base : Type u} :
-    ¬ Nonempty (Proves (emptyContext : FreeCtx Base)
-      (emptyBound : BoundCtx Base 0) [] (.bool false)) := by
+    ¬ Nonempty (Proves (emptyBound : BoundCtx Base 0) [] (.bool false)) := by
   rintro ⟨proof⟩
-  have mustBeTrue := proof.sound (emptyFreeEnv : FreeEnv (emptyContext : FreeCtx Base))
+  have mustBeTrue := proof.sound (defaultFreeEnv : FreeEnv Base)
     (emptyBoundEnv : BoundEnv (emptyBound : BoundCtx Base 0)) (by
       intro p member
       contradiction)
-  have isFalse : Eval (emptyContext : FreeCtx Base) emptyBound emptyFreeEnv
-      emptyBoundEnv (.bool false) .boolTy false := .boolean false
+  have isFalse : Eval emptyBound defaultFreeEnv
+      emptyBoundEnv (.bool false : ClosedTm Base) .boolTy false := .boolean false
   exact Bool.noConfusion (mustBeTrue.unique isFalse)
 
 end Nucleus.HolLN
