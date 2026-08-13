@@ -33,6 +33,9 @@ impl Namespace for Git {
 }
 
 /// A traditional Git object name.
+///
+/// With the default `serde` feature, values use a DAG-JSON link containing a
+/// `CIDv1` with the `git-raw` codec and `sha1` multihash code.
 pub type GitHash = Obj<Git>;
 
 #[cfg(feature = "git-sha1")]

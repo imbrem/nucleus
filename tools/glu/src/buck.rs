@@ -511,6 +511,9 @@ fn generate_workspace(
 
     let mut files = Vec::new();
     for package in graph.workspace_packages() {
+        if !buck_builds(package) {
+            continue;
+        }
         let directory = package_directory(root, package)?;
         let buildscript = graph.workspace_buildscript(package);
         let targets = package
@@ -696,6 +699,11 @@ impl<'a> Graph<'a> {
         // Test targets only. A binary already links its package's library, so
         // giving the library a `$(location)` on that binary would be a cycle.
         let mut env = cargo_package_env(package);
+        // Cargo exposes the package directory to build-time code.
+        env.push((
+            "CARGO_MANIFEST_DIR".to_owned(),
+            "$(location :package_files)".to_owned(),
+        ));
         // What `include!(concat!(env!("OUT_DIR"), …))` reads. The rest of what
         // the script emitted arrives as `rustc_flags`, which the template adds
         // alongside this.
@@ -1149,6 +1157,34 @@ fn target_rule(target: &Target, external: bool) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+/// Whether Buck's Rust rules build this package, as opposed to cargo behind a
+/// `genrule`.
+///
+/// A package opts out with `[package.metadata.glu] buck = false`, and then gets
+/// no generated `BUCK` file at all: `//crates/...` stops naming it, and
+/// whichever artifact rule wants it compiles it through cargo. Two kinds of
+/// package need that, and the Python bindings are both:
+///
+/// - The output is not a Rust library. `rust_library` produces an rlib, so
+///   there is no rule here that emits a Python extension module.
+/// - A dependency's build script needs cargo's `links` metadata. Buck's prelude
+///   keeps only the directives it can turn into rustc arguments, so `pyo3`
+///   never receives the interpreter configuration `pyo3-ffi` computed, and
+///   restating it the way `LINKS_METADATA` does would mean reproducing another
+///   project's build script rather than pointing at a file.
+///
+/// Opting out costs the package Buck's caching and its `rust_test` targets, so
+/// it is worth doing only when one of those two applies. Cargo and Nix still
+/// build and test the package either way.
+fn buck_builds(package: &Package) -> bool {
+    package
+        .metadata
+        .get("glu")
+        .and_then(|glu| glu.get("buck"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(true)
 }
 
 fn is_library(target: &Target) -> bool {

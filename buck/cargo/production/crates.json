@@ -2,6 +2,37 @@
   "generatedBy": "glu 0.0.0",
   "crates": [
     {
+      "id": "workspace#covalence-bin-cas-serve@0.0.0",
+      "name": "covalence-bin-cas-serve",
+      "version": "0.0.0",
+      "path": "crates/bin/cas-serve",
+      "category": "product",
+      "targets": [
+        {
+          "name": "covalence-cas-serve",
+          "kinds": [
+            "bin"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-bin-cas-shell@0.0.0",
+      "name": "covalence-bin-cas-shell",
+      "version": "0.0.0",
+      "path": "crates/bin/cas-shell",
+      "category": "product",
+      "targets": [
+        {
+          "name": "covalence_bin_cas_shell",
+          "kinds": [
+            "cdylib",
+            "rlib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-bin-nucleus@0.0.0",
       "name": "covalence-bin-nucleus",
       "version": "0.0.0",
@@ -12,6 +43,28 @@
           "name": "nucleus",
           "kinds": [
             "bin"
+          ]
+        },
+        {
+          "name": "repl",
+          "kinds": [
+            "test"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-browser@0.0.0",
+      "name": "covalence-browser",
+      "version": "0.0.0",
+      "path": "crates/browser",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_browser",
+          "kinds": [
+            "cdylib",
+            "rlib"
           ]
         }
       ]
@@ -47,6 +100,27 @@
       ]
     },
     {
+      "id": "workspace#covalence-data-cas-http@0.0.0",
+      "name": "covalence-data-cas-http",
+      "version": "0.0.0",
+      "path": "crates/data/cas-http",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_data_cas_http",
+          "kinds": [
+            "lib"
+          ]
+        },
+        {
+          "name": "http",
+          "kinds": [
+            "test"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-data-container@0.0.0",
       "name": "covalence-data-container",
       "version": "0.0.0",
@@ -57,6 +131,22 @@
           "name": "covalence_data_container",
           "kinds": [
             "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-ffi-python@0.0.0",
+      "name": "covalence-ffi-python",
+      "version": "0.0.0",
+      "path": "crates/ffi/python",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_ffi_python",
+          "kinds": [
+            "cdylib",
+            "rlib"
           ]
         }
       ]
@@ -123,6 +213,27 @@
           "name": "covalence_lib_json",
           "kinds": [
             "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-lib-python@0.0.0",
+      "name": "covalence-lib-python",
+      "version": "0.0.0",
+      "path": "crates/lib/python",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_lib_python",
+          "kinds": [
+            "lib"
+          ]
+        },
+        {
+          "name": "extension",
+          "kinds": [
+            "test"
           ]
         }
       ]
@@ -223,12 +334,118 @@
           ]
         }
       ]
+    },
+    {
+      "id": "workspace#covalence-repl@0.0.0",
+      "name": "covalence-repl",
+      "version": "0.0.0",
+      "path": "crates/repl",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_repl",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
     }
   ],
   "edges": [
     {
+      "source": "workspace#covalence-bin-cas-serve@0.0.0",
+      "target": "workspace#covalence-data-cas-http@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-bin-cas-serve@0.0.0",
+      "target": "workspace#covalence-data-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-bin-cas-shell@0.0.0",
+      "target": "workspace#covalence-lib-sqlite@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "workspace#covalence-bin-nucleus@0.0.0",
-      "target": "workspace#covalence-nucleus@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-bin-nucleus@0.0.0",
+      "target": "workspace#covalence-lib-sqlite@0.0.0",
+      "kinds": [
+        "dev"
+      ]
+    },
+    {
+      "source": "workspace#covalence-bin-nucleus@0.0.0",
+      "target": "workspace#covalence-neutron@0.0.0",
+      "kinds": [
+        "dev"
+      ]
+    },
+    {
+      "source": "workspace#covalence-bin-nucleus@0.0.0",
+      "target": "workspace#covalence-repl@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-browser@0.0.0",
+      "target": "workspace#covalence-data-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-browser@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-browser@0.0.0",
+      "target": "workspace#covalence-lib-sqlite@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-browser@0.0.0",
+      "target": "workspace#covalence-neutron@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-browser@0.0.0",
+      "target": "workspace#covalence-repl@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-cas-http@0.0.0",
+      "target": "workspace#covalence-data-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-cas-http@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
       "kinds": [
         "normal"
       ]
@@ -236,6 +453,20 @@
     {
       "source": "workspace#covalence-data-cas@0.0.0",
       "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-ffi-python@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-ffi-python@0.0.0",
+      "target": "workspace#covalence-lib-python@0.0.0",
       "kinds": [
         "normal"
       ]
@@ -312,6 +543,34 @@
     },
     {
       "source": "workspace#covalence-nucleus@0.0.0",
+      "target": "workspace#covalence-neutron@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-repl@0.0.0",
+      "target": "workspace#covalence-data-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-repl@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-repl@0.0.0",
+      "target": "workspace#covalence-lib-sqlite@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-repl@0.0.0",
       "target": "workspace#covalence-neutron@0.0.0",
       "kinds": [
         "normal"

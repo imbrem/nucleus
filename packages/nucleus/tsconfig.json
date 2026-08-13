@@ -3,6 +3,7 @@
     "declaration": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
+    "lib": ["DOM", "ES2022", "ESNext.Disposable"],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "outDir": "dist",

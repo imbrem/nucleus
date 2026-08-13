@@ -1,0 +1,24 @@
+[package]
+name = "covalence-data-cas-http"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Read-only HTTP access to a content-addressed store"
+publish = false
+
+[dependencies]
+axum = "0.8"
+axum-extra = { version = "0.10", features = ["typed-header"] }
+bytes = "1"
+covalence-data-cas = { path = "../cas" }
+covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["blake3"] }
+headers = "0.4"
+tokio = { version = "1", features = ["net", "rt-multi-thread"] }
+tower-http = { version = "0.6", features = ["cors"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread"] }
+
+[lints]
+workspace = true
