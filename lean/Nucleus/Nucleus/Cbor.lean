@@ -7,6 +7,8 @@ import Nucleus.Cbor.Profiles
 import Nucleus.Cbor.Subsets
 import Nucleus.Cbor.Reasonable
 import Nucleus.Cbor.Dag
+import Nucleus.Cbor.Json
+import Nucleus.Cbor.Cas
 
 /-!
 # CBOR
