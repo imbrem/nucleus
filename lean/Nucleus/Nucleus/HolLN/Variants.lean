@@ -219,6 +219,11 @@ def checkUnindexedSort : (sort : HolSort) → Unindexed Base → Option (NoDepth
     checkUnindexedSort sort (noDepthToUnindexed x) = some x := by
   induction x <;> simp_all [noDepthToUnindexed, checkUnindexedSort]
 
+theorem noDepthToUnindexed_injective :
+    Function.Injective (noDepthToUnindexed : NoDepth Base sort → Unindexed Base) :=
+  fun {x y} h => Option.some.inj (by
+    rw [← checkUnindexedSort_noDepth x, ← checkUnindexedSort_noDepth y, h])
+
 /-- The computable partial inverse of simultaneous sort and depth erasure. -/
 def checkUnindexed (sort : HolSort) (depth : Nat) (x : Unindexed Base) :
     Option (Hol Base sort depth) := do
@@ -234,6 +239,42 @@ theorem unindexed_injective :
     Function.Injective (unindexed : Hol Base sort depth → Unindexed Base) :=
   fun {x y} h => Option.some.inj (by
     rw [← checkUnindexed_unindexed x, ← checkUnindexed_unindexed y, h])
+
+/-- Computable partial inverse of the depth-indexed, sort-erased embedding. -/
+def checkUnindexedDepth (depth : Nat) (x : Unindexed Base) : Option (NoSort Base depth) :=
+  match x with
+  | .base n => if h : depth = 0 then by subst depth; exact some (.base n) else none
+  | .boolTy => if h : depth = 0 then by subst depth; exact some .boolTy else none
+  | .natTy => if h : depth = 0 then by subst depth; exact some .natTy else none
+  | .arr a b => if h : depth = 0 then by
+      subst depth; exact return .arr (← checkUnindexedDepth 0 a) (← checkUnindexedDepth 0 b)
+    else none
+  | .sub a p => if h : depth = 0 then by
+      subst depth; exact return .sub (← checkUnindexedDepth 0 a) (← checkUnindexedDepth 1 p)
+    else none
+  | .bound i => if h : i < depth then some (.bound ⟨i, h⟩) else none
+  | .free n => some (.free n)
+  | .app f x => return .app (← checkUnindexedDepth depth f) (← checkUnindexedDepth depth x)
+  | .lam a b => return .lam (← checkUnindexedDepth 0 a) (← checkUnindexedDepth (depth + 1) b)
+  | .bool b => some (.bool b) | .zero => some .zero
+  | .succ x => return .succ (← checkUnindexedDepth depth x)
+  | .eq a x y => return (NoSort.eq (← checkUnindexedDepth 0 a)
+      (← checkUnindexedDepth depth x) (← checkUnindexedDepth depth y))
+  | .eps a p => return .eps (← checkUnindexedDepth 0 a) (← checkUnindexedDepth depth p)
+  | .abs a p x => return (NoSort.abs (← checkUnindexedDepth 0 a)
+      (← checkUnindexedDepth 1 p) (← checkUnindexedDepth depth x))
+  | .rep a p x => return (NoSort.rep (← checkUnindexedDepth 0 a)
+      (← checkUnindexedDepth 1 p) (← checkUnindexedDepth depth x))
+  | .emptyCtx | .freeCtx .. | .boundCtx .. => none
+
+@[simp] theorem checkUnindexedDepth_noSort (x : NoSort Base depth) :
+    checkUnindexedDepth depth (noSortToUnindexed x) = some x := by
+  induction x <;> simp_all [checkUnindexedDepth, noSortToUnindexed]
+
+theorem noSortToUnindexed_injective :
+    Function.Injective (noSortToUnindexed : NoSort Base depth → Unindexed Base) :=
+  fun {x y} h => Option.some.inj (by
+    rw [← checkUnindexedDepth_noSort x, ← checkUnindexedDepth_noSort y, h])
 
 end Erasure
 
