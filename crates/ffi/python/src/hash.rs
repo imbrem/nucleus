@@ -94,7 +94,7 @@ fn exact<const BYTES: usize>(data: &[u8]) -> PyResult<[u8; BYTES]> {
 /// Ordering is bytewise and hashing agrees with equality, but both stop at the
 /// namespace boundary: comparing two namespaces is `False`, and ordering them
 /// against each other raises `TypeError`, however their bytes compare.
-#[pyclass(subclass, frozen, module = "covalence.hash", name = "Obj")]
+#[pyclass(subclass, frozen, module = "covalence.lib.hash", name = "Obj")]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 pub struct PyObj {
     /// Wide enough for every namespace, so a value costs no allocation.
@@ -204,7 +204,7 @@ macro_rules! object {
         #[pyclass(
             frozen,
             extends = PyObj,
-            module = "covalence.hash",
+            module = "covalence.lib.hash",
             name = $name,
             crate = "covalence_lib_python::pyo3"
         )]
@@ -523,7 +523,7 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
         // `create_exception!` accepts a Rust module identifier rather than a
         // dotted Python path. Publish the public location explicitly: the
         // native module is private and `covalence` no longer exports these.
-        exception.setattr("__module__", "covalence.hash")?;
+        exception.setattr("__module__", "covalence.lib.hash")?;
         module.add(name, exception)?;
     }
 
@@ -531,7 +531,7 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
         wrap_pyfunction!(git_object_name, module)?,
         wrap_pyfunction!(git_blob_name, module)?,
     ] {
-        function.setattr("__module__", "covalence.hash")?;
+        function.setattr("__module__", "covalence.lib.hash")?;
         module.add_function(function)?;
     }
 

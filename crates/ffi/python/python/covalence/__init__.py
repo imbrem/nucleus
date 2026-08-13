@@ -1,6 +1,6 @@
 """Python bindings for Covalence."""
 
-from . import hash
+from . import lib
 from ._covalence import __version__
 
-__all__ = ["hash", "__version__"]
+__all__ = ["lib", "__version__"]

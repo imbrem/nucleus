@@ -16,18 +16,20 @@ def test_package_imports_and_reports_a_version() -> None:
     assert covalence.__version__ == _covalence.__version__
 
 
-def test_hash_is_a_regular_public_submodule() -> None:
-    assert covalence.__all__ == ["hash", "__version__"]
-    assert covalence.hash.__name__ == "covalence.hash"
-    assert covalence.hash.O256 is _covalence.O256
+def test_hash_follows_its_crate_path() -> None:
+    assert covalence.__all__ == ["lib", "__version__"]
+    assert covalence.lib.__all__ == ["hash"]
+    assert covalence.lib.hash.__name__ == "covalence.lib.hash"
+    assert covalence.lib.hash.O256 is _covalence.O256
     assert not hasattr(covalence, "O256")
+    assert not hasattr(covalence, "hash")
 
 
 def test_hash_objects_report_their_public_module() -> None:
-    for name in covalence.hash.__all__:
-        value = getattr(covalence.hash, name)
+    for name in covalence.lib.hash.__all__:
+        value = getattr(covalence.lib.hash, name)
         if isinstance(value, type) or callable(value):
-            assert value.__module__ == "covalence.hash", name
+            assert value.__module__ == "covalence.lib.hash", name
 
 
 def test_compiled_module_is_the_one_inside_the_package() -> None:
@@ -40,12 +42,13 @@ def test_the_package_ships_typing_metadata() -> None:
     """`py.typed` is what makes the stubs visible to a type checker."""
     root = pathlib.Path(covalence.__path__[0])
     assert (root / "py.typed").is_file()
-    assert (root / "hash.py").is_file()
+    assert (root / "lib" / "__init__.py").is_file()
+    assert (root / "lib" / "hash.py").is_file()
     assert (root / "_covalence.pyi").is_file()
 
 
 def test_public_names_are_declared() -> None:
     for name in covalence.__all__:
         assert hasattr(covalence, name), name
-    for name in covalence.hash.__all__:
-        assert hasattr(covalence.hash, name), name
+    for name in covalence.lib.hash.__all__:
+        assert hasattr(covalence.lib.hash, name), name

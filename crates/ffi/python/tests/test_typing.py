@@ -11,7 +11,7 @@ import pathlib
 
 import covalence
 from covalence import _covalence
-from covalence import hash as public_hash
+from covalence.lib import hash as public_hash
 
 PACKAGE = pathlib.Path(covalence.__path__[0])
 STUB = ast.parse((PACKAGE / "_covalence.pyi").read_text())
