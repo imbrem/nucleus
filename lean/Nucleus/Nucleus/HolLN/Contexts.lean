@@ -107,6 +107,10 @@ def ProvesIn (Δ : FreeCtxS Base) (Γ : BoundCtxS Base depth)
   ∃ Δ₀ Γ₀, decodeFree Δ = some Δ₀ ∧ decodeBound Γ = some Γ₀ ∧
     Proves Δ₀.denote Γ₀.denote H p
 
+theorem HasTypeIn.sound (h : HasTypeIn Δ Γ t A) :
+    ∃ Δ₀ Γ₀, decodeFree Δ = some Δ₀ ∧ decodeBound Γ = some Γ₀ ∧
+      HasType Δ₀.denote Γ₀.denote t A := h
+
 theorem EqTmIn.sound (h : EqTmIn Δ Γ t u A) :
     ∃ Δ₀ Γ₀, decodeFree Δ = some Δ₀ ∧ decodeBound Γ = some Γ₀ ∧
       ∃ t₀ u₀ A₀, Nonempty (Nucleus.HolLN.EqTm Δ₀.denote Γ₀.denote t₀ u₀ A₀) ∧
@@ -171,6 +175,10 @@ def ProvesIn (Δ : FreeCtxS Base) (Γ : BoundCtxS Base depth)
   ∃ Δ₀ Γ₀, decodeFree Δ = some Δ₀ ∧ decodeBound Γ = some Γ₀ ∧
     Proves Δ₀.denote Γ₀.denote H p
 
+theorem HasTypeIn.sound (h : HasTypeIn Δ Γ t A) :
+    ∃ Δ₀ Γ₀, decodeFree Δ = some Δ₀ ∧ decodeBound Γ = some Γ₀ ∧
+      HasType Δ₀.denote Γ₀.denote t A := h
+
 theorem EqTmIn.sound (h : EqTmIn Δ Γ t u A) :
     ∃ Δ₀ Γ₀, decodeFree Δ = some Δ₀ ∧ decodeBound Γ = some Γ₀ ∧
       ∃ t₀ u₀ A₀, Nonempty (Nucleus.HolLN.EqTm Δ₀.denote Γ₀.denote t₀ u₀ A₀) ∧
@@ -234,6 +242,10 @@ def ProvesIn (Δ : FreeCtxS Base) (Γ : BoundCtxS Base depth)
     (H : List (Unindexed Base)) (p : Unindexed Base) : Prop :=
   ∃ Δ₀ Γ₀, decodeFree Δ = some Δ₀ ∧ decodeBound Γ = some Γ₀ ∧
     Proves Δ₀.denote Γ₀.denote H p
+
+theorem HasTypeIn.sound (h : HasTypeIn Δ Γ t A) :
+    ∃ Δ₀ Γ₀, decodeFree Δ = some Δ₀ ∧ decodeBound Γ = some Γ₀ ∧
+      HasType Δ₀.denote Γ₀.denote t A := h
 
 theorem EqTmIn.sound (h : EqTmIn Δ Γ t u A) :
     ∃ Δ₀ Γ₀, decodeFree Δ = some Δ₀ ∧ decodeBound Γ = some Γ₀ ∧
@@ -302,6 +314,10 @@ def ProvesFused (Δ Γ : Unindexed Base) (depth : Nat)
     (H : List (Unindexed Base)) (p : Unindexed Base) : Prop :=
   ∃ Δ₀ Γ₀, checkFree Δ = some Δ₀ ∧ checkBound depth Γ = some Γ₀ ∧
     ProvesIn Δ₀ Γ₀ H p
+
+theorem HasTypeFused.sound (h : HasTypeFused Δ Γ depth t A) :
+    ∃ Δ₀ Γ₀, checkFree Δ = some Δ₀ ∧ checkBound depth Γ = some Γ₀ ∧
+      HasTypeIn Δ₀ Γ₀ t A := h
 
 theorem EqTmFused.sound (h : EqTmFused Δ Γ depth t u A) :
     ∃ Δ₀ Γ₀, checkFree Δ = some Δ₀ ∧ checkBound depth Γ = some Γ₀ ∧

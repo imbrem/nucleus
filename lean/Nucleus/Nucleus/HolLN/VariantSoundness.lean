@@ -24,6 +24,13 @@ def Proves (Δ : FreeCtx Base) (Γ : BoundCtx Base depth)
   ∃ H₀ p₀, Nonempty (Nucleus.HolLN.Proves Δ Γ H₀ p₀) ∧
     H₀.map Erasure.noDepth = H ∧ Erasure.noDepth p₀ = p
 
+theorem HasType.sound (h : HasType Δ Γ t A) :
+    ∃ t₀ A₀, Nucleus.HolLN.HasType Δ Γ t₀ A₀ ∧ Erasure.noDepth t₀ = t ∧
+      Erasure.noDepth A₀ = A ∧ ∀ (freeEnv : FreeEnv Δ) (boundEnv : BoundEnv Γ),
+        ∃ value : DenoteTy A₀, Eval Δ Γ freeEnv boundEnv t₀ A₀ value := by
+  rcases h with ⟨t₀, A₀, typing, rfl, rfl⟩
+  exact ⟨t₀, A₀, typing, rfl, rfl, typing.eval_exists⟩
+
 theorem EqTm.sound (h : EqTm Δ Γ t u A) :
     ∃ t₀ u₀ A₀, Nonempty (Nucleus.HolLN.EqTm Δ Γ t₀ u₀ A₀) ∧
       Erasure.noDepth t₀ = t ∧ Erasure.noDepth u₀ = u ∧ Erasure.noDepth A₀ = A ∧
@@ -60,6 +67,13 @@ def Proves (Δ : FreeCtx Base) (Γ : BoundCtx Base depth)
   ∃ H₀ p₀, Nonempty (Nucleus.HolLN.Proves Δ Γ H₀ p₀) ∧
     H₀.map Erasure.noSort = H ∧ Erasure.noSort p₀ = p
 
+theorem HasType.sound (h : HasType Δ Γ t A) :
+    ∃ t₀ A₀, Nucleus.HolLN.HasType Δ Γ t₀ A₀ ∧ Erasure.noSort t₀ = t ∧
+      Erasure.noSort A₀ = A ∧ ∀ (freeEnv : FreeEnv Δ) (boundEnv : BoundEnv Γ),
+        ∃ value : DenoteTy A₀, Eval Δ Γ freeEnv boundEnv t₀ A₀ value := by
+  rcases h with ⟨t₀, A₀, typing, rfl, rfl⟩
+  exact ⟨t₀, A₀, typing, rfl, rfl, typing.eval_exists⟩
+
 theorem EqTm.sound (h : EqTm Δ Γ t u A) :
     ∃ t₀ u₀ A₀, Nonempty (Nucleus.HolLN.EqTm Δ Γ t₀ u₀ A₀) ∧
       Erasure.noSort t₀ = t ∧ Erasure.noSort u₀ = u ∧ Erasure.noSort A₀ = A ∧
@@ -94,6 +108,13 @@ def Proves (Δ : FreeCtx Base) (Γ : BoundCtx Base depth)
     (H : List (Unindexed Base)) (p : Unindexed Base) : Prop :=
   ∃ H₀ p₀, Nonempty (Nucleus.HolLN.Proves Δ Γ H₀ p₀) ∧
     H₀.map Erasure.unindexed = H ∧ Erasure.unindexed p₀ = p
+
+theorem HasType.sound (h : HasType Δ Γ t A) :
+    ∃ t₀ A₀, Nucleus.HolLN.HasType Δ Γ t₀ A₀ ∧ Erasure.unindexed t₀ = t ∧
+      Erasure.unindexed A₀ = A ∧ ∀ (freeEnv : FreeEnv Δ) (boundEnv : BoundEnv Γ),
+        ∃ value : DenoteTy A₀, Eval Δ Γ freeEnv boundEnv t₀ A₀ value := by
+  rcases h with ⟨t₀, A₀, typing, rfl, rfl⟩
+  exact ⟨t₀, A₀, typing, rfl, rfl, typing.eval_exists⟩
 
 theorem EqTm.sound (h : EqTm Δ Γ t u A) :
     ∃ t₀ u₀ A₀, Nonempty (Nucleus.HolLN.EqTm Δ Γ t₀ u₀ A₀) ∧
