@@ -1,0 +1,18 @@
+[package]
+name = "covalence-logic-lrat"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Parser-independent typed LRAT clause validation"
+publish = false
+
+[features]
+default = ["parse"]
+parse = []
+
+[dependencies]
+covalence-logic-sat = { path = "../sat" }
+
+[lints]
+workspace = true

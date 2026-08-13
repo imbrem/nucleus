@@ -7,7 +7,7 @@
 # Buffer intentionally accepts bytes, bytearray, memoryview, and other
 # contiguous buffer exporters.
 
-from collections.abc import Buffer
+from collections.abc import Buffer, Iterable, Sequence
 
 __version__: str
 
@@ -23,6 +23,115 @@ class InvalidHexError(ValueError):
 
 class InvalidBase64Error(ValueError):
     """A Base64 string was outside the alphabet, mispadded, or non-canonical."""
+
+class LratError(ValueError):
+    """A typed LRAT operation was rejected."""
+
+class CnfError(ValueError):
+    """A conjunctive-normal-form value was malformed."""
+
+class Literal:
+    """A signed, nonzero propositional literal."""
+
+    value: int
+    variable: int
+
+    def __init__(self, value: int, /) -> None: ...
+    def __int__(self) -> int: ...
+    def __neg__(self) -> Literal: ...
+    def __repr__(self) -> str: ...
+    def __hash__(self) -> int: ...
+    def __eq__(self, other: object, /) -> bool: ...
+    def __ne__(self, other: object, /) -> bool: ...
+    def __lt__(self, other: Literal, /) -> bool: ...
+    def __le__(self, other: Literal, /) -> bool: ...
+    def __gt__(self, other: Literal, /) -> bool: ...
+    def __ge__(self, other: Literal, /) -> bool: ...
+
+class Clause:
+    """A disjunction of literals."""
+
+    literals: list[int]
+
+    def __init__(self, literals: Sequence[int], /) -> None: ...
+    def __len__(self) -> int: ...
+    def __repr__(self) -> str: ...
+    def __eq__(self, other: object, /) -> bool: ...
+
+class Formula:
+    """A conjunction of clauses."""
+
+    clauses: list[Clause]
+    max_variable: int
+
+    def __init__(self, clauses: Sequence[Clause], /) -> None: ...
+    def __len__(self) -> int: ...
+    def __eq__(self, other: object, /) -> bool: ...
+
+class RatGroup:
+    """One explicitly delimited RAT resolvent check."""
+
+    opposing_clause_id: int
+    resolvent_rup_hints: list[int]
+
+    def __init__(
+        self, opposing_clause_id: int, resolvent_rup_hints: Sequence[int], /
+    ) -> None: ...
+    def __repr__(self) -> str: ...
+
+class Step:
+    """One typed LRAT proof step."""
+
+    kind: str
+    id: int | None
+    clause: Clause | None
+    ids: list[int] | None
+    ordered_hints: list[int] | None
+
+    @staticmethod
+    def rup(id: int, clause: Clause, ordered_hints: Sequence[int], /) -> Step: ...
+    @staticmethod
+    def rat(
+        id: int,
+        clause: Clause,
+        pivot: Literal,
+        prefix_rup_hints: Sequence[int],
+        groups: Sequence[RatGroup],
+        /,
+    ) -> Step: ...
+    @staticmethod
+    def forget(ids: Sequence[int], /) -> Step: ...
+
+class Kernel:
+    """A parser-independent typed LRAT clause kernel."""
+
+    def __init__(self, initial: Formula, /) -> None: ...
+    @property
+    def refuted(self) -> bool: ...
+    @property
+    def high_water(self) -> int: ...
+    def clause(self, id: int, /) -> list[int] | None: ...
+    def learn_rup(
+        self, id: int, clause: Clause, ordered_hints: Sequence[int], /
+    ) -> None: ...
+    def learn_rat(
+        self,
+        id: int,
+        clause: Clause,
+        pivot: Literal,
+        prefix_rup_hints: Sequence[int],
+        groups: Sequence[RatGroup],
+        /,
+    ) -> None: ...
+    def forget(self, ids: Sequence[int], /) -> None: ...
+    def verify(
+        self,
+        proof: str | Buffer | Iterable[Step],
+        /,
+    ) -> None: ...
+
+def parse_text(text: str, /) -> list[Step]: ...
+def parse_binary(proof: Buffer, /) -> list[Step]: ...
 
 class Obj:
     """A fixed-width Covalence identifier, of no particular namespace.

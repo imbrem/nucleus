@@ -12,6 +12,8 @@ import pathlib
 import covalence
 from covalence import _covalence
 from covalence.lib import hash as public_hash
+from covalence.logic import lrat as public_lrat
+from covalence.logic import sat as public_sat
 
 PACKAGE = pathlib.Path(covalence.__path__[0])
 STUB = ast.parse((PACKAGE / "_covalence.pyi").read_text())
@@ -61,10 +63,11 @@ def test_every_declared_name_exists() -> None:
 
 
 def test_every_public_name_is_reexported() -> None:
-    """The stub describes the compiled module; `hash` decides what is public."""
-    assert set(public_hash.__all__) <= _exported_names()
-    for name in public_hash.__all__:
-        assert getattr(public_hash, name) is getattr(_covalence, name)
+    """Public modules select names from the private compiled module."""
+    for public_module in (public_hash, public_lrat, public_sat):
+        assert set(public_module.__all__) <= _exported_names()
+        for name in public_module.__all__:
+            assert getattr(public_module, name) is getattr(_covalence, name)
 
 
 def test_declared_members_exist_on_each_class() -> None:
@@ -108,7 +111,21 @@ def _runtime_members(cls: type) -> set[str]:
 
 
 def test_the_stub_does_not_omit_class_members() -> None:
-    for name in ("Obj", "O256", "Blake3", "Sha256", "ContextKey", "Sha1", "GitHash"):
+    for name in (
+        "Obj",
+        "O256",
+        "Blake3",
+        "Sha256",
+        "ContextKey",
+        "Sha1",
+        "GitHash",
+        "Kernel",
+        "RatGroup",
+        "Literal",
+        "Clause",
+        "Formula",
+        "Step",
+    ):
         missing = sorted(
             _runtime_members(getattr(_covalence, name)) - _declared_members(name)
         )
