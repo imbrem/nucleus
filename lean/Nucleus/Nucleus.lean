@@ -1,4 +1,5 @@
 import Nucleus.HolLN
+import Nucleus.Hol
 import Nucleus.HolLN.Array
 import Nucleus.HolLN.Json
 import Nucleus.Json
