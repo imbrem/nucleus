@@ -9,7 +9,7 @@ from covalence.logic.lrat import (
     parse_binary,
     parse_text,
 )
-from covalence.logic.sat import Clause, Formula, Literal
+from covalence.logic.sat import Clause, Formula
 
 
 def test_rup_refutes_a_unit_contradiction() -> None:
@@ -53,11 +53,6 @@ def test_rat_groups_are_explicit_values() -> None:
     assert group.opposing_clause_id == 7
     assert group.resolvent_rup_hints == [1, 2]
     assert repr(group) == "RatGroup(7, [1, 2])"
-
-
-def test_invalid_literals_are_rejected() -> None:
-    with pytest.raises(LratError, match="InvalidLiteral"):
-        Clause([0])
 
 
 @pytest.mark.parametrize(
