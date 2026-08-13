@@ -1,0 +1,126 @@
+import Nucleus.HolLN.Consistency
+import Nucleus.HolLN.Variants
+
+/-!
+# Soundness and consistency of the erased presentations
+
+Raw trees never contain evidence.  The proof judgments below are the images of
+the kernel judgment, and their soundness theorems recover the unique kernel
+objects and the original semantic theorem.
+-/
+
+namespace Nucleus.HolLN
+
+universe u
+
+set_option linter.style.longLine false
+
+variable {Base : Type u} {depth : Nat}
+
+namespace NoDepth
+
+def Proves (Δ : FreeCtx Base) (Γ : BoundCtx Base depth)
+    (H : List (NoDepth Base .tm)) (p : NoDepth Base .tm) : Prop :=
+  ∃ H₀ p₀, Nonempty (Nucleus.HolLN.Proves Δ Γ H₀ p₀) ∧
+    H₀.map Erasure.noDepth = H ∧ Erasure.noDepth p₀ = p
+
+theorem EqTm.sound (h : EqTm Δ Γ t u A) :
+    ∃ t₀ u₀ A₀, Nonempty (Nucleus.HolLN.EqTm Δ Γ t₀ u₀ A₀) ∧
+      Erasure.noDepth t₀ = t ∧ Erasure.noDepth u₀ = u ∧ Erasure.noDepth A₀ = A ∧
+      ∀ (freeEnv : FreeEnv Δ) (boundEnv : BoundEnv Γ) {left right : DenoteTy A₀},
+        Eval Δ Γ freeEnv boundEnv t₀ A₀ left →
+        Eval Δ Γ freeEnv boundEnv u₀ A₀ right → left = right := by
+  rcases h with ⟨t₀, u₀, A₀, ⟨equality⟩, rfl, rfl, rfl⟩
+  exact ⟨t₀, u₀, A₀, ⟨equality⟩, rfl, rfl, rfl, equality.sound⟩
+
+theorem Proves.sound (h : Proves Δ Γ H p) :
+    ∃ H₀ p₀, Nonempty (Nucleus.HolLN.Proves Δ Γ H₀ p₀) ∧
+      H₀.map Erasure.noDepth = H ∧ Erasure.noDepth p₀ = p ∧
+      Nucleus.HolLN.Entails (Δ := Δ) (Γ := Γ) H₀ p₀ := by
+  rcases h with ⟨H₀, p₀, ⟨proof⟩, rfl, rfl⟩
+  exact ⟨H₀, p₀, ⟨proof⟩, rfl, rfl, proof.sound⟩
+
+theorem empty_not_proves_false :
+    ¬ Proves (emptyContext : FreeCtx Base) (emptyBound : BoundCtx Base 0)
+      [] (.bool false) := by
+  rintro ⟨H, p, proof, mapped, erased⟩
+  have hH : H = [] := List.eq_nil_of_map_eq_nil mapped
+  subst H
+  have hp : p = (.bool false : ClosedTm Base) :=
+    Erasure.noDepth_injective erased
+  subst p
+  exact Nucleus.HolLN.empty_not_proves_false proof
+
+end NoDepth
+
+namespace NoSort
+
+def Proves (Δ : FreeCtx Base) (Γ : BoundCtx Base depth)
+    (H : List (NoSort Base depth)) (p : NoSort Base depth) : Prop :=
+  ∃ H₀ p₀, Nonempty (Nucleus.HolLN.Proves Δ Γ H₀ p₀) ∧
+    H₀.map Erasure.noSort = H ∧ Erasure.noSort p₀ = p
+
+theorem EqTm.sound (h : EqTm Δ Γ t u A) :
+    ∃ t₀ u₀ A₀, Nonempty (Nucleus.HolLN.EqTm Δ Γ t₀ u₀ A₀) ∧
+      Erasure.noSort t₀ = t ∧ Erasure.noSort u₀ = u ∧ Erasure.noSort A₀ = A ∧
+      ∀ (freeEnv : FreeEnv Δ) (boundEnv : BoundEnv Γ) {left right : DenoteTy A₀},
+        Eval Δ Γ freeEnv boundEnv t₀ A₀ left →
+        Eval Δ Γ freeEnv boundEnv u₀ A₀ right → left = right := by
+  rcases h with ⟨t₀, u₀, A₀, ⟨equality⟩, rfl, rfl, rfl⟩
+  exact ⟨t₀, u₀, A₀, ⟨equality⟩, rfl, rfl, rfl, equality.sound⟩
+
+theorem Proves.sound (h : Proves Δ Γ H p) :
+    ∃ H₀ p₀, Nonempty (Nucleus.HolLN.Proves Δ Γ H₀ p₀) ∧
+      H₀.map Erasure.noSort = H ∧ Erasure.noSort p₀ = p ∧
+      Nucleus.HolLN.Entails (Δ := Δ) (Γ := Γ) H₀ p₀ := by
+  rcases h with ⟨H₀, p₀, ⟨proof⟩, rfl, rfl⟩
+  exact ⟨H₀, p₀, ⟨proof⟩, rfl, rfl, proof.sound⟩
+
+theorem empty_not_proves_false :
+    ¬ Proves (emptyContext : FreeCtx Base) (emptyBound : BoundCtx Base 0)
+      [] (.bool false) := by
+  rintro ⟨H, p, proof, mapped, erased⟩
+  have hH : H = [] := List.eq_nil_of_map_eq_nil mapped
+  subst H
+  have hp : p = (.bool false : ClosedTm Base) := Erasure.noSort_injective erased
+  subst p
+  exact Nucleus.HolLN.empty_not_proves_false proof
+
+end NoSort
+
+namespace Unindexed
+
+def Proves (Δ : FreeCtx Base) (Γ : BoundCtx Base depth)
+    (H : List (Unindexed Base)) (p : Unindexed Base) : Prop :=
+  ∃ H₀ p₀, Nonempty (Nucleus.HolLN.Proves Δ Γ H₀ p₀) ∧
+    H₀.map Erasure.unindexed = H ∧ Erasure.unindexed p₀ = p
+
+theorem EqTm.sound (h : EqTm Δ Γ t u A) :
+    ∃ t₀ u₀ A₀, Nonempty (Nucleus.HolLN.EqTm Δ Γ t₀ u₀ A₀) ∧
+      Erasure.unindexed t₀ = t ∧ Erasure.unindexed u₀ = u ∧ Erasure.unindexed A₀ = A ∧
+      ∀ (freeEnv : FreeEnv Δ) (boundEnv : BoundEnv Γ) {left right : DenoteTy A₀},
+        Eval Δ Γ freeEnv boundEnv t₀ A₀ left →
+        Eval Δ Γ freeEnv boundEnv u₀ A₀ right → left = right := by
+  rcases h with ⟨t₀, u₀, A₀, ⟨equality⟩, rfl, rfl, rfl⟩
+  exact ⟨t₀, u₀, A₀, ⟨equality⟩, rfl, rfl, rfl, equality.sound⟩
+
+theorem Proves.sound (h : Proves Δ Γ H p) :
+    ∃ H₀ p₀, Nonempty (Nucleus.HolLN.Proves Δ Γ H₀ p₀) ∧
+      H₀.map Erasure.unindexed = H ∧ Erasure.unindexed p₀ = p ∧
+      Nucleus.HolLN.Entails (Δ := Δ) (Γ := Γ) H₀ p₀ := by
+  rcases h with ⟨H₀, p₀, ⟨proof⟩, rfl, rfl⟩
+  exact ⟨H₀, p₀, ⟨proof⟩, rfl, rfl, proof.sound⟩
+
+theorem empty_not_proves_false :
+    ¬ Proves (emptyContext : FreeCtx Base) (emptyBound : BoundCtx Base 0)
+      [] (.bool false) := by
+  rintro ⟨H, p, proof, mapped, erased⟩
+  have hH : H = [] := List.eq_nil_of_map_eq_nil mapped
+  subst H
+  have hp : p = (.bool false : ClosedTm Base) := Erasure.unindexed_injective erased
+  subst p
+  exact Nucleus.HolLN.empty_not_proves_false proof
+
+end Unindexed
+
+end Nucleus.HolLN

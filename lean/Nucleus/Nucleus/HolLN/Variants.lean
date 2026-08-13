@@ -75,6 +75,9 @@ inductive Unindexed (Base : Type u) where
   | eps (type predicate : Unindexed Base)
   | abs (carrier predicate value : Unindexed Base)
   | rep (carrier predicate value : Unindexed Base)
+  | emptyCtx
+  | freeCtx (name : Nat) (type tail : Unindexed Base)
+  | boundCtx (type tail : Unindexed Base)
   deriving Repr
 
 namespace Erasure
@@ -209,6 +212,7 @@ def checkUnindexedSort : (sort : HolSort) → Unindexed Base → Option (NoDepth
       (← checkUnindexedSort .tm p) (← checkUnindexedSort .tm x))
   | .tm, .rep a p x => return (NoDepth.rep (← checkUnindexedSort .ty a)
       (← checkUnindexedSort .tm p) (← checkUnindexedSort .tm x))
+  | _, .emptyCtx | _, .freeCtx .. | _, .boundCtx .. => none
   | _, _ => none
 
 @[simp] theorem checkUnindexedSort_noDepth (x : NoDepth Base sort) :
@@ -335,6 +339,11 @@ def encode : Unindexed Base → Json.Tree Base
       (field "predicate" (encode p) (field "value" (encode x) .objNil)))
   | .rep a p x => tagged "tm.rep" (field "carrier" (encode a)
       (field "predicate" (encode p) (field "value" (encode x) .objNil)))
+  | .emptyCtx => tagged "ctx.empty"
+  | .freeCtx n a tail => tagged "ctx.free" (field "name" (scalar (.nat n))
+      (field "type" (encode a) (field "body" (encode tail) .objNil)))
+  | .boundCtx a tail => tagged "ctx.bound"
+      (field "type" (encode a) (field "body" (encode tail) .objNil))
 
 def encodeNoDepth (x : NoDepth Base sort) : Json.Tree Base :=
   encode (Erasure.noDepthToUnindexed x)
