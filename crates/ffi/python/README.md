@@ -6,7 +6,7 @@ Python bindings for Covalence.
 
 The package is a mixed one: hand-written Python in `python/covalence`, and the
 compiled extension module staged beside it as `covalence._covalence`. The
-compiled module is private; ordinary Python modules such as `covalence.hash`
+compiled module is private; ordinary Python modules such as `covalence.lib.hash`
 name the public surface. This keeps that surface independent of the Rust module
 and leaves room for later `covalence.cas` and `covalence.nucleus` modules.
 
@@ -24,8 +24,8 @@ unequal.
 
 ```python
 >>> import covalence
->>> from covalence.hash import O256, COV_ROOT, git_blob
->>> covalence.hash is not None
+>>> from covalence.lib.hash import O256, COV_ROOT, git_blob
+>>> covalence.lib.hash is not None
 True
 >>> O256.hash(b"abc")
 O256.from_hex('6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85')

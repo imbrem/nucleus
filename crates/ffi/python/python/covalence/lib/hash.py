@@ -9,14 +9,14 @@ Constructing from bytes or hex names a value; it does not check that anything
 ever hashed to it. Invalid widths and encodings raise the corresponding
 ``ValueError`` subclass.
 
-    >>> from covalence.hash import O256, git_blob
+    >>> from covalence.lib.hash import O256, git_blob
     >>> O256.hash(b"abc")
     O256.from_hex('6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85')
     >>> str(git_blob(b""))
     'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391'
 """
 
-from ._covalence import (
+from .._covalence import (
     COV,
     COV_ROOT,
     COV_ROOT_CTX_KEY,

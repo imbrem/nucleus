@@ -1,13 +1,11 @@
-"""Type information for the compiled module.
+"""Compiled primitives exposed through the public Covalence modules."""
 
-PyO3 does not emit stubs, so this file is written by hand and has to be kept in
-step with `crates/ffi/python/src`. `tests/test_typing.py` checks that every name
-the module exports appears here, and that every member declared here exists on
-the class that is built.
-
-`Buffer` rather than `bytes` for byte input: `bytes`, `bytearray`, `memoryview`,
-and anything else exporting a contiguous buffer are all accepted.
-"""
+# PyO3 does not emit stubs, so this file is maintained alongside
+# `crates/ffi/python/src`. `tests/test_typing.py` checks both directions for
+# drift between the declarations and the compiled module.
+#
+# Buffer intentionally accepts bytes, bytearray, memoryview, and other
+# contiguous buffer exporters.
 
 from collections.abc import Buffer
 

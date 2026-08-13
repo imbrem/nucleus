@@ -12,7 +12,7 @@ import itertools
 import operator
 
 import pytest
-from covalence.hash import (
+from covalence.lib.hash import (
     COV,
     COV_ROOT,
     COV_ROOT_CTX_KEY,
@@ -340,7 +340,7 @@ def test_the_exceptions_are_all_value_errors() -> None:
     """One `except ValueError` catches every malformed input."""
     for exception in (InvalidLengthError, InvalidHexError, InvalidBase64Error):
         assert issubclass(exception, ValueError)
-    assert InvalidLengthError.__module__ == "covalence.hash"
+    assert InvalidLengthError.__module__ == "covalence.lib.hash"
 
 
 # Input shapes.
