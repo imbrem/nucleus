@@ -20,6 +20,15 @@ namespace Bytes
 /-- Number of octets. -/
 def length (bytes : Bytes) : Nat := bytes.data.size
 
+/-- Append one octet in place using `ByteArray`'s compact buffer operation. -/
+def push (bytes : Bytes) (byte : UInt8) : Bytes := ⟨bytes.data.push byte⟩
+
+/-- Empty byte string. -/
+def empty : Bytes := ⟨ByteArray.empty⟩
+
+/-- Concatenate compact byte strings. -/
+def append (left right : Bytes) : Bytes := ⟨left.data.append right.data⟩
+
 /-- The largest argument representable by a CBOR definite-length head. -/
 def maxDefiniteLength : Nat := 2 ^ 64 - 1
 

@@ -2,6 +2,7 @@ import Nucleus.HolLN
 import Nucleus.HolLN.Json
 import Nucleus.Json
 import Nucleus.Cbor
+import Nucleus.Encoding.Base128
 import Nucleus.Lrat
 
 /-!
