@@ -53,6 +53,9 @@
         glu = craneLib.buildPackage (gluArgs // {
           cargoArtifacts = gluCargoArtifacts;
         });
+        fonts = pkgs.makeFontsConf {
+          fontDirectories = [ pkgs.dejavu_fonts ];
+        };
         native-check = rustPlatform.buildRustPackage {
           pname = "nucleus-native-check";
           version = "0.0.0";
@@ -118,6 +121,7 @@
           packages = tools;
           shellHook = ''
             export CHROMIUM_PATH="${pkgs.chromium}/bin/chromium"
+            export FONTCONFIG_FILE="${fonts}"
             export CC_wasm32_unknown_unknown=nucleus-wasm-clang
             export CC_wasm32_wasip1=wasm32-unknown-wasi-cc
             export CC_wasm32_wasip2=wasm32-unknown-wasi-cc
