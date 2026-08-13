@@ -32,7 +32,7 @@ use std::{
 };
 
 use covalence_lib_hash::{
-    Blake3, COV, COV_ROOT, Cov, CtxKey, CtxKeyNamespace, Git, HashCid, HashMultihash, O256, Obj,
+    Blake3, C256, COV, COV_ROOT, Cov, CtxKey, CtxKeyNamespace, Git, M256, O256, Obj,
     ParseBase64Error, ParseHexError, RootedNamespace, Sha1, Sha256, git_blob, git_object,
 };
 use covalence_lib_python::exceptions::create_exception;
@@ -261,7 +261,7 @@ macro_rules! object {
             /// Extracts a value from its standard binary multihash.
             #[staticmethod]
             fn from_multihash(python: Python<'_>, data: Bytes) -> PyResult<Py<Self>> {
-                let hash = HashMultihash::from_bytes(data.as_slice())
+                let hash = M256::from_bytes(data.as_slice())
                     .map_err(|error| PyValueError::new_err(error.to_string()))?;
                 let value = Obj::<$namespace>::from_multihash(&hash)
                     .map_err(|error| PyValueError::new_err(error.to_string()))?;
@@ -277,7 +277,7 @@ macro_rules! object {
             /// Extracts a value from its standard raw CID.
             #[staticmethod]
             fn from_raw_cid(python: Python<'_>, text: &str) -> PyResult<Py<Self>> {
-                let cid = HashCid::from_str(text)
+                let cid = C256::from_str(text)
                     .map_err(|error| PyValueError::new_err(error.to_string()))?;
                 let value = Obj::<$namespace>::from_raw_cid(&cid)
                     .map_err(|error| PyValueError::new_err(error.to_string()))?;

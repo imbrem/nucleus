@@ -14,7 +14,7 @@ const SHA1: u64 = 0x11;
 const SHA2_256: u64 = 0x12;
 const BLAKE3_256: u64 = 0x1e;
 
-type HashCid = CidGeneric<32>;
+type SerdeCid = CidGeneric<32>;
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -36,7 +36,7 @@ where
     let hash = Multihash::<32>::wrap(hash_code, value.as_ref())
         .expect("supported hash representations fit in a 32-byte multihash");
     DagJsonLink {
-        cid: HashCid::new_v1(codec, hash).to_string(),
+        cid: SerdeCid::new_v1(codec, hash).to_string(),
     }
     .serialize(serializer)
 }
@@ -52,7 +52,7 @@ where
     D: Deserializer<'de>,
 {
     let link = DagJsonLink::deserialize(deserializer)?;
-    let cid = HashCid::from_str(&link.cid).map_err(de::Error::custom)?;
+    let cid = SerdeCid::from_str(&link.cid).map_err(de::Error::custom)?;
 
     if link.cid != cid.to_string() {
         return Err(de::Error::custom(format_args!(

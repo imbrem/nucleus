@@ -29,7 +29,7 @@ pub use blake3::{
 };
 pub use git::{Git, GitHash, Sha1};
 #[cfg(feature = "multiformats")]
-pub use multiformats::{HashCid, HashMultihash, InvalidMultiformat, MultiformatNamespace};
+pub use multiformats::{C256, InvalidMultiformat, M256, MultiformatNamespace};
 
 #[cfg(feature = "git-sha1")]
 pub use git::{git_blob, git_object, sha1};
