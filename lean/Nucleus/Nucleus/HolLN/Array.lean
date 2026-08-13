@@ -30,7 +30,7 @@ inductive Row (Base : Type u) (Ref : Type v) : Type (max u v) where
   | tyArr (domain codomain : Ref)
   | tySub (carrier predicate : Ref)
   | tmBound (index : Nat)
-  | tmFree (name : Nat)
+  | tmFree (name : Nat) (type : Ref)
   | tmApp (function argument : Ref)
   | tmLam (domain body : Ref)
   | tmBool (value : Bool)
@@ -51,7 +51,7 @@ def Row.map {Base : Type u} {R : Type v} {S : Type w} (f : R → S) :
   | .tyArr domain codomain => .tyArr (f domain) (f codomain)
   | .tySub carrier predicate => .tySub (f carrier) (f predicate)
   | .tmBound index => .tmBound index
-  | .tmFree name => .tmFree name
+  | .tmFree name type => .tmFree name (f type)
   | .tmApp function argument => .tmApp (f function) (f argument)
   | .tmLam domain body => .tmLam (f domain) (f body)
   | .tmBool value => .tmBool value
@@ -64,7 +64,8 @@ def Row.map {Base : Type u} {R : Type v} {S : Type w} (f : R → S) :
 
 /-- Child references in their stable, constructor-specific order. -/
 def Row.children {Base : Type u} {Ref : Type v} : Row Base Ref → List Ref
-  | .tyBase _ | .tyBool | .tyInd | .tmBound _ | .tmFree _ | .tmBool _ | .tmZero => []
+  | .tyBase _ | .tyBool | .tyInd | .tmBound _ | .tmBool _ | .tmZero => []
+  | .tmFree _ type => [type]
   | .tmSucc value => [value]
   | .tyArr domain codomain | .tySub domain codomain | .tmApp domain codomain |
       .tmLam domain codomain | .tmEps domain codomain => [domain, codomain]
@@ -158,7 +159,10 @@ private def validateRow {Base : Type u} (n : Nat) :
       | some carrier, some predicate => some (.tySub carrier predicate)
       | _, _ => none
   | .tmBound index => some (.tmBound index)
-  | .tmFree name => some (.tmFree name)
+  | .tmFree name type =>
+      match ref type with
+      | some type => some (.tmFree name type)
+      | none => none
   | .tmApp function argument =>
       match ref function, ref argument with
       | some function, some argument => some (.tmApp function argument)
@@ -213,7 +217,7 @@ private def elaborateRow {Base : Type u} {n : Nat}
       return .sub (← decode carrier) (← decode (depth := 1) predicate)
   | .tmBound index, .tm, depth =>
       if h : index < depth then some (.bound ⟨index, h⟩) else none
-  | .tmFree name, .tm, _ => some (.free name)
+  | .tmFree name type, .tm, _ => return .free name (← decode type)
   | .tmApp function argument, .tm, depth =>
       return .app (← decode (depth := depth) function) (← decode (depth := depth) argument)
   | .tmLam domain body, .tm, depth =>
@@ -295,7 +299,7 @@ private def elaboratePackedRow {Base : Type u} (get : Nat → Option (Packed Bas
       else none
   | .tmBound index =>
       some (Packed.ofTm (.bound ⟨index, Nat.lt_succ_self index⟩))
-  | .tmFree name => some (Packed.ofTm (.free name : Tm Base 0))
+  | .tmFree name type => return Packed.ofTm (.free name (← packedTy get type) : Tm Base 0)
   | .tmApp function argument => do
       let function ← packedTm get function
       let argument ← packedTm get argument
@@ -383,7 +387,7 @@ def encodeRow {Base : Type u} : Row Base Nat → Tree Base
   | .tyArr domain codomain => array [string "ty.arr", nat domain, nat codomain]
   | .tySub carrier predicate => array [string "ty.sub", nat carrier, nat predicate]
   | .tmBound index => array [string "tm.bound", nat index]
-  | .tmFree name => array [string "tm.free", nat name]
+  | .tmFree name type => array [string "tm.free", nat name, nat type]
   | .tmApp function argument => array [string "tm.app", nat function, nat argument]
   | .tmLam domain body => array [string "tm.lam", nat domain, nat body]
   | .tmBool value => array [string "tm.bool", bool value]
@@ -408,7 +412,8 @@ def decodeRow {Base : Type u} : Tree Base → Option (Row Base Nat)
       | [.scalar (.string "ty.sub"), .scalar (.nat carrier), .scalar (.nat predicate)] =>
           some (.tySub carrier predicate)
       | [.scalar (.string "tm.bound"), .scalar (.nat index)] => some (.tmBound index)
-      | [.scalar (.string "tm.free"), .scalar (.nat name)] => some (.tmFree name)
+      | [.scalar (.string "tm.free"), .scalar (.nat name), .scalar (.nat type)] =>
+          some (.tmFree name type)
       | [.scalar (.string "tm.app"), .scalar (.nat function), .scalar (.nat argument)] =>
           some (.tmApp function argument)
       | [.scalar (.string "tm.lam"), .scalar (.nat domain), .scalar (.nat body)] =>

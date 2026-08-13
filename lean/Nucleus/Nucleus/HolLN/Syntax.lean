@@ -29,7 +29,7 @@ inductive Hol (Base : Type u) : HolSort -> Nat -> Type u where
   | arr (domain codomain : Hol Base .ty 0) : Hol Base .ty 0
   | sub (carrier : Hol Base .ty 0) (predicate : Hol Base .tm 1) : Hol Base .ty 0
   | bound {depth : Nat} (index : Fin depth) : Hol Base .tm depth
-  | free {depth : Nat} (name : Nat) : Hol Base .tm depth
+  | free {depth : Nat} (name : Nat) (type : Hol Base .ty 0) : Hol Base .tm depth
   | app {depth : Nat} (function argument : Hol Base .tm depth) : Hol Base .tm depth
   | lam {depth : Nat} (domain : Hol Base .ty 0)
       (body : Hol Base .tm (depth + 1)) : Hol Base .tm depth

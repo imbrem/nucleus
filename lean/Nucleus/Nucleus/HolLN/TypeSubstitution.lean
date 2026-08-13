@@ -24,7 +24,7 @@ def substHol {Base : Type u} {Target : Type v} (σ : TypeSub Base Target) :
   | _, _, .arr A B => .arr (substHol σ A) (substHol σ B)
   | _, _, .sub A p => .sub (substHol σ A) (substHol σ p)
   | _, _, .bound i => .bound i
-  | _, _, .free name => .free name
+  | _, _, .free name A => .free name (substHol σ A)
   | _, _, .app f x => .app (substHol σ f) (substHol σ x)
   | _, _, .lam A body => .lam (substHol σ A) (substHol σ body)
   | _, _, .bool value => .bool value
@@ -40,10 +40,6 @@ abbrev substTy {Base : Type u} {Target : Type v} (σ : TypeSub Base Target)
 
 abbrev substTm {Base : Type u} {Target : Type v} (σ : TypeSub Base Target)
     {depth : Nat} (term : Tm Base depth) : Tm Target depth := substHol σ term
-
-def substFreeCtx {Base : Type u} {Target : Type v} (σ : TypeSub Base Target)
-    (Δ : FreeCtx Base) : FreeCtx Target :=
-  fun name => (Δ name).map (substTy σ)
 
 def substBoundCtx {Base : Type u} {Target : Type v} (σ : TypeSub Base Target)
     {depth : Nat} (Γ : BoundCtx Base depth) : BoundCtx Target depth :=
@@ -61,7 +57,8 @@ theorem substHol_identity {Base : Type u} : {sort : HolSort} -> {depth : Nat} ->
   | _, _, .arr A B => by simp [substHol, substHol_identity A, substHol_identity B]
   | _, _, .sub A p => by simp [substHol, substHol_identity A, substHol_identity p]
   | _, _, .bound i => rfl
-  | _, _, .free name => rfl
+  | _, _, .free name A => by
+      simp [substHol, substHol_identity A]
   | _, _, .app f x => by simp [substHol, substHol_identity f, substHol_identity x]
   | _, _, .lam A body => by simp [substHol, substHol_identity A, substHol_identity body]
   | _, _, .bool value => rfl
@@ -86,7 +83,8 @@ theorem substHol_comp {Base : Type u} {Middle : Type v} {Target : Type w}
   | _, _, .arr A B => by simp [substHol, substHol_comp σ τ A, substHol_comp σ τ B]
   | _, _, .sub A p => by simp [substHol, substHol_comp σ τ A, substHol_comp σ τ p]
   | _, _, .bound i => rfl
-  | _, _, .free name => rfl
+  | _, _, .free name A => by
+      simp [substHol, substHol_comp σ τ A]
   | _, _, .app f x => by simp [substHol, substHol_comp σ τ f, substHol_comp σ τ x]
   | _, _, .lam A body => by
       simp [substHol, substHol_comp σ τ A, substHol_comp σ τ body]
@@ -117,7 +115,9 @@ theorem substHol_fresh {Base : Type u} {Target : Type v} (σ : TypeSub Base Targ
       exact ⟨substHol_fresh σ name baseFresh A fresh.1,
         substHol_fresh σ name baseFresh p fresh.2⟩
   | _, _, .bound i, _ => by simp [Fresh, FreeIn, substHol]
-  | _, _, .free other, fresh => by simpa [Fresh, FreeIn, substHol] using fresh
+  | _, _, .free other A, fresh => by
+      simp only [Fresh, substHol, FreeIn, not_or] at fresh ⊢
+      exact ⟨fresh.1, substHol_fresh σ name baseFresh A fresh.2⟩
   | _, _, .app f x, fresh => by
       simp only [Fresh, substHol, FreeIn, not_or] at fresh ⊢
       exact ⟨substHol_fresh σ name baseFresh f fresh.1,
@@ -154,7 +154,7 @@ theorem substTm_rename {Base : Type u} {Target : Type v} (σ : TypeSub Base Targ
     {m n : Nat} (ρ : Fin m -> Fin n) : (term : Tm Base m) ->
       substTm σ (rename ρ term) = rename ρ (substTm σ term)
   | .bound i => by simp [rename, substTm, substHol]
-  | .free name => by simp [rename, substTm, substHol]
+  | .free name A => by simp [rename, substTm, substHol]
   | .app f x => by simp [rename, substHol, substTm_rename σ ρ f, substTm_rename σ ρ x]
   | .lam A body => by
       simp [rename, substHol, substTm_rename σ (liftRen ρ) body]
@@ -177,7 +177,7 @@ theorem substTm_instantiate {Base : Type u} {Target : Type v}
       substTm typeSub (instantiate termSub term) =
         instantiate (fun i => substTm typeSub (termSub i)) (substTm typeSub term)
   | .bound i => by simp [instantiate, substTm, substHol]
-  | .free name => by simp [instantiate, substTm, substHol]
+  | .free name A => by simp [instantiate, substTm, substHol]
   | .app f x => by
       simp [instantiate, substHol, substTm_instantiate typeSub termSub f,
         substTm_instantiate typeSub termSub x]
@@ -223,18 +223,6 @@ theorem substTm_instantiateOne {Base : Type u} {Target : Type v}
       instantiateOne (substTm σ predicate) (substTm σ replacement) := by
   exact substTm_instantiate σ (fun _ => replacement) predicate
 
-theorem substFreeCtx_empty {Base : Type u} {Target : Type v} (σ : TypeSub Base Target) :
-    substFreeCtx σ (emptyContext : FreeCtx Base) = emptyContext := by
-  funext name
-  rfl
-
-theorem substFreeCtx_extend {Base : Type u} {Target : Type v}
-    (σ : TypeSub Base Target) (Δ : FreeCtx Base) (name : Nat) (A : Ty Base) :
-    substFreeCtx σ (extendFree Δ name A) =
-      extendFree (substFreeCtx σ Δ) name (substTy σ A) := by
-  funext other
-  by_cases same : other = name <;> simp [substFreeCtx, extendFree, same]
-
 theorem substBoundCtx_empty {Base : Type u} {Target : Type v} (σ : TypeSub Base Target) :
     substBoundCtx σ (emptyBound : BoundCtx Base 0) = emptyBound := by
   funext i
@@ -266,43 +254,42 @@ mutual
     | _, .arr hA hB => .arr (Kinded.substTy wellKinded hA) (Kinded.substTy wellKinded hB)
     | _, .sub hA hp => by
         apply Kinded.sub (Kinded.substTy wellKinded hA)
-        simpa [substTy, substTm, substHol, substFreeCtx_empty, substBoundCtx_extend,
+        simpa [substTy, substTm, substHol, substBoundCtx_extend,
           substBoundCtx_empty] using
           HasType.substTy wellKinded hp
 
   theorem HasType.substTy {Base : Type u} {Target : Type v}
       {σ : TypeSub Base Target} (wellKinded : WellKindedTypeSub σ) :
-      {Δ : FreeCtx Base} -> {depth : Nat} -> {Γ : BoundCtx Base depth} ->
-      {term : Tm Base depth} -> {A : Ty Base} -> HasType Δ Γ term A ->
-        HasType (substFreeCtx σ Δ) (substBoundCtx σ Γ)
+      {depth : Nat} -> {Γ : BoundCtx Base depth} ->
+      {term : Tm Base depth} -> {A : Ty Base} -> HasType Γ term A ->
+        HasType (substBoundCtx σ Γ)
           (substTm σ term) (Nucleus.HolLN.substTy σ A)
-    | _, _, _, _, _, .bound hA lookup => by
+    | _, _, _, _, .bound hA lookup => by
         apply HasType.bound (Kinded.substTy wellKinded hA)
         simp [substBoundCtx, lookup]
-    | _, _, _, _, _, .free name hA lookup => by
-        apply HasType.free name (Kinded.substTy wellKinded hA)
-        simp [substFreeCtx, lookup]
-    | _, _, _, _, _, .app hf hx =>
+    | _, _, _, _, .free name hA =>
+        HasType.free name (Kinded.substTy wellKinded hA)
+    | _, _, _, _, .app hf hx =>
         .app (HasType.substTy wellKinded hf) (HasType.substTy wellKinded hx)
-    | _, _, Γ, _, _, .lam body hA ht => by
+    | _, Γ, _, _, .lam body hA ht => by
         apply HasType.lam _ (Kinded.substTy wellKinded hA)
         simpa [substBoundCtx_extend] using HasType.substTy wellKinded ht
-    | _, _, _, _, _, .bool value => .bool value
-    | _, _, _, _, _, .zero => .zero
-    | _, _, _, _, _, .succ ht => .succ (HasType.substTy wellKinded ht)
-    | _, _, _, _, _, .eq hA hx hy =>
+    | _, _, _, _, .bool value => .bool value
+    | _, _, _, _, .zero => .zero
+    | _, _, _, _, .succ ht => .succ (HasType.substTy wellKinded ht)
+    | _, _, _, _, .eq hA hx hy =>
         .eq (Kinded.substTy wellKinded hA)
           (HasType.substTy wellKinded hx) (HasType.substTy wellKinded hy)
-    | _, _, _, _, _, .eps hA hp =>
+    | _, _, _, _, .eps hA hp =>
         .eps (Kinded.substTy wellKinded hA) (HasType.substTy wellKinded hp)
-    | _, _, _, _, _, .abs hA hp hx => by
+    | _, _, _, _, .abs hA hp hx => by
         apply HasType.abs (Kinded.substTy wellKinded hA) _ (HasType.substTy wellKinded hx)
-        simpa [substTy, substTm, substHol, substFreeCtx_empty, substBoundCtx_extend,
+        simpa [substTy, substTm, substHol, substBoundCtx_extend,
           substBoundCtx_empty] using
           HasType.substTy wellKinded hp
-    | _, _, _, _, _, .rep hA hp hx => by
+    | _, _, _, _, .rep hA hp hx => by
         apply HasType.rep (Kinded.substTy wellKinded hA) _ (HasType.substTy wellKinded hx)
-        simpa [substTy, substTm, substHol, substFreeCtx_empty, substBoundCtx_extend,
+        simpa [substTy, substTm, substHol, substBoundCtx_extend,
           substBoundCtx_empty] using
           HasType.substTy wellKinded hp
 end

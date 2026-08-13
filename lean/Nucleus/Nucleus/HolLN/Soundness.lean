@@ -12,10 +12,10 @@ namespace Nucleus.HolLN
 
 universe u
 
-theorem EqTm.typing {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
+theorem EqTm.typing {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} {t uterm : Tm Base depth} {A : Ty Base}
-    (equality : EqTm Δ Γ t uterm A) :
-    HasType Δ Γ t A ∧ HasType Δ Γ uterm A := by
+    (equality : EqTm Γ t uterm A) :
+    HasType Γ t A ∧ HasType Γ uterm A := by
   induction equality with
   | refl typing => exact ⟨typing, typing⟩
   | symm _ ih => exact ih.symm
@@ -30,12 +30,12 @@ theorem EqTm.typing {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
 set_option maxHeartbeats 1000000 in
 -- Soundness eliminates both equality certificates and dependent evaluations.
 set_option maxRecDepth 2000 in
-theorem EqTm.sound {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
+theorem EqTm.sound {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} {t uterm : Tm Base depth} {A : Ty Base}
-    (equality : EqTm Δ Γ t uterm A) (freeEnv : FreeEnv Δ) (boundEnv : BoundEnv Γ)
+    (equality : EqTm Γ t uterm A) (freeEnv : FreeEnv Base) (boundEnv : BoundEnv Γ)
     {left right : DenoteTy A}
-    (leftEval : Eval Δ Γ freeEnv boundEnv t A left)
-    (rightEval : Eval Δ Γ freeEnv boundEnv uterm A right) : left = right := by
+    (leftEval : Eval Γ freeEnv boundEnv t A left)
+    (rightEval : Eval Γ freeEnv boundEnv uterm A right) : left = right := by
   induction equality with
   | refl typing => exact leftEval.unique rightEval
   | symm equality ih => exact (ih boundEnv rightEval leftEval).symm
@@ -97,7 +97,7 @@ theorem EqTm.sound {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
             (target := extendBoundEnv argument boundEnv) (fun _ => rfl) (by
               intro i B lookup
               rfl)
-          have argumentEval := Eval.bound (Δ := Δ) freeEnv
+          have argumentEval := Eval.bound  freeEnv
             (i := 0) (extendBoundEnv argument boundEnv)
               (by
                 have regular := functionTyping.regularity
@@ -110,24 +110,24 @@ theorem EqTm.sound {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
           exact output.trans (congrArg₂ (fun function value => function value)
             (bodyFunction.unique weakened) (bodyArgument.unique argumentEval))
 
-def HypsTrue {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
-    {Γ : BoundCtx Base depth} (freeEnv : FreeEnv Δ) (boundEnv : BoundEnv Γ)
+def HypsTrue {Base : Type u} {depth : Nat}
+    {Γ : BoundCtx Base depth} (freeEnv : FreeEnv Base) (boundEnv : BoundEnv Γ)
     (hypotheses : List (Tm Base depth)) : Prop :=
-  ∀ p, p ∈ hypotheses -> Eval Δ Γ freeEnv boundEnv p .boolTy true
+  ∀ p, p ∈ hypotheses -> Eval Γ freeEnv boundEnv p .boolTy true
 
-def Entails {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
+def Entails {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} (hypotheses : List (Tm Base depth))
     (conclusion : Tm Base depth) : Prop :=
-  ∀ (freeEnv : FreeEnv Δ) (boundEnv : BoundEnv Γ),
+  ∀ (freeEnv : FreeEnv Base) (boundEnv : BoundEnv Γ),
     HypsTrue freeEnv boundEnv hypotheses ->
-    Eval Δ Γ freeEnv boundEnv conclusion .boolTy true
+    Eval Γ freeEnv boundEnv conclusion .boolTy true
 
 set_option maxHeartbeats 1000000 in
 -- The complete entailment induction carries dependent environments through every rule.
 set_option maxRecDepth 2000 in
-theorem Proves.sound {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
+theorem Proves.sound {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} {H : List (Tm Base depth)} {p : Tm Base depth}
-    (proof : Proves Δ Γ H p) : Entails (Δ := Δ) (Γ := Γ) H p := by
+    (proof : Proves Γ H p) : Entails  (Γ := Γ) H p := by
   intro freeEnv boundEnv hypotheses
   induction proof with
   | hyp typed member => exact hypotheses _ member
@@ -158,7 +158,7 @@ theorem Proves.sound {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
       cases predicateType
       have witnessType := hx.unique witnessEval.typing
       cases witnessType
-      have selected : Eval Δ Γ freeEnv boundEnv (.eps _ _) _ (chooseValue _ predicate) :=
+      have selected : Eval Γ freeEnv boundEnv (.eps _ _) _ (chooseValue _ predicate) :=
         .eps hA predicateEval
       have chosenTrue := chooseValue_spec predicate witness holds.symm
       exact chosenTrue ▸ Eval.app predicateEval selected
@@ -206,7 +206,7 @@ theorem Proves.sound {Base : Type u} {Δ : FreeCtx Base} {depth : Nat}
               exact .eqTrue .nat leftValue rightValue (natSucc_injective equal)
   | zeroNotSucc typed hx =>
       obtain ⟨value, valueEval⟩ := hx.eval_exists freeEnv boundEnv
-      have inner : Eval Δ Γ freeEnv boundEnv (.eq .natTy .zero (.succ _))
+      have inner : Eval Γ freeEnv boundEnv (.eq .natTy .zero (.succ _))
           .boolTy false :=
         .eqFalse .nat .naturalZero (.naturalSucc valueEval) (natZero_ne_natSucc value)
       exact .eqTrue .bool inner (.boolean false) rfl
