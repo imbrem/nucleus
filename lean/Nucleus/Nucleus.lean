@@ -5,6 +5,7 @@ import Nucleus.Json
 import Nucleus.Cbor
 import Nucleus.Encoding.Base128
 import Nucleus.Lrat
+import Nucleus.SExpr
 
 /-!
 # Nucleus
