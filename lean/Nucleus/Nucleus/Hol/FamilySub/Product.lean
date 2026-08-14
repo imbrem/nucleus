@@ -1,4 +1,4 @@
-import Nucleus.Hol.FamilySub.Kernel
+import Nucleus.Hol.FamilySub.Intrinsic
 
 /-! # Products from type-family lambda and ordinary subtypes -/
 
@@ -216,5 +216,40 @@ theorem appliedProductFam_defeq {A B : Ty Sig []} (hA : Kinded A) (hB : Kinded B
       productCarrier, pairChurch, pairFunction, Checked.existsTm,
       Checked.lam, Checked.app, Checked.eps, Checked.eq, Checked.bv] using
       (FamEq.beta (Sig := Sig) bodyAfterA B)
+
+theorem appliedProductFam_kinded {A B : Ty Sig []} (hA : Kinded A) (hB : Kinded B) :
+    Kinded (appliedProductFam Sig A B) :=
+  .tyApp (.tyApp (productFam_kinded Sig) hA) hB
+
+def pairAtFamily {A B : Ty Sig []} {Γ : BoundCtx Sig [] depth}
+    (hA : Kinded A) (hB : Kinded B)
+    (a : DefEqChecked Sig Γ A) (b : DefEqChecked Sig Γ B) :
+    DefEqChecked Sig Γ (appliedProductFam Sig A B) := by
+  let constructor : DefEqChecked Sig Γ (.arr A (.arr B (productCarrier A B))) :=
+    .ofRaw (pairFunction hA hB).tm (pairFunction hA hB).typing
+  let represented := (constructor.app a).app b
+  let value : DefEqChecked Sig Γ (productTy hA hB) :=
+    DefEqChecked.abs (productCarrier_kinded hA hB) (productPredicate hA hB).tm
+      (productPredicate hA hB).typing represented
+  exact value.conv (appliedProductFam_kinded hA hB)
+    (.symm (appliedProductFam_defeq hA hB))
+
+def fstAtFamily {A B : Ty Sig []} {Γ : BoundCtx Sig [] depth}
+    (hA : Kinded A) (hB : Kinded B)
+    (value : DefEqChecked Sig Γ (appliedProductFam Sig A B)) :
+    DefEqChecked Sig Γ A := by
+  let represented := value.conv (productTy_kinded hA hB)
+    (appliedProductFam_defeq hA hB)
+  exact (DefEqChecked.ofRaw (fstFunction hA hB).tm (fstFunction hA hB).typing).app
+    represented
+
+def sndAtFamily {A B : Ty Sig []} {Γ : BoundCtx Sig [] depth}
+    (hA : Kinded A) (hB : Kinded B)
+    (value : DefEqChecked Sig Γ (appliedProductFam Sig A B)) :
+    DefEqChecked Sig Γ B := by
+  let represented := value.conv (productTy_kinded hA hB)
+    (appliedProductFam_defeq hA hB)
+  exact (DefEqChecked.ofRaw (sndFunction hA hB).tm (sndFunction hA hB).typing).app
+    represented
 
 end Nucleus.Hol.FamilySub

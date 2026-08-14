@@ -142,4 +142,58 @@ theorem appliedCoproductFam_defeq {A B : Ty Sig []} (hA : Kinded A) (hB : Kinded
       FamilySub.weaken, rename, liftRen] using
       (FamEq.beta (Sig := Sig) bodyAfterA B)
 
+theorem appliedCoproductFam_kinded {A B : Ty Sig []} (hA : Kinded A) (hB : Kinded B) :
+    Kinded (appliedCoproductFam Sig A B) :=
+  .tyApp (.tyApp (coproductFam_kinded Sig) hA) hB
+
+def inlAtFamily {A B : Ty Sig []} {Γ : BoundCtx Sig [] depth}
+    (hA : Kinded A) (hB : Kinded B) (a : DefEqChecked Sig Γ A) :
+    DefEqChecked Sig Γ (appliedCoproductFam Sig A B) := by
+  let leftTy : Ty Sig [] := .arr A .boolTy
+  let rightTy : Ty Sig [] := .arr B .boolTy
+  let hLeft : Kinded leftTy := .arr hA .boolTy
+  let hRight : Kinded rightTy := .arr hB .boolTy
+  let Γl := extendBound leftTy Γ
+  let Γr := extendBound rightTy Γl
+  let left : DefEqChecked Sig Γr leftTy :=
+    .ofRaw (.bv 1) (.bv (i := 1) hLeft rfl)
+  let represented : DefEqChecked Sig Γ (coproductCarrier A B) :=
+    DefEqChecked.lam hLeft (DefEqChecked.lam hRight (left.app a.weaken.weaken))
+  let value : DefEqChecked Sig Γ (coproductTy hA hB) :=
+    DefEqChecked.abs (coproductCarrier_kinded hA hB) (coproductPredicate hA hB).tm
+      (coproductPredicate hA hB).typing represented
+  exact value.conv (appliedCoproductFam_kinded hA hB)
+    (.symm (appliedCoproductFam_defeq hA hB))
+
+def inrAtFamily {A B : Ty Sig []} {Γ : BoundCtx Sig [] depth}
+    (hA : Kinded A) (hB : Kinded B) (b : DefEqChecked Sig Γ B) :
+    DefEqChecked Sig Γ (appliedCoproductFam Sig A B) := by
+  let leftTy : Ty Sig [] := .arr A .boolTy
+  let rightTy : Ty Sig [] := .arr B .boolTy
+  let hLeft : Kinded leftTy := .arr hA .boolTy
+  let hRight : Kinded rightTy := .arr hB .boolTy
+  let Γl := extendBound leftTy Γ
+  let Γr := extendBound rightTy Γl
+  let right : DefEqChecked Sig Γr rightTy :=
+    .ofRaw (.bv 0) (.bv (i := 0) hRight rfl)
+  let represented : DefEqChecked Sig Γ (coproductCarrier A B) :=
+    DefEqChecked.lam hLeft (DefEqChecked.lam hRight (right.app b.weaken.weaken))
+  let value : DefEqChecked Sig Γ (coproductTy hA hB) :=
+    DefEqChecked.abs (coproductCarrier_kinded hA hB) (coproductPredicate hA hB).tm
+      (coproductPredicate hA hB).typing represented
+  exact value.conv (appliedCoproductFam_kinded hA hB)
+    (.symm (appliedCoproductFam_defeq hA hB))
+
+def caseAtFamily {A B C : Ty Sig []} {Γ : BoundCtx Sig [] depth}
+    (hA : Kinded A) (hB : Kinded B) (hC : Kinded C)
+    (left : DefEqChecked Sig Γ (.arr A C))
+    (right : DefEqChecked Sig Γ (.arr B C))
+    (value : DefEqChecked Sig Γ (appliedCoproductFam Sig A B)) :
+    DefEqChecked Sig Γ C := by
+  let represented := value.conv (coproductTy_kinded hA hB)
+    (appliedCoproductFam_defeq hA hB)
+  let eliminator := DefEqChecked.ofRaw (coproductCaseFunction (Γ := Γ) hA hB hC).tm
+    (coproductCaseFunction (Γ := Γ) hA hB hC).typing
+  exact ((eliminator.app left).app right).app represented
+
 end Nucleus.Hol.FamilySub

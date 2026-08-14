@@ -6,6 +6,7 @@ import Nucleus.Hol.Intrinsic
 import Nucleus.Hol.FamilySub
 import Nucleus.Hol.FamilySub.Substitution
 import Nucleus.Hol.FamilySub.Kernel
+import Nucleus.Hol.FamilySub.Intrinsic
 import Nucleus.Hol.FamilySub.Product
 import Nucleus.Hol.FamilySub.Coproduct
 
