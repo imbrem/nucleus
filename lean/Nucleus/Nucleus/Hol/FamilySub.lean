@@ -68,6 +68,9 @@ abbrev Fam (Sig : Signature) (types : List Kind) (kind : Kind) :=
 abbrev Ty (Sig : Signature) (types : List Kind) := Fam Sig types .star
 abbrev Tm (Sig : Signature) (types : List Kind) (depth : Nat) := Expr Sig types .tm depth
 
+abbrev TySub (Sig : Signature) (source target : List Kind) :=
+  {kind : Kind} → TyVar source kind → Fam Sig target kind
+
 def renameTypes (ρ : TyRen source target) :
     Expr Sig source sort depth → Expr Sig target sort depth
   | .boolTy => .boolTy
@@ -92,6 +95,57 @@ def weakenTypes (expression : Expr Sig types sort depth) :
     Expr Sig (kind :: types) sort depth :=
   renameTypes (fun v => .succ v) expression
 
+def liftTySub (σ : TySub Sig source target) :
+    TySub Sig (kind :: source) (kind :: target)
+  | _, .zero => .tyBv .zero
+  | _, .succ v => weakenTypes (σ v)
+
+/-- Capture-avoiding simultaneous substitution of type variables throughout
+types and terms. -/
+def instantiateTypes (σ : TySub Sig source target) :
+    Expr Sig source sort depth → Expr Sig target sort depth
+  | .boolTy => .boolTy
+  | .arr A B => .arr (instantiateTypes σ A) (instantiateTypes σ B)
+  | .tyApp F A => .tyApp (instantiateTypes σ F) (instantiateTypes σ A)
+  | .tyLam body => .tyLam (instantiateTypes (liftTySub σ) body)
+  | .tyBv v => σ v
+  | .sub A p => .sub (instantiateTypes σ A) (instantiateTypes σ p)
+  | .primFam symbol => .primFam symbol
+  | .primTm symbol => .primTm symbol
+  | .bv index => .bv index
+  | .fv name A => .fv name (instantiateTypes σ A)
+  | .app f x => .app (instantiateTypes σ f) (instantiateTypes σ x)
+  | .lam A body => .lam (instantiateTypes σ A) (instantiateTypes σ body)
+  | .bool value => .bool value
+  | .eq A x y => .eq (instantiateTypes σ A) (instantiateTypes σ x)
+      (instantiateTypes σ y)
+  | .eps A p => .eps (instantiateTypes σ A) (instantiateTypes σ p)
+  | .abs A p x => .abs (instantiateTypes σ A) (instantiateTypes σ p)
+      (instantiateTypes σ x)
+  | .rep A p x => .rep (instantiateTypes σ A) (instantiateTypes σ p)
+      (instantiateTypes σ x)
+
+def headTySub (replacement : Fam Sig types kind) :
+    TySub Sig (kind :: types) types
+  | _, .zero => replacement
+  | _, .succ v => .tyBv v
+
+def openType (body : Expr Sig (kind :: types) sort depth)
+    (replacement : Fam Sig types kind) : Expr Sig types sort depth :=
+  instantiateTypes (headTySub replacement) body
+
+@[simp] theorem openType_bv_zero (replacement : Fam Sig types kind) :
+    openType (.tyBv .zero) replacement = replacement := rfl
+
+@[simp] theorem openType_bv_succ (v : TyVar types otherKind)
+    (replacement : Fam Sig types kind) :
+    openType (.tyBv (.succ v)) replacement = .tyBv v := rfl
+
+/-- Type-family beta reduction is computation of locally nameless opening. -/
+@[simp] theorem openType_tyLam_beta
+    (body : Fam Sig (kind :: types) codomain) (argument : Fam Sig types kind) :
+    openType body argument = instantiateTypes (headTySub argument) body := rfl
+
 /-- Pointwise subtype-family formation, defined solely from type-family lambda,
 application, and ordinary `Sub`.  Its predicate receives one term whose type is
 `carrier α`, where `α` is the freshly bound type variable. -/
@@ -111,6 +165,9 @@ class SigTyping (Sig : Signature) where
   HasType : {types : List Kind} → Sig .tm → Ty Sig types → Prop
   rename {source target : List Kind} {symbol : Sig .tm} {A : Ty Sig source}
     (ρ : TyRen source target) : HasType symbol A → HasType symbol (renameTypes ρ A)
+  instantiate {source target : List Kind} {symbol : Sig .tm} {A : Ty Sig source}
+    (σ : TySub Sig source target) :
+    HasType symbol A → HasType symbol (instantiateTypes σ A)
 
 inductive Classification (Sig : Signature) (types : List Kind) : HolSort → Type u where
   | kind {kind : Kind} : Classification Sig types (.kind kind)
@@ -225,6 +282,88 @@ theorem Kinded.weakenTypes {Sig : Signature} [SigTyping Sig]
   let ρ : TyRen types (kind :: types) := fun v => .succ v
   change Kinded (renameTypes ρ A)
   simpa only [renameBoundCtx_empty, Classification.rename] using checking.renameTypes ρ
+
+def WellFormedTySub {Sig : Signature} [SigTyping Sig]
+    (σ : TySub Sig source target) : Prop :=
+  ∀ {kind} (v : TyVar source kind), Kinded (σ v)
+
+theorem WellFormedTySub.lift {Sig : Signature} [SigTyping Sig]
+    {σ : TySub Sig source target} (wellFormed : WellFormedTySub σ) :
+    WellFormedTySub (liftTySub (kind := kind) σ) := by
+  intro resultKind v
+  cases v with
+  | zero => exact .tyBv .zero
+  | succ v => exact (wellFormed v).weakenTypes
+
+def instantiateBoundCtx (σ : TySub Sig source target) (Γ : BoundCtx Sig source depth) :
+    BoundCtx Sig target depth := fun i => instantiateTypes σ (Γ i)
+
+@[simp] theorem instantiateBoundCtx_empty (σ : TySub Sig source target) :
+    instantiateBoundCtx (Sig := Sig) σ (emptyBound : BoundCtx Sig source 0) =
+      (emptyBound : BoundCtx Sig target 0) := by
+  funext i
+  exact Fin.elim0 i
+
+@[simp] theorem instantiateBoundCtx_extend (σ : TySub Sig source target)
+    (A : Ty Sig source) (Γ : BoundCtx Sig source depth) :
+    instantiateBoundCtx σ (extendBound A Γ) =
+      extendBound (instantiateTypes σ A) (instantiateBoundCtx σ Γ) := by
+  funext i
+  refine Fin.cases ?_ (fun j => ?_) i <;> rfl
+
+def Classification.instantiate (σ : TySub Sig source target) :
+    Classification Sig source sort → Classification Sig target sort
+  | .kind => .kind
+  | .tm A => .tm (instantiateTypes σ A)
+
+attribute [simp] instantiateTypes Classification.instantiate
+
+theorem Checks.instantiateTypes {Sig : Signature} [SigTyping Sig]
+    {Γ : BoundCtx Sig source depth} {expression : Expr Sig source sort depth}
+    {classification : Classification Sig source sort}
+    (checking : Checks Γ expression classification) {σ : TySub Sig source target}
+    (wellFormed : WellFormedTySub σ) :
+    Checks (instantiateBoundCtx σ Γ) (FamilySub.instantiateTypes σ expression)
+      (classification.instantiate σ) := by
+  induction checking generalizing target with
+  | boolTy => simpa using (Checks.boolTy (Sig := Sig))
+  | arr _ _ ihA ihB => simpa using (.arr (by simpa using ihA wellFormed)
+      (by simpa using ihB wellFormed))
+  | tyApp _ _ ihF ihA => simpa using (.tyApp (by simpa using ihF wellFormed)
+      (by simpa using ihA wellFormed))
+  | tyLam body ih => simpa using (.tyLam (by simpa using ih wellFormed.lift))
+  | tyBv v => simpa using wellFormed v
+  | sub _ _ ihA ihp => simpa using (.sub (by simpa using ihA wellFormed)
+      (by simpa using ihp wellFormed))
+  | primFam symbol => simpa using (Checks.primFam (Sig := Sig) symbol)
+  | primTm rule => exact .primTm (SigTyping.instantiate σ rule)
+  | bv hA lookup ihA => exact (.bv (by simpa using ihA wellFormed)
+      (congrArg (FamilySub.instantiateTypes σ) lookup))
+  | fv name hA ihA => exact .fv name (by simpa using ihA wellFormed)
+  | app hf hx ihf ihx => exact .app (ihf wellFormed) (ihx wellFormed)
+  | lam body hA hb ihA ihb => exact (.lam _ (by simpa using ihA wellFormed)
+      (by simpa using ihb wellFormed))
+  | bool value => exact .bool value
+  | eq hA hx hy ihA ihx ihy => exact (.eq (by simpa using ihA wellFormed)
+      (ihx wellFormed) (ihy wellFormed))
+  | eps hA hp ihA ihp => exact .eps (by simpa using ihA wellFormed) (ihp wellFormed)
+  | abs hA hp hx ihA ihp ihx => exact (.abs (by simpa using ihA wellFormed)
+      (by simpa using ihp wellFormed) (ihx wellFormed))
+  | rep hA hp hx ihA ihp ihx => exact (.rep (by simpa using ihA wellFormed)
+      (by simpa using ihp wellFormed) (ihx wellFormed))
+
+theorem Kinded.openType {Sig : Signature} [SigTyping Sig]
+    {body : Fam Sig (kind :: types) resultKind} (bodyKinded : Kinded body)
+    {argument : Fam Sig types kind} (argumentKinded : Kinded argument) :
+    Kinded (openType body argument) := by
+  let σ : TySub Sig (kind :: types) types := headTySub argument
+  change Kinded (instantiateTypes σ body)
+  have wellFormed : WellFormedTySub σ := by
+    intro variableKind v
+    cases v with
+    | zero => exact argumentKinded
+    | succ v => exact .tyBv v
+  simpa using bodyKinded.instantiateTypes wellFormed
 
 /-- The crucial admissible construction: ordinary subtype formation under a
 type-family lambda yields a well-kinded family. -/
