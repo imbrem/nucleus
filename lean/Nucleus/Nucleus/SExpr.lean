@@ -11,5 +11,8 @@ import Nucleus.SExpr.Printer
 import Nucleus.SExpr.Pointer
 import Nucleus.SExpr.Coinductive
 import Nucleus.SExpr.Indexed
+import Nucleus.SExpr.Memory
+import Nucleus.SExpr.Allocator
+import Nucleus.SExpr.Rooted
 
 /-! Binary, proper, and tagged S-expression data models and parsers. -/

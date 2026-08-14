@@ -38,6 +38,28 @@ def mapAtom (f : α → β) : Cell2 ι α → Cell2 ι β
 
 end Cell2
 
+/-- A stored S-expression cell. Unlike `Cell2`, this includes an allocated
+nil cell; an outer `Option` can therefore unambiguously mean a free address. -/
+inductive Cell (ι : Type u) (α : Type v) where
+  | nil
+  | atom (value : α)
+  | cons (cell : ConsCell ι)
+  deriving DecidableEq, Repr
+
+namespace Cell
+
+def mapIndex (f : ι → κ) : Cell ι α → Cell κ α
+  | .nil => .nil
+  | .atom value => .atom value
+  | .cons cell => .cons ⟨f cell.car, f cell.cdr⟩
+
+def mapAtom (f : α → β) : Cell ι α → Cell ι β
+  | .nil => .nil
+  | .atom value => .atom (f value)
+  | .cons cell => .cons cell
+
+end Cell
+
 /-- A total table over an arbitrary index space. -/
 abbrev CellTable (ι : Type u) (α : Type v) := ι → Cell2 ι α
 
