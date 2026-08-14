@@ -108,14 +108,13 @@ def extendBound (A : Ty Sig types) (context : BoundCtx Sig types depth) :
     BoundCtx Sig types (depth + 1) := Fin.cases A context
 
 class SigTyping (Sig : Signature) where
-  HasType : Sig .tm → Ty Sig [] → Prop
+  HasType : {types : List Kind} → Sig .tm → Ty Sig types → Prop
+  rename {source target : List Kind} {symbol : Sig .tm} {A : Ty Sig source}
+    (ρ : TyRen source target) : HasType symbol A → HasType symbol (renameTypes ρ A)
 
 inductive Classification (Sig : Signature) (types : List Kind) : HolSort → Type u where
   | kind {kind : Kind} : Classification Sig types (.kind kind)
   | tm (type : Ty Sig types) : Classification Sig types .tm
-
-def weakenClosed (A : Ty Sig []) : Ty Sig types :=
-  renameTypes (source := []) (target := types) (fun {_} v => nomatch v) A
 
 inductive Checks {Sig : Signature} [SigTyping Sig] : {types : List Kind} →
     {sort : HolSort} → {depth : Nat} → BoundCtx Sig types depth →
@@ -133,7 +132,7 @@ inductive Checks {Sig : Signature} [SigTyping Sig] : {types : List Kind} →
       Checks emptyBound (.sub A p) .kind
   | primFam (symbol : Sig (.kind kind)) : Checks emptyBound (.primFam symbol) .kind
   | primTm (rule : SigTyping.HasType symbol A) :
-      Checks Γ (.primTm symbol) (.tm (weakenClosed A))
+      Checks Γ (.primTm symbol) (.tm A)
   | bv (hA : Checks emptyBound A .kind) (lookup : Γ i = A) :
       Checks Γ (.bv i) (.tm A)
   | fv (name : Nat) (hA : Checks emptyBound A .kind) : Checks Γ (.fv name A) (.tm A)
@@ -159,18 +158,85 @@ abbrev Kinded {Sig : Signature} [SigTyping Sig] (A : Fam Sig types kind) : Prop 
 abbrev HasType {Sig : Signature} [SigTyping Sig] (Γ : BoundCtx Sig types depth)
     (term : Tm Sig types depth) (A : Ty Sig types) : Prop := Checks Γ term (.tm A)
 
+def renameBoundCtx (ρ : TyRen source target) (Γ : BoundCtx Sig source depth) :
+    BoundCtx Sig target depth := fun i => renameTypes ρ (Γ i)
+
+@[simp] theorem renameBoundCtx_empty (ρ : TyRen source target) :
+    renameBoundCtx (Sig := Sig) ρ (emptyBound : BoundCtx Sig source 0) =
+      (emptyBound : BoundCtx Sig target 0) :=
+  by
+    funext i
+    exact Fin.elim0 i
+
+@[simp] theorem renameBoundCtx_extend (ρ : TyRen source target)
+    (A : Ty Sig source) (Γ : BoundCtx Sig source depth) :
+    renameBoundCtx ρ (extendBound A Γ) =
+      extendBound (renameTypes ρ A) (renameBoundCtx ρ Γ) := by
+  funext i
+  refine Fin.cases ?_ (fun j => ?_) i <;> rfl
+
+def Classification.rename (ρ : TyRen source target) :
+    Classification Sig source sort → Classification Sig target sort
+  | .kind => .kind
+  | .tm A => .tm (renameTypes ρ A)
+
+attribute [simp] renameTypes Classification.rename
+
+theorem Checks.renameTypes {Sig : Signature} [SigTyping Sig]
+    {Γ : BoundCtx Sig source depth} {expression : Expr Sig source sort depth}
+    {classification : Classification Sig source sort}
+    (checking : Checks Γ expression classification) (ρ : TyRen source target) :
+    Checks (renameBoundCtx ρ Γ) (FamilySub.renameTypes ρ expression)
+      (classification.rename ρ) := by
+  induction checking generalizing target with
+  | boolTy =>
+      simpa [Classification.rename] using (Checks.boolTy (Sig := Sig))
+  | arr _ _ ihA ihB => simpa [Classification.rename] using
+      (Checks.arr (by simpa using ihA ρ) (by simpa using ihB ρ))
+  | tyApp _ _ ihF ihA => simpa [Classification.rename] using
+      (Checks.tyApp (by simpa using ihF ρ) (by simpa using ihA ρ))
+  | tyLam body ih => simpa [Classification.rename] using
+      (Checks.tyLam (by simpa using ih (liftTyRen ρ)))
+  | tyBv v => simpa [Classification.rename] using
+      (Checks.tyBv (Sig := Sig) (ρ v))
+  | sub _ _ ihA ihp => simpa [Classification.rename, extendBound] using
+      (Checks.sub (by simpa using ihA ρ) (by simpa using ihp ρ))
+  | primFam symbol =>
+      simpa [Classification.rename] using (Checks.primFam (Sig := Sig) symbol)
+  | primTm rule => exact .primTm (SigTyping.rename ρ rule)
+  | bv hA lookup ihA =>
+      exact .bv (by simpa using ihA ρ)
+        (congrArg (FamilySub.renameTypes ρ) lookup)
+  | fv name hA ihA => exact .fv name (by simpa using ihA ρ)
+  | app hf hx ihf ihx => exact .app (ihf ρ) (ihx ρ)
+  | lam body hA hb ihA ihb =>
+      exact .lam _ (by simpa using ihA ρ) (by simpa using ihb ρ)
+  | bool value => exact .bool value
+  | eq hA hx hy ihA ihx ihy => exact .eq (by simpa using ihA ρ) (ihx ρ) (ihy ρ)
+  | eps hA hp ihA ihp => exact .eps (by simpa using ihA ρ) (ihp ρ)
+  | abs hA hp hx ihA ihp ihx =>
+      exact .abs (by simpa using ihA ρ) (by simpa using ihp ρ) (ihx ρ)
+  | rep hA hp hx ihA ihp ihx =>
+      exact .rep (by simpa using ihA ρ) (by simpa using ihp ρ) (ihx ρ)
+
+theorem Kinded.weakenTypes {Sig : Signature} [SigTyping Sig]
+    {A : Fam Sig types familyKind} (checking : Kinded A) :
+    Kinded (weakenTypes (kind := kind) A) := by
+  let ρ : TyRen types (kind :: types) := fun v => .succ v
+  change Kinded (renameTypes ρ A)
+  simpa only [renameBoundCtx_empty, Classification.rename] using checking.renameTypes ρ
+
 /-- The crucial admissible construction: ordinary subtype formation under a
 type-family lambda yields a well-kinded family. -/
 theorem subFam_kinded {Sig : Signature} [SigTyping Sig] {kind : Kind}
     {carrier : Fam Sig types (.arr kind .star)}
     {predicate : Tm Sig (kind :: types) 1}
-    (_carrierKinded : Kinded carrier)
+    (carrierKinded : Kinded carrier)
     (predicateTyped : HasType
       (extendBound (.tyApp (weakenTypes (kind := kind) carrier) (.tyBv .zero)) emptyBound)
-      predicate .boolTy)
-    (weakenedCarrierKinded : Kinded (weakenTypes (kind := kind) carrier)) :
+      predicate .boolTy) :
     Kinded (subFam carrier predicate) := by
-  exact .tyLam (.sub (.tyApp weakenedCarrierKinded (.tyBv .zero)) predicateTyped)
+  exact .tyLam (.sub (.tyApp carrierKinded.weakenTypes (.tyBv .zero)) predicateTyped)
 
 /-! ## Embedding of the closed signature kernel -/
 
