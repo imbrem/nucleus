@@ -204,16 +204,24 @@ def emptyBound : BoundCtx Sig types 0 := Fin.elim0
 def extendBound (A : Ty Sig types) (context : BoundCtx Sig types depth) :
     BoundCtx Sig types (depth + 1) := Fin.cases A context
 
+/-- Signature-provided primitive family equalities.  An implementation may
+obtain these certificates by fetching content-addressed definitions or by
+running a computation; the kernel only consumes the resulting rule value. -/
+class SigFamilyEquality (Sig : Signature.{u}) where
+  Rule : {types : List Kind} → {kind : Kind} →
+    Fam Sig types kind → Fam Sig types kind → Type u
+
 /-- Definitional equality for type families.  In particular, family lambda is
 computational: applying it opens its body. -/
-inductive FamEq (Sig : Signature) : {types : List Kind} → {kind : Kind} →
-    Fam Sig types kind → Fam Sig types kind → Prop where
+inductive FamEq (Sig : Signature.{u}) : {types : List Kind} → {kind : Kind} →
+    Fam Sig types kind → Fam Sig types kind → Type (u + 1) where
   | refl : FamEq Sig A A
   | symm : FamEq Sig A B → FamEq Sig B A
   | trans : FamEq Sig A B → FamEq Sig B C → FamEq Sig A C
   | arr : FamEq Sig A A' → FamEq Sig B B' → FamEq Sig (.arr A B) (.arr A' B')
   | app : FamEq Sig F F' → FamEq Sig A A' → FamEq Sig (.tyApp F A) (.tyApp F' A')
   | lam : FamEq Sig body body' → FamEq Sig (.tyLam body) (.tyLam body')
+  | sub : FamEq Sig A B → p = q → FamEq Sig (.sub A p) (.sub B q)
   | beta (body : Fam Sig (domain :: types) codomain) (argument : Fam Sig types domain) :
       FamEq Sig (.tyApp (.tyLam body) argument) (openType body argument)
   | rename {source target : List Kind} {kind : Kind}
@@ -224,6 +232,13 @@ inductive FamEq (Sig : Signature) : {types : List Kind} → {kind : Kind} →
       {A B : Fam Sig source kind} (equality : FamEq Sig A B)
       (σ : TySub Sig source target) :
       FamEq Sig (instantiateTypes σ A) (instantiateTypes σ B)
+  | signature [rules : SigFamilyEquality Sig]
+      (certificate : rules.Rule A B) : FamEq Sig A B
+
+/-- First-class equality certificates for ordinary HOL types.  Equality for
+higher-kinded families is `FamEq`; this is its `★` fragment. -/
+abbrev EqTy (Sig : Signature) {types : List Kind} (A B : Ty Sig types) :=
+  FamEq Sig A B
 
 class SigTyping (Sig : Signature) where
   HasType : {types : List Kind} → Sig .tm → Ty Sig types → Prop
@@ -336,7 +351,7 @@ def Classification.rename (ρ : TyRen source target) :
 
 attribute [simp] renameTypes Classification.rename
 
-theorem FamEq.renameTypes {A B : Fam Sig source kind}
+def FamEq.renameTypes {A B : Fam Sig source kind}
     (equality : FamEq Sig A B) (ρ : TyRen source target) :
     FamEq Sig (renameTypes ρ A) (renameTypes ρ B) := .rename equality ρ
 
@@ -419,7 +434,7 @@ def Classification.instantiate (σ : TySub Sig source target) :
 
 attribute [simp] instantiateTypes Classification.instantiate
 
-theorem FamEq.instantiateTypes {A B : Fam Sig source kind}
+def FamEq.instantiateTypes {A B : Fam Sig source kind}
     (equality : FamEq Sig A B)
     (σ : TySub Sig source target) :
     FamEq Sig (instantiateTypes σ A) (instantiateTypes σ B) := .instantiate equality σ

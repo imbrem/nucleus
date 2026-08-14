@@ -198,7 +198,7 @@ def appliedProductFam (Sig : Signature) [SigTyping Sig]
     (A B : Ty Sig []) : Ty Sig [] :=
   .tyApp (.tyApp (productFam Sig) A) B
 
-theorem appliedProductFam_defeq {A B : Ty Sig []} (hA : Kinded A) (hB : Kinded B) :
+def appliedProductFam_defeq {A B : Ty Sig []} (hA : Kinded A) (hB : Kinded B) :
     FamEq Sig (appliedProductFam Sig A B) (productTy hA hB) := by
   let body : Fam Sig [.star] (.arr .star .star) :=
     .tyLam (productTy (.tyBv (.succ .zero)) (.tyBv .zero))

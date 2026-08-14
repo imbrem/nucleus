@@ -121,7 +121,7 @@ def appliedCoproductFam (Sig : Signature) [SigTyping Sig]
     (A B : Ty Sig []) : Ty Sig [] :=
   .tyApp (.tyApp (coproductFam Sig) A) B
 
-theorem appliedCoproductFam_defeq {A B : Ty Sig []} (hA : Kinded A) (hB : Kinded B) :
+def appliedCoproductFam_defeq {A B : Ty Sig []} (hA : Kinded A) (hB : Kinded B) :
     FamEq Sig (appliedCoproductFam Sig A B) (coproductTy hA hB) := by
   let body : Fam Sig [.star] (.arr .star .star) :=
     .tyLam (coproductTy (.tyBv (.succ .zero)) (.tyBv .zero))
