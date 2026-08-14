@@ -1,6 +1,8 @@
 import Nucleus.Hol.Traits
 import Nucleus.Hol.Tag
 import Nucleus.Hol.Nat
+import Nucleus.Hol.Soundness
+import Nucleus.Hol.Intrinsic
 
 /-!
 # Signature-parametric HOL

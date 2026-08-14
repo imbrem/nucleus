@@ -21,8 +21,6 @@ abbrev Signature := HolSort → Type u
 
 /-- Sorted, intrinsically scoped, but extrinsically typed HOL syntax. -/
 inductive Expr (Sig : Signature) : HolSort → Nat → Type u where
-  | primFam {kind : Kind} (symbol : Sig (.kind kind)) : Expr Sig (.kind kind) 0
-  | primTm {depth : Nat} (symbol : Sig .tm) : Expr Sig .tm depth
   | boolTy : Expr Sig (.kind .star) 0
   | arr (domain codomain : Expr Sig (.kind .star) 0) : Expr Sig (.kind .star) 0
   | tyApp {domain codomain : Kind}
@@ -30,6 +28,8 @@ inductive Expr (Sig : Signature) : HolSort → Nat → Type u where
       (argument : Expr Sig (.kind domain) 0) : Expr Sig (.kind codomain) 0
   | sub (carrier : Expr Sig (.kind .star) 0)
       (predicate : Expr Sig .tm 1) : Expr Sig (.kind .star) 0
+  | primFam {kind : Kind} (symbol : Sig (.kind kind)) : Expr Sig (.kind kind) 0
+  | primTm {depth : Nat} (symbol : Sig .tm) : Expr Sig .tm depth
   | bv {depth : Nat} (index : Fin depth) : Expr Sig .tm depth
   | fv {depth : Nat} (name : Nat)
       (type : Expr Sig (.kind .star) 0) : Expr Sig .tm depth
