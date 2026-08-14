@@ -3,6 +3,7 @@ import Nucleus.Hol.Tag
 import Nucleus.Hol.Nat
 import Nucleus.Hol.Soundness
 import Nucleus.Hol.Intrinsic
+import Nucleus.Hol.FamilySub
 
 /-!
 # Signature-parametric HOL
