@@ -141,6 +141,49 @@ def openType (body : Expr Sig (kind :: types) sort depth)
     (replacement : Fam Sig types kind) :
     openType (.tyBv (.succ v)) replacement = .tyBv v := rfl
 
+theorem instantiateTypes_renameTypes_cancel
+    (expression : Expr Sig source sort depth) (ρ : TyRen source middle)
+    (σ : TySub Sig middle source)
+    (cancel : ∀ {variableKind} (v : TyVar source variableKind),
+      σ (ρ v) = .tyBv v) :
+    instantiateTypes σ (renameTypes ρ expression) = expression := by
+  induction expression generalizing middle with
+  | boolTy | primFam | primTm | bv | bool => rfl
+  | arr A B ihA ihB | tyApp A B ihA ihB | app A B ihA ihB =>
+      simp only [renameTypes, instantiateTypes]
+      rw [ihA ρ σ cancel, ihB ρ σ cancel]
+  | tyLam body ih =>
+      simp only [renameTypes, instantiateTypes]
+      congr 1
+      apply ih (liftTyRen ρ) (liftTySub σ)
+      intro variableKind v
+      cases v with
+      | zero => rfl
+      | succ v => simp [liftTyRen, liftTySub, cancel v, weakenTypes, renameTypes]
+  | tyBv v => exact cancel v
+  | sub A p ihA ihp | lam A p ihA ihp | eps A p ihA ihp =>
+      simp only [renameTypes, instantiateTypes]
+      rw [ihA ρ σ cancel, ihp ρ σ cancel]
+  | fv name A ih =>
+      simp only [renameTypes, instantiateTypes]
+      rw [ih ρ σ cancel]
+  | eq A x y ihA ihx ihy | abs A x y ihA ihx ihy | rep A x y ihA ihx ihy =>
+      simp only [renameTypes, instantiateTypes]
+      rw [ihA ρ σ cancel, ihx ρ σ cancel, ihy ρ σ cancel]
+
+@[simp] theorem openType_weakenTypes
+    (expression : Expr Sig types sort depth) (replacement : Fam Sig types kind) :
+    openType (weakenTypes (kind := kind) expression) replacement = expression := by
+  apply instantiateTypes_renameTypes_cancel expression (fun v => .succ v)
+    (headTySub replacement)
+  intro variableKind v
+  rfl
+
+@[simp] theorem instantiateTypes_head_weakenTypes
+    (expression : Expr Sig types sort depth) (replacement : Fam Sig types kind) :
+    instantiateTypes (headTySub replacement) (weakenTypes (kind := kind) expression) =
+      expression := openType_weakenTypes expression replacement
+
 /-- Type-family beta reduction is computation of locally nameless opening. -/
 @[simp] theorem openType_tyLam_beta
     (body : Fam Sig (kind :: types) codomain) (argument : Fam Sig types kind) :
@@ -160,6 +203,27 @@ def emptyBound : BoundCtx Sig types 0 := Fin.elim0
 
 def extendBound (A : Ty Sig types) (context : BoundCtx Sig types depth) :
     BoundCtx Sig types (depth + 1) := Fin.cases A context
+
+/-- Definitional equality for type families.  In particular, family lambda is
+computational: applying it opens its body. -/
+inductive FamEq (Sig : Signature) : {types : List Kind} → {kind : Kind} →
+    Fam Sig types kind → Fam Sig types kind → Prop where
+  | refl : FamEq Sig A A
+  | symm : FamEq Sig A B → FamEq Sig B A
+  | trans : FamEq Sig A B → FamEq Sig B C → FamEq Sig A C
+  | arr : FamEq Sig A A' → FamEq Sig B B' → FamEq Sig (.arr A B) (.arr A' B')
+  | app : FamEq Sig F F' → FamEq Sig A A' → FamEq Sig (.tyApp F A) (.tyApp F' A')
+  | lam : FamEq Sig body body' → FamEq Sig (.tyLam body) (.tyLam body')
+  | beta (body : Fam Sig (domain :: types) codomain) (argument : Fam Sig types domain) :
+      FamEq Sig (.tyApp (.tyLam body) argument) (openType body argument)
+  | rename {source target : List Kind} {kind : Kind}
+      {A B : Fam Sig source kind} (equality : FamEq Sig A B)
+      (ρ : TyRen source target) :
+      FamEq Sig (renameTypes ρ A) (renameTypes ρ B)
+  | instantiate {source target : List Kind} {kind : Kind}
+      {A B : Fam Sig source kind} (equality : FamEq Sig A B)
+      (σ : TySub Sig source target) :
+      FamEq Sig (instantiateTypes σ A) (instantiateTypes σ B)
 
 class SigTyping (Sig : Signature) where
   HasType : {types : List Kind} → Sig .tm → Ty Sig types → Prop
@@ -215,6 +279,39 @@ abbrev Kinded {Sig : Signature} [SigTyping Sig] (A : Fam Sig types kind) : Prop 
 abbrev HasType {Sig : Signature} [SigTyping Sig] (Γ : BoundCtx Sig types depth)
     (term : Tm Sig types depth) (A : Ty Sig types) : Prop := Checks Γ term (.tm A)
 
+/-- Typing modulo type-family definitional equality.  `HasType` remains the
+syntax-directed judgment used by the checker; this is its conversion closure. -/
+inductive HasTypeDefEq {Sig : Signature} [SigTyping Sig] : {types : List Kind} →
+    {depth : Nat} → BoundCtx Sig types depth → Tm Sig types depth → Ty Sig types → Prop where
+  | exact (typing : HasType Γ term A) : HasTypeDefEq Γ term A
+  | app : HasTypeDefEq Γ f (.arr A B) → HasTypeDefEq Γ x A →
+      HasTypeDefEq Γ (.app f x) B
+  | lam (body : Tm Sig types (depth + 1)) (hA : Kinded A) :
+      HasTypeDefEq (extendBound A Γ) body B →
+      HasTypeDefEq Γ (.lam A body) (.arr A B)
+  | eq (hA : Kinded A) : HasTypeDefEq Γ x A → HasTypeDefEq Γ y A →
+      HasTypeDefEq Γ (.eq A x y) .boolTy
+  | eps (hA : Kinded A) : HasTypeDefEq Γ p (.arr A .boolTy) →
+      HasTypeDefEq Γ (.eps A p) A
+  | abs (hA : Kinded A) (hp : HasType (extendBound A emptyBound) p .boolTy) :
+      HasTypeDefEq Γ x A → HasTypeDefEq Γ (.abs A p x) (.sub A p)
+  | rep (hA : Kinded A) (hp : HasType (extendBound A emptyBound) p .boolTy) :
+      HasTypeDefEq Γ x (.sub A p) → HasTypeDefEq Γ (.rep A p x) A
+  | conv (typing : HasTypeDefEq Γ term A) (hB : Kinded B)
+      (conversion : FamEq Sig A B) : HasTypeDefEq Γ term B
+
+namespace HasTypeDefEq
+
+variable {Sig : Signature} [SigTyping Sig] {types : List Kind} {depth : Nat}
+  {Γ : BoundCtx Sig types depth} {term : Tm Sig types depth} {A B : Ty Sig types}
+
+theorem ofHasType (typing : HasType Γ term A) : HasTypeDefEq Γ term A := .exact typing
+
+theorem convert (typing : HasTypeDefEq Γ term A) (hB : Kinded B)
+    (conversion : FamEq Sig A B) : HasTypeDefEq Γ term B := .conv typing hB conversion
+
+end HasTypeDefEq
+
 def renameBoundCtx (ρ : TyRen source target) (Γ : BoundCtx Sig source depth) :
     BoundCtx Sig target depth := fun i => renameTypes ρ (Γ i)
 
@@ -238,6 +335,10 @@ def Classification.rename (ρ : TyRen source target) :
   | .tm A => .tm (renameTypes ρ A)
 
 attribute [simp] renameTypes Classification.rename
+
+theorem FamEq.renameTypes {A B : Fam Sig source kind}
+    (equality : FamEq Sig A B) (ρ : TyRen source target) :
+    FamEq Sig (renameTypes ρ A) (renameTypes ρ B) := .rename equality ρ
 
 theorem Checks.renameTypes {Sig : Signature} [SigTyping Sig]
     {Γ : BoundCtx Sig source depth} {expression : Expr Sig source sort depth}
@@ -317,6 +418,11 @@ def Classification.instantiate (σ : TySub Sig source target) :
   | .tm A => .tm (instantiateTypes σ A)
 
 attribute [simp] instantiateTypes Classification.instantiate
+
+theorem FamEq.instantiateTypes {A B : Fam Sig source kind}
+    (equality : FamEq Sig A B)
+    (σ : TySub Sig source target) :
+    FamEq Sig (instantiateTypes σ A) (instantiateTypes σ B) := .instantiate equality σ
 
 theorem Checks.instantiateTypes {Sig : Signature} [SigTyping Sig]
     {Γ : BoundCtx Sig source depth} {expression : Expr Sig source sort depth}
