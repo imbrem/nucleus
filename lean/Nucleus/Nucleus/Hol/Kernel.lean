@@ -30,10 +30,17 @@ def TypedHyps {Sig : Signature} [SigTyping Sig] {depth : Nat}
     (Γ : BoundCtx Sig depth) (hypotheses : List (Tm Sig depth)) : Prop :=
   ∀ p, p ∈ hypotheses → HasType Γ p .boolTy
 
-inductive Proves {Sig : Signature} [SigTyping Sig] {depth : Nat}
-    (Γ : BoundCtx Sig depth) : List (Tm Sig depth) → Tm Sig depth → Type u where
+inductive Proves {Sig : Signature} [SigTyping Sig] : {depth : Nat} →
+    (Γ : BoundCtx Sig depth) → List (Tm Sig depth) → Tm Sig depth → Type u where
   | hyp (typed : TypedHyps Γ H) (member : p ∈ H) : Proves Γ H p
   | truth (typed : TypedHyps Γ H) : Proves Γ H (.bool true)
+  | falseElim (typed : TypedHyps Γ H) (hp : HasType Γ p .boolTy) :
+      Proves Γ H (.bool false) → Proves Γ H p
+  | boolCases (typed : TypedHyps Γ H) (hp : HasType Γ p .boolTy)
+      (leftTyped : TypedHyps Γ (p :: H))
+      (rightTyped : TypedHyps Γ (.eq .boolTy p (.bool false) :: H)) :
+      Proves Γ (p :: H) q → Proves Γ (.eq .boolTy p (.bool false) :: H) q →
+      Proves Γ H q
   | eqRefl (typed : TypedHyps Γ H) (hA : Kinded A)
       (hx : HasType Γ x A) : Proves Γ H (.eq A x x)
   | eqMp (typed : TypedHyps Γ H) (hA : Kinded A)
@@ -43,6 +50,17 @@ inductive Proves {Sig : Signature} [SigTyping Sig] {depth : Nat}
   | choice (typed : TypedHyps Γ H) (hA : Kinded A)
       (hp : HasType Γ p (.arr A .boolTy)) (hx : HasType Γ x A) :
       Proves Γ H (.app p x) → Proves Γ H (.app p (.eps A p))
+  | generalize {depth : Nat} {Γ : BoundCtx Sig depth} {H : List (Tm Sig depth)}
+      {A : Ty Sig} {body : Tm Sig (depth + 1)}
+      (typed : TypedHyps Γ H) (hA : Kinded A)
+      (bodyTyping : HasType (extendBound A Γ) body .boolTy) :
+      Proves (extendBound A Γ) (H.map weaken) body →
+      Proves Γ H (.eq (.arr A .boolTy) (.lam A body) (.lam A (.bool true)))
+  | weakenBound {depth : Nat} {Γ : BoundCtx Sig depth} {H : List (Tm Sig depth)}
+      {p : Tm Sig depth} {A : Ty Sig} {K : List (Tm Sig (depth + 1))}
+      (typed : TypedHyps Γ H) (hA : Kinded A) (typedK : TypedHyps (extendBound A Γ) K)
+      (embedding : ∀ q, q ∈ H → weaken q ∈ K) :
+      Proves Γ H p → Proves (extendBound A Γ) K (weaken p)
   | convert (typed : TypedHyps Γ H) : EqTm Γ p q .boolTy →
       Proves Γ H p → Proves Γ H q
   | eqOfEqTm (typed : TypedHyps Γ H) (hA : Kinded A) :

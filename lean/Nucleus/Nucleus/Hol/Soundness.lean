@@ -113,12 +113,30 @@ theorem Proves.sound {Sig : Signature} [SigTyping Sig] [UniqueSigTyping Sig]
   induction proof with
   | hyp typed member => exact hypotheses _ member
   | truth typed => exact .boolean true
+  | falseElim typed hp falseProof ih =>
+      have impossible := ih boundEnv hypotheses
+      exact False.elim (Bool.noConfusion (impossible.unique (.boolean false)))
+  | boolCases typed hp leftTyped rightTyped leftProof rightProof ihLeft ihRight =>
+      obtain ⟨value, valueEval⟩ := hp.eval_exists freeEnv boundEnv
+      cases value with
+      | false =>
+          apply ihRight boundEnv
+          intro proposition member
+          rcases List.mem_cons.mp member with rfl | member
+          · exact .eqTrue .boolTy valueEval (.boolean false) rfl
+          · exact hypotheses _ member
+      | true =>
+          apply ihLeft boundEnv
+          intro proposition member
+          rcases List.mem_cons.mp member with rfl | member
+          · exact valueEval
+          · exact hypotheses _ member
   | eqRefl typed hA hx =>
       obtain ⟨value, evaluation⟩ := hx.eval_exists freeEnv boundEnv
       exact .eqTrue hA evaluation evaluation rfl
   | eqMp typed hA hp hx hy equality application ihEquality ihApplication =>
-      have equalityTrue := ihEquality hypotheses
-      have applicationTrue := ihApplication hypotheses
+      have equalityTrue := ihEquality boundEnv hypotheses
+      have applicationTrue := ihApplication boundEnv hypotheses
       obtain ⟨left, right, leftEval, rightEval, equal⟩ := equalityTrue.eq_true_inv
       obtain ⟨domain, function, argument, functionEval, argumentEval, applied⟩ :=
         applicationTrue.app_inv
@@ -130,17 +148,57 @@ theorem Proves.sound {Sig : Signature} [SigTyping Sig] [UniqueSigTyping Sig]
         exact applied.symm
       exact output ▸ Eval.app functionEval rightEval
   | choice typed hA hp hx application ih =>
-      have applicationTrue := ih hypotheses
+      have applicationTrue := ih boundEnv hypotheses
       obtain ⟨domain, predicate, witness, predicateEval, witnessEval, holds⟩ :=
         applicationTrue.app_inv
       cases hp.unique predicateEval.typing
       cases hx.unique witnessEval.typing
-      have selected : Eval Γ freeEnv boundEnv (.eps _ _) _ (chooseValue _ predicate) :=
-        .eps hA predicateEval
+      have selected := Eval.eps hA predicateEval
       have chosenTrue := chooseValue_spec predicate witness holds.symm
       exact chosenTrue ▸ Eval.app predicateEval selected
+  | @generalize depth Γ H A body typed hA bodyTyping premise ih =>
+      let left : DenoteTy (.arr A .boolTy) := fun argument =>
+        Classical.choose (bodyTyping.eval_exists freeEnv (extendBoundEnv argument boundEnv))
+      have leftEval : Eval Γ freeEnv boundEnv (.lam A body) (.arr A .boolTy) left :=
+        .lam hA fun argument =>
+          Classical.choose_spec
+            (bodyTyping.eval_exists freeEnv (extendBoundEnv argument boundEnv))
+      let right : DenoteTy (.arr A .boolTy) := fun _ => true
+      have rightEval : Eval Γ freeEnv boundEnv (.lam A (.bool true))
+          (.arr A .boolTy) right := .lam hA fun _ => .boolean true
+      have equal : left = right := by
+        funext argument
+        have lifted : HypsTrue freeEnv (extendBoundEnv argument boundEnv) (H.map weaken) := by
+          intro proposition member
+          obtain ⟨original, originalMember, rfl⟩ := List.mem_map.mp member
+          exact (hypotheses original originalMember).rename (ρ := Fin.succ)
+            (target := extendBoundEnv argument boundEnv) (fun _ => rfl) (by
+              intro i B lookup
+              rfl)
+        have bodyTrue := ih (extendBoundEnv argument boundEnv) lifted
+        exact (Classical.choose_spec
+          (bodyTyping.eval_exists freeEnv (extendBoundEnv argument boundEnv))).unique bodyTrue
+      exact .eqTrue (.arr hA .boolTy) leftEval rightEval equal
+  | @weakenBound depth Γ H p A K typed hA typedK embedding premise ih =>
+      let sourceEnv : BoundEnv Γ := fun i B lookup => boundEnv i.succ B lookup
+      have sourceHyps : HypsTrue freeEnv sourceEnv H := by
+        intro proposition member
+        obtain ⟨value, evaluation⟩ :=
+          (typed proposition member).eval_exists freeEnv sourceEnv
+        have weakened := evaluation.rename (ρ := Fin.succ) (target := boundEnv)
+          (fun _ => rfl) (by
+            intro i B lookup
+            rfl)
+        have targetTrue := hypotheses (weaken proposition) (embedding proposition member)
+        have equal := weakened.unique targetTrue
+        cases equal
+        exact evaluation
+      exact (ih sourceEnv sourceHyps).rename (ρ := Fin.succ) (target := boundEnv)
+        (fun _ => rfl) (by
+          intro i B lookup
+          rfl)
   | convert typed equality premise ih =>
-      have premiseTrue := ih hypotheses
+      have premiseTrue := ih boundEnv hypotheses
       obtain ⟨value, targetEval⟩ := equality.typing.2.eval_exists freeEnv boundEnv
       have values := equality.sound freeEnv boundEnv premiseTrue targetEval
       cases values
@@ -154,13 +212,13 @@ theorem Proves.sound {Sig : Signature} [SigTyping Sig] [UniqueSigTyping Sig]
       obtain ⟨right, rightEval⟩ := hq.eval_exists freeEnv boundEnv
       have equal : left = right := by
         cases left <;> cases right <;> try rfl
-        · have impossible := ihRight (by
+        · have impossible := ihRight boundEnv (by
             intro r member
             rcases List.mem_cons.mp member with equal | member
             · subst r; exact rightEval
             · exact hypotheses _ member)
           exact False.elim (Bool.noConfusion (impossible.unique leftEval))
-        · have impossible := ihLeft (by
+        · have impossible := ihLeft boundEnv (by
             intro r member
             rcases List.mem_cons.mp member with equal | member
             · subst r; exact leftEval

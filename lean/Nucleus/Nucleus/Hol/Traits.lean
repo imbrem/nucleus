@@ -141,6 +141,16 @@ class ProofRules (L : Type u) [TypeSyntax L] [BooleanTypeSyntax L]
   Typed : TermSyntax.Ctx (L := L) depth → List (TermSyntax.Tm (L := L) depth) → Prop
   hyp : Typed Γ H → p ∈ H → Proves Γ H p
   truth : Typed Γ H → Proves Γ H (TermSyntax.bool true)
+  falseElim : Typed Γ H →
+    TypingRules.HasType (L := L) Γ p BooleanTypeSyntax.boolTy →
+    Proves Γ H (TermSyntax.bool false) → Proves Γ H p
+  boolCases : Typed Γ H →
+    TypingRules.HasType (L := L) Γ p BooleanTypeSyntax.boolTy →
+    Typed Γ (p :: H) → Typed Γ (TermSyntax.eq BooleanTypeSyntax.boolTy p
+      (TermSyntax.bool false) :: H) →
+    Proves Γ (p :: H) q →
+    Proves Γ (TermSyntax.eq BooleanTypeSyntax.boolTy p (TermSyntax.bool false) :: H) q →
+    Proves Γ H q
   eqRefl : Typed Γ H → TypingRules.Formed (L := L) A →
     TypingRules.HasType (L := L) Γ x A →
     Proves Γ H (TermSyntax.eq A x x)
@@ -153,6 +163,16 @@ class ProofRules (L : Type u) [TypeSyntax L] [BooleanTypeSyntax L]
     TypingRules.HasType (L := L) Γ p (FunctionTypeSyntax.arr A BooleanTypeSyntax.boolTy) →
     TypingRules.HasType (L := L) Γ x A → Proves Γ H (TermSyntax.app p x) →
     Proves Γ H (TermSyntax.app p (TermSyntax.eps A p))
+  generalize : Typed Γ H → TypingRules.Formed (L := L) A →
+    TypingRules.HasType (L := L) (TermSyntax.extend A Γ) body BooleanTypeSyntax.boolTy →
+    Proves (TermSyntax.extend A Γ) (H.map BindingSyntax.weaken) body →
+    Proves Γ H (TermSyntax.eq (FunctionTypeSyntax.arr A BooleanTypeSyntax.boolTy)
+      (TermSyntax.lam A body) (TermSyntax.lam A (TermSyntax.bool true)))
+  weakenBound : Typed Γ H → TypingRules.Formed (L := L) A →
+    Typed (TermSyntax.extend A Γ) K →
+    (∀ q, q ∈ H → BindingSyntax.weaken q ∈ K) →
+    Proves Γ H p →
+    Proves (TermSyntax.extend A Γ) K (BindingSyntax.weaken p)
   convert : Typed Γ H → EqualityRules.EqTm (L := L) Γ p q BooleanTypeSyntax.boolTy →
     Proves Γ H p → Proves Γ H q
   eqOfEqTm : Typed Γ H → TypingRules.Formed (L := L) A →
@@ -253,9 +273,13 @@ instance {Sig : Signature} [SigTyping Sig] : ProofRules (Language Sig) where
   Typed := Nucleus.Hol.TypedHyps
   hyp := .hyp
   truth := .truth
+  falseElim := .falseElim
+  boolCases := .boolCases
   eqRefl := .eqRefl
   eqMp := .eqMp
   choice := .choice
+  generalize := .generalize
+  weakenBound := .weakenBound
   convert := .convert
   eqOfEqTm := fun typed hA equality => .eqOfEqTm typed hA equality
   antisymm := .antisymm
