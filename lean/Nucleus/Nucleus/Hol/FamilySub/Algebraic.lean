@@ -74,6 +74,18 @@ class ProductRules (Sig : Signature) [SigTyping Sig] [ProductOps Sig] where
         (ProductOps.pair hA hB a₁ b₁) (ProductOps.pair hA hB a₂ b₂))) :
     Intrinsic.Proves Γ H (DefEqChecked.eq hB b₁ b₂)
 
+/-- Higher-kinded presentation of binary products.  It is separate from
+`ProductOps` because a syntax may support products without exposing them as a
+first-class `* → * → *` family, or conversely expose a family before rules. -/
+class ProductFamilyOps (Sig : Signature) [SigTyping Sig] [ProductOps Sig] where
+  family : Fam Sig [] (.arr .star (.arr .star .star))
+  familyKinded : Kinded family
+  applyEq {A B : Ty Sig []} (hA : Kinded A) (hB : Kinded B) :
+    FamEq Sig (.tyApp (.tyApp family A) B) (ProductOps.product hA hB)
+
+class ProductTheory (Sig : Signature) [SigTyping Sig] extends
+    ProductOps Sig, ProductRules Sig, ProductFamilyOps Sig
+
 /-- Operations needed to use binary coproducts independently of their concrete
 Church/subtype representation. -/
 class CoproductOps (Sig : Signature) [SigTyping Sig] where
@@ -132,6 +144,16 @@ class CoproductRules (Sig : Signature) [SigTyping Sig] [CoproductOps Sig] where
       (DefEqChecked.eq (CoproductOps.coproductKinded hA hB)
         (CoproductOps.inl hA hB left) (CoproductOps.inr hA hB right)))
 
+/-- Higher-kinded presentation of binary coproducts. -/
+class CoproductFamilyOps (Sig : Signature) [SigTyping Sig] [CoproductOps Sig] where
+  family : Fam Sig [] (.arr .star (.arr .star .star))
+  familyKinded : Kinded family
+  applyEq {A B : Ty Sig []} (hA : Kinded A) (hB : Kinded B) :
+    FamEq Sig (.tyApp (.tyApp family A) B) (CoproductOps.coproduct hA hB)
+
+class CoproductTheory (Sig : Signature) [SigTyping Sig] extends
+    CoproductOps Sig, CoproductRules Sig, CoproductFamilyOps Sig
+
 instance (Sig : Signature) [SigTyping Sig] : ProductOps Sig where
   product := productTy
   productKinded := productTy_kinded
@@ -147,6 +169,13 @@ instance (Sig : Signature) [SigTyping Sig] : ProductRules Sig where
   pairInjectiveFirst := pair_injective_first
   pairInjectiveSecond := pair_injective_second
 
+instance (Sig : Signature) [SigTyping Sig] : ProductFamilyOps Sig where
+  family := productFam Sig
+  familyKinded := productFam_kinded Sig
+  applyEq := appliedProductFam_defeq
+
+instance (Sig : Signature) [SigTyping Sig] : ProductTheory Sig where
+
 instance (Sig : Signature) [SigTyping Sig] : CoproductOps Sig where
   coproduct := coproductTy
   coproductKinded := coproductTy_kinded
@@ -160,5 +189,12 @@ noncomputable instance (Sig : Signature) [SigTyping Sig] : CoproductRules Sig wh
   inlInjective := inl_injective
   inrInjective := inr_injective
   inlNeInr := inl_ne_inr
+
+instance (Sig : Signature) [SigTyping Sig] : CoproductFamilyOps Sig where
+  family := coproductFam Sig
+  familyKinded := coproductFam_kinded Sig
+  applyEq := appliedCoproductFam_defeq
+
+noncomputable instance (Sig : Signature) [SigTyping Sig] : CoproductTheory Sig where
 
 end Nucleus.Hol.FamilySub
