@@ -786,6 +786,42 @@ def snd_pair (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
       (sndChecked_eq_choice typed hA hB (pairChecked hA hB a b)))
     (sndChoice_pair typed hA hB a b)
 
+/-- Equality of pairs determines equality of their first components. -/
+def pair_injective_first (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (a₁ a₂ : DefEqChecked Sig Γ A) (b₁ b₂ : DefEqChecked Sig Γ B)
+    (equality : Intrinsic.Proves Γ H
+      (DefEqChecked.eq (productTy_kinded hA hB)
+        (pairChecked hA hB a₁ b₁) (pairChecked hA hB a₂ b₂))) :
+    Intrinsic.Proves Γ H (DefEqChecked.eq hA a₁ a₂) := by
+  let projection := DefEqChecked.ofRaw (fstFunction (Γ := Γ) hA hB).tm
+    (fstFunction (Γ := Γ) hA hB).typing
+  have projected := Intrinsic.Proves.appArgCongr typed (productTy_kinded hA hB) hA
+    projection (pairChecked hA hB a₁ b₁) (pairChecked hA hB a₂ b₂) equality
+  exact Intrinsic.Proves.eqTrans typed hA a₁
+    (fstChecked hA hB (pairChecked hA hB a₁ b₁)) a₂
+    (Intrinsic.Proves.eqSymm typed hA _ _ (fst_pair typed hA hB a₁ b₁))
+    (Intrinsic.Proves.eqTrans typed hA _
+      (fstChecked hA hB (pairChecked hA hB a₂ b₂)) a₂ projected
+      (fst_pair typed hA hB a₂ b₂))
+
+/-- Equality of pairs determines equality of their second components. -/
+def pair_injective_second (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (a₁ a₂ : DefEqChecked Sig Γ A) (b₁ b₂ : DefEqChecked Sig Γ B)
+    (equality : Intrinsic.Proves Γ H
+      (DefEqChecked.eq (productTy_kinded hA hB)
+        (pairChecked hA hB a₁ b₁) (pairChecked hA hB a₂ b₂))) :
+    Intrinsic.Proves Γ H (DefEqChecked.eq hB b₁ b₂) := by
+  let projection := DefEqChecked.ofRaw (sndFunction (Γ := Γ) hA hB).tm
+    (sndFunction (Γ := Γ) hA hB).typing
+  have projected := Intrinsic.Proves.appArgCongr typed (productTy_kinded hA hB) hB
+    projection (pairChecked hA hB a₁ b₁) (pairChecked hA hB a₂ b₂) equality
+  exact Intrinsic.Proves.eqTrans typed hB b₁
+    (sndChecked hA hB (pairChecked hA hB a₁ b₁)) b₂
+    (Intrinsic.Proves.eqSymm typed hB _ _ (snd_pair typed hA hB a₁ b₁))
+    (Intrinsic.Proves.eqTrans typed hB _
+      (sndChecked hA hB (pairChecked hA hB a₂ b₂)) b₂ projected
+      (snd_pair typed hA hB a₂ b₂))
+
 def pair_congr (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
     (a a' : DefEqChecked Sig Γ A) (b b' : DefEqChecked Sig Γ B)
     (first : Intrinsic.Proves Γ H (DefEqChecked.eq hA a a'))

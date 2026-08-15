@@ -57,6 +57,22 @@ class ProductRules (Sig : Signature) [SigTyping Sig] [ProductOps Sig] where
       (DefEqChecked.eq hB (ProductOps.snd hA hB left) (ProductOps.snd hA hB right))) :
     Intrinsic.Proves Γ H
       (DefEqChecked.eq (ProductOps.productKinded hA hB) left right)
+  pairInjectiveFirst {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx Sig types depth} {H : PropCtx Γ} {A B : Ty Sig types}
+    (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (a₁ a₂ : DefEqChecked Sig Γ A) (b₁ b₂ : DefEqChecked Sig Γ B)
+    (equality : Intrinsic.Proves Γ H
+      (DefEqChecked.eq (ProductOps.productKinded hA hB)
+        (ProductOps.pair hA hB a₁ b₁) (ProductOps.pair hA hB a₂ b₂))) :
+    Intrinsic.Proves Γ H (DefEqChecked.eq hA a₁ a₂)
+  pairInjectiveSecond {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx Sig types depth} {H : PropCtx Γ} {A B : Ty Sig types}
+    (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (a₁ a₂ : DefEqChecked Sig Γ A) (b₁ b₂ : DefEqChecked Sig Γ B)
+    (equality : Intrinsic.Proves Γ H
+      (DefEqChecked.eq (ProductOps.productKinded hA hB)
+        (ProductOps.pair hA hB a₁ b₁) (ProductOps.pair hA hB a₂ b₂))) :
+    Intrinsic.Proves Γ H (DefEqChecked.eq hB b₁ b₂)
 
 /-- Operations needed to use binary coproducts independently of their concrete
 Church/subtype representation. -/
@@ -128,6 +144,8 @@ instance (Sig : Signature) [SigTyping Sig] : ProductRules Sig where
   sndPair := snd_pair
   eta := product_eta
   ext := product_ext
+  pairInjectiveFirst := pair_injective_first
+  pairInjectiveSecond := pair_injective_second
 
 instance (Sig : Signature) [SigTyping Sig] : CoproductOps Sig where
   coproduct := coproductTy
