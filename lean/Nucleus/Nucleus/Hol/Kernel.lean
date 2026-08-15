@@ -56,6 +56,11 @@ inductive Proves {Sig : Signature} [SigTyping Sig] : {depth : Nat} →
       (bodyTyping : HasType (extendBound A Γ) body .boolTy) :
       Proves (extendBound A Γ) (H.map weaken) body →
       Proves Γ H (.eq (.arr A .boolTy) (.lam A body) (.lam A (.bool true)))
+  | weakenBound {depth : Nat} {Γ : BoundCtx Sig depth} {H : List (Tm Sig depth)}
+      {p : Tm Sig depth} {A : Ty Sig} {K : List (Tm Sig (depth + 1))}
+      (typed : TypedHyps Γ H) (hA : Kinded A) (typedK : TypedHyps (extendBound A Γ) K)
+      (embedding : ∀ q, q ∈ H → weaken q ∈ K) :
+      Proves Γ H p → Proves (extendBound A Γ) K (weaken p)
   | convert (typed : TypedHyps Γ H) : EqTm Γ p q .boolTy →
       Proves Γ H p → Proves Γ H q
   | eqOfEqTm (typed : TypedHyps Γ H) (hA : Kinded A) :

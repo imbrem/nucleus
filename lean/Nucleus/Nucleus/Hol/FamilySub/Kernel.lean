@@ -56,6 +56,12 @@ inductive Proves {Sig : Signature} [SigTyping Sig] {types : List Kind} : {depth 
       (bodyTyping : HasTypeDefEq (extendBound A Γ) body .boolTy) :
       Proves (extendBound A Γ) (H.map weaken) body →
       Proves Γ H (.eq (.arr A .boolTy) (.lam A body) (.lam A (.bool true)))
+  | weakenBound (typed : TypedHyps Γ H) (hA : Kinded A)
+      (typedK : TypedHyps (extendBound A Γ) K)
+      (embedding : ∀ q, q ∈ H → weaken q ∈ K) :
+      Proves Γ H p → Proves (extendBound A Γ) K (weaken p)
+  | hypothesisMap (typedK : TypedHyps Γ K)
+      (subset : ∀ q, q ∈ H → q ∈ K) : Proves Γ H p → Proves Γ K p
   | convert (typed : TypedHyps Γ H) : EqTm Γ p q .boolTy →
       Proves Γ H p → Proves Γ H q
   | eqOfEqTm (typed : TypedHyps Γ H) (hA : Kinded A) :
@@ -100,99 +106,16 @@ theorem typedHypotheses {Sig : Signature} [SigTyping Sig] {types : List Kind}
       .convert typed _ _ | .eqOfEqTm typed _ _ |
       .antisymm typed _ _ _ _ _ _ | .absRep typed _ _ _ |
       .repAbs typed _ _ _ _ _ | .repPredOfWitness typed _ _ _ _ _ _ _ => typed
+  | .weakenBound _ _ typedK _ _ => typedK
+  | .hypothesisMap typedK _ _ => typedK
 
 /-- Proofs are monotone in their hypothesis list. -/
 noncomputable def mapHypotheses {Sig : Signature} [SigTyping Sig] {types : List Kind}
     {depth : Nat} {Γ : BoundCtx Sig types depth} {H K : List (Tm Sig types depth)}
     {p : Tm Sig types depth} (typedK : TypedHyps Γ K)
     (subset : ∀ proposition, proposition ∈ H → proposition ∈ K) :
-    Proves Γ H p → Proves Γ K p
-  | .hyp _ member => .hyp typedK (subset _ member)
-  | .truth _ => .truth typedK
-  | .falseElim _ hp falseProof =>
-      .falseElim typedK hp (mapHypotheses typedK subset falseProof)
-  | .boolCases _ hp _ _ left right =>
-      .boolCases typedK hp
-        (fun proposition membership => by
-          rcases List.mem_cons.mp membership with rfl | membership
-          · exact hp
-          · exact typedK proposition membership)
-        (fun proposition membership => by
-          rcases List.mem_cons.mp membership with rfl | membership
-          · exact .eq .boolTy hp (.exact (.bool false))
-          · exact typedK proposition membership)
-        (mapHypotheses
-          (fun proposition membership => by
-            rcases List.mem_cons.mp membership with rfl | membership
-            · exact hp
-            · exact typedK proposition membership)
-          (fun proposition membership => by
-            rcases List.mem_cons.mp membership with rfl | membership
-            · exact List.mem_cons_self
-            · exact List.mem_cons_of_mem _ (subset proposition membership)) left)
-        (mapHypotheses
-          (fun proposition membership => by
-            rcases List.mem_cons.mp membership with rfl | membership
-            · exact .eq .boolTy hp (.exact (.bool false))
-            · exact typedK proposition membership)
-          (fun proposition membership => by
-            rcases List.mem_cons.mp membership with rfl | membership
-            · exact List.mem_cons_self
-            · exact List.mem_cons_of_mem _ (subset proposition membership)) right)
-  | .eqRefl _ hA hx => .eqRefl typedK hA hx
-  | .eqMp _ hA hp hx hy equality application =>
-      .eqMp typedK hA hp hx hy
-        (mapHypotheses typedK subset equality)
-        (mapHypotheses typedK subset application)
-  | .choice _ hA hp hx premise =>
-      .choice typedK hA hp hx (mapHypotheses typedK subset premise)
-  | .generalize _ hA bodyTyping premise =>
-      .generalize typedK hA bodyTyping
-        (mapHypotheses
-          (fun proposition membership => by
-            obtain ⟨original, member, rfl⟩ := List.mem_map.mp membership
-            exact (typedK original member).weaken)
-          (fun proposition membership => by
-            obtain ⟨original, member, rfl⟩ := List.mem_map.mp membership
-            exact List.mem_map_of_mem (subset original member)) premise)
-  | .convert _ equality premise =>
-      .convert typedK equality (mapHypotheses typedK subset premise)
-  | .eqOfEqTm _ hA equality => .eqOfEqTm typedK hA equality
-  | .antisymm _ hp hq leftTyped rightTyped left right =>
-      .antisymm typedK hp hq
-        (fun proposition membership => by
-          rcases List.mem_cons.mp membership with rfl | membership
-          · exact hp
-          · exact typedK proposition membership)
-        (fun proposition membership => by
-          rcases List.mem_cons.mp membership with rfl | membership
-          · exact hq
-          · exact typedK proposition membership)
-        (mapHypotheses
-          (fun proposition membership => by
-            rcases List.mem_cons.mp membership with rfl | membership
-            · exact hp
-            · exact typedK proposition membership)
-          (fun proposition membership => by
-            rcases List.mem_cons.mp membership with rfl | membership
-            · exact List.mem_cons_self
-            · exact List.mem_cons_of_mem _ (subset proposition membership)) left)
-        (mapHypotheses
-          (fun proposition membership => by
-            rcases List.mem_cons.mp membership with rfl | membership
-            · exact hq
-            · exact typedK proposition membership)
-          (fun proposition membership => by
-            rcases List.mem_cons.mp membership with rfl | membership
-            · exact List.mem_cons_self
-            · exact List.mem_cons_of_mem _ (subset proposition membership)) right)
-  | .absRep _ hA hp hx => .absRep typedK hA hp hx
-  | .repAbs _ hA hp hx predicateTyping premise =>
-      .repAbs typedK hA hp hx predicateTyping (mapHypotheses typedK subset premise)
-  | .repPredOfWitness _ hA hp witnessTyping witnessPredicateTyping subtypeTyping
-      representationPredicateTyping premise =>
-      .repPredOfWitness typedK hA hp witnessTyping witnessPredicateTyping subtypeTyping
-        representationPredicateTyping (mapHypotheses typedK subset premise)
+    Proves Γ H p → Proves Γ K p :=
+  .hypothesisMap typedK subset
 
 /-- Adding an unused proposition to the local hypothesis list is admissible. -/
 noncomputable def weakenHypotheses {Sig : Signature} [SigTyping Sig] {types : List Kind}

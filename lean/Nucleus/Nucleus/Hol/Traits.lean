@@ -168,6 +168,11 @@ class ProofRules (L : Type u) [TypeSyntax L] [BooleanTypeSyntax L]
     Proves (TermSyntax.extend A Γ) (H.map BindingSyntax.weaken) body →
     Proves Γ H (TermSyntax.eq (FunctionTypeSyntax.arr A BooleanTypeSyntax.boolTy)
       (TermSyntax.lam A body) (TermSyntax.lam A (TermSyntax.bool true)))
+  weakenBound : Typed Γ H → TypingRules.Formed (L := L) A →
+    Typed (TermSyntax.extend A Γ) K →
+    (∀ q, q ∈ H → BindingSyntax.weaken q ∈ K) →
+    Proves Γ H p →
+    Proves (TermSyntax.extend A Γ) K (BindingSyntax.weaken p)
   convert : Typed Γ H → EqualityRules.EqTm (L := L) Γ p q BooleanTypeSyntax.boolTy →
     Proves Γ H p → Proves Γ H q
   eqOfEqTm : Typed Γ H → TypingRules.Formed (L := L) A →
@@ -274,6 +279,7 @@ instance {Sig : Signature} [SigTyping Sig] : ProofRules (Language Sig) where
   eqMp := .eqMp
   choice := .choice
   generalize := .generalize
+  weakenBound := .weakenBound
   convert := .convert
   eqOfEqTm := fun typed hA equality => .eqOfEqTm typed hA equality
   antisymm := .antisymm

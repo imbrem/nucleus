@@ -179,6 +179,24 @@ theorem Proves.sound {Sig : Signature} [SigTyping Sig] [UniqueSigTyping Sig]
         exact (Classical.choose_spec
           (bodyTyping.eval_exists freeEnv (extendBoundEnv argument boundEnv))).unique bodyTrue
       exact .eqTrue (.arr hA .boolTy) leftEval rightEval equal
+  | @weakenBound depth Γ H p A K typed hA typedK embedding premise ih =>
+      let sourceEnv : BoundEnv Γ := fun i B lookup => boundEnv i.succ B lookup
+      have sourceHyps : HypsTrue freeEnv sourceEnv H := by
+        intro proposition member
+        obtain ⟨value, evaluation⟩ :=
+          (typed proposition member).eval_exists freeEnv sourceEnv
+        have weakened := evaluation.rename (ρ := Fin.succ) (target := boundEnv)
+          (fun _ => rfl) (by
+            intro i B lookup
+            rfl)
+        have targetTrue := hypotheses (weaken proposition) (embedding proposition member)
+        have equal := weakened.unique targetTrue
+        cases equal
+        exact evaluation
+      exact (ih sourceEnv sourceHyps).rename (ρ := Fin.succ) (target := boundEnv)
+        (fun _ => rfl) (by
+          intro i B lookup
+          rfl)
   | convert typed equality premise ih =>
       have premiseTrue := ih boundEnv hypotheses
       obtain ⟨value, targetEval⟩ := equality.typing.2.eval_exists freeEnv boundEnv

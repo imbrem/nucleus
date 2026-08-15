@@ -152,6 +152,13 @@ def terms (context : PropCtx Γ) : List (Tm Sig types depth) :=
 def weaken {A : Ty Sig types} (context : PropCtx Γ) :
     PropCtx (extendBound A Γ) := context.map DefEqChecked.weaken
 
+@[simp] theorem terms_weaken {A : Ty Sig types} (context : PropCtx Γ) :
+    (weaken (A := A) context).terms = context.terms.map FamilySub.weaken := by
+  induction context with
+  | nil => rfl
+  | cons proposition tail ih =>
+      simp [weaken, terms, DefEqChecked.weaken]
+
 theorem typed (context : PropCtx Γ) : TypedHyps Γ context.terms := by
   intro p member
   obtain ⟨checked, _, rfl⟩ := List.mem_map.mp member
@@ -331,15 +338,17 @@ def generalize (hA : Kinded A)
     Proves Γ H (DefEqChecked.eq (.arr hA .boolTy)
       (DefEqChecked.lam hA body)
       (DefEqChecked.lam hA (DefEqChecked.truth (Γ := extendBound A Γ)))) := by
-  have contexts : (PropCtx.weaken (A := A) H).terms =
-      H.terms.map FamilySub.weaken := by
-    induction H with
-    | nil => rfl
-    | cons proposition tail ih =>
-        simp [PropCtx.weaken, PropCtx.terms, DefEqChecked.weaken]
   refine ⟨.generalize (PropCtx.typed H) hA body.typing ?_⟩
-  rw [← contexts]
+  rw [← PropCtx.terms_weaken]
   exact premise.proof
+
+noncomputable def weakenBound (hA : Kinded A) (proof : Proves Γ H p) :
+    Proves (extendBound A Γ) (PropCtx.weaken (A := A) H) p.weaken := by
+  refine ⟨.weakenBound (PropCtx.typed H) hA
+    (PropCtx.typed (PropCtx.weaken (A := A) H)) ?_ proof.proof⟩
+  intro proposition member
+  rw [PropCtx.terms_weaken]
+  exact List.mem_map_of_mem member
 
 /-- HOL existential introduction, where `∃ x, p x` is the usual choice-based
 definition `p (ε p)`. -/
