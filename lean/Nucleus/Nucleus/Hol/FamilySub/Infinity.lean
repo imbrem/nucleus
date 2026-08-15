@@ -55,6 +55,19 @@ def indSucc {Sig : Signature} [SigTyping Sig] [InfiniteOps Sig]
   funext i
   exact Fin.elim0 i
 
+@[simp] theorem indSucc_weaken {Sig : Signature} [SigTyping Sig] [InfiniteOps Sig]
+    {types : List Kind} {depth : Nat} {Γ : BoundCtx Sig types depth}
+    {A : Ty Sig types} :
+    (indSucc (Sig := Sig) (Γ := Γ)).weaken =
+      indSucc (Sig := Sig) (Γ := extendBound A Γ) := by
+  apply DefEqChecked.ext
+  simp [indSucc, indSuccChecked, DefEqChecked.weaken, DefEqChecked.ofRaw,
+    FamilySub.weaken]
+  rw [rename_comp]
+  congr
+  funext i
+  exact Fin.elim0 i
+
 /-- The proof component of infinity, deliberately independent from its syntax.
 An implementation can therefore expose constants without granting rules, or
 grant rules for derived terms without adding primitive syntax. -/
