@@ -45,6 +45,24 @@ def instantiateOne (predicate : Tm Sig types 1)
     (replacement : Tm Sig types depth) : Tm Sig types depth :=
   instantiate (fun _ => replacement) predicate
 
+@[simp] theorem rename_bv (ρ : Fin m → Fin n) (i : Fin m) :
+    rename (Sig := Sig) (types := types) ρ (.bv i) = .bv (ρ i) := by
+  simp [rename]
+
+@[simp] theorem weaken_bv (i : Fin depth) :
+    weaken (Sig := Sig) (types := types) (.bv i) = .bv i.succ := by
+  simp [weaken]
+
+@[simp] theorem instantiate_bv (σ : Fin m → Tm Sig types n) (i : Fin m) :
+    instantiate σ (.bv i) = σ i := by
+  simp [instantiate]
+
+@[simp] theorem liftSub_zero (σ : Fin m → Tm Sig types n) :
+    liftSub σ 0 = (.bv 0 : Tm Sig types (n + 1)) := rfl
+
+@[simp] theorem liftSub_succ (σ : Fin m → Tm Sig types n) (i : Fin m) :
+    liftSub σ i.succ = weaken (σ i) := rfl
+
 theorem instantiate_rename (term : Tm Sig types m)
     (ρ : Fin m → Fin n) (σ : Fin n → Tm Sig types k) (τ : Fin m → Fin k)
     (commute : ∀ i, σ (ρ i) = .bv (τ i)) :
@@ -63,7 +81,7 @@ theorem instantiate_rename (term : Tm Sig types m)
       intro i
       refine Fin.cases ?_ (fun j => ?_) i
       · rfl
-      · simp [liftRen, liftSub, commute j, weaken, rename]
+      · simp [liftRen, liftSub, commute j, weaken]
   | eq A left right =>
       simp only [rename, instantiate]
       rw [instantiate_rename left ρ σ τ commute,
@@ -152,7 +170,7 @@ theorem instantiate_rename_cancel (term : Tm Sig types m)
   apply instantiate_rename term (fun i => (Fin.succ (Fin.succ i)))
     (liftSub (Fin.cases replacement .bv)) Fin.succ
   intro i
-  simp [liftSub, weaken, rename]
+  simp [liftSub, weaken]
 
 def FreeIn (name : Nat) : {sort : HolSort} → {depth : Nat} →
     Expr Sig types sort depth → Prop

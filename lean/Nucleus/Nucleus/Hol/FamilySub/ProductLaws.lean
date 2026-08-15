@@ -35,13 +35,94 @@ def pairChurchChecked (hA : Kinded A) (hB : Kinded B)
   ((DefEqChecked.ofRaw (pairFunction (Γ := Γ) hA hB).tm
     (pairFunction (Γ := Γ) hA hB).typing).app a).app b
 
+def pairBodyC (hA : Kinded A) (hB : Kinded B)
+    (a : DefEqChecked Sig Γ A) (b : DefEqChecked Sig Γ B) :
+    BoolTm (extendBound (.arr A (.arr B .boolTy)) Γ) :=
+  let hF : Kinded (.arr A (.arr B .boolTy)) := .arr hA (.arr hB .boolTy)
+  let f := DefEqChecked.bv (Γ := extendBound (.arr A (.arr B .boolTy)) Γ) hF 0 rfl
+  (f.app a.weaken).app b.weaken
+
+def pairAfterB (hA : Kinded A) (hB : Kinded B)
+    (a : DefEqChecked Sig Γ A) (b : DefEqChecked Sig Γ B) :
+    DefEqChecked Sig Γ (productCarrier A B) :=
+  DefEqChecked.lam (.arr hA (.arr hB .boolTy)) (pairBodyC hA hB a b)
+
+def pairBodyB (hA : Kinded A) (hB : Kinded B) (a : DefEqChecked Sig Γ A) :
+    DefEqChecked Sig (extendBound B Γ) (productCarrier A B) :=
+  let b := DefEqChecked.bv (Γ := extendBound B Γ) hB 0 rfl
+  pairAfterB hA hB a.weaken b
+
+def pairAfterA (hA : Kinded A) (hB : Kinded B) (a : DefEqChecked Sig Γ A) :
+    DefEqChecked Sig Γ (.arr B (productCarrier A B)) :=
+  DefEqChecked.lam hB (pairBodyB hA hB a)
+
+def pairBodyA (hA : Kinded A) (hB : Kinded B) :
+    DefEqChecked Sig (extendBound A Γ) (.arr B (productCarrier A B)) :=
+  let a := DefEqChecked.bv (Γ := extendBound A Γ) hA 0 rfl
+  pairAfterA hA hB a
+
+theorem pairConstructor_eq_lam (hA : Kinded A) (hB : Kinded B) :
+    DefEqChecked.ofRaw (pairFunction (Γ := Γ) hA hB).tm
+        (pairFunction (Γ := Γ) hA hB).typing =
+      DefEqChecked.lam hA (pairBodyA hA hB) := by
+  apply DefEqChecked.ext
+  simp [pairFunction, pairBodyA, pairAfterA, pairBodyB, pairAfterB, pairBodyC,
+    DefEqChecked.ofRaw, DefEqChecked.lam, DefEqChecked.app, DefEqChecked.bv,
+    DefEqChecked.weaken, Checked.lam, Checked.app, Checked.bv, weaken]
+
+theorem pairBodyA_open (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (a : DefEqChecked Sig Γ A) :
+    (pairBodyA hA hB).openBound typed a = pairAfterA hA hB a := by
+  apply DefEqChecked.ext
+  simp only [pairBodyA, pairAfterA, pairBodyB, pairAfterB, pairBodyC,
+    DefEqChecked.openBound, DefEqChecked.lam, DefEqChecked.app,
+    DefEqChecked.bv, DefEqChecked.weaken, FamilySub.openBound]
+  simp [instantiate, liftSub]
+
+theorem pairBodyB_open (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (a : DefEqChecked Sig Γ A) (b : DefEqChecked Sig Γ B) :
+    (pairBodyB hA hB a).openBound typed b = pairAfterB hA hB a b := by
+  apply DefEqChecked.ext
+  simp only [pairBodyB, pairAfterB, pairBodyC, DefEqChecked.openBound,
+    DefEqChecked.lam, DefEqChecked.app, DefEqChecked.bv, DefEqChecked.weaken,
+    FamilySub.openBound]
+  simp [instantiate, liftSub]
+
+theorem pairBodyC_open (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (a : DefEqChecked Sig Γ A) (b : DefEqChecked Sig Γ B)
+    (continuation : DefEqChecked Sig Γ (.arr A (.arr B .boolTy))) :
+    (pairBodyC hA hB a b).openBound typed continuation =
+      (continuation.app a).app b := by
+  apply DefEqChecked.ext
+  simp only [pairBodyC, DefEqChecked.openBound, DefEqChecked.app,
+    DefEqChecked.bv, DefEqChecked.weaken, FamilySub.openBound]
+  simp [instantiate]
+
+def pairChurch_apply (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (a : DefEqChecked Sig Γ A) (b : DefEqChecked Sig Γ B)
+    (continuation : DefEqChecked Sig Γ (.arr A (.arr B .boolTy))) :
+    Intrinsic.EqTm ((pairChurchChecked hA hB a b).app continuation)
+      ((continuation.app a).app b) := by
+  have constructorEq := pairConstructor_eq_lam (Γ := Γ) hA hB
+  have first := Intrinsic.EqTm.beta typed hA (pairBodyA (Γ := Γ) hA hB) a
+  rw [← constructorEq, pairBodyA_open typed hA hB a] at first
+  have firstApplied := first.app (Intrinsic.EqTm.refl b)
+  have second := Intrinsic.EqTm.beta typed hB (pairBodyB hA hB a) b
+  rw [pairBodyB_open typed hA hB a b] at second
+  have throughSecond := firstApplied.trans second
+  have secondApplied := throughSecond.app (Intrinsic.EqTm.refl continuation)
+  have hContinuation : Kinded (.arr A (.arr B .boolTy)) := .arr hA (.arr hB .boolTy)
+  have third := Intrinsic.EqTm.beta typed hContinuation (pairBodyC hA hB a b) continuation
+  rw [pairBodyC_open typed hA hB a b continuation] at third
+  exact secondApplied.trans third
+
 @[simp] theorem instantiate_pairFunction {m n : Nat}
     {Γm : BoundCtx Sig types m} {Γn : BoundCtx Sig types n}
     (hA : Kinded A) (hB : Kinded B) (σ : Fin m → Tm Sig types n) :
     instantiate σ (pairFunction (Γ := Γm) hA hB).tm =
       (pairFunction (Γ := Γn) hA hB).tm := by
   simp [pairFunction, Checked.lam, Checked.app, Checked.bv,
-    instantiate, liftSub, weaken, rename, Fin.cases_zero]
+    instantiate, liftSub, weaken, Fin.cases_zero]
 
 def productEquationBody (hA : Kinded A) (hB : Kinded B)
     (represented : DefEqChecked Sig Γ (productCarrier A B)) :
@@ -80,7 +161,7 @@ theorem productPredicateAt_eq_membership (hA : Kinded A) (hB : Kinded B)
     DefEqChecked.lam, DefEqChecked.app, DefEqChecked.eps, DefEqChecked.eq,
     DefEqChecked.weaken, DefEqChecked.bv, DefEqChecked.ofRaw, Checked.existsTm,
     Checked.lam, Checked.app, Checked.eps, Checked.eq, Checked.bv,
-    instantiateOne, instantiate, liftSub, weaken, rename,
+    instantiateOne, instantiate, liftSub, weaken,
     pairChurch, pairFunction]
 
 /-- Every constructed Church pair satisfies the image predicate used by the
