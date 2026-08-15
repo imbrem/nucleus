@@ -65,6 +65,12 @@ def existsTm (hA : Kinded A) (body : DefEqChecked Sig (extendBound A Γ) .boolTy
   let predicate := DefEqChecked.lam hA body
   predicate.app (predicate.eps hA)
 
+/-- Every HOL type is inhabited: choice is total even for a predicate with no
+witnesses. -/
+def arbitrary (hA : Kinded A) : DefEqChecked Sig Γ A :=
+  let body : DefEqChecked Sig (extendBound A Γ) .boolTy := DefEqChecked.boolean false
+  DefEqChecked.eps hA (DefEqChecked.lam hA body)
+
 def abs (hA : Kinded A) (predicate : Tm Sig types 1)
     (predicateTyping : HasType (extendBound A emptyBound) predicate .boolTy)
     (value : DefEqChecked Sig Γ A) : DefEqChecked Sig Γ (.sub A predicate) :=

@@ -385,6 +385,61 @@ def rep_pair (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
     (productPredicateAt hA hB (pairChurchChecked hA hB a b)) rfl
     (productPredicate_pair typed hA hB a b)
 
+def productPredicate_rep (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (value : DefEqChecked Sig Γ (productTy hA hB)) :
+    Intrinsic.Proves Γ H (productPredicateAt hA hB (repPair hA hB value)) := by
+  let a : DefEqChecked Sig Γ A := DefEqChecked.arbitrary hA
+  let b : DefEqChecked Sig Γ B := DefEqChecked.arbitrary hB
+  let witness := pairChurchChecked hA hB a b
+  exact Intrinsic.Proves.repPredOfWitness (productCarrier_kinded hA hB)
+    (productPredicate hA hB).tm (productPredicate hA hB).typing witness
+    (productPredicateAt hA hB witness) rfl value
+    (productPredicateAt hA hB (repPair hA hB value)) rfl
+    (productPredicate_pair typed hA hB a b)
+
+def productMembership_rep (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (value : DefEqChecked Sig Γ (productTy hA hB)) :
+    Intrinsic.Proves Γ H (productMembership hA hB (repPair hA hB value)) := by
+  rw [← productPredicateAt_eq_membership]
+  exact productPredicate_rep typed hA hB value
+
+def decompositionFirst (hA : Kinded A) (hB : Kinded B)
+    (represented : DefEqChecked Sig Γ (productCarrier A B)) : DefEqChecked Sig Γ A :=
+  let body := DefEqChecked.existsTm hB (productEquationBody hA hB represented)
+  DefEqChecked.eps hA (DefEqChecked.lam hA body)
+
+def decompositionSecond (hA : Kinded A) (hB : Kinded B)
+    (represented : DefEqChecked Sig Γ (productCarrier A B)) : DefEqChecked Sig Γ B :=
+  let first := decompositionFirst hA hB represented
+  let body := productEquationAfterFirst hA hB represented first
+  DefEqChecked.eps hB (DefEqChecked.lam hB body)
+
+/-- Every product representation is provably a Church pair.  Nonemptiness is
+derived from total choice, not required by subtype formation. -/
+def rep_decompose (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (value : DefEqChecked Sig Γ (productTy hA hB)) :
+    Intrinsic.Proves Γ H
+      (DefEqChecked.eq (productCarrier_kinded hA hB) (repPair hA hB value)
+        (pairChurchChecked hA hB
+          (decompositionFirst hA hB (repPair hA hB value))
+          (decompositionSecond hA hB (repPair hA hB value)))) := by
+  let represented := repPair hA hB value
+  let first := decompositionFirst hA hB represented
+  let second := decompositionSecond hA hB represented
+  have membership := productMembership_rep (H := H) typed hA hB value
+  have afterFirst : Intrinsic.Proves Γ H
+      ((DefEqChecked.existsTm hB (productEquationBody hA hB represented)).openBound
+        typed first) :=
+    Intrinsic.Proves.betaReduce typed hA
+      (DefEqChecked.existsTm hB (productEquationBody hA hB represented)) first membership
+  rw [productExistsBody_open typed hA hB represented first] at afterFirst
+  have equation : Intrinsic.Proves Γ H
+      ((productEquationAfterFirst hA hB represented first).openBound typed second) :=
+    Intrinsic.Proves.betaReduce typed hB
+      (productEquationAfterFirst hA hB represented first) second afterFirst
+  rw [productEquationAfterFirst_open typed hA hB represented first second] at equation
+  exact equation
+
 def firstSelectorBody (hA : Kinded A) (hB : Kinded B)
     (value : DefEqChecked Sig Γ (productTy hA hB)) :
   BoolTm (extendBound A Γ) :=
