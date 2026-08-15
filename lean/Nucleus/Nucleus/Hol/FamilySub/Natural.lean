@@ -304,6 +304,16 @@ def naturalSucc (value : DefEqChecked Sig Γ (naturalTy Sig types)) :
     (natPredicate (Sig := Sig) (types := types)).typing
     (indSucc.app (repNatural value))
 
+theorem naturalSucc_open {C : Ty Sig types} (typed : TypedCtx Γ)
+    (body : DefEqChecked Sig (extendBound C Γ) (naturalTy Sig types))
+    (argument : DefEqChecked Sig Γ C) :
+    (naturalSucc body).openBound typed argument =
+      naturalSucc (body.openBound typed argument) := by
+  apply DefEqChecked.ext
+  simp [naturalSucc, repNatural, DefEqChecked.openBound, DefEqChecked.abs,
+    DefEqChecked.rep, DefEqChecked.app, indSucc, indSuccChecked,
+    DefEqChecked.ofRaw, FamilySub.openBound, instantiate]
+
 noncomputable def repNatural_zero (typed : TypedCtx Γ) :
     Intrinsic.Proves Γ H (DefEqChecked.eq InfiniteOps.indKinded
       (repNatural (naturalZero (Sig := Sig) (Γ := Γ))) indZero) :=
@@ -422,6 +432,17 @@ class NaturalRules (Sig : Signature) [SigTyping Sig] [NaturalOps Sig] where
       (DefEqChecked.eq (NaturalOps.natKinded (Sig := Sig))
         NaturalOps.zero (NaturalOps.succ value)))
 
+/-- Syntactic coherence of natural operations with locally nameless opening.
+This is separate from HOL proof rules: it states that the host-level operation
+constructs syntax naturally under substitution. -/
+class NaturalSubstitutionLaws (Sig : Signature) [SigTyping Sig] [NaturalOps Sig] where
+  succOpen {types : List Kind} {depth : Nat} {Γ : BoundCtx Sig types depth}
+    {C : Ty Sig types} (typed : TypedCtx Γ)
+    (body : DefEqChecked Sig (extendBound C Γ) NaturalOps.nat)
+    (argument : DefEqChecked Sig Γ C) :
+    (NaturalOps.succ body).openBound typed argument =
+      NaturalOps.succ (body.openBound typed argument)
+
 instance (Sig : Signature) [SigTyping Sig] [InfiniteOps Sig] : NaturalOps Sig where
   nat := fun {types} => naturalTy Sig types
   natKinded := fun {types} => naturalTy_kinded (Sig := Sig) (types := types)
@@ -432,5 +453,9 @@ noncomputable instance (Sig : Signature) [SigTyping Sig] [InfiniteOps Sig] [Infi
     NaturalRules Sig where
   succInjective := naturalSucc_injective
   zeroNeSucc := naturalZero_ne_succ
+
+instance (Sig : Signature) [SigTyping Sig] [InfiniteOps Sig] :
+    NaturalSubstitutionLaws Sig where
+  succOpen := naturalSucc_open
 
 end Nucleus.Hol.FamilySub
