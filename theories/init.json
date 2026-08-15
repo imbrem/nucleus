@@ -1,0 +1,54 @@
+{
+  "format": "nucleus.hol.init.array-v0",
+  "status": "design-sketch",
+  "encoding": {
+    "declaration": ["class", "name", "parameters", "type-or-kind", "body", "properties"],
+    "classes": ["type-family", "constant", "definition", "theorem", "section"],
+    "kind": ["kind.star"],
+    "kindArrow": ["kind.arr", "domain", "codomain"],
+    "note": "Expression arrays use the FamilySub JSON tags. Names are resolved to earlier declarations, then expressions are flattened to backward-reference arena rows. A null body marks an explicitly deferred construction, not a kernel axiom."
+  },
+  "declarations": [
+    ["section", "logic", [], null, null, ["Definitions use only equality, lambda, application, epsilon, and subtype primitives."]],
+    ["definition", "true", [], "bool", ["tm.eq", "bool->bool", ["tm.lam", "bool", ["tm.bv", 0]], ["tm.lam", "bool", ["tm.bv", 0]]], []],
+    ["definition", "false", [], "bool", ["tm.eq", "bool->bool", ["tm.lam", "bool", ["tm.bv", 0]], ["tm.lam", "bool", "true"]], []],
+    ["definition", "not", [], "bool->bool", ["tm.lam", "bool", ["tm.eq", "bool", ["tm.bv", 0], "false"]], ["not.true", "not.false"]],
+    ["definition", "and", [], "bool->bool->bool", ["church.and", "true", "false"], ["and.true_left", "and.false_left", "and.comm", "and.assoc"]],
+    ["definition", "or", [], "bool->bool->bool", ["church.or", "true", "false"], ["or.true_left", "or.false_left", "or.comm", "or.assoc"]],
+    ["definition", "imp", [], "bool->bool->bool", ["church.imp", "true", "false"], ["imp.true", "imp.false"]],
+    ["definition", "exists", [["A", ["kind.star"]]], "(A->bool)->bool", ["tm.lam", "A->bool", ["tm.app", ["tm.bv", 0], ["tm.eps", "A", ["tm.bv", 0]]]], ["exists.intro", "exists.elim"]],
+    ["definition", "forall", [["A", ["kind.star"]]], "(A->bool)->bool", ["tm.lam", "A->bool", ["not", ["exists", "A", ["tm.lam", "A", ["not", ["tm.app", ["tm.bv", 1], ["tm.bv", 0]]]]]]], ["forall.intro", "forall.elim"]],
+
+    ["section", "finite-structure", [], null, null, []],
+    ["type-family", "unit", [], ["kind.star"], ["ty.sub", "bool", ["tm.lam", "bool", ["tm.eq", "bool", ["tm.bv", 0], "true"]]], ["unit.inhabited", "unit.unique"]],
+    ["definition", "unit.star", [], "unit", ["tm.abs", "bool", "unit.predicate", "true"], []],
+    ["type-family", "product", [["A", ["kind.star"]], ["B", ["kind.star"]]], ["kind.star"], ["family.product", "A", "B"], ["product.pair", "product.fst", "product.snd", "product.beta_fst", "product.beta_snd", "product.eta", "product.ext"]],
+    ["type-family", "coproduct", [["A", ["kind.star"]], ["B", ["kind.star"]]], ["kind.star"], ["family.coproduct", "A", "B"], ["coproduct.inl", "coproduct.inr", "coproduct.case", "coproduct.beta_inl", "coproduct.beta_inr", "coproduct.inl_injective", "coproduct.inr_injective", "coproduct.disjoint", "coproduct.exhaustive"]],
+    ["type-family", "option", [["A", ["kind.star"]]], ["kind.star"], ["coproduct", "unit", "A"], ["option.none", "option.some", "option.case"]],
+    ["type-family", "fin", [["n", "nat"]], ["kind.star"], ["ty.sub", "nat", ["tm.lam", "nat", ["nat.lt", ["tm.bv", 0], "n"]]], ["fin.cardinality"]],
+
+    ["section", "natural-numbers", [], null, null, ["The standard HOL construction starts from the primitive infinite type ind."]],
+    ["type-family", "ind", [], ["kind.star"], ["sig.fam", "ind"], ["ind.infinite"]],
+    ["definition", "ind.zero", [], "ind", ["tm.eps", "ind", ["tm.lam", "ind", "true"]], []],
+    ["definition", "ind.succ", [], "ind->ind", ["tm.eps", "ind->ind", ["ind.successor-spec", "ind.zero"]], ["ind.succ.injective", "ind.zero_not_succ"]],
+    ["type-family", "nat", [], ["kind.star"], ["ty.sub", "ind", ["tm.lam", "ind", ["forall", "ind->bool", ["tm.lam", "ind->bool", ["imp", ["and", ["tm.app", ["tm.bv", 0], "ind.zero"], ["closed-under", ["tm.bv", 0], "ind.succ"]], ["tm.app", ["tm.bv", 0], ["tm.bv", 1]]]]]]], ["nat.zero", "nat.succ", "nat.induction"]],
+    ["definition", "nat.rec", [["A", ["kind.star"]]], "A->(nat->A->A)->nat->A", ["graph.recursor", "nat.induction", "epsilon"], ["nat.rec.zero", "nat.rec.succ", "nat.rec.unique"]],
+    ["definition", "nat.add", [], "nat->nat->nat", ["nat.rec", "nat", ["tm.lam", "nat", ["tm.bv", 0]], ["tm.lam", "nat", ["tm.lam", "nat", ["tm.lam", "nat", ["nat.succ", ["tm.bv", 0]]]]]], ["nat.add.zero", "nat.add.succ", "nat.add.assoc", "nat.add.comm"]],
+    ["definition", "nat.mul", [], "nat->nat->nat", ["nat.rec", "nat", "nat.zero", ["tm.lam", "nat", ["tm.lam", "nat", ["tm.lam", "nat", ["nat.add", ["tm.bv", 2], ["tm.bv", 0]]]]]], ["nat.mul.zero", "nat.mul.succ", "nat.mul.assoc", "nat.mul.comm", "nat.distrib"]],
+    ["definition", "nat.le", [], "nat->nat->bool", ["exists-difference", "nat.add"], ["nat.le.refl", "nat.le.trans", "nat.le.antisymm", "nat.le.total"]],
+    ["definition", "nat.lt", [], "nat->nat->bool", ["and", "nat.le", ["not", "eq"]], ["nat.lt.irrefl", "nat.lt.trans", "nat.well_ordered"]],
+
+    ["section", "recursive-data", [], null, null, []],
+    ["type-family", "list", [["A", ["kind.star"]]], ["kind.star"], ["initial-algebra", ["type-lambda", "X", ["coproduct", "unit", ["product", "A", "X"]]]], ["list.nil", "list.cons", "list.rec", "list.induction", "list.no_confusion"]],
+    ["definition", "list.append", [["A", ["kind.star"]]], "list A->list A->list A", ["list.rec", "A", "identity", "cons-step"], ["list.append.nil", "list.append.cons", "list.append.assoc"]],
+    ["definition", "list.map", [["A", ["kind.star"]], ["B", ["kind.star"]]], "(A->B)->list A->list B", ["list.rec", "A", "list.nil", "map-cons-step"], ["list.map.id", "list.map.comp"]],
+
+    ["section", "integers-and-rationals", [], null, null, []],
+    ["type-family", "int", [], ["kind.star"], ["canonical-quotient-subtype", ["product", "nat", "nat"], ["pair-difference-equivalence", "nat.add"]], ["int.ofNat", "int.neg", "int.add", "int.mul", "int.linear_ordered_ring"]],
+    ["type-family", "rat", [], ["kind.star"], ["canonical-quotient-subtype", ["product", "int", "nat"], ["nonzero-denominator", "fraction-equivalence"]], ["rat.ofInt", "rat.normalize", "rat.add", "rat.mul", "rat.inv", "rat.linear_ordered_field"]],
+
+    ["section", "reals", [], null, null, []],
+    ["type-family", "real", [], ["kind.star"], ["dedekind-cuts", "rat", ["lower", "nonempty", "proper", "downward-closed", "no-greatest"]], ["real.ofRat", "real.add", "real.mul", "real.inv", "real.linear_ordered_field", "real.archimedean", "real.complete"]],
+    ["theorem", "real.supremum", [["S", "real->bool"]], "bounded-nonempty S -> exists real (isLub S)", null, ["deferred: prove from the union of Dedekind cuts"]]
+  ]
+}
