@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nucleus.dev/schema/hol-init-array-v0.json",
+  "title": "Nucleus HOL bootstrap declarations (array-v0)",
+  "type": "object",
+  "required": ["format", "status", "encoding", "declarations"],
+  "additionalProperties": false,
+  "properties": {
+    "format": { "const": "nucleus.hol.init.array-v0" },
+    "status": { "enum": ["design-sketch", "checked", "complete"] },
+    "encoding": {
+      "type": "object",
+      "required": ["declaration", "classes", "kind", "kindArrow", "note"],
+      "additionalProperties": false,
+      "properties": {
+        "declaration": {
+          "const": ["class", "name", "parameters", "type-or-kind", "body", "properties"]
+        },
+        "classes": {
+          "const": ["type-family", "constant", "definition", "theorem", "section"]
+        },
+        "kind": { "const": ["kind.star"] },
+        "kindArrow": { "const": ["kind.arr", "domain", "codomain"] },
+        "note": { "type": "string" }
+      }
+    },
+    "declarations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/declaration" }
+    }
+  },
+  "$defs": {
+    "expression": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/expressionAtom" }
+        }
+      ]
+    },
+    "expressionAtom": {
+      "oneOf": [
+        { "$ref": "#/$defs/expression" },
+        { "type": "integer", "minimum": 0 },
+        { "type": "boolean" }
+      ]
+    },
+    "parameter": {
+      "type": "array",
+      "prefixItems": [
+        { "type": "string", "minLength": 1 },
+        { "$ref": "#/$defs/expression" }
+      ],
+      "items": false,
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "declaration": {
+      "type": "array",
+      "prefixItems": [
+        { "enum": ["type-family", "constant", "definition", "theorem", "section"] },
+        { "type": "string", "minLength": 1 },
+        { "type": "array", "items": { "$ref": "#/$defs/parameter" } },
+        {
+          "oneOf": [
+            { "$ref": "#/$defs/expression" },
+            { "type": "null" }
+          ]
+        },
+        {
+          "oneOf": [
+            { "$ref": "#/$defs/expression" },
+            { "type": "null" }
+          ]
+        },
+        { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      ],
+      "items": false,
+      "minItems": 6,
+      "maxItems": 6,
+      "allOf": [
+        {
+          "if": { "prefixItems": [{ "const": "section" }] },
+          "then": {
+            "prefixItems": [true, true, { "maxItems": 0 }, { "type": "null" },
+              { "type": "null" }]
+          }
+        },
+        {
+          "if": { "prefixItems": [{ "const": "type-family" }] },
+          "then": { "prefixItems": [true, true, true, { "$ref": "#/$defs/expression" }] }
+        },
+        {
+          "if": {
+            "prefixItems": [{ "enum": ["constant", "definition", "theorem"] }]
+          },
+          "then": { "prefixItems": [true, true, true, { "$ref": "#/$defs/expression" }] }
+        }
+      ]
+    }
+  }
+}
