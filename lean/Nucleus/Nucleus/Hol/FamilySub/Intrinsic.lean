@@ -245,6 +245,11 @@ namespace Proves
 def hyp {p : BoolTm Γ} (member : p ∈ H) : Proves Γ H p :=
   ⟨.hyp (PropCtx.typed H) (List.mem_map_of_mem member)⟩
 
+/-- Add an unused checked proposition to the local context. -/
+noncomputable def weakenHyp (q : BoolTm Γ) (proof : Proves Γ H p) :
+    Proves Γ (q :: H) p :=
+  ⟨proof.proof.weakenHypotheses q.typing⟩
+
 def truth : Proves Γ H (DefEqChecked.boolean true) :=
   ⟨.truth (PropCtx.typed H)⟩
 

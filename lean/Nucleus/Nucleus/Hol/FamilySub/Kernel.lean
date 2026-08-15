@@ -76,4 +76,84 @@ inductive Proves {Sig : Signature} [SigTyping Sig] {types : List Kind} {depth : 
       Proves Γ H (instantiateOne p witness) →
       Proves Γ H (instantiateOne p (.rep A p x))
 
+namespace Proves
+
+/-- Every proof certificate carries the well-typedness of its hypotheses. -/
+theorem typedHypotheses {Sig : Signature} [SigTyping Sig] {types : List Kind}
+    {depth : Nat} {Γ : BoundCtx Sig types depth} {H : List (Tm Sig types depth)}
+    {p : Tm Sig types depth} : Proves Γ H p → TypedHyps Γ H
+  | .hyp typed _ | .truth typed | .eqRefl typed _ _ |
+      .eqMp typed _ _ _ _ _ _ | .choice typed _ _ _ _ |
+      .convert typed _ _ | .eqOfEqTm typed _ _ |
+      .antisymm typed _ _ _ _ _ _ | .absRep typed _ _ _ |
+      .repAbs typed _ _ _ _ _ | .repPredOfWitness typed _ _ _ _ _ _ _ => typed
+
+/-- Proofs are monotone in their hypothesis list. -/
+noncomputable def mapHypotheses {Sig : Signature} [SigTyping Sig] {types : List Kind}
+    {depth : Nat} {Γ : BoundCtx Sig types depth} {H K : List (Tm Sig types depth)}
+    {p : Tm Sig types depth} (typedK : TypedHyps Γ K)
+    (subset : ∀ proposition, proposition ∈ H → proposition ∈ K) :
+    Proves Γ H p → Proves Γ K p
+  | .hyp _ member => .hyp typedK (subset _ member)
+  | .truth _ => .truth typedK
+  | .eqRefl _ hA hx => .eqRefl typedK hA hx
+  | .eqMp _ hA hp hx hy equality application =>
+      .eqMp typedK hA hp hx hy
+        (mapHypotheses typedK subset equality)
+        (mapHypotheses typedK subset application)
+  | .choice _ hA hp hx premise =>
+      .choice typedK hA hp hx (mapHypotheses typedK subset premise)
+  | .convert _ equality premise =>
+      .convert typedK equality (mapHypotheses typedK subset premise)
+  | .eqOfEqTm _ hA equality => .eqOfEqTm typedK hA equality
+  | .antisymm _ hp hq leftTyped rightTyped left right =>
+      .antisymm typedK hp hq
+        (fun proposition membership => by
+          rcases List.mem_cons.mp membership with rfl | membership
+          · exact hp
+          · exact typedK proposition membership)
+        (fun proposition membership => by
+          rcases List.mem_cons.mp membership with rfl | membership
+          · exact hq
+          · exact typedK proposition membership)
+        (mapHypotheses
+          (fun proposition membership => by
+            rcases List.mem_cons.mp membership with rfl | membership
+            · exact hp
+            · exact typedK proposition membership)
+          (fun proposition membership => by
+            rcases List.mem_cons.mp membership with rfl | membership
+            · exact List.mem_cons_self
+            · exact List.mem_cons_of_mem _ (subset proposition membership)) left)
+        (mapHypotheses
+          (fun proposition membership => by
+            rcases List.mem_cons.mp membership with rfl | membership
+            · exact hq
+            · exact typedK proposition membership)
+          (fun proposition membership => by
+            rcases List.mem_cons.mp membership with rfl | membership
+            · exact List.mem_cons_self
+            · exact List.mem_cons_of_mem _ (subset proposition membership)) right)
+  | .absRep _ hA hp hx => .absRep typedK hA hp hx
+  | .repAbs _ hA hp hx predicateTyping premise =>
+      .repAbs typedK hA hp hx predicateTyping (mapHypotheses typedK subset premise)
+  | .repPredOfWitness _ hA hp witnessTyping witnessPredicateTyping subtypeTyping
+      representationPredicateTyping premise =>
+      .repPredOfWitness typedK hA hp witnessTyping witnessPredicateTyping subtypeTyping
+        representationPredicateTyping (mapHypotheses typedK subset premise)
+
+/-- Adding an unused proposition to the local hypothesis list is admissible. -/
+noncomputable def weakenHypotheses {Sig : Signature} [SigTyping Sig] {types : List Kind}
+    {depth : Nat} {Γ : BoundCtx Sig types depth} {H : List (Tm Sig types depth)}
+    {p q : Tm Sig types depth} (hq : HasTypeDefEq Γ q .boolTy)
+    (proof : Proves Γ H p) : Proves Γ (q :: H) p :=
+  mapHypotheses
+    (fun proposition membership => by
+      rcases List.mem_cons.mp membership with rfl | membership
+      · exact hq
+      · exact proof.typedHypotheses proposition membership)
+    (fun proposition membership => List.mem_cons_of_mem _ membership) proof
+
+end Proves
+
 end Nucleus.Hol.FamilySub
