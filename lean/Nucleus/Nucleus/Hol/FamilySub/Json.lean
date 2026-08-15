@@ -58,6 +58,82 @@ theorem Tag.name_injective : Function.Injective Tag.name := by
   intro left right equality
   cases left <;> cases right <;> simp_all [Tag.name]
 
+def TyVar.index {types : List Kind} {kind : Kind} : TyVar types kind → Nat
+  | .zero => 0
+  | .succ v => TyVar.index v + 1
+
+namespace Object
+
+private def string {Sig : Signature.{u}} (value : String) : Tree Sig :=
+  .scalar (.string value)
+
+private def nat {Sig : Signature.{u}} (value : Nat) : Tree Sig :=
+  .scalar (.nat value)
+
+private def bool {Sig : Signature.{u}} (value : Bool) : Tree Sig :=
+  .scalar (.bool value)
+
+private def kind {Sig : Signature.{u}} (value : Kind) : Tree Sig :=
+  .scalar (.kind value)
+
+private def field {Sig : Signature.{u}} (key : String) (value : Tree Sig)
+    (tail : RawSyn String (Scalar Sig) .obj) : RawSyn String (Scalar Sig) .obj :=
+  .objCons key value tail
+
+private def tagged {Sig : Signature.{u}} (tag : Tag)
+    (fields : RawSyn String (Scalar Sig) .obj := .objNil) : Tree Sig :=
+  .map (.objCons "tag" (string tag.name) fields)
+
+/-- Named-field encoding of the active type-family HOL syntax.  The positional
+arena codec below uses the same tag vocabulary. -/
+def encode {Sig : Signature.{u}} : {types : List Kind} → {sort : HolSort} →
+    {depth : Nat} → Expr Sig types sort depth → Tree Sig
+  | _, _, _, .boolTy => tagged .tyBool
+  | _, _, _, .arr domain codomain =>
+      tagged .tyArr (field "domain" (encode domain)
+        (field "codomain" (encode codomain) .objNil))
+  | _, .kind _, _, @Expr.tyApp _ _ domain codomain function argument =>
+      tagged .tyApp (field "domainKind" (kind domain)
+        (field "codomainKind" (kind codomain)
+          (field "function" (encode function) (field "argument" (encode argument) .objNil))))
+  | _, .kind _, _, @Expr.tyLam _ _ domain codomain body =>
+      tagged .tyLam (field "domainKind" (kind domain)
+        (field "codomainKind" (kind codomain) (field "body" (encode body) .objNil)))
+  | _, .kind _, _, @Expr.tyBv _ _ familyKind v =>
+      tagged .tyBv (field "kind" (kind familyKind)
+        (field "index" (nat (TyVar.index v)) .objNil))
+  | _, _, _, .sub carrier predicate =>
+      tagged .tySub (field "carrier" (encode carrier)
+        (field "predicate" (encode predicate) .objNil))
+  | _, .kind _, _, @Expr.primFam _ _ familyKind symbol =>
+      tagged .sigFam (field "symbol" (.scalar (.famSymbol (familyKind := familyKind) symbol))
+        .objNil)
+  | _, .tm, _, .primTm symbol =>
+      tagged .sigTm (field "symbol" (.scalar (.tmSymbol symbol)) .objNil)
+  | _, _, _, .bv index => tagged .tmBv (field "index" (nat index) .objNil)
+  | _, _, _, .fv name type =>
+      tagged .tmFv (field "name" (nat name) (field "type" (encode type) .objNil))
+  | _, _, _, .app function argument =>
+      tagged .tmApp (field "function" (encode function)
+        (field "argument" (encode argument) .objNil))
+  | _, _, _, .lam domain body =>
+      tagged .tmLam (field "domain" (encode domain) (field "body" (encode body) .objNil))
+  | _, _, _, .bool value => tagged .tmBool (field "value" (bool value) .objNil)
+  | _, _, _, .eq type left right =>
+      tagged .tmEq (field "type" (encode type)
+        (field "left" (encode left) (field "right" (encode right) .objNil)))
+  | _, _, _, .eps type predicate =>
+      tagged .tmEps (field "type" (encode type)
+        (field "predicate" (encode predicate) .objNil))
+  | _, _, _, .abs carrier predicate value =>
+      tagged .tmAbs (field "carrier" (encode carrier)
+        (field "predicate" (encode predicate) (field "value" (encode value) .objNil)))
+  | _, _, _, .rep carrier predicate value =>
+      tagged .tmRep (field "carrier" (encode carrier)
+        (field "predicate" (encode predicate) (field "value" (encode value) .objNil)))
+
+end Object
+
 /-- One compact arena row.  `Ref` selects untrusted indices or checked
 backward references. -/
 inductive Row (Sig : Signature.{u}) (Ref : Type v) : Type (max u v) where
