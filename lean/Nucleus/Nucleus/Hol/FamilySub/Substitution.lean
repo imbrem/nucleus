@@ -94,6 +94,33 @@ theorem instantiate_rename (term : Tm Sig types m)
       rw [instantiate_rename value ρ σ τ commute]
 termination_by sizeOf term
 
+/-- Substitution after renaming is substitution by the composite map. -/
+theorem instantiate_rename_fusion (term : Tm Sig types m)
+    (ρ : Fin m → Fin n) (σ : Fin n → Tm Sig types k) :
+    instantiate σ (rename ρ term) = instantiate (fun i ↦ σ (ρ i)) term := by
+  cases term with
+  | primTm | fv | bv | bool => simp [rename, instantiate]
+  | app function argument =>
+      simp only [rename, instantiate]
+      rw [instantiate_rename_fusion function, instantiate_rename_fusion argument]
+  | lam A body =>
+      simp only [rename, instantiate]
+      rw [instantiate_rename_fusion body]
+      congr 1
+      apply congrArg (fun τ ↦ instantiate τ body)
+      funext i
+      exact Fin.cases rfl (fun _ => rfl) i
+  | eq A left right =>
+      simp only [rename, instantiate]
+      rw [instantiate_rename_fusion left, instantiate_rename_fusion right]
+  | eps A predicate =>
+      simp only [rename, instantiate]
+      rw [instantiate_rename_fusion predicate]
+  | abs A predicate value | rep A predicate value =>
+      simp only [rename, instantiate]
+      rw [instantiate_rename_fusion value]
+termination_by sizeOf term
+
 @[simp] theorem rename_id (term : Tm Sig types m) : rename id term = term := by
   cases term with
   | primTm | fv | bv | bool => simp [rename]
@@ -142,6 +169,43 @@ theorem rename_comp (term : Tm Sig types m) (ρ : Fin m → Fin n)
       simp only [rename]
       rw [rename_comp value]
 termination_by sizeOf term
+
+/-- Renaming after substitution renames every replacement in the
+substitution map. -/
+theorem rename_instantiate_fusion (term : Tm Sig types m)
+    (σ : Fin m → Tm Sig types n) (ρ : Fin n → Fin k) :
+    rename ρ (instantiate σ term) = instantiate (fun i ↦ rename ρ (σ i)) term := by
+  cases term with
+  | primTm | fv | bv | bool => simp [rename, instantiate]
+  | app function argument =>
+      simp only [rename, instantiate]
+      rw [rename_instantiate_fusion function, rename_instantiate_fusion argument]
+  | lam A body =>
+      simp only [rename, instantiate]
+      rw [rename_instantiate_fusion body]
+      congr 1
+      apply congrArg (fun τ ↦ instantiate τ body)
+      funext i
+      refine Fin.cases (by simp [liftSub, liftRen]) (fun j => ?_) i
+      simp only [liftSub_succ, weaken]
+      rw [rename_comp, rename_comp]
+      congr
+  | eq A left right =>
+      simp only [rename, instantiate]
+      rw [rename_instantiate_fusion left, rename_instantiate_fusion right]
+  | eps A predicate =>
+      simp only [rename, instantiate]
+      rw [rename_instantiate_fusion predicate]
+  | abs A predicate value | rep A predicate value =>
+      simp only [rename, instantiate]
+      rw [rename_instantiate_fusion value]
+termination_by sizeOf term
+
+@[simp] theorem instantiate_liftSub_weaken (term : Tm Sig types m)
+    (σ : Fin m → Tm Sig types n) :
+    instantiate (liftSub σ) (weaken term) = weaken (instantiate σ term) := by
+  rw [weaken, instantiate_rename_fusion]
+  exact (rename_instantiate_fusion term σ Fin.succ).symm
 
 /-- A closed term has a unique renaming into any fixed bound-variable depth. -/
 theorem rename_closed_unique (term : Tm Sig types 0)

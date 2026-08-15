@@ -564,12 +564,10 @@ theorem fstBody_open (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
     DefEqChecked.lam, DefEqChecked.app, DefEqChecked.eps, DefEqChecked.eq,
     DefEqChecked.rep, DefEqChecked.bv, DefEqChecked.weaken,
     DefEqChecked.ofRaw, FamilySub.openBound, instantiate, liftSub]
-  constructor
-  · simp [weaken, rename, instantiate, liftSub]
-  · exact instantiate_pairFunction
-      (Γm := extendBound B (extendBound A (extendBound (productTy hA hB) Γ)))
-      (Γn := extendBound B (extendBound A Γ)) hA hB
-      (liftSub (liftSub (Fin.cases value.tm .bv)))
+  exact instantiate_pairFunction
+    (Γm := extendBound B (extendBound A (extendBound (productTy hA hB) Γ)))
+    (Γn := extendBound B (extendBound A Γ)) hA hB
+    (liftSub (liftSub (Fin.cases value.tm .bv)))
 
 def fstChecked_eq_choice (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
     (value : DefEqChecked Sig Γ (productTy hA hB)) :
@@ -758,12 +756,10 @@ theorem sndBody_open (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
     DefEqChecked.eps, DefEqChecked.eq, DefEqChecked.rep, DefEqChecked.bv,
     DefEqChecked.weaken, DefEqChecked.ofRaw, FamilySub.openBound,
     instantiate, liftSub]
-  constructor
-  · simp [weaken, rename, instantiate, liftSub]
-  · exact instantiate_pairFunction
-      (Γm := extendBound A (extendBound B (extendBound (productTy hA hB) Γ)))
-      (Γn := extendBound A (extendBound B Γ)) hA hB
-      (liftSub (liftSub (Fin.cases value.tm .bv)))
+  exact instantiate_pairFunction
+    (Γm := extendBound A (extendBound B (extendBound (productTy hA hB) Γ)))
+    (Γn := extendBound A (extendBound B Γ)) hA hB
+    (liftSub (liftSub (Fin.cases value.tm .bv)))
 
 def sndChecked_eq_choice (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
     (value : DefEqChecked Sig Γ (productTy hA hB)) :

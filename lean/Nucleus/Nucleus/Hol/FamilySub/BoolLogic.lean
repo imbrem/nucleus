@@ -30,7 +30,6 @@ theorem andLeftBody_open (typed : TypedCtx Γ) (right value : BoolTm Γ) :
     DefEqChecked.eq, DefEqChecked.lam, DefEqChecked.app, DefEqChecked.bv,
     DefEqChecked.weaken, DefEqChecked.truth, DefEqChecked.boolean,
     FamilySub.openBound, instantiate, liftSub]
-  simp [weaken, rename, instantiate]
 
 theorem andRightBody_open (typed : TypedCtx Γ) (left value : BoolTm Γ) :
     (andRightBody left).openBound typed value = DefEqChecked.and left value := by
@@ -41,7 +40,6 @@ theorem andRightBody_open (typed : TypedCtx Γ) (left value : BoolTm Γ) :
     DefEqChecked.eq, DefEqChecked.lam, DefEqChecked.app, DefEqChecked.bv,
     DefEqChecked.weaken, DefEqChecked.truth, DefEqChecked.boolean,
     FamilySub.openBound, instantiate, liftSub]
-  simp [weaken, rename, instantiate]
 
 theorem andLhsBody_open (typed : TypedCtx Γ) (left right : BoolTm Γ)
     (operator : DefEqChecked Sig Γ (.arr .boolTy (.arr .boolTy .boolTy))) :

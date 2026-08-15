@@ -172,9 +172,7 @@ theorem coproductRightBody_open (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kind
     inrBodyRight, DefEqChecked.openBound, DefEqChecked.eq, DefEqChecked.lam,
     DefEqChecked.app, DefEqChecked.bv, DefEqChecked.weaken,
     FamilySub.openBound, instantiate]
-  simp [weaken, rename, instantiate, liftSub, liftRen]
-  rw [rename_comp, rename_comp]
-  congr 1
+  simp [weaken, rename, liftSub, liftRen]
 
 def coproductLeftImage_inl (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
     (value : DefEqChecked Sig Γ A) :
