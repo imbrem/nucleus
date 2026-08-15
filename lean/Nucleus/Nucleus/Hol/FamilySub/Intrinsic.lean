@@ -105,14 +105,24 @@ def not (proposition : BoolTm Γ) : BoolTm Γ :=
   eq .boolTy proposition falsehood
 
 /-- Equality-only HOL conjunction on definitionally typed terms. -/
-def and (left right : BoolTm Γ) : BoolTm Γ := by
+def andLhsBody (left right : BoolTm Γ) :
+    BoolTm (extendBound (.arr .boolTy (.arr .boolTy .boolTy)) Γ) := by
   let functionTy : Ty Sig types := .arr .boolTy (.arr .boolTy .boolTy)
   let hFunction : Kinded functionTy := .arr .boolTy (.arr .boolTy .boolTy)
   let f := DefEqChecked.bv (Γ := extendBound functionTy Γ) hFunction 0 rfl
-  let lhs := DefEqChecked.lam hFunction ((f.app left.weaken).app right.weaken)
-  let rhs := DefEqChecked.lam hFunction
-    ((f.app (truth (Γ := Γ)).weaken).app (truth (Γ := Γ)).weaken)
-  exact eq (.arr hFunction .boolTy) lhs rhs
+  exact (f.app left.weaken).app right.weaken
+
+def andLhs (left right : BoolTm Γ) :
+    DefEqChecked Sig Γ (.arr (.arr .boolTy (.arr .boolTy .boolTy)) .boolTy) :=
+  DefEqChecked.lam (.arr .boolTy (.arr .boolTy .boolTy)) (andLhsBody left right)
+
+def andRhs :
+    DefEqChecked Sig Γ (.arr (.arr .boolTy (.arr .boolTy .boolTy)) .boolTy) :=
+  andLhs truth truth
+
+def and (left right : BoolTm Γ) : BoolTm Γ :=
+  eq (.arr (.arr .boolTy (.arr .boolTy .boolTy)) .boolTy)
+    (andLhs left right) andRhs
 
 def or (left right : BoolTm Γ) : BoolTm Γ :=
   not (and (not left) (not right))
