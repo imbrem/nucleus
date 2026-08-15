@@ -15,7 +15,7 @@ the rows into intrinsically scoped syntax are deliberately separate steps.
 
 namespace Nucleus.Hol.FamilySub.Json
 
-universe u v
+universe u v w
 
 /-- Scalar leaves used by the generic logical codec.  A concrete RFC JSON
 profile supplies textual encodings for kinds and signature symbols. -/
@@ -155,7 +155,112 @@ inductive Row (Sig : Signature.{u}) (Ref : Type v) : Type (max u v) where
   | tmRep (carrier predicate value : Ref)
   | sigTm (symbol : Sig .tm)
 
-abbrev RawArena (Sig : Signature.{u}) := Array (Row Sig Nat)
+/-- Apply a representation change uniformly to every child reference. -/
+def Row.map {Sig : Signature.{u}} {R : Type v} {S : Type w} (f : R → S) :
+    Row Sig R → Row Sig S
+  | .tyBool => .tyBool
+  | .tyArr domain codomain => .tyArr (f domain) (f codomain)
+  | .tyApp domain codomain function argument =>
+      .tyApp domain codomain (f function) (f argument)
+  | .tyLam domain codomain body => .tyLam domain codomain (f body)
+  | .tyBv kind index => .tyBv kind index
+  | .tySub carrier predicate => .tySub (f carrier) (f predicate)
+  | .sigFam symbol => .sigFam symbol
+  | .tmBv index => .tmBv index
+  | .tmFv name type => .tmFv name (f type)
+  | .tmApp function argument => .tmApp (f function) (f argument)
+  | .tmLam domain body => .tmLam (f domain) (f body)
+  | .tmBool value => .tmBool value
+  | .tmEq type left right => .tmEq (f type) (f left) (f right)
+  | .tmEps type predicate => .tmEps (f type) (f predicate)
+  | .tmAbs carrier predicate value => .tmAbs (f carrier) (f predicate) (f value)
+  | .tmRep carrier predicate value => .tmRep (f carrier) (f predicate) (f value)
+  | .sigTm symbol => .sigTm symbol
+
+/-- Child references in their canonical constructor order. -/
+def Row.children {Sig : Signature.{u}} {Ref : Type v} : Row Sig Ref → List Ref
+  | .tyBool | .tyBv _ _ | .sigFam _ | .tmBv _ | .tmBool _ | .sigTm _ => []
+  | .tyLam _ _ body => [body]
+  | .tmFv _ type => [type]
+  | .tyArr left right | .tySub left right | .tmApp left right |
+      .tmLam left right | .tmEps left right => [left, right]
+  | .tyApp _ _ function argument => [function, argument]
+  | .tmEq type left right | .tmAbs type left right | .tmRep type left right =>
+      [type, left, right]
+
+@[simp] theorem Row.children_map {Sig : Signature.{u}} {R : Type v} {S : Type w}
+    (f : R → S) (row : Row Sig R) :
+    (row.map f).children = row.children.map f := by
+  cases row <;> rfl
+
+abbrev RawArena (Sig : Signature.{u}) := Array (Row.{u, 0} Sig Nat)
+
+/-- A backward reference lifted to the signature's universe. -/
+abbrev BackRef (n : Nat) := ULift.{u} (Fin n)
+
+/-- A validated arena whose rows can only refer to strict prefixes. -/
+inductive Arena (Sig : Signature.{u}) : Nat → Type u where
+  | nil : Arena Sig 0
+  | snoc {n : Nat} (prior : Arena Sig n) (row : Row Sig (BackRef.{u} n)) :
+      Arena Sig (n + 1)
+
+/-- Existential package for a dynamically sized validated arena. -/
+structure SomeArena (Sig : Signature.{u}) where
+  size : Nat
+  arena : Arena Sig size
+
+private def validateRow {Sig : Signature.{u}} (n : Nat) :
+    Row.{u, 0} Sig Nat → Option (Row Sig (BackRef.{u} n))
+  | .tyBool => some .tyBool
+  | .tyArr domain codomain => return .tyArr (← ref domain) (← ref codomain)
+  | .tyApp domain codomain function argument =>
+      return .tyApp domain codomain (← ref function) (← ref argument)
+  | .tyLam domain codomain body => return .tyLam domain codomain (← ref body)
+  | .tyBv kind index => some (.tyBv kind index)
+  | .tySub carrier predicate => return .tySub (← ref carrier) (← ref predicate)
+  | .sigFam symbol => some (.sigFam symbol)
+  | .tmBv index => some (.tmBv index)
+  | .tmFv name type => return .tmFv name (← ref type)
+  | .tmApp function argument => return .tmApp (← ref function) (← ref argument)
+  | .tmLam domain body => return .tmLam (← ref domain) (← ref body)
+  | .tmBool value => some (.tmBool value)
+  | .tmEq type left right => return .tmEq (← ref type) (← ref left) (← ref right)
+  | .tmEps type predicate => return .tmEps (← ref type) (← ref predicate)
+  | .tmAbs carrier predicate value =>
+      return .tmAbs (← ref carrier) (← ref predicate) (← ref value)
+  | .tmRep carrier predicate value =>
+      return .tmRep (← ref carrier) (← ref predicate) (← ref value)
+  | .sigTm symbol => some (.sigTm symbol)
+where
+  ref (child : Nat) : Option (BackRef.{u} n) :=
+    if h : child < n then some ⟨⟨child, h⟩⟩ else none
+
+private def validateList {Sig : Signature.{u}} :
+    (rows : List (Row.{u, 0} Sig Nat)) → {n : Nat} → Arena Sig n →
+      Option (SomeArena Sig)
+  | [], n, prior => some ⟨n, prior⟩
+  | row :: rows, _, prior => do
+      let checked ← validateRow _ row
+      validateList rows (.snoc prior checked)
+
+/-- Validate every raw reference in one left-to-right pass. This rejects
+forward references and cycles before any sort or scope elaboration occurs. -/
+def RawArena.validate {Sig : Signature.{u}} (rows : RawArena Sig) :
+    Option (SomeArena Sig) :=
+  validateList rows.toList .nil
+
+private abbrev EmptySignature : Signature := fun _ => Empty
+
+example : (RawArena.validate (Sig := EmptySignature)
+    #[.tyBool, .tmBool true, .tmEq 0 1 1]).isSome = true := by
+  decide
+
+example : (RawArena.validate (Sig := EmptySignature) #[.tyArr 0 0]).isSome = false := by
+  decide
+
+example : (RawArena.validate (Sig := EmptySignature)
+    #[.tyBool, .tmApp 2 0, .tmBool true]).isSome = false := by
+  decide
 
 private def string {Sig : Signature.{u}} (value : String) : Tree Sig :=
   .scalar (.string value)
