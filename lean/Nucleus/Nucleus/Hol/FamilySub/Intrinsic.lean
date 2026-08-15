@@ -182,6 +182,9 @@ def appFromLeftBody (hA : Kinded A) (hB : Kinded B)
   let varied := DefEqChecked.bv (.arr hA hB) 0 rfl
   DefEqChecked.eq hB (function.app argument).weaken (varied.app argument.weaken)
 
+def boolIdentityBody : BoolTm (extendBound (.boolTy : Ty Sig types) Γ) :=
+  DefEqChecked.bv .boolTy 0 rfl
+
 theorem eqFromLeftBody_open (typed : TypedCtx Γ) (hA : Kinded A)
     (left argument : DefEqChecked Sig Γ A) :
     (eqFromLeftBody hA left).openBound typed argument =
@@ -207,6 +210,12 @@ theorem appFromLeftBody_open (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded 
   simp [appFromLeftBody, DefEqChecked.openBound, DefEqChecked.eq,
     DefEqChecked.app, DefEqChecked.weaken, DefEqChecked.bv,
     FamilySub.openBound, instantiate]
+
+theorem boolIdentityBody_open (typed : TypedCtx Γ) (proposition : BoolTm Γ) :
+    boolIdentityBody.openBound typed proposition = proposition := by
+  apply DefEqChecked.ext
+  simp [boolIdentityBody, DefEqChecked.openBound, DefEqChecked.bv,
+    FamilySub.openBound]
 
 namespace Proves
 
@@ -318,6 +327,20 @@ def appCongr (typedContext : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
     eqMp hFunction predicate function varied equality predicateAtFunction
   have openedVaried := appFromLeftBody_open typedContext hA hB function varied argument
   exact openedVaried ▸ betaReduce typedContext hFunction body varied predicateAtVaried
+
+def ofEqBool (typedContext : TypedCtx Γ) (left right : BoolTm Γ)
+    (equality : Proves Γ H (DefEqChecked.eq .boolTy left right))
+    (premise : Proves Γ H left) : Proves Γ H right := by
+  let body := boolIdentityBody (Sig := Sig) (types := types) (Γ := Γ)
+  let predicate := DefEqChecked.lam (.boolTy : Kinded (.boolTy : Ty Sig types)) body
+  have openedLeft := boolIdentityBody_open typedContext left
+  have atLeft : Proves Γ H (body.openBound typedContext left) := openedLeft.symm ▸ premise
+  have predicateAtLeft : Proves Γ H (predicate.app left) :=
+    betaExpand typedContext .boolTy body left atLeft
+  have predicateAtRight : Proves Γ H (predicate.app right) :=
+    eqMp .boolTy predicate left right equality predicateAtLeft
+  have openedRight := boolIdentityBody_open typedContext right
+  exact openedRight ▸ betaReduce typedContext .boolTy body right predicateAtRight
 
 def antisymm (p q : BoolTm Γ) (left : Proves Γ (p :: H) q)
     (right : Proves Γ (q :: H) p) : Proves Γ H (DefEqChecked.eq .boolTy p q) :=
