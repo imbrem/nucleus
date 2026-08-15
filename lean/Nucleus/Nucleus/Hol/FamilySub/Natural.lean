@@ -325,6 +325,76 @@ noncomputable def repNatural_succ (typed : TypedCtx Γ)
     (natPredicateAt_term_eq (indSucc.app (repNatural value)))
     (natPredicate_succ typed (repNatural value) (repNatural_predicate typed value))
 
+noncomputable def repNatural_congr (typed : TypedCtx Γ)
+    (left right : DefEqChecked Sig Γ (naturalTy Sig types))
+    (equality : Intrinsic.Proves Γ H
+      (DefEqChecked.eq (naturalTy_kinded (Sig := Sig)) left right)) :
+    Intrinsic.Proves Γ H (DefEqChecked.eq InfiniteOps.indKinded
+      (repNatural left) (repNatural right)) :=
+  Intrinsic.Proves.repCongr typed InfiniteOps.indKinded
+    (natPredicate (Sig := Sig) (types := types)).tm
+    (natPredicate (Sig := Sig) (types := types)).typing left right equality
+
+noncomputable def naturalSuccessors_repEquality (typed : TypedCtx Γ)
+    (left right : DefEqChecked Sig Γ (naturalTy Sig types))
+    (equality : Intrinsic.Proves Γ H
+      (DefEqChecked.eq (naturalTy_kinded (Sig := Sig))
+        (naturalSucc left) (naturalSucc right))) :
+    Intrinsic.Proves Γ H (DefEqChecked.eq InfiniteOps.indKinded
+      (indSucc.app (repNatural left)) (indSucc.app (repNatural right))) :=
+  Intrinsic.Proves.eqTrans typed InfiniteOps.indKinded
+    (indSucc.app (repNatural left)) (repNatural (naturalSucc left))
+    (indSucc.app (repNatural right))
+    (Intrinsic.Proves.eqSymm typed InfiniteOps.indKinded _ _
+      (repNatural_succ typed left))
+    (Intrinsic.Proves.eqTrans typed InfiniteOps.indKinded _
+      (repNatural (naturalSucc right)) _
+      (repNatural_congr typed (naturalSucc left) (naturalSucc right) equality)
+      (repNatural_succ typed right))
+
+noncomputable def naturalSucc_injective [InfiniteRules Sig] (typed : TypedCtx Γ)
+    (left right : DefEqChecked Sig Γ (naturalTy Sig types))
+    (equality : Intrinsic.Proves Γ H
+      (DefEqChecked.eq (naturalTy_kinded (Sig := Sig))
+        (naturalSucc left) (naturalSucc right))) :
+    Intrinsic.Proves Γ H
+      (DefEqChecked.eq (naturalTy_kinded (Sig := Sig)) left right) := by
+  have represented := InfiniteRules.succInjective typed
+    (repNatural left) (repNatural right)
+    (naturalSuccessors_repEquality typed left right equality)
+  exact Intrinsic.Proves.repInjective typed InfiniteOps.indKinded
+    (natPredicate (Sig := Sig) (types := types)).tm
+    (natPredicate (Sig := Sig) (types := types)).typing left right represented
+
+noncomputable def naturalZeroSucc_repEquality (typed : TypedCtx Γ)
+    (value : DefEqChecked Sig Γ (naturalTy Sig types))
+    (equality : Intrinsic.Proves Γ H
+      (DefEqChecked.eq (naturalTy_kinded (Sig := Sig)) naturalZero
+        (naturalSucc value))) :
+    Intrinsic.Proves Γ H (DefEqChecked.eq InfiniteOps.indKinded
+      indZero (indSucc.app (repNatural value))) :=
+  Intrinsic.Proves.eqTrans typed InfiniteOps.indKinded
+    indZero (repNatural naturalZero) (indSucc.app (repNatural value))
+    (Intrinsic.Proves.eqSymm typed InfiniteOps.indKinded _ _
+      (repNatural_zero typed))
+    (Intrinsic.Proves.eqTrans typed InfiniteOps.indKinded _
+      (repNatural (naturalSucc value)) _
+      (repNatural_congr typed naturalZero (naturalSucc value) equality)
+      (repNatural_succ typed value))
+
+noncomputable def naturalZero_ne_succ [InfiniteRules Sig] (typed : TypedCtx Γ)
+    (value : DefEqChecked Sig Γ (naturalTy Sig types)) :
+    Intrinsic.Proves Γ H (DefEqChecked.not
+      (DefEqChecked.eq (naturalTy_kinded (Sig := Sig)) naturalZero
+        (naturalSucc value))) := by
+  let proposition := DefEqChecked.eq (naturalTy_kinded (Sig := Sig))
+    (naturalZero (Sig := Sig) (Γ := Γ)) (naturalSucc value)
+  apply notIntro typed proposition
+  have equality : Intrinsic.Proves Γ (proposition :: H) proposition :=
+    Intrinsic.Proves.hyp (by simp)
+  exact notElim typed (InfiniteRules.zeroNeSucc typed (repNatural value))
+    (naturalZeroSucc_repEquality typed value equality)
+
 class NaturalOps (Sig : Signature) [SigTyping Sig] where
   nat {types : List Kind} : Ty Sig types
   natKinded {types : List Kind} : Kinded (nat (types := types))
@@ -334,10 +404,33 @@ class NaturalOps (Sig : Signature) [SigTyping Sig] where
     DefEqChecked Sig Γ (nat (types := types)) →
       DefEqChecked Sig Γ (nat (types := types))
 
+class NaturalRules (Sig : Signature) [SigTyping Sig] [NaturalOps Sig] where
+  succInjective {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx Sig types depth} {H : PropCtx Γ}
+    (typed : TypedCtx Γ)
+    (left right : DefEqChecked Sig Γ (NaturalOps.nat (Sig := Sig)))
+    (equality : Intrinsic.Proves Γ H
+      (DefEqChecked.eq (NaturalOps.natKinded (Sig := Sig))
+        (NaturalOps.succ left) (NaturalOps.succ right))) :
+    Intrinsic.Proves Γ H
+      (DefEqChecked.eq (NaturalOps.natKinded (Sig := Sig)) left right)
+  zeroNeSucc {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx Sig types depth} {H : PropCtx Γ}
+    (typed : TypedCtx Γ)
+    (value : DefEqChecked Sig Γ (NaturalOps.nat (Sig := Sig))) :
+    Intrinsic.Proves Γ H (DefEqChecked.not
+      (DefEqChecked.eq (NaturalOps.natKinded (Sig := Sig))
+        NaturalOps.zero (NaturalOps.succ value)))
+
 instance (Sig : Signature) [SigTyping Sig] [InfiniteOps Sig] : NaturalOps Sig where
   nat := fun {types} => naturalTy Sig types
   natKinded := fun {types} => naturalTy_kinded (Sig := Sig) (types := types)
   zero := naturalZero
   succ := naturalSucc
+
+noncomputable instance (Sig : Signature) [SigTyping Sig] [InfiniteOps Sig] [InfiniteRules Sig] :
+    NaturalRules Sig where
+  succInjective := naturalSucc_injective
+  zeroNeSucc := naturalZero_ne_succ
 
 end Nucleus.Hol.FamilySub
