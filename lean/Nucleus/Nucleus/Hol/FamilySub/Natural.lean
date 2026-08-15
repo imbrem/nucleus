@@ -118,6 +118,19 @@ def repNatural (value : DefEqChecked Sig Γ (naturalTy Sig types)) :
     (natPredicate (Sig := Sig) (types := types)).tm
     (natPredicate (Sig := Sig) (types := types)).typing value
 
+/-- Every representation of the guarded natural subtype satisfies its
+intersection-of-inductive-predicates definition. -/
+noncomputable def repNatural_predicate (typed : TypedCtx Γ)
+    (value : DefEqChecked Sig Γ (naturalTy Sig types)) :
+    Intrinsic.Proves Γ H (natPredicateAt (repNatural value)) :=
+  Intrinsic.Proves.repPredOfWitness InfiniteOps.indKinded
+    (natPredicate (Sig := Sig) (types := types)).tm
+    (natPredicate (Sig := Sig) (types := types)).typing
+    (indZero (Sig := Sig) (Γ := Γ)) (natPredicateAt indZero)
+    (natPredicateAt_term_eq indZero) value
+    (natPredicateAt (repNatural value)) (natPredicateAt_term_eq (repNatural value))
+    (natPredicate_zero typed)
+
 /-- Successor is inherited from `ind` and re-abstracted into the guarded
 natural subtype.  Closure proofs establish its expected laws later; subtype
 formation and the term itself require no nonemptiness premise. -/
