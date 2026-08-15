@@ -127,11 +127,11 @@ inductive Error (Name : Type v) where
 /-- Primitive bindings and behavior are independent of surface syntax. -/
 class PrimitiveSemantics (Atom : Type u) (Name : Type v) (Primitive : Type w)
     [Language Atom Name] where
-  State : Type*
+  State : Type (max u v w)
   initialState : State
   bindings : List (Name × Primitive)
-  apply : Primitive → List (Value Atom Name Primitive) → State →
-    Except (Error Name) (Value Atom Name Primitive × State)
+  apply : Primitive → List (Value Atom Name Primitive) →
+    StateT State (Except (Error Name)) (Value Atom Name Primitive)
 
 abbrev State (Atom : Type u) (Name : Type v) (Primitive : Type w)
     [Language Atom Name] [PrimitiveSemantics Atom Name Primitive] :=
@@ -140,6 +140,25 @@ abbrev State (Atom : Type u) (Name : Type v) (Primitive : Type w)
 abbrev Result (Atom : Type u) (Name : Type v) (Primitive : Type w)
     [Language Atom Name] [PrimitiveSemantics Atom Name Primitive] :=
   Except (Error Name) (Value Atom Name Primitive × State Atom Name Primitive)
+
+/-- Evaluation effects: mutable language state over exceptions.  This order
+means that a failed computation does not expose its intermediate state. -/
+abbrev EvalM (Atom : Type u) (Name : Type v) (Primitive : Type w)
+    [Language Atom Name] [PrimitiveSemantics Atom Name Primitive] :=
+  StateT (State Atom Name Primitive) (Except (Error Name))
+
+namespace EvalM
+
+def throw [Language Atom Name] [PrimitiveSemantics Atom Name Primitive]
+    (error : Error Name) : EvalM Atom Name Primitive α :=
+  fun _ => .error error
+
+@[simp] theorem run_throw [Language Atom Name] [PrimitiveSemantics Atom Name Primitive]
+    (error : Error Name) (state : State Atom Name Primitive) :
+    (throw (Atom := Atom) (Primitive := Primitive) error : EvalM Atom Name Primitive α) state =
+      .error error := rfl
+
+end EvalM
 
 def toList? : Expr Atom → Option (List (Expr Atom))
   | .nil => some []
@@ -215,14 +234,14 @@ private def bindParameters (parameters : List Name)
     .ok (Environment.ofList (parameters.zip arguments) |>.append tail)
   else .error (.arity parameters.length arguments.length)
 
-/- The generic fuelled evaluator. Every recursive call receives less fuel. -/
+/- The generic fuelled monadic evaluator. Every recursive call receives less fuel. -/
 mutual
-  def eval [DecidableEq Name] [Language Atom Name]
+  def evalM [DecidableEq Name] [Language Atom Name]
       [PrimitiveSemantics Atom Name Primitive] :
-      Nat → Environment Atom Name Primitive → State Atom Name Primitive →
-      Expr Atom → Result Atom Name Primitive
-    | 0, _, _, _ => .error .outOfFuel
-    | fuel + 1, environment, state, expression =>
+      Nat → Environment Atom Name Primitive → Expr Atom → EvalM Atom Name Primitive
+        (Value Atom Name Primitive)
+    | 0, _, _ => EvalM.throw .outOfFuel
+    | fuel + 1, environment, expression => fun state =>
         match expression with
         | .nil => .ok (.datum .nil, state)
         | .atom value => match Language.symbol? (Atom := Atom) (Name := Name) value with
@@ -242,11 +261,11 @@ mutual
                   else if name = Language.ifName (Atom := Atom) (Name := Name) then
                     match arguments with
                     | [condition, yes, no] =>
-                        match (eval fuel environment state condition :
+                        match (evalM fuel environment condition state :
                             Result Atom Name Primitive) with
                         | .error error => .error error
                         | .ok (condition, state) =>
-                            eval fuel environment state (if condition.isTruthy then yes else no)
+                            evalM fuel environment (if condition.isTruthy then yes else no) state
                     | _ => .error (.malformedSpecialForm name)
                   else if name = Language.lambdaName (Atom := Atom) (Name := Name) then
                     match arguments with
@@ -254,51 +273,57 @@ mutual
                       | some names => .ok (.closure names body environment, state)
                       | none => .error .malformedParameters
                     | _ => .error (.malformedSpecialForm name)
-                  else evalApplication fuel environment state head arguments
-              | none => evalApplication fuel environment state head arguments
-            | _, some arguments => evalApplication fuel environment state head arguments
+                  else evalApplicationM fuel environment head arguments state
+              | none => evalApplicationM fuel environment head arguments state
+            | _, some arguments => evalApplicationM fuel environment head arguments state
             | _, none => .error .improperApplication
 
-  def evalArguments [DecidableEq Name] [Language Atom Name]
+  def evalArgumentsM [DecidableEq Name] [Language Atom Name]
       [PrimitiveSemantics Atom Name Primitive] :
-      Nat → Environment Atom Name Primitive → State Atom Name Primitive →
-      List (Expr Atom) →
-      Except (Error Name) (List (Value Atom Name Primitive) × State Atom Name Primitive)
-    | 0, _, _, _ => .error .outOfFuel
-    | _ + 1, _, state, [] => .ok ([], state)
-    | fuel + 1, environment, state, expression :: tail =>
-        match eval fuel environment state expression with
-        | .error error => .error error
-        | .ok (value, state) => match evalArguments fuel environment state tail with
-          | .error error => .error error
-          | .ok (values, state) => .ok (value :: values, state)
+      Nat → Environment Atom Name Primitive → List (Expr Atom) →
+      EvalM Atom Name Primitive (List (Value Atom Name Primitive))
+    | 0, _, _ => EvalM.throw .outOfFuel
+    | _ + 1, _, [] => pure []
+    | fuel + 1, environment, expression :: tail => do
+        let value ← evalM fuel environment expression
+        let values ← evalArgumentsM fuel environment tail
+        pure (value :: values)
 
-  def apply [DecidableEq Name] [Language Atom Name]
+  def applyM [DecidableEq Name] [Language Atom Name]
       [PrimitiveSemantics Atom Name Primitive] :
       Nat → Value Atom Name Primitive → List (Value Atom Name Primitive) →
-      State Atom Name Primitive →
-      Result Atom Name Primitive
-    | 0, _, _, _ => .error .outOfFuel
-    | _ + 1, .datum _, _, _ => .error .notCallable
-    | _ + 1, .primitive operation, arguments, state =>
-        PrimitiveSemantics.apply operation arguments state
-    | fuel + 1, .closure parameters body closureEnvironment, arguments, state =>
+      EvalM Atom Name Primitive (Value Atom Name Primitive)
+    | 0, _, _ => EvalM.throw .outOfFuel
+    | _ + 1, .datum _, _ => EvalM.throw .notCallable
+    | _ + 1, .primitive operation, arguments => PrimitiveSemantics.apply operation arguments
+    | fuel + 1, .closure parameters body closureEnvironment, arguments =>
         match bindParameters parameters arguments closureEnvironment with
-        | .error error => .error error
-        | .ok environment => eval fuel environment state body
+        | .error error => EvalM.throw error
+        | .ok environment => evalM fuel environment body
 
-  def evalApplication [DecidableEq Name] [Language Atom Name]
+  def evalApplicationM [DecidableEq Name] [Language Atom Name]
       [PrimitiveSemantics Atom Name Primitive]
       (fuel : Nat) (environment : Environment Atom Name Primitive)
-      (state : State Atom Name Primitive)
-      (function : Expr Atom) (arguments : List (Expr Atom)) : Result Atom Name Primitive :=
-    match (eval fuel environment state function : Result Atom Name Primitive) with
-    | .error error => .error error
-    | .ok (function, state) => match (evalArguments fuel environment state arguments :
-        Except (Error Name) (List (Value Atom Name Primitive) × State Atom Name Primitive)) with
-      | .error error => .error error
-      | .ok (values, state) => apply fuel function values state
+      (function : Expr Atom) (arguments : List (Expr Atom)) :
+      EvalM Atom Name Primitive (Value Atom Name Primitive) := do
+    let function ← evalM fuel environment function
+    let values ← evalArgumentsM fuel environment arguments
+    applyM fuel function values
 end
+
+/-- Run the monadic evaluator from an explicit state.  This compatibility
+interface is definitionally the old state-threading semantics. -/
+def eval [DecidableEq Name] [Language Atom Name]
+    [PrimitiveSemantics Atom Name Primitive] (fuel : Nat)
+    (environment : Environment Atom Name Primitive) (state : State Atom Name Primitive)
+    (expression : Expr Atom) : Result Atom Name Primitive :=
+  evalM fuel environment expression state
+
+@[simp] theorem eval_eq_run_evalM [DecidableEq Name] [Language Atom Name]
+    [PrimitiveSemantics Atom Name Primitive] (fuel : Nat)
+    (environment : Environment Atom Name Primitive) (state : State Atom Name Primitive)
+    (expression : Expr Atom) :
+    eval fuel environment state expression = evalM fuel environment expression state := rfl
 
 def run [DecidableEq Name] [Language Atom Name]
     [PrimitiveSemantics Atom Name Primitive] (fuel : Nat) (expression : Expr Atom) :
@@ -310,6 +335,20 @@ def Evaluates [DecidableEq Name] [Language Atom Name]
     (state : State Atom Name Primitive) (expression : Expr Atom)
     (value : Value Atom Name Primitive) : Prop :=
   ∃ fuel finalState, eval fuel environment state expression = .ok (value, finalState)
+
+/-- The relational semantics stated directly in terms of the monadic action. -/
+def EvaluatesM [DecidableEq Name] [Language Atom Name]
+    [PrimitiveSemantics Atom Name Primitive] (environment : Environment Atom Name Primitive)
+    (state : State Atom Name Primitive) (expression : Expr Atom)
+    (value : Value Atom Name Primitive) : Prop :=
+  ∃ fuel finalState, evalM fuel environment expression state = .ok (value, finalState)
+
+@[simp] theorem evaluates_iff_evaluatesM [DecidableEq Name] [Language Atom Name]
+    [PrimitiveSemantics Atom Name Primitive] (environment : Environment Atom Name Primitive)
+    (state : State Atom Name Primitive) (expression : Expr Atom)
+    (value : Value Atom Name Primitive) :
+    Evaluates environment state expression value ↔ EvaluatesM environment state expression value :=
+  Iff.rfl
 
 theorem eval_deterministic [DecidableEq Name] [Language Atom Name]
     [PrimitiveSemantics Atom Name Primitive]
@@ -332,7 +371,7 @@ theorem eval_deterministic [DecidableEq Name] [Language Atom Name]
   change eval (fuel + 1) environment state
     (.cons (.atom (Language.quoteAtom (Atom := Atom) (Name := Name)))
       (SExpr2.ofList [value])) = _
-  simp [eval, Language.symbol?_quoteAtom]
+  simp [eval, evalM]
 
 /-! ## Shared structural primitives -/
 
@@ -454,13 +493,15 @@ def runScheme (fuel : Nat) (expression : SchemeExpr) :
     (environment : Environment SchemeAtom String StructuralPrimitive)
     (fuel : Nat) (value : String) :
     eval (fuel + 1) environment () (.atom (.string value)) =
-      .ok (.datum (.atom (.string value)), ()) := by simp [eval]
+      .ok (.datum (.atom (.string value)), ()) := by
+  simp [eval, evalM]
 
 @[simp] theorem eval_integer_literal
     (environment : Environment SchemeAtom String StructuralPrimitive)
     (fuel : Nat) (value : Int) :
     eval (fuel + 1) environment () (.atom (.integer value)) =
-      .ok (.datum (.atom (.integer value)), ()) := by simp [eval]
+      .ok (.datum (.atom (.integer value)), ()) := by
+  simp [eval, evalM]
 
 /- A stateful variant uses exactly the same evaluator. -/
 namespace Stateful
