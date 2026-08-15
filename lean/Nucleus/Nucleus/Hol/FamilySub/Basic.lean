@@ -181,4 +181,84 @@ noncomputable def optionNone_ne_some (typed : TypedCtx Γ) (hA : Kinded A)
       (DefEqChecked.eq (optionTy_kinded hA) (optionNone hA) (optionSome hA value))) :=
   inl_ne_inr typed unitTy_kinded hA unitStar value
 
+/-- Representation-independent operations for a singleton type. -/
+class UnitOps (Sig : Signature) [SigTyping Sig] where
+  unit {types : List Kind} : Ty Sig types
+  unitKinded {types : List Kind} : Kinded (unit (types := types))
+  star {types : List Kind} {depth : Nat} {Γ : BoundCtx Sig types depth} :
+    DefEqChecked Sig Γ (unit (types := types))
+
+/-- The characteristic law of a singleton implementation. -/
+class UnitRules (Sig : Signature) [SigTyping Sig] [UnitOps Sig] where
+  unique {types : List Kind} {depth : Nat} {Γ : BoundCtx Sig types depth}
+    {H : PropCtx Γ} (typed : TypedCtx Γ)
+    (value : DefEqChecked Sig Γ (UnitOps.unit (Sig := Sig) (types := types))) :
+    Intrinsic.Proves Γ H (DefEqChecked.eq (UnitOps.unitKinded (Sig := Sig))
+      value (UnitOps.star (Sig := Sig)))
+
+/-- Representation-independent option operations. -/
+class OptionOps (Sig : Signature) [SigTyping Sig] where
+  option {types : List Kind} {A : Ty Sig types} : Kinded A → Ty Sig types
+  optionKinded {types : List Kind} {A : Ty Sig types} (hA : Kinded A) :
+    Kinded (option hA)
+  none {types : List Kind} {depth : Nat} {Γ : BoundCtx Sig types depth}
+    {A : Ty Sig types} (hA : Kinded A) : DefEqChecked Sig Γ (option hA)
+  some {types : List Kind} {depth : Nat} {Γ : BoundCtx Sig types depth}
+    {A : Ty Sig types} (hA : Kinded A) :
+    DefEqChecked Sig Γ A → DefEqChecked Sig Γ (option hA)
+  case {types : List Kind} {depth : Nat} {Γ : BoundCtx Sig types depth}
+    {A C : Ty Sig types} (hA : Kinded A) (hC : Kinded C) :
+    DefEqChecked Sig Γ C → DefEqChecked Sig Γ (.arr A C) →
+    DefEqChecked Sig Γ (option hA) → DefEqChecked Sig Γ C
+
+/-- Computation and no-confusion laws for option implementations. -/
+class OptionRules (Sig : Signature) [SigTyping Sig] [OptionOps Sig] where
+  caseNone {types : List Kind} {depth : Nat} {Γ : BoundCtx Sig types depth}
+    {H : PropCtx Γ} {A C : Ty Sig types} (typed : TypedCtx Γ)
+    (hA : Kinded A) (hC : Kinded C) (none : DefEqChecked Sig Γ C)
+    (some : DefEqChecked Sig Γ (.arr A C)) :
+    Intrinsic.Proves Γ H (DefEqChecked.eq hC
+      (OptionOps.case hA hC none some (OptionOps.none hA)) none)
+  caseSome {types : List Kind} {depth : Nat} {Γ : BoundCtx Sig types depth}
+    {H : PropCtx Γ} {A C : Ty Sig types} (typed : TypedCtx Γ)
+    (hA : Kinded A) (hC : Kinded C) (none : DefEqChecked Sig Γ C)
+    (some : DefEqChecked Sig Γ (.arr A C)) (value : DefEqChecked Sig Γ A) :
+    Intrinsic.Proves Γ H (DefEqChecked.eq hC
+      (OptionOps.case hA hC none some (OptionOps.some hA value)) (some.app value))
+  someInjective {types : List Kind} {depth : Nat} {Γ : BoundCtx Sig types depth}
+    {H : PropCtx Γ} {A : Ty Sig types} (typed : TypedCtx Γ) (hA : Kinded A)
+    (left right : DefEqChecked Sig Γ A)
+    (equality : Intrinsic.Proves Γ H
+      (DefEqChecked.eq (OptionOps.optionKinded hA)
+        (OptionOps.some hA left) (OptionOps.some hA right))) :
+    Intrinsic.Proves Γ H (DefEqChecked.eq hA left right)
+  noneNeSome {types : List Kind} {depth : Nat} {Γ : BoundCtx Sig types depth}
+    {H : PropCtx Γ} {A : Ty Sig types} (typed : TypedCtx Γ) (hA : Kinded A)
+    (value : DefEqChecked Sig Γ A) :
+    Intrinsic.Proves Γ H (DefEqChecked.not
+      (DefEqChecked.eq (OptionOps.optionKinded hA)
+        (OptionOps.none hA) (OptionOps.some hA value)))
+
+instance (Sig : Signature) [SigTyping Sig] : UnitOps Sig where
+  unit := fun {types} => unitTy Sig types
+  unitKinded := fun {types} => unitTy_kinded (Sig := Sig) (types := types)
+  star := fun {types} {depth} {Γ} =>
+    unitStar (Sig := Sig) (types := types) (depth := depth) (Γ := Γ)
+
+instance (Sig : Signature) [SigTyping Sig] : UnitRules Sig where
+  unique := fun typed value => unit_unique typed value
+
+instance (Sig : Signature) [SigTyping Sig] : OptionOps Sig where
+  option := optionTy
+  optionKinded := optionTy_kinded
+  none := optionNone
+  some := optionSome
+  case := optionCase
+
+noncomputable instance (Sig : Signature) [SigTyping Sig] : OptionRules Sig where
+  caseNone := optionCase_none
+  caseSome := optionCase_some
+  someInjective := optionSome_injective
+  noneNeSome := optionNone_ne_some
+
 end Nucleus.Hol.FamilySub
