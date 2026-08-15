@@ -15,6 +15,9 @@ import Nucleus.Hol.FamilySub.CoproductLaws
 import Nucleus.Hol.FamilySub.Algebraic
 import Nucleus.Hol.FamilySub.Basic
 import Nucleus.Hol.FamilySub.Finite
+import Nucleus.Hol.FamilySub.Quantifiers
+import Nucleus.Hol.FamilySub.Infinity
+import Nucleus.Hol.FamilySub.Natural
 import Nucleus.Hol.FamilySub.Json
 import Nucleus.Hol.GuardedSubtype
 
