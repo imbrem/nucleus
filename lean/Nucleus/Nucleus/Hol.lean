@@ -18,6 +18,7 @@ import Nucleus.Hol.FamilySub.Finite
 import Nucleus.Hol.FamilySub.Quantifiers
 import Nucleus.Hol.FamilySub.Infinity
 import Nucleus.Hol.FamilySub.Natural
+import Nucleus.Hol.FamilySub.Recursion
 import Nucleus.Hol.FamilySub.Json
 import Nucleus.Hol.GuardedSubtype
 
