@@ -116,6 +116,79 @@ def pairChurch_apply (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
   rw [pairBodyC_open typed hA hB a b continuation] at third
   exact secondApplied.trans third
 
+def firstTestBodyB (hA : Kinded A) (_hB : Kinded B)
+    (target : DefEqChecked Sig Γ A) :
+    BoolTm (extendBound B (extendBound A Γ)) :=
+  let candidate := DefEqChecked.bv
+    (Γ := extendBound B (extendBound A Γ)) hA 1 rfl
+  DefEqChecked.eq hA candidate target.weaken.weaken
+
+def firstTestBodyA (hA : Kinded A) (hB : Kinded B)
+    (target : DefEqChecked Sig Γ A) :
+    DefEqChecked Sig (extendBound A Γ) (.arr B .boolTy) :=
+  DefEqChecked.lam hB (firstTestBodyB hA hB target)
+
+def firstTest (hA : Kinded A) (hB : Kinded B)
+    (target : DefEqChecked Sig Γ A) :
+    DefEqChecked Sig Γ (.arr A (.arr B .boolTy)) :=
+  DefEqChecked.lam hA (firstTestBodyA hA hB target)
+
+theorem firstTestBodyA_open (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (target candidate : DefEqChecked Sig Γ A) :
+    (firstTestBodyA hA hB target).openBound typed candidate =
+      DefEqChecked.lam hB
+        (DefEqChecked.eq hA candidate.weaken target.weaken) := by
+  apply DefEqChecked.ext
+  simp only [firstTestBodyA, firstTestBodyB, DefEqChecked.openBound,
+    DefEqChecked.lam, DefEqChecked.eq, DefEqChecked.bv, DefEqChecked.weaken,
+    FamilySub.openBound]
+  simp [instantiate, liftSub]
+
+theorem firstTestBodyB_open (typed : TypedCtx Γ) (hA : Kinded A) (_hB : Kinded B)
+    (target candidate : DefEqChecked Sig Γ A) (ignored : DefEqChecked Sig Γ B) :
+    (DefEqChecked.eq hA candidate.weaken target.weaken).openBound typed ignored =
+      DefEqChecked.eq hA candidate target := by
+  apply DefEqChecked.ext
+  simp [DefEqChecked.openBound, DefEqChecked.eq, DefEqChecked.weaken,
+    FamilySub.openBound, instantiate]
+
+def firstTest_apply (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (target candidate : DefEqChecked Sig Γ A) (ignored : DefEqChecked Sig Γ B) :
+    Intrinsic.EqTm (((firstTest hA hB target).app candidate).app ignored)
+      (DefEqChecked.eq hA candidate target) := by
+  have first := Intrinsic.EqTm.beta typed hA (firstTestBodyA hA hB target) candidate
+  rw [firstTestBodyA_open typed hA hB target candidate] at first
+  have applied := first.app (Intrinsic.EqTm.refl ignored)
+  have second := Intrinsic.EqTm.beta typed hB
+    (DefEqChecked.eq hA candidate.weaken target.weaken) ignored
+  rw [firstTestBodyB_open typed hA hB target candidate ignored] at second
+  exact applied.trans second
+
+/-- Equality of Church pairs determines their first components. -/
+def pair_first_injective (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (a a' : DefEqChecked Sig Γ A) (b b' : DefEqChecked Sig Γ B)
+    (equality : Intrinsic.Proves Γ H
+      (DefEqChecked.eq (productCarrier_kinded hA hB)
+        (pairChurchChecked hA hB a b) (pairChurchChecked hA hB a' b'))) :
+    Intrinsic.Proves Γ H (DefEqChecked.eq hA a a') := by
+  let hContinuation : Kinded (.arr A (.arr B .boolTy)) := .arr hA (.arr hB .boolTy)
+  let test := firstTest hA hB a
+  have applied := Intrinsic.Proves.appCongr typed hContinuation .boolTy
+    (pairChurchChecked hA hB a b) (pairChurchChecked hA hB a' b') test equality
+  have leftReduction := (pairChurch_apply typed hA hB a b test).trans
+    (firstTest_apply typed hA hB a a b)
+  have rightReduction := (pairChurch_apply typed hA hB a' b' test).trans
+    (firstTest_apply typed hA hB a a' b')
+  have leftTrue : Intrinsic.Proves Γ H
+      ((pairChurchChecked hA hB a b).app test) :=
+    Intrinsic.Proves.convert leftReduction.symm (Intrinsic.Proves.eqRefl hA a)
+  have rightTrue := Intrinsic.Proves.ofEqBool typed
+    ((pairChurchChecked hA hB a b).app test)
+    ((pairChurchChecked hA hB a' b').app test) applied leftTrue
+  have reverse : Intrinsic.Proves Γ H (DefEqChecked.eq hA a' a) :=
+    Intrinsic.Proves.convert rightReduction rightTrue
+  exact Intrinsic.Proves.eqSymm typed hA a' a reverse
+
 @[simp] theorem instantiate_pairFunction {m n : Nat}
     {Γm : BoundCtx Sig types m} {Γn : BoundCtx Sig types n}
     (hA : Kinded A) (hB : Kinded B) (σ : Fin m → Tm Sig types n) :
