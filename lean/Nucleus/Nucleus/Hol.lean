@@ -20,6 +20,7 @@ import Nucleus.Hol.FamilySub.Infinity
 import Nucleus.Hol.FamilySub.Natural
 import Nucleus.Hol.FamilySub.Recursion
 import Nucleus.Hol.FamilySub.Peano
+import Nucleus.Hol.FamilySub.List
 import Nucleus.Hol.FamilySub.Json
 import Nucleus.Hol.GuardedSubtype
 
