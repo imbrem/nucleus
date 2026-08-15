@@ -262,6 +262,114 @@ example : (RawArena.validate (Sig := EmptySignature)
     #[.tyBool, .tmApp 2 0, .tmBool true]).isSome = false := by
   decide
 
+private def tyVar? : (types : List Kind) → (kind : Kind) → Nat →
+    Option (TyVar types kind)
+  | [], _, _ => none
+  | actual :: _, expected, 0 =>
+      if equality : actual = expected then some (equality ▸ .zero) else none
+  | _ :: tail, expected, index + 1 => return .succ (← tyVar? tail expected index)
+
+private def elaborateRow {Sig : Signature.{u}} {n : Nat}
+    (decode : {types : List Kind} → {sort : HolSort} → {depth : Nat} →
+      BackRef.{u} n → Option (Expr Sig types sort depth)) :
+    Row Sig (BackRef.{u} n) → (types : List Kind) → (sort : HolSort) →
+      (depth : Nat) → Option (Expr Sig types sort depth)
+  | .tyBool, _, .kind .star, 0 => some .boolTy
+  | .tyArr domain codomain, _, .kind .star, 0 =>
+      return .arr (← decode domain) (← decode codomain)
+  | .tyApp domain codomain function argument, _, .kind expected, 0 =>
+      if equality : codomain = expected then
+        return equality ▸ .tyApp
+          (← decode (sort := .kind (.arr domain codomain)) function)
+          (← decode (sort := .kind domain) argument)
+      else none
+  | .tyLam domain codomain body, _, .kind expected, 0 =>
+      if equality : (.arr domain codomain : Kind) = expected then
+        return equality ▸ .tyLam
+          (← decode (types := domain :: _) (sort := .kind codomain) body)
+      else none
+  | .tyBv actual index, types, .kind expected, 0 =>
+      if equality : actual = expected then
+        match tyVar? types actual index with
+        | some v => some (equality ▸ .tyBv v)
+        | none => none
+      else none
+  | .tySub carrier predicate, _, .kind .star, 0 =>
+      return .sub (← decode carrier) (← decode (sort := .tm) (depth := 1) predicate)
+  | @Row.sigFam _ _ actual symbol, _, .kind expected, 0 =>
+      if equality : actual = expected then some (equality ▸ .primFam symbol) else none
+  | .tmBv index, _, .tm, depth =>
+      if scope : index < depth then some (.bv ⟨index, scope⟩) else none
+  | .tmFv name type, _, .tm, _ => return .fv name (← decode type)
+  | .tmApp function argument, _, .tm, depth =>
+      return .app (← decode (depth := depth) function) (← decode (depth := depth) argument)
+  | .tmLam domain body, _, .tm, depth =>
+      return .lam (← decode domain) (← decode (depth := depth + 1) body)
+  | .tmBool value, _, .tm, _ => some (.bool value)
+  | .tmEq type left right, _, .tm, depth =>
+      return .eq (← decode type) (← decode (depth := depth) left)
+        (← decode (depth := depth) right)
+  | .tmEps type predicate, _, .tm, depth =>
+      return .eps (← decode type) (← decode (depth := depth) predicate)
+  | .tmAbs carrier predicate value, _, .tm, depth =>
+      return .abs (← decode carrier) (← decode (depth := 1) predicate)
+        (← decode (depth := depth) value)
+  | .tmRep carrier predicate value, _, .tm, depth =>
+      return .rep (← decode carrier) (← decode (depth := 1) predicate)
+        (← decode (depth := depth) value)
+  | .sigTm symbol, _, .tm, _ => some (.primTm symbol)
+  | _, _, _, _ => none
+
+/-- Decode one root of a trusted arena at explicitly requested indices. -/
+def Arena.decodeOpen {Sig : Signature.{u}} : {n : Nat} → Arena Sig n →
+    (root : BackRef.{u} n) → (types : List Kind) → (sort : HolSort) →
+      (depth : Nat) → Option (Expr Sig types sort depth)
+  | _ + 1, .snoc prior row, root, types, sort, depth =>
+      Fin.lastCases
+        (elaborateRow
+          (fun {types} {sort} {depth} child =>
+            Arena.decodeOpen prior child types sort depth)
+          row types sort depth)
+        (fun child => Arena.decodeOpen prior ⟨child⟩ types sort depth)
+        root.down
+
+/-- Validate a raw arena and decode a selected root at expected indices. -/
+def RawArena.decodeOpen {Sig : Signature.{u}} (rows : RawArena Sig) (root : Nat)
+    (types : List Kind) (sort : HolSort) (depth : Nat) :
+    Option (Expr Sig types sort depth) := do
+  let checked ← rows.validate
+  if scope : root < checked.size then
+    checked.arena.decodeOpen ⟨⟨root, scope⟩⟩ types sort depth
+  else none
+
+def RawArena.decodeFam {Sig : Signature.{u}} (rows : RawArena Sig) (root : Nat)
+    (types : List Kind) (kind : Kind) : Option (Fam Sig types kind) :=
+  rows.decodeOpen root types (.kind kind) 0
+
+def RawArena.decodeTm {Sig : Signature.{u}} (rows : RawArena Sig) (root : Nat)
+    (types : List Kind) (depth : Nat) : Option (Tm Sig types depth) :=
+  rows.decodeOpen root types .tm depth
+
+example : (RawArena.decodeFam (Sig := EmptySignature) #[.tyBool] 0 [] .star).isSome =
+    true := by
+  decide
+
+example : (RawArena.decodeFam (Sig := EmptySignature)
+    #[.tyBv .star 0, .tyLam .star .star 0] 1 [] (.arr .star .star)).isSome = true := by
+  decide
+
+example : (RawArena.decodeTm (Sig := EmptySignature)
+    #[.tyBool, .tmBv 0, .tmLam 0 1] 2 [] 0).isSome = true := by
+  decide
+
+example : (RawArena.decodeTm (Sig := EmptySignature) #[.tmBv 0] 0 [] 0).isSome =
+    false := by
+  decide
+
+example : (RawArena.decodeTm (Sig := EmptySignature) #[.tyBool] 0 [] 0).isSome =
+    false := by
+  decide
+
 private def string {Sig : Signature.{u}} (value : String) : Tree Sig :=
   .scalar (.string value)
 
