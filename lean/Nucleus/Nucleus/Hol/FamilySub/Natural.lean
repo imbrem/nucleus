@@ -58,6 +58,27 @@ def natStepBody : BoolTm
 def natStep : BoolTm (extendBound (.arr InfiniteOps.ind .boolTy) Γ) :=
   DefEqChecked.forallTm InfiniteOps.indKinded natStepBody
 
+def natStepAt
+    (predicate : DefEqChecked Sig Γ (.arr InfiniteOps.ind .boolTy)) : BoolTm Γ :=
+  let y := DefEqChecked.bv (Sig := Sig) (types := types)
+    (Γ := extendBound InfiniteOps.ind Γ) InfiniteOps.indKinded 0 rfl
+  DefEqChecked.forallTm InfiniteOps.indKinded
+    (DefEqChecked.imp (predicate.weaken.app y)
+      (predicate.weaken.app (indSucc.app y)))
+
+theorem natStep_open (typed : TypedCtx Γ)
+    (predicate : DefEqChecked Sig Γ (.arr InfiniteOps.ind .boolTy)) :
+    (natStep (Sig := Sig) (Γ := Γ)).openBound typed predicate =
+      natStepAt predicate := by
+  apply DefEqChecked.ext
+  simp [natStep, natStepBody, natStepAt, DefEqChecked.forallTm,
+    DefEqChecked.imp, DefEqChecked.and, DefEqChecked.andLhs,
+    DefEqChecked.andLhsBody, DefEqChecked.andRhs, DefEqChecked.openBound,
+    DefEqChecked.eq, DefEqChecked.lam, DefEqChecked.app, DefEqChecked.bv,
+    DefEqChecked.weaken, DefEqChecked.truth, DefEqChecked.boolean,
+    indSucc, indSuccChecked, DefEqChecked.ofRaw, FamilySub.openBound,
+    instantiate, liftSub]
+
 def natClosureBody (represented : DefEqChecked Sig Γ InfiniteOps.ind) :
     BoolTm (extendBound (.arr InfiniteOps.ind .boolTy) Γ) :=
   let hPred : Kinded (.arr InfiniteOps.ind .boolTy : Ty Sig types) :=
@@ -68,6 +89,29 @@ def natClosureBody (represented : DefEqChecked Sig Γ InfiniteOps.ind) :
     (.arr InfiniteOps.ind .boolTy) Γ))
   let closed := DefEqChecked.and base natStep
   DefEqChecked.imp closed (predicate.app represented.weaken)
+
+def natClosureAt (represented : DefEqChecked Sig Γ InfiniteOps.ind)
+    (predicate : DefEqChecked Sig Γ (.arr InfiniteOps.ind .boolTy)) : BoolTm Γ :=
+  DefEqChecked.imp
+    (DefEqChecked.and (predicate.app indZero) (natStepAt predicate))
+    (predicate.app represented)
+
+theorem natClosureBody_open (typed : TypedCtx Γ)
+    (represented : DefEqChecked Sig Γ InfiniteOps.ind)
+    (predicate : DefEqChecked Sig Γ (.arr InfiniteOps.ind .boolTy)) :
+    (natClosureBody represented).openBound typed predicate =
+      natClosureAt represented predicate := by
+  have stepOpen : instantiate (Fin.cases predicate.tm .bv)
+      (natStep (Sig := Sig) (Γ := Γ)).tm = (natStepAt predicate).tm := by
+    simpa [DefEqChecked.openBound, FamilySub.openBound] using
+      congrArg DefEqChecked.tm (natStep_open typed predicate)
+  apply DefEqChecked.ext
+  simp [natClosureBody, natClosureAt, stepOpen, DefEqChecked.imp,
+    DefEqChecked.and, DefEqChecked.andLhs, DefEqChecked.andLhsBody,
+    DefEqChecked.andRhs, DefEqChecked.openBound, DefEqChecked.eq,
+    DefEqChecked.lam, DefEqChecked.app, DefEqChecked.bv, DefEqChecked.weaken,
+    DefEqChecked.truth, DefEqChecked.boolean, indZero, indZeroChecked,
+    DefEqChecked.ofRaw, FamilySub.openBound, instantiate, liftSub]
 
 def natPredicateAt (represented : DefEqChecked Sig Γ InfiniteOps.ind) : BoolTm Γ :=
   DefEqChecked.forallTm (.arr InfiniteOps.indKinded .boolTy)
@@ -130,6 +174,20 @@ noncomputable def repNatural_predicate (typed : TypedCtx Γ)
     (natPredicateAt_term_eq indZero) value
     (natPredicateAt (repNatural value)) (natPredicateAt_term_eq (repNatural value))
     (natPredicate_zero typed)
+
+/-- Induction over the `ind` representation of a guarded natural. -/
+noncomputable def naturalInduction (typed : TypedCtx Γ)
+    (predicate : DefEqChecked Sig Γ (.arr InfiniteOps.ind .boolTy))
+    (value : DefEqChecked Sig Γ (naturalTy Sig types))
+    (base : Intrinsic.Proves Γ H (predicate.app indZero))
+    (step : Intrinsic.Proves Γ H (natStepAt predicate)) :
+    Intrinsic.Proves Γ H (predicate.app (repNatural value)) := by
+  have universal := repNatural_predicate (H := H) typed value
+  have closed := Intrinsic.Proves.forallElim typed
+    (.arr InfiniteOps.indKinded .boolTy) (natClosureBody (repNatural value))
+    predicate universal
+  rw [natClosureBody_open typed (repNatural value) predicate] at closed
+  exact impElim typed closed (andIntro typed base step)
 
 /-- Successor is inherited from `ind` and re-abstracted into the guarded
 natural subtype.  Closure proofs establish its expected laws later; subtype
