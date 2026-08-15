@@ -92,6 +92,36 @@ end DefEqChecked
 abbrev BoolTm {Sig : Signature} [SigTyping Sig] {types : List Kind} {depth : Nat}
     (Γ : BoundCtx Sig types depth) := DefEqChecked Sig Γ (.boolTy : Ty Sig types)
 
+namespace DefEqChecked
+
+variable {Sig : Signature} [SigTyping Sig] {types : List Kind} {depth : Nat}
+  {Γ : BoundCtx Sig types depth}
+
+def truth : BoolTm Γ := boolean true
+
+def falsehood : BoolTm Γ := boolean false
+
+def not (proposition : BoolTm Γ) : BoolTm Γ :=
+  eq .boolTy proposition falsehood
+
+/-- Equality-only HOL conjunction on definitionally typed terms. -/
+def and (left right : BoolTm Γ) : BoolTm Γ := by
+  let functionTy : Ty Sig types := .arr .boolTy (.arr .boolTy .boolTy)
+  let hFunction : Kinded functionTy := .arr .boolTy (.arr .boolTy .boolTy)
+  let f := DefEqChecked.bv (Γ := extendBound functionTy Γ) hFunction 0 rfl
+  let lhs := DefEqChecked.lam hFunction ((f.app left.weaken).app right.weaken)
+  let rhs := DefEqChecked.lam hFunction
+    ((f.app (truth (Γ := Γ)).weaken).app (truth (Γ := Γ)).weaken)
+  exact eq (.arr hFunction .boolTy) lhs rhs
+
+def or (left right : BoolTm Γ) : BoolTm Γ :=
+  not (and (not left) (not right))
+
+def imp (left right : BoolTm Γ) : BoolTm Γ :=
+  or (not left) right
+
+end DefEqChecked
+
 abbrev HolProp {Sig : Signature} [SigTyping Sig] {types : List Kind} {depth : Nat}
     (Γ : BoundCtx Sig types depth) := BoolTm Γ
 
@@ -393,6 +423,21 @@ def antisymm (p q : BoolTm Γ) (left : Proves Γ (p :: H) q)
     (right : Proves Γ (q :: H) p) : Proves Γ H (DefEqChecked.eq .boolTy p q) :=
   ⟨.antisymm (PropCtx.typed H) p.typing q.typing (PropCtx.typed (p :: H))
     (PropCtx.typed (q :: H)) left.proof right.proof⟩
+
+/-- A proved proposition is provably equal to truth. -/
+noncomputable def eqTrue (_typed : TypedCtx Γ) (premise : Proves Γ H p) :
+    Proves Γ H (DefEqChecked.eq .boolTy p DefEqChecked.truth) :=
+  antisymm p DefEqChecked.truth
+    (truth (H := p :: H))
+    (weakenHyp DefEqChecked.truth premise)
+
+/-- Equality to truth can be eliminated back to the proposition. -/
+def ofEqTrue (typed : TypedCtx Γ)
+    (equality : Proves Γ H (DefEqChecked.eq .boolTy p DefEqChecked.truth)) :
+    Proves Γ H p :=
+  ofEqBool typed DefEqChecked.truth p
+    (eqSymm typed .boolTy p DefEqChecked.truth equality)
+    truth
 
 def absRep (hA : Kinded A) (predicate : Tm Sig types 1)
     (predicateTyping : HasType (extendBound A emptyBound) predicate .boolTy)
