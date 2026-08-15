@@ -143,6 +143,24 @@ theorem rename_comp (term : Tm Sig types m) (ρ : Fin m → Fin n)
       rw [rename_comp value]
 termination_by sizeOf term
 
+/-- A closed term has a unique renaming into any fixed bound-variable depth. -/
+theorem rename_closed_unique (term : Tm Sig types 0)
+    (ρ σ : Fin 0 → Fin n) :
+    rename ρ term = rename σ term := by
+  congr 1
+  funext i
+  exact Fin.elim0 i
+
+/-- Substitution cannot affect a closed term that has merely been renamed into
+a larger bound-variable context. -/
+theorem instantiate_rename_closed (term : Tm Sig types 0)
+    (ρ : Fin 0 → Fin n) (σ : Fin n → Tm Sig types k)
+    (τ : Fin 0 → Fin k) :
+    instantiate σ (rename ρ term) = rename τ term := by
+  apply instantiate_rename term ρ σ τ
+  intro i
+  exact Fin.elim0 i
+
 theorem instantiate_rename_cancel (term : Tm Sig types m)
     (ρ : Fin m → Fin n) (σ : Fin n → Tm Sig types m)
     (cancel : ∀ i, σ (ρ i) = .bv i) :
