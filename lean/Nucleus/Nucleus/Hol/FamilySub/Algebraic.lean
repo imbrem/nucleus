@@ -1,5 +1,5 @@
 import Nucleus.Hol.FamilySub.ProductLaws
-import Nucleus.Hol.FamilySub.Coproduct
+import Nucleus.Hol.FamilySub.CoproductLaws
 
 /-! # Reusable product and coproduct interfaces -/
 
@@ -108,39 +108,15 @@ instance (Sig : Signature) [SigTyping Sig] : ProductRules Sig where
   eta := product_eta
   ext := product_ext
 
-private def inlDefEq {Sig : Signature} [SigTyping Sig] {types : List Kind}
-    {depth : Nat} {Γ : BoundCtx Sig types depth} {A B : Ty Sig types}
-    (hA : Kinded A) (hB : Kinded B) (value : DefEqChecked Sig Γ A) :
-    DefEqChecked Sig Γ (coproductTy hA hB) := by
-  let hLeft : Kinded (.arr A .boolTy) := .arr hA .boolTy
-  let hRight : Kinded (.arr B .boolTy) := .arr hB .boolTy
-  let left := DefEqChecked.bv
-    (Γ := extendBound (.arr B .boolTy) (extendBound (.arr A .boolTy) Γ)) hLeft 1 rfl
-  let represented := DefEqChecked.lam hLeft
-    (DefEqChecked.lam hRight (left.app value.weaken.weaken))
-  exact DefEqChecked.abs (coproductCarrier_kinded hA hB) (coproductPredicate hA hB).tm
-    (coproductPredicate hA hB).typing represented
-
-private def inrDefEq {Sig : Signature} [SigTyping Sig] {types : List Kind}
-    {depth : Nat} {Γ : BoundCtx Sig types depth} {A B : Ty Sig types}
-    (hA : Kinded A) (hB : Kinded B) (value : DefEqChecked Sig Γ B) :
-    DefEqChecked Sig Γ (coproductTy hA hB) := by
-  let hLeft : Kinded (.arr A .boolTy) := .arr hA .boolTy
-  let hRight : Kinded (.arr B .boolTy) := .arr hB .boolTy
-  let right := DefEqChecked.bv
-    (Γ := extendBound (.arr B .boolTy) (extendBound (.arr A .boolTy) Γ)) hRight 0 rfl
-  let represented := DefEqChecked.lam hLeft
-    (DefEqChecked.lam hRight (right.app value.weaken.weaken))
-  exact DefEqChecked.abs (coproductCarrier_kinded hA hB) (coproductPredicate hA hB).tm
-    (coproductPredicate hA hB).typing represented
-
 instance (Sig : Signature) [SigTyping Sig] : CoproductOps Sig where
   coproduct := coproductTy
   coproductKinded := coproductTy_kinded
-  inl := inlDefEq
-  inr := inrDefEq
-  case hA hB hC left right value :=
-    (((DefEqChecked.ofRaw (coproductCaseFunction hA hB hC).tm
-      (coproductCaseFunction hA hB hC).typing).app left).app right).app value
+  inl := inlChecked
+  inr := inrChecked
+  case := caseChecked
+
+noncomputable instance (Sig : Signature) [SigTyping Sig] : CoproductRules Sig where
+  caseInl := case_inl
+  caseInr := case_inr
 
 end Nucleus.Hol.FamilySub

@@ -280,4 +280,220 @@ noncomputable def rep_inr (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
     (coproductPredicateAt hA hB (inrChurchChecked hA hB value)) rfl
     (coproductPredicate_inr typed hA hB value)
 
+def leftResultBody (hA : Kinded A) (hC : Kinded C)
+    (candidate : DefEqChecked Sig Γ C) (left : DefEqChecked Sig Γ (.arr A C)) :
+    BoolTm (extendBound A Γ) :=
+  let value := DefEqChecked.bv (Γ := extendBound A Γ) hA 0 rfl
+  DefEqChecked.eq hC candidate.weaken (left.weaken.app value)
+
+def leftResultPredicate (hA : Kinded A) (hC : Kinded C)
+    (candidate : DefEqChecked Sig Γ C) (left : DefEqChecked Sig Γ (.arr A C)) :
+    DefEqChecked Sig Γ (.arr A .boolTy) :=
+  DefEqChecked.lam hA (leftResultBody hA hC candidate left)
+
+def rightResultBody (hB : Kinded B) (hC : Kinded C)
+    (candidate : DefEqChecked Sig Γ C) (right : DefEqChecked Sig Γ (.arr B C)) :
+    BoolTm (extendBound B Γ) :=
+  let value := DefEqChecked.bv (Γ := extendBound B Γ) hB 0 rfl
+  DefEqChecked.eq hC candidate.weaken (right.weaken.app value)
+
+def rightResultPredicate (hB : Kinded B) (hC : Kinded C)
+    (candidate : DefEqChecked Sig Γ C) (right : DefEqChecked Sig Γ (.arr B C)) :
+    DefEqChecked Sig Γ (.arr B .boolTy) :=
+  DefEqChecked.lam hB (rightResultBody hB hC candidate right)
+
+theorem leftResultBody_open (typed : TypedCtx Γ) (hA : Kinded A) (hC : Kinded C)
+    (candidate : DefEqChecked Sig Γ C) (left : DefEqChecked Sig Γ (.arr A C))
+    (value : DefEqChecked Sig Γ A) :
+    (leftResultBody hA hC candidate left).openBound typed value =
+      DefEqChecked.eq hC candidate (left.app value) := by
+  apply DefEqChecked.ext
+  simp [leftResultBody, DefEqChecked.openBound, DefEqChecked.eq,
+    DefEqChecked.app, DefEqChecked.bv, DefEqChecked.weaken,
+    FamilySub.openBound, instantiate]
+
+theorem rightResultBody_open (typed : TypedCtx Γ) (hB : Kinded B) (hC : Kinded C)
+    (candidate : DefEqChecked Sig Γ C) (right : DefEqChecked Sig Γ (.arr B C))
+    (value : DefEqChecked Sig Γ B) :
+    (rightResultBody hB hC candidate right).openBound typed value =
+      DefEqChecked.eq hC candidate (right.app value) := by
+  apply DefEqChecked.ext
+  simp [rightResultBody, DefEqChecked.openBound, DefEqChecked.eq,
+    DefEqChecked.app, DefEqChecked.bv, DefEqChecked.weaken,
+    FamilySub.openBound, instantiate]
+
+def leftResultPredicate_apply (typed : TypedCtx Γ) (hA : Kinded A) (hC : Kinded C)
+    (candidate : DefEqChecked Sig Γ C) (left : DefEqChecked Sig Γ (.arr A C))
+    (value : DefEqChecked Sig Γ A) :
+    Intrinsic.EqTm ((leftResultPredicate hA hC candidate left).app value)
+      (DefEqChecked.eq hC candidate (left.app value)) := by
+  have reduction := Intrinsic.EqTm.beta typed hA
+    (leftResultBody hA hC candidate left) value
+  rw [leftResultBody_open typed hA hC candidate left value] at reduction
+  exact reduction
+
+def rightResultPredicate_apply (typed : TypedCtx Γ) (hB : Kinded B) (hC : Kinded C)
+    (candidate : DefEqChecked Sig Γ C) (right : DefEqChecked Sig Γ (.arr B C))
+    (value : DefEqChecked Sig Γ B) :
+    Intrinsic.EqTm ((rightResultPredicate hB hC candidate right).app value)
+      (DefEqChecked.eq hC candidate (right.app value)) := by
+  have reduction := Intrinsic.EqTm.beta typed hB
+    (rightResultBody hB hC candidate right) value
+  rw [rightResultBody_open typed hB hC candidate right value] at reduction
+  exact reduction
+
+def casePredicateAt (hA : Kinded A) (hB : Kinded B) (hC : Kinded C)
+    (left : DefEqChecked Sig Γ (.arr A C)) (right : DefEqChecked Sig Γ (.arr B C))
+    (sum : DefEqChecked Sig Γ (coproductTy hA hB))
+    (candidate : DefEqChecked Sig Γ C) : BoolTm Γ :=
+  ((repCoproduct hA hB sum).app (leftResultPredicate hA hC candidate left)).app
+    (rightResultPredicate hB hC candidate right)
+
+def caseBody (hA : Kinded A) (hB : Kinded B) (hC : Kinded C)
+    (left : DefEqChecked Sig Γ (.arr A C)) (right : DefEqChecked Sig Γ (.arr B C))
+    (sum : DefEqChecked Sig Γ (coproductTy hA hB)) : BoolTm (extendBound C Γ) :=
+  let candidate := DefEqChecked.bv (Γ := extendBound C Γ) hC 0 rfl
+  casePredicateAt hA hB hC left.weaken right.weaken sum.weaken candidate
+
+def caseChecked (hA : Kinded A) (hB : Kinded B) (hC : Kinded C)
+    (left : DefEqChecked Sig Γ (.arr A C)) (right : DefEqChecked Sig Γ (.arr B C))
+    (sum : DefEqChecked Sig Γ (coproductTy hA hB)) : DefEqChecked Sig Γ C :=
+  DefEqChecked.eps hC (DefEqChecked.lam hC (caseBody hA hB hC left right sum))
+
+theorem caseBody_open (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (hC : Kinded C) (left : DefEqChecked Sig Γ (.arr A C))
+    (right : DefEqChecked Sig Γ (.arr B C))
+    (sum : DefEqChecked Sig Γ (coproductTy hA hB))
+    (candidate : DefEqChecked Sig Γ C) :
+    (caseBody hA hB hC left right sum).openBound typed candidate =
+      casePredicateAt hA hB hC left right sum candidate := by
+  apply DefEqChecked.ext
+  simp [caseBody, casePredicateAt, repCoproduct, leftResultPredicate,
+    rightResultPredicate, leftResultBody, rightResultBody,
+    DefEqChecked.openBound, DefEqChecked.rep, DefEqChecked.lam,
+    DefEqChecked.app, DefEqChecked.eq, DefEqChecked.bv, DefEqChecked.weaken,
+    FamilySub.openBound, instantiate, liftSub]
+
+noncomputable def casePredicateAt_inl_eq (typed : TypedCtx Γ)
+    (hA : Kinded A) (hB : Kinded B) (hC : Kinded C)
+    (left : DefEqChecked Sig Γ (.arr A C)) (right : DefEqChecked Sig Γ (.arr B C))
+    (value : DefEqChecked Sig Γ A) (candidate : DefEqChecked Sig Γ C) :
+    Intrinsic.Proves Γ H
+      (DefEqChecked.eq .boolTy
+        (casePredicateAt hA hB hC left right (inlChecked hA hB value) candidate)
+        (DefEqChecked.eq hC candidate (left.app value))) := by
+  let leftPredicate := leftResultPredicate hA hC candidate left
+  let rightPredicate := rightResultPredicate hB hC candidate right
+  have representation := rep_inl (H := H) typed hA hB value
+  have afterLeft := Intrinsic.Proves.appCongr typed (.arr hA .boolTy)
+    (.arr (.arr hB .boolTy) .boolTy)
+    (repCoproduct hA hB (inlChecked hA hB value))
+    (inlChurchChecked hA hB value) leftPredicate representation
+  have applied := Intrinsic.Proves.appCongr typed (.arr hB .boolTy) .boolTy
+    ((repCoproduct hA hB (inlChecked hA hB value)).app leftPredicate)
+    ((inlChurchChecked hA hB value).app leftPredicate) rightPredicate afterLeft
+  have reduction := (inlChurch_apply typed hA hB value leftPredicate rightPredicate).trans
+    (leftResultPredicate_apply typed hA hC candidate left value)
+  exact Intrinsic.Proves.eqTrans typed .boolTy
+    (casePredicateAt hA hB hC left right (inlChecked hA hB value) candidate)
+    (((inlChurchChecked hA hB value).app leftPredicate).app rightPredicate)
+    (DefEqChecked.eq hC candidate (left.app value)) applied
+    (Intrinsic.Proves.eqOfEqTm (H := H) .boolTy reduction)
+
+noncomputable def casePredicateAt_inr_eq (typed : TypedCtx Γ)
+    (hA : Kinded A) (hB : Kinded B) (hC : Kinded C)
+    (left : DefEqChecked Sig Γ (.arr A C)) (right : DefEqChecked Sig Γ (.arr B C))
+    (value : DefEqChecked Sig Γ B) (candidate : DefEqChecked Sig Γ C) :
+    Intrinsic.Proves Γ H
+      (DefEqChecked.eq .boolTy
+        (casePredicateAt hA hB hC left right (inrChecked hA hB value) candidate)
+        (DefEqChecked.eq hC candidate (right.app value))) := by
+  let leftPredicate := leftResultPredicate hA hC candidate left
+  let rightPredicate := rightResultPredicate hB hC candidate right
+  have representation := rep_inr (H := H) typed hA hB value
+  have afterLeft := Intrinsic.Proves.appCongr typed (.arr hA .boolTy)
+    (.arr (.arr hB .boolTy) .boolTy)
+    (repCoproduct hA hB (inrChecked hA hB value))
+    (inrChurchChecked hA hB value) leftPredicate representation
+  have applied := Intrinsic.Proves.appCongr typed (.arr hB .boolTy) .boolTy
+    ((repCoproduct hA hB (inrChecked hA hB value)).app leftPredicate)
+    ((inrChurchChecked hA hB value).app leftPredicate) rightPredicate afterLeft
+  have reduction := (inrChurch_apply typed hA hB value leftPredicate rightPredicate).trans
+    (rightResultPredicate_apply typed hB hC candidate right value)
+  exact Intrinsic.Proves.eqTrans typed .boolTy
+    (casePredicateAt hA hB hC left right (inrChecked hA hB value) candidate)
+    (((inrChurchChecked hA hB value).app leftPredicate).app rightPredicate)
+    (DefEqChecked.eq hC candidate (right.app value)) applied
+    (Intrinsic.Proves.eqOfEqTm (H := H) .boolTy reduction)
+
+noncomputable def case_inl (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (hC : Kinded C) (left : DefEqChecked Sig Γ (.arr A C))
+    (right : DefEqChecked Sig Γ (.arr B C)) (value : DefEqChecked Sig Γ A) :
+    Intrinsic.Proves Γ H
+      (DefEqChecked.eq hC (caseChecked hA hB hC left right (inlChecked hA hB value))
+        (left.app value)) := by
+  let target := left.app value
+  let sum := inlChecked hA hB value
+  let body := caseBody hA hB hC left right sum
+  let predicate := DefEqChecked.lam hC body
+  have atTargetEquality := casePredicateAt_inl_eq (H := H) typed hA hB hC
+    left right value target
+  have atTarget : Intrinsic.Proves Γ H
+      (casePredicateAt hA hB hC left right sum target) :=
+    Intrinsic.Proves.ofEqBool typed (DefEqChecked.eq hC target target)
+      (casePredicateAt hA hB hC left right sum target)
+      (Intrinsic.Proves.eqSymm typed .boolTy _ _ atTargetEquality)
+      (Intrinsic.Proves.eqRefl hC target)
+  have predicateAtTarget : Intrinsic.Proves Γ H (predicate.app target) :=
+    Intrinsic.Proves.betaExpand typed hC body target
+      (caseBody_open typed hA hB hC left right sum target ▸ atTarget)
+  have predicateAtChoice : Intrinsic.Proves Γ H (predicate.app (predicate.eps hC)) :=
+    Intrinsic.Proves.choice hC predicate target predicateAtTarget
+  have opened : Intrinsic.Proves Γ H
+      (casePredicateAt hA hB hC left right sum (caseChecked hA hB hC left right sum)) := by
+    have reduced := Intrinsic.Proves.betaReduce typed hC body (predicate.eps hC)
+      predicateAtChoice
+    simpa [predicate, caseChecked] using
+      (caseBody_open typed hA hB hC left right sum (predicate.eps hC) ▸ reduced)
+  exact Intrinsic.Proves.ofEqBool typed
+    (casePredicateAt hA hB hC left right sum (caseChecked hA hB hC left right sum))
+    (DefEqChecked.eq hC (caseChecked hA hB hC left right sum) target)
+    (casePredicateAt_inl_eq (H := H) typed hA hB hC left right value
+      (caseChecked hA hB hC left right sum)) opened
+
+noncomputable def case_inr (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (hC : Kinded C) (left : DefEqChecked Sig Γ (.arr A C))
+    (right : DefEqChecked Sig Γ (.arr B C)) (value : DefEqChecked Sig Γ B) :
+    Intrinsic.Proves Γ H
+      (DefEqChecked.eq hC (caseChecked hA hB hC left right (inrChecked hA hB value))
+        (right.app value)) := by
+  let target := right.app value
+  let sum := inrChecked hA hB value
+  let body := caseBody hA hB hC left right sum
+  let predicate := DefEqChecked.lam hC body
+  have atTargetEquality := casePredicateAt_inr_eq (H := H) typed hA hB hC
+    left right value target
+  have atTarget : Intrinsic.Proves Γ H
+      (casePredicateAt hA hB hC left right sum target) :=
+    Intrinsic.Proves.ofEqBool typed (DefEqChecked.eq hC target target)
+      (casePredicateAt hA hB hC left right sum target)
+      (Intrinsic.Proves.eqSymm typed .boolTy _ _ atTargetEquality)
+      (Intrinsic.Proves.eqRefl hC target)
+  have predicateAtTarget : Intrinsic.Proves Γ H (predicate.app target) :=
+    Intrinsic.Proves.betaExpand typed hC body target
+      (caseBody_open typed hA hB hC left right sum target ▸ atTarget)
+  have predicateAtChoice : Intrinsic.Proves Γ H (predicate.app (predicate.eps hC)) :=
+    Intrinsic.Proves.choice hC predicate target predicateAtTarget
+  have opened : Intrinsic.Proves Γ H
+      (casePredicateAt hA hB hC left right sum (caseChecked hA hB hC left right sum)) := by
+    have reduced := Intrinsic.Proves.betaReduce typed hC body (predicate.eps hC)
+      predicateAtChoice
+    simpa [predicate, caseChecked] using
+      (caseBody_open typed hA hB hC left right sum (predicate.eps hC) ▸ reduced)
+  exact Intrinsic.Proves.ofEqBool typed
+    (casePredicateAt hA hB hC left right sum (caseChecked hA hB hC left right sum))
+    (DefEqChecked.eq hC (caseChecked hA hB hC left right sum) target)
+    (casePredicateAt_inr_eq (H := H) typed hA hB hC left right value
+      (caseChecked hA hB hC left right sum)) opened
+
 end Nucleus.Hol.FamilySub
