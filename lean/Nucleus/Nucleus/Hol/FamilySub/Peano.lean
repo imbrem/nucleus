@@ -73,4 +73,21 @@ noncomputable def naturalAdd_succ [NaturalSubstitutionLaws Sig]
   exact Intrinsic.Proves.eqTrans typed NaturalOps.natKinded _ _ _ unfolded
     (Intrinsic.Proves.eqOfEqTm (H := H) NaturalOps.natKinded reduced)
 
+noncomputable def naturalMul_zero [NaturalSubstitutionLaws Sig]
+    [NaturalRecursorExistence Sig] (typed : TypedCtx Γ)
+    (left : NatTm (Sig := Sig) (Γ := Γ)) :
+    Intrinsic.Proves Γ H (DefEqChecked.eq NaturalOps.natKinded
+      (naturalMul left NaturalOps.zero) NaturalOps.zero) :=
+  NaturalRecursorRules.recZero typed NaturalOps.natKinded NaturalOps.zero
+    (naturalMulStep left)
+
+noncomputable def naturalMul_succ_raw [NaturalSubstitutionLaws Sig]
+    [NaturalRecursorExistence Sig] (typed : TypedCtx Γ)
+    (left right : NatTm (Sig := Sig) (Γ := Γ)) :
+    Intrinsic.Proves Γ H (DefEqChecked.eq NaturalOps.natKinded
+      (naturalMul left (NaturalOps.succ right))
+      (((naturalMulStep left).app right).app (naturalMul left right))) :=
+  NaturalRecursorRules.recSucc typed NaturalOps.natKinded NaturalOps.zero
+    (naturalMulStep left) right
+
 end Nucleus.Hol.FamilySub
