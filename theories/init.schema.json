@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://nucleus.dev/schema/hol-init-array-v0.json",
   "title": "Nucleus HOL bootstrap declarations (array-v0)",
+  "description": "Structural schema for the source manifest. Semantic rules and the required inventory are specified by init.md and enforced by validate-init.jq.",
   "type": "object",
   "required": ["format", "status", "encoding", "declarations"],
   "additionalProperties": false,
@@ -50,7 +51,7 @@
     "parameter": {
       "type": "array",
       "prefixItems": [
-        { "type": "string", "minLength": 1 },
+        { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_.?-]*$" },
         { "$ref": "#/$defs/expression" }
       ],
       "items": false,
@@ -61,7 +62,7 @@
       "type": "array",
       "prefixItems": [
         { "enum": ["type-family", "constant", "definition", "theorem", "section"] },
-        { "type": "string", "minLength": 1 },
+        { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_.?-]*$" },
         { "type": "array", "items": { "$ref": "#/$defs/parameter" } },
         {
           "oneOf": [
