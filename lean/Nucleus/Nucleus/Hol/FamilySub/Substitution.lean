@@ -225,6 +225,12 @@ theorem instantiate_rename_closed (term : Tm Sig types 0)
   intro i
   exact Fin.elim0 i
 
+@[simp] theorem instantiate_rename_closed_default (term : Tm Sig types 0)
+    (ρ : Fin 0 → Fin n) (σ : Fin n → Tm Sig types k) :
+    instantiate σ (rename ρ term) =
+      rename (fun i ↦ Fin.elim0 i) term :=
+  instantiate_rename_closed term ρ σ (fun i ↦ Fin.elim0 i)
+
 theorem instantiate_rename_cancel (term : Tm Sig types m)
     (ρ : Fin m → Fin n) (σ : Fin n → Tm Sig types m)
     (cancel : ∀ i, σ (ρ i) = .bv i) :

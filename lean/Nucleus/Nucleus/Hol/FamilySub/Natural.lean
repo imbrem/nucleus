@@ -73,6 +73,20 @@ def natPredicateAt (represented : DefEqChecked Sig Γ InfiniteOps.ind) : BoolTm 
   DefEqChecked.forallTm (.arr InfiniteOps.indKinded .boolTy)
     (natClosureBody represented)
 
+theorem natPredicateAt_term_eq
+    (represented : DefEqChecked Sig Γ InfiniteOps.ind) :
+    (natPredicateAt represented).tm = instantiateOne
+      (natPredicate (Sig := Sig) (types := types)).tm represented.tm := by
+  simp [natPredicateAt, natClosureBody, natStep, natStepBody, natPredicate,
+    DefEqChecked.forallTm, Checked.forallTm, DefEqChecked.imp, Checked.imp,
+    DefEqChecked.and, DefEqChecked.andLhs, DefEqChecked.andLhsBody,
+    DefEqChecked.andRhs, Checked.and, DefEqChecked.eq, Checked.eq,
+    DefEqChecked.app, Checked.app, DefEqChecked.lam, Checked.lam,
+    DefEqChecked.bv, Checked.bv, DefEqChecked.truth, Checked.truth,
+    DefEqChecked.boolean, DefEqChecked.weaken, Checked.weaken,
+    indZero, indSucc, indZeroChecked, indSuccChecked, DefEqChecked.ofRaw,
+    instantiateOne, instantiate, liftSub]
+
 /-- Zero belongs to the intersection of all inductive predicates. -/
 noncomputable def natPredicate_zero (typed : TypedCtx Γ) :
     Intrinsic.Proves Γ H (natPredicateAt (indZero (Γ := Γ))) := by
