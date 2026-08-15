@@ -168,6 +168,30 @@ end EqTm
 structure Proves (Γ : BoundCtx Sig types depth) (H : PropCtx Γ) (p : BoolTm Γ) : Type u where
   proof : FamilySub.Proves Γ H.terms p.tm
 
+def eqFromLeftBody (hA : Kinded A) (left : DefEqChecked Sig Γ A) :
+    BoolTm (extendBound A Γ) :=
+  DefEqChecked.eq hA left.weaken (DefEqChecked.bv hA 0 rfl)
+
+def eqToRightBody (hA : Kinded A) (right : DefEqChecked Sig Γ A) :
+    BoolTm (extendBound A Γ) :=
+  DefEqChecked.eq hA (DefEqChecked.bv hA 0 rfl) right.weaken
+
+theorem eqFromLeftBody_open (typed : TypedCtx Γ) (hA : Kinded A)
+    (left argument : DefEqChecked Sig Γ A) :
+    (eqFromLeftBody hA left).openBound typed argument =
+      DefEqChecked.eq hA left argument := by
+  apply DefEqChecked.ext
+  simp [eqFromLeftBody, DefEqChecked.openBound, DefEqChecked.eq,
+    DefEqChecked.weaken, DefEqChecked.bv, FamilySub.openBound, instantiate]
+
+theorem eqToRightBody_open (typed : TypedCtx Γ) (hA : Kinded A)
+    (right argument : DefEqChecked Sig Γ A) :
+    (eqToRightBody hA right).openBound typed argument =
+      DefEqChecked.eq hA argument right := by
+  apply DefEqChecked.ext
+  simp [eqToRightBody, DefEqChecked.openBound, DefEqChecked.eq,
+    DefEqChecked.weaken, DefEqChecked.bv, FamilySub.openBound, instantiate]
+
 namespace Proves
 
 def hyp {p : BoolTm Γ} (member : p ∈ H) : Proves Γ H p :=
@@ -227,6 +251,38 @@ def existsIntroBody (typedContext : TypedCtx Γ) (hA : Kinded A)
 def eqOfEqTm (hA : Kinded A) {x y : DefEqChecked Sig Γ A} (equality : EqTm x y) :
     Proves Γ H (DefEqChecked.eq hA x y) :=
   ⟨.eqOfEqTm (PropCtx.typed H) hA equality.proof⟩
+
+def eqSymm (typedContext : TypedCtx Γ) (hA : Kinded A)
+    (x y : DefEqChecked Sig Γ A)
+    (equality : Proves Γ H (DefEqChecked.eq hA x y)) :
+    Proves Γ H (DefEqChecked.eq hA y x) := by
+  let body := eqToRightBody hA x
+  let predicate := DefEqChecked.lam hA body
+  have openedX := eqToRightBody_open typedContext hA x x
+  have atX : Proves Γ H (body.openBound typedContext x) :=
+    openedX.symm ▸ eqRefl hA x
+  have predicateAtX : Proves Γ H (predicate.app x) :=
+    betaExpand typedContext hA body x atX
+  have predicateAtY : Proves Γ H (predicate.app y) :=
+    eqMp hA predicate x y equality predicateAtX
+  have openedY := eqToRightBody_open typedContext hA x y
+  exact openedY ▸ betaReduce typedContext hA body y predicateAtY
+
+def eqTrans (typedContext : TypedCtx Γ) (hA : Kinded A)
+    (x y z : DefEqChecked Sig Γ A)
+    (first : Proves Γ H (DefEqChecked.eq hA x y))
+    (second : Proves Γ H (DefEqChecked.eq hA y z)) :
+    Proves Γ H (DefEqChecked.eq hA x z) := by
+  let body := eqFromLeftBody hA x
+  let predicate := DefEqChecked.lam hA body
+  have openedY := eqFromLeftBody_open typedContext hA x y
+  have atY : Proves Γ H (body.openBound typedContext y) := openedY.symm ▸ first
+  have predicateAtY : Proves Γ H (predicate.app y) :=
+    betaExpand typedContext hA body y atY
+  have predicateAtZ : Proves Γ H (predicate.app z) :=
+    eqMp hA predicate y z second predicateAtY
+  have openedZ := eqFromLeftBody_open typedContext hA x z
+  exact openedZ ▸ betaReduce typedContext hA body z predicateAtZ
 
 def antisymm (p q : BoolTm Γ) (left : Proves Γ (p :: H) q)
     (right : Proves Γ (q :: H) p) : Proves Γ H (DefEqChecked.eq .boolTy p q) :=
