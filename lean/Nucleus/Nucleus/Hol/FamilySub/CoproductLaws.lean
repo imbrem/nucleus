@@ -1,5 +1,6 @@
 import Nucleus.Hol.FamilySub.Coproduct
 import Nucleus.Hol.FamilySub.ProductLaws
+import Nucleus.Hol.FamilySub.BoolLogic
 
 /-! # Derived coproduct laws -/
 
@@ -113,5 +114,170 @@ def inrChurch_apply (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
     (inrBodyRight hA hB value) right
   rw [inrSecond_open typed hA hB value right] at second
   exact applied.trans second
+
+def coproductLeftBody (hA : Kinded A) (hB : Kinded B)
+    (represented : DefEqChecked Sig Γ (coproductCarrier A B)) :
+    BoolTm (extendBound A Γ) :=
+  let value := DefEqChecked.bv (Γ := extendBound A Γ) hA 0 rfl
+  DefEqChecked.eq (coproductCarrier_kinded hA hB) represented.weaken
+    (inlChurchChecked hA hB value)
+
+def coproductRightBody (hA : Kinded A) (hB : Kinded B)
+    (represented : DefEqChecked Sig Γ (coproductCarrier A B)) :
+    BoolTm (extendBound B Γ) :=
+  let value := DefEqChecked.bv (Γ := extendBound B Γ) hB 0 rfl
+  DefEqChecked.eq (coproductCarrier_kinded hA hB) represented.weaken
+    (inrChurchChecked hA hB value)
+
+def coproductLeftImage (hA : Kinded A) (hB : Kinded B)
+    (represented : DefEqChecked Sig Γ (coproductCarrier A B)) : BoolTm Γ :=
+  DefEqChecked.existsTm hA (coproductLeftBody hA hB represented)
+
+def coproductRightImage (hA : Kinded A) (hB : Kinded B)
+    (represented : DefEqChecked Sig Γ (coproductCarrier A B)) : BoolTm Γ :=
+  DefEqChecked.existsTm hB (coproductRightBody hA hB represented)
+
+def coproductMembership (hA : Kinded A) (hB : Kinded B)
+    (represented : DefEqChecked Sig Γ (coproductCarrier A B)) : BoolTm Γ :=
+  DefEqChecked.or (coproductLeftImage hA hB represented)
+    (coproductRightImage hA hB represented)
+
+def coproductPredicateAt (hA : Kinded A) (hB : Kinded B)
+    (represented : DefEqChecked Sig Γ (coproductCarrier A B)) : BoolTm Γ :=
+  ⟨instantiateOne (coproductPredicate hA hB).tm represented.tm,
+    Checks.instantiateDefEq (coproductPredicate hA hB).typing
+      (fun _ => represented.tm)
+      (fun i => Fin.cases represented.typing (fun j => Fin.elim0 j) i)⟩
+
+theorem coproductLeftBody_open (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (represented : DefEqChecked Sig Γ (coproductCarrier A B))
+    (value : DefEqChecked Sig Γ A) :
+    (coproductLeftBody hA hB represented).openBound typed value =
+      DefEqChecked.eq (coproductCarrier_kinded hA hB) represented
+        (inlChurchChecked hA hB value) := by
+  apply DefEqChecked.ext
+  simp [coproductLeftBody, inlChurchChecked, inlBodyLeft, inlAfterLeft,
+    inlBodyRight, DefEqChecked.openBound, DefEqChecked.eq, DefEqChecked.lam,
+    DefEqChecked.app, DefEqChecked.bv, DefEqChecked.weaken,
+    FamilySub.openBound, instantiate, liftSub]
+
+theorem coproductRightBody_open (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (represented : DefEqChecked Sig Γ (coproductCarrier A B))
+    (value : DefEqChecked Sig Γ B) :
+    (coproductRightBody hA hB represented).openBound typed value =
+      DefEqChecked.eq (coproductCarrier_kinded hA hB) represented
+        (inrChurchChecked hA hB value) := by
+  apply DefEqChecked.ext
+  simp [coproductRightBody, inrChurchChecked, inrBodyLeft, inrAfterLeft,
+    inrBodyRight, DefEqChecked.openBound, DefEqChecked.eq, DefEqChecked.lam,
+    DefEqChecked.app, DefEqChecked.bv, DefEqChecked.weaken,
+    FamilySub.openBound, instantiate]
+  simp [weaken, rename, instantiate, liftSub, liftRen]
+  rw [rename_comp, rename_comp]
+  congr 1
+
+def coproductLeftImage_inl (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (value : DefEqChecked Sig Γ A) :
+    Intrinsic.Proves Γ H (coproductLeftImage hA hB (inlChurchChecked hA hB value)) := by
+  apply Intrinsic.Proves.existsIntroBody typed hA _ value
+  rw [coproductLeftBody_open typed hA hB]
+  exact Intrinsic.Proves.eqRefl (H := H) (coproductCarrier_kinded hA hB)
+    (inlChurchChecked hA hB value)
+
+def coproductRightImage_inr (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (value : DefEqChecked Sig Γ B) :
+    Intrinsic.Proves Γ H (coproductRightImage hA hB (inrChurchChecked hA hB value)) := by
+  apply Intrinsic.Proves.existsIntroBody typed hB _ value
+  rw [coproductRightBody_open typed hA hB]
+  exact Intrinsic.Proves.eqRefl (H := H) (coproductCarrier_kinded hA hB)
+    (inrChurchChecked hA hB value)
+
+noncomputable def coproductMembership_inl (typed : TypedCtx Γ)
+    (hA : Kinded A) (hB : Kinded B) (value : DefEqChecked Sig Γ A) :
+    Intrinsic.Proves Γ H (coproductMembership hA hB (inlChurchChecked hA hB value)) :=
+  orIntroLeft typed (coproductLeftImage_inl typed hA hB value)
+
+noncomputable def coproductMembership_inr (typed : TypedCtx Γ)
+    (hA : Kinded A) (hB : Kinded B) (value : DefEqChecked Sig Γ B) :
+    Intrinsic.Proves Γ H (coproductMembership hA hB (inrChurchChecked hA hB value)) :=
+  orIntroRight typed (coproductRightImage_inr typed hA hB value)
+
+theorem coproductPredicateAt_eq_membership (hA : Kinded A) (hB : Kinded B)
+    (represented : DefEqChecked Sig Γ (coproductCarrier A B)) :
+    coproductPredicateAt hA hB represented = coproductMembership hA hB represented := by
+  apply DefEqChecked.ext
+  simp [coproductPredicateAt, coproductMembership, coproductLeftImage,
+    coproductRightImage, coproductLeftBody, coproductRightBody,
+    coproductPredicate, inlChurchChecked, inrChurchChecked, inlBodyLeft,
+    inlAfterLeft, inlBodyRight, inrBodyLeft, inrAfterLeft, inrBodyRight,
+    DefEqChecked.or, DefEqChecked.not, DefEqChecked.and,
+    DefEqChecked.andLhs, DefEqChecked.andLhsBody, DefEqChecked.andRhs,
+    DefEqChecked.existsTm, DefEqChecked.lam, DefEqChecked.app,
+    DefEqChecked.eps, DefEqChecked.eq, DefEqChecked.weaken, DefEqChecked.bv,
+    DefEqChecked.boolean, DefEqChecked.truth, DefEqChecked.falsehood,
+    Checked.or, Checked.not, Checked.and, Checked.existsTm, Checked.lam,
+    Checked.app, Checked.eps, Checked.eq, Checked.weaken, Checked.bv,
+    Checked.truth, Checked.falsehood, instantiateOne, instantiate, liftSub,
+    weaken, rename, inlChurch, inrChurch]
+  simp only [liftRen, Fin.cases_zero, finCasesOne, finCasesTwo]
+  simp only [Fin.cases_succ]
+  simp [Fin.cases_zero]
+  all_goals
+    rw [rename_comp, rename_comp]
+    congr 1
+
+noncomputable def coproductPredicate_inl (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (value : DefEqChecked Sig Γ A) :
+    Intrinsic.Proves Γ H
+      (coproductPredicateAt hA hB (inlChurchChecked hA hB value)) := by
+  rw [coproductPredicateAt_eq_membership]
+  exact coproductMembership_inl typed hA hB value
+
+noncomputable def coproductPredicate_inr (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (value : DefEqChecked Sig Γ B) :
+    Intrinsic.Proves Γ H
+      (coproductPredicateAt hA hB (inrChurchChecked hA hB value)) := by
+  rw [coproductPredicateAt_eq_membership]
+  exact coproductMembership_inr typed hA hB value
+
+def inlChecked (hA : Kinded A) (hB : Kinded B) (value : DefEqChecked Sig Γ A) :
+    DefEqChecked Sig Γ (coproductTy hA hB) :=
+  DefEqChecked.abs (coproductCarrier_kinded hA hB) (coproductPredicate hA hB).tm
+    (coproductPredicate hA hB).typing (inlChurchChecked hA hB value)
+
+def inrChecked (hA : Kinded A) (hB : Kinded B) (value : DefEqChecked Sig Γ B) :
+    DefEqChecked Sig Γ (coproductTy hA hB) :=
+  DefEqChecked.abs (coproductCarrier_kinded hA hB) (coproductPredicate hA hB).tm
+    (coproductPredicate hA hB).typing (inrChurchChecked hA hB value)
+
+def repCoproduct (hA : Kinded A) (hB : Kinded B)
+    (value : DefEqChecked Sig Γ (coproductTy hA hB)) :
+    DefEqChecked Sig Γ (coproductCarrier A B) :=
+  DefEqChecked.rep (coproductCarrier_kinded hA hB) (coproductPredicate hA hB).tm
+    (coproductPredicate hA hB).typing value
+
+noncomputable def rep_inl (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (value : DefEqChecked Sig Γ A) :
+    Intrinsic.Proves Γ H
+      (DefEqChecked.eq (coproductCarrier_kinded hA hB)
+        (repCoproduct hA hB (inlChecked hA hB value))
+        (inlChurchChecked hA hB value)) :=
+  Intrinsic.Proves.repAbs (coproductCarrier_kinded hA hB)
+    (coproductPredicate hA hB).tm (coproductPredicate hA hB).typing
+    (inlChurchChecked hA hB value)
+    (coproductPredicateAt hA hB (inlChurchChecked hA hB value)) rfl
+    (coproductPredicate_inl typed hA hB value)
+
+noncomputable def rep_inr (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (value : DefEqChecked Sig Γ B) :
+    Intrinsic.Proves Γ H
+      (DefEqChecked.eq (coproductCarrier_kinded hA hB)
+        (repCoproduct hA hB (inrChecked hA hB value))
+        (inrChurchChecked hA hB value)) :=
+  Intrinsic.Proves.repAbs (coproductCarrier_kinded hA hB)
+    (coproductPredicate hA hB).tm (coproductPredicate hA hB).typing
+    (inrChurchChecked hA hB value)
+    (coproductPredicateAt hA hB (inrChurchChecked hA hB value)) rfl
+    (coproductPredicate_inr typed hA hB value)
 
 end Nucleus.Hol.FamilySub
