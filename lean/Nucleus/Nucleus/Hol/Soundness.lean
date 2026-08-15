@@ -113,6 +113,9 @@ theorem Proves.sound {Sig : Signature} [SigTyping Sig] [UniqueSigTyping Sig]
   induction proof with
   | hyp typed member => exact hypotheses _ member
   | truth typed => exact .boolean true
+  | falseElim typed hp falseProof ih =>
+      have impossible := ih hypotheses
+      exact False.elim (Bool.noConfusion (impossible.unique (.boolean false)))
   | eqRefl typed hA hx =>
       obtain ⟨value, evaluation⟩ := hx.eval_exists freeEnv boundEnv
       exact .eqTrue hA evaluation evaluation rfl

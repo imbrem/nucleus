@@ -34,6 +34,8 @@ inductive Proves {Sig : Signature} [SigTyping Sig] {depth : Nat}
     (Γ : BoundCtx Sig depth) : List (Tm Sig depth) → Tm Sig depth → Type u where
   | hyp (typed : TypedHyps Γ H) (member : p ∈ H) : Proves Γ H p
   | truth (typed : TypedHyps Γ H) : Proves Γ H (.bool true)
+  | falseElim (typed : TypedHyps Γ H) (hp : HasType Γ p .boolTy) :
+      Proves Γ H (.bool false) → Proves Γ H p
   | eqRefl (typed : TypedHyps Γ H) (hA : Kinded A)
       (hx : HasType Γ x A) : Proves Γ H (.eq A x x)
   | eqMp (typed : TypedHyps Γ H) (hA : Kinded A)

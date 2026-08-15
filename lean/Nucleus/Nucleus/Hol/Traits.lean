@@ -141,6 +141,9 @@ class ProofRules (L : Type u) [TypeSyntax L] [BooleanTypeSyntax L]
   Typed : TermSyntax.Ctx (L := L) depth → List (TermSyntax.Tm (L := L) depth) → Prop
   hyp : Typed Γ H → p ∈ H → Proves Γ H p
   truth : Typed Γ H → Proves Γ H (TermSyntax.bool true)
+  falseElim : Typed Γ H →
+    TypingRules.HasType (L := L) Γ p BooleanTypeSyntax.boolTy →
+    Proves Γ H (TermSyntax.bool false) → Proves Γ H p
   eqRefl : Typed Γ H → TypingRules.Formed (L := L) A →
     TypingRules.HasType (L := L) Γ x A →
     Proves Γ H (TermSyntax.eq A x x)
@@ -253,6 +256,7 @@ instance {Sig : Signature} [SigTyping Sig] : ProofRules (Language Sig) where
   Typed := Nucleus.Hol.TypedHyps
   hyp := .hyp
   truth := .truth
+  falseElim := .falseElim
   eqRefl := .eqRefl
   eqMp := .eqMp
   choice := .choice

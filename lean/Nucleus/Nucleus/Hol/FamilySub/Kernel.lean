@@ -36,6 +36,8 @@ inductive Proves {Sig : Signature} [SigTyping Sig] {types : List Kind} {depth : 
     Type u where
   | hyp (typed : TypedHyps Γ H) (member : p ∈ H) : Proves Γ H p
   | truth (typed : TypedHyps Γ H) : Proves Γ H (.bool true)
+  | falseElim (typed : TypedHyps Γ H) (hp : HasTypeDefEq Γ p .boolTy) :
+      Proves Γ H (.bool false) → Proves Γ H p
   | eqRefl (typed : TypedHyps Γ H) (hA : Kinded A) (hx : HasTypeDefEq Γ x A) :
       Proves Γ H (.eq A x x)
   | eqMp (typed : TypedHyps Γ H) (hA : Kinded A)
@@ -82,7 +84,7 @@ namespace Proves
 theorem typedHypotheses {Sig : Signature} [SigTyping Sig] {types : List Kind}
     {depth : Nat} {Γ : BoundCtx Sig types depth} {H : List (Tm Sig types depth)}
     {p : Tm Sig types depth} : Proves Γ H p → TypedHyps Γ H
-  | .hyp typed _ | .truth typed | .eqRefl typed _ _ |
+  | .hyp typed _ | .truth typed | .falseElim typed _ _ | .eqRefl typed _ _ |
       .eqMp typed _ _ _ _ _ _ | .choice typed _ _ _ _ |
       .convert typed _ _ | .eqOfEqTm typed _ _ |
       .antisymm typed _ _ _ _ _ _ | .absRep typed _ _ _ |
@@ -96,6 +98,8 @@ noncomputable def mapHypotheses {Sig : Signature} [SigTyping Sig] {types : List 
     Proves Γ H p → Proves Γ K p
   | .hyp _ member => .hyp typedK (subset _ member)
   | .truth _ => .truth typedK
+  | .falseElim _ hp falseProof =>
+      .falseElim typedK hp (mapHypotheses typedK subset falseProof)
   | .eqRefl _ hA hx => .eqRefl typedK hA hx
   | .eqMp _ hA hp hx hy equality application =>
       .eqMp typedK hA hp hx hy

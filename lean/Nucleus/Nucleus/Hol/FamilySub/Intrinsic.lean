@@ -283,6 +283,10 @@ noncomputable def weakenHyp (q : BoolTm Γ) (proof : Proves Γ H p) :
 def truth : Proves Γ H (DefEqChecked.boolean true) :=
   ⟨.truth (PropCtx.typed H)⟩
 
+def falseElim (proposition : BoolTm Γ)
+    (falseProof : Proves Γ H DefEqChecked.falsehood) : Proves Γ H proposition :=
+  ⟨.falseElim (PropCtx.typed H) proposition.typing falseProof.proof⟩
+
 def eqRefl (hA : Kinded A) (x : DefEqChecked Sig Γ A) :
     Proves Γ H (DefEqChecked.eq hA x x) :=
   ⟨.eqRefl (PropCtx.typed H) hA x.typing⟩
