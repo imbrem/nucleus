@@ -25,11 +25,11 @@ def natPredicate : Checked Sig
   let y : Checked Sig Γy I := Checked.bv hI 0 rfl
   let pAtY : Checked Sig Γy predTy := Checked.bv hPred 1 rfl
   let stepBody : Checked Sig Γy .boolTy :=
-    Checked.imp (pAtY.app y) (pAtY.app (InfiniteOps.succ.app y))
+    Checked.imp (pAtY.app y) (pAtY.app (indSuccChecked.app y))
   let step : Checked Sig Γp .boolTy := Checked.forallTm hI stepBody
   let p : Checked Sig Γp predTy := Checked.bv hPred 0 rfl
   let x : Checked Sig Γp I := Checked.bv hI 1 rfl
-  let base : Checked Sig Γp .boolTy := p.app InfiniteOps.zero
+  let base : Checked Sig Γp .boolTy := p.app indZeroChecked
   let closed : Checked Sig Γp .boolTy := Checked.and base step
   let contains : Checked Sig Γp .boolTy := p.app x
   exact Checked.forallTm hPred (Checked.imp closed contains)
@@ -41,6 +41,57 @@ def naturalTy (Sig : Signature) [SigTyping Sig] [InfiniteOps Sig]
 
 theorem naturalTy_kinded : Kinded (naturalTy Sig types) :=
   .sub InfiniteOps.indKinded (natPredicate (Sig := Sig) (types := types)).typing
+
+def natStepBody : BoolTm
+    (extendBound InfiniteOps.ind
+      (extendBound (.arr InfiniteOps.ind .boolTy) Γ)) :=
+  let hI : Kinded (InfiniteOps.ind (Sig := Sig) (types := types)) :=
+    InfiniteOps.indKinded
+  let hPred : Kinded (.arr InfiniteOps.ind .boolTy : Ty Sig types) :=
+    .arr hI .boolTy
+  let y := DefEqChecked.bv (Γ := extendBound InfiniteOps.ind
+    (extendBound (.arr InfiniteOps.ind .boolTy) Γ)) hI 0 rfl
+  let predicate := DefEqChecked.bv (Γ := extendBound InfiniteOps.ind
+    (extendBound (.arr InfiniteOps.ind .boolTy) Γ)) hPred 1 rfl
+  DefEqChecked.imp (predicate.app y) (predicate.app (indSucc.app y))
+
+def natStep : BoolTm (extendBound (.arr InfiniteOps.ind .boolTy) Γ) :=
+  DefEqChecked.forallTm InfiniteOps.indKinded natStepBody
+
+def natClosureBody (represented : DefEqChecked Sig Γ InfiniteOps.ind) :
+    BoolTm (extendBound (.arr InfiniteOps.ind .boolTy) Γ) :=
+  let hPred : Kinded (.arr InfiniteOps.ind .boolTy : Ty Sig types) :=
+    .arr InfiniteOps.indKinded .boolTy
+  let predicate := DefEqChecked.bv (Γ := extendBound
+    (.arr InfiniteOps.ind .boolTy) Γ) hPred 0 rfl
+  let base := predicate.app (indZero (Γ := extendBound
+    (.arr InfiniteOps.ind .boolTy) Γ))
+  let closed := DefEqChecked.and base natStep
+  DefEqChecked.imp closed (predicate.app represented.weaken)
+
+def natPredicateAt (represented : DefEqChecked Sig Γ InfiniteOps.ind) : BoolTm Γ :=
+  DefEqChecked.forallTm (.arr InfiniteOps.indKinded .boolTy)
+    (natClosureBody represented)
+
+/-- Zero belongs to the intersection of all inductive predicates. -/
+noncomputable def natPredicate_zero (typed : TypedCtx Γ) :
+    Intrinsic.Proves Γ H (natPredicateAt (indZero (Γ := Γ))) := by
+  unfold natPredicateAt
+  apply Intrinsic.Proves.forallIntro
+  unfold natClosureBody
+  apply impIntro (TypedCtx.extend typed (.arr InfiniteOps.indKinded .boolTy))
+  have closure : Intrinsic.Proves _
+      (DefEqChecked.and
+        ((DefEqChecked.bv (.arr InfiniteOps.indKinded .boolTy) 0 rfl).app indZero)
+        natStep :: PropCtx.weaken (A := .arr InfiniteOps.ind .boolTy) H)
+      (DefEqChecked.and
+        ((DefEqChecked.bv (.arr InfiniteOps.indKinded .boolTy) 0 rfl).app indZero)
+        natStep) := Intrinsic.Proves.hyp (by simp)
+  have base := andElimLeft
+    (p := (DefEqChecked.bv (.arr InfiniteOps.indKinded .boolTy) 0 rfl).app
+      (indZero (Γ := extendBound (.arr InfiniteOps.ind .boolTy) Γ)))
+    (q := natStep) (TypedCtx.extend typed (.arr InfiniteOps.indKinded .boolTy)) closure
+  simpa only [indZero_weaken] using base
 
 def naturalZero : DefEqChecked Sig Γ (naturalTy Sig types) :=
   DefEqChecked.abs InfiniteOps.indKinded
