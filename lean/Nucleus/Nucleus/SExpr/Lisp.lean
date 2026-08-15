@@ -1,88 +1,122 @@
 import Nucleus.SExpr.Basic
+import Nucleus.SExpr.Atom
 
 /-!
-# A small Lisp over binary S-expressions
+# A reusable Lisp evaluator over binary S-expressions
 
-Programs and quoted data are `SExpr2 String`. Runtime closures are deliberately
-kept out of the source data model. The evaluator is fuelled, lexically scoped,
-and parameterized by the spellings of its special forms, making it a compact
-baseline against which later Lisp dialects can be compared.
+The evaluator is generic in atoms, symbols, primitive operations, and the
+surface conventions of a Lisp dialect. Runtime values and environments form
+one indexed family. A String-only Lisp and a small Scheme atom model are
+instances of the same evaluator and inherit its proofs.
 -/
 
 namespace Nucleus.SExpr2.Lisp
 
-abbrev Expr := SExpr2 String
+universe u v w
 
-/-- Surface spellings which commonly vary between Lisp dialects. -/
-structure Dialect where
-  quoteName : String := "quote"
-  ifName : String := "if"
-  lambdaName : String := "lambda"
-  trueName : String := "t"
-  deriving DecidableEq, Repr
+variable {Atom : Type u} {Name : Type v} {Primitive : Type w} {σ : Type*}
 
-def Dialect.standard : Dialect := {}
+abbrev Expr (Atom : Type u) := SExpr2 Atom
 
-/-- The deliberately small collection of built-in operations. -/
-inductive Primitive where
-  | cons | car | cdr | atom | eq | isNil
-  deriving DecidableEq, Repr
+/-- Surface syntax and truth conventions supplied by a Lisp-like language. -/
+class Language (Atom : Type u) (Name : Type v) where
+  symbol? : Atom → Option Name
+  symbol : Name → Atom
+  symbol?_symbol : ∀ name, symbol? (symbol name) = some name
+  quoteName : Name
+  ifName : Name
+  lambdaName : Name
+  trueValue : Expr Atom
+  isTruthyDatum : Expr Atom → Bool
+  isTruthy_trueValue : isTruthyDatum trueValue = true
 
-/-- The two sorts represented by the indexed runtime family. -/
+namespace Language
+
+variable {Atom : Type u} {Name : Type v} [Language Atom Name]
+
+def boolValue (value : Bool) : Expr Atom :=
+  if value then Language.trueValue (Atom := Atom) (Name := Name) else .nil
+
+def quoteAtom : Atom := Language.symbol (Atom := Atom) (Name := Name)
+  (Language.quoteName (Atom := Atom) (Name := Name))
+def ifAtom : Atom := Language.symbol (Atom := Atom) (Name := Name)
+  (Language.ifName (Atom := Atom) (Name := Name))
+def lambdaAtom : Atom := Language.symbol (Atom := Atom) (Name := Name)
+  (Language.lambdaName (Atom := Atom) (Name := Name))
+
+@[simp] theorem symbol?_quoteAtom :
+    Language.symbol? (Atom := Atom) (Name := Name)
+      (quoteAtom (Atom := Atom) (Name := Name)) =
+      some (Language.quoteName (Atom := Atom) (Name := Name)) :=
+  Language.symbol?_symbol _
+
+end Language
+
+/-- The runtime sorts represented by one indexed family. -/
 inductive RuntimeKind where
   | value
   | environment
   deriving DecidableEq, Repr
 
-/-- Values and lexical environments in one regular indexed family. The index
-rules out nonsensical cases and supplies one induction principle for proofs
-about closures together with their captured environments. -/
-inductive Runtime : RuntimeKind → Type where
-  | datum (value : Expr) : Runtime .value
-  | closure (parameters : List String) (body : Expr)
-      (environment : Runtime .environment) : Runtime .value
-  | primitive (operation : Primitive) : Runtime .value
-  | empty : Runtime .environment
-  | bind (name : String) (value : Runtime .value)
-      (tail : Runtime .environment) : Runtime .environment
+/-- Runtime values and lexical environments. `Primitive` and the atom/symbol
+types are parameters, so alternative languages reuse the same induction
+principle and evaluator theory. -/
+inductive Runtime (Atom : Type u) (Name : Type v) (Primitive : Type w) :
+    RuntimeKind → Type (max u v w) where
+  | datum (value : Expr Atom) : Runtime Atom Name Primitive .value
+  | closure (parameters : List Name) (body : Expr Atom)
+      (environment : Runtime Atom Name Primitive .environment) :
+      Runtime Atom Name Primitive .value
+  | primitive (operation : Primitive) : Runtime Atom Name Primitive .value
+  | empty : Runtime Atom Name Primitive .environment
+  | bind (name : Name) (value : Runtime Atom Name Primitive .value)
+      (tail : Runtime Atom Name Primitive .environment) :
+      Runtime Atom Name Primitive .environment
   deriving DecidableEq, Repr
 
-abbrev Value := Runtime .value
-abbrev Environment := Runtime .environment
+abbrev Value (Atom : Type u) (Name : Type v) (Primitive : Type w) :=
+  Runtime Atom Name Primitive .value
+abbrev Environment (Atom : Type u) (Name : Type v) (Primitive : Type w) :=
+  Runtime Atom Name Primitive .environment
 
 namespace Environment
 
-def lookup (environment : Environment) (name : String) : Option Value :=
+variable {Atom : Type u} {Name : Type v} {Primitive : Type w}
+
+def lookup [DecidableEq Name] (environment : Environment Atom Name Primitive)
+    (name : Name) : Option (Value Atom Name Primitive) :=
   match environment with
   | .empty => none
   | .bind key value tail => if name = key then some value else lookup tail name
 
-def append (front back : Environment) : Environment :=
+def append (front back : Environment Atom Name Primitive) :
+    Environment Atom Name Primitive :=
   match front with
   | .empty => back
   | .bind name value tail => .bind name value (append tail back)
 
-def ofList : List (String × Value) → Environment
+def ofList : List (Name × Value Atom Name Primitive) → Environment Atom Name Primitive
   | [] => .empty
   | (name, value) :: tail => .bind name value (ofList tail)
 
-@[simp] theorem lookup_bind_eq (environment : Environment) (name : String)
-    (value : Value) : lookup (.bind name value environment) name = some value := by
-  simp [lookup]
+@[simp] theorem lookup_bind_eq [DecidableEq Name]
+    (environment : Environment Atom Name Primitive) (name : Name)
+    (value : Value Atom Name Primitive) :
+    lookup (.bind name value environment) name = some value := by simp [lookup]
 
-theorem lookup_bind_ne (environment : Environment) {name key : String}
-    (value : Value) (h : name ≠ key) :
+theorem lookup_bind_ne [DecidableEq Name]
+    (environment : Environment Atom Name Primitive) {name key : Name}
+    (value : Value Atom Name Primitive) (h : name ≠ key) :
     lookup (.bind key value environment) name = lookup environment name := by
   simp [lookup, h]
 
 end Environment
 
-/-- Observable evaluator failures. Invalid programs are distinguished from
-fuel exhaustion, which is useful when comparing evaluators. -/
-inductive Error where
+/-- Errors shared by every instance of the evaluator. -/
+inductive Error (Name : Type v) where
   | outOfFuel
-  | unbound (name : String)
-  | malformedSpecialForm (name : String)
+  | unbound (name : Name)
+  | malformedSpecialForm (name : Name)
   | malformedParameters
   | improperApplication
   | notCallable
@@ -90,14 +124,29 @@ inductive Error where
   | type
   deriving DecidableEq, Repr
 
-abbrev Result := Except Error Value
+/-- Primitive bindings and behavior are independent of surface syntax. -/
+class PrimitiveSemantics (Atom : Type u) (Name : Type v) (Primitive : Type w)
+    [Language Atom Name] where
+  State : Type*
+  initialState : State
+  bindings : List (Name × Primitive)
+  apply : Primitive → List (Value Atom Name Primitive) → State →
+    Except (Error Name) (Value Atom Name Primitive × State)
 
-def toList? : Expr → Option (List Expr)
+abbrev State (Atom : Type u) (Name : Type v) (Primitive : Type w)
+    [Language Atom Name] [PrimitiveSemantics Atom Name Primitive] :=
+  PrimitiveSemantics.State (Atom := Atom) (Name := Name) (Primitive := Primitive)
+
+abbrev Result (Atom : Type u) (Name : Type v) (Primitive : Type w)
+    [Language Atom Name] [PrimitiveSemantics Atom Name Primitive] :=
+  Except (Error Name) (Value Atom Name Primitive × State Atom Name Primitive)
+
+def toList? : Expr Atom → Option (List (Expr Atom))
   | .nil => some []
   | .cons head tail => (head :: ·) <$> toList? tail
   | .atom _ => none
 
-@[simp] theorem toList?_ofList (values : List Expr) :
+@[simp] theorem toList?_ofList (values : List (Expr Atom)) :
     toList? (SExpr2.ofList values) = some values := by
   induction values with
   | nil => rfl
@@ -105,183 +154,346 @@ def toList? : Expr → Option (List Expr)
 
 namespace Syntax
 
-/-- Construct a proper application form. -/
-def apply (function : Expr) (arguments : List Expr) : Expr :=
+variable {Atom : Type u} {Name : Type v} [Language Atom Name]
+
+def apply (function : Expr Atom) (arguments : List (Expr Atom)) : Expr Atom :=
   SExpr2.ofList (function :: arguments)
 
-def quote (dialect : Dialect) (value : Expr) : Expr :=
-  apply (.atom dialect.quoteName) [value]
+def quote (value : Expr Atom) : Expr Atom :=
+  apply (.atom (Language.quoteAtom (Atom := Atom) (Name := Name))) [value]
 
-def ifThenElse (dialect : Dialect) (condition yes no : Expr) : Expr :=
-  apply (.atom dialect.ifName) [condition, yes, no]
+def ifThenElse (condition yes no : Expr Atom) : Expr Atom :=
+  apply (.atom (Language.ifAtom (Atom := Atom) (Name := Name))) [condition, yes, no]
 
-def lambda (dialect : Dialect) (parameters : List String) (body : Expr) : Expr :=
-  apply (.atom dialect.lambdaName) [SExpr2.ofAtoms parameters, body]
+def lambda (parameters : List Name) (body : Expr Atom) : Expr Atom :=
+  apply (.atom (Language.lambdaAtom (Atom := Atom) (Name := Name)))
+    [SExpr2.ofAtoms (parameters.map Language.symbol), body]
 
 end Syntax
 
-def parseParameters : Expr → Option (List String)
+def parseParameters [Language Atom Name] : Expr Atom → Option (List Name)
   | .nil => some []
-  | .cons (.atom name) tail => (name :: ·) <$> parseParameters tail
-  | _ => none
+  | .atom _ => none
+  | .cons head tail => match head with
+    | .atom value => match Language.symbol? (Atom := Atom) (Name := Name) value with
+      | some name => (name :: ·) <$> parseParameters tail
+      | none => none
+    | _ => none
 
-@[simp] theorem parseParameters_ofAtoms (names : List String) :
-    parseParameters (SExpr2.ofAtoms names) = some names := by
-  unfold SExpr2.ofAtoms
+private theorem parseParameters_list_symbols [Language Atom Name] (names : List Name) :
+    parseParameters (SExpr2.ofList (names.map fun name =>
+      .atom (Language.symbol (Atom := Atom) (Name := Name) name))) = some names := by
   induction names with
   | nil => rfl
-  | cons name names ih => simp [SExpr2.ofList, parseParameters, ih]
+  | cons name names ih =>
+      simp [SExpr2.ofList, parseParameters, Language.symbol?_symbol, ih]
 
-def Value.isTruthy : Value → Bool
-  | .datum .nil => false
+@[simp] theorem parseParameters_symbols [Language Atom Name] (names : List Name) :
+    parseParameters (SExpr2.ofAtoms (names.map
+      (Language.symbol (Atom := Atom) (Name := Name)))) = some names := by
+  simpa [SExpr2.ofAtoms, List.map_map, Function.comp_def] using
+    parseParameters_list_symbols (Atom := Atom) names
+
+def Value.isTruthy [Language Atom Name] : Value Atom Name Primitive → Bool
+  | .datum value => Language.isTruthyDatum (Atom := Atom) (Name := Name) value
   | _ => true
 
-def Value.toExpr? : Value → Option Expr
+def Value.toExpr? : Value Atom Name Primitive → Option (Expr Atom)
   | .datum value => some value
   | _ => none
 
-private def expectDatum : Value → Except Error Expr
+def primitiveEnvironment [Language Atom Name]
+    [PrimitiveSemantics Atom Name Primitive] : Environment Atom Name Primitive :=
+  Environment.ofList (PrimitiveSemantics.bindings (Atom := Atom) (Name := Name)
+    (Primitive := Primitive) |>.map fun pair => (pair.1, .primitive pair.2))
+
+private def bindParameters (parameters : List Name)
+    (arguments : List (Value Atom Name Primitive))
+    (tail : Environment Atom Name Primitive) :
+    Except (Error Name) (Environment Atom Name Primitive) :=
+  if _h : parameters.length = arguments.length then
+    .ok (Environment.ofList (parameters.zip arguments) |>.append tail)
+  else .error (.arity parameters.length arguments.length)
+
+/- The generic fuelled evaluator. Every recursive call receives less fuel. -/
+mutual
+  def eval [DecidableEq Name] [Language Atom Name]
+      [PrimitiveSemantics Atom Name Primitive] :
+      Nat → Environment Atom Name Primitive → State Atom Name Primitive →
+      Expr Atom → Result Atom Name Primitive
+    | 0, _, _, _ => .error .outOfFuel
+    | fuel + 1, environment, state, expression =>
+        match expression with
+        | .nil => .ok (.datum .nil, state)
+        | .atom value => match Language.symbol? (Atom := Atom) (Name := Name) value with
+          | none => .ok (.datum (.atom value), state)
+          | some name => match Environment.lookup environment name with
+            | some value => .ok (value, state)
+            | none => .error (.unbound name)
+        | .cons head tail =>
+            match head, toList? tail with
+            | .atom value, some arguments =>
+                match Language.symbol? (Atom := Atom) (Name := Name) value with
+              | some name =>
+                  if name = Language.quoteName (Atom := Atom) (Name := Name) then
+                    match arguments with
+                    | [quoted] => .ok (.datum quoted, state)
+                    | _ => .error (.malformedSpecialForm name)
+                  else if name = Language.ifName (Atom := Atom) (Name := Name) then
+                    match arguments with
+                    | [condition, yes, no] =>
+                        match (eval fuel environment state condition :
+                            Result Atom Name Primitive) with
+                        | .error error => .error error
+                        | .ok (condition, state) =>
+                            eval fuel environment state (if condition.isTruthy then yes else no)
+                    | _ => .error (.malformedSpecialForm name)
+                  else if name = Language.lambdaName (Atom := Atom) (Name := Name) then
+                    match arguments with
+                    | [parameters, body] => match parseParameters parameters with
+                      | some names => .ok (.closure names body environment, state)
+                      | none => .error .malformedParameters
+                    | _ => .error (.malformedSpecialForm name)
+                  else evalApplication fuel environment state head arguments
+              | none => evalApplication fuel environment state head arguments
+            | _, some arguments => evalApplication fuel environment state head arguments
+            | _, none => .error .improperApplication
+
+  def evalArguments [DecidableEq Name] [Language Atom Name]
+      [PrimitiveSemantics Atom Name Primitive] :
+      Nat → Environment Atom Name Primitive → State Atom Name Primitive →
+      List (Expr Atom) →
+      Except (Error Name) (List (Value Atom Name Primitive) × State Atom Name Primitive)
+    | 0, _, _, _ => .error .outOfFuel
+    | _ + 1, _, state, [] => .ok ([], state)
+    | fuel + 1, environment, state, expression :: tail =>
+        match eval fuel environment state expression with
+        | .error error => .error error
+        | .ok (value, state) => match evalArguments fuel environment state tail with
+          | .error error => .error error
+          | .ok (values, state) => .ok (value :: values, state)
+
+  def apply [DecidableEq Name] [Language Atom Name]
+      [PrimitiveSemantics Atom Name Primitive] :
+      Nat → Value Atom Name Primitive → List (Value Atom Name Primitive) →
+      State Atom Name Primitive →
+      Result Atom Name Primitive
+    | 0, _, _, _ => .error .outOfFuel
+    | _ + 1, .datum _, _, _ => .error .notCallable
+    | _ + 1, .primitive operation, arguments, state =>
+        PrimitiveSemantics.apply operation arguments state
+    | fuel + 1, .closure parameters body closureEnvironment, arguments, state =>
+        match bindParameters parameters arguments closureEnvironment with
+        | .error error => .error error
+        | .ok environment => eval fuel environment state body
+
+  def evalApplication [DecidableEq Name] [Language Atom Name]
+      [PrimitiveSemantics Atom Name Primitive]
+      (fuel : Nat) (environment : Environment Atom Name Primitive)
+      (state : State Atom Name Primitive)
+      (function : Expr Atom) (arguments : List (Expr Atom)) : Result Atom Name Primitive :=
+    match (eval fuel environment state function : Result Atom Name Primitive) with
+    | .error error => .error error
+    | .ok (function, state) => match (evalArguments fuel environment state arguments :
+        Except (Error Name) (List (Value Atom Name Primitive) × State Atom Name Primitive)) with
+      | .error error => .error error
+      | .ok (values, state) => apply fuel function values state
+end
+
+def run [DecidableEq Name] [Language Atom Name]
+    [PrimitiveSemantics Atom Name Primitive] (fuel : Nat) (expression : Expr Atom) :
+    Result Atom Name Primitive := eval fuel primitiveEnvironment
+      PrimitiveSemantics.initialState expression
+
+def Evaluates [DecidableEq Name] [Language Atom Name]
+    [PrimitiveSemantics Atom Name Primitive] (environment : Environment Atom Name Primitive)
+    (state : State Atom Name Primitive) (expression : Expr Atom)
+    (value : Value Atom Name Primitive) : Prop :=
+  ∃ fuel finalState, eval fuel environment state expression = .ok (value, finalState)
+
+theorem eval_deterministic [DecidableEq Name] [Language Atom Name]
+    [PrimitiveSemantics Atom Name Primitive]
+    {environment : Environment Atom Name Primitive} {expression : Expr Atom}
+    {fuel : Nat} {left right : Value Atom Name Primitive}
+    {state leftState rightState : State Atom Name Primitive}
+    (hl : eval fuel environment state expression = .ok (left, leftState))
+    (hr : eval fuel environment state expression = .ok (right, rightState)) :
+    left = right ∧ leftState = rightState := by
+  rw [hl] at hr
+  have pair := Except.ok.inj hr
+  exact ⟨congrArg Prod.fst pair, congrArg Prod.snd pair⟩
+
+@[simp] theorem eval_quote [DecidableEq Name] [Language Atom Name]
+    [PrimitiveSemantics Atom Name Primitive]
+    (environment : Environment Atom Name Primitive) (state : State Atom Name Primitive)
+    (fuel : Nat) (value : Expr Atom) :
+    eval (fuel + 1) environment state (Syntax.quote (Name := Name) value) =
+      .ok (.datum value, state) := by
+  change eval (fuel + 1) environment state
+    (.cons (.atom (Language.quoteAtom (Atom := Atom) (Name := Name)))
+      (SExpr2.ofList [value])) = _
+  simp [eval, Language.symbol?_quoteAtom]
+
+/-! ## Shared structural primitives -/
+
+inductive StructuralPrimitive where
+  | cons | car | cdr | atom | eq | isNil
+  deriving DecidableEq, Repr
+
+private def expectDatum : Value Atom Name Primitive → Except (Error Name) (Expr Atom)
   | .datum value => .ok value
   | _ => .error .type
 
-private def boolDatum (dialect : Dialect) (value : Bool) : Value :=
-  .datum (if value then .atom dialect.trueName else .nil)
-
-def primitiveEnvironment : Environment := Environment.ofList [
-  ("cons", .primitive .cons),
-  ("car", .primitive .car),
-  ("cdr", .primitive .cdr),
-  ("atom?", .primitive .atom),
-  ("eq?", .primitive .eq),
-  ("nil?", .primitive .isNil)
-]
-
-private def applyPrimitive (dialect : Dialect) (operation : Primitive)
-    (arguments : List Value) : Result := do
+def applyStructural [DecidableEq Atom] [Language Atom Name]
+    (operation : StructuralPrimitive)
+    (arguments : List (Value Atom Name Primitive)) (state : σ) :
+    Except (Error Name) (Value Atom Name Primitive × σ) :=
   match operation, arguments with
-  | .cons, [left, right] =>
-      return .datum (.cons (← expectDatum left) (← expectDatum right))
-  | .car, [value] => return .datum (← expectDatum value).car
-  | .cdr, [value] => return .datum (← expectDatum value).cdr
-  | .atom, [value] =>
-      let value ← expectDatum value
-      return boolDatum dialect (match value with | .cons _ _ => false | _ => true)
-  | .eq, [left, right] =>
-      return boolDatum dialect ((← expectDatum left) == (← expectDatum right))
-  | .isNil, [value] => return boolDatum dialect (← expectDatum value).isNil
-  | .cons, _ => .error (.arity 2 arguments.length)
-  | .eq, _ => .error (.arity 2 arguments.length)
+  | .cons, [left, right] => match expectDatum left, expectDatum right with
+    | .ok left, .ok right => .ok (.datum (.cons left right), state)
+    | .error error, _ | _, .error error => .error error
+  | .car, [value] => match expectDatum value with
+    | .ok value => .ok (.datum value.car, state)
+    | .error error => .error error
+  | .cdr, [value] => match expectDatum value with
+    | .ok value => .ok (.datum value.cdr, state)
+    | .error error => .error error
+  | .atom, [value] => match expectDatum value with
+    | .ok value => .ok (.datum (Language.boolValue (Name := Name)
+        (match value with | .cons _ _ => false | _ => true)), state)
+    | .error error => .error error
+  | .eq, [left, right] => match expectDatum left, expectDatum right with
+    | .ok left, .ok right =>
+        .ok (.datum (Language.boolValue (Name := Name) (left == right)), state)
+    | .error error, _ | _, .error error => .error error
+  | .isNil, [value] => match expectDatum value with
+    | .ok value => .ok (.datum (Language.boolValue (Name := Name) value.isNil), state)
+    | .error error => .error error
+  | .cons, _ | .eq, _ => .error (.arity 2 arguments.length)
   | _, _ => .error (.arity 1 arguments.length)
 
-private def bindParameters (parameters : List String) (arguments : List Value)
-    (tail : Environment) : Except Error Environment :=
-  if _h : parameters.length = arguments.length then
-    .ok (Environment.ofList (parameters.zip arguments) |>.append tail)
-  else
-    .error (.arity parameters.length arguments.length)
+/-! ## The original String Lisp -/
 
-/- Fuel bounds recursive evaluation, including argument evaluation and
-closure calls. Every recursive evaluator call receives strictly less fuel. -/
-mutual
-  def eval (dialect : Dialect) : Nat → Environment → Expr → Result
-    | 0, _, _ => .error .outOfFuel
-    | fuel + 1, environment, expression =>
-        match expression with
-        | .nil => .ok (.datum .nil)
-        | .atom name =>
-            if name = dialect.trueName then .ok (.datum (.atom dialect.trueName))
-            else match environment.lookup name with
-              | some value => .ok value
-              | none => .error (.unbound name)
-        | .cons head tail =>
-            match head, toList? tail with
-            | .atom name, some arguments =>
-                if name = dialect.quoteName then
-                  match arguments with
-                  | [quoted] => .ok (.datum quoted)
-                  | _ => .error (.malformedSpecialForm name)
-                else if name = dialect.ifName then
-                  match arguments with
-                  | [condition, yes, no] => do
-                      let condition ← eval dialect fuel environment condition
-                      eval dialect fuel environment (if condition.isTruthy then yes else no)
-                  | _ => .error (.malformedSpecialForm name)
-                else if name = dialect.lambdaName then
-                  match arguments with
-                  | [parameters, body] => match parseParameters parameters with
-                    | some names => .ok (.closure names body environment)
-                    | none => .error .malformedParameters
-                  | _ => .error (.malformedSpecialForm name)
-                else do
-                  let function ← eval dialect fuel environment head
-                  let values ← evalArguments dialect fuel environment arguments
-                  apply dialect fuel function values
-            | _, some arguments => do
-                let function ← eval dialect fuel environment head
-                let values ← evalArguments dialect fuel environment arguments
-                apply dialect fuel function values
-            | _, none => .error .improperApplication
+namespace StringLisp
 
-  def evalArguments (dialect : Dialect) : Nat → Environment → List Expr →
-      Except Error (List Value)
-    | 0, _, _ => .error .outOfFuel
-    | _ + 1, _, [] => .ok []
-    | fuel + 1, environment, expression :: tail => do
-        let value ← eval dialect fuel environment expression
-        let values ← evalArguments dialect fuel environment tail
-        return value :: values
+instance stringLanguage : Language String String where
+  symbol? := some
+  symbol := id
+  symbol?_symbol _ := rfl
+  quoteName := "quote"
+  ifName := "if"
+  lambdaName := "lambda"
+  trueValue := .atom "t"
+  isTruthyDatum
+    | .nil => false
+    | _ => true
+  isTruthy_trueValue := rfl
 
-  def apply (dialect : Dialect) : Nat → Value → List Value → Result
-    | 0, _, _ => .error .outOfFuel
-    | _ + 1, .datum _, _ => .error .notCallable
-    | _ + 1, .primitive operation, arguments => applyPrimitive dialect operation arguments
-    | fuel + 1, .closure parameters body closureEnvironment, arguments => do
-        let environment ← bindParameters parameters arguments closureEnvironment
-        eval dialect fuel environment body
-end
+instance stringPrimitives : PrimitiveSemantics String String StructuralPrimitive where
+  State := Unit
+  initialState := ()
+  bindings := [("cons", .cons), ("car", .car), ("cdr", .cdr),
+    ("atom?", .atom), ("eq?", .eq), ("nil?", .isNil)]
+  apply := applyStructural (Primitive := StructuralPrimitive)
 
-/-- Evaluate in the standard primitive environment. -/
-def run (fuel : Nat) (expression : Expr) : Result :=
-  eval .standard fuel primitiveEnvironment expression
+abbrev StringExpr := Expr String
+abbrev StringValue := Value String String StructuralPrimitive
+abbrev StringEnvironment := Environment String String StructuralPrimitive
 
-/-- The unbounded semantic relation induced by successful finite evaluation. -/
-def Evaluates (dialect : Dialect) (environment : Environment)
-    (expression : Expr) (value : Value) : Prop :=
-  ∃ fuel, eval dialect fuel environment expression = .ok value
+def runString (fuel : Nat) (expression : StringExpr) :
+    Result String String StructuralPrimitive := run fuel expression
 
-theorem eval_deterministic {dialect : Dialect} {environment : Environment}
-    {expression : Expr} {fuel : Nat} {left right : Value}
-    (hl : eval dialect fuel environment expression = .ok left)
-    (hr : eval dialect fuel environment expression = .ok right) : left = right := by
-  rw [hl] at hr
-  exact Except.ok.inj hr
+end StringLisp
 
-@[simp] theorem eval_quote (dialect : Dialect) (environment : Environment)
-    (fuel : Nat) (value : Expr) :
-    eval dialect (fuel + 1) environment
-      (SExpr2.ofList [.atom dialect.quoteName, value]) = .ok (.datum value) := by
-  simp [eval, toList?, SExpr2.ofList]
+/-! ## A small Scheme-flavoured instance -/
 
-@[simp] theorem run_nil (fuel : Nat) : run (fuel + 1) .nil = .ok (.datum .nil) := rfl
+namespace Scheme
 
-/-- Quotation is data-preserving. -/
-theorem run_quote (fuel : Nat) (value : Expr) :
-    run (fuel + 1) (Syntax.quote .standard value) = .ok (.datum value) := by
-  simp [run, Syntax.quote, Syntax.apply]
+inductive SchemeAtom where
+  | symbol (name : String)
+  | string (value : String)
+  | integer (value : Int)
+  | boolean (value : Bool)
+  deriving DecidableEq, Repr
 
-@[simp] theorem applyPrimitive_cons (dialect : Dialect) (left right : Expr) :
-    applyPrimitive dialect .cons [.datum left, .datum right] =
-      .ok (.datum (.cons left right)) := rfl
+instance schemeLanguage : Language SchemeAtom String where
+  symbol?
+    | .symbol name => some name
+    | _ => none
+  symbol := .symbol
+  symbol?_symbol _ := rfl
+  quoteName := "quote"
+  ifName := "if"
+  lambdaName := "lambda"
+  trueValue := .atom (.boolean true)
+  isTruthyDatum
+    | .atom (.boolean false) => false
+    | _ => true
+  isTruthy_trueValue := rfl
 
-/-- Constructing a standard lambda captures precisely the current lexical
-environment; it does not evaluate its body. -/
-theorem eval_standard_lambda (fuel : Nat) (environment : Environment)
-    (parameters : List String) (body : Expr) :
-    eval .standard (fuel + 1) environment
-      (Syntax.lambda .standard parameters body) =
-      .ok (.closure parameters body environment) := by
-  change eval .standard (fuel + 1) environment
-    (.cons (.atom "lambda") (SExpr2.ofList [SExpr2.ofAtoms parameters, body])) = _
-  simp [Dialect.standard, eval]
+instance schemePrimitives : PrimitiveSemantics SchemeAtom String StructuralPrimitive where
+  State := Unit
+  initialState := ()
+  bindings := [("cons", .cons), ("car", .car), ("cdr", .cdr),
+    ("pair?", .atom), ("eq?", .eq), ("null?", .isNil)]
+  apply := applyStructural (Primitive := StructuralPrimitive)
+
+@[simp] theorem symbol?_string (value : String) :
+    Language.symbol? (Atom := SchemeAtom) (Name := String) (.string value) = none := rfl
+
+@[simp] theorem symbol?_integer (value : Int) :
+    Language.symbol? (Atom := SchemeAtom) (Name := String) (.integer value) = none := rfl
+
+abbrev SchemeExpr := Expr SchemeAtom
+abbrev SchemeValue := Value SchemeAtom String StructuralPrimitive
+
+def runScheme (fuel : Nat) (expression : SchemeExpr) :
+    Result SchemeAtom String StructuralPrimitive := run fuel expression
+
+@[simp] theorem eval_string_literal
+    (environment : Environment SchemeAtom String StructuralPrimitive)
+    (fuel : Nat) (value : String) :
+    eval (fuel + 1) environment () (.atom (.string value)) =
+      .ok (.datum (.atom (.string value)), ()) := by simp [eval]
+
+@[simp] theorem eval_integer_literal
+    (environment : Environment SchemeAtom String StructuralPrimitive)
+    (fuel : Nat) (value : Int) :
+    eval (fuel + 1) environment () (.atom (.integer value)) =
+      .ok (.datum (.atom (.integer value)), ()) := by simp [eval]
+
+/- A stateful variant uses exactly the same evaluator. -/
+namespace Stateful
+
+inductive StatefulPrimitive where
+  | structural (operation : StructuralPrimitive)
+  | tick
+  deriving DecidableEq, Repr
+
+instance statefulPrimitives : PrimitiveSemantics SchemeAtom String StatefulPrimitive where
+  State := Nat
+  initialState := 0
+  bindings := [("cons", .structural .cons), ("car", .structural .car),
+    ("cdr", .structural .cdr), ("pair?", .structural .atom),
+    ("eq?", .structural .eq), ("null?", .structural .isNil), ("tick", .tick)]
+  apply operation arguments state := match operation with
+    | .structural operation => applyStructural operation arguments state
+    | .tick => match arguments with
+      | [] => .ok (.datum (.atom (.integer state)), state + 1)
+      | _ => .error (.arity 0 arguments.length)
+
+abbrev StatefulValue := Value SchemeAtom String StatefulPrimitive
+
+def runStateful (fuel : Nat) (expression : SchemeExpr) :
+    Result SchemeAtom String StatefulPrimitive := run fuel expression
+
+@[simp] theorem apply_tick (state : Nat) :
+    PrimitiveSemantics.apply (Atom := SchemeAtom) (Name := String)
+      (Primitive := StatefulPrimitive) .tick [] state =
+      .ok (.datum (.atom (.integer state)), state + 1) := rfl
+
+end Stateful
+
+end Scheme
 
 end Nucleus.SExpr2.Lisp
