@@ -669,4 +669,122 @@ noncomputable def inr_injective (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kind
     (rep_inr typed hA hB right)
   exact inrChurch_injective typed hA hB left right churches
 
+def falsePredicateBody (_hA : Kinded A) : BoolTm (extendBound A Γ) :=
+  DefEqChecked.falsehood.weaken
+
+def falsePredicate (hA : Kinded A) : DefEqChecked Sig Γ (.arr A .boolTy) :=
+  DefEqChecked.lam hA (falsePredicateBody hA)
+
+theorem falsePredicateBody_open (typed : TypedCtx Γ) (hA : Kinded A)
+    (value : DefEqChecked Sig Γ A) :
+    (falsePredicateBody hA).openBound typed value = DefEqChecked.falsehood := by
+  apply DefEqChecked.ext
+  simp [falsePredicateBody, DefEqChecked.openBound, DefEqChecked.falsehood,
+    DefEqChecked.weaken, FamilySub.openBound]
+
+def falsePredicate_apply (typed : TypedCtx Γ) (hA : Kinded A)
+    (value : DefEqChecked Sig Γ A) :
+    Intrinsic.EqTm ((falsePredicate hA).app value) DefEqChecked.falsehood := by
+  have reduction := Intrinsic.EqTm.beta typed hA (falsePredicateBody hA) value
+  rw [falsePredicateBody_open typed hA value] at reduction
+  exact reduction
+
+/-- The two Church coproduct injections have disjoint images. -/
+noncomputable def inlChurch_inrChurch_false (typed : TypedCtx Γ)
+    (hA : Kinded A) (hB : Kinded B) (left : DefEqChecked Sig Γ A)
+    (right : DefEqChecked Sig Γ B)
+    (equality : Intrinsic.Proves Γ H
+      (DefEqChecked.eq (coproductCarrier_kinded hA hB)
+        (inlChurchChecked hA hB left) (inrChurchChecked hA hB right))) :
+    Intrinsic.Proves Γ H DefEqChecked.falsehood := by
+  let test := equalityPredicate hA left
+  let reject := falsePredicate (Γ := Γ) hB
+  have afterTest := Intrinsic.Proves.appCongr typed (.arr hA .boolTy)
+    (.arr (.arr hB .boolTy) .boolTy)
+    (inlChurchChecked hA hB left) (inrChurchChecked hA hB right) test equality
+  have applied := Intrinsic.Proves.appCongr typed (.arr hB .boolTy) .boolTy
+    ((inlChurchChecked hA hB left).app test)
+    ((inrChurchChecked hA hB right).app test) reject afterTest
+  have leftReduction := (inlChurch_apply typed hA hB left test reject).trans
+    (equalityPredicate_apply typed hA left left)
+  have rightReduction := (inrChurch_apply typed hA hB right test reject).trans
+    (falsePredicate_apply typed hB right)
+  have leftProof : Intrinsic.Proves Γ H
+      (((inlChurchChecked hA hB left).app test).app reject) :=
+    Intrinsic.Proves.convert leftReduction.symm (Intrinsic.Proves.eqRefl hA left)
+  have rightProof : Intrinsic.Proves Γ H
+      (((inrChurchChecked hA hB right).app test).app reject) :=
+    Intrinsic.Proves.ofEqBool typed _ _ applied leftProof
+  exact Intrinsic.Proves.convert rightReduction rightProof
+
+/-- Equality between a left and right subtype injection entails false. -/
+noncomputable def inl_inr_false (typed : TypedCtx Γ) (hA : Kinded A)
+    (hB : Kinded B) (left : DefEqChecked Sig Γ A) (right : DefEqChecked Sig Γ B)
+    (equality : Intrinsic.Proves Γ H
+      (DefEqChecked.eq (coproductTy_kinded hA hB)
+        (inlChecked hA hB left) (inrChecked hA hB right))) :
+    Intrinsic.Proves Γ H DefEqChecked.falsehood := by
+  let representation := repFunctionChecked (Γ := Γ) hA hB
+  have applied := Intrinsic.Proves.appArgCongr typed (coproductTy_kinded hA hB)
+    (coproductCarrier_kinded hA hB) representation
+    (inlChecked hA hB left) (inrChecked hA hB right) equality
+  have leftReduction := repFunction_apply typed hA hB (inlChecked hA hB left)
+  have rightReduction := repFunction_apply typed hA hB (inrChecked hA hB right)
+  have reps := Intrinsic.Proves.eqTrans typed (coproductCarrier_kinded hA hB)
+    (repCoproduct hA hB (inlChecked hA hB left))
+    (representation.app (inrChecked hA hB right))
+    (repCoproduct hA hB (inrChecked hA hB right))
+    (Intrinsic.Proves.eqTrans typed (coproductCarrier_kinded hA hB) _
+      (representation.app (inlChecked hA hB left)) _
+      (Intrinsic.Proves.eqSymm typed (coproductCarrier_kinded hA hB) _ _
+        (Intrinsic.Proves.eqOfEqTm (H := H) (coproductCarrier_kinded hA hB)
+          leftReduction)) applied)
+    (Intrinsic.Proves.eqOfEqTm (H := H) (coproductCarrier_kinded hA hB) rightReduction)
+  have churches := Intrinsic.Proves.eqTrans typed (coproductCarrier_kinded hA hB)
+    (inlChurchChecked hA hB left)
+    (repCoproduct hA hB (inrChecked hA hB right))
+    (inrChurchChecked hA hB right)
+    (Intrinsic.Proves.eqTrans typed (coproductCarrier_kinded hA hB) _
+      (repCoproduct hA hB (inlChecked hA hB left)) _
+      (Intrinsic.Proves.eqSymm typed (coproductCarrier_kinded hA hB) _ _
+        (rep_inl typed hA hB left)) reps)
+    (rep_inr typed hA hB right)
+  exact inlChurch_inrChurch_false typed hA hB left right churches
+
+/-- A left injection is provably unequal to every right injection. -/
+noncomputable def inl_ne_inr (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (left : DefEqChecked Sig Γ A) (right : DefEqChecked Sig Γ B) :
+    Intrinsic.Proves Γ H (DefEqChecked.not
+      (DefEqChecked.eq (coproductTy_kinded hA hB)
+        (inlChecked hA hB left) (inrChecked hA hB right))) := by
+  let equality := DefEqChecked.eq (coproductTy_kinded hA hB)
+    (inlChecked hA hB left) (inrChecked hA hB right)
+  apply notIntro typed equality
+  have equalityProof : Intrinsic.Proves Γ (equality :: H) equality :=
+    Intrinsic.Proves.hyp (by simp)
+  exact inl_inr_false typed hA hB left right (by simpa [equality] using equalityProof)
+
+/-- Every value of the subtype coproduct represents either a left or a right injection. -/
+noncomputable def coproductPredicate_rep (typed : TypedCtx Γ)
+    (hA : Kinded A) (hB : Kinded B)
+    (value : DefEqChecked Sig Γ (coproductTy hA hB)) :
+    Intrinsic.Proves Γ H
+      (coproductPredicateAt hA hB (repCoproduct hA hB value)) := by
+  let witnessValue : DefEqChecked Sig Γ A := DefEqChecked.arbitrary hA
+  let witness := inlChurchChecked hA hB witnessValue
+  exact Intrinsic.Proves.repPredOfWitness (coproductCarrier_kinded hA hB)
+    (coproductPredicate hA hB).tm (coproductPredicate hA hB).typing witness
+    (coproductPredicateAt hA hB witness) rfl value
+    (coproductPredicateAt hA hB (repCoproduct hA hB value)) rfl
+    (coproductPredicate_inl typed hA hB witnessValue)
+
+/-- Extensional exhaustiveness: every coproduct representation lies in one injection image. -/
+noncomputable def coproduct_exhaustive (typed : TypedCtx Γ)
+    (hA : Kinded A) (hB : Kinded B)
+    (value : DefEqChecked Sig Γ (coproductTy hA hB)) :
+    Intrinsic.Proves Γ H
+      (coproductMembership hA hB (repCoproduct hA hB value)) := by
+  rw [← coproductPredicateAt_eq_membership]
+  exact coproductPredicate_rep typed hA hB value
+
 end Nucleus.Hol.FamilySub

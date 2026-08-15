@@ -94,6 +94,27 @@ class CoproductRules (Sig : Signature) [SigTyping Sig] [CoproductOps Sig] where
     Intrinsic.Proves Γ H (DefEqChecked.eq hC
       (CoproductOps.case hA hB hC left right (CoproductOps.inr hA hB value))
       (right.app value))
+  inlInjective {types : List Kind} {depth : Nat} {Γ : BoundCtx Sig types depth}
+    {H : PropCtx Γ} {A B : Ty Sig types} (typed : TypedCtx Γ)
+    (hA : Kinded A) (hB : Kinded B) (left right : DefEqChecked Sig Γ A)
+    (equality : Intrinsic.Proves Γ H
+      (DefEqChecked.eq (CoproductOps.coproductKinded hA hB)
+        (CoproductOps.inl hA hB left) (CoproductOps.inl hA hB right))) :
+    Intrinsic.Proves Γ H (DefEqChecked.eq hA left right)
+  inrInjective {types : List Kind} {depth : Nat} {Γ : BoundCtx Sig types depth}
+    {H : PropCtx Γ} {A B : Ty Sig types} (typed : TypedCtx Γ)
+    (hA : Kinded A) (hB : Kinded B) (left right : DefEqChecked Sig Γ B)
+    (equality : Intrinsic.Proves Γ H
+      (DefEqChecked.eq (CoproductOps.coproductKinded hA hB)
+        (CoproductOps.inr hA hB left) (CoproductOps.inr hA hB right))) :
+    Intrinsic.Proves Γ H (DefEqChecked.eq hB left right)
+  inlNeInr {types : List Kind} {depth : Nat} {Γ : BoundCtx Sig types depth}
+    {H : PropCtx Γ} {A B : Ty Sig types} (typed : TypedCtx Γ)
+    (hA : Kinded A) (hB : Kinded B) (left : DefEqChecked Sig Γ A)
+    (right : DefEqChecked Sig Γ B) :
+    Intrinsic.Proves Γ H (DefEqChecked.not
+      (DefEqChecked.eq (CoproductOps.coproductKinded hA hB)
+        (CoproductOps.inl hA hB left) (CoproductOps.inr hA hB right)))
 
 instance (Sig : Signature) [SigTyping Sig] : ProductOps Sig where
   product := productTy
@@ -118,5 +139,8 @@ instance (Sig : Signature) [SigTyping Sig] : CoproductOps Sig where
 noncomputable instance (Sig : Signature) [SigTyping Sig] : CoproductRules Sig where
   caseInl := case_inl
   caseInr := case_inr
+  inlInjective := inl_injective
+  inrInjective := inr_injective
+  inlNeInr := inl_ne_inr
 
 end Nucleus.Hol.FamilySub
