@@ -460,4 +460,16 @@ def decodeArena {Sig : Signature.{u}} : Tree Sig → Option (RawArena Sig)
   | .list values => return (← decodeRows values.toList).toArray
   | _ => none
 
+/-- Parse, validate, and elaborate a family root from compact JSON. -/
+def decodeFam {Sig : Signature.{u}} (json : Tree Sig) (root : Nat)
+    (types : List Kind) (kind : Kind) : Option (Fam Sig types kind) := do
+  let rows ← decodeArena json
+  rows.decodeFam root types kind
+
+/-- Parse, validate, and elaborate a term root from compact JSON. -/
+def decodeTm {Sig : Signature.{u}} (json : Tree Sig) (root : Nat)
+    (types : List Kind) (depth : Nat) : Option (Tm Sig types depth) := do
+  let rows ← decodeArena json
+  rows.decodeTm root types depth
+
 end Nucleus.Hol.FamilySub.Json
