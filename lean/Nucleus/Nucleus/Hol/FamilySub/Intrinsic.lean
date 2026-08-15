@@ -128,7 +128,7 @@ def or (left right : BoolTm Γ) : BoolTm Γ :=
   not (and (not left) (not right))
 
 def imp (left right : BoolTm Γ) : BoolTm Γ :=
-  or (not left) right
+  eq .boolTy (and left right) left
 
 end DefEqChecked
 

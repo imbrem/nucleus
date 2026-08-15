@@ -224,6 +224,34 @@ noncomputable def notIntro (_typed : TypedCtx Γ) (proposition : BoolTm Γ)
   · exact Intrinsic.Proves.falseElim proposition
       (Intrinsic.Proves.hyp (H := DefEqChecked.falsehood :: H) (by simp))
 
+/-- Negation elimination is equality substitution into false. -/
+def notElim (typed : TypedCtx Γ) (negated : Intrinsic.Proves Γ H (DefEqChecked.not p))
+    (premise : Intrinsic.Proves Γ H p) :
+    Intrinsic.Proves Γ H DefEqChecked.falsehood :=
+  Intrinsic.Proves.ofEqBool typed p DefEqChecked.falsehood negated premise
+
+/-- Implication introduction for the equality definition `p ∧ q = p`. -/
+noncomputable def impIntro (typed : TypedCtx Γ)
+    (consequence : Intrinsic.Proves Γ (p :: H) q) :
+    Intrinsic.Proves Γ H (DefEqChecked.imp p q) := by
+  unfold DefEqChecked.imp
+  apply Intrinsic.Proves.antisymm (DefEqChecked.and p q) p
+  · have conjunction : Intrinsic.Proves Γ (DefEqChecked.and p q :: H)
+        (DefEqChecked.and p q) := Intrinsic.Proves.hyp (by simp)
+    exact andElimLeft typed conjunction
+  · have premise : Intrinsic.Proves Γ (p :: H) p := Intrinsic.Proves.hyp (by simp)
+    exact andIntro typed premise consequence
+
+/-- Modus ponens for equality-defined implication. -/
+def impElim (typed : TypedCtx Γ)
+    (implication : Intrinsic.Proves Γ H (DefEqChecked.imp p q))
+    (premise : Intrinsic.Proves Γ H p) : Intrinsic.Proves Γ H q := by
+  have expanded : Intrinsic.Proves Γ H (DefEqChecked.and p q) :=
+    Intrinsic.Proves.ofEqBool typed p (DefEqChecked.and p q)
+      (Intrinsic.Proves.eqSymm typed .boolTy (DefEqChecked.and p q) p implication)
+      premise
+  exact andElimRight typed expanded
+
 /-- Left introduction for the De Morgan definition of disjunction. -/
 noncomputable def orIntroLeft (typed : TypedCtx Γ)
     (premise : Intrinsic.Proves Γ H p) :

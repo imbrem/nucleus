@@ -13,7 +13,7 @@ variable {Sig : Signature} [SigTyping Sig] {types : List Kind} {depth : Nat}
   {Γ : BoundCtx Sig types depth} {A : Ty Sig types}
 
 def imp (left right : Checked Sig Γ .boolTy) : Checked Sig Γ .boolTy :=
-  Checked.or (Checked.not left) right
+  Checked.eq .boolTy (Checked.and left right) left
 
 /-- Universal quantification by classical duality, `∀x. p x = ¬∃x. ¬p x`. -/
 def forallTm (hA : Kinded A)
