@@ -297,6 +297,16 @@ def falseElim (proposition : BoolTm Γ)
     (falseProof : Proves Γ H DefEqChecked.falsehood) : Proves Γ H proposition :=
   ⟨.falseElim (PropCtx.typed H) proposition.typing falseProof.proof⟩
 
+noncomputable def boolCases (_typedContext : TypedCtx Γ) (proposition : BoolTm Γ)
+    (conclusion : BoolTm Γ)
+    (whenTrue : Proves Γ (proposition :: H) conclusion)
+    (whenFalse : Proves Γ (DefEqChecked.not proposition :: H) conclusion) :
+    Proves Γ H conclusion :=
+  ⟨.boolCases (PropCtx.typed H) proposition.typing
+    (PropCtx.typed (proposition :: H))
+    (PropCtx.typed (DefEqChecked.not proposition :: H))
+    whenTrue.proof whenFalse.proof⟩
+
 def eqRefl (hA : Kinded A) (x : DefEqChecked Sig Γ A) :
     Proves Γ H (DefEqChecked.eq hA x x) :=
   ⟨.eqRefl (PropCtx.typed H) hA x.typing⟩

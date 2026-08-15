@@ -36,6 +36,11 @@ inductive Proves {Sig : Signature} [SigTyping Sig] {depth : Nat}
   | truth (typed : TypedHyps Γ H) : Proves Γ H (.bool true)
   | falseElim (typed : TypedHyps Γ H) (hp : HasType Γ p .boolTy) :
       Proves Γ H (.bool false) → Proves Γ H p
+  | boolCases (typed : TypedHyps Γ H) (hp : HasType Γ p .boolTy)
+      (leftTyped : TypedHyps Γ (p :: H))
+      (rightTyped : TypedHyps Γ (.eq .boolTy p (.bool false) :: H)) :
+      Proves Γ (p :: H) q → Proves Γ (.eq .boolTy p (.bool false) :: H) q →
+      Proves Γ H q
   | eqRefl (typed : TypedHyps Γ H) (hA : Kinded A)
       (hx : HasType Γ x A) : Proves Γ H (.eq A x x)
   | eqMp (typed : TypedHyps Γ H) (hA : Kinded A)

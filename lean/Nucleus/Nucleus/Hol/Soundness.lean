@@ -116,6 +116,21 @@ theorem Proves.sound {Sig : Signature} [SigTyping Sig] [UniqueSigTyping Sig]
   | falseElim typed hp falseProof ih =>
       have impossible := ih hypotheses
       exact False.elim (Bool.noConfusion (impossible.unique (.boolean false)))
+  | boolCases typed hp leftTyped rightTyped leftProof rightProof ihLeft ihRight =>
+      obtain ⟨value, valueEval⟩ := hp.eval_exists freeEnv boundEnv
+      cases value with
+      | false =>
+          apply ihRight
+          intro proposition member
+          rcases List.mem_cons.mp member with rfl | member
+          · exact .eqTrue .boolTy valueEval (.boolean false) rfl
+          · exact hypotheses _ member
+      | true =>
+          apply ihLeft
+          intro proposition member
+          rcases List.mem_cons.mp member with rfl | member
+          · exact valueEval
+          · exact hypotheses _ member
   | eqRefl typed hA hx =>
       obtain ⟨value, evaluation⟩ := hx.eval_exists freeEnv boundEnv
       exact .eqTrue hA evaluation evaluation rfl

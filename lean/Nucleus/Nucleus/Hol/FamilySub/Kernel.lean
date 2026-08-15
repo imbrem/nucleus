@@ -38,6 +38,11 @@ inductive Proves {Sig : Signature} [SigTyping Sig] {types : List Kind} {depth : 
   | truth (typed : TypedHyps Γ H) : Proves Γ H (.bool true)
   | falseElim (typed : TypedHyps Γ H) (hp : HasTypeDefEq Γ p .boolTy) :
       Proves Γ H (.bool false) → Proves Γ H p
+  | boolCases (typed : TypedHyps Γ H) (hp : HasTypeDefEq Γ p .boolTy)
+      (leftTyped : TypedHyps Γ (p :: H))
+      (rightTyped : TypedHyps Γ (.eq .boolTy p (.bool false) :: H)) :
+      Proves Γ (p :: H) q → Proves Γ (.eq .boolTy p (.bool false) :: H) q →
+      Proves Γ H q
   | eqRefl (typed : TypedHyps Γ H) (hA : Kinded A) (hx : HasTypeDefEq Γ x A) :
       Proves Γ H (.eq A x x)
   | eqMp (typed : TypedHyps Γ H) (hA : Kinded A)
@@ -84,7 +89,8 @@ namespace Proves
 theorem typedHypotheses {Sig : Signature} [SigTyping Sig] {types : List Kind}
     {depth : Nat} {Γ : BoundCtx Sig types depth} {H : List (Tm Sig types depth)}
     {p : Tm Sig types depth} : Proves Γ H p → TypedHyps Γ H
-  | .hyp typed _ | .truth typed | .falseElim typed _ _ | .eqRefl typed _ _ |
+  | .hyp typed _ | .truth typed | .falseElim typed _ _ |
+      .boolCases typed _ _ _ _ _ | .eqRefl typed _ _ |
       .eqMp typed _ _ _ _ _ _ | .choice typed _ _ _ _ |
       .convert typed _ _ | .eqOfEqTm typed _ _ |
       .antisymm typed _ _ _ _ _ _ | .absRep typed _ _ _ |
@@ -100,6 +106,34 @@ noncomputable def mapHypotheses {Sig : Signature} [SigTyping Sig] {types : List 
   | .truth _ => .truth typedK
   | .falseElim _ hp falseProof =>
       .falseElim typedK hp (mapHypotheses typedK subset falseProof)
+  | .boolCases _ hp _ _ left right =>
+      .boolCases typedK hp
+        (fun proposition membership => by
+          rcases List.mem_cons.mp membership with rfl | membership
+          · exact hp
+          · exact typedK proposition membership)
+        (fun proposition membership => by
+          rcases List.mem_cons.mp membership with rfl | membership
+          · exact .eq .boolTy hp (.exact (.bool false))
+          · exact typedK proposition membership)
+        (mapHypotheses
+          (fun proposition membership => by
+            rcases List.mem_cons.mp membership with rfl | membership
+            · exact hp
+            · exact typedK proposition membership)
+          (fun proposition membership => by
+            rcases List.mem_cons.mp membership with rfl | membership
+            · exact List.mem_cons_self
+            · exact List.mem_cons_of_mem _ (subset proposition membership)) left)
+        (mapHypotheses
+          (fun proposition membership => by
+            rcases List.mem_cons.mp membership with rfl | membership
+            · exact .eq .boolTy hp (.exact (.bool false))
+            · exact typedK proposition membership)
+          (fun proposition membership => by
+            rcases List.mem_cons.mp membership with rfl | membership
+            · exact List.mem_cons_self
+            · exact List.mem_cons_of_mem _ (subset proposition membership)) right)
   | .eqRefl _ hA hx => .eqRefl typedK hA hx
   | .eqMp _ hA hp hx hy equality application =>
       .eqMp typedK hA hp hx hy

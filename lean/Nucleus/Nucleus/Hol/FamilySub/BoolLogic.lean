@@ -252,6 +252,27 @@ def impElim (typed : TypedCtx Γ)
       premise
   exact andElimRight typed expanded
 
+/-- Double-negation introduction. -/
+noncomputable def doubleNegIntro (typed : TypedCtx Γ)
+    (premise : Intrinsic.Proves Γ H p) :
+    Intrinsic.Proves Γ H (DefEqChecked.not (DefEqChecked.not p)) := by
+  apply notIntro typed (DefEqChecked.not p)
+  have negated : Intrinsic.Proves Γ (DefEqChecked.not p :: H) (DefEqChecked.not p) :=
+    Intrinsic.Proves.hyp (by simp)
+  exact notElim typed negated (Intrinsic.Proves.weakenHyp (DefEqChecked.not p) premise)
+
+/-- Classical double-negation elimination, using the sound Boolean case rule. -/
+noncomputable def doubleNegElim (typed : TypedCtx Γ)
+    (premise : Intrinsic.Proves Γ H (DefEqChecked.not (DefEqChecked.not p))) :
+    Intrinsic.Proves Γ H p := by
+  apply Intrinsic.Proves.boolCases typed p p
+  · exact Intrinsic.Proves.hyp (by simp)
+  · have negated : Intrinsic.Proves Γ (DefEqChecked.not p :: H)
+        (DefEqChecked.not p) := Intrinsic.Proves.hyp (by simp)
+    have contradiction := notElim typed
+      (Intrinsic.Proves.weakenHyp (DefEqChecked.not p) premise) negated
+    exact Intrinsic.Proves.falseElim p contradiction
+
 /-- Left introduction for the De Morgan definition of disjunction. -/
 noncomputable def orIntroLeft (typed : TypedCtx Γ)
     (premise : Intrinsic.Proves Γ H p) :
