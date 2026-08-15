@@ -182,6 +182,12 @@ def appFromLeftBody (hA : Kinded A) (hB : Kinded B)
   let varied := DefEqChecked.bv (.arr hA hB) 0 rfl
   DefEqChecked.eq hB (function.app argument).weaken (varied.app argument.weaken)
 
+def appArgumentFromLeftBody (hA : Kinded A) (hB : Kinded B)
+    (function : DefEqChecked Sig Γ (.arr A B)) (argument : DefEqChecked Sig Γ A) :
+    BoolTm (extendBound A Γ) :=
+  let varied := DefEqChecked.bv hA 0 rfl
+  DefEqChecked.eq hB (function.app argument).weaken (function.weaken.app varied)
+
 def boolIdentityBody : BoolTm (extendBound (.boolTy : Ty Sig types) Γ) :=
   DefEqChecked.bv .boolTy 0 rfl
 
@@ -208,6 +214,17 @@ theorem appFromLeftBody_open (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded 
       DefEqChecked.eq hB (function.app argument) (varied.app argument) := by
   apply DefEqChecked.ext
   simp [appFromLeftBody, DefEqChecked.openBound, DefEqChecked.eq,
+    DefEqChecked.app, DefEqChecked.weaken, DefEqChecked.bv,
+    FamilySub.openBound, instantiate]
+
+theorem appArgumentFromLeftBody_open (typed : TypedCtx Γ)
+    (hA : Kinded A) (hB : Kinded B)
+    (function : DefEqChecked Sig Γ (.arr A B))
+    (argument varied : DefEqChecked Sig Γ A) :
+    (appArgumentFromLeftBody hA hB function argument).openBound typed varied =
+      DefEqChecked.eq hB (function.app argument) (function.app varied) := by
+  apply DefEqChecked.ext
+  simp [appArgumentFromLeftBody, DefEqChecked.openBound, DefEqChecked.eq,
     DefEqChecked.app, DefEqChecked.weaken, DefEqChecked.bv,
     FamilySub.openBound, instantiate]
 
@@ -327,6 +344,25 @@ def appCongr (typedContext : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
     eqMp hFunction predicate function varied equality predicateAtFunction
   have openedVaried := appFromLeftBody_open typedContext hA hB function varied argument
   exact openedVaried ▸ betaReduce typedContext hFunction body varied predicateAtVaried
+
+def appArgCongr (typedContext : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (function : DefEqChecked Sig Γ (.arr A B))
+    (argument varied : DefEqChecked Sig Γ A)
+    (equality : Proves Γ H (DefEqChecked.eq hA argument varied)) :
+    Proves Γ H (DefEqChecked.eq hB (function.app argument) (function.app varied)) := by
+  let body := appArgumentFromLeftBody hA hB function argument
+  let predicate := DefEqChecked.lam hA body
+  have openedArgument :=
+    appArgumentFromLeftBody_open typedContext hA hB function argument argument
+  have atArgument : Proves Γ H (body.openBound typedContext argument) :=
+    openedArgument.symm ▸ eqRefl hB (function.app argument)
+  have predicateAtArgument : Proves Γ H (predicate.app argument) :=
+    betaExpand typedContext hA body argument atArgument
+  have predicateAtVaried : Proves Γ H (predicate.app varied) :=
+    eqMp hA predicate argument varied equality predicateAtArgument
+  have openedVaried :=
+    appArgumentFromLeftBody_open typedContext hA hB function argument varied
+  exact openedVaried ▸ betaReduce typedContext hA body varied predicateAtVaried
 
 def ofEqBool (typedContext : TypedCtx Γ) (left right : BoolTm Γ)
     (equality : Proves Γ H (DefEqChecked.eq .boolTy left right))
