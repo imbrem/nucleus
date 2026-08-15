@@ -58,26 +58,67 @@ def natStepBody : BoolTm
 def natStep : BoolTm (extendBound (.arr InfiniteOps.ind .boolTy) Γ) :=
   DefEqChecked.forallTm InfiniteOps.indKinded natStepBody
 
-def natStepAt
-    (predicate : DefEqChecked Sig Γ (.arr InfiniteOps.ind .boolTy)) : BoolTm Γ :=
+def natStepAtBody
+    (predicate : DefEqChecked Sig Γ (.arr InfiniteOps.ind .boolTy)) :
+    BoolTm (extendBound InfiniteOps.ind Γ) :=
   let y := DefEqChecked.bv (Sig := Sig) (types := types)
     (Γ := extendBound InfiniteOps.ind Γ) InfiniteOps.indKinded 0 rfl
-  DefEqChecked.forallTm InfiniteOps.indKinded
-    (DefEqChecked.imp (predicate.weaken.app y)
-      (predicate.weaken.app (indSucc.app y)))
+  DefEqChecked.imp (predicate.weaken.app y)
+    (predicate.weaken.app (indSucc.app y))
+
+def natStepAt
+    (predicate : DefEqChecked Sig Γ (.arr InfiniteOps.ind .boolTy)) : BoolTm Γ :=
+  DefEqChecked.forallTm InfiniteOps.indKinded (natStepAtBody predicate)
+
+theorem natStepAtBody_open (typed : TypedCtx Γ)
+    (predicate : DefEqChecked Sig Γ (.arr InfiniteOps.ind .boolTy))
+    (value : DefEqChecked Sig Γ InfiniteOps.ind) :
+    (natStepAtBody predicate).openBound typed value =
+      DefEqChecked.imp (predicate.app value)
+        (predicate.app (indSucc.app value)) := by
+  apply DefEqChecked.ext
+  simp [natStepAtBody, DefEqChecked.imp, DefEqChecked.and,
+    DefEqChecked.andLhs, DefEqChecked.andLhsBody, DefEqChecked.andRhs,
+    DefEqChecked.openBound, DefEqChecked.eq, DefEqChecked.lam,
+    DefEqChecked.app, DefEqChecked.bv, DefEqChecked.weaken,
+    DefEqChecked.truth, DefEqChecked.boolean, indSucc, indSuccChecked,
+    DefEqChecked.ofRaw, FamilySub.openBound, instantiate, liftSub]
+
+noncomputable def natStepElim (typed : TypedCtx Γ)
+    (predicate : DefEqChecked Sig Γ (.arr InfiniteOps.ind .boolTy))
+    (value : DefEqChecked Sig Γ InfiniteOps.ind)
+    (step : Intrinsic.Proves Γ H (natStepAt predicate))
+    (premise : Intrinsic.Proves Γ H (predicate.app value)) :
+    Intrinsic.Proves Γ H (predicate.app (indSucc.app value)) := by
+  have implication := Intrinsic.Proves.forallElim typed InfiniteOps.indKinded
+    (natStepAtBody predicate) value step
+  rw [natStepAtBody_open typed predicate value] at implication
+  exact impElim typed implication premise
 
 theorem natStep_open (typed : TypedCtx Γ)
     (predicate : DefEqChecked Sig Γ (.arr InfiniteOps.ind .boolTy)) :
     (natStep (Sig := Sig) (Γ := Γ)).openBound typed predicate =
       natStepAt predicate := by
   apply DefEqChecked.ext
-  simp [natStep, natStepBody, natStepAt, DefEqChecked.forallTm,
+  simp [natStep, natStepBody, natStepAt, natStepAtBody, DefEqChecked.forallTm,
     DefEqChecked.imp, DefEqChecked.and, DefEqChecked.andLhs,
     DefEqChecked.andLhsBody, DefEqChecked.andRhs, DefEqChecked.openBound,
     DefEqChecked.eq, DefEqChecked.lam, DefEqChecked.app, DefEqChecked.bv,
     DefEqChecked.weaken, DefEqChecked.truth, DefEqChecked.boolean,
     indSucc, indSuccChecked, DefEqChecked.ofRaw, FamilySub.openBound,
     instantiate, liftSub]
+
+theorem natStep_bound_eq :
+    natStep (Sig := Sig) (Γ := Γ) =
+      natStepAt (DefEqChecked.bv
+        (.arr InfiniteOps.indKinded .boolTy) 0 rfl) := by
+  apply DefEqChecked.ext
+  simp [natStep, natStepBody, natStepAt, natStepAtBody,
+    DefEqChecked.forallTm, DefEqChecked.imp, DefEqChecked.and,
+    DefEqChecked.andLhs, DefEqChecked.andLhsBody, DefEqChecked.andRhs,
+    DefEqChecked.eq, DefEqChecked.lam, DefEqChecked.app, DefEqChecked.bv,
+    DefEqChecked.weaken, DefEqChecked.truth, DefEqChecked.boolean,
+    indSucc, indSuccChecked, DefEqChecked.ofRaw]
 
 def natClosureBody (represented : DefEqChecked Sig Γ InfiniteOps.ind) :
     BoolTm (extendBound (.arr InfiniteOps.ind .boolTy) Γ) :=
@@ -131,6 +172,19 @@ theorem natPredicateAt_term_eq
     indZero, indSucc, indZeroChecked, indSuccChecked, DefEqChecked.ofRaw,
     instantiateOne, instantiate, liftSub]
 
+@[simp] theorem natPredicateAt_weaken
+    (represented : DefEqChecked Sig Γ InfiniteOps.ind) {A : Ty Sig types} :
+    (natPredicateAt represented).weaken =
+      natPredicateAt (represented.weaken (C := A)) := by
+  apply DefEqChecked.ext
+  change weaken (natPredicateAt represented).tm =
+    (natPredicateAt (represented.weaken (C := A))).tm
+  rw [natPredicateAt_term_eq, natPredicateAt_term_eq]
+  unfold instantiateOne DefEqChecked.weaken
+  exact rename_instantiate_fusion
+    (natPredicate (Sig := Sig) (types := types)).tm
+    (fun _ ↦ represented.tm) Fin.succ
+
 /-- Zero belongs to the intersection of all inductive predicates. -/
 noncomputable def natPredicate_zero (typed : TypedCtx Γ) :
     Intrinsic.Proves Γ H (natPredicateAt (indZero (Γ := Γ))) := by
@@ -150,6 +204,43 @@ noncomputable def natPredicate_zero (typed : TypedCtx Γ) :
       (indZero (Γ := extendBound (.arr InfiniteOps.ind .boolTy) Γ)))
     (q := natStep) (TypedCtx.extend typed (.arr InfiniteOps.indKinded .boolTy)) closure
   simpa only [indZero_weaken] using base
+
+/-- The intersection-of-inductive-predicates definition is closed under the
+designated successor. -/
+set_option maxHeartbeats 1000000 in
+noncomputable def natPredicate_succ (typed : TypedCtx Γ)
+    (represented : DefEqChecked Sig Γ InfiniteOps.ind)
+    (premise : Intrinsic.Proves Γ H (natPredicateAt represented)) :
+    Intrinsic.Proves Γ H (natPredicateAt (indSucc.app represented)) := by
+  unfold natPredicateAt
+  apply Intrinsic.Proves.forallIntro
+  unfold natClosureBody
+  let hPred : Kinded (.arr InfiniteOps.ind .boolTy : Ty Sig types) :=
+    .arr InfiniteOps.indKinded .boolTy
+  let Γp := extendBound (.arr InfiniteOps.ind .boolTy) Γ
+  let typedP : TypedCtx Γp := TypedCtx.extend typed hPred
+  let predicate : DefEqChecked Sig Γp (.arr InfiniteOps.ind .boolTy) :=
+    DefEqChecked.bv hPred 0 rfl
+  rw [natStep_bound_eq (Sig := Sig) (Γ := Γ)]
+  apply impIntro typedP
+  let closure := DefEqChecked.and (predicate.app indZero)
+    (natStep (Sig := Sig) (Γ := Γ))
+  have closureProof : Intrinsic.Proves Γp
+      (closure :: PropCtx.weaken (A := .arr InfiniteOps.ind .boolTy) H) closure :=
+    Intrinsic.Proves.hyp (by simp)
+  have step : Intrinsic.Proves Γp
+      (closure :: PropCtx.weaken (A := .arr InfiniteOps.ind .boolTy) H)
+      (natStepAt predicate) := by
+    exact andElimRight typedP closureProof
+  have weakened := Intrinsic.Proves.weakenBound hPred premise
+  rw [natPredicateAt_weaken represented] at weakened
+  have closed := Intrinsic.Proves.forallElim typedP hPred
+    (natClosureBody represented.weaken) predicate weakened
+  rw [natClosureBody_open typedP represented.weaken predicate] at closed
+  have contained := impElim typedP
+    (Intrinsic.Proves.weakenHyp closure closed) closureProof
+  exact natStepElim typedP predicate represented.weaken
+    step contained
 
 def naturalZero : DefEqChecked Sig Γ (naturalTy Sig types) :=
   DefEqChecked.abs InfiniteOps.indKinded
@@ -198,6 +289,27 @@ def naturalSucc (value : DefEqChecked Sig Γ (naturalTy Sig types)) :
     (natPredicate (Sig := Sig) (types := types)).tm
     (natPredicate (Sig := Sig) (types := types)).typing
     (indSucc.app (repNatural value))
+
+noncomputable def repNatural_zero (typed : TypedCtx Γ) :
+    Intrinsic.Proves Γ H (DefEqChecked.eq InfiniteOps.indKinded
+      (repNatural (naturalZero (Sig := Sig) (Γ := Γ))) indZero) :=
+  Intrinsic.Proves.repAbs InfiniteOps.indKinded
+    (natPredicate (Sig := Sig) (types := types)).tm
+    (natPredicate (Sig := Sig) (types := types)).typing indZero
+    (natPredicateAt indZero) (natPredicateAt_term_eq indZero)
+    (natPredicate_zero typed)
+
+noncomputable def repNatural_succ (typed : TypedCtx Γ)
+    (value : DefEqChecked Sig Γ (naturalTy Sig types)) :
+    Intrinsic.Proves Γ H (DefEqChecked.eq InfiniteOps.indKinded
+      (repNatural (naturalSucc value)) (indSucc.app (repNatural value))) :=
+  Intrinsic.Proves.repAbs InfiniteOps.indKinded
+    (natPredicate (Sig := Sig) (types := types)).tm
+    (natPredicate (Sig := Sig) (types := types)).typing
+    (indSucc.app (repNatural value))
+    (natPredicateAt (indSucc.app (repNatural value)))
+    (natPredicateAt_term_eq (indSucc.app (repNatural value)))
+    (natPredicate_succ typed (repNatural value) (repNatural_predicate typed value))
 
 class NaturalOps (Sig : Signature) [SigTyping Sig] where
   nat {types : List Kind} : Ty Sig types
