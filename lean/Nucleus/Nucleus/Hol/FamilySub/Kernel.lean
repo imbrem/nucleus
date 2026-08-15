@@ -31,8 +31,8 @@ def TypedHyps {Sig : Signature} [SigTyping Sig] (Γ : BoundCtx Sig types depth)
     (hypotheses : List (Tm Sig types depth)) : Prop :=
   ∀ p, p ∈ hypotheses → HasTypeDefEq Γ p .boolTy
 
-inductive Proves {Sig : Signature} [SigTyping Sig] {types : List Kind} {depth : Nat}
-    (Γ : BoundCtx Sig types depth) : List (Tm Sig types depth) → Tm Sig types depth →
+inductive Proves {Sig : Signature} [SigTyping Sig] {types : List Kind} : {depth : Nat} →
+    (Γ : BoundCtx Sig types depth) → List (Tm Sig types depth) → Tm Sig types depth →
     Type u where
   | hyp (typed : TypedHyps Γ H) (member : p ∈ H) : Proves Γ H p
   | truth (typed : TypedHyps Γ H) : Proves Γ H (.bool true)
@@ -52,6 +52,10 @@ inductive Proves {Sig : Signature} [SigTyping Sig] {types : List Kind} {depth : 
   | choice (typed : TypedHyps Γ H) (hA : Kinded A)
       (hp : HasTypeDefEq Γ p (.arr A .boolTy)) (hx : HasTypeDefEq Γ x A) :
       Proves Γ H (.app p x) → Proves Γ H (.app p (.eps A p))
+  | generalize (typed : TypedHyps Γ H) (hA : Kinded A)
+      (bodyTyping : HasTypeDefEq (extendBound A Γ) body .boolTy) :
+      Proves (extendBound A Γ) (H.map weaken) body →
+      Proves Γ H (.eq (.arr A .boolTy) (.lam A body) (.lam A (.bool true)))
   | convert (typed : TypedHyps Γ H) : EqTm Γ p q .boolTy →
       Proves Γ H p → Proves Γ H q
   | eqOfEqTm (typed : TypedHyps Γ H) (hA : Kinded A) :
@@ -92,6 +96,7 @@ theorem typedHypotheses {Sig : Signature} [SigTyping Sig] {types : List Kind}
   | .hyp typed _ | .truth typed | .falseElim typed _ _ |
       .boolCases typed _ _ _ _ _ | .eqRefl typed _ _ |
       .eqMp typed _ _ _ _ _ _ | .choice typed _ _ _ _ |
+      .generalize typed _ _ _ |
       .convert typed _ _ | .eqOfEqTm typed _ _ |
       .antisymm typed _ _ _ _ _ _ | .absRep typed _ _ _ |
       .repAbs typed _ _ _ _ _ | .repPredOfWitness typed _ _ _ _ _ _ _ => typed
@@ -141,6 +146,15 @@ noncomputable def mapHypotheses {Sig : Signature} [SigTyping Sig] {types : List 
         (mapHypotheses typedK subset application)
   | .choice _ hA hp hx premise =>
       .choice typedK hA hp hx (mapHypotheses typedK subset premise)
+  | .generalize _ hA bodyTyping premise =>
+      .generalize typedK hA bodyTyping
+        (mapHypotheses
+          (fun proposition membership => by
+            obtain ⟨original, member, rfl⟩ := List.mem_map.mp membership
+            exact (typedK original member).weaken)
+          (fun proposition membership => by
+            obtain ⟨original, member, rfl⟩ := List.mem_map.mp membership
+            exact List.mem_map_of_mem (subset original member)) premise)
   | .convert _ equality premise =>
       .convert typedK equality (mapHypotheses typedK subset premise)
   | .eqOfEqTm _ hA equality => .eqOfEqTm typedK hA equality

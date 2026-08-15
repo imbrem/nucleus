@@ -30,8 +30,8 @@ def TypedHyps {Sig : Signature} [SigTyping Sig] {depth : Nat}
     (Γ : BoundCtx Sig depth) (hypotheses : List (Tm Sig depth)) : Prop :=
   ∀ p, p ∈ hypotheses → HasType Γ p .boolTy
 
-inductive Proves {Sig : Signature} [SigTyping Sig] {depth : Nat}
-    (Γ : BoundCtx Sig depth) : List (Tm Sig depth) → Tm Sig depth → Type u where
+inductive Proves {Sig : Signature} [SigTyping Sig] : {depth : Nat} →
+    (Γ : BoundCtx Sig depth) → List (Tm Sig depth) → Tm Sig depth → Type u where
   | hyp (typed : TypedHyps Γ H) (member : p ∈ H) : Proves Γ H p
   | truth (typed : TypedHyps Γ H) : Proves Γ H (.bool true)
   | falseElim (typed : TypedHyps Γ H) (hp : HasType Γ p .boolTy) :
@@ -50,6 +50,12 @@ inductive Proves {Sig : Signature} [SigTyping Sig] {depth : Nat}
   | choice (typed : TypedHyps Γ H) (hA : Kinded A)
       (hp : HasType Γ p (.arr A .boolTy)) (hx : HasType Γ x A) :
       Proves Γ H (.app p x) → Proves Γ H (.app p (.eps A p))
+  | generalize {depth : Nat} {Γ : BoundCtx Sig depth} {H : List (Tm Sig depth)}
+      {A : Ty Sig} {body : Tm Sig (depth + 1)}
+      (typed : TypedHyps Γ H) (hA : Kinded A)
+      (bodyTyping : HasType (extendBound A Γ) body .boolTy) :
+      Proves (extendBound A Γ) (H.map weaken) body →
+      Proves Γ H (.eq (.arr A .boolTy) (.lam A body) (.lam A (.bool true)))
   | convert (typed : TypedHyps Γ H) : EqTm Γ p q .boolTy →
       Proves Γ H p → Proves Γ H q
   | eqOfEqTm (typed : TypedHyps Γ H) (hA : Kinded A) :
