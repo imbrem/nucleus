@@ -207,21 +207,17 @@ noncomputable def natPredicate_zero (typed : TypedCtx Γ) :
 
 /-- The intersection-of-inductive-predicates definition is closed under the
 designated successor. -/
-set_option maxHeartbeats 1000000 in
 noncomputable def natPredicate_succ (typed : TypedCtx Γ)
     (represented : DefEqChecked Sig Γ InfiniteOps.ind)
     (premise : Intrinsic.Proves Γ H (natPredicateAt represented)) :
     Intrinsic.Proves Γ H (natPredicateAt (indSucc.app represented)) := by
-  unfold natPredicateAt
   apply Intrinsic.Proves.forallIntro
-  unfold natClosureBody
   let hPred : Kinded (.arr InfiniteOps.ind .boolTy : Ty Sig types) :=
     .arr InfiniteOps.indKinded .boolTy
   let Γp := extendBound (.arr InfiniteOps.ind .boolTy) Γ
   let typedP : TypedCtx Γp := TypedCtx.extend typed hPred
   let predicate : DefEqChecked Sig Γp (.arr InfiniteOps.ind .boolTy) :=
     DefEqChecked.bv hPred 0 rfl
-  rw [natStep_bound_eq (Sig := Sig) (Γ := Γ)]
   apply impIntro typedP
   let closure := DefEqChecked.and (predicate.app indZero)
     (natStep (Sig := Sig) (Γ := Γ))
@@ -231,16 +227,34 @@ noncomputable def natPredicate_succ (typed : TypedCtx Γ)
   have step : Intrinsic.Proves Γp
       (closure :: PropCtx.weaken (A := .arr InfiniteOps.ind .boolTy) H)
       (natStepAt predicate) := by
-    exact andElimRight typedP closureProof
+    have raw := andElimRight typedP closureProof
+    exact natStep_bound_eq (Sig := Sig) (Γ := Γ) ▸ raw
+  have base : Intrinsic.Proves Γp
+      (closure :: PropCtx.weaken (A := .arr InfiniteOps.ind .boolTy) H)
+      (predicate.app indZero) := andElimLeft typedP closureProof
+  have closureAt : Intrinsic.Proves Γp
+      (closure :: PropCtx.weaken (A := .arr InfiniteOps.ind .boolTy) H)
+      (DefEqChecked.and (predicate.app indZero) (natStepAt predicate)) :=
+    andIntro typedP base step
   have weakened := Intrinsic.Proves.weakenBound hPred premise
   rw [natPredicateAt_weaken represented] at weakened
   have closed := Intrinsic.Proves.forallElim typedP hPred
     (natClosureBody represented.weaken) predicate weakened
   rw [natClosureBody_open typedP represented.weaken predicate] at closed
   have contained := impElim typedP
-    (Intrinsic.Proves.weakenHyp closure closed) closureProof
-  exact natStepElim typedP predicate represented.weaken
-    step contained
+    (Intrinsic.Proves.weakenHyp closure closed) closureAt
+  have successorWeaken :
+      (indSucc.app represented).weaken
+        (C := (.arr InfiniteOps.ind .boolTy : Ty Sig types)) =
+      indSucc.app (represented.weaken
+        (C := (.arr InfiniteOps.ind .boolTy : Ty Sig types))) := by
+    apply DefEqChecked.ext
+    simp [DefEqChecked.app, DefEqChecked.weaken, FamilySub.weaken, rename]
+    exact congrArg DefEqChecked.tm
+      (indSucc_weaken (Sig := Sig) (Γ := Γ)
+        (A := (.arr InfiniteOps.ind .boolTy : Ty Sig types)))
+  rw [successorWeaken]
+  exact natStepElim typedP predicate represented.weaken step contained
 
 def naturalZero : DefEqChecked Sig Γ (naturalTy Sig types) :=
   DefEqChecked.abs InfiniteOps.indKinded

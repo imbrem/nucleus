@@ -491,6 +491,108 @@ def ofEqTrue (typed : TypedCtx Γ)
     (eqSymm typed .boolTy p DefEqChecked.truth equality)
     truth
 
+def subtypeRepBody (hA : Kinded A) (predicate : Tm Sig types 1)
+    (predicateTyping : HasType (extendBound A emptyBound) predicate .boolTy) :
+    DefEqChecked Sig (extendBound (.sub A predicate) Γ) A :=
+  DefEqChecked.rep hA predicate predicateTyping
+    (DefEqChecked.bv (.sub hA predicateTyping) 0 rfl)
+
+def subtypeRepFunction (hA : Kinded A) (predicate : Tm Sig types 1)
+    (predicateTyping : HasType (extendBound A emptyBound) predicate .boolTy) :
+    DefEqChecked Sig Γ (.arr (.sub A predicate) A) :=
+  DefEqChecked.lam (.sub hA predicateTyping)
+    (subtypeRepBody hA predicate predicateTyping)
+
+theorem subtypeRepBody_open (typed : TypedCtx Γ) (hA : Kinded A)
+    (predicate : Tm Sig types 1)
+    (predicateTyping : HasType (extendBound A emptyBound) predicate .boolTy)
+    (value : DefEqChecked Sig Γ (.sub A predicate)) :
+    (subtypeRepBody hA predicate predicateTyping).openBound typed value =
+      DefEqChecked.rep hA predicate predicateTyping value := by
+  apply DefEqChecked.ext
+  simp [subtypeRepBody, DefEqChecked.openBound, DefEqChecked.rep,
+    DefEqChecked.bv, FamilySub.openBound, instantiate]
+
+def subtypeRepFunction_apply (typed : TypedCtx Γ) (hA : Kinded A)
+    (predicate : Tm Sig types 1)
+    (predicateTyping : HasType (extendBound A emptyBound) predicate .boolTy)
+    (value : DefEqChecked Sig Γ (.sub A predicate)) :
+    EqTm ((subtypeRepFunction hA predicate predicateTyping).app value)
+      (DefEqChecked.rep hA predicate predicateTyping value) := by
+  have reduction := EqTm.beta typed (.sub hA predicateTyping)
+    (subtypeRepBody hA predicate predicateTyping) value
+  rw [subtypeRepBody_open typed hA predicate predicateTyping value] at reduction
+  exact reduction
+
+noncomputable def repCongr (typed : TypedCtx Γ) (hA : Kinded A)
+    (predicate : Tm Sig types 1)
+    (predicateTyping : HasType (extendBound A emptyBound) predicate .boolTy)
+    (left right : DefEqChecked Sig Γ (.sub A predicate))
+    (equality : Proves Γ H (DefEqChecked.eq (.sub hA predicateTyping) left right)) :
+    Proves Γ H (DefEqChecked.eq hA
+      (DefEqChecked.rep hA predicate predicateTyping left)
+      (DefEqChecked.rep hA predicate predicateTyping right)) := by
+  let function := subtypeRepFunction (Sig := Sig) (Γ := Γ)
+    hA predicate predicateTyping
+  have applied := appArgCongr typed (.sub hA predicateTyping) hA function
+    left right equality
+  have leftReduction := subtypeRepFunction_apply typed hA predicate predicateTyping left
+  have rightReduction := subtypeRepFunction_apply typed hA predicate predicateTyping right
+  exact eqTrans typed hA _ (function.app right) _
+    (eqTrans typed hA _ (function.app left) _
+      (eqSymm typed hA _ _ (eqOfEqTm (H := H) hA leftReduction)) applied)
+    (eqOfEqTm (H := H) hA rightReduction)
+
+def subtypeAbsBody (hA : Kinded A) (predicate : Tm Sig types 1)
+    (predicateTyping : HasType (extendBound A emptyBound) predicate .boolTy) :
+    DefEqChecked Sig (extendBound A Γ) (.sub A predicate) :=
+  DefEqChecked.abs hA predicate predicateTyping (DefEqChecked.bv hA 0 rfl)
+
+def subtypeAbsFunction (hA : Kinded A) (predicate : Tm Sig types 1)
+    (predicateTyping : HasType (extendBound A emptyBound) predicate .boolTy) :
+    DefEqChecked Sig Γ (.arr A (.sub A predicate)) :=
+  DefEqChecked.lam hA (subtypeAbsBody hA predicate predicateTyping)
+
+theorem subtypeAbsBody_open (typed : TypedCtx Γ) (hA : Kinded A)
+    (predicate : Tm Sig types 1)
+    (predicateTyping : HasType (extendBound A emptyBound) predicate .boolTy)
+    (value : DefEqChecked Sig Γ A) :
+    (subtypeAbsBody hA predicate predicateTyping).openBound typed value =
+      DefEqChecked.abs hA predicate predicateTyping value := by
+  apply DefEqChecked.ext
+  simp [subtypeAbsBody, DefEqChecked.openBound, DefEqChecked.abs,
+    DefEqChecked.bv, FamilySub.openBound, instantiate]
+
+def subtypeAbsFunction_apply (typed : TypedCtx Γ) (hA : Kinded A)
+    (predicate : Tm Sig types 1)
+    (predicateTyping : HasType (extendBound A emptyBound) predicate .boolTy)
+    (value : DefEqChecked Sig Γ A) :
+    EqTm ((subtypeAbsFunction hA predicate predicateTyping).app value)
+      (DefEqChecked.abs hA predicate predicateTyping value) := by
+  have reduction := EqTm.beta typed hA (subtypeAbsBody hA predicate predicateTyping) value
+  rw [subtypeAbsBody_open typed hA predicate predicateTyping value] at reduction
+  exact reduction
+
+noncomputable def absCongr (typed : TypedCtx Γ) (hA : Kinded A)
+    (predicate : Tm Sig types 1)
+    (predicateTyping : HasType (extendBound A emptyBound) predicate .boolTy)
+    (left right : DefEqChecked Sig Γ A)
+    (equality : Proves Γ H (DefEqChecked.eq hA left right)) :
+    Proves Γ H (DefEqChecked.eq (.sub hA predicateTyping)
+      (DefEqChecked.abs hA predicate predicateTyping left)
+      (DefEqChecked.abs hA predicate predicateTyping right)) := by
+  let function := subtypeAbsFunction (Sig := Sig) (Γ := Γ)
+    hA predicate predicateTyping
+  have applied := appArgCongr typed hA (.sub hA predicateTyping) function
+    left right equality
+  have leftReduction := subtypeAbsFunction_apply typed hA predicate predicateTyping left
+  have rightReduction := subtypeAbsFunction_apply typed hA predicate predicateTyping right
+  exact eqTrans typed (.sub hA predicateTyping) _ (function.app right) _
+    (eqTrans typed (.sub hA predicateTyping) _ (function.app left) _
+      (eqSymm typed (.sub hA predicateTyping) _ _
+        (eqOfEqTm (H := H) (.sub hA predicateTyping) leftReduction)) applied)
+    (eqOfEqTm (H := H) (.sub hA predicateTyping) rightReduction)
+
 def absRep (hA : Kinded A) (predicate : Tm Sig types 1)
     (predicateTyping : HasType (extendBound A emptyBound) predicate .boolTy)
     (x : DefEqChecked Sig Γ (.sub A predicate)) :
@@ -498,6 +600,25 @@ def absRep (hA : Kinded A) (predicate : Tm Sig types 1)
       (DefEqChecked.abs hA predicate predicateTyping
         (DefEqChecked.rep hA predicate predicateTyping x)) x) :=
   ⟨.absRep (PropCtx.typed H) hA (.exact predicateTyping) x.typing⟩
+
+noncomputable def repInjective (typed : TypedCtx Γ) (hA : Kinded A)
+    (predicate : Tm Sig types 1)
+    (predicateTyping : HasType (extendBound A emptyBound) predicate .boolTy)
+    (left right : DefEqChecked Sig Γ (.sub A predicate))
+    (equality : Proves Γ H (DefEqChecked.eq hA
+      (DefEqChecked.rep hA predicate predicateTyping left)
+      (DefEqChecked.rep hA predicate predicateTyping right))) :
+    Proves Γ H (DefEqChecked.eq (.sub hA predicateTyping) left right) := by
+  have abstracted := absCongr typed hA predicate predicateTyping _ _ equality
+  exact eqTrans typed (.sub hA predicateTyping) left
+    (DefEqChecked.abs hA predicate predicateTyping
+      (DefEqChecked.rep hA predicate predicateTyping left)) right
+    (eqSymm typed (.sub hA predicateTyping) _ _
+      (absRep hA predicate predicateTyping left))
+    (eqTrans typed (.sub hA predicateTyping) _
+      (DefEqChecked.abs hA predicate predicateTyping
+        (DefEqChecked.rep hA predicate predicateTyping right)) right
+      abstracted (absRep hA predicate predicateTyping right))
 
 def repAbs (hA : Kinded A) (predicate : Tm Sig types 1)
     (predicateTyping : HasType (extendBound A emptyBound) predicate .boolTy)
