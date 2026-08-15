@@ -158,16 +158,11 @@ def naturalSuccFunction :
     DefEqChecked Sig Γ (.arr NaturalOps.nat NaturalOps.nat) :=
   DefEqChecked.lam NaturalOps.natKinded naturalSuccBody
 
-def naturalAddStepBody : DefEqChecked Sig
-    (extendBound NaturalOps.nat (extendBound NaturalOps.nat Γ))
-    NaturalOps.nat :=
-  NaturalOps.succ (DefEqChecked.bv NaturalOps.natKinded 0 rfl)
-
 /-- `fun _ accumulator => succ accumulator`. -/
 def naturalAddStep : DefEqChecked Sig Γ
     (.arr NaturalOps.nat (.arr NaturalOps.nat NaturalOps.nat)) :=
   DefEqChecked.lam NaturalOps.natKinded
-    (DefEqChecked.lam NaturalOps.natKinded naturalAddStepBody)
+    (naturalSuccFunction.weaken)
 
 def naturalAdd [NaturalRecursorOps Sig] (left right : NatTm (Sig := Sig) (Γ := Γ)) :
     NatTm (Sig := Sig) (Γ := Γ) :=
