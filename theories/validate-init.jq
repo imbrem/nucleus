@@ -49,8 +49,8 @@ elif (declarations | all(if .[0] == "constant" then .[4] == null else true end))
 elif (requiredInventory - names | length) != 0 then
   error("required bootstrap inventory is missing: \((requiredInventory - names) | join(", "))")
 elif (.status != "design-sketch" and
-    (semantic | any(.[4] == null))) then
-  error("checked and complete manifests may not contain deferred bodies")
+    (semantic | any((.[0] == "definition" or .[0] == "theorem") and .[4] == null))) then
+  error("checked and complete manifests may not contain deferred definitions or theorems")
 elif (.status == "complete" and
     ((semantic | map(select(.[0] == "theorem") | .[1])) as $theorems |
       (semantic | map(.[5][]?) | unique) - $theorems | length) != 0) then
