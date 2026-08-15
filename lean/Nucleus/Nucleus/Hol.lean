@@ -10,6 +10,7 @@ import Nucleus.Hol.FamilySub.Intrinsic
 import Nucleus.Hol.FamilySub.Product
 import Nucleus.Hol.FamilySub.ProductLaws
 import Nucleus.Hol.FamilySub.Coproduct
+import Nucleus.Hol.FamilySub.CoproductLaws
 import Nucleus.Hol.FamilySub.Algebraic
 import Nucleus.Hol.FamilySub.Json
 import Nucleus.Hol.GuardedSubtype
