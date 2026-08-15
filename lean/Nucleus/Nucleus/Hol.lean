@@ -8,7 +8,9 @@ import Nucleus.Hol.FamilySub.Substitution
 import Nucleus.Hol.FamilySub.Kernel
 import Nucleus.Hol.FamilySub.Intrinsic
 import Nucleus.Hol.FamilySub.Product
+import Nucleus.Hol.FamilySub.ProductLaws
 import Nucleus.Hol.FamilySub.Coproduct
+import Nucleus.Hol.GuardedSubtype
 
 /-!
 # Signature-parametric HOL

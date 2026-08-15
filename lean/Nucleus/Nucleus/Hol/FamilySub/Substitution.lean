@@ -45,6 +45,115 @@ def instantiateOne (predicate : Tm Sig types 1)
     (replacement : Tm Sig types depth) : Tm Sig types depth :=
   instantiate (fun _ => replacement) predicate
 
+theorem instantiate_rename (term : Tm Sig types m)
+    (ρ : Fin m → Fin n) (σ : Fin n → Tm Sig types k) (τ : Fin m → Fin k)
+    (commute : ∀ i, σ (ρ i) = .bv (τ i)) :
+    instantiate σ (rename ρ term) = rename τ term := by
+  cases term with
+  | primTm | fv | bool => simp [rename, instantiate]
+  | bv i => simpa [rename, instantiate] using commute i
+  | app function argument =>
+      simp only [rename, instantiate]
+      rw [instantiate_rename function ρ σ τ commute,
+        instantiate_rename argument ρ σ τ commute]
+  | lam A body =>
+      simp only [rename, instantiate]
+      congr 1
+      apply instantiate_rename body (liftRen ρ) (liftSub σ) (liftRen τ)
+      intro i
+      refine Fin.cases ?_ (fun j => ?_) i
+      · rfl
+      · simp [liftRen, liftSub, commute j, weaken, rename]
+  | eq A left right =>
+      simp only [rename, instantiate]
+      rw [instantiate_rename left ρ σ τ commute,
+        instantiate_rename right ρ σ τ commute]
+  | eps A predicate =>
+      simp only [rename, instantiate]
+      rw [instantiate_rename predicate ρ σ τ commute]
+  | abs A predicate value | rep A predicate value =>
+      simp only [rename, instantiate]
+      rw [instantiate_rename value ρ σ τ commute]
+termination_by sizeOf term
+
+@[simp] theorem rename_id (term : Tm Sig types m) : rename id term = term := by
+  cases term with
+  | primTm | fv | bv | bool => simp [rename]
+  | app function argument =>
+      simp only [rename]
+      rw [rename_id function, rename_id argument]
+  | lam A body =>
+      simp only [rename]
+      have lifted : liftRen (id : Fin m → Fin m) = id := by
+        funext i
+        exact Fin.cases rfl (fun _ => rfl) i
+      rw [lifted, rename_id body]
+  | eq A left right =>
+      simp only [rename]
+      rw [rename_id left, rename_id right]
+  | eps A predicate =>
+      simp only [rename]
+      rw [rename_id predicate]
+  | abs A predicate value | rep A predicate value =>
+      simp only [rename]
+      rw [rename_id value]
+termination_by sizeOf term
+
+theorem rename_comp (term : Tm Sig types m) (ρ : Fin m → Fin n)
+    (τ : Fin n → Fin k) :
+    rename τ (rename ρ term) = rename (fun i => τ (ρ i)) term := by
+  cases term with
+  | primTm | fv | bv | bool => simp [rename]
+  | app function argument =>
+      simp only [rename]
+      rw [rename_comp function, rename_comp argument]
+  | lam A body =>
+      simp only [rename]
+      have lifted : (fun i => liftRen τ (liftRen ρ i)) =
+          liftRen (fun i => τ (ρ i)) := by
+        funext i
+        exact Fin.cases rfl (fun _ => rfl) i
+      rw [rename_comp body, lifted]
+  | eq A left right =>
+      simp only [rename]
+      rw [rename_comp left, rename_comp right]
+  | eps A predicate =>
+      simp only [rename]
+      rw [rename_comp predicate]
+  | abs A predicate value | rep A predicate value =>
+      simp only [rename]
+      rw [rename_comp value]
+termination_by sizeOf term
+
+theorem instantiate_rename_cancel (term : Tm Sig types m)
+    (ρ : Fin m → Fin n) (σ : Fin n → Tm Sig types m)
+    (cancel : ∀ i, σ (ρ i) = .bv i) :
+    instantiate σ (rename ρ term) = term := by
+  simpa using instantiate_rename term ρ σ id (by simpa using cancel)
+
+@[simp] theorem openBound_weaken (term : Tm Sig types depth)
+    (replacement : Tm Sig types depth) :
+    openBound (weaken term) replacement = term := by
+  apply instantiate_rename_cancel term Fin.succ (Fin.cases replacement .bv)
+  intro i
+  rfl
+
+@[simp] theorem instantiate_head_weaken (term : Tm Sig types depth)
+    (replacement : Tm Sig types depth) :
+    instantiate (Fin.cases replacement .bv) (weaken term) = term :=
+  openBound_weaken term replacement
+
+@[simp] theorem instantiate_lift_head_weaken_weaken (term : Tm Sig types depth)
+    (replacement : Tm Sig types depth) :
+    instantiate (liftSub (Fin.cases replacement .bv)) (weaken (weaken term)) =
+      weaken term := by
+  rw [show weaken (weaken term) = rename (fun i => Fin.succ (Fin.succ i)) term by
+    exact rename_comp term Fin.succ Fin.succ]
+  apply instantiate_rename term (fun i => (Fin.succ (Fin.succ i)))
+    (liftSub (Fin.cases replacement .bv)) Fin.succ
+  intro i
+  simp [liftSub, weaken, rename]
+
 def FreeIn (name : Nat) : {sort : HolSort} → {depth : Nat} →
     Expr Sig types sort depth → Prop
   | _, _, .primFam _ | _, _, .primTm _ | _, _, .boolTy | _, _, .tyBv _ |

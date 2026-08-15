@@ -63,10 +63,10 @@ inductive Proves {Sig : Signature} [SigTyping Sig] {types : List Kind} {depth : 
       (predicateTyping : HasTypeDefEq Γ (instantiateOne p x) .boolTy) :
       Proves Γ H (instantiateOne p x) →
       Proves Γ H (.eq A (.rep A p (.abs A p x)) x)
-  /-- Every representation of a subtype value satisfies its predicate.  The
-  witness premise is the HOL type-definition side condition and prevents an
-  empty predicate from manufacturing an inhabited type. -/
-  | repPred (typed : TypedHyps Γ H) (hA : Kinded A)
+  /-- In the guarded interpretation `Sub p = {x | p x ∨ ¬∃y, p y}`, a local
+  witness selects the inhabited branch and therefore establishes `p (rep x)`.
+  Subtype formation itself has no nonemptiness side condition. -/
+  | repPredOfWitness (typed : TypedHyps Γ H) (hA : Kinded A)
       (hp : HasTypeDefEq (extendBound A emptyBound) p .boolTy)
       (witnessTyping : HasTypeDefEq Γ witness A)
       (witnessPredicateTyping : HasTypeDefEq Γ (instantiateOne p witness) .boolTy)
