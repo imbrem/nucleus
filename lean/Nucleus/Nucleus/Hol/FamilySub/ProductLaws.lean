@@ -511,4 +511,172 @@ def fst_pair (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
       (fstChecked_eq_choice typed hA hB (pairChecked hA hB a b)))
     (fstChoice_pair typed hA hB a b)
 
+def secondEquationBody (hA : Kinded A) (hB : Kinded B)
+    (represented : DefEqChecked Sig Γ (productCarrier A B)) :
+    BoolTm (extendBound A (extendBound B Γ)) :=
+  let a := DefEqChecked.bv (Γ := extendBound A (extendBound B Γ)) hA 0 rfl
+  let b := DefEqChecked.bv (Γ := extendBound A (extendBound B Γ)) hB 1 rfl
+  DefEqChecked.eq (productCarrier_kinded hA hB) represented.weaken.weaken
+    (pairChurchChecked hA hB a b)
+
+def secondEquationAfterSecond (hA : Kinded A) (hB : Kinded B)
+    (represented : DefEqChecked Sig Γ (productCarrier A B))
+    (b : DefEqChecked Sig Γ B) : BoolTm (extendBound A Γ) :=
+  let a := DefEqChecked.bv (Γ := extendBound A Γ) hA 0 rfl
+  DefEqChecked.eq (productCarrier_kinded hA hB) represented.weaken
+    (pairChurchChecked hA hB a b.weaken)
+
+theorem secondExistsBody_open (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (represented : DefEqChecked Sig Γ (productCarrier A B))
+    (b : DefEqChecked Sig Γ B) :
+    (DefEqChecked.existsTm hA (secondEquationBody hA hB represented)).openBound typed b =
+      DefEqChecked.existsTm hA (secondEquationAfterSecond hA hB represented b) := by
+  apply DefEqChecked.ext
+  simp only [DefEqChecked.existsTm, secondEquationBody, secondEquationAfterSecond,
+    pairChurchChecked, DefEqChecked.openBound, DefEqChecked.lam,
+    DefEqChecked.app, DefEqChecked.eps, DefEqChecked.eq, DefEqChecked.weaken,
+    DefEqChecked.bv, DefEqChecked.ofRaw, FamilySub.openBound]
+  simp [instantiate, liftSub]
+  exact instantiate_pairFunction
+    (Γm := extendBound A (extendBound B Γ)) (Γn := extendBound A Γ)
+    hA hB (liftSub (Fin.cases b.tm .bv))
+
+theorem secondEquationAfterSecond_open (typed : TypedCtx Γ)
+    (hA : Kinded A) (hB : Kinded B)
+    (represented : DefEqChecked Sig Γ (productCarrier A B))
+    (b : DefEqChecked Sig Γ B) (a : DefEqChecked Sig Γ A) :
+    (secondEquationAfterSecond hA hB represented b).openBound typed a =
+      DefEqChecked.eq (productCarrier_kinded hA hB) represented
+        (pairChurchChecked hA hB a b) := by
+  apply DefEqChecked.ext
+  simp only [secondEquationAfterSecond, pairChurchChecked, DefEqChecked.openBound,
+    DefEqChecked.app, DefEqChecked.eq, DefEqChecked.weaken, DefEqChecked.bv,
+    DefEqChecked.ofRaw, FamilySub.openBound]
+  simp [instantiate]
+  exact instantiate_pairFunction (Γm := extendBound A Γ) (Γn := Γ)
+    hA hB (Fin.cases a.tm .bv)
+
+def secondSelectorBody (hA : Kinded A) (hB : Kinded B)
+    (value : DefEqChecked Sig Γ (productTy hA hB)) : BoolTm (extendBound B Γ) :=
+  DefEqChecked.existsTm hA (secondEquationBody hA hB (repPair hA hB value))
+
+def secondSelector (hA : Kinded A) (hB : Kinded B)
+    (value : DefEqChecked Sig Γ (productTy hA hB)) :
+    DefEqChecked Sig Γ (.arr B .boolTy) :=
+  DefEqChecked.lam hB (secondSelectorBody hA hB value)
+
+def sndChoice (hA : Kinded A) (hB : Kinded B)
+    (value : DefEqChecked Sig Γ (productTy hA hB)) : DefEqChecked Sig Γ B :=
+  DefEqChecked.eps hB (secondSelector hA hB value)
+
+def secondSelector_pair (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (a : DefEqChecked Sig Γ A) (b : DefEqChecked Sig Γ B) :
+    Intrinsic.Proves Γ H
+      ((secondSelector hA hB (pairChecked hA hB a b)).app b) := by
+  apply Intrinsic.Proves.betaExpand typed hB _ b
+  rw [show (secondSelectorBody hA hB (pairChecked hA hB a b)).openBound typed b =
+      DefEqChecked.existsTm hA
+        (secondEquationAfterSecond hA hB
+          (repPair hA hB (pairChecked hA hB a b)) b) by
+    simpa [secondSelectorBody] using
+      secondExistsBody_open typed hA hB
+        (repPair hA hB (pairChecked hA hB a b)) b]
+  apply Intrinsic.Proves.existsIntroBody typed hA _ a
+  rw [secondEquationAfterSecond_open typed hA hB]
+  exact rep_pair typed hA hB a b
+
+def sndChoice_pair (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (a : DefEqChecked Sig Γ A) (b : DefEqChecked Sig Γ B) :
+    Intrinsic.Proves Γ H
+      (DefEqChecked.eq hB (sndChoice hA hB (pairChecked hA hB a b)) b) := by
+  let value := pairChecked hA hB a b
+  let selector := secondSelector hA hB value
+  let chosen := sndChoice hA hB value
+  have atB : Intrinsic.Proves Γ H (selector.app b) := secondSelector_pair typed hA hB a b
+  have atChosen : Intrinsic.Proves Γ H (selector.app chosen) :=
+    Intrinsic.Proves.choice hB selector b atB
+  have openedChosen : Intrinsic.Proves Γ H
+      ((secondSelectorBody hA hB value).openBound typed chosen) :=
+    Intrinsic.Proves.betaReduce typed hB (secondSelectorBody hA hB value) chosen atChosen
+  rw [show (secondSelectorBody hA hB value).openBound typed chosen =
+      DefEqChecked.existsTm hA
+        (secondEquationAfterSecond hA hB (repPair hA hB value) chosen) by
+    simpa [secondSelectorBody] using
+      secondExistsBody_open typed hA hB (repPair hA hB value) chosen] at openedChosen
+  let equation := secondEquationAfterSecond hA hB (repPair hA hB value) chosen
+  let companion := DefEqChecked.eps hA (DefEqChecked.lam hA equation)
+  have selectedEquation : Intrinsic.Proves Γ H (equation.openBound typed companion) :=
+    Intrinsic.Proves.betaReduce typed hA equation companion openedChosen
+  rw [secondEquationAfterSecond_open typed hA hB] at selectedEquation
+  have representation := rep_pair (H := H) typed hA hB a b
+  have pairEquality := Intrinsic.Proves.eqTrans typed (productCarrier_kinded hA hB)
+    (pairChurchChecked hA hB a b) (repPair hA hB value)
+    (pairChurchChecked hA hB companion chosen)
+    (Intrinsic.Proves.eqSymm typed (productCarrier_kinded hA hB)
+      (repPair hA hB value) (pairChurchChecked hA hB a b) representation)
+    selectedEquation
+  have components := pair_second_injective typed hA hB a companion b chosen pairEquality
+  exact Intrinsic.Proves.eqSymm typed hB b chosen components
+
+def sndBody (hA : Kinded A) (hB : Kinded B) :
+    DefEqChecked Sig (extendBound (productTy hA hB) Γ) B :=
+  let value := DefEqChecked.bv (productTy_kinded hA hB) 0 rfl
+  sndChoice hA hB value
+
+def sndChecked (hA : Kinded A) (hB : Kinded B)
+    (value : DefEqChecked Sig Γ (productTy hA hB)) : DefEqChecked Sig Γ B :=
+  (DefEqChecked.ofRaw (sndFunction (Γ := Γ) hA hB).tm
+    (sndFunction (Γ := Γ) hA hB).typing).app value
+
+theorem sndFunction_eq_lam (hA : Kinded A) (hB : Kinded B) :
+    DefEqChecked.ofRaw (sndFunction (Γ := Γ) hA hB).tm
+        (sndFunction (Γ := Γ) hA hB).typing =
+      DefEqChecked.lam (productTy_kinded hA hB) (sndBody hA hB) := by
+  apply DefEqChecked.ext
+  simp [sndFunction, sndBody, sndChoice, secondSelector, secondSelectorBody,
+    secondEquationBody, repPair, pairChurchChecked, pairChurch, pairFunction,
+    DefEqChecked.ofRaw, DefEqChecked.existsTm, DefEqChecked.lam,
+    DefEqChecked.app, DefEqChecked.eps, DefEqChecked.eq, DefEqChecked.rep,
+    DefEqChecked.bv, DefEqChecked.weaken, Checked.existsTm, Checked.lam,
+    Checked.app, Checked.eps, Checked.eq, Checked.rep, Checked.bv,
+    weaken, rename]
+
+theorem sndBody_open (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (value : DefEqChecked Sig Γ (productTy hA hB)) :
+    (sndBody hA hB).openBound typed value = sndChoice hA hB value := by
+  apply DefEqChecked.ext
+  simp [sndBody, sndChoice, secondSelector, secondSelectorBody,
+    secondEquationBody, repPair, pairChurchChecked, DefEqChecked.openBound,
+    DefEqChecked.existsTm, DefEqChecked.lam, DefEqChecked.app,
+    DefEqChecked.eps, DefEqChecked.eq, DefEqChecked.rep, DefEqChecked.bv,
+    DefEqChecked.weaken, DefEqChecked.ofRaw, FamilySub.openBound,
+    instantiate, liftSub]
+  constructor
+  · simp [weaken, rename, instantiate, liftSub]
+  · exact instantiate_pairFunction
+      (Γm := extendBound A (extendBound B (extendBound (productTy hA hB) Γ)))
+      (Γn := extendBound A (extendBound B Γ)) hA hB
+      (liftSub (liftSub (Fin.cases value.tm .bv)))
+
+def sndChecked_eq_choice (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (value : DefEqChecked Sig Γ (productTy hA hB)) :
+    Intrinsic.EqTm (sndChecked hA hB value) (sndChoice hA hB value) := by
+  have functionEq := sndFunction_eq_lam (Γ := Γ) hA hB
+  have reduction := Intrinsic.EqTm.beta typed (productTy_kinded hA hB)
+    (sndBody (Γ := Γ) hA hB) value
+  rw [← functionEq, sndBody_open typed hA hB value] at reduction
+  exact reduction
+
+/-- The public second projection satisfies its product β-law. -/
+def snd_pair (typed : TypedCtx Γ) (hA : Kinded A) (hB : Kinded B)
+    (a : DefEqChecked Sig Γ A) (b : DefEqChecked Sig Γ B) :
+    Intrinsic.Proves Γ H
+      (DefEqChecked.eq hB (sndChecked hA hB (pairChecked hA hB a b)) b) :=
+  Intrinsic.Proves.eqTrans typed hB
+    (sndChecked hA hB (pairChecked hA hB a b))
+    (sndChoice hA hB (pairChecked hA hB a b)) b
+    (Intrinsic.Proves.eqOfEqTm hB
+      (sndChecked_eq_choice typed hA hB (pairChecked hA hB a b)))
+    (sndChoice_pair typed hA hB a b)
+
 end Nucleus.Hol.FamilySub
