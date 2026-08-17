@@ -121,6 +121,108 @@ noncomputable def CChecks.renameTypes {Γ : BoundCtx ClassicalSig source depth}
       rw [renameBoundCtx_empty] at cp
       exact .tyExists cp
 
+/-- The proof-relevant checking mirror is stable under well-formed type
+substitution.  This equation-style definition is the certificate counterpart
+of `Checks.instantiateTypes` and exposes usable reduction rules for semantic
+substitution and family beta. -/
+noncomputable def CChecks.instantiateTypes
+    {Γ : BoundCtx ClassicalSig source depth}
+    {expression : Expr ClassicalSig source sort depth}
+    {classification : Classification ClassicalSig source sort}
+    (checking : CChecks Γ expression classification)
+    {σ : TySub ClassicalSig source target} (wellFormed : WellFormedTySub σ) :
+    CChecks (instantiateBoundCtx σ Γ) (HolE.instantiateTypes σ expression)
+      (classification.instantiate σ) := by
+  exact match checking with
+  | .boolTy => by simpa using (CChecks.boolTy (types := target))
+  | .arr hA hB => by
+      have cA := hA.instantiateTypes wellFormed
+      have cB := hB.instantiateTypes wellFormed
+      rw [instantiateBoundCtx_empty] at cA cB
+      change CKinded _ at cA cB
+      simpa using CChecks.arr cA cB
+  | .tyApp hF hA => by
+      have cF := hF.instantiateTypes wellFormed
+      have cA := hA.instantiateTypes wellFormed
+      rw [instantiateBoundCtx_empty] at cF cA
+      change CKinded _ at cF cA
+      simpa using CChecks.tyApp cF cA
+  | .tyLam body => by
+      have cb := body.instantiateTypes wellFormed.lift
+      rw [instantiateBoundCtx_empty] at cb
+      change CKinded _ at cb
+      simpa using CChecks.tyLam cb
+  | .tyBv v => by
+      simpa using (wellFormed v).certificate
+  | .sub hA hp => by
+      have cA := hA.instantiateTypes wellFormed
+      have cp := hp.instantiateTypes wellFormed
+      rw [instantiateBoundCtx_empty] at cA
+      change CKinded _ at cA
+      rw [instantiateBoundCtx_extend, instantiateBoundCtx_empty] at cp
+      simpa using CChecks.sub cA cp
+  | .model hp => by
+      have cp := hp.instantiateTypes wellFormed.lift
+      rw [instantiateBoundCtx_empty] at cp
+      simpa using CChecks.model cp
+  | .primFam symbol => nomatch symbol
+  | .primTm rule => nomatch rule
+  | .bv hA lookup => by
+      have cA := hA.instantiateTypes wellFormed
+      rw [instantiateBoundCtx_empty] at cA
+      change CKinded _ at cA
+      exact .bv cA (congrArg (HolE.instantiateTypes _) lookup)
+  | .fv name hA => by
+      have cA := hA.instantiateTypes wellFormed
+      rw [instantiateBoundCtx_empty] at cA
+      change CKinded _ at cA
+      exact .fv name cA
+  | .app hA hB hf hx => by
+      have cA := hA.instantiateTypes wellFormed
+      have cB := hB.instantiateTypes wellFormed
+      rw [instantiateBoundCtx_empty] at cA cB
+      change CKinded _ at cA cB
+      exact .app cA cB (hf.instantiateTypes wellFormed)
+        (hx.instantiateTypes wellFormed)
+  | .lam body hA hB hb => by
+      have cA := hA.instantiateTypes wellFormed
+      have cB := hB.instantiateTypes wellFormed
+      rw [instantiateBoundCtx_empty] at cA cB
+      change CKinded _ at cA cB
+      have cb := hb.instantiateTypes wellFormed
+      rw [instantiateBoundCtx_extend] at cb
+      simpa using CChecks.lam _ cA cB cb
+  | .bool value => .bool value
+  | .eq hA hx hy => by
+      have cA := hA.instantiateTypes wellFormed
+      rw [instantiateBoundCtx_empty] at cA
+      change CKinded _ at cA
+      exact .eq cA (hx.instantiateTypes wellFormed)
+        (hy.instantiateTypes wellFormed)
+  | .eps hA hp => by
+      have cA := hA.instantiateTypes wellFormed
+      rw [instantiateBoundCtx_empty] at cA
+      change CKinded _ at cA
+      exact .eps cA (hp.instantiateTypes wellFormed)
+  | .abs hA hp hx => by
+      have cA := hA.instantiateTypes wellFormed
+      have cp := hp.instantiateTypes wellFormed
+      rw [instantiateBoundCtx_empty] at cA
+      change CKinded _ at cA
+      rw [instantiateBoundCtx_extend, instantiateBoundCtx_empty] at cp
+      exact .abs cA cp (hx.instantiateTypes wellFormed)
+  | .rep hA hp hx => by
+      have cA := hA.instantiateTypes wellFormed
+      have cp := hp.instantiateTypes wellFormed
+      rw [instantiateBoundCtx_empty] at cA
+      change CKinded _ at cA
+      rw [instantiateBoundCtx_extend, instantiateBoundCtx_empty] at cp
+      exact .rep cA cp (hx.instantiateTypes wellFormed)
+  | .tyExists hp => by
+      have cp := hp.instantiateTypes wellFormed.lift
+      rw [instantiateBoundCtx_empty] at cp
+      exact .tyExists cp
+
 @[simp] theorem cSem_boolTy (env : CTypeEnv types) :
     cSem (CChecks.boolTy (types := types)) env = cBool := rfl
 
