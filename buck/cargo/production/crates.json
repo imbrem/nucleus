@@ -121,6 +121,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-data-cbor@0.0.0",
+      "name": "covalence-data-cbor",
+      "version": "0.0.0",
+      "path": "crates/data/cbor",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_data_cbor",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-data-container@0.0.0",
       "name": "covalence-data-container",
       "version": "0.0.0",
@@ -175,6 +190,21 @@
       "targets": [
         {
           "name": "covalence_lib_bigint",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-lib-cbor@0.0.0",
+      "name": "covalence-lib-cbor",
+      "version": "0.0.0",
+      "path": "crates/lib/cbor",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_lib_cbor",
           "kinds": [
             "lib"
           ]
@@ -513,6 +543,13 @@
     {
       "source": "workspace#covalence-data-cas@0.0.0",
       "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-cbor@0.0.0",
+      "target": "workspace#covalence-data-num@0.0.0",
       "kinds": [
         "normal"
       ]
