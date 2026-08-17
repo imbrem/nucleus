@@ -1,0 +1,18 @@
+[package]
+name = "covalence-lib-cbor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "CBOR serialization for Nucleus"
+publish = false
+
+[features]
+default = ["serde"]
+serde = ["dep:ciborium"]
+
+[dependencies]
+ciborium = { version = "0.2.2", optional = true }
+
+[lints]
+workspace = true

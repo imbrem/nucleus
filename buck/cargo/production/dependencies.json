@@ -437,6 +437,76 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#ciborium@0.2.2",
+      "name": "ciborium",
+      "version": "0.2.2",
+      "checksum": "42e69ffd6f0917f5c029256a24d0161db17cea3997d185db0d35926308770f0e",
+      "edition": "2021",
+      "features": [
+        "default",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Nathaniel McCallum <npmccallum@profian.com>",
+        "CARGO_PKG_DESCRIPTION": "serde implementation of CBOR using ciborium-basic",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/enarx/ciborium",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/enarx/ciborium"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "ciborium_io": ":ciborium-io-0.2.2",
+            "ciborium_ll": ":ciborium-ll-0.2.2",
+            "serde": ":serde-1.0.229"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#ciborium-io@0.2.2",
+      "name": "ciborium-io",
+      "version": "0.2.2",
+      "checksum": "05afea1e0a06c9be33d539b876f1ce3692f4afea2cb41f740e7743225ed1c757",
+      "edition": "2021",
+      "features": [
+        "alloc",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Nathaniel McCallum <npmccallum@profian.com>",
+        "CARGO_PKG_DESCRIPTION": "Simplified Read/Write traits for no_std usage",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/enarx/ciborium",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/enarx/ciborium"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#ciborium-ll@0.2.2",
+      "name": "ciborium-ll",
+      "version": "0.2.2",
+      "checksum": "57663b653d948a338bfb3eeba9bb2fd5fcfaecb9e199e87e1eda4d9e8b240fd9",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Nathaniel McCallum <npmccallum@profian.com>",
+        "CARGO_PKG_DESCRIPTION": "Low-level CBOR codec primitives",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/enarx/ciborium",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/enarx/ciborium"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "ciborium_io": ":ciborium-io-0.2.2",
+            "half": ":half-2.7.1"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#cid@0.11.3",
       "name": "cid",
       "version": "0.11.3",
@@ -1031,6 +1101,27 @@
         }
       ],
       "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#half@2.7.1",
+      "name": "half",
+      "version": "2.7.1",
+      "checksum": "6ea2d84b969582b4b1864a92dc5d27cd2b77b622a8d79306834f1be5ba20d84b",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Kathryn Long <squeeself@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Half-precision floating point f16 and bf16 types for Rust implementing the IEEE 754-2008 standard binary16 and bfloat16 types.",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/VoidStarKat/half-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "cfg_if": ":cfg-if-1.0.4",
+            "zerocopy": ":zerocopy-0.8.55"
+          }
+        }
+      ]
     },
     {
       "id": "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
@@ -3151,7 +3242,9 @@
       "checksum": "b5a105cd7b140f6eeec8acff2ea38135d3cab283ada58540f629fe51e46696eb",
       "edition": "2021",
       "features": [
-        "simd"
+        "derive",
+        "simd",
+        "zerocopy-derive"
       ],
       "env": {
         "CARGO_PKG_AUTHORS": "Joshua Liebow-Feeser <joshlf@google.com>:Jack Wrenn <jswrenn@amazon.com>",
@@ -3160,9 +3253,36 @@
         "CARGO_PKG_REPOSITORY": "https://github.com/google/zerocopy"
       },
       "targets": [
-        {}
+        {
+          "named_deps": {
+            "zerocopy_derive": ":zerocopy-derive-0.8.55"
+          }
+        }
       ],
       "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#zerocopy-derive@0.8.55",
+      "name": "zerocopy-derive",
+      "version": "0.8.55",
+      "checksum": "0fe976fb70c78cd64cccfe3a6fc142244e8a77b70959b30faf9d0ac37ee228eb",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Joshua Liebow-Feeser <joshlf@google.com>:Jack Wrenn <jswrenn@amazon.com>",
+        "CARGO_PKG_DESCRIPTION": "Custom derive for traits from the zerocopy crate",
+        "CARGO_PKG_LICENSE": "BSD-2-Clause OR Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/google/zerocopy"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "proc_macro2": ":proc-macro2-1.0.107",
+            "quote": ":quote-1.0.47",
+            "syn": ":syn-2.0.119"
+          },
+          "proc_macro": true
+        }
+      ]
     },
     {
       "id": "registry+https://github.com/rust-lang/crates.io-index#zeroize@1.9.0",
@@ -3255,6 +3375,14 @@
       "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#num-bigint@0.4.8"
+      ]
+    },
+    {
+      "id": "workspace#covalence-lib-cbor@0.0.0",
+      "name": "covalence-lib-cbor",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#ciborium@0.2.2"
       ]
     },
     {
@@ -3790,6 +3918,41 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#ciborium-ll@0.2.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#ciborium-io@0.2.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#ciborium-ll@0.2.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#half@2.7.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#ciborium@0.2.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#ciborium-io@0.2.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#ciborium@0.2.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#ciborium-ll@0.2.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#ciborium@0.2.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#cid@0.11.3",
       "target": "registry+https://github.com/rust-lang/crates.io-index#multibase@0.9.3",
       "kinds": [
@@ -4095,6 +4258,20 @@
         "normal (cfg(target_os = \"netbsd\"))",
         "normal (cfg(target_os = \"solaris\"))",
         "normal (cfg(target_os = \"vxworks\"))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#half@2.7.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#half@2.7.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#zerocopy@0.8.55",
+      "kinds": [
+        "normal"
       ]
     },
     {
@@ -5254,6 +5431,35 @@
       "target": "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen-shared@0.2.121",
       "kinds": [
         "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#zerocopy-derive@0.8.55",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#zerocopy-derive@0.8.55",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#zerocopy-derive@0.8.55",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#zerocopy@0.8.55",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#zerocopy-derive@0.8.55",
+      "kinds": [
+        "normal",
+        "normal (cfg(any()))"
       ]
     }
   ]
