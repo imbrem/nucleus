@@ -176,6 +176,29 @@ def CChecks.typeKinded : CHasType Γ term A → CKinded A
   | .eps hA _ | .rep hA _ _ => hA
   | .abs hA hp _ => .sub hA hp
 
+theorem CChecks.classification_unique {types : List Kind} {sort : HolSort} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth} {expression : Expr ClassicalSig types sort depth}
+    {leftClass rightClass : Classification ClassicalSig types sort}
+    (left : CChecks Γ expression leftClass)
+    (right : CChecks Γ expression rightClass) : leftClass = rightClass := by
+  induction left <;> cases right <;> simp_all
+  case primTm.primTm ruleLeft ruleRight => exact nomatch ruleLeft
+  case app.app hA1 hB1 lf lx ihA ihB ihf ihx A2 hA2 rx hB2 rf =>
+    have equal := ihB hB2
+    injection equal with typeEqual
+    injection typeEqual
+  case lam.lam hA1 hB1 body1 ihA ihB ihBody B2 hB2 hA2 body2 =>
+    have equal := ihBody body2
+    injection equal
+
+theorem CChecks.type_unique {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth} {term : Tm ClassicalSig types depth}
+    {A B : Ty ClassicalSig types} (left : CHasType Γ term A)
+    (right : CHasType Γ term B) : A = B := by
+  have equal := left.classification_unique right
+  cases equal
+  rfl
+
 theorem Checks.toC {types : List Kind} {sort : HolSort} {depth : Nat}
     {Γ : BoundCtx ClassicalSig types depth} {expression : Expr ClassicalSig types sort depth}
     {classification : Classification ClassicalSig types sort}
@@ -337,5 +360,24 @@ noncomputable def cEval {types : List Kind} {depth : Nat}
     {A : Ty ClassicalSig types} (env : CTypeEnv types) (bound : CBoundEnv depth)
     (typing : CHasType Γ term A) (expected : CPointed) : ULift.{1, 0} expected.carrier :=
   cSem typing env bound expected
+
+theorem CChecks.unique {types : List Kind} {sort : HolSort} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth} {expression : Expr ClassicalSig types sort depth}
+    {classification : Classification ClassicalSig types sort}
+    (left right : CChecks Γ expression classification) : left = right := by
+  induction left <;> cases right
+  case app.app hA₁ hB₁ hf₁ hx₁ ihA ihB ihf ihx A₂ hA₂ hx₂ hB₂ hf₂ =>
+    have typeEqual := hx₁.type_unique hx₂
+    subst A₂
+    congr 1 <;> apply_assumption
+  all_goals try rfl
+  all_goals congr 1 <;> apply_assumption
+
+theorem cSem_certificate_coherent {types : List Kind} {sort : HolSort} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth} {expression : Expr ClassicalSig types sort depth}
+    {classification : Classification ClassicalSig types sort}
+    (left right : CChecks Γ expression classification) (env : CTypeEnv types) :
+    cSem left env = cSem right env := by
+  rw [left.unique right]
 
 end Nucleus.HolE
