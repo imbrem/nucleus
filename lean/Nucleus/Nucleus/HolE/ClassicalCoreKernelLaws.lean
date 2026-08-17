@@ -7,6 +7,35 @@ namespace Nucleus.HolE
 
 set_option relaxedAutoImplicit true
 
+theorem CRealizes.eq_true_elim
+    (hA : Kinded A)
+    (realizes : CRealizes (Γ := Γ) env bound (.eq A x y) .boolTy cBool true) :
+    ∃ (left : CDefChecks Γ x A) (right : CDefChecks Γ y A),
+      cDefSem left env bound (denoteChecked hA env) =
+        cDefSem right env bound (denoteChecked hA env) := by
+  classical
+  obtain ⟨checking, truth⟩ := realizes
+  rw [checking.rawView_semantics] at truth
+  cases viewEq : checking.rawView with
+  | mk rawType raw =>
+    rw [viewEq] at truth
+    simp only [CDefRawView.sem] at truth
+    cases raw with
+    | eq cA left right =>
+        refine ⟨.exact left, .exact right, ?_⟩
+        have decision := congrArg ULift.down truth
+        change alignCValue cBool cBool (decide
+          ((cSem left env bound (cSem cA env)).down =
+            (cSem right env bound (cSem cA env)).down)) = true at decision
+        have decided : decide
+            ((cSem left env bound (cSem cA env)).down =
+              (cSem right env bound (cSem cA env)).down) = true :=
+          (alignCValue_self cBool _).symm.trans decision
+        have carrierEq : cSem cA env = denoteChecked hA env :=
+          cSem_certificate_coherent cA hA.certificate env
+        rw [← carrierEq]
+        exact congrArg ULift.up (of_decide_eq_true decided)
+
 theorem classical_convert (eqLaws : ClassicalEqTmRuleLaws)
     (conclusionTyping : HasTypeDefEq Γ q .boolTy)
     (equality : EqTm Γ p q .boolTy)
