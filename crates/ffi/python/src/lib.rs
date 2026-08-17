@@ -16,6 +16,7 @@
 
 use covalence_lib_python::prelude::*;
 
+mod bdd;
 mod cbor;
 mod hash;
 mod lrat;
@@ -26,6 +27,7 @@ mod sat;
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 fn _covalence(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("__version__", env!("CARGO_PKG_VERSION"))?;
+    bdd::register(module)?;
     cbor::register(module)?;
     hash::register(module)?;
     sat::register(module)?;

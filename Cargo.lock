@@ -358,6 +358,7 @@ dependencies = [
  "covalence-data-cbor",
  "covalence-lib-hash",
  "covalence-lib-python",
+ "covalence-logic-bdd",
  "covalence-logic-lrat",
  "covalence-logic-sat",
 ]
@@ -443,6 +444,13 @@ dependencies = [
  "indexmap",
  "libsqlite3-sys",
  "sqlite-wasm-rs",
+]
+
+[[package]]
+name = "covalence-logic-bdd"
+version = "0.0.0"
+dependencies = [
+ "covalence-logic-sat",
 ]
 
 [[package]]

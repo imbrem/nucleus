@@ -59,6 +59,14 @@ recursively converts those scalar types, lists, and dictionaries.
 True
 ```
 
+`covalence.logic.bdd` exposes general `Diagram` syntax alongside canonical
+`Bdd` values owned by a `BddManager`. General diagrams may be unordered or
+redundant; `manager.reduce(diagram)` canonicalizes them. Canonical values use
+`&`, `|`, `^`, and `~`, support evaluation and existential quantification, and
+convert to and from `covalence.logic.sat.Formula`. `Bdd.to_cnf()` returns a
+linear-size Tseitin encoding together with the complete list of introduced
+variables.
+
 | Path                | Contents                                       |
 | ------------------- | ---------------------------------------------- |
 | `src/`              | The `#[pymodule]` and its bindings             |
