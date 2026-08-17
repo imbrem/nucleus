@@ -28,96 +28,96 @@ noncomputable def CChecks.renameTypes {Γ : BoundCtx ClassicalSig source depth}
     (checking : CChecks Γ expression classification) (ρ : TyRen source target) :
     CChecks (renameBoundCtx ρ Γ) (HolE.renameTypes ρ expression)
       (classification.rename ρ) := by
-  induction checking generalizing target with
-  | boolTy => simpa using (CChecks.boolTy (types := target))
-  | arr _ _ ihA ihB =>
-      have cA := ihA ρ
-      have cB := ihB ρ
+  exact match checking with
+  | .boolTy => by simpa using (CChecks.boolTy (types := target))
+  | .arr hA hB => by
+      have cA := hA.renameTypes ρ
+      have cB := hB.renameTypes ρ
       rw [renameBoundCtx_empty] at cA cB
       change CKinded _ at cA cB
       simpa [renameBoundCtx, Classification.rename, HolE.renameTypes] using
         CChecks.arr cA cB
-  | tyApp _ _ ihF ihA =>
-      have cF := ihF ρ
-      have cA := ihA ρ
+  | .tyApp hF hA => by
+      have cF := hF.renameTypes ρ
+      have cA := hA.renameTypes ρ
       rw [renameBoundCtx_empty] at cF cA
       change CKinded _ at cF cA
       simpa [renameBoundCtx, Classification.rename, HolE.renameTypes] using
         CChecks.tyApp cF cA
-  | tyLam _ ih =>
-      have cb := ih (liftTyRen ρ)
+  | .tyLam body => by
+      have cb := body.renameTypes (liftTyRen ρ)
       rw [renameBoundCtx_empty] at cb
       change CKinded _ at cb
       simpa [renameBoundCtx, Classification.rename, HolE.renameTypes] using
         CChecks.tyLam cb
-  | tyBv v => simpa using CChecks.tyBv (ρ v)
-  | sub _ _ ihA ihp =>
-      have cA := ihA ρ
-      have cp := ihp ρ
+  | .tyBv v => by simpa using CChecks.tyBv (ρ v)
+  | .sub hA hp => by
+      have cA := hA.renameTypes ρ
+      have cp := hp.renameTypes ρ
       rw [renameBoundCtx_empty] at cA
       change CKinded _ at cA
       rw [renameBoundCtx_extend, renameBoundCtx_empty] at cp
       simpa [renameBoundCtx, Classification.rename, HolE.renameTypes] using
         CChecks.sub cA cp
-  | model _ ihp =>
-      have cp := ihp (liftTyRen ρ)
+  | .model hp => by
+      have cp := hp.renameTypes (liftTyRen ρ)
       rw [renameBoundCtx_empty] at cp
       simpa [renameBoundCtx, Classification.rename, HolE.renameTypes] using
         CChecks.model cp
-  | primFam symbol => exact nomatch symbol
-  | primTm rule => exact nomatch rule
-  | bv hA lookup ihA =>
-      have cA := ihA ρ
+  | .primFam symbol => nomatch symbol
+  | .primTm rule => nomatch rule
+  | .bv hA lookup => by
+      have cA := hA.renameTypes ρ
       rw [renameBoundCtx_empty] at cA
       change CKinded _ at cA
       exact .bv cA (congrArg (HolE.renameTypes ρ) lookup)
-  | fv name hA ihA =>
-      have cA := ihA ρ
+  | .fv name hA => by
+      have cA := hA.renameTypes ρ
       rw [renameBoundCtx_empty] at cA
       change CKinded _ at cA
       exact .fv name cA
-  | app hA hB hf hx ihA ihB ihf ihx =>
-      have cA := ihA ρ
-      have cB := ihB ρ
+  | .app hA hB hf hx => by
+      have cA := hA.renameTypes ρ
+      have cB := hB.renameTypes ρ
       rw [renameBoundCtx_empty] at cA cB
       change CKinded _ at cA cB
-      exact .app cA cB (ihf ρ) (ihx ρ)
-  | lam body hA hB hb ihA ihB ihb =>
-      have cA := ihA ρ
-      have cB := ihB ρ
+      exact .app cA cB (hf.renameTypes ρ) (hx.renameTypes ρ)
+  | .lam body hA hB hb => by
+      have cA := hA.renameTypes ρ
+      have cB := hB.renameTypes ρ
       rw [renameBoundCtx_empty] at cA cB
       change CKinded _ at cA cB
-      have cb := ihb ρ
+      have cb := hb.renameTypes ρ
       rw [renameBoundCtx_extend] at cb
       simpa [renameBoundCtx_extend, Classification.rename, HolE.renameTypes] using
         CChecks.lam _ cA cB cb
-  | bool value => exact .bool value
-  | eq hA hx hy ihA ihx ihy =>
-      have cA := ihA ρ
+  | .bool value => .bool value
+  | .eq hA hx hy => by
+      have cA := hA.renameTypes ρ
       rw [renameBoundCtx_empty] at cA
       change CKinded _ at cA
-      exact .eq cA (ihx ρ) (ihy ρ)
-  | eps hA hp ihA ihp =>
-      have cA := ihA ρ
+      exact .eq cA (hx.renameTypes ρ) (hy.renameTypes ρ)
+  | .eps hA hp => by
+      have cA := hA.renameTypes ρ
       rw [renameBoundCtx_empty] at cA
       change CKinded _ at cA
-      exact .eps cA (ihp ρ)
-  | abs hA hp hx ihA ihp ihx =>
-      have cA := ihA ρ
-      have cp := ihp ρ
-      rw [renameBoundCtx_empty] at cA
-      change CKinded _ at cA
-      rw [renameBoundCtx_extend, renameBoundCtx_empty] at cp
-      exact .abs cA cp (ihx ρ)
-  | rep hA hp hx ihA ihp ihx =>
-      have cA := ihA ρ
-      have cp := ihp ρ
+      exact .eps cA (hp.renameTypes ρ)
+  | .abs hA hp hx => by
+      have cA := hA.renameTypes ρ
+      have cp := hp.renameTypes ρ
       rw [renameBoundCtx_empty] at cA
       change CKinded _ at cA
       rw [renameBoundCtx_extend, renameBoundCtx_empty] at cp
-      exact .rep cA cp (ihx ρ)
-  | tyExists hp ihp =>
-      have cp := ihp (liftTyRen ρ)
+      exact .abs cA cp (hx.renameTypes ρ)
+  | .rep hA hp hx => by
+      have cA := hA.renameTypes ρ
+      have cp := hp.renameTypes ρ
+      rw [renameBoundCtx_empty] at cA
+      change CKinded _ at cA
+      rw [renameBoundCtx_extend, renameBoundCtx_empty] at cp
+      exact .rep cA cp (hx.renameTypes ρ)
+  | .tyExists hp => by
+      have cp := hp.renameTypes (liftTyRen ρ)
       rw [renameBoundCtx_empty] at cp
       exact .tyExists cp
 
