@@ -28,6 +28,7 @@ rust_library(
     srcs = _RUST_SOURCES,
     tests = [":covalence_logic_hol-unit-test"],
     named_deps = {
+        "covalence_lib_cbor": "nucleus//crates/lib/cbor:covalence_lib_cbor",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
     },
     env = {
@@ -57,6 +58,7 @@ rust_test(
     edition = "2024",
     srcs = _RUST_SOURCES,
     named_deps = {
+        "covalence_lib_cbor": "nucleus//crates/lib/cbor:covalence_lib_cbor",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
     },
     env = {

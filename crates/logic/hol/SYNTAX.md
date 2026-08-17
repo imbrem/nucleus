@@ -42,6 +42,34 @@ The high-level forms `TM_AND`, `TM_INF`, `TM_NAT`, `TM_ZERO`, `TM_SUCC`, and
 `TM_LIT_NAT` are definitions. Their canonical checked expansions live in
 `Nucleus.HolE.EmptyNatural`; none extends the trusted HolE syntax.
 
+## Canonical CBOR wire format
+
+Kinds, types, and terms use definite CBOR arrays of the form
+`[numeric-tag, field, ...]`. Fields appear in constructor order and recursive
+children use the same representation. Integers use their shortest CBOR
+encoding; decoders reject non-canonical encodings, trailing data, wrong arity,
+unknown tags, and syntax nested more than 1024 nodes deep.
+
+`CborObject` is the primary syntax-codec boundary: `.encode()` produces a
+shared `CborValue`, while `T::decode(value)` reconstructs a syntax object.
+Bytewise encoding is only an outer canonical-CBOR adapter. Constructor payloads
+can be shared across syntactic sorts; for example both type and term application
+use `App<T>`, with `App<ArcTy>` and `App<ArcTm>` selecting the appropriate tag
+through their codec instances.
+
+A type link is `[TY_LINK, digest, format, kind]` and a term link is
+`[TM_LINK, digest, format, type]`, where `digest` is exactly 32 bytes. Format
+identifier `0` is `BLOB` and `1` is `CBOR_TREE`; `BLOB` is reserved until the
+term language has a raw-bytes literal former and currently produces an explicit
+not-implemented decoding error. The annotation is checked after resolution; it
+does not weaken the requirement that successful imports are closed and checked.
+
+Contexts have no separate wire tag. The empty context is the closed term
+`[TM_BOOL, true]`; `Context::And(premise, rest)` is
+`[TM_AND, premise, rest]`. Thus a theorem implication serializes its entire
+premise stack as an ordinary conjunction tree and can be lowered directly to
+context-free HolE syntax.
+
 Each row below is an exact constructor and wire-tag correspondence.
 
 | Rust | Lean | Canonical tag | ID |

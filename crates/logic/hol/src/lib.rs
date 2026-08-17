@@ -5,8 +5,13 @@ use std::sync::Arc;
 
 use covalence_lib_hash::O256;
 
+mod cbor;
 mod tag;
 
+pub use cbor::{
+    CborError, CborObject, CborValue, decode_term, decode_type, encode_term, encode_type,
+    term_from_value, term_to_value, type_from_value, type_to_value,
+};
 pub use tag::{SurfaceTag, UnknownSurfaceTag};
 
 /// Storage choices for indices held by surface syntax.
@@ -31,6 +36,20 @@ pub struct Variable<R: Repr> {
 pub struct TypeVariable<R: Repr> {
     pub index: Bv,
     pub kind: R::Kind,
+}
+
+/// The application former shared by type and term syntax.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct App<T> {
+    pub function: T,
+    pub argument: T,
+}
+
+impl<T> App<T> {
+    #[must_use]
+    pub const fn new(function: T, argument: T) -> Self {
+        Self { function, argument }
+    }
 }
 
 /// Canonical de Bruijn index for term bound variables.
@@ -112,7 +131,7 @@ impl<R: Repr> Kind<R> {
 pub enum Ty<R: Repr> {
     Bool,
     Arr(R::Ty, R::Ty),
-    App(R::Ty, R::Ty),
+    App(App<R::Ty>),
     Abs(R::Kind, R::Ty),
     Bv(R::TyVar),
     Sub(R::Ty, R::Tm),
@@ -128,7 +147,7 @@ impl<R: Repr> Ty<R> {
         match self {
             Self::Bool => SurfaceTag::TyBool,
             Self::Arr(_, _) => SurfaceTag::TyArr,
-            Self::App(_, _) => SurfaceTag::TyApp,
+            Self::App(_) => SurfaceTag::TyApp,
             Self::Abs(_, _) => SurfaceTag::TyLam,
             Self::Bv(_) => SurfaceTag::TyBv,
             Self::Sub(_, _) => SurfaceTag::TySub,
@@ -146,7 +165,7 @@ pub enum Tm<R: Repr> {
     Prim(R::Prim),
     Bv(Bv),
     Fv(R::Fv),
-    App(R::Tm, R::Tm),
+    App(App<R::Tm>),
     Lam(R::Ty, R::Tm),
     Bool(bool),
     Eq(R::Ty, R::Tm, R::Tm),
@@ -170,7 +189,7 @@ impl<R: Repr> Tm<R> {
             Self::Prim(_) => SurfaceTag::TmPrim,
             Self::Bv(_) => SurfaceTag::TmBv,
             Self::Fv(_) => SurfaceTag::TmFv,
-            Self::App(_, _) => SurfaceTag::TmApp,
+            Self::App(_) => SurfaceTag::TmApp,
             Self::Lam(_, _) => SurfaceTag::TmLam,
             Self::Bool(_) => SurfaceTag::TmBool,
             Self::Eq(_, _, _) => SurfaceTag::TmEq,
@@ -209,6 +228,8 @@ impl<R: Repr> AnyExpr<R> {
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 #[repr(u8)]
 pub enum Format {
+    /// Raw bytes. Reserved until the HOL surface has a bytes literal former.
+    Blob,
     CborTree,
 }
 
@@ -433,12 +454,15 @@ mod tests {
     #[test]
     fn default_indices_share_nodes_and_heterogeneous_storage_is_explicit() {
         let argument = Arc::new(Tm::<ArcRepr>::Bool(true));
-        let application = Tm::<ArcRepr>::App(Arc::clone(&argument), Arc::clone(&argument));
+        let application = Tm::<ArcRepr>::App(super::App::new(
+            Arc::clone(&argument),
+            Arc::clone(&argument),
+        ));
 
-        let Tm::App(left, right) = application else {
+        let Tm::App(application) = application else {
             panic!("expected application");
         };
-        assert!(Arc::ptr_eq(&left, &right));
+        assert!(Arc::ptr_eq(&application.function, &application.argument));
 
         let expressions = [
             AnyExpr::Kind(Kind::<ArcRepr>::Star),
