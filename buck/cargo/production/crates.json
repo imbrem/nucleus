@@ -344,6 +344,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-logic-hol@0.0.0",
+      "name": "covalence-logic-hol",
+      "version": "0.0.0",
+      "path": "crates/logic/hol",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_logic_hol",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-logic-lrat@0.0.0",
       "name": "covalence-logic-lrat",
       "version": "0.0.0",
@@ -599,6 +614,13 @@
     {
       "source": "workspace#covalence-lib-hash@0.0.0",
       "target": "workspace#covalence-lib-rand@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-hol@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
       "kinds": [
         "normal"
       ]
