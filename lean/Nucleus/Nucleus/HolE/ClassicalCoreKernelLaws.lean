@@ -93,6 +93,48 @@ private theorem entails_at_certificate
   obtain ⟨checking, truth⟩ := entails env bound truths
   exact (typing.certificate.coherent checking env bound cBool).trans truth
 
+theorem classical_eqTm_app
+    (leftRaw : HasType Γ (.app f x) B) (_rightRaw : HasType Γ (.app g y) B)
+    (leftFunctionRaw : HasType Γ f (.arr A B)) (leftArgumentRaw : HasType Γ x A)
+    (rightFunctionRaw : HasType Γ g (.arr A B)) (rightArgumentRaw : HasType Γ y A)
+    (functionEqual : CSemEq (Γ := Γ) f g (.arr A B))
+    (argumentEqual : CSemEq (Γ := Γ) x y A) :
+    CSemEq (Γ := Γ) (.app f x) (.app g y) B := by
+  intro leftTyping rightTyping env bound expected
+  let hA := leftArgumentRaw.certificate.typeKinded
+  let hB := leftRaw.certificate.typeKinded
+  let leftApp : CDefChecks Γ (.app f x) B :=
+    .exact (.app hA hB leftFunctionRaw.certificate leftArgumentRaw.certificate)
+  let rightApp : CDefChecks Γ (.app g y) B :=
+    .exact (.app hA hB rightFunctionRaw.certificate rightArgumentRaw.certificate)
+  rw [leftTyping.certificate.coherent leftApp env bound expected,
+    rightTyping.certificate.coherent rightApp env bound expected]
+  let domain := cSem hA env
+  let codomain := cSem hB env
+  let leftFunctionTyping : HasTypeDefEq Γ f (.arr A B) := .exact leftFunctionRaw
+  let rightFunctionTyping : HasTypeDefEq Γ g (.arr A B) := .exact rightFunctionRaw
+  let leftArgumentTyping : HasTypeDefEq Γ x A := .exact leftArgumentRaw
+  let rightArgumentTyping : HasTypeDefEq Γ y A := .exact rightArgumentRaw
+  have functions₀ := functionEqual leftFunctionTyping rightFunctionTyping
+    env bound ⟨domain.carrier → codomain.carrier, fun _ => codomain.point⟩
+  have functions : cSem leftFunctionRaw.certificate env bound
+      ⟨domain.carrier → codomain.carrier, fun _ => codomain.point⟩ =
+      cSem rightFunctionRaw.certificate env bound
+        ⟨domain.carrier → codomain.carrier, fun _ => codomain.point⟩ :=
+    ((.exact leftFunctionRaw.certificate : CDefChecks Γ f (.arr A B)).coherent
+      leftFunctionTyping.certificate env bound _).trans
+      (functions₀.trans (rightFunctionTyping.certificate.coherent
+        (.exact rightFunctionRaw.certificate) env bound _))
+  have arguments₀ := argumentEqual leftArgumentTyping rightArgumentTyping env bound domain
+  have arguments : cSem leftArgumentRaw.certificate env bound domain =
+      cSem rightArgumentRaw.certificate env bound domain :=
+    ((.exact leftArgumentRaw.certificate : CDefChecks Γ x A).coherent
+      leftArgumentTyping.certificate env bound domain).trans
+      (arguments₀.trans (rightArgumentTyping.certificate.coherent
+        (.exact rightArgumentRaw.certificate) env bound domain))
+  dsimp [leftApp, rightApp, cDefSem, cSem]
+  rw [functions, arguments]
+
 theorem classical_eqMp
     (hA : Kinded A) (conclusionTyping : HasTypeDefEq Γ (.app p y) .boolTy)
     (_hp : HasTypeDefEq Γ p (.arr A .boolTy))

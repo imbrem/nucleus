@@ -200,7 +200,7 @@ theorem EqTm.typing {types : List Kind} {depth : Nat}
   | refl typing => exact ⟨typing, typing⟩
   | symm _ ih => exact ih.symm
   | trans _ _ ih₁ ih₂ => exact ⟨ih₁.1, ih₂.2⟩
-  | app leftRaw rightRaw _ _ ihf ihx =>
+  | app leftRaw rightRaw _ _ _ _ _ _ ihf ihx =>
       exact ⟨.app leftRaw ihf.1 ihx.1, .app rightRaw ihf.2 ihx.2⟩
   | lam leftRaw rightRaw hA _ ih =>
       exact ⟨.lam _ leftRaw hA ih.1, .lam _ rightRaw hA ih.2⟩

@@ -15,7 +15,9 @@ inductive EqTm {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig] :
   | symm : EqTm Γ t u A → EqTm Γ u t A
   | trans : EqTm Γ t u A → EqTm Γ u v A → EqTm Γ t v A
   | app (leftRaw : HasType Γ (.app f x) B)
-      (rightRaw : HasType Γ (.app g y) B) :
+      (rightRaw : HasType Γ (.app g y) B)
+      (leftFunctionRaw : HasType Γ f (.arr A B)) (leftArgumentRaw : HasType Γ x A)
+      (rightFunctionRaw : HasType Γ g (.arr A B)) (rightArgumentRaw : HasType Γ y A) :
       EqTm Γ f g (.arr A B) → EqTm Γ x y A →
       EqTm Γ (.app f x) (.app g y) B
   | lam (leftRaw : HasType Γ (.lam A t) (.arr A B))
