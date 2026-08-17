@@ -317,7 +317,7 @@ inductive FamEq (Sig : Signature.{u}) [SigTyping Sig] [rules : SigFamilyEquality
   | arr : FamEq Sig A A' → FamEq Sig B B' → FamEq Sig (.arr A B) (.arr A' B')
   | app : FamEq Sig F F' → FamEq Sig A A' → FamEq Sig (.tyApp F A) (.tyApp F' A')
   | lam : FamEq Sig body body' → FamEq Sig (.tyLam body) (.tyLam body')
-  | sub : FamEq Sig A B → p = q → FamEq Sig (.sub A p) (.sub B q)
+  | sub : A = B → p = q → FamEq Sig (.sub A p) (.sub B q)
   | model : p = q → FamEq Sig (.model p) (.model q)
   | beta (body : Fam Sig (domain :: types) codomain) (argument : Fam Sig types domain)
       (hbody : Kinded body) (hargument : Kinded argument) :
