@@ -8,11 +8,14 @@ namespace Nucleus.HolE
 set_option relaxedAutoImplicit true
 
 theorem CRealizes.eq_true_elim
+    {types : List Kind} {depth : Nat} {Γ : BoundCtx ClassicalSig types depth}
+    {A : Ty ClassicalSig types} {x y : Tm ClassicalSig types depth}
+    {env : CTypeEnv types} {bound : CBoundEnv depth}
     (hA : Kinded A)
     (realizes : CRealizes (Γ := Γ) env bound (.eq A x y) .boolTy cBool true) :
-    ∃ (left : CDefChecks Γ x A) (right : CDefChecks Γ y A),
-      cDefSem left env bound (denoteChecked hA env) =
-        cDefSem right env bound (denoteChecked hA env) := by
+    ∃ (left : CChecks Γ x (.tm A)) (right : CChecks Γ y (.tm A)),
+      cSem left env bound (denoteChecked hA env) =
+        cSem right env bound (denoteChecked hA env) := by
   classical
   obtain ⟨checking, truth⟩ := realizes
   rw [checking.rawView_semantics] at truth
@@ -22,7 +25,7 @@ theorem CRealizes.eq_true_elim
     simp only [CDefRawView.sem] at truth
     cases raw with
     | eq cA left right =>
-        refine ⟨.exact left, .exact right, ?_⟩
+        refine ⟨left, right, ?_⟩
         have decision := congrArg ULift.down truth
         change alignCValue cBool cBool (decide
           ((cSem left env bound (cSem cA env)).down =
@@ -77,5 +80,82 @@ theorem classical_eqOfEqTm (eqLaws : ClassicalEqTmRuleLaws)
         rw [rawOperandsEqual]
         simp
         exact congrArg ULift.up (alignCValue_self cBool true)
+
+private theorem entails_at_certificate
+    {types : List Kind} {depth : Nat} {Γ : BoundCtx ClassicalSig types depth}
+    {H : List (Tm ClassicalSig types depth)}
+    {proposition : Tm ClassicalSig types depth}
+    (typing : HasTypeDefEq Γ proposition .boolTy)
+    (entails : CEntails (Γ := Γ) H proposition)
+    (env : CTypeEnv types) (bound : CBoundEnv depth)
+    (truths : CHypsTrue (Γ := Γ) env bound H) :
+    cDefSem typing.certificate env bound cBool = ⟨true⟩ := by
+  obtain ⟨checking, truth⟩ := entails env bound truths
+  exact (typing.certificate.coherent checking env bound cBool).trans truth
+
+theorem classical_eqMp
+    (hA : Kinded A) (conclusionTyping : HasTypeDefEq Γ (.app p y) .boolTy)
+    (_hp : HasTypeDefEq Γ p (.arr A .boolTy))
+    (_hx : HasTypeDefEq Γ x A) (_hy : HasTypeDefEq Γ y A)
+    (_equalityTyping : HasTypeDefEq Γ (.eq A x y) .boolTy)
+    (premiseTyping : HasTypeDefEq Γ (.app p x) .boolTy)
+    (equality : CEntails (Γ := Γ) H (.eq A x y))
+    (premise : CEntails (Γ := Γ) H (.app p x)) :
+    CEntails (Γ := Γ) H (.app p y) := by
+  intro env bound truths
+  classical
+  have eqRealizes : CRealizes (Γ := Γ) env bound (.eq A x y) .boolTy cBool true :=
+    equality env bound truths
+  obtain ⟨xChecking, yChecking, xy⟩ := eqRealizes.eq_true_elim hA
+  have premiseTrue := entails_at_certificate premiseTyping premise env bound truths
+  refine ⟨conclusionTyping.certificate, ?_⟩
+  rw [premiseTyping.certificate.rawView_semantics] at premiseTrue
+  rw [conclusionTyping.certificate.rawView_semantics]
+  cases premiseView : premiseTyping.certificate.rawView with
+  | mk premiseType premiseRaw =>
+    rw [premiseView] at premiseTrue
+    simp only [CDefRawView.sem] at premiseTrue
+    cases premiseRaw with
+    | app premiseDomain premiseCodomain premiseFunction premiseArgument =>
+      cases conclusionView : conclusionTyping.certificate.rawView with
+      | mk conclusionType conclusionRaw =>
+        simp only [CDefRawView.sem]
+        cases conclusionRaw with
+        | app conclusionDomain conclusionCodomain conclusionFunction conclusionArgument =>
+          have domainEq := premiseArgument.type_unique xChecking
+          cases domainEq
+          have conclusionDomainEq := conclusionArgument.type_unique yChecking
+          cases conclusionDomainEq
+          have functionTypeEq := premiseFunction.type_unique conclusionFunction
+          injection functionTypeEq with domainAgain codomainEq
+          subst conclusionType
+          have functionEq := premiseFunction.unique conclusionFunction
+          cases functionEq
+          have xCertEq := premiseArgument.unique xChecking
+          have yCertEq := conclusionArgument.unique yChecking
+          cases xCertEq
+          cases yCertEq
+          have domainCertEq := premiseDomain.unique conclusionDomain
+          have codomainCertEq := premiseCodomain.unique conclusionCodomain
+          cases domainCertEq
+          cases codomainCertEq
+          have carrierEq : cSem premiseDomain env = denoteChecked hA env :=
+            cSem_certificate_coherent premiseDomain hA.certificate env
+          change ULift.up (alignCValue (cSem premiseCodomain env) cBool
+            ((cSem premiseFunction env bound
+              ⟨(cSem premiseDomain env).carrier → (cSem premiseCodomain env).carrier,
+                fun _ => (cSem premiseCodomain env).point⟩).down
+              (cSem xChecking env bound (cSem premiseDomain env)).down)) =
+                ULift.up true at premiseTrue
+          change ULift.up (alignCValue (cSem premiseCodomain env) cBool
+            ((cSem premiseFunction env bound
+              ⟨(cSem premiseDomain env).carrier → (cSem premiseCodomain env).carrier,
+                fun _ => (cSem premiseCodomain env).point⟩).down
+              (cSem yChecking env bound (cSem premiseDomain env)).down)) =
+                ULift.up true
+          rw [carrierEq] at premiseTrue ⊢
+          have valueEq := congrArg ULift.down xy
+          rw [← valueEq]
+          exact premiseTrue
 
 end Nucleus.HolE
