@@ -179,4 +179,106 @@ noncomputable def CDefChecks.tyExistsConversion {types : List Kind} {depth : Nat
   | .tyExists _ => .refl
   | .conv source _ conversion => .trans source.tyExistsConversion conversion
 
+/-- Equality inversion exposes its common operand type and composes any result
+conversion from Boolean. -/
+structure CDefEqView {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth} {annotated : Ty ClassicalSig types}
+    {left right : Tm ClassicalSig types depth} {result : Ty ClassicalSig types}
+    (checking : CDefChecks Γ (.eq annotated left right) result) where
+  annotatedKinded : CKinded annotated
+  leftChecking : CDefChecks Γ left annotated
+  rightChecking : CDefChecks Γ right annotated
+  conversion : FamEq ClassicalSig .boolTy result
+
+noncomputable def CDefChecks.eqView {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth} {annotated : Ty ClassicalSig types}
+    {left right : Tm ClassicalSig types depth} {result : Ty ClassicalSig types}
+    (checking : CDefChecks Γ (.eq annotated left right) result) :
+    CDefEqView checking :=
+  match checking with
+  | .exact (.eq hA leftChecking rightChecking) =>
+      ⟨hA, .exact leftChecking, .exact rightChecking, .refl⟩
+  | .eq hA leftChecking rightChecking =>
+      ⟨hA, leftChecking, rightChecking, .refl⟩
+  | .conv source _ conversion =>
+      let view := source.eqView
+      ⟨view.annotatedKinded, view.leftChecking, view.rightChecking,
+        .trans view.conversion conversion⟩
+
+/-- Choice inversion exposes the predicate certificate and a conversion from
+the annotated carrier to the advertised result. -/
+structure CDefEpsView {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth} {carrier : Ty ClassicalSig types}
+    {predicate : Tm ClassicalSig types depth} {result : Ty ClassicalSig types}
+    (checking : CDefChecks Γ (.eps carrier predicate) result) where
+  carrierKinded : CKinded carrier
+  predicateChecking : CDefChecks Γ predicate (.arr carrier .boolTy)
+  conversion : FamEq ClassicalSig carrier result
+
+noncomputable def CDefChecks.epsView {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth} {carrier : Ty ClassicalSig types}
+    {predicate : Tm ClassicalSig types depth} {result : Ty ClassicalSig types}
+    (checking : CDefChecks Γ (.eps carrier predicate) result) :
+    CDefEpsView checking :=
+  match checking with
+  | .exact (.eps hA predicateChecking) =>
+      ⟨hA, .exact predicateChecking, .refl⟩
+  | .eps hA predicateChecking => ⟨hA, predicateChecking, .refl⟩
+  | .conv source _ conversion =>
+      let view := source.epsView
+      ⟨view.carrierKinded, view.predicateChecking,
+        .trans view.conversion conversion⟩
+
+/-- Subtype abstraction inversion. -/
+structure CDefAbsView {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth} {carrier : Ty ClassicalSig types}
+    {predicate : Tm ClassicalSig types 1} {value : Tm ClassicalSig types depth}
+    {result : Ty ClassicalSig types}
+    (checking : CDefChecks Γ (.abs carrier predicate value) result) where
+  carrierKinded : CKinded carrier
+  predicateChecking : CChecks (extendBound carrier emptyBound) predicate (.tm .boolTy)
+  valueChecking : CDefChecks Γ value carrier
+  conversion : FamEq ClassicalSig (.sub carrier predicate) result
+
+noncomputable def CDefChecks.absView {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth} {carrier : Ty ClassicalSig types}
+    {predicate : Tm ClassicalSig types 1} {value : Tm ClassicalSig types depth}
+    {result : Ty ClassicalSig types}
+    (checking : CDefChecks Γ (.abs carrier predicate value) result) :
+    CDefAbsView checking :=
+  match checking with
+  | .exact (.abs hA hp valueChecking) =>
+      ⟨hA, hp, .exact valueChecking, .refl⟩
+  | .abs hA hp valueChecking => ⟨hA, hp, valueChecking, .refl⟩
+  | .conv source _ conversion =>
+      let view := source.absView
+      ⟨view.carrierKinded, view.predicateChecking, view.valueChecking,
+        .trans view.conversion conversion⟩
+
+/-- Subtype representation inversion. -/
+structure CDefRepView {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth} {carrier : Ty ClassicalSig types}
+    {predicate : Tm ClassicalSig types 1} {value : Tm ClassicalSig types depth}
+    {result : Ty ClassicalSig types}
+    (checking : CDefChecks Γ (.rep carrier predicate value) result) where
+  carrierKinded : CKinded carrier
+  predicateChecking : CChecks (extendBound carrier emptyBound) predicate (.tm .boolTy)
+  valueChecking : CDefChecks Γ value (.sub carrier predicate)
+  conversion : FamEq ClassicalSig carrier result
+
+noncomputable def CDefChecks.repView {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth} {carrier : Ty ClassicalSig types}
+    {predicate : Tm ClassicalSig types 1} {value : Tm ClassicalSig types depth}
+    {result : Ty ClassicalSig types}
+    (checking : CDefChecks Γ (.rep carrier predicate value) result) :
+    CDefRepView checking :=
+  match checking with
+  | .exact (.rep hA hp valueChecking) =>
+      ⟨hA, hp, .exact valueChecking, .refl⟩
+  | .rep hA hp valueChecking => ⟨hA, hp, valueChecking, .refl⟩
+  | .conv source _ conversion =>
+      let view := source.repView
+      ⟨view.carrierKinded, view.predicateChecking, view.valueChecking,
+        .trans view.conversion conversion⟩
+
 end Nucleus.HolE
