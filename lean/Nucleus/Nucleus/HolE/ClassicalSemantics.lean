@@ -50,6 +50,16 @@ noncomputable def alignCValue (source target : CPointed) (value : source.carrier
   classical
   exact if equal : source = target then cast (by cases equal; rfl) value else target.point
 
+@[simp] theorem alignCValue_self (semantic : CPointed) (value : semantic.carrier) :
+    alignCValue semantic semantic value = value := by
+  simp [alignCValue]
+
+theorem alignCValue_of_eq {source target : CPointed} (equal : source = target)
+    (value : source.carrier) :
+    alignCValue source target value = cast (congrArg CPointed.carrier equal) value := by
+  subst target
+  simp
+
 def CGuarded {A : Type} (predicate : A → Bool) (value : A) : Prop :=
   predicate value = true ∨ ¬ ∃ witness, predicate witness = true
 
@@ -198,6 +208,19 @@ theorem CChecks.type_unique {types : List Kind} {depth : Nat}
   have equal := left.classification_unique right
   cases equal
   rfl
+
+theorem Checks.typeKinded {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth} {term : Tm ClassicalSig types depth}
+    {A : Ty ClassicalSig types} : HasType Γ term A → Kinded A
+  | .primTm rule => nomatch rule
+  | .bv hA _ | .fv _ hA => hA
+  | .app hf _ => by
+      cases hf.typeKinded with
+      | arr _ hB => exact hB
+  | .lam _ hA hb => .arr hA hb.typeKinded
+  | .bool _ | .eq _ _ _ | .tyExists _ => .boolTy
+  | .eps hA _ | .rep hA _ _ => hA
+  | .abs hA hp _ => .sub hA hp
 
 theorem Checks.toC {types : List Kind} {sort : HolSort} {depth : Nat}
     {Γ : BoundCtx ClassicalSig types depth} {expression : Expr ClassicalSig types sort depth}
@@ -379,5 +402,25 @@ theorem cSem_certificate_coherent {types : List Kind} {sort : HolSort} {depth : 
     (left right : CChecks Γ expression classification) (env : CTypeEnv types) :
     cSem left env = cSem right env := by
   rw [left.unique right]
+
+/-- Proof-irrelevant denotation of a well-kinded family.  The public API takes
+the ordinary `Prop`-valued checking judgment; `CChecks` remains an internal
+recursion device. -/
+noncomputable def denoteChecked {types : List Kind} {kind : Kind}
+    {family : Fam ClassicalSig types kind} (checking : Kinded family)
+    (env : CTypeEnv types) : CDenoteKind kind :=
+  cSem checking.certificate env
+
+/-- Evaluation of a syntax-directed typing derivation at its own denoted type. -/
+noncomputable def evalChecked {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth} {term : Tm ClassicalSig types depth}
+    {A : Ty ClassicalSig types} (typing : HasType Γ term A)
+    (env : CTypeEnv types) (bound : CBoundEnv depth) :
+    (denoteChecked typing.typeKinded env).carrier :=
+  (cSem typing.certificate env bound (denoteChecked typing.typeKinded env)).down
+
+/-- Closed Boolean truth under the deterministic classical interpretation. -/
+def CTrue {term : Tm ClassicalSig [] 0} (typing : HasType emptyBound term .boolTy) : Prop :=
+  (cSem typing.certificate emptyCTypeEnv emptyCBoundEnv cBool).down = true
 
 end Nucleus.HolE
