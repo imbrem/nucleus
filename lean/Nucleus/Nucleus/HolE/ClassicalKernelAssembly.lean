@@ -12,13 +12,6 @@ namespace Nucleus.HolE
 set_option relaxedAutoImplicit true
 
 structure ClassicalRemainingEqTmLaws where
-  lam : ∀ {types depth} {Γ : BoundCtx ClassicalSig types depth}
-      {A B : Ty ClassicalSig types}
-      {body₁ body₂ : Tm ClassicalSig types (depth + 1)},
-    HasType Γ (.lam A body₁) (.arr A B) →
-    HasType Γ (.lam A body₂) (.arr A B) → Kinded A →
-    CSemEq (Γ := extendBound A Γ) body₁ body₂ B →
-    CSemEq (Γ := Γ) (.lam A body₁) (.lam A body₂) (.arr A B)
   beta : ∀ {types depth} {Γ : BoundCtx ClassicalSig types depth}
       {A B : Ty ClassicalSig types} {body : Tm ClassicalSig types (depth + 1)}
       {x : Tm ClassicalSig types depth},
@@ -35,7 +28,7 @@ structure ClassicalRemainingEqTmLaws where
 theorem ClassicalRemainingEqTmLaws.assemble
     (remaining : ClassicalRemainingEqTmLaws) : ClassicalEqTmRuleLaws where
   app := classical_eqTm_app
-  lam := remaining.lam
+  lam := classical_eqTm_lam
   beta := remaining.beta
   eta := remaining.eta
 

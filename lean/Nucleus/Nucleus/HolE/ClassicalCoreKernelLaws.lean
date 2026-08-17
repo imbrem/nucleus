@@ -135,6 +135,54 @@ theorem classical_eqTm_app
   dsimp [leftApp, rightApp, cDefSem, cSem]
   rw [functions, arguments]
 
+theorem classical_eqTm_lam
+    (leftRaw : HasType Γ (.lam A body₁) (.arr A B))
+    (rightRaw : HasType Γ (.lam A body₂) (.arr A B)) (_hA : Kinded A)
+    (bodiesEqual : CSemEq (Γ := extendBound A Γ) body₁ body₂ B) :
+    CSemEq (Γ := Γ) (.lam A body₁) (.lam A body₂) (.arr A B) := by
+  intro leftTyping rightTyping env bound expected
+  let leftCheck := leftRaw.certificate
+  let rightCheck := rightRaw.certificate
+  rw [leftTyping.certificate.coherent (.exact leftCheck) env bound expected,
+    rightTyping.certificate.coherent (.exact rightCheck) env bound expected]
+  cases leftCheck with
+  | lam body hA hB leftBody =>
+    cases rightCheck with
+    | lam _ hA' hB' rightBody =>
+      have domainCertEq := hA.unique hA'
+      have codomainCertEq := hB.unique hB'
+      cases domainCertEq
+      cases codomainCertEq
+      change ULift.up (alignCValue
+        ⟨(cSem hA env).carrier → (cSem hB env).carrier,
+          fun _ => (cSem hB env).point⟩ expected
+        (fun argument =>
+          (cSem leftBody env
+            (extendCBoundEnv (cSem hA env) argument bound) (cSem hB env)).down)) =
+        ULift.up (alignCValue
+          ⟨(cSem hA env).carrier → (cSem hB env).carrier,
+            fun _ => (cSem hB env).point⟩ expected
+          (fun argument =>
+            (cSem rightBody env
+              (extendCBoundEnv (cSem hA env) argument bound) (cSem hB env)).down))
+      congr 2
+      funext argument
+      let leftBodyTyping : HasTypeDefEq (extendBound A Γ) body₁ B :=
+        .exact leftBody.toChecks
+      let rightBodyTyping : HasTypeDefEq (extendBound A Γ) body₂ B :=
+        .exact rightBody.toChecks
+      have bodyEq := bodiesEqual leftBodyTyping rightBodyTyping env
+        (extendCBoundEnv (cSem hA env) argument bound) (cSem hB env)
+      have rawBodyEq : cSem leftBody env
+          (extendCBoundEnv (cSem hA env) argument bound) (cSem hB env) =
+          cSem rightBody env
+            (extendCBoundEnv (cSem hA env) argument bound) (cSem hB env) :=
+        ((.exact leftBody : CDefChecks (extendBound A Γ) body₁ B).coherent
+          leftBodyTyping.certificate env _ _).trans
+          (bodyEq.trans (rightBodyTyping.certificate.coherent
+            (.exact rightBody) env _ _))
+      exact congrArg ULift.down rawBodyEq
+
 theorem classical_eqMp
     (hA : Kinded A) (conclusionTyping : HasTypeDefEq Γ (.app p y) .boolTy)
     (_hp : HasTypeDefEq Γ p (.arr A .boolTy))
