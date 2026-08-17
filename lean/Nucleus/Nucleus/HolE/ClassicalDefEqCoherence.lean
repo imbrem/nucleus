@@ -281,4 +281,42 @@ noncomputable def CDefChecks.repView {types : List Kind} {depth : Nat}
       ⟨view.carrierKinded, view.predicateChecking, view.valueChecking,
         .trans view.conversion conversion⟩
 
+/-- Semantic inversion of a true equality.  This deliberately returns the
+operand certificates existentially instead of mentioning the noncomputable
+view projections, which keeps rewriting robust. -/
+theorem cDefSem_eq_true_elim {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth} {annotated : Ty ClassicalSig types}
+    {left right : Tm ClassicalSig types depth} {result : Ty ClassicalSig types}
+    (checking : CDefChecks Γ (.eq annotated left right) result)
+    (env : CTypeEnv types) (bound : CBoundEnv depth)
+    (truth : cDefSem checking env bound cBool = ⟨true⟩) :
+    ∃ (hA : CKinded annotated) (leftChecking : CDefChecks Γ left annotated)
+        (rightChecking : CDefChecks Γ right annotated),
+      (cDefSem leftChecking env bound (cSem hA env)).down =
+        (cDefSem rightChecking env bound (cSem hA env)).down := by
+  classical
+  cases checking with
+  | exact raw =>
+      cases raw with
+      | eq hA leftChecking rightChecking =>
+          refine ⟨hA, .exact leftChecking, .exact rightChecking, ?_⟩
+          have decision := congrArg ULift.down truth
+          change alignCValue cBool cBool (decide _) = true at decision
+          have decision' : decide
+              ((cSem leftChecking env bound (cSem hA env)).down =
+                (cSem rightChecking env bound (cSem hA env)).down) = true := by
+            exact (alignCValue_self cBool _).symm.trans decision
+          exact of_decide_eq_true decision'
+  | eq hA leftChecking rightChecking =>
+      refine ⟨hA, leftChecking, rightChecking, ?_⟩
+      have decision := congrArg ULift.down truth
+      change alignCValue cBool cBool (decide _) = true at decision
+      have decision' : decide
+          ((cDefSem leftChecking env bound (cSem hA env)).down =
+            (cDefSem rightChecking env bound (cSem hA env)).down) = true := by
+        exact (alignCValue_self cBool _).symm.trans decision
+      exact of_decide_eq_true decision'
+  | conv source hB conversion =>
+      exact cDefSem_eq_true_elim source env bound truth
+
 end Nucleus.HolE
