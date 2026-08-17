@@ -97,6 +97,13 @@ grow the budget.
 one explicit checking boundary on the way in. Proof producers, importers,
 codecs, and e-graphs all live outside it.
 
+Signed admission looks like an exception and is not one. Bytes decode to a *raw
+candidate* through an untrusted decoder; the trusted side then re-encodes that
+candidate canonically and verifies the signature over the result. A decoder bug
+can therefore only cause a false rejection. What is trusted is the canonical
+**encoder**, not the decoder — and a theorem admitted under a key is recorded,
+so a session can report which keys its results depend on.
+
 ---
 
 ## 4. How to work

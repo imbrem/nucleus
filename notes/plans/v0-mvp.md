@@ -95,7 +95,10 @@ Session()
              antisymm · abs_rep · rep_abs · succ_injective · zero_not_succ
 
   inspect    hyps(thm) -> [Tm] · concl(thm) -> Tm · show(h) -> str
-  codec      to_cbor(h) -> bytes · from_cbor(bytes) -> handle
+  codec      to_cbor(h) -> bytes · from_cbor(bytes) -> handle        replay
+  signing    sign(thm, key) -> bytes
+             admit_signed(bytes, keys: [PublicKey]) -> Thm           trusted
+             trusted_keys() -> [PublicKey]     which keys this session relied on
 ```
 
 Each host wraps handles in a thin class for `repr`/`toString` — perhaps fifty
@@ -114,26 +117,86 @@ comparison in §5 means anything. Faithful beats comfortable here.
 
 ---
 
-## 4. CBOR, and where the trust boundary sits
+## 4. CBOR, signing, and where the trust boundary sits
 
-CBOR is for **serialization only**. Nothing is ever parsed as a checked object.
+There are **two decode paths with different trust levels**, and conflating them
+is a soundness hole. Name them separately in the API and in the code.
+
+### (a) Replay — untrusted
+
+CBOR carries raw syntax plus a rule tape. Decode, then re-run every rule through
+the same methods a caller would use. No privileged path, so a wrong decode
+yields a rejected or different theorem, never an unjustified one. This codec is
+userspace; its only hard requirement is not panicking on adversarial bytes.
+
+### (b) Signed admission — trusted, and it is a different thing entirely
+
+The point of signing is that the recipient **does not re-check the proof** —
+otherwise there would be no reason to sign. So the path is: verify a signature,
+decode a statement, admit it. And that makes the decoder trusted, because *what
+was signed is a meaning, and a decoder is the thing that assigns meaning to
+bytes*. A decoder that turns the signer's `|- true` into `|- false` converts an
+honest signature into a forged theorem. This is the classic
+signature-wrapping/canonicalization failure, and it has bitten XML-DSig, JWT,
+and several others.
+
+**But the decoder does not have to be the trusted component.** Invert it:
 
 ```
-to_cbor(thm)      →  bytes            an encoding of raw syntax + a rule tape
-from_cbor(bytes)  →  handle           decode to RAW syntax, then re-check
+1.  untrusted decoder            bytes B  ──▶  candidate statement in the arena
+2.  TRUSTED canonical encoder    statement ──▶  B′
+3.  TRUSTED                      verify(key, sig, hash(B′))
+4.  admit only if step 3 passes
 ```
 
-`from_cbor` builds raw syntax and pushes it through the same `type_of` and the
-same rule methods that a caller would use. It has no privileged path and cannot
-mint a theorem the API could not mint.
+If the decoder is wrong, `B′ ≠ B`, the hash differs, and the signature fails.
+**A decoder bug can only cause false rejection, never false acceptance.**
 
-Which is why **the CBOR codec is userspace, not TCB**. It may be wrong; it may
-not be unsound, because being wrong only produces a rejected or different term,
-never an unjustified one. Its only hard requirement is that it not panic on
-adversarial bytes — a fuzz target, not a review burden.
+This is strictly better than trusting the decoder, because parsing adversarial
+bytes into meaning is hard and serializing a known in-memory value is easy. It
+also means **`to_cbor` is TCB and `from_cbor` is not** — the opposite of the
+first draft of this plan, and a much smaller thing to audit. Perhaps 150 lines.
 
-Encoding the proof, not just the conclusion, is what makes a saved theorem
-checkable rather than merely believable.
+It also preserves the standing rule intact: nothing is ever deserialized *into* a
+checked object. Bytes become a raw candidate; the candidate is then verified.
+
+### What the trusted encoder must satisfy
+
+1. **Deterministic** — one statement, one byte string, always. Lean's
+   `Cbor.deterministic` with `deterministic_unique` is exactly this property, and
+   the Rust encoder is transcribed from it.
+2. **Injective** — distinct statements never share bytes. This is the actual
+   soundness property: a collision means a signature over one statement admits
+   the other. `HolLN.Json.encode_injective` is the shape of the theorem wanted.
+3. **Domain-separated** — a statement's bytes must not be readable as a term, a
+   proof, a snapshot, or any other signed object. Tag the preimage.
+4. **Total** — no panics on any arena-well-formed input.
+
+### Pin the theory in the signed object, from the first signature
+
+A signed `|- P` is only meaningful relative to the signature it was proved
+under: `base "foo"` in the signer's theory and `base "foo"` in the recipient's
+are different types that print identically. Without a theory identifier in the
+signed preimage, a signature transfers between incompatible theories.
+
+v0 declares no base types, so this is vacuous today — which is exactly why the
+field must be there anyway. **Adding it later invalidates every signature ever
+issued.** One `O256` of the theory's canonical description, in the preimage,
+now.
+
+### Signed admission is this kernel's `#print axioms`
+
+Admitting under a key accepts a theorem the session did not check. That is a
+different trust mode from everything else in the kernel and should be visible:
+
+- the trusted key set is an **explicit argument**, never ambient;
+- the session records which keys were actually relied upon;
+- `session.trusted_keys()` reports them.
+
+A result that depended on no key is checked outright; one that depended on `K`
+is checked *modulo* trusting `K`. That is precisely the distinction
+`#print axioms` draws in Lean, it costs almost nothing, and without it signing
+is a hole rather than a feature.
 
 ---
 
@@ -164,12 +227,15 @@ one level up, and it costs a day.
 | L4 | `kernel/src/eq.rs` | **TCB** | `EqTm`, 8 rules |
 | L5 | `kernel/src/proves.rs` | **TCB** | `Proves`, 12 rules |
 | L6 | `kernel/src/show.rs` | semi | printing. Not soundness-critical, but a wrong printer displays a true theorem as a false one — hold it to the corpus |
-| L7 | `codec/src/cbor.rs` | user | encode + decode-then-recheck; fuzz for panics |
+| L7a | `kernel/src/canon.rs` | **TCB** | canonical statement encoder: deterministic, injective, domain-separated, total. ~150 lines |
+| L7b | `codec/src/cbor.rs` | user | replay encode + decode; fuzz for panics |
+| L7c | `codec/src/signed.rs` | user | decode candidate, re-encode via L7a, verify. Untrusted by construction |
 | L8 | `ffi/python/src/hol.rs` + `python/covalence/hol.py` | user | follow the `hash`/`sat`/`lrat` pattern exactly, including `.pyi` |
 | L9 | `browser/src/hol.rs` + `packages/nucleus/src` | user | follow the `Repl` pattern; put `Session` on `window.nucleus` |
 | L10 | `conformance/` + three drivers | test | §5 |
 
 L1–L5 are unchanged from the eight-hour plan and keep their model assignment.
+L7a joins them in the TCB, taking the read budget to ≈ 1120 lines.
 L8 and L9 are mechanical against an existing pattern — good cheap-model lanes,
 and their oracle is L10.
 
@@ -178,7 +244,8 @@ and their oracle is L10.
 1. **L1–L5** to a Rust test proving `|- true` and one beta equality. Nothing else starts before this passes.
 2. **L6 + L10** — printer and transcript together, since the transcript is what the printer is checked against.
 3. **L8 and L9 in parallel** — both are one line per operation over a finished core.
-4. **L7** last. Serialization is the only piece with no consumer waiting on it, and `from_cbor` needs the rule methods finished to re-check through them.
+4. **L7a** whenever L1 lands — it depends only on the syntax, and it is TCB, so it wants your reading time early rather than at the end.
+5. **L7b, L7c** last. Replay needs the rule methods finished to re-check through them, and signed admission needs L7a.
 
 ### Static browser demo
 
@@ -191,8 +258,8 @@ the demo instruction is "open the console". No build step for whoever is looking
 ## 7. Out of scope for v0
 
 Scheme and Forsp · effect handlers, capabilities, revocation · the CEK machine ·
-content-addressed links · CAS integration beyond what `to_cbor` hands back ·
-SQLite · PKI and signing · flat arrays and arenas as an interchange format ·
+content-addressed links · key management, rotation, and revocation — v0 takes a key set as an argument and does nothing else with it · CAS integration beyond what `to_cbor` hands back ·
+SQLite · flat arrays and arenas as an interchange format ·
 e-graphs · OpenTheory, Metamath, Alethe · tactics · `run_sound` and all new Lean.
 
 The Lean gate for v0 is the existing `empty_not_proves_false` plus the corpus.
