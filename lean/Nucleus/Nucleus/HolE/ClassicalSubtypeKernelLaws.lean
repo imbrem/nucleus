@@ -194,7 +194,7 @@ theorem absRepLaw {types depth} {Γ : BoundCtx ClassicalSig types depth}
     (_hp : HasType (extendBound A emptyBound) p .boolTy)
     (_hx : HasTypeDefEq Γ x (.sub A p)) :
     CEntails (Γ := Γ) H (.eq (.sub A p) (.abs A p (.rep A p x)) x) := by
-  intro env bound truths
+  intro env bound typed valid truths
   refine ⟨conclusionTyping.certificate, ?_⟩
   classical
   rw [conclusionTyping.certificate.rawView_semantics]
@@ -231,10 +231,10 @@ theorem repAbsLaw (opening : CInstantiateOneTrueLaw)
     (instanceTyping : HasTypeDefEq Γ (instantiateOne p x) .boolTy)
     (premise : CEntails (Γ := Γ) H (instantiateOne p x)) :
     CEntails (Γ := Γ) H (.eq A (.rep A p (.abs A p x)) x) := by
-  intro env bound truths
+  intro env bound typed valid truths
   have predicateTrue :=
     (opening.true_iff hA hp hx.certificate instanceTyping env bound).mp
-      (premise env bound truths)
+      (premise env bound typed valid truths)
   refine ⟨conclusionTyping.certificate, ?_⟩
   classical
   rw [conclusionTyping.certificate.rawView_semantics]
@@ -294,11 +294,11 @@ theorem repPredOfWitnessLaw (opening : CInstantiateOneTrueLaw)
       HasTypeDefEq Γ (instantiateOne p (.rep A p x)) .boolTy)
     (premise : CEntails (Γ := Γ) H (instantiateOne p witness)) :
     CEntails (Γ := Γ) H (instantiateOne p (.rep A p x)) := by
-  intro env bound truths
+  intro env bound typed valid truths
   let cw := witnessTyping.certificate
   have witnessTrue :=
     (opening.true_iff hA hp cw witnessPredicateTyping env bound).mp
-      (premise env bound truths)
+      (premise env bound typed valid truths)
   apply (opening.rep_true_iff hA hp subtypeTyping
     representationPredicateTyping env bound).mpr
   have subtypeEq := cSem_sub_eq hA.certificate hp.certificate env
