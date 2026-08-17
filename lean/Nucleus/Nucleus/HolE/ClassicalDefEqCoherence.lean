@@ -15,6 +15,31 @@ namespace Nucleus.HolE
 
 set_option relaxedAutoImplicit true
 
+/-- Erase the proof-relevant classical checking mirror back to the ordinary
+`Prop`-valued checker. -/
+theorem CChecks.toChecks : CChecks Γ expression classification →
+    Checks Γ expression classification
+  | .boolTy => .boolTy
+  | .arr hA hB => .arr hA.toChecks hB.toChecks
+  | .tyApp hF hA => .tyApp hF.toChecks hA.toChecks
+  | .tyLam body => .tyLam body.toChecks
+  | .tyBv v => .tyBv v
+  | .sub hA hp => .sub hA.toChecks hp.toChecks
+  | .model hp => .model hp.toChecks
+  | .primFam symbol => nomatch symbol
+  | .primTm rule => nomatch rule
+  | .bv hA lookup => .bv hA.toChecks lookup
+  | .fv name hA => .fv name hA.toChecks
+  | .app hA hB function argument =>
+      .app function.toChecks argument.toChecks
+  | .lam body hA hB bodyChecking => .lam body hA.toChecks bodyChecking.toChecks
+  | .bool literal => .bool literal
+  | .eq hA left right => .eq hA.toChecks left.toChecks right.toChecks
+  | .eps hA predicate => .eps hA.toChecks predicate.toChecks
+  | .abs hA hp value => .abs hA.toChecks hp.toChecks value.toChecks
+  | .rep hA hp value => .rep hA.toChecks hp.toChecks value.toChecks
+  | .tyExists predicate => .tyExists predicate.toChecks
+
 /-- Evidence that a `CDefChecks` certificate's outermost rule is syntax
 directed.  An inductive witness gives dependent inversion substantially better
 behavior than a Boolean discriminator. -/
@@ -63,7 +88,8 @@ noncomputable def CDefChecks.rootView (checking : CDefChecks Γ term A) :
   by
     induction checking with
     | conv source hB conversion ih =>
-        exact ⟨ih.type, ih.root, ih.isRoot, .trans ih.conversion conversion⟩
+        exact ⟨ih.type, ih.root, ih.isRoot,
+          .trans ih.conversion source.typeKinded.toChecks conversion⟩
     | exact raw => exact CDefRootView.self (.exact raw) (.exact raw)
     | app function argument _ _ =>
         exact CDefRootView.self (.app function argument) (.app function argument)
@@ -130,7 +156,7 @@ noncomputable def CDefChecks.appView {types : List Kind} {depth : Nat}
   | .conv source _ conversion =>
       let view := source.appView
       ⟨view.domain, view.codomain, view.functionChecking, view.argumentChecking,
-        .trans view.conversion conversion⟩
+        .trans view.conversion source.typeKinded.toChecks conversion⟩
 
 /-- Complete lambda inversion, again exposing only one composed result
 conversion. -/
@@ -154,7 +180,7 @@ noncomputable def CDefChecks.lamView {types : List Kind} {depth : Nat}
   | .conv source _ conversion =>
       let view := source.lamView
       ⟨view.codomain, view.domainKinded, view.bodyChecking,
-        .trans view.conversion conversion⟩
+        .trans view.conversion source.typeKinded.toChecks conversion⟩
 
 /-- A Boolean literal has root type `boolTy`; any other advertised type comes
 solely from conversion. -/
@@ -165,7 +191,8 @@ noncomputable def CDefChecks.boolConversion {types : List Kind} {depth : Nat}
     FamEq ClassicalSig .boolTy result :=
   match checking with
   | .exact (.bool _) => .refl
-  | .conv source _ conversion => .trans source.boolConversion conversion
+  | .conv source _ conversion =>
+      .trans source.boolConversion source.typeKinded.toChecks conversion
 
 /-- A type existential has root type `boolTy`. -/
 noncomputable def CDefChecks.tyExistsConversion {types : List Kind} {depth : Nat}
@@ -177,7 +204,8 @@ noncomputable def CDefChecks.tyExistsConversion {types : List Kind} {depth : Nat
   match checking with
   | .exact (.tyExists predicateChecking) => .refl
   | .tyExists _ => .refl
-  | .conv source _ conversion => .trans source.tyExistsConversion conversion
+  | .conv source _ conversion =>
+      .trans source.tyExistsConversion source.typeKinded.toChecks conversion
 
 /-- Equality inversion exposes its common operand type and composes any result
 conversion from Boolean. -/
@@ -203,7 +231,7 @@ noncomputable def CDefChecks.eqView {types : List Kind} {depth : Nat}
   | .conv source _ conversion =>
       let view := source.eqView
       ⟨view.annotatedKinded, view.leftChecking, view.rightChecking,
-        .trans view.conversion conversion⟩
+        .trans view.conversion source.typeKinded.toChecks conversion⟩
 
 /-- Choice inversion exposes the predicate certificate and a conversion from
 the annotated carrier to the advertised result. -/
@@ -227,7 +255,7 @@ noncomputable def CDefChecks.epsView {types : List Kind} {depth : Nat}
   | .conv source _ conversion =>
       let view := source.epsView
       ⟨view.carrierKinded, view.predicateChecking,
-        .trans view.conversion conversion⟩
+        .trans view.conversion source.typeKinded.toChecks conversion⟩
 
 /-- Subtype abstraction inversion. -/
 structure CDefAbsView {types : List Kind} {depth : Nat}
@@ -253,7 +281,7 @@ noncomputable def CDefChecks.absView {types : List Kind} {depth : Nat}
   | .conv source _ conversion =>
       let view := source.absView
       ⟨view.carrierKinded, view.predicateChecking, view.valueChecking,
-        .trans view.conversion conversion⟩
+        .trans view.conversion source.typeKinded.toChecks conversion⟩
 
 /-- Subtype representation inversion. -/
 structure CDefRepView {types : List Kind} {depth : Nat}
@@ -279,7 +307,7 @@ noncomputable def CDefChecks.repView {types : List Kind} {depth : Nat}
   | .conv source _ conversion =>
       let view := source.repView
       ⟨view.carrierKinded, view.predicateChecking, view.valueChecking,
-        .trans view.conversion conversion⟩
+        .trans view.conversion source.typeKinded.toChecks conversion⟩
 
 /-- Semantic inversion of a true equality.  This deliberately returns the
 operand certificates existentially instead of mentioning the noncomputable
