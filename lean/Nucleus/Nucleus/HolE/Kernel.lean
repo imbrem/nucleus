@@ -108,6 +108,7 @@ inductive Proves {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
       (conclusionTyping : HasTypeDefEq Γ
         (.eq A (.rep A p (.abs A p x)) x) .boolTy)
       (hp : HasType (extendBound A emptyBound) p .boolTy)
+      (hxRaw : HasType Γ x A)
       (hx : HasTypeDefEq Γ x A)
       (predicateTyping : HasTypeDefEq Γ (instantiateOne p x) .boolTy) :
       Proves Γ H (instantiateOne p x) →
@@ -119,8 +120,10 @@ inductive Proves {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
       (conclusionTyping : HasTypeDefEq Γ
         (instantiateOne p (.rep A p x)) .boolTy)
       (hp : HasType (extendBound A emptyBound) p .boolTy)
+      (witnessRaw : HasType Γ witness A)
       (witnessTyping : HasTypeDefEq Γ witness A)
       (witnessPredicateTyping : HasTypeDefEq Γ (instantiateOne p witness) .boolTy)
+      (subtypeRaw : HasType Γ x (.sub A p))
       (subtypeTyping : HasTypeDefEq Γ x (.sub A p))
       (representationPredicateTyping :
         HasTypeDefEq Γ (instantiateOne p (.rep A p x)) .boolTy) :
