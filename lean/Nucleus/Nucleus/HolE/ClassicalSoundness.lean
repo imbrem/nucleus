@@ -282,6 +282,71 @@ theorem no_closed_false_under_axiom_of_sound
   exact not_realizes_false_as_true emptyCTypeEnv emptyCBoundEnv
     (sound proof emptyCTypeEnv emptyCBoundEnv hypotheses)
 
+namespace CEntails
+
+theorem hyp (member : proposition ∈ hypotheses) :
+    CEntails (Γ := Γ) hypotheses proposition := by
+  intro env bound truths
+  exact truths proposition member
+
+theorem truth : CEntails (Γ := Γ) hypotheses (.bool true) := by
+  intro env bound truths
+  exact CRealizes.boolean true env bound
+
+theorem falseElim (premise : CEntails (Γ := Γ) hypotheses (.bool false)) :
+    CEntails (Γ := Γ) hypotheses conclusion := by
+  intro env bound truths
+  exact False.elim (not_realizes_false_as_true env bound (premise env bound truths))
+
+private theorem realizes_eq_false_of_false
+    {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth}
+    {proposition : Tm ClassicalSig types depth}
+    (typing : HasTypeDefEq Γ proposition .boolTy)
+    (env : CTypeEnv types) (bound : CBoundEnv depth)
+    (evaluates : cDefSem typing.certificate env bound cBool = ⟨false⟩) :
+    CRealizes (Γ := Γ) env bound
+      (.eq .boolTy proposition (.bool false)) .boolTy cBool true := by
+  let falseChecking : CDefChecks Γ (.bool false) .boolTy := .exact (.bool false)
+  refine ⟨.eq .boolTy typing.certificate falseChecking, ?_⟩
+  classical
+  change ULift.up (alignCValue cBool cBool
+    (decide ((cDefSem typing.certificate env bound cBool).down =
+      (cDefSem falseChecking env bound cBool).down))) = ULift.up true
+  rw [evaluates, cDefSem_false falseChecking env bound]
+  simp [cBool, alignCValue]
+  apply cast_eq
+
+theorem boolCases (typing : HasTypeDefEq Γ proposition .boolTy)
+    (left : CEntails (Γ := Γ) (proposition :: hypotheses) conclusion)
+    (right : CEntails (Γ := Γ)
+      (.eq .boolTy proposition (.bool false) :: hypotheses) conclusion) :
+    CEntails (Γ := Γ) hypotheses conclusion := by
+  intro env bound truths
+  let evaluated := cDefSem typing.certificate env bound cBool
+  generalize valueEq : evaluated.down = value
+  have evaluatedEq : evaluated = ULift.up value := by
+    have eta : evaluated = ULift.up evaluated.down := by cases evaluated; rfl
+    rw [valueEq] at eta
+    exact eta
+  cases value with
+  | true =>
+      apply left env bound
+      intro candidate member
+      rcases List.mem_cons.mp member with rfl | member
+      · refine ⟨typing.certificate, ?_⟩
+        exact evaluatedEq
+      · exact truths candidate member
+  | false =>
+      apply right env bound
+      intro candidate member
+      rcases List.mem_cons.mp member with rfl | member
+      · apply realizes_eq_false_of_false typing env bound
+        exact evaluatedEq
+      · exact truths candidate member
+
+end CEntails
+
 /-- The two fundamental transport facts needed by beta, eta, generalization,
 and type quantification.  They are intentionally named here so the kernel
 proof and the substitution proof can be developed independently. -/
