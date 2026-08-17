@@ -229,8 +229,6 @@ theorem repAbsLaw (opening : CRawInstantiateOneTrueLaw)
       (.eq A (.rep A p (.abs A p x)) x) .boolTy)
     (hp : HasType (extendBound A emptyBound) p .boolTy)
     (hxRaw : HasType Γ x A)
-    (_hx : HasTypeDefEq Γ x A)
-    (_instanceTyping : HasTypeDefEq Γ (instantiateOne p x) .boolTy)
     (premise : CEntails (Γ := Γ) H (instantiateOne p x)) :
     CEntails (Γ := Γ) H (.eq A (.rep A p (.abs A p x)) x) := by
   intro env bound typed valid truths
@@ -290,17 +288,10 @@ theorem repPredOfWitnessLaw (opening : CRawInstantiateOneTrueLaw)
       HasTypeDefEq Γ (instantiateOne p (.rep A p x)) .boolTy)
     (hp : HasType (extendBound A emptyBound) p .boolTy)
     (witnessRaw : HasType Γ witness A)
-    (witnessTyping : HasTypeDefEq Γ witness A)
-    (_witnessPredicateTyping :
-      HasTypeDefEq Γ (instantiateOne p witness) .boolTy)
     (subtypeRaw : HasType Γ x (.sub A p))
-    (_subtypeTyping : HasTypeDefEq Γ x (.sub A p))
-    (_representationPredicateTyping :
-      HasTypeDefEq Γ (instantiateOne p (.rep A p x)) .boolTy)
     (premise : CEntails (Γ := Γ) H (instantiateOne p witness)) :
     CEntails (Γ := Γ) H (instantiateOne p (.rep A p x)) := by
   intro env bound typed valid truths
-  let cw := witnessTyping.certificate
   have witnessTrue :=
     (opening.true_iff hA.certificate hp.certificate witnessRaw.certificate
       (hp.instantiateOne witnessRaw).certificate env bound typed valid).mp

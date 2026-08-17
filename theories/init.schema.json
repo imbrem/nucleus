@@ -14,10 +14,23 @@
       "additionalProperties": false,
       "properties": {
         "declaration": {
-          "const": ["class", "name", "parameters", "type-or-kind", "body", "properties"]
+          "const": [
+            "class",
+            "name",
+            "parameters",
+            "type-or-kind",
+            "body",
+            "properties"
+          ]
         },
         "classes": {
-          "const": ["type-family", "constant", "definition", "theorem", "section"]
+          "const": [
+            "type-family",
+            "constant",
+            "definition",
+            "theorem",
+            "section"
+          ]
         },
         "kind": { "const": ["kind.star"] },
         "kindArrow": { "const": ["kind.arr", "domain", "codomain"] },
@@ -60,20 +73,22 @@
     "declaration": {
       "type": "array",
       "prefixItems": [
-        { "enum": ["type-family", "constant", "definition", "theorem", "section"] },
+        {
+          "enum": [
+            "type-family",
+            "constant",
+            "definition",
+            "theorem",
+            "section"
+          ]
+        },
         { "type": "string", "minLength": 1 },
         { "type": "array", "items": { "$ref": "#/$defs/parameter" } },
         {
-          "oneOf": [
-            { "$ref": "#/$defs/expression" },
-            { "type": "null" }
-          ]
+          "oneOf": [{ "$ref": "#/$defs/expression" }, { "type": "null" }]
         },
         {
-          "oneOf": [
-            { "$ref": "#/$defs/expression" },
-            { "type": "null" }
-          ]
+          "oneOf": [{ "$ref": "#/$defs/expression" }, { "type": "null" }]
         },
         { "type": "array", "items": { "type": "string", "minLength": 1 } }
       ],
@@ -84,19 +99,28 @@
         {
           "if": { "prefixItems": [{ "const": "section" }] },
           "then": {
-            "prefixItems": [true, true, { "maxItems": 0 }, { "type": "null" },
-              { "type": "null" }]
+            "prefixItems": [
+              true,
+              true,
+              { "maxItems": 0 },
+              { "type": "null" },
+              { "type": "null" }
+            ]
           }
         },
         {
           "if": { "prefixItems": [{ "const": "type-family" }] },
-          "then": { "prefixItems": [true, true, true, { "$ref": "#/$defs/expression" }] }
+          "then": {
+            "prefixItems": [true, true, true, { "$ref": "#/$defs/expression" }]
+          }
         },
         {
           "if": {
             "prefixItems": [{ "enum": ["constant", "definition", "theorem"] }]
           },
-          "then": { "prefixItems": [true, true, true, { "$ref": "#/$defs/expression" }] }
+          "then": {
+            "prefixItems": [true, true, true, { "$ref": "#/$defs/expression" }]
+          }
         }
       ]
     }
