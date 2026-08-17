@@ -389,22 +389,32 @@ theorem HasTypeDefEq.renameTm {Sig : Signature} [SigTyping Sig] [SigFamilyEquali
     HasTypeDefEq Δ (rename ρ t) A := by
   induction typing generalizing n with
   | exact raw => exact .exact (raw.renameTm ρ contexts)
-  | app _ _ ihf ihx => simpa [rename] using
-      (HasTypeDefEq.app (ihf ρ contexts) (ihx ρ contexts))
-  | lam body hA _ ih =>
-      simpa [rename] using (HasTypeDefEq.lam (rename (liftRen ρ) body) hA
+  | app raw _ _ ihf ihx => simpa [rename] using
+      (HasTypeDefEq.app (by simpa [rename] using raw.renameTm ρ contexts)
+        (ihf ρ contexts) (ihx ρ contexts))
+  | lam body raw hA _ ih =>
+      simpa [rename] using (HasTypeDefEq.lam (rename (liftRen ρ) body)
+        (by simpa [rename] using raw.renameTm ρ contexts) hA
         (ih (liftRen ρ) (by
           intro i
           refine Fin.cases ?_ (fun j => ?_) i
           · rfl
           · exact contexts j)))
-  | eq hA _ _ ihx ihy => simpa [rename] using
-      (HasTypeDefEq.eq hA (ihx ρ contexts) (ihy ρ contexts))
-  | eps hA _ ih => simpa [rename] using (HasTypeDefEq.eps hA (ih ρ contexts))
-  | abs hA hp _ ih => simpa [rename] using (HasTypeDefEq.abs hA hp (ih ρ contexts))
-  | rep hA hp _ ih => simpa [rename] using (HasTypeDefEq.rep hA hp (ih ρ contexts))
-  | tyExists premise _ => simpa [rename] using
-      (HasTypeDefEq.tyExists (Γ := Δ) premise)
+  | eq raw hA _ _ ihx ihy => simpa [rename] using
+      (HasTypeDefEq.eq (by simpa [rename] using raw.renameTm ρ contexts) hA
+        (ihx ρ contexts) (ihy ρ contexts))
+  | eps raw hA _ ih => simpa [rename] using
+      (HasTypeDefEq.eps (by simpa [rename] using raw.renameTm ρ contexts)
+        hA (ih ρ contexts))
+  | abs raw hA hp _ ih => simpa [rename] using
+      (HasTypeDefEq.abs (by simpa [rename] using raw.renameTm ρ contexts)
+        hA hp (ih ρ contexts))
+  | rep raw hA hp _ ih => simpa [rename] using
+      (HasTypeDefEq.rep (by simpa [rename] using raw.renameTm ρ contexts)
+        hA hp (ih ρ contexts))
+  | tyExists raw premise _ => simpa [rename] using
+      (HasTypeDefEq.tyExists (Γ := Δ)
+        (by simpa [rename] using raw.renameTm ρ contexts) premise)
   | conv _ hB conversion ih => exact .conv (ih ρ contexts) hB conversion
 
 theorem HasTypeDefEq.weaken {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
@@ -415,91 +425,6 @@ theorem HasTypeDefEq.weaken {Sig : Signature} [SigTyping Sig] [SigFamilyEquality
   intro i
   rfl
 
-def WellTypedDefEqSub {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
-    (Γ : BoundCtx Sig types m) (Δ : BoundCtx Sig types n)
-    (σ : Fin m → Tm Sig types n) : Prop :=
-  ∀ i, HasTypeDefEq Δ (σ i) (Γ i)
-
-theorem liftWellTypedDefEqSub {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
-    {types : List Kind} {A : Ty Sig types}
-    {Γ : BoundCtx Sig types m} {Δ : BoundCtx Sig types n}
-    {σ : Fin m → Tm Sig types n} (wellTyped : WellTypedDefEqSub Γ Δ σ)
-    (hA : Kinded A) :
-    WellTypedDefEqSub (extendBound A Γ) (extendBound A Δ)
-      (liftSub (Sig := Sig) (types := types) σ) := by
-  intro i
-  refine Fin.cases ?_ (fun j => ?_) i
-  · exact .exact (.bv hA rfl)
-  · exact (wellTyped j).weaken
-
-set_option linter.defProp false in
-def Checks.instantiateDefEq {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
-    {Γ : BoundCtx Sig types m} {Δ : BoundCtx Sig types n}
-    {t : Tm Sig types m} {A : Ty Sig types} (typing : HasType Γ t A)
-    (σ : Fin m → Tm Sig types n) (wellTyped : WellTypedDefEqSub Γ Δ σ) :
-    HasTypeDefEq Δ (instantiate σ t) A :=
-  match typing with
-  | .primTm hA rule =>
-      .exact (by simpa [instantiate] using (.primTm (Γ := Δ) hA rule))
-  | .bv (i := i) hA lookup => by
-      have variableTyping := wellTyped i
-      rw [lookup] at variableTyping
-      simpa [instantiate] using variableTyping
-  | .fv name hA => .exact (by simpa [instantiate] using (.fv (Γ := Δ) name hA))
-  | .app hf hx => by simpa [instantiate] using
-      (HasTypeDefEq.app (Checks.instantiateDefEq hf σ wellTyped)
-        (Checks.instantiateDefEq hx σ wellTyped))
-  | .lam body hA hb => by simpa [instantiate] using
-      (HasTypeDefEq.lam (instantiate (liftSub σ) body) hA
-        (Checks.instantiateDefEq hb (liftSub σ)
-          (liftWellTypedDefEqSub wellTyped hA)))
-  | .bool value => .exact (by simpa [instantiate] using (.bool (Γ := Δ) value))
-  | .tyExists hp => by simpa [instantiate] using
-      (HasTypeDefEq.tyExists (Γ := Δ) (.exact hp))
-  | .eq hA hx hy => by simpa [instantiate] using
-      (HasTypeDefEq.eq hA (Checks.instantiateDefEq hx σ wellTyped)
-        (Checks.instantiateDefEq hy σ wellTyped))
-  | .eps hA hp => by simpa [instantiate] using
-      (HasTypeDefEq.eps hA (Checks.instantiateDefEq hp σ wellTyped))
-  | .abs hA hp hx => by simpa [instantiate] using
-      (HasTypeDefEq.abs hA hp (Checks.instantiateDefEq hx σ wellTyped))
-  | .rep hA hp hx => by simpa [instantiate] using
-      (HasTypeDefEq.rep hA hp (Checks.instantiateDefEq hx σ wellTyped))
-
-theorem HasTypeDefEq.instantiateTm {Sig : Signature} [SigTyping Sig]
-    [SigFamilyEquality Sig]
-    {Γ : BoundCtx Sig types m} {Δ : BoundCtx Sig types n}
-    {t : Tm Sig types m} {A : Ty Sig types} (typing : HasTypeDefEq Γ t A)
-    (σ : Fin m → Tm Sig types n) (wellTyped : WellTypedDefEqSub Γ Δ σ) :
-    HasTypeDefEq Δ (instantiate σ t) A := by
-  induction typing generalizing n with
-  | exact raw => exact raw.instantiateDefEq σ wellTyped
-  | app _ _ ihf ihx => simpa [instantiate] using
-      (HasTypeDefEq.app (ihf σ wellTyped) (ihx σ wellTyped))
-  | lam body hA _ ih =>
-      simpa [instantiate] using (HasTypeDefEq.lam (instantiate (liftSub σ) body) hA
-        (ih (liftSub σ) (liftWellTypedDefEqSub wellTyped hA)))
-  | eq hA _ _ ihx ihy => simpa [instantiate] using
-      (HasTypeDefEq.eq hA (ihx σ wellTyped) (ihy σ wellTyped))
-  | eps hA _ ih => simpa [instantiate] using (HasTypeDefEq.eps hA (ih σ wellTyped))
-  | abs hA hp _ ih => simpa [instantiate] using
-      (HasTypeDefEq.abs hA hp (ih σ wellTyped))
-  | rep hA hp _ ih => simpa [instantiate] using
-      (HasTypeDefEq.rep hA hp (ih σ wellTyped))
-  | tyExists premise _ => simpa [instantiate] using
-      (HasTypeDefEq.tyExists (Γ := Δ) premise)
-  | conv _ hB conversion ih => exact .conv (ih σ wellTyped) hB conversion
-
-theorem HasTypeDefEq.openBound {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
-    {Γ : BoundCtx Sig types depth} {body : Tm Sig types (depth + 1)}
-    {replacement : Tm Sig types depth} {A B : Ty Sig types}
-    (typedContext : TypedCtx Γ) (bodyTyping : HasTypeDefEq (extendBound A Γ) body B)
-    (replacementTyping : HasTypeDefEq Γ replacement A) :
-    HasTypeDefEq Γ (openBound body replacement) B := by
-  apply bodyTyping.instantiateTm (Fin.cases replacement .bv)
-  intro i
-  exact Fin.cases replacementTyping (fun j => .exact (.bv (typedContext j) rfl)) i
-
 theorem HasTypeDefEq.renameTypes {Sig : Signature} [SigTyping Sig]
     [SigFamilyEquality Sig]
     {Γ : BoundCtx Sig source depth} {t : Tm Sig source depth} {A : Ty Sig source}
@@ -508,25 +433,32 @@ theorem HasTypeDefEq.renameTypes {Sig : Signature} [SigTyping Sig]
       (HolE.renameTypes ρ A) := by
   induction typing generalizing target with
   | exact raw => exact .exact (raw.renameTypes ρ)
-  | app _ _ ihf ihx => simpa using (HasTypeDefEq.app (ihf ρ) (ihx ρ))
-  | lam body hA _ ih =>
+  | app raw _ _ ihf ihx => simpa using
+      (HasTypeDefEq.app (raw.renameTypes ρ) (ihf ρ) (ihx ρ))
+  | lam body raw hA _ ih =>
       have bodyTyping := ih ρ
       rw [renameBoundCtx_extend] at bodyTyping
       simpa using (HasTypeDefEq.lam (HolE.renameTypes ρ body)
+        (by simpa using raw.renameTypes ρ)
         (by simpa using hA.renameTypes ρ) bodyTyping)
-  | eq hA _ _ ihx ihy =>
-      simpa using (HasTypeDefEq.eq (by simpa using hA.renameTypes ρ)
+  | eq raw hA _ _ ihx ihy =>
+      simpa using (HasTypeDefEq.eq (by simpa using raw.renameTypes ρ)
+        (by simpa using hA.renameTypes ρ)
         (ihx ρ) (ihy ρ))
-  | eps hA _ ih =>
-      simpa using (HasTypeDefEq.eps (by simpa using hA.renameTypes ρ) (ih ρ))
-  | abs hA hp _ ih =>
-      simpa using (HasTypeDefEq.abs (by simpa using hA.renameTypes ρ)
+  | eps raw hA _ ih =>
+      simpa using (HasTypeDefEq.eps (by simpa using raw.renameTypes ρ)
+        (by simpa using hA.renameTypes ρ) (ih ρ))
+  | abs raw hA hp _ ih =>
+      simpa using (HasTypeDefEq.abs (by simpa using raw.renameTypes ρ)
+        (by simpa using hA.renameTypes ρ)
         (by simpa using hp.renameTypes ρ) (ih ρ))
-  | rep hA hp _ ih =>
-      simpa using (HasTypeDefEq.rep (by simpa using hA.renameTypes ρ)
+  | rep raw hA hp _ ih =>
+      simpa using (HasTypeDefEq.rep (by simpa using raw.renameTypes ρ)
+        (by simpa using hA.renameTypes ρ)
         (by simpa using hp.renameTypes ρ) (ih ρ))
-  | tyExists _ ih => simpa using
-      (HasTypeDefEq.tyExists (by simpa using ih (liftTyRen ρ)))
+  | tyExists raw _ ih => simpa using
+      (HasTypeDefEq.tyExists (by simpa using raw.renameTypes ρ)
+        (by simpa using ih (liftTyRen ρ)))
   | conv sourceTyping hB conversion ih =>
       exact .conv (ih ρ) (by simpa using hB.renameTypes ρ)
         (conversion.renameTypes sourceTyping.typeKinded hB ρ)
@@ -540,29 +472,36 @@ theorem HasTypeDefEq.instantiateTypes {Sig : Signature} [SigTyping Sig]
       (HolE.instantiateTypes σ A) := by
   induction typing generalizing target with
   | exact raw => exact .exact (raw.instantiateTypes wellFormed)
-  | app _ _ ihf ihx => simpa using
-      (HasTypeDefEq.app (ihf wellFormed) (ihx wellFormed))
-  | lam body hA _ ih =>
+  | app raw _ _ ihf ihx => simpa using
+      (HasTypeDefEq.app (raw.instantiateTypes wellFormed)
+        (ihf wellFormed) (ihx wellFormed))
+  | lam body raw hA _ ih =>
       have bodyTyping := ih wellFormed
       rw [instantiateBoundCtx_extend] at bodyTyping
       simpa using (HasTypeDefEq.lam (HolE.instantiateTypes σ body)
+        (by simpa using raw.instantiateTypes wellFormed)
         (by simpa using hA.instantiateTypes wellFormed) bodyTyping)
-  | eq hA _ _ ihx ihy =>
-      simpa using (HasTypeDefEq.eq (by simpa using hA.instantiateTypes wellFormed)
+  | eq raw hA _ _ ihx ihy =>
+      simpa using (HasTypeDefEq.eq (by simpa using raw.instantiateTypes wellFormed)
+        (by simpa using hA.instantiateTypes wellFormed)
         (ihx wellFormed) (ihy wellFormed))
-  | eps hA _ ih =>
-      simpa using (HasTypeDefEq.eps (by simpa using hA.instantiateTypes wellFormed)
+  | eps raw hA _ ih =>
+      simpa using (HasTypeDefEq.eps (by simpa using raw.instantiateTypes wellFormed)
+        (by simpa using hA.instantiateTypes wellFormed)
         (ih wellFormed))
-  | abs hA hp _ ih =>
+  | abs raw hA hp _ ih =>
       simpa using (HasTypeDefEq.abs
+        (by simpa using raw.instantiateTypes wellFormed)
         (by simpa using hA.instantiateTypes wellFormed)
         (by simpa using hp.instantiateTypes wellFormed) (ih wellFormed))
-  | rep hA hp _ ih =>
+  | rep raw hA hp _ ih =>
       simpa using (HasTypeDefEq.rep
+        (by simpa using raw.instantiateTypes wellFormed)
         (by simpa using hA.instantiateTypes wellFormed)
         (by simpa using hp.instantiateTypes wellFormed) (ih wellFormed))
-  | tyExists _ ih => simpa using
-      (HasTypeDefEq.tyExists (by simpa using ih wellFormed.lift))
+  | tyExists raw _ ih => simpa using
+      (HasTypeDefEq.tyExists (by simpa using raw.instantiateTypes wellFormed)
+        (by simpa using ih wellFormed.lift))
   | conv sourceTyping hB conversion ih =>
       exact .conv (ih wellFormed)
         (by simpa using hB.instantiateTypes wellFormed)

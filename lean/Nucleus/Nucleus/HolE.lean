@@ -345,20 +345,27 @@ inductive HasTypeDefEq {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
     {types : List Kind} →
     {depth : Nat} → BoundCtx Sig types depth → Tm Sig types depth → Ty Sig types → Prop where
   | exact (typing : HasType Γ term A) : HasTypeDefEq Γ term A
-  | app : HasTypeDefEq Γ f (.arr A B) → HasTypeDefEq Γ x A →
+  | app (raw : HasType Γ (.app f x) B) :
+      HasTypeDefEq Γ f (.arr A B) → HasTypeDefEq Γ x A →
       HasTypeDefEq Γ (.app f x) B
-  | lam (body : Tm Sig types (depth + 1)) (hA : Kinded A) :
+  | lam (body : Tm Sig types (depth + 1))
+      (raw : HasType Γ (.lam A body) (.arr A B)) (hA : Kinded A) :
       HasTypeDefEq (extendBound A Γ) body B →
       HasTypeDefEq Γ (.lam A body) (.arr A B)
-  | eq (hA : Kinded A) : HasTypeDefEq Γ x A → HasTypeDefEq Γ y A →
+  | eq (raw : HasType Γ (.eq A x y) .boolTy) (hA : Kinded A) :
+      HasTypeDefEq Γ x A → HasTypeDefEq Γ y A →
       HasTypeDefEq Γ (.eq A x y) .boolTy
-  | eps (hA : Kinded A) : HasTypeDefEq Γ p (.arr A .boolTy) →
+  | eps (raw : HasType Γ (.eps A p) A) (hA : Kinded A) :
+      HasTypeDefEq Γ p (.arr A .boolTy) →
       HasTypeDefEq Γ (.eps A p) A
-  | abs (hA : Kinded A) (hp : HasType (extendBound A emptyBound) p .boolTy) :
+  | abs (raw : HasType Γ (.abs A p x) (.sub A p))
+      (hA : Kinded A) (hp : HasType (extendBound A emptyBound) p .boolTy) :
       HasTypeDefEq Γ x A → HasTypeDefEq Γ (.abs A p x) (.sub A p)
-  | rep (hA : Kinded A) (hp : HasType (extendBound A emptyBound) p .boolTy) :
+  | rep (raw : HasType Γ (.rep A p x) A)
+      (hA : Kinded A) (hp : HasType (extendBound A emptyBound) p .boolTy) :
       HasTypeDefEq Γ x (.sub A p) → HasTypeDefEq Γ (.rep A p x) A
-  | tyExists : HasTypeDefEq (types := .star :: types) emptyBound p .boolTy →
+  | tyExists (raw : HasType (types := types) Γ (.tyExists p) .boolTy) :
+      HasTypeDefEq (types := .star :: types) emptyBound p .boolTy →
       HasTypeDefEq (types := types) Γ (.tyExists p) .boolTy
   | conv (typing : HasTypeDefEq Γ term A) (hB : Kinded B)
       (conversion : FamEq Sig A B) : HasTypeDefEq Γ term B
@@ -369,13 +376,13 @@ theorem HasTypeDefEq.typeKinded {Sig : Signature} [SigTyping Sig]
     (typing : HasTypeDefEq Γ term A) : Kinded A := by
   induction typing with
   | exact raw => exact raw.typeKinded
-  | app _ _ ihf _ =>
+  | app _ _ _ ihf _ =>
       cases ihf with
       | arr _ hB => exact hB
-  | lam _ hA _ ih => exact .arr hA ih
+  | lam _ _ hA _ ih => exact .arr hA ih
   | eq | tyExists => exact .boolTy
-  | eps hA _ _ | rep hA _ _ _ => exact hA
-  | abs hA hp _ _ => exact .sub hA hp
+  | eps _ hA _ _ | rep _ hA _ _ _ => exact hA
+  | abs _ hA hp _ _ => exact .sub hA hp
   | conv _ hB _ _ => exact hB
 
 namespace HasTypeDefEq
