@@ -38,6 +38,11 @@ inductive Ty (R : Repr) where
   | link (target : R.Link) (kind : R.Kind)
   | nat
 
+/-- A theorem context is an explicit conjunction spine. -/
+inductive Context (R : Repr) where
+  | empty
+  | and (premise : R.Tm) (rest : R.Ctx)
+
 inductive Tm (R : Repr) where
   | tyExists (body : R.Tm)
   | prim (primitive : R.Prim)
@@ -51,8 +56,11 @@ inductive Tm (R : Repr) where
   | abs (type : R.Ty) (predicate representation : R.Tm)
   | rep (type : R.Ty) (predicate abstraction : R.Tm)
   | link (target : R.Link) (type : R.Ty)
+  | and (left right : R.Tm)
+  | inf
+  | zero
+  | succ
   | nat (value : UInt64)
-  | ctx (premises : R.Ctx)
   | imp (premises : R.Ctx) (conclusion : R.Tm)
 
 /-- An explicit wrapper for heterogeneous storage of the three sorted forms. -/
@@ -67,7 +75,7 @@ inductive Tag where
   | tyBool | tyArr | tyApp | tyLam | tyBv | tySub | tyExists | tyModel
   | tyPrim | tyLink
   | tmPrim | tmBv | tmFv | tmApp | tmLam | tmBool | tmEq | tmEps | tmAbs | tmRep
-  | tmLink | imp | tyNat | ctx | tmLitNat
+  | tmLink | tmImp | tmAnd | tmInf | tmNat | tmZero | tmSucc | tmLitNat
 
 def Tag.id : Tag → Nat
   | .kindStar => 0
@@ -93,10 +101,13 @@ def Tag.id : Tag → Nat
   | .tmAbs => 20
   | .tmRep => 21
   | .tmLink => 22
-  | .imp => 64
-  | .tyNat => 65
-  | .ctx => 66
-  | .tmLitNat => 67
+  | .tmImp => 64
+  | .tmAnd => 65
+  | .tmInf => 66
+  | .tmNat => 67
+  | .tmZero => 68
+  | .tmSucc => 69
+  | .tmLitNat => 70
 
 def Tag.name : Tag → String
   | .kindStar => "KIND_STAR"
@@ -122,9 +133,12 @@ def Tag.name : Tag → String
   | .tmAbs => "TM_ABS"
   | .tmRep => "TM_REP"
   | .tmLink => "TM_LINK"
-  | .imp => "IMP"
-  | .tyNat => "TY_NAT"
-  | .ctx => "CTX"
+  | .tmImp => "TM_IMP"
+  | .tmAnd => "TM_AND"
+  | .tmInf => "TM_INF"
+  | .tmNat => "TM_NAT"
+  | .tmZero => "TM_ZERO"
+  | .tmSucc => "TM_SUCC"
   | .tmLitNat => "TM_LIT_NAT"
 
 def Kind.tag {R : Repr} : Kind R → Tag
@@ -141,7 +155,7 @@ def Ty.tag {R : Repr} : Ty R → Tag
   | .model _ => .tyModel
   | .prim _ => .tyPrim
   | .link _ _ => .tyLink
-  | .nat => .tyNat
+  | .nat => .tmNat
 
 def Tm.tag {R : Repr} : Tm R → Tag
   | .tyExists _ => .tyExists
@@ -156,9 +170,12 @@ def Tm.tag {R : Repr} : Tm R → Tag
   | .abs _ _ _ => .tmAbs
   | .rep _ _ _ => .tmRep
   | .link _ _ => .tmLink
+  | .and _ _ => .tmAnd
+  | .inf => .tmInf
+  | .zero => .tmZero
+  | .succ => .tmSucc
   | .nat _ => .tmLitNat
-  | .ctx _ => .ctx
-  | .imp _ _ => .imp
+  | .imp _ _ => .tmImp
 
 def AnyExpr.tag {R : Repr} : AnyExpr R → Tag
   | .kind value => value.tag

@@ -91,10 +91,13 @@ surface_tags! {
 
     // Surface judgement/context forms and definitions needed by the first demo.
     TmLink = 22 => "TM_LINK",
-    Imp = 64 => "IMP",
-    TyNat = 65 => "TY_NAT",
-    Ctx = 66 => "CTX",
-    TmLitNat = 67 => "TM_LIT_NAT",
+    TmImp = 64 => "TM_IMP",
+    TmAnd = 65 => "TM_AND",
+    TmInf = 66 => "TM_INF",
+    TmNat = 67 => "TM_NAT",
+    TmZero = 68 => "TM_ZERO",
+    TmSucc = 69 => "TM_SUCC",
+    TmLitNat = 70 => "TM_LIT_NAT",
 }
 
 impl TryFrom<&str> for SurfaceTag {

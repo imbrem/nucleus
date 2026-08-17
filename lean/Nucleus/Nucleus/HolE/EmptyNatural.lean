@@ -47,6 +47,12 @@ def and {types : List Kind} {depth : Nat} {Γ : Ctx types depth}
   let rhs := lam functionTy ((app f (truth extended)).app (truth extended))
   exact eq (functionTy.arr FamK.boolTy) lhs rhs
 
+/-- Boolean implication, defined by the absorption equation
+`left ∧ right = left`. -/
+def imp {types : List Kind} {depth : Nat} {Γ : Ctx types depth}
+    (left right : BoolTm Γ) : BoolTm Γ :=
+  eq FamK.boolTy (and left right) left
+
 end Term
 
 namespace Natural

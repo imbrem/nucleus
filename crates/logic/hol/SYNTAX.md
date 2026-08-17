@@ -17,6 +17,14 @@ while the allocation contains the full hash and serialization format. A type
 link carries a kind; a term link carries a type. Kind links are intentionally
 absent.
 
+`Context::{Empty, And}` corresponds to Lean `Context.{empty, and}`. Contexts
+are ordered conjunction spines rather than name maps: stacking the infinity
+assumption is `And(TM_INF, rest)`, and the spine lowers to nested `TM_AND`.
+
+The high-level forms `TM_AND`, `TM_INF`, `TM_NAT`, `TM_ZERO`, `TM_SUCC`, and
+`TM_LIT_NAT` are definitions. Their canonical checked expansions live in
+`Nucleus.HolE.EmptyNatural`; none extends the trusted HolE syntax.
+
 Each row below is an exact constructor and wire-tag correspondence.
 
 | Rust | Lean | Canonical tag | ID |
@@ -44,10 +52,13 @@ Each row below is an exact constructor and wire-tag correspondence.
 | `Tm::Abs` | `Tm.abs` | `TM_ABS` | 20 |
 | `Tm::Rep` | `Tm.rep` | `TM_REP` | 21 |
 | `Tm::Link` | `Tm.link` | `TM_LINK` | 22 |
-| `Tm::Imp` | `Tm.imp` | `IMP` | 64 |
-| `Ty::Nat` | `Ty.nat` | `TY_NAT` | 65 |
-| `Tm::Ctx` | `Tm.ctx` | `CTX` | 66 |
-| `Tm::Nat` | `Tm.nat` | `TM_LIT_NAT` | 67 |
+| `Tm::Imp` | `Tm.imp` | `TM_IMP` | 64 |
+| `Tm::And` | `Tm.and` | `TM_AND` | 65 |
+| `Tm::Inf` | `Tm.inf` | `TM_INF` | 66 |
+| `Ty::Nat` | `Ty.nat` | `TM_NAT` | 67 |
+| `Tm::Zero` | `Tm.zero` | `TM_ZERO` | 68 |
+| `Tm::Succ` | `Tm.succ` | `TM_SUCC` | 69 |
+| `Tm::Nat` | `Tm.nat` | `TM_LIT_NAT` | 70 |
 
 Rust `AnyExpr::{Kind, Ty, Tm}` corresponds to Lean
 `AnyExpr.{kind, ty, tm}`. It is only the explicit heterogeneous-storage wrapper;

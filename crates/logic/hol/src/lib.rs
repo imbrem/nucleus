@@ -1,6 +1,5 @@
 //! Backend-neutral surface syntax and an LCF-style kernel boundary.
 
-use std::collections::BTreeMap;
 use std::error::Error;
 use std::sync::Arc;
 
@@ -27,34 +26,30 @@ pub struct Variable<R: Repr> {
     pub ty: R::Ty,
 }
 
+/// A context-free theorem context.  The spine lowers to nested `TM_AND`
+/// propositions; unlike a map, order and sharing are explicit and canonical.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Context<R: Repr>(BTreeMap<String, R::Tm>);
+pub enum Context<R: Repr> {
+    Empty,
+    And(R::Tm, R::Ctx),
+}
 
 impl<R: Repr> Context<R> {
     #[must_use]
-    pub fn new() -> Self {
-        Self(BTreeMap::new())
+    pub const fn empty() -> Self {
+        Self::Empty
     }
 
-    pub fn insert(&mut self, name: impl Into<String>, premise: R::Tm) -> Option<R::Tm> {
-        self.0.insert(name.into(), premise)
-    }
-
+    /// Stack one premise in front of an existing context.
     #[must_use]
-    pub fn get(&self, name: &str) -> Option<&R::Tm> {
-        self.0.get(name)
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = (&str, &R::Tm)> {
-        self.0
-            .iter()
-            .map(|(name, premise)| (name.as_str(), premise))
+    pub const fn and(premise: R::Tm, rest: R::Ctx) -> Self {
+        Self::And(premise, rest)
     }
 }
 
 impl<R: Repr> Default for Context<R> {
     fn default() -> Self {
-        Self::new()
+        Self::empty()
     }
 }
 
@@ -101,7 +96,7 @@ impl<R: Repr> Ty<R> {
             Self::Model(_) => SurfaceTag::TyModel,
             Self::Prim(_) => SurfaceTag::TyPrim,
             Self::Link(_, _) => SurfaceTag::TyLink,
-            Self::Nat => SurfaceTag::TyNat,
+            Self::Nat => SurfaceTag::TmNat,
         }
     }
 }
@@ -120,8 +115,11 @@ pub enum Tm<R: Repr> {
     Abs(R::Ty, R::Tm, R::Tm),
     Rep(R::Ty, R::Tm, R::Tm),
     Link(R::Link, R::Ty),
+    And(R::Tm, R::Tm),
+    Inf,
+    Zero,
+    Succ,
     Nat(u64),
-    Ctx(R::Ctx),
     Imp(R::Ctx, R::Tm),
 }
 
@@ -141,9 +139,12 @@ impl<R: Repr> Tm<R> {
             Self::Abs(_, _, _) => SurfaceTag::TmAbs,
             Self::Rep(_, _, _) => SurfaceTag::TmRep,
             Self::Link(_, _) => SurfaceTag::TmLink,
+            Self::And(_, _) => SurfaceTag::TmAnd,
+            Self::Inf => SurfaceTag::TmInf,
+            Self::Zero => SurfaceTag::TmZero,
+            Self::Succ => SurfaceTag::TmSucc,
             Self::Nat(_) => SurfaceTag::TmLitNat,
-            Self::Ctx(_) => SurfaceTag::Ctx,
-            Self::Imp(_, _) => SurfaceTag::Imp,
+            Self::Imp(_, _) => SurfaceTag::TmImp,
         }
     }
 }
@@ -220,12 +221,7 @@ pub trait PropI: TyI {}
 
 pub trait PredI: TmI<Ty: PropI> {}
 
-pub trait CtxI: PredI {
-    type Pred: PredI<Ty: PropI>;
-
-    fn get(&self, name: &str) -> Option<&Self::Pred>;
-    fn iter(&self) -> impl Iterator<Item = (&str, &Self::Pred)>;
-}
+pub trait CtxI: PredI {}
 
 /// A proven predicate implication with explicit premises and conclusion.
 pub trait ThmI: PredI {
@@ -328,7 +324,7 @@ mod tests {
     use std::mem::size_of;
     use std::sync::Arc;
 
-    use super::{AnyExpr, ArcRepr, Kind, Link, SurfaceTag, Tm, Ty};
+    use super::{AnyExpr, ArcRepr, Context, Kind, Link, SurfaceTag, Tm, Ty};
 
     #[test]
     fn tags_are_unique_and_round_trip() {
@@ -371,5 +367,21 @@ mod tests {
     #[test]
     fn default_link_is_one_shared_pointer() {
         assert_eq!(size_of::<Link>(), size_of::<usize>());
+    }
+
+    #[test]
+    fn contexts_are_explicit_conjunction_spines() {
+        let rest = Arc::new(Context::<ArcRepr>::empty());
+        let context = Context::<ArcRepr>::and(Arc::new(Tm::Inf), Arc::clone(&rest));
+
+        let Context::And(premise, tail) = context else {
+            panic!("expected a nonempty context");
+        };
+        assert_eq!(premise.tag(), SurfaceTag::TmInf);
+        assert!(Arc::ptr_eq(&tail, &rest));
+        assert_eq!(
+            Tm::<ArcRepr>::And(Arc::new(Tm::Inf), Arc::new(Tm::Bool(true))).tag(),
+            SurfaceTag::TmAnd,
+        );
     }
 }
