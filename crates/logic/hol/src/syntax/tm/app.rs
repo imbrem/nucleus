@@ -9,12 +9,9 @@ pub struct TmApp<R: Repr> {
 }
 impl<R: Repr> TmApp<R> {
     /// # Errors
-    /// Returns an error unless `function` accepts the type of `argument`.
-    pub fn new(repr: &R, function: Tm<R>, argument: Tm<R>) -> Result<Self, BuildError> {
-        let Some((domain, ty)) = function.ty().as_arr(repr) else {
-            return Err(BuildError::ExpectedFunction);
-        };
-        if !repr.ix_eq(domain.index(), argument.ty().index()) {
+    /// Returns an error unless the function type converts to `argument.ty() → ty`.
+    pub fn new(repr: &R, function: Tm<R>, argument: Tm<R>, ty: Ty<R>) -> Result<Self, BuildError> {
+        if !repr.ty_eq_fun(function.ty(), argument.ty(), &ty) {
             return Err(BuildError::TypeMismatch);
         }
         Ok(Self {

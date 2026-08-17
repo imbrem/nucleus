@@ -18,13 +18,13 @@ impl<R: Repr> TmAbs<R> {
         value: Tm<R>,
         ty: Ty<R>,
     ) -> Result<Self, BuildError> {
-        if !repr.ix_eq(carrier.index(), value.ty().index()) {
+        if !repr.ty_eq(&carrier, value.ty()) {
             return Err(BuildError::TypeMismatch);
         }
         let Expr::TySub(subtype) = repr.expr(ty.index()) else {
             return Err(BuildError::TypeMismatch);
         };
-        if !repr.ix_eq(subtype.carrier().index(), carrier.index())
+        if !repr.ty_eq(subtype.carrier(), &carrier)
             || !repr.ix_eq(subtype.predicate().index(), predicate.index())
         {
             return Err(BuildError::TypeMismatch);

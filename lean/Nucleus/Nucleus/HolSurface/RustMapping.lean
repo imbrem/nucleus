@@ -4,9 +4,10 @@ import Nucleus.HolSurface
 /-!
 # Audited Rust-to-Lean HolE constructor map
 
-The `core` cases lower one-for-one to `HolE Empty`. Links are the only surface
-cases: after resolution and validation they disappear, yielding a closed core
-type or term with their recorded annotation.
+The `core` cases lower one-for-one to `HolE Empty`. Links and casts are surface
+cases. After resolution and validation, links yield a closed core type or term.
+A cast lowers to its operand when conversion succeeds and to an arbitrary
+inhabitant of its target type otherwise.
 -/
 
 namespace Nucleus.HolSurface.RustMapping
@@ -21,6 +22,7 @@ inductive Lowering where
   | core (constructor : CoreConstructor)
   | closedTypeLink
   | closedTermLink
+  | typeCast
   deriving DecidableEq
 
 def lowering : Tag → Lowering
@@ -45,6 +47,7 @@ def lowering : Tag → Lowering
   | .tmAbs => .core .abs
   | .tmRep => .core .rep
   | .tmLink => .closedTermLink
+  | .tmCast => .typeCast
 
 theorem lowering_injective : Function.Injective lowering := by
   intro a b h

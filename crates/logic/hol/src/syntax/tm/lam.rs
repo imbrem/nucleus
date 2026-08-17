@@ -14,9 +14,7 @@ impl<R: Repr> TmLam<R> {
         let Some((actual_domain, actual_codomain)) = ty.as_arr(repr) else {
             return Err(BuildError::ExpectedFunction);
         };
-        if !repr.ix_eq(actual_domain.index(), domain.index())
-            || !repr.ix_eq(actual_codomain.index(), body.ty().index())
-        {
+        if !repr.ty_eq(&actual_domain, &domain) || !repr.ty_eq(&actual_codomain, body.ty()) {
             return Err(BuildError::TypeMismatch);
         }
         Ok(Self { domain, body, ty })

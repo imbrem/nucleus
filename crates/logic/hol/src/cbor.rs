@@ -3,7 +3,7 @@
 //! Every node is a definite array `[tag, fields..]`. Child expressions are
 //! nested CBOR values. A type's final field is its kind; a term's final field
 //! is its type, except where that annotation is already an unambiguous field
-//! (`TM_EPS`, `TM_REP`, and free variables). `TM_EQ` contains only its two
+//! (`TM_EPS`, `TM_REP`, `TM_CAST`, and free variables). `TM_EQ` contains only its two
 //! operands and Boolean result type: the checked constructor derives the
 //! operand type and verifies that both sides agree.
 //!
@@ -232,6 +232,10 @@ fn encode_tm<R: TrustedRepr>(repr: &R, value: &Tm<R>) -> Value {
                 ty(),
             ],
         ),
+        Expr::TmCast(x) => tagged(
+            SurfaceTag::TmCast,
+            [encode_tm(repr, x.value()), encode_ty(repr, x.target())],
+        ),
         _ => unreachable!("Tm points to a non-term expression"),
     }
 }
@@ -296,6 +300,14 @@ fn source(value: Value) -> Result<O256, DecodeError> {
 
 fn same<R: Repr>(repr: &R, left: &R::Ix, right: &R::Ix) -> Result<(), DecodeError> {
     if repr.ix_eq(left, right) {
+        Ok(())
+    } else {
+        Err(DecodeError::AnnotationMismatch)
+    }
+}
+
+fn same_ty<R: Repr>(repr: &R, left: &Ty<R>, right: &Ty<R>) -> Result<(), DecodeError> {
+    if repr.ty_eq(left, right) {
         Ok(())
     } else {
         Err(DecodeError::AnnotationMismatch)
@@ -438,9 +450,7 @@ fn decode_tm<R: TrustedRepr>(
             let f = decode_tm(repr, f, depth + 1)?;
             let a = decode_tm(repr, a, depth + 1)?;
             let annotation = decode_ty(repr, annotation, depth + 1)?;
-            let result = repr.tm_app(f, a)?;
-            same(repr, result.ty().index(), annotation.index())?;
-            result
+            repr.tm_app(f, a, annotation)?
         }
         SurfaceTag::TmLam => {
             let [domain, body, annotation] = exact(tag, values)?;
@@ -448,7 +458,7 @@ fn decode_tm<R: TrustedRepr>(
             let body = decode_tm(repr, body, depth + 1)?;
             let annotation = decode_ty(repr, annotation, depth + 1)?;
             let result = repr.tm_lam(domain, body)?;
-            same(repr, result.ty().index(), annotation.index())?;
+            same_ty(repr, result.ty(), &annotation)?;
             result
         }
         SurfaceTag::TmBool => {
@@ -479,7 +489,7 @@ fn decode_tm<R: TrustedRepr>(
             let value = decode_tm(repr, value, depth + 1)?;
             let annotation = decode_ty(repr, annotation, depth + 1)?;
             let result = repr.tm_abs(carrier, predicate, value)?;
-            same(repr, result.ty().index(), annotation.index())?;
+            same_ty(repr, result.ty(), &annotation)?;
             result
         }
         SurfaceTag::TmRep => {
@@ -495,6 +505,12 @@ fn decode_tm<R: TrustedRepr>(
             let format = format(&format_value)?;
             let ty = decode_ty(repr, ty, depth + 1)?;
             repr.tm_link(source, format, ty)
+        }
+        SurfaceTag::TmCast => {
+            let [value, target] = exact(tag, values)?;
+            let value = decode_tm(repr, value, depth + 1)?;
+            let target = decode_ty(repr, target, depth + 1)?;
+            repr.tm_cast(value, target)
         }
         actual => {
             return Err(DecodeError::UnexpectedTag {
