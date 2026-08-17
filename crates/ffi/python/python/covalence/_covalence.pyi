@@ -25,6 +25,9 @@ class Cbor:
     )
     __hash__: None
 
+    def __init__(self, value: object, /) -> None: ...
+    @staticmethod
+    def from_python(value: object, /) -> Cbor: ...
     @staticmethod
     def integer(value: int, /) -> Cbor: ...
     @staticmethod

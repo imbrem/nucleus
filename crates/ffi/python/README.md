@@ -47,6 +47,8 @@ retain their original width and raw bits. Python integers are converted to the
 shared arbitrary-precision Rust `Int` without narrowing. Equality works
 directly against Python integers, booleans, `None`, bytes, strings, lists, and
 insertion-ordered dictionaries; no conversion call is required.
+The `Cbor(value)` constructor (also available as `Cbor.from_python(value)`)
+recursively converts those scalar types, lists, and dictionaries.
 
 ```python
 >>> from covalence.data.cbor import Cbor
