@@ -231,13 +231,15 @@ pub trait CtxI: PredI {}
 
 /// Result of attempting lazy link resolution.
 ///
-/// A deferred resolution is a recoverable obligation.  The checker may replace
-/// it with a typed free variable derived from `LinkResolver::fallback_variable`
-/// and retry resolution when the target becomes available.
+/// `Opaque` means that the target is merely unavailable and the original link
+/// must remain in the syntax. `Invalid` means that bytes were obtained but did
+/// not decode, check, or match their annotation; a total semantic consumer may
+/// pair that diagnostic with a canonical closed fallback.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LinkResolution<T, E> {
     Resolved(T),
-    Deferred(E),
+    Opaque,
+    Invalid(E),
 }
 
 /// Resolve serialized links at the checked, closed boundary.
@@ -248,9 +250,6 @@ pub trait LinkResolver<R: Repr>: Send + Sync {
     type ClosedType: ClosedTyI;
     type ClosedTerm: ClosedTmI;
     type Error: Error + Send + Sync + 'static;
-
-    /// Stable free-variable identity used when this link remains unresolved.
-    fn fallback_variable(&self, target: &R::Link) -> R::Var;
 
     /// Resolve a type link to a closed, well-kinded type and validate its kind.
     ///

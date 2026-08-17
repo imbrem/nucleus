@@ -22,48 +22,63 @@ abbrev ClosedType := Empty.Ty []
 /-- A closed checked term of some checked type. -/
 abbrev ClosedTerm := Σ A : Empty.Ty [], Empty.Term Empty.Ctx.empty A
 
+/-- Three-way lazy resolution. `opaque` preserves an unavailable link;
+`invalid` records that available content failed validation. -/
+inductive LinkResolution (Value Error : Type) where
+  | resolved (value : Value)
+  | opaque
+  | invalid (error : Error)
+
 /-- A successful link resolution cannot produce open or unchecked syntax: the
-codomain contains both the empty scopes and the checking certificate.  Failure
-is retained as a lazy obligation and recovered using a typed free variable. -/
+codomain contains both the empty scopes and the checking certificate. -/
 structure LinkResolver (Link Error : Type) where
-  fallbackName : Link → Nat
   resolveType : (target : Link) → (kind : Nucleus.HolE.Kind) →
-    Except Error (Empty.FamK [] kind)
+    LinkResolution (Empty.FamK [] kind) Error
   resolveTerm : (target : Link) → (A : Empty.Ty []) →
-    Except Error (Empty.Term (Empty.Ctx.empty : Empty.Ctx [] 0) A)
+    LinkResolution (Empty.Term (Empty.Ctx.empty : Empty.Ctx [] 0) A) Error
 
-/-- The total result of lazy lowering: `value` is always checked and `deferred`
-records the resolution error, if one was recovered by a free variable. -/
-structure LazyLowering (Value Error : Type) where
-  value : Value
-  deferred : Option Error
+/-- Lowering preserves unavailable links. Invalid content receives a checked,
+fully closed fallback while retaining its diagnostic. -/
+inductive LazyLowering (Value Link Error : Type) where
+  | resolved (value : Value)
+  | opaque (target : Link)
+  | invalid (fallback : Value) (error : Error)
 
-/-- A well-kinded placeholder for an unresolved type link.  At kind `*` it is
-a `Model` whose predicate is a distinguished free-variable obligation; at
-higher kind it is pointwise lifted through type lambdas. -/
-def unresolvedFamily (name : Nat) : {types : List Nucleus.HolE.Kind} →
+/-- A canonical fully closed, well-kinded fallback for an invalid type link.
+At kind `*` it is `Model false`; at higher kind it is pointwise lifted through
+type lambdas. -/
+def invalidFamily : {types : List Nucleus.HolE.Kind} →
     (kind : Nucleus.HolE.Kind) → Empty.FamK types kind
   | _, .star =>
       Empty.Term.model
-        (Empty.Term.fv (types := .star :: _) Empty.Ctx.empty name Empty.FamK.boolTy)
+        (Empty.Term.falsehood (types := .star :: _) Empty.Ctx.empty)
   | _, .arr domain codomain =>
-      Empty.FamK.lam (unresolvedFamily (types := domain :: _) name codomain)
+      Empty.FamK.lam (invalidFamily (types := domain :: _) codomain)
 
-/-- Lower a type link, recovering a lazy failure as a well-kinded placeholder. -/
+/-- A canonical fully closed, well-typed fallback for an invalid term link. -/
+def invalidTerm (A : Empty.Ty []) :
+    Empty.Term (Empty.Ctx.empty : Empty.Ctx [] 0) A :=
+  let predicate := Empty.Term.lam A
+    (Empty.Term.falsehood ((Empty.Ctx.empty : Empty.Ctx [] 0).extend A))
+  Empty.Term.eps A predicate
+
+/-- Lower a type link without collapsing temporary CAS absence into failure. -/
 def lowerTypeLink (resolver : LinkResolver Link Error) (target : Link)
-    (kind : Nucleus.HolE.Kind) : LazyLowering (Empty.FamK [] kind) Error :=
+    (kind : Nucleus.HolE.Kind) :
+    LazyLowering (Empty.FamK [] kind) Link Error :=
   match resolver.resolveType target kind with
-  | .ok value => ⟨value, none⟩
-  | .error error => ⟨unresolvedFamily (resolver.fallbackName target) kind, some error⟩
+  | .resolved value => .resolved value
+  | .opaque => .opaque target
+  | .invalid error => .invalid (invalidFamily kind) error
 
-/-- Lower a term link, recovering a lazy failure as a typed free variable. -/
+/-- Lower a term link without collapsing temporary CAS absence into failure. -/
 def lowerTermLink (resolver : LinkResolver Link Error) (target : Link)
     (A : Empty.Ty []) :
-    LazyLowering (Empty.Term (Empty.Ctx.empty : Empty.Ctx [] 0) A) Error :=
+    LazyLowering (Empty.Term (Empty.Ctx.empty : Empty.Ctx [] 0) A) Link Error :=
   match resolver.resolveTerm target A with
-  | .ok value => ⟨value, none⟩
-  | .error error =>
-      ⟨Empty.Term.fv Empty.Ctx.empty (resolver.fallbackName target) A, some error⟩
+  | .resolved value => .resolved value
+  | .opaque => .opaque target
+  | .invalid error => .invalid (invalidTerm A) error
 
 /-- `TM_NAT` lowers to the selected model of the infinity theory. -/
 def nat : ClosedType := Natural.nat

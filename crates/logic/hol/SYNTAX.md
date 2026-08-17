@@ -20,13 +20,13 @@ absent.
 Successful links always resolve to closed checked objects. Rust expresses this
 through `LinkResolver::{ClosedType, ClosedTerm}` and the
 `ClosedTyI`/`ClosedTmI` marker interfaces. Resolution is lazy: failure returns
-`LinkResolution::Deferred`, not a fatal error, and
-`LinkResolver::fallback_variable` gives it a stable free-variable identity.
-Lean's `EmptyDesugar.LinkResolver` returns respectively `FamK [] kind` or
-`Term (Ctx.empty : Ctx [] 0) A`; `lowerTypeLink` and `lowerTermLink` recover an
-error as a well-kinded/well-typed placeholder containing that free variable
-while retaining the error as a deferred obligation. Resolution must defer a
-target that disagrees with the annotation stored in the link node.
+one of two non-success states. `LinkResolution::Opaque` means the content is
+currently absent (for example, not yet in CAS), so the link remains unchanged
+and may resolve later. `LinkResolution::Invalid(error)` means content was
+available but failed decoding, checking, or annotation validation. Lean's
+`lowerTypeLink` and `lowerTermLink` preserve opaque links; only invalid content
+gets a fully closed checked fallback (`Model false` or epsilon) paired with its
+diagnostic. Locally-closed/free-variable imports are a separate future mode.
 
 `Context::{Empty, And}` corresponds to Lean `Context.{empty, and}`. Contexts
 are ordered conjunction spines rather than name maps: stacking the infinity
