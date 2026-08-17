@@ -17,5 +17,6 @@ import Nucleus.SExpr.Rooted
 import Nucleus.SExpr.Lisp
 import Nucleus.SExpr.Forsp.Literal
 import Nucleus.SExpr.Forsp.Tree
+import Nucleus.SExpr.Forsp.Parser
 
 /-! Binary, proper, and tagged S-expression data models and parsers. -/
