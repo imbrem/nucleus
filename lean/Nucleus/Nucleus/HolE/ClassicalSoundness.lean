@@ -1,4 +1,4 @@
-import Nucleus.HolE.ClassicalEquations
+import Nucleus.HolE.ClassicalSemantics
 
 /-! # Soundness interface for the deterministic classical HolE semantics
 
@@ -247,6 +247,40 @@ theorem not_realizes_false_as_true (env : CTypeEnv types) (bound : CBoundEnv dep
   rintro ⟨checking, evaluates⟩
   rw [cDefSem_false checking env bound] at evaluates
   exact Bool.noConfusion (congrArg ULift.down evaluates)
+
+/-- Once the rule induction supplies `CEntails`, consistency is immediate and
+does not require certificate coherence: literal-false inversion above handles
+every possible conversion wrapper. -/
+theorem no_closed_false_of_sound
+    (sound : ∀ proof : Proves (emptyBound : BoundCtx ClassicalSig [] 0) []
+      (.bool false), CEntails (Γ := (emptyBound : BoundCtx ClassicalSig [] 0))
+        [] (.bool false)) :
+    Proves (emptyBound : BoundCtx ClassicalSig [] 0) [] (.bool false) → False := by
+  intro proof
+  have realized := sound proof emptyCTypeEnv emptyCBoundEnv (by
+    intro proposition member
+    nomatch member)
+  exact not_realizes_false_as_true emptyCTypeEnv emptyCBoundEnv realized
+
+/-- Generic one-axiom consistency consequence.  The infinity development only
+has to establish realization of its closed axiom by the `Nat` witness. -/
+theorem no_closed_false_under_axiom_of_sound
+    (axiomTerm : Tm ClassicalSig [] 0)
+    (axiomTrue : CRealizes (Γ := (emptyBound : BoundCtx ClassicalSig [] 0))
+      emptyCTypeEnv emptyCBoundEnv axiomTerm .boolTy cBool true)
+    (sound : ∀ proof : Proves (emptyBound : BoundCtx ClassicalSig [] 0) [axiomTerm]
+      (.bool false), CEntails (Γ := (emptyBound : BoundCtx ClassicalSig [] 0))
+        [axiomTerm] (.bool false)) :
+    Proves (emptyBound : BoundCtx ClassicalSig [] 0) [axiomTerm] (.bool false) → False := by
+  intro proof
+  have hypotheses : CHypsTrue (Γ := (emptyBound : BoundCtx ClassicalSig [] 0))
+      emptyCTypeEnv emptyCBoundEnv [axiomTerm] := by
+    intro proposition member
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at member
+    subst proposition
+    exact axiomTrue
+  exact not_realizes_false_as_true emptyCTypeEnv emptyCBoundEnv
+    (sound proof emptyCTypeEnv emptyCBoundEnv hypotheses)
 
 /-- The two fundamental transport facts needed by beta, eta, generalization,
 and type quantification.  They are intentionally named here so the kernel
