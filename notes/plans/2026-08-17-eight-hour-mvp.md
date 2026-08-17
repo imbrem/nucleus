@@ -1,5 +1,12 @@
 # The 8-hour demo MVP
 
+> **Partly superseded by `v0-mvp.md`.** The surface layer changed: there is no
+> Scheme REPL and no parser — the shell is a Python prompt natively and a
+> JavaScript prompt in the browser, over the same kernel. Lanes L1–L5 below, the
+> skeleton-first protocol in §2, the model assignment in §3, and the machine
+> plan in §4 all stand. Lanes L6 and L7 are replaced by the binding lanes in
+> `v0-mvp.md` §6.
+
 **Target:** by tonight, on `develop`, a Rust HOL kernel + S-expression REPL that
 proves real theorems. Sloppy is fine. Unmerged is fine. The point is to have
 something to point at, and to learn where the API hurts before the real build.
