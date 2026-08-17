@@ -72,6 +72,47 @@ noncomputable def cGuardedAbs (carrier : CPointed)
   · exact ⟨value, valid⟩
   · exact (cGuardedType carrier predicate).point
 
+theorem cGuardedAbs_value (carrier : CPointed) (predicate : carrier.carrier → Bool)
+    (value : carrier.carrier) (valid : CGuarded predicate value) :
+    (cGuardedAbs carrier predicate value).1 = value := by
+  classical
+  simp [cGuardedAbs, valid]
+
+theorem cGuardedAbs_rep (carrier : CPointed) (predicate : carrier.carrier → Bool)
+    (value : (cGuardedType carrier predicate).carrier) :
+    cGuardedAbs carrier predicate value.1 = value := by
+  apply Subtype.ext
+  exact cGuardedAbs_value carrier predicate value.1 value.2
+
+theorem cGuarded_rep_abs_of_true (carrier : CPointed)
+    (predicate : carrier.carrier → Bool) (value : carrier.carrier)
+    (holds : predicate value = true) :
+    (cGuardedAbs carrier predicate value).1 = value :=
+  cGuardedAbs_value carrier predicate value (Or.inl holds)
+
+theorem cGuarded_rep_pred_of_witness (carrier : CPointed)
+    (predicate : carrier.carrier → Bool)
+    (witness : carrier.carrier) (witnessHolds : predicate witness = true)
+    (value : (cGuardedType carrier predicate).carrier) :
+    predicate value.1 = true := by
+  rcases value.2 with holds | empty
+  · exact holds
+  · exact False.elim (empty ⟨witness, witnessHolds⟩)
+
+noncomputable def chooseCModel (satisfies : CPointed → Prop) : CPointed := by
+  classical
+  exact if witness : ∃ candidate, satisfies candidate then Classical.choose witness else cBool
+
+theorem chooseCModel_spec (satisfies : CPointed → Prop)
+    (witness : CPointed) (holds : satisfies witness) :
+    satisfies (chooseCModel satisfies) := by
+  classical
+  simp only [chooseCModel]
+  split
+  · exact Classical.choose_spec ‹∃ candidate, satisfies candidate›
+  · exfalso
+    exact ‹¬ ∃ candidate, satisfies candidate› ⟨witness, holds⟩
+
 /-- A proof-relevant mirror of the public, proof-irrelevant checking judgment.
 The extra kinding fields on `app` and `lam` make semantic recursion manifestly
 structural. -/
@@ -235,10 +276,11 @@ noncomputable def cSem {types : List Kind} {sort : HolSort} {depth : Nat}
       let pred := fun value =>
         (ihp env (extendCBoundEnv carrier value emptyCBoundEnv) cBool).down
       exact cGuardedType carrier pred
-  | model hp ih => exact fun env =>
-      let satisfies := fun candidate : CPointed =>
+  | model hp ih =>
+      intro env
+      let sat := fun candidate : CPointed =>
         ih (extendCTypeEnv (kind := .star) candidate env) emptyCBoundEnv cBool = ⟨true⟩
-      if witness : ∃ candidate, satisfies candidate then Classical.choose witness else cBool
+      exact chooseCModel sat
   | primFam symbol => exact nomatch symbol
   | primTm rule => exact nomatch rule
   | @bv _ _ _ _ index hA lookup ihA =>
