@@ -7,6 +7,16 @@ unmerged** on purpose — see `AGENTS.md` §2.
 **The spike is the experiment. The note is the result.** A spike with no note is
 the only kind that has actually gone to waste.
 
+## Two kinds
+
+- **Built spikes** — code on a branch. The note is retrospective: what was tried,
+  what it taught. Lives here.
+- **Design spikes** — a written sketch of alternatives, argued far enough to
+  implement, with no code yet. Lives in `notes/design/`, marked as a spike in
+  its header, and moves here once something is built against it.
+
+Both are source material. Neither is a decision.
+
 ## Writing one
 
 One file per spike or per family of related spikes, named for the design rather

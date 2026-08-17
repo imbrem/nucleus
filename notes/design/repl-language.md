@@ -10,7 +10,9 @@ Effects are handled by a stack of handler maps that mirrors the environment
 stack. Static typing is not a second language — it is one extra operation,
 `cast`, whose failure is itself an effect.
 
-Not tonight. See §7.
+Not tonight. See §7. Two concrete cores are sketched, with pros and cons, in
+`repl-core-sketches.md` — that document is an open design spike, this one holds
+the parts that are settled.
 
 ---
 
