@@ -69,12 +69,13 @@ theorem tyExistsIntro_sound
     CEntails (Γ := (emptyBound : BoundCtx ClassicalSig types 0)) H
       (.tyExists predicate) := by
   classical
-  intro env bound truths
+  intro env bound typed valid truths
   have boundEq : bound = emptyCBoundEnv := by
     funext i
     exact Fin.elim0 i
   subst bound
-  obtain ⟨instanceCheck, instanceTrue⟩ := premise env emptyCBoundEnv truths
+  obtain ⟨instanceCheck, instanceTrue⟩ :=
+    premise env emptyCBoundEnv typed valid truths
   let conclusionCheck := conclusionTyping.certificate
   refine ⟨conclusionCheck, ?_⟩
   rw [conclusionCheck.rawView_semantics]
@@ -118,12 +119,13 @@ theorem modelSpec_sound
     CEntails (Γ := (emptyBound : BoundCtx ClassicalSig types 0)) H
       (openType predicate (.model predicate)) := by
   classical
-  intro env bound truths
+  intro env bound typed valid truths
   have boundEq : bound = emptyCBoundEnv := by
     funext i
     exact Fin.elim0 i
   subst bound
-  obtain ⟨existsCheck, existsTrue⟩ := premise env emptyCBoundEnv truths
+  obtain ⟨existsCheck, existsTrue⟩ :=
+    premise env emptyCBoundEnv typed valid truths
   rw [existsCheck.rawView_semantics] at existsTrue
   cases he : existsCheck.rawView with
   | mk existsType existsRaw =>
