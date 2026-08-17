@@ -308,71 +308,71 @@ noncomputable def cSem {types : List Kind} {sort : HolSort} {depth : Nat}
     (checking : CChecks Γ expression classification) :
     CTypeEnv types → CResult (depth := depth) classification := by
   classical
-  induction checking with
-  | boolTy => exact fun _ => cBool
-  | arr hA hB ihA ihB => exact fun env =>
-      let domain := ihA env; let codomain := ihB env
+  exact match checking with
+  | .boolTy => fun _ => cBool
+  | .arr hA hB => fun env =>
+      let domain := cSem hA env; let codomain := cSem hB env
       ⟨domain.carrier → codomain.carrier, fun _ => codomain.point⟩
-  | tyApp hF hA ihF ihA => exact fun env => ihF env (ihA env)
-  | tyLam body ih => exact fun env argument => ih (extendCTypeEnv argument env)
-  | tyBv v => exact fun env => env _ v
-  | sub hA hp ihA ihp =>
-      intro env
-      let carrier := ihA env
+  | .tyApp hF hA => fun env => cSem hF env (cSem hA env)
+  | .tyLam body => fun env argument => cSem body (extendCTypeEnv argument env)
+  | .tyBv v => fun env => env _ v
+  | .sub hA hp => fun env =>
+      let carrier := cSem hA env
       let pred := fun value =>
-        (ihp env (extendCBoundEnv carrier value emptyCBoundEnv) cBool).down
-      exact cGuardedType carrier pred
-  | model hp ih =>
-      intro env
+        (cSem hp env (extendCBoundEnv carrier value emptyCBoundEnv) cBool).down
+      cGuardedType carrier pred
+  | .model hp => fun env =>
       let sat := fun candidate : CPointed =>
-        ih (extendCTypeEnv (kind := .star) candidate env) emptyCBoundEnv cBool = ⟨true⟩
-      exact chooseCModel sat
-  | primFam symbol => exact nomatch symbol
-  | primTm rule => exact nomatch rule
-  | @bv _ _ _ _ index hA lookup ihA =>
-      exact fun _ bound expected => ⟨bound index expected⟩
-  | fv name hA ihA => exact fun _ _ expected => ⟨expected.point⟩
-  | app hA hB hf hx ihA ihB ihf ihx => exact fun env bound expected =>
-      let domain := ihA env; let codomain := ihB env
+        cSem hp (extendCTypeEnv (kind := .star) candidate env)
+          emptyCBoundEnv cBool = ⟨true⟩
+      chooseCModel sat
+  | .primFam symbol => nomatch symbol
+  | .primTm rule => nomatch rule
+  | @CChecks.bv _ _ _ _ index hA lookup =>
+      fun _ bound expected => ⟨bound index expected⟩
+  | .fv name hA => fun _ _ expected => ⟨expected.point⟩
+  | .app hA hB hf hx => fun env bound expected =>
+      let domain := cSem hA env; let codomain := cSem hB env
       let functionType : CPointed :=
         ⟨domain.carrier → codomain.carrier, fun _ => codomain.point⟩
       ⟨alignCValue codomain expected
-        ((ihf env bound functionType).down (ihx env bound domain).down)⟩
-  | lam body hA hB hb ihA ihB ihb => exact fun env bound expected =>
-      let domain := ihA env; let codomain := ihB env
+        ((cSem hf env bound functionType).down (cSem hx env bound domain).down)⟩
+  | .lam body hA hB hb => fun env bound expected =>
+      let domain := cSem hA env; let codomain := cSem hB env
       let functionType : CPointed :=
         ⟨domain.carrier → codomain.carrier, fun _ => codomain.point⟩
       let function := fun argument =>
-        (ihb env (extendCBoundEnv domain argument bound) codomain).down
+        (cSem hb env (extendCBoundEnv domain argument bound) codomain).down
       ⟨alignCValue functionType expected function⟩
-  | bool literal => exact fun _ _ expected => ⟨alignCValue cBool expected literal⟩
-  | eq hA hx hy ihA ihx ihy => exact fun env bound expected =>
-      let carrier := ihA env
+  | .bool literal => fun _ _ expected => ⟨alignCValue cBool expected literal⟩
+  | .eq hA hx hy => fun env bound expected =>
+      let carrier := cSem hA env
       ⟨alignCValue cBool expected
-        (decide ((ihx env bound carrier).down = (ihy env bound carrier).down))⟩
-  | eps hA hp ihA ihp => exact fun env bound expected =>
-      let carrier := ihA env
+        (decide ((cSem hx env bound carrier).down = (cSem hy env bound carrier).down))⟩
+  | .eps hA hp => fun env bound expected =>
+      let carrier := cSem hA env
       let functionType : CPointed := ⟨carrier.carrier → Bool, fun _ => false⟩
-      let predicate := (ihp env bound functionType).down
+      let predicate := (cSem hp env bound functionType).down
       let selected := if witness : ∃ value, predicate value = true then
         Classical.choose witness else carrier.point
       ⟨alignCValue carrier expected selected⟩
-  | abs hA hp hx ihA ihp ihx => exact fun env bound expected =>
-      let carrier := ihA env
+  | .abs hA hp hx => fun env bound expected =>
+      let carrier := cSem hA env
       let predicate := fun value =>
-        (ihp env (extendCBoundEnv carrier value emptyCBoundEnv) cBool).down
+        (cSem hp env (extendCBoundEnv carrier value emptyCBoundEnv) cBool).down
       let subtype := cGuardedType carrier predicate
       ⟨alignCValue subtype expected
-        (cGuardedAbs carrier predicate (ihx env bound carrier).down)⟩
-  | rep hA hp hx ihA ihp ihx => exact fun env bound expected =>
-      let carrier := ihA env
+        (cGuardedAbs carrier predicate (cSem hx env bound carrier).down)⟩
+  | .rep hA hp hx => fun env bound expected =>
+      let carrier := cSem hA env
       let predicate := fun value =>
-        (ihp env (extendCBoundEnv carrier value emptyCBoundEnv) cBool).down
+        (cSem hp env (extendCBoundEnv carrier value emptyCBoundEnv) cBool).down
       let subtype := cGuardedType carrier predicate
-      ⟨alignCValue carrier expected (ihx env bound subtype).down.1⟩
-  | tyExists hp ih => exact fun env _ expected =>
+      ⟨alignCValue carrier expected (cSem hx env bound subtype).down.1⟩
+  | .tyExists hp => fun env _ expected =>
       ⟨alignCValue cBool expected (decide (∃ candidate : CPointed,
-        ih (extendCTypeEnv (kind := .star) candidate env) emptyCBoundEnv cBool = ⟨true⟩))⟩
+        cSem hp (extendCTypeEnv (kind := .star) candidate env)
+          emptyCBoundEnv cBool = ⟨true⟩))⟩
 
 noncomputable def cDenoteFam {types : List Kind} {kind : Kind}
     {A : Fam ClassicalSig types kind} (env : CTypeEnv types) (checking : CKinded A) :
