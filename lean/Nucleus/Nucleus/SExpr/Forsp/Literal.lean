@@ -24,6 +24,7 @@ inductive Magic where
   | integer
   | string
   | bytes
+  | closure
   deriving DecidableEq, Repr
 
 /-- Atoms used by the concrete S-expression object representation. -/

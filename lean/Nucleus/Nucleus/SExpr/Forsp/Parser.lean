@@ -129,10 +129,10 @@ mutual
         | none | some ')' | some '\'' | some '^' | some '$' => none
         | some '(' => list fuel [] input.next
         | some '"' => do
-            let (value, rest) ← quoted fuel input.next
+            let (value, rest) ← quoted (input.source.length + 1) input.next
             some (.atom (.literal (.string (String.ofList value))), rest)
         | some _ =>
-            let (token, rest) := bare fuel input
+            let (token, rest) := bare (input.source.length + 1) input
             if token.isEmpty then none
             else do
               let atom ← classify (String.ofList token)

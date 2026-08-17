@@ -86,14 +86,22 @@ private def allocateLiteral (literal : Literal) : M Object
       let allocated := state.literals.allocate literal
       .ok (allocated.2, { state with literals := allocated.1 })
 
-private def valueTag : Value → Int
-  | .datum .nil => 0
-  | .datum (.atom _) => 1
-  | .datum (.cons _ _) => 3
+private def valueTag (literals : LiteralTable) : Value → Int
+  | .datum object => if (literals.decode? object).isSome then 2 else match object with
+    | .nil => 0
+    | .atom _ => 1
+    | .cons _ _ => 3
   | .closure _ _ => 4
   | .primitive _ => 5
 
-private def objectsEqual (left right : Value) : Bool := decide (left = right)
+private def valuesEqual (literals : LiteralTable) (left right : Value) : Bool :=
+  match left, right with
+  | .datum left, .datum right =>
+      match literals.decode? left, literals.decode? right with
+      | some left, some right => decide (left = right)
+      | none, none => decide (left = right)
+      | _, _ => false
+  | _, _ => decide (left = right)
 
 def initialEnvironment : Environment :=
   [ ("push", .push), ("pop", .pop), ("eq", .eq), ("cons", .cons),
@@ -116,8 +124,10 @@ private def applyPrimitive (operation : Primitive) (environment : Environment) :
   | .eq =>
       let right ← pop
       let left ← pop
-      push (.datum (if objectsEqual left right then .atom (.symbol "t") else .nil))
-      pure environment
+      fun state =>
+        let result : Object := if valuesEqual state.literals left right then
+          .atom (.symbol "t") else .nil
+        .ok (environment, { state with stack := Runtime.datum result :: state.stack })
   | .cons =>
       let car ← liftExcept (expectDatum (← pop))
       let cdr ← liftExcept (expectDatum (← pop))
@@ -140,9 +150,12 @@ private def applyPrimitive (operation : Primitive) (environment : Environment) :
         push second
       pure environment
   | .tag =>
-      let object ← allocateLiteral (.integer (valueTag (← pop)))
-      push (.datum object)
-      pure environment
+      let value ← pop
+      fun state =>
+        let allocated := state.literals.allocate (.integer (valueTag state.literals value))
+        .ok (environment, { state with
+          literals := allocated.1
+          stack := .datum allocated.2 :: state.stack })
   | .read => fun state => match state.input with
       | [] => .error .inputExhausted
       | object :: input => .ok (environment,
