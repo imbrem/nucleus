@@ -103,6 +103,27 @@ pub trait Repr: Sized + 'static {
         left.definitely_eq(right)
     }
 
+    /// Decides the type equality used by checked term constructors.
+    fn ty_eq(&self, left: &Ty<Self>, right: &Ty<Self>) -> bool {
+        self.ix_eq(left.index(), right.index())
+    }
+
+    /// Checks whether `function` converts to `domain → codomain`.
+    fn ty_eq_fun(&self, function: &Ty<Self>, domain: &Ty<Self>, codomain: &Ty<Self>) -> bool {
+        let Some((actual_domain, actual_codomain)) = function.as_arr(self) else {
+            return false;
+        };
+        self.ty_eq(&actual_domain, domain) && self.ty_eq(&actual_codomain, codomain)
+    }
+
+    /// Checks whether `predicate` converts to `domain → bool`.
+    fn ty_eq_pred(&self, predicate: &Ty<Self>, domain: &Ty<Self>) -> bool {
+        let Some((actual_domain, actual_codomain)) = predicate.as_arr(self) else {
+            return false;
+        };
+        self.ty_eq(&actual_domain, domain) && actual_codomain.is_bool(self)
+    }
+
     fn kind_star(&mut self) -> Kind<Self>
     where
         Self: TrustedRepr,
@@ -202,11 +223,16 @@ pub trait Repr: Sized + 'static {
         Ok(self.new_tm(former))
     }
 
-    fn tm_app(&mut self, function: Tm<Self>, argument: Tm<Self>) -> Result<Tm<Self>, BuildError>
+    fn tm_app(
+        &mut self,
+        function: Tm<Self>,
+        argument: Tm<Self>,
+        ty: Ty<Self>,
+    ) -> Result<Tm<Self>, BuildError>
     where
         Self: TrustedRepr,
     {
-        let former = syntax::tm::TmApp::new(self, function, argument)?;
+        let former = syntax::tm::TmApp::new(self, function, argument, ty)?;
         Ok(self.new_tm(former))
     }
 
@@ -280,6 +306,13 @@ pub trait Repr: Sized + 'static {
         Self: TrustedRepr,
     {
         self.new_tm(syntax::tm::TmLink::new(source, format, ty))
+    }
+
+    fn tm_cast(&mut self, value: Tm<Self>, target: Ty<Self>) -> Tm<Self>
+    where
+        Self: TrustedRepr,
+    {
+        self.new_tm(syntax::tm::TmCast::new(value, target))
     }
 }
 
@@ -511,6 +544,7 @@ pub enum Expr<R: Repr> {
     TmAbs(TmAbs<R>),
     TmRep(TmRep<R>),
     TmLink(TmLink<R>),
+    TmCast(TmCast<R>),
 }
 
 impl<R: TrustedRepr> ExprI for Expr<R> {
@@ -537,6 +571,7 @@ impl<R: TrustedRepr> ExprI for Expr<R> {
             Self::TmAbs(x) => x.tag(),
             Self::TmRep(x) => x.tag(),
             Self::TmLink(x) => x.tag(),
+            Self::TmCast(x) => x.tag(),
         }
     }
 }
@@ -564,6 +599,7 @@ impl<R: TrustedRepr> Expr<R> {
             Self::TmAbs(x) => Sort::Term(x.ty().clone()),
             Self::TmRep(x) => Sort::Term(x.ty().clone()),
             Self::TmLink(x) => Sort::Term(x.ty().clone()),
+            Self::TmCast(x) => Sort::Term(x.ty().clone()),
         }
     }
 }
@@ -648,11 +684,11 @@ mod tests {
         let mut repr = ArcRepr::new();
         let bool_ty = bool_ty(&mut repr);
         let function = repr.tm_bool(bool_ty.clone(), true).unwrap();
-        let argument = repr.tm_bool(bool_ty, false).unwrap();
+        let argument = repr.tm_bool(bool_ty.clone(), false).unwrap();
 
         assert_eq!(
-            repr.tm_app(function, argument),
-            Err(BuildError::ExpectedFunction)
+            repr.tm_app(function, argument, bool_ty),
+            Err(BuildError::TypeMismatch)
         );
     }
 
@@ -676,6 +712,25 @@ mod tests {
     }
 
     #[test]
+    fn cast_is_typed_even_when_conversion_is_not_known() {
+        let mut repr = ArcRepr::new();
+        let bool_ty = bool_ty(&mut repr);
+        let truth = repr.tm_bool(bool_ty.clone(), true).unwrap();
+        let function_ty = repr.ty_arr(bool_ty.clone(), bool_ty.clone()).unwrap();
+
+        let identity_cast = repr.tm_cast(truth.clone(), bool_ty);
+        let garbage_cast = repr.tm_cast(truth, function_ty.clone());
+
+        assert!(
+            matches!(repr.expr(identity_cast.index()), Expr::TmCast(x) if x.is_identity(&repr))
+        );
+        assert!(
+            matches!(repr.expr(garbage_cast.index()), Expr::TmCast(x) if !x.is_identity(&repr))
+        );
+        assert!(repr.ty_eq(garbage_cast.ty(), &function_ty));
+    }
+
+    #[test]
     fn cbor_values_round_trip_through_checked_constructors() {
         let mut repr = ArcRepr::new();
         let bool_ty = bool_ty(&mut repr);
@@ -687,7 +742,7 @@ mod tests {
         let decoded = tm_from_value(&mut repr, encoded.clone()).unwrap();
 
         assert_eq!(tm_to_value(&repr, &decoded), encoded);
-        assert!(repr.ix_eq(variable.ty().index(), decoded.ty().index()));
+        assert!(repr.ty_eq(variable.ty(), decoded.ty()));
     }
 
     #[test]
@@ -698,7 +753,7 @@ mod tests {
         let truth = repr.tm_bool(bool_ty.clone(), true).unwrap();
         let bound = repr.tm_bv(Bv::new(0), bool_ty.clone());
         let identity = repr.tm_lam(bool_ty.clone(), bound).unwrap();
-        let application = repr.tm_app(identity, truth).unwrap();
+        let application = repr.tm_app(identity, truth, bool_ty.clone()).unwrap();
         let CborValue::Array(mut encoded) = tm_to_value(&repr, &application) else {
             unreachable!();
         };

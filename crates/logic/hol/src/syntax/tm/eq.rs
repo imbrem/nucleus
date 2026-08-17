@@ -14,7 +14,7 @@ impl<R: Repr> TmEq<R> {
         if !ty.is_bool(repr) {
             return Err(BuildError::ExpectedBool);
         }
-        if !repr.ix_eq(left.ty().index(), right.ty().index()) {
+        if !repr.ty_eq(left.ty(), right.ty()) {
             return Err(BuildError::TypeMismatch);
         }
         Ok(Self { left, right, ty })

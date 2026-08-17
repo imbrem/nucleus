@@ -19,7 +19,7 @@ impl<R: Repr> TmRep<R> {
         let Expr::TySub(subtype) = repr.expr(value.ty().index()) else {
             return Err(BuildError::TypeMismatch);
         };
-        if !repr.ix_eq(subtype.carrier().index(), carrier.index())
+        if !repr.ty_eq(subtype.carrier(), &carrier)
             || !repr.ix_eq(subtype.predicate().index(), predicate.index())
         {
             return Err(BuildError::TypeMismatch);

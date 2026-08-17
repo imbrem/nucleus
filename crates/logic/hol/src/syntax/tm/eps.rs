@@ -10,10 +10,7 @@ impl<R: Repr> TmEps<R> {
     /// # Errors
     /// Returns an error unless `predicate` has type `ty → bool`.
     pub fn new(repr: &R, ty: Ty<R>, predicate: Tm<R>) -> Result<Self, BuildError> {
-        let Some((domain, codomain)) = predicate.ty().as_arr(repr) else {
-            return Err(BuildError::ExpectedFunction);
-        };
-        if !repr.ix_eq(domain.index(), ty.index()) || !codomain.is_bool(repr) {
+        if !repr.ty_eq_pred(predicate.ty(), &ty) {
             return Err(BuildError::TypeMismatch);
         }
         Ok(Self { predicate, ty })

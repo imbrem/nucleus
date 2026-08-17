@@ -89,6 +89,7 @@ surface_tags! {
     TmRep = 21 => "TM_REP",
 
     TmLink = 22 => "TM_LINK",
+    TmCast = 23 => "TM_CAST",
 }
 
 impl TryFrom<&str> for SurfaceTag {

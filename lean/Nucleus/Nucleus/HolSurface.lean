@@ -71,11 +71,12 @@ inductive Expr (R : Repr) where
   | tmAbs (carrier : Ty R) (predicate value : Tm R) (result : Ty R)
   | tmRep (carrier : Ty R) (predicate value : Tm R)
   | tmLink (source : R.Link) (format : Format) (result : Ty R)
+  | tmCast (value : Tm R) (target : Ty R)
 
 inductive Tag where
   | kindStar | kindArr
   | tyBool | tyArr | tyApp | tyLam | tyBv | tySub | tyExists | tyModel | tyLink
-  | tmBv | tmFv | tmApp | tmLam | tmBool | tmEq | tmEps | tmAbs | tmRep | tmLink
+  | tmBv | tmFv | tmApp | tmLam | tmBool | tmEq | tmEps | tmAbs | tmRep | tmLink | tmCast
   deriving DecidableEq
 
 def Tag.id : Tag → Nat
@@ -100,6 +101,7 @@ def Tag.id : Tag → Nat
   | .tmAbs => 20
   | .tmRep => 21
   | .tmLink => 22
+  | .tmCast => 23
 
 def Tag.name : Tag → String
   | .kindStar => "KIND_STAR"
@@ -123,6 +125,7 @@ def Tag.name : Tag → String
   | .tmAbs => "TM_ABS"
   | .tmRep => "TM_REP"
   | .tmLink => "TM_LINK"
+  | .tmCast => "TM_CAST"
 
 def Expr.tag {R : Repr} : Expr R → Tag
   | .kindStar => .kindStar
@@ -146,6 +149,7 @@ def Expr.tag {R : Repr} : Expr R → Tag
   | .tmAbs .. => .tmAbs
   | .tmRep .. => .tmRep
   | .tmLink .. => .tmLink
+  | .tmCast .. => .tmCast
 
 theorem Tag.id_injective : Function.Injective Tag.id := by
   intro a b h
