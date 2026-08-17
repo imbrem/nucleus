@@ -113,54 +113,57 @@ noncomputable def cDefSem {types : List Kind} {depth : Nat}
     CTypeEnv types → CBoundEnv depth → (expected : CPointed) →
       ULift.{1, 0} expected.carrier := by
   classical
-  induction checking with
-  | exact raw => exact fun env bound expected => cSem raw env bound expected
-  | app function argument ihf ihx =>
-      cases function.typeKinded with
-      | arr hA hB => exact fun env bound expected =>
+  exact match checking with
+  | .exact raw => fun env bound expected => cSem raw env bound expected
+  | .app function argument =>
+      match function.typeKinded with
+      | .arr hA hB => fun env bound expected =>
           let domain := cSem hA env
           let codomain := cSem hB env
           let functionType : CPointed :=
             ⟨domain.carrier → codomain.carrier, fun _ => codomain.point⟩
           ⟨alignCValue codomain expected
-            ((ihf env bound functionType).down (ihx env bound domain).down)⟩
-  | lam body hA bodyChecking ih => exact fun env bound expected =>
+            ((cDefSem function env bound functionType).down
+              (cDefSem argument env bound domain).down)⟩
+  | .lam body hA bodyChecking => fun env bound expected =>
       let domain := cSem hA env
       let codomain := cSem bodyChecking.typeKinded env
       let functionType : CPointed :=
         ⟨domain.carrier → codomain.carrier, fun _ => codomain.point⟩
       let function := fun argument =>
-        (ih env (extendCBoundEnv domain argument bound) codomain).down
+        (cDefSem bodyChecking env
+          (extendCBoundEnv domain argument bound) codomain).down
       ⟨alignCValue functionType expected function⟩
-  | eq hA left right ihx ihy => exact fun env bound expected =>
+  | .eq hA left right => fun env bound expected =>
       let carrier := cSem hA env
       ⟨alignCValue cBool expected
-        (decide ((ihx env bound carrier).down = (ihy env bound carrier).down))⟩
-  | eps hA predicate ih => exact fun env bound expected =>
+        (decide ((cDefSem left env bound carrier).down =
+          (cDefSem right env bound carrier).down))⟩
+  | .eps hA predicate => fun env bound expected =>
       let carrier := cSem hA env
       let functionType : CPointed := ⟨carrier.carrier → Bool, fun _ => false⟩
-      let pred := (ih env bound functionType).down
+      let pred := (cDefSem predicate env bound functionType).down
       let selected := if witness : ∃ value, pred value = true then
         Classical.choose witness else carrier.point
       ⟨alignCValue carrier expected selected⟩
-  | abs hA hp value ih => exact fun env bound expected =>
+  | .abs hA hp value => fun env bound expected =>
       let carrier := cSem hA env
       let predicate := fun value =>
         (cSem hp env (extendCBoundEnv carrier value emptyCBoundEnv) cBool).down
       let subtype := cGuardedType carrier predicate
       ⟨alignCValue subtype expected
-        (cGuardedAbs carrier predicate (ih env bound carrier).down)⟩
-  | rep hA hp value ih => exact fun env bound expected =>
+        (cGuardedAbs carrier predicate (cDefSem value env bound carrier).down)⟩
+  | .rep hA hp value => fun env bound expected =>
       let carrier := cSem hA env
       let predicate := fun value =>
         (cSem hp env (extendCBoundEnv carrier value emptyCBoundEnv) cBool).down
       let subtype := cGuardedType carrier predicate
-      ⟨alignCValue carrier expected (ih env bound subtype).down.1⟩
-  | tyExists predicate ih => exact fun env _ expected =>
+      ⟨alignCValue carrier expected (cDefSem value env bound subtype).down.1⟩
+  | .tyExists predicate => fun env _ expected =>
       ⟨alignCValue cBool expected (decide (∃ candidate : CPointed,
-        ih (extendCTypeEnv (kind := .star) candidate env)
+        cDefSem predicate (extendCTypeEnv (kind := .star) candidate env)
           emptyCBoundEnv cBool = ⟨true⟩))⟩
-  | conv source hB conversion ih => exact ih
+  | .conv source hB conversion => cDefSem source
 
 noncomputable def evalDefEq {types : List Kind} {depth : Nat}
     {Γ : BoundCtx ClassicalSig types depth} {term : Tm ClassicalSig types depth}
