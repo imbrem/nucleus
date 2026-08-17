@@ -266,17 +266,11 @@ pub trait Repr: Sized + 'static {
         Ok(self.new_tm(former))
     }
 
-    fn tm_abs(
-        &mut self,
-        carrier: Ty<Self>,
-        predicate: Tm<Self>,
-        value: Tm<Self>,
-    ) -> Result<Tm<Self>, BuildError>
+    fn tm_abs(&mut self, ty: Ty<Self>, value: Tm<Self>) -> Result<Tm<Self>, BuildError>
     where
         Self: TrustedRepr,
     {
-        let subtype = self.ty_sub(carrier.clone(), predicate.clone())?;
-        let former = syntax::tm::TmAbs::new(self, carrier, predicate, value, subtype)?;
+        let former = syntax::tm::TmAbs::new(self, ty, value)?;
         Ok(self.new_tm(former))
     }
 

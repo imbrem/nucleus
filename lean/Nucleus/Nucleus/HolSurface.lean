@@ -68,7 +68,7 @@ inductive Expr (R : Repr) where
   | tmBool (value : Bool) (result : Ty R)
   | tmEq (left right : Tm R) (result : Ty R)
   | tmEps (predicate : Tm R) (result : Ty R)
-  | tmAbs (carrier : Ty R) (predicate value : Tm R) (result : Ty R)
+  | tmAbs (subtype : Ty R) (value : Tm R)
   | tmRep (carrier : Ty R) (predicate value : Tm R)
   | tmLink (source : R.Link) (format : Format) (result : Ty R)
   | tmCast (value : Tm R) (target : Ty R)
