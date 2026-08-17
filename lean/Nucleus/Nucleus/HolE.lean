@@ -262,7 +262,7 @@ inductive Checks {Sig : Signature} [SigTyping Sig] : {types : List Kind} →
   | model : Checks (types := .star :: types) emptyBound p (.tm .boolTy) →
       Checks (types := types) emptyBound (.model p) .kind
   | primFam (symbol : Sig (.kind kind)) : Checks emptyBound (.primFam symbol) .kind
-  | primTm (rule : SigTyping.HasType symbol A) :
+  | primTm (hA : Checks emptyBound A .kind) (rule : SigTyping.HasType symbol A) :
       Checks Γ (.primTm symbol) (.tm A)
   | bv (hA : Checks emptyBound A .kind) (lookup : Γ i = A) :
       Checks Γ (.bv i) (.tm A)
@@ -289,6 +289,19 @@ abbrev Kinded {Sig : Signature} [SigTyping Sig] (A : Fam Sig types kind) : Prop 
 abbrev HasType {Sig : Signature} [SigTyping Sig] (Γ : BoundCtx Sig types depth)
     (term : Tm Sig types depth) (A : Ty Sig types) : Prop := Checks Γ term (.tm A)
 
+theorem Checks.typeKinded {Sig : Signature} [SigTyping Sig]
+    {types : List Kind} {depth : Nat} {Γ : BoundCtx Sig types depth}
+    {term : Tm Sig types depth} {A : Ty Sig types} : HasType Γ term A → Kinded A
+  | .primTm hA _ => hA
+  | .bv hA _ | .fv _ hA => hA
+  | .app hf _ => by
+      cases hf.typeKinded with
+      | arr _ hB => exact hB
+  | .lam _ hA hb => .arr hA hb.typeKinded
+  | .bool _ | .eq _ _ _ | .tyExists _ => .boolTy
+  | .eps hA _ | .rep hA _ _ => hA
+  | .abs hA hp _ => .sub hA hp
+
 def WellFormedTySub {Sig : Signature} [SigTyping Sig]
     (σ : TySub Sig source target) : Prop :=
   ∀ {kind} (v : TyVar source kind), Kinded (σ v)
@@ -300,21 +313,23 @@ inductive FamEq (Sig : Signature.{u}) [SigTyping Sig] [rules : SigFamilyEquality
     Fam Sig types kind → Fam Sig types kind → Type (u + 1) where
   | refl : FamEq Sig A A
   | symm : FamEq Sig A B → FamEq Sig B A
-  | trans : FamEq Sig A B → FamEq Sig B C → FamEq Sig A C
+  | trans : FamEq Sig A B → Kinded B → FamEq Sig B C → FamEq Sig A C
   | arr : FamEq Sig A A' → FamEq Sig B B' → FamEq Sig (.arr A B) (.arr A' B')
   | app : FamEq Sig F F' → FamEq Sig A A' → FamEq Sig (.tyApp F A) (.tyApp F' A')
   | lam : FamEq Sig body body' → FamEq Sig (.tyLam body) (.tyLam body')
   | sub : FamEq Sig A B → p = q → FamEq Sig (.sub A p) (.sub B q)
   | model : p = q → FamEq Sig (.model p) (.model q)
-  | beta (body : Fam Sig (domain :: types) codomain) (argument : Fam Sig types domain) :
+  | beta (body : Fam Sig (domain :: types) codomain) (argument : Fam Sig types domain)
+      (hbody : Kinded body) (hargument : Kinded argument) :
       FamEq Sig (.tyApp (.tyLam body) argument) (openType body argument)
   | rename {source target : List Kind} {kind : Kind}
       {A B : Fam Sig source kind} (equality : FamEq Sig A B)
-      (ρ : TyRen source target) :
+      (hA : Kinded A) (hB : Kinded B) (ρ : TyRen source target) :
       FamEq Sig (renameTypes ρ A) (renameTypes ρ B)
   | instantiate {source target : List Kind} {kind : Kind}
       {A B : Fam Sig source kind} (equality : FamEq Sig A B)
-      (σ : TySub Sig source target) (wellFormed : WellFormedTySub σ) :
+      (hA : Kinded A) (hB : Kinded B) (σ : TySub Sig source target)
+      (wellFormed : WellFormedTySub σ) :
       FamEq Sig (instantiateTypes σ A) (instantiateTypes σ B)
   | signature (certificate : rules.Rule A B) : FamEq Sig A B
 
@@ -347,6 +362,21 @@ inductive HasTypeDefEq {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
       HasTypeDefEq (types := types) Γ (.tyExists p) .boolTy
   | conv (typing : HasTypeDefEq Γ term A) (hB : Kinded B)
       (conversion : FamEq Sig A B) : HasTypeDefEq Γ term B
+
+theorem HasTypeDefEq.typeKinded {Sig : Signature} [SigTyping Sig]
+    [SigFamilyEquality Sig] {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx Sig types depth} {term : Tm Sig types depth} {A : Ty Sig types}
+    (typing : HasTypeDefEq Γ term A) : Kinded A := by
+  induction typing with
+  | exact raw => exact raw.typeKinded
+  | app _ _ ihf _ =>
+      cases ihf with
+      | arr _ hB => exact hB
+  | lam _ hA _ ih => exact .arr hA ih
+  | eq | tyExists => exact .boolTy
+  | eps hA _ _ | rep hA _ _ _ => exact hA
+  | abs hA hp _ _ => exact .sub hA hp
+  | conv _ hB _ _ => exact hB
 
 namespace HasTypeDefEq
 
@@ -387,8 +417,9 @@ attribute [simp] renameTypes Classification.rename
 
 def FamEq.renameTypes [SigTyping Sig] [SigFamilyEquality Sig]
     {A B : Fam Sig source kind}
-    (equality : FamEq Sig A B) (ρ : TyRen source target) :
-    FamEq Sig (renameTypes ρ A) (renameTypes ρ B) := .rename equality ρ
+    (equality : FamEq Sig A B) (hA : Kinded A) (hB : Kinded B)
+    (ρ : TyRen source target) :
+    FamEq Sig (renameTypes ρ A) (renameTypes ρ B) := .rename equality hA hB ρ
 
 theorem Checks.renameTypes {Sig : Signature} [SigTyping Sig]
     {Γ : BoundCtx Sig source depth} {expression : Expr Sig source sort depth}
@@ -416,7 +447,8 @@ theorem Checks.renameTypes {Sig : Signature} [SigTyping Sig]
       (Checks.model (by simpa using ihp (liftTyRen ρ)))
   | primFam symbol =>
       simpa [Classification.rename] using (Checks.primFam (Sig := Sig) symbol)
-  | primTm rule => exact .primTm (SigTyping.rename ρ rule)
+  | primTm hA rule ihA => exact (.primTm (by simpa using ihA ρ)
+      (SigTyping.rename ρ rule))
   | bv hA lookup ihA =>
       exact .bv (by simpa using ihA ρ)
         (congrArg (HolE.renameTypes ρ) lookup)
@@ -472,10 +504,10 @@ attribute [simp] instantiateTypes Classification.instantiate
 
 def FamEq.instantiateTypes [SigTyping Sig] [SigFamilyEquality Sig]
     {A B : Fam Sig source kind}
-    (equality : FamEq Sig A B)
+    (equality : FamEq Sig A B) (hA : Kinded A) (hB : Kinded B)
     (σ : TySub Sig source target) (wellFormed : WellFormedTySub σ) :
     FamEq Sig (instantiateTypes σ A) (instantiateTypes σ B) :=
-  .instantiate equality σ wellFormed
+  .instantiate equality hA hB σ wellFormed
 
 theorem Checks.instantiateTypes {Sig : Signature} [SigTyping Sig]
     {Γ : BoundCtx Sig source depth} {expression : Expr Sig source sort depth}
@@ -498,7 +530,8 @@ theorem Checks.instantiateTypes {Sig : Signature} [SigTyping Sig]
       simpa using (Checks.tyExists (by simpa using (ihp wellFormed.lift)))
   | model hp ihp => simpa using (.model (by simpa using ihp wellFormed.lift))
   | primFam symbol => simpa using (Checks.primFam (Sig := Sig) symbol)
-  | primTm rule => exact .primTm (SigTyping.instantiate σ rule)
+  | primTm hA rule ihA => exact (.primTm (by simpa using ihA wellFormed)
+      (SigTyping.instantiate σ rule))
   | bv hA lookup ihA => exact (.bv (by simpa using ihA wellFormed)
       (congrArg (HolE.instantiateTypes σ) lookup))
   | fv name hA ihA => exact .fv name (by simpa using ihA wellFormed)

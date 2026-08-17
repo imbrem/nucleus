@@ -284,7 +284,7 @@ def Checks.renameTm {Sig : Signature} [SigTyping Sig]
     (ρ : Fin m → Fin n) (contexts : ∀ i, Δ (ρ i) = Γ i) :
     HasType Δ (rename ρ t) A :=
   match typing with
-  | .primTm rule => by simpa [rename] using (.primTm (Γ := Δ) rule)
+  | .primTm hA rule => by simpa [rename] using (.primTm (Γ := Δ) hA rule)
   | .bv hA lookup => by simpa [rename] using (.bv hA ((contexts _).trans lookup))
   | .fv name hA => by simpa [rename] using (.fv name hA)
   | .app hf hx => by simpa [rename] using
@@ -332,7 +332,7 @@ def Checks.instantiateTm {Sig : Signature} [SigTyping Sig]
     (σ : Fin m → Tm Sig types n) (wellTyped : WellTypedSub Γ Δ σ) :
     HasType Δ (instantiate σ t) A :=
   match typing with
-  | .primTm rule => by simpa [instantiate] using (.primTm (Γ := Δ) rule)
+  | .primTm hA rule => by simpa [instantiate] using (.primTm (Γ := Δ) hA rule)
   | .bv (i := i) hA lookup => by
       have variableTyping := wellTyped i
       rw [lookup] at variableTyping
@@ -439,7 +439,8 @@ def Checks.instantiateDefEq {Sig : Signature} [SigTyping Sig] [SigFamilyEquality
     (σ : Fin m → Tm Sig types n) (wellTyped : WellTypedDefEqSub Γ Δ σ) :
     HasTypeDefEq Δ (instantiate σ t) A :=
   match typing with
-  | .primTm rule => .exact (by simpa [instantiate] using (.primTm (Γ := Δ) rule))
+  | .primTm hA rule =>
+      .exact (by simpa [instantiate] using (.primTm (Γ := Δ) hA rule))
   | .bv (i := i) hA lookup => by
       have variableTyping := wellTyped i
       rw [lookup] at variableTyping
@@ -526,8 +527,9 @@ theorem HasTypeDefEq.renameTypes {Sig : Signature} [SigTyping Sig]
         (by simpa using hp.renameTypes ρ) (ih ρ))
   | tyExists _ ih => simpa using
       (HasTypeDefEq.tyExists (by simpa using ih (liftTyRen ρ)))
-  | conv _ hB conversion ih =>
-      exact .conv (ih ρ) (by simpa using hB.renameTypes ρ) (conversion.renameTypes ρ)
+  | conv sourceTyping hB conversion ih =>
+      exact .conv (ih ρ) (by simpa using hB.renameTypes ρ)
+        (conversion.renameTypes sourceTyping.typeKinded hB ρ)
 
 theorem HasTypeDefEq.instantiateTypes {Sig : Signature} [SigTyping Sig]
     [SigFamilyEquality Sig]
@@ -561,9 +563,9 @@ theorem HasTypeDefEq.instantiateTypes {Sig : Signature} [SigTyping Sig]
         (by simpa using hp.instantiateTypes wellFormed) (ih wellFormed))
   | tyExists _ ih => simpa using
       (HasTypeDefEq.tyExists (by simpa using ih wellFormed.lift))
-  | conv _ hB conversion ih =>
+  | conv sourceTyping hB conversion ih =>
       exact .conv (ih wellFormed)
         (by simpa using hB.instantiateTypes wellFormed)
-        (conversion.instantiateTypes σ wellFormed)
+        (conversion.instantiateTypes sourceTyping.typeKinded hB σ wellFormed)
 
 end Nucleus.HolE

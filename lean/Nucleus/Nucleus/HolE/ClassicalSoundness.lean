@@ -12,23 +12,6 @@ namespace Nucleus.HolE
 universe u
 set_option relaxedAutoImplicit true
 
-/-- Typing modulo family conversion still determines a well-kinded result
-type.  This is useful independently of semantics and lets semantic evaluation
-always choose the denotation of the advertised result type. -/
-theorem HasTypeDefEq.typeKinded {types : List Kind} {depth : Nat}
-    {Γ : BoundCtx ClassicalSig types depth} {term : Tm ClassicalSig types depth}
-    {A : Ty ClassicalSig types} (typing : HasTypeDefEq Γ term A) : Kinded A := by
-  induction typing with
-  | exact raw => exact raw.typeKinded
-  | app _ _ ihf _ =>
-      cases ihf with
-      | arr _ hB => exact hB
-  | lam _ hA _ ih => exact .arr hA ih
-  | eq | tyExists => exact .boolTy
-  | eps hA _ _ | rep hA _ _ _ => exact hA
-  | abs hA hp _ _ => exact .sub hA hp
-  | conv _ hB _ _ => exact hB
-
 /-- Proof-relevant mirror of typing modulo family equality.  `HasTypeDefEq`
 lives in `Prop`, so Lean cannot recurse over it to compute a semantic value;
 this mirror is the same standard bridge used by `CChecks` for raw checking. -/

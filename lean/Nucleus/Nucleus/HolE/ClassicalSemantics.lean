@@ -212,19 +212,6 @@ theorem CChecks.type_unique {types : List Kind} {depth : Nat}
   cases equal
   rfl
 
-theorem Checks.typeKinded {types : List Kind} {depth : Nat}
-    {Γ : BoundCtx ClassicalSig types depth} {term : Tm ClassicalSig types depth}
-    {A : Ty ClassicalSig types} : HasType Γ term A → Kinded A
-  | .primTm rule => nomatch rule
-  | .bv hA _ | .fv _ hA => hA
-  | .app hf _ => by
-      cases hf.typeKinded with
-      | arr _ hB => exact hB
-  | .lam _ hA hb => .arr hA hb.typeKinded
-  | .bool _ | .eq _ _ _ | .tyExists _ => .boolTy
-  | .eps hA _ | .rep hA _ _ => hA
-  | .abs hA hp _ => .sub hA hp
-
 theorem Checks.toC {types : List Kind} {sort : HolSort} {depth : Nat}
     {Γ : BoundCtx ClassicalSig types depth} {expression : Expr ClassicalSig types sort depth}
     {classification : Classification ClassicalSig types sort}
