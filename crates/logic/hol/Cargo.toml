@@ -1,0 +1,11 @@
+[package]
+name = "covalence-logic-hol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Backend-neutral LCF interface for higher-order logic kernels"
+publish = false
+
+[lints]
+workspace = true
