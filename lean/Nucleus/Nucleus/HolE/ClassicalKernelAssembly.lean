@@ -3,6 +3,7 @@ import Nucleus.HolE.ClassicalSubtypeKernelLaws
 import Nucleus.HolE.ClassicalTypeExistentialKernelLaws
 import Nucleus.HolE.ClassicalBoundKernelLaws
 import Nucleus.HolE.ClassicalEtaKernelLaw
+import Nucleus.HolE.ClassicalBetaKernelLaw
 
 /-! # Assembly of the classical kernel soundness laws
 
@@ -13,29 +14,18 @@ namespace Nucleus.HolE
 
 set_option relaxedAutoImplicit true
 
-structure ClassicalRemainingEqTmLaws where
-  beta : ∀ {types depth} {Γ : BoundCtx ClassicalSig types depth}
-      {A B : Ty ClassicalSig types} {body : Tm ClassicalSig types (depth + 1)}
-      {x : Tm ClassicalSig types depth},
-    Kinded A → TypedCtx Γ → HasType Γ (.app (.lam A body) x) B →
-    HasTypeDefEq (extendBound A Γ) body B → HasTypeDefEq Γ x A →
-    HasTypeDefEq Γ (openBound body x) B →
-    CSemEq (Γ := Γ) (.app (.lam A body) x) (openBound body x) B
-
-theorem ClassicalRemainingEqTmLaws.assemble
-    (remaining : ClassicalRemainingEqTmLaws) : ClassicalEqTmRuleLaws where
+theorem classicalEqTmRuleLaws : ClassicalEqTmRuleLaws where
   app := classical_eqTm_app
   lam := classical_eqTm_lam
-  beta := remaining.beta
+  beta := classical_eqTm_beta
   eta := classical_eqTm_eta
 
 structure ClassicalRemainingKernelLaws where
-  eqTm : ClassicalRemainingEqTmLaws
   opening : CInstantiateOneTrueLaw
 
 theorem ClassicalRemainingKernelLaws.assemble
     (remaining : ClassicalRemainingKernelLaws) : ClassicalKernelRuleLaws :=
-  let eqLaws := remaining.eqTm.assemble
+  let eqLaws := classicalEqTmRuleLaws
   { eqMp := classical_eqMp
     choice := classical_choice
     generalize := classical_generalize
