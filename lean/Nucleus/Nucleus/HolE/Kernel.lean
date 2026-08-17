@@ -25,6 +25,7 @@ inductive EqTm {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig] :
       EqTm (extendBound A Γ) t u B →
       EqTm Γ (.lam A t) (.lam A u) (.arr A B)
   | beta (body : Tm Sig types (depth + 1)) (x : Tm Sig types depth) (hA : Kinded A)
+      (typedContext : TypedCtx Γ)
       (applicationRaw : HasType Γ (.app (.lam A body) x) B)
       (bodyTyping : HasTypeDefEq (extendBound A Γ) body B)
       (argumentTyping : HasTypeDefEq Γ x A)

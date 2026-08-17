@@ -15,7 +15,7 @@ structure ClassicalRemainingEqTmLaws where
   beta : ∀ {types depth} {Γ : BoundCtx ClassicalSig types depth}
       {A B : Ty ClassicalSig types} {body : Tm ClassicalSig types (depth + 1)}
       {x : Tm ClassicalSig types depth},
-    Kinded A → HasType Γ (.app (.lam A body) x) B →
+    Kinded A → TypedCtx Γ → HasType Γ (.app (.lam A body) x) B →
     HasTypeDefEq (extendBound A Γ) body B → HasTypeDefEq Γ x A →
     HasTypeDefEq Γ (openBound body x) B →
     CSemEq (Γ := Γ) (.app (.lam A body) x) (openBound body x) B

@@ -204,7 +204,7 @@ theorem EqTm.typing {types : List Kind} {depth : Nat}
       exact ⟨.app leftRaw ihf.1 ihx.1, .app rightRaw ihf.2 ihx.2⟩
   | lam leftRaw rightRaw hA _ ih =>
       exact ⟨.lam _ leftRaw hA ih.1, .lam _ rightRaw hA ih.2⟩
-  | beta body x hA applicationRaw bodyTyping argumentTyping resultTyping =>
+  | beta body x hA typedContext applicationRaw bodyTyping argumentTyping resultTyping =>
       cases applicationRaw with
       | app functionRaw argumentRaw =>
           exact ⟨.exact (.app functionRaw argumentRaw), resultTyping⟩

@@ -40,7 +40,7 @@ structure ClassicalEqTmRuleLaws where
   beta : ∀ {types depth} {Γ : BoundCtx ClassicalSig types depth}
       {A B : Ty ClassicalSig types} {body : Tm ClassicalSig types (depth + 1)}
       {x : Tm ClassicalSig types depth},
-    Kinded A → HasType Γ (.app (.lam A body) x) B →
+    Kinded A → TypedCtx Γ → HasType Γ (.app (.lam A body) x) B →
     HasTypeDefEq (extendBound A Γ) body B → HasTypeDefEq Γ x A →
     HasTypeDefEq Γ (openBound body x) B →
     CSemEq (Γ := Γ) (.app (.lam A body) x) (openBound body x) B
@@ -70,8 +70,8 @@ theorem EqTm.sound_of_laws {types : List Kind} {depth : Nat}
       exact laws.app leftRaw rightRaw leftFunctionRaw leftArgumentRaw
         rightFunctionRaw rightArgumentRaw ihf ihx
   | lam leftRaw rightRaw hA bodies ih => exact laws.lam leftRaw rightRaw hA ih
-  | beta body x hA applicationRaw bodyTyping argumentTyping resultTyping =>
-      exact laws.beta hA applicationRaw bodyTyping argumentTyping resultTyping
+  | beta body x hA typedContext applicationRaw bodyTyping argumentTyping resultTyping =>
+      exact laws.beta hA typedContext applicationRaw bodyTyping argumentTyping resultTyping
   | eta name fresh functionTyping etaTyping =>
       exact laws.eta name fresh functionTyping etaTyping
 
