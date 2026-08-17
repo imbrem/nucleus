@@ -26,6 +26,38 @@ pub struct Variable<R: Repr> {
     pub ty: R::Ty,
 }
 
+/// Canonical de Bruijn index for term bound variables.
+///
+/// The field is private so index arithmetic cannot silently wrap. Operations
+/// which would exceed the wire-level `u64` range panic immediately.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct Bv(u64);
+
+impl Bv {
+    #[must_use]
+    pub const fn new(index: u64) -> Self {
+        Self(index)
+    }
+
+    #[must_use]
+    pub const fn index(self) -> u64 {
+        self.0
+    }
+
+    /// Shift this index outward, panicking rather than wrapping on overflow.
+    ///
+    /// # Panics
+    /// Panics if `self + amount` exceeds `u64::MAX`.
+    #[must_use]
+    pub fn shift(self, amount: u64) -> Self {
+        Self(
+            self.0
+                .checked_add(amount)
+                .expect("term bound-variable index overflow"),
+        )
+    }
+}
+
 /// A context-free theorem context.  The spine lowers to nested `TM_AND`
 /// propositions; unlike a map, order and sharing are explicit and canonical.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -105,7 +137,7 @@ impl<R: Repr> Ty<R> {
 pub enum Tm<R: Repr> {
     Exists(R::Tm),
     Prim(R::Prim),
-    Bv(R::Var),
+    Bv(Bv),
     Fv(R::Var),
     App(R::Tm, R::Tm),
     Lam(R::Ty, R::Tm),
@@ -369,7 +401,7 @@ mod tests {
     use std::mem::size_of;
     use std::sync::Arc;
 
-    use super::{AnyExpr, ArcRepr, Context, Kind, Link, SurfaceTag, Tm, Ty};
+    use super::{AnyExpr, ArcRepr, Bv, Context, Kind, Link, SurfaceTag, Tm, Ty};
 
     #[test]
     fn tags_are_unique_and_round_trip() {
@@ -428,5 +460,19 @@ mod tests {
             Tm::<ArcRepr>::And(Arc::new(Tm::Inf), Arc::new(Tm::Bool(true))).tag(),
             SurfaceTag::TmAnd,
         );
+    }
+
+    #[test]
+    fn bound_variables_are_canonical_u64_indices() {
+        let index = Bv::new(41);
+        assert_eq!(index.index(), 41);
+        assert_eq!(index.shift(1), Bv::new(42));
+        assert_eq!(Tm::<ArcRepr>::Bv(index).tag(), SurfaceTag::TmBv);
+    }
+
+    #[test]
+    #[should_panic(expected = "term bound-variable index overflow")]
+    fn bound_variable_shift_panics_on_overflow() {
+        let _ = Bv::new(u64::MAX).shift(1);
     }
 }

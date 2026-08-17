@@ -22,6 +22,11 @@ structure Repr where
   Link : Type u
   Prim : Type u
 
+/-- Canonical wire representation of a term de Bruijn index. -/
+structure Bv where
+  index : UInt64
+deriving DecidableEq
+
 inductive Kind (R : Repr) where
   | star
   | arr (domain codomain : R.Kind)
@@ -46,7 +51,7 @@ inductive Context (R : Repr) where
 inductive Tm (R : Repr) where
   | tyExists (body : R.Tm)
   | prim (primitive : R.Prim)
-  | bv (index : R.Var)
+  | bv (index : Bv)
   | fv (index : R.Var)
   | app (function argument : R.Tm)
   | lam (domain : R.Ty) (body : R.Tm)

@@ -11,6 +11,11 @@ representation indices:
 | `Link` | `Link` | Abstract imported-object reference |
 | `Prim` | `Prim` | Backend primitive |
 
+`Tm::Bv` does not use `Repr::Var`: it contains the opaque canonical `Bv(u64)`
+de Bruijn index. `Bv::shift` uses checked arithmetic and panics on overflow, so
+scope manipulation can never silently wrap a serialized index. `Tm::Fv`
+remains representation-defined and carries its syntactic type.
+
 Lean intentionally imposes no structure on `Link`. The default Rust
 representation chooses `Arc<(O256, Format)>`: the enum stores one shared pointer
 while the allocation contains the full hash and serialization format. A type
