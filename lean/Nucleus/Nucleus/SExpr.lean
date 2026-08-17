@@ -15,5 +15,7 @@ import Nucleus.SExpr.Memory
 import Nucleus.SExpr.Allocator
 import Nucleus.SExpr.Rooted
 import Nucleus.SExpr.Lisp
+import Nucleus.SExpr.Forsp.Literal
+import Nucleus.SExpr.Forsp.Tree
 
 /-! Binary, proper, and tagged S-expression data models and parsers. -/
