@@ -221,4 +221,21 @@ theorem CRealizes.weaken
   rw [cDefSem_weaken source target]
   simpa using sourceValue
 
+theorem CRealizes.of_weaken
+    {Γ : BoundCtx ClassicalSig types depth} {term : Tm ClassicalSig types depth}
+    {A B : Ty ClassicalSig types} {env : CTypeEnv types}
+    {bound : CBoundEnv depth} {expected : CPointed} {value : expected.carrier}
+    (semantic : CPointed) (head : semantic.carrier)
+    (typing : HasTypeDefEq Γ term A)
+    (realizes : CRealizes (Γ := extendBound B Γ) env
+      (extendCBoundEnv semantic head bound) (HolE.weaken term) A expected value) :
+    CRealizes (Γ := Γ) env bound term A expected value := by
+  obtain ⟨target, targetValue⟩ := realizes
+  let source := typing.certificate
+  refine ⟨source, ?_⟩
+  have transported := cDefSem_weaken source target env
+    (extendCBoundEnv semantic head bound) expected
+  rw [CBoundEnv.rename_succ_extend] at transported
+  exact transported.symm.trans targetValue
+
 end Nucleus.HolE
