@@ -19,6 +19,59 @@ structure Proof {types : List Kind} {depth : Nat} (Γ : Ctx types depth)
     (H : PropCtx Γ) (conclusion : BoolTm Γ) where
   raw : Proves Γ.raw H.raw conclusion.raw
 
+/-- A checked kernel equality between two terms. -/
+structure TermEq {types : List Kind} {depth : Nat} (Γ : Ctx types depth)
+    {A : Ty types} (left right : Term Γ A) where
+  raw : EqTm Γ.raw left.raw right.raw A.raw
+
+namespace TermEq
+
+def refl (term : Term Γ A) : TermEq Γ term term :=
+  ⟨.refl (.exact term.typing)⟩
+
+def symm (equality : TermEq Γ left right) : TermEq Γ right left :=
+  ⟨.symm equality.raw⟩
+
+def trans (first : TermEq Γ left middle) (second : TermEq Γ middle right) :
+    TermEq Γ left right :=
+  ⟨.trans first.raw second.raw⟩
+
+def app (function : TermEq Γ leftFunction rightFunction)
+    (argument : TermEq Γ leftArgument rightArgument) :
+    TermEq Γ (Term.app leftFunction leftArgument)
+      (Term.app rightFunction rightArgument) :=
+  ⟨.app (Term.app leftFunction leftArgument).typing
+    (Term.app rightFunction rightArgument).typing
+    leftFunction.typing leftArgument.typing
+    rightFunction.typing rightArgument.typing function.raw argument.raw⟩
+
+def lam (domain : Ty types) {B : Ty types}
+    {leftBody rightBody : Term (Γ.extend domain) B}
+    (bodies : TermEq (Γ.extend domain) leftBody rightBody) :
+    TermEq Γ (Term.lam domain leftBody) (Term.lam domain rightBody) :=
+  ⟨.lam (Term.lam domain leftBody).typing (Term.lam domain rightBody).typing
+    domain.kinded bodies.raw⟩
+
+def beta (body : Term (Γ.extend A) B) (argument : Term Γ A) :
+    TermEq Γ (Term.app (Term.lam A body) argument) (Term.openBound body argument) :=
+  ⟨.beta body.raw argument.raw A.kinded Γ.typed
+    (Term.app (Term.lam A body) argument).typing
+    (.exact body.typing) (.exact argument.typing)
+    (.exact (Term.openBound body argument).typing)⟩
+
+def eta (name : Nat) (function : Term Γ (A.arr B))
+    (fresh : Fresh name function.raw) :
+    TermEq Γ
+      (Term.lam A (Term.app (function.weaken A)
+        (Term.bvAs (Γ.extend A) 0 A (by simp [Ctx.extend, extendBound]))))
+      function :=
+  ⟨.eta name fresh Γ.typed (.exact function.typing)
+    (.exact (Term.lam A
+      (Term.app (function.weaken A)
+        (Term.bvAs (Γ.extend A) 0 A (by simp [Ctx.extend, extendBound])))).typing)⟩
+
+end TermEq
+
 namespace Proof
 
 def hyp {p : BoolTm Γ} (member : p ∈ H) : Proof Γ H p := by
@@ -99,6 +152,33 @@ def antisymm (left right : BoolTm Γ)
   ⟨.antisymm (PropCtx.typed H) (.exact left.typing) (.exact right.typing)
     (PropCtx.typed (left :: H)) (.exact (Term.eq FamK.boolTy left right).typing)
     (PropCtx.typed (right :: H)) forward.raw backward.raw⟩
+
+def convert (equality : TermEq Γ source target)
+    (premise : Proof Γ H source) : Proof Γ H target :=
+  ⟨.convert H.typed (.exact target.typing) equality.raw premise.raw⟩
+
+def eqOfTermEq {A : Ty types} {left right : Term Γ A}
+    (equality : TermEq Γ left right) :
+    Proof Γ H (Term.eq A left right) :=
+  ⟨.eqOfEqTm H.typed A.kinded (.exact (Term.eq A left right).typing)
+    equality.raw⟩
+
+def tyExistsIntro {types : List Kind} {H : PropCtx (Ctx.empty : Ctx types 0)}
+    (predicate : BoolTm (types := .star :: types) Ctx.empty)
+    (witness : Ty types)
+    (premise : Proof Ctx.empty H (predicate.openType witness)) :
+    Proof Ctx.empty H (Term.tyExists Ctx.empty predicate) :=
+  ⟨.tyExistsIntro H.typed (.exact (Term.tyExists Ctx.empty predicate).typing)
+    witness.kinded (.exact predicate.typing)
+    (.exact (predicate.openType witness).typing) premise.raw⟩
+
+def modelSpec {types : List Kind} {H : PropCtx (Ctx.empty : Ctx types 0)}
+    (predicate : BoolTm (types := .star :: types) Ctx.empty)
+    (premise : Proof Ctx.empty H (Term.tyExists Ctx.empty predicate)) :
+    Proof Ctx.empty H (predicate.openType (Term.model predicate)) :=
+  ⟨.modelSpec H.typed (.exact (predicate.openType (Term.model predicate)).typing)
+    (.exact predicate.typing)
+    (.exact (predicate.openType (Term.model predicate)).typing) premise.raw⟩
 
 def absRep (A : Ty types) (predicate : Term (Ctx.empty.extend A) FamK.boolTy)
     (value : Term Γ (Term.sub A predicate)) :

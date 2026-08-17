@@ -70,6 +70,10 @@ def bv (Γ : Ctx types depth) (index : Fin depth) :
     Term Γ ⟨Γ.raw index, Γ.typed index⟩ :=
   ⟨.bv index, .bv (Γ.typed index) rfl⟩
 
+def bvAs (Γ : Ctx types depth) (index : Fin depth) (A : Ty types)
+    (lookup : Γ.raw index = A.raw) : Term Γ A :=
+  ⟨.bv index, .bv A.kinded lookup⟩
+
 def fv (Γ : Ctx types depth) (name : Nat) (A : Ty types) : Term Γ A :=
   ⟨.fv name A.raw, .fv name A.kinded⟩
 
@@ -124,6 +128,18 @@ def falsehood (Γ : Ctx types depth) : Term Γ FamK.boolTy := bool Γ false
 def weaken {types : List Kind} {depth : Nat} {Γ : Ctx types depth}
     {A : Ty types} (term : Term Γ A) (B : Ty types) : Term (Γ.extend B) A :=
   ⟨HolE.weaken term.raw, term.typing.weaken⟩
+
+def openBound (body : Term (Γ.extend A) B) (argument : Term Γ A) : Term Γ B :=
+  ⟨HolE.openBound body.raw argument.raw,
+    body.typing.openBound Γ.typed argument.typing⟩
+
+def openType (predicate : Term (types := kind :: types) Ctx.empty FamK.boolTy)
+    (argument : FamK types kind) :
+    Term (types := types) Ctx.empty FamK.boolTy := by
+  refine ⟨HolE.openType predicate.raw argument.raw, ?_⟩
+  have instantiated := predicate.typing.instantiateTypes
+    (wellFormed_headTySub argument.kinded)
+  simpa [Ctx.empty, HolE.openType, FamK.boolTy] using instantiated
 
 end Term
 
