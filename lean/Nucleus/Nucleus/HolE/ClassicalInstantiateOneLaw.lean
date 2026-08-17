@@ -94,4 +94,113 @@ theorem CWellTypedSub.bound_lift
         cSem (checked j) env bound expected := semantic
     exact congrArg ULift.down semantic'
 
+/-- Evaluation of a checked simultaneous substitution is evaluation in the
+semantic environment induced by its replacement terms. -/
+theorem CChecks.cSem_instantiateTmC
+    {Γ : BoundCtx ClassicalSig types m} {Δ : BoundCtx ClassicalSig types n}
+    {term : Tm ClassicalSig types m} {A : Ty ClassicalSig types}
+    (source : CChecks Γ term (.tm A)) (σ : Fin m → Tm ClassicalSig types n)
+    (checked : CWellTypedSub Γ Δ σ)
+    (env : CTypeEnv types) (bound : CBoundEnv n) (expected : CPointed) :
+    cSem (source.instantiateTmC σ checked) env bound expected =
+      cSem source env (checked.bound env bound) expected :=
+  match source with
+  | .primTm rule => nomatch rule
+  | .bv (index := index) hA lookup => by
+      cases lookup
+      let replacement := checked index
+      rw [cSem_term_normalize ((CChecks.bv hA rfl).instantiateTmC σ checked)
+        (σ index) (by simp) replacement]
+      unfold CWellTypedSub.bound
+      rfl
+  | .fv name hA => by
+      rw [cSem_term_normalize ((CChecks.fv name hA).instantiateTmC σ checked)
+        (.fv name _) (by simp [instantiate]) (.fv name hA)]
+      rfl
+  | .bool literal => by
+      rw [cSem_term_normalize ((CChecks.bool literal).instantiateTmC σ checked)
+        (.bool literal) (by simp [instantiate]) (.bool literal)]
+      rfl
+  | .tyExists hp => by
+      rw [cSem_term_normalize ((CChecks.tyExists hp).instantiateTmC σ checked)
+        (.tyExists _) (by simp [instantiate]) (.tyExists hp)]
+      rfl
+  | .app hA hB hf hx => by
+      let cf := CChecks.instantiateTmC hf σ checked
+      let cx := CChecks.instantiateTmC hx σ checked
+      rw [cSem_term_normalize ((CChecks.app hA hB hf hx).instantiateTmC σ checked)
+        (.app (instantiate σ _) (instantiate σ _))
+        (by simp [instantiate]) (.app hA hB cf cx)]
+      simp only [cSem]
+      dsimp [cf, cx]
+      rw [hf.cSem_instantiateTmC σ checked env bound
+          ⟨(cSem hA env).carrier → (cSem hB env).carrier,
+            fun _ => (cSem hB env).point⟩,
+        hx.cSem_instantiateTmC σ checked env bound (cSem hA env)]
+  | .lam body hA hB hb => by
+      let lifted := CWellTypedSub.lift hA checked
+      let cb := CChecks.instantiateTmC hb (liftSub σ) lifted
+      rw [cSem_term_normalize ((CChecks.lam body hA hB hb).instantiateTmC σ checked)
+        (.lam _ (instantiate (liftSub σ) body))
+        (by simp [instantiate]) (.lam _ hA hB cb)]
+      simp only [cSem]
+      apply congrArg ULift.up
+      apply congrArg (alignCValue _ expected)
+      funext value
+      have bodySem := hb.cSem_instantiateTmC (liftSub σ) lifted env
+        (extendCBoundEnv (cSem hA env) value bound) (cSem hB env)
+      rw [CWellTypedSub.bound_lift] at bodySem
+      exact congrArg ULift.down bodySem
+  | .eq hA hx hy => by
+      let cx := CChecks.instantiateTmC hx σ checked
+      let cy := CChecks.instantiateTmC hy σ checked
+      rw [cSem_term_normalize ((CChecks.eq hA hx hy).instantiateTmC σ checked)
+        (.eq _ (instantiate σ _) (instantiate σ _))
+        (by simp [instantiate]) (.eq hA cx cy)]
+      simp only [cSem]
+      dsimp [cx, cy]
+      rw [hx.cSem_instantiateTmC σ checked env bound (cSem hA env),
+        hy.cSem_instantiateTmC σ checked env bound (cSem hA env)]
+  | .eps hA hp => by
+      let cp := CChecks.instantiateTmC hp σ checked
+      rw [cSem_term_normalize ((CChecks.eps hA hp).instantiateTmC σ checked)
+        (.eps _ (instantiate σ _))
+        (by simp [instantiate]) (.eps hA cp)]
+      simp only [cSem]
+      dsimp [cp]
+      rw [hp.cSem_instantiateTmC σ checked env bound
+        ⟨(cSem hA env).carrier → Bool, fun _ => false⟩]
+  | .abs hA hp hx => by
+      let cx := CChecks.instantiateTmC hx σ checked
+      rw [cSem_term_normalize ((CChecks.abs hA hp hx).instantiateTmC σ checked)
+        (.abs _ _ (instantiate σ _))
+        (by simp [instantiate]) (.abs hA hp cx)]
+      simp only [cSem]
+      dsimp [cx]
+      rw [hx.cSem_instantiateTmC σ checked env bound (cSem hA env)]
+  | .rep hA hp hx => by
+      let cx := CChecks.instantiateTmC hx σ checked
+      rw [cSem_term_normalize ((CChecks.rep hA hp hx).instantiateTmC σ checked)
+        (.rep _ _ (instantiate σ _))
+        (by simp [instantiate]) (.rep hA hp cx)]
+      simp only [cSem]
+      dsimp [cx]
+      rw [hx.cSem_instantiateTmC σ checked env bound
+        (cGuardedType (cSem hA env) (fun value =>
+          (cSem hp env (extendCBoundEnv (cSem hA env) value emptyCBoundEnv)
+            cBool).down))]
+termination_by sizeOf source
+
+theorem cSem_instantiate_raw
+    {Γ : BoundCtx ClassicalSig types m} {Δ : BoundCtx ClassicalSig types n}
+    {term : Tm ClassicalSig types m} {A : Ty ClassicalSig types}
+    (source : CChecks Γ term (.tm A)) (σ : Fin m → Tm ClassicalSig types n)
+    (checked : CWellTypedSub Γ Δ σ)
+    (target : CChecks Δ (instantiate σ term) (.tm A))
+    (env : CTypeEnv types) (bound : CBoundEnv n) (expected : CPointed) :
+    cSem target env bound expected =
+      cSem source env (checked.bound env bound) expected := by
+  rw [target.unique (source.instantiateTmC σ checked)]
+  exact source.cSem_instantiateTmC σ checked env bound expected
+
 end Nucleus.HolE
