@@ -1,5 +1,6 @@
 import Nucleus.HolE.ClassicalDefEqCoherence
 import Nucleus.HolE.ClassicalEquations
+import Nucleus.HolE.ClassicalRawOpeningInterface
 
 /-! # Classical semantic laws for guarded HOL subtypes -/
 
@@ -219,7 +220,7 @@ theorem absRepLaw {types depth} {Γ : BoundCtx ClassicalSig types depth}
 
 /-- Representation after abstraction is the identity when the represented
 value satisfies the subtype predicate. -/
-theorem repAbsLaw (opening : CInstantiateOneTrueLaw)
+theorem repAbsLaw (opening : CRawInstantiateOneTrueLaw)
     {types depth} {Γ : BoundCtx ClassicalSig types depth}
     {H : List (Tm ClassicalSig types depth)} {A : Ty ClassicalSig types}
     {p : Tm ClassicalSig types 1} {x : Tm ClassicalSig types depth}
@@ -227,13 +228,15 @@ theorem repAbsLaw (opening : CInstantiateOneTrueLaw)
     (conclusionTyping : HasTypeDefEq Γ
       (.eq A (.rep A p (.abs A p x)) x) .boolTy)
     (hp : HasType (extendBound A emptyBound) p .boolTy)
-    (hx : HasTypeDefEq Γ x A)
-    (instanceTyping : HasTypeDefEq Γ (instantiateOne p x) .boolTy)
+    (hxRaw : HasType Γ x A)
+    (_hx : HasTypeDefEq Γ x A)
+    (_instanceTyping : HasTypeDefEq Γ (instantiateOne p x) .boolTy)
     (premise : CEntails (Γ := Γ) H (instantiateOne p x)) :
     CEntails (Γ := Γ) H (.eq A (.rep A p (.abs A p x)) x) := by
   intro env bound typed valid truths
   have predicateTrue :=
-    (opening.true_iff hA hp hx.certificate instanceTyping env bound).mp
+    (opening.true_iff hA.certificate hp.certificate hxRaw.certificate
+      (hp.instantiateOne hxRaw).certificate env bound typed valid).mp
       (premise env bound typed valid truths)
   refine ⟨conclusionTyping.certificate, ?_⟩
   classical
@@ -259,26 +262,26 @@ theorem repAbsLaw (opening : CInstantiateOneTrueLaw)
           cases cAEq
           have cpEq := cp.unique hp.certificate
           cases cpEq
-          have valueSem := hx.certificate.coherent (.exact right) env bound
-            (cSem hA.certificate env)
-          have valueSemDown := congrArg ULift.down valueSem
+          have rawValueEq := hxRaw.certificate.unique right
+          cases rawValueEq
           have rawPredicateTrue :
               (cEval env (extendCBoundEnv (cSem hA.certificate env)
-                (cSem right env bound (cSem hA.certificate env)).down
+                (cSem hxRaw.certificate env bound
+                  (cSem hA.certificate env)).down
                 emptyCBoundEnv) hp.certificate cBool).down = true := by
             change (cEval env (extendCBoundEnv (cSem hA.certificate env)
-              (cDefSem (.exact right) env bound
+              (cDefSem (.exact hxRaw.certificate) env bound
                 (cSem hA.certificate env)).down emptyCBoundEnv)
               hp.certificate cBool).down = true
-            rw [← valueSemDown]
             exact predicateTrue
-          exact cSem_repAbs_eq_true hA.certificate hp.certificate right
+          exact cSem_repAbs_eq_true hA.certificate hp.certificate
+            hxRaw.certificate
             env bound rawPredicateTrue
 
 /-- If the guarded predicate has a witness, every representation of a subtype
 value satisfies it.  The nonempty fallback branch of `CGuarded` is thereby
 excluded. -/
-theorem repPredOfWitnessLaw (opening : CInstantiateOneTrueLaw)
+theorem repPredOfWitnessLaw (opening : CRawInstantiateOneTrueLaw)
     {types depth} {Γ : BoundCtx ClassicalSig types depth}
     {H : List (Tm ClassicalSig types depth)} {A : Ty ClassicalSig types}
     {p : Tm ClassicalSig types 1} {witness x : Tm ClassicalSig types depth}
@@ -286,29 +289,37 @@ theorem repPredOfWitnessLaw (opening : CInstantiateOneTrueLaw)
     (_conclusionTyping :
       HasTypeDefEq Γ (instantiateOne p (.rep A p x)) .boolTy)
     (hp : HasType (extendBound A emptyBound) p .boolTy)
+    (witnessRaw : HasType Γ witness A)
     (witnessTyping : HasTypeDefEq Γ witness A)
-    (witnessPredicateTyping :
+    (_witnessPredicateTyping :
       HasTypeDefEq Γ (instantiateOne p witness) .boolTy)
-    (subtypeTyping : HasTypeDefEq Γ x (.sub A p))
-    (representationPredicateTyping :
+    (subtypeRaw : HasType Γ x (.sub A p))
+    (_subtypeTyping : HasTypeDefEq Γ x (.sub A p))
+    (_representationPredicateTyping :
       HasTypeDefEq Γ (instantiateOne p (.rep A p x)) .boolTy)
     (premise : CEntails (Γ := Γ) H (instantiateOne p witness)) :
     CEntails (Γ := Γ) H (instantiateOne p (.rep A p x)) := by
   intro env bound typed valid truths
   let cw := witnessTyping.certificate
   have witnessTrue :=
-    (opening.true_iff hA hp cw witnessPredicateTyping env bound).mp
+    (opening.true_iff hA.certificate hp.certificate witnessRaw.certificate
+      (hp.instantiateOne witnessRaw).certificate env bound typed valid).mp
       (premise env bound typed valid truths)
-  apply (opening.rep_true_iff hA hp subtypeTyping
-    representationPredicateTyping env bound).mpr
+  apply (opening.rep_true_iff hA.certificate hp.certificate
+    subtypeRaw.certificate
+    (hp.instantiateOne (.rep hA hp subtypeRaw)).certificate
+    env bound typed valid).mpr
   have subtypeEq := cSem_sub_eq hA.certificate hp.certificate env
   cases subtypeEq
+  rw [cSem_rep_at_carrier hA.certificate hp.certificate
+    subtypeRaw.certificate env bound]
   exact cGuarded_rep_pred_of_witness (cSem hA.certificate env)
     (fun value =>
       (cEval env (extendCBoundEnv (cSem hA.certificate env) value
         emptyCBoundEnv) hp.certificate cBool).down)
-    (cDefSem cw env bound (cSem hA.certificate env)).down witnessTrue
-    (cDefSem subtypeTyping.certificate env bound
+    (cSem witnessRaw.certificate env bound (cSem hA.certificate env)).down
+    witnessTrue
+    (cSem subtypeRaw.certificate env bound
       (cGuardedType (cSem hA.certificate env) fun value =>
         (cEval env (extendCBoundEnv (cSem hA.certificate env) value
           emptyCBoundEnv) hp.certificate cBool).down)).down
