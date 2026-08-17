@@ -17,7 +17,8 @@ structure Repr where
   Kind : Type u
   Ty : Type u
   Tm : Type u
-  Var : Type u
+  TyVar : Type u
+  Fv : Type u
   Ctx : Type u
   Link : Type u
   Prim : Type u
@@ -36,7 +37,7 @@ inductive Ty (R : Repr) where
   | arr (domain codomain : R.Ty)
   | app (function argument : R.Ty)
   | abs (domain : R.Kind) (body : R.Ty)
-  | bv (index : R.Var)
+  | bv (index : R.TyVar)
   | sub (carrier : R.Ty) (predicate : R.Tm)
   | model (witness : R.Tm)
   | prim (primitive : R.Prim)
@@ -52,7 +53,7 @@ inductive Tm (R : Repr) where
   | tyExists (body : R.Tm)
   | prim (primitive : R.Prim)
   | bv (index : Bv)
-  | fv (index : R.Var)
+  | fv (index : R.Fv)
   | app (function argument : R.Tm)
   | lam (domain : R.Ty) (body : R.Tm)
   | bool (value : Bool)

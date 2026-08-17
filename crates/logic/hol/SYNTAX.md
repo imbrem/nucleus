@@ -1,20 +1,21 @@
 # Rust–Lean syntax correspondence
 
 The normative Rust syntax is in `src/lib.rs`; its direct formal counterpart is
-`lean/Nucleus/Nucleus/HolSurface.lean`. Both are parameterized by the same seven
+`lean/Nucleus/Nucleus/HolSurface.lean`. Both are parameterized by the same eight
 representation indices:
 
 | Rust `Repr` | Lean `Repr` | Meaning |
 |---|---|---|
 | `Kind`, `Ty`, `Tm` | `Kind`, `Ty`, `Tm` | Child indices of each syntactic sort |
-| `Var`, `Ctx` | `Var`, `Ctx` | Variables and premise contexts |
+| `TyVar`, `Fv`, `Ctx` | `TyVar`, `Fv`, `Ctx` | Type variables, typed term free variables, and premise contexts |
 | `Link` | `Link` | Abstract imported-object reference |
 | `Prim` | `Prim` | Backend primitive |
 
-`Tm::Bv` does not use `Repr::Var`: it contains the opaque canonical `Bv(u64)`
+`Tm::Bv` does not use a representation index: it contains the opaque canonical `Bv(u64)`
 de Bruijn index. `Bv::shift` uses checked arithmetic and panics on overflow, so
 scope manipulation can never silently wrap a serialized index. `Tm::Fv`
-remains representation-defined and carries its syntactic type.
+uses `Repr::Fv` and carries its syntactic type; `Ty::Bv` instead uses
+`Repr::TyVar`, whose default representation carries a de Bruijn index and kind.
 
 Lean intentionally imposes no structure on `Link`. The default Rust
 representation chooses `Arc<(O256, Format)>`: the enum stores one shared pointer

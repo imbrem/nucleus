@@ -14,7 +14,8 @@ pub trait Repr: Sized + 'static {
     type Kind;
     type Ty;
     type Tm;
-    type Var;
+    type TyVar;
+    type Fv;
     type Ctx;
     type Link;
     type Prim;
@@ -24,6 +25,12 @@ pub trait Repr: Sized + 'static {
 pub struct Variable<R: Repr> {
     pub name: String,
     pub ty: R::Ty,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TypeVariable<R: Repr> {
+    pub index: Bv,
+    pub kind: R::Kind,
 }
 
 /// Canonical de Bruijn index for term bound variables.
@@ -107,7 +114,7 @@ pub enum Ty<R: Repr> {
     Arr(R::Ty, R::Ty),
     App(R::Ty, R::Ty),
     Abs(R::Kind, R::Ty),
-    Bv(R::Var),
+    Bv(R::TyVar),
     Sub(R::Ty, R::Tm),
     Model(R::Tm),
     Prim(R::Prim),
@@ -138,7 +145,7 @@ pub enum Tm<R: Repr> {
     Exists(R::Tm),
     Prim(R::Prim),
     Bv(Bv),
-    Fv(R::Var),
+    Fv(R::Fv),
     App(R::Tm, R::Tm),
     Lam(R::Ty, R::Tm),
     Bool(bool),
@@ -214,12 +221,15 @@ pub struct ArcRepr;
 pub type ArcKind = Arc<Kind<ArcRepr>>;
 pub type ArcTy = Arc<Ty<ArcRepr>>;
 pub type ArcTm = Arc<Tm<ArcRepr>>;
+pub type ArcTyVar = Arc<TypeVariable<ArcRepr>>;
+pub type ArcFv = Arc<Variable<ArcRepr>>;
 
 impl Repr for ArcRepr {
     type Kind = ArcKind;
     type Ty = ArcTy;
     type Tm = ArcTm;
-    type Var = Arc<Variable<Self>>;
+    type TyVar = ArcTyVar;
+    type Fv = ArcFv;
     type Ctx = Arc<Context<Self>>;
     type Link = Link;
     type Prim = String;
@@ -344,7 +354,7 @@ pub trait KernelBackend: Send + Sync + 'static {
     /// Returns a diagnostic when the variable cannot be opened as a term.
     fn open(
         &self,
-        variable: <Self::Repr as Repr>::Var,
+        variable: <Self::Repr as Repr>::Fv,
     ) -> Result<<Self::Repr as Repr>::Tm, Self::Error>;
 
     /// # Errors
