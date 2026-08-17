@@ -2,6 +2,7 @@ import Nucleus.HolLN
 import Nucleus.Hol
 import Nucleus.HolLN.Array
 import Nucleus.HolLN.Json
+import Nucleus.HolSurface
 import Nucleus.Json
 import Nucleus.Cbor
 import Nucleus.Encoding.Base128
