@@ -9,6 +9,10 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
+mod tag;
+
+pub use tag::{SurfaceTag, UnknownSurfaceTag};
+
 /// Stable identity of a kernel implementation/configuration.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct BackendId(String);
@@ -337,7 +341,27 @@ pub trait KernelBackend: Send + Sync + 'static {
 
 #[cfg(test)]
 mod tests {
-    use super::{Link, SurfaceError, SurfaceTerm, SurfaceType, SurfaceVar};
+    use std::collections::BTreeSet;
+
+    use super::{Link, SurfaceError, SurfaceTag, SurfaceTerm, SurfaceType, SurfaceVar};
+
+    #[test]
+    fn tag_ids_and_names_are_unique_and_round_trip() {
+        let mut ids = BTreeSet::new();
+        let mut names = BTreeSet::new();
+
+        for &tag in SurfaceTag::ALL {
+            let id = u64::from(tag);
+            let name = <&'static str>::from(tag);
+            assert!(ids.insert(id));
+            assert!(names.insert(name));
+            assert_eq!(SurfaceTag::try_from(id), Ok(tag));
+            assert_eq!(SurfaceTag::try_from(name), Ok(tag));
+            assert_eq!(name.parse(), Ok(tag));
+            assert_eq!(format!("{tag}"), name);
+            assert_eq!(format!("{tag:?}"), name);
+        }
+    }
 
     #[test]
     fn open_close_builds_capture_free_locally_nameless_body() {
