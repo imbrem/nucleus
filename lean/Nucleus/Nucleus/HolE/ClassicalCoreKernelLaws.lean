@@ -43,11 +43,11 @@ theorem classical_convert (eqLaws : ClassicalEqTmRuleLaws)
     (conclusionTyping : HasTypeDefEq Γ q .boolTy)
     (equality : EqTm Γ p q .boolTy)
     (premise : CEntails (Γ := Γ) H p) : CEntails (Γ := Γ) H q := by
-  intro env bound truths
-  obtain ⟨premiseChecking, premiseTrue⟩ := premise env bound truths
+  intro env bound typed valid truths
+  obtain ⟨premiseChecking, premiseTrue⟩ := premise env bound typed valid truths
   refine ⟨conclusionTyping.certificate, ?_⟩
   have equal := equality.sound_of_laws eqLaws equality.typing.1 conclusionTyping
-    env bound cBool
+    env bound typed valid cBool
   have premiseTrue' : cDefSem equality.typing.1.certificate env bound cBool = ⟨true⟩ :=
     (equality.typing.1.certificate.coherent premiseChecking env bound cBool).trans premiseTrue
   exact equal.symm.trans premiseTrue'
@@ -55,7 +55,7 @@ theorem classical_convert (eqLaws : ClassicalEqTmRuleLaws)
 theorem classical_eqOfEqTm (eqLaws : ClassicalEqTmRuleLaws)
     (_hA : Kinded A) (conclusionTyping : HasTypeDefEq Γ (.eq A x y) .boolTy)
     (equality : EqTm Γ x y A) : CEntails (Γ := Γ) H (.eq A x y) := by
-  intro env bound truths
+  intro env bound typed valid truths
   classical
   refine ⟨conclusionTyping.certificate, ?_⟩
   rw [conclusionTyping.certificate.rawView_semantics]
@@ -67,7 +67,7 @@ theorem classical_eqOfEqTm (eqLaws : ClassicalEqTmRuleLaws)
         let leftTyping : HasTypeDefEq Γ x A := .exact leftChecking.toChecks
         let rightTyping : HasTypeDefEq Γ y A := .exact rightChecking.toChecks
         have operandsEqual := equality.sound_of_laws eqLaws leftTyping rightTyping
-          env bound (cSem cA env)
+          env bound typed valid (cSem cA env)
         have rawOperandsEqual :
             cSem leftChecking env bound (cSem cA env) =
               cSem rightChecking env bound (cSem cA env) :=
@@ -88,9 +88,10 @@ private theorem entails_at_certificate
     (typing : HasTypeDefEq Γ proposition .boolTy)
     (entails : CEntails (Γ := Γ) H proposition)
     (env : CTypeEnv types) (bound : CBoundEnv depth)
+    (typed : TypedCtx Γ) (valid : CBoundValid typed env bound)
     (truths : CHypsTrue (Γ := Γ) env bound H) :
     cDefSem typing.certificate env bound cBool = ⟨true⟩ := by
-  obtain ⟨checking, truth⟩ := entails env bound truths
+  obtain ⟨checking, truth⟩ := entails env bound typed valid truths
   exact (typing.certificate.coherent checking env bound cBool).trans truth
 
 theorem classical_eqTm_app
@@ -100,7 +101,7 @@ theorem classical_eqTm_app
     (functionEqual : CSemEq (Γ := Γ) f g (.arr A B))
     (argumentEqual : CSemEq (Γ := Γ) x y A) :
     CSemEq (Γ := Γ) (.app f x) (.app g y) B := by
-  intro leftTyping rightTyping env bound expected
+  intro leftTyping rightTyping env bound typed valid expected
   let hA := leftArgumentRaw.certificate.typeKinded
   let hB := leftRaw.certificate.typeKinded
   let leftApp : CDefChecks Γ (.app f x) B :=
@@ -116,7 +117,7 @@ theorem classical_eqTm_app
   let leftArgumentTyping : HasTypeDefEq Γ x A := .exact leftArgumentRaw
   let rightArgumentTyping : HasTypeDefEq Γ y A := .exact rightArgumentRaw
   have functions₀ := functionEqual leftFunctionTyping rightFunctionTyping
-    env bound ⟨domain.carrier → codomain.carrier, fun _ => codomain.point⟩
+    env bound typed valid ⟨domain.carrier → codomain.carrier, fun _ => codomain.point⟩
   have functions : cSem leftFunctionRaw.certificate env bound
       ⟨domain.carrier → codomain.carrier, fun _ => codomain.point⟩ =
       cSem rightFunctionRaw.certificate env bound
@@ -125,7 +126,8 @@ theorem classical_eqTm_app
       leftFunctionTyping.certificate env bound _).trans
       (functions₀.trans (rightFunctionTyping.certificate.coherent
         (.exact rightFunctionRaw.certificate) env bound _))
-  have arguments₀ := argumentEqual leftArgumentTyping rightArgumentTyping env bound domain
+  have arguments₀ := argumentEqual leftArgumentTyping rightArgumentTyping env bound
+    typed valid domain
   have arguments : cSem leftArgumentRaw.certificate env bound domain =
       cSem rightArgumentRaw.certificate env bound domain :=
     ((.exact leftArgumentRaw.certificate : CDefChecks Γ x A).coherent
@@ -137,10 +139,10 @@ theorem classical_eqTm_app
 
 theorem classical_eqTm_lam
     (leftRaw : HasType Γ (.lam A body₁) (.arr A B))
-    (rightRaw : HasType Γ (.lam A body₂) (.arr A B)) (_hA : Kinded A)
+    (rightRaw : HasType Γ (.lam A body₂) (.arr A B)) (kindedA : Kinded A)
     (bodiesEqual : CSemEq (Γ := extendBound A Γ) body₁ body₂ B) :
     CSemEq (Γ := Γ) (.lam A body₁) (.lam A body₂) (.arr A B) := by
-  intro leftTyping rightTyping env bound expected
+  intro leftTyping rightTyping env bound typed valid expected
   let leftCheck := leftRaw.certificate
   let rightCheck := rightRaw.certificate
   rw [leftTyping.certificate.coherent (.exact leftCheck) env bound expected,
@@ -153,30 +155,34 @@ theorem classical_eqTm_lam
       have codomainCertEq := hB.unique hB'
       cases domainCertEq
       cases codomainCertEq
+      have declaredDomainEq := hA.unique kindedA.certificate
+      cases declaredDomainEq
       change ULift.up (alignCValue
-        ⟨(cSem hA env).carrier → (cSem hB env).carrier,
+        ⟨(denoteChecked kindedA env).carrier → (cSem hB env).carrier,
           fun _ => (cSem hB env).point⟩ expected
         (fun argument =>
           (cSem leftBody env
-            (extendCBoundEnv (cSem hA env) argument bound) (cSem hB env)).down)) =
+            (extendCBoundEnv (denoteChecked kindedA env) argument bound) (cSem hB env)).down)) =
         ULift.up (alignCValue
-          ⟨(cSem hA env).carrier → (cSem hB env).carrier,
+          ⟨(denoteChecked kindedA env).carrier → (cSem hB env).carrier,
             fun _ => (cSem hB env).point⟩ expected
           (fun argument =>
             (cSem rightBody env
-              (extendCBoundEnv (cSem hA env) argument bound) (cSem hB env)).down))
+              (extendCBoundEnv (denoteChecked kindedA env) argument bound) (cSem hB env)).down))
       congr 2
       funext argument
       let leftBodyTyping : HasTypeDefEq (extendBound A Γ) body₁ B :=
         .exact leftBody.toChecks
       let rightBodyTyping : HasTypeDefEq (extendBound A Γ) body₂ B :=
         .exact rightBody.toChecks
+      have extendedValid := extendCBoundEnv_valid kindedA typed env bound valid argument
       have bodyEq := bodiesEqual leftBodyTyping rightBodyTyping env
-        (extendCBoundEnv (cSem hA env) argument bound) (cSem hB env)
+        (extendCBoundEnv (denoteChecked kindedA env) argument bound) (typed.extend kindedA)
+        extendedValid (cSem hB env)
       have rawBodyEq : cSem leftBody env
-          (extendCBoundEnv (cSem hA env) argument bound) (cSem hB env) =
+          (extendCBoundEnv (denoteChecked kindedA env) argument bound) (cSem hB env) =
           cSem rightBody env
-            (extendCBoundEnv (cSem hA env) argument bound) (cSem hB env) :=
+            (extendCBoundEnv (denoteChecked kindedA env) argument bound) (cSem hB env) :=
         ((.exact leftBody : CDefChecks (extendBound A Γ) body₁ B).coherent
           leftBodyTyping.certificate env _ _).trans
           (bodyEq.trans (rightBodyTyping.certificate.coherent
@@ -192,12 +198,12 @@ theorem classical_eqMp
     (equality : CEntails (Γ := Γ) H (.eq A x y))
     (premise : CEntails (Γ := Γ) H (.app p x)) :
     CEntails (Γ := Γ) H (.app p y) := by
-  intro env bound truths
+  intro env bound typed valid truths
   classical
   have eqRealizes : CRealizes (Γ := Γ) env bound (.eq A x y) .boolTy cBool true :=
-    equality env bound truths
+    equality env bound typed valid truths
   obtain ⟨xChecking, yChecking, xy⟩ := eqRealizes.eq_true_elim hA
-  have premiseTrue := entails_at_certificate premiseTyping premise env bound truths
+  have premiseTrue := entails_at_certificate premiseTyping premise env bound typed valid truths
   refine ⟨conclusionTyping.certificate, ?_⟩
   rw [premiseTyping.certificate.rawView_semantics] at premiseTrue
   rw [conclusionTyping.certificate.rawView_semantics]
@@ -254,7 +260,7 @@ theorem classical_antisymm
     (left : CEntails (Γ := Γ) (p :: H) q)
     (right : CEntails (Γ := Γ) (q :: H) p) :
     CEntails (Γ := Γ) H (.eq .boolTy p q) := by
-  intro env bound truths
+  intro env bound typed valid truths
   classical
   refine ⟨conclusionTyping.certificate, ?_⟩
   rw [conclusionTyping.certificate.rawView_semantics]
@@ -279,7 +285,7 @@ theorem classical_antisymm
         cases hpv : pValue <;> cases hqv : qValue
         · rfl
         · exfalso
-          have qTrue := right env bound (fun candidate member => by
+          have qTrue := right env bound typed valid (fun candidate member => by
             rcases List.mem_cons.mp member with rfl | member
             · refine ⟨.exact qCheck, ?_⟩
               change cSem qCheck env bound cBool = ⟨true⟩
@@ -293,7 +299,7 @@ theorem classical_antisymm
           have impossible := congrArg ULift.down this
           contradiction
         · exfalso
-          have qTrue := left env bound (fun candidate member => by
+          have qTrue := left env bound typed valid (fun candidate member => by
             rcases List.mem_cons.mp member with rfl | member
             · refine ⟨.exact pCheck, ?_⟩
               change cSem pCheck env bound cBool = ⟨true⟩
@@ -320,9 +326,9 @@ theorem classical_choice
     (premiseTyping : HasTypeDefEq Γ (.app p x) .boolTy)
     (premise : CEntails (Γ := Γ) H (.app p x)) :
     CEntails (Γ := Γ) H (.app p (.eps A p)) := by
-  intro env bound truths
+  intro env bound typed valid truths
   classical
-  have premiseTrue := entails_at_certificate premiseTyping premise env bound truths
+  have premiseTrue := entails_at_certificate premiseTyping premise env bound typed valid truths
   refine ⟨conclusionTyping.certificate, ?_⟩
   rw [premiseTyping.certificate.rawView_semantics] at premiseTrue
   rw [conclusionTyping.certificate.rawView_semantics]
