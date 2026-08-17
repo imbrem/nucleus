@@ -231,6 +231,22 @@ class SigFamilyEquality (Sig : Signature.{u}) where
   Rule : {types : List Kind} → {kind : Kind} →
     Fam Sig types kind → Fam Sig types kind → Type u
 
+/-- A uniform relation on same-kinded type families.  Semantic models use this
+to state what it means for a signature-provided family equality to be sound. -/
+abbrev FamilyRelation (Sig : Signature.{u}) :=
+  {types : List Kind} → {kind : Kind} →
+    Fam Sig types kind → Fam Sig types kind → Prop
+
+/-- Soundness obligation for the primitive equality certificates supplied by
+a signature.  The relation is deliberately a parameter: each semantics says
+what observational equality means, while the signature must justify every
+primitive certificate in that semantics.  Structural `FamEq` rules are proved
+sound once, independently of this signature-specific case. -/
+class SigFamilyEqualitySound (Sig : Signature.{u}) [rules : SigFamilyEquality Sig]
+    (relation : FamilyRelation Sig) : Prop where
+  signature {types : List Kind} {kind : Kind}
+      {A B : Fam Sig types kind} : rules.Rule A B → relation A B
+
 class SigTyping (Sig : Signature) where
   HasType : {types : List Kind} → Sig .tm → Ty Sig types → Prop
   rename {source target : List Kind} {symbol : Sig .tm} {A : Ty Sig source}

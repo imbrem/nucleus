@@ -1009,6 +1009,18 @@ theorem CTypeEnv.ofSub_head
 
 /-! ## Soundness of family definitional equality -/
 
+/-- Denotational equality of two type families in every well-kinded classical
+interpretation. -/
+def CFamilyEquivalent {types : List Kind} {kind : Kind}
+    (A B : Fam ClassicalSig types kind) : Prop :=
+  ∀ (hA : Kinded A) (hB : Kinded B) (env : CTypeEnv types),
+    denoteChecked hA env = denoteChecked hB env
+
+/-- `ClassicalSig` has no primitive symbols and hence no primitive equality
+certificates; its signature-specific equality soundness obligation is empty. -/
+instance : SigFamilyEqualitySound ClassicalSig CFamilyEquivalent where
+  signature certificate := nomatch certificate
+
 theorem FamEq.sound {types : List Kind} {kind : Kind}
     {A B : Fam ClassicalSig types kind} (equality : FamEq ClassicalSig A B)
     (hA : Kinded A) (hB : Kinded B) (env : CTypeEnv types) :
@@ -1131,6 +1143,9 @@ theorem FamEq.sound {types : List Kind} {kind : Kind}
         (HolE.instantiateTypes sigma _) rfl hB.certificate env] at semB
       exact semA.trans
         ((ih originalA originalB (CTypeEnv.ofSub sigma wellFormed env)).trans semB.symm)
-  | signature certificate => exact nomatch certificate
+  | signature certificate =>
+      have primitiveSound : CFamilyEquivalent _ _ :=
+        SigFamilyEqualitySound.signature (relation := CFamilyEquivalent) certificate
+      exact primitiveSound hA hB env
 
 end Nucleus.HolE
