@@ -203,4 +203,67 @@ theorem cSem_instantiate_raw
   rw [target.unique (source.instantiateTmC σ checked)]
   exact source.cSem_instantiateTmC σ checked env bound expected
 
+/-- Erasure of a proof-relevant definitional typing certificate. -/
+theorem CDefChecks.toHasTypeDefEq : CDefChecks Γ term A → HasTypeDefEq Γ term A
+  | .exact raw => .exact raw.toChecks
+  | .app raw f x => .app raw.toChecks f.toHasTypeDefEq x.toHasTypeDefEq
+  | .lam body raw hA bodyTyping =>
+      .lam body raw.toChecks hA.toChecks bodyTyping.toHasTypeDefEq
+  | .eq raw hA x y =>
+      .eq raw.toChecks hA.toChecks x.toHasTypeDefEq y.toHasTypeDefEq
+  | .eps raw hA p => .eps raw.toChecks hA.toChecks p.toHasTypeDefEq
+  | .abs raw hA hp x =>
+      .abs raw.toChecks hA.toChecks hp.toChecks x.toHasTypeDefEq
+  | .rep raw hA hp x =>
+      .rep raw.toChecks hA.toChecks hp.toChecks x.toHasTypeDefEq
+  | .tyExists raw p => .tyExists raw.toChecks p.toHasTypeDefEq
+  | .conv source hB equality =>
+      .conv source.toHasTypeDefEq hB.toChecks equality
+
+abbrev CDefWellTypedSub {types : List Kind} {m n : Nat}
+    (Γ : BoundCtx ClassicalSig types m) (Δ : BoundCtx ClassicalSig types n)
+    (σ : Fin m → Tm ClassicalSig types n) : Type 1 :=
+  ∀ i, CDefChecks Δ (σ i) (Γ i)
+
+noncomputable def CDefWellTypedSub.bound
+    {Γ : BoundCtx ClassicalSig types m} {Δ : BoundCtx ClassicalSig types n}
+    {σ : Fin m → Tm ClassicalSig types n} (checked : CDefWellTypedSub Γ Δ σ)
+    (env : CTypeEnv types) (bound : CBoundEnv n) : CBoundEnv m :=
+  fun i expected => (cDefSem (checked i) env bound expected).down
+
+private noncomputable def CDefWellTypedSub.lift
+    {Γ : BoundCtx ClassicalSig types m} {Δ : BoundCtx ClassicalSig types n}
+    {σ : Fin m → Tm ClassicalSig types n} {A : Ty ClassicalSig types}
+    (hA : CKinded A) (checked : CDefWellTypedSub Γ Δ σ) :
+    CDefWellTypedSub (extendBound A Γ) (extendBound A Δ) (liftSub σ) :=
+  fun i => Fin.cases (.exact (.bv hA rfl)) (fun j =>
+    ((checked j).toHasTypeDefEq.weaken (B := A)).certificate) i
+
+theorem CDefWellTypedSub.bound_lift
+    {Γ : BoundCtx ClassicalSig types m} {Δ : BoundCtx ClassicalSig types n}
+    {σ : Fin m → Tm ClassicalSig types n} {A : Ty ClassicalSig types}
+    (hA : CKinded A) (checked : CDefWellTypedSub Γ Δ σ)
+    (env : CTypeEnv types) (bound : CBoundEnv n)
+    (value : (cSem hA env).carrier) :
+    (CDefWellTypedSub.lift hA checked).bound env
+        (extendCBoundEnv (cSem hA env) value bound) =
+      extendCBoundEnv (cSem hA env) value (checked.bound env bound) := by
+  funext i expected
+  refine Fin.cases ?_ (fun j => ?_) i
+  · unfold CDefWellTypedSub.bound
+    rw [CDefChecks.coherent ((CDefWellTypedSub.lift hA checked) 0)
+      (.exact (.bv hA rfl))]
+    simp only [cDefSem, cSem]
+    exact (extendCBoundEnv_zero (cSem hA env) value bound expected).trans
+      (extendCBoundEnv_zero (cSem hA env) value
+        (fun i expected => (cDefSem (checked i) env bound expected).down)
+        expected).symm
+  · unfold CDefWellTypedSub.bound
+    let weakened := ((checked j).toHasTypeDefEq.weaken (B := A)).certificate
+    rw [CDefChecks.coherent ((CDefWellTypedSub.lift hA checked) j.succ) weakened]
+    have semantic := cDefSem_weaken (checked j) weakened env
+      (extendCBoundEnv (cSem hA env) value bound) expected
+    rw [CBoundEnv.rename_succ_extend (cSem hA env) value bound] at semantic
+    exact congrArg ULift.down semantic
+
 end Nucleus.HolE
