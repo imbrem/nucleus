@@ -355,6 +355,7 @@ name = "covalence-ffi-python"
 version = "0.0.0"
 dependencies = [
  "cid",
+ "covalence-data-cbor",
  "covalence-lib-hash",
  "covalence-lib-python",
  "covalence-logic-lrat",
