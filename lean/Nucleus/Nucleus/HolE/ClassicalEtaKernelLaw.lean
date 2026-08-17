@@ -98,4 +98,79 @@ private theorem cSem_align_expected
       symm
       apply alignCValue_self
 
+theorem classical_eqTm_eta
+    {Γ : BoundCtx ClassicalSig types depth}
+    {A B : Ty ClassicalSig types} {f : Tm ClassicalSig types depth}
+    (_name : Nat) (_fresh : Fresh _name f) (_typedContext : TypedCtx Γ)
+    (functionTyping : HasTypeDefEq Γ f (.arr A B))
+    (etaTyping : HasTypeDefEq Γ
+      (.lam A (.app (weaken f) (.bv 0))) (.arr A B)) :
+    CSemEq (Γ := Γ) (.lam A (.app (weaken f) (.bv 0))) f (.arr A B) := by
+  intro leftTyping rightTyping env bound typed valid expected
+  rw [leftTyping.certificate.coherent etaTyping.certificate env bound expected,
+    rightTyping.certificate.coherent functionTyping.certificate env bound expected]
+  rw [etaTyping.certificate.rawView_semantics,
+    functionTyping.certificate.rawView_semantics]
+  cases etaView : etaTyping.certificate.rawView with
+  | mk etaRawType etaRaw =>
+    cases functionView : functionTyping.certificate.rawView with
+    | mk functionRawType functionRaw =>
+      simp only [CDefRawView.sem]
+      cases etaRaw with
+      | lam body domain codomain bodyChecking =>
+        cases bodyChecking with
+        | app appDomain appCodomain weakenedFunction argumentChecking =>
+          cases argumentChecking with
+          | bv argumentType lookup =>
+            cases lookup
+            have domainEq := domain.unique appDomain
+            have codomainEq := codomain.unique appCodomain
+            cases domainEq
+            cases codomainEq
+            let renamed : CChecks (extendBound A Γ) (weaken f)
+                (.tm functionRawType) :=
+              ((functionRaw.toChecks.renameTm Fin.succ (fun _ => rfl)).certificate)
+            have functionTypeEq := weakenedFunction.type_unique renamed
+            cases functionTypeEq
+            have sourceAligned := cSem_align_expected functionRaw
+              (.arr domain codomain) typed env bound valid expected
+            rw [sourceAligned]
+            simp only [cSem]
+            apply congrArg ULift.up
+            apply congrArg (alignCValue _ expected)
+            funext value
+            have weakenedEq := cSem_rename_raw functionRaw Fin.succ (fun _ => rfl)
+              weakenedFunction env
+              (extendCBoundEnv (cSem domain env) value bound)
+              ⟨(cSem domain env).carrier → (cSem codomain env).carrier,
+                fun _ => (cSem codomain env).point⟩
+            have envEq := CBoundEnv.rename_succ_extend (cSem domain env) value bound
+            rw [envEq] at weakenedEq
+            have argumentEq :
+                (cSem (CChecks.bv argumentType rfl) env
+                  (extendCBoundEnv (cSem domain env) value bound)
+                  (cSem domain env)).down = value := by
+              rw [argumentType.unique domain]
+              change extendCBoundEnv (cSem domain env) value bound 0
+                (cSem domain env) = value
+              exact (extendCBoundEnv_zero (cSem domain env) value bound
+                (cSem domain env)).trans (alignCValue_self _ _)
+            have headEq : extendCBoundEnv (cSem domain env) value bound 0
+                (cSem domain env) = value :=
+              (extendCBoundEnv_zero (cSem domain env) value bound
+                (cSem domain env)).trans (alignCValue_self _ _)
+            have applicationEq :
+                (cSem weakenedFunction env
+                    (extendCBoundEnv (cSem domain env) value bound)
+                    ⟨(cSem domain env).carrier → (cSem codomain env).carrier,
+                      fun _ => (cSem codomain env).point⟩).down
+                    (extendCBoundEnv (cSem domain env) value bound 0
+                      (cSem domain env)) =
+                  (cSem functionRaw env bound
+                    ⟨(cSem domain env).carrier → (cSem codomain env).carrier,
+                      fun _ => (cSem codomain env).point⟩).down value := by
+              rw [headEq]
+              exact congrFun (congrArg ULift.down weakenedEq) value
+            exact (alignCValue_self _ _).trans applicationEq
+
 end Nucleus.HolE
