@@ -18,8 +18,16 @@ fn malformed(error: Error) -> PyErr {
     CnfError::new_err(error.to_string())
 }
 
-#[pyclass(frozen, module = "covalence.logic.sat", name = "Literal")]
+#[pyclass(
+    frozen,
+    eq,
+    ord,
+    hash,
+    module = "covalence.logic.sat",
+    name = "Literal"
+)]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
+#[derive(Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PyLiteral(pub(crate) Literal);
 
 #[pymethods]
@@ -51,14 +59,11 @@ impl PyLiteral {
     fn __repr__(&self) -> String {
         format!("Literal({})", self.0.get())
     }
-
-    fn __eq__(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
 }
 
-#[pyclass(frozen, module = "covalence.logic.sat", name = "Clause")]
+#[pyclass(frozen, eq, ord, hash, module = "covalence.logic.sat", name = "Clause")]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
+#[derive(Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PyClause(pub(crate) Clause);
 
 #[pymethods]
@@ -81,14 +86,18 @@ impl PyClause {
     fn __repr__(&self) -> String {
         format!("Clause({:?})", self.literals())
     }
-
-    fn __eq__(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
 }
 
-#[pyclass(frozen, module = "covalence.logic.sat", name = "Formula")]
+#[pyclass(
+    frozen,
+    eq,
+    ord,
+    hash,
+    module = "covalence.logic.sat",
+    name = "Formula"
+)]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
+#[derive(Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PyFormula(pub(crate) Formula);
 
 #[pymethods]
@@ -116,10 +125,6 @@ impl PyFormula {
 
     fn __len__(&self) -> usize {
         self.0.len()
-    }
-
-    fn __eq__(&self, other: &Self) -> bool {
-        self.0 == other.0
     }
 }
 

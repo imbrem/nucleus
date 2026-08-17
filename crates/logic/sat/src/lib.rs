@@ -72,7 +72,7 @@ pub mod cnf {
     }
 
     /// A disjunction of literals.
-    #[derive(Clone, Debug, Default, Eq, PartialEq)]
+    #[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
     pub struct Clause(Box<[Literal]>);
 
     impl Clause {
@@ -122,7 +122,7 @@ pub mod cnf {
     }
 
     /// A conjunction of clauses.
-    #[derive(Clone, Debug, Default, Eq, PartialEq)]
+    #[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
     pub struct Formula(Box<[Clause]>);
 
     impl Formula {
