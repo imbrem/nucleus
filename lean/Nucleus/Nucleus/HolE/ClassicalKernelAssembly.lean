@@ -22,7 +22,8 @@ structure ClassicalRemainingEqTmLaws where
     CSemEq (Γ := Γ) (.app (.lam A body) x) (openBound body x) B
   eta : ∀ {types depth} {Γ : BoundCtx ClassicalSig types depth}
       {A B : Ty ClassicalSig types} {f : Tm ClassicalSig types depth},
-    (name : Nat) → Fresh name f → HasTypeDefEq Γ f (.arr A B) →
+    (name : Nat) → Fresh name f → TypedCtx Γ →
+    HasTypeDefEq Γ f (.arr A B) →
     HasTypeDefEq Γ (.lam A (.app (weaken f) (.bv 0))) (.arr A B) →
     CSemEq (Γ := Γ) (.lam A (.app (weaken f) (.bv 0))) f (.arr A B)
 

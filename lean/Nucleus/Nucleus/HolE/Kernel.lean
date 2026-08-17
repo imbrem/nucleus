@@ -32,6 +32,7 @@ inductive EqTm {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig] :
       (resultTyping : HasTypeDefEq Γ (openBound body x) B) :
       EqTm Γ (.app (.lam A body) x) (openBound body x) B
   | eta (name : Nat) (fresh : Fresh name f)
+      (typedContext : TypedCtx Γ)
       (functionTyping : HasTypeDefEq Γ f (.arr A B))
       (etaTyping : HasTypeDefEq Γ (.lam A (.app (weaken f) (.bv 0))) (.arr A B)) :
       EqTm Γ (.lam A (.app (weaken f) (.bv 0))) f (.arr A B)

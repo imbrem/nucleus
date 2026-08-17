@@ -208,7 +208,8 @@ theorem EqTm.typing {types : List Kind} {depth : Nat}
       cases applicationRaw with
       | app functionRaw argumentRaw =>
           exact ⟨.exact (.app functionRaw argumentRaw), resultTyping⟩
-  | eta name fresh functionTyping etaTyping => exact ⟨etaTyping, functionTyping⟩
+  | eta name fresh typedContext functionTyping etaTyping =>
+      exact ⟨etaTyping, functionTyping⟩
 
 /-- A typed context paired with the polymorphic bound environment consumed by
 `cSem`.  At a lookup, the evaluator specializes `bound` to the denotation of
@@ -217,6 +218,64 @@ structure CContextEnv {types : List Kind} {depth : Nat}
     (Γ : BoundCtx ClassicalSig types depth) where
   typed : TypedCtx Γ
   bound : CBoundEnv depth
+
+/-- The canonical proof that extending a well-kinded bound context preserves
+well-kindedness.  Keeping this constructor named is useful because semantic
+environment validity below is indexed by the particular context typing
+certificate. -/
+theorem TypedCtx.extend {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth} {A : Ty ClassicalSig types}
+    (hA : Kinded A) (typed : TypedCtx Γ) : TypedCtx (extendBound A Γ) :=
+  fun i => Fin.cases hA typed i
+
+/-- A polymorphic bound environment is valid when each entry is represented by
+one value at the denotation of its declared type, and every other requested
+representation is obtained by `alignCValue` from that value.
+
+This condition is essential: an arbitrary `CBoundEnv` may return unrelated
+values when the evaluator asks for definitionally equal types through distinct
+typing certificates, which makes beta and eta conversion false. -/
+def CBoundValid {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth} (typed : TypedCtx Γ)
+    (env : CTypeEnv types) (bound : CBoundEnv depth) : Prop :=
+  ∀ i expected,
+    bound i expected = alignCValue (denoteChecked (typed i) env) expected
+      (bound i (denoteChecked (typed i) env))
+
+theorem emptyCBoundEnv_valid (env : CTypeEnv types) :
+    CBoundValid (Γ := (emptyBound : BoundCtx ClassicalSig types 0))
+      (fun i => Fin.elim0 i) env emptyCBoundEnv := by
+  intro i
+  exact Fin.elim0 i
+
+private theorem extendCBoundEnv_head_valid (semantic : CPointed)
+    (value : semantic.carrier) (bound : CBoundEnv depth) (expected : CPointed) :
+    extendCBoundEnv semantic value bound 0 expected =
+      alignCValue semantic expected
+        (extendCBoundEnv semantic value bound 0 semantic) := by
+  by_cases equal : expected = semantic
+  · subst expected
+    simp [extendCBoundEnv, alignCValue]
+  · have reverse : semantic ≠ expected := Ne.symm equal
+    simp [extendCBoundEnv, alignCValue, equal, reverse]
+
+theorem extendCBoundEnv_valid {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth} {A : Ty ClassicalSig types}
+    (hA : Kinded A) (typed : TypedCtx Γ) (env : CTypeEnv types)
+    (bound : CBoundEnv depth) (valid : CBoundValid typed env bound)
+    (value : (denoteChecked hA env).carrier) :
+    CBoundValid (typed.extend hA) env
+      (extendCBoundEnv (denoteChecked hA env) value bound) := by
+  intro i expected
+  refine Fin.cases ?_ (fun j => ?_) i
+  · have proofEq : typed.extend hA (0 : Fin (depth + 1)) = hA :=
+      Subsingleton.elim _ _
+    rw [proofEq]
+    exact extendCBoundEnv_head_valid (denoteChecked hA env) value bound expected
+  · change bound j expected = alignCValue
+      (denoteChecked (typed j) env) expected
+      (bound j (denoteChecked (typed j) env))
+    exact valid j expected
 
 /-- A term realizes a semantic value when some proof-relevant typing
 certificate computes that value.  Existential certificate semantics is enough
@@ -241,6 +300,7 @@ def CEntails {types : List Kind} {depth : Nat}
     (hypotheses : List (Tm ClassicalSig types depth))
     (conclusion : Tm ClassicalSig types depth) : Prop :=
   ∀ (env : CTypeEnv types) (bound : CBoundEnv depth),
+    ∀ (typed : TypedCtx Γ), CBoundValid typed env bound →
     CHypsTrue (Γ := Γ) env bound hypotheses →
     CRealizes (Γ := Γ) env bound conclusion .boolTy cBool true
 
@@ -279,7 +339,8 @@ theorem no_closed_false_of_sound
         [] (.bool false)) :
     Proves (emptyBound : BoundCtx ClassicalSig [] 0) [] (.bool false) → False := by
   intro proof
-  have realized := sound proof emptyCTypeEnv emptyCBoundEnv (by
+  have realized := sound proof emptyCTypeEnv emptyCBoundEnv
+    (fun i => Fin.elim0 i) (emptyCBoundEnv_valid emptyCTypeEnv) (by
     intro proposition member
     nomatch member)
   exact not_realizes_false_as_true emptyCTypeEnv emptyCBoundEnv realized
@@ -302,23 +363,25 @@ theorem no_closed_false_under_axiom_of_sound
     subst proposition
     exact axiomTrue
   exact not_realizes_false_as_true emptyCTypeEnv emptyCBoundEnv
-    (sound proof emptyCTypeEnv emptyCBoundEnv hypotheses)
+    (sound proof emptyCTypeEnv emptyCBoundEnv
+      (fun i => Fin.elim0 i) (emptyCBoundEnv_valid emptyCTypeEnv) hypotheses)
 
 namespace CEntails
 
 theorem hyp (member : proposition ∈ hypotheses) :
     CEntails (Γ := Γ) hypotheses proposition := by
-  intro env bound truths
+  intro env bound typed valid truths
   exact truths proposition member
 
 theorem truth : CEntails (Γ := Γ) hypotheses (.bool true) := by
-  intro env bound truths
+  intro env bound typed valid truths
   exact CRealizes.boolean true env bound
 
 theorem falseElim (premise : CEntails (Γ := Γ) hypotheses (.bool false)) :
     CEntails (Γ := Γ) hypotheses conclusion := by
-  intro env bound truths
-  exact False.elim (not_realizes_false_as_true env bound (premise env bound truths))
+  intro env bound typed valid truths
+  exact False.elim (not_realizes_false_as_true env bound
+    (premise env bound typed valid truths))
 
 private theorem realizes_eq_false_of_false
     {types : List Kind} {depth : Nat}
@@ -360,7 +423,7 @@ theorem boolCases (typing : HasTypeDefEq Γ proposition .boolTy)
     (right : CEntails (Γ := Γ)
       (.eq .boolTy proposition (.bool false) :: hypotheses) conclusion) :
     CEntails (Γ := Γ) hypotheses conclusion := by
-  intro env bound truths
+  intro env bound typed valid truths
   let evaluated := cDefSem typing.certificate env bound cBool
   generalize valueEq : evaluated.down = value
   have evaluatedEq : evaluated = ULift.up value := by
@@ -369,14 +432,14 @@ theorem boolCases (typing : HasTypeDefEq Γ proposition .boolTy)
     exact eta
   cases value with
   | true =>
-      apply left env bound
+      apply left env bound typed valid
       intro candidate member
       rcases List.mem_cons.mp member with rfl | member
       · refine ⟨typing.certificate, ?_⟩
         exact evaluatedEq
       · exact truths candidate member
   | false =>
-      apply right env bound
+      apply right env bound typed valid
       intro candidate member
       rcases List.mem_cons.mp member with rfl | member
       · apply realizes_eq_false_of_false typing falseEqualityTyping env bound
@@ -386,7 +449,7 @@ theorem boolCases (typing : HasTypeDefEq Γ proposition .boolTy)
 theorem eqRefl (_hA : Kinded A) (_typing : HasTypeDefEq Γ term A)
     (conclusionTyping : HasTypeDefEq Γ (.eq A term term) .boolTy) :
     CEntails (Γ := Γ) hypotheses (.eq A term term) := by
-  intro env bound truths
+  intro env bound typed valid truths
   refine ⟨conclusionTyping.certificate, ?_⟩
   classical
   rw [conclusionTyping.certificate.rawView_semantics]
@@ -407,8 +470,8 @@ theorem hypothesisMap
     (subset : ∀ proposition, proposition ∈ source → proposition ∈ target)
     (premise : CEntails (Γ := Γ) source conclusion) :
     CEntails (Γ := Γ) target conclusion := by
-  intro env bound targetTrue
-  apply premise env bound
+  intro env bound typed valid targetTrue
+  apply premise env bound typed valid
   intro proposition member
   exact targetTrue proposition (subset proposition member)
 
