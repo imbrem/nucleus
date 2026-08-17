@@ -497,7 +497,7 @@ private theorem cSem_instantiate_kind_normalize
     exact (heq_of_eq (CChecks.unique instantiated transported)).trans htransport
   exact congrArg (fun packed : Packed => cSem packed.2 env) packedEq
 
-private theorem cSem_instantiate_tm_normalize
+theorem cSem_instantiate_tm_normalize
     {source target : List Kind} {depth : Nat}
     {Γ : BoundCtx ClassicalSig source depth}
     {term : Tm ClassicalSig source depth} {A : Ty ClassicalSig source}
