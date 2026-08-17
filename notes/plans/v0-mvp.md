@@ -119,84 +119,106 @@ comparison in §5 means anything. Faithful beats comfortable here.
 
 ## 4. CBOR, signing, and where the trust boundary sits
 
-There are **two decode paths with different trust levels**, and conflating them
-is a soundness hole. Name them separately in the API and in the code.
+There are **two codecs with different trust levels**. Conflating them is a
+soundness hole; failing to separate them makes the TCB much larger than it needs
+to be.
 
-### (a) Replay — untrusted
+### (a) The statement codec — TCB, both directions
 
-CBOR carries raw syntax plus a rule tape. Decode, then re-run every rule through
-the same methods a caller would use. No privileged path, so a wrong decode
-yields a rejected or different theorem, never an unjustified one. This codec is
-userspace; its only hard requirement is not panicking on adversarial bytes.
-
-### (b) Signed admission — trusted, and it is a different thing entirely
-
-The point of signing is that the recipient **does not re-check the proof** —
-otherwise there would be no reason to sign. So the path is: verify a signature,
-decode a statement, admit it. And that makes the decoder trusted, because *what
-was signed is a meaning, and a decoder is the thing that assigns meaning to
-bytes*. A decoder that turns the signer's `|- true` into `|- false` converts an
-honest signature into a forged theorem. This is the classic
-signature-wrapping/canonicalization failure, and it has bitten XML-DSig, JWT,
-and several others.
-
-**But the decoder does not have to be the trusted component.** Invert it:
+Signing means the recipient does **not** re-check the proof. So both ends of the
+wire are trusted, symmetrically:
 
 ```
-1.  untrusted decoder            bytes B  ──▶  candidate statement in the arena
-2.  TRUSTED canonical encoder    statement ──▶  B′
-3.  TRUSTED                      verify(key, sig, hash(B′))
-4.  admit only if step 3 passes
+signer      P  ──encode──▶  B,  sign(key, B)      encoder trusted:
+                                                  a signer whose encoder emits Q
+                                                  has attested to Q, not to P
+
+recipient   B  ──decode──▶  P,  verify(key, B)    decoder trusted:
+                                                  a recipient whose decoder reads Q
+                                                  admits Q under a signature for P
 ```
 
-If the decoder is wrong, `B′ ≠ B`, the hash differs, and the signature fails.
-**A decoder bug can only cause false rejection, never false acceptance.**
+Both directions carry the meaning, so both are in the TCB. This is the whole of
+the correction to the previous draft of this plan.
 
-This is strictly better than trusting the decoder, because parsing adversarial
-bytes into meaning is hard and serializing a known in-memory value is easy. It
-also means **`to_cbor` is TCB and `from_cbor` is not** — the opposite of the
-first draft of this plan, and a much smaller thing to audit. Perhaps 150 lines.
+### The single theorem that covers both
 
-It also preserves the standing rule intact: nothing is ever deserialized *into* a
-checked object. Bytes become a raw candidate; the candidate is then verified.
+```
+decode (encode S) = S            for every well-formed statement S
+```
 
-### What the trusted encoder must satisfy
+Round-trip is sufficient *and* it implies what is separately needed: if
+`encode P = encode Q` for `P ≠ Q`, round-trip fails at one of them, so
+injectivity is a corollary rather than an extra obligation. One theorem, both
+components.
 
-1. **Deterministic** — one statement, one byte string, always. Lean's
-   `Cbor.deterministic` with `deterministic_unique` is exactly this property, and
-   the Rust encoder is transcribed from it.
-2. **Injective** — distinct statements never share bytes. This is the actual
-   soundness property: a collision means a signature over one statement admits
-   the other. `HolLN.Json.encode_injective` is the shape of the theorem wanted.
-3. **Domain-separated** — a statement's bytes must not be readable as a term, a
-   proof, a snapshot, or any other signed object. Tag the preimage.
-4. **Total** — no panics on any arena-well-formed input.
+It is also the *right* theorem for this threat model. Bytes on the signed path
+are always in the image of `encode`, because an attacker who could present bytes
+outside it would have to forge a signature. So the general "decoder must
+withstand arbitrary adversarial input" burden does not apply to *soundness*
+here — only to totality.
 
-### Pin the theory in the signed object, from the first signature
+`HolLN.Json` already establishes this shape, with `encode_injective` proved and
+the decode side present; the Rust codec is transcribed from it and the corpus
+carries byte-exact expected encodings.
 
-A signed `|- P` is only meaningful relative to the signature it was proved
-under: `base "foo"` in the signer's theory and `base "foo"` in the recipient's
-are different types that print identically. Without a theory identifier in the
-signed preimage, a signature transfers between incompatible theories.
+### Requirements
+
+1. **Round-trip**, as above. The property test is the corpus; the proof is Lean's.
+2. **Deterministic encoding** — one statement, one byte string. `Cbor.deterministic`
+   with `deterministic_unique` is exactly this.
+3. **Domain-separated** — statement bytes must not be readable as a term, a proof,
+   a snapshot, or any other signed object. Tag the preimage.
+4. **Total, both directions** — no panics on any input, adversarial included.
+   Soundness does not depend on this; availability and the no-panic rule do.
+
+### Rejected: verify-by-re-encoding
+
+An earlier draft proposed keeping the decoder untrusted by re-encoding the
+decoded candidate and verifying the signature over *that*. It is sound, and it
+does confine decoder bugs to false rejections.
+
+It was rejected because it makes every signature depend on the recipient
+reproducing the signer's bytes exactly, so **any change to the encoder
+invalidates every signature ever issued** — trading a bounded correctness
+obligation for unbounded operational brittleness. Recorded here because it is an
+appealing idea that someone will propose again.
+
+### (b) The proof/replay codec — userspace
+
+CBOR carrying raw syntax plus a rule tape, decoded and re-run through the same
+rule methods a caller would use. No privileged path, so a wrong decode yields a
+rejected or different theorem, never an unjustified one. Fuzz it for panics;
+do not read it.
+
+**Keeping (b) out of (a) is what keeps this small.** Only statements —
+hypotheses and a conclusion — need the trusted codec. Proofs, which are far
+larger and more complex, never do.
+
+### Pin the theory in the signed preimage, from the first signature
+
+A signed `|- P` is meaningful only relative to the signature it was proved
+under: `base "foo"` in the signer's theory and in the recipient's are different
+types that print identically. Without a theory identifier in the preimage, a
+signature transfers between incompatible theories.
 
 v0 declares no base types, so this is vacuous today — which is exactly why the
 field must be there anyway. **Adding it later invalidates every signature ever
-issued.** One `O256` of the theory's canonical description, in the preimage,
-now.
+issued.** One `O256` of the theory's canonical description, in the preimage, now.
 
 ### Signed admission is this kernel's `#print axioms`
 
-Admitting under a key accepts a theorem the session did not check. That is a
-different trust mode from everything else in the kernel and should be visible:
+Admitting under a key accepts a theorem the session did not check — a different
+trust mode from everything else here, and it should be visible:
 
 - the trusted key set is an **explicit argument**, never ambient;
 - the session records which keys were actually relied upon;
 - `session.trusted_keys()` reports them.
 
-A result that depended on no key is checked outright; one that depended on `K`
-is checked *modulo* trusting `K`. That is precisely the distinction
-`#print axioms` draws in Lean, it costs almost nothing, and without it signing
-is a hole rather than a feature.
+A result that depended on no key is checked outright; one that depended on `K` is
+checked *modulo* trusting `K`. That is the distinction `#print axioms` draws in
+Lean, it costs almost nothing, and without it signing is a hole rather than a
+feature.
 
 ---
 
@@ -227,15 +249,17 @@ one level up, and it costs a day.
 | L4 | `kernel/src/eq.rs` | **TCB** | `EqTm`, 8 rules |
 | L5 | `kernel/src/proves.rs` | **TCB** | `Proves`, 12 rules |
 | L6 | `kernel/src/show.rs` | semi | printing. Not soundness-critical, but a wrong printer displays a true theorem as a false one — hold it to the corpus |
-| L7a | `kernel/src/canon.rs` | **TCB** | canonical statement encoder: deterministic, injective, domain-separated, total. ~150 lines |
-| L7b | `codec/src/cbor.rs` | user | replay encode + decode; fuzz for panics |
-| L7c | `codec/src/signed.rs` | user | decode candidate, re-encode via L7a, verify. Untrusted by construction |
+| L7a | `kernel/src/statement.rs` | **TCB** | statement codec, **both directions**: deterministic, round-tripping, domain-separated, total. ~300 lines |
+| L7b | `kernel/src/signed.rs` | **TCB** | sign / verify / admit over L7a's preimage; key set explicit; record reliance. ~120 lines |
+| L7c | `codec/src/replay.rs` | user | proof tape encode + decode-then-recheck; fuzz for panics |
 | L8 | `ffi/python/src/hol.rs` + `python/covalence/hol.py` | user | follow the `hash`/`sat`/`lrat` pattern exactly, including `.pyi` |
 | L9 | `browser/src/hol.rs` + `packages/nucleus/src` | user | follow the `Repl` pattern; put `Session` on `window.nucleus` |
 | L10 | `conformance/` + three drivers | test | §5 |
 
 L1–L5 are unchanged from the eight-hour plan and keep their model assignment.
-L7a joins them in the TCB, taking the read budget to ≈ 1120 lines.
+L7a and L7b join them in the TCB, taking the read budget to ≈ 1390 lines. That
+is the cost of signing, and it is worth paying deliberately rather than
+discovering.
 L8 and L9 are mechanical against an existing pattern — good cheap-model lanes,
 and their oracle is L10.
 
@@ -244,8 +268,8 @@ and their oracle is L10.
 1. **L1–L5** to a Rust test proving `|- true` and one beta equality. Nothing else starts before this passes.
 2. **L6 + L10** — printer and transcript together, since the transcript is what the printer is checked against.
 3. **L8 and L9 in parallel** — both are one line per operation over a finished core.
-4. **L7a** whenever L1 lands — it depends only on the syntax, and it is TCB, so it wants your reading time early rather than at the end.
-5. **L7b, L7c** last. Replay needs the rule methods finished to re-check through them, and signed admission needs L7a.
+4. **L7a** as soon as L1 lands — it depends only on the syntax, and it is TCB, so it wants reading time early rather than at the end. Its round-trip property test is written before it is.
+5. **L7b** after L7a. **L7c** last; replay needs the rule methods finished to re-check through them.
 
 ### Static browser demo
 

@@ -97,12 +97,16 @@ grow the budget.
 one explicit checking boundary on the way in. Proof producers, importers,
 codecs, and e-graphs all live outside it.
 
-Signed admission looks like an exception and is not one. Bytes decode to a *raw
-candidate* through an untrusted decoder; the trusted side then re-encodes that
-candidate canonically and verifies the signature over the result. A decoder bug
-can therefore only cause a false rejection. What is trusted is the canonical
-**encoder**, not the decoder — and a theorem admitted under a key is recorded,
-so a session can report which keys its results depend on.
+Signed admission is the one real exception, because signing exists precisely so
+the recipient need not re-check. There, **both directions of the statement codec
+are TCB**: an encoder that emits the wrong bytes makes a signer attest to
+something they did not prove, and a decoder that reads them wrongly makes a
+recipient admit something nobody signed. One theorem covers both —
+`decode (encode S) = S` — and injectivity follows from it.
+
+Only *statements* get the trusted codec. Proof tapes are re-checked on arrival
+and stay in userspace. A theorem admitted under a key is recorded, so a session
+can report which keys its results depend on.
 
 ---
 
