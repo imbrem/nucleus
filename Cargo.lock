@@ -445,6 +445,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "covalence-logic-hol"
+version = "0.0.0"
+dependencies = [
+ "covalence-lib-cbor",
+ "covalence-lib-hash",
+]
+
+[[package]]
 name = "covalence-logic-lrat"
 version = "0.0.0"
 dependencies = [
