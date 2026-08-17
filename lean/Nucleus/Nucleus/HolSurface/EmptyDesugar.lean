@@ -22,24 +22,48 @@ abbrev ClosedType := Empty.Ty []
 /-- A closed checked term of some checked type. -/
 abbrev ClosedTerm := Σ A : Empty.Ty [], Empty.Term Empty.Ctx.empty A
 
-/-- A link resolver cannot produce open or unchecked syntax: the codomain
-contains both the empty scopes and the checking certificate. -/
-structure LinkResolver (Link : Type) where
+/-- A successful link resolution cannot produce open or unchecked syntax: the
+codomain contains both the empty scopes and the checking certificate.  Failure
+is retained as a lazy obligation and recovered using a typed free variable. -/
+structure LinkResolver (Link Error : Type) where
+  fallbackName : Link → Nat
   resolveType : (target : Link) → (kind : Nucleus.HolE.Kind) →
-    Option (Empty.FamK [] kind)
+    Except Error (Empty.FamK [] kind)
   resolveTerm : (target : Link) → (A : Empty.Ty []) →
-    Option (Empty.Term (Empty.Ctx.empty : Empty.Ctx [] 0) A)
+    Except Error (Empty.Term (Empty.Ctx.empty : Empty.Ctx [] 0) A)
 
-/-- Lower a type link after its surface kind annotation has been checked. -/
-def lowerTypeLink (resolver : LinkResolver Link) (target : Link)
-    (kind : Nucleus.HolE.Kind) :
-    Option (Empty.FamK [] kind) :=
-  resolver.resolveType target kind
+/-- The total result of lazy lowering: `value` is always checked and `deferred`
+records the resolution error, if one was recovered by a free variable. -/
+structure LazyLowering (Value Error : Type) where
+  value : Value
+  deferred : Option Error
 
-/-- Lower a term link after its surface type annotation has been checked. -/
-def lowerTermLink (resolver : LinkResolver Link) (target : Link) (A : Empty.Ty []) :
-    Option (Empty.Term (Empty.Ctx.empty : Empty.Ctx [] 0) A) :=
-  resolver.resolveTerm target A
+/-- A well-kinded placeholder for an unresolved type link.  At kind `*` it is
+a `Model` whose predicate is a distinguished free-variable obligation; at
+higher kind it is pointwise lifted through type lambdas. -/
+def unresolvedFamily (name : Nat) : {types : List Nucleus.HolE.Kind} →
+    (kind : Nucleus.HolE.Kind) → Empty.FamK types kind
+  | _, .star =>
+      Empty.Term.model
+        (Empty.Term.fv (types := .star :: _) Empty.Ctx.empty name Empty.FamK.boolTy)
+  | _, .arr domain codomain =>
+      Empty.FamK.lam (unresolvedFamily (types := domain :: _) name codomain)
+
+/-- Lower a type link, recovering a lazy failure as a well-kinded placeholder. -/
+def lowerTypeLink (resolver : LinkResolver Link Error) (target : Link)
+    (kind : Nucleus.HolE.Kind) : LazyLowering (Empty.FamK [] kind) Error :=
+  match resolver.resolveType target kind with
+  | .ok value => ⟨value, none⟩
+  | .error error => ⟨unresolvedFamily (resolver.fallbackName target) kind, some error⟩
+
+/-- Lower a term link, recovering a lazy failure as a typed free variable. -/
+def lowerTermLink (resolver : LinkResolver Link Error) (target : Link)
+    (A : Empty.Ty []) :
+    LazyLowering (Empty.Term (Empty.Ctx.empty : Empty.Ctx [] 0) A) Error :=
+  match resolver.resolveTerm target A with
+  | .ok value => ⟨value, none⟩
+  | .error error =>
+      ⟨Empty.Term.fv Empty.Ctx.empty (resolver.fallbackName target) A, some error⟩
 
 /-- `TM_NAT` lowers to the selected model of the infinity theory. -/
 def nat : ClosedType := Natural.nat

@@ -229,6 +229,17 @@ pub trait PredI: TmI<Ty: PropI> {}
 
 pub trait CtxI: PredI {}
 
+/// Result of attempting lazy link resolution.
+///
+/// A deferred resolution is a recoverable obligation.  The checker may replace
+/// it with a typed free variable derived from `LinkResolver::fallback_variable`
+/// and retry resolution when the target becomes available.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LinkResolution<T, E> {
+    Resolved(T),
+    Deferred(E),
+}
+
 /// Resolve serialized links at the checked, closed boundary.
 ///
 /// Implementations must reject a target whose checked kind or type differs
@@ -238,27 +249,24 @@ pub trait LinkResolver<R: Repr>: Send + Sync {
     type ClosedTerm: ClosedTmI;
     type Error: Error + Send + Sync + 'static;
 
+    /// Stable free-variable identity used when this link remains unresolved.
+    fn fallback_variable(&self, target: &R::Link) -> R::Var;
+
     /// Resolve a type link to a closed, well-kinded type and validate its kind.
     ///
-    /// # Errors
-    /// Returns a diagnostic for a missing, malformed, open, ill-kinded, or
-    /// incorrectly annotated target.
     fn resolve_type(
         &self,
         target: &R::Link,
         expected_kind: &R::Kind,
-    ) -> Result<Self::ClosedType, Self::Error>;
+    ) -> LinkResolution<Self::ClosedType, Self::Error>;
 
     /// Resolve a term link to a closed, well-typed term and validate its type.
     ///
-    /// # Errors
-    /// Returns a diagnostic for a missing, malformed, open, ill-typed, or
-    /// incorrectly annotated target.
     fn resolve_term(
         &self,
         target: &R::Link,
         expected_type: &R::Ty,
-    ) -> Result<Self::ClosedTerm, Self::Error>;
+    ) -> LinkResolution<Self::ClosedTerm, Self::Error>;
 }
 
 /// A proven predicate implication with explicit premises and conclusion.
