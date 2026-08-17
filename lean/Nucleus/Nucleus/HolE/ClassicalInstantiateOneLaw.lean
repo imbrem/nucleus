@@ -220,6 +220,26 @@ theorem CDefChecks.toHasTypeDefEq : CDefChecks Γ term A → HasTypeDefEq Γ ter
   | .conv source hB equality =>
       .conv source.toHasTypeDefEq hB.toChecks equality
 
+/-- The raw root type of a definitional certificate is definitionally equal
+to its advertised type. -/
+noncomputable def CDefChecks.rawTypeEq (checking : CDefChecks Γ term A) :
+    FamEq ClassicalSig checking.rawView.type A :=
+  match checking with
+  | .exact _ | .app .. | .lam .. | .eq .. | .eps .. | .abs .. | .rep .. |
+      .tyExists .. => .refl
+  | .conv source _ equality =>
+      .trans source.rawTypeEq source.typeKinded.toChecks equality
+
+/-- Any two definitional typings of one term have definitionally equal result
+types.  This is uniqueness of raw typing, closed under explicit conversion. -/
+noncomputable def CDefChecks.typeEq (left : CDefChecks Γ term A)
+    (right : CDefChecks Γ term B) : FamEq ClassicalSig A B := by
+  have rawEqual := left.rawView.raw.type_unique right.rawView.raw
+  have rightEq : FamEq ClassicalSig left.rawView.type B := by
+    simpa only [rawEqual] using right.rawTypeEq
+  exact .trans (.symm left.rawTypeEq) left.rawView.raw.typeKinded.toChecks
+    rightEq
+
 abbrev CDefWellTypedSub {types : List Kind} {m n : Nat}
     (Γ : BoundCtx ClassicalSig types m) (Δ : BoundCtx ClassicalSig types n)
     (σ : Fin m → Tm ClassicalSig types n) : Type 1 :=
