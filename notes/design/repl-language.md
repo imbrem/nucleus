@@ -266,3 +266,109 @@ design it fully before writing it; that is what produced this note's §4 gap.
 - Does Scheme-surface-to-stack-core survive contact with macros, or do macros want to see the core?
 - Is `Delimiter` carrying a concrete answer type actually enough for the handlers we want, or does the first real use want polymorphism?
 - Do WIT resources (handles) map onto handler-returned values cleanly, or do they need a separate mechanism?
+
+---
+
+## 8. Types: what to take from Coalton, and what not to
+
+[Coalton](https://coalton-lang.github.io/) is the right reference, and the thing
+to take from it is **structural, not implementational**.
+
+Coalton is Hindley–Milner with typeclasses, embedded in Common Lisp. Its
+minimality is in the *runtime*, not the language: the elaborator is large. So
+"Coalton, but ours" is the opposite of a few-page core. What is worth copying is
+one decision:
+
+> **The typed layer is a separate elaborator over the same syntax, not part of
+> the core.** `coalton-toplevel` is a macro that runs a compiler. The Lisp
+> underneath does not know it exists.
+
+That is exactly the layering this design wants, and it means **types can be
+added later without touching the core.** Concretely:
+
+| Layer | Size | When |
+| --- | --- | --- |
+| Machine — stack, frames, 8 instructions | ~2 pages | first |
+| Surface → core compiler | ~1 page | first |
+| Boundary checks — one shape check per handler crossing | ~0 pages | with the first handler |
+| HM elaborator — infers a region well-typed, erases its checks | ~5–10 pages | when it earns itself |
+| Typeclasses / dictionary passing | ~10 pages | probably never; see below |
+
+The few-page core is rows one and two. Everything else is opt-in.
+
+### Two other references worth more than they cost
+
+- **Pre-Scheme** (Scheme 48, recently revived) is the closest existing thing to
+  the WASM story: the *same* Lisp syntax, a restricted statically-typed subset,
+  compiled to a low-level target with no runtime. It is the existence proof that
+  "restricted typed subset compiles efficiently, full language stays
+  interpreted" works — which is the §4 compilation claim, already validated.
+- **Typed Racket** is the reference for boundary semantics specifically, because
+  it studied what goes *wrong*: gradual-typing boundaries have a real
+  performance cliff when crossed frequently, sometimes an order of magnitude.
+  If every CAS `fetch` crosses a checked boundary inside a loop, the checks
+  dominate. Two mitigations, both cheap: check **shapes** rather than deep
+  structure at the boundary, and let the elaborator erase checks in regions it
+  has proven well-typed. Design for this now; it is much harder to retrofit than
+  the types themselves.
+
+### Skip typeclasses, at least at first
+
+Dictionary passing is the largest single chunk of a Coalton-like elaborator, and
+it works against the §4 goal: monomorphic typed regions compile to WASM
+directly, while dictionary-passing polymorphism does not. If polymorphism is
+wanted later, **monomorphize** rather than pass dictionaries. Note this as a
+deliberate divergence from Coalton rather than an omission.
+
+---
+
+## 9. The internal language: a fragment, not the whole thing
+
+The eventual goal — the Lisp as an *internal* language, so the prover can reason
+about programs — pulls against the minimal dynamic core, and the resolution is
+worth writing down now even though the work is far off.
+
+Two ways a language lives inside HOL:
+
+- **Deep embedding.** Define `Value` and `step` as HOL data and functions;
+  reason about `run prog input = output`. Works for *everything* — effects,
+  general recursion, dynamic typing — and is heavy to reason with. This is also
+  PL Metatheory L1 on the ladder, so it is wanted regardless.
+- **Shallow embedding.** A program of type `int -> int` *denotes* an actual HOL
+  function. Reasoning is then ordinary HOL, which is enormously more pleasant.
+  Requires the program be typed, total, and effect-free.
+
+The resolution: **the internal language is the typed, total, effect-free
+fragment — and the handler boundary is exactly where that fragment ends.**
+Inside such a region, terms denote HOL functions and get the shallow embedding.
+Anything that performs an effect or recurses generally is deep-embedded only.
+
+Which makes one boundary serve three purposes at once:
+
+1. where runtime type checks happen (§4),
+2. where WASM compilation becomes possible (§4),
+3. where shallow embedding into HOL becomes possible (here).
+
+That convergence is the strongest argument yet for putting the typed boundary
+where the handlers are.
+
+### The theorem that makes it safe
+
+The same shape as the kernel's `run_sound`: build the deep embedding first, then
+the shallow one, then **prove they agree on the fragment.** Without that
+theorem, shallow reasoning about a program is a claim about a different program
+that merely looks similar. With it, you may reason shallowly and cash the result
+out deeply whenever you need to.
+
+Ordering, whenever this starts: deep embedding → typed fragment identified →
+shallow embedding → agreement theorem. Not before the machine runs.
+
+---
+
+## 10. Standing constraint
+
+Everything in §8 and §9 is post-interactivity. The core must run, be typed at
+its boundaries by nothing more than a shape check, and host the CAS handler
+before any elaborator is written. The failure mode this note is most concerned
+about is designing the type system first — which is how a few-page core becomes
+a few-month one.
