@@ -22,6 +22,25 @@ abbrev ClosedType := Empty.Ty []
 /-- A closed checked term of some checked type. -/
 abbrev ClosedTerm := Σ A : Empty.Ty [], Empty.Term Empty.Ctx.empty A
 
+/-- A link resolver cannot produce open or unchecked syntax: the codomain
+contains both the empty scopes and the checking certificate. -/
+structure LinkResolver (Link : Type) where
+  resolveType : (target : Link) → (kind : Nucleus.HolE.Kind) →
+    Option (Empty.FamK [] kind)
+  resolveTerm : (target : Link) → (A : Empty.Ty []) →
+    Option (Empty.Term (Empty.Ctx.empty : Empty.Ctx [] 0) A)
+
+/-- Lower a type link after its surface kind annotation has been checked. -/
+def lowerTypeLink (resolver : LinkResolver Link) (target : Link)
+    (kind : Nucleus.HolE.Kind) :
+    Option (Empty.FamK [] kind) :=
+  resolver.resolveType target kind
+
+/-- Lower a term link after its surface type annotation has been checked. -/
+def lowerTermLink (resolver : LinkResolver Link) (target : Link) (A : Empty.Ty []) :
+    Option (Empty.Term (Empty.Ctx.empty : Empty.Ctx [] 0) A) :=
+  resolver.resolveTerm target A
+
 /-- `TM_NAT` lowers to the selected model of the infinity theory. -/
 def nat : ClosedType := Natural.nat
 

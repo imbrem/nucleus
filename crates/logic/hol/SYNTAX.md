@@ -17,6 +17,14 @@ while the allocation contains the full hash and serialization format. A type
 link carries a kind; a term link carries a type. Kind links are intentionally
 absent.
 
+Links always resolve to closed checked objects. Rust expresses this through
+`LinkResolver::{ClosedType, ClosedTerm}` and the `ClosedTyI`/`ClosedTmI` marker
+interfaces. Lean's `EmptyDesugar.LinkResolver` is stronger still: its result is
+respectively `FamK [] kind` or `Term (Ctx.empty : Ctx [] 0) A`, so closedness
+and the kinding/typing certificate are present by construction. Resolution
+must reject a target that disagrees with the annotation stored in the link
+node.
+
 `Context::{Empty, And}` corresponds to Lean `Context.{empty, and}`. Contexts
 are ordered conjunction spines rather than name maps: stacking the infinity
 assumption is `And(TM_INF, rest)`, and the spine lowers to nested `TM_AND`.

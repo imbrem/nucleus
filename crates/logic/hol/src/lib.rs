@@ -210,11 +210,17 @@ pub trait TyI: ExprI {
     fn kind(&self) -> &Self::Kind;
 }
 
+/// A checked type with no free or bound type variables.
+pub trait ClosedTyI: TyI {}
+
 pub trait TmI: ExprI {
     type Ty: TyI;
 
     fn ty(&self) -> &Self::Ty;
 }
+
+/// A checked term with no free or bound term or type variables.
+pub trait ClosedTmI: TmI {}
 
 /// Checked Boolean type used for propositions; no separate syntax node.
 pub trait PropI: TyI {}
@@ -222,6 +228,38 @@ pub trait PropI: TyI {}
 pub trait PredI: TmI<Ty: PropI> {}
 
 pub trait CtxI: PredI {}
+
+/// Resolve serialized links at the checked, closed boundary.
+///
+/// Implementations must reject a target whose checked kind or type differs
+/// from the annotation carried by `Ty::Link` or `Tm::Link`.
+pub trait LinkResolver<R: Repr>: Send + Sync {
+    type ClosedType: ClosedTyI;
+    type ClosedTerm: ClosedTmI;
+    type Error: Error + Send + Sync + 'static;
+
+    /// Resolve a type link to a closed, well-kinded type and validate its kind.
+    ///
+    /// # Errors
+    /// Returns a diagnostic for a missing, malformed, open, ill-kinded, or
+    /// incorrectly annotated target.
+    fn resolve_type(
+        &self,
+        target: &R::Link,
+        expected_kind: &R::Kind,
+    ) -> Result<Self::ClosedType, Self::Error>;
+
+    /// Resolve a term link to a closed, well-typed term and validate its type.
+    ///
+    /// # Errors
+    /// Returns a diagnostic for a missing, malformed, open, ill-typed, or
+    /// incorrectly annotated target.
+    fn resolve_term(
+        &self,
+        target: &R::Link,
+        expected_type: &R::Ty,
+    ) -> Result<Self::ClosedTerm, Self::Error>;
+}
 
 /// A proven predicate implication with explicit premises and conclusion.
 pub trait ThmI: PredI {
