@@ -1,6 +1,7 @@
 import Nucleus.HolE.ClassicalCoreKernelLaws
 import Nucleus.HolE.ClassicalSubtypeKernelLaws
 import Nucleus.HolE.ClassicalTypeExistentialKernelLaws
+import Nucleus.HolE.ClassicalBoundKernelLaws
 
 /-! # Assembly of the classical kernel soundness laws
 
@@ -34,23 +35,6 @@ theorem ClassicalRemainingEqTmLaws.assemble
 
 structure ClassicalRemainingKernelLaws where
   eqTm : ClassicalRemainingEqTmLaws
-  generalize : ∀ {types depth} {Γ : BoundCtx ClassicalSig types depth}
-      {H : List (Tm ClassicalSig types depth)} {A : Ty ClassicalSig types}
-      {body : Tm ClassicalSig types (depth + 1)},
-    TypedHyps Γ H → Kinded A → HasTypeDefEq Γ
-      (.eq (.arr A .boolTy) (.lam A body) (.lam A (.bool true))) .boolTy →
-    HasTypeDefEq (extendBound A Γ) body .boolTy →
-    CEntails (Γ := extendBound A Γ) (H.map weaken) body →
-    CEntails (Γ := Γ) H
-      (.eq (.arr A .boolTy) (.lam A body) (.lam A (.bool true)))
-  weakenBound : ∀ {types depth} {Γ : BoundCtx ClassicalSig types depth}
-      {H : List (Tm ClassicalSig types depth)} {A : Ty ClassicalSig types}
-      {K : List (Tm ClassicalSig types (depth + 1))}
-      {p : Tm ClassicalSig types depth},
-    TypedHyps Γ H → Kinded A →
-    HasTypeDefEq (extendBound A Γ) (weaken p) .boolTy →
-    (∀ q, q ∈ H → weaken q ∈ K) →
-    CEntails (Γ := Γ) H p → CEntails (Γ := extendBound A Γ) K (weaken p)
   opening : CInstantiateOneTrueLaw
 
 theorem ClassicalRemainingKernelLaws.assemble
@@ -58,8 +42,8 @@ theorem ClassicalRemainingKernelLaws.assemble
   let eqLaws := remaining.eqTm.assemble
   { eqMp := classical_eqMp
     choice := classical_choice
-    generalize := remaining.generalize
-    weakenBound := remaining.weakenBound
+    generalize := classical_generalize
+    weakenBound := classical_weakenBound
     convert := classical_convert eqLaws
     eqOfEqTm := classical_eqOfEqTm eqLaws
     antisymm := classical_antisymm
