@@ -40,6 +40,23 @@ once, in the crate being wrapped. Malformed input raises `InvalidLengthError`,
 `InvalidHexError`, or `InvalidBase64Error` — all `ValueError` — and anything
 that is not bytes-like raises `TypeError`.
 
+`covalence.data.cbor.Cbor` exposes the immutable shared CBOR data model. Its
+constructors keep representation-sensitive values explicit: arrays and ordered
+map entries return tuples, simple values retain their numeric code, and floats
+retain their original width and raw bits. Python integers are converted to the
+shared arbitrary-precision Rust `Int` without narrowing. Equality works
+directly against Python integers, booleans, `None`, bytes, strings, lists, and
+insertion-ordered dictionaries; no conversion call is required.
+
+```python
+>>> from covalence.data.cbor import Cbor
+>>> value = Cbor.array([Cbor.integer(2**256), Cbor.text("large")])
+>>> value.kind
+'array'
+>>> value.value[0].value == 2**256
+True
+```
+
 | Path                | Contents                                       |
 | ------------------- | ---------------------------------------------- |
 | `src/`              | The `#[pymodule]` and its bindings             |
