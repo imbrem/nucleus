@@ -22,6 +22,7 @@ structure ClassicalKernelRuleLaws where
       {p x y : Tm ClassicalSig types depth},
     Kinded A → HasTypeDefEq Γ (.app p y) .boolTy → HasTypeDefEq Γ p (.arr A .boolTy) →
     HasTypeDefEq Γ x A → HasTypeDefEq Γ y A →
+    HasTypeDefEq Γ (.eq A x y) .boolTy → HasTypeDefEq Γ (.app p x) .boolTy →
     CEntails (Γ := Γ) H (.eq A x y) → CEntails (Γ := Γ) H (.app p x) →
     CEntails (Γ := Γ) H (.app p y)
   choice : ∀ {types depth} {Γ : BoundCtx ClassicalSig types depth}
@@ -29,6 +30,7 @@ structure ClassicalKernelRuleLaws where
       {p x : Tm ClassicalSig types depth},
     Kinded A → HasTypeDefEq Γ (.app p (.eps A p)) .boolTy →
     HasTypeDefEq Γ p (.arr A .boolTy) → HasTypeDefEq Γ x A →
+    HasTypeDefEq Γ (.app p x) .boolTy →
     CEntails (Γ := Γ) H (.app p x) →
     CEntails (Γ := Γ) H (.app p (.eps A p))
   generalize : ∀ {types depth} {Γ : BoundCtx ClassicalSig types depth}
@@ -128,9 +130,10 @@ theorem Proves.sound_of_kernel_laws (laws : ClassicalKernelRuleLaws) :
       exact CEntails.boolCases hp (rightTyped _ (List.mem_cons_self)) ihl ihr
   | eqRefl typed conclusionTyping hA hx => exact CEntails.eqRefl hA hx conclusionTyping
   | eqMp typed hA conclusionTyping hp hx hy equality premise iheq ihp =>
-      exact laws.eqMp hA conclusionTyping hp hx hy iheq ihp
+      exact laws.eqMp hA conclusionTyping hp hx hy equality.conclusionTyping
+        premise.conclusionTyping iheq ihp
   | choice typed hA conclusionTyping hp hx premise ih =>
-      exact laws.choice hA conclusionTyping hp hx ih
+      exact laws.choice hA conclusionTyping hp hx premise.conclusionTyping ih
   | generalize typed hA conclusionTyping bodyTyping premise ih =>
       exact laws.generalize hA conclusionTyping bodyTyping ih
   | weakenBound typed hA typedK conclusionTyping embedding premise ih =>
