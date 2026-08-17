@@ -4,6 +4,7 @@ import Nucleus.HolE.ClassicalTypeExistentialKernelLaws
 import Nucleus.HolE.ClassicalBoundKernelLaws
 import Nucleus.HolE.ClassicalEtaKernelLaw
 import Nucleus.HolE.ClassicalBetaKernelLaw
+import Nucleus.HolE.ClassicalRawOpeningLaw
 
 /-! # Assembly of the classical kernel soundness laws
 
@@ -20,11 +21,7 @@ theorem classicalEqTmRuleLaws : ClassicalEqTmRuleLaws where
   beta := classical_eqTm_beta
   eta := classical_eqTm_eta
 
-structure ClassicalRemainingKernelLaws where
-  opening : CInstantiateOneTrueLaw
-
-theorem ClassicalRemainingKernelLaws.assemble
-    (remaining : ClassicalRemainingKernelLaws) : ClassicalKernelRuleLaws :=
+theorem classicalKernelRuleLaws : ClassicalKernelRuleLaws :=
   let eqLaws := classicalEqTmRuleLaws
   { eqMp := classical_eqMp
     choice := classical_choice
@@ -34,8 +31,9 @@ theorem ClassicalRemainingKernelLaws.assemble
     eqOfEqTm := classical_eqOfEqTm eqLaws
     antisymm := classical_antisymm
     absRep := CEntails.absRepLaw
-    repAbs := CEntails.repAbsLaw remaining.opening
-    repPredOfWitness := CEntails.repPredOfWitnessLaw remaining.opening
+    repAbs := CEntails.repAbsLaw classicalRawInstantiateOneTrueLaw
+    repPredOfWitness :=
+      CEntails.repPredOfWitnessLaw classicalRawInstantiateOneTrueLaw
     tyExistsIntro := fun hA conclusionTyping predicateTyping instanceTyping premise =>
       tyExistsIntro_sound conclusionTyping hA predicateTyping instanceTyping premise
     modelSpec := modelSpec_sound }
