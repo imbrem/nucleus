@@ -111,6 +111,101 @@ edges have already been found.
 
 ---
 
+## 1b. Revocation, not gated capture
+
+The safety mechanism is **revocation at scope exit**: capture freely, and when
+the granting scope ends the capability dies, so using an escaped one raises.
+
+```scheme
+(with-secure ((fetch f)) body)     ; ≡ (with ((fetch f)) body) + revoke on exit
+```
+
+This supersedes the earlier suggestion of gating `capture` as an operation, and
+strictly dominates it:
+
+| | Gate `capture` | Revoke on exit |
+| --- | --- | --- |
+| What the granter decides | a policy, anticipated in advance | the extent — which `with` already states |
+| Granularity | all-or-nothing per scope | exact, and automatic |
+| Legitimate capture inside the extent | forbidden | fine |
+| Extra machinery | a policy mechanism | one monotonic bit |
+
+The granter already writes down the extent by writing `with`. Revocation makes
+that statement mean what it looks like it means, and nothing further has to be
+reasoned about.
+
+This is Redell's caretaker pattern; the object-capability literature is where
+its sharp edges are already documented.
+
+### The bit belongs to the frame, not the capability
+
+Naïvely, `revoke` kills the capability you are holding. That is wrong in two
+ways, and the fix is the same for both:
+
+> **The `Handlers` frame owns one revocation cell. Every capability captured
+> from that frame references *that* cell. Scope exit flips it once.**
+
+- `capture` may be called any number of times, and revocation must kill every
+  derived capability, not the one you happen to hold. One shared cell does this
+  in O(1) rather than by tracking or scanning.
+- **A captured continuation can otherwise resurrect the scope.** Since handler
+  frames live in `konts` (§0), a continuation captured by an *outer* handler
+  contains the inner `Handlers` frames; resuming it after scope exit would
+  reinstate a live `fetch`. With the cell as the authority, lookups through a
+  resurrected frame check the cell, find it dead, and raise. Frame presence is
+  not authority; the cell is.
+
+This second point is the one that would otherwise be found late and be very
+confusing when it was.
+
+### Four consequences to take deliberately
+
+**1. Revocation fires on frame pop, not at the end of the body.** Otherwise a
+non-local exit — a handler that declines to resume, an unwind — leaks a live
+capability. Tying it to the pop makes it automatic and total.
+
+**2. A revoked scope may not be re-entered.** Frame pop and multi-shot resume
+conflict directly: resuming into a popped scope gets a dead one. Mark
+`with-secure` frames one-shot and reject re-entry with a clear error, rather
+than reference-counting re-entries. A security scope that can be re-entered
+after revocation is confusing regardless of what the machine does.
+
+**3. Use of a dead capability is an ordinary effect** — `perform revoked(cap)`,
+resolved dynamically at the point of use, defaulting to the root printer. No new
+error mechanism, and the policy is replaceable like every other.
+
+**4. This is the only mutable state in the core, and it is monotonic.** A
+language advertised as immutable now has a bit that changes. It is worth naming
+as a deliberate exception rather than letting it in quietly. Monotonicity is
+what keeps it small: alive → dead, never back, so it is a write-once latch and
+general mutable state cannot be built from it.
+
+### Two things it buys
+
+**Attenuation, for free.** `capture` the real capability, wrap it in a
+restricting closure, `with` the wrapper — and the wrapper revokes independently
+of what it wraps. That is the caretaker pattern proper, out of primitives that
+already exist.
+
+**A safe default.** Since the long-lived grants — the REPL's own root handlers —
+sit in scopes that never exit, they are never revoked, and revoking scopes cost
+them nothing. So the recommendation is to invert the naming:
+
+> **`with` revokes. `with-escaping` is the rare, explicitly-named opt-out.**
+
+Safe by default, and the unsafe case is visible at the *grant* site, which is
+where the trust decision is actually being made — not at the capture site, where
+the code doing the capturing has no standing to make it.
+
+### Naming
+
+Prefer `revoke` to `destroy`. Revocation affects every holder of the capability,
+not the caller's copy; `destroy` suggests otherwise and the difference is
+exactly the thing a reader needs to have right.
+
+
+---
+
 ## 2. Sketch A — a simple immutable Lisp
 
 ### Grammar
