@@ -1,8 +1,14 @@
 # The REPL language
 
-**Decision: a Forsp-shaped core with Scheme surface syntax, on a machine with a
-reified continuation from day one.** Not "Scheme or Forsp" — both, at different
-layers, because they answer different questions.
+**Decision: Forsp, concatenative all the way down, dynamically typed, on a
+machine whose continuation is a value.** No Scheme surface and no compiler
+layer: a constructor application is `child1 … childn makeNode` rather than
+`makeNode child1 … childn`, and quoting already distinguishes data from code, so
+a separate frontend buys nothing.
+
+Effects are handled by a stack of handler maps that mirrors the environment
+stack. Static typing is not a second language — it is one extra operation,
+`cast`, whose failure is itself an effect.
 
 Not tonight. See §7.
 
@@ -86,17 +92,24 @@ That is what makes CAS-as-a-handler more than an elegance: a Scheme handler and
 a WASM component implementing the same WIT interface are interchangeable, and
 the program above them cannot tell which it got.
 
-### But the surface stays Scheme
+### No applicative surface
 
-A proof REPL's dominant activity is typing nested data — `'(lam bool (bound 0))`
-— and nested literals are the one thing concatenative notation is worst at.
-Forsp keeps S-expression syntax, so quoted data is unaffected either way; the
-question is only whether *code* reads applicatively. It should.
+Postfix constructor application reads fine — `'bool 'zero tm-succ` — and
+S-expression syntax with quoting is retained either way, so nested *data* was
+never the problem it looked like. Dropping the surface layer removes a compiler,
+a second semantics, and the equivalence theorem between them. For a few-page
+core that is the right trade.
 
-Bonkoski's point about Forsp is that it *is* lambda calculus in disguise, with
-translations both directions. So compile Scheme surface → stack core in one
-pass, and later prove `eval_surface e = eval_core (compile e)` in Lean. That
-theorem is the reason to keep #706 alive.
+It does cost one thing, and the loss is worth naming: **in a concatenative core
+nothing localizes arity errors.** In Scheme, parentheses delimit an application,
+so a constructor given two arguments instead of three is a syntax-level mistake.
+In postfix it silently consumes whatever was further down the stack and fails
+somewhere else entirely.
+
+The design already contains the fix — typed boundaries and `cast` — which is why
+§7 sequences casts **early** rather than as a later layer. In an applicative
+language types are an optimization and a proof device. Here they are the primary
+error-localization mechanism, doing the job parentheses do elsewhere.
 
 ---
 
@@ -104,24 +117,88 @@ theorem is the reason to keep #706 alive.
 
 ```
 Value ::= nil | bool | int | bytes | sym | cons(Value, Value)
-        | closure(Code, Env) | continuation(Vec<Frame>) | tag(PromptId)
+        | closure(Code, Env) | continuation(Vec<Frame>) | type(TypeRepr)
 
 Instr ::= Push(Value) | Lookup(Sym) | Bind(Sym) | Call | Quote(Value)
-        | Perform(Op) | Prompt(Tag, HandlerSet) | Resume
+        | Perform(Op) | WithHandlers(HandlerMap) | Cast | Resume
 
-Frame ::= Return { code: Code, env: Env }
-        | Delimiter { tag: Tag, handlers: HandlerSet, answer: Type }
+Frame ::= Return   { code: Code, env: Env }
+        | Handlers { map: HandlerMap }
 
-State ::= { stack: Vec<Value>, env: Env, code: Code, konts: Vec<Frame> }
+State ::= { stack: Vec<Value>, env: Env, code: Code, konts: Vec<Frame>,
+            horizon: usize }
 
-step : State -> Result<State, Error>
+step : State -> State          -- total; see §3b on the root handler
 ```
 
-`Perform(op)` walks `konts` from the top to the nearest `Delimiter` handling
-`op`, splits the frame vector there, packages the prefix as a `continuation`
-value, and enters the handler with the operation's arguments plus that
-continuation on the stack. That is the entire mechanism. Roughly 50 lines once
-the machine exists; impossible before it does.
+`Perform(op)` walks `konts` downward from `horizon` to the nearest `Handlers`
+frame whose map contains `op`, splits the frame vector there, packages the
+prefix as a `continuation` value, and enters the handler with the operation's
+arguments plus that continuation on the stack. That is the entire mechanism.
+
+---
+
+## 3b. Handler scoping — four rules, and why each one is needed
+
+The design is "a stack of handler maps mirroring the environment stack". Four
+details decide whether it works; all four are cheap to get right up front and
+unpleasant to discover later.
+
+### 1. Handler frames live *in* the continuation stack, not beside it
+
+The tempting implementation is a second stack, pushed by `with-handlers` and
+popped on exit, sitting next to `konts`. Do not do this.
+
+The moment a continuation can be captured and resumed, a separate handler stack
+desynchronizes: capture inside a handler scope, resume outside it, and the two
+stacks disagree about what is installed. Every fix for that is worse than the
+problem.
+
+Putting `Handlers` frames in `konts` makes handler scope and continuation
+delimiter **the same object by construction.** Capture and resume are then
+automatically correct, because the handlers were part of what was captured. It
+is also *less* machine, not more — one stack instead of two — which is the right
+direction for a few-page core.
+
+### 2. Closures capture the environment, never the handlers
+
+Forsp's symbol-table stack is **lexical**: a closure captures the environment it
+was created in. Handler lookup is **dynamic**: an operation resolves to whatever
+is installed when it is performed, not when the performing code was written.
+
+These are genuinely different disciplines living in one machine, and conflating
+them is the classic bug in this design. A closure that captured its handler
+stack would fetch through whichever CAS was installed at definition time — the
+opposite of what makes CAS-as-a-handler useful.
+
+### 3. A running handler searches outward from below itself — the horizon
+
+Forwarding is not a separate mechanism: a handler that wants to delegate simply
+performs the operation again, and the search continues outward. That composes
+perfectly and costs nothing — *provided* a handler cannot re-find itself.
+
+So handler activation carries a **horizon**: while running the handler installed
+at frame `k`, `perform` searches from `k-1` downward. Without it, forwarding is
+an infinite loop, and it is the first thing to go wrong once handlers start
+delegating.
+
+### 4. The root handler makes `perform` total
+
+An unmatched operation reaching the root gets the default handler, which prints
+it as an error and does not resume.
+
+The payoff is larger than the convenience: **there is no "unhandled effect"
+failure case in the machine.** Every operation resolves to something, so `step`
+is a total function — which is exactly the shape that makes the Lean
+formalization pleasant, and it is the same discipline the kernel already follows.
+
+Two consequences worth taking deliberately:
+
+- The root frame is distinguished: it is the one that returns rather than
+  resumes, so the REPL's own result type is its answer type.
+- **Error policy becomes replaceable.** Swap the root handler and unhandled
+  operations raise into the debugger, or log structurally, or get routed to an
+  agent — which is a free and rather good answer to the MCP story later.
 
 In Lean the same state is a flat structure and `step` is a total function, so
 determinism, progress, and preservation are ordinary inductions. This is
@@ -130,10 +207,40 @@ independent reason to prefer the flat machine.
 
 ---
 
-## 4. Handlers as the typing boundary
+## 4. Typing is one operation, and its failure is an effect
 
-Inside a handled region, the language is dynamically typed. At every effect
-boundary it is checked. That is contracts-at-boundaries, and it is coherent:
+The language is dynamically typed. Always. Static typing is the special case
+obtained by prepending
+
+```
+(cast type value)  ⟶  value              if value satisfies type
+                   ⟶  perform cast-failed(type, value)   otherwise
+```
+
+which is perhaps thirty lines and no type system whatsoever. Everything the
+earlier drafts of this note wanted from a typed boundary falls out of it:
+
+- **Blame policy is pluggable** — the cast handler decides whether a mismatch
+  aborts, coerces, logs, or asks.
+- **Check erasure is a handler**, not a compiler pass. A region an elaborator has
+  proven well-typed installs a cast handler that never fires — which is precisely
+  the Typed Racket mitigation in §8, obtained for free.
+- **Gradual typing is not a feature.** Types are casts; casts are effects. There
+  is nothing else to build.
+
+Two hazards, both cheap to avoid:
+
+- A cast handler performs casts of its own. It needs the §3b horizon rule for
+  the same reason handlers do, and the **root cast handler must not itself
+  cast**, or a type error becomes an infinite regress.
+- **Types must be data, not predicates.** A type as an opaque `Value -> Bool`
+  closure makes `cast` trivial but leaves nothing for a compiler to read, which
+  forecloses §4's compilation story. Represent types as a small inspectable ADT
+  with a `satisfies?` interpreter over it. WIT types then become a *vocabulary*
+  within that ADT rather than a separate system — which is how you reach WIT
+  without ever building a type checker.
+
+With that, the boundary is still where §2's alignment pays off:
 
 ```scheme
 (interface cas
@@ -144,9 +251,10 @@ boundary it is checked. That is contracts-at-boundaries, and it is coherent:
   (lambda () (check (fetch #o256:9f3c…))))
 ```
 
-`fetch` pushes an `o256`, or the machine crashes at the boundary. It returns
-`bytes`, or the machine crashes at the boundary. Between boundaries, nothing is
-checked and nothing needs to be.
+`fetch` pushes an `o256`, or the cast handler fires. It returns `bytes`, or the
+cast handler fires. Between boundaries nothing is checked and nothing needs to
+be. A handler declared with no types is an ordinary dynamic handler and inserts
+no casts at all — **dynamic is the default, static is the annotation.**
 
 **Why this is the door to compilation:** a region between two typed boundaries
 has known input and output types, so it can be monomorphized and compiled —
@@ -254,8 +362,8 @@ design it fully before writing it; that is what produced this note's §4 gap.
 
 ## Sequencing after that
 
-1. The machine — `step`, frames, no effects yet. Scheme surface compiles to it.
-2. `prompt` / `perform` / one-shot resume. CAS as the first handler; verification stays outside.
+1. The machine — `step`, `konts`, `Return` and `Handlers` frames, the horizon, the root default handler. No effects installed yet.
+2. `perform` / one-shot resume, then `cast` **immediately** — it is the error-localization mechanism this syntax lacks (§2), not a later refinement. CAS as the first real handler; verification stays outside.
 3. Extract the handler signatures into `interfaces/*.wit` and write the conformance transcript. **This is the deliverable**; the REPL is scaffolding around it.
 4. Typed boundaries with monomorphic answer types, generated from those `.wit` files both directions.
 5. Multi-shot for `choose`, gated per prompt.
