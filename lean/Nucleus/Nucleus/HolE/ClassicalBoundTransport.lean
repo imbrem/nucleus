@@ -183,4 +183,42 @@ theorem cSem_rename_raw
   rw [target.unique (source.renameForBound rho contexts)]
   exact source.cSem_renameForBound rho contexts env bound expected
 
+/-- Definitional typing certificates evaluate compatibly with weakening. -/
+theorem cDefSem_weaken
+    {Γ : BoundCtx ClassicalSig types depth} {term : Tm ClassicalSig types depth}
+    {A B : Ty ClassicalSig types}
+    (source : CDefChecks Γ term A)
+    (target : CDefChecks (extendBound B Γ) (weaken term) A)
+    (env : CTypeEnv types) (bound : CBoundEnv (depth + 1)) (expected : CPointed) :
+    cDefSem target env bound expected =
+      cDefSem source env (bound.rename Fin.succ) expected := by
+  rw [source.rawView_semantics, target.rawView_semantics]
+  cases hs : source.rawView with
+  | mk sourceType sourceRaw =>
+    cases ht : target.rawView with
+    | mk targetType targetRaw =>
+      simp only [CDefRawView.sem]
+      let renamed : CChecks (extendBound B Γ) (weaken term) (.tm sourceType) :=
+        ((sourceRaw.toChecks.renameTm Fin.succ (fun _ => rfl)).certificate)
+      have typeEq : targetType = sourceType := targetRaw.type_unique renamed
+      cases typeEq
+      exact cSem_rename_raw sourceRaw Fin.succ (fun _ => rfl) targetRaw
+        env bound expected
+
+theorem CRealizes.weaken
+    {Γ : BoundCtx ClassicalSig types depth} {term : Tm ClassicalSig types depth}
+    {A B : Ty ClassicalSig types} {env : CTypeEnv types}
+    {bound : CBoundEnv depth} {expected : CPointed} {value : expected.carrier}
+    (semantic : CPointed) (head : semantic.carrier)
+    (typing : HasTypeDefEq Γ term A)
+    (realizes : CRealizes (Γ := Γ) env bound term A expected value) :
+    CRealizes (Γ := extendBound B Γ) env
+      (extendCBoundEnv semantic head bound)
+      (weaken term) A expected value := by
+  obtain ⟨source, sourceValue⟩ := realizes
+  let target := typing.weaken (B := B) |>.certificate
+  refine ⟨target, ?_⟩
+  rw [cDefSem_weaken source target]
+  simpa using sourceValue
+
 end Nucleus.HolE
