@@ -4,6 +4,8 @@
 // thin boundary only reads them.
 #![allow(clippy::needless_pass_by_value)]
 
+use std::collections::HashSet;
+
 use covalence_data_cbor::{Int, Value, ValueKind};
 use covalence_lib_python::prelude::*;
 use covalence_lib_python::pyo3::{
@@ -50,6 +52,76 @@ fn rust_int<'py>(python: Python<'py>, value: &Int) -> PyResult<Bound<'py, PyAny>
         .get_type::<PyInt>()
         .call1((value.to_string(),))
         .map(Bound::into_any)
+}
+
+const MAX_CONTAINER_DEPTH: usize = 256;
+
+fn from_python(
+    value: &Bound<'_, PyAny>,
+    ancestors: &mut HashSet<usize>,
+    depth: usize,
+) -> PyResult<Value> {
+    if let Ok(value) = value.cast::<PyCbor>() {
+        return Ok(value.get().value.clone());
+    }
+    if value.is_none() {
+        return Ok(Value::null());
+    }
+    if let Ok(value) = value.cast::<PyBool>() {
+        return Ok(Value::bool(value.extract()?));
+    }
+    if let Ok(value) = value.cast::<PyInt>() {
+        return Ok(Value::integer(python_int(value)?));
+    }
+    if let Ok(value) = value.cast::<PyBytes>() {
+        return Ok(Value::bytes(value.as_bytes()));
+    }
+    if let Ok(value) = value.cast::<PyString>() {
+        return Ok(Value::text(value.to_str()?));
+    }
+    if depth == MAX_CONTAINER_DEPTH {
+        return Err(PyValueError::new_err(format!(
+            "CBOR input exceeds {MAX_CONTAINER_DEPTH} nested containers"
+        )));
+    }
+
+    let identity = value.as_ptr() as usize;
+    if let Ok(value) = value.cast::<PyList>() {
+        if !ancestors.insert(identity) {
+            return Err(PyValueError::new_err("CBOR input contains a cycle"));
+        }
+        let result = value
+            .iter()
+            .map(|value| from_python(&value, ancestors, depth + 1))
+            .collect::<PyResult<Vec<_>>>();
+        ancestors.remove(&identity);
+        return result.map(Value::array);
+    }
+    if let Ok(value) = value.cast::<PyDict>() {
+        if !ancestors.insert(identity) {
+            return Err(PyValueError::new_err("CBOR input contains a cycle"));
+        }
+        let result = value
+            .iter()
+            .map(|(key, value)| {
+                Ok((
+                    from_python(&key, ancestors, depth + 1)?,
+                    from_python(&value, ancestors, depth + 1)?,
+                ))
+            })
+            .collect::<PyResult<Vec<_>>>();
+        ancestors.remove(&identity);
+        return result.map(Value::map);
+    }
+
+    Err(PyTypeError::new_err(format!(
+        "cannot construct CBOR from {}",
+        value.get_type().name()?
+    )))
+}
+
+fn converted(value: &Bound<'_, PyAny>) -> PyResult<Value> {
+    from_python(value, &mut HashSet::new(), 0)
 }
 
 fn equals_python(value: &Value, other: &Bound<'_, PyAny>) -> PyResult<Option<bool>> {
@@ -119,6 +191,16 @@ fn equals_python(value: &Value, other: &Bound<'_, PyAny>) -> PyResult<Option<boo
 #[pymethods]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 impl PyCbor {
+    #[new]
+    fn new(value: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Ok(Self::wrap(converted(value)?))
+    }
+
+    #[staticmethod]
+    fn from_python(value: &Bound<'_, PyAny>) -> PyResult<Self> {
+        Self::new(value)
+    }
+
     #[staticmethod]
     fn integer(value: &Bound<'_, PyInt>) -> PyResult<Self> {
         Ok(Self::wrap(Value::integer(python_int(value)?)))

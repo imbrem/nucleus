@@ -95,3 +95,38 @@ def test_constructor_types_and_widths_are_checked() -> None:
         Cbor.simple(256)
     with pytest.raises(OverflowError):
         Cbor.float16(2**16)
+
+
+def test_python_values_convert_recursively() -> None:
+    source = {
+        "none": None,
+        "bool": True,
+        "bytes": b"payload",
+        "text": "hello",
+        "integer": 2**256,
+        "list": [False, -1, {"nested": b"value"}],
+    }
+    assert Cbor(source) == source
+    assert Cbor.from_python(source) == source
+    assert Cbor(Cbor.integer(42)) == 42
+
+
+def test_python_conversion_rejects_unsupported_and_cyclic_values() -> None:
+    with pytest.raises(TypeError):
+        Cbor(1.5)
+
+    cyclic_list: list[object] = []
+    cyclic_list.append(cyclic_list)
+    with pytest.raises(ValueError, match="cycle"):
+        Cbor(cyclic_list)
+
+    cyclic_dict: dict[str, object] = {}
+    cyclic_dict["self"] = cyclic_dict
+    with pytest.raises(ValueError, match="cycle"):
+        Cbor(cyclic_dict)
+
+    nested: object = None
+    for _ in range(257):
+        nested = [nested]
+    with pytest.raises(ValueError, match="nested containers"):
+        Cbor(nested)
