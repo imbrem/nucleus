@@ -54,7 +54,7 @@ bool
 >>> th = s.eq_of_eq_tm(s.beta(a))
 >>> th
 |- (= bool (app (lam bool #0) #t) #t)
->>> s.to_cbor(th).hex()[:12]
+>>> s.statement_bytes(th).hex()[:12]
 'a2016f74686d'
 >>> s.type_of(s.app(s.true(), s.true()))
 TypeError: not a function type at argument 0
@@ -68,7 +68,7 @@ Browser, in the dev console with no build step:
 > const th = s.eqOfEqTm(s.beta(s.app(f, s.true())))
 > th.toString()
 "|- (= bool (app (lam bool #0) #t) #t)"
-> await nucleus.fromCbor(s.toCbor(th))   // re-checked, not trusted
+> s.statementBytes(th)                    // the signed body, not a proof
 ```
 
 Four things demonstrated: it type-checks, it beta-reduces, it mints theorems
@@ -95,10 +95,14 @@ Session()
              antisymm · abs_rep · rep_abs · succ_injective · zero_not_succ
 
   inspect    hyps(thm) -> [Tm] · concl(thm) -> Tm · show(h) -> str
-  codec      to_cbor(h) -> bytes · from_cbor(bytes) -> handle        replay
+  statement  statement_bytes(thm) -> bytes          canonical; the signed body
+             statement_of(bytes) -> (hyps, concl)   TCB decode
   signing    sign(thm, key) -> bytes
-             admit_signed(bytes, keys: [PublicKey]) -> Thm           trusted
+             admit_signed(bytes, keys: [PublicKey]) -> Thm
              trusted_keys() -> [PublicKey]     which keys this session relied on
+
+There is no `to_cbor`/`from_cbor` for *proofs*. See §4(b): a proof is a program,
+not a document.
 ```
 
 Each host wraps handles in a thin class for `repr`/`toString` — perhaps fifty
@@ -184,16 +188,37 @@ invalidates every signature ever issued** — trading a bounded correctness
 obligation for unbounded operational brittleness. Recorded here because it is an
 appealing idea that someone will propose again.
 
-### (b) The proof/replay codec — userspace
+### (b) Proofs — no format at all
 
-CBOR carrying raw syntax plus a rule tape, decoded and re-run through the same
-rule methods a caller would use. No privileged path, so a wrong decode yields a
-rejected or different theorem, never an unjustified one. Fuzz it for panics;
-do not read it.
+**There is no proof format, and the project does not define one.**
 
-**Keeping (b) out of (a) is what keeps this small.** Only statements —
-hypotheses and a conclusion — need the trusted codec. Proofs, which are far
-larger and more complex, never do.
+A proof is *any program that calls the rule methods in the right order*: Python
+at a prompt, JavaScript in a browser console, a WASM component, a Scheme script,
+somebody's bespoke tape with their own interpreter. The kernel neither knows nor
+cares. It exposes rules; whatever drives them produces theorems.
+
+The preferred vehicle is **a WASM component that imports the kernel and exports
+`run`**. `wit/kernel/kernel.wit` already declares a `proof-script` world of
+exactly that shape — it needs a `hol` interface added to its imports and nothing
+else. That gives proofs which are content-addressable, deterministic, and
+sandboxable, with no serialization format anywhere.
+
+Every consequence is a simplification:
+
+- No replay codec, no tape encoding, no tape fixtures, no tape spec — and one
+  fewer lane in §6.
+- "Checking a proof" is **running a program and seeing which theorem comes out.**
+- Proof reproducibility is program determinism, not canonical bytes.
+- Content addressing addresses the *program*.
+- The only proof-related kernel concern is **resource limits**: an untrusted
+  program can loop or allocate without bound. That is a session-level fuel and
+  memory ceiling, and it is not a format question.
+
+Which gives the principle that decides every future case of this kind:
+
+> **A format is needed exactly where re-derivation is impossible or refused.**
+> Signing refuses re-derivation, so statements need a canonical format on both
+> sides. Proofs are always re-derived by running them, so they need none.
 
 ### Pin the theory in the signed preimage, from the first signature
 
@@ -251,7 +276,7 @@ one level up, and it costs a day.
 | L6 | `kernel/src/show.rs` | semi | printing. Not soundness-critical, but a wrong printer displays a true theorem as a false one — hold it to the corpus |
 | L7a | `kernel/src/statement.rs` | **TCB** | statement codec, **both directions**: deterministic, round-tripping, domain-separated, total. ~300 lines |
 | L7b | `kernel/src/signed.rs` | **TCB** | sign / verify / admit over L7a's preimage; key set explicit; record reliance. ~120 lines |
-| L7c | `codec/src/replay.rs` | user | proof tape encode + decode-then-recheck; fuzz for panics |
+| L7c | ~~replay codec~~ | — | **deleted.** Proofs are programs; see §4(b) |
 | L8 | `ffi/python/src/hol.rs` + `python/covalence/hol.py` | user | follow the `hash`/`sat`/`lrat` pattern exactly, including `.pyi` |
 | L9 | `browser/src/hol.rs` + `packages/nucleus/src` | user | follow the `Repl` pattern; put `Session` on `window.nucleus` |
 | L10 | `conformance/` + three drivers | test | §5 |
@@ -269,7 +294,7 @@ and their oracle is L10.
 2. **L6 + L10** — printer and transcript together, since the transcript is what the printer is checked against.
 3. **L8 and L9 in parallel** — both are one line per operation over a finished core.
 4. **L7a** as soon as L1 lands — it depends only on the syntax, and it is TCB, so it wants reading time early rather than at the end. Its round-trip property test is written before it is.
-5. **L7b** after L7a. **L7c** last; replay needs the rule methods finished to re-check through them.
+5. **L7b** after L7a. There is no L7c.
 
 ### Static browser demo
 
@@ -282,7 +307,8 @@ the demo instruction is "open the console". No build step for whoever is looking
 ## 7. Out of scope for v0
 
 Scheme and Forsp · effect handlers, capabilities, revocation · the CEK machine ·
-content-addressed links · key management, rotation, and revocation — v0 takes a key set as an argument and does nothing else with it · CAS integration beyond what `to_cbor` hands back ·
+content-addressed links · key management, rotation, and revocation — v0 takes a key set as an argument and does nothing else with it · CAS integration beyond what `statement_bytes` hands back · the WASM
+`proof-script` world (§4(b) names it as the destination; v0 does not build it) ·
 SQLite · flat arrays and arenas as an interchange format ·
 e-graphs · OpenTheory, Metamath, Alethe · tactics · `run_sound` and all new Lean.
 

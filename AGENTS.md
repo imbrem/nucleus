@@ -104,9 +104,16 @@ something they did not prove, and a decoder that reads them wrongly makes a
 recipient admit something nobody signed. One theorem covers both —
 `decode (encode S) = S` — and injectivity follows from it.
 
-Only *statements* get the trusted codec. Proof tapes are re-checked on arrival
-and stay in userspace. A theorem admitted under a key is recorded, so a session
-can report which keys its results depend on.
+A theorem admitted under a key is recorded, so a session can report which keys
+its results depend on.
+
+**Only statements have a format at all.** There is no proof format and the
+project does not define one: a proof is any program that calls the rule methods
+in the right order — a script, a REPL session, or preferably a WASM component
+importing the kernel. Checking a proof means running it and seeing which theorem
+comes out. The general rule is that **a format is needed exactly where
+re-derivation is impossible or refused**; signing refuses it, so statements need
+one, and proofs never do.
 
 ---
 

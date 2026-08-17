@@ -20,7 +20,7 @@ Everything here is read line by line by a human. Nothing else in the repository 
 | **0** | In-memory syntax trees for types, terms, kinds; typing rules | ◐ `HolLN` complete in Lean incl. soundness + consistency; ⌛ signature-parametric `Nucleus.Hol` in #700→#701; ○ in Rust |
 | **0A** | *Optional but default* acceleration for bytestrings + small unsigned integers — everything needed to write parsers, and later for WASM acceleration | ○ |
 | **0B** | *Optional* acceleration for bignat, bigint, string, char, list, set, map, indexmap as built-in types. Possibly eventually a table type over SQLite | ○ |
-| **1** | Serialization to **CBOR**. Chosen over JSON because it has byte strings natively; JSON + IPLD conventions then serve as a user-facing prettyprint and as an alternative format that can exploit SQLite JSONB — at the cost of some TCB growth | ◐ Lean `Cbor` has the data model, deterministic encoding with a uniqueness theorem, wire parser, DAG and CAS layers |
+| **1** | Serialization of **statements** to **CBOR**. Chosen over JSON because it has byte strings natively; JSON + IPLD conventions then serve as a user-facing prettyprint and as an alternative format that can exploit SQLite JSONB — at the cost of some TCB growth. Trusted in both directions once statements are signed | ◐ Lean `Cbor` has the data model, deterministic encoding with a uniqueness theorem, wire parser, DAG and CAS layers |
 | **1** | PKI for loading trusted proofs: a set of trusted keys plus derivations in SQLite, stored by hash | ◐ partial — `crates/nucleus/src/snapshot/signing.rs` |
 | **2** | Content-addressed links inside CBOR-HOL terms, rules fully formalized | ⌛ spec in #711; Lean `Cbor.Cas` + `Json.IpldStore` exist |
 | **3** | SQLite + LRAT logical reasoning over contexts-as-formulas, and over formulas generally; CBOR + JSON ser/de of formulas to and from SQLite | ◐ Lean `Lrat`; ✔ `crates/logic/lrat`; the propositional PR stacks target this |
@@ -76,8 +76,15 @@ existing CAS-SQLite work becomes a special case of this.
 
 | L | Contents | State |
 | --- | --- | --- |
-| **0** | Proofs saved as Scheme programs, in CBOR, in the CAS | ○ |
-| **1** | Proofs saved as WASM/Scheme amalgamations — the first step toward a Scheme/WASM API | ○ |
+| **0** | Proofs saved to the CAS **as programs**. The CAS addresses the program; re-checking runs it | ○ |
+| **1** | Proofs as WASM/Scheme amalgamations — the first step toward a Scheme/WASM API | ○ |
+
+**There is no proof format.** A proof is any program that drives the kernel's
+rule methods, so distribution is program distribution and checking is program
+execution. The preferred vehicle is a WASM component importing the kernel —
+`wit/kernel/kernel.wit` already declares a `proof-script` world of that shape.
+A format is needed exactly where re-derivation is impossible or refused, which
+is signing, which is why only *statements* have one.
 
 ---
 

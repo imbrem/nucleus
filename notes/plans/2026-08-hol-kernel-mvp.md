@@ -138,13 +138,19 @@ New modules under `Nucleus/Kernel/`:
 | --- | --- |
 | `Repr.lean` | `Row` as concrete fixed-width fields; `Arena := Array Row`; `Name := ByteArray`; the concrete signature table |
 | `Check.lean` | total `inferKind` / `inferType : Arena → Idx → Except Err Idx`. No fuel, no partiality, structural recursion on the validated prefix |
-| `Tape.lean` | the proof tape: a flat array of steps, step `i` referencing only steps `< i` and arena indices |
+| `Tape.lean` | a **trace** of rule applications: a flat array of steps, step `i` referencing only steps `< i` and arena indices. Internal to the soundness statement — see the note below |
 | `Run.lean` | `step : State → Step → Except Err State`; `run : Arena → Tape → Except Err Sequent` |
 | `Sound.lean` | **`theorem run_sound : run arena tape = .ok seq → ∃ Γ H p, seq.decode arena = some ⟨Γ, H, p⟩ ∧ Nonempty (Proves Γ H p)`** |
 | `Corpus.lean` | `#eval`-driven emitter producing the golden corpus as CBOR + JSON |
 
 `run_sound` is the deliverable of this fortnight. It is what makes the phrase
 "the kernel data structures themselves being modeled" literally true.
+
+> **`Tape` is not a wire format.** It is the trace of API calls a proof program
+> makes, and it exists so `run_sound` has something to quantify over. The project
+> defines no proof format: a proof is a program that calls the rule methods, and
+> checking one means running it. Nothing encodes a `Tape` to bytes, and nothing
+> should. See `v0-mvp.md` §4(b).
 
 Much of the groundwork exists: `HolLN/Array.lean` already gives
 `RawArena.validate`, `Arena.decodeOpen` and `elaborate` with the same
@@ -203,12 +209,12 @@ plumbing, which already works.
 | --- | --- |
 | Kernel L0 | in-memory syntax/typing — **full** |
 | Kernel L0A | bytestrings + small unsigned ints as the accelerated base — **full** |
-| Kernel L1 | CBOR ser/de of terms, proofs, theorems — **full**, using the merged Lean `Cbor` model |
+| Kernel L1 | CBOR ser/de of **statements** — hypotheses and a conclusion — using the merged Lean `Cbor` model. Trusted in both directions, because signing refuses re-derivation. Proofs get no format at all |
 | Kernel L1 (PKI) | signed derivations in SQLite, keyed by hash — **partial**, reusing `nucleus/snapshot/signing.rs` |
 | Kernel L2 | content-addressed links in CBOR terms — **eager resolution only**, lazy deferred |
 | UI/UX L0 | S-expression REPL, prettyprinter + parser, CBOR and in-memory round-trip — **full** |
 | CAS L0, L1 | in-memory and SQLite-backed — **already exists**, wire it to the kernel |
-| Persistence L0 | proofs saved as CBOR S-expressions in the CAS — **full** |
+| Persistence L0 | proofs saved to the CAS **as programs** — the CAS addresses the program, and re-checking runs it. No proof encoding is defined |
 | Applications L0 | the REPL, native + browser — **full** |
 
 ### Explicitly out, and not to be reopened before Day 14
