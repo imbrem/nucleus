@@ -1,73 +1,82 @@
 /-!
-# Backend-neutral HOL surface syntax
+# Rust HolE surface syntax
 
-This is the Lean counterpart of `covalence-logic-hol`'s raw syntax. Children
-are supplied by a representation so implementations may choose sharing,
-interning, or indices without changing the syntax. In particular, `Link` is
-deliberately abstract here: hashes and serialization formats are implementation
-details, not logical syntax.
+This is the Lean specification of `covalence-logic-hol`'s checked syntax DAG.
+Every child is one representation-owned index. Types and terms additionally
+carry their checked result kind or type inline.
+
+Links are surface constructors, not logical constructors. A successful link
+resolution must produce a closed, checked type or term with the recorded sort.
 -/
 
 namespace Nucleus.HolSurface
 
 universe u
 
-/-- Storage choices for indices held by surface syntax. -/
 structure Repr where
-  Kind : Type u
-  Ty : Type u
-  Tm : Type u
-  Var : Type u
-  Ctx : Type u
+  Ix : Type u
+  Name : Type u
   Link : Type u
-  Prim : Type u
 
-inductive Kind (R : Repr) where
-  | star
-  | arr (domain codomain : R.Kind)
+structure Kind (R : Repr) where
+  index : R.Ix
 
-inductive Ty (R : Repr) where
-  | bool
-  | arr (domain codomain : R.Ty)
-  | app (function argument : R.Ty)
-  | abs (domain : R.Kind) (body : R.Ty)
-  | bv (index : R.Var)
-  | sub (carrier : R.Ty) (predicate : R.Tm)
-  | model (witness : R.Tm)
-  | prim (primitive : R.Prim)
-  | link (target : R.Link) (kind : R.Kind)
-  | nat
+structure Ty (R : Repr) where
+  index : R.Ix
+  kind : Kind R
 
-inductive Tm (R : Repr) where
-  | tyExists (body : R.Tm)
-  | prim (primitive : R.Prim)
-  | bv (index : R.Var)
-  | fv (index : R.Var)
-  | app (function argument : R.Tm)
-  | lam (domain : R.Ty) (body : R.Tm)
-  | bool (value : Bool)
-  | eq (type : R.Ty) (left right : R.Tm)
-  | eps (type : R.Ty) (predicate : R.Tm)
-  | abs (type : R.Ty) (predicate representation : R.Tm)
-  | rep (type : R.Ty) (predicate abstraction : R.Tm)
-  | link (target : R.Link) (type : R.Ty)
-  | nat (value : UInt64)
-  | ctx (premises : R.Ctx)
-  | imp (premises : R.Ctx) (conclusion : R.Tm)
+structure Tm (R : Repr) where
+  index : R.Ix
+  ty : Ty R
 
-/-- An explicit wrapper for heterogeneous storage of the three sorted forms. -/
-inductive AnyExpr (R : Repr) where
-  | kind (value : Kind R)
-  | ty (value : Ty R)
-  | tm (value : Tm R)
+inductive ExprSort (R : Repr) where
+  | tm (type : Ty R)
+  | ty (kind : Kind R)
+  | kind
 
-/-- Canonical tags shared by Lean, Rust, and the CBOR representation. -/
+structure Variable (R : Repr) where
+  name : R.Name
+  ty : Ty R
+
+structure TypeVariable (R : Repr) where
+  index : UInt64
+  kind : Kind R
+
+inductive Format where
+  | blob
+  | cborTree
+  deriving DecidableEq
+
+/-- One node of the Rust checked syntax DAG. Field order specifies CBOR order;
+the numeric tag is prepended to these fields. -/
+inductive Expr (R : Repr) where
+  | kindStar
+  | kindArr (domain codomain : Kind R)
+  | tyBool (kind : Kind R)
+  | tyArr (domain codomain : Ty R) (kind : Kind R)
+  | tyApp (function argument : Ty R) (kind : Kind R)
+  | tyLam (domain : Kind R) (body : Ty R) (kind : Kind R)
+  | tyBv (fv : TypeVariable R)
+  | tySub (carrier : Ty R) (predicate : Tm R) (kind : Kind R)
+  | tyModel (predicate : Tm R) (kind : Kind R)
+  | tyLink (source : R.Link) (format : Format) (kind : Kind R)
+  | tyExists (predicate : Tm R) (result : Ty R)
+  | tmBv (index : UInt64) (result : Ty R)
+  | tmFv (fv : Variable R)
+  | tmApp (function argument : Tm R) (result : Ty R)
+  | tmLam (domain : Ty R) (body : Tm R) (result : Ty R)
+  | tmBool (value : Bool) (result : Ty R)
+  | tmEq (left right : Tm R) (result : Ty R)
+  | tmEps (predicate : Tm R) (result : Ty R)
+  | tmAbs (carrier : Ty R) (predicate value : Tm R) (result : Ty R)
+  | tmRep (carrier : Ty R) (predicate value : Tm R)
+  | tmLink (source : R.Link) (format : Format) (result : Ty R)
+
 inductive Tag where
   | kindStar | kindArr
-  | tyBool | tyArr | tyApp | tyLam | tyBv | tySub | tyExists | tyModel
-  | tyPrim | tyLink
-  | tmPrim | tmBv | tmFv | tmApp | tmLam | tmBool | tmEq | tmEps | tmAbs | tmRep
-  | tmLink | imp | tyNat | ctx | tmLitNat
+  | tyBool | tyArr | tyApp | tyLam | tyBv | tySub | tyExists | tyModel | tyLink
+  | tmBv | tmFv | tmApp | tmLam | tmBool | tmEq | tmEps | tmAbs | tmRep | tmLink
+  deriving DecidableEq
 
 def Tag.id : Tag → Nat
   | .kindStar => 0
@@ -80,9 +89,7 @@ def Tag.id : Tag → Nat
   | .tySub => 7
   | .tyExists => 8
   | .tyModel => 9
-  | .tyPrim => 10
   | .tyLink => 11
-  | .tmPrim => 12
   | .tmBv => 13
   | .tmFv => 14
   | .tmApp => 15
@@ -93,10 +100,6 @@ def Tag.id : Tag → Nat
   | .tmAbs => 20
   | .tmRep => 21
   | .tmLink => 22
-  | .imp => 64
-  | .tyNat => 65
-  | .ctx => 66
-  | .tmLitNat => 67
 
 def Tag.name : Tag → String
   | .kindStar => "KIND_STAR"
@@ -109,9 +112,7 @@ def Tag.name : Tag → String
   | .tySub => "TY_SUB"
   | .tyExists => "TY_EXISTS"
   | .tyModel => "TY_MODEL"
-  | .tyPrim => "TY_PRIM"
   | .tyLink => "TY_LINK"
-  | .tmPrim => "TM_PRIM"
   | .tmBv => "TM_BV"
   | .tmFv => "TM_FV"
   | .tmApp => "TM_APP"
@@ -122,47 +123,32 @@ def Tag.name : Tag → String
   | .tmAbs => "TM_ABS"
   | .tmRep => "TM_REP"
   | .tmLink => "TM_LINK"
-  | .imp => "IMP"
-  | .tyNat => "TY_NAT"
-  | .ctx => "CTX"
-  | .tmLitNat => "TM_LIT_NAT"
 
-def Kind.tag {R : Repr} : Kind R → Tag
-  | .star => .kindStar
-  | .arr _ _ => .kindArr
+def Expr.tag {R : Repr} : Expr R → Tag
+  | .kindStar => .kindStar
+  | .kindArr .. => .kindArr
+  | .tyBool .. => .tyBool
+  | .tyArr .. => .tyArr
+  | .tyApp .. => .tyApp
+  | .tyLam .. => .tyLam
+  | .tyBv .. => .tyBv
+  | .tySub .. => .tySub
+  | .tyModel .. => .tyModel
+  | .tyLink .. => .tyLink
+  | .tyExists .. => .tyExists
+  | .tmBv .. => .tmBv
+  | .tmFv .. => .tmFv
+  | .tmApp .. => .tmApp
+  | .tmLam .. => .tmLam
+  | .tmBool .. => .tmBool
+  | .tmEq .. => .tmEq
+  | .tmEps .. => .tmEps
+  | .tmAbs .. => .tmAbs
+  | .tmRep .. => .tmRep
+  | .tmLink .. => .tmLink
 
-def Ty.tag {R : Repr} : Ty R → Tag
-  | .bool => .tyBool
-  | .arr _ _ => .tyArr
-  | .app _ _ => .tyApp
-  | .abs _ _ => .tyLam
-  | .bv _ => .tyBv
-  | .sub _ _ => .tySub
-  | .model _ => .tyModel
-  | .prim _ => .tyPrim
-  | .link _ _ => .tyLink
-  | .nat => .tyNat
-
-def Tm.tag {R : Repr} : Tm R → Tag
-  | .tyExists _ => .tyExists
-  | .prim _ => .tmPrim
-  | .bv _ => .tmBv
-  | .fv _ => .tmFv
-  | .app _ _ => .tmApp
-  | .lam _ _ => .tmLam
-  | .bool _ => .tmBool
-  | .eq _ _ _ => .tmEq
-  | .eps _ _ => .tmEps
-  | .abs _ _ _ => .tmAbs
-  | .rep _ _ _ => .tmRep
-  | .link _ _ => .tmLink
-  | .nat _ => .tmLitNat
-  | .ctx _ => .ctx
-  | .imp _ _ => .imp
-
-def AnyExpr.tag {R : Repr} : AnyExpr R → Tag
-  | .kind value => value.tag
-  | .ty value => value.tag
-  | .tm value => value.tag
+theorem Tag.id_injective : Function.Injective Tag.id := by
+  intro a b h
+  cases a <;> cases b <;> simp_all [Tag.id]
 
 end Nucleus.HolSurface

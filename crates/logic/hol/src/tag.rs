@@ -76,9 +76,8 @@ surface_tags! {
     TySub = 7 => "TY_SUB",
     TyExists = 8 => "TY_EXISTS",
     TyModel = 9 => "TY_MODEL",
-    TyPrim = 10 => "TY_PRIM",
+    // 10 and 12 are reserved for future signature primitives.
     TyLink = 11 => "TY_LINK",
-    TmPrim = 12 => "TM_PRIM",
     TmBv = 13 => "TM_BV",
     TmFv = 14 => "TM_FV",
     TmApp = 15 => "TM_APP",
@@ -89,12 +88,7 @@ surface_tags! {
     TmAbs = 20 => "TM_ABS",
     TmRep = 21 => "TM_REP",
 
-    // Surface judgement/context forms and definitions needed by the first demo.
     TmLink = 22 => "TM_LINK",
-    Imp = 64 => "IMP",
-    TyNat = 65 => "TY_NAT",
-    Ctx = 66 => "CTX",
-    TmLitNat = 67 => "TM_LIT_NAT",
 }
 
 impl TryFrom<&str> for SurfaceTag {
