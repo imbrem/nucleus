@@ -1,0 +1,14 @@
+[package]
+name = "covalence-data-num"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Numeric value vocabulary for Nucleus"
+publish = false
+
+[dependencies]
+covalence-lib-bigint = { path = "../../lib/bigint" }
+
+[lints]
+workspace = true
