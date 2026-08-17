@@ -783,7 +783,7 @@ theorem infinityAxiom_realized :
       emptyCTypeEnv emptyCBoundEnv (infinityAxiom (Sig := ClassicalSig))
       .boolTy cBool true := by
   classical
-  refine ⟨CDefChecks.tyExists (.exact predicateChecking), ?_⟩
+  refine ⟨CDefChecks.tyExists (.tyExists predicateChecking) (.exact predicateChecking), ?_⟩
   change ULift.up (alignCValue cBool cBool
     (decide (∃ candidate : CPointed,
       cSem predicateChecking
