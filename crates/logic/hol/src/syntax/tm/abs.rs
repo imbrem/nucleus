@@ -3,44 +3,20 @@ use crate::{BuildError, Expr, ExprI, Repr, SurfaceTag, Tm, TmI, TrustedRepr, Ty}
 /// Rust counterpart of Lean `Nucleus.HolE.Expr.abs`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TmAbs<R: Repr> {
-    carrier: Ty<R>,
-    predicate: Tm<R>,
     value: Tm<R>,
     ty: Ty<R>,
 }
 impl<R: Repr> TmAbs<R> {
     /// # Errors
-    /// Returns an error unless the value has the carrier type and `ty` is the matching subtype.
-    pub fn new(
-        repr: &R,
-        carrier: Ty<R>,
-        predicate: Tm<R>,
-        value: Tm<R>,
-        ty: Ty<R>,
-    ) -> Result<Self, BuildError> {
-        if !repr.ty_eq(&carrier, value.ty()) {
-            return Err(BuildError::TypeMismatch);
-        }
+    /// Returns an error unless `ty` is a subtype whose carrier is the value's type.
+    pub fn new(repr: &R, ty: Ty<R>, value: Tm<R>) -> Result<Self, BuildError> {
         let Expr::TySub(subtype) = repr.expr(ty.index()) else {
             return Err(BuildError::TypeMismatch);
         };
-        if !repr.ty_eq(subtype.carrier(), &carrier)
-            || !repr.ix_eq(subtype.predicate().index(), predicate.index())
-        {
+        if !repr.ty_eq(subtype.carrier(), value.ty()) {
             return Err(BuildError::TypeMismatch);
         }
-        Ok(Self {
-            carrier,
-            predicate,
-            value,
-            ty,
-        })
-    }
-    pub fn carrier(&self) -> &Ty<R> {
-        &self.carrier
-    }
-    pub fn predicate(&self) -> &Tm<R> {
-        &self.predicate
+        Ok(Self { value, ty })
     }
     pub fn value(&self) -> &Tm<R> {
         &self.value

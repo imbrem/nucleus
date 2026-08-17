@@ -207,15 +207,7 @@ fn encode_tm<R: TrustedRepr>(repr: &R, value: &Tm<R>) -> Value {
             SurfaceTag::TmEps,
             [encode_ty(repr, x.ty()), encode_tm(repr, x.predicate())],
         ),
-        Expr::TmAbs(x) => tagged(
-            SurfaceTag::TmAbs,
-            [
-                encode_ty(repr, x.carrier()),
-                encode_tm(repr, x.predicate()),
-                encode_tm(repr, x.value()),
-                ty(),
-            ],
-        ),
+        Expr::TmAbs(x) => tagged(SurfaceTag::TmAbs, [ty(), encode_tm(repr, x.value())]),
         Expr::TmRep(x) => tagged(
             SurfaceTag::TmRep,
             [
@@ -483,14 +475,10 @@ fn decode_tm<R: TrustedRepr>(
             repr.tm_eps(ty, predicate)?
         }
         SurfaceTag::TmAbs => {
-            let [carrier, predicate, value, annotation] = exact(tag, values)?;
-            let carrier = decode_ty(repr, carrier, depth + 1)?;
-            let predicate = decode_tm(repr, predicate, depth + 1)?;
+            let [ty, value] = exact(tag, values)?;
+            let ty = decode_ty(repr, ty, depth + 1)?;
             let value = decode_tm(repr, value, depth + 1)?;
-            let annotation = decode_ty(repr, annotation, depth + 1)?;
-            let result = repr.tm_abs(carrier, predicate, value)?;
-            same_ty(repr, result.ty(), &annotation)?;
-            result
+            repr.tm_abs(ty, value)?
         }
         SurfaceTag::TmRep => {
             let [carrier, predicate, value] = exact(tag, values)?;

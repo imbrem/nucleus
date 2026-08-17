@@ -125,6 +125,42 @@ def truth (Γ : Ctx types depth) : Term Γ FamK.boolTy := bool Γ true
 
 def falsehood (Γ : Ctx types depth) : Term Γ FamK.boolTy := bool Γ false
 
+/-- A canonical well-typed garbage term. HOL's epsilon makes every type
+inhabited, so failed surface conversions never require an ill-typed node. -/
+def garbage {types : List Kind} {depth : Nat} {Γ : Ctx types depth}
+    (A : Ty types) : Term Γ A :=
+  eps A (lam A (truth (Γ.extend A)))
+
+/-- Total lowering for `TM_CAST`.
+
+When the source and target raw types are equal, this is the source term with
+its typing certificate transported. Otherwise it is canonical well-typed
+garbage at the target type. This lets a small kernel consume an independently
+proved type equality without incorporating unification into its TCB. -/
+noncomputable def cast {types : List Kind} {depth : Nat} {Γ : Ctx types depth}
+    {A : Ty types} (term : Term Γ A) (target : Ty types) : Term Γ target :=
+  by
+    classical
+    by_cases equal : A.raw = target.raw
+    · exact ⟨term.raw, equal ▸ term.typing⟩
+    · exact garbage target
+
+@[simp] theorem cast_of_raw_eq {types : List Kind} {depth : Nat}
+    {Γ : Ctx types depth} {A : Ty types} (term : Term Γ A) (target : Ty types)
+    (equal : A.raw = target.raw) : (cast term target).raw = term.raw := by
+  classical
+  simp [cast, equal]
+
+@[simp] theorem cast_self_raw {types : List Kind} {depth : Nat}
+    {Γ : Ctx types depth} {A : Ty types} (term : Term Γ A) :
+    (Term.cast term A).raw = term.raw :=
+  cast_of_raw_eq term A rfl
+
+theorem cast_typing {types : List Kind} {depth : Nat} {Γ : Ctx types depth}
+    {A : Ty types} (term : Term Γ A) (target : Ty types) :
+    HasType Γ.raw (Term.cast term target).raw target.raw :=
+  (Term.cast term target).typing
+
 def weaken {types : List Kind} {depth : Nat} {Γ : Ctx types depth}
     {A : Ty types} (term : Term Γ A) (B : Ty types) : Term (Γ.extend B) A :=
   ⟨HolE.weaken term.raw, term.typing.weaken⟩

@@ -12,6 +12,8 @@ inhabitant of its target type otherwise.
 
 namespace Nucleus.HolSurface.RustMapping
 
+open Nucleus.HolE.Empty
+
 inductive CoreConstructor where
   | kindStar | kindArr
   | boolTy | arr | tyApp | tyLam | tyBv | sub | tyExists | model
@@ -52,5 +54,25 @@ def lowering : Tag → Lowering
 theorem lowering_injective : Function.Injective lowering := by
   intro a b h
   cases a <;> cases b <;> simp_all [lowering]
+
+/-- The checked Lean implementation of the `TM_CAST` lowering contract. -/
+noncomputable abbrev lowerCast {types : List Nucleus.Hol.Kind} {depth : Nat}
+    {Γ : Nucleus.HolE.Empty.Ctx types depth} {A : Nucleus.HolE.Empty.Ty types}
+    (term : Nucleus.HolE.Empty.Term Γ A) (target : Nucleus.HolE.Empty.Ty types) :
+    Nucleus.HolE.Empty.Term Γ target :=
+  Term.cast term target
+
+theorem lowerCast_wellTyped {types : List Nucleus.Hol.Kind} {depth : Nat}
+    {Γ : Nucleus.HolE.Empty.Ctx types depth} {A : Nucleus.HolE.Empty.Ty types}
+    (term : Nucleus.HolE.Empty.Term Γ A) (target : Nucleus.HolE.Empty.Ty types) :
+    Nucleus.HolE.HasType Γ.raw (lowerCast term target).raw target.raw :=
+  Term.cast_typing term target
+
+theorem lowerCast_of_typeEquality {types : List Nucleus.Hol.Kind} {depth : Nat}
+    {Γ : Nucleus.HolE.Empty.Ctx types depth} {A : Nucleus.HolE.Empty.Ty types}
+    (term : Nucleus.HolE.Empty.Term Γ A) (target : Nucleus.HolE.Empty.Ty types)
+    (typeEquality : A.raw = target.raw) :
+    (lowerCast term target).raw = term.raw :=
+  Term.cast_of_raw_eq term target typeEquality
 
 end Nucleus.HolSurface.RustMapping
