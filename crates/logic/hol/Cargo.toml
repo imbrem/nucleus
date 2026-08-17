@@ -8,6 +8,7 @@ description = "Backend-neutral LCF interface for higher-order logic kernels"
 publish = false
 
 [dependencies]
+covalence-lib-cbor = { path = "../../lib/cbor" }
 covalence-lib-hash = { path = "../../lib/hash", default-features = false }
 
 [lints]
