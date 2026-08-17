@@ -44,6 +44,29 @@ inductive CDefChecks : {types : List Kind} → {depth : Nat} →
   | conv : CDefChecks Γ term A → CKinded B → FamEq ClassicalSig A B →
       CDefChecks Γ term B
 
+/-- Erase a proof-relevant classical checking certificate. -/
+theorem CChecks.toChecks : CChecks Γ expression classification →
+    Checks Γ expression classification
+  | .boolTy => .boolTy
+  | .arr hA hB => .arr hA.toChecks hB.toChecks
+  | .tyApp hF hA => .tyApp hF.toChecks hA.toChecks
+  | .tyLam body => .tyLam body.toChecks
+  | .tyBv v => .tyBv v
+  | .sub hA hp => .sub hA.toChecks hp.toChecks
+  | .model hp => .model hp.toChecks
+  | .primFam symbol => nomatch symbol
+  | .primTm rule => nomatch rule
+  | .bv hA lookup => .bv hA.toChecks lookup
+  | .fv name hA => .fv name hA.toChecks
+  | .app hA hB function argument => .app function.toChecks argument.toChecks
+  | .lam body hA hB bodyChecking => .lam body hA.toChecks bodyChecking.toChecks
+  | .bool literal => .bool literal
+  | .eq hA left right => .eq hA.toChecks left.toChecks right.toChecks
+  | .eps hA predicate => .eps hA.toChecks predicate.toChecks
+  | .abs hA hp value => .abs hA.toChecks hp.toChecks value.toChecks
+  | .rep hA hp value => .rep hA.toChecks hp.toChecks value.toChecks
+  | .tyExists predicate => .tyExists predicate.toChecks
+
 def CDefChecks.typeKinded : CDefChecks Γ term A → CKinded A
   | .exact raw => raw.typeKinded
   | .app raw .. | .lam _ raw .. | .eq raw .. | .eps raw .. |
