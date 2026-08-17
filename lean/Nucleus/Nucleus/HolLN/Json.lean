@@ -35,6 +35,7 @@ structure Fields where
   type : String
   left : String
   right : String
+  kind : String
   deriving DecidableEq, Repr
 
 /-- Constructor names used by a HOL JSON dialect. -/
@@ -43,9 +44,10 @@ structure Tags where
   tyBool : String
   tyInd : String
   tyArr : String
+  tyApp : String
   tySub : String
-  tmBound : String
-  tmFree : String
+  tmBv : String
+  tmFv : String
   tmApp : String
   tmLam : String
   tmBool : String
@@ -69,10 +71,11 @@ def Schema.v0 : Schema where
     tag := "tag", name := "name", domain := "domain", codomain := "codomain",
     carrier := "carrier", predicate := "predicate", index := "index",
     function := "function", argument := "argument", body := "body", value := "value",
-    type := "type", left := "left", right := "right" }
+    type := "type", left := "left", right := "right", kind := "kind" }
   tags := {
-    tyBase := "ty.base", tyBool := "ty.bool", tyInd := "ty.ind", tyArr := "ty.arr",
-    tySub := "ty.sub", tmBound := "tm.bound", tmFree := "tm.free", tmApp := "tm.app",
+    tyBase := "ty.base", tyBool := "ty.bool", tyInd := "ty.ind",
+    tyArr := "ty.arr", tyApp := "ty.app",
+    tySub := "ty.sub", tmBv := "tm.bv", tmFv := "tm.fv", tmApp := "tm.app",
     tmLam := "tm.lam", tmBool := "tm.bool", tmZero := "tm.zero", tmSucc := "tm.succ",
     tmEq := "tm.eq", tmEps := "tm.eps", tmAbs := "tm.abs", tmRep := "tm.rep" }
 
@@ -80,12 +83,12 @@ def Schema.v0 : Schema where
 def Fields.names (fields : Fields) : List String :=
   [fields.tag, fields.name, fields.domain, fields.codomain, fields.carrier,
     fields.predicate, fields.index, fields.function, fields.argument, fields.body,
-    fields.value, fields.type, fields.left, fields.right]
+    fields.value, fields.type, fields.left, fields.right, fields.kind]
 
 /-- Constructor tags in `Hol` constructor order. -/
 def Tags.names (tags : Tags) : List String :=
-  [tags.tyBase, tags.tyBool, tags.tyInd, tags.tyArr, tags.tySub, tags.tmBound,
-    tags.tmFree, tags.tmApp, tags.tmLam, tags.tmBool, tags.tmZero, tags.tmSucc,
+  [tags.tyBase, tags.tyBool, tags.tyInd, tags.tyArr, tags.tyApp, tags.tySub, tags.tmBv,
+    tags.tmFv, tags.tmApp, tags.tmLam, tags.tmBool, tags.tmZero, tags.tmSucc,
     tags.tmEq, tags.tmEps, tags.tmAbs, tags.tmRep]
 
 /-- Tags must be distinct. Field names need not all be distinct because some
@@ -111,6 +114,7 @@ inductive Scalar (Base : Type u) where
   | nat (value : Nat)
   | bool (value : Bool)
   | base (value : Base)
+  | kind (value : Kind)
   deriving Repr
 
 abbrev Tree (Base : Type u) := RawJson (Scalar Base)
@@ -123,6 +127,7 @@ private def string (value : String) : Tree Base := .scalar (.string value)
 private def nat (value : Nat) : Tree Base := .scalar (.nat value)
 private def bool (value : Bool) : Tree Base := .scalar (.bool value)
 private def base (value : Base) : Tree Base := .scalar (.base value)
+private def kindScalar (value : Kind) : Tree Base := .scalar (.kind value)
 
 private def field (key : String) (value : Tree Base) (tail : RawSyn String (Scalar Base) .obj) :
     RawSyn String (Scalar Base) .obj := .objCons key value tail
@@ -134,24 +139,30 @@ private def tagged (schema : Schema) (tag : String)
 /-- Serialize an intrinsically scoped HOL type or term as a nested JSON tree. -/
 def encodeWith (schema : Schema) : {sort : HolSort} → {depth : Nat} →
     Hol Base sort depth → Tree Base
-  | _, _, .base name =>
+  | .kind kind, _, .base name =>
       tagged schema schema.tags.tyBase
-        (field schema.fields.name (base name) .objNil)
+        (field schema.fields.name (base name)
+          (field schema.fields.kind (kindScalar kind) .objNil))
   | _, _, .boolTy => tagged schema schema.tags.tyBool
   | _, _, .natTy => tagged schema schema.tags.tyInd
   | _, _, .arr domain codomain =>
       tagged schema schema.tags.tyArr
         (field schema.fields.domain (encodeWith schema domain)
           (field schema.fields.codomain (encodeWith schema codomain) .objNil))
+  | .kind _, _, @Hol.tyApp _ domain _ function argument =>
+      tagged schema schema.tags.tyApp
+        (field schema.fields.kind (kindScalar domain)
+          (field schema.fields.function (encodeWith schema function)
+            (field schema.fields.argument (encodeWith schema argument) .objNil)))
   | _, _, .sub carrier predicate =>
       tagged schema schema.tags.tySub
         (field schema.fields.carrier (encodeWith schema carrier)
           (field schema.fields.predicate (encodeWith schema predicate) .objNil))
-  | _, _, .bound index =>
-      tagged schema schema.tags.tmBound
+  | _, _, .bv index =>
+      tagged schema schema.tags.tmBv
         (field schema.fields.index (nat index) .objNil)
-  | _, _, .free name type =>
-      tagged schema schema.tags.tmFree
+  | _, _, .fv name type =>
+      tagged schema schema.tags.tmFv
         (field schema.fields.name (nat name)
           (field schema.fields.type (encodeWith schema type) .objNil))
   | _, _, .app function argument =>
@@ -199,47 +210,78 @@ def decodeOpenWith (schema : Schema) (sort : HolSort) (depth : Nat) :
   | .map (.objCons key (.scalar (.string tag)) fields) =>
       if key != schema.fields.tag then none
       else match sort, depth with
-      | .ty, 0 =>
+      | .kind expected, 0 =>
         if tag = schema.tags.tyBase then
           match fields with
-          | .objCons key (.scalar (.base name)) .objNil =>
-              if key = schema.fields.name then some (.base name) else none
+          | .objCons first (.scalar (.base name))
+              (.objCons second (.scalar (.kind actual)) .objNil) =>
+              if first = schema.fields.name ∧ second = schema.fields.kind then
+                if h : actual = expected then by
+                  subst actual; exact some (.base name)
+                else none
+              else none
           | _ => none
         else if tag = schema.tags.tyBool then
-          match fields with | .objNil => some .boolTy | _ => none
+          if h : expected = .star then by
+            subst expected; exact match fields with | .objNil => some .boolTy | _ => none
+          else none
         else if tag = schema.tags.tyInd then
-          match fields with | .objNil => some .natTy | _ => none
+          if h : expected = .star then by
+            subst expected; exact match fields with | .objNil => some .natTy | _ => none
+          else none
         else if tag = schema.tags.tyArr then
           match fields with
           | .objCons first domain (.objCons second codomain .objNil) =>
               if first = schema.fields.domain ∧ second = schema.fields.codomain then
-                return .arr (← decodeOpenWith schema .ty 0 domain)
-                  (← decodeOpenWith schema .ty 0 codomain)
+                if h : expected = .star then by
+                  subst expected
+                  exact do
+                    let A ← decodeOpenWith schema (.kind .star) 0 domain
+                    let B ← decodeOpenWith schema (.kind .star) 0 codomain
+                    return .arr A B
+                else none
+              else none
+          | _ => none
+        else if tag = schema.tags.tyApp then
+          match fields with
+          | .objCons first (.scalar (.kind domain))
+              (.objCons second function (.objCons third argument .objNil)) =>
+              if first = schema.fields.kind ∧ second = schema.fields.function ∧
+                  third = schema.fields.argument then
+                do
+                  let F ← decodeOpenWith schema (.kind (.arr domain expected)) 0 function
+                  let A ← decodeOpenWith schema (.kind domain) 0 argument
+                  return .tyApp F A
               else none
           | _ => none
         else if tag = schema.tags.tySub then
           match fields with
           | .objCons first carrier (.objCons second predicate .objNil) =>
               if first = schema.fields.carrier ∧ second = schema.fields.predicate then
-                return .sub (← decodeOpenWith schema .ty 0 carrier)
-                  (← decodeOpenWith schema .tm 1 predicate)
+                if h : expected = .star then by
+                  subst expected
+                  exact do
+                    let A ← decodeOpenWith schema (.kind .star) 0 carrier
+                    let p ← decodeOpenWith schema .tm 1 predicate
+                    return .sub A p
+                else none
               else none
           | _ => none
         else none
-      | .ty, _ + 1 => none
+      | .kind _, _ + 1 => none
       | .tm, depth =>
-        if tag = schema.tags.tmBound then
+        if tag = schema.tags.tmBv then
           match fields with
           | .objCons key (.scalar (.nat index)) .objNil =>
               if key = schema.fields.index then
-                if h : index < depth then some (.bound ⟨index, h⟩) else none
+                if h : index < depth then some (.bv ⟨index, h⟩) else none
               else none
           | _ => none
-        else if tag = schema.tags.tmFree then
+        else if tag = schema.tags.tmFv then
           match fields with
           | .objCons first (.scalar (.nat name)) (.objCons second type .objNil) =>
               if first = schema.fields.name ∧ second = schema.fields.type then
-                return .free name (← decodeOpenWith schema .ty 0 type)
+                return .fv name (← decodeOpenWith schema (.kind .star) 0 type)
               else none
           | _ => none
         else if tag = schema.tags.tmApp then
@@ -254,7 +296,7 @@ def decodeOpenWith (schema : Schema) (sort : HolSort) (depth : Nat) :
           match fields with
           | .objCons first domain (.objCons second body .objNil) =>
               if first = schema.fields.domain ∧ second = schema.fields.body then
-                return .lam (← decodeOpenWith schema .ty 0 domain)
+                return .lam (← decodeOpenWith schema (.kind .star) 0 domain)
                   (← decodeOpenWith schema .tm (depth + 1) body)
               else none
           | _ => none
@@ -279,7 +321,7 @@ def decodeOpenWith (schema : Schema) (sort : HolSort) (depth : Nat) :
           | .objCons first type (.objCons second left (.objCons third right .objNil)) =>
               if first = schema.fields.type ∧ second = schema.fields.left ∧
                   third = schema.fields.right then
-                return .eq (← decodeOpenWith schema .ty 0 type)
+                return .eq (← decodeOpenWith schema (.kind .star) 0 type)
                   (← decodeOpenWith schema .tm depth left)
                   (← decodeOpenWith schema .tm depth right)
               else none
@@ -288,7 +330,7 @@ def decodeOpenWith (schema : Schema) (sort : HolSort) (depth : Nat) :
           match fields with
           | .objCons first type (.objCons second predicate .objNil) =>
               if first = schema.fields.type ∧ second = schema.fields.predicate then
-                return .eps (← decodeOpenWith schema .ty 0 type)
+                return .eps (← decodeOpenWith schema (.kind .star) 0 type)
                   (← decodeOpenWith schema .tm depth predicate)
               else none
           | _ => none
@@ -298,7 +340,7 @@ def decodeOpenWith (schema : Schema) (sort : HolSort) (depth : Nat) :
               (.objCons second predicate (.objCons third value .objNil)) =>
               if first = schema.fields.carrier ∧ second = schema.fields.predicate ∧
                   third = schema.fields.value then
-                return .abs (← decodeOpenWith schema .ty 0 carrier)
+                return .abs (← decodeOpenWith schema (.kind .star) 0 carrier)
                   (← decodeOpenWith schema .tm 1 predicate)
                   (← decodeOpenWith schema .tm depth value)
               else none
@@ -309,7 +351,7 @@ def decodeOpenWith (schema : Schema) (sort : HolSort) (depth : Nat) :
               (.objCons second predicate (.objCons third value .objNil)) =>
               if first = schema.fields.carrier ∧ second = schema.fields.predicate ∧
                   third = schema.fields.value then
-                return .rep (← decodeOpenWith schema .ty 0 carrier)
+                return .rep (← decodeOpenWith schema (.kind .star) 0 carrier)
                   (← decodeOpenWith schema .tm 1 predicate)
                   (← decodeOpenWith schema .tm depth value)
               else none
@@ -325,7 +367,7 @@ def decodeOpen (sort : HolSort) (depth : Nat) (json : Tree Base) :
 
 /-- Decode a closed HOL type with an explicitly selected vocabulary. -/
 def decodeTyWith (schema : Schema) (json : Tree Base) : Option (Ty Base) :=
-  decodeOpenWith schema .ty 0 json
+  decodeOpenWith schema (.kind .star) 0 json
 
 /-- Decode a closed HOL term with an explicitly selected vocabulary. -/
 def decodeTmWith (schema : Schema) (json : Tree Base) : Option (ClosedTm Base) :=
@@ -341,43 +383,20 @@ def decodeTm (json : Tree Base) : Option (ClosedTm Base) := decodeTmWith Schema.
 @[simp] theorem decodeOpen_encode (term : Hol Base sort depth) :
     decodeOpen sort depth (encode term) = some term := by
   induction term
-  case succ openDepth value ih =>
-    simp only [decodeOpen, encode, Schema.v0, encodeWith, tagged, field, string]
+  case base kind name =>
+    simp only [decodeOpen, encode, encodeWith, tagged, field, string, base, kindScalar]
     unfold decodeOpenWith
-    dsimp only [Schema.v0]
-    have hkey : ("tag" != "tag") ≠ true := by decide
-    have hbound : "tm.succ" ≠ "tm.bound" := by decide
-    have hfree : "tm.succ" ≠ "tm.free" := by decide
-    have happ : "tm.succ" ≠ "tm.app" := by decide
-    have hlam : "tm.succ" ≠ "tm.lam" := by decide
-    have hbool : "tm.succ" ≠ "tm.bool" := by decide
-    have hzero : "tm.succ" ≠ "tm.zero" := by decide
-    rw [if_neg hkey, if_neg hbound, if_neg hfree, if_neg happ, if_neg hlam,
-      if_neg hbool, if_neg hzero, if_pos rfl]
-    simp only [decodeOpen, encode, Schema.v0] at ih
-    rw [ih]
-    rw [if_pos rfl]
-  case app function argument function_ih argument_ih =>
+    simp [Schema.v0]
+  case tyApp domain codomain function argument function_ih argument_ih =>
     simp only [decodeOpen, encode, Schema.v0] at function_ih argument_ih
-    simp only [decodeOpen, encode, Schema.v0, encodeWith, tagged, field, string]
+    simp only [decodeOpen, encode, encodeWith, tagged, field, string, kindScalar]
     unfold decodeOpenWith
-    dsimp only [Schema.v0]
-    simp [function_ih, argument_ih]
-  case lam domain body domain_ih body_ih =>
-    simp only [decodeOpen, encode, Schema.v0] at domain_ih body_ih
-    simp only [decodeOpen, encode, Schema.v0, encodeWith, tagged, field, string]
-    unfold decodeOpenWith
-    dsimp only [Schema.v0]
-    simp [domain_ih, body_ih]
-  case eps type predicate type_ih predicate_ih =>
-    simp only [decodeOpen, encode, Schema.v0] at type_ih predicate_ih
-    simp only [decodeOpen, encode, Schema.v0, encodeWith, tagged, field, string]
-    unfold decodeOpenWith
-    dsimp only [Schema.v0]
-    simp [type_ih, predicate_ih]
+    simp [Schema.v0, function_ih, argument_ih]
   all_goals
-    simp_all [decodeOpen, encode, Schema.v0, encodeWith, tagged, field, string, nat,
-      bool, base, decodeOpenWith, Option.bind]
+    simp only [decodeOpen, encode, Schema.v0, encodeWith, tagged, field, string,
+      nat, bool] at *
+    unfold decodeOpenWith
+    simp_all [Option.bind]
 
 /-- Closed-type round trip for the initial vocabulary. -/
 @[simp] theorem decodeTy_encode (type : Ty Base) : decodeTy (encode type) = some type :=

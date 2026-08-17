@@ -46,7 +46,7 @@ namespace Checked
 
 @[ext] theorem ext {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} {A : Ty Base} {left right : Checked Γ A}
-    (terms : left.term = right.term) : left = right := by
+    (terms : left.tm = right.tm) : left = right := by
   cases left
   cases right
   cases terms
@@ -54,7 +54,7 @@ namespace Checked
 
 def boolean {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} (value : Bool) : BoolTm Γ :=
-  ⟨.bool value, .bool value⟩
+  ⟨.bool value, .tmBool value⟩
 
 instance {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} : Coe Bool (BoolTm Γ) where
@@ -85,52 +85,56 @@ def app {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} {A B : Ty Base}
     (function : Checked Γ (.arr A B)) (argument : Checked Γ A) :
     Checked Γ B :=
-  ⟨.app function.term argument.term, .app function.typing argument.typing⟩
+  ⟨.app function.tm argument.tm, .tmApp function.typing argument.typing⟩
 
-def bound {Base : Type u} {depth : Nat}
+def bv {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} {A : Ty Base} (hA : Kinded A)
     (index : Fin depth) (lookup : Γ index = A) : Checked Γ A :=
-  ⟨.bound index, .bound hA lookup⟩
+  ⟨.bv index, .tmBv hA lookup⟩
+
+def fv {Base : Type u} {depth : Nat}
+    {Γ : BoundCtx Base depth} {A : Ty Base} (name : Nat) (hA : Kinded A) : Checked Γ A :=
+  ⟨.fv name A, .tmFv name hA⟩
 
 def weaken {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} {A B : Ty Base} (term : Checked Γ A) :
     Checked (extendBound B Γ) A :=
-  ⟨Nucleus.HolLN.weaken term.term, term.typing.weakenBound⟩
+  ⟨Nucleus.HolLN.weaken term.tm, term.typing.weakenBound⟩
 
 def lam {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} {A B : Ty Base} (hA : Kinded A)
     (body : Checked (extendBound A Γ) B) : Checked Γ (.arr A B) :=
-  ⟨.lam A body.term, .lam body.term hA body.typing⟩
+  ⟨.lam A body.tm, .tmLam body.tm hA body.typing⟩
 
 def eq {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} {A : Ty Base} (hA : Kinded A)
     (left right : Checked Γ A) : BoolTm Γ :=
-  ⟨.eq A left.term right.term, .eq hA left.typing right.typing⟩
+  ⟨.eq A left.tm right.tm, .tmEq hA left.typing right.typing⟩
 
 def eps {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} {A : Ty Base} (hA : Kinded A)
     (predicate : Checked Γ (.arr A .boolTy)) : Checked Γ A :=
-  ⟨.eps A predicate.term, .eps hA predicate.typing⟩
+  ⟨.eps A predicate.tm, .tmEps hA predicate.typing⟩
 
 def abs {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} {A : Ty Base} (hA : Kinded A)
     (predicate : Checked (extendBound A emptyBound) .boolTy)
-    (value : Checked Γ A) : Checked Γ (.sub A predicate.term) :=
-  ⟨.abs A predicate.term value.term, .abs hA predicate.typing value.typing⟩
+    (value : Checked Γ A) : Checked Γ (.sub A predicate.tm) :=
+  ⟨.abs A predicate.tm value.tm, .tmAbs hA predicate.typing value.typing⟩
 
 def rep {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} {A : Ty Base} (hA : Kinded A)
     (predicate : Checked (extendBound A emptyBound) .boolTy)
-    (value : Checked Γ (.sub A predicate.term)) : Checked Γ A :=
-  ⟨.rep A predicate.term value.term, .rep hA predicate.typing value.typing⟩
+    (value : Checked Γ (.sub A predicate.tm)) : Checked Γ A :=
+  ⟨.rep A predicate.tm value.tm, .tmRep hA predicate.typing value.typing⟩
 
 def succ {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} (value : Checked Γ .natTy) : Checked Γ .natTy :=
-  ⟨.succ value.term, .succ value.typing⟩
+  ⟨.succ value.tm, .tmSucc value.typing⟩
 
 def natural {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} : Nat -> NatTm Γ
-  | 0 => ⟨.zero, .zero⟩
+  | 0 => ⟨.zero, .tmZero⟩
   | n + 1 => succ (natural n)
 
 instance {Base : Type u} {depth : Nat}
@@ -147,16 +151,17 @@ as it gives `true, true`. -/
 def boolAnd {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} (left right : BoolTm Γ) : BoolTm Γ :=
   let operatorTy : Ty Base := .arr .boolTy (.arr .boolTy .boolTy)
-  let hOperator : Kinded operatorTy := .arr .bool (.arr .bool .bool)
+  let hOperator : Kinded operatorTy :=
+    .kindArr .kindBool (.kindArr .kindBool .kindBool)
   let operator : Checked (extendBound operatorTy Γ) operatorTy :=
-    bound hOperator 0 rfl
+    bv hOperator 0 rfl
   let applied := app (app operator (weaken left)) (weaken right)
   let appliedTrue := app (app operator (boolean true)) (boolean true)
-  eq (.arr hOperator .bool) (lam hOperator applied) (lam hOperator appliedTrue)
+  eq (.kindArr hOperator .kindBool) (lam hOperator applied) (lam hOperator appliedTrue)
 
 def boolNot {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} (proposition : BoolTm Γ) : BoolTm Γ :=
-  eq .bool proposition (boolean false)
+  eq .kindBool proposition (boolean false)
 
 def boolOr {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} (left right : BoolTm Γ) : BoolTm Γ :=
@@ -201,7 +206,7 @@ namespace PropCtx
 
 def terms {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} (context : PropCtx Γ) : List (Tm Base depth) :=
-  context.map Checked.term
+  context.map Checked.tm
 
 theorem typed {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} (context : PropCtx Γ) :
@@ -236,13 +241,13 @@ proof-relevant equality certificate remains the reference kernel certificate. -/
 structure EqTm {Base : Type u} {depth : Nat}
     (Γ : BoundCtx Base depth) {A : Ty Base}
     (left right : Checked Γ A) : Type u where
-  proof : Nucleus.HolLN.EqTm Γ left.term right.term A
+  proof : Nucleus.HolLN.EqTm Γ left.tm right.tm A
 
 /-- Checked HOL entailment. Context and conclusion carry the typing invariant;
 the proof field remains an inspectable reference-kernel certificate. -/
 structure Proves {Base : Type u} {depth : Nat}
     (Γ : BoundCtx Base depth) (H : PropCtx Γ) (p : BoolTm Γ) : Type u where
-  proof : Nucleus.HolLN.Proves Γ H.terms p.term
+  proof : Nucleus.HolLN.Proves Γ H.terms p.tm
 
 namespace Proves
 
@@ -275,21 +280,21 @@ def eqOfEqTm (hA : Kinded A) {x y : Checked Γ A} (equality : EqTm Γ x y) :
   ⟨.eqOfEqTm (PropCtx.typed H) hA equality.proof⟩
 
 def antisymm (p q : BoolTm Γ) (left : Proves Γ (p :: H) q)
-    (right : Proves Γ (q :: H) p) : Proves Γ H (Checked.eq .bool p q) :=
+    (right : Proves Γ (q :: H) p) : Proves Γ H (Checked.eq .kindBool p q) :=
   ⟨.antisymm (PropCtx.typed H) p.typing q.typing (PropCtx.typed (p :: H))
     (PropCtx.typed (q :: H)) left.proof right.proof⟩
 
 def absRep (hA : Kinded A)
     (predicate : Checked (extendBound A emptyBound) .boolTy)
-    (x : Checked Γ (.sub A predicate.term)) :
-    Proves Γ H (Checked.eq (.sub hA predicate.typing)
+    (x : Checked Γ (.sub A predicate.tm)) :
+    Proves Γ H (Checked.eq (.kindSub hA predicate.typing)
       (Checked.abs hA predicate (Checked.rep hA predicate x)) x) :=
   ⟨.absRep (PropCtx.typed H) hA predicate.typing x.typing⟩
 
 def repAbs (hA : Kinded A)
     (predicate : Checked (extendBound A emptyBound) .boolTy)
     (x : Checked Γ A) (instantiated : BoolTm Γ)
-    (term_eq : instantiated.term = instantiateOne predicate.term x.term)
+    (term_eq : instantiated.tm = instantiateOne predicate.tm x.tm)
     (premise : Proves Γ H instantiated) :
     Proves Γ H (Checked.eq hA
       (Checked.rep hA predicate (Checked.abs hA predicate x)) x) := by
@@ -298,21 +303,21 @@ def repAbs (hA : Kinded A)
   · exact term_eq ▸ premise.proof
 
 def succInjective (x y : NatTm Γ)
-    (premise : Proves Γ H (Checked.eq .nat (Checked.succ x) (Checked.succ y))) :
-    Proves Γ H (Checked.eq .nat x y) :=
+    (premise : Proves Γ H (Checked.eq .kindNat (Checked.succ x) (Checked.succ y))) :
+    Proves Γ H (Checked.eq .kindNat x y) :=
   ⟨.succInjective (PropCtx.typed H) x.typing y.typing premise.proof⟩
 
 def zeroNotSucc (x : NatTm Γ) :
-    Proves Γ H (Checked.eq .bool
-      (Checked.eq .nat ⟨.zero, .zero⟩ (Checked.succ x)) (Checked.boolean false)) :=
+    Proves Γ H (Checked.eq .kindBool
+      (Checked.eq .kindNat ⟨.zero, .tmZero⟩ (Checked.succ x)) (Checked.boolean false)) :=
   ⟨.zeroNotSucc (PropCtx.typed H) x.typing⟩
 
 def toKernel {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} {H : PropCtx Γ} {p : BoolTm Γ}
-    (proof : Proves Γ H p) : Nucleus.HolLN.Proves Γ H.terms p.term :=
+    (proof : Proves Γ H p) : Nucleus.HolLN.Proves Γ H.terms p.tm :=
   proof.proof
 
-def ofKernel (proof : Nucleus.HolLN.Proves Γ H.terms p.term) : Proves Γ H p :=
+def ofKernel (proof : Nucleus.HolLN.Proves Γ H.terms p.tm) : Proves Γ H p :=
   ⟨proof⟩
 
 end Proves
@@ -320,7 +325,7 @@ end Proves
 theorem proves_iff_kernel {Base : Type u} {depth : Nat}
     {Γ : BoundCtx Base depth} {H : PropCtx Γ} {p : BoolTm Γ} :
     Nonempty (Proves Γ H p) ↔
-      Nonempty (Nucleus.HolLN.Proves Γ H.terms p.term) := by
+      Nonempty (Nucleus.HolLN.Proves Γ H.terms p.tm) := by
   constructor <;> rintro ⟨proof⟩
   · exact ⟨proof.proof⟩
   · exact ⟨⟨proof⟩⟩

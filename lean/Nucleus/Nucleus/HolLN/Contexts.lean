@@ -47,10 +47,10 @@ abbrev OriginalBoundContext (Base : Type u) (depth : Nat) :=
 namespace Tree.Sorted
 
 abbrev BoundContext (Base : Type u) (depth : Nat) :=
-  Tree.Context.Bound (Tree.Sorted Base .ty) depth
+  Tree.Context.Bound (Tree.Sorted Base (.kind .star)) depth
 
 def decodeBound (Γ : BoundContext Base depth) : Option (OriginalBoundContext Base depth) :=
-  Γ.traverse (Erasure.checkDepth .ty 0)
+  Γ.traverse (Erasure.checkDepth (.kind .star) 0)
 
 def encodeBound (Γ : OriginalBoundContext Base depth) : BoundContext Base depth :=
   Γ.map Erasure.toSorted
@@ -60,11 +60,11 @@ def encodeBound (Γ : OriginalBoundContext Base depth) : BoundContext Base depth
   Tree.Context.Bound.traverse_map _ _ Erasure.checkDepth_toSorted Γ
 
 def HasTypeIn (Γ : BoundContext Base depth) (t : Tree.Sorted Base .tm)
-    (A : Tree.Sorted Base .ty) : Prop :=
+    (A : Tree.Sorted Base (.kind .star)) : Prop :=
   ∃ Γ₀, decodeBound Γ = some Γ₀ ∧ HasType Γ₀.denote t A
 
 def EqTmIn (Γ : BoundContext Base depth) (t u : Tree.Sorted Base .tm)
-    (A : Tree.Sorted Base .ty) : Prop :=
+    (A : Tree.Sorted Base (.kind .star)) : Prop :=
   ∃ Γ₀, decodeBound Γ = some Γ₀ ∧ EqTm Γ₀.denote t u A
 
 def ProvesIn (Γ : BoundContext Base depth) (H : List (Tree.Sorted Base .tm))
@@ -79,7 +79,7 @@ abbrev BoundContext (Base : Type u) (depth : Nat) :=
   Tree.Context.Bound (Tree.Scoped Base 0) depth
 
 def decodeBound (Γ : BoundContext Base depth) : Option (OriginalBoundContext Base depth) :=
-  Γ.traverse (Erasure.checkSort .ty)
+  Γ.traverse (Erasure.checkSort (.kind .star))
 
 def encodeBound (Γ : OriginalBoundContext Base depth) : BoundContext Base depth :=
   Γ.map Erasure.toScoped
@@ -108,7 +108,7 @@ abbrev BoundContext (Base : Type u) (depth : Nat) :=
   Tree.Context.Bound (Tree.Raw Base) depth
 
 def decodeBound (Γ : BoundContext Base depth) : Option (OriginalBoundContext Base depth) :=
-  Γ.traverse (Erasure.checkRaw .ty 0)
+  Γ.traverse (Erasure.checkRaw (.kind .star) 0)
 
 def encodeBound (Γ : OriginalBoundContext Base depth) : BoundContext Base depth :=
   Γ.map Erasure.toRaw

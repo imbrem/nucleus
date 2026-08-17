@@ -17,36 +17,48 @@ namespace Nucleus.HolLN
 
 universe u
 
+/-- Kinds of HOL type expressions. `star` classifies ordinary term-level
+types; `arr` classifies type constructors. -/
+inductive Kind where
+  | star
+  | arr (domain codomain : Kind)
+  deriving DecidableEq, Repr
+
 inductive HolSort where
-  | ty
+  | kind (kind : Kind)
   | tm
   deriving DecidableEq, Repr
 
 inductive Hol (Base : Type u) : HolSort -> Nat -> Type u where
-  | base (name : Base) : Hol Base .ty 0
-  | boolTy : Hol Base .ty 0
-  | natTy : Hol Base .ty 0
-  | arr (domain codomain : Hol Base .ty 0) : Hol Base .ty 0
-  | sub (carrier : Hol Base .ty 0) (predicate : Hol Base .tm 1) : Hol Base .ty 0
-  | bound {depth : Nat} (index : Fin depth) : Hol Base .tm depth
-  | free {depth : Nat} (name : Nat) (type : Hol Base .ty 0) : Hol Base .tm depth
+  | boolTy : Hol Base (.kind .star) 0
+  | natTy : Hol Base (.kind .star) 0
+  | arr (domain codomain : Hol Base (.kind .star) 0) : Hol Base (.kind .star) 0
+  | tyApp {domain codomain : Kind}
+      (function : Hol Base (.kind (.arr domain codomain)) 0)
+      (argument : Hol Base (.kind domain) 0) : Hol Base (.kind codomain) 0
+  | sub (carrier : Hol Base (.kind .star) 0)
+      (predicate : Hol Base .tm 1) : Hol Base (.kind .star) 0
+  | base {kind : Kind} (name : Base) : Hol Base (.kind kind) 0
+  | bv {depth : Nat} (index : Fin depth) : Hol Base .tm depth
+  | fv {depth : Nat} (name : Nat) (type : Hol Base (.kind .star) 0) : Hol Base .tm depth
   | app {depth : Nat} (function argument : Hol Base .tm depth) : Hol Base .tm depth
-  | lam {depth : Nat} (domain : Hol Base .ty 0)
+  | lam {depth : Nat} (domain : Hol Base (.kind .star) 0)
       (body : Hol Base .tm (depth + 1)) : Hol Base .tm depth
   | bool {depth : Nat} (value : Bool) : Hol Base .tm depth
   | zero {depth : Nat} : Hol Base .tm depth
   | succ {depth : Nat} (value : Hol Base .tm depth) : Hol Base .tm depth
-  | eq {depth : Nat} (type : Hol Base .ty 0)
+  | eq {depth : Nat} (type : Hol Base (.kind .star) 0)
       (left right : Hol Base .tm depth) : Hol Base .tm depth
-  | eps {depth : Nat} (type : Hol Base .ty 0)
+  | eps {depth : Nat} (type : Hol Base (.kind .star) 0)
       (predicate : Hol Base .tm depth) : Hol Base .tm depth
-  | abs {depth : Nat} (carrier : Hol Base .ty 0)
+  | abs {depth : Nat} (carrier : Hol Base (.kind .star) 0)
       (predicate : Hol Base .tm 1) (value : Hol Base .tm depth) : Hol Base .tm depth
-  | rep {depth : Nat} (carrier : Hol Base .ty 0)
+  | rep {depth : Nat} (carrier : Hol Base (.kind .star) 0)
       (predicate : Hol Base .tm 1) (value : Hol Base .tm depth) : Hol Base .tm depth
   deriving Repr
 
-abbrev Ty (Base : Type u) := Hol Base .ty 0
+abbrev Fam (Base : Type u) (kind : Kind) := Hol Base (.kind kind) 0
+abbrev Ty (Base : Type u) := Fam Base .star
 abbrev Tm (Base : Type u) (depth : Nat) := Hol Base .tm depth
 abbrev ClosedTm (Base : Type u) := Tm Base 0
 
