@@ -71,11 +71,11 @@ inductive Proves {Sig : Signature} [SigTyping Sig] {types : List Kind} : {depth 
       (rightTyped : TypedHyps Γ (q :: H)) : Proves Γ (p :: H) q →
       Proves Γ (q :: H) p → Proves Γ H (.eq .boolTy p q)
   | absRep (typed : TypedHyps Γ H) (hA : Kinded A)
-      (hp : HasTypeDefEq (extendBound A emptyBound) p .boolTy)
+      (hp : HasType (extendBound A emptyBound) p .boolTy)
       (hx : HasTypeDefEq Γ x (.sub A p)) :
       Proves Γ H (.eq (.sub A p) (.abs A p (.rep A p x)) x)
   | repAbs (typed : TypedHyps Γ H) (hA : Kinded A)
-      (hp : HasTypeDefEq (extendBound A emptyBound) p .boolTy)
+      (hp : HasType (extendBound A emptyBound) p .boolTy)
       (hx : HasTypeDefEq Γ x A)
       (predicateTyping : HasTypeDefEq Γ (instantiateOne p x) .boolTy) :
       Proves Γ H (instantiateOne p x) →
@@ -84,7 +84,7 @@ inductive Proves {Sig : Signature} [SigTyping Sig] {types : List Kind} : {depth 
   witness selects the inhabited branch and therefore establishes `p (rep x)`.
   Subtype formation itself has no nonemptiness side condition. -/
   | repPredOfWitness (typed : TypedHyps Γ H) (hA : Kinded A)
-      (hp : HasTypeDefEq (extendBound A emptyBound) p .boolTy)
+      (hp : HasType (extendBound A emptyBound) p .boolTy)
       (witnessTyping : HasTypeDefEq Γ witness A)
       (witnessPredicateTyping : HasTypeDefEq Γ (instantiateOne p witness) .boolTy)
       (subtypeTyping : HasTypeDefEq Γ x (.sub A p))
