@@ -345,6 +345,32 @@ theorem boolCases (typing : HasTypeDefEq Γ proposition .boolTy)
         exact evaluatedEq
       · exact truths candidate member
 
+theorem eqRefl (hA : Kinded A) (typing : HasTypeDefEq Γ term A) :
+    CEntails (Γ := Γ) hypotheses (.eq A term term) := by
+  intro env bound truths
+  let cA := hA.certificate
+  let cterm := typing.certificate
+  refine ⟨.eq cA cterm cterm, ?_⟩
+  classical
+  change ULift.up (alignCValue cBool cBool
+    (decide ((cDefSem cterm env bound (cSem cA env)).down =
+      (cDefSem cterm env bound (cSem cA env)).down))) = ULift.up true
+  have decision : @decide
+      ((cDefSem cterm env bound (cSem cA env)).down =
+        (cDefSem cterm env bound (cSem cA env)).down)
+      (Classical.propDecidable _) = true := by simp
+  rw [decision]
+  exact congrArg ULift.up (alignCValue_self cBool true)
+
+theorem hypothesisMap
+    (subset : ∀ proposition, proposition ∈ source → proposition ∈ target)
+    (premise : CEntails (Γ := Γ) source conclusion) :
+    CEntails (Γ := Γ) target conclusion := by
+  intro env bound targetTrue
+  apply premise env bound
+  intro proposition member
+  exact targetTrue proposition (subset proposition member)
+
 end CEntails
 
 /-- The two fundamental transport facts needed by beta, eta, generalization,
