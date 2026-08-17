@@ -15,6 +15,10 @@ _DOCS_SOURCES = glob(
     ],
 )
 
+# The `notes/` corpus is compiled into the site by `apps/docs`, so it is a
+# documentation input rather than a source tree of its own.
+_NOTES_SOURCES = glob(["notes/**/*.md"])
+
 _NUCLEUS_PACKAGE_SOURCES = glob(
     ["packages/nucleus/**"],
     exclude = [
@@ -180,6 +184,7 @@ genrule(
             "production-dependencies": "//buck/cargo/production:dependencies-json",
         },
         _DOCS_SOURCES +
+        _NOTES_SOURCES +
         [
             ":loc",
             ":rustdoc",
