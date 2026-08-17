@@ -36,7 +36,7 @@ structure ClassicalKernelRuleLaws where
   generalize : ∀ {types depth} {Γ : BoundCtx ClassicalSig types depth}
       {H : List (Tm ClassicalSig types depth)} {A : Ty ClassicalSig types}
       {body : Tm ClassicalSig types (depth + 1)},
-    Kinded A → HasTypeDefEq Γ
+    TypedHyps Γ H → Kinded A → HasTypeDefEq Γ
       (.eq (.arr A .boolTy) (.lam A body) (.lam A (.bool true))) .boolTy →
     HasTypeDefEq (extendBound A Γ) body .boolTy →
     CEntails (Γ := extendBound A Γ) (H.map weaken) body →
@@ -46,7 +46,8 @@ structure ClassicalKernelRuleLaws where
       {H : List (Tm ClassicalSig types depth)} {A : Ty ClassicalSig types}
       {K : List (Tm ClassicalSig types (depth + 1))}
       {p : Tm ClassicalSig types depth},
-    Kinded A → HasTypeDefEq (extendBound A Γ) (weaken p) .boolTy →
+    TypedHyps Γ H → Kinded A →
+    HasTypeDefEq (extendBound A Γ) (weaken p) .boolTy →
     (∀ q, q ∈ H → weaken q ∈ K) →
     CEntails (Γ := Γ) H p → CEntails (Γ := extendBound A Γ) K (weaken p)
   convert : ∀ {types depth} {Γ : BoundCtx ClassicalSig types depth}
@@ -135,9 +136,9 @@ theorem Proves.sound_of_kernel_laws (laws : ClassicalKernelRuleLaws) :
   | choice typed hA conclusionTyping hp hx premise ih =>
       exact laws.choice hA conclusionTyping hp hx premise.conclusionTyping ih
   | generalize typed hA conclusionTyping bodyTyping premise ih =>
-      exact laws.generalize hA conclusionTyping bodyTyping ih
+      exact laws.generalize typed hA conclusionTyping bodyTyping ih
   | weakenBound typed hA typedK conclusionTyping embedding premise ih =>
-      exact laws.weakenBound hA conclusionTyping embedding ih
+      exact laws.weakenBound typed hA conclusionTyping embedding ih
   | hypothesisMap typedK conclusionTyping subset premise ih =>
       exact CEntails.hypothesisMap subset ih
   | convert typed conclusionTyping equality premise ih =>
