@@ -19,35 +19,35 @@ inductive CDefChecks : {types : List Kind} → {depth : Nat} →
     BoundCtx ClassicalSig types depth → Tm ClassicalSig types depth →
     Ty ClassicalSig types → Type 1 where
   | exact : CChecks Γ term (.tm A) → CDefChecks Γ term A
-  | app : CDefChecks Γ f (.arr A B) → CDefChecks Γ x A →
+  | app (raw : CChecks Γ (.app f x) (.tm B)) :
+      CDefChecks Γ f (.arr A B) → CDefChecks Γ x A →
       CDefChecks Γ (.app f x) B
-  | lam (body : Tm ClassicalSig types (depth + 1)) (hA : CKinded A) :
+  | lam (body : Tm ClassicalSig types (depth + 1))
+      (raw : CChecks Γ (.lam A body) (.tm (.arr A B))) (hA : CKinded A) :
       CDefChecks (extendBound A Γ) body B →
       CDefChecks Γ (.lam A body) (.arr A B)
-  | eq (hA : CKinded A) : CDefChecks Γ x A → CDefChecks Γ y A →
+  | eq (raw : CChecks Γ (.eq A x y) (.tm .boolTy)) (hA : CKinded A) :
+      CDefChecks Γ x A → CDefChecks Γ y A →
       CDefChecks Γ (.eq A x y) .boolTy
-  | eps (hA : CKinded A) : CDefChecks Γ p (.arr A .boolTy) →
+  | eps (raw : CChecks Γ (.eps A p) (.tm A)) (hA : CKinded A) :
+      CDefChecks Γ p (.arr A .boolTy) →
       CDefChecks Γ (.eps A p) A
-  | abs (hA : CKinded A)
+  | abs (raw : CChecks Γ (.abs A p x) (.tm (.sub A p))) (hA : CKinded A)
       (hp : CChecks (extendBound A emptyBound) p (.tm .boolTy)) :
       CDefChecks Γ x A → CDefChecks Γ (.abs A p x) (.sub A p)
-  | rep (hA : CKinded A)
+  | rep (raw : CChecks Γ (.rep A p x) (.tm A)) (hA : CKinded A)
       (hp : CChecks (extendBound A emptyBound) p (.tm .boolTy)) :
       CDefChecks Γ x (.sub A p) → CDefChecks Γ (.rep A p x) A
-  | tyExists : CDefChecks (types := .star :: types) emptyBound p .boolTy →
+  | tyExists (raw : CChecks (types := types) Γ (.tyExists p) (.tm .boolTy)) :
+      CDefChecks (types := .star :: types) emptyBound p .boolTy →
       CDefChecks (types := types) Γ (.tyExists p) .boolTy
   | conv : CDefChecks Γ term A → CKinded B → FamEq ClassicalSig A B →
       CDefChecks Γ term B
 
 def CDefChecks.typeKinded : CDefChecks Γ term A → CKinded A
   | .exact raw => raw.typeKinded
-  | .app function _ => by
-      cases function.typeKinded with
-      | arr _ hB => exact hB
-  | .lam _ hA body => .arr hA body.typeKinded
-  | .eq .. | .tyExists _ => .boolTy
-  | .eps hA _ | .rep hA _ _ => hA
-  | .abs hA hp _ => .sub hA hp
+  | .app raw .. | .lam _ raw .. | .eq raw .. | .eps raw .. |
+      .abs raw .. | .rep raw .. | .tyExists raw _ => raw.typeKinded
   | .conv _ hB _ => hB
 
 theorem HasTypeDefEq.toC {types : List Kind} {depth : Nat}
@@ -56,29 +56,29 @@ theorem HasTypeDefEq.toC {types : List Kind} {depth : Nat}
     Nonempty (CDefChecks Γ term A) := by
   induction typing with
   | exact raw => exact ⟨.exact raw.certificate⟩
-  | app _ _ ihf ihx =>
+  | app raw _ _ ihf ihx =>
       obtain ⟨cf⟩ := ihf
       obtain ⟨cx⟩ := ihx
-      exact ⟨.app cf cx⟩
-  | lam body hA _ ih =>
+      exact ⟨.app raw.certificate cf cx⟩
+  | lam body raw hA _ ih =>
       obtain ⟨cbody⟩ := ih
-      exact ⟨.lam body hA.certificate cbody⟩
-  | eq hA _ _ ihx ihy =>
+      exact ⟨.lam body raw.certificate hA.certificate cbody⟩
+  | eq raw hA _ _ ihx ihy =>
       obtain ⟨cx⟩ := ihx
       obtain ⟨cy⟩ := ihy
-      exact ⟨.eq hA.certificate cx cy⟩
-  | eps hA _ ih =>
+      exact ⟨.eq raw.certificate hA.certificate cx cy⟩
+  | eps raw hA _ ih =>
       obtain ⟨cp⟩ := ih
-      exact ⟨.eps hA.certificate cp⟩
-  | abs hA hp _ ih =>
+      exact ⟨.eps raw.certificate hA.certificate cp⟩
+  | abs raw hA hp _ ih =>
       obtain ⟨cx⟩ := ih
-      exact ⟨.abs hA.certificate hp.certificate cx⟩
-  | rep hA hp _ ih =>
+      exact ⟨.abs raw.certificate hA.certificate hp.certificate cx⟩
+  | rep raw hA hp _ ih =>
       obtain ⟨cx⟩ := ih
-      exact ⟨.rep hA.certificate hp.certificate cx⟩
-  | tyExists _ ih =>
+      exact ⟨.rep raw.certificate hA.certificate hp.certificate cx⟩
+  | tyExists raw _ ih =>
       obtain ⟨cp⟩ := ih
-      exact ⟨.tyExists cp⟩
+      exact ⟨.tyExists raw.certificate cp⟩
   | conv _ hB conversion ih =>
       obtain ⟨cterm⟩ := ih
       exact ⟨.conv cterm hB.certificate conversion⟩
@@ -98,55 +98,64 @@ noncomputable def cDefSem {types : List Kind} {depth : Nat}
   classical
   exact match checking with
   | .exact raw => fun env bound expected => cSem raw env bound expected
-  | .app function argument =>
-      match function.typeKinded with
-      | .arr hA hB => fun env bound expected =>
-          let domain := cSem hA env
-          let codomain := cSem hB env
-          let functionType : CPointed :=
-            ⟨domain.carrier → codomain.carrier, fun _ => codomain.point⟩
-          ⟨alignCValue codomain expected
-            ((cDefSem function env bound functionType).down
-              (cDefSem argument env bound domain).down)⟩
-  | .lam body hA bodyChecking => fun env bound expected =>
-      let domain := cSem hA env
-      let codomain := cSem bodyChecking.typeKinded env
-      let functionType : CPointed :=
-        ⟨domain.carrier → codomain.carrier, fun _ => codomain.point⟩
-      let function := fun argument =>
-        (cDefSem bodyChecking env
-          (extendCBoundEnv domain argument bound) codomain).down
-      ⟨alignCValue functionType expected function⟩
-  | .eq hA left right => fun env bound expected =>
-      let carrier := cSem hA env
-      ⟨alignCValue cBool expected
-        (decide ((cDefSem left env bound carrier).down =
-          (cDefSem right env bound carrier).down))⟩
-  | .eps hA predicate => fun env bound expected =>
-      let carrier := cSem hA env
-      let functionType : CPointed := ⟨carrier.carrier → Bool, fun _ => false⟩
-      let pred := (cDefSem predicate env bound functionType).down
-      let selected := if witness : ∃ value, pred value = true then
-        Classical.choose witness else carrier.point
-      ⟨alignCValue carrier expected selected⟩
-  | .abs hA hp value => fun env bound expected =>
-      let carrier := cSem hA env
-      let predicate := fun value =>
-        (cSem hp env (extendCBoundEnv carrier value emptyCBoundEnv) cBool).down
-      let subtype := cGuardedType carrier predicate
-      ⟨alignCValue subtype expected
-        (cGuardedAbs carrier predicate (cDefSem value env bound carrier).down)⟩
-  | .rep hA hp value => fun env bound expected =>
-      let carrier := cSem hA env
-      let predicate := fun value =>
-        (cSem hp env (extendCBoundEnv carrier value emptyCBoundEnv) cBool).down
-      let subtype := cGuardedType carrier predicate
-      ⟨alignCValue carrier expected (cDefSem value env bound subtype).down.1⟩
-  | .tyExists predicate => fun env _ expected =>
-      ⟨alignCValue cBool expected (decide (∃ candidate : CPointed,
-        cDefSem predicate (extendCTypeEnv (kind := .star) candidate env)
-          emptyCBoundEnv cBool = ⟨true⟩))⟩
+  | .app raw .. | .lam _ raw .. | .eq raw .. | .eps raw .. |
+      .abs raw .. | .rep raw .. | .tyExists raw _ =>
+      fun env bound expected => cSem raw env bound expected
   | .conv source hB conversion => cDefSem source
+
+/-- A syntax-directed typing certificate underlying definitionally typed
+checking.  Structural rules store this certificate for the whole term. -/
+structure CDefRawView {types : List Kind} {depth : Nat}
+    (Γ : BoundCtx ClassicalSig types depth)
+    (term : Tm ClassicalSig types depth) where
+  type : Ty ClassicalSig types
+  raw : CChecks Γ term (.tm type)
+
+noncomputable def CDefRawView.sem {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth} {term : Tm ClassicalSig types depth}
+    (view : CDefRawView Γ term)
+    (env : CTypeEnv types) (bound : CBoundEnv depth) (expected : CPointed) :
+    ULift expected.carrier := cSem view.raw env bound expected
+
+noncomputable def CDefChecks.rawView {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth} {term : Tm ClassicalSig types depth}
+    {A : Ty ClassicalSig types} (checking : CDefChecks Γ term A) :
+    CDefRawView Γ term :=
+  match checking with
+  | .exact raw => ⟨_, raw⟩
+  | .app raw _ _ => ⟨_, raw⟩
+  | .lam _ raw _ _ => ⟨_, raw⟩
+  | .eq raw _ _ _ => ⟨_, raw⟩
+  | .eps raw _ _ => ⟨_, raw⟩
+  | .abs raw _ _ _ => ⟨_, raw⟩
+  | .rep raw _ _ _ => ⟨_, raw⟩
+  | .tyExists raw _ => ⟨_, raw⟩
+  | .conv source _ _ => source.rawView
+
+theorem CDefChecks.rawView_semantics {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth} {term : Tm ClassicalSig types depth}
+    {A : Ty ClassicalSig types} (checking : CDefChecks Γ term A)
+    (env : CTypeEnv types) (bound : CBoundEnv depth) (expected : CPointed) :
+    cDefSem checking env bound expected = checking.rawView.sem env bound expected := by
+  induction checking with
+  | conv source hB conversion ih => exact ih env bound
+  | exact | app | lam | eq | eps | abs | rep | tyExists => rfl
+
+theorem CDefChecks.coherent {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth} {term : Tm ClassicalSig types depth}
+    {A : Ty ClassicalSig types} (left right : CDefChecks Γ term A)
+    (env : CTypeEnv types) (bound : CBoundEnv depth) (expected : CPointed) :
+    cDefSem left env bound expected = cDefSem right env bound expected := by
+  rw [left.rawView_semantics, right.rawView_semantics]
+  unfold CDefRawView.sem
+  cases hl : left.rawView with
+  | mk leftType leftRaw =>
+    cases hr : right.rawView with
+    | mk rightType rightRaw =>
+      change cSem leftRaw env bound expected = cSem rightRaw env bound expected
+      have typeEqual := leftRaw.type_unique rightRaw
+      cases typeEqual
+      rw [leftRaw.unique rightRaw]
 
 noncomputable def evalDefEq {types : List Kind} {depth : Nat}
     {Γ : BoundCtx ClassicalSig types depth} {term : Tm ClassicalSig types depth}
@@ -168,10 +177,14 @@ theorem EqTm.typing {types : List Kind} {depth : Nat}
   | refl typing => exact ⟨typing, typing⟩
   | symm _ ih => exact ih.symm
   | trans _ _ ih₁ ih₂ => exact ⟨ih₁.1, ih₂.2⟩
-  | app _ _ ihf ihx => exact ⟨.app ihf.1 ihx.1, .app ihf.2 ihx.2⟩
-  | lam hA _ ih => exact ⟨.lam _ hA ih.1, .lam _ hA ih.2⟩
-  | beta body x hA bodyTyping argumentTyping resultTyping =>
-      exact ⟨.app (.lam body hA bodyTyping) argumentTyping, resultTyping⟩
+  | app leftRaw rightRaw _ _ ihf ihx =>
+      exact ⟨.app leftRaw ihf.1 ihx.1, .app rightRaw ihf.2 ihx.2⟩
+  | lam leftRaw rightRaw hA _ ih =>
+      exact ⟨.lam _ leftRaw hA ih.1, .lam _ rightRaw hA ih.2⟩
+  | beta body x hA applicationRaw bodyTyping argumentTyping resultTyping =>
+      cases applicationRaw with
+      | app functionRaw argumentRaw =>
+          exact ⟨.exact (.app functionRaw argumentRaw), resultTyping⟩
   | eta name fresh functionTyping etaTyping => exact ⟨etaTyping, functionTyping⟩
 
 /-- A typed context paired with the polymorphic bound environment consumed by
@@ -289,21 +302,37 @@ private theorem realizes_eq_false_of_false
     {Γ : BoundCtx ClassicalSig types depth}
     {proposition : Tm ClassicalSig types depth}
     (typing : HasTypeDefEq Γ proposition .boolTy)
+    (equalityTyping : HasTypeDefEq Γ
+      (.eq .boolTy proposition (.bool false)) .boolTy)
     (env : CTypeEnv types) (bound : CBoundEnv depth)
     (evaluates : cDefSem typing.certificate env bound cBool = ⟨false⟩) :
     CRealizes (Γ := Γ) env bound
       (.eq .boolTy proposition (.bool false)) .boolTy cBool true := by
-  let falseChecking : CDefChecks Γ (.bool false) .boolTy := .exact (.bool false)
-  refine ⟨.eq .boolTy typing.certificate falseChecking, ?_⟩
+  refine ⟨equalityTyping.certificate, ?_⟩
   classical
-  change ULift.up (alignCValue cBool cBool
-    (decide ((cDefSem typing.certificate env bound cBool).down =
-      (cDefSem falseChecking env bound cBool).down))) = ULift.up true
-  rw [evaluates, cDefSem_false falseChecking env bound]
-  simp [cBool, alignCValue]
-  apply cast_eq
+  rw [equalityTyping.certificate.rawView_semantics]
+  cases viewEq : equalityTyping.certificate.rawView with
+  | mk rawType raw =>
+    simp only [CDefRawView.sem]
+    cases raw with
+    | eq hA leftChecking rightChecking =>
+        have leftEval : cSem leftChecking env bound cBool = ⟨false⟩ := by
+          rw [← evaluates]
+          exact (typing.certificate.coherent (.exact leftChecking) env bound cBool).symm
+        have rightEval : cSem rightChecking env bound cBool = ⟨false⟩ := by
+          exact cDefSem_false (.exact rightChecking) env bound
+        have hASem : cSem hA env = cBool := cSem_certificate_coherent hA .boolTy env
+        change ULift.up (alignCValue cBool cBool
+          (decide ((cSem leftChecking env bound (cSem hA env)).down =
+            (cSem rightChecking env bound (cSem hA env)).down))) = ULift.up true
+        rw [hASem]
+        rw [leftEval, rightEval]
+        simp [cBool, alignCValue]
+        apply cast_eq
 
 theorem boolCases (typing : HasTypeDefEq Γ proposition .boolTy)
+    (falseEqualityTyping : HasTypeDefEq Γ
+      (.eq .boolTy proposition (.bool false)) .boolTy)
     (left : CEntails (Γ := Γ) (proposition :: hypotheses) conclusion)
     (right : CEntails (Γ := Γ)
       (.eq .boolTy proposition (.bool false) :: hypotheses) conclusion) :
@@ -327,26 +356,29 @@ theorem boolCases (typing : HasTypeDefEq Γ proposition .boolTy)
       apply right env bound
       intro candidate member
       rcases List.mem_cons.mp member with rfl | member
-      · apply realizes_eq_false_of_false typing env bound
+      · apply realizes_eq_false_of_false typing falseEqualityTyping env bound
         exact evaluatedEq
       · exact truths candidate member
 
-theorem eqRefl (hA : Kinded A) (typing : HasTypeDefEq Γ term A) :
+theorem eqRefl (_hA : Kinded A) (_typing : HasTypeDefEq Γ term A)
+    (conclusionTyping : HasTypeDefEq Γ (.eq A term term) .boolTy) :
     CEntails (Γ := Γ) hypotheses (.eq A term term) := by
   intro env bound truths
-  let cA := hA.certificate
-  let cterm := typing.certificate
-  refine ⟨.eq cA cterm cterm, ?_⟩
+  refine ⟨conclusionTyping.certificate, ?_⟩
   classical
-  change ULift.up (alignCValue cBool cBool
-    (decide ((cDefSem cterm env bound (cSem cA env)).down =
-      (cDefSem cterm env bound (cSem cA env)).down))) = ULift.up true
-  have decision : @decide
-      ((cDefSem cterm env bound (cSem cA env)).down =
-        (cDefSem cterm env bound (cSem cA env)).down)
-      (Classical.propDecidable _) = true := by simp
-  rw [decision]
-  exact congrArg ULift.up (alignCValue_self cBool true)
+  rw [conclusionTyping.certificate.rawView_semantics]
+  cases viewEq : conclusionTyping.certificate.rawView with
+  | mk rawType raw =>
+    simp only [CDefRawView.sem]
+    cases raw with
+    | eq cA leftChecking rightChecking =>
+        have operandsEqual : leftChecking = rightChecking := leftChecking.unique rightChecking
+        cases operandsEqual
+        change ULift.up (alignCValue cBool cBool
+          (decide ((cSem leftChecking env bound (cSem cA env)).down =
+            (cSem leftChecking env bound (cSem cA env)).down))) = ULift.up true
+        simp
+        exact congrArg ULift.up (alignCValue_self cBool true)
 
 theorem hypothesisMap
     (subset : ∀ proposition, proposition ∈ source → proposition ∈ target)
