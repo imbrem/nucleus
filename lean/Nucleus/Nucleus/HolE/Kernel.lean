@@ -108,9 +108,7 @@ inductive Proves {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
       (conclusionTyping : HasTypeDefEq Γ
         (.eq A (.rep A p (.abs A p x)) x) .boolTy)
       (hp : HasType (extendBound A emptyBound) p .boolTy)
-      (hxRaw : HasType Γ x A)
-      (hx : HasTypeDefEq Γ x A)
-      (predicateTyping : HasTypeDefEq Γ (instantiateOne p x) .boolTy) :
+      (hxRaw : HasType Γ x A) :
       Proves Γ H (instantiateOne p x) →
       Proves Γ H (.eq A (.rep A p (.abs A p x)) x)
   /-- In the guarded interpretation `Sub p = {x | p x ∨ ¬∃y, p y}`, a local
@@ -121,12 +119,7 @@ inductive Proves {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
         (instantiateOne p (.rep A p x)) .boolTy)
       (hp : HasType (extendBound A emptyBound) p .boolTy)
       (witnessRaw : HasType Γ witness A)
-      (witnessTyping : HasTypeDefEq Γ witness A)
-      (witnessPredicateTyping : HasTypeDefEq Γ (instantiateOne p witness) .boolTy)
-      (subtypeRaw : HasType Γ x (.sub A p))
-      (subtypeTyping : HasTypeDefEq Γ x (.sub A p))
-      (representationPredicateTyping :
-        HasTypeDefEq Γ (instantiateOne p (.rep A p x)) .boolTy) :
+      (subtypeRaw : HasType Γ x (.sub A p)) :
       Proves Γ H (instantiateOne p witness) →
       Proves Γ H (instantiateOne p (.rep A p x))
   /-- Existential introduction with one concrete well-kinded type witness. -/

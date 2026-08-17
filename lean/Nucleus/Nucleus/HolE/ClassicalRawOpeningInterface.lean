@@ -2,13 +2,15 @@ import Nucleus.HolE.ClassicalDefEqCoherence
 
 /-! # Interface for raw-typed semantic opening
 
-The predicate-sensitive kernel rules currently retain their definitionally
-typed premises and additionally expose syntax-directed typings for the values
-substituted into predicates.  This is the minimal sound interface needed by
-the concrete semantics.  Recovering variants whose premises are exclusively
-`HasTypeDefEq` is a later admissibility result: it requires component
-canonicity for `FamEq`, so that a converted composite typing can be inverted at
-the carrier types expected by substitution.
+The predicate-sensitive kernel rules expose syntax-directed typings for the
+values substituted into predicates.  These witnesses already imply the
+corresponding `HasTypeDefEq` facts, so the kernel does not duplicate them as
+premises.  This is the minimal sound interface needed by the concrete
+semantics.  Recovering variants whose premises accept arbitrary
+`HasTypeDefEq` derivations is a later admissibility result: it requires a
+component-decomposition capability for `FamEq`, so that a converted composite
+typing can be inverted at the carrier types expected by substitution.  Such a
+capability cannot be assumed for arbitrary signature-provided equalities.
 -/
 
 namespace Nucleus.HolE

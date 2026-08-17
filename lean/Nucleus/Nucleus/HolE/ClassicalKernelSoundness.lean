@@ -79,7 +79,6 @@ structure ClassicalKernelRuleLaws where
     Kinded A → HasTypeDefEq Γ (.eq A (.rep A p (.abs A p x)) x) .boolTy →
     HasType (extendBound A emptyBound) p .boolTy →
     HasType Γ x A →
-    HasTypeDefEq Γ x A → HasTypeDefEq Γ (instantiateOne p x) .boolTy →
     CEntails (Γ := Γ) H (instantiateOne p x) →
     CEntails (Γ := Γ) H (.eq A (.rep A p (.abs A p x)) x)
   repPredOfWitness : ∀ {types depth} {Γ : BoundCtx ClassicalSig types depth}
@@ -88,10 +87,7 @@ structure ClassicalKernelRuleLaws where
     Kinded A → HasTypeDefEq Γ (instantiateOne p (.rep A p x)) .boolTy →
     HasType (extendBound A emptyBound) p .boolTy →
     HasType Γ witness A →
-    HasTypeDefEq Γ witness A → HasTypeDefEq Γ (instantiateOne p witness) .boolTy →
     HasType Γ x (.sub A p) →
-    HasTypeDefEq Γ x (.sub A p) →
-    HasTypeDefEq Γ (instantiateOne p (.rep A p x)) .boolTy →
     CEntails (Γ := Γ) H (instantiateOne p witness) →
     CEntails (Γ := Γ) H (instantiateOne p (.rep A p x))
   tyExistsIntro : ∀ {types} {H : List (Tm ClassicalSig types 0)}
@@ -152,12 +148,10 @@ theorem Proves.sound_of_kernel_laws (laws : ClassicalKernelRuleLaws) :
       exact laws.antisymm hp hq conclusionTyping ihl ihr
   | absRep typed hA conclusionTyping hp hx =>
       exact laws.absRep hA conclusionTyping hp hx
-  | repAbs typed hA conclusionTyping hp hxRaw hx predicateTyping premise ih =>
-      exact laws.repAbs hA conclusionTyping hp hxRaw hx predicateTyping ih
-  | repPredOfWitness typed hA conclusionTyping hp witnessRaw witnessTyping
-      witnessPredicateTyping subtypeRaw subtypeTyping representationPredicateTyping premise ih =>
-      exact laws.repPredOfWitness hA conclusionTyping hp witnessRaw witnessTyping
-        witnessPredicateTyping subtypeRaw subtypeTyping representationPredicateTyping ih
+  | repAbs typed hA conclusionTyping hp hxRaw premise ih =>
+      exact laws.repAbs hA conclusionTyping hp hxRaw ih
+  | repPredOfWitness typed hA conclusionTyping hp witnessRaw subtypeRaw premise ih =>
+      exact laws.repPredOfWitness hA conclusionTyping hp witnessRaw subtypeRaw ih
   | tyExistsIntro typed conclusionTyping hA predicateTyping instanceTyping premise ih =>
       exact laws.tyExistsIntro hA conclusionTyping predicateTyping instanceTyping ih
   | modelSpec typed conclusionTyping predicateTyping modelInstanceTyping premise ih =>
