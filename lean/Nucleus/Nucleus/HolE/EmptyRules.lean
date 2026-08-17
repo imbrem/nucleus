@@ -222,6 +222,12 @@ def repPredOfWitness (A : Ty types)
     witnessProof
   exact ⟨resultEq.symm ▸ produced⟩
 
+/-- The checked empty-signature façade inherits the proved consistency of the
+underlying HolE kernel. -/
+theorem consistent
+    (proof : Proof (Ctx.empty : Ctx [] 0) [] (Term.falsehood Ctx.empty)) : False :=
+  classical_consistent proof.raw
+
 end Proof
 
 end Nucleus.HolE.Empty
