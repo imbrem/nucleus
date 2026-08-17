@@ -7,7 +7,8 @@ namespace Nucleus.HolE
 universe u
 set_option relaxedAutoImplicit true
 
-inductive EqTm {Sig : Signature} [SigTyping Sig] : {types : List Kind} → {depth : Nat} →
+inductive EqTm {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig] :
+    {types : List Kind} → {depth : Nat} →
     BoundCtx Sig types depth → Tm Sig types depth → Tm Sig types depth → Ty Sig types →
     Type u where
   | refl (typing : HasTypeDefEq Γ t A) : EqTm Γ t t A
@@ -27,11 +28,13 @@ inductive EqTm {Sig : Signature} [SigTyping Sig] : {types : List Kind} → {dept
       (etaTyping : HasTypeDefEq Γ (.lam A (.app (weaken f) (.bv 0))) (.arr A B)) :
       EqTm Γ (.lam A (.app (weaken f) (.bv 0))) f (.arr A B)
 
-def TypedHyps {Sig : Signature} [SigTyping Sig] (Γ : BoundCtx Sig types depth)
+def TypedHyps {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
+    (Γ : BoundCtx Sig types depth)
     (hypotheses : List (Tm Sig types depth)) : Prop :=
   ∀ p, p ∈ hypotheses → HasTypeDefEq Γ p .boolTy
 
-inductive Proves {Sig : Signature} [SigTyping Sig] {types : List Kind} : {depth : Nat} →
+inductive Proves {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
+    {types : List Kind} : {depth : Nat} →
     (Γ : BoundCtx Sig types depth) → List (Tm Sig types depth) → Tm Sig types depth →
     Type u where
   | hyp (typed : TypedHyps Γ H) (member : p ∈ H) : Proves Γ H p
@@ -113,7 +116,8 @@ inductive Proves {Sig : Signature} [SigTyping Sig] {types : List Kind} : {depth 
 namespace Proves
 
 /-- Every proof certificate carries the well-typedness of its hypotheses. -/
-theorem typedHypotheses {Sig : Signature} [SigTyping Sig] {types : List Kind}
+theorem typedHypotheses {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
+    {types : List Kind}
     {depth : Nat} {Γ : BoundCtx Sig types depth} {H : List (Tm Sig types depth)}
     {p : Tm Sig types depth} : Proves Γ H p → TypedHyps Γ H
   | .hyp typed _ | .truth typed | .falseElim typed _ _ |
@@ -128,7 +132,8 @@ theorem typedHypotheses {Sig : Signature} [SigTyping Sig] {types : List Kind}
   | .hypothesisMap typedK _ _ => typedK
 
 /-- Proofs are monotone in their hypothesis list. -/
-noncomputable def mapHypotheses {Sig : Signature} [SigTyping Sig] {types : List Kind}
+noncomputable def mapHypotheses {Sig : Signature} [SigTyping Sig]
+    [SigFamilyEquality Sig] {types : List Kind}
     {depth : Nat} {Γ : BoundCtx Sig types depth} {H K : List (Tm Sig types depth)}
     {p : Tm Sig types depth} (typedK : TypedHyps Γ K)
     (subset : ∀ proposition, proposition ∈ H → proposition ∈ K) :
@@ -136,7 +141,8 @@ noncomputable def mapHypotheses {Sig : Signature} [SigTyping Sig] {types : List 
   .hypothesisMap typedK subset
 
 /-- Adding an unused proposition to the local hypothesis list is admissible. -/
-noncomputable def weakenHypotheses {Sig : Signature} [SigTyping Sig] {types : List Kind}
+noncomputable def weakenHypotheses {Sig : Signature} [SigTyping Sig]
+    [SigFamilyEquality Sig] {types : List Kind}
     {depth : Nat} {Γ : BoundCtx Sig types depth} {H : List (Tm Sig types depth)}
     {p q : Tm Sig types depth} (hq : HasTypeDefEq Γ q .boolTy)
     (proof : Proves Γ H p) : Proves Γ (q :: H) p :=

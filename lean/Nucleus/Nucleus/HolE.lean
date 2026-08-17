@@ -233,7 +233,8 @@ class SigFamilyEquality (Sig : Signature.{u}) where
 
 /-- Definitional equality for type families.  In particular, family lambda is
 computational: applying it opens its body. -/
-inductive FamEq (Sig : Signature.{u}) : {types : List Kind} → {kind : Kind} →
+inductive FamEq (Sig : Signature.{u}) [rules : SigFamilyEquality Sig] :
+    {types : List Kind} → {kind : Kind} →
     Fam Sig types kind → Fam Sig types kind → Type (u + 1) where
   | refl : FamEq Sig A A
   | symm : FamEq Sig A B → FamEq Sig B A
@@ -253,12 +254,12 @@ inductive FamEq (Sig : Signature.{u}) : {types : List Kind} → {kind : Kind} �
       {A B : Fam Sig source kind} (equality : FamEq Sig A B)
       (σ : TySub Sig source target) :
       FamEq Sig (instantiateTypes σ A) (instantiateTypes σ B)
-  | signature [rules : SigFamilyEquality Sig]
-      (certificate : rules.Rule A B) : FamEq Sig A B
+  | signature (certificate : rules.Rule A B) : FamEq Sig A B
 
 /-- First-class equality certificates for ordinary HOL types.  Equality for
 higher-kinded families is `FamEq`; this is its `★` fragment. -/
-abbrev EqTy (Sig : Signature) {types : List Kind} (A B : Ty Sig types) :=
+abbrev EqTy (Sig : Signature) [SigFamilyEquality Sig]
+    {types : List Kind} (A B : Ty Sig types) :=
   FamEq Sig A B
 
 class SigTyping (Sig : Signature) where
@@ -321,7 +322,8 @@ abbrev HasType {Sig : Signature} [SigTyping Sig] (Γ : BoundCtx Sig types depth)
 
 /-- Typing modulo type-family definitional equality.  `HasType` remains the
 syntax-directed judgment used by the checker; this is its conversion closure. -/
-inductive HasTypeDefEq {Sig : Signature} [SigTyping Sig] : {types : List Kind} →
+inductive HasTypeDefEq {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig] :
+    {types : List Kind} →
     {depth : Nat} → BoundCtx Sig types depth → Tm Sig types depth → Ty Sig types → Prop where
   | exact (typing : HasType Γ term A) : HasTypeDefEq Γ term A
   | app : HasTypeDefEq Γ f (.arr A B) → HasTypeDefEq Γ x A →
@@ -344,7 +346,8 @@ inductive HasTypeDefEq {Sig : Signature} [SigTyping Sig] : {types : List Kind} �
 
 namespace HasTypeDefEq
 
-variable {Sig : Signature} [SigTyping Sig] {types : List Kind} {depth : Nat}
+variable {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
+  {types : List Kind} {depth : Nat}
   {Γ : BoundCtx Sig types depth} {term : Tm Sig types depth} {A B : Ty Sig types}
 
 theorem ofHasType (typing : HasType Γ term A) : HasTypeDefEq Γ term A := .exact typing
@@ -378,7 +381,7 @@ def Classification.rename (ρ : TyRen source target) :
 
 attribute [simp] renameTypes Classification.rename
 
-def FamEq.renameTypes {A B : Fam Sig source kind}
+def FamEq.renameTypes [SigFamilyEquality Sig] {A B : Fam Sig source kind}
     (equality : FamEq Sig A B) (ρ : TyRen source target) :
     FamEq Sig (renameTypes ρ A) (renameTypes ρ B) := .rename equality ρ
 
@@ -466,7 +469,7 @@ def Classification.instantiate (σ : TySub Sig source target) :
 
 attribute [simp] instantiateTypes Classification.instantiate
 
-def FamEq.instantiateTypes {A B : Fam Sig source kind}
+def FamEq.instantiateTypes [SigFamilyEquality Sig] {A B : Fam Sig source kind}
     (equality : FamEq Sig A B)
     (σ : TySub Sig source target) :
     FamEq Sig (instantiateTypes σ A) (instantiateTypes σ B) := .instantiate equality σ

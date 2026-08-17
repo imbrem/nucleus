@@ -382,7 +382,7 @@ theorem HasType.instantiateOne {Sig : Signature} [SigTyping Sig]
   intro i
   exact Fin.cases replacementTyping (fun j => Fin.elim0 j) i
 
-theorem HasTypeDefEq.renameTm {Sig : Signature} [SigTyping Sig]
+theorem HasTypeDefEq.renameTm {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
     {Γ : BoundCtx Sig types m} {Δ : BoundCtx Sig types n}
     {t : Tm Sig types m} {A : Ty Sig types} (typing : HasTypeDefEq Γ t A)
     (ρ : Fin m → Fin n) (contexts : ∀ i, Δ (ρ i) = Γ i) :
@@ -407,7 +407,7 @@ theorem HasTypeDefEq.renameTm {Sig : Signature} [SigTyping Sig]
       (HasTypeDefEq.tyExists (Γ := Δ) premise)
   | conv _ hB conversion ih => exact .conv (ih ρ contexts) hB conversion
 
-theorem HasTypeDefEq.weaken {Sig : Signature} [SigTyping Sig]
+theorem HasTypeDefEq.weaken {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
     {Γ : BoundCtx Sig types depth} {t : Tm Sig types depth} {A B : Ty Sig types}
     (typing : HasTypeDefEq Γ t A) :
     HasTypeDefEq (extendBound B Γ) (HolE.weaken t) A := by
@@ -415,12 +415,12 @@ theorem HasTypeDefEq.weaken {Sig : Signature} [SigTyping Sig]
   intro i
   rfl
 
-def WellTypedDefEqSub {Sig : Signature} [SigTyping Sig]
+def WellTypedDefEqSub {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
     (Γ : BoundCtx Sig types m) (Δ : BoundCtx Sig types n)
     (σ : Fin m → Tm Sig types n) : Prop :=
   ∀ i, HasTypeDefEq Δ (σ i) (Γ i)
 
-theorem liftWellTypedDefEqSub {Sig : Signature} [SigTyping Sig]
+theorem liftWellTypedDefEqSub {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
     {types : List Kind} {A : Ty Sig types}
     {Γ : BoundCtx Sig types m} {Δ : BoundCtx Sig types n}
     {σ : Fin m → Tm Sig types n} (wellTyped : WellTypedDefEqSub Γ Δ σ)
@@ -433,7 +433,7 @@ theorem liftWellTypedDefEqSub {Sig : Signature} [SigTyping Sig]
   · exact (wellTyped j).weaken
 
 set_option linter.defProp false in
-def Checks.instantiateDefEq {Sig : Signature} [SigTyping Sig]
+def Checks.instantiateDefEq {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
     {Γ : BoundCtx Sig types m} {Δ : BoundCtx Sig types n}
     {t : Tm Sig types m} {A : Ty Sig types} (typing : HasType Γ t A)
     (σ : Fin m → Tm Sig types n) (wellTyped : WellTypedDefEqSub Γ Δ σ) :
@@ -466,6 +466,7 @@ def Checks.instantiateDefEq {Sig : Signature} [SigTyping Sig]
       (HasTypeDefEq.rep hA hp (Checks.instantiateDefEq hx σ wellTyped))
 
 theorem HasTypeDefEq.instantiateTm {Sig : Signature} [SigTyping Sig]
+    [SigFamilyEquality Sig]
     {Γ : BoundCtx Sig types m} {Δ : BoundCtx Sig types n}
     {t : Tm Sig types m} {A : Ty Sig types} (typing : HasTypeDefEq Γ t A)
     (σ : Fin m → Tm Sig types n) (wellTyped : WellTypedDefEqSub Γ Δ σ) :
@@ -488,7 +489,7 @@ theorem HasTypeDefEq.instantiateTm {Sig : Signature} [SigTyping Sig]
       (HasTypeDefEq.tyExists (Γ := Δ) premise)
   | conv _ hB conversion ih => exact .conv (ih σ wellTyped) hB conversion
 
-theorem HasTypeDefEq.openBound {Sig : Signature} [SigTyping Sig]
+theorem HasTypeDefEq.openBound {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
     {Γ : BoundCtx Sig types depth} {body : Tm Sig types (depth + 1)}
     {replacement : Tm Sig types depth} {A B : Ty Sig types}
     (typedContext : TypedCtx Γ) (bodyTyping : HasTypeDefEq (extendBound A Γ) body B)
@@ -499,6 +500,7 @@ theorem HasTypeDefEq.openBound {Sig : Signature} [SigTyping Sig]
   exact Fin.cases replacementTyping (fun j => .exact (.bv (typedContext j) rfl)) i
 
 theorem HasTypeDefEq.renameTypes {Sig : Signature} [SigTyping Sig]
+    [SigFamilyEquality Sig]
     {Γ : BoundCtx Sig source depth} {t : Tm Sig source depth} {A : Ty Sig source}
     (typing : HasTypeDefEq Γ t A) (ρ : TyRen source target) :
     HasTypeDefEq (renameBoundCtx ρ Γ) (HolE.renameTypes ρ t)
@@ -528,6 +530,7 @@ theorem HasTypeDefEq.renameTypes {Sig : Signature} [SigTyping Sig]
       exact .conv (ih ρ) (by simpa using hB.renameTypes ρ) (conversion.renameTypes ρ)
 
 theorem HasTypeDefEq.instantiateTypes {Sig : Signature} [SigTyping Sig]
+    [SigFamilyEquality Sig]
     {Γ : BoundCtx Sig source depth} {t : Tm Sig source depth} {A : Ty Sig source}
     (typing : HasTypeDefEq Γ t A) {σ : TySub Sig source target}
     (wellFormed : WellFormedTySub σ) :

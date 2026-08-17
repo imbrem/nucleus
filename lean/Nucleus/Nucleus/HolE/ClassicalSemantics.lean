@@ -8,6 +8,9 @@ set_option relaxedAutoImplicit true
 
 abbrev ClassicalSig : Signature := fun _ => Empty
 
+instance : SigFamilyEquality ClassicalSig where
+  Rule := fun _ _ => Empty
+
 instance : SigTyping ClassicalSig where
   HasType symbol := nomatch symbol
   rename _ rule := nomatch rule
