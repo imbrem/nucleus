@@ -252,7 +252,7 @@ theorem not_realizes_false_as_true (env : CTypeEnv types) (bound : CBoundEnv dep
 does not require certificate coherence: literal-false inversion above handles
 every possible conversion wrapper. -/
 theorem no_closed_false_of_sound
-    (sound : ∀ proof : Proves (emptyBound : BoundCtx ClassicalSig [] 0) []
+    (sound : ∀ _proof : Proves (emptyBound : BoundCtx ClassicalSig [] 0) []
       (.bool false), CEntails (Γ := (emptyBound : BoundCtx ClassicalSig [] 0))
         [] (.bool false)) :
     Proves (emptyBound : BoundCtx ClassicalSig [] 0) [] (.bool false) → False := by
@@ -268,7 +268,7 @@ theorem no_closed_false_under_axiom_of_sound
     (axiomTerm : Tm ClassicalSig [] 0)
     (axiomTrue : CRealizes (Γ := (emptyBound : BoundCtx ClassicalSig [] 0))
       emptyCTypeEnv emptyCBoundEnv axiomTerm .boolTy cBool true)
-    (sound : ∀ proof : Proves (emptyBound : BoundCtx ClassicalSig [] 0) [axiomTerm]
+    (sound : ∀ _proof : Proves (emptyBound : BoundCtx ClassicalSig [] 0) [axiomTerm]
       (.bool false), CEntails (Γ := (emptyBound : BoundCtx ClassicalSig [] 0))
         [axiomTerm] (.bool false)) :
     Proves (emptyBound : BoundCtx ClassicalSig [] 0) [axiomTerm] (.bool false) → False := by
