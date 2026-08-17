@@ -1,5 +1,5 @@
 import Nucleus.HolE.ClassicalBoundTransport
-import Nucleus.HolE.ClassicalKernelAssembly
+import Nucleus.HolE.ClassicalEqTmSoundness
 
 /-! # Soundness of term eta conversion -/
 

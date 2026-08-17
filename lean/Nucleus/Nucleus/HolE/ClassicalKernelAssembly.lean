@@ -2,6 +2,7 @@ import Nucleus.HolE.ClassicalCoreKernelLaws
 import Nucleus.HolE.ClassicalSubtypeKernelLaws
 import Nucleus.HolE.ClassicalTypeExistentialKernelLaws
 import Nucleus.HolE.ClassicalBoundKernelLaws
+import Nucleus.HolE.ClassicalEtaKernelLaw
 
 /-! # Assembly of the classical kernel soundness laws
 
@@ -20,19 +21,13 @@ structure ClassicalRemainingEqTmLaws where
     HasTypeDefEq (extendBound A Γ) body B → HasTypeDefEq Γ x A →
     HasTypeDefEq Γ (openBound body x) B →
     CSemEq (Γ := Γ) (.app (.lam A body) x) (openBound body x) B
-  eta : ∀ {types depth} {Γ : BoundCtx ClassicalSig types depth}
-      {A B : Ty ClassicalSig types} {f : Tm ClassicalSig types depth},
-    (name : Nat) → Fresh name f → TypedCtx Γ →
-    HasTypeDefEq Γ f (.arr A B) →
-    HasTypeDefEq Γ (.lam A (.app (weaken f) (.bv 0))) (.arr A B) →
-    CSemEq (Γ := Γ) (.lam A (.app (weaken f) (.bv 0))) f (.arr A B)
 
 theorem ClassicalRemainingEqTmLaws.assemble
     (remaining : ClassicalRemainingEqTmLaws) : ClassicalEqTmRuleLaws where
   app := classical_eqTm_app
   lam := classical_eqTm_lam
   beta := remaining.beta
-  eta := remaining.eta
+  eta := classical_eqTm_eta
 
 structure ClassicalRemainingKernelLaws where
   eqTm : ClassicalRemainingEqTmLaws
