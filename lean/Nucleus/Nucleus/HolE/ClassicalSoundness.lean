@@ -211,14 +211,6 @@ theorem EqTm.typing {types : List Kind} {depth : Nat}
   | eta name fresh typedContext functionTyping etaTyping =>
       exact ⟨etaTyping, functionTyping⟩
 
-/-- A typed context paired with the polymorphic bound environment consumed by
-`cSem`.  At a lookup, the evaluator specializes `bound` to the denotation of
-the type certified by `typed`. -/
-structure CContextEnv {types : List Kind} {depth : Nat}
-    (Γ : BoundCtx ClassicalSig types depth) where
-  typed : TypedCtx Γ
-  bound : CBoundEnv depth
-
 /-- The canonical proof that extending a well-kinded bound context preserves
 well-kindedness.  Keeping this constructor named is useful because semantic
 environment validity below is indexed by the particular context typing
@@ -276,6 +268,14 @@ theorem extendCBoundEnv_valid {types : List Kind} {depth : Nat}
       (denoteChecked (typed j) env) expected
       (bound j (denoteChecked (typed j) env))
     exact valid j expected
+
+/-- A checked context environment packages exactly the data admitted by the
+soundness relation. -/
+structure CContextEnv {types : List Kind} {depth : Nat}
+    (Γ : BoundCtx ClassicalSig types depth) (env : CTypeEnv types) where
+  typed : TypedCtx Γ
+  bound : CBoundEnv depth
+  valid : CBoundValid typed env bound
 
 /-- A term realizes a semantic value when some proof-relevant typing
 certificate computes that value.  Existential certificate semantics is enough
