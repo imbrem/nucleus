@@ -223,4 +223,74 @@ theorem classical_antisymm
       simp
       exact congrArg ULift.up (alignCValue_self cBool true)
 
+theorem classical_choice
+    (_hA : Kinded A)
+    (conclusionTyping : HasTypeDefEq Γ (.app p (.eps A p)) .boolTy)
+    (_hp : HasTypeDefEq Γ p (.arr A .boolTy)) (_hx : HasTypeDefEq Γ x A)
+    (premiseTyping : HasTypeDefEq Γ (.app p x) .boolTy)
+    (premise : CEntails (Γ := Γ) H (.app p x)) :
+    CEntails (Γ := Γ) H (.app p (.eps A p)) := by
+  intro env bound truths
+  classical
+  have premiseTrue := entails_at_certificate premiseTyping premise env bound truths
+  refine ⟨conclusionTyping.certificate, ?_⟩
+  rw [premiseTyping.certificate.rawView_semantics] at premiseTrue
+  rw [conclusionTyping.certificate.rawView_semantics]
+  cases premiseView : premiseTyping.certificate.rawView with
+  | mk premiseType premiseRaw =>
+    rw [premiseView] at premiseTrue
+    simp only [CDefRawView.sem] at premiseTrue
+    cases premiseRaw with
+    | app premiseDomain premiseCodomain premiseFunction premiseArgument =>
+      cases conclusionView : conclusionTyping.certificate.rawView with
+      | mk conclusionType conclusionRaw =>
+        simp only [CDefRawView.sem]
+        cases conclusionRaw with
+        | app conclusionDomain conclusionCodomain conclusionFunction conclusionArgument =>
+          cases conclusionArgument with
+          | eps epsCarrier predicateChecking =>
+            have functionTypeEq := conclusionFunction.type_unique predicateChecking
+            injection functionTypeEq with _ codomainEq
+            subst conclusionType
+            have conclusionFunctionEq := conclusionFunction.unique predicateChecking
+            cases conclusionFunctionEq
+            have conclusionDomainEq := conclusionDomain.unique epsCarrier
+            cases conclusionDomainEq
+            have conclusionCodomainEq := conclusionCodomain.unique CChecks.boolTy
+            cases conclusionCodomainEq
+            have premiseFunctionTypeEq := premiseFunction.type_unique predicateChecking
+            cases premiseFunctionTypeEq
+            have premiseFunctionEq := premiseFunction.unique predicateChecking
+            cases premiseFunctionEq
+            have premiseDomainEq := premiseDomain.unique epsCarrier
+            cases premiseDomainEq
+            have premiseCodomainEq := premiseCodomain.unique CChecks.boolTy
+            cases premiseCodomainEq
+            simp only [cSem]
+            change ULift.up (alignCValue cBool cBool
+              ((cSem predicateChecking env bound
+                ⟨(cSem epsCarrier env).carrier → Bool, fun _ => false⟩).down
+                (alignCValue (cSem epsCarrier env) (cSem epsCarrier env)
+                  (if witness : ∃ value,
+                    (cSem predicateChecking env bound
+                      ⟨(cSem epsCarrier env).carrier → Bool, fun _ => false⟩).down value = true
+                  then Classical.choose witness else (cSem epsCarrier env).point)))) =
+                    ULift.up true
+            change ULift.up (alignCValue cBool cBool
+              ((cSem predicateChecking env bound
+                ⟨(cSem epsCarrier env).carrier → Bool, fun _ => false⟩).down
+                (cSem premiseArgument env bound (cSem epsCarrier env)).down)) =
+                    ULift.up true at premiseTrue
+            have witness : ∃ value,
+                (cSem predicateChecking env bound
+                  ⟨(cSem epsCarrier env).carrier → Bool, fun _ => false⟩).down value = true := by
+              refine ⟨(cSem premiseArgument env bound (cSem epsCarrier env)).down, ?_⟩
+              have downTrue := congrArg ULift.down premiseTrue
+              exact (alignCValue_self cBool _).symm.trans downTrue
+            rw [dif_pos witness]
+            have chosen := Classical.choose_spec witness
+            rw [alignCValue_self (cSem epsCarrier env) (Classical.choose witness)]
+            rw [chosen]
+            exact congrArg ULift.up (alignCValue_self cBool true)
+
 end Nucleus.HolE
