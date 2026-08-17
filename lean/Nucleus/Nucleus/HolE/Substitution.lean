@@ -564,6 +564,6 @@ theorem HasTypeDefEq.instantiateTypes {Sig : Signature} [SigTyping Sig]
   | conv _ hB conversion ih =>
       exact .conv (ih wellFormed)
         (by simpa using hB.instantiateTypes wellFormed)
-        (conversion.instantiateTypes σ)
+        (conversion.instantiateTypes σ wellFormed)
 
 end Nucleus.HolE

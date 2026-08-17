@@ -231,37 +231,6 @@ class SigFamilyEquality (Sig : Signature.{u}) where
   Rule : {types : List Kind} → {kind : Kind} →
     Fam Sig types kind → Fam Sig types kind → Type u
 
-/-- Definitional equality for type families.  In particular, family lambda is
-computational: applying it opens its body. -/
-inductive FamEq (Sig : Signature.{u}) [rules : SigFamilyEquality Sig] :
-    {types : List Kind} → {kind : Kind} →
-    Fam Sig types kind → Fam Sig types kind → Type (u + 1) where
-  | refl : FamEq Sig A A
-  | symm : FamEq Sig A B → FamEq Sig B A
-  | trans : FamEq Sig A B → FamEq Sig B C → FamEq Sig A C
-  | arr : FamEq Sig A A' → FamEq Sig B B' → FamEq Sig (.arr A B) (.arr A' B')
-  | app : FamEq Sig F F' → FamEq Sig A A' → FamEq Sig (.tyApp F A) (.tyApp F' A')
-  | lam : FamEq Sig body body' → FamEq Sig (.tyLam body) (.tyLam body')
-  | sub : FamEq Sig A B → p = q → FamEq Sig (.sub A p) (.sub B q)
-  | model : p = q → FamEq Sig (.model p) (.model q)
-  | beta (body : Fam Sig (domain :: types) codomain) (argument : Fam Sig types domain) :
-      FamEq Sig (.tyApp (.tyLam body) argument) (openType body argument)
-  | rename {source target : List Kind} {kind : Kind}
-      {A B : Fam Sig source kind} (equality : FamEq Sig A B)
-      (ρ : TyRen source target) :
-      FamEq Sig (renameTypes ρ A) (renameTypes ρ B)
-  | instantiate {source target : List Kind} {kind : Kind}
-      {A B : Fam Sig source kind} (equality : FamEq Sig A B)
-      (σ : TySub Sig source target) :
-      FamEq Sig (instantiateTypes σ A) (instantiateTypes σ B)
-  | signature (certificate : rules.Rule A B) : FamEq Sig A B
-
-/-- First-class equality certificates for ordinary HOL types.  Equality for
-higher-kinded families is `FamEq`; this is its `★` fragment. -/
-abbrev EqTy (Sig : Signature) [SigFamilyEquality Sig]
-    {types : List Kind} (A B : Ty Sig types) :=
-  FamEq Sig A B
-
 class SigTyping (Sig : Signature) where
   HasType : {types : List Kind} → Sig .tm → Ty Sig types → Prop
   rename {source target : List Kind} {symbol : Sig .tm} {A : Ty Sig source}
@@ -319,6 +288,41 @@ abbrev Kinded {Sig : Signature} [SigTyping Sig] (A : Fam Sig types kind) : Prop 
 
 abbrev HasType {Sig : Signature} [SigTyping Sig] (Γ : BoundCtx Sig types depth)
     (term : Tm Sig types depth) (A : Ty Sig types) : Prop := Checks Γ term (.tm A)
+
+def WellFormedTySub {Sig : Signature} [SigTyping Sig]
+    (σ : TySub Sig source target) : Prop :=
+  ∀ {kind} (v : TyVar source kind), Kinded (σ v)
+
+/-- Definitional equality for type families.  In particular, family lambda is
+computational: applying it opens its body. -/
+inductive FamEq (Sig : Signature.{u}) [SigTyping Sig] [rules : SigFamilyEquality Sig] :
+    {types : List Kind} → {kind : Kind} →
+    Fam Sig types kind → Fam Sig types kind → Type (u + 1) where
+  | refl : FamEq Sig A A
+  | symm : FamEq Sig A B → FamEq Sig B A
+  | trans : FamEq Sig A B → FamEq Sig B C → FamEq Sig A C
+  | arr : FamEq Sig A A' → FamEq Sig B B' → FamEq Sig (.arr A B) (.arr A' B')
+  | app : FamEq Sig F F' → FamEq Sig A A' → FamEq Sig (.tyApp F A) (.tyApp F' A')
+  | lam : FamEq Sig body body' → FamEq Sig (.tyLam body) (.tyLam body')
+  | sub : FamEq Sig A B → p = q → FamEq Sig (.sub A p) (.sub B q)
+  | model : p = q → FamEq Sig (.model p) (.model q)
+  | beta (body : Fam Sig (domain :: types) codomain) (argument : Fam Sig types domain) :
+      FamEq Sig (.tyApp (.tyLam body) argument) (openType body argument)
+  | rename {source target : List Kind} {kind : Kind}
+      {A B : Fam Sig source kind} (equality : FamEq Sig A B)
+      (ρ : TyRen source target) :
+      FamEq Sig (renameTypes ρ A) (renameTypes ρ B)
+  | instantiate {source target : List Kind} {kind : Kind}
+      {A B : Fam Sig source kind} (equality : FamEq Sig A B)
+      (σ : TySub Sig source target) (wellFormed : WellFormedTySub σ) :
+      FamEq Sig (instantiateTypes σ A) (instantiateTypes σ B)
+  | signature (certificate : rules.Rule A B) : FamEq Sig A B
+
+/-- First-class equality certificates for ordinary HOL types.  Equality for
+higher-kinded families is `FamEq`; this is its `★` fragment. -/
+abbrev EqTy (Sig : Signature) [SigTyping Sig] [SigFamilyEquality Sig]
+    {types : List Kind} (A B : Ty Sig types) :=
+  FamEq Sig A B
 
 /-- Typing modulo type-family definitional equality.  `HasType` remains the
 syntax-directed judgment used by the checker; this is its conversion closure. -/
@@ -381,7 +385,8 @@ def Classification.rename (ρ : TyRen source target) :
 
 attribute [simp] renameTypes Classification.rename
 
-def FamEq.renameTypes [SigFamilyEquality Sig] {A B : Fam Sig source kind}
+def FamEq.renameTypes [SigTyping Sig] [SigFamilyEquality Sig]
+    {A B : Fam Sig source kind}
     (equality : FamEq Sig A B) (ρ : TyRen source target) :
     FamEq Sig (renameTypes ρ A) (renameTypes ρ B) := .rename equality ρ
 
@@ -434,10 +439,6 @@ theorem Kinded.weakenTypes {Sig : Signature} [SigTyping Sig]
   change Kinded (renameTypes ρ A)
   simpa only [renameBoundCtx_empty, Classification.rename] using checking.renameTypes ρ
 
-def WellFormedTySub {Sig : Signature} [SigTyping Sig]
-    (σ : TySub Sig source target) : Prop :=
-  ∀ {kind} (v : TyVar source kind), Kinded (σ v)
-
 theorem WellFormedTySub.lift {Sig : Signature} [SigTyping Sig]
     {σ : TySub Sig source target} (wellFormed : WellFormedTySub σ) :
     WellFormedTySub (liftTySub (kind := kind) σ) := by
@@ -469,10 +470,12 @@ def Classification.instantiate (σ : TySub Sig source target) :
 
 attribute [simp] instantiateTypes Classification.instantiate
 
-def FamEq.instantiateTypes [SigFamilyEquality Sig] {A B : Fam Sig source kind}
+def FamEq.instantiateTypes [SigTyping Sig] [SigFamilyEquality Sig]
+    {A B : Fam Sig source kind}
     (equality : FamEq Sig A B)
-    (σ : TySub Sig source target) :
-    FamEq Sig (instantiateTypes σ A) (instantiateTypes σ B) := .instantiate equality σ
+    (σ : TySub Sig source target) (wellFormed : WellFormedTySub σ) :
+    FamEq Sig (instantiateTypes σ A) (instantiateTypes σ B) :=
+  .instantiate equality σ wellFormed
 
 theorem Checks.instantiateTypes {Sig : Signature} [SigTyping Sig]
     {Γ : BoundCtx Sig source depth} {expression : Expr Sig source sort depth}
