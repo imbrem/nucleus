@@ -196,18 +196,57 @@ structure CContextEnv {types : List Kind} {depth : Nat}
   typed : TypedCtx Γ
   bound : CBoundEnv depth
 
-/-- Truth of hypotheses, parameterized by the eventual evaluator for typing
-modulo `FamEq`.  Keeping this predicate evaluator-parametric separates the
-logical induction from the conversion/substitution proof. -/
+/-- A term realizes a semantic value when some proof-relevant typing
+certificate computes that value.  Existential certificate semantics is enough
+for kernel soundness and avoids making consistency wait on proof-irrelevance
+of arbitrary `FamEq` certificate paths. -/
+def CRealizes {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth} (env : CTypeEnv types)
+    (bound : CBoundEnv depth) (term : Tm ClassicalSig types depth)
+    (A : Ty ClassicalSig types) (expected : CPointed)
+    (value : expected.carrier) : Prop :=
+  ∃ checking : CDefChecks Γ term A,
+    cDefSem checking env bound expected = ⟨value⟩
+
 def CHypsTrue {types : List Kind} {depth : Nat}
-    {Γ : BoundCtx ClassicalSig types depth}
-    (eval : ∀ {term A}, HasTypeDefEq Γ term A →
-      CTypeEnv types → CBoundEnv depth → CPointed → Bool)
-    (typeEnv : CTypeEnv types) (bound : CBoundEnv depth)
-    (hypotheses : List (Tm ClassicalSig types depth)) : Prop :=
+    {Γ : BoundCtx ClassicalSig types depth} (env : CTypeEnv types)
+    (bound : CBoundEnv depth) (hypotheses : List (Tm ClassicalSig types depth)) : Prop :=
   ∀ proposition, proposition ∈ hypotheses →
-    ∀ typing : HasTypeDefEq Γ proposition .boolTy,
-      eval typing typeEnv bound cBool = true
+    CRealizes (Γ := Γ) env bound proposition .boolTy cBool true
+
+def CEntails {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth}
+    (hypotheses : List (Tm ClassicalSig types depth))
+    (conclusion : Tm ClassicalSig types depth) : Prop :=
+  ∀ (env : CTypeEnv types) (bound : CBoundEnv depth),
+    CHypsTrue (Γ := Γ) env bound hypotheses →
+    CRealizes (Γ := Γ) env bound conclusion .boolTy cBool true
+
+theorem CRealizes.boolean (literal : Bool) (env : CTypeEnv types)
+    (bound : CBoundEnv depth) :
+    CRealizes (Γ := Γ) env bound (.bool literal) .boolTy cBool literal := by
+  refine ⟨.exact (.bool literal), ?_⟩
+  change ULift.up (alignCValue cBool cBool literal) = ULift.up literal
+  exact congrArg ULift.up (alignCValue_self cBool literal)
+
+theorem cDefSem_false {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth}
+    {A : Ty ClassicalSig types} (checking : CDefChecks Γ (.bool false) A)
+    (env : CTypeEnv types) (bound : CBoundEnv depth) :
+    cDefSem checking env bound cBool = ⟨false⟩ := by
+  cases checking with
+  | exact raw =>
+      cases raw
+      change ULift.up (alignCValue cBool cBool false) = ULift.up false
+      exact congrArg ULift.up (alignCValue_self cBool false)
+  | conv source hB conversion => exact cDefSem_false source env bound
+termination_by sizeOf checking
+
+theorem not_realizes_false_as_true (env : CTypeEnv types) (bound : CBoundEnv depth) :
+    ¬ CRealizes (Γ := Γ) env bound (.bool false) .boolTy cBool true := by
+  rintro ⟨checking, evaluates⟩
+  rw [cDefSem_false checking env bound] at evaluates
+  exact Bool.noConfusion (congrArg ULift.down evaluates)
 
 /-- The two fundamental transport facts needed by beta, eta, generalization,
 and type quantification.  They are intentionally named here so the kernel
