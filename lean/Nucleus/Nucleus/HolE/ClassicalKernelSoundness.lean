@@ -106,34 +106,35 @@ theorem Proves.sound_of_kernel_laws (laws : ClassicalKernelRuleLaws) :
       Proves Γ H p → CEntails (Γ := Γ) H p := by
   intro types depth Γ H p proof
   induction proof with
-  | hyp typed member => exact CEntails.hyp member
-  | truth typed => exact CEntails.truth
-  | falseElim typed hp premise ih => exact CEntails.falseElim ih
-  | boolCases typed hp leftTyped rightTyped left right ihl ihr =>
-      exact CEntails.boolCases hp ihl ihr
-  | eqRefl typed hA hx => exact CEntails.eqRefl hA hx
-  | eqMp typed hA hp hx hy equality premise iheq ihp =>
+  | hyp typed conclusionTyping member => exact CEntails.hyp member
+  | truth typed conclusionTyping => exact CEntails.truth
+  | falseElim typed conclusionTyping hp premise ih => exact CEntails.falseElim ih
+  | boolCases typed hp conclusionTyping leftTyped rightTyped left right ihl ihr =>
+      exact CEntails.boolCases hp (rightTyped _ (List.mem_cons_self)) ihl ihr
+  | eqRefl typed conclusionTyping hA hx => exact CEntails.eqRefl hA hx conclusionTyping
+  | eqMp typed hA conclusionTyping hp hx hy equality premise iheq ihp =>
       exact laws.eqMp hA hp hx hy iheq ihp
-  | choice typed hA hp hx premise ih => exact laws.choice hA hp hx ih
-  | generalize typed hA bodyTyping premise ih =>
+  | choice typed hA conclusionTyping hp hx premise ih => exact laws.choice hA hp hx ih
+  | generalize typed hA conclusionTyping bodyTyping premise ih =>
       exact laws.generalize hA bodyTyping ih
-  | weakenBound typed hA typedK embedding premise ih =>
+  | weakenBound typed hA typedK conclusionTyping embedding premise ih =>
       exact laws.weakenBound hA embedding ih
-  | hypothesisMap typedK subset premise ih => exact CEntails.hypothesisMap subset ih
-  | convert typed equality premise ih => exact laws.convert equality ih
-  | eqOfEqTm typed hA equality => exact laws.eqOfEqTm hA equality
-  | antisymm typed hp hq leftTyped rightTyped left right ihl ihr =>
+  | hypothesisMap typedK conclusionTyping subset premise ih =>
+      exact CEntails.hypothesisMap subset ih
+  | convert typed conclusionTyping equality premise ih => exact laws.convert equality ih
+  | eqOfEqTm typed hA conclusionTyping equality => exact laws.eqOfEqTm hA equality
+  | antisymm typed hp hq leftTyped conclusionTyping rightTyped left right ihl ihr =>
       exact laws.antisymm hp hq ihl ihr
-  | absRep typed hA hp hx => exact laws.absRep hA hp hx
-  | repAbs typed hA hp hx predicateTyping premise ih =>
+  | absRep typed hA conclusionTyping hp hx => exact laws.absRep hA hp hx
+  | repAbs typed hA conclusionTyping hp hx predicateTyping premise ih =>
       exact laws.repAbs hA hp hx predicateTyping ih
-  | repPredOfWitness typed hA hp witnessTyping witnessPredicateTyping
+  | repPredOfWitness typed hA conclusionTyping hp witnessTyping witnessPredicateTyping
       subtypeTyping representationPredicateTyping premise ih =>
       exact laws.repPredOfWitness hA hp witnessTyping witnessPredicateTyping
         subtypeTyping representationPredicateTyping ih
-  | tyExistsIntro typed hA predicateTyping instanceTyping premise ih =>
+  | tyExistsIntro typed conclusionTyping hA predicateTyping instanceTyping premise ih =>
       exact laws.tyExistsIntro hA predicateTyping instanceTyping ih
-  | modelSpec typed predicateTyping modelInstanceTyping premise ih =>
+  | modelSpec typed conclusionTyping predicateTyping modelInstanceTyping premise ih =>
       exact laws.modelSpec predicateTyping modelInstanceTyping ih
 
 end Nucleus.HolE
