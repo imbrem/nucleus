@@ -49,10 +49,17 @@ maps the ladder onto the four weeks after this one.
 
 There is no OpenTheory, Metamath, or Alethe code anywhere in the tree.
 
-### The actual bottleneck is not code, it is landing
+### The trunk is thin, and the spikes are not indexed
 
-**247 open issues, ~50 open PRs.** Most open PRs sit in deep stacks whose bases
-are other unmerged branches:
+**247 open issues, ~50 open PRs — and this is deliberate.** They are *spikes*:
+exploratory designs kept off the trunk so alternatives can be compared before
+the real design is committed to. `imbrem/covalence` tried the opposite, merging
+carefully designed work that only proved unwieldy once written against, and
+ended up with a trunk of overlapping half-finished designs that confused every
+agent who touched it. Here, merging is the risky act and an open spike is the
+safe one. See `AGENTS.md` §2.
+
+Most open PRs therefore sit in deep stacks based on other unmerged branches:
 
 - `#396 → #397 → #398 → #399 → #455` — HOL kernel in Rust (Aug 6, all draft)
 - `#587 → #588 → #589 → #591 → #593` — HOL kernel in Rust *again* (Aug 11, all draft)
@@ -61,10 +68,13 @@ are other unmerged branches:
 - `#499 → #500 → #501`, `#418 → #419`, `#456 → #474`, `#605 → #632`
 - `#700 → #701 → #705/#711`
 
-Two independent abandoned attempts at the same Rust HOL kernel is the diagnosis:
-agent throughput vastly exceeds landing throughput, so work is produced,
-stranded, and then re-produced. **Every structural rule in section 7 exists to
-fix that one number.**
+Two independent Rust HOL kernel stacks are two designs for the same component,
+kept alive on purpose. The gap is not that they are open — it is that **nothing
+records what either one proved.** `notes/spikes/` is empty, so the comparison
+they exist to enable cannot actually be made, and a third attempt would start
+from scratch rather than from what the first two learned.
+
+That is the one thing to fix before building: not the count, the index.
 
 ---
 
@@ -221,24 +231,29 @@ which, at 50 open PRs, is the state we are trying to escape.
 Nothing else starts until this is done. It is the highest-leverage work in the
 fortnight.
 
-1. **Close the two dead Rust-kernel stacks.** `#396–#399`, `#455`, `#587–#589`,
-   `#591`, `#593`. Comment with the link to this plan; harvest anything worth
-   keeping into a single `notes/` file first. They are superseded by Lane B and
-   they are actively misleading agents about where the kernel lives.
-2. **Close or convert the propositional/SAT stacks.** `#606/#607/#627/#643/#646`,
-   `#625/#626/#647–#652/#674`, `#499–#501`. Kernel L3 is out of scope; these
-   become issues, not open PRs.
+1. **Index the Rust-kernel spikes** into `notes/spikes/hol-kernel-rust.md`.
+   `#396–#399`/`#455` and `#587–#589`/`#591`/`#593` are two designs for the
+   thing Lane B is about to build for a third time. What did each get right,
+   and where did each fight the grain — especially the API friction? Leave them
+   open. This note is the input to Lane B, and it is worth more than any hour
+   Lane B will spend.
+2. **Index the propositional/SAT spikes** into `notes/spikes/proposition-tables.md`.
+   Kernel L3 is out of scope for the fortnight, so the note is the deliverable
+   and the branches stay exactly where they are.
 3. **Land the cheap independents today**: `#481` (BLAKE3 consts), `#484` (direnv
-   check), `#418 → #419` (SQLite wrapper) if still clean.
+   check), `#418 → #419` (SQLite wrapper) if still clean. These are finished
+   work, not spikes.
 4. **Merge `#700 → #701`** — or set the Day-2 fallback trigger.
-5. **Label every remaining issue `mvp` / `post-mvp` / `someday`.** Agents may
-   only pick up `mvp`. Expect ~15 `mvp` labels out of 247.
-6. **Write `AGENTS.md` at repo root** — it does not exist, and it is why agents
-   keep rediscovering the same context. It should contain: the section-7 rules,
-   the TCB budget, the lane map, and "the Lean development is the specification;
-   Rust transcribes it."
+5. **Label every issue `mvp` / `post-mvp` / `spike`.** Agents may only pick up
+   `mvp`. Expect ~15 `mvp` labels out of 247; most of the rest are `spike`, and
+   `spike` explicitly means *leave it alone*.
+6. **`AGENTS.md` now exists** — written alongside this plan. It carries the
+   spike model, the trust boundary, the read policy, and the working rules.
+   Point every agent at it first.
 
-**Target end state: ≤ 8 open PRs, ≤ 20 open `mvp` issues.**
+**Target end state: `notes/spikes/` holds two real notes, ≤ 20 open `mvp`
+issues, and every remaining PR is labelled a spike rather than looking like
+debt.**
 
 ---
 
@@ -298,8 +313,9 @@ These are not style preferences. Each one maps to a specific failure already
 visible in the repository.
 
 **Stacking**
-- *Maximum stack depth 2.* No PR may be based on a branch that is itself based
-  on an unmerged branch. → the five-deep stacks are why nothing lands.
+- *Maximum stack depth 2* — **for MVP lanes only.** Spikes may stack as deep as
+  they like; that is their nature. Work that has to land must not bury itself
+  under work that is deliberately staying open.
 - One open PR per lane at a time. A lane with an open PR writes tests, not more
   features.
 - Lane H (integrator) is the only agent permitted to rebase another lane's
@@ -337,7 +353,8 @@ everything outside the TCB, and you read only the TCB and `Sound.lean`.
 | --- | --- | --- |
 | `run_sound` is harder than it looks | `Sound.lean` not started by Thu 20 | Prove it for `EqTm` only; ship `Proves` soundness as the abstract theorem plus exhaustive differential testing, and say so plainly in the release notes |
 | #701 review swamps Day 1–2 | not merged by Tue 18 EOD | Take the `HolLN` fallback. Monomorphic MVP, migrate in week 3 |
-| Backlog regrows | > 12 open PRs on any day | Lane H stops feature work and lands or closes until it is back under 8 |
+| A lane starts behaving like a spike | An MVP branch open > 2 days with no merge path | Fine for a spike, fatal for a lane. Lane H either lands it, or reclassifies it as a spike, writes the note, and re-plans the lane |
+| An agent "cleans up" the spikes | Any PR closing or consolidating open branches | Revert, and re-point the agent at `AGENTS.md` §2. The spikes are source material |
 | Rust/Lean drift | any fuzz divergence | Stop the lane. Divergence is a soundness bug until proven a test bug |
 | Scope creep from the ladder | any PR touching WASM, tactics, or import frontends | Close it. Those lanes open on Day 15 |
 | Mathlib in the Lean trust base | — | Accept and document. The Lean development is a specification, and Mathlib's axioms are already the ones `#print axioms` reports |
@@ -372,12 +389,18 @@ far better than any of the above.
 
 ## 10. The single most important thing
 
-You do not have a code-production problem. Fourteen thousand lines of
-sorry-free Lean in a few weeks is exceptional throughput.
+You do not have a production problem — fourteen thousand lines of sorry-free
+Lean in a few weeks is exceptional throughput — and you do not have a backlog
+problem, because the backlog is a deliberate spike orchard.
 
-You have a **landing** problem: 247 open issues, 50 open PRs, and the same Rust
-kernel started and abandoned twice. If the only thing this fortnight achieves is
-that a proven kernel is merged on `main` and the backlog is under 20, that is a
-better outcome than every ladder level advancing one step.
+What you have is an **indexing** problem. Two Rust HOL kernel designs exist and
+neither has been written up, so the comparison they were built to enable cannot
+be made, and Lane B is about to become a third attempt starting from zero. The
+same holds across the propositional stacks.
+
+The fortnight's real precondition is therefore three hours of writing, not of
+coding: turn the spikes into `notes/spikes/` entries. Do that, and Lane B starts
+from two designs' worth of hard-won API knowledge instead of from the Lean
+alone. Skip it, and the most likely outcome of this fortnight is a fourth spike.
 
 Section 5 is therefore not preamble. It is the plan.

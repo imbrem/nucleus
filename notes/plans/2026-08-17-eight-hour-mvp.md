@@ -7,6 +7,17 @@ something to point at, and to learn where the API hurts before the real build.
 **Explicit non-goal:** anything from the fortnight plan. No `run_sound`, no Lean
 work at all, no CBOR, no content addressing, no PRs, no review.
 
+**What this is, precisely: the third Rust HOL kernel spike** — after
+`#396–#399`/`#455` and `#587–#593` — and the first one built to be *written
+against* the same day. It stays on `develop` and does not go near `main`. Its
+primary output is not the code; it is a verdict on the Rust API, which is the
+thing that reads fine on paper and turns out unwieldy in practice, and which
+sank the equivalent designs in `imbrem/covalence`.
+
+Before starting, read `notes/spikes/hol-kernel-rust.md` if it exists. If it does
+not, the first 20 minutes of the evening are better spent skimming the two prior
+stacks and writing it than writing Rust.
+
 ---
 
 ## 1. Scope: exactly what ships tonight
@@ -265,9 +276,13 @@ tonight. The compiler and `tests/corpus.rs` are the review.
 
 Three things you cannot get from planning, only from a running kernel:
 
-1. **The API shape.** You will find out within an hour whether opaque theorem
-   handles want to be `Rc<Thm>`, an arena index, or a session-scoped `u32` —
-   and that decision is currently unmade and blocking the real build.
+1. **The API shape — this is the point of the evening.** You will find out
+   within an hour whether opaque theorem handles want to be `Rc<Thm>`, an arena
+   index, or a session-scoped `u32`; whether rule methods want to take handles
+   or borrowed terms; whether the session needs to own the arena. Those
+   decisions are currently unmade, they are the ones that were repeatedly got
+   wrong in covalence, and no amount of review finds them — only writing
+   `session.rs` and `corpus.rs` against the interface does.
 2. **Where the Lean is awkward to transcribe.** Every place the Rust fights the
    Lean is a place `Kernel/Repr.lean` should differ from `HolLN`. Write these
    down as you hit them; they are the input to the fortnight's Lane A.
@@ -275,8 +290,14 @@ Three things you cannot get from planning, only from a running kernel:
    protocol holds for 8 hours, it holds for 14 days. If it doesn't, you have
    found that out for the price of one evening instead of one sprint.
 
-Keep a running `notes/tonight.md`. Every friction point goes in it. That file
-is worth more tomorrow than the code is.
+**Write the spike note tonight, not tomorrow.** Keep `notes/spikes/hol-kernel-rust.md`
+open and append to it as you go — every place the API fought back, every
+signature you wanted to change at hour 3 and couldn't, every rule whose side
+conditions were awkward to express. Append, do not rewrite: the two earlier
+spikes belong in the same file so the three can be read against each other.
+
+That file is the deliverable. The code is the experiment that produced it, and
+it is allowed to be thrown away.
 
 ### Knock-on for the fortnight plan
 
