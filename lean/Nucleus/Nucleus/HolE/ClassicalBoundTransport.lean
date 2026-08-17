@@ -238,4 +238,17 @@ theorem CRealizes.of_weaken
   rw [CBoundEnv.rename_succ_extend] at transported
   exact transported.symm.trans targetValue
 
+theorem CRealizes.of_weakenAt
+    {Γ : BoundCtx ClassicalSig types depth} {term : Tm ClassicalSig types depth}
+    {A B : Ty ClassicalSig types} {env : CTypeEnv types}
+    {bound : CBoundEnv (depth + 1)} {expected : CPointed}
+    {value : expected.carrier}
+    (typing : HasTypeDefEq Γ term A)
+    (realizes : CRealizes (Γ := extendBound B Γ) env bound
+      (HolE.weaken term) A expected value) :
+    CRealizes (Γ := Γ) env (bound.rename Fin.succ) term A expected value := by
+  obtain ⟨target, targetValue⟩ := realizes
+  let source := typing.certificate
+  exact ⟨source, (cDefSem_weaken source target env bound expected).symm.trans targetValue⟩
+
 end Nucleus.HolE
