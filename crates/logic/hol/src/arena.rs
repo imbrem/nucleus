@@ -221,7 +221,6 @@ pub enum Expr {
 /// Simple traversal-oriented wire form. `ix` contains every arena child in
 /// constructor order; `var` is present only for variable leaves.
 #[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct ExprWire {
     tag: String,
     #[serde(default)]

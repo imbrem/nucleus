@@ -78,6 +78,15 @@ private def field? (entries : List (Nucleus.Cbor × Nucleus.Cbor))
   | [value] => some value
   | _ => none
 
+/-- Serde's optional-field behavior: absence is distinct from a duplicate,
+which remains a decoding error. -/
+private def optionalField? (entries : List (Nucleus.Cbor × Nucleus.Cbor))
+    (name : String) : Option (Option Nucleus.Cbor) :=
+  match valuesFor name entries with
+  | [] => some none
+  | [value] => some (some value)
+  | _ => none
+
 private def traverse {α : Type} (decode : Nucleus.Cbor → Option α) :
     List Nucleus.Cbor → Option (List α)
   | [] => some []
@@ -173,17 +182,18 @@ def encodeExpr : Expr → Nucleus.Cbor
 def decodeExpr? (value : Nucleus.Cbor) : Option Expr := do
   let entries ← asMap? value
   let children ← traverse decodeRef? (← asArray? (← field? entries "ix"))
-  match ← field? entries "tag", children with
-  | .primitive (.text "KIND_STAR"), [] => some .kindStar
-  | .primitive (.text "KIND_ARR"), [domain, codomain] => some (.kindArr domain codomain)
-  | .primitive (.text "TY_BOOL"), [] => some .tyBool
-  | .primitive (.text "TY_ARR"), [domain, codomain] => some (.tyArr domain codomain)
-  | .primitive (.text "TY_APP"), [function, argument] => some (.tyApp function argument)
-  | .primitive (.text "TY_LAM"), [domain, body] => some (.tyLam domain body)
-  | .primitive (.text "TY_BV"), [] => some (.tyBv (← asUInt32? (← field? entries "var")))
-  | .primitive (.text "TY_SUB"), [carrier, predicate] => some (.tySub carrier predicate)
-  | .primitive (.text "TY_MODEL"), [predicate] => some (.tyModel predicate)
-  | _, _ => none
+  let var ← optionalField? entries "var"
+  match ← field? entries "tag", children, var with
+  | .primitive (.text "KIND_STAR"), [], none => some .kindStar
+  | .primitive (.text "KIND_ARR"), [domain, codomain], none => some (.kindArr domain codomain)
+  | .primitive (.text "TY_BOOL"), [], none => some .tyBool
+  | .primitive (.text "TY_ARR"), [domain, codomain], none => some (.tyArr domain codomain)
+  | .primitive (.text "TY_APP"), [function, argument], none => some (.tyApp function argument)
+  | .primitive (.text "TY_LAM"), [domain, body], none => some (.tyLam domain body)
+  | .primitive (.text "TY_BV"), [], some var => some (.tyBv (← asUInt32? var))
+  | .primitive (.text "TY_SUB"), [carrier, predicate], none => some (.tySub carrier predicate)
+  | .primitive (.text "TY_MODEL"), [predicate], none => some (.tyModel predicate)
+  | _, _, _ => none
 
 def encodeSegment (segment : Segment) : Nucleus.Cbor := map [
   ("start", encodeRef segment.start),
@@ -467,11 +477,12 @@ private theorem uint64_ref (ref : Ref) :
   exact Ref.ofNat?_value ref
 
 set_option linter.unusedSimpArgs false in
-set_option maxHeartbeats 800000 in
+set_option maxHeartbeats 4000000 in
 -- Expanding the generic map decoder once per expression constructor is costly.
 @[simp] theorem decodeExpr?_encode (expr : Expr) :
     decodeExpr? (encodeExpr expr) = some expr := by
-  cases expr <;> simp [encodeExpr, exprMap, decodeExpr?, field?, valuesFor, traverse]
+  cases expr <;>
+    simp [encodeExpr, exprMap, decodeExpr?, field?, optionalField?, valuesFor, traverse]
 
 @[simp] theorem decodeSegment?_encode (segment : Segment) :
     decodeSegment? (encodeSegment segment) = some segment := by
