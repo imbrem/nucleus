@@ -2,77 +2,42 @@ import Nucleus.HolE.EmptySyntax
 import Nucleus.HolSurface
 
 /-!
-# Audited Rust-to-Lean HolE constructor map
+# Audited Rust-to-Lean HolE type-former map
 
-The `core` cases lower one-for-one to `HolE Empty`. Links and casts are surface
-cases. After resolution and validation, links yield a closed core type or term.
-A cast lowers to its operand when conversion succeeds and to an arbitrary
-inhabitant of its target type otherwise.
+Each constructor of Rust's v0 `Expr` has exactly one case below.  References
+are resolved and checked by the later LCF pass; this file records which raw
+`HolE Empty` constructor that pass must construct.
 -/
 
 namespace Nucleus.HolSurface.RustMapping
 
-open Nucleus.HolE.Empty
-
-inductive CoreConstructor where
+inductive CoreTypeFormer where
   | kindStar | kindArr
-  | boolTy | arr | tyApp | tyLam | tyBv | sub | tyExists | model
-  | bv | fv | app | lam | bool | eq | eps | abs | rep
+  | boolTy | arr | app | lam | bv | sub | model
   deriving DecidableEq
 
-inductive Lowering where
-  | core (constructor : CoreConstructor)
-  | closedTypeLink
-  | closedTermLink
-  | typeCast
-  deriving DecidableEq
+def typeFormer : Expr → CoreTypeFormer
+  | .kindStar => .kindStar
+  | .kindArr .. => .kindArr
+  | .tyBool => .boolTy
+  | .tyArr .. => .arr
+  | .tyApp .. => .app
+  | .tyLam .. => .lam
+  | .tyBv .. => .bv
+  | .tySub .. => .sub
+  | .tyModel .. => .model
 
-def lowering : Tag → Lowering
-  | .kindStar => .core .kindStar
-  | .kindArr => .core .kindArr
-  | .tyBool => .core .boolTy
-  | .tyArr => .core .arr
-  | .tyApp => .core .tyApp
-  | .tyLam => .core .tyLam
-  | .tyBv => .core .tyBv
-  | .tySub => .core .sub
-  | .tyExists => .core .tyExists
-  | .tyModel => .core .model
-  | .tyLink => .closedTypeLink
-  | .tmBv => .core .bv
-  | .tmFv => .core .fv
-  | .tmApp => .core .app
-  | .tmLam => .core .lam
-  | .tmBool => .core .bool
-  | .tmEq => .core .eq
-  | .tmEps => .core .eps
-  | .tmAbs => .core .abs
-  | .tmRep => .core .rep
-  | .tmLink => .closedTermLink
-  | .tmCast => .typeCast
-
-theorem lowering_injective : Function.Injective lowering := by
-  intro a b h
-  cases a <;> cases b <;> simp_all [lowering]
-
-/-- The checked Lean implementation of the `TM_CAST` lowering contract. -/
-noncomputable abbrev lowerCast {types : List Nucleus.Hol.Kind} {depth : Nat}
-    {Γ : Nucleus.HolE.Empty.Ctx types depth} {A : Nucleus.HolE.Empty.Ty types}
-    (term : Nucleus.HolE.Empty.Term Γ A) (target : Nucleus.HolE.Empty.Ty types) :
-    Nucleus.HolE.Empty.Term Γ target :=
-  Term.cast term target
-
-theorem lowerCast_wellTyped {types : List Nucleus.Hol.Kind} {depth : Nat}
-    {Γ : Nucleus.HolE.Empty.Ctx types depth} {A : Nucleus.HolE.Empty.Ty types}
-    (term : Nucleus.HolE.Empty.Term Γ A) (target : Nucleus.HolE.Empty.Ty types) :
-    Nucleus.HolE.HasType Γ.raw (lowerCast term target).raw target.raw :=
-  Term.cast_typing term target
-
-theorem lowerCast_of_typeEquality {types : List Nucleus.Hol.Kind} {depth : Nat}
-    {Γ : Nucleus.HolE.Empty.Ctx types depth} {A : Nucleus.HolE.Empty.Ty types}
-    (term : Nucleus.HolE.Empty.Term Γ A) (target : Nucleus.HolE.Empty.Ty types)
-    (typeEquality : A.raw = target.raw) :
-    (lowerCast term target).raw = term.raw :=
-  Term.cast_of_raw_eq term target typeEquality
+theorem typeFormer_surjective : Function.Surjective typeFormer := by
+  intro former
+  cases former
+  · exact ⟨.kindStar, rfl⟩
+  · exact ⟨.kindArr ⟨1, by decide, by decide⟩ ⟨1, by decide, by decide⟩, rfl⟩
+  · exact ⟨.tyBool, rfl⟩
+  · exact ⟨.tyArr ⟨1, by decide, by decide⟩ ⟨1, by decide, by decide⟩, rfl⟩
+  · exact ⟨.tyApp ⟨1, by decide, by decide⟩ ⟨1, by decide, by decide⟩, rfl⟩
+  · exact ⟨.tyLam ⟨1, by decide, by decide⟩ ⟨1, by decide, by decide⟩, rfl⟩
+  · exact ⟨.tyBv 0, rfl⟩
+  · exact ⟨.tySub ⟨1, by decide, by decide⟩ ⟨1, by decide, by decide⟩, rfl⟩
+  · exact ⟨.tyModel ⟨1, by decide, by decide⟩, rfl⟩
 
 end Nucleus.HolSurface.RustMapping
