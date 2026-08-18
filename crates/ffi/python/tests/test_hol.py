@@ -128,8 +128,10 @@ def test_static_init_arena_is_literal_free_and_hash_pinned() -> None:
     assert isinstance(refs, InitRefs)
     assert len(arena) == 664
     assert arena[refs.bool_ty].tag == "TY_BOOL"
-    assert arena[refs.false_].tag == "TM_LAM"
-    assert arena[refs.true_].tag == "TM_LAM"
+    assert arena[refs.false_].tag == "TM_BOOL"
+    assert arena[refs.false_].value is False
+    assert arena[refs.true_].tag == "TM_BOOL"
+    assert arena[refs.true_].value is True
     assert arena[refs.not_].tag == "TM_LAM"
     assert arena[refs.nat_ty].tag == "TY_MODEL"
     assert arena[refs.zero].tag == "TM_EPS"
