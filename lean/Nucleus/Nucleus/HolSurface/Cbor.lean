@@ -209,7 +209,9 @@ def decodeSegment? (value : Nucleus.Cbor) : Option Segment := do
   let sourceStart ← decodeRef? (← field? entries "source_start")
   if nonempty : start.value < «end».value then
     if arenaKind : link.kind = .arena then
-      some ⟨start, «end», link, sourceStart, nonempty, arenaKind⟩
+      if sourceBound : sourceStart.value + («end».value - start.value - 1) ≤ maxRef then
+        some ⟨start, «end», link, sourceStart, nonempty, arenaKind, sourceBound⟩
+      else none
     else none
   else none
 
@@ -486,8 +488,8 @@ set_option maxHeartbeats 4000000 in
 
 @[simp] theorem decodeSegment?_encode (segment : Segment) :
     decodeSegment? (encodeSegment segment) = some segment := by
-  rcases segment with ⟨start, end_, link, sourceStart, nonempty, arenaKind⟩
-  simp [encodeSegment, decodeSegment?, field?, valuesFor, nonempty, arenaKind]
+  rcases segment with ⟨start, end_, link, sourceStart, nonempty, arenaKind, sourceBound⟩
+  simp [encodeSegment, decodeSegment?, field?, valuesFor, nonempty, arenaKind, sourceBound]
 
 @[simp] theorem decodeArena?_encode {V : Type → Type} [TrustedVec V] (arena : Arena V) :
     decodeArena? (encodeArena arena) = some arena.toOwned := by

@@ -8,7 +8,8 @@ CBOR in `HolSurface/Cbor.lean` and the audited HolE mapping in
 An `Ix`/Lean `Ref` is a nonzero integer no larger than `i32::MAX`. Every local
 definition refers only to earlier indices. Imported ranges are lazy `Segment`s;
 their `LinkRef` stores an import-table index, format, and object kind at the
-reference site. The import table itself is only a flat vector of `O256` values;
+reference site, and both Rust and Lean require the translated source range to
+remain inside the positive-`i32` index space. The import table itself is only a flat vector of `O256` values;
 inserting an address already present reuses its first ID instead of appending a
 duplicate.
 

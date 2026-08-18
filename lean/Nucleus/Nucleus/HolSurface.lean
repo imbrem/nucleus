@@ -111,6 +111,8 @@ structure Segment where
   sourceStart : Ref
   nonempty : start.value < «end».value
   arenaKind : link.kind = .arena
+  /-- Rust checks that translating the final index remains an `Ix`. -/
+  sourceBound : sourceStart.value + («end».value - start.value - 1) ≤ maxRef
 
 inductive Expr where
   | kindStar
