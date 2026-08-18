@@ -24,7 +24,7 @@ arena children in constructor order. Variable leaves additionally use `var`.
 Scalar literal payloads, when an extension defines them, use a separately typed
 field rather than masquerading as child indices.
 
-The v0 base admits these constructors:
+The current surface admits these constructors:
 
 | Rust `Expr` | Lean `HolSurface.Expr` | Tag         | Children/payload          |
 | ----------- | ---------------------- | ----------- | ------------------------- |
@@ -48,6 +48,8 @@ The v0 base admits these constructors:
 | `TmAbs`     | `tmAbs`                | `TM_ABS`    | carrier, predicate, value |
 | `TmRep`     | `tmRep`                | `TM_REP`    | carrier, predicate, value |
 | `TmCast`    | `tmCast`               | `TM_CAST`   | term, target type         |
+| `TmNat`     | `tmNat`                | `TM_NAT`    | canonical unsigned `data` |
+| `TmBytes`   | `tmBytes`              | `TM_BYTES`  | byte-string `data`        |
 
 `SurfaceTag` also reserves names for later HolE and surface extensions. A
 reserved tag is not an admitted expression: decoding succeeds only when

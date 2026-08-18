@@ -3463,6 +3463,7 @@
       "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#bitflags@2.13.1",
+        "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
         "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229"
       ]
     },

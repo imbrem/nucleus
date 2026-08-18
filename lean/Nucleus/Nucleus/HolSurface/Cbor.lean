@@ -1,6 +1,7 @@
 import Nucleus.Cbor.Integers
 import Nucleus.Cbor.Wire
 import Nucleus.HolSurface
+import Mathlib.Data.Nat.Digits.Lemmas
 
 /-!
 # CBOR values for indexed HolE objects
@@ -72,6 +73,38 @@ private def asInt32? (value : Nucleus.Cbor) : Option Int32 := do
   if Int32.minValue.toInt ≤ value ∧ value ≤ Int32.maxValue.toInt then
     some (Int32.ofInt value)
   else none
+
+/-- Rust `Num`'s canonical unsigned big-endian bytes. Zero is `[0]`. -/
+private def natDataDigits (value : Nat) : List Nat :=
+  if value = 0 then [0] else (Nat.digits 256 value).reverse
+
+private def encodeNatData (value : Nat) : Nucleus.Bytes :=
+  ⟨(natDataDigits value |>.map UInt8.ofNat).toByteArray⟩
+
+private def decodeNatData? (value : Nucleus.Bytes) : Option Nat :=
+  let digits := value.data.data.toList.map UInt8.toNat
+  match digits with
+  | [] => none
+  | digits =>
+      let decoded := Nat.ofDigits 256 digits.reverse
+      if encodeNatData decoded = value then some decoded else none
+
+@[simp] private theorem decodeNatData?_encode (value : Nat) :
+    decodeNatData? (encodeNatData value) = some value := by
+  by_cases zero : value = 0
+  · subst value
+    rfl
+  · have mapped :
+        List.map (UInt8.toNat ∘ UInt8.ofNat) (Nat.digits 256 value) =
+          Nat.digits 256 value := by
+      calc
+        _ = List.map id (Nat.digits 256 value) := List.map_congr_left (by
+          intro digit member
+          simp [Function.comp_apply, UInt8.toNat_ofNat',
+            Nat.mod_eq_of_lt (Nat.digits_lt_base (by decide) member)])
+        _ = _ := List.map_id _
+    simp [encodeNatData, decodeNatData?, natDataDigits, zero, mapped,
+      Nat.digits_ne_nil_iff_ne_zero.mpr zero, Nat.ofDigits_digits]
 
 private def valuesFor (name : String) :
     List (Nucleus.Cbor × Nucleus.Cbor) → List Nucleus.Cbor
@@ -182,10 +215,12 @@ def decodeRef? (value : Nucleus.Cbor) : Option Ref := do
   Ref.ofNat? (← asNat? value)
 
 private def exprMap (tag : String) (children : List Ref) (var : Option UInt32 := none)
-    (value : Option Bool := none) : Nucleus.Cbor :=
+    (value : Option Bool := none) (data : Option Nucleus.Bytes := none) :
+    Nucleus.Cbor :=
   map <| [("tag", .primitive (.text tag)), ("ix", array (children.map encodeRef))] ++
     var.toList.map (fun index => ("var", unsigned index.toNat)) ++
-    value.toList.map (fun value => ("value", .primitive (if value then .true else .false)))
+    value.toList.map (fun value => ("value", .primitive (if value then .true else .false))) ++
+    data.toList.map (fun value => ("data", .primitive (.bytes value)))
 
 def encodeExpr : Expr → Nucleus.Cbor
   | .kindStar => exprMap "KIND_STAR" []
@@ -208,12 +243,15 @@ def encodeExpr : Expr → Nucleus.Cbor
   | .tmAbs carrier predicate value => exprMap "TM_ABS" [carrier, predicate, value]
   | .tmRep carrier predicate value => exprMap "TM_REP" [carrier, predicate, value]
   | .tmCast term target => exprMap "TM_CAST" [term, target]
+  | .tmNat value => exprMap "TM_NAT" [] none none (some (encodeNatData value))
+  | .tmBytes value => exprMap "TM_BYTES" [] none none (some value)
 
 def decodeExpr? (value : Nucleus.Cbor) : Option Expr := do
   let entries ← asMap? value
   let children ← traverse decodeRef? (← asArray? (← field? entries "ix"))
   let _ ← typedOptionalField? entries "var" asUInt32?
   let _ ← typedOptionalField? entries "value" asBool?
+  let _ ← typedOptionalField? entries "data" asBytes?
   match ← field? entries "tag", children with
   | .primitive (.text "KIND_STAR"), [] => some .kindStar
   | .primitive (.text "KIND_ARR"), [domain, codomain] => some (.kindArr domain codomain)
@@ -242,6 +280,14 @@ def decodeExpr? (value : Nucleus.Cbor) : Option Expr := do
   | .primitive (.text "TM_REP"), [carrier, predicate, value] =>
       some (.tmRep carrier predicate value)
   | .primitive (.text "TM_CAST"), [term, target] => some (.tmCast term target)
+  | .primitive (.text "TM_NAT"), [] =>
+      match ← field? entries "data" with
+      | .primitive (.bytes value) => .tmNat <$> decodeNatData? value
+      | _ => none
+  | .primitive (.text "TM_BYTES"), [] =>
+      match ← field? entries "data" with
+      | .primitive (.bytes value) => some (.tmBytes value)
+      | _ => none
   | _, _ => none
 
 def encodeSegment (segment : Segment) : Nucleus.Cbor := map [
@@ -535,9 +581,9 @@ set_option maxHeartbeats 4000000 in
   cases expr
   case tmBool value =>
     cases value <;> simp [encodeExpr, exprMap, decodeExpr?, typedOptionalField?, optionalField?,
-      asBool?, field?, valuesFor, traverse, CborPrimitive.false, CborPrimitive.true]
+      asBool?, asBytes?, field?, valuesFor, traverse, CborPrimitive.false, CborPrimitive.true]
   all_goals simp [encodeExpr, exprMap, decodeExpr?, typedOptionalField?, optionalField?,
-    asBool?, field?, valuesFor, traverse]
+    asBool?, asBytes?, field?, valuesFor, traverse]
 
 @[simp] theorem decodeSegment?_encode (segment : Segment) :
     decodeSegment? (encodeSegment segment) = some segment := by

@@ -29,6 +29,8 @@ rust_library(
     tests = [":covalence_logic_hol-unit-test"],
     named_deps = {
         "bitflags": "nucleus//buck/cargo/production:bitflags-2.13.1",
+        "bytes": "nucleus//buck/cargo/production:bytes-1.12.1",
+        "covalence_data_num": "nucleus//crates/data/num:covalence_data_num",
         "covalence_lib_cbor": "nucleus//crates/lib/cbor:covalence_lib_cbor",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "serde": "nucleus//buck/cargo/production:serde-1.0.229",
@@ -61,6 +63,8 @@ rust_test(
     srcs = _RUST_SOURCES,
     named_deps = {
         "bitflags": "nucleus//buck/cargo/production:bitflags-2.13.1",
+        "bytes": "nucleus//buck/cargo/production:bytes-1.12.1",
+        "covalence_data_num": "nucleus//crates/data/num:covalence_data_num",
         "covalence_lib_cbor": "nucleus//crates/lib/cbor:covalence_lib_cbor",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "serde": "nucleus//buck/cargo/production:serde-1.0.229",
