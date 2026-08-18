@@ -43,6 +43,11 @@ def test_term_payloads_are_typed_and_round_trip() -> None:
     with pytest.raises(ValueError):
         Expr("TM_BV", value=False)
 
+    two_fifty_six = Expr("TM_NAT", data=b"\x01\x00")
+    assert two_fifty_six.data == b"\x01\x00"
+    with pytest.raises(ValueError):
+        Expr("TM_NAT", data=b"\x00\x01")
+
 
 def test_arenas_and_sequents_form_a_lazy_import_graph() -> None:
     root = Arena()
