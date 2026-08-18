@@ -50,6 +50,8 @@ The arena admits these constructors:
 | `TmAbs`     | `tmAbs`                | `TM_ABS`    | carrier, predicate, value |
 | `TmRep`     | `tmRep`                | `TM_REP`    | carrier, predicate, value |
 | `TmCast`    | `tmCast`               | `TM_CAST`   | term, target type         |
+| `TmNat`     | `tmNat`                | `TM_NAT`    | canonical unsigned `data` |
+| `TmBytes`   | `tmBytes`              | `TM_BYTES`  | byte-string `data`        |
 
 `SurfaceTag` names the wider HolE syntax. A named tag is not necessarily an
 admitted arena expression: decoding succeeds only when
