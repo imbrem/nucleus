@@ -70,8 +70,11 @@ class Expr:
     var: int | None
     value: bool | None
     def __init__(
-        self, tag: str, ix: Sequence[int] = ..., var: int | None = ...,
-        value: bool | None = ...
+        self,
+        tag: str,
+        ix: Sequence[int] = ...,
+        var: int | None = ...,
+        value: bool | None = ...,
     ) -> None: ...
     def __repr__(self) -> str: ...
 
