@@ -1,3 +1,6 @@
+import Nucleus.Cbor.Bytes
+import Mathlib.Logic.Equiv.Defs
+
 /-!
 # Indexed HolE arena objects
 
@@ -6,6 +9,8 @@ live in `Nucleus.HolSurface.Cbor`.
 -/
 
 namespace Nucleus.HolSurface
+
+noncomputable section
 
 def maxRef : Nat := 2 ^ 31 - 1
 
@@ -28,45 +33,55 @@ def ofNat? (value : Nat) : Option Ref :=
 
 end Ref
 
-inductive Format where | blob | cbor
+inductive Format where | blob | cborDense | cborSparse
   deriving DecidableEq
 
-def Format.tag : Format → Nat | .blob => 0 | .cbor => 1
+def Format.tag : Format → Nat
+  | .blob => 0 | .cborDense => 1 | .cborSparse => 2
 
-inductive ObjectKind where | bytes | importTable | arena | theorem
+inductive ObjectKind where | bytes | importTable | arena | sequent
   deriving DecidableEq
 
 def ObjectKind.tag : ObjectKind → Nat
-  | .bytes => 0 | .importTable => 1 | .arena => 2 | .theorem => 3
+  | .bytes => 0 | .importTable => 1 | .arena => 2 | .sequent => 3
 
-/-- The exact 32-byte Rust `O256` payload, abstracted from hash semantics. -/
-structure Hash where
-  bytes : ByteArray
-  length : bytes.size = 32
-  deriving DecidableEq
+/-- A 32-byte object identifier representation and its hashing operation. -/
+class Hash32 (α : Type) where
+  bytes : α ≃ { value : Nucleus.Bytes // Nucleus.Bytes.length value = 32 }
+  hash : Nucleus.Bytes → α
+
+/-- Rust's `O256`, kept opaque together with its concrete hashing algorithm. -/
+opaque O256 : Type
+axiom O256.hash32 : Hash32 O256
+attribute [instance] O256.hash32
+
+instance : DecidableEq O256 := fun left right =>
+  decidable_of_iff (Hash32.bytes left = Hash32.bytes right) Hash32.bytes.injective.eq_iff
 
 structure Link where
-  addr : Hash
+  addr : O256
   format : Format
   kind : ObjectKind
   deriving DecidableEq
 
-/-- Rust's typed `Link<T>` pairs a link with the marker-type invariant checked
-during deserialization. -/
-structure TypedLink (kind : ObjectKind) where
-  link : Link
-  typed : link.kind = kind
+/-- A reference through the flat hash import table. Interpretation metadata is
+stored here rather than behind the content hash. -/
+structure LinkRef where
+  importId : UInt32
+  format : Format
+  kind : ObjectKind
   deriving DecidableEq
 
-abbrev ImportTable := List Link
+abbrev ImportTable := List O256
 abbrev ImportId := UInt32
 
 structure Segment where
   start : Ref
   «end» : Ref
-  importId : ImportId
+  link : LinkRef
   sourceStart : Ref
   nonempty : start.value < «end».value
+  arenaKind : link.kind = .arena
 
 inductive Expr where
   | kindStar
@@ -91,7 +106,7 @@ def Expr.children : Expr → List Ref
   | .tyModel p => [p]
 
 structure Arena where
-  imports : Option (TypedLink .importTable)
+  imports : Option O256
   segments : List Segment
   localBase : UInt32
   defs : List Expr
@@ -102,9 +117,10 @@ inductive Resolve where
   | wrongKind (link : Link)
   | missing
 
-/-- A relation endpoint is a signed literal stored in all 32 bits. `0` and
-Rust's reserved `i32::MIN` encoding are null. -/
-inductive RelRef where | null | pos (ref : Ref) | neg (ref : Ref)
+abbrev SRef := Int32
+
+/-- Semantic view of the exact signed `i32` relation endpoint. -/
+inductive SRefView where | null | pos (ref : Ref) | neg (ref : Ref)
   deriving DecidableEq
 
 def relReservedNull : UInt32 := 0x80000000
@@ -122,7 +138,7 @@ def Relation.symmetric : Relation → Bool
   | .hasTy | .imp | .hasKind => false
 
 /-- The public, relation-indexed view used by the wire format and API. -/
-abbrev RelationTable := List (Relation × List (UInt32 × UInt32))
+abbrev RelationTable := List (Relation × List (SRef × SRef))
 
 /-- Relations are presented as premise and conclusion tables.  Their packed
 Rust representation is deliberately not part of this interface. -/
@@ -139,87 +155,88 @@ codec correctness proof.  Clients should use `Relations`, not these masks. -/
 abbrev RelationFlags := UInt8
 
 structure RelationEntry where
-  left : UInt32
-  right : UInt32
+  left : SRef
+  right : SRef
   premiseFlags : RelationFlags
   conclusionFlags : RelationFlags
   deriving DecidableEq
 
 /-- Ordered model of Rust's private
-`BTreeMap<(RelRef, RelRef), (RelationFlags, RelationFlags)>`. -/
+`BTreeMap<(SRef, SRef), (RelationFlags, RelationFlags)>`. -/
 abbrev PackedRelations := List RelationEntry
 
 end Internal
 
-/-! `Proposition` is used rather than `Prop`, which is Lean's built-in sort.
-Rust calls this type `Prop`. -/
-structure Proposition where
-  arena : Option (TypedLink .arena)
-  imports : Option (TypedLink .importTable)
-  theorems : List ImportId
+/-! Rust and Lean both call a heterogeneous logical side `Ctx`. -/
+structure Ctx where
+  arena : Option LinkRef
+  imports : Option O256
+  sequents : List LinkRef
   relations : RelationTable
   deriving DecidableEq
 
-/-- Rust `Thm`'s exact public/wire data. -/
-structure Thm where
-  arena : Option (TypedLink .arena)
-  imports : Option (TypedLink .importTable)
-  premiseTheorems : List ImportId
-  conclusionTheorems : List ImportId
+/-- Rust `Seq`'s exact public/wire data. -/
+structure Seq where
+  arena : Option LinkRef
+  imports : Option O256
+  premiseSequents : List LinkRef
+  conclusionSequents : List LinkRef
   premises : RelationTable
   conclusions : RelationTable
   deriving DecidableEq
 
-/-- The precise replacement for the informal `Thm ≅ Proposition ×
-Proposition`: the two sides must inhabit the same arena and import table. -/
-structure CompatibleProps where
-  premises : Proposition
-  conclusion : Proposition
+/-- A `Seq` is a compatible pair of contexts: both sides inhabit the same
+arena and import table. -/
+structure CompatibleCtxs where
+  premises : Ctx
+  conclusion : Ctx
   arena_eq : premises.arena = conclusion.arena
   imports_eq : premises.imports = conclusion.imports
 
-namespace Thm
+namespace Seq
 
-def toProps (thm : Thm) : CompatibleProps where
-  premises := ⟨thm.arena, thm.imports, thm.premiseTheorems, thm.premises⟩
-  conclusion := ⟨thm.arena, thm.imports, thm.conclusionTheorems, thm.conclusions⟩
+def toContexts (seq : Seq) : CompatibleCtxs where
+  premises := ⟨seq.arena, seq.imports, seq.premiseSequents, seq.premises⟩
+  conclusion := ⟨seq.arena, seq.imports, seq.conclusionSequents, seq.conclusions⟩
   arena_eq := rfl
   imports_eq := rfl
 
-def ofProps (props : CompatibleProps) : Thm where
-  arena := props.premises.arena
-  imports := props.premises.imports
-  premiseTheorems := props.premises.theorems
-  conclusionTheorems := props.conclusion.theorems
-  premises := props.premises.relations
-  conclusions := props.conclusion.relations
+def ofContexts (contexts : CompatibleCtxs) : Seq where
+  arena := contexts.premises.arena
+  imports := contexts.premises.imports
+  premiseSequents := contexts.premises.sequents
+  conclusionSequents := contexts.conclusion.sequents
+  premises := contexts.premises.relations
+  conclusions := contexts.conclusion.relations
 
-def fromPremises (premises : Proposition) : Thm where
+def fromPremises (premises : Ctx) : Seq where
   arena := premises.arena
   imports := premises.imports
-  premiseTheorems := premises.theorems
-  conclusionTheorems := []
+  premiseSequents := premises.sequents
+  conclusionSequents := []
   premises := premises.relations
   conclusions := []
 
-def fromConclusion (conclusion : Proposition) : Thm where
+def fromConclusion (conclusion : Ctx) : Seq where
   arena := conclusion.arena
   imports := conclusion.imports
-  premiseTheorems := []
-  conclusionTheorems := conclusion.theorems
+  premiseSequents := []
+  conclusionSequents := conclusion.sequents
   premises := []
   conclusions := conclusion.relations
 
-@[simp] theorem fromPremises_premises (premises : Proposition) :
-    (fromPremises premises).toProps.premises = premises := rfl
+@[simp] theorem fromPremises_premises (premises : Ctx) :
+    (fromPremises premises).toContexts.premises = premises := rfl
 
-@[simp] theorem fromConclusion_conclusion (conclusion : Proposition) :
-    (fromConclusion conclusion).toProps.conclusion = conclusion := rfl
+@[simp] theorem fromConclusion_conclusion (conclusion : Ctx) :
+    (fromConclusion conclusion).toContexts.conclusion = conclusion := rfl
 
-@[simp] theorem ofProps_toProps (thm : Thm) : ofProps thm.toProps = thm := rfl
+@[simp] theorem ofContexts_toContexts (seq : Seq) :
+    ofContexts seq.toContexts = seq := rfl
 
-theorem toProps_ofProps (props : CompatibleProps) : (ofProps props).toProps = props := by
-  cases props with
+theorem toContexts_ofContexts (contexts : CompatibleCtxs) :
+    (ofContexts contexts).toContexts = contexts := by
+  cases contexts with
   | mk premises conclusion arena_eq imports_eq =>
     cases premises
     cases conclusion
@@ -227,6 +244,8 @@ theorem toProps_ofProps (props : CompatibleProps) : (ofProps props).toProps = pr
     cases imports_eq
     rfl
 
-end Thm
+end Seq
+
+end
 
 end Nucleus.HolSurface

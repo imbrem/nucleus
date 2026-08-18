@@ -1,6 +1,5 @@
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
-use std::marker::PhantomData;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
@@ -46,7 +45,8 @@ impl<'de> Deserialize<'de> for Ix {
 #[repr(u8)]
 pub enum Format {
     Blob = 0,
-    Cbor = 1,
+    CborDense = 1,
+    CborSparse = 2,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -55,7 +55,7 @@ pub enum ObjectKind {
     Bytes = 0,
     ImportTable = 1,
     Arena = 2,
-    Theorem = 3,
+    Sequent = 3,
 }
 
 macro_rules! numeric_enum_serde {
@@ -76,63 +76,31 @@ macro_rules! numeric_enum_serde {
     };
 }
 
-numeric_enum_serde!(Format, 0 => Format::Blob, 1 => Format::Cbor);
+numeric_enum_serde!(
+    Format,
+    0 => Format::Blob,
+    1 => Format::CborDense,
+    2 => Format::CborSparse,
+);
 numeric_enum_serde!(
     ObjectKind,
     0 => ObjectKind::Bytes,
     1 => ObjectKind::ImportTable,
     2 => ObjectKind::Arena,
-    3 => ObjectKind::Theorem,
+    3 => ObjectKind::Sequent,
 );
 
-pub trait LinkTarget: 'static {
-    const KIND: ObjectKind;
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum BytesObject {}
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum ImportTableObject {}
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum ArenaObject {}
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum TheoremObject {}
-
-impl LinkTarget for BytesObject {
-    const KIND: ObjectKind = ObjectKind::Bytes;
-}
-impl LinkTarget for ImportTableObject {
-    const KIND: ObjectKind = ObjectKind::ImportTable;
-}
-impl LinkTarget for ArenaObject {
-    const KIND: ObjectKind = ObjectKind::Arena;
-}
-impl LinkTarget for TheoremObject {
-    const KIND: ObjectKind = ObjectKind::Theorem;
-}
-
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
-pub struct AnyLink {
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+pub struct Link {
     pub addr: O256,
     pub format: Format,
     pub kind: ObjectKind,
 }
 
-#[derive(Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct Link<T: LinkTarget> {
-    addr: O256,
-    format: Format,
-    target: PhantomData<fn() -> T>,
-}
-
-impl<T: LinkTarget> Link<T> {
+impl Link {
     #[must_use]
-    pub const fn new(addr: O256, format: Format) -> Self {
-        Self {
-            addr,
-            format,
-            target: PhantomData,
-        }
+    pub const fn new(addr: O256, format: Format, kind: ObjectKind) -> Self {
+        Self { addr, format, kind }
     }
     #[must_use]
     pub const fn address(&self) -> O256 {
@@ -143,88 +111,46 @@ impl<T: LinkTarget> Link<T> {
         self.format
     }
     #[must_use]
-    pub const fn erase(&self) -> AnyLink {
-        AnyLink {
-            addr: self.addr,
-            format: self.format,
-            kind: T::KIND,
-        }
+    pub const fn kind(&self) -> ObjectKind {
+        self.kind
     }
 }
 
-impl<T: LinkTarget> Clone for Link<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
+/// A reference through an import table. Format and object kind are stored at
+/// the reference site, never behind the content hash.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+pub struct LinkRef {
+    pub import: u32,
+    pub format: Format,
+    pub kind: ObjectKind,
 }
-impl<T: LinkTarget> Copy for Link<T> {}
-
-impl<T: LinkTarget> TryFrom<AnyLink> for Link<T> {
-    type Error = LinkKindError;
-    fn try_from(link: AnyLink) -> Result<Self, Self::Error> {
-        if link.kind == T::KIND {
-            Ok(Self::new(link.addr, link.format))
-        } else {
-            Err(LinkKindError {
-                expected: T::KIND,
-                actual: link.kind,
-            })
-        }
-    }
-}
-
-impl<T: LinkTarget> Serialize for Link<T> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.erase().serialize(serializer)
-    }
-}
-
-impl<'de, T: LinkTarget> Deserialize<'de> for Link<T> {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Self::try_from(AnyLink::deserialize(deserializer)?).map_err(serde::de::Error::custom)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct LinkKindError {
-    pub expected: ObjectKind,
-    pub actual: ObjectKind,
-}
-impl Display for LinkKindError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "expected {:?} link, found {:?}",
-            self.expected, self.actual
-        )
-    }
-}
-impl Error for LinkKindError {}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ImportTable {
-    links: Vec<AnyLink>,
+    addresses: Vec<O256>,
 }
 
 impl ImportTable {
     #[must_use]
     pub const fn new() -> Self {
-        Self { links: Vec::new() }
+        Self {
+            addresses: Vec::new(),
+        }
     }
     /// # Errors
     /// Returns an error if the import-table index cannot fit in `u32`.
-    pub fn push<T: LinkTarget>(&mut self, link: Link<T>) -> Result<u32, ArenaError> {
-        let id = u32::try_from(self.links.len()).map_err(|_| ArenaError::IndexOverflow)?;
-        self.links.push(link.erase());
+    pub fn push(&mut self, address: O256) -> Result<u32, ArenaError> {
+        let id = u32::try_from(self.addresses.len()).map_err(|_| ArenaError::IndexOverflow)?;
+        self.addresses.push(address);
         Ok(id)
     }
     #[must_use]
-    pub fn get(&self, id: u32) -> Option<&AnyLink> {
-        self.links.get(id as usize)
+    pub fn get(&self, id: u32) -> Option<O256> {
+        self.addresses.get(id as usize).copied()
     }
-    pub fn iter(&self) -> impl Iterator<Item = &AnyLink> {
-        self.links.iter()
+    pub fn iter(&self) -> impl Iterator<Item = O256> + '_ {
+        self.addresses.iter().copied()
     }
 }
 
@@ -232,14 +158,20 @@ impl ImportTable {
 pub struct Segment {
     pub start: Ix,
     pub end: Ix,
-    pub import: u32,
+    pub link: LinkRef,
     pub source_start: Ix,
 }
 
 impl Segment {
     /// # Errors
     /// Returns an error for an empty range or source-index overflow.
-    pub fn new(start: Ix, end: Ix, import: u32, source_start: Ix) -> Result<Self, ArenaError> {
+    pub fn new(start: Ix, end: Ix, link: LinkRef, source_start: Ix) -> Result<Self, ArenaError> {
+        if link.kind != ObjectKind::Arena {
+            return Err(ArenaError::WrongObjectKind {
+                expected: ObjectKind::Arena,
+                actual: link.kind,
+            });
+        }
         if start >= end {
             return Err(ArenaError::EmptySegment);
         }
@@ -252,7 +184,7 @@ impl Segment {
         Ok(Self {
             start,
             end,
-            import,
+            link,
             source_start,
         })
     }
@@ -275,6 +207,84 @@ pub enum Expr {
     TyBv { index: u32 },
     TySub { carrier: Ix, predicate: Ix },
     TyModel { predicate: Ix },
+}
+
+/// Simple traversal-oriented wire form. `ix` contains every arena child in
+/// constructor order; `var` is present only for variable leaves.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExprWire {
+    tag: String,
+    #[serde(default)]
+    ix: Vec<Ix>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    var: Option<u32>,
+}
+
+impl From<&Expr> for ExprWire {
+    fn from(expr: &Expr) -> Self {
+        Self {
+            tag: expr.tag().to_string(),
+            ix: expr.children().collect(),
+            var: match expr {
+                Expr::TyBv { index } => Some(*index),
+                _ => None,
+            },
+        }
+    }
+}
+
+impl TryFrom<ExprWire> for Expr {
+    type Error = &'static str;
+
+    fn try_from(wire: ExprWire) -> Result<Self, Self::Error> {
+        let tag = wire.tag.parse().map_err(|_| "unknown expression tag")?;
+        let no_var = wire.var.is_none();
+        match (tag, wire.ix.as_slice(), wire.var) {
+            (SurfaceTag::KindStar, [], None) => Ok(Self::KindStar),
+            (SurfaceTag::KindArr, [domain, codomain], None) => Ok(Self::KindArr {
+                domain: *domain,
+                codomain: *codomain,
+            }),
+            (SurfaceTag::TyBool, [], None) => Ok(Self::TyBool),
+            (SurfaceTag::TyArr, [domain, codomain], None) => Ok(Self::TyArr {
+                domain: *domain,
+                codomain: *codomain,
+            }),
+            (SurfaceTag::TyApp, [function, argument], None) => Ok(Self::TyApp {
+                function: *function,
+                argument: *argument,
+            }),
+            (SurfaceTag::TyLam, [domain, body], None) => Ok(Self::TyLam {
+                domain: *domain,
+                body: *body,
+            }),
+            (SurfaceTag::TyBv, [], Some(index)) => Ok(Self::TyBv { index }),
+            (SurfaceTag::TySub, [carrier, predicate], None) => Ok(Self::TySub {
+                carrier: *carrier,
+                predicate: *predicate,
+            }),
+            (SurfaceTag::TyModel, [predicate], None) => Ok(Self::TyModel {
+                predicate: *predicate,
+            }),
+            _ if !no_var => Err("only a variable expression may carry `var`"),
+            _ => Err("wrong number of expression children"),
+        }
+    }
+}
+
+impl Serialize for Expr {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        ExprWire::from(self).serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Expr {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        ExprWire::deserialize(deserializer)?
+            .try_into()
+            .map_err(serde::de::Error::custom)
+    }
 }
 
 impl Expr {
@@ -307,111 +317,8 @@ impl Expr {
     }
 }
 
-impl Serialize for Expr {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let tag = u32::try_from(u64::from(self.tag())).map_err(serde::ser::Error::custom)?;
-        let mut words = vec![tag];
-        match self {
-            Self::KindStar | Self::TyBool => {}
-            Self::KindArr { domain, codomain } | Self::TyArr { domain, codomain } => {
-                words.extend([domain.get(), codomain.get()]);
-            }
-            Self::TyApp { function, argument } => words.extend([function.get(), argument.get()]),
-            Self::TyLam { domain, body } => words.extend([domain.get(), body.get()]),
-            Self::TyBv { index } => words.push(*index),
-            Self::TySub { carrier, predicate } => words.extend([carrier.get(), predicate.get()]),
-            Self::TyModel { predicate } => words.push(predicate.get()),
-        }
-        words.serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for Expr {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let words = Vec::<u32>::deserialize(deserializer)?;
-        let (&tag, children) = words
-            .split_first()
-            .ok_or_else(|| serde::de::Error::custom("empty expression"))?;
-        let tag = SurfaceTag::try_from(u64::from(tag)).map_err(serde::de::Error::custom)?;
-        let child = |position: usize| {
-            children
-                .get(position)
-                .copied()
-                .ok_or_else(|| serde::de::Error::custom("missing expression child"))
-                .and_then(|value| Ix::new(value).map_err(serde::de::Error::custom))
-        };
-        let no_extra = |expected: usize| {
-            if children.len() == expected {
-                Ok(())
-            } else {
-                Err(serde::de::Error::custom("wrong expression arity"))
-            }
-        };
-        Ok(match tag {
-            SurfaceTag::KindStar => {
-                no_extra(0)?;
-                Self::KindStar
-            }
-            SurfaceTag::KindArr => {
-                no_extra(2)?;
-                Self::KindArr {
-                    domain: child(0)?,
-                    codomain: child(1)?,
-                }
-            }
-            SurfaceTag::TyBool => {
-                no_extra(0)?;
-                Self::TyBool
-            }
-            SurfaceTag::TyArr => {
-                no_extra(2)?;
-                Self::TyArr {
-                    domain: child(0)?,
-                    codomain: child(1)?,
-                }
-            }
-            SurfaceTag::TyApp => {
-                no_extra(2)?;
-                Self::TyApp {
-                    function: child(0)?,
-                    argument: child(1)?,
-                }
-            }
-            SurfaceTag::TyLam => {
-                no_extra(2)?;
-                Self::TyLam {
-                    domain: child(0)?,
-                    body: child(1)?,
-                }
-            }
-            SurfaceTag::TyBv => {
-                no_extra(1)?;
-                Self::TyBv { index: children[0] }
-            }
-            SurfaceTag::TySub => {
-                no_extra(2)?;
-                Self::TySub {
-                    carrier: child(0)?,
-                    predicate: child(1)?,
-                }
-            }
-            SurfaceTag::TyModel => {
-                no_extra(1)?;
-                Self::TyModel {
-                    predicate: child(0)?,
-                }
-            }
-            _ => {
-                return Err(serde::de::Error::custom(
-                    "tag is not a v0 arena type former",
-                ));
-            }
-        })
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct Arena<I = Option<Link<ImportTableObject>>> {
+pub struct Arena<I = Option<O256>> {
     imports: I,
     segments: Vec<Segment>,
     local_base: u32,
@@ -436,7 +343,7 @@ impl<'de, I: Deserialize<'de>> Deserialize<'de> for Arena<I> {
                     Segment::new(
                         segment.start,
                         segment.end,
-                        segment.import,
+                        segment.link,
                         segment.source_start,
                     )
                     .map_err(serde::de::Error::custom)?,
@@ -564,14 +471,11 @@ impl Arena<ImportTable> {
         let Some(source) = segment.translate(index) else {
             return Resolve::Missing;
         };
-        let Some(link) = self.imports.get(segment.import) else {
+        let Some(address) = self.imports.get(segment.link.import) else {
             return Resolve::Missing;
         };
-        if link.kind != ObjectKind::Arena {
-            return Resolve::WrongKind(link);
-        }
         Resolve::Lazy {
-            link,
+            link: Link::new(address, segment.link.format, segment.link.kind),
             index: source,
         }
     }
@@ -580,8 +484,7 @@ impl Arena<ImportTable> {
 #[derive(Clone, Copy, Debug)]
 pub enum Resolve<'a> {
     Local(&'a Expr),
-    Lazy { link: &'a AnyLink, index: Ix },
-    WrongKind(&'a AnyLink),
+    Lazy { link: Link, index: Ix },
     Missing,
 }
 
@@ -610,8 +513,8 @@ impl SharedArena {
         self.0.address
     }
     #[must_use]
-    pub fn link(&self) -> Link<ArenaObject> {
-        Link::new(self.address(), Format::Cbor)
+    pub fn link(&self) -> Link {
+        Link::new(self.address(), Format::CborDense, ObjectKind::Arena)
     }
 }
 
@@ -646,14 +549,14 @@ impl SharedImportTable {
         self.0.address
     }
     #[must_use]
-    pub fn link(&self) -> Link<ImportTableObject> {
-        Link::new(self.address(), Format::Cbor)
+    pub fn link(&self) -> O256 {
+        self.address()
     }
 }
 
 impl Serialize for SharedImportTable {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.link().serialize(serializer)
+        self.address().serialize(serializer)
     }
 }
 
@@ -665,8 +568,15 @@ pub enum ArenaError {
     EmptySegment,
     OverlappingSegment,
     SegmentsAfterDefinitions,
-    ForwardReference { parent: Ix, child: Ix },
+    ForwardReference {
+        parent: Ix,
+        child: Ix,
+    },
     LocalBaseBeforeSegment,
+    WrongObjectKind {
+        expected: ObjectKind,
+        actual: ObjectKind,
+    },
 }
 impl Display for ArenaError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {

@@ -2,64 +2,51 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 use bitflags::bitflags;
+use covalence_lib_hash::O256;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::{ArenaObject, ImportTableObject, Ix, Link};
+use crate::{Ix, LinkRef};
 
-type RelationSet = BTreeMap<Relation, BTreeSet<(RelRef, RelRef)>>;
-type PropParts<A, I> = (A, I, BTreeSet<u32>, RelationSet);
+type RelationSet = BTreeMap<Relation, BTreeSet<(SRef, SRef)>>;
+type CtxParts<A, I> = (A, I, BTreeSet<LinkRef>, RelationSet);
 
+/// A signed arena reference used as a relation endpoint.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct ImportId(u32);
-impl ImportId {
-    #[must_use]
-    pub const fn new(value: u32) -> Self {
-        Self(value)
-    }
-    #[must_use]
-    pub const fn get(self) -> u32 {
-        self.0
-    }
-}
-
-/// A relation endpoint encoded as a signed arena literal in one `u32`.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct RelRef(u32);
+pub struct SRef(i32);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RelRefView {
+pub enum SRefView {
     Null,
     Pos(Ix),
     Neg(Ix),
 }
 
-impl RelRef {
+impl SRef {
     pub const NULL: Self = Self(0);
     #[must_use]
     pub const fn pos(value: Ix) -> Self {
-        Self(value.get())
+        Self(value.get().cast_signed())
     }
     #[must_use]
     pub const fn neg(value: Ix) -> Self {
-        Self(value.get().wrapping_neg())
+        Self(-value.get().cast_signed())
     }
     #[must_use]
-    pub const fn from_raw(value: u32) -> Self {
+    pub const fn from_raw(value: i32) -> Self {
         Self(value)
     }
     #[must_use]
-    pub const fn raw(self) -> u32 {
+    pub const fn raw(self) -> i32 {
         self.0
     }
     #[must_use]
-    pub fn view(self) -> RelRefView {
-        let signed = self.0.cast_signed();
-        if signed == 0 || signed == i32::MIN {
-            RelRefView::Null
-        } else if signed > 0 {
-            Ix::new(signed.cast_unsigned()).map_or(RelRefView::Null, RelRefView::Pos)
+    pub fn view(self) -> SRefView {
+        if self.0 == 0 || self.0 == i32::MIN {
+            SRefView::Null
+        } else if self.0 > 0 {
+            Ix::new(self.0.cast_unsigned()).map_or(SRefView::Null, SRefView::Pos)
         } else {
-            Ix::new(signed.unsigned_abs()).map_or(RelRefView::Null, RelRefView::Neg)
+            Ix::new(self.0.unsigned_abs()).map_or(SRefView::Null, SRefView::Neg)
         }
     }
 }
@@ -132,28 +119,28 @@ bitflags! {
 /// Sparse relations with `(premise, conclusion)` masks at each oriented pair.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Relations {
-    pairs: BTreeMap<(RelRef, RelRef), (RelationFlags, RelationFlags)>,
+    pairs: BTreeMap<(SRef, SRef), (RelationFlags, RelationFlags)>,
 }
 
-/// One side of a theorem: imported theorems and oriented relation facts.
+/// One side of a sequent: imported sequents and oriented relation facts.
 ///
 /// The fields are private so the packed representation can change without
-/// changing the logical API or canonical CBOR format.
+/// changing the logical API or CBOR format.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct Prop<A = Option<Link<ArenaObject>>, I = Option<Link<ImportTableObject>>> {
+pub struct Ctx<A = Option<LinkRef>, I = Option<O256>> {
     arena: A,
     imports: I,
-    theorems: BTreeSet<u32>,
+    sequents: BTreeSet<LinkRef>,
     relations: RelationSet,
 }
 
-impl<A, I> Prop<A, I> {
+impl<A, I> Ctx<A, I> {
     #[must_use]
     pub const fn new(arena: A, imports: I) -> Self {
         Self {
             arena,
             imports,
-            theorems: BTreeSet::new(),
+            sequents: BTreeSet::new(),
             relations: BTreeMap::new(),
         }
     }
@@ -168,11 +155,11 @@ impl<A, I> Prop<A, I> {
         &self.imports
     }
 
-    pub fn insert_theorem(&mut self, theorem: u32) -> bool {
-        self.theorems.insert(theorem)
+    pub fn insert_sequent(&mut self, sequent: LinkRef) -> bool {
+        self.sequents.insert(sequent)
     }
 
-    pub fn insert(&mut self, relation: Relation, left: RelRef, right: RelRef) -> bool {
+    pub fn insert(&mut self, relation: Relation, left: SRef, right: SRef) -> bool {
         self.relations
             .entry(relation)
             .or_default()
@@ -181,7 +168,7 @@ impl<A, I> Prop<A, I> {
 
     /// # Panics
     /// Panics when `relation` is directional.
-    pub fn insert_symmetric(&mut self, relation: Relation, left: RelRef, right: RelRef) -> bool {
+    pub fn insert_symmetric(&mut self, relation: Relation, left: SRef, right: SRef) -> bool {
         assert!(
             relation.is_symmetric(),
             "directional relation passed as symmetric"
@@ -192,41 +179,41 @@ impl<A, I> Prop<A, I> {
     }
 
     #[must_use]
-    pub fn contains(&self, relation: Relation, left: RelRef, right: RelRef) -> bool {
+    pub fn contains(&self, relation: Relation, left: SRef, right: SRef) -> bool {
         self.relations
             .get(&relation)
             .is_some_and(|pairs| pairs.contains(&(left, right)))
     }
 
-    pub fn theorems(&self) -> impl Iterator<Item = u32> + '_ {
-        self.theorems.iter().copied()
+    pub fn sequents(&self) -> impl Iterator<Item = LinkRef> + '_ {
+        self.sequents.iter().copied()
     }
 
-    pub fn pairs(&self, relation: Relation) -> impl Iterator<Item = (RelRef, RelRef)> + '_ {
+    pub fn pairs(&self, relation: Relation) -> impl Iterator<Item = (SRef, SRef)> + '_ {
         self.relations.get(&relation).into_iter().flatten().copied()
     }
 
-    pub(crate) fn into_parts(self) -> PropParts<A, I> {
-        (self.arena, self.imports, self.theorems, self.relations)
+    pub(crate) fn into_parts(self) -> CtxParts<A, I> {
+        (self.arena, self.imports, self.sequents, self.relations)
     }
 
     pub(crate) fn from_parts(
         arena: A,
         imports: I,
-        theorems: impl IntoIterator<Item = u32>,
-        relations: impl Fn(Relation) -> Vec<(RelRef, RelRef)>,
+        sequents: impl IntoIterator<Item = LinkRef>,
+        relations: impl Fn(Relation) -> Vec<(SRef, SRef)>,
     ) -> Self {
-        let mut proposition = Self::new(arena, imports);
-        proposition.theorems.extend(theorems);
+        let mut context = Self::new(arena, imports);
+        context.sequents.extend(sequents);
         for relation in Relation::ALL {
-            proposition
+            context
                 .relations
                 .entry(relation)
                 .or_default()
                 .extend(relations(relation));
         }
-        proposition.relations.retain(|_, pairs| !pairs.is_empty());
-        proposition
+        context.relations.retain(|_, pairs| !pairs.is_empty());
+        context
     }
 }
 
@@ -241,8 +228,8 @@ impl Relations {
         &mut self,
         conclusion: bool,
         relation: Relation,
-        left: RelRef,
-        right: RelRef,
+        left: SRef,
+        right: SRef,
     ) -> bool {
         let flags = self.pairs.entry((left, right)).or_default();
         let side = if conclusion {
@@ -254,18 +241,18 @@ impl Relations {
         side.insert(relation.flag());
         old != *side
     }
-    pub fn insert_premise(&mut self, relation: Relation, left: RelRef, right: RelRef) -> bool {
+    pub fn insert_premise(&mut self, relation: Relation, left: SRef, right: SRef) -> bool {
         self.insert_side(false, relation, left, right)
     }
-    pub fn insert_conclusion(&mut self, relation: Relation, left: RelRef, right: RelRef) -> bool {
+    pub fn insert_conclusion(&mut self, relation: Relation, left: SRef, right: SRef) -> bool {
         self.insert_side(true, relation, left, right)
     }
     fn insert_symmetric(
         &mut self,
         conclusion: bool,
         relation: Relation,
-        left: RelRef,
-        right: RelRef,
+        left: SRef,
+        right: SRef,
     ) -> bool {
         assert!(
             relation.is_symmetric(),
@@ -278,49 +265,46 @@ impl Relations {
     pub fn insert_symmetric_premise(
         &mut self,
         relation: Relation,
-        left: RelRef,
-        right: RelRef,
+        left: SRef,
+        right: SRef,
     ) -> bool {
         self.insert_symmetric(false, relation, left, right)
     }
     pub fn insert_symmetric_conclusion(
         &mut self,
         relation: Relation,
-        left: RelRef,
-        right: RelRef,
+        left: SRef,
+        right: SRef,
     ) -> bool {
         self.insert_symmetric(true, relation, left, right)
     }
     #[must_use]
-    pub fn contains_premise(&self, relation: Relation, left: RelRef, right: RelRef) -> bool {
+    pub fn contains_premise(&self, relation: Relation, left: SRef, right: SRef) -> bool {
         self.pairs
             .get(&(left, right))
             .is_some_and(|flags| flags.0.contains(relation.flag()))
     }
     #[must_use]
-    pub fn contains_conclusion(&self, relation: Relation, left: RelRef, right: RelRef) -> bool {
+    pub fn contains_conclusion(&self, relation: Relation, left: SRef, right: SRef) -> bool {
         self.pairs
             .get(&(left, right))
             .is_some_and(|flags| flags.1.contains(relation.flag()))
     }
     pub(crate) fn pairs(
         &self,
-    ) -> impl Iterator<Item = ((RelRef, RelRef), (RelationFlags, RelationFlags))> + '_ {
+    ) -> impl Iterator<Item = ((SRef, SRef), (RelationFlags, RelationFlags))> + '_ {
         self.pairs.iter().map(|(pair, flags)| (*pair, *flags))
     }
 
-    pub fn premise_pairs(&self, relation: Relation) -> impl Iterator<Item = (RelRef, RelRef)> + '_ {
+    pub fn premise_pairs(&self, relation: Relation) -> impl Iterator<Item = (SRef, SRef)> + '_ {
         self.pairs()
             .filter_map(move |(pair, flags)| flags.0.contains(relation.flag()).then_some(pair))
     }
-    pub fn conclusion_pairs(
-        &self,
-        relation: Relation,
-    ) -> impl Iterator<Item = (RelRef, RelRef)> + '_ {
+    pub fn conclusion_pairs(&self, relation: Relation) -> impl Iterator<Item = (SRef, SRef)> + '_ {
         self.pairs()
             .filter_map(move |(pair, flags)| flags.1.contains(relation.flag()).then_some(pair))
     }
-    pub(crate) fn wire_side(&self, conclusion: bool) -> BTreeMap<Relation, Vec<(u32, u32)>> {
+    pub(crate) fn wire_side(&self, conclusion: bool) -> BTreeMap<Relation, Vec<(i32, i32)>> {
         Relation::ALL
             .into_iter()
             .filter_map(|relation| {
@@ -340,15 +324,15 @@ impl Relations {
     pub(crate) fn insert_wire_side(
         &mut self,
         conclusion: bool,
-        relations: BTreeMap<Relation, Vec<(u32, u32)>>,
+        relations: BTreeMap<Relation, Vec<(i32, i32)>>,
     ) {
         for (relation, pairs) in relations {
             for (left, right) in pairs {
                 self.insert_side(
                     conclusion,
                     relation,
-                    RelRef::from_raw(left),
-                    RelRef::from_raw(right),
+                    SRef::from_raw(left),
+                    SRef::from_raw(right),
                 );
             }
         }

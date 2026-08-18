@@ -8,7 +8,9 @@ use std::fmt::{self, Display, Formatter};
 use covalence_lib_cbor::Value;
 use serde::{Deserialize, Serialize};
 
-use crate::{Arena, ImportTableObject, Link, Thm};
+use covalence_lib_hash::O256;
+
+use crate::{Arena, Seq};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EncodeError(String);
@@ -60,10 +62,10 @@ pub fn arena_to_value(arena: &Arena) -> Result<Value, EncodeError> {
 pub fn arena_from_value(value: &Value) -> Result<Arena, DecodeError> {
     from_value(value)
 }
-pub fn thm_to_value(thm: &Thm) -> Result<Value, EncodeError> {
-    to_value(thm)
+pub fn seq_to_value(seq: &Seq) -> Result<Value, EncodeError> {
+    to_value(seq)
 }
-pub fn thm_from_value(value: &Value) -> Result<Thm, DecodeError> {
+pub fn seq_from_value(value: &Value) -> Result<Seq, DecodeError> {
     from_value(value)
 }
 pub fn import_table_to_value(table: &crate::ImportTable) -> Result<Value, EncodeError> {
@@ -72,6 +74,6 @@ pub fn import_table_to_value(table: &crate::ImportTable) -> Result<Value, Encode
 pub fn import_table_from_value(value: &Value) -> Result<crate::ImportTable, DecodeError> {
     from_value(value)
 }
-pub fn import_table_link_from_value(value: &Value) -> Result<Link<ImportTableObject>, DecodeError> {
+pub fn import_table_address_from_value(value: &Value) -> Result<O256, DecodeError> {
     from_value(value)
 }

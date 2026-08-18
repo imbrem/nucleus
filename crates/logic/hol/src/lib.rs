@@ -7,19 +7,18 @@ mod tag;
 mod theorem;
 
 pub use arena::{
-    AnyLink, Arena, ArenaError, ArenaObject, BytesObject, Expr, Format, ImportTable,
-    ImportTableObject, Ix, Link, LinkKindError, LinkTarget, ObjectKind, Resolve, Segment,
-    SharedArena, SharedImportTable, TheoremObject,
+    Arena, ArenaError, Expr, Format, ImportTable, Ix, Link, LinkRef, ObjectKind, Resolve, Segment,
+    SharedArena, SharedImportTable,
 };
 pub use cbor::{
     DecodeError, EncodeError, arena_from_value, arena_to_value, deserialize_cbor, from_value,
-    import_table_from_value, import_table_link_from_value, import_table_to_value, serialize_cbor,
-    thm_from_value, thm_to_value, to_value,
+    import_table_address_from_value, import_table_from_value, import_table_to_value,
+    seq_from_value, seq_to_value, serialize_cbor, to_value,
 };
 pub use covalence_lib_cbor::Value as CborValue;
-pub use relations::{ImportId, Prop, RelRef, RelRefView, Relation, Relations};
+pub use relations::{Ctx, Relation, Relations, SRef, SRefView};
 pub use tag::{SurfaceTag, UnknownSurfaceTag};
-pub use theorem::Thm;
+pub use theorem::{Seq, SharedSeq};
 
 #[cfg(test)]
 mod tests {
@@ -30,7 +29,7 @@ mod tests {
         SharedImportTable::new(ImportTable::new()).unwrap()
     }
 
-    fn sample_arena(imports: Link<ImportTableObject>) -> Arena {
+    fn sample_arena(imports: O256) -> Arena {
         let mut arena = Arena::new(Some(imports));
         let star = arena.push(Expr::KindStar).unwrap();
         let bool_ty = arena.push(Expr::TyBool).unwrap();
@@ -70,13 +69,21 @@ mod tests {
     }
 
     #[test]
-    fn typed_links_reject_the_wrong_object_kind() {
-        let link = AnyLink {
-            addr: O256::from_bytes(b"theorem"),
-            format: Format::Cbor,
-            kind: ObjectKind::Theorem,
+    fn arena_segments_reject_the_wrong_object_kind() {
+        let link = LinkRef {
+            import: 0,
+            format: Format::CborSparse,
+            kind: ObjectKind::Sequent,
         };
-        assert!(Link::<ArenaObject>::try_from(link).is_err());
+        assert!(
+            Segment::new(
+                Ix::new(1).unwrap(),
+                Ix::new(2).unwrap(),
+                link,
+                Ix::new(1).unwrap(),
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -84,14 +91,18 @@ mod tests {
         let imports_link = empty_imports();
         let imported = SharedArena::new(sample_arena(imports_link.link())).unwrap();
         let mut table = ImportTable::new();
-        let import_id = table.push(imported.link()).unwrap();
+        let import_id = table.push(imported.address()).unwrap();
         let mut arena = Arena::new(table);
         arena
             .add_segment(
                 Segment::new(
                     Ix::new(1).unwrap(),
                     Ix::new(3).unwrap(),
-                    import_id,
+                    LinkRef {
+                        import: import_id,
+                        format: Format::CborDense,
+                        kind: ObjectKind::Arena,
+                    },
                     Ix::new(1).unwrap(),
                 )
                 .unwrap(),
@@ -108,8 +119,8 @@ mod tests {
 
     #[test]
     fn relations_colocate_premises_and_conclusions() {
-        let one = RelRef::pos(Ix::new(1).unwrap());
-        let two = RelRef::neg(Ix::new(2).unwrap());
+        let one = SRef::pos(Ix::new(1).unwrap());
+        let two = SRef::neg(Ix::new(2).unwrap());
         let mut relations = Relations::new();
         relations.insert_premise(Relation::Imp, one, two);
         relations.insert_symmetric_conclusion(Relation::TyEq, one, two);
@@ -119,47 +130,158 @@ mod tests {
     }
 
     #[test]
-    fn theorem_cbor_round_trip_preserves_both_sides() {
+    fn sequent_cbor_round_trip_preserves_both_sides() {
         let imports = empty_imports();
         let arena = SharedArena::new(sample_arena(imports.link())).unwrap();
-        let mut theorem = Thm::new(Some(arena.link()), Some(imports.link()));
-        theorem.assume(7);
-        theorem.conclude(7);
-        let one = RelRef::pos(Ix::new(1).unwrap());
-        theorem
+        let mut sequent_imports = ImportTable::new();
+        sequent_imports.push(arena.address()).unwrap();
+        let sequent_imports = SharedImportTable::new(sequent_imports).unwrap();
+        let mut sequent = Seq::new(
+            Some(LinkRef {
+                import: 0,
+                format: Format::CborDense,
+                kind: ObjectKind::Arena,
+            }),
+            Some(sequent_imports.link()),
+        );
+        let imported = LinkRef {
+            import: 7,
+            format: Format::CborSparse,
+            kind: ObjectKind::Sequent,
+        };
+        sequent.assume(imported);
+        sequent.conclude(imported);
+        let one = SRef::pos(Ix::new(1).unwrap());
+        sequent
             .relations_mut()
             .insert_conclusion(Relation::HasKind, one, one);
-        let value = thm_to_value(&theorem).unwrap();
-        assert_eq!(thm_from_value(&value).unwrap(), theorem);
+        let value = seq_to_value(&sequent).unwrap();
+        assert_eq!(seq_from_value(&value).unwrap(), sequent);
 
-        let premises = theorem.premises();
-        let conclusion = theorem.conclusion();
-        assert_eq!(premises.theorems().collect::<Vec<_>>(), [7]);
+        let premises = sequent.premises();
+        let conclusion = sequent.conclusion();
+        assert_eq!(premises.sequents().collect::<Vec<_>>(), [imported]);
         assert!(conclusion.contains(Relation::HasKind, one, one));
-        assert_eq!(Thm::from_props(premises, conclusion), Some(theorem));
+        assert_eq!(Seq::from_contexts(premises, conclusion), Some(sequent));
     }
 
     #[test]
-    fn one_sided_theorems_do_not_require_cloneable_links() {
+    fn one_sided_sequents_do_not_require_cloneable_links() {
         #[derive(Debug, Eq, PartialEq)]
         struct Handle(u8);
 
-        let mut premise = Prop::new(Handle(1), Handle(2));
-        premise.insert_theorem(3);
-        let theorem = Thm::from_premises(premise);
-        assert_eq!(theorem.premise_theorems().collect::<Vec<_>>(), [3]);
-        assert_eq!(theorem.conclusion_theorems().count(), 0);
-
-        let mut conclusion = Prop::new(Handle(1), Handle(2));
-        conclusion.insert_theorem(4);
-        let theorem = Thm::from_conclusion(conclusion);
-        assert_eq!(theorem.premise_theorems().count(), 0);
-        assert_eq!(theorem.conclusion_theorems().collect::<Vec<_>>(), [4]);
-
-        let no_indices: Thm = Thm::new(None, None);
+        let mut premise = Ctx::new(Handle(1), Handle(2));
+        let premise_link = LinkRef {
+            import: 3,
+            format: Format::CborSparse,
+            kind: ObjectKind::Sequent,
+        };
+        premise.insert_sequent(premise_link);
+        let sequent = Seq::from_premises(premise);
         assert_eq!(
-            thm_from_value(&thm_to_value(&no_indices).unwrap()).unwrap(),
+            sequent.premise_sequents().collect::<Vec<_>>(),
+            [premise_link]
+        );
+        assert_eq!(sequent.conclusion_sequents().count(), 0);
+
+        let mut conclusion = Ctx::new(Handle(1), Handle(2));
+        let conclusion_link = LinkRef {
+            import: 4,
+            format: Format::CborSparse,
+            kind: ObjectKind::Sequent,
+        };
+        conclusion.insert_sequent(conclusion_link);
+        let sequent = Seq::from_conclusion(conclusion);
+        assert_eq!(sequent.premise_sequents().count(), 0);
+        assert_eq!(
+            sequent.conclusion_sequents().collect::<Vec<_>>(),
+            [conclusion_link]
+        );
+
+        let no_indices: Seq = Seq::new(None, None);
+        assert_eq!(
+            seq_from_value(&seq_to_value(&no_indices).unwrap()).unwrap(),
             no_indices
+        );
+    }
+
+    #[test]
+    fn arenas_and_sequents_form_a_lazy_import_graph() {
+        let mut root: Arena = Arena::new(None);
+        root.push(Expr::KindStar).unwrap();
+        let root = SharedArena::new(root).unwrap();
+
+        let mut arena_imports = ImportTable::new();
+        let root_id = arena_imports.push(root.address()).unwrap();
+        let arena_imports = SharedImportTable::new(arena_imports).unwrap();
+        let mut dependent = Arena::new(arena_imports.table().clone());
+        dependent
+            .add_segment(
+                Segment::new(
+                    Ix::new(1).unwrap(),
+                    Ix::new(2).unwrap(),
+                    LinkRef {
+                        import: root_id,
+                        format: Format::CborDense,
+                        kind: ObjectKind::Arena,
+                    },
+                    Ix::new(1).unwrap(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert!(
+            matches!(dependent.resolve(Ix::new(1).unwrap()), Resolve::Lazy { link, .. }
+            if link.address() == root.address() && link.kind() == ObjectKind::Arena)
+        );
+        let dependent =
+            SharedArena::new(dependent.map_imports(|_| Some(arena_imports.link()))).unwrap();
+
+        let mut first_imports = ImportTable::new();
+        first_imports.push(dependent.address()).unwrap();
+        let first_imports = SharedImportTable::new(first_imports).unwrap();
+        let first = SharedSeq::new(Seq::new(
+            Some(LinkRef {
+                import: 0,
+                format: Format::CborDense,
+                kind: ObjectKind::Arena,
+            }),
+            Some(first_imports.address()),
+        ))
+        .unwrap();
+
+        let mut second_imports = ImportTable::new();
+        second_imports.push(dependent.address()).unwrap();
+        second_imports.push(first.address()).unwrap();
+        let second_imports = SharedImportTable::new(second_imports).unwrap();
+        let mut second = Seq::new(
+            Some(LinkRef {
+                import: 0,
+                format: Format::CborDense,
+                kind: ObjectKind::Arena,
+            }),
+            Some(second_imports.address()),
+        );
+        second.assume(LinkRef {
+            import: 1,
+            format: Format::CborSparse,
+            kind: ObjectKind::Sequent,
+        });
+        let second = SharedSeq::new(second).unwrap();
+
+        assert!(second.sequent().link_ref_is_sequent(
+            second_imports.table(),
+            LinkRef {
+                import: 1,
+                format: Format::CborSparse,
+                kind: ObjectKind::Sequent,
+            }
+        ));
+        assert_eq!(to_value(&root).unwrap(), to_value(&root.link()).unwrap());
+        assert_eq!(to_value(&first).unwrap(), to_value(&first.link()).unwrap());
+        assert_eq!(
+            to_value(&second).unwrap(),
+            to_value(&second.link()).unwrap()
         );
     }
 }
