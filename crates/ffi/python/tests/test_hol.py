@@ -1,7 +1,6 @@
 """The Python arena API uses the exact Rust/Lean v0 wire representation."""
 
 import pytest
-
 from covalence.lib.hash import O256
 from covalence.logic.hol import Arena, Expr, ImportTable, LinkRef, Segment, Seq
 
