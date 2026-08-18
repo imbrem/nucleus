@@ -6,8 +6,8 @@
 use covalence_lib_python::prelude::*;
 use covalence_lib_python::pyo3::types::{PyBytes, PyType};
 use covalence_logic_hol::{
-    Arena, Expr, Format, ImportTable, Ix, LinkRef, ObjectKind, Segment, Seq, SharedArena,
-    SharedImportTable, SharedSeq, SurfaceTag, deserialize_cbor, serialize_cbor,
+    Arena, Ctx, Expr, Format, ImportTable, Ix, LinkRef, ObjectKind, Relation, SRef, Segment, Seq,
+    SharedArena, SharedImportTable, SharedSeq, SurfaceTag, deserialize_cbor, serialize_cbor,
 };
 
 use crate::hash::PyO256;
@@ -54,6 +54,24 @@ fn kind_name(value: ObjectKind) -> &'static str {
         ObjectKind::Arena => "arena",
         ObjectKind::Sequent => "sequent",
     }
+}
+
+fn parse_relation(value: &str) -> PyResult<Relation> {
+    match value {
+        "syn_eq" => Ok(Relation::SynEq),
+        "conv_eq" => Ok(Relation::ConvEq),
+        "ty_eq" => Ok(Relation::TyEq),
+        "has_ty" => Ok(Relation::HasTy),
+        "imp" => Ok(Relation::Imp),
+        "eq" => Ok(Relation::Eq),
+        "has_kind" => Ok(Relation::HasKind),
+        "ne" => Ok(Relation::Ne),
+        _ => Err(PyValueError::new_err("unsupported HolE relation")),
+    }
+}
+
+fn sref(value: i32) -> PyResult<SRef> {
+    SRef::from_raw(value).map_err(value_error)
 }
 
 #[pyclass(
@@ -317,6 +335,95 @@ impl PyArena {
     }
 }
 
+/// One heterogeneous logical side of a sequent.
+#[pyclass(skip_from_py_object, module = "covalence.logic.hol", name = "Ctx")]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+#[derive(Clone)]
+pub struct PyCtx {
+    ctx: Ctx,
+}
+
+#[pymethods]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+impl PyCtx {
+    #[new]
+    #[pyo3(signature = (arena=None, imports=None))]
+    fn new(arena: Option<&PyLinkRef>, imports: Option<PyRef<'_, PyO256>>) -> Self {
+        Self {
+            ctx: Ctx::new(
+                arena.map(|link| link.link),
+                imports.as_ref().map(PyO256::value),
+            ),
+        }
+    }
+
+    #[classmethod]
+    fn from_cbor(_class: &Bound<'_, PyType>, bytes: Bytes) -> PyResult<Self> {
+        deserialize_cbor(bytes.as_slice())
+            .map(|ctx| Self { ctx })
+            .map_err(value_error)
+    }
+
+    fn to_cbor<'py>(&self, python: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let bytes = serialize_cbor(&self.ctx).map_err(value_error)?;
+        Ok(PyBytes::new(python, &bytes))
+    }
+
+    fn insert_sequent(&mut self, sequent: &PyLinkRef) -> bool {
+        self.ctx.insert_sequent(sequent.link)
+    }
+
+    fn insert(&mut self, relation: &str, left: i32, right: i32) -> PyResult<bool> {
+        Ok(self
+            .ctx
+            .insert(parse_relation(relation)?, sref(left)?, sref(right)?))
+    }
+
+    fn insert_symmetric(&mut self, relation: &str, left: i32, right: i32) -> PyResult<bool> {
+        let relation = parse_relation(relation)?;
+        if !relation.is_symmetric() {
+            return Err(PyValueError::new_err(
+                "directional relation is not symmetric",
+            ));
+        }
+        Ok(self
+            .ctx
+            .insert_symmetric(relation, sref(left)?, sref(right)?))
+    }
+
+    fn contains(&self, relation: &str, left: i32, right: i32) -> PyResult<bool> {
+        Ok(self
+            .ctx
+            .contains(parse_relation(relation)?, sref(left)?, sref(right)?))
+    }
+
+    fn pairs(&self, relation: &str) -> PyResult<Vec<(i32, i32)>> {
+        Ok(self
+            .ctx
+            .pairs(parse_relation(relation)?)
+            .map(|(left, right)| (left.raw(), right.raw()))
+            .collect())
+    }
+
+    #[getter]
+    fn arena(&self) -> Option<PyLinkRef> {
+        self.ctx.arena().map(|link| PyLinkRef { link })
+    }
+
+    #[getter]
+    fn imports(&self, python: Python<'_>) -> PyResult<Option<Py<PyO256>>> {
+        self.ctx
+            .imports()
+            .map(|address| py_hash(python, address))
+            .transpose()
+    }
+
+    #[getter]
+    fn sequents(&self) -> Vec<PyLinkRef> {
+        self.ctx.sequents().map(|link| PyLinkRef { link }).collect()
+    }
+}
+
 #[pyclass(module = "covalence.logic.hol", name = "Seq")]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 pub struct PySeq {
@@ -352,6 +459,79 @@ impl PySeq {
         self.seq.conclude(sequent.link)
     }
 
+    fn insert_premise(&mut self, relation: &str, left: i32, right: i32) -> PyResult<bool> {
+        Ok(self.seq.relations_mut().insert_premise(
+            parse_relation(relation)?,
+            sref(left)?,
+            sref(right)?,
+        ))
+    }
+
+    fn insert_conclusion(&mut self, relation: &str, left: i32, right: i32) -> PyResult<bool> {
+        Ok(self.seq.relations_mut().insert_conclusion(
+            parse_relation(relation)?,
+            sref(left)?,
+            sref(right)?,
+        ))
+    }
+
+    fn premise_pairs(&self, relation: &str) -> PyResult<Vec<(i32, i32)>> {
+        Ok(self
+            .seq
+            .relations()
+            .premise_pairs(parse_relation(relation)?)
+            .map(|(left, right)| (left.raw(), right.raw()))
+            .collect())
+    }
+
+    fn conclusion_pairs(&self, relation: &str) -> PyResult<Vec<(i32, i32)>> {
+        Ok(self
+            .seq
+            .relations()
+            .conclusion_pairs(parse_relation(relation)?)
+            .map(|(left, right)| (left.raw(), right.raw()))
+            .collect())
+    }
+
+    #[getter]
+    fn premises(&self) -> PyCtx {
+        PyCtx {
+            ctx: self.seq.premises(),
+        }
+    }
+
+    #[getter]
+    fn conclusion(&self) -> PyCtx {
+        PyCtx {
+            ctx: self.seq.conclusion(),
+        }
+    }
+
+    #[classmethod]
+    fn from_premises(_class: &Bound<'_, PyType>, premises: &PyCtx) -> Self {
+        Self {
+            seq: Seq::from_premises(premises.ctx.clone()),
+        }
+    }
+
+    #[classmethod]
+    fn from_conclusion(_class: &Bound<'_, PyType>, conclusion: &PyCtx) -> Self {
+        Self {
+            seq: Seq::from_conclusion(conclusion.ctx.clone()),
+        }
+    }
+
+    #[classmethod]
+    fn from_contexts(
+        _class: &Bound<'_, PyType>,
+        premises: &PyCtx,
+        conclusion: &PyCtx,
+    ) -> PyResult<Self> {
+        Seq::from_contexts(premises.ctx.clone(), conclusion.ctx.clone())
+            .map(|seq| Self { seq })
+            .ok_or_else(|| PyValueError::new_err("contexts use different arenas or import tables"))
+    }
+
     fn to_cbor<'py>(&self, python: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         let bytes = serialize_cbor(&self.seq).map_err(value_error)?;
         Ok(PyBytes::new(python, &bytes))
@@ -369,5 +549,6 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PySegment>()?;
     module.add_class::<PyImportTable>()?;
     module.add_class::<PyArena>()?;
+    module.add_class::<PyCtx>()?;
     module.add_class::<PySeq>()
 }
