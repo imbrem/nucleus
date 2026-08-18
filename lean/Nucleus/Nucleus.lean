@@ -4,6 +4,7 @@ import Nucleus.HolLN.Array
 import Nucleus.HolLN.Json
 import Nucleus.HolSurface
 import Nucleus.HolSurface.Cbor
+import Nucleus.HolSurface.Init
 import Nucleus.HolSurface.RustMapping
 import Nucleus.Json
 import Nucleus.Cbor

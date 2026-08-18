@@ -7,6 +7,7 @@
 
 mod arena;
 mod cbor;
+mod init;
 mod relations;
 mod tag;
 mod theorem;
@@ -22,6 +23,7 @@ pub use cbor::{
     import_table_to_value, seq_from_value, seq_to_value, serialize_cbor, to_value,
 };
 pub use covalence_lib_cbor::Value as CborValue;
+pub use init::{INIT_ARENA, INIT_REFS, InitRefs, build_init_arena};
 pub use relations::{Ctx, InvalidSRef, Relation, SRef, SRefView};
 pub use tag::{SurfaceTag, UnknownSurfaceTag};
 pub use theorem::{Seq, SharedSeq};
