@@ -207,15 +207,55 @@ impl Segment {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Expr {
+    /// Lean `Nucleus.Hol.Kind.star`.
     KindStar,
+    /// Lean `Nucleus.Hol.Kind.arr`; children are domain and codomain kinds.
     KindArr { domain: Ix, codomain: Ix },
+    /// Lean `Nucleus.HolE.Expr.boolTy`.
     TyBool,
+    /// Lean `Nucleus.HolE.Expr.arr`.
     TyArr { domain: Ix, codomain: Ix },
+    /// Lean `Nucleus.HolE.Expr.tyApp`.
     TyApp { function: Ix, argument: Ix },
+    /// Lean `Nucleus.HolE.Expr.tyLam`; `domain` records the bound variable's kind.
     TyLam { domain: Ix, body: Ix },
+    /// Lean `Nucleus.HolE.Expr.tyBv` after decoding the heterogeneous index.
     TyBv { index: u32 },
+    /// Lean `Nucleus.HolE.Expr.sub`.
     TySub { carrier: Ix, predicate: Ix },
+    /// Lean `Nucleus.HolE.Expr.tyExists`.
+    TyExists { predicate: Ix },
+    /// Lean `Nucleus.HolE.Expr.model`.
     TyModel { predicate: Ix },
+    /// Lean `Nucleus.HolE.Expr.bv`.
+    TmBv { index: u32 },
+    /// Lean `Nucleus.HolE.Expr.fv`; free variables carry their syntactic type.
+    TmFv { name: u32, ty: Ix },
+    /// Lean `Nucleus.HolE.Expr.app`.
+    TmApp { function: Ix, argument: Ix },
+    /// Lean `Nucleus.HolE.Expr.lam`.
+    TmLam { domain: Ix, body: Ix },
+    /// Lean `Nucleus.HolE.Expr.bool`.
+    TmBool { value: bool },
+    /// Lean `Nucleus.HolE.Expr.eq`; the first child is the operand type.
+    TmEq { ty: Ix, left: Ix, right: Ix },
+    /// Lean `Nucleus.HolE.Expr.eps`.
+    TmEps { ty: Ix, predicate: Ix },
+    /// Lean `Nucleus.HolE.Expr.abs`.
+    TmAbs {
+        carrier: Ix,
+        predicate: Ix,
+        value: Ix,
+    },
+    /// Lean `Nucleus.HolE.Expr.rep`.
+    TmRep {
+        carrier: Ix,
+        predicate: Ix,
+        value: Ix,
+    },
+    /// Surface conversion. Its LCF interpretation is the source term when its
+    /// type equals `target`, and canonical inhabited garbage otherwise.
+    TmCast { term: Ix, target: Ix },
 }
 
 /// Simple traversal-oriented wire form. `ix` contains every arena child in
@@ -227,6 +267,8 @@ struct ExprWire {
     ix: Vec<Ix>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     var: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    value: Option<bool>,
 }
 
 impl From<&Expr> for ExprWire {
@@ -235,7 +277,12 @@ impl From<&Expr> for ExprWire {
             tag: expr.tag().to_string(),
             ix: expr.children().collect(),
             var: match expr {
-                Expr::TyBv { index } => Some(*index),
+                Expr::TyBv { index } | Expr::TmBv { index } => Some(*index),
+                Expr::TmFv { name, .. } => Some(*name),
+                _ => None,
+            },
+            value: match expr {
+                Expr::TmBool { value } => Some(*value),
                 _ => None,
             },
         }
@@ -247,7 +294,7 @@ impl TryFrom<ExprWire> for Expr {
 
     fn try_from(wire: ExprWire) -> Result<Self, Self::Error> {
         let tag = wire.tag.parse().map_err(|_| "unknown expression tag")?;
-        Self::from_parts(tag, &wire.ix, wire.var)
+        Self::from_parts(tag, &wire.ix, wire.var, wire.value)
     }
 }
 
@@ -260,36 +307,74 @@ impl Expr {
         tag: SurfaceTag,
         children: &[Ix],
         var: Option<u32>,
+        value: Option<bool>,
     ) -> Result<Self, &'static str> {
-        let no_var = var.is_none();
-        match (tag, children, var) {
-            (SurfaceTag::KindStar, [], None) => Ok(Self::KindStar),
-            (SurfaceTag::KindArr, [domain, codomain], None) => Ok(Self::KindArr {
+        let no_payload = var.is_none() && value.is_none();
+        match (tag, children, var, value) {
+            (SurfaceTag::KindStar, [], None, None) => Ok(Self::KindStar),
+            (SurfaceTag::KindArr, [domain, codomain], None, None) => Ok(Self::KindArr {
                 domain: *domain,
                 codomain: *codomain,
             }),
-            (SurfaceTag::TyBool, [], None) => Ok(Self::TyBool),
-            (SurfaceTag::TyArr, [domain, codomain], None) => Ok(Self::TyArr {
+            (SurfaceTag::TyBool, [], None, None) => Ok(Self::TyBool),
+            (SurfaceTag::TyArr, [domain, codomain], None, None) => Ok(Self::TyArr {
                 domain: *domain,
                 codomain: *codomain,
             }),
-            (SurfaceTag::TyApp, [function, argument], None) => Ok(Self::TyApp {
+            (SurfaceTag::TyApp, [function, argument], None, None) => Ok(Self::TyApp {
                 function: *function,
                 argument: *argument,
             }),
-            (SurfaceTag::TyLam, [domain, body], None) => Ok(Self::TyLam {
+            (SurfaceTag::TyLam, [domain, body], None, None) => Ok(Self::TyLam {
                 domain: *domain,
                 body: *body,
             }),
-            (SurfaceTag::TyBv, [], Some(index)) => Ok(Self::TyBv { index }),
-            (SurfaceTag::TySub, [carrier, predicate], None) => Ok(Self::TySub {
+            (SurfaceTag::TyBv, [], Some(index), None) => Ok(Self::TyBv { index }),
+            (SurfaceTag::TySub, [carrier, predicate], None, None) => Ok(Self::TySub {
                 carrier: *carrier,
                 predicate: *predicate,
             }),
-            (SurfaceTag::TyModel, [predicate], None) => Ok(Self::TyModel {
+            (SurfaceTag::TyExists, [predicate], None, None) => Ok(Self::TyExists {
                 predicate: *predicate,
             }),
-            _ if !no_var => Err("only a variable expression may carry `var`"),
+            (SurfaceTag::TyModel, [predicate], None, None) => Ok(Self::TyModel {
+                predicate: *predicate,
+            }),
+            (SurfaceTag::TmBv, [], Some(index), None) => Ok(Self::TmBv { index }),
+            (SurfaceTag::TmFv, [ty], Some(name), None) => Ok(Self::TmFv { name, ty: *ty }),
+            (SurfaceTag::TmApp, [function, argument], None, None) => Ok(Self::TmApp {
+                function: *function,
+                argument: *argument,
+            }),
+            (SurfaceTag::TmLam, [domain, body], None, None) => Ok(Self::TmLam {
+                domain: *domain,
+                body: *body,
+            }),
+            (SurfaceTag::TmBool, [], None, Some(value)) => Ok(Self::TmBool { value }),
+            (SurfaceTag::TmEq, [ty, left, right], None, None) => Ok(Self::TmEq {
+                ty: *ty,
+                left: *left,
+                right: *right,
+            }),
+            (SurfaceTag::TmEps, [ty, predicate], None, None) => Ok(Self::TmEps {
+                ty: *ty,
+                predicate: *predicate,
+            }),
+            (SurfaceTag::TmAbs, [carrier, predicate, value], None, None) => Ok(Self::TmAbs {
+                carrier: *carrier,
+                predicate: *predicate,
+                value: *value,
+            }),
+            (SurfaceTag::TmRep, [carrier, predicate, value], None, None) => Ok(Self::TmRep {
+                carrier: *carrier,
+                predicate: *predicate,
+                value: *value,
+            }),
+            (SurfaceTag::TmCast, [term, target], None, None) => Ok(Self::TmCast {
+                term: *term,
+                target: *target,
+            }),
+            _ if !no_payload => Err("invalid payload for expression tag"),
             _ => Err("wrong number of expression children"),
         }
     }
@@ -321,21 +406,59 @@ impl Expr {
             Self::TyLam { .. } => SurfaceTag::TyLam,
             Self::TyBv { .. } => SurfaceTag::TyBv,
             Self::TySub { .. } => SurfaceTag::TySub,
+            Self::TyExists { .. } => SurfaceTag::TyExists,
             Self::TyModel { .. } => SurfaceTag::TyModel,
+            Self::TmBv { .. } => SurfaceTag::TmBv,
+            Self::TmFv { .. } => SurfaceTag::TmFv,
+            Self::TmApp { .. } => SurfaceTag::TmApp,
+            Self::TmLam { .. } => SurfaceTag::TmLam,
+            Self::TmBool { .. } => SurfaceTag::TmBool,
+            Self::TmEq { .. } => SurfaceTag::TmEq,
+            Self::TmEps { .. } => SurfaceTag::TmEps,
+            Self::TmAbs { .. } => SurfaceTag::TmAbs,
+            Self::TmRep { .. } => SurfaceTag::TmRep,
+            Self::TmCast { .. } => SurfaceTag::TmCast,
         }
     }
     pub fn children(&self) -> impl Iterator<Item = Ix> + '_ {
-        let pair = match self {
-            Self::KindStar | Self::TyBool | Self::TyBv { .. } => [None, None],
+        let triple = match self {
+            Self::KindStar
+            | Self::TyBool
+            | Self::TyBv { .. }
+            | Self::TmBv { .. }
+            | Self::TmBool { .. } => [None, None, None],
             Self::KindArr { domain, codomain } | Self::TyArr { domain, codomain } => {
-                [Some(*domain), Some(*codomain)]
+                [Some(*domain), Some(*codomain), None]
             }
-            Self::TyApp { function, argument } => [Some(*function), Some(*argument)],
-            Self::TyLam { domain, body } => [Some(*domain), Some(*body)],
-            Self::TySub { carrier, predicate } => [Some(*carrier), Some(*predicate)],
-            Self::TyModel { predicate } => [Some(*predicate), None],
+            Self::TyApp { function, argument } | Self::TmApp { function, argument } => {
+                [Some(*function), Some(*argument), None]
+            }
+            Self::TyLam { domain, body } | Self::TmLam { domain, body } => {
+                [Some(*domain), Some(*body), None]
+            }
+            Self::TySub { carrier, predicate }
+            | Self::TmEps {
+                ty: carrier,
+                predicate,
+            } => [Some(*carrier), Some(*predicate), None],
+            Self::TyExists { predicate } | Self::TyModel { predicate } => {
+                [Some(*predicate), None, None]
+            }
+            Self::TmFv { ty, .. } => [Some(*ty), None, None],
+            Self::TmEq { ty, left, right } => [Some(*ty), Some(*left), Some(*right)],
+            Self::TmAbs {
+                carrier,
+                predicate,
+                value,
+            }
+            | Self::TmRep {
+                carrier,
+                predicate,
+                value,
+            } => [Some(*carrier), Some(*predicate), Some(*value)],
+            Self::TmCast { term, target } => [Some(*term), Some(*target), None],
         };
-        pair.into_iter().flatten()
+        triple.into_iter().flatten()
     }
 }
 
