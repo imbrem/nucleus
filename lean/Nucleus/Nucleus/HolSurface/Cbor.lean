@@ -244,6 +244,7 @@ def encodeExpr : Expr → Nucleus.Cbor
   | .tmRep carrier predicate value => exprMap "TM_REP" [carrier, predicate, value]
   | .tmCast term target => exprMap "TM_CAST" [term, target]
   | .tmNat value => exprMap "TM_NAT" [] none none (some (encodeNatData value))
+  | .tmBytes value => exprMap "TM_BYTES" [] none none (some value)
 
 def decodeExpr? (value : Nucleus.Cbor) : Option Expr := do
   let entries ← asMap? value
@@ -281,6 +282,10 @@ def decodeExpr? (value : Nucleus.Cbor) : Option Expr := do
   | .primitive (.text "TM_NAT"), [] =>
       match ← field? entries "data" with
       | .primitive (.bytes value) => .tmNat <$> decodeNatData? value
+      | _ => none
+  | .primitive (.text "TM_BYTES"), [] =>
+      match ← field? entries "data" with
+      | .primitive (.bytes value) => some (.tmBytes value)
       | _ => none
   | _, _ => none
 

@@ -451,6 +451,7 @@ name = "covalence-logic-hol"
 version = "0.0.0"
 dependencies = [
  "bitflags",
+ "bytes",
  "covalence-data-num",
  "covalence-lib-cbor",
  "covalence-lib-hash",
