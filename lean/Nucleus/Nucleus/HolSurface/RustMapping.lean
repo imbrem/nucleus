@@ -6,9 +6,9 @@ import Nucleus.HolSurface
 
 `CoreFormer` records the `HolE Empty` constructor represented by each arena
 expression. Child references, binder kinds, and de Bruijn indices are checked
-before constructing its arguments. `tmCast` lowers through
-`HolE.Empty.Term.cast`, a total operation rather than a raw `HolE.Expr`
-constructor.
+before constructing its arguments. The checker infers `tmEq`'s shared operand
+type from its children. `tmCast` lowers through `HolE.Empty.Term.cast`, a total
+operation rather than a raw `HolE.Expr` constructor.
 -/
 
 namespace Nucleus.HolSurface.RustMapping
@@ -59,8 +59,7 @@ theorem coreFormer_surjective : Function.Surjective coreFormer := by
   · exact ⟨.tmApp ⟨1, by decide, by decide⟩ ⟨1, by decide, by decide⟩, rfl⟩
   · exact ⟨.tmLam ⟨1, by decide, by decide⟩ ⟨1, by decide, by decide⟩, rfl⟩
   · exact ⟨.tmBool false, rfl⟩
-  · exact ⟨.tmEq ⟨1, by decide, by decide⟩ ⟨1, by decide, by decide⟩
-      ⟨1, by decide, by decide⟩, rfl⟩
+  · exact ⟨.tmEq ⟨1, by decide, by decide⟩ ⟨1, by decide, by decide⟩, rfl⟩
   · exact ⟨.tmEps ⟨1, by decide, by decide⟩ ⟨1, by decide, by decide⟩, rfl⟩
   · exact ⟨.tmAbs ⟨1, by decide, by decide⟩ ⟨1, by decide, by decide⟩
       ⟨1, by decide, by decide⟩, rfl⟩

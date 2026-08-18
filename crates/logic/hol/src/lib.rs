@@ -151,11 +151,7 @@ mod tests {
             Expr::TmLam { domain: a, body: b },
             Expr::TmBool { value: false },
             Expr::TmBool { value: true },
-            Expr::TmEq {
-                ty: a,
-                left: b,
-                right: c,
-            },
+            Expr::TmEq { left: b, right: c },
             Expr::TmEps {
                 ty: a,
                 predicate: b,

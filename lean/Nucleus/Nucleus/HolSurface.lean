@@ -129,7 +129,8 @@ inductive Expr where
   | tmApp (function argument : Ref)
   | tmLam (domain body : Ref)
   | tmBool (value : Bool)
-  | tmEq (type left right : Ref)
+  /-- Equality with its shared operand type inferred by the LCF checker. -/
+  | tmEq (left right : Ref)
   | tmEps (type predicate : Ref)
   | tmAbs (carrier predicate value : Ref)
   | tmRep (carrier predicate value : Ref)
@@ -151,7 +152,8 @@ def Expr.children : Expr → List Ref
   | .tmApp a b | .tmLam a b | .tmEps a b | .tmCast a b => [a, b]
   | .tyExists p | .tyModel p => [p]
   | .tmFv _ A => [A]
-  | .tmEq A x y | .tmAbs A x y | .tmRep A x y => [A, x, y]
+  | .tmEq x y => [x, y]
+  | .tmAbs A x y | .tmRep A x y => [A, x, y]
 
 class TrustedVec (V : Type → Type) where
   toList {α : Type} : V α → List α
