@@ -6,8 +6,9 @@
 use covalence_lib_python::prelude::*;
 use covalence_lib_python::pyo3::types::{PyBytes, PyType};
 use covalence_logic_hol::{
-    Arena, Ctx, Expr, Format, ImportTable, Ix, LinkRef, ObjectKind, Relation, SRef, Segment, Seq,
-    SharedArena, SharedImportTable, SharedSeq, SurfaceTag, deserialize_cbor, serialize_cbor,
+    Arena, Ctx, Expr, Format, INIT_ARENA, ImportTable, Ix, LinkRef, ObjectKind, Relation, SRef,
+    Segment, Seq, SharedArena, SharedImportTable, SharedSeq, SurfaceTag, deserialize_cbor,
+    serialize_cbor,
 };
 
 use crate::hash::PyO256;
@@ -338,6 +339,15 @@ impl PyArena {
         deserialize_cbor(bytes.as_slice())
             .map(|arena| Self { arena })
             .map_err(value_error)
+    }
+
+    #[classmethod]
+    fn init(_class: &Bound<'_, PyType>) -> Self {
+        Self {
+            arena: INIT_ARENA
+                .to_owned()
+                .expect("audited static initialization arena"),
+        }
     }
 
     fn to_cbor<'py>(&self, python: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
