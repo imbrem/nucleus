@@ -115,6 +115,71 @@ mod tests {
     }
 
     #[test]
+    fn every_hol_e_empty_surface_constructor_round_trips() {
+        let a = Ix::new(1).unwrap();
+        let b = Ix::new(2).unwrap();
+        let c = Ix::new(3).unwrap();
+        let expressions = [
+            Expr::KindStar,
+            Expr::KindArr {
+                domain: a,
+                codomain: b,
+            },
+            Expr::TyBool,
+            Expr::TyArr {
+                domain: a,
+                codomain: b,
+            },
+            Expr::TyApp {
+                function: a,
+                argument: b,
+            },
+            Expr::TyLam { domain: a, body: b },
+            Expr::TyBv { index: 7 },
+            Expr::TySub {
+                carrier: a,
+                predicate: b,
+            },
+            Expr::TyExists { predicate: a },
+            Expr::TyModel { predicate: a },
+            Expr::TmBv { index: 7 },
+            Expr::TmFv { name: 8, ty: a },
+            Expr::TmApp {
+                function: a,
+                argument: b,
+            },
+            Expr::TmLam { domain: a, body: b },
+            Expr::TmBool { value: false },
+            Expr::TmBool { value: true },
+            Expr::TmEq {
+                ty: a,
+                left: b,
+                right: c,
+            },
+            Expr::TmEps {
+                ty: a,
+                predicate: b,
+            },
+            Expr::TmAbs {
+                carrier: a,
+                predicate: b,
+                value: c,
+            },
+            Expr::TmRep {
+                carrier: a,
+                predicate: b,
+                value: c,
+            },
+            Expr::TmCast { term: a, target: b },
+        ];
+
+        for expression in expressions {
+            let encoded = to_value(&expression).unwrap();
+            assert_eq!(from_value::<Expr>(&encoded).unwrap(), expression);
+        }
+    }
+
+    #[test]
     fn arena_cbor_round_trip_and_hash_are_stable() {
         let imports = empty_imports();
         let arena = sample_arena(imports.link());
