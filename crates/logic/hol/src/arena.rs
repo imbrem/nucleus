@@ -6,7 +6,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use covalence_data_num::Num;
 use covalence_lib_hash::O256;
-use serde::de::{SeqAccess, Visitor};
+use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::SurfaceTag;
@@ -292,7 +292,7 @@ impl Serialize for WireBytes {
 impl<'de> Deserialize<'de> for WireBytes {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct BytesVisitor;
-        impl<'de> Visitor<'de> for BytesVisitor {
+        impl Visitor<'_> for BytesVisitor {
             type Value = WireBytes;
 
             fn expecting(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
@@ -302,13 +302,6 @@ impl<'de> Deserialize<'de> for WireBytes {
                 Ok(WireBytes(value.to_vec()))
             }
             fn visit_byte_buf<E: serde::de::Error>(self, value: Vec<u8>) -> Result<Self::Value, E> {
-                Ok(WireBytes(value))
-            }
-            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-                let mut value = Vec::with_capacity(seq.size_hint().unwrap_or(0));
-                while let Some(byte) = seq.next_element()? {
-                    value.push(byte);
-                }
                 Ok(WireBytes(value))
             }
         }
