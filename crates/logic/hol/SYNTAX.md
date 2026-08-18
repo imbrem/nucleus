@@ -12,6 +12,10 @@ reference site. The import table itself is only a flat vector of `O256` values;
 inserting an address already present reuses its first ID instead of appending a
 duplicate.
 
+Relation endpoints use an `i32`: zero is null, positive values are `Ix` values,
+and negative values are negated `Ix` values. `i32::MIN` is rejected because its
+magnitude is outside the `Ix` range.
+
 ## Expression wire shape
 
 Every node is a CBOR map with a string `tag` and an `ix` array containing its

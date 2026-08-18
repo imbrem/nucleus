@@ -1,5 +1,8 @@
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::error::Error;
+use std::fmt::{self, Display, Formatter};
 
 use bitflags::bitflags;
 use covalence_lib_hash::O256;
@@ -13,6 +16,17 @@ type CtxParts<A, I> = (A, I, BTreeSet<LinkRef>, RelationSet);
 /// A signed arena reference used as a relation endpoint.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SRef(i32);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InvalidSRef;
+
+impl Display for InvalidSRef {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter.write_str("i32::MIN is reserved and is not a signed arena reference")
+    }
+}
+
+impl Error for InvalidSRef {}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SRefView {
@@ -31,9 +45,15 @@ impl SRef {
     pub const fn neg(value: Ix) -> Self {
         Self(-value.get().cast_signed())
     }
-    #[must_use]
-    pub const fn from_raw(value: i32) -> Self {
-        Self(value)
+    /// # Errors
+    /// Returns an error for `i32::MIN`, the sole signed value that is neither
+    /// zero nor the positive or negative image of an [`Ix`].
+    pub const fn from_raw(value: i32) -> Result<Self, InvalidSRef> {
+        if value == i32::MIN {
+            Err(InvalidSRef)
+        } else {
+            Ok(Self(value))
+        }
     }
     #[must_use]
     pub const fn raw(self) -> i32 {
@@ -41,12 +61,20 @@ impl SRef {
     }
     #[must_use]
     pub fn view(self) -> SRefView {
-        if self.0 == 0 || self.0 == i32::MIN {
-            SRefView::Null
-        } else if self.0 > 0 {
-            Ix::new(self.0.cast_unsigned()).map_or(SRefView::Null, SRefView::Pos)
-        } else {
-            Ix::new(self.0.unsigned_abs()).map_or(SRefView::Null, SRefView::Neg)
+        match self.0.cmp(&0) {
+            Ordering::Equal => SRefView::Null,
+            Ordering::Greater => {
+                let Ok(reference) = Ix::new(self.0.cast_unsigned()) else {
+                    unreachable!("positive i32 is an Ix")
+                };
+                SRefView::Pos(reference)
+            }
+            Ordering::Less => {
+                let Ok(reference) = Ix::new(self.0.unsigned_abs()) else {
+                    unreachable!("SRef excludes i32::MIN")
+                };
+                SRefView::Neg(reference)
+            }
         }
     }
 }
@@ -256,16 +284,18 @@ impl<'a, A, I> From<&'a Ctx<A, I>> for detail::Ctx<&'a A, &'a I> {
     }
 }
 
-impl<A, I> From<detail::Ctx<A, I>> for Ctx<A, I> {
-    fn from(wire: detail::Ctx<A, I>) -> Self {
+impl<A, I> TryFrom<detail::Ctx<A, I>> for Ctx<A, I> {
+    type Error = InvalidSRef;
+
+    fn try_from(wire: detail::Ctx<A, I>) -> Result<Self, Self::Error> {
         let mut context = Self::new(wire.arena, wire.imports);
         context.sequents.extend(wire.sequents);
         for (relation, pairs) in wire.relations {
             for (left, right) in pairs {
-                context.insert(relation, SRef::from_raw(left), SRef::from_raw(right));
+                context.insert(relation, SRef::from_raw(left)?, SRef::from_raw(right)?);
             }
         }
-        context
+        Ok(context)
     }
 }
 
@@ -277,7 +307,9 @@ impl<A: Serialize, I: Serialize> Serialize for Ctx<A, I> {
 
 impl<'de, A: Deserialize<'de>, I: Deserialize<'de>> Deserialize<'de> for Ctx<A, I> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Ok(detail::Ctx::<A, I>::deserialize(deserializer)?.into())
+        detail::Ctx::<A, I>::deserialize(deserializer)?
+            .try_into()
+            .map_err(serde::de::Error::custom)
     }
 }
 
@@ -389,16 +421,17 @@ impl Relations {
         &mut self,
         conclusion: bool,
         relations: BTreeMap<Relation, Vec<(i32, i32)>>,
-    ) {
+    ) -> Result<(), InvalidSRef> {
         for (relation, pairs) in relations {
             for (left, right) in pairs {
                 self.insert_side(
                     conclusion,
                     relation,
-                    SRef::from_raw(left),
-                    SRef::from_raw(right),
+                    SRef::from_raw(left)?,
+                    SRef::from_raw(right)?,
                 );
             }
         }
+        Ok(())
     }
 }

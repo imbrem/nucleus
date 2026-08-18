@@ -233,8 +233,10 @@ impl<'a, A, I> From<&'a Seq<A, I>> for detail::Seq<&'a A, &'a I> {
     }
 }
 
-impl<A, I> From<detail::Seq<A, I>> for Seq<A, I> {
-    fn from(wire: detail::Seq<A, I>) -> Self {
+impl<A, I> TryFrom<detail::Seq<A, I>> for Seq<A, I> {
+    type Error = crate::InvalidSRef;
+
+    fn try_from(wire: detail::Seq<A, I>) -> Result<Self, Self::Error> {
         let mut sequent = Self::new(wire.arena, wire.imports);
         for id in wire.premise_sequents {
             sequent.assume(id);
@@ -242,9 +244,9 @@ impl<A, I> From<detail::Seq<A, I>> for Seq<A, I> {
         for id in wire.conclusion_sequents {
             sequent.conclude(id);
         }
-        sequent.relations.insert_wire_side(false, wire.premises);
-        sequent.relations.insert_wire_side(true, wire.conclusions);
-        sequent
+        sequent.relations.insert_wire_side(false, wire.premises)?;
+        sequent.relations.insert_wire_side(true, wire.conclusions)?;
+        Ok(sequent)
     }
 }
 
@@ -256,7 +258,9 @@ impl<A: Serialize, I: Serialize> Serialize for Seq<A, I> {
 
 impl<'de, A: Deserialize<'de>, I: Deserialize<'de>> Deserialize<'de> for Seq<A, I> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Ok(detail::Seq::<A, I>::deserialize(deserializer)?.into())
+        detail::Seq::<A, I>::deserialize(deserializer)?
+            .try_into()
+            .map_err(serde::de::Error::custom)
     }
 }
 

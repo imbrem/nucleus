@@ -17,7 +17,7 @@ pub use cbor::{
     import_table_to_value, seq_from_value, seq_to_value, serialize_cbor, to_value,
 };
 pub use covalence_lib_cbor::Value as CborValue;
-pub use relations::{Ctx, Relation, Relations, SRef, SRefView};
+pub use relations::{Ctx, InvalidSRef, Relation, Relations, SRef, SRefView};
 pub use tag::{SurfaceTag, UnknownSurfaceTag};
 pub use theorem::{Seq, SharedSeq};
 
@@ -188,6 +188,15 @@ mod tests {
         assert!(relations.contains_premise(Relation::Imp, one, two));
         assert!(relations.contains_conclusion(Relation::TyEq, one, two));
         assert!(relations.contains_conclusion(Relation::TyEq, two, one));
+    }
+
+    #[test]
+    fn signed_references_have_one_semantic_view() {
+        assert_eq!(SRef::from_raw(i32::MIN), Err(InvalidSRef));
+        assert_eq!(SRef::from_raw(0).unwrap().view(), SRefView::Null);
+        let max = Ix::new(i32::MAX.cast_unsigned()).unwrap();
+        assert_eq!(SRef::pos(max).view(), SRefView::Pos(max));
+        assert_eq!(SRef::neg(max).view(), SRefView::Neg(max));
     }
 
     #[test]

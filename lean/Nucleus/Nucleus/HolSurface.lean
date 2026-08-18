@@ -170,13 +170,19 @@ inductive Resolve where
   | wrongKind (link : Link)
   | missing
 
-abbrev SRef := Int32
+/-- Rust `SRef(i32)`. `i32::MIN` is excluded because its magnitude is one
+larger than the largest arena reference; every remaining value has exactly one
+of the null, positive-reference, or negative-reference interpretations. -/
+structure SRef where
+  raw : Int32
+  valid : raw ≠ Int32.minValue
+  deriving DecidableEq
 
 /-- Semantic view of the exact signed `i32` relation endpoint. -/
 inductive SRefView where | null | pos (ref : Ref) | neg (ref : Ref)
   deriving DecidableEq
 
-def relReservedNull : UInt32 := 0x80000000
+def relReserved : UInt32 := 0x80000000
 
 inductive Relation where
   | synEq | convEq | tyEq | hasTy | imp | eq | hasKind | ne

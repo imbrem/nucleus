@@ -230,16 +230,20 @@ def decodeRelation? (value : Nucleus.Cbor) : Option Relation := do
   | _ => none
 
 private def encodeSRef (ref : SRef) : Nucleus.Cbor :=
-  match ref.toInt with
+  match ref.raw.toInt with
   | .ofNat value => unsigned value
   | .negSucc value => .primitive (.integer (.negative (UInt64.ofNat value)))
+
+private def decodeSRef? (value : Nucleus.Cbor) : Option SRef := do
+  let raw ← asInt32? value
+  if valid : raw ≠ Int32.minValue then some ⟨raw, valid⟩ else none
 
 private def encodePair (pair : SRef × SRef) : Nucleus.Cbor :=
   array [encodeSRef pair.1, encodeSRef pair.2]
 
 private def decodePair? (value : Nucleus.Cbor) : Option (SRef × SRef) := do
   match ← asArray? value with
-  | [left, right] => some (← asInt32? left, ← asInt32? right)
+  | [left, right] => some (← decodeSRef? left, ← decodeSRef? right)
   | _ => none
 
 private def relationMapItems : RelationTable → List (Nucleus.Cbor × Nucleus.Cbor)
@@ -296,10 +300,12 @@ def decodeSeq? (value : Nucleus.Cbor) : Option Nucleus.HolSurface.Seq := do
   let conclusions ← decodeRelationTable? (← field? entries "conclusions")
   some ⟨arena, imports, premiseSequents, conclusionSequents, premises, conclusions⟩
 
-/-- An address is correct when it hashes a deterministic CBOR encoding. The
-encoded bytes are a logical witness, not retained by the cached wrapper. -/
+/-- An address is correct when it hashes a complete CBOR encoding of the
+value. The encoded bytes are a logical witness, not retained by the cached
+wrapper. Rust currently chooses Serde's stable struct-field order; callers may
+use other encodings of the same value without changing what decoding means. -/
 def HasAddress (value : Nucleus.Cbor) (address : O256) : Prop :=
-  ∃ encoded, Nucleus.CborWire.RfcDeterministicEncoding value encoded ∧
+  ∃ encoded, Nucleus.CborWire.parse? encoded = some value ∧
     Hash32.hash encoded = address
 
 structure CachedArena where
@@ -487,10 +493,10 @@ set_option maxHeartbeats 800000 in
     decodeRelation? (encodeRelation relation) = some relation := by cases relation <;> rfl
 
 private theorem asInt?_encodeSRef (ref : SRef) :
-    asInt? (encodeSRef ref) = some ref.toInt := by
-  have lower := Int32.le_toInt ref
-  have upper := Int32.toInt_le ref
-  cases representation : ref.toInt with
+    asInt? (encodeSRef ref) = some ref.raw.toInt := by
+  have lower := Int32.le_toInt ref.raw
+  have upper := Int32.toInt_le ref.raw
+  cases representation : ref.raw.toInt with
   | ofNat value =>
       have upper' : (value : Int) ≤ 2 ^ 31 - 1 := by
         simpa [representation, Int32.toInt_maxValue] using upper
@@ -511,19 +517,25 @@ private theorem asInt?_encodeSRef (ref : SRef) :
       simp [encodeSRef, representation, asInt?, converted]
 
 @[simp] private theorem asInt32?_encodeSRef (ref : SRef) :
-    asInt32? (encodeSRef ref) = some ref := by
-  have lower := Int32.le_toInt ref
-  change (-2147483648 : Int) ≤ ref.toInt at lower
-  have bounds : Int32.minValue.toInt ≤ ref.toInt ∧ ref.toInt ≤ Int32.maxValue.toInt := by
+    asInt32? (encodeSRef ref) = some ref.raw := by
+  have lower := Int32.le_toInt ref.raw
+  change (-2147483648 : Int) ≤ ref.raw.toInt at lower
+  have bounds : Int32.minValue.toInt ≤ ref.raw.toInt ∧
+      ref.raw.toInt ≤ Int32.maxValue.toInt := by
     constructor
     · rw [Int32.toInt_minValue]
       exact lower
-    · exact Int32.toInt_le ref
+    · exact Int32.toInt_le ref.raw
   unfold asInt32?
   rw [asInt?_encodeSRef]
-  change (if Int32.minValue.toInt ≤ ref.toInt ∧ ref.toInt ≤ Int32.maxValue.toInt then
-    some (Int32.ofInt ref.toInt) else none) = some ref
+  change (if Int32.minValue.toInt ≤ ref.raw.toInt ∧
+      ref.raw.toInt ≤ Int32.maxValue.toInt then
+    some (Int32.ofInt ref.raw.toInt) else none) = some ref.raw
   rw [if_pos bounds, Int32.ofInt_toInt]
+
+@[simp] private theorem decodeSRef?_encode (ref : SRef) :
+    decodeSRef? (encodeSRef ref) = some ref := by
+  simp [decodeSRef?, ref.valid]
 
 @[simp] private theorem decodePair?_encode (pair : SRef × SRef) :
     decodePair? (encodePair pair) = some pair := by
