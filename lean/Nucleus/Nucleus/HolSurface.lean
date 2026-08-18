@@ -75,6 +75,35 @@ structure LinkRef where
 abbrev ImportTable := List O256
 abbrev ImportId := UInt32
 
+namespace ImportTable
+
+private def findIndexFrom (address : O256) : List O256 → Nat → Option Nat
+  | [], _ => none
+  | candidate :: rest, index =>
+      if candidate = address then some index else findIndexFrom address rest (index + 1)
+
+def findIndex? (table : ImportTable) (address : O256) : Option Nat :=
+  findIndexFrom address table 0
+
+/-- Exact value model of Rust's mutating `ImportTable::push`: reuse an
+existing ID, append a new address otherwise, and fail only when the resulting
+ID is not representable by `u32`. -/
+def push? (table : ImportTable) (address : O256) : Option (ImportTable × ImportId) :=
+  let index := (findIndex? table address).getD table.length
+  if index ≤ UInt32.size - 1 then
+    let updated := if (findIndex? table address).isSome then table else table ++ [address]
+    some (updated, UInt32.ofNat index)
+  else none
+
+@[simp] theorem push?_empty (address : O256) : push? [] address = some ([address], 0) := by
+  simp [push?, findIndex?, findIndexFrom]
+
+@[simp] theorem push?_singleton_same (address : O256) :
+    push? [address] address = some ([address], 0) := by
+  simp [push?, findIndex?, findIndexFrom]
+
+end ImportTable
+
 structure Segment where
   start : Ref
   «end» : Ref
