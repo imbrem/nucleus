@@ -74,7 +74,9 @@ def test_contexts_materialize_and_repack_every_sequent_fact() -> None:
     assert sequent.premise_pairs("has_ty") == [(1, 2)]
     assert sequent.conclusion_pairs("imp") == [(0, 1)]
     assert Seq.from_premises(premises).premises.to_cbor() == premises.to_cbor()
-    assert Seq.from_conclusion(conclusions).conclusion.to_cbor() == conclusions.to_cbor()
+    assert (
+        Seq.from_conclusion(conclusions).conclusion.to_cbor() == conclusions.to_cbor()
+    )
 
     with pytest.raises(ValueError, match="different arenas"):
         Seq.from_contexts(premises, Ctx())
