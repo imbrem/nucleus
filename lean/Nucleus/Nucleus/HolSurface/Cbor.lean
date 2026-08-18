@@ -53,6 +53,15 @@ private def asUInt32? (value : Nucleus.Cbor) : Option UInt32 := do
   let value ← asNat? value
   if value ≤ UInt32.size - 1 then some (UInt32.ofNat value) else none
 
+private def asBool? : Nucleus.Cbor → Option Bool
+  | .primitive (.simple 20) => some false
+  | .primitive (.simple 21) => some true
+  | _ => none
+
+private def asBytes? : Nucleus.Cbor → Option Nucleus.Bytes
+  | .primitive (.bytes value) => some value
+  | _ => none
+
 private def asInt? : Nucleus.Cbor → Option Int
   | .primitive (.integer (.unsigned value)) => some value.toNat
   | .primitive (.integer (.negative value)) => some (.negSucc value.toNat)
@@ -86,6 +95,15 @@ private def optionalField? (entries : List (Nucleus.Cbor × Nucleus.Cbor))
   | [] => some none
   | [value] => some (some value)
   | _ => none
+
+/-- Serde validates the type and uniqueness of every declared optional field
+before the expression tag decides whether that field is semantically relevant. -/
+private def typedOptionalField? {α : Type}
+    (entries : List (Nucleus.Cbor × Nucleus.Cbor)) (name : String)
+    (decode : Nucleus.Cbor → Option α) : Option (Option α) := do
+  match ← optionalField? entries name with
+  | none => some none
+  | some value => some (some (← decode value))
 
 private def traverse {α : Type} (decode : Nucleus.Cbor → Option α) :
     List Nucleus.Cbor → Option (List α)
@@ -194,6 +212,8 @@ def encodeExpr : Expr → Nucleus.Cbor
 def decodeExpr? (value : Nucleus.Cbor) : Option Expr := do
   let entries ← asMap? value
   let children ← traverse decodeRef? (← asArray? (← field? entries "ix"))
+  let _ ← typedOptionalField? entries "var" asUInt32?
+  let _ ← typedOptionalField? entries "value" asBool?
   match ← field? entries "tag", children with
   | .primitive (.text "KIND_STAR"), [] => some .kindStar
   | .primitive (.text "KIND_ARR"), [domain, codomain] => some (.kindArr domain codomain)
@@ -514,9 +534,10 @@ set_option maxHeartbeats 4000000 in
     decodeExpr? (encodeExpr expr) = some expr := by
   cases expr
   case tmBool value =>
-    cases value <;> simp [encodeExpr, exprMap, decodeExpr?, field?, valuesFor, traverse,
-      CborPrimitive.false, CborPrimitive.true]
-  all_goals simp [encodeExpr, exprMap, decodeExpr?, field?, valuesFor, traverse]
+    cases value <;> simp [encodeExpr, exprMap, decodeExpr?, typedOptionalField?, optionalField?,
+      asBool?, field?, valuesFor, traverse, CborPrimitive.false, CborPrimitive.true]
+  all_goals simp [encodeExpr, exprMap, decodeExpr?, typedOptionalField?, optionalField?,
+    asBool?, field?, valuesFor, traverse]
 
 @[simp] theorem decodeSegment?_encode (segment : Segment) :
     decodeSegment? (encodeSegment segment) = some segment := by

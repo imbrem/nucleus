@@ -110,6 +110,30 @@ mod tests {
     }
 
     #[test]
+    fn expression_wire_validates_declared_payloads_before_using_the_tag() {
+        let mut fields = vec![
+            (
+                CborValue::Text("tag".into()),
+                CborValue::Text("KIND_STAR".into()),
+            ),
+            (CborValue::Text("ix".into()), CborValue::Array(vec![])),
+        ];
+        fields.push((CborValue::Text("var".into()), 9_u64.into()));
+        assert_eq!(
+            from_value::<Expr>(&CborValue::Map(fields.clone())).unwrap(),
+            Expr::KindStar
+        );
+
+        let last = fields.last_mut().unwrap();
+        last.1 = CborValue::Text("not an integer".into());
+        assert!(from_value::<Expr>(&CborValue::Map(fields.clone())).is_err());
+
+        fields.last_mut().unwrap().1 = 9_u64.into();
+        fields.push((CborValue::Text("var".into()), 10_u64.into()));
+        assert!(from_value::<Expr>(&CborValue::Map(fields)).is_err());
+    }
+
+    #[test]
     fn every_hol_e_empty_surface_constructor_round_trips() {
         let a = Ix::new(1).unwrap();
         let b = Ix::new(2).unwrap();
