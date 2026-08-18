@@ -51,5 +51,10 @@ serialize through the same validated owned wire form. `Ctx` and `Seq` refer to
 an arena and import table by optional links and encode logical facts as sparse,
 relation-indexed pairs.
 
+Rust canonicalizes imported sequents and relation pairs in private ordered
+bitflag maps. Lean models both that packed representation and its exact public
+projection. Its simpler list-based `Ctx` and `Seq` types are the public wire
+view; ordering and duplicate spellings are not additional logical facts.
+
 Rust and Lean both prove/validate preferred-encoding round trips. Cached Rust
 objects retain their value and typed `O256` address, not the source CBOR bytes.

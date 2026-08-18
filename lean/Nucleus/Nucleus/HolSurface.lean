@@ -190,6 +190,9 @@ inductive Relation where
   | synEq | convEq | tyEq | hasTy | imp | eq | hasKind | ne
   deriving DecidableEq
 
+def Relation.all : List Relation :=
+  [.synEq, .convEq, .tyEq, .hasTy, .imp, .eq, .hasKind, .ne]
+
 def Relation.tag : Relation → Nat
   | .synEq => 0 | .convEq => 1 | .tyEq => 2 | .hasTy => 3
   | .imp => 4 | .eq => 5 | .hasKind => 6 | .ne => 7
@@ -226,6 +229,25 @@ structure RelationEntry where
 `BTreeMap<(SRef, SRef), (RelationFlags, RelationFlags)>`. -/
 abbrev PackedRelations := List RelationEntry
 
+/-- Whether the private byte mask contains the bit assigned to a relation. -/
+def RelationFlags.contains (flags : RelationFlags) (relation : Relation) : Bool :=
+  (flags.toNat / 2 ^ relation.tag) % 2 == 1
+
+/-- Exact public projection used by Rust's private `Relations::wire_side`.
+`packed` is ordered by `(left, right)`, as a `BTreeMap` is in Rust. -/
+def PackedRelations.wireSide (packed : PackedRelations) (conclusion : Bool) : RelationTable :=
+  Relation.all.filterMap fun relation =>
+    let pairs := packed.filterMap fun entry =>
+      let flags := if conclusion then entry.conclusionFlags else entry.premiseFlags
+      if flags.contains relation then some (entry.left, entry.right) else none
+    if pairs.isEmpty then none else some (relation, pairs)
+
+/-- A public relation table is in Rust's canonical order precisely when it is
+the projection of an ordered packed map. Duplicate and order-varying CBOR
+tables can still denote the same finite relation before this normalization. -/
+def CanonicalRelationTable (table : RelationTable) (conclusion : Bool) : Prop :=
+  ∃ packed : PackedRelations, packed.wireSide conclusion = table
+
 end Internal
 
 /-! Rust and Lean both call a heterogeneous logical side `Ctx`. -/
@@ -236,7 +258,8 @@ structure Ctx where
   relations : RelationTable
   deriving DecidableEq
 
-/-- Rust `Seq`'s exact public/wire data. -/
+/-- Rust `Seq`'s public/wire view. Rust stores this view canonically in private
+bitflag maps; the corresponding projection is modeled below. -/
 structure Seq where
   arena : Option LinkRef
   imports : Option O256
@@ -245,6 +268,41 @@ structure Seq where
   premises : RelationTable
   conclusions : RelationTable
   deriving DecidableEq
+
+namespace Internal
+
+abbrev SeqFlags := UInt8
+
+structure ImportedSequentEntry where
+  link : LinkRef
+  flags : SeqFlags
+  deriving DecidableEq
+
+/-- Lean model of Rust's private `Seq` representation. Both lists stand for
+ordered `BTreeMap`s and therefore contain unique keys. -/
+structure PackedSeq where
+  arena : Option LinkRef
+  imports : Option O256
+  sequents : List ImportedSequentEntry
+  relations : PackedRelations
+  deriving DecidableEq
+
+private def SeqFlags.contains (flags : SeqFlags) (bit : Nat) : Bool :=
+  (flags.toNat / 2 ^ bit) % 2 == 1
+
+/-- Exact projection from Rust's packed sequent storage to its public CBOR
+fields (`PREMISE = 1`, `CONCLUSION = 2`). -/
+def PackedSeq.toPublic (packed : PackedSeq) : Seq where
+  arena := packed.arena
+  imports := packed.imports
+  premiseSequents := packed.sequents.filterMap fun entry =>
+    if entry.flags.contains 0 then some entry.link else none
+  conclusionSequents := packed.sequents.filterMap fun entry =>
+    if entry.flags.contains 1 then some entry.link else none
+  premises := packed.relations.wireSide false
+  conclusions := packed.relations.wireSide true
+
+end Internal
 
 /-- A `Seq` is a compatible pair of contexts: both sides inhabit the same
 arena and import table. -/
