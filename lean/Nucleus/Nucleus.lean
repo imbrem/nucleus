@@ -1,6 +1,7 @@
 import Nucleus.HolLN
 import Nucleus.Hol
 import Nucleus.HolLN.Array
+import Nucleus.HolLN.Indexed
 import Nucleus.HolLN.Json
 import Nucleus.Json
 import Nucleus.Cbor
