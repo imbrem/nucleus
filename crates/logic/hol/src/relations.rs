@@ -217,6 +217,70 @@ impl<A, I> Ctx<A, I> {
     }
 }
 
+mod detail {
+    use std::collections::BTreeMap;
+
+    use serde::{Deserialize, Serialize};
+
+    use crate::{LinkRef, Relation};
+
+    #[derive(Serialize, Deserialize)]
+    pub(super) struct Ctx<A, I> {
+        pub arena: A,
+        pub imports: I,
+        pub sequents: Vec<LinkRef>,
+        pub relations: BTreeMap<Relation, Vec<(i32, i32)>>,
+    }
+}
+
+impl<'a, A, I> From<&'a Ctx<A, I>> for detail::Ctx<&'a A, &'a I> {
+    fn from(context: &'a Ctx<A, I>) -> Self {
+        Self {
+            arena: &context.arena,
+            imports: &context.imports,
+            sequents: context.sequents().collect(),
+            relations: context
+                .relations
+                .iter()
+                .map(|(relation, pairs)| {
+                    (
+                        *relation,
+                        pairs
+                            .iter()
+                            .map(|(left, right)| (left.raw(), right.raw()))
+                            .collect(),
+                    )
+                })
+                .collect(),
+        }
+    }
+}
+
+impl<A, I> From<detail::Ctx<A, I>> for Ctx<A, I> {
+    fn from(wire: detail::Ctx<A, I>) -> Self {
+        let mut context = Self::new(wire.arena, wire.imports);
+        context.sequents.extend(wire.sequents);
+        for (relation, pairs) in wire.relations {
+            for (left, right) in pairs {
+                context.insert(relation, SRef::from_raw(left), SRef::from_raw(right));
+            }
+        }
+        context
+    }
+}
+
+impl<A: Serialize, I: Serialize> Serialize for Ctx<A, I> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        detail::Ctx::from(self).serialize(serializer)
+    }
+}
+
+impl<'de, A: Deserialize<'de>, I: Deserialize<'de>> Deserialize<'de> for Ctx<A, I> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(detail::Ctx::<A, I>::deserialize(deserializer)?.into())
+    }
+}
+
 impl Relations {
     #[must_use]
     pub const fn new() -> Self {

@@ -203,11 +203,11 @@ def decodeSegment? (value : Nucleus.Cbor) : Option Segment := do
     else none
   else none
 
-def encodeArena (arena : Arena) : Nucleus.Cbor := map [
+def encodeArena {V : Type → Type} [TrustedVec V] (arena : Arena V) : Nucleus.Cbor := map [
   ("imports", encodeOptional encodeO256 arena.imports),
-  ("segments", array (arena.segments.map encodeSegment)),
+  ("segments", array ((TrustedVec.toList arena.segments).map encodeSegment)),
   ("local_base", unsigned arena.localBase.toNat),
-  ("defs", array (arena.defs.map encodeExpr))]
+  ("defs", array ((TrustedVec.toList arena.defs).map encodeExpr))]
 
 def decodeArena? (value : Nucleus.Cbor) : Option Arena := do
   let entries ← asMap? value
@@ -216,6 +216,10 @@ def decodeArena? (value : Nucleus.Cbor) : Option Arena := do
   let localBase ← asUInt32? (← field? entries "local_base")
   let defs ← traverse decodeExpr? (← asArray? (← field? entries "defs"))
   some ⟨imports, segments, localBase, defs⟩
+
+/-- Rust serializes `StaticArena` through the owned arena wire shape. -/
+def encodeStaticArena (arena : StaticArena) : Nucleus.Cbor :=
+  encodeArena arena
 
 def encodeRelation (relation : Relation) : Nucleus.Cbor := unsigned relation.tag
 
@@ -325,6 +329,20 @@ def link (cached : CachedImportTable) : O256 := cached.address
 @[simp] theorem link_eq (cached : CachedImportTable) : cached.link = cached.address := rfl
 
 end CachedImportTable
+
+structure CachedSeq where
+  seq : Nucleus.HolSurface.Seq
+  address : O256
+  correct : HasAddress (encodeSeq seq) address
+
+namespace CachedSeq
+
+def link (cached : CachedSeq) : Link :=
+  ⟨cached.address, .cborSparse, .sequent⟩
+
+@[simp] theorem link_address (cached : CachedSeq) : cached.link.addr = cached.address := rfl
+
+end CachedSeq
 
 /-! ## Preferred-encoding round trips -/
 
@@ -442,21 +460,28 @@ private theorem uint64_ref (ref : Ref) :
   rw [uint64_ref]
   exact Ref.ofNat?_value ref
 
+set_option linter.unusedSimpArgs false in
+set_option maxHeartbeats 800000 in
+-- Expanding the generic map decoder once per expression constructor is costly.
 @[simp] theorem decodeExpr?_encode (expr : Expr) :
     decodeExpr? (encodeExpr expr) = some expr := by
-  cases expr <;> simp [encodeExpr, exprMap, decodeExpr?, field?, valuesFor]
+  cases expr <;> simp [encodeExpr, exprMap, decodeExpr?, field?, valuesFor, traverse]
 
 @[simp] theorem decodeSegment?_encode (segment : Segment) :
     decodeSegment? (encodeSegment segment) = some segment := by
   rcases segment with ⟨start, end_, link, sourceStart, nonempty, arenaKind⟩
   simp [encodeSegment, decodeSegment?, field?, valuesFor, nonempty, arenaKind]
 
-@[simp] theorem decodeArena?_encode (arena : Arena) :
-    decodeArena? (encodeArena arena) = some arena := by
+@[simp] theorem decodeArena?_encode {V : Type → Type} [TrustedVec V] (arena : Arena V) :
+    decodeArena? (encodeArena arena) = some arena.toOwned := by
   rcases arena with ⟨imports, segments, localBase, defs⟩
-  simp [encodeArena, decodeArena?, field?, valuesFor,
+  simp [encodeArena, decodeArena?, Arena.toOwned, field?, valuesFor,
     traverse_map_roundtrip encodeSegment decodeSegment? decodeSegment?_encode,
     traverse_map_roundtrip encodeExpr decodeExpr? decodeExpr?_encode]
+
+@[simp] theorem decodeArena?_encodeStatic (arena : StaticArena) :
+    decodeArena? (encodeStaticArena arena) = some arena.toOwned :=
+  decodeArena?_encode arena
 
 @[simp] theorem decodeRelation?_encode (relation : Relation) :
     decodeRelation? (encodeRelation relation) = some relation := by cases relation <;> rfl
@@ -496,7 +521,9 @@ private theorem asInt?_encodeSRef (ref : SRef) :
     · exact Int32.toInt_le ref
   unfold asInt32?
   rw [asInt?_encodeSRef]
-  simp [bounds, Int32.ofInt_toInt]
+  change (if Int32.minValue.toInt ≤ ref.toInt ∧ ref.toInt ≤ Int32.maxValue.toInt then
+    some (Int32.ofInt ref.toInt) else none) = some ref
+  rw [if_pos bounds, Int32.ofInt_toInt]
 
 @[simp] private theorem decodePair?_encode (pair : SRef × SRef) :
     decodePair? (encodePair pair) = some pair := by

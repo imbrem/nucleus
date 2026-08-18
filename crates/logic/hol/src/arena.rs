@@ -239,8 +239,22 @@ impl TryFrom<ExprWire> for Expr {
 
     fn try_from(wire: ExprWire) -> Result<Self, Self::Error> {
         let tag = wire.tag.parse().map_err(|_| "unknown expression tag")?;
-        let no_var = wire.var.is_none();
-        match (tag, wire.ix.as_slice(), wire.var) {
+        Self::from_parts(tag, &wire.ix, wire.var)
+    }
+}
+
+impl Expr {
+    /// Build an expression from its traversal-oriented wire components.
+    ///
+    /// # Errors
+    /// Rejects the wrong child arity or a `var` payload on a non-variable tag.
+    pub fn from_parts(
+        tag: SurfaceTag,
+        children: &[Ix],
+        var: Option<u32>,
+    ) -> Result<Self, &'static str> {
+        let no_var = var.is_none();
+        match (tag, children, var) {
             (SurfaceTag::KindStar, [], None) => Ok(Self::KindStar),
             (SurfaceTag::KindArr, [domain, codomain], None) => Ok(Self::KindArr {
                 domain: *domain,
@@ -317,13 +331,117 @@ impl Expr {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct Arena<I = Option<O256>> {
-    imports: I,
-    segments: Vec<Segment>,
-    local_base: u32,
-    defs: Vec<Expr>,
+mod storage {
+    pub trait Sealed {}
 }
+
+/// A trusted choice of arena-vector representation.
+///
+/// The trait is sealed because arena invariants depend on the two audited
+/// implementations: owned vectors and immutable static slices.
+pub trait TrustedVec: storage::Sealed {
+    type Of<T: 'static>: AsRef<[T]>;
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct OwnedVec;
+impl storage::Sealed for OwnedVec {}
+impl TrustedVec for OwnedVec {
+    type Of<T: 'static> = Vec<T>;
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct StaticVec;
+impl storage::Sealed for StaticVec {}
+impl TrustedVec for StaticVec {
+    type Of<T: 'static> = &'static [T];
+}
+
+/// An arena whose two vectors share one audited storage family.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "ArenaWire<I>")]
+#[serde(bound(serialize = "I: Serialize, V::Of<Segment>: Serialize, V::Of<Expr>: Serialize"))]
+#[serde(bound(
+    deserialize = "I: Deserialize<'de>, Arena<I, V>: TryFrom<ArenaWire<I>, Error = ArenaError>"
+))]
+pub struct Arena<I = Option<O256>, V: TrustedVec = OwnedVec> {
+    imports: I,
+    segments: V::Of<Segment>,
+    local_base: u32,
+    defs: V::Of<Expr>,
+}
+
+/// Immutable, slice-backed specialization used by foundational arenas.
+pub type StaticArena<I = Option<O256>> = Arena<I, StaticVec>;
+
+impl<I> Arena<I, StaticVec> {
+    /// Construct and validate a slice-backed arena.
+    ///
+    /// # Errors
+    /// Returns the first structural arena error.
+    pub fn from_static(
+        imports: I,
+        segments: &'static [Segment],
+        local_base: u32,
+        defs: &'static [Expr],
+    ) -> Result<Self, ArenaError>
+    where
+        I: Clone,
+    {
+        let arena = Self::new_const(imports, segments, local_base, defs);
+        arena.validate()?;
+        Ok(arena)
+    }
+
+    /// Internal constant constructor for audited built-in tables. Every such
+    /// value is also passed through [`Self::validate`] in tests.
+    pub(crate) const fn new_const(
+        imports: I,
+        segments: &'static [Segment],
+        local_base: u32,
+        defs: &'static [Expr],
+    ) -> Self {
+        Self {
+            imports,
+            segments,
+            local_base,
+            defs,
+        }
+    }
+
+    /// Validate the static table using the owned arena's single checker.
+    ///
+    /// # Errors
+    /// Returns the first structural arena error.
+    pub fn validate(&self) -> Result<(), ArenaError>
+    where
+        I: Clone,
+    {
+        self.to_owned().map(|_| ())
+    }
+
+    /// Decode-compatible owned representation of the same arena.
+    ///
+    /// # Errors
+    /// Returns the first structural arena error.
+    pub fn to_owned(&self) -> Result<Arena<I>, ArenaError>
+    where
+        I: Clone,
+    {
+        let mut arena = Arena::new(self.imports.clone());
+        for segment in self.segments {
+            arena.add_segment(*segment)?;
+        }
+        arena.set_local_base(self.local_base)?;
+        for expr in self.defs {
+            arena.push(expr.clone())?;
+        }
+        Ok(arena)
+    }
+}
+
+/// The canonical static arena with no imports or definitions.
+pub const EMPTY_STATIC_ARENA: StaticArena = Arena::new_const(None, &[], 1, &[]);
 
 #[derive(Deserialize)]
 struct ArenaWire<I> {
@@ -333,34 +451,28 @@ struct ArenaWire<I> {
     defs: Vec<Expr>,
 }
 
-impl<'de, I: Deserialize<'de>> Deserialize<'de> for Arena<I> {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let wire = ArenaWire::<I>::deserialize(deserializer)?;
+impl<I> TryFrom<ArenaWire<I>> for Arena<I, OwnedVec> {
+    type Error = ArenaError;
+
+    fn try_from(wire: ArenaWire<I>) -> Result<Self, Self::Error> {
         let mut arena = Self::new(wire.imports);
         for segment in wire.segments {
-            arena
-                .add_segment(
-                    Segment::new(
-                        segment.start,
-                        segment.end,
-                        segment.link,
-                        segment.source_start,
-                    )
-                    .map_err(serde::de::Error::custom)?,
-                )
-                .map_err(serde::de::Error::custom)?;
+            arena.add_segment(Segment::new(
+                segment.start,
+                segment.end,
+                segment.link,
+                segment.source_start,
+            )?)?;
         }
-        arena
-            .set_local_base(wire.local_base)
-            .map_err(serde::de::Error::custom)?;
+        arena.set_local_base(wire.local_base)?;
         for expr in wire.defs {
-            arena.push(expr).map_err(serde::de::Error::custom)?;
+            arena.push(expr)?;
         }
         Ok(arena)
     }
 }
 
-impl<I> Arena<I> {
+impl<I> Arena<I, OwnedVec> {
     #[must_use]
     pub const fn new(imports: I) -> Self {
         Self {
@@ -371,19 +483,6 @@ impl<I> Arena<I> {
         }
     }
     #[must_use]
-    pub const fn imports(&self) -> &I {
-        &self.imports
-    }
-    pub fn segments(&self) -> &[Segment] {
-        &self.segments
-    }
-    #[must_use]
-    pub const fn local_base(&self) -> u32 {
-        self.local_base
-    }
-    pub fn defs(&self) -> &[Expr] {
-        &self.defs
-    }
     pub fn map_imports<J>(self, map: impl FnOnce(I) -> J) -> Arena<J> {
         Arena {
             imports: map(self.imports),
@@ -448,24 +547,41 @@ impl<I> Arena<I> {
         self.defs.push(expr);
         Ok(index)
     }
+}
+
+impl<I, V: TrustedVec> Arena<I, V> {
+    #[must_use]
+    pub const fn imports(&self) -> &I {
+        &self.imports
+    }
+    pub fn segments(&self) -> &[Segment] {
+        self.segments.as_ref()
+    }
+    #[must_use]
+    pub const fn local_base(&self) -> u32 {
+        self.local_base
+    }
+    pub fn defs(&self) -> &[Expr] {
+        self.defs.as_ref()
+    }
     #[must_use]
     pub fn local(&self, index: Ix) -> Option<&Expr> {
         (index.get() >= self.local_base)
             .then(|| index.get() - self.local_base)
-            .and_then(|offset| self.defs.get(offset as usize))
+            .and_then(|offset| self.defs().get(offset as usize))
     }
 }
 
-impl Arena<ImportTable> {
+impl<V: TrustedVec> Arena<ImportTable, V> {
     #[must_use]
     pub fn resolve(&self, index: Ix) -> Resolve<'_> {
         if let Some(expr) = self.local(index) {
             return Resolve::Local(expr);
         }
         let position = self
-            .segments
+            .segments()
             .partition_point(|segment| segment.start <= index);
-        let Some(segment) = position.checked_sub(1).and_then(|i| self.segments.get(i)) else {
+        let Some(segment) = position.checked_sub(1).and_then(|i| self.segments().get(i)) else {
             return Resolve::Missing;
         };
         let Some(source) = segment.translate(index) else {

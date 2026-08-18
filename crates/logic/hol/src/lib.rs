@@ -7,13 +7,14 @@ mod tag;
 mod theorem;
 
 pub use arena::{
-    Arena, ArenaError, Expr, Format, ImportTable, Ix, Link, LinkRef, ObjectKind, Resolve, Segment,
-    SharedArena, SharedImportTable,
+    Arena, ArenaError, EMPTY_STATIC_ARENA, Expr, Format, ImportTable, Ix, Link, LinkRef,
+    ObjectKind, OwnedVec, Resolve, Segment, SharedArena, SharedImportTable, StaticArena, StaticVec,
+    TrustedVec,
 };
 pub use cbor::{
-    DecodeError, EncodeError, arena_from_value, arena_to_value, deserialize_cbor, from_value,
-    import_table_address_from_value, import_table_from_value, import_table_to_value,
-    seq_from_value, seq_to_value, serialize_cbor, to_value,
+    DecodeError, EncodeError, arena_from_value, arena_to_value, ctx_from_value, ctx_to_value,
+    deserialize_cbor, from_value, import_table_address_from_value, import_table_from_value,
+    import_table_to_value, seq_from_value, seq_to_value, serialize_cbor, to_value,
 };
 pub use covalence_lib_cbor::Value as CborValue;
 pub use relations::{Ctx, Relation, Relations, SRef, SRefView};
@@ -46,6 +47,57 @@ mod tests {
             })
             .unwrap();
         arena
+    }
+
+    const STATIC_DEFS: &[Expr] = &[Expr::KindStar, Expr::TyBool];
+    const STATIC_ARENA: StaticArena = StaticArena::new_const(None, &[], 1, STATIC_DEFS);
+
+    #[test]
+    fn static_arena_uses_the_owned_wire_format() {
+        STATIC_ARENA.validate().unwrap();
+        let owned = STATIC_ARENA.to_owned().unwrap();
+        assert_eq!(
+            serialize_cbor(&STATIC_ARENA).unwrap(),
+            serialize_cbor(&owned).unwrap()
+        );
+        assert_eq!(
+            deserialize_cbor::<Arena>(&serialize_cbor(&STATIC_ARENA).unwrap()).unwrap(),
+            owned
+        );
+    }
+
+    #[test]
+    fn expression_wire_shape_has_uniform_children_and_variable_leaves() {
+        let one = Ix::new(1).unwrap();
+        let two = Ix::new(2).unwrap();
+        assert_eq!(
+            to_value(&Expr::TyApp {
+                function: one,
+                argument: two,
+            })
+            .unwrap(),
+            CborValue::Map(vec![
+                (
+                    CborValue::Text("tag".into()),
+                    CborValue::Text("TY_APP".into()),
+                ),
+                (
+                    CborValue::Text("ix".into()),
+                    CborValue::Array(vec![1_u64.into(), 2_u64.into()]),
+                ),
+            ])
+        );
+        assert_eq!(
+            to_value(&Expr::TyBv { index: 9 }).unwrap(),
+            CborValue::Map(vec![
+                (
+                    CborValue::Text("tag".into()),
+                    CborValue::Text("TY_BV".into()),
+                ),
+                (CborValue::Text("ix".into()), CborValue::Array(vec![])),
+                (CborValue::Text("var".into()), 9_u64.into()),
+            ])
+        );
     }
 
     #[test]

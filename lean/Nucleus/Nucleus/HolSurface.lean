@@ -105,11 +105,35 @@ def Expr.children : Expr → List Ref
   | .kindArr a b | .tyArr a b | .tyApp a b | .tyLam a b | .tySub a b => [a, b]
   | .tyModel p => [p]
 
-structure Arena where
+class TrustedVec (V : Type → Type) where
+  toList {α : Type} : V α → List α
+
+instance : TrustedVec List where
+  toList := id
+
+/-- Logical model of Rust's immutable slice storage family. -/
+structure StaticVec (α : Type) where
+  values : List α
+  deriving DecidableEq
+
+instance : TrustedVec StaticVec where
+  toList := StaticVec.values
+
+structure Arena (V : Type → Type := List) where
   imports : Option O256
-  segments : List Segment
+  segments : V Segment
   localBase : UInt32
-  defs : List Expr
+  defs : V Expr
+
+abbrev StaticArena := Arena StaticVec
+
+def Arena.toOwned {V : Type → Type} [TrustedVec V] (arena : Arena V) : Arena :=
+  ⟨arena.imports, TrustedVec.toList arena.segments, arena.localBase,
+    TrustedVec.toList arena.defs⟩
+
+def StaticArena.empty : StaticArena := ⟨none, ⟨[]⟩, 1, ⟨[]⟩⟩
+
+@[simp] theorem StaticArena.empty_toOwned : StaticArena.empty.toOwned = ⟨none, [], 1, []⟩ := rfl
 
 inductive Resolve where
   | local (expr : Expr)
