@@ -36,6 +36,8 @@ def test_arenas_and_sequents_form_a_lazy_import_graph() -> None:
 
     arena_imports = ImportTable()
     assert arena_imports.push(root.address()) == 0
+    assert arena_imports.push(root.address()) == 0
+    assert len(arena_imports) == 1
     dependent = Arena(arena_imports.address())
     dependent.add_segment(Segment(1, 2, LinkRef(0, "cbor_dense", "arena"), 1))
 

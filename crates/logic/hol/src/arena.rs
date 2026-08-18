@@ -138,9 +138,18 @@ impl ImportTable {
             addresses: Vec::new(),
         }
     }
+    /// Insert an address, returning its existing ID when it is already present.
+    ///
     /// # Errors
-    /// Returns an error if the import-table index cannot fit in `u32`.
+    /// Returns an error if a new import-table index cannot fit in `u32`.
     pub fn push(&mut self, address: O256) -> Result<u32, ArenaError> {
+        if let Some(id) = self
+            .addresses
+            .iter()
+            .position(|candidate| *candidate == address)
+        {
+            return u32::try_from(id).map_err(|_| ArenaError::IndexOverflow);
+        }
         let id = u32::try_from(self.addresses.len()).map_err(|_| ArenaError::IndexOverflow)?;
         self.addresses.push(address);
         Ok(id)

@@ -49,6 +49,15 @@ mod tests {
         arena
     }
 
+    #[test]
+    fn import_tables_deduplicate_addresses() {
+        let address = O256::from_bytes(b"one imported object");
+        let mut table = ImportTable::new();
+        assert_eq!(table.push(address).unwrap(), 0);
+        assert_eq!(table.push(address).unwrap(), 0);
+        assert_eq!(table.iter().collect::<Vec<_>>(), vec![address]);
+    }
+
     const STATIC_DEFS: &[Expr] = &[Expr::KindStar, Expr::TyBool];
     const STATIC_ARENA: StaticArena = StaticArena::new_const(None, &[], 1, STATIC_DEFS);
 
