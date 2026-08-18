@@ -15,7 +15,7 @@ bitflags! {
 
 /// A theorem contract interpreted entirely in `arena`.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Thm<A = Link<ArenaObject>, I = Link<ImportTableObject>> {
+pub struct Thm<A = Option<Link<ArenaObject>>, I = Option<Link<ImportTableObject>>> {
     arena: A,
     imports: I,
     theorems: BTreeMap<u32, TheoremFlags>,

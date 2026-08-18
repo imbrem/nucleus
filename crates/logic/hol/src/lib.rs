@@ -31,7 +31,7 @@ mod tests {
     }
 
     fn sample_arena(imports: Link<ImportTableObject>) -> Arena {
-        let mut arena = Arena::new(imports);
+        let mut arena = Arena::new(Some(imports));
         let star = arena.push(Expr::KindStar).unwrap();
         let bool_ty = arena.push(Expr::TyBool).unwrap();
         arena
@@ -61,6 +61,12 @@ mod tests {
         let second = SharedArena::new(arena).unwrap();
         assert_eq!(first.address(), second.address());
         assert_eq!(to_value(&first).unwrap(), to_value(&first.link()).unwrap());
+
+        let no_imports: Arena = Arena::new(None);
+        assert_eq!(
+            arena_from_value(&arena_to_value(&no_imports).unwrap()).unwrap(),
+            no_imports
+        );
     }
 
     #[test]
@@ -116,7 +122,7 @@ mod tests {
     fn theorem_cbor_round_trip_preserves_both_sides() {
         let imports = empty_imports();
         let arena = SharedArena::new(sample_arena(imports.link())).unwrap();
-        let mut theorem = Thm::new(arena.link(), imports.link());
+        let mut theorem = Thm::new(Some(arena.link()), Some(imports.link()));
         theorem.assume(7);
         theorem.conclude(7);
         let one = RelRef::pos(Ix::new(1).unwrap());
@@ -149,5 +155,11 @@ mod tests {
         let theorem = Thm::from_conclusion(conclusion);
         assert_eq!(theorem.premise_theorems().count(), 0);
         assert_eq!(theorem.conclusion_theorems().collect::<Vec<_>>(), [4]);
+
+        let no_indices: Thm = Thm::new(None, None);
+        assert_eq!(
+            thm_from_value(&thm_to_value(&no_indices).unwrap()).unwrap(),
+            no_indices
+        );
     }
 }

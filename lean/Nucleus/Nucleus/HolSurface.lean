@@ -91,7 +91,7 @@ def Expr.children : Expr → List Ref
   | .tyModel p => [p]
 
 structure Arena where
-  imports : TypedLink .importTable
+  imports : Option (TypedLink .importTable)
   segments : List Segment
   localBase : UInt32
   defs : List Expr
@@ -154,16 +154,16 @@ end Internal
 /-! `Proposition` is used rather than `Prop`, which is Lean's built-in sort.
 Rust calls this type `Prop`. -/
 structure Proposition where
-  arena : TypedLink .arena
-  imports : TypedLink .importTable
+  arena : Option (TypedLink .arena)
+  imports : Option (TypedLink .importTable)
   theorems : List ImportId
   relations : RelationTable
   deriving DecidableEq
 
 /-- Rust `Thm`'s exact public/wire data. -/
 structure Thm where
-  arena : TypedLink .arena
-  imports : TypedLink .importTable
+  arena : Option (TypedLink .arena)
+  imports : Option (TypedLink .importTable)
   premiseTheorems : List ImportId
   conclusionTheorems : List ImportId
   premises : RelationTable

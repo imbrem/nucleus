@@ -411,7 +411,7 @@ impl<'de> Deserialize<'de> for Expr {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct Arena<I = Link<ImportTableObject>> {
+pub struct Arena<I = Option<Link<ImportTableObject>>> {
     imports: I,
     segments: Vec<Segment>,
     local_base: u32,

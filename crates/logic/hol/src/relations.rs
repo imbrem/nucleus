@@ -140,7 +140,7 @@ pub struct Relations {
 /// The fields are private so the packed representation can change without
 /// changing the logical API or canonical CBOR format.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct Prop<A = Link<ArenaObject>, I = Link<ImportTableObject>> {
+pub struct Prop<A = Option<Link<ArenaObject>>, I = Option<Link<ImportTableObject>>> {
     arena: A,
     imports: I,
     theorems: BTreeSet<u32>,
