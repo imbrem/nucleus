@@ -26,17 +26,17 @@ encoding and reproducible addresses.
 
 ## The two representations
 
-| Concern | Packed stack (v1) | Plain-context stack (v2) |
-|---|---|---|
-| Shared scope | One arena and import-table handle per `Seq` | Same |
-| Imported sequents | One map from link to premise/conclusion bits | One set in each context body |
-| Relation facts | One pair-keyed map with premise/conclusion relation masks | One relation-keyed set of oriented pairs in each body |
-| Public CBOR | Six flat side-specific fields | `premises` and `conclusion`, each an ordinary nested body |
-| Rust serialization | Private packed state projected through a wire struct | Derived directly from the logical structs |
-| Lean model | Public types plus masks, packed entries, and projection functions | The same `CtxBody`, `Ctx`, and `Seq` shape as Rust |
-| Dependencies | `bitflags` | Standard collections and Serde only |
-| Natural query bias | “Which relations/sides contain this pair?” | “Which pairs inhabit this relation and side?” |
-| Facts present on both sides | One key with two masks | Stored once per side |
+| Concern                     | Packed stack (v1)                                                 | Plain-context stack (v2)                                  |
+| --------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------- |
+| Shared scope                | One arena and import-table handle per `Seq`                       | Same                                                      |
+| Imported sequents           | One map from link to premise/conclusion bits                      | One set in each context body                              |
+| Relation facts              | One pair-keyed map with premise/conclusion relation masks         | One relation-keyed set of oriented pairs in each body     |
+| Public CBOR                 | Six flat side-specific fields                                     | `premises` and `conclusion`, each an ordinary nested body |
+| Rust serialization          | Private packed state projected through a wire struct              | Derived directly from the logical structs                 |
+| Lean model                  | Public types plus masks, packed entries, and projection functions | The same `CtxBody`, `Ctx`, and `Seq` shape as Rust        |
+| Dependencies                | `bitflags`                                                        | Standard collections and Serde only                       |
+| Natural query bias          | “Which relations/sides contain this pair?”                        | “Which pairs inhabit this relation and side?”             |
+| Facts present on both sides | One key with two masks                                            | Stored once per side                                      |
 
 On the arena-base branches, v2 removes 307 net lines relative to v1 (247
 insertions, 554 deletions). The two Rust sequent/relation modules shrink from
