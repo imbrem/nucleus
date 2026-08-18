@@ -111,9 +111,9 @@ def test_contexts_materialize_and_repack_every_sequent_fact() -> None:
 
 def test_static_init_arena_is_literal_free_and_hash_pinned() -> None:
     arena = Arena.init()
-    assert len(arena) == 132
+    assert len(arena) == 664
     assert all(expr.tag not in {"TM_NAT", "TM_BYTES"} for expr in arena.defs)
     assert Arena.from_cbor(arena.to_cbor()).to_cbor() == arena.to_cbor()
     assert str(arena.address()) == (
-        "bd45466292e106cf30b9e596e4432058e18141460b9032d740c034ef614709ed"
+        "347991489412c30c1c1838a1706812a77df44c0d949e24d1c46249edc135d6a1"
     )

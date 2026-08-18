@@ -71,3 +71,16 @@ view; ordering and duplicate spellings are not additional logical facts.
 
 Rust and Lean both prove/validate preferred-encoding round trips. Cached Rust
 objects retain their value and typed `O256` address, not the source CBOR bytes.
+
+## Foundational initializer
+
+`INIT_ARENA` is an import-free `StaticArena` backed by `&'static [Expr]`. Its
+readable builder is checked node-for-node against the frozen table, and
+`HolSurface/Init.lean` mirrors that table exactly. It contains only core HolE
+constructors: in particular, neither `TM_NAT` nor `TM_BYTES` occurs in it.
+
+The initializer defines booleans and their basic connectives; a categorical
+second-order Peano model with zero, successor, and recursively characterized
+addition; the numeral 256 by repeated doubling; bytes as the subtype of
+naturals below 256; and byte strings as the categorical list model over bytes.
+Its canonical CBOR address is pinned by Rust and Python tests.
