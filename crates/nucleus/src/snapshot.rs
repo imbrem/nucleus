@@ -1,4 +1,4 @@
-use covalence_lib_hash::{O256, o256};
+use covalence_lib_hash::{O256, o256_path};
 
 mod signing;
 
@@ -9,12 +9,16 @@ pub use signing::{Ed25519Signer, Ed25519Verifier, SignError, Signer, Verificatio
 /// Signing [`valid_snapshot_statement`] attests that the exact image named by
 /// its hash has a truthful catalog and truthful interpreted relations. This
 /// assertion never includes connection-local `cov_conn_*` state.
-pub const COV_VALID_DB_V0: O256 =
-    o256!("e8095bfb2c053a7ae2033105d9b194160cb55d36b02330aaf9b787262aa58078");
+pub const COV_VALID_DB_V0: O256 = o256_path!(
+    const ::nucleus.snapshot.valid.v0 =
+        "e8095bfb2c053a7ae2033105d9b194160cb55d36b02330aaf9b787262aa58078"
+);
 
 /// Namespace root for Ed25519 public-key identities.
-pub const ED25519_PUBLIC_KEY_V0: O256 =
-    o256!("6d5b0cc7de272425ce91d2712182758b08fec18eb9c2ce3c37457dfdf9ee5822");
+pub const ED25519_PUBLIC_KEY_V0: O256 = o256_path!(
+    const ::crypto.public_key.ed25519.v0 =
+        "6d5b0cc7de272425ce91d2712182758b08fec18eb9c2ce3c37457dfdf9ee5822"
+);
 
 /// Derives the standard object identity of an Ed25519 public key.
 #[must_use]
@@ -30,15 +34,9 @@ pub fn valid_snapshot_statement(snapshot_hash: O256) -> O256 {
 
 #[cfg(test)]
 mod tests {
-    use covalence_lib_hash::{O256, assert_o256_path};
+    use covalence_lib_hash::O256;
 
     use super::*;
-
-    #[test]
-    fn protocol_roots_match_their_documented_paths() {
-        assert_o256_path!(COV_VALID_DB_V0, ::nucleus.snapshot.valid.v0);
-        assert_o256_path!(ED25519_PUBLIC_KEY_V0, ::crypto.public_key.ed25519.v0);
-    }
 
     #[test]
     fn key_and_statement_vectors_are_stable() {
