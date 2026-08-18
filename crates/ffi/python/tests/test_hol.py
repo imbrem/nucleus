@@ -38,6 +38,7 @@ def test_arenas_and_sequents_form_a_lazy_import_graph() -> None:
     assert arena_imports.push(root.address()) == 0
     assert arena_imports.push(root.address()) == 0
     assert len(arena_imports) == 1
+    assert isinstance(arena_imports.address(), O256)
     dependent = Arena(arena_imports.address())
     dependent.add_segment(Segment(1, 2, LinkRef(0, "cbor_dense", "arena"), 1))
 
@@ -50,5 +51,6 @@ def test_arenas_and_sequents_form_a_lazy_import_graph() -> None:
     assert second_imports.push(first.address()) == 1
     second = Seq(LinkRef(0, "cbor_dense", "arena"), second_imports.address())
     assert second.assume(LinkRef(1, "cbor_sparse", "sequent"))
+    assert isinstance(second.address(), O256)
 
     assert Seq.from_cbor(second.to_cbor()).to_cbor() == second.to_cbor()
