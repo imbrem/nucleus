@@ -186,7 +186,7 @@ def encodeExpr : Expr → Nucleus.Cbor
   | .tmApp function argument => exprMap "TM_APP" [function, argument]
   | .tmLam domain body => exprMap "TM_LAM" [domain, body]
   | .tmBool value => exprMap "TM_BOOL" [] none (some value)
-  | .tmEq type left right => exprMap "TM_EQ" [type, left, right]
+  | .tmEq left right => exprMap "TM_EQ" [left, right]
   | .tmEps type predicate => exprMap "TM_EPS" [type, predicate]
   | .tmAbs carrier predicate value => exprMap "TM_ABS" [carrier, predicate, value]
   | .tmRep carrier predicate value => exprMap "TM_REP" [carrier, predicate, value]
@@ -222,8 +222,7 @@ def decodeExpr? (value : Nucleus.Cbor) : Option Expr := do
       some (.tmBool false)
   | .primitive (.text "TM_BOOL"), [], none, some (.primitive (.simple 21)) =>
       some (.tmBool true)
-  | .primitive (.text "TM_EQ"), [type, left, right], none, none =>
-      some (.tmEq type left right)
+  | .primitive (.text "TM_EQ"), [left, right], none, none => some (.tmEq left right)
   | .primitive (.text "TM_EPS"), [type, predicate], none, none =>
       some (.tmEps type predicate)
   | .primitive (.text "TM_ABS"), [carrier, predicate, value], none, none =>

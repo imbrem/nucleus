@@ -35,6 +35,9 @@ def test_term_payloads_are_typed_and_round_trip() -> None:
     truth = Expr("TM_BOOL", value=True)
 
     assert (bound.var, free.var, free.ix, truth.value) == (4, 5, [1], True)
+    assert Expr("TM_EQ", [1, 2]).ix == [1, 2]
+    with pytest.raises(ValueError):
+        Expr("TM_EQ", [1, 2, 3])
     with pytest.raises(ValueError):
         Expr("TM_BOOL", var=1)
     with pytest.raises(ValueError):

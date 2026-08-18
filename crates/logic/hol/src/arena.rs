@@ -237,8 +237,8 @@ pub enum Expr {
     TmLam { domain: Ix, body: Ix },
     /// Lean `Nucleus.HolE.Expr.bool`.
     TmBool { value: bool },
-    /// Lean `Nucleus.HolE.Expr.eq`; the first child is the operand type.
-    TmEq { ty: Ix, left: Ix, right: Ix },
+    /// Lean `Nucleus.HolE.Expr.eq`; the LCF checker infers the shared operand type.
+    TmEq { left: Ix, right: Ix },
     /// Lean `Nucleus.HolE.Expr.eps`.
     TmEps { ty: Ix, predicate: Ix },
     /// Lean `Nucleus.HolE.Expr.abs`.
@@ -351,8 +351,7 @@ impl Expr {
                 body: *body,
             }),
             (SurfaceTag::TmBool, [], None, Some(value)) => Ok(Self::TmBool { value }),
-            (SurfaceTag::TmEq, [ty, left, right], None, None) => Ok(Self::TmEq {
-                ty: *ty,
+            (SurfaceTag::TmEq, [left, right], None, None) => Ok(Self::TmEq {
                 left: *left,
                 right: *right,
             }),
@@ -445,7 +444,7 @@ impl Expr {
                 [Some(*predicate), None, None]
             }
             Self::TmFv { ty, .. } => [Some(*ty), None, None],
-            Self::TmEq { ty, left, right } => [Some(*ty), Some(*left), Some(*right)],
+            Self::TmEq { left, right } => [Some(*left), Some(*right), None],
             Self::TmAbs {
                 carrier,
                 predicate,

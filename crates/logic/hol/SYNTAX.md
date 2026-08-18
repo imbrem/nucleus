@@ -43,7 +43,7 @@ The v0 base admits these constructors:
 | `TmApp`     | `tmApp`                | `TM_APP`    | function, argument        |
 | `TmLam`     | `tmLam`                | `TM_LAM`    | domain, body              |
 | `TmBool`    | `tmBool`               | `TM_BOOL`   | Boolean `value`           |
-| `TmEq`      | `tmEq`                 | `TM_EQ`     | type, left, right         |
+| `TmEq`      | `tmEq`                 | `TM_EQ`     | left, right               |
 | `TmEps`     | `tmEps`                | `TM_EPS`    | type, predicate           |
 | `TmAbs`     | `tmAbs`                | `TM_ABS`    | carrier, predicate, value |
 | `TmRep`     | `tmRep`                | `TM_REP`    | carrier, predicate, value |

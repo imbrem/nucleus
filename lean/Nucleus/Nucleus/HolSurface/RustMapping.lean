@@ -7,7 +7,8 @@ import Nucleus.HolSurface
 Each core constructor of Rust's v0 `Expr` has exactly one case below.
 References, binder kinds, and finite de Bruijn indices are resolved and
 checked by the later LCF pass; this file records which raw `HolE Empty`
-constructor that pass must construct. `tmCast` lowers through
+constructor that pass must construct. In particular, the pass infers `tmEq`'s
+shared operand type from its two children. `tmCast` lowers through
 `HolE.Empty.Term.cast`, since it is deliberately a total surface operation
 rather than a raw `HolE.Expr` constructor.
 -/
@@ -60,8 +61,7 @@ theorem coreFormer_surjective : Function.Surjective coreFormer := by
   · exact ⟨.tmApp ⟨1, by decide, by decide⟩ ⟨1, by decide, by decide⟩, rfl⟩
   · exact ⟨.tmLam ⟨1, by decide, by decide⟩ ⟨1, by decide, by decide⟩, rfl⟩
   · exact ⟨.tmBool false, rfl⟩
-  · exact ⟨.tmEq ⟨1, by decide, by decide⟩ ⟨1, by decide, by decide⟩
-      ⟨1, by decide, by decide⟩, rfl⟩
+  · exact ⟨.tmEq ⟨1, by decide, by decide⟩ ⟨1, by decide, by decide⟩, rfl⟩
   · exact ⟨.tmEps ⟨1, by decide, by decide⟩ ⟨1, by decide, by decide⟩, rfl⟩
   · exact ⟨.tmAbs ⟨1, by decide, by decide⟩ ⟨1, by decide, by decide⟩
       ⟨1, by decide, by decide⟩, rfl⟩
