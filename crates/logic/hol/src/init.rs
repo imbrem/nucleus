@@ -57,8 +57,8 @@ impl Builder {
     fn lam(&mut self, domain: Ix, body: Ix) -> Result<Ix, ArenaError> {
         self.push(Expr::TmLam { domain, body })
     }
-    fn eq(&mut self, ty: Ix, left: Ix, right: Ix) -> Result<Ix, ArenaError> {
-        self.push(Expr::TmEq { ty, left, right })
+    fn eq(&mut self, _ty: Ix, left: Ix, right: Ix) -> Result<Ix, ArenaError> {
+        self.push(Expr::TmEq { left, right })
     }
     fn eps(&mut self, ty: Ix, predicate: Ix) -> Result<Ix, ArenaError> {
         self.push(Expr::TmEps { ty, predicate })
@@ -297,7 +297,6 @@ pub fn build_init_arena() -> Result<(Arena, InitRefs), ArenaError> {
 
     let bool_var = arena.push(Expr::TmBv { index: 0 })?;
     let not_body = arena.push(Expr::TmEq {
-        ty: bool_ty,
         left: bool_var,
         right: false_,
     })?;
@@ -342,12 +341,11 @@ pub fn build_init_arena() -> Result<(Arena, InitRefs), ArenaError> {
         domain: binary_bool,
         body: f_true_true,
     })?;
-    let functional = arena.push(Expr::TyArr {
+    let _functional = arena.push(Expr::TyArr {
         domain: binary_bool,
         codomain: bool_ty,
     })?;
     let and_body = arena.push(Expr::TmEq {
-        ty: functional,
         left: lhs,
         right: rhs,
     })?;
@@ -487,7 +485,6 @@ static INIT_DEFS: &[Expr] = &[
     Expr::TmBool { value: true },
     Expr::TmBv { index: 0 },
     Expr::TmEq {
-        ty: i(2),
         left: i(5),
         right: i(3),
     },
@@ -536,7 +533,6 @@ static INIT_DEFS: &[Expr] = &[
         codomain: i(2),
     },
     Expr::TmEq {
-        ty: i(20),
         left: i(15),
         right: i(19),
     },
@@ -595,17 +591,14 @@ static INIT_DEFS: &[Expr] = &[
         argument: i(37),
     },
     Expr::TmEq {
-        ty: i(33),
         left: i(38),
         right: i(39),
     },
     Expr::TmEq {
-        ty: i(33),
         left: i(36),
         right: i(37),
     },
     Expr::TmEq {
-        ty: i(2),
         left: i(40),
         right: i(41),
     },
@@ -622,7 +615,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(43),
         left: i(44),
         right: i(45),
     },
@@ -639,7 +631,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(47),
         left: i(48),
         right: i(49),
     },
@@ -651,7 +642,6 @@ static INIT_DEFS: &[Expr] = &[
         argument: i(53),
     },
     Expr::TmEq {
-        ty: i(33),
         left: i(54),
         right: i(52),
     },
@@ -672,7 +662,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(57),
         left: i(58),
         right: i(59),
     },
@@ -726,17 +715,14 @@ static INIT_DEFS: &[Expr] = &[
         argument: i(74),
     },
     Expr::TmEq {
-        ty: i(70),
         left: i(75),
         right: i(76),
     },
     Expr::TmEq {
-        ty: i(70),
         left: i(73),
         right: i(74),
     },
     Expr::TmEq {
-        ty: i(2),
         left: i(77),
         right: i(78),
     },
@@ -753,7 +739,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(80),
         left: i(81),
         right: i(82),
     },
@@ -770,7 +755,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(84),
         left: i(85),
         right: i(86),
     },
@@ -782,7 +766,6 @@ static INIT_DEFS: &[Expr] = &[
         argument: i(90),
     },
     Expr::TmEq {
-        ty: i(70),
         left: i(91),
         right: i(89),
     },
@@ -803,7 +786,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(94),
         left: i(95),
         right: i(96),
     },
@@ -867,7 +849,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(115),
         left: i(116),
         right: i(117),
     },
@@ -898,7 +879,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(124),
         left: i(125),
         right: i(126),
     },
@@ -927,7 +907,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(131),
         left: i(132),
         right: i(133),
     },
@@ -981,17 +960,14 @@ static INIT_DEFS: &[Expr] = &[
         argument: i(148),
     },
     Expr::TmEq {
-        ty: i(144),
         left: i(149),
         right: i(150),
     },
     Expr::TmEq {
-        ty: i(144),
         left: i(147),
         right: i(148),
     },
     Expr::TmEq {
-        ty: i(2),
         left: i(151),
         right: i(152),
     },
@@ -1008,7 +984,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(154),
         left: i(155),
         right: i(156),
     },
@@ -1025,7 +1000,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(158),
         left: i(159),
         right: i(160),
     },
@@ -1037,7 +1011,6 @@ static INIT_DEFS: &[Expr] = &[
         argument: i(164),
     },
     Expr::TmEq {
-        ty: i(144),
         left: i(165),
         right: i(163),
     },
@@ -1058,7 +1031,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(168),
         left: i(169),
         right: i(170),
     },
@@ -1122,7 +1094,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(189),
         left: i(190),
         right: i(191),
     },
@@ -1153,7 +1124,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(198),
         left: i(199),
         right: i(200),
     },
@@ -1182,7 +1152,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(205),
         left: i(206),
         right: i(207),
     },
@@ -1230,17 +1199,14 @@ static INIT_DEFS: &[Expr] = &[
         argument: i(219),
     },
     Expr::TmEq {
-        ty: i(144),
         left: i(220),
         right: i(221),
     },
     Expr::TmEq {
-        ty: i(144),
         left: i(218),
         right: i(219),
     },
     Expr::TmEq {
-        ty: i(2),
         left: i(222),
         right: i(223),
     },
@@ -1257,7 +1223,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(225),
         left: i(226),
         right: i(227),
     },
@@ -1274,7 +1239,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(229),
         left: i(230),
         right: i(231),
     },
@@ -1286,7 +1250,6 @@ static INIT_DEFS: &[Expr] = &[
         argument: i(235),
     },
     Expr::TmEq {
-        ty: i(144),
         left: i(236),
         right: i(234),
     },
@@ -1307,7 +1270,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(239),
         left: i(240),
         right: i(241),
     },
@@ -1371,7 +1333,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(260),
         left: i(261),
         right: i(262),
     },
@@ -1402,7 +1363,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(269),
         left: i(270),
         right: i(271),
     },
@@ -1431,7 +1391,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(276),
         left: i(277),
         right: i(278),
     },
@@ -1478,7 +1437,6 @@ static INIT_DEFS: &[Expr] = &[
         argument: i(288),
     },
     Expr::TmEq {
-        ty: i(144),
         left: i(291),
         right: i(288),
     },
@@ -1495,7 +1453,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(293),
         left: i(294),
         right: i(295),
     },
@@ -1530,7 +1487,6 @@ static INIT_DEFS: &[Expr] = &[
         argument: i(307),
     },
     Expr::TmEq {
-        ty: i(144),
         left: i(302),
         right: i(308),
     },
@@ -1547,7 +1503,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(310),
         left: i(311),
         right: i(312),
     },
@@ -1564,7 +1519,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(314),
         left: i(315),
         right: i(316),
     },
@@ -1667,7 +1621,6 @@ static INIT_DEFS: &[Expr] = &[
         argument: i(340),
     },
     Expr::TmEq {
-        ty: i(144),
         left: i(343),
         right: i(338),
     },
@@ -1713,7 +1666,6 @@ static INIT_DEFS: &[Expr] = &[
     },
     Expr::TmBv { index: 2 },
     Expr::TmEq {
-        ty: i(350),
         left: i(357),
         right: i(358),
     },
@@ -1734,7 +1686,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(361),
         left: i(362),
         right: i(363),
     },
@@ -1751,7 +1702,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(365),
         left: i(366),
         right: i(367),
     },
@@ -1778,21 +1728,18 @@ static INIT_DEFS: &[Expr] = &[
         argument: i(376),
     },
     Expr::TmEq {
-        ty: i(350),
         left: i(373),
         right: i(378),
     },
     Expr::TmBv { index: 3 },
     Expr::TmBv { index: 1 },
     Expr::TmEq {
-        ty: i(349),
         left: i(380),
         right: i(381),
     },
     Expr::TmBv { index: 2 },
     Expr::TmBv { index: 0 },
     Expr::TmEq {
-        ty: i(350),
         left: i(383),
         right: i(384),
     },
@@ -1805,7 +1752,6 @@ static INIT_DEFS: &[Expr] = &[
         argument: i(385),
     },
     Expr::TmEq {
-        ty: i(2),
         left: i(379),
         right: i(387),
     },
@@ -1822,7 +1768,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(389),
         left: i(390),
         right: i(391),
     },
@@ -1839,7 +1784,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(393),
         left: i(394),
         right: i(395),
     },
@@ -1856,7 +1800,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(397),
         left: i(398),
         right: i(399),
     },
@@ -1873,7 +1816,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(401),
         left: i(402),
         right: i(403),
     },
@@ -1934,7 +1876,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(422),
         left: i(423),
         right: i(424),
     },
@@ -1951,7 +1892,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(426),
         left: i(427),
         right: i(428),
     },
@@ -1982,7 +1922,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(435),
         left: i(436),
         right: i(437),
     },
@@ -2011,7 +1950,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(442),
         left: i(443),
         right: i(444),
     },
@@ -2078,7 +2016,6 @@ static INIT_DEFS: &[Expr] = &[
     },
     Expr::TmBv { index: 2 },
     Expr::TmEq {
-        ty: i(457),
         left: i(464),
         right: i(465),
     },
@@ -2099,7 +2036,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(468),
         left: i(469),
         right: i(470),
     },
@@ -2116,7 +2052,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(472),
         left: i(473),
         right: i(474),
     },
@@ -2143,21 +2078,18 @@ static INIT_DEFS: &[Expr] = &[
         argument: i(483),
     },
     Expr::TmEq {
-        ty: i(457),
         left: i(480),
         right: i(485),
     },
     Expr::TmBv { index: 3 },
     Expr::TmBv { index: 1 },
     Expr::TmEq {
-        ty: i(349),
         left: i(487),
         right: i(488),
     },
     Expr::TmBv { index: 2 },
     Expr::TmBv { index: 0 },
     Expr::TmEq {
-        ty: i(457),
         left: i(490),
         right: i(491),
     },
@@ -2170,7 +2102,6 @@ static INIT_DEFS: &[Expr] = &[
         argument: i(492),
     },
     Expr::TmEq {
-        ty: i(2),
         left: i(486),
         right: i(494),
     },
@@ -2187,7 +2118,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(496),
         left: i(497),
         right: i(498),
     },
@@ -2204,7 +2134,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(500),
         left: i(501),
         right: i(502),
     },
@@ -2221,7 +2150,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(504),
         left: i(505),
         right: i(506),
     },
@@ -2238,7 +2166,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(508),
         left: i(509),
         right: i(510),
     },
@@ -2299,7 +2226,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(529),
         left: i(530),
         right: i(531),
     },
@@ -2316,7 +2242,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(533),
         left: i(534),
         right: i(535),
     },
@@ -2347,7 +2272,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(542),
         left: i(543),
         right: i(544),
     },
@@ -2376,7 +2300,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(549),
         left: i(550),
         right: i(551),
     },
@@ -2437,7 +2360,6 @@ static INIT_DEFS: &[Expr] = &[
     },
     Expr::TmBv { index: 2 },
     Expr::TmEq {
-        ty: i(457),
         left: i(568),
         right: i(569),
     },
@@ -2458,7 +2380,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(572),
         left: i(573),
         right: i(574),
     },
@@ -2475,7 +2396,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(576),
         left: i(577),
         right: i(578),
     },
@@ -2502,21 +2422,18 @@ static INIT_DEFS: &[Expr] = &[
         argument: i(587),
     },
     Expr::TmEq {
-        ty: i(457),
         left: i(584),
         right: i(589),
     },
     Expr::TmBv { index: 3 },
     Expr::TmBv { index: 1 },
     Expr::TmEq {
-        ty: i(349),
         left: i(591),
         right: i(592),
     },
     Expr::TmBv { index: 2 },
     Expr::TmBv { index: 0 },
     Expr::TmEq {
-        ty: i(457),
         left: i(594),
         right: i(595),
     },
@@ -2529,7 +2446,6 @@ static INIT_DEFS: &[Expr] = &[
         argument: i(596),
     },
     Expr::TmEq {
-        ty: i(2),
         left: i(590),
         right: i(598),
     },
@@ -2546,7 +2462,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(600),
         left: i(601),
         right: i(602),
     },
@@ -2563,7 +2478,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(604),
         left: i(605),
         right: i(606),
     },
@@ -2580,7 +2494,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(608),
         left: i(609),
         right: i(610),
     },
@@ -2597,7 +2510,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(612),
         left: i(613),
         right: i(614),
     },
@@ -2658,7 +2570,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(633),
         left: i(634),
         right: i(635),
     },
@@ -2675,7 +2586,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(637),
         left: i(638),
         right: i(639),
     },
@@ -2706,7 +2616,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(646),
         left: i(647),
         right: i(648),
     },
@@ -2735,7 +2644,6 @@ static INIT_DEFS: &[Expr] = &[
         body: i(4),
     },
     Expr::TmEq {
-        ty: i(653),
         left: i(654),
         right: i(655),
     },
@@ -2821,7 +2729,7 @@ mod tests {
         let cached = crate::SharedArena::new(decoded).unwrap();
         assert_eq!(
             cached.address().to_string(),
-            "347991489412c30c1c1838a1706812a77df44c0d949e24d1c46249edc135d6a1"
+            "0efca95433f5c70531b88e3cf43d612fa8042c5ec9db2b5e1f1cd3f6a00d0170"
         );
     }
 }

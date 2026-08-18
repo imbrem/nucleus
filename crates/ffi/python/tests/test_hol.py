@@ -115,5 +115,5 @@ def test_static_init_arena_is_literal_free_and_hash_pinned() -> None:
     assert all(expr.tag not in {"TM_NAT", "TM_BYTES"} for expr in arena.defs)
     assert Arena.from_cbor(arena.to_cbor()).to_cbor() == arena.to_cbor()
     assert str(arena.address()) == (
-        "347991489412c30c1c1838a1706812a77df44c0d949e24d1c46249edc135d6a1"
+        "0efca95433f5c70531b88e3cf43d612fa8042c5ec9db2b5e1f1cd3f6a00d0170"
     )
