@@ -255,6 +255,12 @@
       "category": "tcb",
       "targets": [
         {
+          "name": "blake3_lazy",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "covalence_lib_hash",
           "kinds": [
             "lib"
