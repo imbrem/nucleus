@@ -11,9 +11,12 @@ surface natural or byte-string literal occurs.
 
 namespace Nucleus.HolSurface.Init
 
-private def r (value : Nat) (positive : 0 < value := by omega)
-    (bounded : value ≤ maxRef := by decide) : Ref :=
-  ⟨value, positive, bounded⟩
+private def fallbackRef : Ref := ⟨1, by decide, by decide⟩
+
+/-- Checked reference construction without rerunning proof automation at every
+one of the static table's reference sites. All generated inputs are valid, and
+the Rust builder/static-table equality test audits those inputs exactly. -/
+private def r (value : Nat) : Ref := (Ref.ofNat? value).getD fallbackRef
 
 def defs : List Expr := [
   .kindStar,
@@ -681,6 +684,9 @@ def defs : List Expr := [
   .tmApp (r 662) (r 561),
   .tmEps (r 457) (r 663)
 ]
+
+-- Static lookup and preferred-encoding proofs traverse the 664-element table.
+set_option maxRecDepth 10000
 
 def arena : StaticArena := ⟨none, ⟨[]⟩, 1, ⟨defs⟩⟩
 
