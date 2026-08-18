@@ -203,105 +203,30 @@ def Relation.symmetric : Relation → Bool
 /-- The public, relation-indexed view used by the wire format and API. -/
 abbrev RelationTable := List (Relation × List (SRef × SRef))
 
-/-- Relations are presented as premise and conclusion tables. Their packed
-representation is private to the implementation. -/
-structure Relations where
-  premises : RelationTable
-  conclusions : RelationTable
-  deriving DecidableEq
-
-namespace Internal
-
-/-! The packed representation used to prove correspondence with the Rust
-implementation. Clients should use `Relations`, not these masks. -/
-
-abbrev RelationFlags := UInt8
-
-structure RelationEntry where
-  left : SRef
-  right : SRef
-  premiseFlags : RelationFlags
-  conclusionFlags : RelationFlags
-  deriving DecidableEq
-
-/-- Ordered model of
-`BTreeMap<(SRef, SRef), (RelationFlags, RelationFlags)>`. -/
-abbrev PackedRelations := List RelationEntry
-
-/-- Whether a byte mask contains the bit assigned to a relation. -/
-def RelationFlags.contains (flags : RelationFlags) (relation : Relation) : Bool :=
-  (flags.toNat / 2 ^ relation.tag) % 2 == 1
-
-/-- Public projection implemented by `Relations::wire_side`.
-`packed` is ordered by `(left, right)`, as a `BTreeMap` is in Rust. -/
-def PackedRelations.wireSide (packed : PackedRelations) (conclusion : Bool) : RelationTable :=
-  Relation.all.filterMap fun relation =>
-    let pairs := packed.filterMap fun entry =>
-      let flags := if conclusion then entry.conclusionFlags else entry.premiseFlags
-      if flags.contains relation then some (entry.left, entry.right) else none
-    if pairs.isEmpty then none else some (relation, pairs)
-
-/-- A public relation table is in Rust's canonical order precisely when it is
-the projection of an ordered packed map. Duplicate and order-varying CBOR
-tables can still denote the same finite relation before this normalization. -/
-def CanonicalRelationTable (table : RelationTable) (conclusion : Bool) : Prop :=
-  ∃ packed : PackedRelations, packed.wireSide conclusion = table
-
-end Internal
-
-/-! A heterogeneous logical context. -/
-structure Ctx where
-  arena : Option LinkRef
-  imports : Option O256
+/-- One complete, unpacked side of a sparse v2 sequent. Rust stores the same
+two fields directly; no flag-packed representation belongs to the TCB. -/
+structure CtxBody where
   sequents : List LinkRef
   relations : RelationTable
   deriving DecidableEq
 
-/-- The public sequent wire shape. The implementation stores it in ordered
-bitflag maps; the corresponding projection is modeled below. -/
+def CtxBody.empty : CtxBody := ⟨[], []⟩
+
+/-! Rust and Lean both call a heterogeneous logical side `Ctx`. -/
+structure Ctx where
+  arena : Option LinkRef
+  imports : Option O256
+  body : CtxBody
+  deriving DecidableEq
+
+/-- The maximally direct v2 representation: one shared scope and two ordinary
+context bodies. E-classes and flag maps may be derived outside the TCB. -/
 structure Seq where
   arena : Option LinkRef
   imports : Option O256
-  premiseSequents : List LinkRef
-  conclusionSequents : List LinkRef
-  premises : RelationTable
-  conclusions : RelationTable
+  premises : CtxBody
+  conclusion : CtxBody
   deriving DecidableEq
-
-namespace Internal
-
-abbrev SeqFlags := UInt8
-
-structure ImportedSequentEntry where
-  link : LinkRef
-  flags : SeqFlags
-  deriving DecidableEq
-
-/-- Model of the packed `Seq` representation. Both lists stand for
-ordered `BTreeMap`s and therefore contain unique keys. -/
-structure PackedSeq where
-  arena : Option LinkRef
-  imports : Option O256
-  sequents : List ImportedSequentEntry
-  relations : PackedRelations
-  deriving DecidableEq
-
-private def SeqFlags.contains (flags : SeqFlags) (bit : Nat) : Bool :=
-  (flags.toNat / 2 ^ bit) % 2 == 1
-
-/-- Projection from packed sequent storage to its public CBOR
-fields (`PREMISE = 1`, `CONCLUSION = 2`). -/
-def PackedSeq.toPublic (packed : PackedSeq) : Seq where
-  arena := packed.arena
-  imports := packed.imports
-  premiseSequents := packed.sequents.filterMap fun entry =>
-    if entry.flags.contains 0 then some entry.link else none
-  conclusionSequents := packed.sequents.filterMap fun entry =>
-    if entry.flags.contains 1 then some entry.link else none
-  premises := packed.relations.wireSide false
-  conclusions := packed.relations.wireSide true
-
-end Internal
 
 /-- A `Seq` is a compatible pair of contexts: both sides inhabit the same
 arena and import table. -/
@@ -314,34 +239,28 @@ structure CompatibleCtxs where
 namespace Seq
 
 def toContexts (seq : Seq) : CompatibleCtxs where
-  premises := ⟨seq.arena, seq.imports, seq.premiseSequents, seq.premises⟩
-  conclusion := ⟨seq.arena, seq.imports, seq.conclusionSequents, seq.conclusions⟩
+  premises := ⟨seq.arena, seq.imports, seq.premises⟩
+  conclusion := ⟨seq.arena, seq.imports, seq.conclusion⟩
   arena_eq := rfl
   imports_eq := rfl
 
 def ofContexts (contexts : CompatibleCtxs) : Seq where
   arena := contexts.premises.arena
   imports := contexts.premises.imports
-  premiseSequents := contexts.premises.sequents
-  conclusionSequents := contexts.conclusion.sequents
-  premises := contexts.premises.relations
-  conclusions := contexts.conclusion.relations
+  premises := contexts.premises.body
+  conclusion := contexts.conclusion.body
 
 def fromPremises (premises : Ctx) : Seq where
   arena := premises.arena
   imports := premises.imports
-  premiseSequents := premises.sequents
-  conclusionSequents := []
-  premises := premises.relations
-  conclusions := []
+  premises := premises.body
+  conclusion := .empty
 
 def fromConclusion (conclusion : Ctx) : Seq where
   arena := conclusion.arena
   imports := conclusion.imports
-  premiseSequents := []
-  conclusionSequents := conclusion.sequents
-  premises := []
-  conclusions := conclusion.relations
+  premises := .empty
+  conclusion := conclusion.body
 
 @[simp] theorem fromPremises_premises (premises : Ctx) :
     (fromPremises premises).toContexts.premises = premises := rfl

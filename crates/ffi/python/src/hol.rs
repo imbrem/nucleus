@@ -459,25 +459,20 @@ impl PySeq {
     }
 
     fn insert_premise(&mut self, relation: &str, left: i32, right: i32) -> PyResult<bool> {
-        Ok(self.seq.relations_mut().insert_premise(
-            parse_relation(relation)?,
-            sref(left)?,
-            sref(right)?,
-        ))
+        Ok(self
+            .seq
+            .insert_premise(parse_relation(relation)?, sref(left)?, sref(right)?))
     }
 
     fn insert_conclusion(&mut self, relation: &str, left: i32, right: i32) -> PyResult<bool> {
-        Ok(self.seq.relations_mut().insert_conclusion(
-            parse_relation(relation)?,
-            sref(left)?,
-            sref(right)?,
-        ))
+        Ok(self
+            .seq
+            .insert_conclusion(parse_relation(relation)?, sref(left)?, sref(right)?))
     }
 
     fn premise_pairs(&self, relation: &str) -> PyResult<Vec<(i32, i32)>> {
         Ok(self
             .seq
-            .relations()
             .premise_pairs(parse_relation(relation)?)
             .map(|(left, right)| (left.raw(), right.raw()))
             .collect())
@@ -486,7 +481,6 @@ impl PySeq {
     fn conclusion_pairs(&self, relation: &str) -> PyResult<Vec<(i32, i32)>> {
         Ok(self
             .seq
-            .relations()
             .conclusion_pairs(parse_relation(relation)?)
             .map(|(left, right)| (left.raw(), right.raw()))
             .collect())

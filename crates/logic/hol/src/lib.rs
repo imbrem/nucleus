@@ -22,7 +22,7 @@ pub use cbor::{
     import_table_to_value, seq_from_value, seq_to_value, serialize_cbor, to_value,
 };
 pub use covalence_lib_cbor::Value as CborValue;
-pub use relations::{Ctx, InvalidSRef, Relation, Relations, SRef, SRefView};
+pub use relations::{Ctx, InvalidSRef, Relation, SRef, SRefView};
 pub use tag::{SurfaceTag, UnknownSurfaceTag};
 pub use theorem::{Seq, SharedSeq};
 
@@ -221,15 +221,42 @@ mod tests {
     }
 
     #[test]
-    fn relations_colocate_premises_and_conclusions() {
+    fn sequents_keep_two_plain_relation_sides() {
         let one = SRef::pos(Ix::new(1).unwrap());
         let two = SRef::neg(Ix::new(2).unwrap());
-        let mut relations = Relations::new();
-        relations.insert_premise(Relation::Imp, one, two);
-        relations.insert_symmetric_conclusion(Relation::TyEq, one, two);
-        assert!(relations.contains_premise(Relation::Imp, one, two));
-        assert!(relations.contains_conclusion(Relation::TyEq, one, two));
-        assert!(relations.contains_conclusion(Relation::TyEq, two, one));
+        let mut sequent: Seq = Seq::new(None, None);
+        sequent.insert_premise(Relation::Imp, one, two);
+        sequent.insert_symmetric_conclusion(Relation::TyEq, one, two);
+        assert!(sequent.contains_premise(Relation::Imp, one, two));
+        assert!(sequent.contains_conclusion(Relation::TyEq, one, two));
+        assert!(sequent.contains_conclusion(Relation::TyEq, two, one));
+    }
+
+    #[test]
+    fn v2_context_and_sequent_wire_shapes_are_directly_nested() {
+        let empty_body = CborValue::Map(vec![
+            (CborValue::Text("sequents".into()), CborValue::Array(vec![])),
+            (CborValue::Text("relations".into()), CborValue::Map(vec![])),
+        ]);
+        let context: Ctx = Ctx::new(None, None);
+        assert_eq!(
+            ctx_to_value(&context).unwrap(),
+            CborValue::Map(vec![
+                (CborValue::Text("arena".into()), CborValue::Null),
+                (CborValue::Text("imports".into()), CborValue::Null),
+                (CborValue::Text("body".into()), empty_body.clone()),
+            ])
+        );
+        let sequent: Seq = Seq::new(None, None);
+        assert_eq!(
+            seq_to_value(&sequent).unwrap(),
+            CborValue::Map(vec![
+                (CborValue::Text("arena".into()), CborValue::Null),
+                (CborValue::Text("imports".into()), CborValue::Null),
+                (CborValue::Text("premises".into()), empty_body.clone()),
+                (CborValue::Text("conclusion".into()), empty_body),
+            ])
+        );
     }
 
     #[test]
@@ -264,9 +291,7 @@ mod tests {
         sequent.assume(imported);
         sequent.conclude(imported);
         let one = SRef::pos(Ix::new(1).unwrap());
-        sequent
-            .relations_mut()
-            .insert_conclusion(Relation::HasKind, one, one);
+        sequent.insert_conclusion(Relation::HasKind, one, one);
         let value = seq_to_value(&sequent).unwrap();
         assert_eq!(seq_from_value(&value).unwrap(), sequent);
 

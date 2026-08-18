@@ -1,47 +1,42 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use bitflags::bitflags;
 use covalence_lib_hash::O256;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 
-use crate::{Ctx, Format, Link, LinkRef, ObjectKind, Relation, Relations};
+use crate::relations::CtxBody;
+use crate::{Ctx, Format, Link, LinkRef, ObjectKind, Relation, SRef};
 
-bitflags! {
-    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-    pub(crate) struct SeqFlags: u8 {
-        const PREMISE = 1 << 0;
-        const CONCLUSION = 1 << 1;
-    }
-}
-
-/// Premises and conclusions interpreted in one arena and import table.
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// A sparse sequent with one shared arena/import scope and two ordinary sides.
+/// Packed and indexed forms can be derived without changing this interface.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Seq<A = Option<LinkRef>, I = Option<O256>> {
     arena: A,
     imports: I,
-    sequents: BTreeMap<LinkRef, SeqFlags>,
-    relations: Relations,
+    premises: CtxBody,
+    conclusion: CtxBody,
 }
 
 impl<A, I> Seq<A, I> {
     #[must_use]
-    pub fn new(arena: A, imports: I) -> Self {
+    pub const fn new(arena: A, imports: I) -> Self {
         Self {
             arena,
             imports,
-            sequents: BTreeMap::new(),
-            relations: Relations::new(),
+            premises: CtxBody::new(),
+            conclusion: CtxBody::new(),
         }
     }
+
     #[must_use]
     pub const fn arena(&self) -> &A {
         &self.arena
     }
+
     #[must_use]
     pub const fn imports(&self) -> &I {
         &self.imports
     }
+
     pub fn map_links<B, J>(
         self,
         arena: impl FnOnce(A) -> B,
@@ -50,21 +45,19 @@ impl<A, I> Seq<A, I> {
         Seq {
             arena: arena(self.arena),
             imports: imports(self.imports),
-            sequents: self.sequents,
-            relations: self.relations,
+            premises: self.premises,
+            conclusion: self.conclusion,
         }
     }
+
     pub fn premise_sequents(&self) -> impl Iterator<Item = LinkRef> + '_ {
-        self.sequents
-            .iter()
-            .filter_map(|(id, flags)| flags.contains(SeqFlags::PREMISE).then_some(*id))
+        self.premises.sequents()
     }
+
     pub fn conclusion_sequents(&self) -> impl Iterator<Item = LinkRef> + '_ {
-        self.sequents
-            .iter()
-            .filter_map(|(id, flags)| flags.contains(SeqFlags::CONCLUSION).then_some(*id))
+        self.conclusion.sequents()
     }
-    /// Materialize the premise side without exposing the packed flag maps.
+
     #[must_use]
     pub fn premises(&self) -> Ctx<A, I>
     where
@@ -74,11 +67,10 @@ impl<A, I> Seq<A, I> {
         Ctx::from_parts(
             self.arena.clone(),
             self.imports.clone(),
-            self.premise_sequents(),
-            |relation| self.relations.premise_pairs(relation).collect(),
+            self.premises.clone(),
         )
     }
-    /// Materialize the conclusion side without exposing the packed flag maps.
+
     #[must_use]
     pub fn conclusion(&self) -> Ctx<A, I>
     where
@@ -88,13 +80,12 @@ impl<A, I> Seq<A, I> {
         Ctx::from_parts(
             self.arena.clone(),
             self.imports.clone(),
-            self.conclusion_sequents(),
-            |relation| self.relations.conclusion_pairs(relation).collect(),
+            self.conclusion.clone(),
         )
     }
 
-    /// Repack a compatible pair of contexts. Returns `None` when their arena
-    /// or import-table handles disagree.
+    /// Construct a sequent from contexts that share the same arena and import
+    /// table. The common scope is stored only once.
     pub fn from_contexts(premises: Ctx<A, I>, conclusion: Ctx<A, I>) -> Option<Self>
     where
         A: Eq,
@@ -103,64 +94,36 @@ impl<A, I> Seq<A, I> {
         if premises.arena() != conclusion.arena() || premises.imports() != conclusion.imports() {
             return None;
         }
-        let (arena, imports, premise_sequents, premise_relations) = premises.into_parts();
-        let (_, _, conclusion_sequents, conclusion_relations) = conclusion.into_parts();
-        let mut sequent = Self::new(arena, imports);
-        for imported in premise_sequents {
-            sequent.assume(imported);
-        }
-        for imported in conclusion_sequents {
-            sequent.conclude(imported);
-        }
-        for relation in Relation::ALL {
-            for (left, right) in premise_relations
-                .get(&relation)
-                .into_iter()
-                .flatten()
-                .copied()
-            {
-                sequent.relations.insert_premise(relation, left, right);
-            }
-            for (left, right) in conclusion_relations
-                .get(&relation)
-                .into_iter()
-                .flatten()
-                .copied()
-            {
-                sequent.relations.insert_conclusion(relation, left, right);
-            }
-        }
-        Some(sequent)
+        let (arena, imports, premises) = premises.into_parts();
+        let (_, _, conclusion) = conclusion.into_parts();
+        Some(Self {
+            arena,
+            imports,
+            premises,
+            conclusion,
+        })
     }
 
     #[must_use]
     pub fn from_premises(premises: Ctx<A, I>) -> Self {
-        let (arena, imports, sequents, relations) = premises.into_parts();
-        let mut sequent = Self::new(arena, imports);
-        for imported in sequents {
-            sequent.assume(imported);
+        let (arena, imports, premises) = premises.into_parts();
+        Self {
+            arena,
+            imports,
+            premises,
+            conclusion: CtxBody::default(),
         }
-        for relation in Relation::ALL {
-            for (left, right) in relations.get(&relation).into_iter().flatten().copied() {
-                sequent.relations.insert_premise(relation, left, right);
-            }
-        }
-        sequent
     }
 
     #[must_use]
     pub fn from_conclusion(conclusion: Ctx<A, I>) -> Self {
-        let (arena, imports, sequents, relations) = conclusion.into_parts();
-        let mut sequent = Self::new(arena, imports);
-        for imported in sequents {
-            sequent.conclude(imported);
+        let (arena, imports, conclusion) = conclusion.into_parts();
+        Self {
+            arena,
+            imports,
+            premises: CtxBody::default(),
+            conclusion,
         }
-        for relation in Relation::ALL {
-            for (left, right) in relations.get(&relation).into_iter().flatten().copied() {
-                sequent.relations.insert_conclusion(relation, left, right);
-            }
-        }
-        sequent
     }
 
     #[must_use]
@@ -169,29 +132,61 @@ impl<A, I> Seq<A, I> {
         A: Clone,
         I: Clone,
     {
-        let premises = self.premises();
-        let conclusion = self.conclusion();
+        let premises = Ctx::from_parts(self.arena.clone(), self.imports.clone(), self.premises);
+        let conclusion = Ctx::from_parts(self.arena, self.imports, self.conclusion);
         (premises, conclusion)
     }
-    #[must_use]
-    pub const fn relations(&self) -> &Relations {
-        &self.relations
-    }
-    #[must_use]
-    pub const fn relations_mut(&mut self) -> &mut Relations {
-        &mut self.relations
-    }
-    fn insert_sequent(&mut self, import: LinkRef, flag: SeqFlags) -> bool {
-        let flags = self.sequents.entry(import).or_default();
-        let old = *flags;
-        flags.insert(flag);
-        old != *flags
-    }
+
     pub fn assume(&mut self, sequent: LinkRef) -> bool {
-        self.insert_sequent(sequent, SeqFlags::PREMISE)
+        self.premises.insert_sequent(sequent)
     }
+
     pub fn conclude(&mut self, sequent: LinkRef) -> bool {
-        self.insert_sequent(sequent, SeqFlags::CONCLUSION)
+        self.conclusion.insert_sequent(sequent)
+    }
+
+    pub fn insert_premise(&mut self, relation: Relation, left: SRef, right: SRef) -> bool {
+        self.premises.insert(relation, left, right)
+    }
+
+    pub fn insert_conclusion(&mut self, relation: Relation, left: SRef, right: SRef) -> bool {
+        self.conclusion.insert(relation, left, right)
+    }
+
+    pub fn insert_symmetric_premise(
+        &mut self,
+        relation: Relation,
+        left: SRef,
+        right: SRef,
+    ) -> bool {
+        self.premises.insert_symmetric(relation, left, right)
+    }
+
+    pub fn insert_symmetric_conclusion(
+        &mut self,
+        relation: Relation,
+        left: SRef,
+        right: SRef,
+    ) -> bool {
+        self.conclusion.insert_symmetric(relation, left, right)
+    }
+
+    #[must_use]
+    pub fn contains_premise(&self, relation: Relation, left: SRef, right: SRef) -> bool {
+        self.premises.contains(relation, left, right)
+    }
+
+    #[must_use]
+    pub fn contains_conclusion(&self, relation: Relation, left: SRef, right: SRef) -> bool {
+        self.conclusion.contains(relation, left, right)
+    }
+
+    pub fn premise_pairs(&self, relation: Relation) -> impl Iterator<Item = (SRef, SRef)> + '_ {
+        self.premises.pairs(relation)
+    }
+
+    pub fn conclusion_pairs(&self, relation: Relation) -> impl Iterator<Item = (SRef, SRef)> + '_ {
+        self.conclusion.pairs(relation)
     }
 }
 
@@ -199,68 +194,6 @@ impl Seq {
     #[must_use]
     pub fn link_ref_is_sequent(&self, table: &crate::ImportTable, link: LinkRef) -> bool {
         link.kind == crate::ObjectKind::Sequent && table.get(link.import).is_some()
-    }
-}
-
-mod detail {
-    use std::collections::BTreeMap;
-
-    use serde::{Deserialize, Serialize};
-
-    use crate::{LinkRef, Relation};
-
-    #[derive(Serialize, Deserialize)]
-    pub(super) struct Seq<A, I> {
-        pub arena: A,
-        pub imports: I,
-        pub premise_sequents: Vec<LinkRef>,
-        pub conclusion_sequents: Vec<LinkRef>,
-        pub premises: BTreeMap<Relation, Vec<(i32, i32)>>,
-        pub conclusions: BTreeMap<Relation, Vec<(i32, i32)>>,
-    }
-}
-
-impl<'a, A, I> From<&'a Seq<A, I>> for detail::Seq<&'a A, &'a I> {
-    fn from(sequent: &'a Seq<A, I>) -> Self {
-        Self {
-            arena: &sequent.arena,
-            imports: &sequent.imports,
-            premise_sequents: sequent.premise_sequents().collect(),
-            conclusion_sequents: sequent.conclusion_sequents().collect(),
-            premises: sequent.relations.wire_side(false),
-            conclusions: sequent.relations.wire_side(true),
-        }
-    }
-}
-
-impl<A, I> TryFrom<detail::Seq<A, I>> for Seq<A, I> {
-    type Error = crate::InvalidSRef;
-
-    fn try_from(wire: detail::Seq<A, I>) -> Result<Self, Self::Error> {
-        let mut sequent = Self::new(wire.arena, wire.imports);
-        for id in wire.premise_sequents {
-            sequent.assume(id);
-        }
-        for id in wire.conclusion_sequents {
-            sequent.conclude(id);
-        }
-        sequent.relations.insert_wire_side(false, wire.premises)?;
-        sequent.relations.insert_wire_side(true, wire.conclusions)?;
-        Ok(sequent)
-    }
-}
-
-impl<A: Serialize, I: Serialize> Serialize for Seq<A, I> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        detail::Seq::from(self).serialize(serializer)
-    }
-}
-
-impl<'de, A: Deserialize<'de>, I: Deserialize<'de>> Deserialize<'de> for Seq<A, I> {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        detail::Seq::<A, I>::deserialize(deserializer)?
-            .try_into()
-            .map_err(serde::de::Error::custom)
     }
 }
 
@@ -281,14 +214,17 @@ impl SharedSeq {
         let address = O256::from_bytes(&bytes);
         Ok(Self(Arc::new(CachedSeq { sequent, address })))
     }
+
     #[must_use]
     pub fn sequent(&self) -> &Seq {
         &self.0.sequent
     }
+
     #[must_use]
     pub fn address(&self) -> O256 {
         self.0.address
     }
+
     #[must_use]
     pub fn link(&self) -> Link {
         Link::new(self.address(), Format::CborSparse, ObjectKind::Sequent)
