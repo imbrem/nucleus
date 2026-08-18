@@ -16,7 +16,7 @@ namespace Nucleus.HolSurface.RustMapping
 inductive CoreFormer where
   | kindStar | kindArr
   | boolTy | arr | tyApp | tyLam | tyBv | sub | tyExists | model
-  | tmBv | tmFv | tmApp | tmLam | tmBool | eq | eps | abs | rep | cast
+  | tmBv | tmFv | tmApp | tmLam | tmBool | eq | eps | abs | rep | cast | nat
   deriving DecidableEq
 
 def coreFormer : Expr → CoreFormer
@@ -40,6 +40,7 @@ def coreFormer : Expr → CoreFormer
   | .tmAbs .. => .abs
   | .tmRep .. => .rep
   | .tmCast .. => .cast
+  | .tmNat .. => .nat
 
 theorem coreFormer_surjective : Function.Surjective coreFormer := by
   intro former
@@ -66,5 +67,6 @@ theorem coreFormer_surjective : Function.Surjective coreFormer := by
   · exact ⟨.tmRep ⟨1, by decide, by decide⟩ ⟨1, by decide, by decide⟩
       ⟨1, by decide, by decide⟩, rfl⟩
   · exact ⟨.tmCast ⟨1, by decide, by decide⟩ ⟨1, by decide, by decide⟩, rfl⟩
+  · exact ⟨.tmNat 0, rfl⟩
 
 end Nucleus.HolSurface.RustMapping

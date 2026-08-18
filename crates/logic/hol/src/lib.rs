@@ -191,12 +191,27 @@ mod tests {
                 value: c,
             },
             Expr::TmCast { term: a, target: b },
+            Expr::TmNat {
+                value: covalence_data_num::Num::from(256_u16),
+            },
         ];
 
         for expression in expressions {
             let encoded = to_value(&expression).unwrap();
             assert_eq!(from_value::<Expr>(&encoded).unwrap(), expression);
         }
+    }
+
+    #[test]
+    fn natural_literals_require_canonical_big_endian_data() {
+        assert_eq!(
+            Expr::from_parts(SurfaceTag::TmNat, &[], None, None, Some(&[1, 0])).unwrap(),
+            Expr::TmNat {
+                value: covalence_data_num::Num::from(256_u16),
+            }
+        );
+        assert!(Expr::from_parts(SurfaceTag::TmNat, &[], None, None, Some(&[0, 1])).is_err());
+        assert!(Expr::from_parts(SurfaceTag::TmNat, &[], None, None, Some(&[])).is_err());
     }
 
     #[test]

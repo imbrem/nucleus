@@ -229,15 +229,21 @@ impl From<Expr> for PyExpr {
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 impl PyExpr {
     #[new]
-    #[pyo3(signature = (tag, ix=Vec::new(), var=None, value=None))]
-    fn new(tag: &str, ix: Vec<u32>, var: Option<u32>, value: Option<bool>) -> PyResult<Self> {
+    #[pyo3(signature = (tag, ix=Vec::new(), var=None, value=None, data=None))]
+    fn new(
+        tag: &str,
+        ix: Vec<u32>,
+        var: Option<u32>,
+        value: Option<bool>,
+        data: Option<&Bound<'_, PyBytes>>,
+    ) -> PyResult<Self> {
         let tag: SurfaceTag = tag.parse().map_err(value_error)?;
         let children = ix
             .into_iter()
             .map(Ix::new)
             .collect::<Result<Vec<_>, _>>()
             .map_err(value_error)?;
-        Expr::from_parts(tag, &children, var, value)
+        Expr::from_parts(tag, &children, var, value, data.map(|data| data.as_bytes()))
             .map(Self::from)
             .map_err(value_error)
     }
@@ -269,7 +275,20 @@ impl PyExpr {
         }
     }
 
+    #[getter]
+    fn data(&self, python: Python<'_>) -> Option<Py<PyBytes>> {
+        match &self.expr {
+            Expr::TmNat { value } => {
+                Some(PyBytes::new(python, &value.to_canonical_bytes()).unbind())
+            }
+            _ => None,
+        }
+    }
+
     fn __repr__(&self) -> String {
+        if let Expr::TmNat { value } = &self.expr {
+            return format!("Expr(tag='TM_NAT', data={:?})", value.to_canonical_bytes());
+        }
         match (self.var(), self.value()) {
             (Some(var), None) => {
                 format!("Expr(tag='{}', ix={:?}, var={var})", self.tag(), self.ix())

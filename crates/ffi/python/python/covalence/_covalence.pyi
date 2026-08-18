@@ -69,12 +69,14 @@ class Expr:
     ix: list[int]
     var: int | None
     value: bool | None
+    data: bytes | None
     def __init__(
         self,
         tag: str,
         ix: Sequence[int] = ...,
         var: int | None = ...,
         value: bool | None = ...,
+        data: bytes | None = ...,
     ) -> None: ...
     def __repr__(self) -> str: ...
 
