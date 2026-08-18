@@ -194,6 +194,9 @@ mod tests {
             Expr::TmNat {
                 value: covalence_data_num::Num::from(256_u16),
             },
+            Expr::TmBytes {
+                value: bytes::Bytes::from_static(b"HolE"),
+            },
         ];
 
         for expression in expressions {

@@ -8,6 +8,7 @@ description = "Indexed higher-order logic syntax and sequents"
 publish = false
 
 [dependencies]
+bytes = "1"
 covalence-data-num = { path = "../../data/num" }
 covalence-lib-cbor = { path = "../../lib/cbor" }
 covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["blake3", "serde"] }

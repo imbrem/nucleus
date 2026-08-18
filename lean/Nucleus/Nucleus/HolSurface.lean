@@ -138,6 +138,8 @@ inductive Expr where
   | tmCast (term target : Ref)
   /-- Surface natural literal, lowered to the pure-HolE natural representation. -/
   | tmNat (value : Nat)
+  /-- Surface immutable byte-string literal. -/
+  | tmBytes (value : Nucleus.Bytes)
   deriving DecidableEq
 
 def Expr.tag : Expr → Nat
@@ -147,9 +149,10 @@ def Expr.tag : Expr → Nat
   | .tmBv .. => 13 | .tmFv .. => 14 | .tmApp .. => 15 | .tmLam .. => 16
   | .tmBool .. => 17 | .tmEq .. => 18 | .tmEps .. => 19
   | .tmAbs .. => 20 | .tmRep .. => 21 | .tmCast .. => 23 | .tmNat .. => 24
+  | .tmBytes .. => 25
 
 def Expr.children : Expr → List Ref
-  | .kindStar | .tyBool | .tyBv _ | .tmBv _ | .tmBool _ | .tmNat _ => []
+  | .kindStar | .tyBool | .tyBv _ | .tmBv _ | .tmBool _ | .tmNat _ | .tmBytes _ => []
   | .kindArr a b | .tyArr a b | .tyApp a b | .tyLam a b | .tySub a b
   | .tmApp a b | .tmLam a b | .tmEps a b | .tmCast a b => [a, b]
   | .tyExists p | .tyModel p => [p]

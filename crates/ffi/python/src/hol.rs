@@ -243,9 +243,15 @@ impl PyExpr {
             .map(Ix::new)
             .collect::<Result<Vec<_>, _>>()
             .map_err(value_error)?;
-        Expr::from_parts(tag, &children, var, value, data.map(|data| data.as_bytes()))
-            .map(Self::from)
-            .map_err(value_error)
+        Expr::from_parts(
+            tag,
+            &children,
+            var,
+            value,
+            data.map(PyBytesMethods::as_bytes),
+        )
+        .map(Self::from)
+        .map_err(value_error)
     }
 
     #[getter]
@@ -281,6 +287,7 @@ impl PyExpr {
             Expr::TmNat { value } => {
                 Some(PyBytes::new(python, &value.to_canonical_bytes()).unbind())
             }
+            Expr::TmBytes { value } => Some(PyBytes::new(python, value).unbind()),
             _ => None,
         }
     }
@@ -288,6 +295,9 @@ impl PyExpr {
     fn __repr__(&self) -> String {
         if let Expr::TmNat { value } = &self.expr {
             return format!("Expr(tag='TM_NAT', data={:?})", value.to_canonical_bytes());
+        }
+        if let Expr::TmBytes { value } = &self.expr {
+            return format!("Expr(tag='TM_BYTES', data={value:?})");
         }
         match (self.var(), self.value()) {
             (Some(var), None) => {

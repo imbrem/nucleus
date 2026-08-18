@@ -3,6 +3,7 @@ use std::fmt::{self, Display, Formatter};
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
+use bytes::Bytes;
 use covalence_data_num::Num;
 use covalence_lib_hash::O256;
 use serde::de::{SeqAccess, Visitor};
@@ -294,6 +295,8 @@ pub enum Expr {
     /// Arbitrary-precision natural literal surface sugar. Foundational arenas
     /// define naturals in pure `HolE` and deliberately do not use this node.
     TmNat { value: Num },
+    /// Immutable byte-string literal surface sugar.
+    TmBytes { value: Bytes },
 }
 
 /// Traversal-oriented wire form. `ix` contains every arena child in
@@ -362,6 +365,7 @@ impl From<&Expr> for ExprWire {
             },
             data: match expr {
                 Expr::TmNat { value } => Some(WireBytes(value.to_canonical_bytes())),
+                Expr::TmBytes { value } => Some(WireBytes(value.to_vec())),
                 _ => None,
             },
         }
@@ -408,6 +412,14 @@ impl Expr {
                     .map(|value| Self::TmNat { value })
                     .map_err(|_| "non-canonical natural literal"),
                 _ => Err("invalid natural literal payload"),
+            };
+        }
+        if tag == SurfaceTag::TmBytes {
+            return match (children, var, value, data) {
+                ([], None, None, Some(data)) => Ok(Self::TmBytes {
+                    value: Bytes::copy_from_slice(data),
+                }),
+                _ => Err("invalid byte-string literal payload"),
             };
         }
         if data.is_some() {
@@ -522,6 +534,7 @@ impl Expr {
             Self::TmRep { .. } => SurfaceTag::TmRep,
             Self::TmCast { .. } => SurfaceTag::TmCast,
             Self::TmNat { .. } => SurfaceTag::TmNat,
+            Self::TmBytes { .. } => SurfaceTag::TmBytes,
         }
     }
     pub fn children(&self) -> impl Iterator<Item = Ix> + '_ {
@@ -531,7 +544,8 @@ impl Expr {
             | Self::TyBv { .. }
             | Self::TmBv { .. }
             | Self::TmBool { .. }
-            | Self::TmNat { .. } => [None, None, None],
+            | Self::TmNat { .. }
+            | Self::TmBytes { .. } => [None, None, None],
             Self::KindArr { domain, codomain } | Self::TyArr { domain, codomain } => {
                 [Some(*domain), Some(*codomain), None]
             }

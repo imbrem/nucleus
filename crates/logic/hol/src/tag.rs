@@ -91,6 +91,7 @@ surface_tags! {
     TmLink = 22 => "TM_LINK",
     TmCast = 23 => "TM_CAST",
     TmNat = 24 => "TM_NAT",
+    TmBytes = 25 => "TM_BYTES",
 }
 
 impl TryFrom<&str> for SurfaceTag {
