@@ -294,7 +294,11 @@ impl TryFrom<ExprWire> for Expr {
 
     fn try_from(wire: ExprWire) -> Result<Self, Self::Error> {
         let tag = wire.tag.parse().map_err(|_| "unknown expression tag")?;
-        Self::from_parts(tag, &wire.ix, wire.var, wire.value)
+        let var = matches!(tag, SurfaceTag::TyBv | SurfaceTag::TmBv | SurfaceTag::TmFv)
+            .then_some(wire.var)
+            .flatten();
+        let value = (tag == SurfaceTag::TmBool).then_some(wire.value).flatten();
+        Self::from_parts(tag, &wire.ix, var, value)
     }
 }
 

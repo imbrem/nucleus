@@ -164,8 +164,7 @@ def decodeRef? (value : Nucleus.Cbor) : Option Ref := do
   Ref.ofNat? (← asNat? value)
 
 private def exprMap (tag : String) (children : List Ref) (var : Option UInt32 := none)
-    (value : Option Bool := none) :
-    Nucleus.Cbor :=
+    (value : Option Bool := none) : Nucleus.Cbor :=
   map <| [("tag", .primitive (.text tag)), ("ix", array (children.map encodeRef))] ++
     var.toList.map (fun index => ("var", unsigned index.toNat)) ++
     value.toList.map (fun value => ("value", .primitive (if value then .true else .false)))
@@ -195,42 +194,35 @@ def encodeExpr : Expr → Nucleus.Cbor
 def decodeExpr? (value : Nucleus.Cbor) : Option Expr := do
   let entries ← asMap? value
   let children ← traverse decodeRef? (← asArray? (← field? entries "ix"))
-  let var ← optionalField? entries "var"
-  let scalar ← optionalField? entries "value"
-  match ← field? entries "tag", children, var, scalar with
-  | .primitive (.text "KIND_STAR"), [], none, none => some .kindStar
-  | .primitive (.text "KIND_ARR"), [domain, codomain], none, none =>
-      some (.kindArr domain codomain)
-  | .primitive (.text "TY_BOOL"), [], none, none => some .tyBool
-  | .primitive (.text "TY_ARR"), [domain, codomain], none, none =>
-      some (.tyArr domain codomain)
-  | .primitive (.text "TY_APP"), [function, argument], none, none =>
-      some (.tyApp function argument)
-  | .primitive (.text "TY_LAM"), [domain, body], none, none => some (.tyLam domain body)
-  | .primitive (.text "TY_BV"), [], some var, none => some (.tyBv (← asUInt32? var))
-  | .primitive (.text "TY_SUB"), [carrier, predicate], none, none =>
-      some (.tySub carrier predicate)
-  | .primitive (.text "TY_EXISTS"), [predicate], none, none => some (.tyExists predicate)
-  | .primitive (.text "TY_MODEL"), [predicate], none, none => some (.tyModel predicate)
-  | .primitive (.text "TM_BV"), [], some var, none => some (.tmBv (← asUInt32? var))
-  | .primitive (.text "TM_FV"), [type], some var, none =>
-      some (.tmFv (← asUInt32? var) type)
-  | .primitive (.text "TM_APP"), [function, argument], none, none =>
-      some (.tmApp function argument)
-  | .primitive (.text "TM_LAM"), [domain, body], none, none => some (.tmLam domain body)
-  | .primitive (.text "TM_BOOL"), [], none, some (.primitive (.simple 20)) =>
-      some (.tmBool false)
-  | .primitive (.text "TM_BOOL"), [], none, some (.primitive (.simple 21)) =>
-      some (.tmBool true)
-  | .primitive (.text "TM_EQ"), [left, right], none, none => some (.tmEq left right)
-  | .primitive (.text "TM_EPS"), [type, predicate], none, none =>
-      some (.tmEps type predicate)
-  | .primitive (.text "TM_ABS"), [carrier, predicate, value], none, none =>
+  match ← field? entries "tag", children with
+  | .primitive (.text "KIND_STAR"), [] => some .kindStar
+  | .primitive (.text "KIND_ARR"), [domain, codomain] => some (.kindArr domain codomain)
+  | .primitive (.text "TY_BOOL"), [] => some .tyBool
+  | .primitive (.text "TY_ARR"), [domain, codomain] => some (.tyArr domain codomain)
+  | .primitive (.text "TY_APP"), [function, argument] => some (.tyApp function argument)
+  | .primitive (.text "TY_LAM"), [domain, body] => some (.tyLam domain body)
+  | .primitive (.text "TY_BV"), [] => some (.tyBv (← asUInt32? (← field? entries "var")))
+  | .primitive (.text "TY_SUB"), [carrier, predicate] => some (.tySub carrier predicate)
+  | .primitive (.text "TY_EXISTS"), [predicate] => some (.tyExists predicate)
+  | .primitive (.text "TY_MODEL"), [predicate] => some (.tyModel predicate)
+  | .primitive (.text "TM_BV"), [] => some (.tmBv (← asUInt32? (← field? entries "var")))
+  | .primitive (.text "TM_FV"), [type] =>
+      some (.tmFv (← asUInt32? (← field? entries "var")) type)
+  | .primitive (.text "TM_APP"), [function, argument] => some (.tmApp function argument)
+  | .primitive (.text "TM_LAM"), [domain, body] => some (.tmLam domain body)
+  | .primitive (.text "TM_BOOL"), [] =>
+      match ← field? entries "value" with
+      | .primitive (.simple 20) => some (.tmBool false)
+      | .primitive (.simple 21) => some (.tmBool true)
+      | _ => none
+  | .primitive (.text "TM_EQ"), [left, right] => some (.tmEq left right)
+  | .primitive (.text "TM_EPS"), [type, predicate] => some (.tmEps type predicate)
+  | .primitive (.text "TM_ABS"), [carrier, predicate, value] =>
       some (.tmAbs carrier predicate value)
-  | .primitive (.text "TM_REP"), [carrier, predicate, value], none, none =>
+  | .primitive (.text "TM_REP"), [carrier, predicate, value] =>
       some (.tmRep carrier predicate value)
-  | .primitive (.text "TM_CAST"), [term, target], none, none => some (.tmCast term target)
-  | _, _, _, _ => none
+  | .primitive (.text "TM_CAST"), [term, target] => some (.tmCast term target)
+  | _, _ => none
 
 def encodeSegment (segment : Segment) : Nucleus.Cbor := map [
   ("start", encodeRef segment.start),
@@ -522,11 +514,9 @@ set_option maxHeartbeats 4000000 in
     decodeExpr? (encodeExpr expr) = some expr := by
   cases expr
   case tmBool value =>
-    cases value <;>
-      simp [encodeExpr, exprMap, decodeExpr?, field?, optionalField?, valuesFor, traverse,
-        CborPrimitive.false, CborPrimitive.true]
-  all_goals
-    simp [encodeExpr, exprMap, decodeExpr?, field?, optionalField?, valuesFor, traverse]
+    cases value <;> simp [encodeExpr, exprMap, decodeExpr?, field?, valuesFor, traverse,
+      CborPrimitive.false, CborPrimitive.true]
+  all_goals simp [encodeExpr, exprMap, decodeExpr?, field?, valuesFor, traverse]
 
 @[simp] theorem decodeSegment?_encode (segment : Segment) :
     decodeSegment? (encodeSegment segment) = some segment := by
