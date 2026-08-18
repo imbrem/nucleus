@@ -66,7 +66,13 @@ def test_every_declared_name_exists() -> None:
 
 def test_every_public_name_is_reexported() -> None:
     """Public modules select names from the private compiled module."""
-    for public_module in (public_cbor, public_hash, public_hol, public_lrat, public_sat):
+    for public_module in (
+        public_cbor,
+        public_hash,
+        public_hol,
+        public_lrat,
+        public_sat,
+    ):
         assert set(public_module.__all__) <= _exported_names()
         for name in public_module.__all__:
             assert getattr(public_module, name) is getattr(_covalence, name)
