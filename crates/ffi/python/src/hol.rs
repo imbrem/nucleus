@@ -488,7 +488,8 @@ impl PyArena {
 
     /// Return a local definition by its one-based arena reference.
     fn __getitem__(&self, index: u32) -> PyResult<PyExpr> {
-        let index = Ix::new(index).map_err(value_error)?;
+        let index = Ix::new(index)
+            .map_err(|_| PyIndexError::new_err("reference is not a positive arena index"))?;
         self.arena
             .local(index)
             .cloned()
