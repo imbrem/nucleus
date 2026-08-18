@@ -123,18 +123,38 @@ inductive Expr where
   | tyLam (domain body : Ref)
   | tyBv (index : UInt32)
   | tySub (carrier predicate : Ref)
+  | tyExists (predicate : Ref)
   | tyModel (predicate : Ref)
+  | tmBv (index : UInt32)
+  | tmFv (name : UInt32) (type : Ref)
+  | tmApp (function argument : Ref)
+  | tmLam (domain body : Ref)
+  | tmBool (value : Bool)
+  /-- Equality with its shared operand type inferred by the LCF checker. -/
+  | tmEq (left right : Ref)
+  | tmEps (type predicate : Ref)
+  | tmAbs (carrier predicate value : Ref)
+  | tmRep (carrier predicate value : Ref)
+  /-- Total surface conversion: identity at equal types, inhabited garbage otherwise. -/
+  | tmCast (term target : Ref)
   deriving DecidableEq
 
 def Expr.tag : Expr → Nat
   | .kindStar => 0 | .kindArr .. => 1 | .tyBool => 2 | .tyArr .. => 3
   | .tyApp .. => 4 | .tyLam .. => 5 | .tyBv .. => 6
-  | .tySub .. => 7 | .tyModel .. => 9
+  | .tySub .. => 7 | .tyExists .. => 8 | .tyModel .. => 9
+  | .tmBv .. => 13 | .tmFv .. => 14 | .tmApp .. => 15 | .tmLam .. => 16
+  | .tmBool .. => 17 | .tmEq .. => 18 | .tmEps .. => 19
+  | .tmAbs .. => 20 | .tmRep .. => 21 | .tmCast .. => 23
 
 def Expr.children : Expr → List Ref
-  | .kindStar | .tyBool | .tyBv _ => []
-  | .kindArr a b | .tyArr a b | .tyApp a b | .tyLam a b | .tySub a b => [a, b]
-  | .tyModel p => [p]
+  | .kindStar | .tyBool | .tyBv _ | .tmBv _ | .tmBool _ => []
+  | .kindArr a b | .tyArr a b | .tyApp a b | .tyLam a b | .tySub a b
+  | .tmApp a b | .tmLam a b | .tmEps a b | .tmCast a b => [a, b]
+  | .tyExists p | .tyModel p => [p]
+  | .tmFv _ A => [A]
+  | .tmEq x y => [x, y]
+  | .tmAbs A x y | .tmRep A x y => [A, x, y]
 
 class TrustedVec (V : Type → Type) where
   toList {α : Type} : V α → List α

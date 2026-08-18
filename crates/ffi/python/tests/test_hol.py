@@ -29,6 +29,21 @@ def test_expression_constructor_rejects_non_children_and_bad_variables() -> None
         Expr("TY_BV", [1], 0)
 
 
+def test_term_payloads_are_typed_and_round_trip() -> None:
+    bound = Expr("TM_BV", var=4)
+    free = Expr("TM_FV", [1], var=5)
+    truth = Expr("TM_BOOL", value=True)
+
+    assert (bound.var, free.var, free.ix, truth.value) == (4, 5, [1], True)
+    assert Expr("TM_EQ", [1, 2]).ix == [1, 2]
+    with pytest.raises(ValueError):
+        Expr("TM_EQ", [1, 2, 3])
+    with pytest.raises(ValueError):
+        Expr("TM_BOOL", var=1)
+    with pytest.raises(ValueError):
+        Expr("TM_BV", value=False)
+
+
 def test_arenas_and_sequents_form_a_lazy_import_graph() -> None:
     root = Arena()
     root.push(Expr("KIND_STAR"))
