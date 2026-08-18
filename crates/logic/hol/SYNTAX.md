@@ -1,5 +1,8 @@
 # Rust–Lean indexed syntax correspondence
 
+See [`STACKS.md`](STACKS.md) for the packed-v1/plain-v2 comparison and why the
+plain-context representation is the recommended MVP.
+
 The normative Rust representation is the flat arena in `src/arena.rs`. Its
 formal counterpart is `lean/Nucleus/Nucleus/HolSurface.lean`, with value-level
 CBOR in `HolSurface/Cbor.lean` and the audited HolE mapping in
