@@ -2,6 +2,7 @@
 
 import pytest
 
+from covalence.lib.hash import O256
 from covalence.logic.hol import Arena, Expr, ImportTable, LinkRef, Segment, Seq
 
 
@@ -32,6 +33,7 @@ def test_expression_constructor_rejects_non_children_and_bad_variables() -> None
 def test_arenas_and_sequents_form_a_lazy_import_graph() -> None:
     root = Arena()
     root.push(Expr("KIND_STAR"))
+    assert isinstance(root.address(), O256)
 
     arena_imports = ImportTable()
     assert arena_imports.push(root.address()) == 0

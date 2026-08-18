@@ -3,7 +3,6 @@
 #![allow(clippy::needless_pass_by_value)]
 #![allow(clippy::trivially_copy_pass_by_ref)]
 
-use covalence_lib_hash::O256;
 use covalence_lib_python::prelude::*;
 use covalence_lib_python::pyo3::types::{PyBytes, PyType};
 use covalence_logic_hol::{
@@ -11,20 +10,14 @@ use covalence_logic_hol::{
     SharedImportTable, SharedSeq, SurfaceTag, deserialize_cbor, serialize_cbor,
 };
 
+use crate::hash::PyO256;
+
 fn value_error(error: impl ToString) -> PyErr {
     PyValueError::new_err(error.to_string())
 }
 
-fn hash32(bytes: &Bytes) -> PyResult<O256> {
-    let value: [u8; 32] = bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| PyValueError::new_err("expected exactly 32 hash bytes"))?;
-    Ok(O256::from_array(value))
-}
-
-fn py_hash(python: Python<'_>, hash: O256) -> Bound<'_, PyBytes> {
-    PyBytes::new(python, hash.as_bytes())
+fn py_hash(python: Python<'_>, hash: covalence_lib_hash::O256) -> PyResult<Py<PyO256>> {
+    PyO256::wrap(python, hash)
 }
 
 fn parse_format(value: &str) -> PyResult<Format> {
@@ -174,8 +167,10 @@ impl PyImportTable {
             .map_err(value_error)
     }
 
-    fn push(&mut self, address: Bytes) -> PyResult<u32> {
-        self.table.push(hash32(&address)?).map_err(value_error)
+    fn push(&mut self, address: PyRef<'_, PyO256>) -> PyResult<u32> {
+        self.table
+            .push(PyO256::value(&address))
+            .map_err(value_error)
     }
 
     fn to_cbor<'py>(&self, python: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
@@ -183,9 +178,9 @@ impl PyImportTable {
         Ok(PyBytes::new(python, &bytes))
     }
 
-    fn address<'py>(&self, python: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+    fn address(&self, python: Python<'_>) -> PyResult<Py<PyO256>> {
         let table = SharedImportTable::new(self.table.clone()).map_err(value_error)?;
-        Ok(py_hash(python, table.address()))
+        py_hash(python, table.address())
     }
 
     fn __len__(&self) -> usize {
@@ -268,10 +263,10 @@ pub struct PyArena {
 impl PyArena {
     #[new]
     #[pyo3(signature = (imports=None))]
-    fn new(imports: Option<Bytes>) -> PyResult<Self> {
-        Ok(Self {
-            arena: Arena::new(imports.as_ref().map(hash32).transpose()?),
-        })
+    fn new(imports: Option<PyRef<'_, PyO256>>) -> Self {
+        Self {
+            arena: Arena::new(imports.as_ref().map(PyO256::value)),
+        }
     }
 
     #[classmethod]
@@ -297,9 +292,9 @@ impl PyArena {
         self.arena.add_segment(segment.segment).map_err(value_error)
     }
 
-    fn address<'py>(&self, python: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+    fn address(&self, python: Python<'_>) -> PyResult<Py<PyO256>> {
         let arena = SharedArena::new(self.arena.clone()).map_err(value_error)?;
-        Ok(py_hash(python, arena.address()))
+        py_hash(python, arena.address())
     }
 
     fn __len__(&self) -> usize {
@@ -333,13 +328,13 @@ pub struct PySeq {
 impl PySeq {
     #[new]
     #[pyo3(signature = (arena=None, imports=None))]
-    fn new(arena: Option<&PyLinkRef>, imports: Option<Bytes>) -> PyResult<Self> {
-        Ok(Self {
+    fn new(arena: Option<&PyLinkRef>, imports: Option<PyRef<'_, PyO256>>) -> Self {
+        Self {
             seq: Seq::new(
                 arena.map(|link| link.link),
-                imports.as_ref().map(hash32).transpose()?,
+                imports.as_ref().map(PyO256::value),
             ),
-        })
+        }
     }
 
     #[classmethod]
@@ -362,9 +357,9 @@ impl PySeq {
         Ok(PyBytes::new(python, &bytes))
     }
 
-    fn address<'py>(&self, python: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+    fn address(&self, python: Python<'_>) -> PyResult<Py<PyO256>> {
         let seq = SharedSeq::new(self.seq.clone()).map_err(value_error)?;
-        Ok(py_hash(python, seq.address()))
+        py_hash(python, seq.address())
     }
 }
 
