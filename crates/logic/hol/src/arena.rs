@@ -348,16 +348,10 @@ impl TryFrom<ExprWire> for Expr {
             .then_some(wire.var)
             .flatten();
         let value = (tag == SurfaceTag::TmBool).then_some(wire.value).flatten();
-        let data = (tag == SurfaceTag::TmNat)
+        let data = matches!(tag, SurfaceTag::TmNat | SurfaceTag::TmBytes)
             .then_some(wire.data.as_ref().map(|data| data.0.as_slice()))
             .flatten();
-        Self::from_parts(
-            tag,
-            &wire.ix,
-            var,
-            value,
-            data,
-        )
+        Self::from_parts(tag, &wire.ix, var, value, data)
     }
 }
 
