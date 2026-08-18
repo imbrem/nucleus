@@ -1,0 +1,131 @@
+nucleus propositional kernel-state semantics, version 1
+=======================================================
+
+This file is the normative semantic commitment for the propositional
+schema. prop_semantics_id() tags exactly these bytes; any change is a new
+schema identity. Design discussion: imbrem/nucleus#391.
+
+Literals and rows
+-----------------
+Proposition ids are positive integers. A literal is a nonzero signed
+64-bit integer other than its minimum value, so negation is representable:
+-p denotes the negation of p. 0 is the truthy constant (true). A row
+(lhs, rhs, model) asserts the implication lhs => rhs. At most one row per
+(lhs, rhs) exists: an implication is true for exactly one recorded reason,
+and the model column names it. The column's DEFAULT is -1, a plain
+universal implication; definitions mark themselves with model 0.
+
+A model of a database is an assignment of truth values to proposition ids,
+extended to literals by negation and mapping 0 to true, that satisfies
+every definitional constraint below. Worlds range over models of the
+definitional layer.
+
+The model column
+----------------
+model = 0    The definitional layer (the initial model).
+             * (a, r, 0) with r != 0 is a definitional conjunct: taken
+               together, the conjunct rows of a define a as the
+               conjunction of their rhs literals, in both directions
+               (a <=> r1 /\ ... /\ rk). Requires a > 0.
+             * (a, 0, 0) declares a as a free variable: substitutable,
+               unconstrained. Requires a > 0.
+             * lhs = 0 is forbidden at model 0 (it would assert an axiom).
+model < 0    A universal consequence: lhs => rhs holds in every model of
+             the definitional layer. The particular negative integer is
+             semantically meaningless and available as proof/step
+             metadata. (0, p, n) records that p holds universally (p is a
+             tautology relative to the definitions); (p, -p, n) records
+             that p is unsatisfiable.
+model = i>0  A fact of the registered world i: lhs => rhs holds in that
+             world. (0, p, i) records that p holds in world i, and hence
+             that p is satisfiable when derived through the rules below.
+             Distinct worlds are never combined.
+
+Subsumption: universal implications hold in every world, so establishing
+a pair universally upgrades an existing world row in place (the stronger
+reason replaces the weaker). A world may not claim a pair that another
+world already holds; the rule fails rather than silently sharing it.
+
+Declarations: (a, 0, 0) declares a free variable; (a, 0, i) with i > 0
+declares a theory variable whose meaning is fixed by world i's registered
+interpretation; theory variables are not free-choosable. Declaration rows
+carry no propositional content (a => true) and are not conjuncts.
+
+Ids referenced but never declared or defined are indeterminate
+propositions: they behave as free variables. Later declaring or defining
+one is allowed only before either polarity occurs in a positive-world row.
+This preserves existing witnesses; universal rows remain sound because
+restricting their model class cannot invalidate them.
+
+Well-formedness (decidable; also the untrusted-import validity checks)
+----------------------------------------------------------------------
+W1  Positivity: model = 0 implies lhs > 0, and declaration rows
+    (rhs = 0, model >= 0) require lhs > 0.
+    Both row literals exclude the minimum signed 64-bit integer.
+W2  Binding uniqueness: the binding rows of an id a — its model-0 rows
+    and any theory declaration (a, 0, i > 0) — are inserted exactly once,
+    as one atomic batch, while no row with |lhs| = a exists and neither
+    polarity occurs anywhere in a positive-world row. Each id therefore
+    has at most one non-negative binding level, there are no redefinitions,
+    and a later binding cannot invalidate a world witness. Rows
+    (a, b, i > 0) with b != 0 are derived world facts, not bindings.
+W3  Acyclicity: the definitional graph with an edge a -> |r| for every
+    conjunct row (a, r, 0) is acyclic.
+W4  Worlds referenced by any row are registered in prop_world.
+W1-W3 guarantee the definitional layer has a model (evaluate bottom-up
+with free/indeterminate ids arbitrary).
+
+Rules
+-----
+Every rule targets a layer m, which is either universal (a caller-chosen
+negative integer) or a registered world i. A premise row (x, y) is usable
+for target m when a row (x, y, model) exists with model = 0, model < 0, or
+model = i (worlds use only their own facts). Conclusions are inserted at
+the target layer. All gates are checked before insertion; a failing rule
+inserts nothing.
+
+DECLARE_FREE (a)        gate: a > 0, no antecedent row for either polarity,
+                        and neither polarity occurs in a positive-world row.
+                        insert (a, 0, 0).
+DECLARE_THEORY (a, i)   gate: as DECLARE_FREE; world i registered.
+                        insert (a, 0, i).
+DEFINE (a, [r1..rk])    gate: a > 0, k >= 1, each rj a literal, no
+                        antecedent row for either polarity, neither polarity
+                        occurs in a positive-world row, and no rj reaches a
+                        through the definitional graph (W3 preserved).
+                        insert the batch (a, r1, 0) .. (a, rk, 0)
+                        atomically.
+REFL (m, p)             gate: p a literal. insert (p, p, m) for m != 0.
+TRANS (m, a, b, c)      gate: (a, b) and (b, c) usable for m.
+                        insert (a, c, m).
+CONTRA (m, a, b)        gate: (a, b) usable for m. insert (-b, -a, m).
+FOLD (m, x, a)          gate: a defined with conjuncts r1..rk and every
+                        (x, rj) usable for m. insert (x, a, m).
+                        (The completeness direction of the definition;
+                        with x = 0 this is evaluation.)
+CASES (m, a, c)         gate: (a, c) and (-a, c) usable for m.
+                        insert (0, c, m).
+CHOOSE (i, l)           gate: i a registered world; |l| free (declared
+                        free or wholly undeclared and undefined); no
+                        (0, -l) row usable for i. insert (0, l, i),
+                        failing if another world holds the pair.
+                        (Free choices on distinct free variables are
+                        jointly satisfiable, so worlds built by CHOOSE
+                        plus derivation are consistent.)
+
+Soundness invariant: every universal row is entailed by the definitional
+layer; every world-i row holds in some model of the definitional layer
+consistent with world i's prior rows. Rows are freely deletable without
+breaking the invariant.
+
+Derived judgements
+------------------
+TAUTO(p): a row (0, p, m < 0).
+UNSAT(p): a row (0, -p, m < 0) or (p, -p, m < 0).
+SAT(p): a row (0, p) usable for some world i built only from CHOOSE and
+the rules above (a universal (0, p) row witnesses satisfiability in every
+world of the definitions).
+
+Deferred by this version: CNF export, DRAT/LRAT certificate checking
+(which would extend the universal layer), negative definitions, and
+theory-fact admission gates for externally interpreted worlds.
