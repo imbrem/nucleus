@@ -42,7 +42,7 @@ private noncomputable def lookupTm (wanted : TmDecl Sig) :
       else
         (lookupTm wanted rest).map Fin.succ
 
-private def resultDepth (sort : HolSort) (depth : Nat) : Nat :=
+def scopeDepth (sort : HolSort) (depth : Nat) : Nat :=
   match sort with
   | .kind _ => 0
   | .tm => depth
@@ -51,7 +51,7 @@ private def resultDepth (sort : HolSort) (depth : Nat) : Nat :=
 noncomputable def lower (typeScope : TyScope) (termScope : TmScope Sig) :
     (expression : Expr Sig sort) →
       Option (Nucleus.HolE.Expr Sig typeScope.kinds sort
-        (resultDepth sort termScope.length))
+        (scopeDepth sort termScope.length))
   | .boolTy => some .boolTy
   | .arr A B => do return .arr (← lower typeScope [] A) (← lower typeScope [] B)
   | .tyApp F A => do return .tyApp (← lower typeScope [] F) (← lower typeScope [] A)
