@@ -8,5 +8,8 @@ import Nucleus.HolE.Named.Equivalence
 import Nucleus.HolE.Named.Typing
 import Nucleus.HolE.Named.Kernel
 import Nucleus.HolE.Named.Semantics
+import Nucleus.HolE.Named.Unsorted.Typing
+import Nucleus.HolE.Named.Unsorted.Kernel
+import Nucleus.HolE.Named.Unsorted.Semantics
 
 /-! # Named presentation of HolE -/
