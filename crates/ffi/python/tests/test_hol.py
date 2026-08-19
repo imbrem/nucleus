@@ -107,3 +107,13 @@ def test_contexts_materialize_and_repack_every_sequent_fact() -> None:
         premises.insert("eq", -(2**31), 1)
     with pytest.raises(ValueError, match="directional"):
         premises.insert_symmetric("imp", 1, 2)
+
+
+def test_static_init_arena_is_literal_free_and_hash_pinned() -> None:
+    arena = Arena.init()
+    assert len(arena) == 664
+    assert all(expr.tag not in {"TM_NAT", "TM_BYTES"} for expr in arena.defs)
+    assert Arena.from_cbor(arena.to_cbor()).to_cbor() == arena.to_cbor()
+    assert str(arena.address()) == (
+        "0efca95433f5c70531b88e3cf43d612fa8042c5ec9db2b5e1f1cd3f6a00d0170"
+    )

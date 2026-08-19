@@ -79,3 +79,16 @@ byte strings and therefore distinct addresses may
 decode to the same logical value. An address identifies the exact bytes stored
 under it; decoding and re-encoding an arbitrary source need not preserve that
 source address.
+
+## Foundational initializer
+
+`INIT_ARENA` is an import-free `StaticArena` backed by `&'static [Expr]`. Its
+readable builder is checked node-for-node against the frozen table, and
+`HolSurface/Init.lean` mirrors that table exactly. It contains only core HolE
+constructors: in particular, neither `TM_NAT` nor `TM_BYTES` occurs in it.
+
+The initializer defines booleans and their basic connectives; a categorical
+second-order Peano model with zero, successor, and recursively characterized
+addition; the numeral 256 by repeated doubling; bytes as the subtype of
+naturals below 256; and byte strings as the categorical list model over bytes.
+Its canonical CBOR address is pinned by Rust and Python tests.
