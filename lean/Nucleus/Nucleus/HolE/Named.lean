@@ -1,4 +1,5 @@
 import Nucleus.HolE.Named.Syntax
+import Nucleus.HolE.Named.Unsorted
 import Nucleus.HolE.Named.FV
 import Nucleus.HolE.Named.Lower
 import Nucleus.HolE.Named.Quote
