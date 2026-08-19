@@ -233,7 +233,7 @@ mod tests {
     }
 
     #[test]
-    fn v2_context_and_sequent_wire_shapes_are_directly_nested() {
+    fn context_and_sequent_wire_shapes_are_directly_nested() {
         let empty_body = CborValue::Map(vec![
             (CborValue::Text("sequents".into()), CborValue::Array(vec![])),
             (CborValue::Text("relations".into()), CborValue::Map(vec![])),

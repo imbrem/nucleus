@@ -137,8 +137,8 @@ impl<'de> Deserialize<'de> for Relation {
     }
 }
 
-/// One unpacked logical side. This is the complete v2 sparse representation;
-/// indexes such as E-classes can be derived outside the trusted core later.
+/// One sparse logical side. Indexes such as E-classes can be derived from
+/// these facts without becoming part of the trusted representation.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct CtxBody {
     sequents: BTreeSet<LinkRef>,

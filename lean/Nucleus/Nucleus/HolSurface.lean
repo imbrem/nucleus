@@ -212,15 +212,15 @@ structure CtxBody where
 
 def CtxBody.empty : CtxBody := ⟨[], []⟩
 
-/-! Rust and Lean both call a heterogeneous logical side `Ctx`. -/
+/-! A heterogeneous logical context. -/
 structure Ctx where
   arena : Option LinkRef
   imports : Option O256
   body : CtxBody
   deriving DecidableEq
 
-/-- The maximally direct v2 representation: one shared scope and two ordinary
-context bodies. E-classes and flag maps may be derived outside the TCB. -/
+/-- A sequent with one shared scope and two ordinary context bodies. E-classes
+and packed indexes can be derived from this sparse representation. -/
 structure Seq where
   arena : Option LinkRef
   imports : Option O256
