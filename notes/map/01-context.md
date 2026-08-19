@@ -8,15 +8,15 @@ Markers are defined in [`00-index.md`](./00-index.md).
 148 files, 32,515 lines. Zero `sorry`, zero `admit`, zero `axiom`
 declarations [v:2].
 
-| Area | Lines | Contents |
-| --- | --- | --- |
-| `Hol/` | 8,373 | signature-parametric HOL: `Signature`, `Typing`, `Intrinsic`, `Soundness`, `FamilySub`, `Nat` |
-| `HolE/` | 7,422 | type-variable-scoped HOL with subtype families; classical kernel laws, `Semantics`, `Soundness`, `Consistency`, `Empty*` API |
-| `SExpr/` | 5,036 | models, parser, printers, canonical form |
-| `HolLN/` | 4,481 | monomorphic locally nameless HOL, plus `Array` (arena) and `Json` |
-| `Json/` | 4,288 | RFC parser, I-JSON, IPLD, CAS |
-| `Cbor/` | 1,415 | data model, deterministic encoding, DAG and CAS layers |
-| `Encoding/`, `Number/` | 464 | |
+| Area                   | Lines | Contents                                                                                                                     |
+| ---------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `Hol/`                 | 8,373 | signature-parametric HOL: `Signature`, `Typing`, `Intrinsic`, `Soundness`, `FamilySub`, `Nat`                                |
+| `HolE/`                | 7,422 | type-variable-scoped HOL with subtype families; classical kernel laws, `Semantics`, `Soundness`, `Consistency`, `Empty*` API |
+| `SExpr/`               | 5,036 | models, parser, printers, canonical form                                                                                     |
+| `HolLN/`               | 4,481 | monomorphic locally nameless HOL, plus `Array` (arena) and `Json`                                                            |
+| `Json/`                | 4,288 | RFC parser, I-JSON, IPLD, CAS                                                                                                |
+| `Cbor/`                | 1,415 | data model, deterministic encoding, DAG and CAS layers                                                                       |
+| `Encoding/`, `Number/` | 464   |                                                                                                                              |
 
 [v:3]
 
@@ -41,19 +41,19 @@ between the two levels is what `03-arena.md` §8 is about.
 
 No HOL kernel on `main`. `crates/logic/` holds `lrat` and `sat` only [v:5].
 
-| Crate | Lines |
-| --- | --- |
-| `lib/sqlite` | 3,842 |
-| `lib/hash` | 2,089 |
-| `repl` | 1,810 |
-| `neutron` | 1,744 |
-| `ffi/python` | 1,370 |
-| `bin/cas-shell` | 827 |
-| `logic/lrat` | 629 |
-| `data/num` | 535 |
-| `nucleus` | 530 |
-| `data/cas` | 498 |
-| `data/cbor` | 211 |
+| Crate           | Lines |
+| --------------- | ----- |
+| `lib/sqlite`    | 3,842 |
+| `lib/hash`      | 2,089 |
+| `repl`          | 1,810 |
+| `neutron`       | 1,744 |
+| `ffi/python`    | 1,370 |
+| `bin/cas-shell` | 827   |
+| `logic/lrat`    | 629   |
+| `data/num`      | 535   |
+| `nucleus`       | 530   |
+| `data/cas`      | 498   |
+| `data/cbor`     | 211   |
 
 [v:8]
 

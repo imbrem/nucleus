@@ -230,7 +230,7 @@ rather than only something the outside world can cite.
 
 ## 1.P — How much substitution composition becomes syntax?
 
-§11 keeps substitution *application* in the kernel and *composition* in
+§11 keeps substitution _application_ in the kernel and _composition_ in
 userspace. That lands on the safe side of the λσ hazard: composition as syntax
 is what breaks strong normalization for well-typed terms in the explicit
 substitution literature [x, §1 of `05-pointers.md`]. Currently by accident.

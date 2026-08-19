@@ -18,17 +18,17 @@ a cleanup proposal.
 
 Newest first [v:1]:
 
-| PR | Subject |
-| --- | --- |
-| #732, #731, #730 | CBOR: shared data model, immutable Python API, recursive conversion |
-| #27 | foundational `Num` and `Int` |
-| #729, #728 | HolE: hole/defeq opening, `TY_EXISTS` |
-| #714, #696 | Python: SAT order hash, lib hash |
-| #713 | forsp formalization |
-| #706, #704, #702, #699, #697, #695, #694 | the S-expression stack, including the Lisp evaluator |
-| #693, #692, #691 | typed free variables, HOL evars, untyped HOL syntax |
-| #690, #689, #678 | CBOR wire format, DAG codec correspondences, CBOR data model |
-| #673 | HolLN array representation |
+| PR                                       | Subject                                                             |
+| ---------------------------------------- | ------------------------------------------------------------------- |
+| #732, #731, #730                         | CBOR: shared data model, immutable Python API, recursive conversion |
+| #27                                      | foundational `Num` and `Int`                                        |
+| #729, #728                               | HolE: hole/defeq opening, `TY_EXISTS`                               |
+| #714, #696                               | Python: SAT order hash, lib hash                                    |
+| #713                                     | forsp formalization                                                 |
+| #706, #704, #702, #699, #697, #695, #694 | the S-expression stack, including the Lisp evaluator                |
+| #693, #692, #691                         | typed free variables, HOL evars, untyped HOL syntax                 |
+| #690, #689, #678                         | CBOR wire format, DAG codec correspondences, CBOR data model        |
+| #673                                     | HolLN array representation                                          |
 
 The CBOR half of the ladder's L1 is landing steadily. The Rust HOL kernel is
 still absent from `main` [v:5].
@@ -57,33 +57,33 @@ question, kept side by side.
 
 ## Other open lineages
 
-| Band | Theme |
-| --- | --- |
-| #587–#593, #396–#399, #455 | two earlier Rust HOL kernel stacks, both draft |
-| #606, #607, #627, #643, #646, #649, #650, #652 | propositional / SAT / LRAT / CaDiCaL |
-| #625, #626, #647, #648, #651, #674 | proposition tables, JSON interchange, REPL demo |
-| #700, #701, #705, #711 | Lean signature-parametric HOL, finite semantics, content-addressed bootstrap |
-| #675, #672 | indexed HOL equivalence classes; linked HOL JSON imports |
-| #605, #632 | `covalence-data-json` |
-| #418, #419, #456, #474, #481 | SQLite wrapper, flat hash arrays, BLAKE3 constants |
-| #231–#355 | the signed-artifact, REPL-guest and above-LCF-library lineage |
-| #115–#230 | older substrate and kernel spikes |
+| Band                                           | Theme                                                                        |
+| ---------------------------------------------- | ---------------------------------------------------------------------------- |
+| #587–#593, #396–#399, #455                     | two earlier Rust HOL kernel stacks, both draft                               |
+| #606, #607, #627, #643, #646, #649, #650, #652 | propositional / SAT / LRAT / CaDiCaL                                         |
+| #625, #626, #647, #648, #651, #674             | proposition tables, JSON interchange, REPL demo                              |
+| #700, #701, #705, #711                         | Lean signature-parametric HOL, finite semantics, content-addressed bootstrap |
+| #675, #672                                     | indexed HOL equivalence classes; linked HOL JSON imports                     |
+| #605, #632                                     | `covalence-data-json`                                                        |
+| #418, #419, #456, #474, #481                   | SQLite wrapper, flat hash arrays, BLAKE3 constants                           |
+| #231–#355                                      | the signed-artifact, REPL-guest and above-LCF-library lineage                |
+| #115–#230                                      | older substrate and kernel spikes                                            |
 
 ## Issues that bear on the arena design
 
-| Issue | Subject | Bearing |
-| --- | --- | --- |
-| #739 | derived E-graph indexes over HolE arenas | states the position that congruence closure is a derived index, not wire format; asks which relations get separate graphs, how context keys into E-class identity, and whether a persistent E-graph is another `(format, class)` pair |
-| #745 | one manifest generating Rust/Lean constructor correspondence | the tag-table single-source problem |
-| #726 | execution plan: Python/Rust/Lean HolLN kernel with swappable HolE backend | the surrounding milestone; fixes the LCF boundary and the eager/classified link split |
-| #725 | tracking: in-memory HolE CBOR_TREE prototype | parent of #716–#724 |
-| #715 | total typed imports over HolE | import typing |
-| #717, #718 | canonical CBOR_TREE serialization; in-memory CAS with lazy classified imports | |
-| #723, #724 | CBOR macro tags and canonical lowering; cross-language conformance tests | |
-| #721, #722 | Lean formalization of surface syntax, elaboration, link filling, import resolution | |
-| #664, #611–#663 | proposition tables and the SAT/LRAT boundary | the other consumer of a fact representation |
-| #680–#688 | HOL variants, reusable interfaces, evars, representation equivalences | binder and representation questions |
-| #707–#710 | bootstrap from `init.json`; nat/int/rat/real | needs polymorphism, so downstream of the signature kernel |
+| Issue           | Subject                                                                            | Bearing                                                                                                                                                                                                                               |
+| --------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| #739            | derived E-graph indexes over HolE arenas                                           | states the position that congruence closure is a derived index, not wire format; asks which relations get separate graphs, how context keys into E-class identity, and whether a persistent E-graph is another `(format, class)` pair |
+| #745            | one manifest generating Rust/Lean constructor correspondence                       | the tag-table single-source problem                                                                                                                                                                                                   |
+| #726            | execution plan: Python/Rust/Lean HolLN kernel with swappable HolE backend          | the surrounding milestone; fixes the LCF boundary and the eager/classified link split                                                                                                                                                 |
+| #725            | tracking: in-memory HolE CBOR_TREE prototype                                       | parent of #716–#724                                                                                                                                                                                                                   |
+| #715            | total typed imports over HolE                                                      | import typing                                                                                                                                                                                                                         |
+| #717, #718      | canonical CBOR_TREE serialization; in-memory CAS with lazy classified imports      |                                                                                                                                                                                                                                       |
+| #723, #724      | CBOR macro tags and canonical lowering; cross-language conformance tests           |                                                                                                                                                                                                                                       |
+| #721, #722      | Lean formalization of surface syntax, elaboration, link filling, import resolution |                                                                                                                                                                                                                                       |
+| #664, #611–#663 | proposition tables and the SAT/LRAT boundary                                       | the other consumer of a fact representation                                                                                                                                                                                           |
+| #680–#688       | HOL variants, reusable interfaces, evars, representation equivalences              | binder and representation questions                                                                                                                                                                                                   |
+| #707–#710       | bootstrap from `init.json`; nat/int/rat/real                                       | needs polymorphism, so downstream of the signature kernel                                                                                                                                                                             |
 
 ## Docs status
 

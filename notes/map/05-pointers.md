@@ -24,8 +24,8 @@ The λσ line, which is what "a substitution arena" joins.
 - **Lescanne, λυ** (POPL 1994) and **Kesner, "A theory of explicit substitutions
   with safe and full composition"** (LMCS 2009). The repairs, and what they cost.
 
-The practical reading: an object-level substitution that is *applied* is safe;
-an object-level substitution that is *composed lazily inside terms* is where the
+The practical reading: an object-level substitution that is _applied_ is safe;
+an object-level substitution that is _composed lazily inside terms_ is where the
 metatheory gets hard. §11 keeps application in the kernel and composition in
 userspace, which lands on the safe side by accident. Worth making deliberate.
 
@@ -51,7 +51,7 @@ userspace, which lands on the safe side by accident. Worth making deliberate.
   system to the arena's ambitions: theory graphs, views as first-class
   morphisms, and a URI for every declaration — which is §10's derived addresses
   with a different naming function.
-- **Metamath.** The extreme case where substitution *is* the proof step. Useful
+- **Metamath.** The extreme case where substitution _is_ the proof step. Useful
   as a lower bound on how small the machinery can be.
 
 ## 3. `eq` as a decreasing forest is a solved form
@@ -104,8 +104,7 @@ semantics.
   degenerate, interval-shaped version of the same idea, and the payoff is the
   same: name coincidence becomes intentional rather than accidental. Doubly
   relevant given the Scheme metalanguage on the ladder.
-- **Kohlbecker, Friedman, Felleisen, Duba, "Hygienic Macro Expansion"** (LFP
-  1986) and **Dybvig, Hieb, Bruggeman, "Syntactic Abstraction in Scheme"**
+- **Kohlbecker, Friedman, Felleisen, Duba, "Hygienic Macro Expansion"** (LFP 1986) and **Dybvig, Hieb, Bruggeman, "Syntactic Abstraction in Scheme"**
   (LSC 1992). The original problem and the renaming-based answer.
 - **Gabbay and Pitts, "A New Approach to Abstract Syntax with Variable Binding"**
   (FAC 2002) and **Pitts, "Nominal Sets"** (2013). Freshness as a first-class

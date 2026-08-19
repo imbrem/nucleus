@@ -6,15 +6,15 @@ marked as an open question.
 
 ## The documents
 
-| # | File | What it holds |
-| --- | --- | --- |
-| 00 | `00-index.md` | this file: the map, the citation convention, the question register |
-| 01 | [`01-context.md`](./01-context.md) | current state of nucleus, covalence, Lean, Rust, as of 2026-08-19 |
-| 02 | [`02-status.md`](./02-status.md) | PR / issue / docs status: what is open, grouped by design question |
-| 03 | [`03-arena.md`](./03-arena.md) | the arena design and the plan to build it |
-| 04 | [`04-evidence.md`](./04-evidence.md) | commands run and their output, for every `[v]` claim |
-| 05 | [`05-pointers.md`](./05-pointers.md) | literature and systems, by the question each answers. From memory, unverified |
-| 06 | [`06-plan.md`](./06-plan.md) | implementation order, S0–S6, with S1 sketched in detail |
+| #   | File                                 | What it holds                                                                 |
+| --- | ------------------------------------ | ----------------------------------------------------------------------------- |
+| 00  | `00-index.md`                        | this file: the map, the citation convention, the question register            |
+| 01  | [`01-context.md`](./01-context.md)   | current state of nucleus, covalence, Lean, Rust, as of 2026-08-19             |
+| 02  | [`02-status.md`](./02-status.md)     | PR / issue / docs status: what is open, grouped by design question            |
+| 03  | [`03-arena.md`](./03-arena.md)       | the arena design and the plan to build it                                     |
+| 04  | [`04-evidence.md`](./04-evidence.md) | commands run and their output, for every `[v]` claim                          |
+| 05  | [`05-pointers.md`](./05-pointers.md) | literature and systems, by the question each answers. From memory, unverified |
+| 06  | [`06-plan.md`](./06-plan.md)         | implementation order, S0–S6, with S1 sketched in detail                       |
 
 Questions live in [`questions/`](./questions/), one file per round.
 
@@ -36,9 +36,9 @@ Rounds are numbered. Question `2.B` means question B of round 2. Answers are
 written back into the same file under each question, so the round file becomes
 the Q/A log.
 
-| Round | File | Opened | Answered |
-| --- | --- | --- | --- |
-| 1 | [`questions/round-1.md`](./questions/round-1.md) | 2026-08-19 | pending |
+| Round | File                                             | Opened     | Answered |
+| ----- | ------------------------------------------------ | ---------- | -------- |
+| 1     | [`questions/round-1.md`](./questions/round-1.md) | 2026-08-19 | pending  |
 
 ## Repositories
 
@@ -53,15 +53,15 @@ the Q/A log.
 
 ## Where things are
 
-| Thing | Location |
-| --- | --- |
-| Specification | `lean/Nucleus/Nucleus/` — `Hol`, `HolE`, `HolLN`, `Cbor`, `Json`, `SExpr`, `Lrat` |
-| Implementation | `crates/` — `data/*`, `lib/*`, `logic/*`, `nucleus`, `neutron`, `repl` |
-| Arena spike (Rust) | `crates/logic/hol/` on branches `hol-*`; absent from `main` [v:5] |
-| Long-range plan | `notes/vision/ladder.md`, in PR #712, not on `main` [v:4] |
-| Working rules | `AGENTS.md`, in PR #712, not on `main` [v:4] |
-| Theory bootstrap | `theories/init.json` + schema, on `main` |
-| Component ABI | `wit/kernel/kernel.wit`, on `main` |
+| Thing              | Location                                                                          |
+| ------------------ | --------------------------------------------------------------------------------- |
+| Specification      | `lean/Nucleus/Nucleus/` — `Hol`, `HolE`, `HolLN`, `Cbor`, `Json`, `SExpr`, `Lrat` |
+| Implementation     | `crates/` — `data/*`, `lib/*`, `logic/*`, `nucleus`, `neutron`, `repl`            |
+| Arena spike (Rust) | `crates/logic/hol/` on branches `hol-*`; absent from `main` [v:5]                 |
+| Long-range plan    | `notes/vision/ladder.md`, in PR #712, not on `main` [v:4]                         |
+| Working rules      | `AGENTS.md`, in PR #712, not on `main` [v:4]                                      |
+| Theory bootstrap   | `theories/init.json` + schema, on `main`                                          |
+| Component ABI      | `wit/kernel/kernel.wit`, on `main`                                                |
 
 ## Glossary
 

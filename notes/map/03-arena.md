@@ -30,7 +30,7 @@ whatever it likes, provided it projects back to a wire arena.
    evidence that the thing formalized is the thing intended, which internal
    consistency alone cannot give: a system can be consistent while its symbols
    mean something subtly other than what was meant. The condition is that
-   exactly one surface is *normative* — the one the arena implements — and that
+   exactly one surface is _normative_ — the one the arena implements — and that
    the others are labelled as grounding rather than mistaken for it [d].
 
 ## 3. Wire shape
@@ -68,7 +68,7 @@ Three deliberate choices:
 - **One arena class, not two.** The dump considers `arena.dense` and
   `arena.segment` as separate classes [d]. A dense arena is the case
   `segments = [{1, base, parent, 1}]`; an empty arena is `base = 1, segments =
-  []`. Keeping one wire class keeps one decoder and one Lean model; the dense
+[]`. Keeping one wire class keeps one decoder and one Lean model; the dense
   and overlay fast paths are in-memory specializations, which cost nothing given
   §12. Split the wire class later if a segment map needs to be shared by many
   overlays without copying — the dump's own workaround (build an arena of
@@ -183,12 +183,12 @@ format should assume it.
 A stage is a number saying how far an object has been checked. Each fact former
 declares the stage at which it is checked.
 
-| Stage | Meaning |
-| --- | --- |
-| absent | nothing claimed |
-| 0 | decodes; structurally well formed; indices in range |
-| 1 | `Syn` facts checked |
-| 2 | `Der` facts checked |
+| Stage  | Meaning                                             |
+| ------ | --------------------------------------------------- |
+| absent | nothing claimed                                     |
+| 0      | decodes; structurally well formed; indices in range |
+| 1      | `Syn` facts checked                                 |
+| 2      | `Der` facts checked                                 |
 
 Stage is orthogonal to fact former. A stage says how far; a former says what
 shape. The dump considers collapsing the syntactic/semantic distinction into
@@ -228,16 +228,16 @@ only valid under one stack.
 
 ### Three options
 
-| | named levels | typed de Bruijn | untyped de Bruijn (today) |
-| --- | --- | --- | --- |
-| type of a lambda body | local | local | needs the binder stack, or an open |
-| `dem[i]` is | a set of free names | a map depth → type | a map depth → type, discovered by walking |
-| alpha equivalence | not structural | structural | structural |
-| shifting | none | at every binder | at every binder |
-| substitution | capture-avoiding; freshness trivial if names are levels | shift and subst | shift and subst |
-| freshness side conditions | an `fvs` column (§4) | an `fvs` column (§4) | an `fvs` column (§4) |
-| effect on the Lean spec | needs `close`, an alpha relation, and the quotient in every correspondence lemma | none: the annotation erases | none |
-| wire cost | binder stores a variable index; `bv` nodes disappear | one extra index per `bv` node | nil |
+|                           | named levels                                                                     | typed de Bruijn               | untyped de Bruijn (today)                 |
+| ------------------------- | -------------------------------------------------------------------------------- | ----------------------------- | ----------------------------------------- |
+| type of a lambda body     | local                                                                            | local                         | needs the binder stack, or an open        |
+| `dem[i]` is               | a set of free names                                                              | a map depth → type            | a map depth → type, discovered by walking |
+| alpha equivalence         | not structural                                                                   | structural                    | structural                                |
+| shifting                  | none                                                                             | at every binder               | at every binder                           |
+| substitution              | capture-avoiding; freshness trivial if names are levels                          | shift and subst               | shift and subst                           |
+| freshness side conditions | an `fvs` column (§4)                                                             | an `fvs` column (§4)          | an `fvs` column (§4)                      |
+| effect on the Lean spec   | needs `close`, an alpha relation, and the quotient in every correspondence lemma | none: the annotation erases   | none                                      |
+| wire cost                 | binder stores a variable index; `bv` nodes disappear                             | one extra index per `bv` node | nil                                       |
 
 ### Freshness is a column, not a per-rule burden
 
@@ -260,7 +260,7 @@ so `fvs` is its computational form, and there is no `freeVars` function in Lean
 yet to conflict with [v:14].
 
 Take the column regardless of which binder discipline wins. HOL's side
-conditions are about *free* variables, which are named under every option here,
+conditions are about _free_ variables, which are named under every option here,
 so `fvs` is owed either way. §4 lists it.
 
 ### Proposal: typed de Bruijn in the arena, erased on elaboration
@@ -406,7 +406,7 @@ Three things follow.
 - **Freshness against a whole import is an interval test.** The free variables
   of any imported index lie in that segment's window, so `x ∉ fvs(t)` for an
   entire imported term or context reduces to `x ∉ [var_start, var_start +
-  var_count)`. Constant time, and no fetch. This is the fast discharge the dump
+var_count)`. Constant time, and no fetch. This is the fast discharge the dump
   asks for [d], and it is the strongest practical argument for integer-named
   free variables.
 - **Append-only mutation preserves identity.** Adding definitions allocates new
@@ -450,8 +450,8 @@ Properties, stated plainly because they decide how the thing can be used:
   addresses and therefore different term names, and a term imported from
   elsewhere gets a different name again. Principle 1 already accepts this: what
   matters is that each name denotes at most one term.
-- **Situated, and that is the point.** `at(H, IX, i)` names a term *as it sits
-  in a particular theory in a particular DAG of parents*. That carries real
+- **Situated, and that is the point.** `at(H, IX, i)` names a term _as it sits
+  in a particular theory in a particular DAG of parents_. That carries real
   information — the reals presented over Dedekind cuts are a different name from
   the reals presented otherwise. The Git analogy is close enough to be useful:
   the plumbing is content and parent pointers, and the naming conventions on top
@@ -515,7 +515,7 @@ side condition in another costume [d].
 data and the algebra is fine: `(∅, identity)` is the unit, `(∅, opaque)` is a
 two-sided annihilator, and the whole thing is an ordinary monoid with zero.
 An earlier draft claimed opaque destroys the monoid. It does not — it destroys
-the unit only if the opaque convention *replaces* the identity one instead of
+the unit only if the opaque convention _replaces_ the identity one instead of
 extending the set [d].
 
 What it does cost:
@@ -546,11 +546,11 @@ use case appears [?1.N].
 §9's per-segment variable window is an affine renaming. That is the growth path,
 and each step is a strict generalization that keeps the monoid:
 
-| | segment carries | what it is |
-| --- | --- | --- |
-| v0 | `var_start`, `var_count` | affine renaming |
-| v1 | a table | arbitrary renaming |
-| v2 | a map to term indices | substitution |
+|     | segment carries          | what it is         |
+| --- | ------------------------ | ------------------ |
+| v0  | `var_start`, `var_count` | affine renaming    |
+| v1  | a table                  | arbitrary renaming |
+| v2  | a map to term indices    | substitution       |
 
 An import under a substitution is then not a new mechanism, it is v2 of a field
 that already exists. A separate arena class for substitutions [d] becomes worth
@@ -592,13 +592,13 @@ condition under which import-as-substitution needs no capture-avoidance pass.
 ### What this costs the TCB
 
 Applying a substitution is needed for beta regardless, so it is not new. The
-delta is the substitution *object*: its wire form, its validation, and the laws.
+delta is the substitution _object_: its wire form, its validation, and the laws.
 Keep the object in userspace until theory interpretation actually needs it
 serialized — substituting a model of T into a proof about abstract T is the
 motivating case [d] and it is also the case that will say what the object should
 look like. HOL kernels have always had `INST` as a rule; making the substitution
 a first-class value is the delta, and Metamath is the extreme where substitution
-*is* the proof step [x, §2 of `05-pointers.md`].
+_is_ the proof step [x, §2 of `05-pointers.md`].
 
 ## 12. Layering
 
@@ -694,28 +694,28 @@ Each step is a spike branch off `main`, kept open, with a note in
 `notes/spikes/` when it has been used [n:AGENTS.md §2].
 
 **P0 — tag manifest.** One file generating the Rust tag table and the Lean tag
-table. Closes issue #745. *Done when* adding a constructor in one place fails
+table. Closes issue #745. _Done when_ adding a constructor in one place fails
 the build everywhere it is not handled.
 
 **P1 — `wire` + `check`.** The §3 shape with named binders (§8), the §15
 validator, the `fvs` fold, no logic. Round-trip
 and adversarial-input fuzzing. Reuse #746 as the starting point rather than
-starting fresh. *Done when* a corpus of arenas round-trips and every malformed
+starting fresh. _Done when_ a corpus of arenas round-trips and every malformed
 input yields a typed error instead of a panic.
 
 **P2 — facts, stage 1.** The §6 fact type, both lists, the `Syn` checker.
 Replaces `Seq`/`Ctx`/`Relations` from #735 with one list type; PR #744 is
-already moving that way. *Done when* an arena with `has_ty` and `syn_eq`
+already moving that way. _Done when_ an arena with `has_ty` and `syn_eq`
 conclusions checks at stage 1, and a wrong claim is rejected.
 
 **P3 — `Der` and the LCF boundary.** Rule methods that mint conclusions. No
-constructor for a `Der` conclusion outside a rule. Ties into #727. *Done when*
+constructor for a `Der` conclusion outside a rule. Ties into #727. _Done when_
 a small theorem is proved through the rule API and lands in an arena's
 conclusion list.
 
 **P4 — derived E-graph index.** Userspace. Congruence closure over a loaded
 arena, projecting back to `eq` columns. Benchmarks against the sparse
-representation. This is issue #739. *Done when* the projection round-trips and
+representation. This is issue #739. _Done when_ the projection round-trips and
 the benchmark exists, whatever it says.
 
 **P4a — derived addresses.** The `at` operator, one-element segments, and the

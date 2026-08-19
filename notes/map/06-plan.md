@@ -14,7 +14,7 @@ formalization [d].
 - **S1's Lean side waits on the named syntax.** Do Rust first, Lean when it
   lands. The wire shape is what the Lean model consumes, so writing it first
   costs nothing.
-- **S2 wants the hash arrays.** `links.flat` *is* the Iroh-style hash array, so
+- **S2 wants the hash arrays.** `links.flat` _is_ the Iroh-style hash array, so
   the parent step lands on top of that merge rather than duplicating it.
 
 ## S0 — freeze the vocabulary
@@ -41,7 +41,7 @@ One file, one list, generating the Rust table and the Lean table. This is issue
    and for userspace dispatch. Otherwise the format has smuggled in a path
    parser, and the TCB has to contain it.
 5. Adding or renaming a tag changes the **schema** address. Integer tags later
-   are a different *format* over the same *class*, so they arrive as a second
+   are a different _format_ over the same _class_, so they arrive as a second
    codec rather than as a version flag.
 
 ## S1 — dense arena, no parent
