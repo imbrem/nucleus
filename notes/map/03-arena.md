@@ -292,8 +292,10 @@ the Lean term up to sharing, so no soundness argument changes. Unverified
 ### What is left of the argument against names
 
 As of 2026-08-19 the author is formalizing a named syntax in Lean that lowers
-into the nameless one [d]. That was the flip condition stated in the previous
-draft of this section, and it has fired.
+into the nameless one [d]. It is wanted under either outcome here — it is
+grounding under principle 5, and the arena's choice does not bear on whether it
+is worth having. It does, incidentally, fire the flip condition stated in the
+previous draft of this section.
 
 The argument against names was never about the implementation. It was that named
 binders introduce an alpha quotient which then rides along in every
@@ -331,10 +333,24 @@ What they cost:
 
 ### Recommendation
 
-Provisionally: **named binders with numeric levels**, contingent on 1.M. Typed
-de Bruijn stays fully specified above as the alternative, and is what to fall
-back to if free-variable identity across imports turns out to want anonymous
-binders.
+**Start named**, with numeric levels [d]. Typed de Bruijn stays fully specified
+above as the fallback, and is what to reach for if free-variable identity across
+imports turns out to want anonymous binders [?1.M].
+
+Starting named is cheap to reverse, which is most of why it is the right place
+to start. Both surfaces lower to the same Lean term, so a later move to typed de
+Bruijn changes the arena's node set and its validator, and changes nothing about
+the theorems underneath.
+
+Two consequences worth stating, since principle 5 turns on being clear which
+surface is normative:
+
+- The **named surface is the implemented one**. The nameless syntax is the
+  spec's core and the lowering's target.
+- The **lowering is TCB**, because the checker's meaning for an arena is the
+  term it lowers to. The reverse map, nameless back to named for display, is
+  not TCB — it is in the same semi-trusted position as the REPL's
+  prettyprinter [n:notes/vision/ladder.md].
 
 This reverses the recommendation two paragraphs of this document earlier held.
 The ground moved twice: freshness side conditions turned out to be a column
@@ -443,7 +459,8 @@ Each step is a spike branch off `main`, kept open, with a note in
 table. Closes issue #745. *Done when* adding a constructor in one place fails
 the build everywhere it is not handled.
 
-**P1 — `wire` + `check`.** The §3 shape, the §12 validator, no logic. Round-trip
+**P1 — `wire` + `check`.** The §3 shape with named binders (§8), the §12
+validator, the `fvs` fold, no logic. Round-trip
 and adversarial-input fuzzing. Reuse #746 as the starting point rather than
 starting fresh. *Done when* a corpus of arenas round-trips and every malformed
 input yields a typed error instead of a panic.
@@ -466,9 +483,9 @@ the benchmark exists, whatever it says.
 **P5 — Python.** Mirror the `wire` objects, not the `mem` ones. Follows #747 and
 #742.
 
-Lean work runs beside P1–P3: the `wire` shape and the §12 validation predicate,
-with the theorem that a validated wire arena elaborates to the intended HolE
-object. `HolLN/Array.lean` already has an arena, `validate`, and `elaborate`
+Lean work runs beside P1–P3: the named syntax and its lowering, then the `wire`
+shape and the §12 validation predicate, with the theorem that a validated wire
+arena elaborates through the lowering to the intended HolE object. `HolLN/Array.lean` already has an arena, `validate`, and `elaborate`
 [n:notes/plans/2026-08-hol-kernel-mvp.md], so this is closer to porting than to
 inventing [?1.F].
 
