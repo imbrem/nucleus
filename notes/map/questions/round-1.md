@@ -187,3 +187,36 @@ identity also sits on every binder, so any renaming has to go under binders.
 Both disciplines have named free variables, so neither escapes it entirely.
 
 **Answer:**
+
+---
+
+## 1.N — Out-of-window imported variables: error or opaque?
+
+A segment declares `var_count`. On resolution the source may mention a variable
+at or above it. Two options: reject the arena, or map the excess to an opaque
+value nothing is provable about, which is what the dump proposes for padding
+generally [d].
+
+Rejecting is fail-closed and matches covalence's rule
+[c:notes/vibes/kernel/substrate-expressions.md]. Opaque is more forgiving for
+lazy imports and keeps a large import usable when only part of it is wanted.
+
+Matters because: it decides whether `var_count` is a bound the importer asserts
+about the source, or a filter the importer applies to it. The filter reading is
+strictly more useful and slightly more dangerous.
+
+**Answer:**
+
+---
+
+## 1.O — How early is the pointwise/range reconciliation worth building?
+
+§10 notes that a one-element segment at `at(H, IX, 10)` and a range segment
+importing `3..25` from `H` can be reconciled by arithmetic, with neither
+resolved. Listed as P4a.
+
+Matters because: it may belong before P4's e-graph rather than after, since it
+is what turns derived addresses into something the checker can reason about
+rather than only something the outside world can cite.
+
+**Answer:**

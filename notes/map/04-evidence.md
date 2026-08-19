@@ -188,6 +188,27 @@ plus soundness cases in Hol/Soundness.lean, HolE/Classical{Soundness,EqTmSoundne
 So `Fresh name t` is already a spec-level predicate used by the `eta` rule,
 while a set-valued `freeVars` function does not exist.
 
+## v:15 — keyed hashing in `crates/lib/hash`
+
+`crates/lib/hash/src/lib.rs`:
+
+```
+pub trait KeyedNamespace<K: ?Sized>: Namespace + Sized {
+    fn keyed(key: &K, bytes: impl AsRef<[u8]>) -> Obj<Self>;
+    fn keyed_from_reader(key: &K, reader: impl std::io::Read) -> std::io::Result<Obj<Self>>;
+}
+
+impl<N: Namespace> Obj<N> {
+    pub fn with_key<K: ?Sized>(key: &K, bytes: impl AsRef<[u8]>) -> Self
+    where N: KeyedNamespace<K>;
+}
+```
+
+So a derivation kind is a namespace type and domain separation sits in the type.
+The crate also carries multiformats (`from_multihash`, `from_raw_cid`) and a
+`git.rs`. Not checked: whether the BLAKE3 implementation behind
+`KeyedNamespace` uses BLAKE3's keyed mode or a prefix construction.
+
 ## What was not verified
 
 - `lake build`, zero-`sorry` via the actual Lean gates, `#print axioms`.

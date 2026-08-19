@@ -23,7 +23,7 @@ whatever it likes, provided it projects back to a wire arena.
    direction is not required and not wanted [d].
 2. Hash raw bytes [d]. `Link` therefore addresses a byte string and carries its
    format and class at the reference site, which the spike already does [v:5].
-3. TCB small and audited; userspace plural [d]. This sets the layering in §9.
+3. TCB small and audited; userspace plural [d]. This sets the layering in §11.
 4. Lean specifies; Rust transcribes [n:AGENTS.md].
 5. **Grounding by consilience.** Several equivalent syntaxes and proof systems,
    with maps between them, are worth having for their own sake. They are
@@ -50,7 +50,8 @@ arena = {
   meta?:    { ... }
 }
 
-seg = { start, end, link, source_start }        -- as in the spike [v:5]
+seg = { start, end, link, source_start,
+        var_start, var_count }                  -- §9; the first four are the spike's [v:5]
 def = { tag, ix: [Ix], var?, data?, <columns>, meta? }
 ```
 
@@ -63,7 +64,7 @@ Three deliberate choices:
   `segments = [{1, base, parent, 1}]`; an empty arena is `base = 1, segments =
   []`. Keeping one wire class keeps one decoder and one Lean model; the dense
   and overlay fast paths are in-memory specializations, which cost nothing given
-  §9. Split the wire class later if a segment map needs to be shared by many
+  §11. Split the wire class later if a segment map needs to be shared by many
   overlays without copying — the dump's own workaround (build an arena of
   segments, import it as one segment) covers that case first [d].
 - **Indices stay unsigned.** The dump floats negative indices for imports [d].
@@ -97,7 +98,8 @@ fact instead — `Syn(HasTy, i, t)`, and the analogous formers for free variable
 and escaping context. That is what makes a side condition dischargeable without
 resolving the import, and it is the same shape as the classified links of #726,
 where `TM_LINK` carries its declared type. Issues #715 and #718 are the same
-question from the import side.
+question from the import side. §9 gives the variable case a cheaper answer
+than a fact: an interval.
 
 ## 5. `eq` as a decreasing forest
 
@@ -333,7 +335,9 @@ What they cost:
 
 ### Recommendation
 
-**Start named**, with numeric levels [d]. Typed de Bruijn stays fully specified
+**Start named**, with numeric levels [d]. §9 adds the argument that decided it
+in practice: with integer names and per-segment variable windows, freshness
+against an entire import is an interval test. Typed de Bruijn stays fully specified
 above as the fallback, and is what to reach for if free-variable identity across
 imports turns out to want anonymous binders [?1.M].
 
@@ -362,7 +366,118 @@ The `dem` fold is still worth writing even under names, as the thing that would
 have to exist if 1.M forces the fallback. Both folds are around forty lines
 [?1.L].
 
-## 9. Layering
+## 9. Variables across arenas
+
+Free variables are integers [v:13]. Two arenas built independently will use the
+same integer for different variables. Inside one arena, whether two indices
+mention the same variable is a comparison; across arenas it is undecidable
+without a convention.
+
+**Rejected: a per-arena variable namespace.** It works — an arena's variables
+cannot leak into its parents, since cycles are forbidden, and parents may
+contain parent variables. The problem is that mutating an arena changes its
+variable signature, so loading a parent and extending it silently refreshes
+every variable [d]. Identity that changes under append is not worth the
+disjointness it buys.
+
+**Proposal: variable translation is index translation.** A segment already
+carries `source_start` and translates the source's indices into the importer's
+index space. Give it two more fields and let it do the same to variables:
+
+```
+seg = { start, end, link, source_start, var_start, var_count }
+```
+
+Imported variable `k < var_count` denotes `var_start + k` locally. `k ≥
+var_count` is out of range [?1.N]. The validator checks that the windows
+`[var_start, var_start + var_count)` of distinct segments do not overlap and
+that the arena's own variables sit above all of them. Disjointness then holds by
+construction rather than by convention, and nothing is renamed: translation is
+virtual, exactly as it already is for indices.
+
+Three things follow.
+
+- **Freshness against a whole import is an interval test.** The free variables
+  of any imported index lie in that segment's window, so `x ∉ fvs(t)` for an
+  entire imported term or context reduces to `x ∉ [var_start, var_start +
+  var_count)`. Constant time, and no fetch. This is the fast discharge the dump
+  asks for [d], and it is the strongest practical argument for integer-named
+  free variables.
+- **Append-only mutation preserves identity.** Adding definitions allocates new
+  variables above the existing windows and renumbers nothing, which is the
+  property the per-arena namespace loses.
+- **`super.k` is a display convention**, not a mechanism. A parent's variable
+  `k` is `parent_var_start + k`, and the prettyprinter may render it however it
+  likes.
+
+`var_count` is a claim about the source until the import is resolved. Before
+resolution it belongs in the premise list; on resolution it is checked. That is
+the same treatment §4 gives to `ty` and `fvs` for unresolved indices.
+
+The general form is a substitution per segment rather than an offset, or a
+separate variable arena that definitions draw from, with a segment arena of
+those for extensibility [d]. A window is the affine degenerate case of both.
+Start with windows; the wire cost is two integers per segment and the checker
+cost is an overlap scan.
+
+## 10. Derived addresses
+
+Give every term a name of its own, fast, by keyed hashing:
+
+```
+at(base, kind, payload) = keyed_hash(key = base, tag(kind) ‖ payload)
+
+term    at(arena_addr, IX,     u64le(index))
+symbol  at(base,       SYM,    utf8)
+member  at(iface,      MEMBER, member_addr)        -- e.g. Add.add
+```
+
+`crates/lib/hash` already has the shape: `Obj::<N>::with_key(key, bytes)` where
+`N: KeyedNamespace<K>`, so each derivation kind is a namespace type and the
+domain separation is in the type rather than in a byte the caller must remember
+[v:15]. The payload encoding has to be injective, which fixed-width and
+whole-remainder encodings give.
+
+Properties, stated plainly because they decide how the thing can be used:
+
+- **Not canonical.** Two encodings of the same arena give different arena
+  addresses and therefore different term names, and a term imported from
+  elsewhere gets a different name again. Principle 1 already accepts this: what
+  matters is that each name denotes at most one term.
+- **Situated, and that is the point.** `at(H, IX, i)` names a term *as it sits
+  in a particular theory in a particular DAG of parents*. That carries real
+  information — the reals presented over Dedekind cuts are a different name from
+  the reals presented otherwise. The Git analogy is close enough to be useful:
+  the plumbing is content and parent pointers, and the naming conventions on top
+  are porcelain [d].
+- **One-way.** Given a bare derived address you cannot recover the base or the
+  key, so resolving one needs a directory. Given the preimage anyone can check
+  it.
+
+That last property sets a rule: **never store a bare derived address; store the
+derivation and compute it.** Then every use is checkable without a lookup, and
+derived addresses stay an export and interchange concern rather than an internal
+one.
+
+**Pointwise term imports.** A term named by a derived address enters an arena as
+a segment of length one whose link is that address. No new fact former is
+needed: facts stay index-to-index, and a HOL equation about two individually
+named terms is an ordinary fact between two one-element segments. That also
+answers what the dump wanted from single-definition segment formats [d].
+
+**Reconciling pointwise and range imports.** If a segment imports `3..25` from
+`H` and another imports the single term `at(H, IX, 10)`, whether the two
+indices denote the same term is decidable by arithmetic on the segment table.
+Recompute the derived address from the range segment's `(link, source_start)`
+and compare. Neither import has to be resolved. This is the near-term payoff and
+worth building early [?1.O].
+
+Symbols and interface members use the same operator and are otherwise deferred.
+Prior art for the operator itself: BLAKE3's `derive_key` mode, HKDF's info
+label, and capability derivation in Tahoe-LAFS all do exactly this, and all of
+them insist on domain separation for the same reason [x].
+
+## 11. Layering
 
 ```
 crates/logic/hol/src/
@@ -382,7 +497,7 @@ façade's type machinery must not define the persisted semantics, and the two
 evaluators must be differentially tested
 [c:notes/vibes/kernel/substrate-expressions.md].
 
-## 10. Links, formats, classes, schemas
+## 12. Links, formats, classes, schemas
 
 Keep the spike's `Link { addr, format, class }` [v:5]. Format is the byte-level
 codec; class is the logical object. Both at the reference site, never behind the
@@ -410,7 +525,7 @@ Prior art, since the dump asks [d] [x]:
   A single-inheritance class tree plus a DAG of refinements that unlock
   interfaces is close to CLOS with `deftype` predicates.
 
-## 11. Data payloads
+## 13. Data payloads
 
 Start with `bytes` and small unsigned integers, matching ladder level 0A
 [n:notes/vision/ladder.md]. Bignat and bigint decode from bytes or arithmetic
@@ -421,7 +536,7 @@ Keep string map keys throughout v0. Integer keys buy compactness and cost
 readability and JSON compatibility; if wanted, they belong in a separate schema
 O256, not a flag.
 
-## 12. Validation, in one pass
+## 14. Validation, in one pass
 
 Every check below is linear, allocation-bounded, and independent of any fixed
 point:
@@ -438,7 +553,7 @@ Nothing here fetches an import. Resolving a segment is a separate, later,
 fallible step. Fail closed: a node that does not decode yields no arena, no
 partial arena, and no theorem — covalence's rule [c:notes/vibes/kernel/substrate-expressions.md].
 
-## 13. Not building yet
+## 15. Not building yet
 
 Named so they are not smuggled in: the general object system and class tree;
 namespaces and string-keyed links; sparse arenas; 64-bit arenas; WASM-defined
@@ -450,7 +565,7 @@ Ion is worth revisiting when either the CBOR bignum situation or the
 self-describing-symbol-table pressure actually bites; writing our own reader
 would put it in the TCB, which is the reason to wait.
 
-## 14. Plan
+## 16. Plan
 
 Each step is a spike branch off `main`, kept open, with a note in
 `notes/spikes/` when it has been used [n:AGENTS.md §2].
@@ -459,7 +574,7 @@ Each step is a spike branch off `main`, kept open, with a note in
 table. Closes issue #745. *Done when* adding a constructor in one place fails
 the build everywhere it is not handled.
 
-**P1 — `wire` + `check`.** The §3 shape with named binders (§8), the §12
+**P1 — `wire` + `check`.** The §3 shape with named binders (§8), the §14
 validator, the `fvs` fold, no logic. Round-trip
 and adversarial-input fuzzing. Reuse #746 as the starting point rather than
 starting fresh. *Done when* a corpus of arenas round-trips and every malformed
@@ -480,15 +595,19 @@ arena, projecting back to `eq` columns. Benchmarks against the sparse
 representation. This is issue #739. *Done when* the projection round-trips and
 the benchmark exists, whatever it says.
 
+**P4a — derived addresses.** The `at` operator, one-element segments, and the
+pointwise-versus-range reconciliation of §10. Small, and it is what makes HOL
+equations about individual O256s possible.
+
 **P5 — Python.** Mirror the `wire` objects, not the `mem` ones. Follows #747 and
 #742.
 
 Lean work runs beside P1–P3: the named syntax and its lowering, then the `wire`
-shape and the §12 validation predicate, with the theorem that a validated wire
+shape and the §14 validation predicate, with the theorem that a validated wire
 arena elaborates through the lowering to the intended HolE object. `HolLN/Array.lean` already has an arena, `validate`, and `elaborate`
 [n:notes/plans/2026-08-hol-kernel-mvp.md], so this is closer to porting than to
 inventing [?1.F].
 
-## 15. Open points
+## 17. Open points
 
-Collected in [`questions/round-1.md`](./questions/round-1.md): 1.A–1.K.
+Collected in [`questions/round-1.md`](./questions/round-1.md): 1.A–1.O.
