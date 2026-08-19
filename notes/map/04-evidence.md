@@ -141,6 +141,23 @@ variables carry their type in their identity.
 `mcp__github__list_pull_requests(state=open, perPage=100)` over four pages:
 100 + 100 + 100 + 40 = **340**. Page 4 ends at #25.
 
+## v:13 — Lean HolE term constructors
+
+`lean/Nucleus/Nucleus/HolE.lean`, `inductive Expr (Sig) : List Kind → HolSort → Nat → Type`:
+
+```
+| tyBv (v : TyVar types kind)                             -- kind-indexed de Bruijn
+| bv   {depth} (index : Fin depth)                        -- scoped, untyped
+| fv   {depth} (name : Nat) (type : Expr ... (.kind .star) 0)
+| lam  {depth} (domain : Expr ... (.kind .star) 0)
+       (body : Expr ... .tm (depth + 1))
+| sub  (carrier) (predicate : Expr ... .tm 1)             -- binds one term variable
+| abs  / rep (carrier) (predicate : Expr ... .tm 1) (value)
+```
+
+So the term level is scoped de Bruijn with untyped `bv` and typed numeric-level
+`fv`; the type level is intrinsically kinded de Bruijn.
+
 ## What was not verified
 
 - `lake build`, zero-`sorry` via the actual Lean gates, `#print axioms`.

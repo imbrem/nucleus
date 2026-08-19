@@ -102,19 +102,13 @@ closure, E-matching, and hash-consing are derived indexes, rebuilt by whoever
 wants them, exactly the position issue #739 takes. The wire records which
 classes were claimed; it does not record how anyone arrived at them.
 
-**H2 (merge restriction).** `eq` may only relate locally closed nodes. Under
-locally nameless syntax a node containing a dangling bound variable is meaningful
-only relative to a binder path, so two such nodes at different depths are not
-comparable. Enforce it with an escape fold computed in the same scan:
-
-```
-esc(bv k)      = k + 1
-esc(binder b)  = max(0, esc(b) - 1)     -- combined with esc of the other children
-esc(other)     = max over children
-```
-
-and require `esc[i] = esc[eq[i]] = 0`. Cost: one `u32` per index, discarded
-after validation. H2 is not yet checked against the Lean semantics [?1.D].
+**H2 (merge restriction).** `eq` may only relate nodes with the same escaping
+context. A node containing a bound variable that escapes it denotes something
+only relative to a binder path, so two nodes escaping different contexts are not
+comparable. §8 defines the per-index demand map `dem[i]` that makes this
+checkable; the condition is `dem[i] = dem[eq[i]]`, and the common case is both
+empty, meaning both locally closed. H2 is not yet checked against the Lean
+semantics [?1.D].
 
 `ty` gets the same treatment minus the forest condition: `ty[i]` is an index,
 `ty[i] ≠ i`, and whether `ty[i] < i` should be forced is [?1.E].
@@ -181,25 +175,83 @@ carrying no facts is valid at every stage vacuously.
 
 ## 8. Binder discipline
 
-Keep locally nameless. Do not switch to named variables.
+The arena constrains this more than a tree does, because an arena **shares
+subterms**. One index may be reached from two different binder paths. Sharing an
+open node across two incompatible contexts is unsound, so whichever discipline
+is chosen, validation needs a per-index summary of what escapes that node. Call
+it `dem[i]`, the demand map.
 
-Reasons, in order of weight:
+That reframes the choice. The cost of tracking locally-closed-versus-not is not
+a cost of de Bruijn; it is a cost of sharing, and it is owed under every option.
 
-1. The Lean spec is locally nameless — `HolE.lean` declares independent locally
-   nameless scopes for type and term variables [v:7], and `HolLN` is the same by
-   construction. `AGENTS.md` makes Lean authoritative [n:AGENTS.md]. Switching
-   the Rust surface breaks the correspondence the whole approach rests on.
-2. Both prior implementations converged there independently: covalence uses
-   `Bound(u32)` plus `Free(Var)` with `Var = (name, type)` [v:11], and the Rust
-   spike has `TM_BV` and `TM_FV` [v:10].
-3. **H4.** Locally nameless helps the E-graph rather than hurting it. Under H2
-   only locally closed nodes may be merged, and locally closed nodes have no
-   free bound-variable indices to disagree about, so alpha-equivalent terms are
-   already structurally equal. With names, alpha would need canonicalization
-   before any merge.
+### What Lean does today
 
-The dump's worry — that de Bruijn makes equality non-local [d] — applies to open
-terms, which H2 excludes from merging anyway.
+Term level: `bv : Fin depth` — scoped and **untyped**, so no dangling index is
+representable and `depth = 0` means locally closed. `fv (name : Nat) (type)` —
+free variables are numeric levels carrying their type. `lam (domain) (body)`
+carries the binder's domain on the binder [v:13]. Type level: `TyVar` is a
+kind-indexed de Bruijn variable, so type variables are already intrinsically
+typed [v:7].
+
+The consequence, and the objection that prompted this section: a `bv` gets its
+type from the enclosing `lam`, so `ty` cannot be a per-index column. Typing a
+lambda means either opening the body against a fresh variable, or walking with a
+binder-type stack and accepting that the cached type of a shared open node is
+only valid under one stack.
+
+### Three options
+
+| | named levels | typed de Bruijn | untyped de Bruijn (today) |
+| --- | --- | --- | --- |
+| type of a lambda body | local | local | needs the binder stack, or an open |
+| `dem[i]` is | a set of free names | a map depth → type | a map depth → type, discovered by walking |
+| alpha equivalence | not structural | structural | structural |
+| shifting | none | at every binder | at every binder |
+| substitution | capture-avoiding; freshness trivial if names are levels | shift and subst | shift and subst |
+| effect on the Lean spec | changes `lam`'s shape; pushes freshness side conditions into the rules | none: the annotation erases | none |
+| wire cost | binder stores a variable index; `bv` nodes disappear | one extra index per `bv` node | nil |
+
+### Proposal: typed de Bruijn in the arena, erased on elaboration
+
+`TM_BV(k, α)` carries the type index `α`. Elaboration to Lean drops it, so the
+arena stays a surface for the existing spec rather than a change to it. For a
+valid arena the annotation is determined by the enclosing binder, so it adds no
+expressiveness — only locality.
+
+Checking becomes one bottom-up fold computing `(ty[i], dem[i])`:
+
+```
+TM_BV(k, α)        ty = α                        dem = {k ↦ α}
+TM_FV(x, α)        ty = α                        dem = {}
+TM_APP(f, a)       ty = codomain of ty[f]        dem = dem[f] ⊔ dem[a]
+TM_LAM(α, b)       ty = α → ty[b]                dem = shift(dem[b] ∖ {0})
+                   requires dem[b][0] = α or absent
+```
+
+`⊔` is union with agreement required on shared depths; disagreement is a decode
+error. `dem` is bounded by binder depth and is empty for the overwhelming
+majority of nodes.
+
+Three things fall out:
+
+- `ty` becomes a genuine per-index column, cacheable and shareable, which is
+  what the arena wanted.
+- `dem[i] = ∅` is exactly "locally closed", so H2 needs no separate machinery,
+  and its relaxed form — merge whenever `dem` agrees — is available for free.
+- Sharing is checked rather than assumed. Two use sites of one open node must
+  agree on the escaping context, which is what the `⊔` at every node enforces.
+
+**H5.** Annotation erasure is total and the annotated arena is in bijection with
+the Lean term up to sharing, so no soundness argument changes. Unverified
+[?1.K].
+
+Names remain the fallback if the annotation bookkeeping turns out worse in
+practice than it reads here. In that case use levels rather than user strings,
+since freshness and capture-avoidance become trivial, and accept that
+alpha-equivalent terms occupy different classes until something proves them
+equal — which is admissible, since `eq` is a claim rather than a definition.
+Covalence went the named-free route with `Var = (name, type)` [v:11], so there
+is prior experience to draw on either way.
 
 ## 9. Layering
 
@@ -269,7 +321,7 @@ point:
 2. every child index either `< i` locally, or inside a declared segment.
 3. segments sorted, disjoint, inside `[1, base)`; translated source ranges stay
    in index space.
-4. escape fold (§5) for binder wellformedness.
+4. the `(ty, dem)` fold of §8; binder agreement discharged at every binder.
 5. `eq` forest conditions; `ty` conditions.
 6. facts: endpoints in range, `ctx` in range, relation known.
 
@@ -329,4 +381,4 @@ inventing [?1.F].
 
 ## 15. Open points
 
-Collected in [`questions/round-1.md`](./questions/round-1.md): 1.A–1.H.
+Collected in [`questions/round-1.md`](./questions/round-1.md): 1.A–1.K.

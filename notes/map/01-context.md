@@ -30,8 +30,12 @@ Two things worth flagging, because the plan notes from 2026-08-17 predate them:
   soundness and consistency. The Rust arena work is downstream of it.
 
 `HolE.lean` declares independent locally nameless scopes for type and term
-variables, with kind-indexed de Bruijn type variables [v:7]. The binder
-discipline is therefore already fixed on the spec side.
+variables [v:7]. Concretely [v:13]: term bound variables are `bv : Fin depth`,
+scoped and untyped, so no dangling index is representable and `depth = 0` means
+locally closed; free variables are `fv (name : Nat) (type)`, numeric levels
+carrying their type; `lam` carries the binder's domain. Type variables are
+kind-indexed de Bruijn, so they are already intrinsically typed. The asymmetry
+between the two levels is what `03-arena.md` §8 is about.
 
 ## Rust: the implementation
 

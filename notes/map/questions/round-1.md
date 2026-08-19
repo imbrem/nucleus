@@ -48,14 +48,14 @@ projection makes these user-facing.
 
 ## 1.D — Is the merge restriction right?
 
-**H2** in `03-arena.md` says `eq` may only relate locally closed nodes. Is there
-a wanted case where two open nodes at the same binder depth should be merged —
-for instance, sharing a subterm under a binder during rewriting?
+**H2** in `03-arena.md` says `eq` may relate two nodes only when their demand
+maps agree, `dem[i] = dem[eq[i]]`. The strict form is both empty, meaning both
+locally closed. The relaxed form allows merging two open nodes that escape the
+same context — a subterm under a binder during rewriting, for instance.
 
-Matters because: it is one line in the validator and hard to relax later without
-a format change. If open merges are wanted, the escape depth has to become part
-of E-class identity, which is the "context key in E-class identity" question in
-issue #739.
+Matters because: strict is one comparison and is hard to relax later without a
+format change; relaxed makes the escaping context part of E-class identity,
+which is the "context key in E-class identity" question in issue #739.
 
 **Answer:**
 
@@ -128,5 +128,25 @@ importer takes it or leaves it.
 
 Matters because: a stage argument lets an importer assume only the syntactic
 half of an import, which is the cheap half to check.
+
+**Answer:**
+
+---
+
+## 1.K — Is annotation erasure really free?
+
+**H5** in `03-arena.md` §8 claims `TM_BV(k, α)` erases to Lean's `bv k`, that
+the annotation is determined by the enclosing binder in any valid arena, and
+that no soundness argument therefore changes.
+
+Two things to check. First, whether the `(ty, dem)` fold really discharges every
+obligation the binder-stack walk would, including for `sub`, `abs` and `rep`,
+which bind a term variable in their predicate at `depth 1` [v:13]. Second,
+whether the elaboration in `HolSurface/RustMapping.lean` can absorb the extra
+field without restructuring.
+
+Matters because: if erasure is not free, typed de Bruijn stops being a surface
+convenience and becomes a change to the spec, at which point named levels are
+the cheaper option.
 
 **Answer:**
