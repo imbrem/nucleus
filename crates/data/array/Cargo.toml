@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Flat hash arrays, sets, and index maps in CAS normal form"
+description = "Flat hash arrays, sets, and bags in CAS normal form"
 publish = false
 
 [dependencies]

@@ -200,6 +200,12 @@ impl<'a, N: Namespace> FlatSet<'a, N> {
         }
         result
     }
+
+    /// Returns elements belonging to exactly one set, in canonical form.
+    #[must_use]
+    pub fn symmetric_difference(&self, other: FlatSet<'_, N>) -> HashArray<N> {
+        self.hashes.set_symmetric_difference(other.hashes)
+    }
 }
 
 impl<N: Namespace> Copy for FlatSet<'_, N> {}
@@ -311,6 +317,7 @@ mod tests {
         assert_eq!(left.intersection(right), array(&[3]));
         assert_eq!(left.difference(right), array(&[1, 5]));
         assert_eq!(right.difference(left), array(&[4]));
+        assert_eq!(left.symmetric_difference(right), array(&[1, 4, 5]));
 
         for merged in [
             left.union(right),

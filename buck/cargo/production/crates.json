@@ -542,6 +542,20 @@
       ]
     },
     {
+      "source": "workspace#covalence-data-array@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-array@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "workspace#covalence-data-cas-http@0.0.0",
       "target": "workspace#covalence-data-cas@0.0.0",
       "kinds": [
@@ -607,20 +621,6 @@
     {
       "source": "workspace#covalence-ffi-python@0.0.0",
       "target": "workspace#covalence-logic-sat@0.0.0",
-      "kinds": [
-        "normal"
-      ]
-    },
-    {
-      "source": "workspace#covalence-data-array@0.0.0",
-      "target": "workspace#covalence-lib-error@0.0.0",
-      "kinds": [
-        "normal"
-      ]
-    },
-    {
-      "source": "workspace#covalence-data-array@0.0.0",
-      "target": "workspace#covalence-lib-hash@0.0.0",
       "kinds": [
         "normal"
       ]

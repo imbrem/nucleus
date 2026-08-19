@@ -1,4 +1,4 @@
-//! Flat hash arrays, and the sets and maps read directly out of them.
+//! Flat hash arrays and their sequence, set, bag, and indexed interpretations.
 //!
 //! A hash array is a sequence of fixed-width objects serialized as the
 //! concatenation of their representations, and nothing else: no header, no
@@ -7,11 +7,10 @@
 //! useful thing a content-addressed store can hold, and the foundation the
 //! other Merkle structures are built on.
 //!
-//! [`FlatSet`] and [`FlatIndexMap`] add invariants to that same normal form —
-//! strictly ascending elements, and an even element count read as
-//! `(key, value)` entries — rather than a representation of their own. One
-//! blob is therefore readable as all three without re-encoding, and each
-//! reading is checkable in a linear scan.
+//! [`FlatSet`] adds a strictly-ascending invariant to that same normal form.
+//! General arrays may also be interpreted as bags or as sparse indexed values;
+//! those interpretations are named explicitly because they obey different
+//! laws.
 //!
 //! # Normal form, not efficiency
 //!
@@ -57,10 +56,8 @@
 
 #![deny(unsafe_code)]
 
-mod map;
 mod seq;
 mod set;
 
-pub use map::{Entries, FlatIndexMap, ParityError};
-pub use seq::{HashArray, Hashes, Iter, WidthError, width};
+pub use seq::{HashArray, HashArrayRef, Hashes, Iter, WidthError, width};
 pub use set::{FlatSet, OrderError};

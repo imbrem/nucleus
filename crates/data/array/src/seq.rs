@@ -6,6 +6,7 @@
 //! being decoded first.
 
 use std::{
+    collections::{BTreeMap, BTreeSet},
     fmt,
     iter::FusedIterator,
     marker::PhantomData,
@@ -16,7 +17,7 @@ use covalence_lib_error::snafu;
 use covalence_lib_hash::{ByteArray, Cov, Namespace, Obj};
 use snafu::Snafu;
 
-use crate::{FlatIndexMap, FlatSet, OrderError, ParityError};
+use crate::{FlatSet, OrderError};
 
 /// The serialized width of one element of namespace `N`, in bytes.
 #[must_use]
@@ -52,6 +53,12 @@ pub struct Hashes<'a, N: Namespace = Cov> {
     bytes: &'a [u8],
     namespace: PhantomData<fn(N) -> N>,
 }
+
+/// A descriptive alias for the borrowed hash-array view.
+///
+/// [`Hashes`] is retained as the concise spelling used by the original API;
+/// new code may prefer this name beside the owned [`HashArray`].
+pub type HashArrayRef<'a, N = Cov> = Hashes<'a, N>;
 
 impl<'a, N: Namespace> Hashes<'a, N> {
     /// Views a normal-form blob as a hash array.
@@ -315,14 +322,144 @@ impl<'a, N: Namespace> Hashes<'a, N> {
         FlatSet::new(self)
     }
 
-    /// Reads the array as a flat index map.
+    /// Returns whether this is a sparse refinement of `other`.
     ///
-    /// # Errors
-    ///
-    /// Returns an error if the element count is odd.
-    pub fn flat_index_map(self) -> Result<FlatIndexMap<'a, N>, ParityError> {
-        FlatIndexMap::new(self)
+    /// Arrays must have the same length. At each position this array must
+    /// either contain the null object or equal `other`. Null is special only
+    /// to this explicitly indexed relation; set and bag operations below
+    /// treat it as an ordinary element.
+    #[must_use]
+    pub fn is_sparse_refinement_of(&self, other: Hashes<'_, N>) -> bool {
+        self.len() == other.len()
+            && self
+                .iter()
+                .zip(other)
+                .all(|(left, right)| is_null(&left) || left == right)
     }
+
+    /// Returns whether the arrays have disjoint non-null support.
+    ///
+    /// Arrays must have the same length. This is symmetric and distinct from
+    /// sparse refinement.
+    #[must_use]
+    pub fn has_disjoint_support_with(&self, other: Hashes<'_, N>) -> bool {
+        self.len() == other.len()
+            && self
+                .iter()
+                .zip(other)
+                .all(|(left, right)| is_null(&left) || is_null(&right))
+    }
+
+    /// Returns the canonical set containing these elements.
+    ///
+    /// The result is ascending and deduplicated. Null is an ordinary element.
+    #[must_use]
+    pub fn canonical_set(&self) -> HashArray<N> {
+        self.iter().collect::<BTreeSet<_>>().into_iter().collect()
+    }
+
+    /// Returns the canonical bag containing these elements.
+    ///
+    /// The result is ascending and retains every multiplicity, including null.
+    #[must_use]
+    pub fn canonical_bag(&self) -> HashArray<N> {
+        self.sorted_vec().into_iter().collect()
+    }
+
+    /// Returns the canonical set union.
+    #[must_use]
+    pub fn set_union(&self, other: Hashes<'_, N>) -> HashArray<N> {
+        self.iter()
+            .chain(other)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
+    /// Returns the canonical set intersection.
+    #[must_use]
+    pub fn set_intersection(&self, other: Hashes<'_, N>) -> HashArray<N> {
+        let left: BTreeSet<_> = self.iter().collect();
+        let right: BTreeSet<_> = other.iter().collect();
+        left.intersection(&right).copied().collect()
+    }
+
+    /// Returns the canonical set difference `self - other`.
+    #[must_use]
+    pub fn set_difference(&self, other: Hashes<'_, N>) -> HashArray<N> {
+        let left: BTreeSet<_> = self.iter().collect();
+        let right: BTreeSet<_> = other.iter().collect();
+        left.difference(&right).copied().collect()
+    }
+
+    /// Returns the canonical set symmetric difference.
+    #[must_use]
+    pub fn set_symmetric_difference(&self, other: Hashes<'_, N>) -> HashArray<N> {
+        let left: BTreeSet<_> = self.iter().collect();
+        let right: BTreeSet<_> = other.iter().collect();
+        left.symmetric_difference(&right).copied().collect()
+    }
+
+    /// Returns the canonical bag union using maximum multiplicities.
+    #[must_use]
+    pub fn bag_union_max(&self, other: Hashes<'_, N>) -> HashArray<N> {
+        combine_bags(*self, other, usize::max)
+    }
+
+    /// Returns the canonical additive bag sum.
+    #[must_use]
+    pub fn bag_sum(&self, other: Hashes<'_, N>) -> HashArray<N> {
+        combine_bags(*self, other, usize::saturating_add)
+    }
+
+    /// Returns the canonical bag intersection using minimum multiplicities.
+    #[must_use]
+    pub fn bag_intersection(&self, other: Hashes<'_, N>) -> HashArray<N> {
+        combine_bags(*self, other, usize::min)
+    }
+
+    /// Returns the canonical bag difference using saturating subtraction.
+    #[must_use]
+    pub fn bag_difference(&self, other: Hashes<'_, N>) -> HashArray<N> {
+        combine_bags(*self, other, usize::saturating_sub)
+    }
+
+    /// Returns the canonical bag symmetric difference.
+    #[must_use]
+    pub fn bag_symmetric_difference(&self, other: Hashes<'_, N>) -> HashArray<N> {
+        combine_bags(*self, other, usize::abs_diff)
+    }
+}
+
+fn is_null<N: Namespace>(value: &Obj<N>) -> bool {
+    value.as_ref().iter().all(|byte| *byte == 0)
+}
+
+fn counts<N: Namespace>(hashes: Hashes<'_, N>) -> BTreeMap<Obj<N>, usize> {
+    let mut counts = BTreeMap::new();
+    for value in hashes {
+        *counts.entry(value).or_default() += 1;
+    }
+    counts
+}
+
+fn combine_bags<N: Namespace>(
+    left: Hashes<'_, N>,
+    right: Hashes<'_, N>,
+    combine: fn(usize, usize) -> usize,
+) -> HashArray<N> {
+    let left = counts(left);
+    let right = counts(right);
+    let keys: BTreeSet<_> = left.keys().chain(right.keys()).copied().collect();
+    let mut result = HashArray::default();
+    for key in keys {
+        let count = combine(
+            left.get(&key).copied().unwrap_or_default(),
+            right.get(&key).copied().unwrap_or_default(),
+        );
+        result.extend(std::iter::repeat_n(key, count));
+    }
+    result
 }
 
 /// Returns whether sorted `left` is contained in sorted `right` as a multiset.
@@ -455,6 +592,12 @@ pub struct HashArray<N: Namespace = Cov> {
 }
 
 impl<N: Namespace> HashArray<N> {
+    /// Creates the one-element array containing `value`.
+    #[must_use]
+    pub fn singleton(value: Obj<N>) -> Self {
+        std::iter::once(value).collect()
+    }
+
     /// Takes ownership of a normal-form blob.
     ///
     /// # Errors
@@ -525,12 +668,6 @@ impl<N: Namespace> HashArray<N> {
     /// Appends an element.
     pub fn push(&mut self, value: Obj<N>) {
         self.bytes.extend_from_slice(value.as_ref());
-    }
-
-    /// Appends a key and a value, as one flat index map entry.
-    pub fn push_entry(&mut self, key: Obj<N>, value: Obj<N>) {
-        self.push(key);
-        self.push(value);
     }
 
     /// Removes and returns the last element.
@@ -647,26 +784,10 @@ impl<N: Namespace> FromIterator<Obj<N>> for HashArray<N> {
     }
 }
 
-impl<N: Namespace> FromIterator<(Obj<N>, Obj<N>)> for HashArray<N> {
-    fn from_iter<I: IntoIterator<Item = (Obj<N>, Obj<N>)>>(entries: I) -> Self {
-        let mut array = Self::default();
-        array.extend(entries);
-        array
-    }
-}
-
 impl<N: Namespace> Extend<Obj<N>> for HashArray<N> {
     fn extend<I: IntoIterator<Item = Obj<N>>>(&mut self, values: I) {
         for value in values {
             self.push(value);
-        }
-    }
-}
-
-impl<N: Namespace> Extend<(Obj<N>, Obj<N>)> for HashArray<N> {
-    fn extend<I: IntoIterator<Item = (Obj<N>, Obj<N>)>>(&mut self, entries: I) {
-        for (key, value) in entries {
-            self.push_entry(key, value);
         }
     }
 }
@@ -824,6 +945,94 @@ mod tests {
     }
 
     #[test]
+    fn indexed_relations_name_null_semantics_explicitly() {
+        let sparse = array(&[1, 0, 3]);
+        let filled = array(&[1, 2, 3]);
+        let incompatible = array(&[9, 2, 3]);
+        assert!(
+            sparse
+                .as_hashes()
+                .is_sparse_refinement_of(filled.as_hashes())
+        );
+        assert!(
+            !filled
+                .as_hashes()
+                .is_sparse_refinement_of(sparse.as_hashes())
+        );
+        assert!(
+            !sparse
+                .as_hashes()
+                .is_sparse_refinement_of(incompatible.as_hashes())
+        );
+        assert!(
+            array(&[1, 0])
+                .as_hashes()
+                .has_disjoint_support_with(array(&[0, 2]).as_hashes())
+        );
+        assert!(
+            !array(&[1])
+                .as_hashes()
+                .has_disjoint_support_with(array(&[2]).as_hashes())
+        );
+        assert!(
+            !array(&[0])
+                .as_hashes()
+                .is_sparse_refinement_of(array(&[0, 1]).as_hashes())
+        );
+    }
+
+    #[test]
+    fn set_algebra_is_sorted_distinct_and_keeps_null() {
+        let left = array(&[3, 0, 1, 1]);
+        let right = array(&[2, 0, 3, 3]);
+        assert_eq!(left.as_hashes().canonical_set(), array(&[0, 1, 3]));
+        assert_eq!(
+            left.as_hashes().set_union(right.as_hashes()),
+            array(&[0, 1, 2, 3])
+        );
+        assert_eq!(
+            left.as_hashes().set_intersection(right.as_hashes()),
+            array(&[0, 3])
+        );
+        assert_eq!(
+            left.as_hashes().set_difference(right.as_hashes()),
+            array(&[1])
+        );
+        assert_eq!(
+            left.as_hashes().set_symmetric_difference(right.as_hashes()),
+            array(&[1, 2])
+        );
+        assert_eq!(HashArray::singleton(obj(0)), array(&[0]));
+    }
+
+    #[test]
+    fn bag_algebra_has_explicit_multiplicity_laws() {
+        let left = array(&[2, 0, 1, 1]);
+        let right = array(&[0, 1, 2, 2]);
+        assert_eq!(left.as_hashes().canonical_bag(), array(&[0, 1, 1, 2]));
+        assert_eq!(
+            left.as_hashes().bag_union_max(right.as_hashes()),
+            array(&[0, 1, 1, 2, 2])
+        );
+        assert_eq!(
+            left.as_hashes().bag_sum(right.as_hashes()),
+            array(&[0, 0, 1, 1, 1, 2, 2, 2])
+        );
+        assert_eq!(
+            left.as_hashes().bag_intersection(right.as_hashes()),
+            array(&[0, 1, 2])
+        );
+        assert_eq!(
+            left.as_hashes().bag_difference(right.as_hashes()),
+            array(&[1])
+        );
+        assert_eq!(
+            left.as_hashes().bag_symmetric_difference(right.as_hashes()),
+            array(&[1, 2])
+        );
+    }
+
+    #[test]
     fn building_sorts_deduplicates_and_pops() {
         let mut values = array(&[3, 1, 3, 2]);
         values.sort();
@@ -848,19 +1057,6 @@ mod tests {
         values.clear();
         assert!(values.is_empty());
         assert_eq!(values.pop(), None);
-    }
-
-    #[test]
-    fn entries_collect_as_pairs() {
-        let map: HashArray = vec![(obj(1), obj(2)), (obj(3), obj(4))]
-            .into_iter()
-            .collect();
-        assert_eq!(map, array(&[1, 2, 3, 4]));
-
-        let mut built = HashArray::with_capacity(2);
-        built.push_entry(obj(1), obj(2));
-        built.push_entry(obj(3), obj(4));
-        assert_eq!(built, map);
     }
 
     #[test]
