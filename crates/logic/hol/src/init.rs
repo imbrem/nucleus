@@ -1,4 +1,4 @@
-//! Pure-`HolE` construction of the v0 foundational arena.
+//! Pure-`HolE` construction of the foundational arena.
 //!
 //! Besides booleans and their connectives, the arena defines a categorical
 //! second-order Peano model, zero, successor, recursively specified addition,
@@ -2681,7 +2681,7 @@ static INIT_DEFS: &[Expr] = &[
     },
 ];
 
-/// Canonical, import-free, literal-free v0 definitions.
+/// Canonical, import-free, literal-free foundational definitions.
 pub const INIT_ARENA: crate::StaticArena = crate::StaticArena::new_const(None, &[], 1, INIT_DEFS);
 
 /// Stable references into [`INIT_ARENA`].

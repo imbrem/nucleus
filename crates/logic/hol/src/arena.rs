@@ -293,7 +293,7 @@ pub enum Expr {
     /// type equals `target`, and canonical inhabited garbage otherwise.
     TmCast { term: Ix, target: Ix },
     /// Arbitrary-precision natural literal surface sugar. Foundational arenas
-    /// define naturals in pure `HolE` and deliberately do not use this node.
+    /// define naturals in pure `HolE` and do not use this node.
     TmNat { value: Num },
     /// Immutable byte-string literal surface sugar.
     TmBytes { value: Bytes },
