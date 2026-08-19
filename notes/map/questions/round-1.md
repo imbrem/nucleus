@@ -220,3 +220,32 @@ is what turns derived addresses into something the checker can reason about
 rather than only something the outside world can cite.
 
 **Answer:**
+
+---
+
+## 1.P — How much substitution composition becomes syntax?
+
+§11 keeps substitution *application* in the kernel and *composition* in
+userspace. That lands on the safe side of the λσ hazard: composition as syntax
+is what breaks strong normalization for well-typed terms in the explicit
+substitution literature [x, §1 of `05-pointers.md`]. Currently by accident.
+
+Matters because: a substitution arena class at v2 makes composition a stored
+object, which is a step toward syntax. Whether stored-but-eagerly-applied is
+safe should be settled before the class exists, not after.
+
+**Answer:**
+
+---
+
+## 1.Q — Variable-normalized form or closure for open-term names?
+
+§11 gives two conventions for naming an open term. Variable-normalized form is
+what term indexing uses; naming the closure needs no convention at all but
+changes the type.
+
+Matters because: this fixes what a userspace name for "Fermat over x, y, z, n"
+actually is, and it should be pinned somewhere even though it is not TCB, since
+otherwise the name is not a function of the term.
+
+**Answer:**

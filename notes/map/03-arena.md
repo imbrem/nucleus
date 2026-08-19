@@ -23,7 +23,7 @@ whatever it likes, provided it projects back to a wire arena.
    direction is not required and not wanted [d].
 2. Hash raw bytes [d]. `Link` therefore addresses a byte string and carries its
    format and class at the reference site, which the spike already does [v:5].
-3. TCB small and audited; userspace plural [d]. This sets the layering in §11.
+3. TCB small and audited; userspace plural [d]. This sets the layering in §12.
 4. Lean specifies; Rust transcribes [n:AGENTS.md].
 5. **Grounding by consilience.** Several equivalent syntaxes and proof systems,
    with maps between them, are worth having for their own sake. They are
@@ -64,7 +64,7 @@ Three deliberate choices:
   `segments = [{1, base, parent, 1}]`; an empty arena is `base = 1, segments =
   []`. Keeping one wire class keeps one decoder and one Lean model; the dense
   and overlay fast paths are in-memory specializations, which cost nothing given
-  §11. Split the wire class later if a segment map needs to be shared by many
+  §12. Split the wire class later if a segment map needs to be shared by many
   overlays without copying — the dump's own workaround (build an arena of
   segments, import it as one segment) covers that case first [d].
 - **Indices stay unsigned.** The dump floats negative indices for imports [d].
@@ -477,7 +477,106 @@ Prior art for the operator itself: BLAKE3's `derive_key` mode, HKDF's info
 label, and capability derivation in Tahoe-LAFS all do exactly this, and all of
 them insist on domain separation for the same reason [x].
 
-## 11. Layering
+## 11. Substitutions
+
+### Naming an open term
+
+A derived address names a term, and the term's free variables cannot appear
+inside the address. So a name for an open term has to fix a convention for them
+[d]. Two work:
+
+- **Variable-normalized form.** Rename the free variables to `0..n-1` in
+  first-occurrence order, then name the pair (normalized term, `n`). The
+  original names are display metadata. This is what term indexing has always
+  done to key open terms [x, §5 of `05-pointers.md`].
+- **Name the closure.** `λΓ. t` is closed, so it needs no convention, and the
+  variable set is recovered from its type.
+
+Both are userspace. The kernel needs neither, and Fermat over `x, y, z, n` is
+exactly the case they serve. `(term, variable set)` as a structure is the first
+of these with the renaming left implicit — fine, as long as the normalization is
+pinned down somewhere, because otherwise the name is not a function of the term.
+
+### Substitutions
+
+A substitution is a finitely-supported map from variables to terms of the same
+type, identity outside its support. They compose, the identity substitution is a
+unit, and renamings are a submonoid. Restricted to substitutions that fix Γ, the
+operations stay compatible with equality under Γ, which is the usual freshness
+side condition in another costume [d].
+
+**The default for uncovered variables is forced.** Identity keeps the monoid.
+Sending uncovered variables to opaque values destroys it: the empty substitution
+would then send *everything* to opaque, so there is no unit, and composition
+stops meaning what it says. Default-by-type has the same problem unless the
+default map is idempotent and composition is defined around it, which is a
+second algebra pretending to be the first.
+
+So: identity, and make trimming-to-opaque a **separate operation** composed with
+a substitution rather than a mode of it. That is the same instinct as not fusing
+the substitution machinery with the scope machinery [d], with an argument
+attached.
+
+### The wire already has the submonoid
+
+§9's per-segment variable window is an affine renaming. That is the growth path,
+and each step is a strict generalization that keeps the monoid:
+
+| | segment carries | what it is |
+| --- | --- | --- |
+| v0 | `var_start`, `var_count` | affine renaming |
+| v1 | a table | arbitrary renaming |
+| v2 | a map to term indices | substitution |
+
+An import under a substitution is then not a new mechanism, it is v2 of a field
+that already exists. A separate arena class for substitutions [d] becomes worth
+having at v2, when the map is large enough to want sharing and its own address.
+
+### Two things called substitution
+
+Worth keeping apart, because the arena has both:
+
+- **Variable substitution**, var to term. The monoid above; in categories with
+  families these are the morphisms between contexts, which is where the
+  composition, identity and functoriality laws come from for free
+  [x, §2 of `05-pointers.md`].
+- **Index normalization**, index to index. §5's `eq` forest is exactly this:
+  the class-minimum map is an idempotent map on the index set. The literature
+  for it is unification solved forms — triangular versus idempotent
+  substitutions — not the binding literature [x, §3 of `05-pointers.md`].
+
+A normalized e-graph is a family of index normalizations, one per choice of
+representative, and a def array is one of them [d]. That reading is right and it
+is the unification one, not the CwF one. Fusing the two would be a mistake even
+though both are monoids.
+
+### Import as substitution, and capture
+
+An import applies the source's def array, so import is substitution application
+[d]. The worry is that substitution is capture-avoiding and import is not.
+
+§9's windows dissolve it. Distinct sources never share variable names, so within
+one arena a name coincidence is intentional by construction, and there is nothing
+accidental left for a binder to capture. Deliberately binding an imported
+variable — importing an open term and generalizing over its free variable — stays
+available and means what it says. Windows compose under nesting, since composing
+affine maps gives an affine map.
+
+That is the substantive payoff of §9 beyond the interval test: it is the
+condition under which import-as-substitution needs no capture-avoidance pass.
+
+### What this costs the TCB
+
+Applying a substitution is needed for beta regardless, so it is not new. The
+delta is the substitution *object*: its wire form, its validation, and the laws.
+Keep the object in userspace until theory interpretation actually needs it
+serialized — substituting a model of T into a proof about abstract T is the
+motivating case [d] and it is also the case that will say what the object should
+look like. HOL kernels have always had `INST` as a rule; making the substitution
+a first-class value is the delta, and Metamath is the extreme where substitution
+*is* the proof step [x, §2 of `05-pointers.md`].
+
+## 12. Layering
 
 ```
 crates/logic/hol/src/
@@ -497,7 +596,7 @@ façade's type machinery must not define the persisted semantics, and the two
 evaluators must be differentially tested
 [c:notes/vibes/kernel/substrate-expressions.md].
 
-## 12. Links, formats, classes, schemas
+## 13. Links, formats, classes, schemas
 
 Keep the spike's `Link { addr, format, class }` [v:5]. Format is the byte-level
 codec; class is the logical object. Both at the reference site, never behind the
@@ -525,7 +624,7 @@ Prior art, since the dump asks [d] [x]:
   A single-inheritance class tree plus a DAG of refinements that unlock
   interfaces is close to CLOS with `deftype` predicates.
 
-## 13. Data payloads
+## 14. Data payloads
 
 Start with `bytes` and small unsigned integers, matching ladder level 0A
 [n:notes/vision/ladder.md]. Bignat and bigint decode from bytes or arithmetic
@@ -536,7 +635,7 @@ Keep string map keys throughout v0. Integer keys buy compactness and cost
 readability and JSON compatibility; if wanted, they belong in a separate schema
 O256, not a flag.
 
-## 14. Validation, in one pass
+## 15. Validation, in one pass
 
 Every check below is linear, allocation-bounded, and independent of any fixed
 point:
@@ -553,7 +652,7 @@ Nothing here fetches an import. Resolving a segment is a separate, later,
 fallible step. Fail closed: a node that does not decode yields no arena, no
 partial arena, and no theorem — covalence's rule [c:notes/vibes/kernel/substrate-expressions.md].
 
-## 15. Not building yet
+## 16. Not building yet
 
 Named so they are not smuggled in: the general object system and class tree;
 namespaces and string-keyed links; sparse arenas; 64-bit arenas; WASM-defined
@@ -565,7 +664,7 @@ Ion is worth revisiting when either the CBOR bignum situation or the
 self-describing-symbol-table pressure actually bites; writing our own reader
 would put it in the TCB, which is the reason to wait.
 
-## 16. Plan
+## 17. Plan
 
 Each step is a spike branch off `main`, kept open, with a note in
 `notes/spikes/` when it has been used [n:AGENTS.md §2].
@@ -574,7 +673,7 @@ Each step is a spike branch off `main`, kept open, with a note in
 table. Closes issue #745. *Done when* adding a constructor in one place fails
 the build everywhere it is not handled.
 
-**P1 — `wire` + `check`.** The §3 shape with named binders (§8), the §14
+**P1 — `wire` + `check`.** The §3 shape with named binders (§8), the §15
 validator, the `fvs` fold, no logic. Round-trip
 and adversarial-input fuzzing. Reuse #746 as the starting point rather than
 starting fresh. *Done when* a corpus of arenas round-trips and every malformed
@@ -603,11 +702,12 @@ equations about individual O256s possible.
 #742.
 
 Lean work runs beside P1–P3: the named syntax and its lowering, then the `wire`
-shape and the §14 validation predicate, with the theorem that a validated wire
+shape and the §15 validation predicate, with the theorem that a validated wire
 arena elaborates through the lowering to the intended HolE object. `HolLN/Array.lean` already has an arena, `validate`, and `elaborate`
 [n:notes/plans/2026-08-hol-kernel-mvp.md], so this is closer to porting than to
 inventing [?1.F].
 
-## 17. Open points
+## 18. Open points
 
-Collected in [`questions/round-1.md`](./questions/round-1.md): 1.A–1.O.
+Collected in [`questions/round-1.md`](./questions/round-1.md): 1.A–1.Q.
+Literature in [`05-pointers.md`](./05-pointers.md).

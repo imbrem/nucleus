@@ -4,7 +4,7 @@ Entry point for the 2026-08-19 arena design push. Written for both the author
 and agents. Everything here is either verified, cited to whoever claimed it, or
 marked as an open question.
 
-## The five documents
+## The documents
 
 | # | File | What it holds |
 | --- | --- | --- |
@@ -13,6 +13,7 @@ marked as an open question.
 | 02 | [`02-status.md`](./02-status.md) | PR / issue / docs status: what is open, grouped by design question |
 | 03 | [`03-arena.md`](./03-arena.md) | the arena design and the plan to build it |
 | 04 | [`04-evidence.md`](./04-evidence.md) | commands run and their output, for every `[v]` claim |
+| 05 | [`05-pointers.md`](./05-pointers.md) | literature and systems, by the question each answers. From memory, unverified |
 
 Questions live in [`questions/`](./questions/), one file per round.
 
