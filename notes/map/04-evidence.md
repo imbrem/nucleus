@@ -158,6 +158,36 @@ variables carry their type in their identity.
 So the term level is scoped de Bruijn with untyped `bv` and typed numeric-level
 `fv`; the type level is intrinsically kinded de Bruijn.
 
+## v:14 — freshness, closing, and alpha in Lean
+
+```
+$ grep -rn "def close\|def open\|def abstract\|def instantiate" lean/Nucleus/Nucleus/{Hol,HolE}/*.lean
+HolE/EmptySyntax.lean:132  def openBound
+HolE/EmptySyntax.lean:136  def openType
+HolE/Substitution.lean:29  def instantiate
+HolE/Substitution.lean:42  def openBound
+HolE/Substitution.lean:46  def instantiateOne
+Hol/Substitution.lean:29   def instantiate
+Hol/Substitution.lean:42   def openBound
+Hol/Substitution.lean:46   def instantiateOne
+Hol/FamilySub.lean:105,133,414
+```
+
+No `close` and no `abstract`. Opening exists, closing does not.
+
+```
+$ grep -rln -i "alpha" lean/Nucleus/Nucleus/          → no matches
+$ grep -rn "freeVars\|def free" lean/.../{HolE,HolLN}/*.lean  → no matches
+$ grep -rn "fresh\|Fresh" lean/Nucleus/Nucleus/{Hol,HolE}/*.lean
+Hol/Kernel.lean:24         | eta (name : Nat) (fresh : Fresh name f)
+HolE/Kernel.lean:34        | eta (name : Nat) (fresh : Fresh name f)
+HolE/EmptyRules.lean:63    (fresh : Fresh name function.raw)
+plus soundness cases in Hol/Soundness.lean, HolE/Classical{Soundness,EqTmSoundness,EtaKernelLaw}.lean
+```
+
+So `Fresh name t` is already a spec-level predicate used by the `eta` rule,
+while a set-valued `freeVars` function does not exist.
+
 ## What was not verified
 
 - `lake build`, zero-`sorry` via the actual Lean gates, `#print axioms`.

@@ -150,3 +150,40 @@ convenience and becomes a change to the spec, at which point named levels are
 the cheaper option.
 
 **Answer:**
+
+---
+
+## 1.L — Write both folds before choosing?
+
+`fvs` under names and `dem` under typed de Bruijn are each roughly forty lines.
+Writing both settles two things argument cannot: how often the `dem` agreement
+condition actually fires on real arenas, and how much of the checker changes
+between the two.
+
+Matters because: §8 currently recommends on the balance of arguments, which is
+weaker evidence than either fold running.
+
+**Answer:**
+
+---
+
+## 1.M — How does free variable identity survive an import?
+
+Free variables are `(name : Nat, type)` in Lean [v:13], so identity is a number.
+Two arenas built independently will reuse the same numbers for different
+variables. Merging or importing one into the other has to reconcile that.
+
+Three shapes, none chosen:
+
+- rename on import, which rewrites nodes and so breaks sharing and addresses;
+- make identity arena-relative, which makes a shared node's meaning depend on
+  which arena it arrived from — dangerous, and probably disqualifying;
+- make identity global, derived from content or from a namespace link, so
+  independent arenas cannot collide.
+
+Matters because: it is the deciding question between named binders and typed de
+Bruijn. Under de Bruijn the problem is confined to leaves; under names the
+identity also sits on every binder, so any renaming has to go under binders.
+Both disciplines have named free variables, so neither escapes it entirely.
+
+**Answer:**

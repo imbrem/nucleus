@@ -25,6 +25,13 @@ whatever it likes, provided it projects back to a wire arena.
    format and class at the reference site, which the spike already does [v:5].
 3. TCB small and audited; userspace plural [d]. This sets the layering in §9.
 4. Lean specifies; Rust transcribes [n:AGENTS.md].
+5. **Grounding by consilience.** Several equivalent syntaxes and proof systems,
+   with maps between them, are worth having for their own sake. They are
+   evidence that the thing formalized is the thing intended, which internal
+   consistency alone cannot give: a system can be consistent while its symbols
+   mean something subtly other than what was meant. The condition is that
+   exactly one surface is *normative* — the one the arena implements — and that
+   the others are labelled as grounding rather than mistaken for it [d].
 
 ## 3. Wire shape
 
@@ -77,8 +84,20 @@ Two columns are worth having dense from the start:
 - `ty : Ix` — the type of this index. Cheap, wanted by almost every consumer.
 - `eq : Ix` — semantic equality, read under `ctx` (§6).
 
+A third is derived rather than stored: `fvs[i]`, the free variable set (§8).
+It is a fold over local nodes, so putting it on the wire would only cache it.
+
 Everything else stays sparse in the fact lists until a workload demands a
 column. Adding a column later is additive; removing one is not.
+
+**Derived for local nodes, claimed for imported ones.** `ty`, `fvs` and `dem`
+are all folds, and a fold cannot run over an index that has not been fetched. So
+for any index supplied by an unresolved segment, each of them has to arrive as a
+fact instead — `Syn(HasTy, i, t)`, and the analogous formers for free variables
+and escaping context. That is what makes a side condition dischargeable without
+resolving the import, and it is the same shape as the classified links of #726,
+where `TM_LINK` carries its declared type. Issues #715 and #718 are the same
+question from the import side.
 
 ## 5. `eq` as a decreasing forest
 
@@ -208,8 +227,33 @@ only valid under one stack.
 | alpha equivalence | not structural | structural | structural |
 | shifting | none | at every binder | at every binder |
 | substitution | capture-avoiding; freshness trivial if names are levels | shift and subst | shift and subst |
-| effect on the Lean spec | changes `lam`'s shape; pushes freshness side conditions into the rules | none: the annotation erases | none |
+| freshness side conditions | an `fvs` column (§4) | an `fvs` column (§4) | an `fvs` column (§4) |
+| effect on the Lean spec | needs `close`, an alpha relation, and the quotient in every correspondence lemma | none: the annotation erases | none |
 | wire cost | binder stores a variable index; `bv` nodes disappear | one extra index per `bv` node | nil |
+
+### Freshness is a column, not a per-rule burden
+
+An earlier draft of this section counted freshness side conditions against the
+named option. That was wrong. "Term `t` has free variable set `S`" is a
+meta-fact of the same standing as "term `t` has type `α`", so it is a column
+computed by a fold, and the rules read it:
+
+```
+fvs(TM_FV x)      = {x}
+fvs(TM_APP f a)   = fvs[f] ∪ fvs[a]
+fvs(TM_LAM x b)   = fvs[b] ∖ {x}          -- named binders
+fvs(binder b)     = fvs[b]                -- de Bruijn binders
+```
+
+The fold is **total**: unlike `dem`, it has no agreement condition and no failure
+mode. The spec already has the predicate this computes — `Fresh name f` is a
+hypothesis of the `eta` rule in `Hol/Kernel.lean` and `HolE/Kernel.lean` [v:14] —
+so `fvs` is its computational form, and there is no `freeVars` function in Lean
+yet to conflict with [v:14].
+
+Take the column regardless of which binder discipline wins. HOL's side
+conditions are about *free* variables, which are named under every option here,
+so `fvs` is owed either way. §4 lists it.
 
 ### Proposal: typed de Bruijn in the arena, erased on elaboration
 
@@ -245,13 +289,62 @@ Three things fall out:
 the Lean term up to sharing, so no soundness argument changes. Unverified
 [?1.K].
 
-Names remain the fallback if the annotation bookkeeping turns out worse in
-practice than it reads here. In that case use levels rather than user strings,
-since freshness and capture-avoidance become trivial, and accept that
-alpha-equivalent terms occupy different classes until something proves them
-equal — which is admissible, since `eq` is a claim rather than a definition.
-Covalence went the named-free route with `Var = (name, type)` [v:11], so there
-is prior experience to draw on either way.
+### What is left of the argument against names
+
+As of 2026-08-19 the author is formalizing a named syntax in Lean that lowers
+into the nameless one [d]. That was the flip condition stated in the previous
+draft of this section, and it has fired.
+
+The argument against names was never about the implementation. It was that named
+binders introduce an alpha quotient which then rides along in every
+correspondence lemma, and that the spec has no reason to carry one: Lean today
+has `openBound`, `instantiate` and `instantiateOne`, no `close` or `abstract`,
+no `freeVars`, and zero occurrences of "alpha" in `lean/Nucleus` [v:14]. Once
+`close` and the lowering exist and are proven, that cost is paid for other
+reasons — under principle 5 it is not a cost at all, it is the grounding — and
+the arena's elaboration becomes an instance of a map that already has a Lean
+counterpart.
+
+What names then have going for them, collected:
+
+- `fvs` is a total fold. `dem` is a fold with an agreement condition that can
+  fail.
+- Sharing of open nodes is unconditional. There is no merge restriction, so H2
+  disappears rather than relaxing.
+- No shifting anywhere.
+- No annotations, so no H5 erasure obligation.
+- Alpha-variants occupying distinct indices is not a new kind of problem. It is
+  principle 1 again: many encodings, one meaning, and the requirement is only
+  that each encoding decodes to at most one term.
+
+What they cost:
+
+- `syn_eq` stays structural, so alpha-equivalence needs a rule or belongs to
+  `conv_eq`, which already does beta and eta.
+- Congruence closure wants alpha-canonical keys. Canonical renaming is
+  well defined bottom-up for closed nodes, so it can be a load-time
+  normalization in userspace rather than a validity condition. Open nodes stay
+  as written.
+- Free variable identity has to survive imports and overlays, and under names
+  that identity sits under binders as well as at leaves [?1.M]. This is the one
+  that is genuinely unsolved.
+
+### Recommendation
+
+Provisionally: **named binders with numeric levels**, contingent on 1.M. Typed
+de Bruijn stays fully specified above as the alternative, and is what to fall
+back to if free-variable identity across imports turns out to want anonymous
+binders.
+
+This reverses the recommendation two paragraphs of this document earlier held.
+The ground moved twice: freshness side conditions turned out to be a column
+rather than a per-rule burden, and the alpha quotient turned out to be
+deliberate work rather than a tax. Both were flip conditions written down in
+advance, which is the only reason to trust the reversal.
+
+The `dem` fold is still worth writing even under names, as the thing that would
+have to exist if 1.M forces the fallback. Both folds are around forty lines
+[?1.L].
 
 ## 9. Layering
 
