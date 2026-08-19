@@ -24,42 +24,42 @@ structure Decl (S : Type v) (Name : Type := Nat) where
   deriving DecidableEq
 
 /-- Fully named HolE syntax.  There are no de Bruijn occurrences in this type. -/
-inductive Expr (Sig : Signature) : HolSort → (Name : Type := Nat) → Type (max u 1) where
-  | boolTy {Name} : Expr Sig (.kind .star) Name
-  | arr {Name} (domain codomain : Expr Sig (.kind .star) Name) :
-      Expr Sig (.kind .star) Name
+inductive Expr (Sig : Signature) (Name : Type := Nat) : HolSort → Type (max u 1) where
+  | boolTy : Expr Sig Name (.kind .star)
+  | arr (domain codomain : Expr Sig Name (.kind .star)) :
+      Expr Sig Name (.kind .star)
   | tyApp {domain codomain : Kind}
-      {Name} (function : Expr Sig (.kind (.arr domain codomain)) Name)
-      (argument : Expr Sig (.kind domain) Name) : Expr Sig (.kind codomain) Name
-  | tyLam {domain codomain : Kind} {Name} (name : Name)
-      (body : Expr Sig (.kind codomain) Name) :
-      Expr Sig (.kind (.arr domain codomain)) Name
-  | tyFv {Name} (name : Name) (kind : Kind) : Expr Sig (.kind kind) Name
-  | sub {Name} (carrier : Expr Sig (.kind .star) Name) (name : Name)
-      (predicate : Expr Sig .tm Name) : Expr Sig (.kind .star) Name
-  | tyExists {Name} (name : Name) (predicate : Expr Sig .tm Name) : Expr Sig .tm Name
-  | model {Name} (name : Name) (predicate : Expr Sig .tm Name) :
-      Expr Sig (.kind .star) Name
-  | primFam {kind : Kind} {Name} (symbol : Sig (.kind kind)) : Expr Sig (.kind kind) Name
-  | primTm {Name} (symbol : Sig .tm) : Expr Sig .tm Name
-  | tmFv {Name} (name : Name) (type : Expr Sig (.kind .star) Name) : Expr Sig .tm Name
-  | app {Name} (function argument : Expr Sig .tm Name) : Expr Sig .tm Name
-  | lam {Name} (name : Name) (domain : Expr Sig (.kind .star) Name)
-      (body : Expr Sig .tm Name) : Expr Sig .tm Name
-  | bool {Name} (value : Bool) : Expr Sig .tm Name
-  | eq {Name} (type : Expr Sig (.kind .star) Name)
-      (left right : Expr Sig .tm Name) : Expr Sig .tm Name
-  | eps {Name} (type : Expr Sig (.kind .star) Name)
-      (predicate : Expr Sig .tm Name) : Expr Sig .tm Name
-  | abs {Name} (carrier : Expr Sig (.kind .star) Name) (name : Name)
-      (predicate value : Expr Sig .tm Name) : Expr Sig .tm Name
-  | rep {Name} (carrier : Expr Sig (.kind .star) Name) (name : Name)
-      (predicate value : Expr Sig .tm Name) : Expr Sig .tm Name
+      (function : Expr Sig Name (.kind (.arr domain codomain)))
+      (argument : Expr Sig Name (.kind domain)) : Expr Sig Name (.kind codomain)
+  | tyLam {domain codomain : Kind} (name : Name)
+      (body : Expr Sig Name (.kind codomain)) :
+      Expr Sig Name (.kind (.arr domain codomain))
+  | tyFv (name : Name) (kind : Kind) : Expr Sig Name (.kind kind)
+  | sub (carrier : Expr Sig Name (.kind .star)) (name : Name)
+      (predicate : Expr Sig Name .tm) : Expr Sig Name (.kind .star)
+  | tyExists (name : Name) (predicate : Expr Sig Name .tm) : Expr Sig Name .tm
+  | model (name : Name) (predicate : Expr Sig Name .tm) :
+      Expr Sig Name (.kind .star)
+  | primFam {kind : Kind} (symbol : Sig (.kind kind)) : Expr Sig Name (.kind kind)
+  | primTm (symbol : Sig .tm) : Expr Sig Name .tm
+  | tmFv (name : Name) (type : Expr Sig Name (.kind .star)) : Expr Sig Name .tm
+  | app (function argument : Expr Sig Name .tm) : Expr Sig Name .tm
+  | lam (name : Name) (domain : Expr Sig Name (.kind .star))
+      (body : Expr Sig Name .tm) : Expr Sig Name .tm
+  | bool (value : Bool) : Expr Sig Name .tm
+  | eq (type : Expr Sig Name (.kind .star))
+      (left right : Expr Sig Name .tm) : Expr Sig Name .tm
+  | eps (type : Expr Sig Name (.kind .star))
+      (predicate : Expr Sig Name .tm) : Expr Sig Name .tm
+  | abs (carrier : Expr Sig Name (.kind .star)) (name : Name)
+      (predicate value : Expr Sig Name .tm) : Expr Sig Name .tm
+  | rep (carrier : Expr Sig Name (.kind .star)) (name : Name)
+      (predicate value : Expr Sig Name .tm) : Expr Sig Name .tm
 
 abbrev Fam (Sig : Signature) (kind : Kind) (Name : Type := Nat) :=
-  Expr Sig (.kind kind) Name
+  Expr Sig Name (.kind kind)
 abbrev Ty (Sig : Signature) (Name : Type := Nat) := Fam Sig .star Name
-abbrev Tm (Sig : Signature) (Name : Type := Nat) := Expr Sig .tm Name
+abbrev Tm (Sig : Signature) (Name : Type := Nat) := Expr Sig Name .tm
 
 abbrev TyDecl (Name : Type := Nat) := Decl Kind Name
 abbrev TmDecl (Sig : Signature) (Name : Type := Nat) := Decl (Ty Sig Name) Name
@@ -76,7 +76,7 @@ def letTm (name : Name) (type : Ty Sig Name) (value body : Tm Sig Name) : Tm Sig
     letTm name type value body = .app (.lam name type body) value := rfl
 
 /-- Rename every binder and variable occurrence uniformly. -/
-def mapNames (f : Name → Name') : Expr Sig sort Name → Expr Sig sort Name'
+def mapNames (f : Name → Name') : Expr Sig Name sort → Expr Sig Name' sort
   | .boolTy => .boolTy
   | .arr A B => .arr (mapNames f A) (mapNames f B)
   | .tyApp F A => .tyApp (mapNames f F) (mapNames f A)
@@ -98,12 +98,12 @@ def mapNames (f : Name → Name') : Expr Sig sort Name → Expr Sig sort Name'
   | .rep A name predicate value =>
       .rep (mapNames f A) (f name) (mapNames f predicate) (mapNames f value)
 
-@[simp] theorem mapNames_id (expression : Expr Sig sort Name) :
+@[simp] theorem mapNames_id (expression : Expr Sig Name sort) :
     mapNames id expression = expression := by
   induction expression <;> simp_all [mapNames]
 
 theorem mapNames_comp (g : Name' → Name'') (f : Name → Name')
-    (expression : Expr Sig sort Name) :
+    (expression : Expr Sig Name sort) :
     mapNames g (mapNames f expression) = mapNames (g ∘ f) expression := by
   induction expression <;> simp_all [mapNames, Function.comp_apply]
 

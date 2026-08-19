@@ -36,7 +36,7 @@ def extendTmNames (declaration : TmDecl Sig) (names : TmNames Sig depth) :
 /-- Quote locally nameless syntax using the supplied names for open binders. -/
 noncomputable def quote (next : Nat) (typeNames : TyNames types)
     (termNames : TmNames Sig depth) :
-    Nucleus.HolE.Expr Sig types sort depth → Expr Sig sort
+    Nucleus.HolE.Expr Sig types sort depth → Expr Sig Nat sort
   | .boolTy => .boolTy
   | .arr A B => .arr (quote next typeNames emptyTmNames A)
       (quote next typeNames emptyTmNames B)
@@ -84,7 +84,7 @@ noncomputable def quote (next : Nat) (typeNames : TyNames types)
 
 /-- Quote a closed locally nameless expression without caller-supplied names. -/
 noncomputable def quoteClosed (expression : Nucleus.HolE.Expr Sig [] sort 0) :
-    Expr Sig sort :=
+    Expr Sig Nat sort :=
   quote (Nucleus.HolE.freshIndex expression) emptyTyNames emptyTmNames expression
 
 end Nucleus.HolE.Named

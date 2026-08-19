@@ -28,11 +28,11 @@ private def tmVariable (name : Name) (type : Ty Sig Name) : TypedFVar Sig Name :
   ⟨name, .tm type⟩
 
 /-- The finite support of a named expression. -/
-noncomputable def fvars : Expr Sig sort Name → Support Sig Name
+noncomputable def fvars : Expr Sig Name sort → Support Sig Name
   | .boolTy => ∅
   | .arr A B => fvars A ∪ fvars B
   | .tyApp F A => fvars F ∪ fvars A
-  | @Expr.tyLam _ domain _ _ name body =>
+  | @Expr.tyLam _ _ domain _ name body =>
       (fvars body).erase (tyVariable name domain)
   | .tyFv name kind => {tyVariable name kind}
   | .sub A name predicate =>
@@ -54,36 +54,36 @@ noncomputable def fvars : Expr Sig sort Name → Support Sig Name
   | .rep A name predicate value =>
       fvars A ∪ (fvars predicate).erase (tmVariable name A) ∪ fvars value
 
-noncomputable def tyFvars (expression : Expr Sig sort Name) : Support Sig Name :=
+noncomputable def tyFvars (expression : Expr Sig Name sort) : Support Sig Name :=
   FVar.tyvars (fvars expression)
 
-noncomputable def tmFvars (expression : Expr Sig sort Name) : Support Sig Name :=
+noncomputable def tmFvars (expression : Expr Sig Name sort) : Support Sig Name :=
   FVar.tmvars (fvars expression)
 
-noncomputable def fvarIndices (expression : Expr Sig sort Name) : Finset Name :=
+noncomputable def fvarIndices (expression : Expr Sig Name sort) : Finset Name :=
   FVar.indices (fvars expression)
 
-noncomputable def tyFvarIndices (expression : Expr Sig sort Name) : Finset Name :=
+noncomputable def tyFvarIndices (expression : Expr Sig Name sort) : Finset Name :=
   FVar.tyIndices (fvars expression)
 
-noncomputable def tmFvarIndices (expression : Expr Sig sort Name) : Finset Name :=
+noncomputable def tmFvarIndices (expression : Expr Sig Name sort) : Finset Name :=
   FVar.tmIndices (fvars expression)
 
-noncomputable def fvarsByIndex (expression : Expr Sig sort Name) :
+noncomputable def fvarsByIndex (expression : Expr Sig Name sort) :
     Nucleus.Dict Name (Finset (FVarSort (Ty Sig Name))) :=
   FVar.byIndex (fvars expression)
 
 /-- No name is used with two distinct syntactic sorts. -/
-def NoNameConfusion (expression : Expr Sig sort Name) : Prop :=
+def NoNameConfusion (expression : Expr Sig Name sort) : Prop :=
   FVar.NoNameConfusion (fvars expression)
 
 /-- Conversion-equivalent annotations at one name are syntactically equal. -/
 def NoConvConfusion (conv : Ty Sig Name → Ty Sig Name → Prop)
-    (expression : Expr Sig sort Name) : Prop :=
+    (expression : Expr Sig Name sort) : Prop :=
   FVar.NoConvConfusion conv (fvars expression)
 
 theorem noNameConfusion_noConvConfusion {sort : HolSort}
-    {expression : Expr Sig sort Name} (clear : NoNameConfusion expression)
+    {expression : Expr Sig Name sort} (clear : NoNameConfusion expression)
     (conv : Ty Sig Name → Ty Sig Name → Prop) :
     Named.NoConvConfusion conv expression :=
   FVar.noNameConfusion_noConvConfusion clear conv
