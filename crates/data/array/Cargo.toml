@@ -1,0 +1,15 @@
+[package]
+name = "covalence-data-array"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Flat hash arrays, sets, and bags in CAS normal form"
+publish = false
+
+[dependencies]
+covalence-lib-error = { path = "../../lib/error" }
+covalence-lib-hash = { path = "../../lib/hash", default-features = false }
+
+[lints]
+workspace = true
