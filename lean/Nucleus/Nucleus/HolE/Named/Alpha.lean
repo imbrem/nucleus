@@ -13,11 +13,11 @@ namespace Nucleus.HolE.Named
 set_option relaxedAutoImplicit true
 
 def Lowerable (typeScope : TyScope types) (termScope : TmScope Sig depth)
-    (expression : Expr Sig sort) : Prop :=
+    (expression : Expr Sig Nat sort) : Prop :=
   ∃ lowered, lower typeScope termScope expression = some lowered
 
 def Alpha (typeScope : TyScope types) (termScope : TmScope Sig depth)
-    (left right : Expr Sig sort) : Prop :=
+    (left right : Expr Sig Nat sort) : Prop :=
   ∃ lowered, lower typeScope termScope left = some lowered ∧
     lower typeScope termScope right = some lowered
 
@@ -45,7 +45,7 @@ theorem Alpha.trans (leftMiddle : Alpha typeScope termScope left middle)
 /-- A named expression bundled with evidence that its scope resolves. -/
 structure ScopedExpr (Sig : Signature) (typeScope : TyScope types)
     (termScope : TmScope Sig depth) (sort : HolSort) where
-  expression : Expr Sig sort
+  expression : Expr Sig Nat sort
   lowerable : Lowerable typeScope termScope expression
 
 instance : Setoid (ScopedExpr Sig typeScope termScope sort) where

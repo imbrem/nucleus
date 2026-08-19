@@ -49,7 +49,7 @@ noncomputable def lowerFam (typeScope : TyScope types) :
     | .boolTy => some .boolTy
     | .arr A B => return .arr (← lowerFam typeScope A) (← lowerFam typeScope B)
     | .tyApp F A => return .tyApp (← lowerFam typeScope F) (← lowerFam typeScope A)
-    | @Expr.tyLam _ domain _ _ name body =>
+    | @Expr.tyLam _ _ domain _ name body =>
         return .tyLam (← lowerFam (.cons (kind := domain) name typeScope) body)
     | .tyFv name kind => return .tyBv (← lookupTy ⟨name, kind⟩ typeScope)
     | .sub A name predicate => do
@@ -102,7 +102,7 @@ def scopeDepth (sort : HolSort) (depth : Nat) : Nat :=
 
 /-- Sort-polymorphic lowering used by alpha equivalence and unified checking. -/
 noncomputable def lower (typeScope : TyScope types) (termScope : TmScope Sig depth) :
-    (expression : Expr Sig sort) →
+    (expression : Expr Sig Nat sort) →
       Option (Nucleus.HolE.Expr Sig types sort (scopeDepth sort depth)) :=
   match sort with
   | .kind _ => lowerFam typeScope

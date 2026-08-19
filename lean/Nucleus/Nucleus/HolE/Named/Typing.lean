@@ -27,7 +27,7 @@ noncomputable def lowerClassification (typeScope : TyScope types) :
 def Checks {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
     (typeScope : TyScope types) (termScope : TmScope Sig depth)
     (Γ : Nucleus.HolE.BoundCtx Sig types (scopeDepth sort depth))
-    (expression : Expr Sig sort) (classification : Classification Sig sort) : Prop :=
+    (expression : Expr Sig Nat sort) (classification : Classification Sig sort) : Prop :=
   ∃ loweredExpression loweredClassification,
     lower typeScope termScope expression = some loweredExpression ∧
     lowerClassification typeScope classification = some loweredClassification ∧
@@ -48,7 +48,7 @@ theorem checks_iff {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
     {types : List Kind} {depth : Nat} {sort : HolSort}
     {typeScope : TyScope types} {termScope : TmScope Sig depth}
     {Γ : Nucleus.HolE.BoundCtx Sig types (scopeDepth sort depth)}
-    {expression : Expr Sig sort} {classification : Classification Sig sort} :
+    {expression : Expr Sig Nat sort} {classification : Classification Sig sort} :
     Checks typeScope termScope Γ expression classification ↔
       ∃ loweredExpression loweredClassification,
         lower typeScope termScope expression = some loweredExpression ∧
@@ -61,7 +61,7 @@ theorem Checks.sound {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
     {types : List Kind} {depth : Nat} {sort : HolSort}
     {typeScope : TyScope types} {termScope : TmScope Sig depth}
     {Γ : Nucleus.HolE.BoundCtx Sig types (scopeDepth sort depth)}
-    {expression : Expr Sig sort} {classification : Classification Sig sort}
+    {expression : Expr Sig Nat sort} {classification : Classification Sig sort}
     (typing : Checks typeScope termScope Γ expression classification) :
     ∃ loweredExpression loweredClassification,
       lower typeScope termScope expression = some loweredExpression ∧
@@ -75,7 +75,7 @@ theorem Checks.complete
     {types : List Kind} {depth : Nat} {sort : HolSort}
     {typeScope : TyScope types} {termScope : TmScope Sig depth}
     {Γ : Nucleus.HolE.BoundCtx Sig types (scopeDepth sort depth)}
-    {expression : Expr Sig sort} {classification : Classification Sig sort}
+    {expression : Expr Sig Nat sort} {classification : Classification Sig sort}
     {loweredExpression : Nucleus.HolE.Expr Sig types sort (scopeDepth sort depth)}
     {loweredClassification : Nucleus.HolE.Classification Sig types sort}
     (expressionLowering : lower typeScope termScope expression = some loweredExpression)
@@ -91,7 +91,7 @@ theorem Checks.alpha_left
     {types : List Kind} {depth : Nat} {sort : HolSort}
     {typeScope : TyScope types} {termScope : TmScope Sig depth}
     {Γ : Nucleus.HolE.BoundCtx Sig types (scopeDepth sort depth)}
-    {left right : Expr Sig sort} {classification : Classification Sig sort}
+    {left right : Expr Sig Nat sort} {classification : Classification Sig sort}
     (equivalent : Alpha typeScope termScope left right)
     (typing : Checks typeScope termScope Γ left classification) :
     Checks typeScope termScope Γ right classification := by
