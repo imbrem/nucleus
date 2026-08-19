@@ -139,6 +139,8 @@ def test_the_stub_does_not_omit_class_members() -> None:
         "LinkRef",
         "Segment",
         "ImportTable",
+        "Ctx",
+        "Seq",
     ):
         missing = sorted(
             _runtime_members(getattr(_covalence, name)) - _declared_members(name)

@@ -1,8 +1,8 @@
-"""Tests for the indexed HolE syntax arena API."""
+"""Tests for indexed HolE arenas and sequents."""
 
 import pytest
 from covalence.lib.hash import O256
-from covalence.logic.hol import Arena, Expr, ImportTable, LinkRef, Segment
+from covalence.logic.hol import Arena, Ctx, Expr, ImportTable, LinkRef, Segment, Seq
 
 
 def test_expression_shape_and_arena_cbor_round_trip() -> None:
@@ -29,7 +29,7 @@ def test_expression_constructor_rejects_non_children_and_bad_variables() -> None
         Expr("TY_BV", [1], 0)
 
 
-def test_arenas_form_a_lazy_import_graph() -> None:
+def test_arenas_and_sequents_form_a_lazy_import_graph() -> None:
     root = Arena()
     root.push(Expr("KIND_STAR"))
     assert isinstance(root.address(), O256)
@@ -42,5 +42,45 @@ def test_arenas_form_a_lazy_import_graph() -> None:
     dependent = Arena(arena_imports.address())
     dependent.add_segment(Segment(1, 2, LinkRef(0, "cbor_dense", "arena"), 1))
 
-    assert isinstance(dependent.address(), O256)
-    assert Arena.from_cbor(dependent.to_cbor()).to_cbor() == dependent.to_cbor()
+    first_imports = ImportTable()
+    assert first_imports.push(dependent.address()) == 0
+    first = Seq(LinkRef(0, "cbor_dense", "arena"), first_imports.address())
+
+    second_imports = ImportTable()
+    assert second_imports.push(dependent.address()) == 0
+    assert second_imports.push(first.address()) == 1
+    second = Seq(LinkRef(0, "cbor_dense", "arena"), second_imports.address())
+    assert second.assume(LinkRef(1, "cbor_sparse", "sequent"))
+    assert isinstance(second.address(), O256)
+
+    assert Seq.from_cbor(second.to_cbor()).to_cbor() == second.to_cbor()
+
+
+def test_contexts_materialize_and_repack_every_sequent_fact() -> None:
+    arena = LinkRef(0, "cbor_dense", "arena")
+    imported = LinkRef(1, "cbor_sparse", "sequent")
+    premises = Ctx(arena)
+    assert premises.insert_sequent(imported)
+    assert premises.insert("has_ty", 1, 2)
+    assert premises.insert_symmetric("ty_eq", 2, -3)
+    assert premises.contains("ty_eq", -3, 2)
+    assert premises.pairs("ty_eq") == [(-3, 2), (2, -3)]
+
+    conclusions = Ctx(arena)
+    assert conclusions.insert("imp", 0, 1)
+    sequent = Seq.from_contexts(premises, conclusions)
+    assert sequent.premises.to_cbor() == premises.to_cbor()
+    assert sequent.conclusion.to_cbor() == conclusions.to_cbor()
+    assert sequent.premise_pairs("has_ty") == [(1, 2)]
+    assert sequent.conclusion_pairs("imp") == [(0, 1)]
+    assert Seq.from_premises(premises).premises.to_cbor() == premises.to_cbor()
+    assert (
+        Seq.from_conclusion(conclusions).conclusion.to_cbor() == conclusions.to_cbor()
+    )
+
+    with pytest.raises(ValueError, match="different arenas"):
+        Seq.from_contexts(premises, Ctx())
+    with pytest.raises(ValueError, match="i32::MIN"):
+        premises.insert("eq", -(2**31), 1)
+    with pytest.raises(ValueError, match="directional"):
+        premises.insert_symmetric("imp", 1, 2)

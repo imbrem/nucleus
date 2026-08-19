@@ -1,5 +1,5 @@
-"""Indexed HolE syntax arenas."""
+"""Indexed HolE syntax and sequents."""
 
-from .._covalence import Arena, Expr, ImportTable, LinkRef, Segment
+from .._covalence import Arena, Ctx, Expr, ImportTable, LinkRef, Segment, Seq
 
-__all__ = ["Arena", "Expr", "ImportTable", "LinkRef", "Segment"]
+__all__ = ["Arena", "Ctx", "Expr", "ImportTable", "LinkRef", "Segment", "Seq"]

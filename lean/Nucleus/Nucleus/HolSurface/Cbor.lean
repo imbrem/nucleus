@@ -233,6 +233,85 @@ def decodeArena? (value : Nucleus.Cbor) : Option Arena := do
 def encodeStaticArena (arena : StaticArena) : Nucleus.Cbor :=
   encodeArena arena
 
+def encodeRelation (relation : Relation) : Nucleus.Cbor := unsigned relation.tag
+
+def decodeRelation? (value : Nucleus.Cbor) : Option Relation := do
+  match ← asNat? value with
+  | 0 => some .synEq | 1 => some .convEq | 2 => some .tyEq | 3 => some .hasTy
+  | 4 => some .imp | 5 => some .eq | 6 => some .hasKind | 7 => some .ne
+  | _ => none
+
+private def encodeSRef (ref : SRef) : Nucleus.Cbor :=
+  match ref.raw.toInt with
+  | .ofNat value => unsigned value
+  | .negSucc value => .primitive (.integer (.negative (UInt64.ofNat value)))
+
+private def decodeSRef? (value : Nucleus.Cbor) : Option SRef := do
+  let raw ← asInt32? value
+  if valid : raw ≠ Int32.minValue then some ⟨raw, valid⟩ else none
+
+private def encodePair (pair : SRef × SRef) : Nucleus.Cbor :=
+  array [encodeSRef pair.1, encodeSRef pair.2]
+
+private def decodePair? (value : Nucleus.Cbor) : Option (SRef × SRef) := do
+  match ← asArray? value with
+  | [left, right] => some (← decodeSRef? left, ← decodeSRef? right)
+  | _ => none
+
+private def relationMapItems : RelationTable → List (Nucleus.Cbor × Nucleus.Cbor)
+  | [] => []
+  | (relation, pairs) :: rest =>
+      (encodeRelation relation, array (pairs.map encodePair)) :: relationMapItems rest
+
+def encodeRelationTable (table : RelationTable) : Nucleus.Cbor :=
+  .map (mapItems (relationMapItems table))
+
+private def decodeRelationEntries? :
+    List (Nucleus.Cbor × Nucleus.Cbor) → Option RelationTable
+  | [] => some []
+  | (key, value) :: rest => do
+      let relation ← decodeRelation? key
+      let pairs ← traverse decodePair? (← asArray? value)
+      let rest ← decodeRelationEntries? rest
+      some ((relation, pairs) :: rest)
+
+def decodeRelationTable? (value : Nucleus.Cbor) : Option RelationTable := do
+  decodeRelationEntries? (← asMap? value)
+
+def encodeCtx (ctx : Nucleus.HolSurface.Ctx) : Nucleus.Cbor := map [
+  ("arena", encodeOptional encodeLinkRef ctx.arena),
+  ("imports", encodeOptional encodeO256 ctx.imports),
+  ("sequents", array (ctx.sequents.map encodeLinkRef)),
+  ("relations", encodeRelationTable ctx.relations)]
+
+def decodeCtx? (value : Nucleus.Cbor) : Option Nucleus.HolSurface.Ctx := do
+  let entries ← asMap? value
+  let arena ← decodeOptional decodeLinkRef? (← field? entries "arena")
+  let imports ← decodeOptional decodeO256? (← field? entries "imports")
+  let sequents ← traverse decodeLinkRef? (← asArray? (← field? entries "sequents"))
+  let relations ← decodeRelationTable? (← field? entries "relations")
+  some ⟨arena, imports, sequents, relations⟩
+
+def encodeSeq (seq : Nucleus.HolSurface.Seq) : Nucleus.Cbor := map [
+  ("arena", encodeOptional encodeLinkRef seq.arena),
+  ("imports", encodeOptional encodeO256 seq.imports),
+  ("premise_sequents", array (seq.premiseSequents.map encodeLinkRef)),
+  ("conclusion_sequents", array (seq.conclusionSequents.map encodeLinkRef)),
+  ("premises", encodeRelationTable seq.premises),
+  ("conclusions", encodeRelationTable seq.conclusions)]
+
+def decodeSeq? (value : Nucleus.Cbor) : Option Nucleus.HolSurface.Seq := do
+  let entries ← asMap? value
+  let arena ← decodeOptional decodeLinkRef? (← field? entries "arena")
+  let imports ← decodeOptional decodeO256? (← field? entries "imports")
+  let premiseSequents ← traverse decodeLinkRef?
+    (← asArray? (← field? entries "premise_sequents"))
+  let conclusionSequents ← traverse decodeLinkRef?
+    (← asArray? (← field? entries "conclusion_sequents"))
+  let premises ← decodeRelationTable? (← field? entries "premises")
+  let conclusions ← decodeRelationTable? (← field? entries "conclusions")
+  some ⟨arena, imports, premiseSequents, conclusionSequents, premises, conclusions⟩
+
 /-- An address is correct when it hashes a complete CBOR encoding of the
 value. The encoded bytes are a logical witness and are not retained by the
 cached wrapper. -/
@@ -267,6 +346,20 @@ def link (cached : CachedImportTable) : O256 := cached.address
 @[simp] theorem link_eq (cached : CachedImportTable) : cached.link = cached.address := rfl
 
 end CachedImportTable
+
+structure CachedSeq where
+  seq : Nucleus.HolSurface.Seq
+  address : O256
+  correct : HasAddress (encodeSeq seq) address
+
+namespace CachedSeq
+
+def link (cached : CachedSeq) : Link :=
+  ⟨cached.address, .cborSparse, .sequent⟩
+
+@[simp] theorem link_address (cached : CachedSeq) : cached.link.addr = cached.address := rfl
+
+end CachedSeq
 
 /-! ## Preferred-encoding round trips -/
 
@@ -407,6 +500,86 @@ set_option maxHeartbeats 4000000 in
 @[simp] theorem decodeArena?_encodeStatic (arena : StaticArena) :
     decodeArena? (encodeStaticArena arena) = some arena.toOwned :=
   decodeArena?_encode arena
+
+@[simp] theorem decodeRelation?_encode (relation : Relation) :
+    decodeRelation? (encodeRelation relation) = some relation := by cases relation <;> rfl
+
+private theorem asInt?_encodeSRef (ref : SRef) :
+    asInt? (encodeSRef ref) = some ref.raw.toInt := by
+  have lower := Int32.le_toInt ref.raw
+  have upper := Int32.toInt_le ref.raw
+  cases representation : ref.raw.toInt with
+  | ofNat value =>
+      have upper' : (value : Int) ≤ 2 ^ 31 - 1 := by
+        simpa [representation, Int32.toInt_maxValue] using upper
+      have fits : value < 2 ^ 64 := by
+        omega
+      have converted : (UInt64.ofNat value).toNat = value := by
+        change value % 2 ^ 64 = value
+        exact Nat.mod_eq_of_lt fits
+      simp [encodeSRef, representation, asInt?, unsigned, converted]
+  | negSucc value =>
+      have lower' : -(2 : Int) ^ 31 ≤ .negSucc value := by
+        simpa [representation] using lower
+      have fits : value < 2 ^ 64 := by
+        omega
+      have converted : (UInt64.ofNat value).toNat = value := by
+        change value % 2 ^ 64 = value
+        exact Nat.mod_eq_of_lt fits
+      simp [encodeSRef, representation, asInt?, converted]
+
+@[simp] private theorem asInt32?_encodeSRef (ref : SRef) :
+    asInt32? (encodeSRef ref) = some ref.raw := by
+  have lower := Int32.le_toInt ref.raw
+  change (-2147483648 : Int) ≤ ref.raw.toInt at lower
+  have bounds : Int32.minValue.toInt ≤ ref.raw.toInt ∧
+      ref.raw.toInt ≤ Int32.maxValue.toInt := by
+    constructor
+    · rw [Int32.toInt_minValue]
+      exact lower
+    · exact Int32.toInt_le ref.raw
+  unfold asInt32?
+  rw [asInt?_encodeSRef]
+  change (if Int32.minValue.toInt ≤ ref.raw.toInt ∧
+      ref.raw.toInt ≤ Int32.maxValue.toInt then
+    some (Int32.ofInt ref.raw.toInt) else none) = some ref.raw
+  rw [if_pos bounds, Int32.ofInt_toInt]
+
+@[simp] private theorem decodeSRef?_encode (ref : SRef) :
+    decodeSRef? (encodeSRef ref) = some ref := by
+  simp [decodeSRef?, ref.valid]
+
+@[simp] private theorem decodePair?_encode (pair : SRef × SRef) :
+    decodePair? (encodePair pair) = some pair := by
+  rcases pair with ⟨left, right⟩
+  simp [decodePair?, encodePair]
+
+private theorem decodeRelationEntries?_map (table : RelationTable) :
+    decodeRelationEntries? (relationMapItems table) = some table := by
+  induction table with
+  | nil => rfl
+  | cons entry table ih =>
+      rcases entry with ⟨relation, pairs⟩
+      simp [relationMapItems, decodeRelationEntries?, ih,
+        traverse_map_roundtrip encodePair decodePair? decodePair?_encode]
+
+@[simp] theorem decodeRelationTable?_encode (table : RelationTable) :
+    decodeRelationTable? (encodeRelationTable table) = some table := by
+  simp [encodeRelationTable, decodeRelationTable?, decodeRelationEntries?_map]
+
+@[simp] theorem decodeCtx?_encode (ctx : Nucleus.HolSurface.Ctx) :
+    decodeCtx? (encodeCtx ctx) = some ctx := by
+  rcases ctx with ⟨arena, imports, sequents, relations⟩
+  simp [encodeCtx, decodeCtx?, field?, valuesFor,
+    traverse_map_roundtrip encodeLinkRef decodeLinkRef? decodeLinkRef?_encode]
+
+set_option maxHeartbeats 800000 in
+-- Expanding both six-field maps through the generic decoder is expensive.
+@[simp] theorem decodeSeq?_encode (seq : Nucleus.HolSurface.Seq) :
+    decodeSeq? (encodeSeq seq) = some seq := by
+  rcases seq with ⟨arena, imports, premiseSequents, conclusionSequents, premises, conclusions⟩
+  simp [encodeSeq, decodeSeq?, field?, valuesFor,
+    traverse_map_roundtrip encodeLinkRef decodeLinkRef? decodeLinkRef?_encode]
 
 end
 

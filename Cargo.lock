@@ -450,6 +450,7 @@ dependencies = [
 name = "covalence-logic-hol"
 version = "0.0.0"
 dependencies = [
+ "bitflags",
  "covalence-lib-cbor",
  "covalence-lib-hash",
  "serde",
