@@ -1,6 +1,6 @@
 import Nucleus.HolE
+import Nucleus.Finset.Nat
 import Mathlib.Data.Finset.Basic
-import Mathlib.Data.Finset.Fold
 
 /-!
 # Free-variable indices of locally nameless HolE
@@ -40,11 +40,10 @@ def fvarIndices : Expr Sig types sort depth → Finset Nat
 
 /-- One greater than every free-variable index in the expression. -/
 def freshIndex (expression : Expr Sig types sort depth) : Nat :=
-  (fvarIndices expression).fold max 0 id + 1
+  (fvarIndices expression).freshNat
 
 theorem lt_freshIndex {name : Nat} {expression : Expr Sig types sort depth}
     (membership : name ∈ fvarIndices expression) : name < freshIndex expression := by
-  simp only [freshIndex, Nat.lt_add_one_iff, Finset.le_fold_max]
-  exact Or.inr ⟨name, membership, le_rfl⟩
+  exact Finset.lt_freshNat membership
 
 end Nucleus.HolE
