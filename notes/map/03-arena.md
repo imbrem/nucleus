@@ -53,6 +53,12 @@ arena = {
 seg = { start, end, link, source_start,
         var_start, var_count }                  -- §9; the first four are the spike's [v:5]
 def = { tag, ix: [Ix], var?, data?, <columns>, meta? }
+
+A variable is `(name, type)`, both carried on the node — `{tag: "hol.tm.var",
+var: n, ix: [type]}` — as in Lean's `fv (name : Nat) (type)` [v:13] and
+covalence's `Var = (name, type)` [v:11]. There is no variable table. Two
+occurrences that disagree on the type denote two different variables, so
+gathering free variables has no agreement condition and cannot fail.
 ```
 
 Field names are provisional [?1.C].
@@ -727,5 +733,6 @@ inventing [?1.F].
 
 ## 18. Open points
 
-Collected in [`questions/round-1.md`](./questions/round-1.md): 1.A–1.Q.
+Collected in [`questions/round-1.md`](./questions/round-1.md): 1.A–1.R.
+Implementation order in [`06-plan.md`](./06-plan.md).
 Literature in [`05-pointers.md`](./05-pointers.md).

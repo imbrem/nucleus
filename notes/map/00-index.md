@@ -14,6 +14,7 @@ marked as an open question.
 | 03 | [`03-arena.md`](./03-arena.md) | the arena design and the plan to build it |
 | 04 | [`04-evidence.md`](./04-evidence.md) | commands run and their output, for every `[v]` claim |
 | 05 | [`05-pointers.md`](./05-pointers.md) | literature and systems, by the question each answers. From memory, unverified |
+| 06 | [`06-plan.md`](./06-plan.md) | implementation order, S0–S6, with S1 sketched in detail |
 
 Questions live in [`questions/`](./questions/), one file per round.
 

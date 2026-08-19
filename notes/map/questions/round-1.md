@@ -254,3 +254,23 @@ actually is, and it should be pinned somewhere even though it is not TCB, since
 otherwise the name is not a function of the term.
 
 **Answer:**
+
+---
+
+## 1.R — What shape is the lambda node?
+
+Two options, given that a variable is `(name, type)` on the node:
+
+- `{tag: "hol.tm.lam", ix: [var_node, body]}` — the binder points at a
+  `hol.tm.var` node, so "which variable" is unambiguous and the domain comes
+  from that node. HOL Light's `Abs(Var(...), body)` is this.
+- `{tag: "hol.tm.lam", var: n, ix: [domain, body]}` — name and domain given
+  separately, and no node kind appears in a binder position.
+
+Matters because: the first is more compact and makes binding an imported
+variable trivially expressible; the second avoids a def index in a position
+where only one tag is legal, which a validator has to check either way.
+
+The named syntax being formalized should decide this rather than the arena.
+
+**Answer:**
