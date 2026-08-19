@@ -69,7 +69,7 @@ macro_rules! numeric_enum_serde {
             fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
                 match u8::deserialize(deserializer)? {
                     $($value => Ok($variant),)+
-                    _ => Err(serde::de::Error::custom("unsupported v0 enum tag")),
+                    _ => Err(serde::de::Error::custom("unsupported enum tag")),
                 }
             }
         }
@@ -251,7 +251,7 @@ pub enum Expr {
     TyModel { predicate: Ix },
 }
 
-/// Simple traversal-oriented wire form. `ix` contains every arena child in
+/// Traversal-oriented wire form. `ix` contains every arena child in
 /// constructor order; `var` is present only for variable leaves.
 #[derive(Serialize, Deserialize)]
 struct ExprWire {
@@ -655,7 +655,7 @@ struct CachedArena {
 
 impl SharedArena {
     /// # Errors
-    /// Returns an error if the arena cannot be serialized to stable v0 CBOR.
+    /// Returns an error if the arena cannot be serialized as CBOR.
     pub fn new(arena: Arena) -> Result<Self, crate::EncodeError> {
         let bytes = crate::serialize_cbor(&arena)?;
         let address = O256::from_bytes(&bytes);
@@ -691,7 +691,7 @@ struct CachedImportTable {
 
 impl SharedImportTable {
     /// # Errors
-    /// Returns an error if the table cannot be serialized to stable v0 CBOR.
+    /// Returns an error if the table cannot be serialized as CBOR.
     pub fn new(table: ImportTable) -> Result<Self, crate::EncodeError> {
         let bytes = crate::serialize_cbor(&table)?;
         let address = O256::from_bytes(&bytes);

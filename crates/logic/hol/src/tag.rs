@@ -67,7 +67,7 @@ surface_tags! {
     KindStar = 0 => "KIND_STAR",
     KindArr = 1 => "KIND_ARR",
 
-    // Every HolE constructor.
+    // HolE constructors.
     TyBool = 2 => "TY_BOOL",
     TyArr = 3 => "TY_ARR",
     TyApp = 4 => "TY_APP",
@@ -76,7 +76,7 @@ surface_tags! {
     TySub = 7 => "TY_SUB",
     TyExists = 8 => "TY_EXISTS",
     TyModel = 9 => "TY_MODEL",
-    // 10 and 12 are reserved for future signature primitives.
+    // Codes 10 and 12 are unassigned.
     TyLink = 11 => "TY_LINK",
     TmBv = 13 => "TM_BV",
     TmFv = 14 => "TM_FV",

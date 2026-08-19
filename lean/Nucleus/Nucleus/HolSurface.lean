@@ -4,9 +4,8 @@ import Mathlib.Logic.Equiv.Defs
 /-!
 # Indexed HolE syntax arena
 
-This file mirrors the syntax-only portion of `covalence-logic-hol`'s v0 Rust
-arena representation. Sequent and relation representations deliberately live
-in a higher layer.
+This file models the indexed syntax arena implemented by
+`covalence-logic-hol`. Logical relations and sequents are separate layers.
 -/
 
 namespace Nucleus.HolSurface
@@ -15,7 +14,7 @@ noncomputable section
 
 def maxRef : Nat := 2 ^ 31 - 1
 
-/-- Rust `Ix(NonZeroU32)`: exactly the positive `i32` range. -/
+/-- Arena indices are nonzero `u32` values bounded by `i32::MAX`. -/
 structure Ref where
   value : Nat
   positive : 0 < value
@@ -46,12 +45,12 @@ inductive ObjectKind where | bytes | importTable | arena | sequent
 def ObjectKind.tag : ObjectKind → Nat
   | .bytes => 0 | .importTable => 1 | .arena => 2 | .sequent => 3
 
-/-- A 32-byte object identifier representation and its hashing operation. -/
+/-- A 32-byte object identifier and the hash function used to produce it. -/
 class Hash32 (α : Type) where
   bytes : α ≃ { value : Nucleus.Bytes // Nucleus.Bytes.length value = 32 }
   hash : Nucleus.Bytes → α
 
-/-- Rust's `O256`, kept opaque together with its concrete hashing algorithm. -/
+/-- The object identifier. Its hash algorithm remains abstract in Lean. -/
 opaque O256 : Type
 axiom O256.hash32 : Hash32 O256
 attribute [instance] O256.hash32
@@ -86,8 +85,7 @@ private def findIndexFrom (address : O256) : List O256 → Nat → Option Nat
 def findIndex? (table : ImportTable) (address : O256) : Option Nat :=
   findIndexFrom address table 0
 
-/-- Exact value model of Rust's mutating `ImportTable::push`: reuse an
-existing ID, append a new address otherwise, and fail only when the resulting
+/-- Reuse an existing ID or append a new address. Appending fails when the new
 ID is not representable by `u32`. -/
 def push? (table : ImportTable) (address : O256) : Option (ImportTable × ImportId) :=
   let index := (findIndex? table address).getD table.length
@@ -112,7 +110,7 @@ structure Segment where
   sourceStart : Ref
   nonempty : start.value < «end».value
   arenaKind : link.kind = .arena
-  /-- Rust checks that translating the final index remains an `Ix`. -/
+  /-- Translating the final index remains within the arena index range. -/
   sourceBound : sourceStart.value + («end».value - start.value - 1) ≤ maxRef
 
 inductive Expr where
@@ -143,7 +141,7 @@ class TrustedVec (V : Type → Type) where
 instance : TrustedVec List where
   toList := id
 
-/-- Logical model of Rust's immutable slice storage family. -/
+/-- Logical model of immutable slice storage. -/
 structure StaticVec (α : Type) where
   values : List α
   deriving DecidableEq

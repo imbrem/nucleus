@@ -5,10 +5,10 @@ import Nucleus.HolSurface
 /-!
 # CBOR values for indexed HolE objects
 
-This is the value-level counterpart of the Rust Serde implementation.  The
-encoders choose one stable representation.  Decoders are functions and hence
-unambiguous, but maps may occur in any order; uniqueness of each recognized
-field is required.  Thus semantic objects need not have unique encodings.
+These definitions specify the CBOR values encoded and accepted by the Rust
+implementation. Maps may occur in any order, but each recognized field must
+occur exactly once. Different encodings may therefore decode to the same
+object.
 -/
 
 namespace Nucleus.HolSurface.Cbor
@@ -229,14 +229,13 @@ def decodeArena? (value : Nucleus.Cbor) : Option Arena := do
   let defs ← traverse decodeExpr? (← asArray? (← field? entries "defs"))
   some ⟨imports, segments, localBase, defs⟩
 
-/-- Rust serializes `StaticArena` through the owned arena wire shape. -/
+/-- Static and owned arenas share one wire shape. -/
 def encodeStaticArena (arena : StaticArena) : Nucleus.Cbor :=
   encodeArena arena
 
 /-- An address is correct when it hashes a complete CBOR encoding of the
-value. The encoded bytes are a logical witness, not retained by the cached
-wrapper. Rust currently chooses Serde's stable struct-field order; callers may
-use other encodings of the same value without changing what decoding means. -/
+value. The encoded bytes are a logical witness and are not retained by the
+cached wrapper. -/
 def HasAddress (value : Nucleus.Cbor) (address : O256) : Prop :=
   ∃ encoded, Nucleus.CborWire.parse? encoded = some value ∧
     Hash32.hash encoded = address

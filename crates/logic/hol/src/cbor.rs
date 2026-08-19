@@ -1,4 +1,4 @@
-//! Serde-backed exact CBOR codecs for v0 `HolE` objects.
+//! Serde-backed CBOR codecs for indexed `HolE` syntax.
 
 #![allow(clippy::missing_errors_doc)]
 

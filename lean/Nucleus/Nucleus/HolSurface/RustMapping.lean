@@ -2,11 +2,11 @@ import Nucleus.HolE.EmptySyntax
 import Nucleus.HolSurface
 
 /-!
-# Audited Rust-to-Lean HolE type-former map
+# HolE arena type formers
 
-Each constructor of Rust's v0 `Expr` has exactly one case below.  References
-are resolved and checked by the later LCF pass; this file records which raw
-`HolE Empty` constructor that pass must construct.
+`CoreTypeFormer` records the `HolE Empty` constructor represented by each
+arena expression. Child references are resolved before constructing that
+former's arguments.
 -/
 
 namespace Nucleus.HolSurface.RustMapping

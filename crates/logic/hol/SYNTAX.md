@@ -22,7 +22,7 @@ arena children in constructor order. Variable leaves additionally use `var`.
 Scalar literal payloads, when an extension defines them, use a separately typed
 field rather than masquerading as child indices.
 
-The v0 base admits these constructors:
+The arena admits these constructors:
 
 | Rust `Expr` | Lean `HolSurface.Expr` | Tag         | Children/payload   |
 | ----------- | ---------------------- | ----------- | ------------------ |
@@ -36,8 +36,8 @@ The v0 base admits these constructors:
 | `TySub`     | `tySub`                | `TY_SUB`    | carrier, predicate |
 | `TyModel`   | `tyModel`              | `TY_MODEL`  | predicate          |
 
-`SurfaceTag` also reserves names for later HolE and surface extensions. A
-reserved tag is not an admitted expression: decoding succeeds only when
+`SurfaceTag` names the wider HolE syntax. A named tag is not necessarily an
+admitted arena expression: decoding succeeds only when
 `Expr::from_parts` has a matching constructor with exactly the required
 children and payload.
 
@@ -48,10 +48,10 @@ storage family. `OwnedVec` uses `Vec`; `StaticVec` uses `&'static [T]`. Both
 serialize through the same validated owned wire form. Logical relations and
 sequents are intentionally separate representations layered over this syntax.
 
-Rust and Lean both prove/validate preferred-encoding round trips. Cached Rust
+Rust and Lean both validate preferred-encoding round trips. Cached Rust
 objects retain their value and typed `O256` address, not the source CBOR bytes.
-The preferred encoder is versioned protocol, but it is not a canonicalization
-requirement: distinct CBOR byte strings and therefore distinct addresses may
+The preferred encoding is not a canonicalization requirement: distinct CBOR
+byte strings and therefore distinct addresses may
 decode to the same logical value. An address identifies the exact bytes stored
 under it; decoding and re-encoding an arbitrary source need not preserve that
 source address.
