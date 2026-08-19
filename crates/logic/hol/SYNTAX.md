@@ -28,17 +28,28 @@ field rather than masquerading as child indices.
 
 The arena admits these constructors:
 
-| Rust `Expr` | Lean `HolSurface.Expr` | Tag         | Children/payload   |
-| ----------- | ---------------------- | ----------- | ------------------ |
-| `KindStar`  | `kindStar`             | `KIND_STAR` | none               |
-| `KindArr`   | `kindArr`              | `KIND_ARR`  | domain, codomain   |
-| `TyBool`    | `tyBool`               | `TY_BOOL`   | none               |
-| `TyArr`     | `tyArr`                | `TY_ARR`    | domain, codomain   |
-| `TyApp`     | `tyApp`                | `TY_APP`    | function, argument |
-| `TyLam`     | `tyLam`                | `TY_LAM`    | binder kind, body  |
-| `TyBv`      | `tyBv`                 | `TY_BV`     | `var`              |
-| `TySub`     | `tySub`                | `TY_SUB`    | carrier, predicate |
-| `TyModel`   | `tyModel`              | `TY_MODEL`  | predicate          |
+| Rust `Expr` | Lean `HolSurface.Expr` | Tag         | Children/payload          |
+| ----------- | ---------------------- | ----------- | ------------------------- |
+| `KindStar`  | `kindStar`             | `KIND_STAR` | none                      |
+| `KindArr`   | `kindArr`              | `KIND_ARR`  | domain, codomain          |
+| `TyBool`    | `tyBool`               | `TY_BOOL`   | none                      |
+| `TyArr`     | `tyArr`                | `TY_ARR`    | domain, codomain          |
+| `TyApp`     | `tyApp`                | `TY_APP`    | function, argument        |
+| `TyLam`     | `tyLam`                | `TY_LAM`    | binder kind, body         |
+| `TyBv`      | `tyBv`                 | `TY_BV`     | `var`                     |
+| `TySub`     | `tySub`                | `TY_SUB`    | carrier, predicate        |
+| `TyExists`  | `tyExists`             | `TY_EXISTS` | predicate                 |
+| `TyModel`   | `tyModel`              | `TY_MODEL`  | predicate                 |
+| `TmBv`      | `tmBv`                 | `TM_BV`     | `var`                     |
+| `TmFv`      | `tmFv`                 | `TM_FV`     | type; `var` name          |
+| `TmApp`     | `tmApp`                | `TM_APP`    | function, argument        |
+| `TmLam`     | `tmLam`                | `TM_LAM`    | domain, body              |
+| `TmBool`    | `tmBool`               | `TM_BOOL`   | Boolean `value`           |
+| `TmEq`      | `tmEq`                 | `TM_EQ`     | left, right               |
+| `TmEps`     | `tmEps`                | `TM_EPS`    | type, predicate           |
+| `TmAbs`     | `tmAbs`                | `TM_ABS`    | carrier, predicate, value |
+| `TmRep`     | `tmRep`                | `TM_REP`    | carrier, predicate, value |
+| `TmCast`    | `tmCast`               | `TM_CAST`   | term, target type         |
 
 `SurfaceTag` names the wider HolE syntax. A named tag is not necessarily an
 admitted arena expression: decoding succeeds only when

@@ -53,6 +53,15 @@ private def asUInt32? (value : Nucleus.Cbor) : Option UInt32 := do
   let value ← asNat? value
   if value ≤ UInt32.size - 1 then some (UInt32.ofNat value) else none
 
+private def asBool? : Nucleus.Cbor → Option Bool
+  | .primitive (.simple 20) => some false
+  | .primitive (.simple 21) => some true
+  | _ => none
+
+private def asBytes? : Nucleus.Cbor → Option Nucleus.Bytes
+  | .primitive (.bytes value) => some value
+  | _ => none
+
 private def asInt? : Nucleus.Cbor → Option Int
   | .primitive (.integer (.unsigned value)) => some value.toNat
   | .primitive (.integer (.negative value)) => some (.negSucc value.toNat)
@@ -86,6 +95,15 @@ private def optionalField? (entries : List (Nucleus.Cbor × Nucleus.Cbor))
   | [] => some none
   | [value] => some (some value)
   | _ => none
+
+/-- Serde validates the type and uniqueness of every declared optional field
+before the expression tag decides whether that field is semantically relevant. -/
+private def typedOptionalField? {α : Type}
+    (entries : List (Nucleus.Cbor × Nucleus.Cbor)) (name : String)
+    (decode : Nucleus.Cbor → Option α) : Option (Option α) := do
+  match ← optionalField? entries name with
+  | none => some none
+  | some value => some (some (← decode value))
 
 private def traverse {α : Type} (decode : Nucleus.Cbor → Option α) :
     List Nucleus.Cbor → Option (List α)
@@ -163,10 +181,11 @@ def encodeRef (ref : Ref) : Nucleus.Cbor := unsigned ref.value
 def decodeRef? (value : Nucleus.Cbor) : Option Ref := do
   Ref.ofNat? (← asNat? value)
 
-private def exprMap (tag : String) (children : List Ref) (var : Option UInt32 := none) :
-    Nucleus.Cbor :=
+private def exprMap (tag : String) (children : List Ref) (var : Option UInt32 := none)
+    (value : Option Bool := none) : Nucleus.Cbor :=
   map <| [("tag", .primitive (.text tag)), ("ix", array (children.map encodeRef))] ++
-    var.toList.map fun index => ("var", unsigned index.toNat)
+    var.toList.map (fun index => ("var", unsigned index.toNat)) ++
+    value.toList.map (fun value => ("value", .primitive (if value then .true else .false)))
 
 def encodeExpr : Expr → Nucleus.Cbor
   | .kindStar => exprMap "KIND_STAR" []
@@ -177,23 +196,53 @@ def encodeExpr : Expr → Nucleus.Cbor
   | .tyLam domain body => exprMap "TY_LAM" [domain, body]
   | .tyBv index => exprMap "TY_BV" [] (some index)
   | .tySub carrier predicate => exprMap "TY_SUB" [carrier, predicate]
+  | .tyExists predicate => exprMap "TY_EXISTS" [predicate]
   | .tyModel predicate => exprMap "TY_MODEL" [predicate]
+  | .tmBv index => exprMap "TM_BV" [] (some index)
+  | .tmFv name type => exprMap "TM_FV" [type] (some name)
+  | .tmApp function argument => exprMap "TM_APP" [function, argument]
+  | .tmLam domain body => exprMap "TM_LAM" [domain, body]
+  | .tmBool value => exprMap "TM_BOOL" [] none (some value)
+  | .tmEq left right => exprMap "TM_EQ" [left, right]
+  | .tmEps type predicate => exprMap "TM_EPS" [type, predicate]
+  | .tmAbs carrier predicate value => exprMap "TM_ABS" [carrier, predicate, value]
+  | .tmRep carrier predicate value => exprMap "TM_REP" [carrier, predicate, value]
+  | .tmCast term target => exprMap "TM_CAST" [term, target]
 
 def decodeExpr? (value : Nucleus.Cbor) : Option Expr := do
   let entries ← asMap? value
   let children ← traverse decodeRef? (← asArray? (← field? entries "ix"))
-  let var ← optionalField? entries "var"
-  match ← field? entries "tag", children, var with
-  | .primitive (.text "KIND_STAR"), [], none => some .kindStar
-  | .primitive (.text "KIND_ARR"), [domain, codomain], none => some (.kindArr domain codomain)
-  | .primitive (.text "TY_BOOL"), [], none => some .tyBool
-  | .primitive (.text "TY_ARR"), [domain, codomain], none => some (.tyArr domain codomain)
-  | .primitive (.text "TY_APP"), [function, argument], none => some (.tyApp function argument)
-  | .primitive (.text "TY_LAM"), [domain, body], none => some (.tyLam domain body)
-  | .primitive (.text "TY_BV"), [], some var => some (.tyBv (← asUInt32? var))
-  | .primitive (.text "TY_SUB"), [carrier, predicate], none => some (.tySub carrier predicate)
-  | .primitive (.text "TY_MODEL"), [predicate], none => some (.tyModel predicate)
-  | _, _, _ => none
+  let _ ← typedOptionalField? entries "var" asUInt32?
+  let _ ← typedOptionalField? entries "value" asBool?
+  match ← field? entries "tag", children with
+  | .primitive (.text "KIND_STAR"), [] => some .kindStar
+  | .primitive (.text "KIND_ARR"), [domain, codomain] => some (.kindArr domain codomain)
+  | .primitive (.text "TY_BOOL"), [] => some .tyBool
+  | .primitive (.text "TY_ARR"), [domain, codomain] => some (.tyArr domain codomain)
+  | .primitive (.text "TY_APP"), [function, argument] => some (.tyApp function argument)
+  | .primitive (.text "TY_LAM"), [domain, body] => some (.tyLam domain body)
+  | .primitive (.text "TY_BV"), [] => some (.tyBv (← asUInt32? (← field? entries "var")))
+  | .primitive (.text "TY_SUB"), [carrier, predicate] => some (.tySub carrier predicate)
+  | .primitive (.text "TY_EXISTS"), [predicate] => some (.tyExists predicate)
+  | .primitive (.text "TY_MODEL"), [predicate] => some (.tyModel predicate)
+  | .primitive (.text "TM_BV"), [] => some (.tmBv (← asUInt32? (← field? entries "var")))
+  | .primitive (.text "TM_FV"), [type] =>
+      some (.tmFv (← asUInt32? (← field? entries "var")) type)
+  | .primitive (.text "TM_APP"), [function, argument] => some (.tmApp function argument)
+  | .primitive (.text "TM_LAM"), [domain, body] => some (.tmLam domain body)
+  | .primitive (.text "TM_BOOL"), [] =>
+      match ← field? entries "value" with
+      | .primitive (.simple 20) => some (.tmBool false)
+      | .primitive (.simple 21) => some (.tmBool true)
+      | _ => none
+  | .primitive (.text "TM_EQ"), [left, right] => some (.tmEq left right)
+  | .primitive (.text "TM_EPS"), [type, predicate] => some (.tmEps type predicate)
+  | .primitive (.text "TM_ABS"), [carrier, predicate, value] =>
+      some (.tmAbs carrier predicate value)
+  | .primitive (.text "TM_REP"), [carrier, predicate, value] =>
+      some (.tmRep carrier predicate value)
+  | .primitive (.text "TM_CAST"), [term, target] => some (.tmCast term target)
+  | _, _ => none
 
 def encodeSegment (segment : Segment) : Nucleus.Cbor := map [
   ("start", encodeRef segment.start),
@@ -484,8 +533,12 @@ set_option maxHeartbeats 4000000 in
 -- Expanding the generic map decoder once per expression constructor is costly.
 @[simp] theorem decodeExpr?_encode (expr : Expr) :
     decodeExpr? (encodeExpr expr) = some expr := by
-  cases expr <;>
-    simp [encodeExpr, exprMap, decodeExpr?, field?, optionalField?, valuesFor, traverse]
+  cases expr
+  case tmBool value =>
+    cases value <;> simp [encodeExpr, exprMap, decodeExpr?, typedOptionalField?, optionalField?,
+      asBool?, field?, valuesFor, traverse, CborPrimitive.false, CborPrimitive.true]
+  all_goals simp [encodeExpr, exprMap, decodeExpr?, typedOptionalField?, optionalField?,
+    asBool?, field?, valuesFor, traverse]
 
 @[simp] theorem decodeSegment?_encode (segment : Segment) :
     decodeSegment? (encodeSegment segment) = some segment := by

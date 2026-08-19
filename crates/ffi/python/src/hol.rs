@@ -229,15 +229,15 @@ impl From<Expr> for PyExpr {
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 impl PyExpr {
     #[new]
-    #[pyo3(signature = (tag, ix=Vec::new(), var=None))]
-    fn new(tag: &str, ix: Vec<u32>, var: Option<u32>) -> PyResult<Self> {
+    #[pyo3(signature = (tag, ix=Vec::new(), var=None, value=None))]
+    fn new(tag: &str, ix: Vec<u32>, var: Option<u32>, value: Option<bool>) -> PyResult<Self> {
         let tag: SurfaceTag = tag.parse().map_err(value_error)?;
         let children = ix
             .into_iter()
             .map(Ix::new)
             .collect::<Result<Vec<_>, _>>()
             .map_err(value_error)?;
-        Expr::from_parts(tag, &children, var)
+        Expr::from_parts(tag, &children, var, value)
             .map(Self::from)
             .map_err(value_error)
     }
@@ -255,15 +255,32 @@ impl PyExpr {
     #[getter]
     fn var(&self) -> Option<u32> {
         match self.expr {
-            Expr::TyBv { index } => Some(index),
+            Expr::TyBv { index } | Expr::TmBv { index } => Some(index),
+            Expr::TmFv { name, .. } => Some(name),
+            _ => None,
+        }
+    }
+
+    #[getter]
+    fn value(&self) -> Option<bool> {
+        match self.expr {
+            Expr::TmBool { value } => Some(value),
             _ => None,
         }
     }
 
     fn __repr__(&self) -> String {
-        match self.var() {
-            Some(var) => format!("Expr(tag='{}', ix=[], var={var})", self.tag()),
-            None => format!("Expr(tag='{}', ix={:?})", self.tag(), self.ix()),
+        match (self.var(), self.value()) {
+            (Some(var), None) => {
+                format!("Expr(tag='{}', ix={:?}, var={var})", self.tag(), self.ix())
+            }
+            (None, Some(value)) => format!(
+                "Expr(tag='{}', ix={:?}, value={value})",
+                self.tag(),
+                self.ix()
+            ),
+            (None, None) => format!("Expr(tag='{}', ix={:?})", self.tag(), self.ix()),
+            (Some(_), Some(_)) => unreachable!("validated expression payload"),
         }
     }
 }

@@ -115,6 +115,91 @@ mod tests {
     }
 
     #[test]
+    fn expression_wire_validates_declared_payloads_before_using_the_tag() {
+        let mut fields = vec![
+            (
+                CborValue::Text("tag".into()),
+                CborValue::Text("KIND_STAR".into()),
+            ),
+            (CborValue::Text("ix".into()), CborValue::Array(vec![])),
+        ];
+        fields.push((CborValue::Text("var".into()), 9_u64.into()));
+        assert_eq!(
+            from_value::<Expr>(&CborValue::Map(fields.clone())).unwrap(),
+            Expr::KindStar
+        );
+
+        let last = fields.last_mut().unwrap();
+        last.1 = CborValue::Text("not an integer".into());
+        assert!(from_value::<Expr>(&CborValue::Map(fields.clone())).is_err());
+
+        fields.last_mut().unwrap().1 = 9_u64.into();
+        fields.push((CborValue::Text("var".into()), 10_u64.into()));
+        assert!(from_value::<Expr>(&CborValue::Map(fields)).is_err());
+    }
+
+    #[test]
+    fn every_hol_e_empty_surface_constructor_round_trips() {
+        let a = Ix::new(1).unwrap();
+        let b = Ix::new(2).unwrap();
+        let c = Ix::new(3).unwrap();
+        let expressions = [
+            Expr::KindStar,
+            Expr::KindArr {
+                domain: a,
+                codomain: b,
+            },
+            Expr::TyBool,
+            Expr::TyArr {
+                domain: a,
+                codomain: b,
+            },
+            Expr::TyApp {
+                function: a,
+                argument: b,
+            },
+            Expr::TyLam { domain: a, body: b },
+            Expr::TyBv { index: 7 },
+            Expr::TySub {
+                carrier: a,
+                predicate: b,
+            },
+            Expr::TyExists { predicate: a },
+            Expr::TyModel { predicate: a },
+            Expr::TmBv { index: 7 },
+            Expr::TmFv { name: 8, ty: a },
+            Expr::TmApp {
+                function: a,
+                argument: b,
+            },
+            Expr::TmLam { domain: a, body: b },
+            Expr::TmBool { value: false },
+            Expr::TmBool { value: true },
+            Expr::TmEq { left: b, right: c },
+            Expr::TmEps {
+                ty: a,
+                predicate: b,
+            },
+            Expr::TmAbs {
+                carrier: a,
+                predicate: b,
+                value: c,
+            },
+            Expr::TmRep {
+                carrier: a,
+                predicate: b,
+                value: c,
+            },
+            Expr::TmCast { term: a, target: b },
+        ];
+
+        for expression in expressions {
+            let encoded = to_value(&expression).unwrap();
+            assert_eq!(from_value::<Expr>(&encoded).unwrap(), expression);
+        }
+    }
+
+    #[test]
     fn arena_cbor_round_trip_and_hash_are_stable() {
         let imports = empty_imports();
         let arena = sample_arena(imports.link());
