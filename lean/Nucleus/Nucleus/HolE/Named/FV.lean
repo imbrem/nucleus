@@ -18,21 +18,21 @@ set_option relaxedAutoImplicit true
 noncomputable local instance (priority := low) {α : Type _} : DecidableEq α :=
   Classical.decEq α
 
-abbrev TypedFVar (Sig : Signature) := FVar Nat (Ty Sig)
-abbrev Support (Sig : Signature) := Finset (TypedFVar Sig)
+abbrev TypedFVar (Sig : Signature) (Name : Type := Nat) := FVar Name (Ty Sig Name)
+abbrev Support (Sig : Signature) (Name : Type := Nat) := Finset (TypedFVar Sig Name)
 
-private def tyVariable (name : Nat) (kind : Kind) : TypedFVar Sig :=
+private def tyVariable (name : Name) (kind : Kind) : TypedFVar Sig Name :=
   ⟨name, .ty kind⟩
 
-private def tmVariable (name : Nat) (type : Ty Sig) : TypedFVar Sig :=
+private def tmVariable (name : Name) (type : Ty Sig Name) : TypedFVar Sig Name :=
   ⟨name, .tm type⟩
 
 /-- The finite support of a named expression. -/
-noncomputable def fvars : Expr Sig sort → Support Sig
+noncomputable def fvars : Expr Sig sort Name → Support Sig Name
   | .boolTy => ∅
   | .arr A B => fvars A ∪ fvars B
   | .tyApp F A => fvars F ∪ fvars A
-  | @Expr.tyLam _ domain _ name body =>
+  | @Expr.tyLam _ domain _ _ name body =>
       (fvars body).erase (tyVariable name domain)
   | .tyFv name kind => {tyVariable name kind}
   | .sub A name predicate =>
@@ -54,41 +54,44 @@ noncomputable def fvars : Expr Sig sort → Support Sig
   | .rep A name predicate value =>
       fvars A ∪ (fvars predicate).erase (tmVariable name A) ∪ fvars value
 
-noncomputable def tyFvars (expression : Expr Sig sort) : Support Sig :=
+noncomputable def tyFvars (expression : Expr Sig sort Name) : Support Sig Name :=
   FVar.tyvars (fvars expression)
 
-noncomputable def tmFvars (expression : Expr Sig sort) : Support Sig :=
+noncomputable def tmFvars (expression : Expr Sig sort Name) : Support Sig Name :=
   FVar.tmvars (fvars expression)
 
-noncomputable def fvarIndices (expression : Expr Sig sort) : Finset Nat :=
+noncomputable def fvarIndices (expression : Expr Sig sort Name) : Finset Name :=
   FVar.indices (fvars expression)
 
-noncomputable def tyFvarIndices (expression : Expr Sig sort) : Finset Nat :=
+noncomputable def tyFvarIndices (expression : Expr Sig sort Name) : Finset Name :=
   FVar.tyIndices (fvars expression)
 
-noncomputable def tmFvarIndices (expression : Expr Sig sort) : Finset Nat :=
+noncomputable def tmFvarIndices (expression : Expr Sig sort Name) : Finset Name :=
   FVar.tmIndices (fvars expression)
 
-noncomputable def fvarsByIndex (expression : Expr Sig sort) :
-    Nucleus.Dict Nat (Finset (FVarSort (Ty Sig))) :=
+noncomputable def fvarsByIndex (expression : Expr Sig sort Name) :
+    Nucleus.Dict Name (Finset (FVarSort (Ty Sig Name))) :=
   FVar.byIndex (fvars expression)
 
 /-- No name is used with two distinct syntactic sorts. -/
-def NoNameConfusion (expression : Expr Sig sort) : Prop :=
+def NoNameConfusion (expression : Expr Sig sort Name) : Prop :=
   FVar.NoNameConfusion (fvars expression)
 
 /-- Conversion-equivalent annotations at one name are syntactically equal. -/
-def NoConvConfusion (conv : Ty Sig → Ty Sig → Prop)
-    (expression : Expr Sig sort) : Prop :=
+def NoConvConfusion (conv : Ty Sig Name → Ty Sig Name → Prop)
+    (expression : Expr Sig sort Name) : Prop :=
   FVar.NoConvConfusion conv (fvars expression)
 
-theorem noNameConfusion_noConvConfusion {sort : HolSort} {expression : Expr Sig sort}
-    (clear : NoNameConfusion expression) (conv : Ty Sig → Ty Sig → Prop) :
+theorem noNameConfusion_noConvConfusion {sort : HolSort}
+    {expression : Expr Sig sort Name} (clear : NoNameConfusion expression)
+    (conv : Ty Sig Name → Ty Sig Name → Prop) :
     Named.NoConvConfusion conv expression :=
   FVar.noNameConfusion_noConvConfusion clear conv
 
-@[simp] theorem fvars_letTm (name : Nat) (A : Ty Sig) (value body : Tm Sig) :
+@[simp] theorem fvars_letTm (name : Name) (A : Ty Sig Name)
+    (value body : Tm Sig Name) :
     fvars (letTm name A value body) =
-      (fvars A ∪ (fvars body).erase (tmVariable name A)) ∪ fvars value := rfl
+      (fvars A ∪ (fvars body).erase (tmVariable name A)) ∪ fvars value := by
+  simp [letTm, fvars]
 
 end Nucleus.HolE.Named

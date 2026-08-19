@@ -13,7 +13,7 @@ namespace Nucleus.HolE.Named
 universe u
 set_option relaxedAutoImplicit true
 
-inductive Classification (Sig : Signature) : HolSort → Type u where
+inductive Classification (Sig : Signature.{u}) : HolSort → Type (max u 1) where
   | kind {kind : Kind} : Classification Sig (.kind kind)
   | tm (type : Ty Sig) : Classification Sig .tm
 

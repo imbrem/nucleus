@@ -55,7 +55,7 @@ noncomputable def lower (typeScope : TyScope) (termScope : TmScope Sig) :
   | .boolTy => some .boolTy
   | .arr A B => do return .arr (← lower typeScope [] A) (← lower typeScope [] B)
   | .tyApp F A => do return .tyApp (← lower typeScope [] F) (← lower typeScope [] A)
-  | @Expr.tyLam _ domain _ name body => do
+  | @Expr.tyLam _ domain _ _ name body => do
       return .tyLam (← lower (⟨name, domain⟩ :: typeScope) [] body)
   | .tyFv name kind => do return .tyBv (← lookupTy ⟨name, kind⟩ typeScope)
   | .sub A name predicate => do
@@ -114,6 +114,11 @@ noncomputable def lowerTm (typeScope : TyScope) (termScope : TmScope Sig)
         let loweredBody ← lowerTm typeScope (⟨name, A⟩ :: termScope) body
         pure (.lam loweredA loweredBody))
       let loweredValue ← lowerTm typeScope termScope value
-      pure (.app loweredFunction loweredValue)) := rfl
+      pure (.app loweredFunction loweredValue)) := by
+  simp only [lowerTm, lowerTy, letTm, lower]
+  generalize typeEquation : lower typeScope [] A = loweredType
+  generalize bodyEquation :
+    lower typeScope (⟨name, A⟩ :: termScope) body = loweredBody
+  cases loweredType <;> cases loweredBody <;> simp [Option.bind] <;> rfl
 
 end Nucleus.HolE.Named
