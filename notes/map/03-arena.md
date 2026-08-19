@@ -23,7 +23,7 @@ whatever it likes, provided it projects back to a wire arena.
    direction is not required and not wanted [d].
 2. Hash raw bytes [d]. `Link` therefore addresses a byte string and carries its
    format and class at the reference site, which the spike already does [v:5].
-3. TCB small and audited; userspace plural [d]. This sets the layering in §12.
+3. TCB small and audited; userspace plural [d]. This sets the layering in §10.
 4. Lean specifies; Rust transcribes [n:AGENTS.md].
 5. **Grounding by consilience.** Several equivalent syntaxes and proof systems,
    with maps between them, are worth having for their own sake. They are
@@ -51,7 +51,7 @@ arena = {
 }
 
 seg = { start, end, link, source_start,
-        var_start, var_count }                  -- §9; the first four are the spike's [v:5]
+        var_start, var_count }                  -- §8; the first four are the spike's [v:5]
 def = { tag, ix: [Ix], var?, data?, <columns>, meta? }
 
 A variable is `(name, type)`, both carried on the node — `{tag: "hol.tm.var",
@@ -70,13 +70,15 @@ Three deliberate choices:
   `segments = [{1, base, parent, 1}]`; an empty arena is `base = 1, segments =
 []`. Keeping one wire class keeps one decoder and one Lean model; the dense
   and overlay fast paths are in-memory specializations, which cost nothing given
-  §12. Split the wire class later if a segment map needs to be shared by many
+  §10. Split the wire class later if a segment map needs to be shared by many
   overlays without copying — the dump's own workaround (build an arena of
   segments, import it as one segment) covers that case first [d].
 - **Indices stay unsigned.** The dump floats negative indices for imports [d].
-  The sign bit is already spent: `SRef` uses it for relation endpoint polarity
-  [v:5]. One integer space with two sign conventions is a bug source, and it
-  halves range.
+  The sign bit is already spent: in the spike a negative `SRef` is the logical
+  negation of the positive reference, as an endpoint of the implication relation
+  `A ⇒ B` [d], matching the signed-literal convention in `crates/logic/sat`
+  where `Literal(i64)` is negatable and zero is rejected [v:16]. One integer
+  space with two sign conventions is a bug source, and it halves range.
 - **Segments carry no logical content**, as the dump requires [d]. Claims about
   an imported arena go in the fact lists (§5), never on the segment.
 
@@ -91,8 +93,13 @@ Two columns are worth having dense from the start:
 - `ty : Ix` — the type of this index. Cheap, wanted by almost every consumer.
 - `eq : Ix` — semantic equality, read under `ctx` (§6).
 
-A third is derived rather than stored: `fvs[i]`, the free variable set (§8).
+A third is derived rather than stored: `fvs[i]`, the free variable set (§7).
 It is a fold over local nodes, so putting it on the wire would only cache it.
+
+Note what `ty` is and is not. **Only a node's child indices are syntax.** A type
+is a predicate attached to an index afterwards, so the `ty` column carries no
+ordering or well-foundedness obligation and `ty[i]` may point anywhere [d]. The
+child indices are the only thing the structural validator constrains.
 
 Everything else stays sparse in the fact lists until a workload demands a
 column. Adding a column later is additive; removing one is not.
@@ -104,7 +111,7 @@ fact instead — `Syn(HasTy, i, t)`, and the analogous formers for free variable
 and escaping context. That is what makes a side condition dischargeable without
 resolving the import, and it is the same shape as the classified links of #726,
 where `TM_LINK` carries its declared type. Issues #715 and #718 are the same
-question from the import side. §9 gives the variable case a cheaper answer
+question from the import side. §8 gives the variable case a cheaper answer
 than a fact: an interval.
 
 ## 5. `eq` as a decreasing forest
@@ -129,16 +136,30 @@ closure, E-matching, and hash-consing are derived indexes, rebuilt by whoever
 wants them, exactly the position issue #739 takes. The wire records which
 classes were claimed; it does not record how anyone arrived at them.
 
-**H2 (merge restriction).** `eq` may only relate nodes with the same escaping
-context. A node containing a bound variable that escapes it denotes something
-only relative to a binder path, so two nodes escaping different contexts are not
-comparable. §8 defines the per-index demand map `dem[i]` that makes this
-checkable; the condition is `dem[i] = dem[eq[i]]`, and the common case is both
-empty, meaning both locally closed. H2 is not yet checked against the Lean
-semantics [?1.D].
+**H2 (what context-freedom costs).** The point of keeping `eq` on the wire this
+way is that an E-class carries no context: a class is a set of indices and
+nothing else, so two arenas' classes can be compared without carrying a context
+around [d].
 
-`ty` gets the same treatment minus the forest condition: `ty[i]` is an index,
-`ty[i] ≠ i`, and whether `ty[i] < i` should be forced is [?1.E].
+The price is paid at use rather than at merge. An `eq` claim is read under the
+arena's `ctx`, so a class over indices whose free variables include `x` is only
+usable under a binder for `x` when `x` does not occur in the context
+assumptions. Otherwise the class was justified by hypotheses about `x` that the
+binder has just discharged.
+
+That side condition is `x ∉ fvs(ctx)`, which is the freshness test §8 makes an
+interval comparison when the context is imported. So context-freedom of E-class
+identity is bought with a freshness obligation on the consumer, and the
+obligation is cheap.
+
+Nothing in the validator enforces it: a stage-0 validator checks the forest
+shape, and whoever _uses_ a class under a binder checks the freshness. Recorded
+because it is easy to forget and unsound to skip [?1.D].
+
+`ty` gets no such condition. **A type is not syntax** — only a node's child
+indices are. `ty` is a predicate attached after the fact, so `ty[i]` is
+unconstrained: it may point anywhere, before or after `i` [d]. Only the child
+indices carry the ordering invariant.
 
 ## 6. Facts, and where the context goes
 
@@ -158,7 +179,7 @@ give the second: it holds vacuously whenever Γ is not derivable.
 ```
 fact ::= Syn(rel, a, b)      -- syn_eq, conv_eq, ty_eq, has_ty, has_kind, ne, ...
        | Der(ctx, i)         -- i is derivable in HOL under context index ctx
-       | Claims(link, stage) -- everything the linked object claims up to stage
+       | Claims(link)        -- everything the linked object claims
 ```
 
 Premises and conclusions are then two lists of the same type, and the sequent is
@@ -174,33 +195,23 @@ responsibility for them with a conclusion. Both directions are needed:
 premises may be added freely and conclusions dropped freely, which is the
 weakening the dump wants.
 
+**What an absent `ctx` means.** Absent is the empty context. Since a context
+here is an index denoting a proposition, the empty context is `⊤`, so absent and
+`ctx: ⊤` agree and writing `⊤` explicitly is the unambiguous form [d].
+
+`ctx: ⊥` is worth having for the opposite reason. Everything is derivable from
+`⊥`, so an arena whose context is `⊥` makes semantically vacuous claims — its
+`Der` facts hold trivially and carry no information. That is a sound way to
+write "these facts are not semantically checked" without a mode, a flag, or a
+special case in the checker: the marker is a value, and the ordinary reading of
+it is already the intended meaning. Well-formedness is still required, so `⊥`
+buys vacuity, not permission to write nonsense.
+
 **H3.** `Der` is a modality over an unspecified derivability relation and need
 not be decidable. Every `Syn` relation currently is decidable, but nothing in the
 format should assume it.
 
-## 7. Stages
-
-A stage is a number saying how far an object has been checked. Each fact former
-declares the stage at which it is checked.
-
-| Stage  | Meaning                                             |
-| ------ | --------------------------------------------------- |
-| absent | nothing claimed                                     |
-| 0      | decodes; structurally well formed; indices in range |
-| 1      | `Syn` facts checked                                 |
-| 2      | `Der` facts checked                                 |
-
-Stage is orthogonal to fact former. A stage says how far; a former says what
-shape. The dump considers collapsing the syntactic/semantic distinction into
-staging [d]; §6 says the distinction was never the right axis in the first
-place, and once contexts sit inside `Der` there is nothing left to collapse.
-Higher stages are free for later conventions, and `Claims(link, stage)` lets an
-importer say which level of an import it is relying on.
-
-Validation at stage n implies validation at every stage below it. An arena
-carrying no facts is valid at every stage vacuously.
-
-## 8. Binder discipline
+## 7. Binder discipline
 
 The arena constrains this more than a tree does, because an arena **shares
 subterms**. One index may be reached from two different binder paths. Sharing an
@@ -341,7 +352,7 @@ What they cost:
 
 ### Recommendation
 
-**Start named**, with numeric levels [d]. §9 adds the argument that decided it
+**Start named**, with numeric levels [d]. §8 adds the argument that decided it
 in practice: with integer names and per-segment variable windows, freshness
 against an entire import is an interval test. Typed de Bruijn stays fully specified
 above as the fallback, and is what to reach for if free-variable identity across
@@ -372,7 +383,7 @@ The `dem` fold is still worth writing even under names, as the thing that would
 have to exist if 1.M forces the fallback. Both folds are around forty lines
 [?1.L].
 
-## 9. Variables across arenas
+## 8. Variables across arenas
 
 Free variables are integers [v:13]. Two arenas built independently will use the
 same integer for different variables. Inside one arena, whether two indices
@@ -426,7 +437,7 @@ those for extensibility [d]. A window is the affine degenerate case of both.
 Start with windows; the wire cost is two integers per segment and the checker
 cost is an overlap scan.
 
-## 10. Derived addresses
+## 9. Derived addresses
 
 Give every term a name of its own, fast, by keyed hashing:
 
@@ -483,124 +494,7 @@ Prior art for the operator itself: BLAKE3's `derive_key` mode, HKDF's info
 label, and capability derivation in Tahoe-LAFS all do exactly this, and all of
 them insist on domain separation for the same reason [x].
 
-## 11. Substitutions
-
-### Naming an open term
-
-A derived address names a term, and the term's free variables cannot appear
-inside the address. So a name for an open term has to fix a convention for them
-[d]. Two work:
-
-- **Variable-normalized form.** Rename the free variables to `0..n-1` in
-  first-occurrence order, then name the pair (normalized term, `n`). The
-  original names are display metadata. This is what term indexing has always
-  done to key open terms [x, §5 of `05-pointers.md`].
-- **Name the closure.** `λΓ. t` is closed, so it needs no convention, and the
-  variable set is recovered from its type.
-
-Both are userspace. The kernel needs neither, and Fermat over `x, y, z, n` is
-exactly the case they serve. `(term, variable set)` as a structure is the first
-of these with the renaming left implicit — fine, as long as the normalization is
-pinned down somewhere, because otherwise the name is not a function of the term.
-
-### Substitutions
-
-A substitution is a finitely-supported map from variables to terms of the same
-type, identity outside its support. They compose, the identity substitution is a
-unit, and renamings are a submonoid. Restricted to substitutions that fix Γ, the
-operations stay compatible with equality under Γ, which is the usual freshness
-side condition in another costume [d].
-
-**The default for uncovered variables.** Carry the policy in the substitution's
-data and the algebra is fine: `(∅, identity)` is the unit, `(∅, opaque)` is a
-two-sided annihilator, and the whole thing is an ordinary monoid with zero.
-An earlier draft claimed opaque destroys the monoid. It does not — it destroys
-the unit only if the opaque convention _replaces_ the identity one instead of
-extending the set [d].
-
-What it does cost:
-
-- opaque has to be type-indexed, so applying a substitution needs the variable's
-  type — available, since named variables carry it;
-- nothing is cancellative any more, since opaque erases;
-- the Γ-fixing submonoid becomes "support covers Γ and is the identity there",
-  which is fine but is a different condition to state;
-- one object now does substitution and scope restriction.
-
-The last is the design objection and it stands on its own. It also comes with a
-reason to be relaxed about it: **you lose no expressiveness by separating them.**
-Writing `trim_S` for the map that fixes `S` and sends everything else to opaque,
-
-```
-(σ, opaque)  =  trim_{supp σ} ; (σ, identity)
-```
-
-so the opaque-default monoid is generated by the identity-default monoid plus
-the trims. Two composable pieces instead of one fused one, with the same reach.
-
-**Start without.** Identity default, no policy field. Add trims separately if a
-use case appears [?1.N].
-
-### The wire already has the submonoid
-
-§9's per-segment variable window is an affine renaming. That is the growth path,
-and each step is a strict generalization that keeps the monoid:
-
-|     | segment carries          | what it is         |
-| --- | ------------------------ | ------------------ |
-| v0  | `var_start`, `var_count` | affine renaming    |
-| v1  | a table                  | arbitrary renaming |
-| v2  | a map to term indices    | substitution       |
-
-An import under a substitution is then not a new mechanism, it is v2 of a field
-that already exists. A separate arena class for substitutions [d] becomes worth
-having at v2, when the map is large enough to want sharing and its own address.
-
-### Two things called substitution
-
-Worth keeping apart, because the arena has both:
-
-- **Variable substitution**, var to term. The monoid above; in categories with
-  families these are the morphisms between contexts, which is where the
-  composition, identity and functoriality laws come from for free
-  [x, §2 of `05-pointers.md`].
-- **Index normalization**, index to index. §5's `eq` forest is exactly this:
-  the class-minimum map is an idempotent map on the index set. The literature
-  for it is unification solved forms — triangular versus idempotent
-  substitutions — not the binding literature [x, §3 of `05-pointers.md`].
-
-A normalized e-graph is a family of index normalizations, one per choice of
-representative, and a def array is one of them [d]. That reading is right and it
-is the unification one, not the CwF one. Fusing the two would be a mistake even
-though both are monoids.
-
-### Import as substitution, and capture
-
-An import applies the source's def array, so import is substitution application
-[d]. The worry is that substitution is capture-avoiding and import is not.
-
-§9's windows dissolve it. Distinct sources never share variable names, so within
-one arena a name coincidence is intentional by construction, and there is nothing
-accidental left for a binder to capture. Deliberately binding an imported
-variable — importing an open term and generalizing over its free variable — stays
-available and means what it says. Windows compose under nesting, since composing
-affine maps gives an affine map.
-
-That is the substantive payoff of §9 beyond the interval test: it is the
-condition under which import-as-substitution needs no capture-avoidance pass.
-
-### What this costs the TCB
-
-Applying a substitution is needed for beta regardless, so it is not new. The
-delta is the substitution _object_: its wire form, its validation, and the laws.
-Keep the object in userspace until theory interpretation actually needs it
-serialized — substituting a model of T into a proof about abstract T is the
-motivating case [d] and it is also the case that will say what the object should
-look like. HOL kernels have always had `INST` as a rule; making the substitution
-a first-class value is the delta, and Metamath is the extreme where substitution
-_is_ the proof step [x, §2 of `05-pointers.md`].
-
-## 12. Layering
+## 10. Layering
 
 ```
 crates/logic/hol/src/
@@ -620,7 +514,7 @@ façade's type machinery must not define the persisted semantics, and the two
 evaluators must be differentially tested
 [c:notes/vibes/kernel/substrate-expressions.md].
 
-## 13. Links, formats, classes, schemas
+## 11. Links, formats, classes, schemas
 
 Keep the spike's `Link { addr, format, class }` [v:5]. Format is the byte-level
 codec; class is the logical object. Both at the reference site, never behind the
@@ -648,7 +542,7 @@ Prior art, since the dump asks [d] [x]:
   A single-inheritance class tree plus a DAG of refinements that unlock
   interfaces is close to CLOS with `deftype` predicates.
 
-## 14. Data payloads
+## 12. Data payloads
 
 Start with `bytes` and small unsigned integers, matching ladder level 0A
 [n:notes/vision/ladder.md]. Bignat and bigint decode from bytes or arithmetic
@@ -659,7 +553,7 @@ Keep string map keys throughout v0. Integer keys buy compactness and cost
 readability and JSON compatibility; if wanted, they belong in a separate schema
 O256, not a flag.
 
-## 15. Validation, in one pass
+## 13. Validation, in one pass
 
 Every check below is linear, allocation-bounded, and independent of any fixed
 point:
@@ -668,7 +562,7 @@ point:
 2. every child index either `< i` locally, or inside a declared segment.
 3. segments sorted, disjoint, inside `[1, base)`; translated source ranges stay
    in index space.
-4. the `(ty, dem)` fold of §8; binder agreement discharged at every binder.
+4. the `(ty, dem)` fold of §7; binder agreement discharged at every binder.
 5. `eq` forest conditions; `ty` conditions.
 6. facts: endpoints in range, `ctx` in range, relation known.
 
@@ -676,7 +570,12 @@ Nothing here fetches an import. Resolving a segment is a separate, later,
 fallible step. Fail closed: a node that does not decode yields no arena, no
 partial arena, and no theorem — covalence's rule [c:notes/vibes/kernel/substrate-expressions.md].
 
-## 16. Not building yet
+## 14. Not building yet
+
+Options considered and set aside are in
+[`08-alternatives.md`](./08-alternatives.md) rather than deleted: staged
+validity levels, first-class substitutions, typed de Bruijn, per-arena variable
+namespaces.
 
 Named so they are not smuggled in: the general object system and class tree;
 namespaces and string-keyed links; sparse arenas; 64-bit arenas; WASM-defined
@@ -688,7 +587,7 @@ Ion is worth revisiting when either the CBOR bignum situation or the
 self-describing-symbol-table pressure actually bites; writing our own reader
 would put it in the TCB, which is the reason to wait.
 
-## 17. Plan
+## 15. Plan
 
 Each step is a spike branch off `main`, kept open, with a note in
 `notes/spikes/` when it has been used [n:AGENTS.md §2].
@@ -697,13 +596,13 @@ Each step is a spike branch off `main`, kept open, with a note in
 table. Closes issue #745. _Done when_ adding a constructor in one place fails
 the build everywhere it is not handled.
 
-**P1 — `wire` + `check`.** The §3 shape with named binders (§8), the §15
+**P1 — `wire` + `check`.** The §3 shape with named binders (§7), the §13
 validator, the `fvs` fold, no logic. Round-trip
 and adversarial-input fuzzing. Reuse #746 as the starting point rather than
 starting fresh. _Done when_ a corpus of arenas round-trips and every malformed
 input yields a typed error instead of a panic.
 
-**P2 — facts, stage 1.** The §6 fact type, both lists, the `Syn` checker.
+**P2 — facts.** The §6 fact type, both lists, the `Syn` checker.
 Replaces `Seq`/`Ctx`/`Relations` from #735 with one list type; PR #744 is
 already moving that way. _Done when_ an arena with `has_ty` and `syn_eq`
 conclusions checks at stage 1, and a wrong claim is rejected.
@@ -719,20 +618,22 @@ representation. This is issue #739. _Done when_ the projection round-trips and
 the benchmark exists, whatever it says.
 
 **P4a — derived addresses.** The `at` operator, one-element segments, and the
-pointwise-versus-range reconciliation of §10. Small, and it is what makes HOL
+pointwise-versus-range reconciliation of §9. Small, and it is what makes HOL
 equations about individual O256s possible.
 
 **P5 — Python.** Mirror the `wire` objects, not the `mem` ones. Follows #747 and
 #742.
 
 Lean work runs beside P1–P3: the named syntax and its lowering, then the `wire`
-shape and the §15 validation predicate, with the theorem that a validated wire
+shape and the §13 validation predicate, with the theorem that a validated wire
 arena elaborates through the lowering to the intended HolE object. `HolLN/Array.lean` already has an arena, `validate`, and `elaborate`
 [n:notes/plans/2026-08-hol-kernel-mvp.md], so this is closer to porting than to
 inventing [?1.F].
 
-## 18. Open points
+## 16. Open points
 
 Collected in [`questions/round-1.md`](./questions/round-1.md): 1.A–1.R.
-Implementation order in [`06-plan.md`](./06-plan.md).
+Implementation order in [`06-plan.md`](./06-plan.md). The minimal first
+format is [`07-format-v0.md`](./07-format-v0.md). Parked options are in
+[`08-alternatives.md`](./08-alternatives.md).
 Literature in [`05-pointers.md`](./05-pointers.md).

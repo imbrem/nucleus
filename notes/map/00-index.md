@@ -6,15 +6,17 @@ marked as an open question.
 
 ## The documents
 
-| #   | File                                 | What it holds                                                                 |
-| --- | ------------------------------------ | ----------------------------------------------------------------------------- |
-| 00  | `00-index.md`                        | this file: the map, the citation convention, the question register            |
-| 01  | [`01-context.md`](./01-context.md)   | current state of nucleus, covalence, Lean, Rust, as of 2026-08-19             |
-| 02  | [`02-status.md`](./02-status.md)     | PR / issue / docs status: what is open, grouped by design question            |
-| 03  | [`03-arena.md`](./03-arena.md)       | the arena design and the plan to build it                                     |
-| 04  | [`04-evidence.md`](./04-evidence.md) | commands run and their output, for every `[v]` claim                          |
-| 05  | [`05-pointers.md`](./05-pointers.md) | literature and systems, by the question each answers. From memory, unverified |
-| 06  | [`06-plan.md`](./06-plan.md)         | implementation order, S0–S6, with S1 sketched in detail                       |
+| #   | File                                         | What it holds                                                                 |
+| --- | -------------------------------------------- | ----------------------------------------------------------------------------- |
+| 00  | `00-index.md`                                | this file: the map, the citation convention, the question register            |
+| 01  | [`01-context.md`](./01-context.md)           | current state of nucleus, covalence, Lean, Rust, as of 2026-08-19             |
+| 02  | [`02-status.md`](./02-status.md)             | PR / issue / docs status: what is open, grouped by design question            |
+| 03  | [`03-arena.md`](./03-arena.md)               | the arena design and the plan to build it                                     |
+| 04  | [`04-evidence.md`](./04-evidence.md)         | commands run and their output, for every `[v]` claim                          |
+| 05  | [`05-pointers.md`](./05-pointers.md)         | literature and systems, by the question each answers. From memory, unverified |
+| 06  | [`06-plan.md`](./06-plan.md)                 | implementation order, S0–S6, with S1 sketched in detail                       |
+| 07  | [`07-format-v0.md`](./07-format-v0.md)       | the minimal dense arena: field names, Lean, Rust, Python                      |
+| 08  | [`08-alternatives.md`](./08-alternatives.md) | options discussed and set aside, with why                                     |
 
 Questions live in [`questions/`](./questions/), one file per round.
 

@@ -46,7 +46,9 @@ One file, one list, generating the Rust table and the Lean table. This is issue
 
 ## S1 — dense arena, no parent
 
-The whole first slice. Everything after it is additive.
+The whole first slice. Everything after it is additive. The format is specified
+in [`07-format-v0.md`](./07-format-v0.md); this section is the ordering around
+it.
 
 ### Shape
 
@@ -217,11 +219,39 @@ Basic tactics in Rust; the init arena for naturals and infinity that everything
 imports; groundwork for nat and int literals. Issues #707–#710 are this, and
 they are gated on polymorphism, so check that gate before starting.
 
+## Parallel lane — substitution results for agents
+
+Not on the critical path, and worth having formalized while the arena is built
+[d]. Each is independently checkable and none blocks the others. `Named` now
+has `substTmFv` and free-variable machinery to state them against [v:18].
+
+1. `t[id] = t`, and `t[σ][τ] = t[σ ; τ]`. The substitution lemma. Everything
+   else leans on it.
+2. The monoid laws: associativity of `;`, `id` a two-sided unit.
+3. Renamings are closed under `;` and contain `id` — the submonoid that
+   `03-arena.md` §8's variable windows live in.
+4. `x ∉ fvs(t) → t[x := u] = t`. The freshness lemma, and the thing the interval
+   test discharges.
+5. `x ∉ fvs(v) → t[x := u][y := v] = t[y := v][x := u[y := v]]`. Commutation.
+6. Type preservation: `Γ ⊢ t : A` and `σ : Δ → Γ` give `Δ ⊢ t[σ] : A[σ]`.
+7. Derivability preservation: `Γ ⊢ p` gives `Δ ⊢ p[σ]`. This is `INST` and it is
+   what makes substitution a kernel rule rather than a convenience.
+8. Capture: if the free variables of `σ`'s image are disjoint from `t`'s bound
+   names, naive substitution agrees with capture-avoiding substitution. This is
+   the theorem that justifies `03-arena.md` §8's claim that disjoint windows
+   make import-as-substitution capture-free.
+9. Alpha compatibility: `t =α u → t[σ] =α u[σ]`, and the lowering is invariant
+   on alpha classes. Partly present already as `Alpha.lower_eq` and
+   `ScopedExpr.lowered_eq_of_alpha` [v:18].
+10. Solved forms: applying a triangular substitution to itself terminates under
+    the strictly-decreasing condition and yields an idempotent one. This is
+    exactly `03-arena.md` §5's `eq` forest normalization, stated in the
+    unification vocabulary.
+
 ## S6 — facts and sequents
 
-Deliberately last. Until it exists, arenas make claims about nothing and stage 0
-is the only stage, which keeps the TCB at "decode and validate" while the
-representation settles. §6 and §7 are the design; PR #744 is already moving the
+Deliberately last. Until it exists, arenas make claims about nothing, which
+keeps the TCB at "decode and validate" while the representation settles. §6 and §7 are the design; PR #744 is already moving the
 existing spike this way.
 
 ## If you want it faster

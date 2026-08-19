@@ -209,6 +209,78 @@ The crate also carries multiformats (`from_multihash`, `from_raw_cid`) and a
 `git.rs`. Not checked: whether the BLAKE3 implementation behind
 `KeyedNamespace` uses BLAKE3's keyed mode or a prefix construction.
 
+## v:16 — signed literals in the SAT crate
+
+`crates/logic/sat/src/lib.rs`: `pub struct Literal(i64)` with `impl Neg`,
+rejecting zero and `i64::MIN` — "CNF literal must be nonzero and negatable".
+So a signed integer meaning "this reference, negated" is an existing convention
+in the tree, which is what a negative `SRef` is: the logical negation of the
+positive reference as an endpoint of the implication relation `A ⇒ B` [d].
+
+## v:17 — how `Nucleus/Hol/` reached `main`
+
+```
+$ git ls-tree -r --name-only main lean/Nucleus/Nucleus/Hol/ | wc -l   → 30
+$ git merge-base --is-ancestor origin/hol-signatures main             → NO
+$ git log --oneline --diff-filter=A -- lean/.../Hol/Signature.lean    → f23a204 (2026-08-17)
+$ git log --oneline --merges --ancestry-path f23a204..main | tail -2
+  1eee983 Merge pull request #729 from imbrem/hole-defeq-opening
+  068a92a Merge pull request #728 from imbrem/hole-type-exists
+$ git diff --stat main origin/hol-signatures -- lean/.../Hol/         → (empty)
+```
+
+So the directory is on `main`, it arrived via the HolE branches rather than via
+#701, #701's tip is not an ancestor of `main`, and the directory's contents are
+identical on both at present.
+
+`Hol/Signature.lean` imports `Nucleus.HolLN.Syntax` and declares "sorted,
+intrinsically scoped, but extrinsically typed HOL syntax".
+
+## v:18 — the named HolE syntax landed 2026-08-19
+
+```
+$ git log --oneline ae39f6a..origin/main
+01e2d07 Merge pull request #751 from imbrem/hol-e-unsorted
+04ebebc lean: add unsorted named HolE syntax
+d447bf4 Merge pull request #749 from imbrem/hol-e-named
+6cde69a lean: prove named HolE alpha quotient equivalence
+9da7e32 lean: parameterize named HolE variable names
+53c37c9 lean: give named HolE lowering semantics
+6e0d8cb lean: pull back HolE judgments to named syntax
+390cc02 lean: add typed free-variable substitution
+99620ea lean: extract fresh natural Finset utility
+462ebda lean: add HolE free-variable indices and quotation
+e277b3d lean: add named HolE syntax and lowering
+92fadf4 lean: add typed free-variable support views
+                                        (17 files, 1869 insertions)
+```
+
+From `HolE/Named/Syntax.lean`:
+
+```lean
+structure Decl (S : Type v) (Name : Type := Nat) where
+  name : Name
+  sort : S
+inductive Expr (Sig : Signature) (Name : Type := Nat) : HolSort → Type (max u 1)
+  | lam   (name : Name) (domain : Expr Sig Name (.kind .star)) (body : Expr Sig Name .tm)
+  | tmFv  (name : Name) (type : Expr Sig Name (.kind .star))
+  | sub   (carrier) (name : Name) (predicate)
+  | abs / rep (carrier) (name : Name) (predicate) (value)
+  | tyLam (name : Name) (body) ;  tyFv (name : Name) (kind : Kind)
+```
+
+Header: "A binder captures only an occurrence with the same name and the same
+syntactic sort. Type conversion is not part of name resolution."
+
+`Named/Unsorted.lean`: "erases the result sort while retaining the kind
+annotations needed to reconstruct type application, type abstraction, type
+variables, and signature primitives. `check` validates a caller-supplied sort.
+`infer` determines the result sort from the outer constructor."
+
+`Named/Alpha.lean` has `Alpha.refl/symm/trans`, `Alpha.lower_eq`,
+`ScopedExpr.lowered_eq_of_alpha`; `Named/Equivalence.lean` has
+`ClosedFamQuotient.ofLN_toLN` and `ClosedTmQuotient.ofLN_toLN`.
+
 ## What was not verified
 
 - `lake build`, zero-`sorry` via the actual Lean gates, `#print axioms`.

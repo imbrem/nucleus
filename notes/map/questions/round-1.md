@@ -15,6 +15,14 @@ landing #701 as the Day-0 decision [n:notes/plans/2026-08-hol-kernel-mvp.md].
 Matters because: that plan's critical path may already be done, which would
 change what the next fortnight is for.
 
+**Partial answer, 2026-08-19, from the repo [v:17]:** the directory is on
+`main` — 30 files, 8,373 lines — and it arrived through the HolE merges #728 and
+#729. #701's tip is _not_ an ancestor of `main`, although the directory's
+contents are identical on both branches right now. So the namespace is in the
+trunk while the PR stays open. The author's reading is that no Nucleus HOL has
+landed, which is a statement about what counts as landing rather than about the
+files; the remaining question is which sense the notes should use.
+
 **Answer:**
 
 ---
@@ -24,11 +32,13 @@ change what the next fortnight is for.
 `SRef::neg` exists with no doc comment [v:5]. The dump mentions "the variant
 with SAT style negative indices" [d], which reads as polarity.
 
-Matters because: §3 of `03-arena.md` rejects negative indices for imports on the
-grounds that the sign is already spent. If `neg` means something else, or is
-vestigial, that argument changes.
+**Answered 2026-08-19 [d].** A negative `SRef` is the logical negation of the
+positive reference, as an endpoint of the implication relation `A ⇒ B`. The
+SQLite-backed SAT work is the context; `crates/logic/sat` already carries the
+same convention in `Literal(i64)`, negatable and nonzero [v:16].
 
-**Answer:**
+So the argument in `03-arena.md` §3 stands: the sign is spent, and indices stay
+unsigned.
 
 ---
 
@@ -46,16 +56,17 @@ projection makes these user-facing.
 
 ---
 
-## 1.D — Is the merge restriction right?
+## 1.D — Where does the E-class freshness obligation get checked?
 
-**H2** in `03-arena.md` says `eq` may relate two nodes only when their demand
-maps agree, `dem[i] = dem[eq[i]]`. The strict form is both empty, meaning both
-locally closed. The relaxed form allows merging two open nodes that escape the
-same context — a subterm under a binder during rewriting, for instance.
+**Reframed 2026-08-19 [d].** The design's point is that E-class identity carries
+no context: a class is a set of indices and nothing else. The price is that a
+class over indices with `x` free is only usable under a binder for `x` when `x`
+does not occur in the context assumptions.
 
-Matters because: strict is one comparison and is hard to relax later without a
-format change; relaxed makes the escaping context part of E-class identity,
-which is the "context key in E-class identity" question in issue #739.
+The open part is who checks it. The structural validator cannot — it does not
+know the consumer's binder. Candidates: the rule that consumes a class under a
+binder, a side condition on the `eq` fact itself, or a discipline that only
+locally closed classes cross a binder at all.
 
 **Answer:**
 
@@ -63,14 +74,10 @@ which is the "context key in E-class identity" question in issue #739.
 
 ## 1.E — Must `ty[i] < i`?
 
-Forcing it means a type always precedes the term it types, so the whole arena
-stays a DAG in index order. Allowing `ty[i] > i` allows types to be added to an
-arena after the fact, in an overlay.
-
-Matters because: the overlay story wants late additions; the single-scan
-validator wants monotone indices.
-
-**Answer:**
+**Answered 2026-08-19 [d].** No. `ty[i]` is unconstrained. A type is not part of
+the syntax — only a node's child indices are — so `ty` is a predicate attached
+after the fact and carries no ordering obligation. The question was malformed:
+it treated a claim as though it were structure.
 
 ---
 
@@ -267,10 +274,11 @@ Two options, given that a variable is `(name, type)` on the node:
 - `{tag: "hol.tm.lam", var: n, ix: [domain, body]}` — name and domain given
   separately, and no node kind appears in a binder position.
 
-Matters because: the first is more compact and makes binding an imported
-variable trivially expressible; the second avoids a def index in a position
-where only one tag is legal, which a validator has to check either way.
+**Answered 2026-08-19 by the spec [v:18].** `HolE/Named/Syntax.lean` has
 
-The named syntax being formalized should decide this rather than the arena.
+```lean
+| lam (name : Name) (domain : Expr Sig Name (.kind .star)) (body : Expr Sig Name .tm)
+```
 
-**Answer:**
+Name and domain on the binder. The arena follows, so `hol.tm.lam` carries `var`
+and two children, and no validator condition about what its first child's tag is.

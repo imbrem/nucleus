@@ -20,17 +20,27 @@ declarations [v:2].
 
 [v:3]
 
-Two things worth flagging, because the plan notes from 2026-08-17 predate them:
+Three things worth flagging.
 
-- Those notes describe `Nucleus.Hol` as 8.6k unmerged lines in PR #700→#701 and
-  put the Lean total at 14.3k [n:notes/plans/2026-08-hol-kernel-mvp.md].
-  `Hol/` is now on `main` at 8,373 lines and the total is 32,515 [v:2][v:3].
-  PR #701 is still open [v:6]. What landed by which route is [?1.A].
-- `HolE/` on `main` is the largest HOL body after `Hol/` and already carries
-  soundness and consistency. The Rust arena work is downstream of it.
+- The plan notes from 2026-08-17 describe `Nucleus.Hol` as 8.6k unmerged lines
+  in PR #700→#701 and put the Lean total at 14.3k
+  [n:notes/plans/2026-08-hol-kernel-mvp.md]. Both figures have moved.
+- **`Nucleus/Hol/` is in the trunk, but #701 did not put it there.** 30 files,
+  8,373 lines on `main`. It arrived through the HolE merges #728 and #729;
+  #701's tip is not an ancestor of `main`, though the directory's contents are
+  currently identical on both [v:17]. Whether that counts as the HOL kernel
+  having landed is a question about what "landed" means here, not about the
+  files [?1.A].
+- **The named HolE syntax landed on 2026-08-19**, after the first draft of these
+  notes, in #749 and #751:
+  `HolE/Named/{Syntax,Typing,Lower,FV,Alpha,Equivalence,Kernel,Quote,Semantics,Unsorted}.lean`,
+  1,869 lines [v:18]. It carries the alpha quotient equivalence, typed
+  free-variable substitution, and an unsorted variant whose `check`/`infer` pair
+  is the arena's situation exactly. This is what
+  [`07-format-v0.md`](./07-format-v0.md) now builds on.
 
 `HolE.lean` declares independent locally nameless scopes for type and term
-variables [v:7]. Concretely [v:13]: term bound variables are `bv : Fin depth`,
+variables [v:7]; `HolE/Named/` is the named surface above it [v:18]. Concretely [v:13]: term bound variables are `bv : Fin depth`,
 scoped and untyped, so no dangling index is representable and `depth = 0` means
 locally closed; free variables are `fv (name : Nat) (type)`, numeric levels
 carrying their type; `lam` carries the binder's domain. Type variables are
