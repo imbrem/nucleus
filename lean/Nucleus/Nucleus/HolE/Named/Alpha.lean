@@ -12,11 +12,11 @@ namespace Nucleus.HolE.Named
 
 set_option relaxedAutoImplicit true
 
-def Lowerable (typeScope : TyScope) (termScope : TmScope Sig)
+def Lowerable (typeScope : TyScope types) (termScope : TmScope Sig depth)
     (expression : Expr Sig sort) : Prop :=
   ∃ lowered, lower typeScope termScope expression = some lowered
 
-def Alpha (typeScope : TyScope) (termScope : TmScope Sig)
+def Alpha (typeScope : TyScope types) (termScope : TmScope Sig depth)
     (left right : Expr Sig sort) : Prop :=
   ∃ lowered, lower typeScope termScope left = some lowered ∧
     lower typeScope termScope right = some lowered
@@ -43,8 +43,8 @@ theorem Alpha.trans (leftMiddle : Alpha typeScope termScope left middle)
   exact ⟨leftLowered, leftEquality, rightEquality⟩
 
 /-- A named expression bundled with evidence that its scope resolves. -/
-structure ScopedExpr (Sig : Signature) (typeScope : TyScope)
-    (termScope : TmScope Sig) (sort : HolSort) where
+structure ScopedExpr (Sig : Signature) (typeScope : TyScope types)
+    (termScope : TmScope Sig depth) (sort : HolSort) where
   expression : Expr Sig sort
   lowerable : Lowerable typeScope termScope expression
 
@@ -59,5 +59,33 @@ theorem Alpha.lower_eq (equivalent : Alpha typeScope termScope left right) :
     lower typeScope termScope left = lower typeScope termScope right := by
   obtain ⟨lowered, leftEquality, rightEquality⟩ := equivalent
   rw [leftEquality, rightEquality]
+
+/-- The locally nameless expression represented by a scoped named expression. -/
+noncomputable def ScopedExpr.lowered
+    {Sig : Signature} {types : List Kind} {depth : Nat}
+    {typeScope : TyScope types} {termScope : TmScope Sig depth} {sort : HolSort}
+    (expression : ScopedExpr Sig typeScope termScope sort) :
+    Nucleus.HolE.Expr Sig types sort (scopeDepth sort depth) :=
+  Classical.choose (show ∃ lowered,
+    lower typeScope termScope expression.expression = some lowered from expression.lowerable)
+
+@[simp] theorem ScopedExpr.lower_lowered
+    {Sig : Signature} {types : List Kind} {depth : Nat}
+    {typeScope : TyScope types} {termScope : TmScope Sig depth} {sort : HolSort}
+    (expression : ScopedExpr Sig typeScope termScope sort) :
+    lower typeScope termScope expression.expression = some expression.lowered :=
+  Classical.choose_spec (show ∃ lowered,
+    lower typeScope termScope expression.expression = some lowered from expression.lowerable)
+
+theorem ScopedExpr.lowered_eq_of_alpha
+    {Sig : Signature} {types : List Kind} {depth : Nat}
+    {typeScope : TyScope types} {termScope : TmScope Sig depth} {sort : HolSort}
+    {left right : ScopedExpr Sig typeScope termScope sort}
+    (equivalent : left ≈ right) :
+    left.lowered (types := types) (depth := depth) =
+      right.lowered (types := types) (depth := depth) := by
+  have equality := Alpha.lower_eq equivalent
+  rw [left.lower_lowered, right.lower_lowered] at equality
+  exact Option.some.inj equality
 
 end Nucleus.HolE.Named

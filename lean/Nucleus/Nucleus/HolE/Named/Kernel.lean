@@ -15,8 +15,8 @@ namespace Nucleus.HolE.Named
 universe u
 set_option relaxedAutoImplicit true
 
-noncomputable def lowerTerms (typeScope : TyScope) (termScope : TmScope Sig) :
-    List (Tm Sig) → Option (List (Nucleus.HolE.Tm Sig typeScope.kinds termScope.length))
+noncomputable def lowerTerms (typeScope : TyScope types) (termScope : TmScope Sig depth) :
+    List (Tm Sig) → Option (List (Nucleus.HolE.Tm Sig types depth))
   | [] => some []
   | term :: terms => return (← lowerTm typeScope termScope term) ::
       (← lowerTerms typeScope termScope terms)
@@ -24,12 +24,12 @@ noncomputable def lowerTerms (typeScope : TyScope) (termScope : TmScope Sig) :
 /-- Named term equality, carrying its locally nameless proof certificate. -/
 structure EqTm {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
     [Nucleus.HolE.SigFamilyEquality Sig]
-    (typeScope : TyScope) (termScope : TmScope Sig)
-    (Γ : Nucleus.HolE.BoundCtx Sig typeScope.kinds termScope.length)
+    (typeScope : TyScope types) (termScope : TmScope Sig depth)
+    (Γ : Nucleus.HolE.BoundCtx Sig types depth)
     (left right : Tm Sig) (A : Ty Sig) where
-  loweredLeft : Nucleus.HolE.Tm Sig typeScope.kinds termScope.length
-  loweredRight : Nucleus.HolE.Tm Sig typeScope.kinds termScope.length
-  loweredType : Nucleus.HolE.Ty Sig typeScope.kinds
+  loweredLeft : Nucleus.HolE.Tm Sig types depth
+  loweredRight : Nucleus.HolE.Tm Sig types depth
+  loweredType : Nucleus.HolE.Ty Sig types
   leftLowering : lowerTm typeScope termScope left = some loweredLeft
   rightLowering : lowerTm typeScope termScope right = some loweredRight
   typeLowering : lowerTy typeScope A = some loweredType
@@ -38,11 +38,11 @@ structure EqTm {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
 /-- Named provability, carrying a certificate for the lowered sequent. -/
 structure Proves {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
     [Nucleus.HolE.SigFamilyEquality Sig]
-    (typeScope : TyScope) (termScope : TmScope Sig)
-    (Γ : Nucleus.HolE.BoundCtx Sig typeScope.kinds termScope.length)
+    (typeScope : TyScope types) (termScope : TmScope Sig depth)
+    (Γ : Nucleus.HolE.BoundCtx Sig types depth)
     (hypotheses : List (Tm Sig)) (conclusion : Tm Sig) where
-  loweredHypotheses : List (Nucleus.HolE.Tm Sig typeScope.kinds termScope.length)
-  loweredConclusion : Nucleus.HolE.Tm Sig typeScope.kinds termScope.length
+  loweredHypotheses : List (Nucleus.HolE.Tm Sig types depth)
+  loweredConclusion : Nucleus.HolE.Tm Sig types depth
   hypothesesLowering :
     lowerTerms typeScope termScope hypotheses = some loweredHypotheses
   conclusionLowering :
@@ -52,8 +52,8 @@ structure Proves {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
 /-- Soundness is projection of the locally nameless proof certificate. -/
 def Proves.sound {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
     [Nucleus.HolE.SigFamilyEquality Sig]
-    {typeScope : TyScope} {termScope : TmScope Sig}
-    {Γ : Nucleus.HolE.BoundCtx Sig typeScope.kinds termScope.length}
+    {types : List Kind} {depth : Nat} {typeScope : TyScope types}
+    {termScope : TmScope Sig depth} {Γ : Nucleus.HolE.BoundCtx Sig types depth}
     {hypotheses : List (Tm Sig)} {conclusion : Tm Sig}
     (proof : Proves typeScope termScope Γ hypotheses conclusion) :
     Nucleus.HolE.Proves Γ proof.loweredHypotheses proof.loweredConclusion :=
@@ -63,11 +63,11 @@ def Proves.sound {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
 def Proves.complete
     {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
     [Nucleus.HolE.SigFamilyEquality Sig]
-    {typeScope : TyScope} {termScope : TmScope Sig}
-    {Γ : Nucleus.HolE.BoundCtx Sig typeScope.kinds termScope.length}
+    {types : List Kind} {depth : Nat} {typeScope : TyScope types}
+    {termScope : TmScope Sig depth} {Γ : Nucleus.HolE.BoundCtx Sig types depth}
     {hypotheses : List (Tm Sig)} {conclusion : Tm Sig}
-    {loweredHypotheses : List (Nucleus.HolE.Tm Sig typeScope.kinds termScope.length)}
-    {loweredConclusion : Nucleus.HolE.Tm Sig typeScope.kinds termScope.length}
+    {loweredHypotheses : List (Nucleus.HolE.Tm Sig types depth)}
+    {loweredConclusion : Nucleus.HolE.Tm Sig types depth}
     (hypothesesLowering :
       lowerTerms typeScope termScope hypotheses = some loweredHypotheses)
     (conclusionLowering :
@@ -80,8 +80,8 @@ def Proves.complete
 theorem Proves.alphaConclusion
     {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
     [Nucleus.HolE.SigFamilyEquality Sig]
-    {typeScope : TyScope} {termScope : TmScope Sig}
-    {Γ : Nucleus.HolE.BoundCtx Sig typeScope.kinds termScope.length}
+    {types : List Kind} {depth : Nat} {typeScope : TyScope types}
+    {termScope : TmScope Sig depth} {Γ : Nucleus.HolE.BoundCtx Sig types depth}
     {hypotheses : List (Tm Sig)} {left right : Tm Sig}
     (equivalent : Alpha typeScope termScope left right)
     (proof : Proves typeScope termScope Γ hypotheses left) :

@@ -10,17 +10,17 @@ set_option relaxedAutoImplicit true
 abbrev EmptySig := Nucleus.HolE.EmptySig
 
 /-- A named family denotes exactly when its locally nameless lowering denotes. -/
-def DenotesFam (typeScope : TyScope) (typeEnv : Nucleus.HolE.TypeEnv typeScope.kinds)
+def DenotesFam (typeScope : TyScope types) (typeEnv : Nucleus.HolE.TypeEnv types)
     (family : Fam EmptySig kind) (semantic : Nucleus.HolE.DenoteKind kind) : Prop :=
   ∃ lowered,
     lowerFam typeScope family = some lowered ∧
     Nucleus.HolE.DenotesFam typeEnv lowered semantic
 
 /-- Evaluation of named terms is evaluation of their locally nameless lowering. -/
-def Eval (typeScope : TyScope) (termScope : TmScope EmptySig)
-    (typeEnv : Nucleus.HolE.TypeEnv typeScope.kinds)
-    (Γ : Nucleus.HolE.BoundCtx EmptySig typeScope.kinds termScope.length)
-    (boundEnv : Nucleus.HolE.RawBoundEnv termScope.length)
+def Eval (typeScope : TyScope types) (termScope : TmScope EmptySig depth)
+    (typeEnv : Nucleus.HolE.TypeEnv types)
+    (Γ : Nucleus.HolE.BoundCtx EmptySig types depth)
+    (boundEnv : Nucleus.HolE.RawBoundEnv depth)
     (term : Tm EmptySig) (A : Ty EmptySig) (semantic : Nucleus.HolE.Pointed)
     (value : semantic.carrier) : Prop :=
   ∃ loweredTerm loweredType,
