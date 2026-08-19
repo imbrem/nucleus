@@ -34,15 +34,15 @@ The empty sequence is the empty blob. A HashSeq's content address is therefore o
 
 ## Ecosystem inventory
 
-| Crate/type | Current observed version | Purpose and representation | Status | Fit here |
-|---|---:|---|---|---|
-| [`blake3`](https://docs.rs/blake3/latest/blake3/) | 1.x | Canonical optimized BLAKE3 implementation; `Hash` is 32 bytes; ordinary, keyed, derive-key, incremental, XOF, rayon, SIMD, and stable `hazmat` subtree APIs | Active upstream, widely used | Keep using it; the repository already does |
-| [`iroh-blake3`](https://docs.rs/iroh-blake3/latest/iroh_blake3/) | 1.4.5 | Fork of an older `blake3`, API-compatible for ordinary hashing, with faster arbitrary subtree hashing added for Iroh/Bao | Historical compatibility fork; superseded upstream | Do not add |
-| [`bao-tree`](https://docs.rs/bao-tree/latest/bao_tree/) | 0.16.0 | BLAKE3/Bao tree geometry, outboards, multi-range verified streaming; re-exports ordinary `blake3` | Active and used by current Iroh blobs | Add only if verified range streaming/outboards become a requirement, not for arrays |
-| [`iroh-blobs`](https://docs.rs/iroh-blobs/latest/iroh_blobs/) | 0.103.0 | Blob transfer protocol, stores, downloader, tickets, Bao validation, `Hash`, and `hashseq::HashSeq` | Active but current docs warn the post-0.35 redesign is not yet production quality | Too broad as a core array dependency; useful as an optional integration target |
-| [`iroh_blobs::Hash`](https://docs.rs/iroh-blobs/latest/iroh_blobs/struct.Hash.html) | as above | Newtype over `bao_tree::blake3::Hash`, raw 32-byte binary serde, lowercase-hex human serde/display; parses 64-char hex or unpadded base32 | Active protocol-facing link type | Byte-compatible with `O256`, but its serde/text policy differs |
-| [`iroh_blobs::hashseq::HashSeq`](https://docs.rs/iroh-blobs/latest/iroh_blobs/hashseq/struct.HashSeq.html) | as above | Validated `bytes::Bytes` backing; `new`, `iter`, `len`, `is_empty`, `get`, `pop_front`, `into_inner`, `FromIterator`, consuming iterator | Active and intentionally small | Best behavioral reference; reimplement the tiny boundary locally |
-| [`bao`](https://docs.rs/bao/latest/bao/) | 0.13.x | Original Bao verified-streaming encoding | Maintained upstream, but Iroh uses `bao-tree` for multi-range/runtime geometry | Not relevant to a flat link array |
+| Crate/type                                                                                                 | Current observed version | Purpose and representation                                                                                                                                  | Status                                                                            | Fit here                                                                            |
+| ---------------------------------------------------------------------------------------------------------- | -----------------------: | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| [`blake3`](https://docs.rs/blake3/latest/blake3/)                                                          |                      1.x | Canonical optimized BLAKE3 implementation; `Hash` is 32 bytes; ordinary, keyed, derive-key, incremental, XOF, rayon, SIMD, and stable `hazmat` subtree APIs | Active upstream, widely used                                                      | Keep using it; the repository already does                                          |
+| [`iroh-blake3`](https://docs.rs/iroh-blake3/latest/iroh_blake3/)                                           |                    1.4.5 | Fork of an older `blake3`, API-compatible for ordinary hashing, with faster arbitrary subtree hashing added for Iroh/Bao                                    | Historical compatibility fork; superseded upstream                                | Do not add                                                                          |
+| [`bao-tree`](https://docs.rs/bao-tree/latest/bao_tree/)                                                    |                   0.16.0 | BLAKE3/Bao tree geometry, outboards, multi-range verified streaming; re-exports ordinary `blake3`                                                           | Active and used by current Iroh blobs                                             | Add only if verified range streaming/outboards become a requirement, not for arrays |
+| [`iroh-blobs`](https://docs.rs/iroh-blobs/latest/iroh_blobs/)                                              |                  0.103.0 | Blob transfer protocol, stores, downloader, tickets, Bao validation, `Hash`, and `hashseq::HashSeq`                                                         | Active but current docs warn the post-0.35 redesign is not yet production quality | Too broad as a core array dependency; useful as an optional integration target      |
+| [`iroh_blobs::Hash`](https://docs.rs/iroh-blobs/latest/iroh_blobs/struct.Hash.html)                        |                 as above | Newtype over `bao_tree::blake3::Hash`, raw 32-byte binary serde, lowercase-hex human serde/display; parses 64-char hex or unpadded base32                   | Active protocol-facing link type                                                  | Byte-compatible with `O256`, but its serde/text policy differs                      |
+| [`iroh_blobs::hashseq::HashSeq`](https://docs.rs/iroh-blobs/latest/iroh_blobs/hashseq/struct.HashSeq.html) |                 as above | Validated `bytes::Bytes` backing; `new`, `iter`, `len`, `is_empty`, `get`, `pop_front`, `into_inner`, `FromIterator`, consuming iterator                    | Active and intentionally small                                                    | Best behavioral reference; reimplement the tiny boundary locally                    |
+| [`bao`](https://docs.rs/bao/latest/bao/)                                                                   |                   0.13.x | Original Bao verified-streaming encoding                                                                                                                    | Maintained upstream, but Iroh uses `bao-tree` for multi-range/runtime geometry    | Not relevant to a flat link array                                                   |
 
 ### Are there multiple “Iroh BLAKE crates”?
 
@@ -128,7 +128,7 @@ It provided exact-size double-ended iteration, checked indexing and slicing, nul
 
 ### Assumptions now stale or incomplete
 
-- PR #456's constructor declared bytes to be a hash array *exactly when* their length was a width multiple and rejected all others at construction. The clarified requirement is broader: arbitrary CAS bytes must have defined outcomes under checked O256-range queries, including malformed suffixes. The canonical type may remain strict, but the CAS query API must be total as a `Result` and must not make malformed objects disappear from the model.
+- PR #456's constructor declared bytes to be a hash array _exactly when_ their length was a width multiple and rejected all others at construction. The clarified requirement is broader: arbitrary CAS bytes must have defined outcomes under checked O256-range queries, including malformed suffixes. The canonical type may remain strict, but the CAS query API must be total as a `Result` and must not make malformed objects disappear from the model.
 - The old API mixed positional sequence queries, unordered bag/set comparisons, and the `FlatSet` canonical refinement on one type. These remain useful, but the new CAS surface needs named semantic families so `subset`, pointwise/indexed compatibility, bag containment, and byte/order-sensitive equality cannot be confused.
 - The set merge code returned local `HashArray` values. A remote/smart CAS operation needs a separate convention: return bytes/value locally, or atomically admit canonical result bytes and return their `O256` address.
 - `FlatIndexMap` paired consecutive hashes. That is not the same as the new **indexed subset** relation over arrays with null holes; the latter is pointwise and needs no alternating key/value representation.
@@ -151,11 +151,11 @@ Thus `[a, b] != [b, a]`, duplicates are retained, and `NULL` is a real element u
 
 This distinction yields three explicit relation families:
 
-| Family | Order | Multiplicity | Typical operations |
-|---|---|---|---|
-| Sequence/positional | Significant | Significant | `len`, `get`, `slice`, exact equality |
-| Bag | Ignored | Significant | `is_subbag`, bag equality, multiset algebra if needed |
-| Set | Ignored | Ignored | `contains`, `is_subset`, union/intersection/difference/symmetric difference/singleton |
+| Family              | Order       | Multiplicity | Typical operations                                                                    |
+| ------------------- | ----------- | ------------ | ------------------------------------------------------------------------------------- |
+| Sequence/positional | Significant | Significant  | `len`, `get`, `slice`, exact equality                                                 |
+| Bag                 | Ignored     | Significant  | `is_subbag`, bag equality, multiset algebra if needed                                 |
+| Set                 | Ignored     | Ignored      | `contains`, `is_subset`, union/intersection/difference/symmetric difference/singleton |
 
 Set-producing operations need deterministic output bytes if their result is to be content-addressed. The natural normal form is strictly bytewise ascending, deduplicated O256s—the earlier `FlatSet` representation—even though inputs need not be sorted. A naive backend sorts/deduplicates; a smart backend performs indexed set algebra. This ordered **result refinement** does not impose sortedness on general hash arrays.
 
@@ -196,12 +196,12 @@ If “indexed subset” instead means only `support(A) ⊆ support(B)`, decide w
 
 All CAS bytes remain valid **blobs**. Only lengths divisible by 32 are canonical `HashArray` encodings. Four query policies are possible:
 
-| Policy | `len` for 33 bytes | element 1 | Benefit | Main problem |
-|---|---:|---|---|---|
-| Strict checked interpretation | error (`remainder = 1`) | error | No invented/lost bytes; matches Iroh canonicality | Callers must propagate `Result` |
-| Zero-extend final chunk | 2 | one byte + 31 zeros | Total `O256` sequence | Collides semantically with a different 64-byte encoding; re-encoding changes address |
-| Truncate suffix | 1 | absent | Simple prefix semantics | Silently ignores authenticated bytes; many blobs share semantics |
-| Adjoin `PartialO256` | 2 logical elements | `Partial([u8; 1])` | Fully faithful and total | Every algebra must handle a non-O256 value that can never be a normal result |
+| Policy                        |      `len` for 33 bytes | element 1           | Benefit                                           | Main problem                                                                         |
+| ----------------------------- | ----------------------: | ------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Strict checked interpretation | error (`remainder = 1`) | error               | No invented/lost bytes; matches Iroh canonicality | Callers must propagate `Result`                                                      |
+| Zero-extend final chunk       |                       2 | one byte + 31 zeros | Total `O256` sequence                             | Collides semantically with a different 64-byte encoding; re-encoding changes address |
+| Truncate suffix               |                       1 | absent              | Simple prefix semantics                           | Silently ignores authenticated bytes; many blobs share semantics                     |
+| Adjoin `PartialO256`          |      2 logical elements | `Partial([u8; 1])`  | Fully faithful and total                          | Every algebra must handle a non-O256 value that can never be a normal result         |
 
 Recommend strict checked interpretation first. It defines every checked query as either a value or a precise noncanonical-shape error and preserves injectivity of canonical encoding. Check the object's total byte length before answering even a range that happens to cover complete elements; otherwise a malicious/truncated suffix can be hidden by a successful prefix query. A low-level diagnostic API can separately expose `full_elements = byte_len / 32`, `remainder = byte_len % 32`, and raw suffix bytes.
 
