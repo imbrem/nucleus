@@ -15,6 +15,10 @@ the one-way function from an import ID to one `O256`. The `push` builder interns
 an address by reusing its first existing ID, but uniqueness is not a decoding
 invariant and wire duplicates retain their distinct indices.
 
+Relation endpoints use an `i32`: zero is null, positive values are `Ix` values,
+and negative values are negated `Ix` values. `i32::MIN` is rejected because its
+magnitude is outside the `Ix` range.
+
 ## Expression wire shape
 
 Every node is a CBOR map with a string `tag` and an `ix` array containing its
@@ -45,8 +49,14 @@ children and payload.
 
 `Arena<I, V>` is generic only over its optional import-table link and its sealed
 storage family. `OwnedVec` uses `Vec`; `StaticVec` uses `&'static [T]`. Both
-serialize through the same validated owned wire form. Logical relations and
-sequents are intentionally separate representations layered over this syntax.
+serialize through the same validated owned wire form. `Ctx` and `Seq` refer to
+an arena and import table by optional links and encode logical facts as sparse,
+relation-indexed pairs.
+
+Rust canonicalizes imported sequents and relation pairs in private ordered
+bitflag maps. Lean models both that packed representation and its exact public
+projection. Its simpler list-based `Ctx` and `Seq` types are the public wire
+view; ordering and duplicate spellings are not additional logical facts.
 
 Rust and Lean both validate preferred-encoding round trips. Cached Rust
 objects retain their value and typed `O256` address, not the source CBOR bytes.

@@ -28,13 +28,14 @@ rust_library(
     srcs = _RUST_SOURCES,
     tests = [":covalence_logic_hol-unit-test"],
     named_deps = {
+        "bitflags": "nucleus//buck/cargo/production:bitflags-2.13.1",
         "covalence_lib_cbor": "nucleus//crates/lib/cbor:covalence_lib_cbor",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "serde": "nucleus//buck/cargo/production:serde-1.0.229",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "Indexed arena syntax for higher-order logic",
+        "CARGO_PKG_DESCRIPTION": "Indexed higher-order logic syntax and sequents",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",
@@ -59,13 +60,14 @@ rust_test(
     edition = "2024",
     srcs = _RUST_SOURCES,
     named_deps = {
+        "bitflags": "nucleus//buck/cargo/production:bitflags-2.13.1",
         "covalence_lib_cbor": "nucleus//crates/lib/cbor:covalence_lib_cbor",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "serde": "nucleus//buck/cargo/production:serde-1.0.229",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "Indexed arena syntax for higher-order logic",
+        "CARGO_PKG_DESCRIPTION": "Indexed higher-order logic syntax and sequents",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",

@@ -2,10 +2,10 @@ import Nucleus.Cbor.Bytes
 import Mathlib.Logic.Equiv.Defs
 
 /-!
-# Indexed HolE syntax arena
+# Indexed HolE arena objects
 
-This file models the indexed syntax arena implemented by
-`covalence-logic-hol`. Logical relations and sequents are separate layers.
+This file models the indexed syntax and sequent representations implemented by
+`covalence-logic-hol`. Wire codecs live in `Nucleus.HolSurface.Cbor`.
 -/
 
 namespace Nucleus.HolSurface
@@ -170,6 +170,199 @@ inductive Resolve where
   | lazy (link : Link) (index : Ref)
   | wrongKind (link : Link)
   | missing
+
+/-- A signed relation endpoint. `i32::MIN` is excluded because its magnitude is one
+larger than the largest arena reference; every remaining value has exactly one
+of the null, positive-reference, or negative-reference interpretations. -/
+structure SRef where
+  raw : Int32
+  valid : raw ≠ Int32.minValue
+  deriving DecidableEq
+
+/-- Interpretation of a signed relation endpoint. -/
+inductive SRefView where | null | pos (ref : Ref) | neg (ref : Ref)
+  deriving DecidableEq
+
+def relReserved : UInt32 := 0x80000000
+
+inductive Relation where
+  | synEq | convEq | tyEq | hasTy | imp | eq | hasKind | ne
+  deriving DecidableEq
+
+def Relation.all : List Relation :=
+  [.synEq, .convEq, .tyEq, .hasTy, .imp, .eq, .hasKind, .ne]
+
+def Relation.tag : Relation → Nat
+  | .synEq => 0 | .convEq => 1 | .tyEq => 2 | .hasTy => 3
+  | .imp => 4 | .eq => 5 | .hasKind => 6 | .ne => 7
+
+def Relation.symmetric : Relation → Bool
+  | .synEq | .convEq | .tyEq | .eq | .ne => true
+  | .hasTy | .imp | .hasKind => false
+
+/-- The public, relation-indexed view used by the wire format and API. -/
+abbrev RelationTable := List (Relation × List (SRef × SRef))
+
+/-- Relations are presented as premise and conclusion tables. Their packed
+representation is private to the implementation. -/
+structure Relations where
+  premises : RelationTable
+  conclusions : RelationTable
+  deriving DecidableEq
+
+namespace Internal
+
+/-! The packed representation used to prove correspondence with the Rust
+implementation. Clients should use `Relations`, not these masks. -/
+
+abbrev RelationFlags := UInt8
+
+structure RelationEntry where
+  left : SRef
+  right : SRef
+  premiseFlags : RelationFlags
+  conclusionFlags : RelationFlags
+  deriving DecidableEq
+
+/-- Ordered model of
+`BTreeMap<(SRef, SRef), (RelationFlags, RelationFlags)>`. -/
+abbrev PackedRelations := List RelationEntry
+
+/-- Whether a byte mask contains the bit assigned to a relation. -/
+def RelationFlags.contains (flags : RelationFlags) (relation : Relation) : Bool :=
+  (flags.toNat / 2 ^ relation.tag) % 2 == 1
+
+/-- Public projection implemented by `Relations::wire_side`.
+`packed` is ordered by `(left, right)`, as a `BTreeMap` is in Rust. -/
+def PackedRelations.wireSide (packed : PackedRelations) (conclusion : Bool) : RelationTable :=
+  Relation.all.filterMap fun relation =>
+    let pairs := packed.filterMap fun entry =>
+      let flags := if conclusion then entry.conclusionFlags else entry.premiseFlags
+      if flags.contains relation then some (entry.left, entry.right) else none
+    if pairs.isEmpty then none else some (relation, pairs)
+
+/-- A public relation table is in Rust's canonical order precisely when it is
+the projection of an ordered packed map. Duplicate and order-varying CBOR
+tables can still denote the same finite relation before this normalization. -/
+def CanonicalRelationTable (table : RelationTable) (conclusion : Bool) : Prop :=
+  ∃ packed : PackedRelations, packed.wireSide conclusion = table
+
+end Internal
+
+/-! A heterogeneous logical context. -/
+structure Ctx where
+  arena : Option LinkRef
+  imports : Option O256
+  sequents : List LinkRef
+  relations : RelationTable
+  deriving DecidableEq
+
+/-- The public sequent wire shape. The implementation stores it in ordered
+bitflag maps; the corresponding projection is modeled below. -/
+structure Seq where
+  arena : Option LinkRef
+  imports : Option O256
+  premiseSequents : List LinkRef
+  conclusionSequents : List LinkRef
+  premises : RelationTable
+  conclusions : RelationTable
+  deriving DecidableEq
+
+namespace Internal
+
+abbrev SeqFlags := UInt8
+
+structure ImportedSequentEntry where
+  link : LinkRef
+  flags : SeqFlags
+  deriving DecidableEq
+
+/-- Model of the packed `Seq` representation. Both lists stand for
+ordered `BTreeMap`s and therefore contain unique keys. -/
+structure PackedSeq where
+  arena : Option LinkRef
+  imports : Option O256
+  sequents : List ImportedSequentEntry
+  relations : PackedRelations
+  deriving DecidableEq
+
+private def SeqFlags.contains (flags : SeqFlags) (bit : Nat) : Bool :=
+  (flags.toNat / 2 ^ bit) % 2 == 1
+
+/-- Projection from packed sequent storage to its public CBOR
+fields (`PREMISE = 1`, `CONCLUSION = 2`). -/
+def PackedSeq.toPublic (packed : PackedSeq) : Seq where
+  arena := packed.arena
+  imports := packed.imports
+  premiseSequents := packed.sequents.filterMap fun entry =>
+    if entry.flags.contains 0 then some entry.link else none
+  conclusionSequents := packed.sequents.filterMap fun entry =>
+    if entry.flags.contains 1 then some entry.link else none
+  premises := packed.relations.wireSide false
+  conclusions := packed.relations.wireSide true
+
+end Internal
+
+/-- A `Seq` is a compatible pair of contexts: both sides inhabit the same
+arena and import table. -/
+structure CompatibleCtxs where
+  premises : Ctx
+  conclusion : Ctx
+  arena_eq : premises.arena = conclusion.arena
+  imports_eq : premises.imports = conclusion.imports
+
+namespace Seq
+
+def toContexts (seq : Seq) : CompatibleCtxs where
+  premises := ⟨seq.arena, seq.imports, seq.premiseSequents, seq.premises⟩
+  conclusion := ⟨seq.arena, seq.imports, seq.conclusionSequents, seq.conclusions⟩
+  arena_eq := rfl
+  imports_eq := rfl
+
+def ofContexts (contexts : CompatibleCtxs) : Seq where
+  arena := contexts.premises.arena
+  imports := contexts.premises.imports
+  premiseSequents := contexts.premises.sequents
+  conclusionSequents := contexts.conclusion.sequents
+  premises := contexts.premises.relations
+  conclusions := contexts.conclusion.relations
+
+def fromPremises (premises : Ctx) : Seq where
+  arena := premises.arena
+  imports := premises.imports
+  premiseSequents := premises.sequents
+  conclusionSequents := []
+  premises := premises.relations
+  conclusions := []
+
+def fromConclusion (conclusion : Ctx) : Seq where
+  arena := conclusion.arena
+  imports := conclusion.imports
+  premiseSequents := []
+  conclusionSequents := conclusion.sequents
+  premises := []
+  conclusions := conclusion.relations
+
+@[simp] theorem fromPremises_premises (premises : Ctx) :
+    (fromPremises premises).toContexts.premises = premises := rfl
+
+@[simp] theorem fromConclusion_conclusion (conclusion : Ctx) :
+    (fromConclusion conclusion).toContexts.conclusion = conclusion := rfl
+
+@[simp] theorem ofContexts_toContexts (seq : Seq) :
+    ofContexts seq.toContexts = seq := rfl
+
+theorem toContexts_ofContexts (contexts : CompatibleCtxs) :
+    (ofContexts contexts).toContexts = contexts := by
+  cases contexts with
+  | mk premises conclusion arena_eq imports_eq =>
+    cases premises
+    cases conclusion
+    cases arena_eq
+    cases imports_eq
+    rfl
+
+end Seq
 
 end
 

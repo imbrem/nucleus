@@ -1,4 +1,4 @@
-//! Serde-backed CBOR codecs for indexed `HolE` syntax.
+//! Serde-backed CBOR codecs for indexed `HolE` objects.
 
 #![allow(clippy::missing_errors_doc)]
 
@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use covalence_lib_hash::O256;
 
-use crate::Arena;
+use crate::{Arena, Ctx, Seq};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EncodeError(String);
@@ -60,6 +60,18 @@ pub fn arena_to_value(arena: &Arena) -> Result<Value, EncodeError> {
     to_value(arena)
 }
 pub fn arena_from_value(value: &Value) -> Result<Arena, DecodeError> {
+    from_value(value)
+}
+pub fn seq_to_value(seq: &Seq) -> Result<Value, EncodeError> {
+    to_value(seq)
+}
+pub fn seq_from_value(value: &Value) -> Result<Seq, DecodeError> {
+    from_value(value)
+}
+pub fn ctx_to_value(ctx: &Ctx) -> Result<Value, EncodeError> {
+    to_value(ctx)
+}
+pub fn ctx_from_value(value: &Value) -> Result<Ctx, DecodeError> {
     from_value(value)
 }
 pub fn import_table_to_value(table: &crate::ImportTable) -> Result<Value, EncodeError> {
