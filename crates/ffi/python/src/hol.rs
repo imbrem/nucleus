@@ -4,11 +4,12 @@
 #![allow(clippy::trivially_copy_pass_by_ref)]
 
 use covalence_lib_python::prelude::*;
+use covalence_lib_python::pyo3::exceptions::PyIndexError;
 use covalence_lib_python::pyo3::types::{PyBytes, PyType};
 use covalence_logic_hol::{
-    Arena, Ctx, Expr, Format, INIT_ARENA, ImportTable, Ix, LinkRef, ObjectKind, Relation, SRef,
-    Segment, Seq, SharedArena, SharedImportTable, SharedSeq, SurfaceTag, deserialize_cbor,
-    serialize_cbor,
+    Arena, Ctx, Expr, Format, INIT_ARENA, INIT_REFS, ImportTable, InitRefs as RustInitRefs, Ix,
+    LinkRef, ObjectKind, Relation, SRef, Segment, Seq, SharedArena, SharedImportTable, SharedSeq,
+    SurfaceTag, deserialize_cbor, serialize_cbor,
 };
 
 use crate::hash::PyO256;
@@ -205,6 +206,112 @@ impl PyImportTable {
     fn __len__(&self) -> usize {
         self.table.iter().count()
     }
+
+    fn __getitem__(&self, python: Python<'_>, import_id: u32) -> PyResult<Py<PyO256>> {
+        let address = self
+            .table
+            .get(import_id)
+            .ok_or_else(|| PyIndexError::new_err("import id is out of range"))?;
+        py_hash(python, address)
+    }
+
+    #[getter]
+    fn addresses(&self, python: Python<'_>) -> PyResult<Vec<Py<PyO256>>> {
+        self.table
+            .iter()
+            .map(|address| py_hash(python, address))
+            .collect()
+    }
+}
+
+/// Stable named references into [`Arena.init`].
+#[pyclass(
+    frozen,
+    skip_from_py_object,
+    module = "covalence.logic.hol",
+    name = "InitRefs"
+)]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+#[derive(Clone, Copy)]
+pub struct PyInitRefs {
+    refs: RustInitRefs,
+}
+
+#[pymethods]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+impl PyInitRefs {
+    #[getter]
+    fn bool_ty(&self) -> u32 {
+        self.refs.bool_ty.get()
+    }
+    #[getter]
+    fn false_(&self) -> u32 {
+        self.refs.false_.get()
+    }
+    #[getter]
+    fn true_(&self) -> u32 {
+        self.refs.true_.get()
+    }
+    #[getter]
+    fn not_(&self) -> u32 {
+        self.refs.not.get()
+    }
+    #[getter]
+    fn and_(&self) -> u32 {
+        self.refs.and.get()
+    }
+    #[getter]
+    fn or_(&self) -> u32 {
+        self.refs.or.get()
+    }
+    #[getter]
+    fn infinity(&self) -> u32 {
+        self.refs.infinity.get()
+    }
+    #[getter]
+    fn nat_exists(&self) -> u32 {
+        self.refs.nat_exists.get()
+    }
+    #[getter]
+    fn nat_ty(&self) -> u32 {
+        self.refs.nat_ty.get()
+    }
+    #[getter]
+    fn zero(&self) -> u32 {
+        self.refs.zero.get()
+    }
+    #[getter]
+    fn succ(&self) -> u32 {
+        self.refs.succ.get()
+    }
+    #[getter]
+    fn add(&self) -> u32 {
+        self.refs.add.get()
+    }
+    #[getter]
+    fn two_fifty_six(&self) -> u32 {
+        self.refs.two_fifty_six.get()
+    }
+    #[getter]
+    fn byte_ty(&self) -> u32 {
+        self.refs.byte_ty.get()
+    }
+    #[getter]
+    fn bytes_exists(&self) -> u32 {
+        self.refs.bytes_exists.get()
+    }
+    #[getter]
+    fn bytes_ty(&self) -> u32 {
+        self.refs.bytes_ty.get()
+    }
+    #[getter]
+    fn bytes_nil(&self) -> u32 {
+        self.refs.bytes_nil.get()
+    }
+    #[getter]
+    fn bytes_cons(&self) -> u32 {
+        self.refs.bytes_cons.get()
+    }
 }
 
 /// One immutable definition in the arena's `tag`/`ix`/`var` wire shape.
@@ -349,6 +456,11 @@ impl PyArena {
         }
     }
 
+    #[classmethod]
+    fn init_refs(_class: &Bound<'_, PyType>) -> PyInitRefs {
+        PyInitRefs { refs: INIT_REFS }
+    }
+
     fn to_cbor<'py>(&self, python: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         let bytes = serialize_cbor(&self.arena).map_err(value_error)?;
         Ok(PyBytes::new(python, &bytes))
@@ -372,6 +484,17 @@ impl PyArena {
 
     fn __len__(&self) -> usize {
         self.arena.defs().len()
+    }
+
+    /// Return a local definition by its one-based arena reference.
+    fn __getitem__(&self, index: u32) -> PyResult<PyExpr> {
+        let index = Ix::new(index)
+            .map_err(|_| PyIndexError::new_err("reference is not a positive arena index"))?;
+        self.arena
+            .local(index)
+            .cloned()
+            .map(PyExpr::from)
+            .ok_or_else(|| PyIndexError::new_err("reference is not a local arena definition"))
     }
 
     #[getter]
@@ -594,6 +717,7 @@ impl PySeq {
 
 pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyExpr>()?;
+    module.add_class::<PyInitRefs>()?;
     module.add_class::<PyLinkRef>()?;
     module.add_class::<PySegment>()?;
     module.add_class::<PyImportTable>()?;

@@ -1,7 +1,7 @@
 import Nucleus.HolSurface.Cbor
 
 /-!
-# Exact Lean model of Rust's static v0 initialization arena
+# Lean model of the static foundational arena
 
 The table contains core HolE only. It defines second-order Peano naturals,
 addition, 256 by repeated doubling, the finite byte subtype, and byte strings

@@ -2,7 +2,16 @@
 
 import pytest
 from covalence.lib.hash import O256
-from covalence.logic.hol import Arena, Ctx, Expr, ImportTable, LinkRef, Segment, Seq
+from covalence.logic.hol import (
+    Arena,
+    Ctx,
+    Expr,
+    ImportTable,
+    InitRefs,
+    LinkRef,
+    Segment,
+    Seq,
+)
 
 
 def test_expression_shape_and_arena_cbor_round_trip() -> None:
@@ -61,6 +70,10 @@ def test_arenas_and_sequents_form_a_lazy_import_graph() -> None:
     assert arena_imports.push(root.address()) == 0
     assert arena_imports.push(root.address()) == 0
     assert len(arena_imports) == 1
+    assert arena_imports[0] == root.address()
+    assert arena_imports.addresses == [root.address()]
+    with pytest.raises(IndexError):
+        _ = arena_imports[1]
     assert isinstance(arena_imports.address(), O256)
     dependent = Arena(arena_imports.address())
     dependent.add_segment(Segment(1, 2, LinkRef(0, "cbor_dense", "arena"), 1))
@@ -111,7 +124,24 @@ def test_contexts_materialize_and_repack_every_sequent_fact() -> None:
 
 def test_static_init_arena_is_literal_free_and_hash_pinned() -> None:
     arena = Arena.init()
+    refs = Arena.init_refs()
+    assert isinstance(refs, InitRefs)
     assert len(arena) == 664
+    assert arena[refs.bool_ty].tag == "TY_BOOL"
+    assert arena[refs.false_].tag == "TM_BOOL"
+    assert arena[refs.false_].value is False
+    assert arena[refs.true_].tag == "TM_BOOL"
+    assert arena[refs.true_].value is True
+    assert arena[refs.not_].tag == "TM_LAM"
+    assert arena[refs.nat_ty].tag == "TY_MODEL"
+    assert arena[refs.zero].tag == "TM_EPS"
+    assert arena[refs.succ].tag == "TM_EPS"
+    assert arena[refs.bytes_ty].tag == "TY_MODEL"
+    assert arena[refs.bytes_nil].tag == "TM_EPS"
+    with pytest.raises(IndexError):
+        _ = arena[0]
+    with pytest.raises(IndexError):
+        _ = arena[len(arena) + 1]
     assert all(expr.tag not in {"TM_NAT", "TM_BYTES"} for expr in arena.defs)
     assert Arena.from_cbor(arena.to_cbor()).to_cbor() == arena.to_cbor()
     assert str(arena.address()) == (
