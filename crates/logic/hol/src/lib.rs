@@ -136,6 +136,21 @@ mod tests {
         fields.last_mut().unwrap().1 = 9_u64.into();
         fields.push((CborValue::Text("var".into()), 10_u64.into()));
         assert!(from_value::<Expr>(&CborValue::Map(fields)).is_err());
+
+        let mut fields = vec![
+            (
+                CborValue::Text("tag".into()),
+                CborValue::Text("KIND_STAR".into()),
+            ),
+            (CborValue::Text("ix".into()), CborValue::Array(vec![])),
+            (CborValue::Text("data".into()), CborValue::Bytes(vec![1, 2])),
+        ];
+        assert_eq!(
+            from_value::<Expr>(&CborValue::Map(fields.clone())).unwrap(),
+            Expr::KindStar
+        );
+        fields.last_mut().unwrap().1 = CborValue::Array(vec![1_u64.into(), 2_u64.into()]);
+        assert!(from_value::<Expr>(&CborValue::Map(fields)).is_err());
     }
 
     #[test]
@@ -191,12 +206,30 @@ mod tests {
                 value: c,
             },
             Expr::TmCast { term: a, target: b },
+            Expr::TmNat {
+                value: covalence_data_num::Num::from(256_u16),
+            },
+            Expr::TmBytes {
+                value: bytes::Bytes::from_static(b"HolE"),
+            },
         ];
 
         for expression in expressions {
             let encoded = to_value(&expression).unwrap();
             assert_eq!(from_value::<Expr>(&encoded).unwrap(), expression);
         }
+    }
+
+    #[test]
+    fn natural_literals_require_canonical_big_endian_data() {
+        assert_eq!(
+            Expr::from_parts(SurfaceTag::TmNat, &[], None, None, Some(&[1, 0])).unwrap(),
+            Expr::TmNat {
+                value: covalence_data_num::Num::from(256_u16),
+            }
+        );
+        assert!(Expr::from_parts(SurfaceTag::TmNat, &[], None, None, Some(&[0, 1])).is_err());
+        assert!(Expr::from_parts(SurfaceTag::TmNat, &[], None, None, Some(&[])).is_err());
     }
 
     #[test]

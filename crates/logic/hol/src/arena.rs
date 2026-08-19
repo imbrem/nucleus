@@ -3,7 +3,10 @@ use std::fmt::{self, Display, Formatter};
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
+use bytes::Bytes;
+use covalence_data_num::Num;
 use covalence_lib_hash::O256;
+use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::SurfaceTag;
@@ -289,6 +292,11 @@ pub enum Expr {
     /// Surface conversion. Its LCF interpretation is the source term when its
     /// type equals `target`, and canonical inhabited garbage otherwise.
     TmCast { term: Ix, target: Ix },
+    /// Arbitrary-precision natural literal surface sugar. Foundational arenas
+    /// define naturals in pure `HolE` and deliberately do not use this node.
+    TmNat { value: Num },
+    /// Immutable byte-string literal surface sugar.
+    TmBytes { value: Bytes },
 }
 
 /// Traversal-oriented wire form. `ix` contains every arena child in
@@ -302,6 +310,36 @@ struct ExprWire {
     var: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     value: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    data: Option<WireBytes>,
+}
+
+struct WireBytes(Vec<u8>);
+
+impl Serialize for WireBytes {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bytes(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for WireBytes {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct BytesVisitor;
+        impl Visitor<'_> for BytesVisitor {
+            type Value = WireBytes;
+
+            fn expecting(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a byte string")
+            }
+            fn visit_bytes<E: serde::de::Error>(self, value: &[u8]) -> Result<Self::Value, E> {
+                Ok(WireBytes(value.to_vec()))
+            }
+            fn visit_byte_buf<E: serde::de::Error>(self, value: Vec<u8>) -> Result<Self::Value, E> {
+                Ok(WireBytes(value))
+            }
+        }
+        deserializer.deserialize_bytes(BytesVisitor)
+    }
 }
 
 impl From<&Expr> for ExprWire {
@@ -318,6 +356,11 @@ impl From<&Expr> for ExprWire {
                 Expr::TmBool { value } => Some(*value),
                 _ => None,
             },
+            data: match expr {
+                Expr::TmNat { value } => Some(WireBytes(value.to_canonical_bytes())),
+                Expr::TmBytes { value } => Some(WireBytes(value.to_vec())),
+                _ => None,
+            },
         }
     }
 }
@@ -331,7 +374,10 @@ impl TryFrom<ExprWire> for Expr {
             .then_some(wire.var)
             .flatten();
         let value = (tag == SurfaceTag::TmBool).then_some(wire.value).flatten();
-        Self::from_parts(tag, &wire.ix, var, value)
+        let data = matches!(tag, SurfaceTag::TmNat | SurfaceTag::TmBytes)
+            .then_some(wire.data.as_ref().map(|data| data.0.as_slice()))
+            .flatten();
+        Self::from_parts(tag, &wire.ix, var, value, data)
     }
 }
 
@@ -345,7 +391,27 @@ impl Expr {
         children: &[Ix],
         var: Option<u32>,
         value: Option<bool>,
+        data: Option<&[u8]>,
     ) -> Result<Self, &'static str> {
+        if tag == SurfaceTag::TmNat {
+            return match (children, var, value, data) {
+                ([], None, None, Some(data)) => Num::from_canonical_bytes(data)
+                    .map(|value| Self::TmNat { value })
+                    .map_err(|_| "non-canonical natural literal"),
+                _ => Err("invalid natural literal payload"),
+            };
+        }
+        if tag == SurfaceTag::TmBytes {
+            return match (children, var, value, data) {
+                ([], None, None, Some(data)) => Ok(Self::TmBytes {
+                    value: Bytes::copy_from_slice(data),
+                }),
+                _ => Err("invalid byte-string literal payload"),
+            };
+        }
+        if data.is_some() {
+            return Err("only a literal expression may carry `data`");
+        }
         let no_payload = var.is_none() && value.is_none();
         match (tag, children, var, value) {
             (SurfaceTag::KindStar, [], None, None) => Ok(Self::KindStar),
@@ -454,6 +520,8 @@ impl Expr {
             Self::TmAbs { .. } => SurfaceTag::TmAbs,
             Self::TmRep { .. } => SurfaceTag::TmRep,
             Self::TmCast { .. } => SurfaceTag::TmCast,
+            Self::TmNat { .. } => SurfaceTag::TmNat,
+            Self::TmBytes { .. } => SurfaceTag::TmBytes,
         }
     }
     pub fn children(&self) -> impl Iterator<Item = Ix> + '_ {
@@ -462,7 +530,9 @@ impl Expr {
             | Self::TyBool
             | Self::TyBv { .. }
             | Self::TmBv { .. }
-            | Self::TmBool { .. } => [None, None, None],
+            | Self::TmBool { .. }
+            | Self::TmNat { .. }
+            | Self::TmBytes { .. } => [None, None, None],
             Self::KindArr { domain, codomain } | Self::TyArr { domain, codomain } => {
                 [Some(*domain), Some(*codomain), None]
             }
