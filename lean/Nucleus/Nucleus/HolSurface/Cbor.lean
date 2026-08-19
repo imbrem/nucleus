@@ -278,39 +278,41 @@ private def decodeRelationEntries? :
 def decodeRelationTable? (value : Nucleus.Cbor) : Option RelationTable := do
   decodeRelationEntries? (← asMap? value)
 
+def encodeCtxBody (body : Nucleus.HolSurface.CtxBody) : Nucleus.Cbor := map [
+  ("sequents", array (body.sequents.map encodeLinkRef)),
+  ("relations", encodeRelationTable body.relations)]
+
+def decodeCtxBody? (value : Nucleus.Cbor) : Option Nucleus.HolSurface.CtxBody := do
+  let entries ← asMap? value
+  let sequents ← traverse decodeLinkRef? (← asArray? (← field? entries "sequents"))
+  let relations ← decodeRelationTable? (← field? entries "relations")
+  some ⟨sequents, relations⟩
+
 def encodeCtx (ctx : Nucleus.HolSurface.Ctx) : Nucleus.Cbor := map [
   ("arena", encodeOptional encodeLinkRef ctx.arena),
   ("imports", encodeOptional encodeO256 ctx.imports),
-  ("sequents", array (ctx.sequents.map encodeLinkRef)),
-  ("relations", encodeRelationTable ctx.relations)]
+  ("body", encodeCtxBody ctx.body)]
 
 def decodeCtx? (value : Nucleus.Cbor) : Option Nucleus.HolSurface.Ctx := do
   let entries ← asMap? value
   let arena ← decodeOptional decodeLinkRef? (← field? entries "arena")
   let imports ← decodeOptional decodeO256? (← field? entries "imports")
-  let sequents ← traverse decodeLinkRef? (← asArray? (← field? entries "sequents"))
-  let relations ← decodeRelationTable? (← field? entries "relations")
-  some ⟨arena, imports, sequents, relations⟩
+  let body ← decodeCtxBody? (← field? entries "body")
+  some ⟨arena, imports, body⟩
 
 def encodeSeq (seq : Nucleus.HolSurface.Seq) : Nucleus.Cbor := map [
   ("arena", encodeOptional encodeLinkRef seq.arena),
   ("imports", encodeOptional encodeO256 seq.imports),
-  ("premise_sequents", array (seq.premiseSequents.map encodeLinkRef)),
-  ("conclusion_sequents", array (seq.conclusionSequents.map encodeLinkRef)),
-  ("premises", encodeRelationTable seq.premises),
-  ("conclusions", encodeRelationTable seq.conclusions)]
+  ("premises", encodeCtxBody seq.premises),
+  ("conclusion", encodeCtxBody seq.conclusion)]
 
 def decodeSeq? (value : Nucleus.Cbor) : Option Nucleus.HolSurface.Seq := do
   let entries ← asMap? value
   let arena ← decodeOptional decodeLinkRef? (← field? entries "arena")
   let imports ← decodeOptional decodeO256? (← field? entries "imports")
-  let premiseSequents ← traverse decodeLinkRef?
-    (← asArray? (← field? entries "premise_sequents"))
-  let conclusionSequents ← traverse decodeLinkRef?
-    (← asArray? (← field? entries "conclusion_sequents"))
-  let premises ← decodeRelationTable? (← field? entries "premises")
-  let conclusions ← decodeRelationTable? (← field? entries "conclusions")
-  some ⟨arena, imports, premiseSequents, conclusionSequents, premises, conclusions⟩
+  let premises ← decodeCtxBody? (← field? entries "premises")
+  let conclusion ← decodeCtxBody? (← field? entries "conclusion")
+  some ⟨arena, imports, premises, conclusion⟩
 
 /-- An address is correct when it hashes a complete CBOR encoding of the
 value. The encoded bytes are a logical witness and are not retained by the
@@ -569,16 +571,14 @@ private theorem decodeRelationEntries?_map (table : RelationTable) :
 
 @[simp] theorem decodeCtx?_encode (ctx : Nucleus.HolSurface.Ctx) :
     decodeCtx? (encodeCtx ctx) = some ctx := by
-  rcases ctx with ⟨arena, imports, sequents, relations⟩
-  simp [encodeCtx, decodeCtx?, field?, valuesFor,
+  rcases ctx with ⟨arena, imports, body⟩
+  simp [encodeCtx, decodeCtx?, encodeCtxBody, decodeCtxBody?, field?, valuesFor,
     traverse_map_roundtrip encodeLinkRef decodeLinkRef? decodeLinkRef?_encode]
 
-set_option maxHeartbeats 800000 in
--- Expanding both six-field maps through the generic decoder is expensive.
 @[simp] theorem decodeSeq?_encode (seq : Nucleus.HolSurface.Seq) :
     decodeSeq? (encodeSeq seq) = some seq := by
-  rcases seq with ⟨arena, imports, premiseSequents, conclusionSequents, premises, conclusions⟩
-  simp [encodeSeq, decodeSeq?, field?, valuesFor,
+  rcases seq with ⟨arena, imports, premises, conclusion⟩
+  simp [encodeSeq, decodeSeq?, encodeCtxBody, decodeCtxBody?, field?, valuesFor,
     traverse_map_roundtrip encodeLinkRef decodeLinkRef? decodeLinkRef?_encode]
 
 end
