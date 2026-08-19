@@ -223,8 +223,8 @@ def Relation.symmetric : Relation → Bool
 /-- The public, relation-indexed view used by the wire format and API. -/
 abbrev RelationTable := List (Relation × List (SRef × SRef))
 
-/-- One complete, unpacked side of a sparse v2 sequent. Rust stores the same
-two fields directly; no flag-packed representation belongs to the TCB. -/
+/-- One sparse logical side. The Rust representation stores the same two
+fields directly. -/
 structure CtxBody where
   sequents : List LinkRef
   relations : RelationTable
