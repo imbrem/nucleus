@@ -205,6 +205,11 @@ Matters because: it decides whether `var_count` is a bound the importer asserts
 about the source, or a filter the importer applies to it. The filter reading is
 strictly more useful and slightly more dangerous.
 
+Related: §11 shows the opaque behaviour factors as `trim ; substitution`, so on
+the substitution side it need not be a mode. The same factoring may apply here,
+which would make this question "is trimming a separate segment operation?"
+rather than a policy flag.
+
 **Answer:**
 
 ---
