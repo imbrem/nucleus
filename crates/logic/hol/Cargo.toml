@@ -1,0 +1,16 @@
+[package]
+name = "covalence-logic-hol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Backend-neutral LCF interface for higher-order logic kernels"
+publish = false
+
+[dependencies]
+covalence-lib-cbor = { path = "../../lib/cbor" }
+covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["blake3", "serde"] }
+serde = { version = "1", features = ["derive"] }
+
+[lints]
+workspace = true
