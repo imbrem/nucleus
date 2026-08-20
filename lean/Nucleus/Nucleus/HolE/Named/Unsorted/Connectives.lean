@@ -354,4 +354,55 @@ theorem imp_hasType (left right :
 
 end Term
 
+namespace Proof
+
+variable {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
+  [Nucleus.HolE.SigFamilyEquality Sig]
+
+/-- Add one unused checked proposition to the hypothesis list. -/
+noncomputable def weakenHyp (proposition : BoolTerm typeScope termScope Γ)
+    (premise : Proof (Sig := Sig) typeScope termScope Γ hypotheses conclusion) :
+    Proof (Sig := Sig) typeScope termScope Γ
+      (proposition :: hypotheses) conclusion :=
+  premise.hypothesisMap (fun _candidate membership =>
+    List.mem_cons_of_mem proposition membership)
+
+/-- Eliminate one checked beta redex.  The named result is supplied explicitly;
+its equation with locally nameless opening is the only bookkeeping premise. -/
+def betaReduce (name : Nat) (typedContext : Nucleus.HolE.TypedCtx Γ)
+    (domain : Family Sig typeScope .star)
+    (body : Term Sig typeScope
+      (.cons ⟨name, domain.expression.sorted⟩ termScope)
+      (Nucleus.HolE.extendBound domain.lowered Γ) (Family.boolTy typeScope))
+    (argument : Term Sig typeScope termScope Γ domain)
+    (result : BoolTerm typeScope termScope Γ)
+    (resultEq : result.lowered =
+      Nucleus.HolE.openBound body.lowered argument.lowered)
+    (premise : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.app (Term.lam name domain (Family.boolTy typeScope) body) argument)) :
+    Proof (Sig := Sig) typeScope termScope Γ hypotheses result :=
+  premise.convert
+    (TermEq.beta name typedContext domain (Family.boolTy typeScope)
+      body argument result resultEq)
+
+/-- Introduce one checked beta redex. -/
+def betaExpand (name : Nat) (typedContext : Nucleus.HolE.TypedCtx Γ)
+    (domain : Family Sig typeScope .star)
+    (body : Term Sig typeScope
+      (.cons ⟨name, domain.expression.sorted⟩ termScope)
+      (Nucleus.HolE.extendBound domain.lowered Γ) (Family.boolTy typeScope))
+    (argument : Term Sig typeScope termScope Γ domain)
+    (result : BoolTerm typeScope termScope Γ)
+    (resultEq : result.lowered =
+      Nucleus.HolE.openBound body.lowered argument.lowered)
+    (premise : Proof (Sig := Sig) typeScope termScope Γ hypotheses result) :
+    Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.app (Term.lam name domain (Family.boolTy typeScope) body) argument) :=
+  premise.convert
+    (TermEq.symm
+      (TermEq.beta name typedContext domain (Family.boolTy typeScope)
+        body argument result resultEq))
+
+end Proof
+
 end Nucleus.HolE.Named.Unsorted
