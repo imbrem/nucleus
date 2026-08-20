@@ -1,4 +1,4 @@
-//! Flat O256 sequences over interchangeable storage.
+//! Flat O256 sequences.
 
 use std::{fmt, slice::SliceIndex};
 
@@ -7,38 +7,28 @@ use covalence_lib_hash::O256;
 use snafu::Snafu;
 use zerocopy::{FromBytes, IntoBytes};
 
-/// The serialized width of one O256 element.
+/// O256 width in bytes.
 pub const WIDTH: usize = 32;
 
-/// Bytes whose length is not a whole number of O256 elements.
+/// A noncanonical byte length.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Snafu)]
 #[snafu(crate_root(snafu))]
 #[snafu(display("expected a multiple of {WIDTH} bytes, found {len}"))]
 pub struct WidthError {
-    /// The byte length supplied by the caller.
+    /// Actual byte length.
     pub len: usize,
 }
 
-/// A flat O256 sequence backed by `V`.
-///
-/// Sequence semantics require only `V: AsRef<[O256]>`. The default owned
-/// storage is `Vec<O256>`; borrowed slices and alternative containers use the
-/// same methods and representation boundary.
+/// An O256 sequence backed by `V`.
 #[repr(transparent)]
 #[derive(Clone, Copy, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct HashArray<V = Vec<O256>>(V);
+pub struct HashSeq<V = Vec<O256>>(V);
 
-/// The conventional owned spelling.
-pub type OwnedHashArray = HashArray<Vec<O256>>;
+/// A borrowed hash sequence.
+pub type HashSeqRef<'a> = HashSeq<&'a [O256]>;
 
-/// A borrowed, checked O256 sequence.
-pub type HashArrayRef<'a> = HashArray<&'a [O256]>;
-
-/// Backwards-compatible concise spelling of the borrowed view.
-pub type Hashes<'a> = HashArrayRef<'a>;
-
-impl<V> HashArray<V> {
-    /// Wraps storage without copying or re-encoding it.
+impl<V> HashSeq<V> {
+    /// Wraps `storage`.
     #[must_use]
     pub const fn new(storage: V) -> Self {
         Self(storage)
@@ -51,14 +41,14 @@ impl<V> HashArray<V> {
     }
 }
 
-impl<V: AsRef<[O256]>> HashArray<V> {
-    /// Borrows the typed elements.
+impl<V: AsRef<[O256]>> HashSeq<V> {
+    /// Returns the elements.
     #[must_use]
     pub fn as_slice(&self) -> &[O256] {
         self.0.as_ref()
     }
 
-    /// Borrows the Iroh-compatible bare concatenation of element bytes.
+    /// Returns the bare concatenation of element bytes.
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         self.as_slice().as_bytes()
@@ -102,18 +92,18 @@ impl<V: AsRef<[O256]>> HashArray<V> {
 
     /// Returns a borrowed checked element subrange.
     #[must_use]
-    pub fn slice<I>(&self, index: I) -> Option<HashArrayRef<'_>>
+    pub fn slice<I>(&self, index: I) -> Option<HashSeqRef<'_>>
     where
         I: SliceIndex<[O256], Output = [O256]>,
     {
-        self.as_slice().get(index).map(HashArray::new)
+        self.as_slice().get(index).map(HashSeq::new)
     }
 
     /// Splits into borrowed views before and from `index`.
     #[must_use]
-    pub fn split_at(&self, index: usize) -> Option<(HashArrayRef<'_>, HashArrayRef<'_>)> {
+    pub fn split_at(&self, index: usize) -> Option<(HashSeqRef<'_>, HashSeqRef<'_>)> {
         let (left, right) = self.as_slice().split_at_checked(index)?;
-        Some((HashArray::new(left), HashArray::new(right)))
+        Some((HashSeq::new(left), HashSeq::new(right)))
     }
 
     /// Returns whether `value` occurs.
@@ -138,16 +128,10 @@ impl<V: AsRef<[O256]>> HashArray<V> {
             .filter(|candidate| *candidate == value)
             .count()
     }
-
-    /// Borrows this value through the conventional slice-backed spelling.
-    #[must_use]
-    pub fn as_ref_array(&self) -> HashArrayRef<'_> {
-        HashArray::new(self.as_slice())
-    }
 }
 
-impl<'a> HashArray<&'a [O256]> {
-    /// Views canonical flat bytes as O256 values without allocation.
+impl<'a> HashSeq<&'a [O256]> {
+    /// Casts canonical bytes without copying.
     ///
     /// # Errors
     ///
@@ -165,18 +149,15 @@ impl<'a> HashArray<&'a [O256]> {
     }
 }
 
-impl HashArray<Vec<O256>> {
-    /// Copies checked flat bytes into typed owned storage.
-    ///
-    /// Borrowing callers can use [`HashArrayRef::from_bytes`] to avoid this
-    /// allocation.
+impl HashSeq<Vec<O256>> {
+    /// Copies canonical bytes into owned storage.
     ///
     /// # Errors
     ///
     /// Returns [`WidthError`] unless `bytes.len()` is a multiple of 32.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, WidthError> {
         Ok(Self::new(
-            HashArrayRef::from_bytes(bytes)?.as_slice().to_vec(),
+            HashSeq::<&[O256]>::from_bytes(bytes)?.as_slice().to_vec(),
         ))
     }
 
@@ -213,7 +194,7 @@ impl HashArray<Vec<O256>> {
     }
 }
 
-impl<V: AsRef<[O256]>> std::ops::Deref for HashArray<V> {
+impl<V: AsRef<[O256]>> std::ops::Deref for HashSeq<V> {
     type Target = [O256];
 
     fn deref(&self) -> &Self::Target {
@@ -221,7 +202,7 @@ impl<V: AsRef<[O256]>> std::ops::Deref for HashArray<V> {
     }
 }
 
-impl<V: AsRef<[O256]>> fmt::Debug for HashArray<V> {
+impl<V: AsRef<[O256]>> fmt::Debug for HashSeq<V> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_list()
@@ -238,31 +219,31 @@ impl fmt::Debug for Hex<'_> {
     }
 }
 
-impl From<Vec<O256>> for OwnedHashArray {
+impl From<Vec<O256>> for HashSeq {
     fn from(values: Vec<O256>) -> Self {
         Self::new(values)
     }
 }
 
-impl From<HashArrayRef<'_>> for OwnedHashArray {
-    fn from(values: HashArrayRef<'_>) -> Self {
+impl From<HashSeq<&[O256]>> for HashSeq {
+    fn from(values: HashSeq<&[O256]>) -> Self {
         Self::new(values.as_slice().to_vec())
     }
 }
 
-impl FromIterator<O256> for OwnedHashArray {
+impl FromIterator<O256> for HashSeq {
     fn from_iter<I: IntoIterator<Item = O256>>(values: I) -> Self {
         Self::new(values.into_iter().collect())
     }
 }
 
-impl Extend<O256> for OwnedHashArray {
+impl Extend<O256> for HashSeq {
     fn extend<I: IntoIterator<Item = O256>>(&mut self, values: I) {
         self.0.extend(values);
     }
 }
 
-impl IntoIterator for OwnedHashArray {
+impl IntoIterator for HashSeq {
     type Item = O256;
     type IntoIter = std::vec::IntoIter<O256>;
 
@@ -271,7 +252,7 @@ impl IntoIterator for OwnedHashArray {
     }
 }
 
-impl<'a, V: AsRef<[O256]>> IntoIterator for &'a HashArray<V> {
+impl<'a, V: AsRef<[O256]>> IntoIterator for &'a HashSeq<V> {
     type Item = &'a O256;
     type IntoIter = std::slice::Iter<'a, O256>;
 
@@ -284,25 +265,25 @@ impl<'a, V: AsRef<[O256]>> IntoIterator for &'a HashArray<V> {
 mod tests {
     use covalence_lib_hash::O256;
 
-    use super::{HashArray, HashArrayRef, OwnedHashArray, WIDTH, WidthError};
+    use super::{HashSeq, WIDTH, WidthError};
 
     fn obj(byte: u8) -> O256 {
         O256::from_array([byte; WIDTH])
     }
 
-    fn array(bytes: &[u8]) -> OwnedHashArray {
+    fn array(bytes: &[u8]) -> HashSeq {
         bytes.iter().copied().map(obj).collect()
     }
 
     #[test]
     fn checked_bytes_borrow_as_typed_elements() {
         let values = array(&[3, 1, 2]);
-        let borrowed = HashArrayRef::from_bytes(values.as_bytes()).unwrap();
+        let borrowed = HashSeq::<&[O256]>::from_bytes(values.as_bytes()).unwrap();
         assert_eq!(borrowed.as_slice(), values.as_slice());
         assert_eq!(borrowed.as_bytes(), values.as_bytes());
         assert_eq!(borrowed.get(1), Some(obj(1)));
         assert_eq!(
-            HashArrayRef::from_bytes(&[0; 31]),
+            HashSeq::<&[O256]>::from_bytes(&[0; 31]),
             Err(WidthError { len: 31 })
         );
     }
@@ -310,8 +291,8 @@ mod tests {
     #[test]
     fn storage_is_generic_but_sequence_methods_are_shared() {
         let vector = array(&[3, 1, 1]);
-        let boxed = HashArray::new(vector.as_slice().to_vec().into_boxed_slice());
-        let borrowed = HashArray::new(vector.as_slice());
+        let boxed = HashSeq::new(vector.as_slice().to_vec().into_boxed_slice());
+        let borrowed = HashSeq::new(vector.as_slice());
         assert_eq!(vector.count(&obj(1)), 2);
         assert_eq!(boxed.count(&obj(1)), 2);
         assert_eq!(borrowed.count(&obj(1)), 2);
@@ -343,7 +324,7 @@ mod tests {
         assert_eq!(values.as_bytes().len(), 2 * WIDTH);
         assert_eq!(&values.as_bytes()[..WIDTH], &[1; WIDTH]);
         assert_eq!(&values.as_bytes()[WIDTH..], &[2; WIDTH]);
-        assert!(HashArrayRef::empty().is_empty());
-        assert_eq!(OwnedHashArray::singleton(obj(0)), array(&[0]));
+        assert!(HashSeq::<&[O256]>::empty().is_empty());
+        assert_eq!(HashSeq::singleton(obj(0)), array(&[0]));
     }
 }

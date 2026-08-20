@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Flat fixed-width hash arrays in CAS normal form"
+description = "Flat O256 sequences in Iroh-compatible wire form"
 publish = false
 
 [dependencies]

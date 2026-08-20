@@ -1,10 +1,10 @@
 import Nucleus.Json.Cas
 
 /-!
-# Flat hash-array sequences
+# Hash sequences
 
 This module specifies the semantic sequence underlying the Rust
-`covalence-data-array` crate.  A hash array is a finite sequence: position and
+`covalence-data-array` crate. A hash sequence is finite: position and
 multiplicity are significant, and no sortedness or non-null invariant is
 assumed.  The wire format is the concatenation of fixed-width element
 encodings.
@@ -14,9 +14,9 @@ such a resolver by checking that the addressed bytes have canonical width;
 once resolved, every query below is a pure sequence operation.
 -/
 
-namespace Nucleus.HashArray
+namespace Nucleus.HashSeq
 
-/-- The semantic value represented by a flat hash array. -/
+/-- A hash sequence's semantic value. -/
 abbrev Seq (α : Type) := List α
 
 /-- The one-element sequence. -/
@@ -134,7 +134,7 @@ theorem encode_length (encoding : Encoding α) (values : Seq α) :
       simp only [List.length_cons, Nat.mul_succ]
       exact Nat.add_comm _ _
 
-/-- In particular, an O256 array occupies exactly 32 bytes per element. -/
+/-- An O256 sequence occupies 32 bytes per element. -/
 theorem o256_encode_length (values : Seq O256) :
     (encode o256Encoding values).length = 32 * values.length :=
   encode_length o256Encoding values
@@ -191,4 +191,4 @@ theorem query_mono {resolve₁ resolve₂ : Resolver Name α}
     exact Unknown.unknown_le _
   · rw [h]
 
-end Nucleus.HashArray
+end Nucleus.HashSeq

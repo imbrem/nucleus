@@ -2,7 +2,7 @@ import Nucleus.HolLN
 import Nucleus.Hol
 import Nucleus.HolLN.Array
 import Nucleus.HolLN.Json
-import Nucleus.HashArray
+import Nucleus.HashSeq
 import Nucleus.Json
 import Nucleus.Cbor
 import Nucleus.Encoding.Base128
