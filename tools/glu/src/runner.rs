@@ -481,11 +481,20 @@ impl Runner {
     ///
     /// `lake build` rather than a bare elaboration, because building is what
     /// reports errors and `sorry` warnings across a whole library.
-    pub(crate) fn lean(&self, list: bool, cache: bool, jobs: Option<u16>) -> Result<()> {
+    pub(crate) fn lean_build(
+        &self,
+        targets: &[OsString],
+        cache: bool,
+        jobs: Option<u16>,
+    ) -> Result<()> {
         let projects = lean_projects(&self.root.join("lean"))?;
         if projects.is_empty() {
             eprintln!("no Lean developments found under lean/");
             return Ok(());
+        }
+
+        if !targets.is_empty() && projects.len() != 1 {
+            bail!("Lake targets require exactly one Lean development; run `glu lean list`");
         }
 
         for project in &projects {
@@ -494,11 +503,6 @@ impl Runner {
                 .unwrap_or(project)
                 .display()
                 .to_string();
-            if list {
-                println!("{name}");
-                continue;
-            }
-
             // Mathlib publishes prebuilt artifacts for every revision. Without
             // them `lake build` compiles all of Mathlib from source, which is
             // hours rather than minutes, so this is not really optional on a
@@ -512,56 +516,18 @@ impl Runner {
                     &[],
                 )?;
             }
+            let mut args = Vec::with_capacity(targets.len() + 1);
+            args.push(OsString::from("build"));
+            args.extend_from_slice(targets);
             self.run_in(
                 &format!("build {name}"),
                 project,
                 "lake",
-                ["build"],
+                args,
                 &lake_jobs_env(jobs),
             )?;
         }
         Ok(())
-    }
-
-    /// Build selected targets in the repository's Lean development.
-    ///
-    /// The command runs from the directory containing the lakefile. This is
-    /// important beyond locating the manifest: Elan discovers the checked-in
-    /// `lean-toolchain` there, so callers need not duplicate it in an
-    /// `ELAN_TOOLCHAIN` environment variable.
-    pub(crate) fn lean_build(
-        &self,
-        targets: &[OsString],
-        cache: bool,
-        jobs: Option<u16>,
-    ) -> Result<()> {
-        let project = self.lean_project()?;
-        let name = project
-            .strip_prefix(&self.root)
-            .unwrap_or(&project)
-            .display()
-            .to_string();
-
-        if cache && requires_mathlib(&project)? {
-            self.run_in(
-                &format!("fetch Mathlib cache for {name}"),
-                &project,
-                "lake",
-                ["exe", "cache", "get"],
-                &[],
-            )?;
-        }
-
-        let mut args = Vec::with_capacity(targets.len() + 1);
-        args.push(OsString::from("build"));
-        args.extend_from_slice(targets);
-        self.run_in(
-            &format!("build {name}"),
-            &project,
-            "lake",
-            args,
-            &lake_jobs_env(jobs),
-        )
     }
 
     /// Forward arbitrary arguments to Lake from the Lean development root.
@@ -592,6 +558,19 @@ impl Runner {
                 )
             }
         }
+    }
+
+    pub(crate) fn lean_list(&self) -> Result<()> {
+        for project in lean_projects(&self.root.join("lean"))? {
+            println!(
+                "{}",
+                project
+                    .strip_prefix(&self.root)
+                    .unwrap_or(&project)
+                    .display()
+            );
+        }
+        Ok(())
     }
 
     /// Generate API documentation for every Lean development that has a

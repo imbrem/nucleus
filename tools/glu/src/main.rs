@@ -1,6 +1,7 @@
 mod artifact;
 mod buck;
 mod cargo;
+mod lean_audit;
 mod loc;
 mod runner;
 
@@ -67,49 +68,13 @@ enum Task {
         #[command(subcommand)]
         command: BuckTask,
     },
-    /// Work with the Lean developments under `lean/`.
+    /// Inspect, build, or document the Lean developments under `lean/`.
     ///
-    /// These are a specification, not a build input, so this is deliberately
-    /// separate: `glu build`, `glu check`, and `glu ci` never touch them. It
-    /// shells out to `lake` rather than going through Buck.
+    /// These are a specification, not a build input, so these tasks remain
+    /// separate from the top-level `build`, `check`, and `ci` tasks.
     Lean {
-        /// A focused Lean operation. With no subcommand, build every
-        /// development for compatibility with the original `glu lean`.
         #[command(subcommand)]
-        command: Option<LeanTask>,
-
-        /// List the developments that would be built, without building.
-        #[arg(long)]
-        list: bool,
-
-        /// Build without first fetching Mathlib's prebuilt artifacts.
-        ///
-        /// On a cold checkout this compiles Mathlib from source, which takes
-        /// hours.
-        #[arg(long)]
-        no_cache: bool,
-
-        /// Generate API documentation rather than just checking the sources.
-        ///
-        /// Collects doc-gen4's HTML tree and its `SQLite` database for every
-        /// development that has a `docbuild` companion project.
-        #[arg(long)]
-        docs: bool,
-
-        /// Directory to stage generated documentation into.
-        #[arg(long, default_value = "lean-docs")]
-        out: PathBuf,
-
-        /// Cap Lake's build parallelism.
-        ///
-        /// Documentation generation holds an elaborated environment per
-        /// worker, so peak memory scales with this. Lowering it is the way out
-        /// of allocation failures on small machines.
-        ///
-        /// Lake has no parallelism flag of its own; it schedules on Lean's
-        /// task pool, so this sets `LEAN_NUM_THREADS`.
-        #[arg(long)]
-        jobs: Option<u16>,
+        command: LeanTask,
     },
     /// Run Lake in the repository's Lean development.
     ///
@@ -172,23 +137,6 @@ enum BuildTarget {
 }
 
 #[derive(Debug, Subcommand)]
-enum LeanTask {
-    /// Build selected Lake targets in the repository's Lean development.
-    Build {
-        /// Lake targets; with none, build the development's default targets.
-        targets: Vec<OsString>,
-
-        /// Build without first fetching Mathlib's prebuilt artifacts.
-        #[arg(long)]
-        no_cache: bool,
-
-        /// Cap Lake's build parallelism via `LEAN_NUM_THREADS`.
-        #[arg(long)]
-        jobs: Option<u16>,
-    },
-}
-
-#[derive(Debug, Subcommand)]
 enum BuckTask {
     /// Configure machine-local Buck tool paths.
     Configure,
@@ -210,6 +158,56 @@ enum DocsTask {
         #[arg(long, default_value_t = 4173)]
         port: u16,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum LeanTask {
+    /// Scan tracked Lean sources for `sorry`, `admit`, and `TODO`.
+    Audit,
+    /// Build Lean developments with Lake.
+    Build {
+        /// Lake targets. With none, build every development's default targets.
+        targets: Vec<OsString>,
+
+        #[command(flatten)]
+        options: LeanBuildOptions,
+    },
+    /// Audit the Lean sources, then build Lean developments.
+    Check {
+        /// Lake targets. With none, build every development's default targets.
+        targets: Vec<OsString>,
+
+        #[command(flatten)]
+        options: LeanBuildOptions,
+    },
+    /// Generate API documentation for every supported development.
+    Doc {
+        #[command(flatten)]
+        options: LeanBuildOptions,
+
+        /// Directory to stage generated documentation into.
+        #[arg(long, default_value = "lean-docs")]
+        out: PathBuf,
+    },
+    /// List the Lean developments without building them.
+    List,
+}
+
+#[derive(Debug, clap::Args)]
+struct LeanBuildOptions {
+    /// Build without first fetching Mathlib's prebuilt artifacts.
+    ///
+    /// On a cold checkout this compiles Mathlib from source, which takes
+    /// hours.
+    #[arg(long)]
+    no_cache: bool,
+
+    /// Cap Lake's build parallelism.
+    ///
+    /// Lake has no parallelism flag of its own; it schedules on Lean's task
+    /// pool, so this sets `LEAN_NUM_THREADS`.
+    #[arg(long)]
+    jobs: Option<u16>,
 }
 
 /// Implementations of Buck actions.
@@ -349,29 +347,24 @@ fn run() -> Result<()> {
             ),
         },
         Task::Lean {
-            command:
-                Some(LeanTask::Build {
-                    targets,
-                    no_cache,
-                    jobs,
-                }),
-            ..
-        } => runner.lean_build(&targets, !no_cache, jobs),
+            command: LeanTask::Audit,
+        } => lean_audit::check(runner.root()),
         Task::Lean {
-            command: None,
-            list,
-            no_cache,
-            docs,
-            out,
-            jobs,
+            command: LeanTask::Build { targets, options },
+        } => runner.lean_build(&targets, !options.no_cache, options.jobs),
+        Task::Lean {
+            command: LeanTask::Check { targets, options },
         } => {
-            if docs {
-                runner.lean_docs(&out, !no_cache, jobs)
-            } else {
-                runner.lean(list, !no_cache, jobs)
-            }
+            lean_audit::check(runner.root())?;
+            runner.lean_build(&targets, !options.no_cache, options.jobs)
         }
         Task::Lake { args } => runner.lake(args),
+        Task::Lean {
+            command: LeanTask::Doc { options, out },
+        } => runner.lean_docs(&out, !options.no_cache, options.jobs),
+        Task::Lean {
+            command: LeanTask::List,
+        } => runner.lean_list(),
         Task::Loc => runner.loc(),
         Task::Status => runner.status(),
     }
@@ -402,20 +395,14 @@ mod tests {
         let cli = Cli::try_parse_from(["glu", "lean", "build", "Nucleus.SimpTy", "--jobs", "2"])
             .expect("targeted Lean build should parse");
         let Task::Lean {
-            command:
-                Some(LeanTask::Build {
-                    targets,
-                    no_cache,
-                    jobs,
-                }),
-            ..
+            command: LeanTask::Build { targets, options },
         } = cli.command
         else {
             panic!("expected a targeted Lean build");
         };
         assert_eq!(targets, ["Nucleus.SimpTy"]);
-        assert!(!no_cache);
-        assert_eq!(jobs, Some(2));
+        assert!(!options.no_cache);
+        assert_eq!(options.jobs, Some(2));
     }
 
     #[test]
