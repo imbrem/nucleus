@@ -1,5 +1,6 @@
+import Nucleus.HolE.Named.Equivalence
 import Nucleus.HolE.Named.Kernel
-import Nucleus.HolE.Normalization.Reduction
+import Nucleus.HolE.Normalization.Eta
 
 /-!
 # Beta and eta reduction for named HolE
@@ -192,6 +193,32 @@ theorem eqTm_nonempty {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
       steps.sourceLowering, steps.targetLowering, typeLowering, derivation⟩⟩
 
 end BetaEtaSteps
+
+/-- A closed named term together with an eta-normal reduct. -/
+structure ClosedEtaNormalForm {Sig : Signature} (source : ClosedTmExpr Sig) where
+  term : ClosedTmExpr Sig
+  steps : BetaEtaSteps (.nil : TyScope []) (.nil : TmScope Sig 0)
+    source.expression term.expression
+  normal : ¬ ∃ target, Nucleus.HolE.Reduction.EtaRelation term.lowered target
+
+/-- Normalize a closed named term by normalizing its locally nameless image
+and quoting the result back to named syntax. -/
+noncomputable def closedEtaNormalForm {Sig : Signature} (source : ClosedTmExpr Sig) :
+    ClosedEtaNormalForm source := by
+  let normalized := Nucleus.HolE.Reduction.etaNormalForm source.lowered
+  let namedNormal := quoteClosedTmScoped normalized.term
+  have namedNormalLowered : namedNormal.lowered = normalized.term := by
+    have lowered := namedNormal.lower_lowered
+    change lowerTm .nil .nil (quoteClosed normalized.term) =
+      some namedNormal.lowered at lowered
+    rw [lowerTm_quoteClosed normalized.term] at lowered
+    exact (Option.some.inj lowered).symm
+  refine ⟨namedNormal, ?_, ?_⟩
+  · exact ⟨source.lowered, normalized.term, source.lower_lowered,
+      lowerTm_quoteClosed normalized.term,
+      Nucleus.HolE.Reduction.etaSteps_to_betaEtaSteps normalized.steps⟩
+  · rw [namedNormalLowered]
+    exact normalized.normal
 
 end Reduction
 
