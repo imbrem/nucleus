@@ -15,7 +15,7 @@ set_option relaxedAutoImplicit true
 namespace EqTm
 
 /-- Both endpoints of a term-conversion certificate are well typed. -/
-theorem typing {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
+theorem endpointsTyping {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
     {types : List Kind} {depth : Nat} {Γ : BoundCtx Sig types depth}
     {left right : Tm Sig types depth} {A : Ty Sig types}
     (conversion : EqTm Γ left right A) :
@@ -35,14 +35,14 @@ theorem leftTyping {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
     {types : List Kind} {depth : Nat} {Γ : BoundCtx Sig types depth}
     {left right : Tm Sig types depth} {A : Ty Sig types}
     (conversion : EqTm Γ left right A) : HasTypeDefEq Γ left A :=
-  conversion.typing.1
+  conversion.endpointsTyping.1
 
 /-- The right endpoint of a term-conversion certificate is well typed. -/
 theorem rightTyping {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
     {types : List Kind} {depth : Nat} {Γ : BoundCtx Sig types depth}
     {left right : Tm Sig types depth} {A : Ty Sig types}
     (conversion : EqTm Γ left right A) : HasTypeDefEq Γ right A :=
-  conversion.typing.2
+  conversion.endpointsTyping.2
 
 end EqTm
 
