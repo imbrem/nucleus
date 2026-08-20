@@ -73,11 +73,13 @@ They are an explicit follow-up inventory, not primitive kernel rules. -/
 inductive DerivedProofRule where
   | letBeta | notIntro | notElim | andIntro | andElimLeft | andElimRight
   | orIntroLeft | orIntroRight | orElim | impIntro | impElim
+  | doubleNegIntro | doubleNegElim
   deriving DecidableEq, Repr
 
 def DerivedProofRule.all : List DerivedProofRule :=
   [.letBeta, .notIntro, .notElim, .andIntro, .andElimLeft, .andElimRight,
-    .orIntroLeft, .orIntroRight, .orElim, .impIntro, .impElim]
+    .orIntroLeft, .orIntroRight, .orElim, .impIntro, .impElim,
+    .doubleNegIntro, .doubleNegElim]
 
 theorem DerivedProofRule.mem_all (rule : DerivedProofRule) :
     rule ∈ DerivedProofRule.all := by

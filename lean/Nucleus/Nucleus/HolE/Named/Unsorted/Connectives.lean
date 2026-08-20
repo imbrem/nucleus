@@ -663,6 +663,21 @@ namespace TermEq
 variable {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
   [Nucleus.HolE.SigFamilyEquality Sig]
 
+/-- The checked let macro computes by the ordinary beta rule. -/
+def letBeta (name : Nat) (typedContext : Nucleus.HolE.TypedCtx Γ)
+    (domain codomain : Family Sig typeScope .star)
+    (value : Term Sig typeScope termScope Γ domain)
+    (body : Term Sig typeScope
+      (.cons ⟨name, domain.expression.sorted⟩ termScope)
+      (Nucleus.HolE.extendBound domain.lowered Γ) codomain)
+    (result : Term Sig typeScope termScope Γ codomain)
+    (resultEq : result.lowered =
+      Nucleus.HolE.openBound body.lowered value.lowered) :
+    TermEq (Sig := Sig) typeScope termScope Γ codomain
+      (Term.letTm name domain codomain value body) result := by
+  simpa [Term.letTm] using
+    (TermEq.beta name typedContext domain codomain body value result resultEq)
+
 /-- The first Boolean selector computes to its first argument. -/
 noncomputable def firstBool_apply (typedContext : Nucleus.HolE.TypedCtx Γ)
     (first second : BoolTerm (Sig := Sig) typeScope termScope Γ) :
