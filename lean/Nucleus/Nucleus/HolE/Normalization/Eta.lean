@@ -52,6 +52,14 @@ theorem etaNormalForm_typing {Sig : Signature} [SigTyping Sig]
     HasType Γ (etaNormalForm source).term A :=
   (etaSteps_to_betaEtaSteps (etaNormalForm source).steps).preserve typed sourceTyping
 
+/-- Eta normalization preserves typing modulo family conversion. -/
+theorem etaNormalForm_typingDefEq {Sig : Signature} [SigTyping Sig]
+    [SigFamilyEquality Sig]
+    {Γ : BoundCtx Sig types depth} {source : Tm Sig types depth}
+    {A : Ty Sig types} (typed : TypedCtx Γ) (sourceTyping : HasTypeDefEq Γ source A) :
+    HasTypeDefEq Γ (etaNormalForm source).term A :=
+  (etaSteps_to_betaEtaSteps (etaNormalForm source).steps).preserveDefEq typed sourceTyping
+
 /-- Eta normalization is accepted by kernel conversion. -/
 theorem etaNormalForm_eqTm_nonempty {Sig : Signature} [SigTyping Sig]
     [SigFamilyEquality Sig]
@@ -59,6 +67,16 @@ theorem etaNormalForm_eqTm_nonempty {Sig : Signature} [SigTyping Sig]
     {A : Ty Sig types} (typed : TypedCtx Γ) (sourceTyping : HasType Γ source A) :
     Nonempty (EqTm Γ source (etaNormalForm source).term A) :=
   (etaSteps_to_betaEtaSteps (etaNormalForm source).steps).eqTm_nonempty typed sourceTyping
+
+/-- Eta normalization is kernel conversion at every definitionally equal
+advertised type of its source. -/
+theorem etaNormalForm_eqTmDefEq_nonempty {Sig : Signature} [SigTyping Sig]
+    [SigFamilyEquality Sig]
+    {Γ : BoundCtx Sig types depth} {source : Tm Sig types depth}
+    {A : Ty Sig types} (typed : TypedCtx Γ) (sourceTyping : HasTypeDefEq Γ source A) :
+    Nonempty (EqTm Γ source (etaNormalForm source).term A) :=
+  (etaSteps_to_betaEtaSteps (etaNormalForm source).steps).eqTmDefEq_nonempty
+    typed sourceTyping
 
 end Reduction
 

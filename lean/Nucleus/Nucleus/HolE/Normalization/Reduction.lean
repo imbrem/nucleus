@@ -74,6 +74,52 @@ private theorem typedCtx_extend {Sig : Signature} [SigTyping Sig]
     (typed : TypedCtx Γ) (hA : Kinded A) : TypedCtx (extendBound A Γ) :=
   fun index => Fin.cases hA typed index
 
+end Reduction
+
+/-- Lift preservation of syntax-directed typing through type conversion. -/
+theorem HasTypeDefEq.preserveFromRaw
+    {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
+    {Γ : BoundCtx Sig types depth} {source target : Tm Sig types depth}
+    {A : Ty Sig types} (sourceTyping : HasTypeDefEq Γ source A)
+    (rawPreserve : ∀ {B}, HasType Γ source B → HasType Γ target B) :
+    HasTypeDefEq Γ target A := by
+  induction sourceTyping with
+  | exact raw => exact .exact (rawPreserve raw)
+  | app raw _ _ => exact .exact (rawPreserve raw)
+  | lam _ raw _ _ => exact .exact (rawPreserve raw)
+  | eq raw _ _ _ => exact .exact (rawPreserve raw)
+  | eps raw _ _ => exact .exact (rawPreserve raw)
+  | abs raw _ _ _ => exact .exact (rawPreserve raw)
+  | rep raw _ _ _ => exact .exact (rawPreserve raw)
+  | tyExists raw _ => exact .exact (rawPreserve raw)
+  | conv typing hA conversion ih => exact .conv (ih rawPreserve) hA conversion
+
+/-- Lift raw equality certificates through every conversion wrapped around the
+source typing derivation. -/
+theorem HasTypeDefEq.eqTmFromRaw
+    {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
+    {Γ : BoundCtx Sig types depth} {source target : Tm Sig types depth}
+    {A : Ty Sig types} (sourceTyping : HasTypeDefEq Γ source A)
+    (targetTyping : HasTypeDefEq Γ target A)
+    (rawPreserve : ∀ {B}, HasType Γ source B → HasType Γ target B)
+    (rawEquality : ∀ {B}, HasType Γ source B → Nonempty (EqTm Γ source target B)) :
+    Nonempty (EqTm Γ source target A) := by
+  induction sourceTyping with
+  | exact raw => exact rawEquality raw
+  | app raw _ _ => exact rawEquality raw
+  | lam _ raw _ _ => exact rawEquality raw
+  | eq raw _ _ _ => exact rawEquality raw
+  | eps raw _ _ => exact rawEquality raw
+  | abs raw _ _ _ => exact rawEquality raw
+  | rep raw _ _ _ => exact rawEquality raw
+  | tyExists raw _ => exact rawEquality raw
+  | conv typing hA conversion ih =>
+      let oldTargetTyping := typing.preserveFromRaw rawPreserve
+      obtain ⟨equality⟩ := ih oldTargetTyping rawPreserve rawEquality
+      exact ⟨.conv (.conv typing hA conversion) targetTyping equality⟩
+
+namespace Reduction
+
 namespace Beta
 
 /-- Full beta reduction preserves syntax-directed typing. -/
@@ -121,6 +167,13 @@ theorem preserve {Sig : Signature} [SigTyping Sig]
       cases sourceTyping with
       | tyExists predicateTyping =>
         exact .tyExists (ih (fun index => Fin.elim0 index) predicateTyping)
+
+/-- Full beta reduction preserves typing modulo family conversion. -/
+theorem preserveDefEq {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
+    {Γ : BoundCtx Sig types depth} {source target : Tm Sig types depth}
+    {A : Ty Sig types} (step : Beta source target) (typed : TypedCtx Γ)
+    (sourceTyping : HasTypeDefEq Γ source A) : HasTypeDefEq Γ target A :=
+  sourceTyping.preserveFromRaw fun raw => step.preserve typed raw
 
 /-- Every well-typed beta step is inhabited by a kernel conversion certificate. -/
 theorem eqTm_nonempty {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
@@ -206,12 +259,28 @@ theorem eqTm_nonempty {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
         exact ⟨.tyExists (.tyExists predicateTyping) (.tyExists targetTyping)
           predicateEquality⟩
 
+/-- Every definitionally typed beta step is kernel conversion at its
+advertised type. -/
+theorem eqTmDefEq_nonempty {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
+    {Γ : BoundCtx Sig types depth} {source target : Tm Sig types depth}
+    {A : Ty Sig types} (step : Beta source target) (typed : TypedCtx Γ)
+    (sourceTyping : HasTypeDefEq Γ source A) : Nonempty (EqTm Γ source target A) :=
+  sourceTyping.eqTmFromRaw (step.preserveDefEq typed sourceTyping)
+    (fun raw => step.preserve typed raw) (fun raw => step.eqTm_nonempty typed raw)
+
 /-- Select the kernel certificate guaranteed by `eqTm_nonempty`. -/
 noncomputable def toEqTm {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
     {Γ : BoundCtx Sig types depth} {source target : Tm Sig types depth}
     {A : Ty Sig types} (step : Beta source target) (typed : TypedCtx Γ)
     (sourceTyping : HasType Γ source A) : EqTm Γ source target A :=
   Classical.choice (step.eqTm_nonempty typed sourceTyping)
+
+/-- Select the conversion certificate at a definitionally equal advertised type. -/
+noncomputable def toEqTmDefEq {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
+    {Γ : BoundCtx Sig types depth} {source target : Tm Sig types depth}
+    {A : Ty Sig types} (step : Beta source target) (typed : TypedCtx Γ)
+    (sourceTyping : HasTypeDefEq Γ source A) : EqTm Γ source target A :=
+  Classical.choice (step.eqTmDefEq_nonempty typed sourceTyping)
 
 end Beta
 
@@ -301,6 +370,13 @@ theorem preserve {Sig : Signature} [SigTyping Sig]
       | tyExists predicateTyping =>
         exact .tyExists (ih (fun index => Fin.elim0 index) predicateTyping)
 
+/-- Full eta reduction preserves typing modulo family conversion. -/
+theorem preserveDefEq {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
+    {Γ : BoundCtx Sig types depth} {source target : Tm Sig types depth}
+    {A : Ty Sig types} (step : Eta source target) (typed : TypedCtx Γ)
+    (sourceTyping : HasTypeDefEq Γ source A) : HasTypeDefEq Γ target A :=
+  sourceTyping.preserveFromRaw fun raw => step.preserve typed raw
+
 /-- Every well-typed eta step is inhabited by a kernel conversion certificate. -/
 theorem eqTm_nonempty {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
     {Γ : BoundCtx Sig types depth} {source target : Tm Sig types depth}
@@ -388,12 +464,28 @@ theorem eqTm_nonempty {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
         exact ⟨.tyExists (.tyExists predicateTyping) (.tyExists targetTyping)
           predicateEquality⟩
 
+/-- Every definitionally typed eta step is kernel conversion at its
+advertised type. -/
+theorem eqTmDefEq_nonempty {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
+    {Γ : BoundCtx Sig types depth} {source target : Tm Sig types depth}
+    {A : Ty Sig types} (step : Eta source target) (typed : TypedCtx Γ)
+    (sourceTyping : HasTypeDefEq Γ source A) : Nonempty (EqTm Γ source target A) :=
+  sourceTyping.eqTmFromRaw (step.preserveDefEq typed sourceTyping)
+    (fun raw => step.preserve typed raw) (fun raw => step.eqTm_nonempty typed raw)
+
 /-- Select the kernel certificate guaranteed by `eqTm_nonempty`. -/
 noncomputable def toEqTm {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
     {Γ : BoundCtx Sig types depth} {source target : Tm Sig types depth}
     {A : Ty Sig types} (step : Eta source target) (typed : TypedCtx Γ)
     (sourceTyping : HasType Γ source A) : EqTm Γ source target A :=
   Classical.choice (step.eqTm_nonempty typed sourceTyping)
+
+/-- Select the conversion certificate at a definitionally equal advertised type. -/
+noncomputable def toEqTmDefEq {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
+    {Γ : BoundCtx Sig types depth} {source target : Tm Sig types depth}
+    {A : Ty Sig types} (step : Eta source target) (typed : TypedCtx Γ)
+    (sourceTyping : HasTypeDefEq Γ source A) : EqTm Γ source target A :=
+  Classical.choice (step.eqTmDefEq_nonempty typed sourceTyping)
 
 end Eta
 
@@ -408,6 +500,15 @@ theorem preserve {Sig : Signature} [SigTyping Sig]
   | inl beta => exact beta.elim fun certificate => certificate.preserve typed sourceTyping
   | inr eta => exact eta.elim fun certificate => certificate.preserve typed sourceTyping
 
+/-- A beta-or-eta step preserves typing modulo family conversion. -/
+theorem preserveDefEq {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
+    {Γ : BoundCtx Sig types depth} {source target : Tm Sig types depth}
+    {A : Ty Sig types} (step : BetaEta source target) (typed : TypedCtx Γ)
+    (sourceTyping : HasTypeDefEq Γ source A) : HasTypeDefEq Γ target A := by
+  cases step with
+  | inl beta => exact beta.elim fun certificate => certificate.preserveDefEq typed sourceTyping
+  | inr eta => exact eta.elim fun certificate => certificate.preserveDefEq typed sourceTyping
+
 /-- Every well-typed beta-or-eta step is kernel conversion. -/
 theorem eqTm_nonempty {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
     {Γ : BoundCtx Sig types depth} {source target : Tm Sig types depth}
@@ -416,6 +517,17 @@ theorem eqTm_nonempty {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
   cases step with
   | inl beta => exact beta.elim fun certificate => certificate.eqTm_nonempty typed sourceTyping
   | inr eta => exact eta.elim fun certificate => certificate.eqTm_nonempty typed sourceTyping
+
+/-- Every definitionally typed beta-or-eta step is kernel conversion. -/
+theorem eqTmDefEq_nonempty {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
+    {Γ : BoundCtx Sig types depth} {source target : Tm Sig types depth}
+    {A : Ty Sig types} (step : BetaEta source target) (typed : TypedCtx Γ)
+    (sourceTyping : HasTypeDefEq Γ source A) : Nonempty (EqTm Γ source target A) := by
+  cases step with
+  | inl beta =>
+      exact beta.elim fun certificate => certificate.eqTmDefEq_nonempty typed sourceTyping
+  | inr eta =>
+      exact eta.elim fun certificate => certificate.eqTmDefEq_nonempty typed sourceTyping
 
 end BetaEta
 
@@ -430,6 +542,16 @@ theorem preserve {Sig : Signature} [SigTyping Sig]
   | refl => exact sourceTyping
   | tail steps step ih => exact step.preserve typed ih
 
+/-- Reflexive-transitive beta-eta reduction preserves typing modulo family
+conversion. -/
+theorem preserveDefEq {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
+    {Γ : BoundCtx Sig types depth} {source target : Tm Sig types depth}
+    {A : Ty Sig types} (steps : BetaEtaSteps source target) (typed : TypedCtx Γ)
+    (sourceTyping : HasTypeDefEq Γ source A) : HasTypeDefEq Γ target A := by
+  induction steps with
+  | refl => exact sourceTyping
+  | tail steps step ih => exact step.preserveDefEq typed ih
+
 /-- Every well-typed beta-eta reduction sequence is kernel conversion. -/
 theorem eqTm_nonempty {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
     {Γ : BoundCtx Sig types depth} {source target : Tm Sig types depth}
@@ -443,12 +565,33 @@ theorem eqTm_nonempty {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
       obtain ⟨lastEquality⟩ := step.eqTm_nonempty typed middleTyping
       exact ⟨.trans firstEquality lastEquality⟩
 
+/-- Every definitionally typed beta-eta sequence is kernel conversion. -/
+theorem eqTmDefEq_nonempty {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
+    {Γ : BoundCtx Sig types depth} {source target : Tm Sig types depth}
+    {A : Ty Sig types} (steps : BetaEtaSteps source target) (typed : TypedCtx Γ)
+    (sourceTyping : HasTypeDefEq Γ source A) : Nonempty (EqTm Γ source target A) := by
+  induction steps with
+  | refl => exact ⟨.refl sourceTyping⟩
+  | tail steps step ih =>
+      let middleTyping := BetaEtaSteps.preserveDefEq steps typed sourceTyping
+      obtain ⟨firstEquality⟩ := ih
+      obtain ⟨lastEquality⟩ := step.eqTmDefEq_nonempty typed middleTyping
+      exact ⟨.trans firstEquality lastEquality⟩
+
 /-- Select the kernel certificate represented by a reduction sequence. -/
 noncomputable def toEqTm {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
     {Γ : BoundCtx Sig types depth} {source target : Tm Sig types depth}
     {A : Ty Sig types} (steps : BetaEtaSteps source target) (typed : TypedCtx Γ)
     (sourceTyping : HasType Γ source A) : EqTm Γ source target A :=
   Classical.choice (steps.eqTm_nonempty typed sourceTyping)
+
+/-- Select the sequence certificate at a definitionally equal advertised type. -/
+noncomputable def toEqTmDefEq {Sig : Signature} [SigTyping Sig]
+    [SigFamilyEquality Sig]
+    {Γ : BoundCtx Sig types depth} {source target : Tm Sig types depth}
+    {A : Ty Sig types} (steps : BetaEtaSteps source target) (typed : TypedCtx Γ)
+    (sourceTyping : HasTypeDefEq Γ source A) : EqTm Γ source target A :=
+  Classical.choice (steps.eqTmDefEq_nonempty typed sourceTyping)
 
 end BetaEtaSteps
 
