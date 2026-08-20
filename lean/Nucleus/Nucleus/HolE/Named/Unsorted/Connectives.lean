@@ -238,34 +238,88 @@ def weakenFresh (name : Nat) (binderType : Family Sig typeScope .star)
     (freshness : name ∉ Unsorted.names term.raw) :
     (weakenFresh name binderType term freshness).raw = term.raw := rfl
 
-/-- Total checked conjunction.  The fresh binder selected by the raw macro is
-also fresh for each operand, so both operands weaken without capture. -/
-def and (left right :
-    Term Sig typeScope termScope Γ (Family.boolTy typeScope)) :
-    Term Sig typeScope termScope Γ (Family.boolTy typeScope) := by
+/-- The type quantified over by the equality-only conjunction encoding. -/
+def andFunctionType (typeScope : Named.TyScope types) : Family Sig typeScope .star :=
   let boolType := Family.boolTy (Sig := Sig) typeScope
-  let functionType := Family.arr boolType (Family.arr boolType boolType)
-  let name := Unsorted.freshName left.raw right.raw
-  have freshUnion : name ∉ Unsorted.names left.raw ∪ Unsorted.names right.raw := by
-    exact Finset.freshNat_not_mem _
-  have freshLeft : name ∉ Unsorted.names left.raw :=
-    fun membership => freshUnion (Finset.mem_union_left _ membership)
-  have freshRight : name ∉ Unsorted.names right.raw :=
-    fun membership => freshUnion (Finset.mem_union_right _ membership)
+  Family.arr boolType (Family.arr boolType boolType)
+
+def andName (left right :
+    Term Sig typeScope termScope Γ (Family.boolTy typeScope)) : Nat :=
+  Unsorted.freshName left.raw right.raw
+
+theorem andName_left_not_mem (left right :
+    Term Sig typeScope termScope Γ (Family.boolTy typeScope)) :
+    andName left right ∉ Unsorted.names left.raw := by
+  intro membership
+  exact Finset.freshNat_not_mem _ (Finset.mem_union_left _ membership)
+
+theorem andName_right_not_mem (left right :
+    Term Sig typeScope termScope Γ (Family.boolTy typeScope)) :
+    andName left right ∉ Unsorted.names right.raw := by
+  intro membership
+  exact Finset.freshNat_not_mem _ (Finset.mem_union_right _ membership)
+
+/-- Body on the left of the defining conjunction equation. -/
+def andLhsBody (left right :
+    Term Sig typeScope termScope Γ (Family.boolTy typeScope)) :
+    BoolTerm typeScope
+      (.cons ⟨andName left right, (andFunctionType typeScope).expression.sorted⟩
+        termScope)
+      (Nucleus.HolE.extendBound (andFunctionType typeScope).lowered Γ) := by
+  let boolType := Family.boolTy (Sig := Sig) typeScope
+  let functionType := andFunctionType (Sig := Sig) typeScope
+  let name := andName left right
   let extendedScope :=
     Named.TmScope.cons ⟨name, functionType.expression.sorted⟩ termScope
   let extendedContext := Nucleus.HolE.extendBound functionType.lowered Γ
   let function : Term Sig typeScope extendedScope extendedContext functionType :=
     Term.boundVariable name functionType 0 (by simp [extendedScope, Named.lookupTm]) rfl
-  let left' := weakenFresh name functionType left freshLeft
-  let right' := weakenFresh name functionType right freshRight
-  let lhsBody := Term.app (Term.app function left') right'
-  let lhs := Term.lam name functionType boolType lhsBody
+  let left' := weakenFresh name functionType left (andName_left_not_mem left right)
+  let right' := weakenFresh name functionType right (andName_right_not_mem left right)
+  exact Term.app (Term.app function left') right'
+
+/-- Left side of the defining conjunction equation. -/
+def andLhs (left right :
+    Term Sig typeScope termScope Γ (Family.boolTy typeScope)) :
+    Term Sig typeScope termScope Γ
+      (Family.arr (andFunctionType typeScope) (Family.boolTy typeScope)) :=
+  Term.lam (andName left right) (andFunctionType typeScope)
+    (Family.boolTy typeScope) (andLhsBody left right)
+
+/-- Body on the right of the defining conjunction equation. -/
+def andRhsBody (left right :
+    Term Sig typeScope termScope Γ (Family.boolTy typeScope)) :
+    BoolTerm typeScope
+      (.cons ⟨andName left right, (andFunctionType typeScope).expression.sorted⟩
+        termScope)
+      (Nucleus.HolE.extendBound (andFunctionType typeScope).lowered Γ) := by
+  let boolType := Family.boolTy (Sig := Sig) typeScope
+  let functionType := andFunctionType (Sig := Sig) typeScope
+  let name := andName left right
+  let extendedScope :=
+    Named.TmScope.cons ⟨name, functionType.expression.sorted⟩ termScope
+  let extendedContext := Nucleus.HolE.extendBound functionType.lowered Γ
+  let function : Term Sig typeScope extendedScope extendedContext functionType :=
+    Term.boundVariable name functionType 0 (by simp [extendedScope, Named.lookupTm]) rfl
   let extendedTruth : Term Sig typeScope extendedScope extendedContext boolType :=
     Term.truth
-  let rhsBody := Term.app (Term.app function extendedTruth) extendedTruth
-  let rhs := Term.lam name functionType boolType rhsBody
-  exact Term.eq (Family.arr functionType boolType) lhs rhs
+  exact Term.app (Term.app function extendedTruth) extendedTruth
+
+/-- Right side of the defining conjunction equation. -/
+def andRhs (left right :
+    Term Sig typeScope termScope Γ (Family.boolTy typeScope)) :
+    Term Sig typeScope termScope Γ
+      (Family.arr (andFunctionType typeScope) (Family.boolTy typeScope)) :=
+  Term.lam (andName left right) (andFunctionType typeScope)
+    (Family.boolTy typeScope) (andRhsBody left right)
+
+/-- Total checked conjunction.  The fresh binder selected by the raw macro is
+also fresh for each operand, so both operands weaken without capture. -/
+def and (left right :
+    Term Sig typeScope termScope Γ (Family.boolTy typeScope)) :
+    Term Sig typeScope termScope Γ (Family.boolTy typeScope) :=
+  Term.eq (Family.arr (andFunctionType typeScope) (Family.boolTy typeScope))
+    (andLhs left right) (andRhs left right)
 
 /-- Total checked disjunction by De Morgan's law. -/
 def or (left right :
@@ -420,7 +474,277 @@ def boolIdentityBody {types : List Kind} {depth : Nat}
   simp [boolIdentityBody, headVariable, Term.boundVariable,
     Nucleus.HolE.openBound]
 
+/-- Body of `fun varied => f x = varied x`. -/
+def appFromLeftBody (name : Nat)
+    (domain codomain : Family Sig typeScope .star)
+    (function : Term Sig typeScope termScope Γ (Family.arr domain codomain))
+    (argument : Term Sig typeScope termScope Γ domain)
+    (functionFresh : name ∉ Unsorted.names function.raw)
+    (argumentFresh : name ∉ Unsorted.names argument.raw) :
+    BoolTerm typeScope
+      (.cons ⟨name, (Family.arr domain codomain).expression.sorted⟩ termScope)
+      (Nucleus.HolE.extendBound (Family.arr domain codomain).lowered Γ) :=
+  let function' := function.weakenFresh name (Family.arr domain codomain) functionFresh
+  let argument' := argument.weakenFresh name (Family.arr domain codomain) argumentFresh
+  let varied := headVariable name (Family.arr domain codomain) termScope Γ
+  Term.eq codomain (Term.app function' argument') (Term.app varied argument')
+
+@[simp] theorem appFromLeftBody_open (_typedContext : Nucleus.HolE.TypedCtx Γ)
+    (name : Nat) (domain codomain : Family Sig typeScope .star)
+    (function varied : Term Sig typeScope termScope Γ (Family.arr domain codomain))
+    (argument : Term Sig typeScope termScope Γ domain)
+    (functionFresh : name ∉ Unsorted.names function.raw)
+    (argumentFresh : name ∉ Unsorted.names argument.raw) :
+    Nucleus.HolE.openBound
+      (appFromLeftBody name domain codomain function argument
+        functionFresh argumentFresh).lowered varied.lowered =
+      (Term.eq codomain (Term.app function argument)
+        (Term.app varied argument)).lowered := by
+  simp [appFromLeftBody, headVariable, weakenFresh, Term.eq, Term.app,
+    Term.boundVariable, Nucleus.HolE.openBound, Nucleus.HolE.instantiate]
+
+/-- Conjunction with a varying left operand. -/
+def andLeftBody (name : Nat) (right : BoolTerm typeScope termScope Γ)
+    (fresh : name ∉ Unsorted.names right.raw) :
+    BoolTerm typeScope
+      (.cons ⟨name, (Family.boolTy (Sig := Sig) typeScope).expression.sorted⟩ termScope)
+      (Nucleus.HolE.extendBound (Family.boolTy (Sig := Sig) typeScope).lowered Γ) :=
+  Term.and (headVariable name (Family.boolTy typeScope) termScope Γ)
+    (right.weakenFresh name (Family.boolTy typeScope) fresh)
+
+/-- Conjunction with a varying right operand. -/
+def andRightBody (name : Nat) (left : BoolTerm typeScope termScope Γ)
+    (fresh : name ∉ Unsorted.names left.raw) :
+    BoolTerm typeScope
+      (.cons ⟨name, (Family.boolTy (Sig := Sig) typeScope).expression.sorted⟩ termScope)
+      (Nucleus.HolE.extendBound (Family.boolTy (Sig := Sig) typeScope).lowered Γ) :=
+  Term.and (left.weakenFresh name (Family.boolTy typeScope) fresh)
+    (headVariable name (Family.boolTy typeScope) termScope Γ)
+
+@[simp] theorem andLeftBody_open (_typedContext : Nucleus.HolE.TypedCtx Γ)
+    (name : Nat) (right value : BoolTerm (Sig := Sig) typeScope termScope Γ)
+    (fresh : name ∉ Unsorted.names right.raw) :
+    Nucleus.HolE.openBound (andLeftBody name right fresh).lowered value.lowered =
+      (Term.and value right).lowered := by
+  simp [andLeftBody, Term.and, Term.andLhs, Term.andRhs, Term.andLhsBody,
+    Term.andRhsBody, Term.andName, Term.andFunctionType, headVariable,
+    weakenFresh, Term.eq, Term.app, Term.lam, Term.truth, Term.bool,
+    Term.boundVariable,
+    Nucleus.HolE.openBound, Nucleus.HolE.instantiate]
+  rfl
+
+@[simp] theorem andRightBody_open (_typedContext : Nucleus.HolE.TypedCtx Γ)
+    (name : Nat) (left value : BoolTerm (Sig := Sig) typeScope termScope Γ)
+    (fresh : name ∉ Unsorted.names left.raw) :
+    Nucleus.HolE.openBound (andRightBody name left fresh).lowered value.lowered =
+      (Term.and left value).lowered := by
+  simp [andRightBody, Term.and, Term.andLhs, Term.andRhs, Term.andLhsBody,
+    Term.andRhsBody, Term.andName, Term.andFunctionType, headVariable,
+    weakenFresh, Term.eq, Term.app, Term.lam, Term.truth, Term.bool,
+    Term.boundVariable,
+    Nucleus.HolE.openBound, Nucleus.HolE.instantiate]
+  rfl
+
+@[simp] theorem andLhsBody_open (_typedContext : Nucleus.HolE.TypedCtx Γ)
+    (left right : BoolTerm (Sig := Sig) typeScope termScope Γ)
+    (operator : Term Sig typeScope termScope Γ (andFunctionType typeScope)) :
+    Nucleus.HolE.openBound (andLhsBody left right).lowered operator.lowered =
+      (Term.app (Term.app operator left) right).lowered := by
+  simp [andLhsBody, andName, andFunctionType, weakenFresh,
+    Term.boundVariable, Term.app, Nucleus.HolE.openBound,
+    Nucleus.HolE.instantiate]
+
+@[simp] theorem andRhsBody_open (_typedContext : Nucleus.HolE.TypedCtx Γ)
+    (left right : BoolTerm (Sig := Sig) typeScope termScope Γ)
+    (operator : Term Sig typeScope termScope Γ (andFunctionType typeScope)) :
+    Nucleus.HolE.openBound (andRhsBody left right).lowered operator.lowered =
+      (Term.app (Term.app operator Term.truth) Term.truth).lowered := by
+  simp [andRhsBody, andName, andFunctionType,
+    Term.boundVariable, Term.app, Term.truth, Term.bool,
+    Nucleus.HolE.openBound, Nucleus.HolE.instantiate]
+
+/-- The Boolean identity function. -/
+def boolIdentity (name : Nat) :
+    Term Sig typeScope termScope Γ
+      (Family.arr (Family.boolTy typeScope) (Family.boolTy typeScope)) :=
+  Term.lam name (Family.boolTy typeScope) (Family.boolTy typeScope)
+    (boolIdentityBody (Sig := Sig) (typeScope := typeScope)
+      (termScope := termScope) (Γ := Γ) name)
+
+/-- A deterministic name fresh for one checked term. -/
+def freshFor {types : List Kind} {depth : Nat}
+    {typeScope : Named.TyScope types} {termScope : Named.TmScope Sig depth}
+    {Γ : Nucleus.HolE.BoundCtx Sig types depth}
+    {type : Family Sig typeScope .star}
+    (term : Term Sig typeScope termScope Γ type) : Nat :=
+  Unsorted.freshName term.raw term.raw
+
+theorem freshFor_not_mem {types : List Kind} {depth : Nat}
+    {typeScope : Named.TyScope types} {termScope : Named.TmScope Sig depth}
+    {Γ : Nucleus.HolE.BoundCtx Sig types depth}
+    {type : Family Sig typeScope .star}
+    (term : Term Sig typeScope termScope Γ type) :
+    freshFor term ∉ Unsorted.names term.raw := by
+  intro membership
+  exact Finset.freshNat_not_mem _ (Finset.mem_union_left _ membership)
+
+/-- Body of the constant function returning a fixed Boolean. -/
+def firstBoolBody (first : BoolTerm (Sig := Sig) typeScope termScope Γ) :
+    BoolTerm (Sig := Sig) typeScope
+      (.cons ⟨freshFor first, (Family.boolTy typeScope).expression.sorted⟩ termScope)
+      (Nucleus.HolE.extendBound (Family.boolTy typeScope).lowered Γ) :=
+  first.weakenFresh (freshFor first) (Family.boolTy typeScope)
+    (freshFor_not_mem first)
+
+/-- Constant function returning its first Boolean argument. -/
+def firstBoolAfterFirst (first : BoolTerm (Sig := Sig) typeScope termScope Γ) :
+    Term Sig typeScope termScope Γ
+      (Family.arr (Family.boolTy typeScope) (Family.boolTy typeScope)) :=
+  Term.lam (freshFor first) (Family.boolTy typeScope) (Family.boolTy typeScope)
+    (firstBoolBody first)
+
+/-- Boolean selector `fun first second => first`. -/
+def firstBool : Term Sig typeScope termScope Γ
+    (Family.arr (Family.boolTy typeScope)
+      (Family.arr (Family.boolTy typeScope) (Family.boolTy typeScope))) :=
+  let name := 0
+  let first := headVariable name (Family.boolTy typeScope) termScope Γ
+  Term.lam name (Family.boolTy typeScope)
+    (Family.arr (Family.boolTy typeScope) (Family.boolTy typeScope))
+    (firstBoolAfterFirst first)
+
+/-- Boolean selector `fun first second => second`. -/
+def secondBool : Term Sig typeScope termScope Γ
+    (Family.arr (Family.boolTy typeScope)
+      (Family.arr (Family.boolTy typeScope) (Family.boolTy typeScope))) :=
+  let name := 0
+  Term.lam name (Family.boolTy typeScope)
+    (Family.arr (Family.boolTy typeScope) (Family.boolTy typeScope))
+    (boolIdentity (Sig := Sig) (typeScope := typeScope)
+      (termScope := .cons ⟨name, (Family.boolTy typeScope).expression.sorted⟩ termScope)
+      (Γ := Nucleus.HolE.extendBound (Family.boolTy typeScope).lowered Γ) 1)
+
+@[simp] theorem firstBool_open (_typedContext : Nucleus.HolE.TypedCtx Γ)
+    (first : BoolTerm (Sig := Sig) typeScope termScope Γ) :
+    Nucleus.HolE.openBound
+      (let name := 0
+       let head := headVariable name (Family.boolTy typeScope) termScope Γ
+       (firstBoolAfterFirst head).lowered)
+      first.lowered = (firstBoolAfterFirst first).lowered := by
+  simp [firstBoolAfterFirst, firstBoolBody, freshFor, headVariable, weakenFresh,
+    Term.boundVariable,
+    Term.lam, Nucleus.HolE.openBound, Nucleus.HolE.instantiate,
+    Nucleus.HolE.weaken]
+  rfl
+
+@[simp] theorem firstBoolAfterFirst_open (_typedContext : Nucleus.HolE.TypedCtx Γ)
+    (first second : BoolTerm (Sig := Sig) typeScope termScope Γ) :
+    Nucleus.HolE.openBound (firstBoolBody first).lowered second.lowered =
+      first.lowered := by
+  simp [firstBoolBody, weakenFresh, Nucleus.HolE.openBound]
+
+@[simp] theorem secondBool_open (_typedContext : Nucleus.HolE.TypedCtx Γ)
+    (first : BoolTerm (Sig := Sig) typeScope termScope Γ) :
+    Nucleus.HolE.openBound
+      (boolIdentity (Sig := Sig) (typeScope := typeScope)
+        (termScope := .cons
+          ⟨0, (Family.boolTy typeScope).expression.sorted⟩ termScope)
+        (Γ := Nucleus.HolE.extendBound (Family.boolTy typeScope).lowered Γ) 1).lowered
+      first.lowered =
+      (boolIdentity (Sig := Sig) (typeScope := typeScope)
+        (termScope := termScope) (Γ := Γ) 1).lowered := by
+  simp [boolIdentity, boolIdentityBody, headVariable, Term.boundVariable,
+    Term.lam, Nucleus.HolE.openBound, Nucleus.HolE.instantiate]
+
 end Term
+
+namespace TermEq
+
+variable {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
+  [Nucleus.HolE.SigFamilyEquality Sig]
+
+/-- The first Boolean selector computes to its first argument. -/
+noncomputable def firstBool_apply (typedContext : Nucleus.HolE.TypedCtx Γ)
+    (first second : BoolTerm (Sig := Sig) typeScope termScope Γ) :
+    TermEq (Sig := Sig) typeScope termScope Γ (Family.boolTy typeScope)
+      (Term.app (Term.app Term.firstBool first) second) first := by
+  let name := 0
+  let head := Term.headVariable name (Family.boolTy typeScope) termScope Γ
+  let outerBody := Term.firstBoolAfterFirst head
+  have outer : TermEq (Sig := Sig) typeScope termScope Γ
+      (Family.arr (Family.boolTy typeScope) (Family.boolTy typeScope))
+      (Term.app Term.firstBool first) (Term.firstBoolAfterFirst first) := by
+    simpa [Term.firstBool, name, head, outerBody] using
+      (TermEq.beta name typedContext (Family.boolTy typeScope)
+        (Family.arr (Family.boolTy typeScope) (Family.boolTy typeScope))
+        outerBody first (Term.firstBoolAfterFirst first)
+        (Term.firstBool_open typedContext first).symm)
+  have applied := TermEq.app outer (TermEq.refl second)
+  have inner : TermEq (Sig := Sig) typeScope termScope Γ
+      (Family.boolTy typeScope)
+      (Term.app (Term.firstBoolAfterFirst first) second) first := by
+    simpa [Term.firstBoolAfterFirst] using
+      (TermEq.beta (Term.freshFor first) typedContext (Family.boolTy typeScope)
+        (Family.boolTy typeScope) (Term.firstBoolBody first) second first
+        (Term.firstBoolAfterFirst_open typedContext first second).symm)
+  exact TermEq.trans applied inner
+
+/-- The second Boolean selector computes to its second argument. -/
+noncomputable def secondBool_apply (typedContext : Nucleus.HolE.TypedCtx Γ)
+    (first second : BoolTerm (Sig := Sig) typeScope termScope Γ) :
+    TermEq (Sig := Sig) typeScope termScope Γ (Family.boolTy typeScope)
+      (Term.app (Term.app Term.secondBool first) second) second := by
+  let boolType := Family.boolTy (Sig := Sig) typeScope
+  let functionType := Family.arr boolType boolType
+  let outerBody := Term.boolIdentity (Sig := Sig) (typeScope := typeScope)
+    (termScope := .cons ⟨0, boolType.expression.sorted⟩ termScope)
+    (Γ := Nucleus.HolE.extendBound boolType.lowered Γ) 1
+  let identity := Term.boolIdentity (Sig := Sig) (typeScope := typeScope)
+    (termScope := termScope) (Γ := Γ) 1
+  have outer : TermEq (Sig := Sig) typeScope termScope Γ functionType
+      (Term.app Term.secondBool first) identity := by
+    simpa [Term.secondBool, boolType, functionType, outerBody, identity] using
+      (TermEq.beta 0 typedContext boolType functionType outerBody first identity
+        (Term.secondBool_open typedContext first).symm)
+  have applied := TermEq.app outer (TermEq.refl second)
+  have inner : TermEq (Sig := Sig) typeScope termScope Γ boolType
+      (Term.app identity second) second := by
+    simpa [identity, Term.boolIdentity] using
+      (TermEq.beta 1 typedContext boolType boolType
+        (Term.boolIdentityBody (Sig := Sig) (typeScope := typeScope)
+          (termScope := termScope) (Γ := Γ) 1)
+        second second (Term.boolIdentityBody_open typedContext 1 second).symm)
+  exact TermEq.trans applied inner
+
+/-- Applying the left side of the conjunction equation exposes both operands. -/
+noncomputable def andLhs_apply (typedContext : Nucleus.HolE.TypedCtx Γ)
+    (left right : BoolTerm (Sig := Sig) typeScope termScope Γ)
+    (operator : Term Sig typeScope termScope Γ (Term.andFunctionType typeScope)) :
+    TermEq (Sig := Sig) typeScope termScope Γ (Family.boolTy typeScope)
+      (Term.app (Term.andLhs left right) operator)
+      (Term.app (Term.app operator left) right) := by
+  simpa [Term.andLhs] using
+    (TermEq.beta (Term.andName left right) typedContext
+      (Term.andFunctionType typeScope) (Family.boolTy typeScope)
+      (Term.andLhsBody left right) operator
+      (Term.app (Term.app operator left) right)
+      (Term.andLhsBody_open typedContext left right operator).symm)
+
+/-- Applying the right side of the conjunction equation exposes `true, true`. -/
+noncomputable def andRhs_apply (typedContext : Nucleus.HolE.TypedCtx Γ)
+    (left right : BoolTerm (Sig := Sig) typeScope termScope Γ)
+    (operator : Term Sig typeScope termScope Γ (Term.andFunctionType typeScope)) :
+    TermEq (Sig := Sig) typeScope termScope Γ (Family.boolTy typeScope)
+      (Term.app (Term.andRhs left right) operator)
+      (Term.app (Term.app operator Term.truth) Term.truth) := by
+  simpa [Term.andRhs] using
+    (TermEq.beta (Term.andName left right) typedContext
+      (Term.andFunctionType typeScope) (Family.boolTy typeScope)
+      (Term.andRhsBody left right) operator
+      (Term.app (Term.app operator Term.truth) Term.truth)
+      (Term.andRhsBody_open typedContext left right operator).symm)
+
+end TermEq
 
 namespace Proof
 
@@ -527,6 +851,50 @@ noncomputable def eqTrans (typedContext : Nucleus.HolE.TypedCtx Γ)
     (Term.eqFromLeftBody_open typedContext name type left right fresh).symm
     predicateAtRight
 
+/-- Applying equal functions to one argument preserves object-language
+equality. -/
+noncomputable def appCongr (typedContext : Nucleus.HolE.TypedCtx Γ)
+    (domain codomain : Family Sig typeScope .star)
+    (function varied :
+      Term Sig typeScope termScope Γ (Family.arr domain codomain))
+    (argument : Term Sig typeScope termScope Γ domain)
+    (equality : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.eq (Family.arr domain codomain) function varied)) :
+    Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.eq codomain (Term.app function argument)
+        (Term.app varied argument)) := by
+  let name := Unsorted.freshName function.raw argument.raw
+  have freshUnion : name ∉
+      Unsorted.names function.raw ∪ Unsorted.names argument.raw := by
+    exact Finset.freshNat_not_mem _
+  have functionFresh : name ∉ Unsorted.names function.raw :=
+    fun membership => freshUnion (Finset.mem_union_left _ membership)
+  have argumentFresh : name ∉ Unsorted.names argument.raw :=
+    fun membership => freshUnion (Finset.mem_union_right _ membership)
+  let functionType := Family.arr domain codomain
+  let body := Term.appFromLeftBody name domain codomain function argument
+    functionFresh argumentFresh
+  let predicate := Term.lam name functionType (Family.boolTy typeScope) body
+  have atFunction : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.eq codomain (Term.app function argument)
+        (Term.app function argument)) := Proof.eqRefl _
+  have predicateAtFunction :
+      Proof (Sig := Sig) typeScope termScope Γ hypotheses
+        (Term.app predicate function) :=
+    betaExpand name typedContext functionType body function
+      (Term.eq codomain (Term.app function argument)
+        (Term.app function argument))
+      (Term.appFromLeftBody_open typedContext name domain codomain function
+        function argument functionFresh argumentFresh).symm atFunction
+  have predicateAtVaried :
+      Proof (Sig := Sig) typeScope termScope Γ hypotheses
+        (Term.app predicate varied) :=
+    Proof.eqMp predicate function varied equality predicateAtFunction
+  exact betaReduce name typedContext functionType body varied
+    (Term.eq codomain (Term.app function argument) (Term.app varied argument))
+    (Term.appFromLeftBody_open typedContext name domain codomain function
+      varied argument functionFresh argumentFresh).symm predicateAtVaried
+
 /-- Equality of Booleans transports provability. -/
 noncomputable def ofEqBool (typedContext : Nucleus.HolE.TypedCtx Γ)
     (left right : BoolTerm typeScope termScope Γ)
@@ -565,6 +933,149 @@ noncomputable def ofEqTrue (typedContext : Nucleus.HolE.TypedCtx Γ)
   ofEqBool typedContext Term.truth proposition
     (eqSymm typedContext (Family.boolTy typeScope) proposition Term.truth equality)
     Proof.truth
+
+/-- The defining equation for conjunction is reflexive at `true, true`. -/
+noncomputable def andTrueTrue :
+    Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.and Term.truth Term.truth) := by
+  let boolType := Family.boolTy (Sig := Sig) typeScope
+  let functionType := Family.arr boolType (Family.arr boolType boolType)
+  let truth : BoolTerm (Sig := Sig) typeScope termScope Γ := Term.truth
+  let name := Unsorted.freshName truth.raw truth.raw
+  have fresh : name ∉ Unsorted.names truth.raw := by
+    intro membership
+    exact Finset.freshNat_not_mem _ (Finset.mem_union_left _ membership)
+  let extendedScope :=
+    Named.TmScope.cons ⟨name, functionType.expression.sorted⟩ termScope
+  let extendedContext := Nucleus.HolE.extendBound functionType.lowered Γ
+  let function : Term Sig typeScope extendedScope extendedContext functionType :=
+    Term.boundVariable name functionType 0
+      (by simp [extendedScope, Named.lookupTm]) rfl
+  let truth' := truth.weakenFresh name functionType fresh
+  let body := Term.app (Term.app function truth') truth'
+  let abstraction := Term.lam name functionType boolType body
+  have reflexive : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.eq (Family.arr functionType boolType) abstraction abstraction) :=
+    Proof.eqRefl abstraction
+  exact ⟨by
+    simpa [Term.and, Term.andLhs, Term.andRhs, Term.andLhsBody,
+      Term.andRhsBody, Term.andName, Term.andFunctionType,
+      boolType, functionType, truth, name, extendedScope,
+      extendedContext, function, truth', body, abstraction, Term.weakenFresh,
+      Term.truth, Term.bool, Nucleus.HolE.weaken, Nucleus.HolE.rename]
+      using reflexive.kernel⟩
+
+/-- Standard conjunction introduction. -/
+noncomputable def andIntro (typedContext : Nucleus.HolE.TypedCtx Γ)
+    (left : Proof (Sig := Sig) typeScope termScope Γ hypotheses p)
+    (right : Proof (Sig := Sig) typeScope termScope Γ hypotheses q) :
+    Proof (Sig := Sig) typeScope termScope Γ hypotheses (Term.and p q) := by
+  let truth : BoolTerm (Sig := Sig) typeScope termScope Γ := Term.truth
+  have qTrue := eqTrue right
+  have trueQ := eqSymm typedContext (Family.boolTy typeScope) q truth qTrue
+  let rightName := Unsorted.freshName truth.raw truth.raw
+  have truthFresh : rightName ∉ Unsorted.names truth.raw := by
+    intro membership
+    exact Finset.freshNat_not_mem _ (Finset.mem_union_left _ membership)
+  let rightBody := Term.andRightBody rightName truth truthFresh
+  let rightPredicate := Term.lam rightName (Family.boolTy typeScope)
+    (Family.boolTy typeScope) rightBody
+  have atTrue : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.app rightPredicate truth) :=
+    betaExpand rightName typedContext (Family.boolTy typeScope) rightBody truth
+      (Term.and truth truth)
+      (Term.andRightBody_open typedContext rightName truth truth truthFresh).symm
+      andTrueTrue
+  have atQ : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.app rightPredicate q) :=
+    Proof.eqMp rightPredicate truth q trueQ atTrue
+  have truthAndQ : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.and truth q) :=
+    betaReduce rightName typedContext (Family.boolTy typeScope) rightBody q
+      (Term.and truth q)
+      (Term.andRightBody_open typedContext rightName truth q truthFresh).symm atQ
+  have pTrue := eqTrue left
+  have trueP := eqSymm typedContext (Family.boolTy typeScope) p truth pTrue
+  let leftName := Unsorted.freshName q.raw q.raw
+  have qFresh : leftName ∉ Unsorted.names q.raw := by
+    intro membership
+    exact Finset.freshNat_not_mem _ (Finset.mem_union_left _ membership)
+  let leftBody := Term.andLeftBody leftName q qFresh
+  let leftPredicate := Term.lam leftName (Family.boolTy typeScope)
+    (Family.boolTy typeScope) leftBody
+  have atTruth : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.app leftPredicate truth) :=
+    betaExpand leftName typedContext (Family.boolTy typeScope) leftBody truth
+      (Term.and truth q)
+      (Term.andLeftBody_open typedContext leftName q truth qFresh).symm truthAndQ
+  have atP : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.app leftPredicate p) :=
+    Proof.eqMp leftPredicate truth p trueP atTruth
+  exact betaReduce leftName typedContext (Family.boolTy typeScope) leftBody p
+    (Term.and p q)
+    (Term.andLeftBody_open typedContext leftName q p qFresh).symm atP
+
+/-- Left elimination for equality-defined conjunction. -/
+noncomputable def andElimLeft (typedContext : Nucleus.HolE.TypedCtx Γ)
+    (conjunction : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.and p q)) :
+    Proof (Sig := Sig) typeScope termScope Γ hypotheses p := by
+  let operator := Term.firstBool (Sig := Sig) (typeScope := typeScope)
+    (termScope := termScope) (Γ := Γ)
+  have applied := appCongr typedContext (Term.andFunctionType typeScope)
+    (Family.boolTy typeScope) (Term.andLhs p q) (Term.andRhs p q)
+    operator conjunction
+  have leftReduction := TermEq.trans
+    (TermEq.andLhs_apply typedContext p q operator)
+    (TermEq.firstBool_apply typedContext p q)
+  have rightReduction := TermEq.trans
+    (TermEq.andRhs_apply typedContext p q operator)
+    (TermEq.firstBool_apply typedContext Term.truth Term.truth)
+  have first : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.eq (Family.boolTy typeScope) p
+        (Term.app (Term.andRhs p q) operator)) :=
+    eqTrans typedContext (Family.boolTy typeScope) p
+      (Term.app (Term.andLhs p q) operator)
+      (Term.app (Term.andRhs p q) operator)
+      (eqSymm typedContext (Family.boolTy typeScope) _ _
+        (Proof.eqOfTermEq leftReduction)) applied
+  have equality : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.eq (Family.boolTy typeScope) p Term.truth) :=
+    eqTrans typedContext (Family.boolTy typeScope) p
+      (Term.app (Term.andRhs p q) operator) Term.truth first
+      (Proof.eqOfTermEq rightReduction)
+  exact ofEqTrue typedContext equality
+
+/-- Right elimination for equality-defined conjunction. -/
+noncomputable def andElimRight (typedContext : Nucleus.HolE.TypedCtx Γ)
+    (conjunction : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.and p q)) :
+    Proof (Sig := Sig) typeScope termScope Γ hypotheses q := by
+  let operator := Term.secondBool (Sig := Sig) (typeScope := typeScope)
+    (termScope := termScope) (Γ := Γ)
+  have applied := appCongr typedContext (Term.andFunctionType typeScope)
+    (Family.boolTy typeScope) (Term.andLhs p q) (Term.andRhs p q)
+    operator conjunction
+  have leftReduction := TermEq.trans
+    (TermEq.andLhs_apply typedContext p q operator)
+    (TermEq.secondBool_apply typedContext p q)
+  have rightReduction := TermEq.trans
+    (TermEq.andRhs_apply typedContext p q operator)
+    (TermEq.secondBool_apply typedContext Term.truth Term.truth)
+  have first : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.eq (Family.boolTy typeScope) q
+        (Term.app (Term.andRhs p q) operator)) :=
+    eqTrans typedContext (Family.boolTy typeScope) q
+      (Term.app (Term.andLhs p q) operator)
+      (Term.app (Term.andRhs p q) operator)
+      (eqSymm typedContext (Family.boolTy typeScope) _ _
+        (Proof.eqOfTermEq leftReduction)) applied
+  have equality : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.eq (Family.boolTy typeScope) q Term.truth) :=
+    eqTrans typedContext (Family.boolTy typeScope) q
+      (Term.app (Term.andRhs p q) operator) Term.truth first
+      (Proof.eqOfTermEq rightReduction)
+  exact ofEqTrue typedContext equality
 
 end Proof
 
