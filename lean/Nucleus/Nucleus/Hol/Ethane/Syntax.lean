@@ -78,6 +78,26 @@ structure AnyExpr (Sig : Signature.{u}) (Name : Type := Nat) where
 
 namespace Syn
 
+/-- Rename every binder and variable occurrence uniformly. -/
+def mapNames (f : Name → Name') : Syn Sig Name → Syn Sig Name'
+  | .boolTy => .boolTy
+  | .arr A B => .arr (A.mapNames f) (B.mapNames f)
+  | .tyApp domain codomain F A =>
+      .tyApp domain codomain (F.mapNames f) (A.mapNames f)
+  | .tyLam domain codomain name body =>
+      .tyLam domain codomain (f name) (body.mapNames f)
+  | .tyFv name kind => .tyFv (f name) kind
+  | .tyExists name predicate => .tyExists (f name) (predicate.mapNames f)
+  | .model name predicate => .model (f name) (predicate.mapNames f)
+  | .primFam kind symbol => .primFam kind symbol
+  | .primTm symbol => .primTm symbol
+  | .tmFv name A => .tmFv (f name) (A.mapNames f)
+  | .app function argument => .app (function.mapNames f) (argument.mapNames f)
+  | .lam name A body => .lam (f name) (A.mapNames f) (body.mapNames f)
+  | .bool value => .bool value
+  | .eq A left right => .eq (A.mapNames f) (left.mapNames f) (right.mapNames f)
+  | .eps A predicate => .eps (A.mapNames f) (predicate.mapNames f)
+
 /-- The result sort suggested by the root constructor. -/
 def rootSort : Syn Sig Name → HolSort
   | .boolTy | .arr .. | .model .. => .kind .star
@@ -182,6 +202,24 @@ end Syn
 
 namespace Expr
 
+/-- Rename every binder and variable occurrence uniformly. -/
+def mapNames (f : Name → Name') : Expr Sig Name sort → Expr Sig Name' sort
+  | .boolTy => .boolTy
+  | .arr A B => .arr (A.mapNames f) (B.mapNames f)
+  | .tyApp F A => .tyApp (F.mapNames f) (A.mapNames f)
+  | .tyLam name body => .tyLam (f name) (body.mapNames f)
+  | .tyFv name kind => .tyFv (f name) kind
+  | .tyExists name predicate => .tyExists (f name) (predicate.mapNames f)
+  | .model name predicate => .model (f name) (predicate.mapNames f)
+  | .primFam symbol => .primFam symbol
+  | .primTm symbol => .primTm symbol
+  | .tmFv name A => .tmFv (f name) (A.mapNames f)
+  | .app function argument => .app (function.mapNames f) (argument.mapNames f)
+  | .lam name A body => .lam (f name) (A.mapNames f) (body.mapNames f)
+  | .bool value => .bool value
+  | .eq A left right => .eq (A.mapNames f) (left.mapNames f) (right.mapNames f)
+  | .eps A predicate => .eps (A.mapNames f) (predicate.mapNames f)
+
 /-- Erase only the syntactic sort index. -/
 def erase : {sort : HolSort} → Expr Sig Name sort → Syn Sig Name
   | _, .boolTy => .boolTy
@@ -243,6 +281,10 @@ def ofHolE : {sort : HolSort} → Nucleus.HolE.Named.Expr Sig Name sort → Opti
 @[simp] theorem ofHolE_toHolE (expression : Expr Sig Name sort) :
     ofHolE expression.toHolE = some expression := by
   induction expression <;> simp_all [toHolE, ofHolE]
+
+@[simp] theorem erase_mapNames (f : Name → Name') (expression : Expr Sig Name sort) :
+    (expression.mapNames f).erase = expression.erase.mapNames f := by
+  induction expression <;> simp_all [mapNames, erase, Syn.mapNames]
 
 @[simp] theorem check_erase (expression : Expr Sig Name sort) :
     Syn.check sort expression.erase = some expression := by

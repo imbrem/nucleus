@@ -1,4 +1,5 @@
 import Nucleus.Hol.Ethane.Reference
+import Nucleus.Hol.Ethane.Subtype
 
 /-!
 # Ethane
