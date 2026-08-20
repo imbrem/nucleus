@@ -12,9 +12,10 @@ single subtype-package existence axiom.
 only the syntactic sort.  Typing and proof certificates live in later layers.
 -/
 
-namespace Nucleus.Ethane
+namespace Nucleus.Hol.Ethane
 
 universe u
+set_option relaxedAutoImplicit true
 
 abbrev Kind := Nucleus.HolE.Kind
 abbrev HolSort := Nucleus.HolE.HolSort
@@ -254,4 +255,4 @@ def ofHolE : {sort : HolSort} → Nucleus.HolE.Named.Expr Sig Name sort → Opti
 
 end Expr
 
-end Nucleus.Ethane
+end Nucleus.Hol.Ethane
