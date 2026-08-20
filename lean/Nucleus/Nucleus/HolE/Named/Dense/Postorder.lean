@@ -1,7 +1,7 @@
 import Nucleus.HolE.Named.Dense.Representation
 import Mathlib.Logic.Equiv.Defs
 
-/-! # Postorder encodings modulo decoding -/
+/-! # Postorder as a canonical representative of finite rooted DAGs -/
 
 namespace Nucleus.HolE.Named.Unsorted.Dense.Encoder
 
@@ -13,9 +13,9 @@ theorem postorderQuotient_bijective :
   constructor
   · intro left right equality
     have equivalent := Quotient.exact equality
-    change ValidRootEncoding.Equivalent (postorderValid left) (postorderValid right)
+    change DAGRootEncoding.Equivalent (postorderDAG left) (postorderDAG right)
       at equivalent
-    change unpostorder (postorder left) = unpostorder (postorder right) at equivalent
+    change (postorder left).decodeTree = (postorder right).decodeTree at equivalent
     simpa using equivalent
   · intro quotient
     refine Quotient.inductionOn quotient ?_
@@ -23,10 +23,11 @@ theorem postorderQuotient_bijective :
     obtain ⟨tree, equivalent⟩ := postorder_surjective_upToEquivalent encoding
     exact ⟨tree, Quotient.sound equivalent⟩
 
-/-- Named HolE trees are canonically equivalent to valid finite postorder
-root encodings modulo decoding equivalence. -/
-noncomputable def postorderEquivQuotient :
-    HolE Sig Name ≃ PostorderQuotient Sig Name :=
+/-- Named HolE trees are canonically equivalent to finite-depth rooted dense
+DAGs modulo decoding equivalence.  Postorder merely chooses a canonical
+representative of each equivalence class. -/
+noncomputable def postorderEquivDAGQuotient :
+    HolE Sig Name ≃ DAGQuotient Sig Name :=
   Equiv.ofBijective postorderQuotient postorderQuotient_bijective
 
 end Nucleus.HolE.Named.Unsorted.Dense.Encoder

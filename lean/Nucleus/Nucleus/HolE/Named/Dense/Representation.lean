@@ -1093,17 +1093,19 @@ abbrev RootEncoding := Result
 /-- Encode a tree at the canonical zero offset. -/
 def postorder (tree : HolE Sig Name) : RootEncoding Sig Name := run tree 0
 
-/-- Decode the raw tree carried by a finite root encoding. -/
-def unpostorder (encoding : RootEncoding Sig Name) : Option (HolE Sig Name) :=
+/-- Decode the raw tree carried by a finite root encoding.  This operation is
+independent of how the arena was numbered; in particular its input need not
+have been produced by `postorder`. -/
+def RootEncoding.decodeTree (encoding : RootEncoding Sig Name) : Option (HolE Sig Name) :=
   encoding.decodeSyntax
 
-@[simp] theorem unpostorder_postorder (tree : HolE Sig Name) :
-    unpostorder (postorder tree) = some tree := decodeSyntax_run tree 0
+@[simp] theorem decodeTree_postorder (tree : HolE Sig Name) :
+    (postorder tree).decodeTree = some tree := decodeSyntax_run tree 0
 
 theorem postorder_injective :
     Function.Injective (@postorder Sig Name) := by
   intro left right equality
-  have := congrArg unpostorder equality
+  have := congrArg RootEncoding.decodeTree equality
   simpa using this
 
 /-- The postorder map bundled with its injectivity proof. -/
@@ -1114,44 +1116,51 @@ structure PostorderEmbedding (Sig : Signature.{u}) (Name : Type) where
 def postorderEmbedding : PostorderEmbedding Sig Name :=
   ⟨postorder, postorder_injective⟩
 
-/-- Root encodings which decode to a finite named tree. -/
-def ValidRootEncoding (Sig : Signature.{u}) (Name : Type) :=
-  { encoding : RootEncoding Sig Name // ∃ tree, unpostorder encoding = some tree }
+/-- Finite-depth rooted DAGs in the concrete dense-list representation.
 
-/-- Decoding equivalence on valid finite root encodings. -/
-def ValidRootEncoding.Equivalent
-    (left right : ValidRootEncoding Sig Name) : Prop :=
-  unpostorder left.val = unpostorder right.val
+Successful left-to-right decoding is the finiteness certificate here: a node
+can only resolve children already available in the finite prefix, so reachable
+edges strictly decrease the list position.  Sharing is unrestricted, and no
+postorder-encoder provenance is required.  `Dense.RootedDAG` is the generic,
+arbitrarily indexed formulation with an explicit accessibility certificate. -/
+def DAGRootEncoding (Sig : Signature.{u}) (Name : Type) :=
+  { encoding : RootEncoding Sig Name // ∃ tree, encoding.decodeTree = some tree }
 
-def ValidRootEncoding.decodingSetoid : Setoid (ValidRootEncoding Sig Name) where
-  r := ValidRootEncoding.Equivalent
+/-- Decoding equivalence on finite-depth rooted DAGs. -/
+def DAGRootEncoding.Equivalent
+    (left right : DAGRootEncoding Sig Name) : Prop :=
+  left.val.decodeTree = right.val.decodeTree
+
+def DAGRootEncoding.decodingSetoid : Setoid (DAGRootEncoding Sig Name) where
+  r := DAGRootEncoding.Equivalent
   iseqv := ⟨fun _ => rfl, fun equality => equality.symm,
     fun left middle => left.trans middle⟩
 
-abbrev PostorderQuotient (Sig : Signature.{u}) (Name : Type) :=
-  Quotient (ValidRootEncoding.decodingSetoid (Sig := Sig) (Name := Name))
+/-- Finite-depth rooted dense DAGs modulo equality of their decoded trees. -/
+abbrev DAGQuotient (Sig : Signature.{u}) (Name : Type) :=
+  Quotient (DAGRootEncoding.decodingSetoid (Sig := Sig) (Name := Name))
 
-def postorderValid (tree : HolE Sig Name) : ValidRootEncoding Sig Name :=
-  ⟨postorder tree, tree, unpostorder_postorder tree⟩
+def postorderDAG (tree : HolE Sig Name) : DAGRootEncoding Sig Name :=
+  ⟨postorder tree, tree, decodeTree_postorder tree⟩
 
 /-- Every valid finite root encoding is decoding-equivalent to a canonical
 postorder encoding. -/
 theorem postorder_surjective_upToEquivalent
-    (encoding : ValidRootEncoding Sig Name) :
-    ∃ tree, ValidRootEncoding.Equivalent (postorderValid tree) encoding := by
+    (encoding : DAGRootEncoding Sig Name) :
+    ∃ tree, DAGRootEncoding.Equivalent (postorderDAG tree) encoding := by
   obtain ⟨tree, decodes⟩ := encoding.property
-  exact ⟨tree, (unpostorder_postorder tree).trans decodes.symm⟩
+  exact ⟨tree, (decodeTree_postorder tree).trans decodes.symm⟩
 
 /-- Postorder is injective on trees and surjective onto valid root encodings
 up to decoding equivalence. -/
 theorem postorder_bijective_upToEquivalent :
     Function.Injective (@postorder Sig Name) ∧
-      ∀ encoding : ValidRootEncoding Sig Name,
-        ∃ tree, ValidRootEncoding.Equivalent (postorderValid tree) encoding :=
+      ∀ encoding : DAGRootEncoding Sig Name,
+        ∃ tree, DAGRootEncoding.Equivalent (postorderDAG tree) encoding :=
   ⟨postorder_injective, postorder_surjective_upToEquivalent⟩
 
-def postorderQuotient (tree : HolE Sig Name) : PostorderQuotient Sig Name :=
-  Quotient.mk _ (postorderValid tree)
+def postorderQuotient (tree : HolE Sig Name) : DAGQuotient Sig Name :=
+  Quotient.mk _ (postorderDAG tree)
 
 example (offset : Nat) :
     (run (.boolTy : HolE Sig Name) offset).decode = some .boolTy := by
