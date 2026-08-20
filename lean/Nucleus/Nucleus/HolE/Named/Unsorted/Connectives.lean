@@ -323,6 +323,35 @@ theorem imp?_complete (left right :
       result.raw = Unsorted.imp left.raw right.raw := by
   simpa [Term.imp?, raw_imp] using Term.ofRaw_complete (imp left right)
 
+/-! The following declarations are the small review surface for the derived
+connectives.  Each statement mentions only the raw macro and its ordinary
+unsorted typing judgment; the construction and lowering witnesses remain in
+the checked term returned above. -/
+
+theorem not_hasType (proposition :
+    Term Sig typeScope termScope Γ (Family.boolTy typeScope)) :
+    HasType typeScope termScope Γ (Unsorted.not proposition.raw) .boolTy := by
+  rw [← raw_not]
+  simpa [Term.rawType, Family.raw_boolTy] using (Term.not proposition).toHasType
+
+theorem and_hasType (left right :
+    Term Sig typeScope termScope Γ (Family.boolTy typeScope)) :
+    HasType typeScope termScope Γ (Unsorted.and left.raw right.raw) .boolTy := by
+  rw [← raw_and]
+  simpa [Term.rawType, Family.raw_boolTy] using (and left right).toHasType
+
+theorem or_hasType (left right :
+    Term Sig typeScope termScope Γ (Family.boolTy typeScope)) :
+    HasType typeScope termScope Γ (Unsorted.or left.raw right.raw) .boolTy := by
+  rw [← raw_or]
+  simpa [Term.rawType, Family.raw_boolTy] using (or left right).toHasType
+
+theorem imp_hasType (left right :
+    Term Sig typeScope termScope Γ (Family.boolTy typeScope)) :
+    HasType typeScope termScope Γ (Unsorted.imp left.raw right.raw) .boolTy := by
+  rw [← raw_imp]
+  simpa [Term.rawType, Family.raw_boolTy] using (imp left right).toHasType
+
 end Term
 
 end Nucleus.HolE.Named.Unsorted
