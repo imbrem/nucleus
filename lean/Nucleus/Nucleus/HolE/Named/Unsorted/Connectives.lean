@@ -1077,6 +1077,50 @@ noncomputable def andElimRight (typedContext : Nucleus.HolE.TypedCtx Γ)
       (Proof.eqOfTermEq rightReduction)
   exact ofEqTrue typedContext equality
 
+/-- Negation introduction, with negation represented as equality to false. -/
+noncomputable def notIntro
+    (proposition : BoolTerm (Sig := Sig) typeScope termScope Γ)
+    (contradiction : Proof (Sig := Sig) typeScope termScope Γ
+      (proposition :: hypotheses) Term.falsehood) :
+    Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.not proposition) := by
+  unfold Term.not
+  exact Proof.antisymm proposition Term.falsehood contradiction
+    (Proof.falseElim proposition (Proof.hyp (by simp)))
+
+/-- Negation elimination is Boolean equality transport into false. -/
+noncomputable def notElim (typedContext : Nucleus.HolE.TypedCtx Γ)
+    (negated : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.not p))
+    (premise : Proof (Sig := Sig) typeScope termScope Γ hypotheses p) :
+    Proof (Sig := Sig) typeScope termScope Γ hypotheses Term.falsehood := by
+  unfold Term.not at negated
+  exact ofEqBool typedContext p Term.falsehood negated premise
+
+/-- Implication introduction for the definition `(p ∧ q) = p`. -/
+noncomputable def impIntro (typedContext : Nucleus.HolE.TypedCtx Γ)
+    (consequence : Proof (Sig := Sig) typeScope termScope Γ
+      (p :: hypotheses) q) :
+    Proof (Sig := Sig) typeScope termScope Γ hypotheses (Term.imp p q) := by
+  unfold Term.imp
+  apply Proof.antisymm (Term.and p q) p
+  · exact andElimLeft (p := p) (q := q) typedContext (Proof.hyp (by simp))
+  · exact andIntro typedContext (Proof.hyp (by simp)) consequence
+
+/-- Modus ponens for equality-defined implication. -/
+noncomputable def impElim (typedContext : Nucleus.HolE.TypedCtx Γ)
+    (implication : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.imp p q))
+    (premise : Proof (Sig := Sig) typeScope termScope Γ hypotheses p) :
+    Proof (Sig := Sig) typeScope termScope Γ hypotheses q := by
+  unfold Term.imp at implication
+  have expanded : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.and p q) :=
+    ofEqBool typedContext p (Term.and p q)
+      (eqSymm typedContext (Family.boolTy typeScope) (Term.and p q) p implication)
+      premise
+  exact andElimRight typedContext expanded
+
 end Proof
 
 end Nucleus.HolE.Named.Unsorted
