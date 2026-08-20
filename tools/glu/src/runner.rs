@@ -523,6 +523,77 @@ impl Runner {
         Ok(())
     }
 
+    /// Build selected targets in the repository's Lean development.
+    ///
+    /// The command runs from the directory containing the lakefile. This is
+    /// important beyond locating the manifest: Elan discovers the checked-in
+    /// `lean-toolchain` there, so callers need not duplicate it in an
+    /// `ELAN_TOOLCHAIN` environment variable.
+    pub(crate) fn lean_build(
+        &self,
+        targets: &[OsString],
+        cache: bool,
+        jobs: Option<u16>,
+    ) -> Result<()> {
+        let project = self.lean_project()?;
+        let name = project
+            .strip_prefix(&self.root)
+            .unwrap_or(&project)
+            .display()
+            .to_string();
+
+        if cache && requires_mathlib(&project)? {
+            self.run_in(
+                &format!("fetch Mathlib cache for {name}"),
+                &project,
+                "lake",
+                ["exe", "cache", "get"],
+                &[],
+            )?;
+        }
+
+        let mut args = Vec::with_capacity(targets.len() + 1);
+        args.push(OsString::from("build"));
+        args.extend_from_slice(targets);
+        self.run_in(
+            &format!("build {name}"),
+            &project,
+            "lake",
+            args,
+            &lake_jobs_env(jobs),
+        )
+    }
+
+    /// Forward arbitrary arguments to Lake from the Lean development root.
+    pub(crate) fn lake(&self, args: Vec<OsString>) -> Result<()> {
+        let project = self.lean_project()?;
+        self.exec_in("run Lake", &project, "lake", args)
+    }
+
+    fn lean_project(&self) -> Result<PathBuf> {
+        let projects = lean_projects(&self.root.join("lean"))?;
+        match projects.as_slice() {
+            [project] => Ok(project.clone()),
+            [] => bail!("no Lean developments found under lean/"),
+            _ => {
+                let projects = projects
+                    .iter()
+                    .map(|project| {
+                        project
+                            .strip_prefix(&self.root)
+                            .unwrap_or(project)
+                            .display()
+                            .to_string()
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                bail!(
+                    "multiple Lean developments found ({projects}); project selection is required"
+                )
+            }
+        }
+    }
+
     /// Generate API documentation for every Lean development that has a
     /// `docbuild` companion project.
     ///
@@ -649,6 +720,33 @@ impl Runner {
         }
 
         eprintln!(" done ({:.2?})", started.elapsed());
+        Ok(())
+    }
+
+    fn exec_in<I, S>(&self, phase: &str, directory: &Path, program: &str, args: I) -> Result<()>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let args: Vec<OsString> = args.into_iter().map(|arg| arg.as_ref().into()).collect();
+        if self.verbose > 0 {
+            eprintln!(
+                "  $ (cd {} && {program} {})",
+                directory.display(),
+                args.iter()
+                    .map(|arg| arg.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+        }
+        let status = Command::new(program)
+            .args(&args)
+            .current_dir(directory)
+            .status()
+            .wrap_err_with(|| format!("{phase}: could not run {program}"))?;
+        if !status.success() {
+            bail!("{phase} failed with {status}");
+        }
         Ok(())
     }
 
