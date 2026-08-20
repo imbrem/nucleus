@@ -67,12 +67,17 @@ enum Task {
         #[command(subcommand)]
         command: BuckTask,
     },
-    /// Build the Lean developments under `lean/`.
+    /// Work with the Lean developments under `lean/`.
     ///
     /// These are a specification, not a build input, so this is deliberately
     /// separate: `glu build`, `glu check`, and `glu ci` never touch them. It
     /// shells out to `lake` rather than going through Buck.
     Lean {
+        /// A focused Lean operation. With no subcommand, build every
+        /// development for compatibility with the original `glu lean`.
+        #[command(subcommand)]
+        command: Option<LeanTask>,
+
         /// List the developments that would be built, without building.
         #[arg(long)]
         list: bool,
@@ -105,6 +110,14 @@ enum Task {
         /// task pool, so this sets `LEAN_NUM_THREADS`.
         #[arg(long)]
         jobs: Option<u16>,
+    },
+    /// Run Lake in the repository's Lean development.
+    ///
+    /// Arguments after `--` are passed through unchanged. Running from the
+    /// development root lets Elan discover its checked-in `lean-toolchain`.
+    Lake {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<OsString>,
     },
     /// Report source line counts.
     Loc,
@@ -156,6 +169,23 @@ enum BuildTarget {
     Component,
     Python,
     Docs,
+}
+
+#[derive(Debug, Subcommand)]
+enum LeanTask {
+    /// Build selected Lake targets in the repository's Lean development.
+    Build {
+        /// Lake targets; with none, build the development's default targets.
+        targets: Vec<OsString>,
+
+        /// Build without first fetching Mathlib's prebuilt artifacts.
+        #[arg(long)]
+        no_cache: bool,
+
+        /// Cap Lake's build parallelism via `LEAN_NUM_THREADS`.
+        #[arg(long)]
+        jobs: Option<u16>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -319,6 +349,16 @@ fn run() -> Result<()> {
             ),
         },
         Task::Lean {
+            command:
+                Some(LeanTask::Build {
+                    targets,
+                    no_cache,
+                    jobs,
+                }),
+            ..
+        } => runner.lean_build(&targets, !no_cache, jobs),
+        Task::Lean {
+            command: None,
             list,
             no_cache,
             docs,
@@ -331,6 +371,7 @@ fn run() -> Result<()> {
                 runner.lean(list, !no_cache, jobs)
             }
         }
+        Task::Lake { args } => runner.lake(args),
         Task::Loc => runner.loc(),
         Task::Status => runner.status(),
     }
@@ -348,5 +389,42 @@ fn main() -> ExitCode {
             eprintln!("{error:?}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, LeanTask, Task};
+    use clap::Parser;
+
+    #[test]
+    fn parses_targeted_lean_build() {
+        let cli = Cli::try_parse_from(["glu", "lean", "build", "Nucleus.SimpTy", "--jobs", "2"])
+            .expect("targeted Lean build should parse");
+        let Task::Lean {
+            command:
+                Some(LeanTask::Build {
+                    targets,
+                    no_cache,
+                    jobs,
+                }),
+            ..
+        } = cli.command
+        else {
+            panic!("expected a targeted Lean build");
+        };
+        assert_eq!(targets, ["Nucleus.SimpTy"]);
+        assert!(!no_cache);
+        assert_eq!(jobs, Some(2));
+    }
+
+    #[test]
+    fn parses_lake_passthrough() {
+        let cli = Cli::try_parse_from(["glu", "lake", "--", "env", "lean", "--version"])
+            .expect("Lake passthrough should parse");
+        let Task::Lake { args } = cli.command else {
+            panic!("expected a Lake passthrough");
+        };
+        assert_eq!(args, ["env", "lean", "--version"]);
     }
 }
