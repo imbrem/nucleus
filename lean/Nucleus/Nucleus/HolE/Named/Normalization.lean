@@ -1,5 +1,5 @@
 import Nucleus.HolE.Named.Equivalence
-import Nucleus.HolE.Named.Kernel
+import Nucleus.HolE.Named.Conversion
 import Nucleus.HolE.Normalization.Eta
 
 /-!
@@ -125,6 +125,23 @@ theorem preserve {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
     exact ⟨step.loweredTarget, .tm loweredType, step.targetLowering,
       classificationLowering, step.derivation.preserve typed rawTyping⟩
 
+/-- Named reduction preserves typing modulo type-family conversion. -/
+theorem preserveConv {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
+    [Nucleus.HolE.SigFamilyEquality Sig]
+    {typeScope : TyScope types} {termScope : TmScope Sig depth}
+    {Γ : Nucleus.HolE.BoundCtx Sig types depth} {source target : Tm Sig}
+    {A : Ty Sig} (step : BetaEta typeScope termScope source target)
+    (typed : Nucleus.HolE.TypedCtx Γ)
+    (sourceTyping : HasTypeConv typeScope termScope Γ source A) :
+    HasTypeConv typeScope termScope Γ target A := by
+  obtain ⟨loweredSource, loweredType, sourceLowering, typeLowering, defTyping⟩ :=
+    sourceTyping
+  rw [step.sourceLowering] at sourceLowering
+  have sourceEqual := Option.some.inj sourceLowering
+  subst loweredSource
+  exact ⟨step.loweredTarget, loweredType, step.targetLowering, typeLowering,
+    step.derivation.preserveDefEq typed defTyping⟩
+
 /-- A typed named step yields a named kernel conversion certificate. -/
 theorem eqTm_nonempty {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
     [Nucleus.HolE.SigFamilyEquality Sig]
@@ -146,6 +163,25 @@ theorem eqTm_nonempty {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
     obtain ⟨derivation⟩ := step.derivation.eqTm_nonempty typed rawTyping
     exact ⟨⟨step.loweredSource, step.loweredTarget, loweredType,
       step.sourceLowering, step.targetLowering, typeLowering, derivation⟩⟩
+
+/-- A definitionally typed named step yields a named kernel conversion
+certificate at the advertised type. -/
+theorem eqTmConv_nonempty {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
+    [Nucleus.HolE.SigFamilyEquality Sig]
+    {typeScope : TyScope types} {termScope : TmScope Sig depth}
+    {Γ : Nucleus.HolE.BoundCtx Sig types depth} {source target : Tm Sig}
+    {A : Ty Sig} (step : BetaEta typeScope termScope source target)
+    (typed : Nucleus.HolE.TypedCtx Γ)
+    (sourceTyping : HasTypeConv typeScope termScope Γ source A) :
+    Nonempty (EqTm typeScope termScope Γ source target A) := by
+  obtain ⟨loweredSource, loweredType, sourceLowering, typeLowering, defTyping⟩ :=
+    sourceTyping
+  rw [step.sourceLowering] at sourceLowering
+  have sourceEqual := Option.some.inj sourceLowering
+  subst loweredSource
+  obtain ⟨derivation⟩ := step.derivation.eqTmDefEq_nonempty typed defTyping
+  exact ⟨⟨step.loweredSource, step.loweredTarget, loweredType,
+    step.sourceLowering, step.targetLowering, typeLowering, derivation⟩⟩
 
 end BetaEta
 
@@ -170,6 +206,23 @@ theorem preserve {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
     exact ⟨steps.loweredTarget, .tm loweredType, steps.targetLowering,
       classificationLowering, steps.derivation.preserve typed rawTyping⟩
 
+/-- Named reduction sequences preserve typing modulo type-family conversion. -/
+theorem preserveConv {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
+    [Nucleus.HolE.SigFamilyEquality Sig]
+    {typeScope : TyScope types} {termScope : TmScope Sig depth}
+    {Γ : Nucleus.HolE.BoundCtx Sig types depth} {source target : Tm Sig}
+    {A : Ty Sig} (steps : BetaEtaSteps typeScope termScope source target)
+    (typed : Nucleus.HolE.TypedCtx Γ)
+    (sourceTyping : HasTypeConv typeScope termScope Γ source A) :
+    HasTypeConv typeScope termScope Γ target A := by
+  obtain ⟨loweredSource, loweredType, sourceLowering, typeLowering, defTyping⟩ :=
+    sourceTyping
+  rw [steps.sourceLowering] at sourceLowering
+  have sourceEqual := Option.some.inj sourceLowering
+  subst loweredSource
+  exact ⟨steps.loweredTarget, loweredType, steps.targetLowering, typeLowering,
+    steps.derivation.preserveDefEq typed defTyping⟩
+
 /-- A typed named reduction sequence yields named kernel conversion. -/
 theorem eqTm_nonempty {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
     [Nucleus.HolE.SigFamilyEquality Sig]
@@ -191,6 +244,25 @@ theorem eqTm_nonempty {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
     obtain ⟨derivation⟩ := steps.derivation.eqTm_nonempty typed rawTyping
     exact ⟨⟨steps.loweredSource, steps.loweredTarget, loweredType,
       steps.sourceLowering, steps.targetLowering, typeLowering, derivation⟩⟩
+
+/-- A definitionally typed named sequence yields named kernel conversion at
+the advertised type. -/
+theorem eqTmConv_nonempty {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
+    [Nucleus.HolE.SigFamilyEquality Sig]
+    {typeScope : TyScope types} {termScope : TmScope Sig depth}
+    {Γ : Nucleus.HolE.BoundCtx Sig types depth} {source target : Tm Sig}
+    {A : Ty Sig} (steps : BetaEtaSteps typeScope termScope source target)
+    (typed : Nucleus.HolE.TypedCtx Γ)
+    (sourceTyping : HasTypeConv typeScope termScope Γ source A) :
+    Nonempty (EqTm typeScope termScope Γ source target A) := by
+  obtain ⟨loweredSource, loweredType, sourceLowering, typeLowering, defTyping⟩ :=
+    sourceTyping
+  rw [steps.sourceLowering] at sourceLowering
+  have sourceEqual := Option.some.inj sourceLowering
+  subst loweredSource
+  obtain ⟨derivation⟩ := steps.derivation.eqTmDefEq_nonempty typed defTyping
+  exact ⟨⟨steps.loweredSource, steps.loweredTarget, loweredType,
+    steps.sourceLowering, steps.targetLowering, typeLowering, derivation⟩⟩
 
 end BetaEtaSteps
 
