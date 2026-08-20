@@ -1,5 +1,7 @@
 import Mathlib.Logic.Embedding.Basic
 import Mathlib.Logic.Equiv.Sum
+import Mathlib.Data.Countable.Defs
+import Mathlib.Data.Finite.Defs
 
 /-!
 # Concrete denoted type formers
@@ -23,6 +25,25 @@ class Denotes (Code : Type u) where
 instance {Code : Type u} [Denotes Code] : CoeSort Code (Type v) where
   coe := Denotes.denote
 
+/-- Every carrier in a denoted family is finite. -/
+class FiniteDen (Code : Type u) [Denotes Code] : Prop where
+  finite (code : Code) : Finite code
+
+/-- Every carrier in a denoted family is countable. -/
+class CountableDen (Code : Type u) [Denotes Code] : Prop where
+  countable (code : Code) : Countable code
+
+instance {Code : Type u} [Denotes Code] [FiniteDen Code] (code : Code) : Finite code :=
+  FiniteDen.finite code
+
+instance {Code : Type u} [Denotes Code] [CountableDen Code] (code : Code) : Countable code :=
+  CountableDen.countable code
+
+instance {Code : Type u} [Denotes Code] [FiniteDen Code] : CountableDen Code where
+  countable code := by
+    letI := FiniteDen.finite code
+    infer_instance
+
 /-- A distinguished embedding of a code's carrier into a type. -/
 class Embeds {Code : Type u} [Denotes Code] (code : Code) (target : Type w) where
   embedding : code ↪ target
@@ -32,7 +53,7 @@ class Encodes {Code : Type u} [Denotes Code] (code : Code) (target : Type w) whe
   equiv : code ≃ target
 
 /-- Merely having a canonical equivalence also supplies its canonical embedding. -/
-instance {Code : Type u} [Denotes Code] (code : Code) (target : Type w)
+instance (priority := 100) {Code : Type u} [Denotes Code] (code : Code) (target : Type w)
     [encoding : Encodes code target] : Embeds code target where
   embedding := encoding.equiv.toEmbedding
 
@@ -113,6 +134,58 @@ class HasProduct (Code : Type u) [Denotes Code] where
 class HasExponential (Code : Type u) [Denotes Code] where
   exponential : Code → Code → Code
   encodes (domain codomain : Code) : Encodes (exponential domain codomain) (domain → codomain)
+
+/-! The concrete type formers preserve canonical equivalences. -/
+
+instance {Code : Type u} [Denotes Code] [HasCoproduct Code]
+    (left right : Code) (X : Type v) (Y : Type w) [Encodes left X] [Encodes right Y] :
+    Encodes (HasCoproduct.coproduct left right) (X ⊕ Y) where
+  equiv := (HasCoproduct.encodes left right).equiv.trans <|
+    Equiv.sumCongr Encodes.equiv Encodes.equiv
+
+instance {Code : Type u} [Denotes Code] [HasProduct Code]
+    (left right : Code) (X : Type v) (Y : Type w) [Encodes left X] [Encodes right Y] :
+    Encodes (HasProduct.product left right) (X × Y) where
+  equiv := (HasProduct.encodes left right).equiv.trans <|
+    Equiv.prodCongr Encodes.equiv Encodes.equiv
+
+instance {Code : Type u} [Denotes Code] [HasExponential Code]
+    (domain codomain : Code) (X : Type v) (Y : Type w)
+    [Encodes domain X] [Encodes codomain Y] :
+    Encodes (HasExponential.exponential domain codomain) (X → Y) where
+  equiv := (HasExponential.encodes domain codomain).equiv.trans <|
+    Equiv.arrowCongr Encodes.equiv Encodes.equiv
+
+/-! Coproducts and products also preserve embeddings. There is deliberately
+no analogous exponential instance: an embedding of domains has the wrong
+variance for transporting arbitrary functions. -/
+
+instance {Code : Type u} [Denotes Code] [HasCoproduct Code]
+    (left right : Code) (X : Type v) (Y : Type w) [Embeds left X] [Embeds right Y] :
+    Embeds (HasCoproduct.coproduct left right) (X ⊕ Y) where
+  embedding := (HasCoproduct.encodes left right).equiv.toEmbedding.trans <|
+    Function.Embedding.sumMap Embeds.embedding Embeds.embedding
+
+instance {Code : Type u} [Denotes Code] [HasProduct Code]
+    (left right : Code) (X : Type v) (Y : Type w) [Embeds left X] [Embeds right Y] :
+    Embeds (HasProduct.product left right) (X × Y) where
+  embedding := (HasProduct.encodes left right).equiv.toEmbedding.trans <|
+    Function.Embedding.prodMap Embeds.embedding Embeds.embedding
+
+section ClosureExamples
+
+variable {Code : Type u} [Denotes Code] {A B : Code} {X : Type v} {Y : Type w}
+
+example [HasCoproduct Code] [Encodes A X] [Encodes B Y] :
+    Encodes (HasCoproduct.coproduct A B) (X ⊕ Y) := inferInstance
+
+example [HasProduct Code] [Embeds A X] [Embeds B Y] :
+    Embeds (HasProduct.product A B) (X × Y) := inferInstance
+
+example [HasExponential Code] [Encodes A X] [Encodes B Y] :
+    Encodes (HasExponential.exponential A B) (X → Y) := inferInstance
+
+end ClosureExamples
 
 namespace TypeFormers
 
