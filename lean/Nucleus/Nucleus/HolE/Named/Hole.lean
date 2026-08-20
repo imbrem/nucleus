@@ -14,6 +14,7 @@ the representation introduces no de Bruijn indices.
 namespace Nucleus.HolE.Named
 
 universe u
+set_option relaxedAutoImplicit true
 
 /-- A sorted named HolE expression containing exactly one hole. -/
 inductive OneHole (Sig : Signature.{u}) (Name : Type) (holeSort : HolSort) :
