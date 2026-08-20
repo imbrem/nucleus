@@ -1,5 +1,6 @@
 import Mathlib.Logic.Embedding.Basic
 import Mathlib.Logic.Equiv.Sum
+import Mathlib.Logic.Equiv.Fin.Basic
 import Mathlib.Data.Countable.Defs
 import Mathlib.SetTheory.Cardinal.NatCard
 
@@ -133,6 +134,29 @@ class HasBool (Code : Type u) [Denotes Code] where
 class HasCoproduct (Code : Type u) [Denotes Code] where
   coproduct : Code → Code → Code
   encodes (left right : Code) : Encodes (coproduct left right) (left ⊕ right)
+
+/-- Zero is the canonical code for the empty finite carrier. -/
+instance : HasEmpty Nat where
+  empty := 0
+  encodes := ⟨
+    { toFun := Fin.elim0
+      invFun := fun value => nomatch value
+      left_inv := fun value => Fin.elim0 value
+      right_inv := fun value => nomatch value }⟩
+
+/-- One is the canonical code for the unit finite carrier. -/
+instance : HasUnit Nat where
+  unit := 1
+  encodes := ⟨
+    { toFun := fun _ => ()
+      invFun := fun _ => ⟨0, by omega⟩
+      left_inv := fun value => (Fin.eq_zero value).symm
+      right_inv := fun _ => rfl }⟩
+
+/-- Addition of finite-cardinality codes denotes disjoint union. -/
+instance : HasCoproduct Nat where
+  coproduct := fun left right => left + right
+  encodes _ _ := ⟨finSumFinEquiv.symm⟩
 
 /-- Codes with concrete binary products. -/
 class HasProduct (Code : Type u) [Denotes Code] where
