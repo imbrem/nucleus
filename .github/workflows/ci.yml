@@ -77,7 +77,7 @@ jobs:
           # much memory is free, since it sizes the reservation by the parent.
           # The child immediately execs, so the reservation is never used.
           sudo sysctl -w vm.overcommit_memory=1
-      - run: nix develop --command glu lean --docs --jobs 2
+      - run: nix develop --command glu lean doc --jobs 2
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: github.ref == 'refs/heads/main'
         with:
