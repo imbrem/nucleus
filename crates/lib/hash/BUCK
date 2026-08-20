@@ -44,6 +44,7 @@ rust_library(
         "serde": "nucleus//buck/cargo/production:serde-1.0.229",
         "sha1": "nucleus//buck/cargo/production:sha1-0.10.7",
         "sha2": "nucleus//buck/cargo/production:sha2-0.10.9",
+        "zerocopy": "nucleus//buck/cargo/production:zerocopy-0.8.55",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -89,6 +90,7 @@ rust_test(
         "serde_json": "nucleus//buck/cargo/production:serde_json-1.0.151",
         "sha1": "nucleus//buck/cargo/production:sha1-0.10.7",
         "sha2": "nucleus//buck/cargo/production:sha2-0.10.9",
+        "zerocopy": "nucleus//buck/cargo/production:zerocopy-0.8.55",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",

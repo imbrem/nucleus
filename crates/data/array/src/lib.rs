@@ -32,7 +32,7 @@
 //!     .collect();
 //!
 //! // Read the same bytes back without a decoding allocation.
-//! let hashes = Hashes::<_>::new(array.as_bytes())?;
+//! let hashes = Hashes::from_bytes(array.as_bytes())?;
 //! assert_eq!(hashes.len(), 4);
 //! assert_eq!(hashes.get(1), Some(O256::from_array([1; 32])));
 //! # Ok::<(), Box<dyn std::error::Error>>(())
@@ -42,4 +42,4 @@
 
 mod seq;
 
-pub use seq::{HashArray, HashArrayRef, Hashes, Iter, WidthError, width};
+pub use seq::{HashArray, HashArrayRef, Hashes, OwnedHashArray, WIDTH, WidthError};

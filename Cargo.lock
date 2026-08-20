@@ -311,6 +311,7 @@ version = "0.0.0"
 dependencies = [
  "covalence-lib-error",
  "covalence-lib-hash",
+ "zerocopy",
 ]
 
 [[package]]
@@ -411,6 +412,7 @@ dependencies = [
  "serde_json",
  "sha1",
  "sha2",
+ "zerocopy",
 ]
 
 [[package]]

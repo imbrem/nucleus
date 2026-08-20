@@ -10,6 +10,7 @@ publish = false
 [dependencies]
 covalence-lib-error = { path = "../../lib/error" }
 covalence-lib-hash = { path = "../../lib/hash", default-features = false }
+zerocopy = "0.8"
 
 [lints]
 workspace = true

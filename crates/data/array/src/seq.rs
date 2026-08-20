@@ -1,504 +1,282 @@
-//! Flat sequences of fixed-width objects.
-//!
-//! [`Hashes`] borrows a normal-form blob; [`HashArray`] owns one. Both keep the
-//! bytes as the authoritative representation and materialize [`Obj`] values on
-//! demand, so a blob read from a content-addressed store is usable without
-//! being decoded first.
+//! Flat O256 sequences over interchangeable storage.
 
-use std::{
-    fmt,
-    iter::FusedIterator,
-    marker::PhantomData,
-    ops::{Bound, RangeBounds},
-};
+use std::{fmt, slice::SliceIndex};
 
 use covalence_lib_error::snafu;
-use covalence_lib_hash::{ByteArray, Cov, Namespace, Obj};
+use covalence_lib_hash::O256;
 use snafu::Snafu;
+use zerocopy::{FromBytes, IntoBytes};
 
-/// The serialized width of one element of namespace `N`, in bytes.
-#[must_use]
-pub const fn width<N: Namespace>() -> usize {
-    <N::Bytes as ByteArray>::LEN
-}
+/// The serialized width of one O256 element.
+pub const WIDTH: usize = 32;
 
-/// A blob whose length was not a whole number of elements.
+/// Bytes whose length is not a whole number of O256 elements.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Snafu)]
 #[snafu(crate_root(snafu))]
-#[snafu(display("expected a multiple of {width} bytes, found {len}"))]
+#[snafu(display("expected a multiple of {WIDTH} bytes, found {len}"))]
 pub struct WidthError {
-    /// The blob's length in bytes.
+    /// The byte length supplied by the caller.
     pub len: usize,
-    /// The element width in bytes.
-    pub width: usize,
 }
 
-/// Reads one element from a chunk of exactly `width::<N>()` bytes.
-fn element<N: Namespace>(chunk: &[u8]) -> Obj<N> {
-    let mut bytes = N::Bytes::default();
-    bytes.as_mut().copy_from_slice(chunk);
-    Obj::from_array(bytes)
-}
-
-/// A borrowed hash array.
+/// A flat O256 sequence backed by `V`.
 ///
-/// The normal form is the concatenation of the elements' fixed-width
-/// representations and nothing else: no header, no length prefix, no element
-/// count. A blob is a hash array exactly when its length is a multiple of
-/// [`width::<N>()`](width), and it holds `len / width` elements.
-pub struct Hashes<'a, N: Namespace = Cov> {
-    bytes: &'a [u8],
-    namespace: PhantomData<fn(N) -> N>,
-}
+/// Sequence semantics require only `V: AsRef<[O256]>`. The default owned
+/// storage is `Vec<O256>`; borrowed slices and alternative containers use the
+/// same methods and representation boundary.
+#[repr(transparent)]
+#[derive(Clone, Copy, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct HashArray<V = Vec<O256>>(V);
 
-/// A descriptive alias for the borrowed hash-array view.
-///
-/// [`Hashes`] is retained as the concise spelling used by the original API;
-/// new code may prefer this name beside the owned [`HashArray`].
-pub type HashArrayRef<'a, N = Cov> = Hashes<'a, N>;
+/// The conventional owned spelling.
+pub type OwnedHashArray = HashArray<Vec<O256>>;
 
-impl<'a, N: Namespace> Hashes<'a, N> {
-    /// Views a normal-form blob as a hash array.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the length is not a whole number of elements.
-    pub const fn new(bytes: &'a [u8]) -> Result<Self, WidthError> {
-        let width = width::<N>();
-        if width == 0 || !bytes.len().is_multiple_of(width) {
-            return Err(WidthError {
-                len: bytes.len(),
-                width,
-            });
-        }
-        Ok(Self {
-            bytes,
-            namespace: PhantomData,
-        })
-    }
+/// A borrowed, checked O256 sequence.
+pub type HashArrayRef<'a> = HashArray<&'a [O256]>;
 
-    /// Returns the empty hash array.
+/// Backwards-compatible concise spelling of the borrowed view.
+pub type Hashes<'a> = HashArrayRef<'a>;
+
+impl<V> HashArray<V> {
+    /// Wraps storage without copying or re-encoding it.
     #[must_use]
-    pub const fn empty() -> Self {
-        Self {
-            bytes: &[],
-            namespace: PhantomData,
-        }
+    pub const fn new(storage: V) -> Self {
+        Self(storage)
     }
 
-    /// Borrows the normal form.
+    /// Returns the backing storage.
     #[must_use]
-    pub const fn as_bytes(&self) -> &'a [u8] {
-        self.bytes
+    pub fn into_storage(self) -> V {
+        self.0
     }
+}
 
-    /// Returns the number of elements.
+impl<V: AsRef<[O256]>> HashArray<V> {
+    /// Borrows the typed elements.
     #[must_use]
-    pub const fn len(&self) -> usize {
-        self.bytes.len() / width::<N>()
+    pub fn as_slice(&self) -> &[O256] {
+        self.0.as_ref()
     }
 
-    /// Returns whether there are no elements.
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.bytes.is_empty()
-    }
-
-    /// Borrows the element at `index` in its serialized form.
-    fn chunk(&self, index: usize) -> Option<&'a [u8]> {
-        let width = width::<N>();
-        let start = index.checked_mul(width)?;
-        self.bytes.get(start..start.checked_add(width)?)
-    }
-
-    /// Returns the element at `index`.
-    #[must_use]
-    pub fn get(&self, index: usize) -> Option<Obj<N>> {
-        self.chunk(index).map(element)
-    }
-
-    /// Returns the first element.
-    #[must_use]
-    pub fn first(&self) -> Option<Obj<N>> {
-        self.get(0)
-    }
-
-    /// Returns the last element.
-    #[must_use]
-    pub fn last(&self) -> Option<Obj<N>> {
-        self.get(self.len().checked_sub(1)?)
-    }
-
-    /// Iterates over the elements.
-    #[must_use]
-    pub fn iter(&self) -> Iter<'a, N> {
-        Iter {
-            chunks: self.bytes.chunks_exact(width::<N>()),
-            namespace: PhantomData,
-        }
-    }
-
-    /// Returns the subarray covering the element positions in `range`.
-    #[must_use]
-    pub fn slice<R: RangeBounds<usize>>(&self, range: R) -> Option<Self> {
-        let start = match range.start_bound() {
-            Bound::Included(&bound) => bound,
-            Bound::Excluded(&bound) => bound.checked_add(1)?,
-            Bound::Unbounded => 0,
-        };
-        let end = match range.end_bound() {
-            Bound::Included(&bound) => bound.checked_add(1)?,
-            Bound::Excluded(&bound) => bound,
-            Bound::Unbounded => self.len(),
-        };
-        if start > end || end > self.len() {
-            return None;
-        }
-        let width = width::<N>();
-        let bytes = self
-            .bytes
-            .get(start.checked_mul(width)?..end.checked_mul(width)?)?;
-        Some(Self {
-            bytes,
-            namespace: PhantomData,
-        })
-    }
-
-    /// Splits into the elements before and from `index`.
-    #[must_use]
-    pub fn split_at(&self, index: usize) -> Option<(Self, Self)> {
-        Some((self.slice(..index)?, self.slice(index..)?))
-    }
-
-    /// Collects the elements.
-    #[must_use]
-    pub fn to_vec(&self) -> Vec<Obj<N>> {
-        self.iter().collect()
-    }
-
-    /// Returns whether `value` occurs, in time linear in the length.
-    ///
-    /// Prefer [`FlatSet::contains`] when the array is known to be sorted.
-    #[must_use]
-    pub fn contains(&self, value: &Obj<N>) -> bool {
-        self.position(value).is_some()
-    }
-
-    /// Returns the position of the first occurrence of `value`.
-    #[must_use]
-    pub fn position(&self, value: &Obj<N>) -> Option<usize> {
-        self.bytes
-            .chunks_exact(width::<N>())
-            .position(|chunk| chunk == value.as_ref())
-    }
-
-    /// Returns the number of occurrences of `value`.
-    #[must_use]
-    pub fn count(&self, value: &Obj<N>) -> usize {
-        self.bytes
-            .chunks_exact(width::<N>())
-            .filter(|chunk| *chunk == value.as_ref())
-            .count()
-    }
-}
-
-impl<N: Namespace> Copy for Hashes<'_, N> {}
-impl<N: Namespace> Clone for Hashes<'_, N> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<N: Namespace> Default for Hashes<'_, N> {
-    fn default() -> Self {
-        Self::empty()
-    }
-}
-impl<N: Namespace> PartialEq for Hashes<'_, N> {
-    fn eq(&self, other: &Self) -> bool {
-        self.bytes == other.bytes
-    }
-}
-impl<N: Namespace> Eq for Hashes<'_, N> {}
-impl<N: Namespace> PartialOrd for Hashes<'_, N> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl<N: Namespace> Ord for Hashes<'_, N> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.bytes.cmp(other.bytes)
-    }
-}
-impl<N: Namespace> std::hash::Hash for Hashes<'_, N> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.bytes.hash(state);
-    }
-}
-impl<N: Namespace> fmt::Debug for Hashes<'_, N> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_list()
-            .entries(self.iter().map(Entry))
-            .finish()
-    }
-}
-
-impl<'a, N: Namespace> IntoIterator for Hashes<'a, N> {
-    type Item = Obj<N>;
-    type IntoIter = Iter<'a, N>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter()
-    }
-}
-
-impl<'a, N: Namespace> IntoIterator for &Hashes<'a, N> {
-    type Item = Obj<N>;
-    type IntoIter = Iter<'a, N>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter()
-    }
-}
-
-/// A hexadecimal list entry.
-struct Entry<N: Namespace>(Obj<N>);
-
-impl<N: Namespace> fmt::Debug for Entry<N> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}", self.0.hex())
-    }
-}
-
-/// An iterator over the elements of a hash array.
-pub struct Iter<'a, N: Namespace = Cov> {
-    chunks: std::slice::ChunksExact<'a, u8>,
-    namespace: PhantomData<fn(N) -> N>,
-}
-
-impl<N: Namespace> Iterator for Iter<'_, N> {
-    type Item = Obj<N>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.chunks.next().map(element)
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.chunks.size_hint()
-    }
-}
-
-impl<N: Namespace> DoubleEndedIterator for Iter<'_, N> {
-    fn next_back(&mut self) -> Option<Self::Item> {
-        self.chunks.next_back().map(element)
-    }
-}
-
-impl<N: Namespace> ExactSizeIterator for Iter<'_, N> {}
-impl<N: Namespace> FusedIterator for Iter<'_, N> {}
-
-impl<N: Namespace> Clone for Iter<'_, N> {
-    fn clone(&self) -> Self {
-        Self {
-            chunks: self.chunks.clone(),
-            namespace: PhantomData,
-        }
-    }
-}
-
-impl<N: Namespace> fmt::Debug for Iter<'_, N> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("Iter")
-            .field("remaining", &self.chunks.len())
-            .finish()
-    }
-}
-
-/// An owned hash array.
-///
-/// This is the building form: push, sort, and deduplicate, then hand the
-/// normal form to a content-addressed store.
-pub struct HashArray<N: Namespace = Cov> {
-    bytes: Vec<u8>,
-    namespace: PhantomData<fn(N) -> N>,
-}
-
-impl<N: Namespace> HashArray<N> {
-    /// Creates the one-element array containing `value`.
-    #[must_use]
-    pub fn singleton(value: Obj<N>) -> Self {
-        std::iter::once(value).collect()
-    }
-
-    /// Takes ownership of a normal-form blob.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the length is not a whole number of elements.
-    pub fn new(bytes: Vec<u8>) -> Result<Self, WidthError> {
-        Hashes::<N>::new(&bytes)?;
-        Ok(Self {
-            bytes,
-            namespace: PhantomData,
-        })
-    }
-
-    /// Creates an empty array with room for `elements` elements.
-    #[must_use]
-    pub fn with_capacity(elements: usize) -> Self {
-        Self {
-            bytes: Vec::with_capacity(elements.saturating_mul(width::<N>())),
-            namespace: PhantomData,
-        }
-    }
-
-    /// Borrows the array.
-    #[must_use]
-    pub fn as_hashes(&self) -> Hashes<'_, N> {
-        Hashes {
-            bytes: &self.bytes,
-            namespace: PhantomData,
-        }
-    }
-
-    /// Borrows the normal form.
+    /// Borrows the Iroh-compatible bare concatenation of element bytes.
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
-        &self.bytes
-    }
-
-    /// Returns the normal form.
-    #[must_use]
-    pub fn into_bytes(self) -> Vec<u8> {
-        self.bytes
+        self.as_slice().as_bytes()
     }
 
     /// Returns the number of elements.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.bytes.len() / width::<N>()
+        self.as_slice().len()
     }
 
     /// Returns whether there are no elements.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.bytes.is_empty()
+        self.as_slice().is_empty()
     }
 
     /// Returns the element at `index`.
     #[must_use]
-    pub fn get(&self, index: usize) -> Option<Obj<N>> {
-        self.as_hashes().get(index)
+    pub fn get(&self, index: usize) -> Option<O256> {
+        self.as_slice().get(index).copied()
     }
 
-    /// Iterates over the elements.
+    /// Returns the first element.
     #[must_use]
-    pub fn iter(&self) -> Iter<'_, N> {
-        self.as_hashes().iter()
+    pub fn first(&self) -> Option<O256> {
+        self.as_slice().first().copied()
+    }
+
+    /// Returns the last element.
+    #[must_use]
+    pub fn last(&self) -> Option<O256> {
+        self.as_slice().last().copied()
+    }
+
+    /// Iterates over copied elements.
+    #[must_use]
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = O256> + ExactSizeIterator + '_ {
+        self.as_slice().iter().copied()
+    }
+
+    /// Returns a borrowed checked element subrange.
+    #[must_use]
+    pub fn slice<I>(&self, index: I) -> Option<HashArrayRef<'_>>
+    where
+        I: SliceIndex<[O256], Output = [O256]>,
+    {
+        self.as_slice().get(index).map(HashArray::new)
+    }
+
+    /// Splits into borrowed views before and from `index`.
+    #[must_use]
+    pub fn split_at(&self, index: usize) -> Option<(HashArrayRef<'_>, HashArrayRef<'_>)> {
+        let (left, right) = self.as_slice().split_at_checked(index)?;
+        Some((HashArray::new(left), HashArray::new(right)))
+    }
+
+    /// Returns whether `value` occurs.
+    #[must_use]
+    pub fn contains(&self, value: &O256) -> bool {
+        self.as_slice().contains(value)
+    }
+
+    /// Returns the first position of `value`.
+    #[must_use]
+    pub fn position(&self, value: &O256) -> Option<usize> {
+        self.as_slice()
+            .iter()
+            .position(|candidate| candidate == value)
+    }
+
+    /// Returns the number of occurrences of `value`.
+    #[must_use]
+    pub fn count(&self, value: &O256) -> usize {
+        self.as_slice()
+            .iter()
+            .filter(|candidate| *candidate == value)
+            .count()
+    }
+
+    /// Borrows this value through the conventional slice-backed spelling.
+    #[must_use]
+    pub fn as_ref_array(&self) -> HashArrayRef<'_> {
+        HashArray::new(self.as_slice())
+    }
+}
+
+impl<'a> HashArray<&'a [O256]> {
+    /// Views canonical flat bytes as O256 values without allocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WidthError`] unless `bytes.len()` is a multiple of 32.
+    pub fn from_bytes(bytes: &'a [u8]) -> Result<Self, WidthError> {
+        let values =
+            <[O256]>::ref_from_bytes(bytes).map_err(|_| WidthError { len: bytes.len() })?;
+        Ok(Self::new(values))
+    }
+
+    /// Returns the empty borrowed sequence.
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self::new(&[])
+    }
+}
+
+impl HashArray<Vec<O256>> {
+    /// Copies checked flat bytes into typed owned storage.
+    ///
+    /// Borrowing callers can use [`HashArrayRef::from_bytes`] to avoid this
+    /// allocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WidthError`] unless `bytes.len()` is a multiple of 32.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, WidthError> {
+        Ok(Self::new(
+            HashArrayRef::from_bytes(bytes)?.as_slice().to_vec(),
+        ))
+    }
+
+    /// Creates the one-element sequence.
+    #[must_use]
+    pub fn singleton(value: O256) -> Self {
+        Self::new(vec![value])
+    }
+
+    /// Creates an empty sequence with element capacity.
+    #[must_use]
+    pub fn with_capacity(elements: usize) -> Self {
+        Self::new(Vec::with_capacity(elements))
     }
 
     /// Appends an element.
-    pub fn push(&mut self, value: Obj<N>) {
-        self.bytes.extend_from_slice(value.as_ref());
+    pub fn push(&mut self, value: O256) {
+        self.0.push(value);
     }
 
     /// Removes and returns the last element.
-    pub fn pop(&mut self) -> Option<Obj<N>> {
-        let last = self.as_hashes().last()?;
-        self.bytes.truncate(self.bytes.len() - width::<N>());
-        Some(last)
+    pub fn pop(&mut self) -> Option<O256> {
+        self.0.pop()
     }
 
-    /// Removes all elements.
+    /// Removes every element.
     pub fn clear(&mut self) {
-        self.bytes.clear();
+        self.0.clear();
     }
 
-    /// Shortens the array to `elements` elements, if it is longer.
+    /// Shortens the sequence to at most `elements` elements.
     pub fn truncate(&mut self, elements: usize) {
-        if elements < self.len() {
-            self.bytes.truncate(elements * width::<N>());
-        }
+        self.0.truncate(elements);
     }
 }
 
-impl<N: Namespace> Default for HashArray<N> {
-    fn default() -> Self {
-        Self {
-            bytes: Vec::new(),
-            namespace: PhantomData,
-        }
+impl<V: AsRef<[O256]>> std::ops::Deref for HashArray<V> {
+    type Target = [O256];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
     }
 }
 
-impl<N: Namespace> Clone for HashArray<N> {
-    fn clone(&self) -> Self {
-        Self {
-            bytes: self.bytes.clone(),
-            namespace: PhantomData,
-        }
-    }
-}
-
-impl<N: Namespace> PartialEq for HashArray<N> {
-    fn eq(&self, other: &Self) -> bool {
-        self.bytes == other.bytes
-    }
-}
-impl<N: Namespace> Eq for HashArray<N> {}
-impl<N: Namespace> PartialOrd for HashArray<N> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl<N: Namespace> Ord for HashArray<N> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.bytes.cmp(&other.bytes)
-    }
-}
-impl<N: Namespace> std::hash::Hash for HashArray<N> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.bytes.hash(state);
-    }
-}
-impl<N: Namespace> fmt::Debug for HashArray<N> {
+impl<V: AsRef<[O256]>> fmt::Debug for HashArray<V> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(&self.as_hashes(), formatter)
+        formatter
+            .debug_list()
+            .entries(self.as_slice().iter().map(Hex))
+            .finish()
     }
 }
 
-impl<N: Namespace> From<Hashes<'_, N>> for HashArray<N> {
-    fn from(hashes: Hashes<'_, N>) -> Self {
-        Self {
-            bytes: hashes.as_bytes().to_vec(),
-            namespace: PhantomData,
-        }
+struct Hex<'a>(&'a O256);
+
+impl fmt::Debug for Hex<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}", self.0.hex())
     }
 }
 
-impl<N: Namespace> FromIterator<Obj<N>> for HashArray<N> {
-    fn from_iter<I: IntoIterator<Item = Obj<N>>>(values: I) -> Self {
-        let mut array = Self::default();
-        array.extend(values);
-        array
+impl From<Vec<O256>> for OwnedHashArray {
+    fn from(values: Vec<O256>) -> Self {
+        Self::new(values)
     }
 }
 
-impl<N: Namespace> Extend<Obj<N>> for HashArray<N> {
-    fn extend<I: IntoIterator<Item = Obj<N>>>(&mut self, values: I) {
-        for value in values {
-            self.push(value);
-        }
+impl From<HashArrayRef<'_>> for OwnedHashArray {
+    fn from(values: HashArrayRef<'_>) -> Self {
+        Self::new(values.as_slice().to_vec())
     }
 }
 
-impl<'a, N: Namespace> IntoIterator for &'a HashArray<N> {
-    type Item = Obj<N>;
-    type IntoIter = Iter<'a, N>;
+impl FromIterator<O256> for OwnedHashArray {
+    fn from_iter<I: IntoIterator<Item = O256>>(values: I) -> Self {
+        Self::new(values.into_iter().collect())
+    }
+}
+
+impl Extend<O256> for OwnedHashArray {
+    fn extend<I: IntoIterator<Item = O256>>(&mut self, values: I) {
+        self.0.extend(values);
+    }
+}
+
+impl IntoIterator for OwnedHashArray {
+    type Item = O256;
+    type IntoIter = std::vec::IntoIter<O256>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.iter()
+        self.0.into_iter()
+    }
+}
+
+impl<'a, V: AsRef<[O256]>> IntoIterator for &'a HashArray<V> {
+    type Item = &'a O256;
+    type IntoIter = std::slice::Iter<'a, O256>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.as_slice().iter()
     }
 }
 
@@ -506,113 +284,66 @@ impl<'a, N: Namespace> IntoIterator for &'a HashArray<N> {
 mod tests {
     use covalence_lib_hash::O256;
 
-    use super::{HashArray, Hashes, WidthError, width};
+    use super::{HashArray, HashArrayRef, OwnedHashArray, WIDTH, WidthError};
 
     fn obj(byte: u8) -> O256 {
-        O256::from_array([byte; 32])
+        O256::from_array([byte; WIDTH])
     }
 
-    fn array(bytes: &[u8]) -> HashArray {
+    fn array(bytes: &[u8]) -> OwnedHashArray {
         bytes.iter().copied().map(obj).collect()
     }
 
     #[test]
-    fn blobs_are_arrays_exactly_when_their_length_is_a_multiple_of_the_width() {
-        assert_eq!(width::<covalence_lib_hash::Cov>(), 32);
-        assert_eq!(
-            Hashes::<covalence_lib_hash::Cov>::new(&[]).unwrap().len(),
-            0
-        );
-        assert!(Hashes::<covalence_lib_hash::Cov>::new(&[0; 32]).is_ok());
-        assert!(Hashes::<covalence_lib_hash::Cov>::new(&[0; 64]).is_ok());
-        assert_eq!(
-            Hashes::<covalence_lib_hash::Cov>::new(&[0; 31]),
-            Err(WidthError { len: 31, width: 32 })
-        );
-        assert!(HashArray::<covalence_lib_hash::Cov>::new(vec![0; 33]).is_err());
-    }
-
-    #[test]
-    fn elements_round_trip_through_the_normal_form() {
+    fn checked_bytes_borrow_as_typed_elements() {
         let values = array(&[3, 1, 2]);
-        assert_eq!(values.len(), 3);
-        assert_eq!(values.as_bytes().len(), 96);
-        assert_eq!(values.get(0), Some(obj(3)));
-        assert_eq!(values.get(2), Some(obj(2)));
-        assert_eq!(values.get(3), None);
-        assert_eq!(values.as_hashes().first(), Some(obj(3)));
-        assert_eq!(values.as_hashes().last(), Some(obj(2)));
+        let borrowed = HashArrayRef::from_bytes(values.as_bytes()).unwrap();
+        assert_eq!(borrowed.as_slice(), values.as_slice());
+        assert_eq!(borrowed.as_bytes(), values.as_bytes());
+        assert_eq!(borrowed.get(1), Some(obj(1)));
         assert_eq!(
-            values.iter().collect::<Vec<_>>(),
-            vec![obj(3), obj(1), obj(2)]
+            HashArrayRef::from_bytes(&[0; 31]),
+            Err(WidthError { len: 31 })
         );
-        assert_eq!(values.iter().next_back(), Some(obj(2)));
-        assert_eq!(values.iter().len(), 3);
-
-        let restored = HashArray::new(values.as_bytes().to_vec()).unwrap();
-        assert_eq!(restored, values);
-        assert_eq!(HashArray::from(values.as_hashes()), values);
     }
 
     #[test]
-    fn empty_arrays_are_uniform() {
-        let empty = HashArray::<covalence_lib_hash::Cov>::default();
-        assert!(empty.is_empty());
-        assert_eq!(empty.len(), 0);
-        assert_eq!(empty.as_hashes(), Hashes::empty());
-        assert!(Hashes::<covalence_lib_hash::Cov>::empty().is_empty());
-        assert_eq!(empty.as_hashes().last(), None);
+    fn storage_is_generic_but_sequence_methods_are_shared() {
+        let vector = array(&[3, 1, 1]);
+        let boxed = HashArray::new(vector.as_slice().to_vec().into_boxed_slice());
+        let borrowed = HashArray::new(vector.as_slice());
+        assert_eq!(vector.count(&obj(1)), 2);
+        assert_eq!(boxed.count(&obj(1)), 2);
+        assert_eq!(borrowed.count(&obj(1)), 2);
+        assert_eq!(vector.as_bytes(), boxed.as_bytes());
     }
 
     #[test]
-    fn slicing_addresses_elements_not_bytes() {
-        let values = array(&[0, 1, 2, 3]);
-        let hashes = values.as_hashes();
-        assert_eq!(hashes.slice(1..3).unwrap().to_vec(), vec![obj(1), obj(2)]);
-        assert_eq!(hashes.slice(..).unwrap(), hashes);
-        assert_eq!(hashes.slice(2..).unwrap().to_vec(), vec![obj(2), obj(3)]);
-        assert_eq!(hashes.slice(..=1).unwrap().to_vec(), vec![obj(0), obj(1)]);
-        assert_eq!(hashes.slice(4..4).unwrap().len(), 0);
-        assert_eq!(hashes.slice(0..5), None);
-        let (start, end) = (3, 1);
-        assert_eq!(hashes.slice(start..end), None);
-
-        let (left, right) = hashes.split_at(1).unwrap();
-        assert_eq!(left.to_vec(), vec![obj(0)]);
-        assert_eq!(right.to_vec(), vec![obj(1), obj(2), obj(3)]);
-    }
-
-    #[test]
-    fn membership_count_and_position_are_linear_sequence_queries() {
-        let values = array(&[1, 3, 3, 7]);
-        let hashes = values.as_hashes();
-        assert!(hashes.contains(&obj(3)));
-        assert!(!hashes.contains(&obj(4)));
-        assert_eq!(hashes.position(&obj(3)), Some(1));
-        assert_eq!(hashes.count(&obj(3)), 2);
-        assert_eq!(hashes.count(&obj(4)), 0);
-    }
-
-    #[test]
-    fn building_preserves_order_and_supports_vec_like_mutation() {
-        let mut values = array(&[1, 2]);
+    fn owned_storage_has_vec_like_mutation() {
+        let mut values = array(&[3, 1, 1]);
+        values.push(obj(2));
         assert_eq!(values.pop(), Some(obj(2)));
-        assert_eq!(values, array(&[1]));
-        values.push(obj(9));
-        assert_eq!(values, array(&[1, 9]));
-        values.truncate(1);
-        assert_eq!(values, array(&[1]));
-        values.truncate(7);
-        assert_eq!(values, array(&[1]));
-        values.clear();
-        assert!(values.is_empty());
-        assert_eq!(values.pop(), None);
-        assert_eq!(HashArray::singleton(obj(0)), array(&[0]));
+        values.truncate(2);
+        assert_eq!(values.into_storage(), vec![obj(3), obj(1)]);
     }
 
     #[test]
-    fn debug_renders_elements_as_hexadecimal() {
-        let rendered = format!("{:?}", array(&[0xab]));
-        assert_eq!(rendered, format!("[{}]", "ab".repeat(32)));
+    fn slices_and_splits_are_element_indexed() {
+        let values = array(&[0, 1, 2, 3]);
+        assert_eq!(values.slice(1..3).unwrap().as_slice(), &[obj(1), obj(2)]);
+        assert_eq!(values.slice(0..5), None);
+        let (left, right) = values.split_at(2).unwrap();
+        assert_eq!(left.as_slice(), &[obj(0), obj(1)]);
+        assert_eq!(right.as_slice(), &[obj(2), obj(3)]);
+    }
+
+    #[test]
+    fn byte_layout_is_bare_concatenation() {
+        let values = array(&[1, 2]);
+        assert_eq!(values.as_bytes().len(), 2 * WIDTH);
+        assert_eq!(&values.as_bytes()[..WIDTH], &[1; WIDTH]);
+        assert_eq!(&values.as_bytes()[WIDTH..], &[2; WIDTH]);
+        assert!(HashArrayRef::empty().is_empty());
+        assert_eq!(OwnedHashArray::singleton(obj(0)), array(&[0]));
     }
 }
