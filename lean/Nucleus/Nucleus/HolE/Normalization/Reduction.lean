@@ -386,6 +386,39 @@ theorem eqTm_nonempty {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
 
 end BetaEta
 
+namespace BetaEtaSteps
+
+/-- Reflexive-transitive beta-eta reduction preserves typing. -/
+theorem preserve {Sig : Signature} [SigTyping Sig]
+    {Γ : BoundCtx Sig types depth} {source target : Tm Sig types depth}
+    {A : Ty Sig types} (steps : BetaEtaSteps source target) (typed : TypedCtx Γ)
+    (sourceTyping : HasType Γ source A) : HasType Γ target A := by
+  induction steps with
+  | refl => exact sourceTyping
+  | tail steps step ih => exact step.preserve typed ih
+
+/-- Every well-typed beta-eta reduction sequence is kernel conversion. -/
+theorem eqTm_nonempty {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
+    {Γ : BoundCtx Sig types depth} {source target : Tm Sig types depth}
+    {A : Ty Sig types} (steps : BetaEtaSteps source target) (typed : TypedCtx Γ)
+    (sourceTyping : HasType Γ source A) : Nonempty (EqTm Γ source target A) := by
+  induction steps with
+  | refl => exact ⟨.refl (.exact sourceTyping)⟩
+  | tail steps step ih =>
+      let middleTyping := BetaEtaSteps.preserve steps typed sourceTyping
+      obtain ⟨firstEquality⟩ := ih
+      obtain ⟨lastEquality⟩ := step.eqTm_nonempty typed middleTyping
+      exact ⟨.trans firstEquality lastEquality⟩
+
+/-- Select the kernel certificate represented by a reduction sequence. -/
+noncomputable def toEqTm {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig]
+    {Γ : BoundCtx Sig types depth} {source target : Tm Sig types depth}
+    {A : Ty Sig types} (steps : BetaEtaSteps source target) (typed : TypedCtx Γ)
+    (sourceTyping : HasType Γ source A) : EqTm Γ source target A :=
+  Classical.choice (steps.eqTm_nonempty typed sourceTyping)
+
+end BetaEtaSteps
+
 end Reduction
 
 end Nucleus.HolE
