@@ -21,6 +21,43 @@ class UniqueSigTyping (Sig : Signature) [rules : Nucleus.HolE.SigTyping Sig] : P
     {left right : Nucleus.HolE.Ty Sig types} :
     rules.HasType symbol left → rules.HasType symbol right → left = right
 
+/-- Syntax-directed HolE typing has a unique classification whenever primitive
+term-symbol typing is unique. -/
+theorem coreChecks_unique {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
+    [UniqueSigTyping Sig] {types : List Kind} {sort : HolSort} {depth : Nat}
+    {Γ : Nucleus.HolE.BoundCtx Sig types depth}
+    {expression : Nucleus.HolE.Expr Sig types sort depth}
+    {left right : Nucleus.HolE.Classification Sig types sort}
+    (leftTyping : Nucleus.HolE.Checks Γ expression left)
+    (rightTyping : Nucleus.HolE.Checks Γ expression right) : left = right := by
+  induction leftTyping with
+  | boolTy | arr | tyApp | tyLam | tyBv | sub | tyExists | model | primFam |
+      bool | eq | eps | abs | rep => cases rightTyping; rfl
+  | primTm _ rule =>
+      cases rightTyping with
+      | primTm _ other =>
+          exact congrArg Nucleus.HolE.Classification.tm
+            (UniqueSigTyping.unique rule other)
+  | bv _ lookup =>
+      cases rightTyping with
+      | bv _ other =>
+          exact congrArg Nucleus.HolE.Classification.tm (lookup.symm.trans other)
+  | fv => cases rightTyping; rfl
+  | app _ _ functionUnique _ =>
+      cases rightTyping with
+      | app other _ => cases functionUnique other; rfl
+  | lam _ _ _ _ bodyUnique =>
+      cases rightTyping with
+      | lam _ _ other => cases bodyUnique other; rfl
+
+theorem coreHasType_unique {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
+    [UniqueSigTyping Sig] {types : List Kind} {depth : Nat}
+    {Γ : Nucleus.HolE.BoundCtx Sig types depth}
+    {term : Nucleus.HolE.Tm Sig types depth} {left right : Nucleus.HolE.Ty Sig types}
+    (leftTyping : Nucleus.HolE.HasType Γ term left)
+    (rightTyping : Nucleus.HolE.HasType Γ term right) : left = right :=
+  Nucleus.HolE.Classification.tm.inj (coreChecks_unique leftTyping rightTyping)
+
 /-- A well-kinded named type family. -/
 structure Family (Sig : Signature) [Nucleus.HolE.SigTyping Sig]
     {types : List Kind} (typeScope : Named.TyScope types) (kind : Kind) where
@@ -79,6 +116,26 @@ theorem toHasType (term : Term Sig typeScope termScope Γ type) :
     (Named.Checks.complete term.lowering
       (by
         simp [Named.lowerClassification, Named.lowerTy, type.lowering]) term.typing)
+
+/-- Erasing a typed named term cannot change its inferred kernel type when the
+signature has unique primitive typing.  This is the implementation-relevant
+uniqueness result; the named `Family` witnesses themselves may still be
+distinct alpha preimages of the same kernel family. -/
+theorem loweredType_unique [UniqueSigTyping Sig]
+    {leftType rightType : Family Sig typeScope .star}
+    (left : Term Sig typeScope termScope Γ leftType)
+    (right : Term Sig typeScope termScope Γ rightType)
+    (sameSyntax : left.raw = right.raw) : leftType.lowered = rightType.lowered := by
+  have loweredTerms : left.lowered = right.lowered := by
+    have leftLowering := left.lowering
+    have rightLowering := right.lowering
+    have sortedSyntax : left.expression.sorted = right.expression.sorted :=
+      congrArg WellSorted.sorted (WellSorted.raw_injective sameSyntax)
+    rw [sortedSyntax] at leftLowering
+    exact Option.some.inj (leftLowering.symm.trans rightLowering)
+  have rightTyping := right.typing
+  rw [← loweredTerms] at rightTyping
+  exact coreHasType_unique left.typing rightTyping
 
 /-- Partial injection into one requested intrinsic type.  It is noncomputable
 for a relational signature; an implementation with decidable typing can use
@@ -211,8 +268,8 @@ theorem ofRaw_complete (value : SomeTyped Sig typeScope termScope Γ) :
         next noTerm =>
           exact False.elim (noTerm ⟨type, value, rfl⟩)
 
-/-- Uniqueness of the intrinsic classification exposed by this façade.  It is
-not automatic for arbitrary signatures: primitive typing is relational. -/
+/-- Full injectivity of the proof-rich intrinsic wrapper.  This is stronger
+than `UniqueSigTyping`: it also chooses one named preimage for each kernel type. -/
 def UniqueClassification {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
     {types : List Kind} {depth : Nat}
     (typeScope : Named.TyScope types) (termScope : Named.TmScope Sig depth)
