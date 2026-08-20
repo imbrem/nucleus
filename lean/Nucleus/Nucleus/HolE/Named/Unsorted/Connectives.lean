@@ -201,3 +201,128 @@ theorem lowerTm_renameExcept
 termination_by sizeOf expression
 
 end Nucleus.HolE.Named
+
+namespace Nucleus.HolE.Named.Unsorted
+
+set_option relaxedAutoImplicit true
+
+namespace Family
+
+@[simp] theorem raw_boolTy {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
+    (typeScope : Named.TyScope types) :
+    (Family.boolTy (Sig := Sig) typeScope).raw = .boolTy := rfl
+
+end Family
+
+namespace Term
+
+variable {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
+
+/-- Weaken a checked term through a named binder whose name is absent from the
+entire surface term. -/
+def weakenFresh (name : Nat) (binderType : Family Sig typeScope .star)
+    (term : Term Sig typeScope termScope Γ type)
+    (freshness : name ∉ Unsorted.names term.raw) :
+    Term Sig typeScope
+      (.cons ⟨name, binderType.expression.sorted⟩ termScope)
+      (Nucleus.HolE.extendBound binderType.lowered Γ) type :=
+  ⟨term.expression, Nucleus.HolE.weaken term.lowered,
+    lowerTm_renameExcept freshness
+      (Named.TmScope.renamesExcept_freshCons name binderType.expression.sorted termScope)
+      term.lowering,
+    term.typing.weaken⟩
+
+@[simp] theorem raw_weakenFresh (name : Nat)
+    (binderType : Family Sig typeScope .star)
+    (term : Term Sig typeScope termScope Γ type)
+    (freshness : name ∉ Unsorted.names term.raw) :
+    (weakenFresh name binderType term freshness).raw = term.raw := rfl
+
+/-- Total checked conjunction.  The fresh binder selected by the raw macro is
+also fresh for each operand, so both operands weaken without capture. -/
+def and (left right :
+    Term Sig typeScope termScope Γ (Family.boolTy typeScope)) :
+    Term Sig typeScope termScope Γ (Family.boolTy typeScope) := by
+  let boolType := Family.boolTy (Sig := Sig) typeScope
+  let functionType := Family.arr boolType (Family.arr boolType boolType)
+  let name := Unsorted.freshName left.raw right.raw
+  have freshUnion : name ∉ Unsorted.names left.raw ∪ Unsorted.names right.raw := by
+    exact Finset.freshNat_not_mem _
+  have freshLeft : name ∉ Unsorted.names left.raw :=
+    fun membership => freshUnion (Finset.mem_union_left _ membership)
+  have freshRight : name ∉ Unsorted.names right.raw :=
+    fun membership => freshUnion (Finset.mem_union_right _ membership)
+  let extendedScope :=
+    Named.TmScope.cons ⟨name, functionType.expression.sorted⟩ termScope
+  let extendedContext := Nucleus.HolE.extendBound functionType.lowered Γ
+  let function : Term Sig typeScope extendedScope extendedContext functionType :=
+    Term.boundVariable name functionType 0 (by simp [extendedScope, Named.lookupTm]) rfl
+  let left' := weakenFresh name functionType left freshLeft
+  let right' := weakenFresh name functionType right freshRight
+  let lhsBody := Term.app (Term.app function left') right'
+  let lhs := Term.lam name functionType boolType lhsBody
+  let extendedTruth : Term Sig typeScope extendedScope extendedContext boolType :=
+    Term.truth
+  let rhsBody := Term.app (Term.app function extendedTruth) extendedTruth
+  let rhs := Term.lam name functionType boolType rhsBody
+  exact Term.eq (Family.arr functionType boolType) lhs rhs
+
+/-- Total checked disjunction by De Morgan's law. -/
+def or (left right :
+    Term Sig typeScope termScope Γ (Family.boolTy typeScope)) :
+    Term Sig typeScope termScope Γ (Family.boolTy typeScope) :=
+  Term.not (and (Term.not left) (Term.not right))
+
+/-- Total checked implication, defined as `(left ∧ right) = left`. -/
+def imp (left right :
+    Term Sig typeScope termScope Γ (Family.boolTy typeScope)) :
+    Term Sig typeScope termScope Γ (Family.boolTy typeScope) :=
+  Term.eq (Family.boolTy typeScope) (and left right) left
+
+@[simp] theorem raw_and (left right :
+    Term Sig typeScope termScope Γ (Family.boolTy typeScope)) :
+    (and left right).raw = Unsorted.and left.raw right.raw := by
+  rfl
+
+@[simp] theorem raw_not (proposition :
+    Term Sig typeScope termScope Γ (Family.boolTy typeScope)) :
+    (Term.not proposition).raw = Unsorted.not proposition.raw := rfl
+
+@[simp] theorem raw_eq (type : Family Sig typeScope .star)
+    (left right : Term Sig typeScope termScope Γ type) :
+    (Term.eq type left right).raw = .eq type.raw left.raw right.raw := rfl
+
+@[simp] theorem raw_or (left right :
+    Term Sig typeScope termScope Γ (Family.boolTy typeScope)) :
+    (or left right).raw = Unsorted.or left.raw right.raw := by
+  simp only [or, Unsorted.or, raw_not, raw_and]
+
+@[simp] theorem raw_imp (left right :
+    Term Sig typeScope termScope Γ (Family.boolTy typeScope)) :
+    (imp left right).raw = Unsorted.imp left.raw right.raw := by
+  simp only [imp, Unsorted.imp, raw_eq, raw_and, Family.raw_boolTy]
+
+/-- The partial façade from `CheckedRules` succeeds on conjunction. -/
+theorem and?_complete (left right :
+    Term Sig typeScope termScope Γ (Family.boolTy typeScope)) :
+    ∃ result, Term.and? left right = some result ∧
+      result.raw = Unsorted.and left.raw right.raw := by
+  simpa [Term.and?, raw_and] using Term.ofRaw_complete (and left right)
+
+/-- The partial façade from `CheckedRules` succeeds on disjunction. -/
+theorem or?_complete (left right :
+    Term Sig typeScope termScope Γ (Family.boolTy typeScope)) :
+    ∃ result, Term.or? left right = some result ∧
+      result.raw = Unsorted.or left.raw right.raw := by
+  simpa [Term.or?, raw_or] using Term.ofRaw_complete (or left right)
+
+/-- The partial façade from `CheckedRules` succeeds on implication. -/
+theorem imp?_complete (left right :
+    Term Sig typeScope termScope Γ (Family.boolTy typeScope)) :
+    ∃ result, Term.imp? left right = some result ∧
+      result.raw = Unsorted.imp left.raw right.raw := by
+  simpa [Term.imp?, raw_imp] using Term.ofRaw_complete (imp left right)
+
+end Term
+
+end Nucleus.HolE.Named.Unsorted
