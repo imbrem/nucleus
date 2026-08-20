@@ -217,6 +217,39 @@ end Beta
 
 namespace Eta
 
+/-- Number of term nodes, excluding scope indices and type annotations. -/
+def nodeCount : {types : List Kind} → {depth : Nat} → Tm Sig types depth → Nat
+  | _, _, .primTm _ | _, _, .bv _ | _, _, .fv _ _ | _, _, .bool _ => 1
+  | _, _, .app function argument | _, _, .eq _ function argument =>
+      nodeCount function + nodeCount argument + 1
+  | _, _, .lam _ body | _, _, .eps _ body | _, _, .tyExists body =>
+      nodeCount body + 1
+  | _, _, .abs _ _ value | _, _, .rep _ _ value => nodeCount value + 1
+
+@[simp] theorem nodeCount_rename (term : Tm Sig types sourceDepth)
+    (ρ : Fin sourceDepth → Fin targetDepth) :
+    nodeCount (rename ρ term) = nodeCount term := by
+  fun_induction rename ρ term <;> simp_all [nodeCount]
+
+/-- Eta contraction strictly decreases the number of term nodes. -/
+theorem nodeCount_lt {source target : Tm Sig types depth} (step : Eta source target) :
+    nodeCount target < nodeCount source := by
+  induction step <;> (simp_all [nodeCount, weaken]; try omega)
+
+/-- Every term is strongly normalizing for eta reduction. -/
+theorem stronglyNormalizing (term : Tm Sig types depth) :
+    Acc (fun target source => Nonempty (Eta source target)) term := by
+  constructor
+  intro target reduction
+  exact stronglyNormalizing target
+termination_by nodeCount term
+decreasing_by exact reduction.elim fun step => step.nodeCount_lt
+
+/-- Full eta reduction is well founded for every HolE term. -/
+theorem wellFounded {Sig : Signature} {types : List Kind} {depth : Nat} :
+    WellFounded (fun target source : Tm Sig types depth => Nonempty (Eta source target)) :=
+  ⟨stronglyNormalizing⟩
+
 /-- Full eta reduction preserves syntax-directed typing. -/
 theorem preserve {Sig : Signature} [SigTyping Sig]
     {Γ : BoundCtx Sig types depth} {source target : Tm Sig types depth}
