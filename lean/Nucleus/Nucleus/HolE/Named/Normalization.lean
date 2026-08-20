@@ -292,6 +292,34 @@ noncomputable def closedEtaNormalForm {Sig : Signature} (source : ClosedTmExpr S
   · rw [namedNormalLowered]
     exact normalized.normal
 
+namespace ClosedEtaNormalForm
+
+/-- The selected closed eta normal form retains every converted type of its
+source. -/
+theorem preserveConv {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
+    [Nucleus.HolE.SigFamilyEquality Sig]
+    {source : ClosedTmExpr Sig} (normalForm : ClosedEtaNormalForm source)
+    {A : Ty Sig}
+    (sourceTyping : HasTypeConv (.nil : TyScope []) (.nil : TmScope Sig 0)
+      Nucleus.HolE.emptyBound source.expression A) :
+    HasTypeConv (.nil : TyScope []) (.nil : TmScope Sig 0)
+      Nucleus.HolE.emptyBound normalForm.term.expression A :=
+  normalForm.steps.preserveConv (fun index => Fin.elim0 index) sourceTyping
+
+/-- The selected closed eta normal form is kernel-convertible to its source at
+every advertised converted type. -/
+theorem conversion {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
+    [Nucleus.HolE.SigFamilyEquality Sig]
+    {source : ClosedTmExpr Sig} (normalForm : ClosedEtaNormalForm source)
+    {A : Ty Sig}
+    (sourceTyping : HasTypeConv (.nil : TyScope []) (.nil : TmScope Sig 0)
+      Nucleus.HolE.emptyBound source.expression A) :
+    TmConv (.nil : TyScope []) (.nil : TmScope Sig 0) Nucleus.HolE.emptyBound
+      source.expression normalForm.term.expression A :=
+  normalForm.steps.eqTmConv_nonempty (fun index => Fin.elim0 index) sourceTyping
+
+end ClosedEtaNormalForm
+
 end Reduction
 
 end Nucleus.HolE.Named
