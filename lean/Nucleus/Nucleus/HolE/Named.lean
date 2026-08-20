@@ -15,6 +15,12 @@ import Nucleus.HolE.Named.Semantics
 import Nucleus.HolE.Named.Unsorted.Typing
 import Nucleus.HolE.Named.Unsorted.Kernel
 import Nucleus.HolE.Named.Unsorted.Semantics
+import Nucleus.HolE.Named.Unsorted.Macros
+import Nucleus.HolE.Named.Unsorted.WellSorted
+import Nucleus.HolE.Named.Unsorted.Checked
+import Nucleus.HolE.Named.Unsorted.CheckedRules
+import Nucleus.HolE.Named.Unsorted.Rulebook
+import Nucleus.HolE.Named.Unsorted.ProofRules
 import Nucleus.HolE.Named.Unsorted.Context
 
 /-! # Named presentation of HolE -/
