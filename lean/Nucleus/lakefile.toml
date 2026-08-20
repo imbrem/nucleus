@@ -19,5 +19,11 @@ name = "mathlib"
 scope = "leanprover-community"
 rev = "v4.33.0-rc1"
 
+# Reuse CSLib's locally nameless beta/eta confluence and STLC normalization.
+[[require]]
+name = "cslib"
+git = "https://github.com/leanprover/cslib"
+rev = "810849d47d1084f2e98844d316091845c561bb25"
+
 [[lean_lib]]
 name = "Nucleus"
