@@ -216,6 +216,56 @@ def ofExpr : Expr Sig Name resultSort → Finite Sig Name holeSort 0 resultSort
   | .rep carrier name predicate value =>
       .rep (ofExpr carrier) name (ofExpr predicate) (ofExpr value)
 
+/-- Include the explicit single-hole reference syntax in affine `Fin 1`
+syntax.  Hole-free siblings use `ofExpr`; coproduct addition keeps the result
+code definitionally equal to one. -/
+def OneHole.toAffine : OneHole Sig Name holeSort resultSort →
+    Finite Sig Name holeSort 1 resultSort
+  | .hole => .hole (⟨0, by omega⟩ : Fin 1)
+  | .arrDomain context codomain => .arr (OneHole.toAffine context) (ofExpr codomain)
+  | .arrCodomain domain context => .arr (ofExpr domain) (OneHole.toAffine context)
+  | .tyAppFunction context argument =>
+      .tyApp (OneHole.toAffine context) (ofExpr argument)
+  | .tyAppArgument function context =>
+      .tyApp (ofExpr function) (OneHole.toAffine context)
+  | .tyLam name context => .tyLam name (OneHole.toAffine context)
+  | .subCarrier context name predicate =>
+      .sub (OneHole.toAffine context) name (ofExpr predicate)
+  | .subPredicate carrier name context =>
+      .sub (ofExpr carrier) name (OneHole.toAffine context)
+  | .tyExists name context => .tyExists name (OneHole.toAffine context)
+  | .model name context => .model name (OneHole.toAffine context)
+  | .tmFv name context => .tmFv name (OneHole.toAffine context)
+  | .appFunction context argument =>
+      .app (OneHole.toAffine context) (ofExpr argument)
+  | .appArgument function context =>
+      .app (ofExpr function) (OneHole.toAffine context)
+  | .lamDomain name context body =>
+      .lam name (OneHole.toAffine context) (ofExpr body)
+  | .lamBody name domain context =>
+      .lam name (ofExpr domain) (OneHole.toAffine context)
+  | .eqType context left right =>
+      .eq (OneHole.toAffine context) (ofExpr left) (ofExpr right)
+  | .eqLeft type context right =>
+      .eq (ofExpr type) (OneHole.toAffine context) (ofExpr right)
+  | .eqRight type left context =>
+      .eq (ofExpr type) (ofExpr left) (OneHole.toAffine context)
+  | .epsType context predicate =>
+      .eps (OneHole.toAffine context) (ofExpr predicate)
+  | .epsPredicate type context => .eps (ofExpr type) (OneHole.toAffine context)
+  | .absCarrier context name predicate value =>
+      .abs (OneHole.toAffine context) name (ofExpr predicate) (ofExpr value)
+  | .absPredicate carrier name context value =>
+      .abs (ofExpr carrier) name (OneHole.toAffine context) (ofExpr value)
+  | .absValue carrier name predicate context =>
+      .abs (ofExpr carrier) name (ofExpr predicate) (OneHole.toAffine context)
+  | .repCarrier context name predicate value =>
+      .rep (OneHole.toAffine context) name (ofExpr predicate) (ofExpr value)
+  | .repPredicate carrier name context value =>
+      .rep (ofExpr carrier) name (OneHole.toAffine context) (ofExpr value)
+  | .repValue carrier name predicate context =>
+      .rep (ofExpr carrier) name (ofExpr predicate) (OneHole.toAffine context)
+
 /-- Filling an embedded hole-free expression is the identity. -/
 @[simp] theorem fill_ofExpr (expression : Expr Sig Name resultSort)
     (replacement : Fin 0 → Expr Sig Name holeSort) :
@@ -265,6 +315,18 @@ def ofExpr : Expr Sig Name resultSort → Finite Sig Name holeSort 0 resultSort
   | .rep carrier name predicate value => by
       simp only [ofExpr, fill]
       rw [fill_ofExpr carrier, fill_ofExpr predicate, fill_ofExpr value]
+
+/-- The inclusion of explicit one-hole syntax preserves filling. -/
+@[simp] theorem fill_toAffine (context : OneHole Sig Name holeSort resultSort)
+    (replacement : Fin 1 → Expr Sig Name holeSort) :
+    (OneHole.toAffine context).fill replacement = context.fill (replacement 0) := by
+  revert replacement
+  induction context <;> intro replacement
+  all_goals
+    simp_all [OneHole.toAffine, fill, OneHole.fill, leftReplacement,
+      rightReplacement, firstReplacement, secondReplacement, thirdReplacement]
+  all_goals
+    congr 1
 
 end AffineHole
 
