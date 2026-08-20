@@ -29,12 +29,14 @@ variable (typeScope : Named.TyScope types) (termScope : Named.TmScope Sig depth)
 variable (boundContext : BoundCtx Sig types depth)
 
 /-- An unsorted expression is a valid assumption when it checks as a term,
-lowers under the named scopes, and has Boolean type up to type conversion. -/
+lowers under the named scopes, and has the syntax-directed Boolean type.  The
+raw typing is what makes Boolean case analysis available without asking type
+conversion to change the explicit operand type of an equality node. -/
 def IsProposition (proposition : Expr Sig) : Prop :=
   ∃ sorted lowered,
     check .tm proposition = some sorted ∧
     Named.lowerTm typeScope termScope sorted = some lowered ∧
-    HasTypeDefEq boundContext lowered .boolTy
+    Nucleus.HolE.HasType boundContext lowered .boolTy
 
 /-- Every member of a well-formed assumption context is a valid proposition. -/
 def WellFormed (context : ListCtx Sig) : Prop :=
@@ -284,7 +286,7 @@ theorem WellFormed.compile {context : ListCtx Sig}
       · simp [Named.lowerTerms, headLowering, tailLowering]
       · intro proposition membership
         rcases List.mem_cons.mp membership with rfl | membership
-        · exact headTyping
+        · exact .exact headTyping
         · exact tailTyping proposition membership
 
 /-- Derivability from an unsorted named assumption list. -/
@@ -339,10 +341,13 @@ theorem Derives.mono {source target : ListCtx Sig} {conclusion : Expr Sig}
       proof.derivation.conclusionLowering,
       proof.derivation.derivation.mapHypotheses targetTyped loweredSubset⟩⟩⟩
 
-/-- `source ⇒ target` means that `source` is a valid assumption context and
-proves every assumption in `target`. -/
+/-- `source ⇒ target` means that both endpoints are valid assumption
+contexts and `source` proves every assumption in `target`.  Carrying endpoint
+validity makes this a partial preorder whose reflexive domain is exactly the
+well-formed contexts. -/
 def Entails (source target : ListCtx Sig) : Prop :=
   WellFormed typeScope termScope boundContext source ∧
+  WellFormed typeScope termScope boundContext target ∧
   ∀ proposition, proposition ∈ target →
     Derives typeScope termScope boundContext source proposition
 
@@ -352,15 +357,17 @@ theorem entails_self_iff (context : ListCtx Sig) :
   constructor
   · exact And.left
   · intro valid
-    exact ⟨valid, fun proposition membership =>
+    exact ⟨valid, valid, fun proposition membership =>
       Derives.hyp typeScope termScope boundContext valid membership⟩
 
 theorem entails_of_subset {source target : ListCtx Sig}
     (sourceValid : WellFormed typeScope termScope boundContext source)
     (subset : ∀ proposition, proposition ∈ target → proposition ∈ source) :
     Entails typeScope termScope boundContext source target :=
-  ⟨sourceValid, fun proposition membership =>
-    Derives.hyp typeScope termScope boundContext sourceValid (subset proposition membership)⟩
+  ⟨sourceValid,
+    fun proposition membership => sourceValid proposition (subset proposition membership),
+    fun proposition membership =>
+      Derives.hyp typeScope termScope boundContext sourceValid (subset proposition membership)⟩
 
 theorem entails_of_sublist {source target : ListCtx Sig}
     (sourceValid : WellFormed typeScope termScope boundContext source)
@@ -388,18 +395,15 @@ theorem entails_all_permutations_iff (context : ListCtx Sig) :
 
 theorem Entails.target_wellFormed {source target : ListCtx Sig}
     (entailment : Entails typeScope termScope boundContext source target) :
-    WellFormed typeScope termScope boundContext target := by
-  intro proposition membership
-  obtain ⟨proof⟩ := entailment.2 proposition membership
-  refine ⟨proof.sortedConclusion, proof.derivation.loweredConclusion,
-    proof.conclusionCheck, proof.derivation.conclusionLowering, ?_⟩
-  exact proof.derivation.derivation.conclusionTyping
+    WellFormed typeScope termScope boundContext target :=
+  entailment.2.1
 
 /-- Cut admissibility for the named unsorted presentation.  This is isolated
 as a capability because the current kernel exposes weakening but has not yet
 proved the general proof-substitution theorem needed to implement cut. -/
 class HasCut : Prop where
   cut : ∀ {source target : ListCtx Sig} {conclusion : Expr Sig},
+    WellFormed typeScope termScope boundContext source →
     WellFormed typeScope termScope boundContext target →
     (∀ proposition, proposition ∈ source →
       Derives typeScope termScope boundContext target proposition) →
@@ -411,9 +415,9 @@ theorem Entails.trans [HasCut typeScope termScope boundContext]
     (left : Entails typeScope termScope boundContext first second)
     (right : Entails typeScope termScope boundContext second third) :
     Entails typeScope termScope boundContext first third := by
-  refine ⟨left.1, ?_⟩
+  refine ⟨left.1, right.2.1, ?_⟩
   intro proposition membership
-  exact HasCut.cut left.1 left.2 (right.2 proposition membership)
+  exact HasCut.cut right.1 left.1 left.2.2 (right.2.2 proposition membership)
 
 theorem entails_append_left (left right : WfList typeScope termScope boundContext) :
     Entails typeScope termScope boundContext (left.raw ++ right.raw) left.raw :=
@@ -433,17 +437,18 @@ theorem entails_append_mono
     (right : Entails typeScope termScope boundContext right₁.raw right₂.raw) :
     Entails typeScope termScope boundContext
       (left₁.raw ++ right₁.raw) (left₂.raw ++ right₂.raw) := by
-  refine ⟨left₁.valid.append typeScope termScope boundContext right₁.valid, ?_⟩
+  refine ⟨left₁.valid.append typeScope termScope boundContext right₁.valid,
+    left₂.valid.append typeScope termScope boundContext right₂.valid, ?_⟩
   intro proposition membership
   rcases List.mem_append.mp membership with membership | membership
   · exact Derives.mono typeScope termScope boundContext
       (left₁.valid.append typeScope termScope boundContext right₁.valid)
       (fun candidate candidateMem => List.mem_append_left _ candidateMem)
-      (left.2 proposition membership)
+      (left.2.2 proposition membership)
   · exact Derives.mono typeScope termScope boundContext
       (left₁.valid.append typeScope termScope boundContext right₁.valid)
       (fun candidate candidateMem => List.mem_append_right _ candidateMem)
-      (right.2 proposition membership)
+      (right.2.2 proposition membership)
 
 section Quotient
 
