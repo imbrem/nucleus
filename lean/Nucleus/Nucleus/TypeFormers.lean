@@ -1,7 +1,7 @@
 import Mathlib.Logic.Embedding.Basic
 import Mathlib.Logic.Equiv.Sum
 import Mathlib.Data.Countable.Defs
-import Mathlib.Data.Finite.Defs
+import Mathlib.SetTheory.Cardinal.NatCard
 
 /-!
 # Concrete denoted type formers
@@ -42,6 +42,15 @@ instance {Code : Type u} [Denotes Code] [CountableDen Code] (code : Code) : Coun
 instance {Code : Type u} [Denotes Code] [FiniteDen Code] : CountableDen Code where
   countable code := by
     letI := FiniteDen.finite code
+    infer_instance
+
+/-- Natural numbers are the canonical codes for the finite carriers `Fin n`. -/
+instance : Denotes Nat where
+  denote := Fin
+
+instance : FiniteDen Nat where
+  finite n := by
+    change Finite (Fin n)
     infer_instance
 
 /-- A distinguished embedding of a code's carrier into a type. -/
