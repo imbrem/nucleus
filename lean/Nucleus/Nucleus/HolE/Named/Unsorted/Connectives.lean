@@ -352,6 +352,74 @@ theorem imp_hasType (left right :
   rw [← raw_imp]
   simpa [Term.rawType, Family.raw_boolTy] using (imp left right).toHasType
 
+/-- The variable introduced at the head of a named term scope. -/
+def headVariable {types : List Kind} {depth : Nat}
+    {typeScope : Named.TyScope types}
+    (name : Nat) (type : Family Sig typeScope .star)
+    (termScope : Named.TmScope Sig depth) (Γ : Nucleus.HolE.BoundCtx Sig types depth) :
+    Term Sig typeScope (.cons ⟨name, type.expression.sorted⟩ termScope)
+      (Nucleus.HolE.extendBound type.lowered Γ) type :=
+  Term.boundVariable name type 0 (by simp [Named.lookupTm]) rfl
+
+/-- Body of the predicate `fun varied => varied = right`. -/
+def eqToRightBody {types : List Kind} {depth : Nat}
+    {typeScope : Named.TyScope types} {termScope : Named.TmScope Sig depth}
+    {Γ : Nucleus.HolE.BoundCtx Sig types depth}
+    (name : Nat) (type : Family Sig typeScope .star)
+    (right : Term Sig typeScope termScope Γ type)
+    (fresh : name ∉ Unsorted.names right.raw) :
+    BoolTerm typeScope (.cons ⟨name, type.expression.sorted⟩ termScope)
+      (Nucleus.HolE.extendBound type.lowered Γ) :=
+  Term.eq type (headVariable name type termScope Γ)
+    (right.weakenFresh name type fresh)
+
+/-- Body of the predicate `fun varied => left = varied`. -/
+def eqFromLeftBody {types : List Kind} {depth : Nat}
+    {typeScope : Named.TyScope types} {termScope : Named.TmScope Sig depth}
+    {Γ : Nucleus.HolE.BoundCtx Sig types depth}
+    (name : Nat) (type : Family Sig typeScope .star)
+    (left : Term Sig typeScope termScope Γ type)
+    (fresh : name ∉ Unsorted.names left.raw) :
+    BoolTerm typeScope (.cons ⟨name, type.expression.sorted⟩ termScope)
+      (Nucleus.HolE.extendBound type.lowered Γ) :=
+  Term.eq type (left.weakenFresh name type fresh)
+    (headVariable name type termScope Γ)
+
+/-- The body of the Boolean identity function. -/
+def boolIdentityBody {types : List Kind} {depth : Nat}
+    {typeScope : Named.TyScope types} {termScope : Named.TmScope Sig depth}
+    {Γ : Nucleus.HolE.BoundCtx Sig types depth} (name : Nat) :
+    BoolTerm typeScope
+      (.cons ⟨name, (Family.boolTy (Sig := Sig) typeScope).expression.sorted⟩ termScope)
+      (Nucleus.HolE.extendBound (Family.boolTy (Sig := Sig) typeScope).lowered Γ) :=
+  headVariable name (Family.boolTy typeScope) termScope Γ
+
+@[simp] theorem eqToRightBody_open (_typedContext : Nucleus.HolE.TypedCtx Γ)
+    (name : Nat) (type : Family Sig typeScope .star)
+    (right argument : Term Sig typeScope termScope Γ type)
+    (fresh : name ∉ Unsorted.names right.raw) :
+    Nucleus.HolE.openBound (eqToRightBody name type right fresh).lowered
+      argument.lowered = (Term.eq type argument right).lowered := by
+  simp [eqToRightBody, headVariable, weakenFresh, Term.eq,
+    Term.boundVariable, Nucleus.HolE.openBound, Nucleus.HolE.instantiate]
+
+@[simp] theorem eqFromLeftBody_open (_typedContext : Nucleus.HolE.TypedCtx Γ)
+    (name : Nat) (type : Family Sig typeScope .star)
+    (left argument : Term Sig typeScope termScope Γ type)
+    (fresh : name ∉ Unsorted.names left.raw) :
+    Nucleus.HolE.openBound (eqFromLeftBody name type left fresh).lowered
+      argument.lowered = (Term.eq type left argument).lowered := by
+  simp [eqFromLeftBody, headVariable, weakenFresh, Term.eq,
+    Term.boundVariable, Nucleus.HolE.openBound, Nucleus.HolE.instantiate]
+
+@[simp] theorem boolIdentityBody_open (_typedContext : Nucleus.HolE.TypedCtx Γ)
+    (name : Nat) (proposition : BoolTerm typeScope termScope Γ) :
+    Nucleus.HolE.openBound (boolIdentityBody (Sig := Sig) (typeScope := typeScope)
+      (termScope := termScope) (Γ := Γ) name).lowered proposition.lowered =
+      proposition.lowered := by
+  simp [boolIdentityBody, headVariable, Term.boundVariable,
+    Nucleus.HolE.openBound]
+
 end Term
 
 namespace Proof
@@ -402,6 +470,101 @@ def betaExpand (name : Nat) (typedContext : Nucleus.HolE.TypedCtx Γ)
     (TermEq.symm
       (TermEq.beta name typedContext domain (Family.boolTy typeScope)
         body argument result resultEq))
+
+/-- Symmetry of object-language equality, derived by equality substitution. -/
+noncomputable def eqSymm (typedContext : Nucleus.HolE.TypedCtx Γ)
+    (type : Family Sig typeScope .star)
+    (left right : Term Sig typeScope termScope Γ type)
+    (equality : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.eq type left right)) :
+    Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.eq type right left) := by
+  let name := Unsorted.freshName left.raw left.raw
+  have fresh : name ∉ Unsorted.names left.raw := by
+    intro membership
+    exact Finset.freshNat_not_mem _
+      (Finset.mem_union_left _ membership)
+  let body := Term.eqToRightBody name type left fresh
+  let predicate := Term.lam name type (Family.boolTy typeScope) body
+  have atLeft : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.eq type left left) := Proof.eqRefl left
+  have predicateAtLeft : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.app predicate left) :=
+    betaExpand name typedContext type body left (Term.eq type left left)
+      (Term.eqToRightBody_open typedContext name type left left fresh).symm atLeft
+  have predicateAtRight : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.app predicate right) :=
+    Proof.eqMp predicate left right equality predicateAtLeft
+  exact betaReduce name typedContext type body right (Term.eq type right left)
+    (Term.eqToRightBody_open typedContext name type left right fresh).symm
+    predicateAtRight
+
+/-- Transitivity of object-language equality, derived by equality substitution. -/
+noncomputable def eqTrans (typedContext : Nucleus.HolE.TypedCtx Γ)
+    (type : Family Sig typeScope .star)
+    (left middle right : Term Sig typeScope termScope Γ type)
+    (first : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.eq type left middle))
+    (second : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.eq type middle right)) :
+    Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.eq type left right) := by
+  let name := Unsorted.freshName left.raw left.raw
+  have fresh : name ∉ Unsorted.names left.raw := by
+    intro membership
+    exact Finset.freshNat_not_mem _
+      (Finset.mem_union_left _ membership)
+  let body := Term.eqFromLeftBody name type left fresh
+  let predicate := Term.lam name type (Family.boolTy typeScope) body
+  have predicateAtMiddle : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.app predicate middle) :=
+    betaExpand name typedContext type body middle (Term.eq type left middle)
+      (Term.eqFromLeftBody_open typedContext name type left middle fresh).symm first
+  have predicateAtRight : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.app predicate right) :=
+    Proof.eqMp predicate middle right second predicateAtMiddle
+  exact betaReduce name typedContext type body right (Term.eq type left right)
+    (Term.eqFromLeftBody_open typedContext name type left right fresh).symm
+    predicateAtRight
+
+/-- Equality of Booleans transports provability. -/
+noncomputable def ofEqBool (typedContext : Nucleus.HolE.TypedCtx Γ)
+    (left right : BoolTerm typeScope termScope Γ)
+    (equality : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.eq (Family.boolTy typeScope) left right))
+    (premise : Proof (Sig := Sig) typeScope termScope Γ hypotheses left) :
+    Proof (Sig := Sig) typeScope termScope Γ hypotheses right := by
+  let name := 0
+  let body := Term.boolIdentityBody (Sig := Sig) (typeScope := typeScope)
+    (termScope := termScope) (Γ := Γ) name
+  let predicate := Term.lam name (Family.boolTy typeScope)
+    (Family.boolTy typeScope) body
+  have predicateAtLeft : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.app predicate left) :=
+    betaExpand name typedContext (Family.boolTy typeScope) body left left
+      (Term.boolIdentityBody_open typedContext name left).symm premise
+  have predicateAtRight : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.app predicate right) :=
+    Proof.eqMp predicate left right equality predicateAtLeft
+  exact betaReduce name typedContext (Family.boolTy typeScope) body right right
+    (Term.boolIdentityBody_open typedContext name right).symm predicateAtRight
+
+/-- Every proved Boolean is provably equal to truth. -/
+noncomputable def eqTrue (premise :
+    Proof (Sig := Sig) typeScope termScope Γ hypotheses proposition) :
+    Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.eq (Family.boolTy typeScope) proposition Term.truth) :=
+  Proof.antisymm proposition Term.truth
+    Proof.truth (premise.weakenHyp Term.truth)
+
+/-- Equality with truth can be eliminated back to the proposition. -/
+noncomputable def ofEqTrue (typedContext : Nucleus.HolE.TypedCtx Γ)
+    (equality : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.eq (Family.boolTy typeScope) proposition Term.truth)) :
+    Proof (Sig := Sig) typeScope termScope Γ hypotheses proposition :=
+  ofEqBool typedContext Term.truth proposition
+    (eqSymm typedContext (Family.boolTy typeScope) proposition Term.truth equality)
+    Proof.truth
 
 end Proof
 
