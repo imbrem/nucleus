@@ -192,6 +192,12 @@ structure State (Sig : Signature.{u}) (Name : Type) where
 
 abbrev M (Sig : Signature.{u}) (Name : Type) := StateM (State Sig Name)
 
+@[simp] private theorem bind_apply (action : M Sig Name α) (next : α → M Sig Name β)
+    (state : State Sig Name) :
+    (action >>= next) state =
+      let (value, state) := action state
+      next value state := rfl
+
 private def emit (tag : Tag Sig Name) (children : List Nat) : M Sig Name Nat :=
   fun state => (state.next,
     { next := state.next + 1, nodes := state.nodes ++ [⟨tag, children⟩] })
@@ -264,6 +270,26 @@ def encode : HolE Sig Name → M Sig Name Nat
       let valueIndex ← encode value
       emit .tmQuotRep [carrierIndex, variableIndex, predicateIndex, valueIndex]
 
+/-- Number of rows emitted by the concrete encoder.  Binder variables are
+rows in their own right. -/
+def nodeCount : HolE Sig Name → Nat
+  | .boolTy | .tyFv .. | .primFam .. | .primTm .. | .bool .. => 1
+  | .arr left right | .tyApp _ _ left right | .app left right |
+      .eps left right => nodeCount left + nodeCount right + 1
+  | .tyLam _ _ _ body | .tyExists _ body | .model _ body => nodeCount body + 2
+  | .sub carrier _ predicate | .lam _ carrier predicate =>
+      nodeCount carrier + nodeCount predicate + 2
+  | .tmFv _ type => nodeCount type + 1
+  | .eq type left right => nodeCount type + nodeCount left + nodeCount right + 1
+  | .abs carrier _ predicate value | .rep carrier _ predicate value =>
+      nodeCount carrier + nodeCount predicate + nodeCount value + 2
+
+theorem encode_root (tree : HolE Sig Name) (state : State Sig Name) :
+    (encode tree state).1 + 1 = (encode tree state).2.next := by
+  cases tree <;>
+    simp [encode, emit, bind_apply] <;>
+    repeat' split <;> rfl
+
 instance postorderStorage : EncoderStorage Postorder Sig Name where
   State := State Sig Name
   initial offset := ⟨offset, []⟩
@@ -334,6 +360,30 @@ theorem run_root (tree : HolE Sig Name) (offset : Nat) :
     (run tree offset).root = (run tree offset).next - 1 := by
   unfold run
   cases encode tree ⟨offset, []⟩
+  rfl
+
+/-- Decode a concrete encoder result using the ordinary left-to-right dense
+arena elaborator and no ambient forest. -/
+def Result.decode (result : Result Sig Name) : Option (HolE Sig Name) :=
+  elaborateForest emptyForest result.nodes result.offset result.root
+
+example (offset : Nat) :
+    (run (.boolTy : HolE Sig Name) offset).decode = some .boolTy := by
+  simp [Result.decode, run, encode, emit, elaborateForest, elaborateList,
+    Forest.mask, emptyForest]
+  rfl
+
+/-- Absolute numbering is observable at nonzero offsets, including the
+ordinary variable row emitted for an abstraction binder. -/
+example :
+    let result := run (.lam 7 .boolTy (.bool true) : HolE Sig Nat) 10
+    result.root = 13 ∧ result.next = 14 ∧
+      result.nodes[1]? = some ⟨.tmVar 7, [10]⟩ := by
+  simp [run, encode, emit, bind_apply]
+
+/-- Batch encoding preserves input order in its public roots. -/
+example :
+    (runList ([.bool true, .bool false] : List (HolE Sig Nat)) 10).roots = [10, 11] := by
   rfl
 
 end Encoder
