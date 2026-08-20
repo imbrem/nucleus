@@ -18,6 +18,11 @@ set_option relaxedAutoImplicit true
 theorem classicalEqTmRuleLaws : ClassicalEqTmRuleLaws where
   app := classical_eqTm_app
   lam := classical_eqTm_lam
+  eq := classical_eqTm_eq
+  eps := classical_eqTm_eps
+  abs := classical_eqTm_abs
+  rep := classical_eqTm_rep
+  tyExists := classical_eqTm_tyExists
   beta := classical_eqTm_beta
   eta := classical_eqTm_eta
 

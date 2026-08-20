@@ -38,6 +38,39 @@ structure ClassicalEqTmRuleLaws where
     HasType Γ (.lam A body₂) (.arr A B) → Kinded A →
     CSemEq (Γ := extendBound A Γ) body₁ body₂ B →
     CSemEq (Γ := Γ) (.lam A body₁) (.lam A body₂) (.arr A B)
+  eq : ∀ {types depth} {Γ : BoundCtx ClassicalSig types depth}
+      {A : Ty ClassicalSig types}
+      {x₁ x₂ y₁ y₂ : Tm ClassicalSig types depth},
+    HasType Γ (.eq A x₁ y₁) .boolTy →
+    HasType Γ (.eq A x₂ y₂) .boolTy → Kinded A →
+    CSemEq (Γ := Γ) x₁ x₂ A → CSemEq (Γ := Γ) y₁ y₂ A →
+    CSemEq (Γ := Γ) (.eq A x₁ y₁) (.eq A x₂ y₂) .boolTy
+  eps : ∀ {types depth} {Γ : BoundCtx ClassicalSig types depth}
+      {A : Ty ClassicalSig types} {p q : Tm ClassicalSig types depth},
+    HasType Γ (.eps A p) A → HasType Γ (.eps A q) A → Kinded A →
+    CSemEq (Γ := Γ) p q (.arr A .boolTy) →
+    CSemEq (Γ := Γ) (.eps A p) (.eps A q) A
+  abs : ∀ {types depth} {Γ : BoundCtx ClassicalSig types depth}
+      {A : Ty ClassicalSig types} {p : Tm ClassicalSig types 1}
+      {x y : Tm ClassicalSig types depth},
+    HasType Γ (.abs A p x) (.sub A p) →
+    HasType Γ (.abs A p y) (.sub A p) → Kinded A →
+    HasType (extendBound A emptyBound) p .boolTy →
+    CSemEq (Γ := Γ) x y A →
+    CSemEq (Γ := Γ) (.abs A p x) (.abs A p y) (.sub A p)
+  rep : ∀ {types depth} {Γ : BoundCtx ClassicalSig types depth}
+      {A : Ty ClassicalSig types} {p : Tm ClassicalSig types 1}
+      {x y : Tm ClassicalSig types depth},
+    HasType Γ (.rep A p x) A → HasType Γ (.rep A p y) A → Kinded A →
+    HasType (extendBound A emptyBound) p .boolTy →
+    CSemEq (Γ := Γ) x y (.sub A p) →
+    CSemEq (Γ := Γ) (.rep A p x) (.rep A p y) A
+  tyExists : ∀ {types depth} {Γ : BoundCtx ClassicalSig types depth}
+      {p q : Tm ClassicalSig (.star :: types) 0},
+    HasType Γ (.tyExists p) .boolTy → HasType Γ (.tyExists q) .boolTy →
+    CSemEq (Γ := (emptyBound : BoundCtx ClassicalSig (.star :: types) 0))
+      p q .boolTy →
+    CSemEq (Γ := Γ) (.tyExists p) (.tyExists q) .boolTy
   beta : ∀ {types depth} {Γ : BoundCtx ClassicalSig types depth}
       {A B : Ty ClassicalSig types} {body : Tm ClassicalSig types (depth + 1)}
       {x : Tm ClassicalSig types depth},
@@ -72,6 +105,12 @@ theorem EqTm.sound_of_laws {types : List Kind} {depth : Nat}
       exact laws.app leftRaw rightRaw leftFunctionRaw leftArgumentRaw
         rightFunctionRaw rightArgumentRaw ihf ihx
   | lam leftRaw rightRaw hA bodies ih => exact laws.lam leftRaw rightRaw hA ih
+  | eq leftRaw rightRaw hA left right ihx ihy =>
+      exact laws.eq leftRaw rightRaw hA ihx ihy
+  | eps leftRaw rightRaw hA predicates ih => exact laws.eps leftRaw rightRaw hA ih
+  | abs leftRaw rightRaw hA hp values ih => exact laws.abs leftRaw rightRaw hA hp ih
+  | rep leftRaw rightRaw hA hp values ih => exact laws.rep leftRaw rightRaw hA hp ih
+  | tyExists leftRaw rightRaw predicates ih => exact laws.tyExists leftRaw rightRaw ih
   | beta body x hA typedContext applicationRaw bodyTyping argumentTyping resultTyping =>
       exact laws.beta hA typedContext applicationRaw bodyTyping argumentTyping resultTyping
   | eta name fresh typedContext functionTyping etaTyping =>
