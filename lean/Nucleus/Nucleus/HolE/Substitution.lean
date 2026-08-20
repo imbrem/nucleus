@@ -303,10 +303,89 @@ def Checks.renameTm {Sig : Signature} [SigTyping Sig]
   | .abs hA hp hx => by simpa [rename] using (.abs hA hp (Checks.renameTm hx ρ contexts))
   | .rep hA hp hx => by simpa [rename] using (.rep hA hp (Checks.renameTm hx ρ contexts))
 
+namespace HasType
+
+/-- Syntax-directed typing reflects through a renaming when the source and
+target contexts agree on every renamed variable. -/
+theorem ofRename {Sig : Signature} [SigTyping Sig]
+    {types : List Kind} {m n : Nat}
+    {Γ : BoundCtx Sig types m} {Δ : BoundCtx Sig types n}
+    {term : Tm Sig types m} {A : Ty Sig types} {ρ : Fin m → Fin n}
+    (typing : HasType Δ (rename ρ term) A)
+    (contexts : ∀ i, Δ (ρ i) = Γ i) : HasType Γ term A := by
+  cases term with
+  | primTm symbol =>
+      simp only [rename] at typing
+      cases typing with
+      | primTm hA rule => exact .primTm hA rule
+  | bv i =>
+      simp only [rename] at typing
+      cases typing with
+      | bv hA lookup => exact .bv hA ((contexts i).symm.trans lookup)
+  | fv name type =>
+      simp only [rename] at typing
+      cases typing with
+      | fv _ hA => exact .fv name hA
+  | app function argument =>
+      simp only [rename] at typing
+      cases typing with
+      | app functionTyping argumentTyping =>
+          exact .app (ofRename functionTyping contexts)
+            (ofRename argumentTyping contexts)
+  | lam domain body =>
+      simp only [rename] at typing
+      cases typing with
+      | lam _ hA bodyTyping =>
+          refine .lam body hA (ofRename bodyTyping ?_)
+          intro i
+          refine Fin.cases ?_ (fun j => ?_) i
+          · rfl
+          · exact contexts j
+  | bool value =>
+      simp only [rename] at typing
+      cases typing with
+      | bool => exact .bool value
+  | tyExists predicate =>
+      simp only [rename] at typing
+      cases typing with
+      | tyExists predicateTyping => exact .tyExists predicateTyping
+  | eq type left right =>
+      simp only [rename] at typing
+      cases typing with
+      | eq hA leftTyping rightTyping =>
+          exact .eq hA (ofRename leftTyping contexts) (ofRename rightTyping contexts)
+  | eps type predicate =>
+      simp only [rename] at typing
+      cases typing with
+      | eps hA predicateTyping => exact .eps hA (ofRename predicateTyping contexts)
+  | abs type predicate value =>
+      simp only [rename] at typing
+      cases typing with
+      | abs hA predicateTyping valueTyping =>
+          exact .abs hA predicateTyping (ofRename valueTyping contexts)
+  | rep type predicate value =>
+      simp only [rename] at typing
+      cases typing with
+      | rep hA predicateTyping valueTyping =>
+          exact .rep hA predicateTyping (ofRename valueTyping contexts)
+termination_by sizeOf term
+
+end HasType
+
 theorem HasType.weaken {Sig : Signature} [SigTyping Sig]
     {Γ : BoundCtx Sig types depth} {t : Tm Sig types depth} {A B : Ty Sig types}
     (typing : HasType Γ t A) : HasType (extendBound B Γ) (weaken t) A :=
   Checks.renameTm typing Fin.succ (fun _ => rfl)
+
+/-- Weakening does not create typings that the original term lacked. -/
+theorem HasType.ofWeaken {Sig : Signature} [SigTyping Sig]
+    {types : List Kind} {depth : Nat} {Γ : BoundCtx Sig types depth}
+    {term : Tm Sig types depth} {A B : Ty Sig types}
+    (typing : HasType (extendBound B Γ) (Nucleus.HolE.weaken term) A) :
+    HasType Γ term A := by
+  apply typing.ofRename (ρ := Fin.succ)
+  intro i
+  rfl
 
 def WellTypedSub {Sig : Signature} [SigTyping Sig]
     (Γ : BoundCtx Sig types m) (Δ : BoundCtx Sig types n)
