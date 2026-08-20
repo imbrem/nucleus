@@ -21,6 +21,7 @@ import Nucleus.HolE.Named.Unsorted.Checked
 import Nucleus.HolE.Named.Unsorted.CheckedRules
 import Nucleus.HolE.Named.Unsorted.Rulebook
 import Nucleus.HolE.Named.Unsorted.ProofRules
+import Nucleus.HolE.Named.Unsorted.Connectives
 import Nucleus.HolE.Named.Unsorted.Context
 
 /-! # Named presentation of HolE -/
