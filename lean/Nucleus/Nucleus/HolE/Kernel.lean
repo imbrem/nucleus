@@ -24,6 +24,32 @@ inductive EqTm {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig] :
       (rightRaw : HasType Γ (.lam A u) (.arr A B)) (hA : Kinded A) :
       EqTm (extendBound A Γ) t u B →
       EqTm Γ (.lam A t) (.lam A u) (.arr A B)
+  | eq (leftRaw : HasType Γ (.eq A x₁ y₁) .boolTy)
+      (rightRaw : HasType Γ (.eq A x₂ y₂) .boolTy) (hA : Kinded A) :
+      EqTm Γ x₁ x₂ A → EqTm Γ y₁ y₂ A →
+      EqTm Γ (.eq A x₁ y₁) (.eq A x₂ y₂) .boolTy
+  | eps (leftRaw : HasType Γ (.eps A p) A)
+      (rightRaw : HasType Γ (.eps A q) A) (hA : Kinded A) :
+      EqTm Γ p q (.arr A .boolTy) →
+      EqTm Γ (.eps A p) (.eps A q) A
+  | abs (leftRaw : HasType Γ (.abs A p x) (.sub A p))
+      (rightRaw : HasType Γ (.abs A p y) (.sub A p))
+      (hA : Kinded A) (hp : HasType (extendBound A emptyBound) p .boolTy) :
+      EqTm Γ x y A →
+      EqTm Γ (.abs A p x) (.abs A p y) (.sub A p)
+  | rep (leftRaw : HasType Γ (.rep A p x) A)
+      (rightRaw : HasType Γ (.rep A p y) A)
+      (hA : Kinded A) (hp : HasType (extendBound A emptyBound) p .boolTy) :
+      EqTm Γ x y (.sub A p) →
+      EqTm Γ (.rep A p x) (.rep A p y) A
+  | tyExists (leftRaw : HasType (types := types) Γ (.tyExists p) .boolTy)
+      (rightRaw : HasType (types := types) Γ (.tyExists q) .boolTy) :
+      EqTm (types := .star :: types) emptyBound p q .boolTy →
+      EqTm (types := types) Γ (.tyExists p) (.tyExists q) .boolTy
+  /-- Reindex an equality when both endpoints check at the new type. -/
+  | conv (leftTyping : HasTypeDefEq Γ left B)
+      (rightTyping : HasTypeDefEq Γ right B) :
+      EqTm Γ left right A → EqTm Γ left right B
   | beta (body : Tm Sig types (depth + 1)) (x : Tm Sig types depth) (hA : Kinded A)
       (typedContext : TypedCtx Γ)
       (applicationRaw : HasType Γ (.app (.lam A body) x) B)

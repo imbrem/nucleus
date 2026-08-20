@@ -26,6 +26,12 @@ theorem endpointsTyping {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig
   | trans _ _ leftMiddle middleRight => exact ⟨leftMiddle.1, middleRight.2⟩
   | app leftRaw rightRaw _ _ _ _ _ _ => exact ⟨.exact leftRaw, .exact rightRaw⟩
   | lam leftRaw rightRaw _ _ => exact ⟨.exact leftRaw, .exact rightRaw⟩
+  | eq leftRaw rightRaw _ _ _ => exact ⟨.exact leftRaw, .exact rightRaw⟩
+  | eps leftRaw rightRaw _ _ => exact ⟨.exact leftRaw, .exact rightRaw⟩
+  | abs leftRaw rightRaw _ _ _ => exact ⟨.exact leftRaw, .exact rightRaw⟩
+  | rep leftRaw rightRaw _ _ _ => exact ⟨.exact leftRaw, .exact rightRaw⟩
+  | tyExists leftRaw rightRaw _ => exact ⟨.exact leftRaw, .exact rightRaw⟩
+  | conv leftTyping rightTyping _ => exact ⟨leftTyping, rightTyping⟩
   | beta _ _ _ _ applicationRaw _ _ resultTyping =>
       exact ⟨.exact applicationRaw, resultTyping⟩
   | eta _ _ _ functionTyping etaTyping => exact ⟨etaTyping, functionTyping⟩

@@ -164,9 +164,12 @@ theorem CDefChecks.rawView_semantics {types : List Kind} {depth : Nat}
   | conv source hB conversion ih => exact ih env bound
   | exact | app | lam | eq | eps | abs | rep | tyExists => rfl
 
+/-- The denotation of a term is independent of both its derivation and its
+advertised definitionally equal type. -/
 theorem CDefChecks.coherent {types : List Kind} {depth : Nat}
     {Γ : BoundCtx ClassicalSig types depth} {term : Tm ClassicalSig types depth}
-    {A : Ty ClassicalSig types} (left right : CDefChecks Γ term A)
+    {A B : Ty ClassicalSig types} (left : CDefChecks Γ term A)
+    (right : CDefChecks Γ term B)
     (env : CTypeEnv types) (bound : CBoundEnv depth) (expected : CPointed) :
     cDefSem left env bound expected = cDefSem right env bound expected := by
   rw [left.rawView_semantics, right.rawView_semantics]
@@ -204,6 +207,17 @@ theorem EqTm.typing {types : List Kind} {depth : Nat}
       exact ⟨.app leftRaw ihf.1 ihx.1, .app rightRaw ihf.2 ihx.2⟩
   | lam leftRaw rightRaw hA _ ih =>
       exact ⟨.lam _ leftRaw hA ih.1, .lam _ rightRaw hA ih.2⟩
+  | eq leftRaw rightRaw hA _ _ ihx ihy =>
+      exact ⟨.eq leftRaw hA ihx.1 ihy.1, .eq rightRaw hA ihx.2 ihy.2⟩
+  | eps leftRaw rightRaw hA _ ih =>
+      exact ⟨.eps leftRaw hA ih.1, .eps rightRaw hA ih.2⟩
+  | abs leftRaw rightRaw hA hp _ ih =>
+      exact ⟨.abs leftRaw hA hp ih.1, .abs rightRaw hA hp ih.2⟩
+  | rep leftRaw rightRaw hA hp _ ih =>
+      exact ⟨.rep leftRaw hA hp ih.1, .rep rightRaw hA hp ih.2⟩
+  | tyExists leftRaw rightRaw _ ih =>
+      exact ⟨.tyExists leftRaw ih.1, .tyExists rightRaw ih.2⟩
+  | conv leftTyping rightTyping _ _ => exact ⟨leftTyping, rightTyping⟩
   | beta body x hA typedContext applicationRaw bodyTyping argumentTyping resultTyping =>
       cases applicationRaw with
       | app functionRaw argumentRaw =>
