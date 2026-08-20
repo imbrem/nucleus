@@ -3,6 +3,7 @@ import Nucleus.SExpr.Atom
 import Nucleus.SExpr.Cell
 import Nucleus.SExpr.Proper
 import Nucleus.SExpr.Tagged
+import Nucleus.SExpr.Ranked
 import Nucleus.SExpr.Parser
 import Nucleus.SExpr.Literals
 import Nucleus.SExpr.Pose
