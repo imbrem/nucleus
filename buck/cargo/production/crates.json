@@ -70,6 +70,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-data-array@0.0.0",
+      "name": "covalence-data-array",
+      "version": "0.0.0",
+      "path": "crates/data/array",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_data_array",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-data-basic@0.0.0",
       "name": "covalence-data-basic",
       "version": "0.0.0",
@@ -522,6 +537,20 @@
     {
       "source": "workspace#covalence-browser@0.0.0",
       "target": "workspace#covalence-repl@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-array@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-array@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
       "kinds": [
         "normal"
       ]

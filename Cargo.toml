@@ -12,6 +12,7 @@ members = [
   "crates/lib/sqlite",
   "crates/logic/lrat",
   "crates/logic/sat",
+  "crates/data/array",
   "crates/data/basic",
   "crates/data/cbor",
   "crates/data/num",

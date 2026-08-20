@@ -1,0 +1,16 @@
+[package]
+name = "covalence-data-array"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Flat O256 sequences in Iroh-compatible wire form"
+publish = false
+
+[dependencies]
+covalence-lib-error = { path = "../../lib/error" }
+covalence-lib-hash = { path = "../../lib/hash", default-features = false }
+zerocopy = "0.8"
+
+[lints]
+workspace = true
