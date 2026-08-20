@@ -1,5 +1,6 @@
 import Nucleus.HolE.Named.Unsorted.Context.Repr
 import Nucleus.HolE.Named.Unsorted.Kernel
+import Nucleus.HolE.Cut
 import Mathlib.Data.List.Perm.Basic
 import Mathlib.Order.Antisymmetrization
 
@@ -10,10 +11,10 @@ The ambient type-variable scope, term-variable scope, and locally nameless
 bound context are fixed throughout.  The contexts defined here are lists of
 named, unsorted assumptions.
 
-The proof kernel requires every hypothesis to have Boolean type up to type
-conversion.  `WellFormed` exposes precisely that invariant.  In particular,
-entailment includes well-formedness of its source; without it, raw pointwise
-derivability is not transitive when the intermediate context is empty.
+Cut admissibility requires every hypothesis to have the syntax-directed
+Boolean type, rather than merely a type convertible to Boolean.  `WellFormed`
+exposes precisely that invariant.  Entailment records validity of both
+endpoints, so its reflexive domain is exactly the well-formed contexts.
 -/
 
 namespace Nucleus.HolE.Named.Unsorted.Context
@@ -100,6 +101,7 @@ theorem WellFormed.perm {left right : ListCtx Sig}
 structure WfList where
   raw : ListCtx Sig
   valid : WellFormed typeScope termScope boundContext raw
+  boundTyped : TypedCtx boundContext
 
 namespace WfList
 
@@ -110,29 +112,35 @@ namespace WfList
   cases raw
   rfl
 
-def empty : WfList typeScope termScope boundContext :=
-  ⟨[], wellFormed_nil typeScope termScope boundContext⟩
+def empty (boundTyped : TypedCtx boundContext) :
+    WfList typeScope termScope boundContext :=
+  ⟨[], wellFormed_nil typeScope termScope boundContext, boundTyped⟩
 
 def append (left right : WfList typeScope termScope boundContext) :
     WfList typeScope termScope boundContext :=
-  ⟨left.raw ++ right.raw, left.valid.append typeScope termScope boundContext right.valid⟩
+  ⟨left.raw ++ right.raw,
+    left.valid.append typeScope termScope boundContext right.valid,
+    left.boundTyped⟩
 
-@[simp] theorem raw_empty : (empty typeScope termScope boundContext).raw = [] := rfl
+@[simp] theorem raw_empty (boundTyped : TypedCtx boundContext) :
+    (empty typeScope termScope boundContext boundTyped).raw = [] := rfl
 
 @[simp] theorem raw_append
     (left right : WfList typeScope termScope boundContext) :
     (WfList.append typeScope termScope boundContext left right).raw =
       left.raw ++ right.raw := rfl
 
-@[simp] theorem empty_append (context : WfList typeScope termScope boundContext) :
+@[simp] theorem empty_append (boundTyped : TypedCtx boundContext)
+    (context : WfList typeScope termScope boundContext) :
     append typeScope termScope boundContext
-      (empty typeScope termScope boundContext) context = context := by
+      (empty typeScope termScope boundContext boundTyped) context = context := by
   apply ext
   simp
 
-@[simp] theorem append_empty (context : WfList typeScope termScope boundContext) :
+@[simp] theorem append_empty (boundTyped : TypedCtx boundContext)
+    (context : WfList typeScope termScope boundContext) :
     append typeScope termScope boundContext context
-      (empty typeScope termScope boundContext) = context := by
+      (empty typeScope termScope boundContext boundTyped) = context := by
   apply ext
   simp
 
@@ -271,7 +279,8 @@ theorem WellFormed.compile {context : ListCtx Sig}
     ∃ sorted lowered,
       checkTerms Sig context = some sorted ∧
       Named.lowerTerms typeScope termScope sorted = some lowered ∧
-      TypedHyps boundContext lowered := by
+      (∀ proposition, proposition ∈ lowered →
+        Nucleus.HolE.HasType boundContext proposition .boolTy) := by
   induction context with
   | nil =>
       exact ⟨[], [], by simp [checkTerms], by simp [Named.lowerTerms],
@@ -286,7 +295,7 @@ theorem WellFormed.compile {context : ListCtx Sig}
       · simp [Named.lowerTerms, headLowering, tailLowering]
       · intro proposition membership
         rcases List.mem_cons.mp membership with rfl | membership
-        · exact .exact headTyping
+        · exact headTyping
         · exact tailTyping proposition membership
 
 /-- Derivability from an unsorted named assumption list. -/
@@ -300,13 +309,16 @@ theorem Derives.hyp {context : ListCtx Sig} {proposition : Expr Sig}
     Derives typeScope termScope boundContext context proposition := by
   obtain ⟨sorted, lowered, contextCheck, contextLowering, typed⟩ :=
     valid.compile typeScope termScope boundContext
+  have typedDefEq : TypedHyps boundContext lowered :=
+    fun proposition membership => .exact (typed proposition membership)
   obtain ⟨sortedProposition, propositionCheck, sortedMembership⟩ :=
     checkTerms_mem_forward contextCheck membership
   obtain ⟨loweredProposition, propositionLowering, loweredMembership⟩ :=
     lowerTerms_mem_forward typeScope termScope contextLowering sortedMembership
   exact ⟨⟨sorted, sortedProposition, contextCheck, propositionCheck,
     ⟨lowered, loweredProposition, contextLowering, propositionLowering,
-      .hyp typed (typed loweredProposition loweredMembership) loweredMembership⟩⟩⟩
+      .hyp typedDefEq (.exact (typed loweredProposition loweredMembership))
+        loweredMembership⟩⟩⟩
 
 /-- Structural weakening of an unsorted named proof. -/
 theorem Derives.mono {source target : ListCtx Sig} {conclusion : Expr Sig}
@@ -315,8 +327,10 @@ theorem Derives.mono {source target : ListCtx Sig} {conclusion : Expr Sig}
     (proof : Derives typeScope termScope boundContext source conclusion) :
     Derives typeScope termScope boundContext target conclusion := by
   obtain ⟨proof⟩ := proof
-  obtain ⟨targetSorted, targetLowered, targetCheck, targetLowering, targetTyped⟩ :=
+  obtain ⟨targetSorted, targetLowered, targetCheck, targetLowering, targetRawTyped⟩ :=
     targetValid.compile typeScope termScope boundContext
+  have targetTyped : TypedHyps boundContext targetLowered :=
+    fun proposition membership => .exact (targetRawTyped proposition membership)
   let loweredSubset : ∀ proposition, proposition ∈ proof.derivation.loweredHypotheses →
       proposition ∈ targetLowered := by
     intro loweredProposition loweredMembership
@@ -340,6 +354,80 @@ theorem Derives.mono {source target : ListCtx Sig} {conclusion : Expr Sig}
     ⟨targetLowered, proof.derivation.loweredConclusion, targetLowering,
       proof.derivation.conclusionLowering,
       proof.derivation.derivation.mapHypotheses targetTyped loweredSubset⟩⟩⟩
+
+/-- Substitution of named, unsorted proof hypotheses, obtained by compiling to
+the locally nameless kernel and applying its admissible cut operation. -/
+theorem Derives.cut {source target : ListCtx Sig} {conclusion : Expr Sig}
+    (typedContext : TypedCtx boundContext)
+    (sourceValid : WellFormed typeScope termScope boundContext source)
+    (targetValid : WellFormed typeScope termScope boundContext target)
+    (replacement : ∀ proposition, proposition ∈ source →
+      Derives typeScope termScope boundContext target proposition)
+    (derivation : Derives typeScope termScope boundContext source conclusion) :
+    Derives typeScope termScope boundContext target conclusion := by
+  obtain ⟨derivation⟩ := derivation
+  obtain ⟨sourceSorted, sourceLowered, sourceCheck, sourceLowering,
+    sourceRawTyped⟩ := sourceValid.compile typeScope termScope boundContext
+  have sourceSortedEq : derivation.sortedHypotheses = sourceSorted :=
+    Option.some.inj (derivation.hypothesesCheck.symm.trans sourceCheck)
+  cases sourceSortedEq
+  have sourceLoweredEq : derivation.derivation.loweredHypotheses = sourceLowered :=
+    Option.some.inj
+      (derivation.derivation.hypothesesLowering.symm.trans sourceLowering)
+  cases sourceLoweredEq
+  obtain ⟨targetSorted, targetLowered, targetCheck, targetLowering,
+    targetRawTyped⟩ := targetValid.compile typeScope termScope boundContext
+  have targetTyped : TypedHyps boundContext targetLowered :=
+    fun proposition membership => .exact (targetRawTyped proposition membership)
+  have loweredReplacement : ∀ proposition,
+      proposition ∈ derivation.derivation.loweredHypotheses →
+      Nucleus.HolE.Proves boundContext targetLowered proposition := by
+    intro loweredProposition loweredMembership
+    have sortedWitness :=
+      lowerTerms_mem_reverse typeScope termScope sourceLowering loweredMembership
+    let sortedProposition := Classical.choose sortedWitness
+    have sortedProperties := Classical.choose_spec sortedWitness
+    have sortedMembership := sortedProperties.1
+    have propositionLowering := sortedProperties.2
+    have rawWitness := checkTerms_mem_reverse sourceCheck sortedMembership
+    let rawProposition := Classical.choose rawWitness
+    have rawProperties := Classical.choose_spec rawWitness
+    have rawMembership := rawProperties.1
+    have propositionCheck := rawProperties.2
+    let proof := Classical.choice (replacement rawProposition rawMembership)
+    have targetSortedEq : proof.sortedHypotheses = targetSorted :=
+      Option.some.inj (proof.hypothesesCheck.symm.trans targetCheck)
+    have conclusionSortedEq : proof.sortedConclusion = sortedProposition :=
+      Option.some.inj (proof.conclusionCheck.symm.trans propositionCheck)
+    have targetLoweredEq : proof.derivation.loweredHypotheses = targetLowered :=
+      Option.some.inj <| calc
+        some proof.derivation.loweredHypotheses =
+            Named.lowerTerms typeScope termScope proof.sortedHypotheses :=
+          proof.derivation.hypothesesLowering.symm
+        _ = Named.lowerTerms typeScope termScope targetSorted :=
+          congrArg (Named.lowerTerms typeScope termScope) targetSortedEq
+        _ = some targetLowered := targetLowering
+    have conclusionLoweredEq :
+        proof.derivation.loweredConclusion = loweredProposition :=
+      Option.some.inj <| calc
+        some proof.derivation.loweredConclusion =
+            Named.lowerTm typeScope termScope proof.sortedConclusion :=
+          proof.derivation.conclusionLowering.symm
+        _ = Named.lowerTm typeScope termScope sortedProposition :=
+          congrArg (Named.lowerTm typeScope termScope) conclusionSortedEq
+        _ = some loweredProposition := propositionLowering
+    have proofTypeEq :
+        Nucleus.HolE.Proves boundContext proof.derivation.loweredHypotheses
+            proof.derivation.loweredConclusion =
+          Nucleus.HolE.Proves boundContext targetLowered loweredProposition := by
+      rw [targetLoweredEq, conclusionLoweredEq]
+    exact proofTypeEq.mp proof.derivation.derivation
+  exact ⟨⟨targetSorted, derivation.sortedConclusion, targetCheck,
+    derivation.conclusionCheck,
+    ⟨targetLowered, derivation.derivation.loweredConclusion, targetLowering,
+      derivation.derivation.conclusionLowering,
+      Nucleus.HolE.Proves.cut typedContext targetTyped sourceRawTyped
+        loweredReplacement derivation.derivation.derivation⟩⟩⟩
 
 /-- `source ⇒ target` means that both endpoints are valid assumption
 contexts and `source` proves every assumption in `target`.  Carrying endpoint
@@ -398,26 +486,15 @@ theorem Entails.target_wellFormed {source target : ListCtx Sig}
     WellFormed typeScope termScope boundContext target :=
   entailment.2.1
 
-/-- Cut admissibility for the named unsorted presentation.  This is isolated
-as a capability because the current kernel exposes weakening but has not yet
-proved the general proof-substitution theorem needed to implement cut. -/
-class HasCut : Prop where
-  cut : ∀ {source target : ListCtx Sig} {conclusion : Expr Sig},
-    WellFormed typeScope termScope boundContext source →
-    WellFormed typeScope termScope boundContext target →
-    (∀ proposition, proposition ∈ source →
-      Derives typeScope termScope boundContext target proposition) →
-    Derives typeScope termScope boundContext source conclusion →
-    Derives typeScope termScope boundContext target conclusion
-
-theorem Entails.trans [HasCut typeScope termScope boundContext]
+theorem Entails.trans (typedContext : TypedCtx boundContext)
     {first second third : ListCtx Sig}
     (left : Entails typeScope termScope boundContext first second)
     (right : Entails typeScope termScope boundContext second third) :
     Entails typeScope termScope boundContext first third := by
   refine ⟨left.1, right.2.1, ?_⟩
   intro proposition membership
-  exact HasCut.cut right.1 left.1 left.2.2 (right.2.2 proposition membership)
+  exact Derives.cut typeScope termScope boundContext typedContext
+    right.1 left.1 left.2.2 (right.2.2 proposition membership)
 
 theorem entails_append_left (left right : WfList typeScope termScope boundContext) :
     Entails typeScope termScope boundContext (left.raw ++ right.raw) left.raw :=
@@ -452,15 +529,14 @@ theorem entails_append_mono
 
 section Quotient
 
-variable [HasCut typeScope termScope boundContext]
-
 instance : LE (WfList typeScope termScope boundContext) where
   le left right := Entails typeScope termScope boundContext left.raw right.raw
 
 instance : Preorder (WfList typeScope termScope boundContext) where
   le_refl context := (entails_self_iff typeScope termScope boundContext context.raw).2
     context.valid
-  le_trans _ _ _ := Entails.trans typeScope termScope boundContext
+  le_trans left _ _ :=
+    Entails.trans typeScope termScope boundContext left.boundTyped
 
 /-- Mutual derivability is the partial-equivalence relation induced by
 context entailment.  Restricted to `WfList`, it is an equivalence relation. -/
@@ -480,9 +556,10 @@ def ofWfList (context : WfList typeScope termScope boundContext) :
   toAntisymmetrization (· ≤ ·) context
 
 /-- The empty context modulo mutual derivability. -/
-def empty : QuotientCtx typeScope termScope boundContext :=
+def empty (boundTyped : TypedCtx boundContext) :
+    QuotientCtx typeScope termScope boundContext :=
   ofWfList typeScope termScope boundContext
-    (WfList.empty typeScope termScope boundContext)
+    (WfList.empty typeScope termScope boundContext boundTyped)
 
 /-- Concatenation descends through mutual derivability. -/
 def append : QuotientCtx typeScope termScope boundContext →
@@ -505,28 +582,30 @@ def append : QuotientCtx typeScope termScope boundContext →
       (WfList.append typeScope termScope boundContext left right) := rfl
 
 @[simp] theorem empty_append
+    (boundTyped : TypedCtx boundContext)
     (context : QuotientCtx typeScope termScope boundContext) :
     append typeScope termScope boundContext
-      (empty typeScope termScope boundContext) context = context := by
+      (empty typeScope termScope boundContext boundTyped) context = context := by
   induction context using Antisymmetrization.induction_on with
   | _ context =>
       change append typeScope termScope boundContext
         (ofWfList typeScope termScope boundContext
-          (WfList.empty typeScope termScope boundContext))
+          (WfList.empty typeScope termScope boundContext boundTyped))
         (ofWfList typeScope termScope boundContext context) =
         ofWfList typeScope termScope boundContext context
       rw [append_ofWfList, WfList.empty_append]
 
 @[simp] theorem append_empty
+    (boundTyped : TypedCtx boundContext)
     (context : QuotientCtx typeScope termScope boundContext) :
     append typeScope termScope boundContext context
-      (empty typeScope termScope boundContext) = context := by
+      (empty typeScope termScope boundContext boundTyped) = context := by
   induction context using Antisymmetrization.induction_on with
   | _ context =>
       change append typeScope termScope boundContext
         (ofWfList typeScope termScope boundContext context)
         (ofWfList typeScope termScope boundContext
-          (WfList.empty typeScope termScope boundContext)) =
+          (WfList.empty typeScope termScope boundContext boundTyped)) =
         ofWfList typeScope termScope boundContext context
       rw [append_ofWfList, WfList.append_empty]
 
