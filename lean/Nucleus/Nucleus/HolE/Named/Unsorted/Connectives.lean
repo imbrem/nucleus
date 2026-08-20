@@ -1121,6 +1121,90 @@ noncomputable def impElim (typedContext : Nucleus.HolE.TypedCtx Γ)
       premise
   exact andElimRight typedContext expanded
 
+/-- Double-negation introduction. -/
+noncomputable def doubleNegIntro (typedContext : Nucleus.HolE.TypedCtx Γ)
+    (premise : Proof (Sig := Sig) typeScope termScope Γ hypotheses p) :
+    Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.not (Term.not p)) := by
+  apply notIntro (Term.not p)
+  have negated : Proof (Sig := Sig) typeScope termScope Γ
+      (Term.not p :: hypotheses) (Term.not p) := Proof.hyp (by simp)
+  exact notElim typedContext negated (premise.weakenHyp (Term.not p))
+
+/-- Classical double-negation elimination via Boolean cases. -/
+noncomputable def doubleNegElim (typedContext : Nucleus.HolE.TypedCtx Γ)
+    (premise : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.not (Term.not p))) :
+    Proof (Sig := Sig) typeScope termScope Γ hypotheses p := by
+  apply Proof.boolCases p p
+  · exact Proof.hyp (by simp)
+  · have negated : Proof (Sig := Sig) typeScope termScope Γ
+        (Term.not p :: hypotheses) (Term.not p) := Proof.hyp (by simp)
+    have contradiction := notElim typedContext
+      (premise.weakenHyp (Term.not p)) negated
+    exact Proof.falseElim p contradiction
+
+/-- Left introduction for De Morgan disjunction. -/
+noncomputable def orIntroLeft (typedContext : Nucleus.HolE.TypedCtx Γ)
+    (premise : Proof (Sig := Sig) typeScope termScope Γ hypotheses p) :
+    Proof (Sig := Sig) typeScope termScope Γ hypotheses (Term.or p q) := by
+  let denied := Term.and (Term.not p) (Term.not q)
+  apply notIntro denied
+  have conjunction : Proof (Sig := Sig) typeScope termScope Γ
+      (denied :: hypotheses) denied := Proof.hyp (by simp)
+  have deniedP : Proof (Sig := Sig) typeScope termScope Γ
+      (denied :: hypotheses) (Term.not p) :=
+    andElimLeft (p := Term.not p) (q := Term.not q) typedContext conjunction
+  have pProof : Proof (Sig := Sig) typeScope termScope Γ
+      (denied :: hypotheses) p := premise.weakenHyp denied
+  exact notElim typedContext deniedP pProof
+
+/-- Right introduction for De Morgan disjunction. -/
+noncomputable def orIntroRight (typedContext : Nucleus.HolE.TypedCtx Γ)
+    (premise : Proof (Sig := Sig) typeScope termScope Γ hypotheses q) :
+    Proof (Sig := Sig) typeScope termScope Γ hypotheses (Term.or p q) := by
+  let denied := Term.and (Term.not p) (Term.not q)
+  apply notIntro denied
+  have conjunction : Proof (Sig := Sig) typeScope termScope Γ
+      (denied :: hypotheses) denied := Proof.hyp (by simp)
+  have deniedQ : Proof (Sig := Sig) typeScope termScope Γ
+      (denied :: hypotheses) (Term.not q) :=
+    andElimRight (p := Term.not p) (q := Term.not q) typedContext conjunction
+  have qProof : Proof (Sig := Sig) typeScope termScope Γ
+      (denied :: hypotheses) q := premise.weakenHyp denied
+  exact notElim typedContext deniedQ qProof
+
+/-- Eliminate De Morgan disjunction by nested Boolean cases. -/
+noncomputable def orElim (typedContext : Nucleus.HolE.TypedCtx Γ)
+    (disjunction : Proof (Sig := Sig) typeScope termScope Γ hypotheses
+      (Term.or p q))
+    (left : Proof (Sig := Sig) typeScope termScope Γ (p :: hypotheses) conclusion)
+    (right : Proof (Sig := Sig) typeScope termScope Γ (q :: hypotheses) conclusion) :
+    Proof (Sig := Sig) typeScope termScope Γ hypotheses conclusion := by
+  apply Proof.boolCases p conclusion left
+  apply Proof.boolCases q conclusion
+  · exact right.hypothesisMap (fun candidate membership => by
+      rcases List.mem_cons.mp membership with rfl | membership
+      · simp
+      · exact List.mem_cons_of_mem q (List.mem_cons_of_mem (Term.not p) membership))
+  · let denied := Term.and (Term.not p) (Term.not q)
+    have notQ : Proof (Sig := Sig) typeScope termScope Γ
+        (Term.not q :: Term.not p :: hypotheses) (Term.not q) :=
+      Proof.hyp (by simp)
+    have notP : Proof (Sig := Sig) typeScope termScope Γ
+        (Term.not q :: Term.not p :: hypotheses) (Term.not p) :=
+      Proof.hyp (by simp)
+    have deniedProof : Proof (Sig := Sig) typeScope termScope Γ
+        (Term.not q :: Term.not p :: hypotheses) denied :=
+      andIntro typedContext notP notQ
+    have disjunctionProof : Proof (Sig := Sig) typeScope termScope Γ
+        (Term.not q :: Term.not p :: hypotheses) (Term.or p q) :=
+      disjunction.hypothesisMap (fun candidate membership =>
+        List.mem_cons_of_mem (Term.not q)
+          (List.mem_cons_of_mem (Term.not p) membership))
+    have contradiction := notElim typedContext disjunctionProof deniedProof
+    exact Proof.falseElim conclusion contradiction
+
 end Proof
 
 end Nucleus.HolE.Named.Unsorted
