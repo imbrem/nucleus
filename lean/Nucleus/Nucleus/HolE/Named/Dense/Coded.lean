@@ -188,4 +188,20 @@ abbrev SimpTy0RootedEncoding (N : Type u → Type v) (Base : Type w)
     [Denotes.{w, u} Base] :=
   CodeRootedEncoding N (SimpTy0 Base)
 
+/-- Forests indexed by free coproducts of base carriers.  By default, the
+base codes are natural numbers denoting the finite types `Fin n`. -/
+abbrev CoprodTyForestOf (N : Type u → Type v) (Base : Type w)
+    [Denotes.{w, u} Base] := CodeForest N (CoprodTy Base)
+abbrev CoprodTyPublicEncodingOf (N : Type u → Type v) (Base : Type w)
+    [Denotes.{w, u} Base] := CodePublicEncoding N (CoprodTy Base)
+abbrev CoprodTyRootedEncodingOf (N : Type u → Type v) (Base : Type w)
+    [Denotes.{w, u} Base] := CodeRootedEncoding N (CoprodTy Base)
+
+abbrev CoprodTyForest (N : Type u → Type v) (Base : Type := Nat)
+    [Denotes.{0, u} Base] := CoprodTyForestOf N Base
+abbrev CoprodTyPublicEncoding (N : Type u → Type v) (Base : Type := Nat)
+    [Denotes.{0, u} Base] := CoprodTyPublicEncodingOf N Base
+abbrev CoprodTyRootedEncoding (N : Type u → Type v) (Base : Type := Nat)
+    [Denotes.{0, u} Base] := CoprodTyRootedEncodingOf N Base
+
 end Nucleus.HolE.Named.Unsorted.Dense
