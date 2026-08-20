@@ -83,16 +83,6 @@ structure Encoding (α : Type) where
   encode : α → List UInt8
   encode_length : ∀ value, (encode value).length = width
 
-/-- A mathematical 256-bit object, presented as exactly 32 octets. -/
-abbrev O256 := Fin 32 → UInt8
-
-/-- The bytewise encoding used by the Rust `O256` representation. -/
-def o256Encoding : Encoding O256 where
-  width := 32
-  width_pos := by omega
-  encode := List.ofFn
-  encode_length := by intro value; simp
-
 /-- Iroh-style bare concatenation: no header, count, or framing. -/
 def encode (encoding : Encoding α) (values : Seq α) : List UInt8 :=
   values.flatMap encoding.encode
@@ -133,11 +123,6 @@ theorem encode_length (encoding : Encoding α) (values : Seq α) :
       rw [encode_cons, List.length_append, encoding.encode_length, ih]
       simp only [List.length_cons, Nat.mul_succ]
       exact Nat.add_comm _ _
-
-/-- An O256 sequence occupies 32 bytes per element. -/
-theorem o256_encode_length (values : Seq O256) :
-    (encode o256Encoding values).length = 32 * values.length :=
-  encode_length o256Encoding values
 
 /-- The empty sequence is the empty blob. -/
 @[simp] theorem encode_empty (encoding : Encoding α) :
