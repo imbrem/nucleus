@@ -290,6 +290,159 @@ theorem encode_root (tree : HolE Sig Name) (state : State Sig Name) :
     simp [encode, emit, bind_apply] <;>
     repeat' split <;> rfl
 
+/-- Elaborate only a freshly emitted suffix, starting in an arbitrary forest.
+This is the compositional form needed to reason about stateful encoders. -/
+def elaborateSuffix (forest : Forest Nat (HolE Sig Name)) (next : Nat) :
+    List (Node Sig Name Nat) → Forest Nat (HolE Sig Name)
+  | [] => forest
+  | node :: nodes =>
+      let value := Node.elaborate forest node
+      elaborateSuffix (forest.set next value) (next + 1) nodes
+
+@[simp] theorem elaborateSuffix_nil (forest : Forest Nat (HolE Sig Name)) (next : Nat) :
+    elaborateSuffix forest next [] = forest := rfl
+
+theorem elaborateSuffix_append (forest : Forest Nat (HolE Sig Name)) (next : Nat)
+    (initialNodes suffix : List (Node Sig Name Nat)) :
+    elaborateSuffix forest next (initialNodes ++ suffix) =
+      elaborateSuffix (elaborateSuffix forest next initialNodes)
+        (next + initialNodes.length) suffix := by
+  induction initialNodes generalizing forest next with
+  | nil => rfl
+  | cons node initialNodes ih =>
+      simp only [List.cons_append, elaborateSuffix, List.length_cons]
+      rw [ih]
+      congr 1
+      omega
+
+/-- Extending at `next` never changes an earlier absolute index. -/
+theorem elaborateSuffix_of_lt (forest : Forest Nat (HolE Sig Name)) (next : Nat)
+    (nodes : List (Node Sig Name Nat)) (index : Nat) (below : index < next) :
+    elaborateSuffix forest next nodes index = forest index := by
+  induction nodes generalizing forest next with
+  | nil => rfl
+  | cons node nodes ih =>
+      simp only [elaborateSuffix]
+      rw [ih (forest.set next (Node.elaborate forest node)) (next + 1) (by omega)]
+      simp [Forest.set, Nat.ne_of_lt below]
+
+theorem elaborateList_go_getElem?_join
+    (forest : Forest Nat (HolE Sig Name)) (next : Nat)
+    (nodes : List (Node Sig Name Nat)) (position : Nat) (bounded : position < nodes.length) :
+    (elaborateList.go forest next nodes)[position]?.join =
+      elaborateSuffix forest next nodes (next + position) := by
+  induction nodes generalizing forest next position with
+  | nil => simp at bounded
+  | cons node nodes ih =>
+      cases position with
+      | zero =>
+          simp only [elaborateList.go, List.getElem?_cons_zero, Option.join_some,
+            elaborateSuffix, Nat.add_zero]
+          rw [elaborateSuffix_of_lt _ (next + 1) nodes next (by omega)]
+          simp [Forest.set]
+          rfl
+      | succ position =>
+          simp only [elaborateList.go, List.getElem?_cons_succ, elaborateSuffix]
+          change
+            (elaborateList.go (forest.set next (Node.elaborate forest node))
+              (next + 1) nodes)[position]?.join =
+            elaborateSuffix (forest.set next (Node.elaborate forest node))
+              (next + 1) nodes (next + (position + 1))
+          rw [show next + (position + 1) = (next + 1) + position by omega]
+          apply ih
+          simpa using bounded
+
+theorem elaborateForest_eq_elaborateSuffix
+    (nodes : List (Node Sig Name Nat)) (offset index : Nat)
+    (above : offset ≤ index) (below : index < offset + nodes.length) :
+    elaborateForest emptyForest nodes offset index =
+      elaborateSuffix emptyForest offset nodes index := by
+  simp only [elaborateForest, above, below, and_self, if_true]
+  unfold elaborateList
+  rw [elaborateList_go_getElem?_join]
+  · rw [show emptyForest.mask offset nodes.length =
+      (emptyForest : Forest Nat (HolE Sig Name)) by
+          apply congrArg Forest.mk
+          funext wanted
+          simp [emptyForest]]
+    rw [Nat.add_sub_of_le above]
+  · omega
+
+/-- Structural contract used by the semantic correctness proof: an action
+appends a suffix, advances by exactly its length, and its returned index
+denotes the expected expression after elaborating that suffix. -/
+def Encodes (action : M Sig Name Nat) (expression : HolE Sig Name) : Prop :=
+  ∀ (state : State Sig Name) (forest : Forest Nat (HolE Sig Name)),
+    ∃ suffix : List (Node Sig Name Nat),
+      (action state).2.nodes = state.nodes ++ suffix ∧
+      (action state).2.next = state.next + suffix.length ∧
+      elaborateSuffix forest state.next suffix (action state).1 = some expression
+
+private theorem encodes_emit (node : Node Sig Name Nat) (expression : HolE Sig Name)
+    (elaborates : ∀ forest : Forest Nat (HolE Sig Name),
+      Node.elaborate forest node = some expression) :
+    Encodes (emit node.tag node.children) expression := by
+  intro state forest
+  refine ⟨[node], by simp [emit], by simp [emit], ?_⟩
+  simp [emit, elaborateSuffix, Forest.set, elaborates]
+
+private theorem encodes_binary
+    (left right output : HolE Sig Name) (tag : Tag Sig Name)
+    (leftCorrect : Encodes (encode left) left)
+    (rightCorrect : Encodes (encode right) right)
+    (elaborates : ∀ (forest : Forest Nat (HolE Sig Name)) leftIndex rightIndex,
+      forest leftIndex = some left → forest rightIndex = some right →
+      Node.elaborate forest ⟨tag, [leftIndex, rightIndex]⟩ = some output) :
+    Encodes (do
+      let leftIndex ← encode left
+      let rightIndex ← encode right
+      emit tag [leftIndex, rightIndex]) output := by
+  intro state forest
+  cases leftEncoded : encode left state with
+  | mk leftIndex leftState =>
+    obtain ⟨leftNodes, leftNodesEq, leftNextEq, leftLookup⟩ := leftCorrect state forest
+    rw [leftEncoded] at leftNodesEq leftNextEq leftLookup
+    simp at leftNodesEq leftNextEq leftLookup
+    let leftForest := elaborateSuffix forest state.next leftNodes
+    cases rightEncoded : encode right leftState with
+    | mk rightIndex rightState =>
+      obtain ⟨rightNodes, rightNodesEq, rightNextEq, rightLookup⟩ :=
+        rightCorrect leftState leftForest
+      rw [rightEncoded] at rightNodesEq rightNextEq rightLookup
+      simp at rightNodesEq rightNextEq rightLookup
+      let rightForest := elaborateSuffix leftForest leftState.next rightNodes
+      have leftBelow : leftIndex < leftState.next := by
+        have := encode_root left state
+        rw [leftEncoded] at this
+        simp at this
+        omega
+      have leftLookup' : rightForest leftIndex = some left := by
+        exact (elaborateSuffix_of_lt leftForest leftState.next rightNodes leftIndex
+          leftBelow).trans leftLookup
+      let parent : Node Sig Name Nat := ⟨tag, [leftIndex, rightIndex]⟩
+      refine ⟨leftNodes ++ rightNodes ++ [parent], ?_, ?_, ?_⟩
+      · simp only [bind_apply, leftEncoded, rightEncoded, emit]
+        rw [rightNodesEq, leftNodesEq]
+        simp [parent, List.append_assoc]
+      · simp only [bind_apply, leftEncoded, rightEncoded, emit]
+        simp only [List.length_append, List.length_singleton]
+        omega
+      · rw [elaborateSuffix_append, elaborateSuffix_append]
+        simp only [List.length_append]
+        simp only [bind_apply, leftEncoded, rightEncoded, emit]
+        change elaborateSuffix
+          (elaborateSuffix leftForest (state.next + leftNodes.length) rightNodes)
+          (state.next + (leftNodes.length + rightNodes.length)) [parent]
+          rightState.next = some output
+        rw [← leftNextEq]
+        change elaborateSuffix rightForest
+          (state.next + (leftNodes.length + rightNodes.length)) [parent]
+          rightState.next = some output
+        rw [show state.next + (leftNodes.length + rightNodes.length) = rightState.next by omega]
+        change elaborateSuffix rightForest rightState.next [parent] rightState.next = some output
+        simp [elaborateSuffix, Forest.set, parent,
+          elaborates rightForest leftIndex rightIndex leftLookup' rightLookup]
+
 instance postorderStorage : EncoderStorage Postorder Sig Name where
   State := State Sig Name
   initial offset := ⟨offset, []⟩
