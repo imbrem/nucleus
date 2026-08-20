@@ -96,12 +96,24 @@ private def resolve (forest : ι → Option (HolE Sig Name)) (children : List ι
     Option (List (HolE Sig Name)) :=
   children.mapM forest
 
-/-- Elaborate one node.  Arity mismatches, dangling references, ill-sorted
-children, and non-variable abstraction binders all return `none`. -/
-def elaborate (forest : ι → Option (HolE Sig Name)) (node : Node Sig Name ι) :
+@[simp] theorem resolve_nil (forest : ι → Option (HolE Sig Name)) :
+    resolve forest [] = some [] := rfl
+
+@[simp] theorem resolve_cons (forest : ι → Option (HolE Sig Name))
+    (index : ι) (indices : List ι) :
+    resolve forest (index :: indices) = do
+      let value ← forest index
+      let values ← resolve forest indices
+      return value :: values := by
+  unfold resolve
+  rw [List.mapM_cons]
+
+/-- Elaborate one node as raw unsorted syntax.  Arity mismatches, dangling
+references, and non-variable abstraction binders return `none`. -/
+def elaborateSyntax (forest : ι → Option (HolE Sig Name)) (node : Node Sig Name ι) :
     Option (HolE Sig Name) := do
   let children ← resolve forest node.children
-  let expression ← match node.tag, children with
+  match node.tag, children with
     | .tyBool, [] => some .boolTy
     | .tyArr, [domain, codomain] => some (.arr domain codomain)
     | .tyApp domain codomain, [function, argument] =>
@@ -132,6 +144,12 @@ def elaborate (forest : ι → Option (HolE Sig Name)) (node : Node Sig Name ι)
     | .tmQuotRep, [carrier, .tmFv name _, predicate, value] =>
         some (.rep carrier name predicate value)
     | _, _ => none
+
+/-- Elaborate one checked node.  Ill-sorted children are rejected after raw
+syntax reconstruction. -/
+def elaborate (forest : ι → Option (HolE Sig Name)) (node : Node Sig Name ι) :
+    Option (HolE Sig Name) := do
+  let expression ← elaborateSyntax forest node
   if (Unsorted.infer expression).isSome then some expression else none
 
 end Node
@@ -141,6 +159,14 @@ instance : NodeLike (HolE Sig Name) ι (HolE Sig Name) where
 
 instance : NodeLike (Node Sig Name ι) ι (HolE Sig Name) where
   get := Node.elaborate
+
+/-- A node explicitly requesting raw syntax elaboration rather than sort
+checking. -/
+structure SyntaxNode (Sig : Signature.{u}) (Name : Type) (ι : Type w) where
+  node : Node Sig Name ι
+
+instance : NodeLike (SyntaxNode Sig Name ι) ι (HolE Sig Name) where
+  get forest node := Node.elaborateSyntax forest node.node
 
 /-- Literal `(tag, children)` rows are interchangeable with `Node`. -/
 instance : NodeLike (Tag Sig Name × List ι) ι (HolE Sig Name) where
