@@ -1,10 +1,10 @@
-import Nucleus.Hol.Ethane.Semantics
+import Nucleus.Hol.Ethane.Reference
 
 /-!
 # Ethane
 
 Ethane is the named, model-only HOL dialect.  The root module currently exports
-its unsorted syntax, sort-indexed syntax, typing relation, lowering, and borrowed
-HolE semantics.  Its proof theory and derived subtype package are layered above
-this syntax boundary.
+its unsorted syntax, sort-indexed syntax, typing relation, lowering, borrowed
+HolE semantics, and reference proof theory.  Its native proof certificates and
+derived subtype package are layered above this syntax boundary.
 -/
