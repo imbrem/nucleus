@@ -17,5 +17,6 @@ import Nucleus.HolE.Named.Semantics
 import Nucleus.HolE.Named.Unsorted.Typing
 import Nucleus.HolE.Named.Unsorted.Kernel
 import Nucleus.HolE.Named.Unsorted.Semantics
+import Nucleus.HolE.Named.Unsorted.Context
 
 /-! # Named presentation of HolE -/
