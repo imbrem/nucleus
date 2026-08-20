@@ -306,6 +306,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "covalence-data-array"
+version = "0.0.0"
+dependencies = [
+ "covalence-lib-error",
+ "covalence-lib-hash",
+]
+
+[[package]]
 name = "covalence-data-basic"
 version = "0.0.0"
 
