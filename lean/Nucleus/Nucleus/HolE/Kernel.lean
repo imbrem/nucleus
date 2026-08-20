@@ -46,6 +46,10 @@ inductive EqTm {Sig : Signature} [SigTyping Sig] [SigFamilyEquality Sig] :
       (rightRaw : HasType (types := types) Γ (.tyExists q) .boolTy) :
       EqTm (types := .star :: types) emptyBound p q .boolTy →
       EqTm (types := types) Γ (.tyExists p) (.tyExists q) .boolTy
+  /-- Reindex an equality when both endpoints check at the new type. -/
+  | conv (leftTyping : HasTypeDefEq Γ left B)
+      (rightTyping : HasTypeDefEq Γ right B) :
+      EqTm Γ left right A → EqTm Γ left right B
   | beta (body : Tm Sig types (depth + 1)) (x : Tm Sig types depth) (hA : Kinded A)
       (typedContext : TypedCtx Γ)
       (applicationRaw : HasType Γ (.app (.lam A body) x) B)

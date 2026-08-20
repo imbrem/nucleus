@@ -111,6 +111,18 @@ theorem EqTm.sound_of_laws {types : List Kind} {depth : Nat}
   | abs leftRaw rightRaw hA hp values ih => exact laws.abs leftRaw rightRaw hA hp ih
   | rep leftRaw rightRaw hA hp values ih => exact laws.rep leftRaw rightRaw hA hp ih
   | tyExists leftRaw rightRaw predicates ih => exact laws.tyExists leftRaw rightRaw ih
+  | @conv types depth Γ left B right A leftTyping rightTyping equality ih =>
+      intro convertedLeft convertedRight env bound typed valid expected
+      let sourceLeft : HasTypeDefEq Γ left A := equality.typing.1
+      let sourceRight : HasTypeDefEq Γ right A := equality.typing.2
+      calc
+        cDefSem convertedLeft.certificate env bound expected =
+            cDefSem sourceLeft.certificate env bound expected :=
+          convertedLeft.certificate.coherent sourceLeft.certificate env bound expected
+        _ = cDefSem sourceRight.certificate env bound expected :=
+          ih sourceLeft sourceRight env bound typed valid expected
+        _ = cDefSem convertedRight.certificate env bound expected :=
+          (convertedRight.certificate.coherent sourceRight.certificate env bound expected).symm
   | beta body x hA typedContext applicationRaw bodyTyping argumentTyping resultTyping =>
       exact laws.beta hA typedContext applicationRaw bodyTyping argumentTyping resultTyping
   | eta name fresh typedContext functionTyping etaTyping =>
