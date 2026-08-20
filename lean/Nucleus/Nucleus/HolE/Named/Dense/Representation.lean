@@ -202,6 +202,10 @@ private def emit (tag : Tag Sig Name) (children : List Nat) : M Sig Name Nat :=
   fun state => (state.next,
     { next := state.next + 1, nodes := state.nodes ++ [⟨tag, children⟩] })
 
+private def encodeTmVar (name : Name) (typeAction : M Sig Name Nat) : M Sig Name Nat := do
+  let typeIndex ← typeAction
+  emit (.tmVar name) [typeIndex]
+
 /-- Encode a named tree in postorder.  Every recursive reference therefore
 points below the node containing it.  Binder occurrences are emitted as
 ordinary `tyVar`/`tmVar` nodes before their abstraction node. -/
@@ -222,7 +226,7 @@ def encode : HolE Sig Name → M Sig Name Nat
   | .tyFv name kind => emit (.tyVar name kind) []
   | .sub carrier name predicate => do
       let carrierIndex ← encode carrier
-      let variableIndex ← emit (.tmVar name) [carrierIndex]
+      let variableIndex ← encodeTmVar name (encode carrier)
       let predicateIndex ← encode predicate
       emit .tySub [carrierIndex, variableIndex, predicateIndex]
   | .tyExists name predicate => do
@@ -235,16 +239,13 @@ def encode : HolE Sig Name → M Sig Name Nat
       emit .tyModel [variableIndex, predicateIndex]
   | .primFam kind symbol => emit (.primFam kind symbol) []
   | .primTm symbol => emit (.primTm symbol) []
-  | .tmFv name type => do
-      let typeIndex ← encode type
-      emit (.tmVar name) [typeIndex]
+  | .tmFv name type => encodeTmVar name (encode type)
   | .app function argument => do
       let functionIndex ← encode function
       let argumentIndex ← encode argument
       emit .tmApp [functionIndex, argumentIndex]
   | .lam name domain body => do
-      let domainIndex ← encode domain
-      let variableIndex ← emit (.tmVar name) [domainIndex]
+      let variableIndex ← encodeTmVar name (encode domain)
       let bodyIndex ← encode body
       emit .tmAbs [variableIndex, bodyIndex]
   | .bool value => emit (.tmBool value) []
@@ -259,13 +260,13 @@ def encode : HolE Sig Name → M Sig Name Nat
       emit .tmEps [typeIndex, predicateIndex]
   | .abs carrier name predicate value => do
       let carrierIndex ← encode carrier
-      let variableIndex ← emit (.tmVar name) [carrierIndex]
+      let variableIndex ← encodeTmVar name (encode carrier)
       let predicateIndex ← encode predicate
       let valueIndex ← encode value
       emit .tmQuotAbs [carrierIndex, variableIndex, predicateIndex, valueIndex]
   | .rep carrier name predicate value => do
       let carrierIndex ← encode carrier
-      let variableIndex ← emit (.tmVar name) [carrierIndex]
+      let variableIndex ← encodeTmVar name (encode carrier)
       let predicateIndex ← encode predicate
       let valueIndex ← encode value
       emit .tmQuotRep [carrierIndex, variableIndex, predicateIndex, valueIndex]
@@ -277,17 +278,18 @@ def nodeCount : HolE Sig Name → Nat
   | .arr left right | .tyApp _ _ left right | .app left right |
       .eps left right => nodeCount left + nodeCount right + 1
   | .tyLam _ _ _ body | .tyExists _ body | .model _ body => nodeCount body + 2
-  | .sub carrier _ predicate | .lam _ carrier predicate =>
-      nodeCount carrier + nodeCount predicate + 2
+  | .sub carrier _ predicate =>
+      nodeCount carrier + nodeCount carrier + nodeCount predicate + 2
+  | .lam _ carrier predicate => nodeCount carrier + nodeCount predicate + 2
   | .tmFv _ type => nodeCount type + 1
   | .eq type left right => nodeCount type + nodeCount left + nodeCount right + 1
   | .abs carrier _ predicate value | .rep carrier _ predicate value =>
-      nodeCount carrier + nodeCount predicate + nodeCount value + 2
+      nodeCount carrier + nodeCount carrier + nodeCount predicate + nodeCount value + 2
 
 theorem encode_root (tree : HolE Sig Name) (state : State Sig Name) :
     (encode tree state).1 + 1 = (encode tree state).2.next := by
   cases tree <;>
-    simp [encode, emit, bind_apply] <;>
+    simp [encode, encodeTmVar, emit, bind_apply] <;>
     repeat' split <;> rfl
 
 /-- Elaborate only a freshly emitted suffix, starting in an arbitrary forest.
@@ -520,6 +522,637 @@ arena elaborator and no ambient forest. -/
 def Result.decode (result : Result Sig Name) : Option (HolE Sig Name) :=
   elaborateForest emptyForest result.nodes result.offset result.root
 
+/-- Decode the raw unsorted syntax represented by a postorder result.  Unlike
+`Result.decode`, this inverse does not reject an otherwise faithful encoding
+merely because the unsorted tree is ill-sorted. -/
+def Result.decodeSyntax (result : Result Sig Name) : Option (HolE Sig Name) :=
+  elaborateForest emptyForest (result.nodes.map SyntaxNode.mk)
+    result.offset result.root
+
+/-! ## Raw syntactic correctness -/
+
+/-- Elaborate a freshly emitted suffix without imposing sort checking. -/
+def elaborateSyntaxSuffix (forest : Forest Nat (HolE Sig Name)) (next : Nat) :
+    List (Node Sig Name Nat) → Forest Nat (HolE Sig Name)
+  | [] => forest
+  | node :: nodes =>
+      elaborateSyntaxSuffix (forest.set next (Node.elaborateSyntax forest node))
+        (next + 1) nodes
+
+@[simp] theorem elaborateSyntaxSuffix_nil
+    (forest : Forest Nat (HolE Sig Name)) (next : Nat) :
+    elaborateSyntaxSuffix forest next [] = forest := rfl
+
+theorem elaborateSyntaxSuffix_append
+    (forest : Forest Nat (HolE Sig Name)) (next : Nat)
+    (initialNodes suffix : List (Node Sig Name Nat)) :
+    elaborateSyntaxSuffix forest next (initialNodes ++ suffix) =
+      elaborateSyntaxSuffix (elaborateSyntaxSuffix forest next initialNodes)
+        (next + initialNodes.length) suffix := by
+  induction initialNodes generalizing forest next with
+  | nil => rfl
+  | cons node initialNodes ih =>
+      simp only [List.cons_append, elaborateSyntaxSuffix, List.length_cons]
+      rw [ih]
+      congr 1
+      omega
+
+theorem elaborateSyntaxSuffix_of_lt
+    (forest : Forest Nat (HolE Sig Name)) (next : Nat)
+    (nodes : List (Node Sig Name Nat)) (index : Nat) (below : index < next) :
+    elaborateSyntaxSuffix forest next nodes index = forest index := by
+  induction nodes generalizing forest next with
+  | nil => rfl
+  | cons node nodes ih =>
+      simp only [elaborateSyntaxSuffix]
+      rw [ih (forest.set next (Node.elaborateSyntax forest node)) (next + 1) (by omega)]
+      simp [Forest.set, Nat.ne_of_lt below]
+
+theorem elaborateSyntaxList_go_getElem?_join
+    (forest : Forest Nat (HolE Sig Name)) (next : Nat)
+    (nodes : List (Node Sig Name Nat)) (position : Nat) (bounded : position < nodes.length) :
+    (elaborateList.go forest next (nodes.map SyntaxNode.mk))[position]?.join =
+      elaborateSyntaxSuffix forest next nodes (next + position) := by
+  induction nodes generalizing forest next position with
+  | nil => simp at bounded
+  | cons node nodes ih =>
+      cases position with
+      | zero =>
+          simp only [List.map_cons, elaborateList.go, List.getElem?_cons_zero,
+            Option.join_some, elaborateSyntaxSuffix, Nat.add_zero]
+          rw [elaborateSyntaxSuffix_of_lt _ (next + 1) nodes next (by omega)]
+          change Node.elaborateSyntax forest node = _
+          simp [Forest.set]
+      | succ position =>
+          simp only [List.map_cons, elaborateList.go, List.getElem?_cons_succ,
+            elaborateSyntaxSuffix]
+          change
+            (elaborateList.go
+              (forest.set next (Node.elaborateSyntax forest node))
+              (next + 1) (nodes.map SyntaxNode.mk))[position]?.join =
+            elaborateSyntaxSuffix
+              (forest.set next (Node.elaborateSyntax forest node))
+              (next + 1) nodes (next + (position + 1))
+          rw [show next + (position + 1) = (next + 1) + position by omega]
+          exact ih _ _ _ (by simpa using bounded)
+
+theorem elaborateSyntaxForest_eq_suffix
+    (nodes : List (Node Sig Name Nat)) (offset index : Nat)
+    (above : offset ≤ index) (below : index < offset + nodes.length) :
+    elaborateForest emptyForest (nodes.map SyntaxNode.mk) offset index =
+      elaborateSyntaxSuffix emptyForest offset nodes index := by
+  simp only [elaborateForest, List.length_map, above, below, and_self, if_true]
+  unfold elaborateList
+  rw [elaborateSyntaxList_go_getElem?_join]
+  · simp only [List.length_map]
+    change elaborateSyntaxSuffix (emptyForest.mask offset nodes.length)
+      offset nodes (offset + (index - offset)) = _
+    rw [show emptyForest.mask offset nodes.length =
+      (emptyForest : Forest Nat (HolE Sig Name)) by
+          apply congrArg Forest.mk
+          funext wanted
+          simp [emptyForest]]
+    rw [Nat.add_sub_of_le above]
+  · omega
+
+/-- The raw semantic contract of the postorder encoder. -/
+def SyntaxEncodes (action : M Sig Name Nat) (expression : HolE Sig Name) : Prop :=
+  ∀ (state : State Sig Name) (forest : Forest Nat (HolE Sig Name)),
+    ∃ suffix : List (Node Sig Name Nat),
+      (action state).2.nodes = state.nodes ++ suffix ∧
+      (action state).2.next = state.next + suffix.length ∧
+      elaborateSyntaxSuffix forest state.next suffix (action state).1 = some expression
+
+private theorem syntaxEncodes_emit
+    (node : Node Sig Name Nat) (expression : HolE Sig Name)
+    (elaborates : ∀ forest : Forest Nat (HolE Sig Name),
+      Node.elaborateSyntax forest node = some expression) :
+    SyntaxEncodes (emit node.tag node.children) expression := by
+  intro state forest
+  refine ⟨[node], by simp [emit], by simp [emit], ?_⟩
+  simp [emit, elaborateSyntaxSuffix, Forest.set, elaborates]
+
+private theorem syntaxEncodes_unary
+    (child output : HolE Sig Name) (tag : Tag Sig Name)
+    (childCorrect : SyntaxEncodes (encode child) child)
+    (elaborates : ∀ (forest : Forest Nat (HolE Sig Name)) childIndex,
+      forest childIndex = some child →
+      Node.elaborateSyntax forest ⟨tag, [childIndex]⟩ = some output) :
+    SyntaxEncodes (do
+      let childIndex ← encode child
+      emit tag [childIndex]) output := by
+  intro state forest
+  cases childEncoded : encode child state with
+  | mk childIndex childState =>
+    obtain ⟨childNodes, childNodesEq, childNextEq, childLookup⟩ :=
+      childCorrect state forest
+    rw [childEncoded] at childNodesEq childNextEq childLookup
+    simp at childNodesEq childNextEq childLookup
+    let parent : Node Sig Name Nat := ⟨tag, [childIndex]⟩
+    refine ⟨childNodes ++ [parent], ?_, ?_, ?_⟩
+    · simp only [bind_apply, childEncoded, emit]
+      rw [childNodesEq]
+      simp [parent, List.append_assoc]
+    · simp only [bind_apply, childEncoded, emit, List.length_append,
+        List.length_singleton]
+      omega
+    · rw [elaborateSyntaxSuffix_append]
+      simp only [bind_apply, childEncoded, emit]
+      change elaborateSyntaxSuffix
+        (elaborateSyntaxSuffix forest state.next childNodes)
+        (state.next + childNodes.length) [parent] childState.next = some output
+      rw [← childNextEq]
+      simp [elaborateSyntaxSuffix, Forest.set, parent,
+        elaborates _ childIndex childLookup]
+
+private theorem syntaxEncodes_binary
+    (left right output : HolE Sig Name) (tag : Tag Sig Name)
+    (leftCorrect : SyntaxEncodes (encode left) left)
+    (rightCorrect : SyntaxEncodes (encode right) right)
+    (elaborates : ∀ (forest : Forest Nat (HolE Sig Name)) leftIndex rightIndex,
+      forest leftIndex = some left → forest rightIndex = some right →
+      Node.elaborateSyntax forest ⟨tag, [leftIndex, rightIndex]⟩ = some output) :
+    SyntaxEncodes (do
+      let leftIndex ← encode left
+      let rightIndex ← encode right
+      emit tag [leftIndex, rightIndex]) output := by
+  intro state forest
+  cases leftEncoded : encode left state with
+  | mk leftIndex leftState =>
+    obtain ⟨leftNodes, leftNodesEq, leftNextEq, leftLookup⟩ :=
+      leftCorrect state forest
+    rw [leftEncoded] at leftNodesEq leftNextEq leftLookup
+    simp at leftNodesEq leftNextEq leftLookup
+    let leftForest := elaborateSyntaxSuffix forest state.next leftNodes
+    cases rightEncoded : encode right leftState with
+    | mk rightIndex rightState =>
+      obtain ⟨rightNodes, rightNodesEq, rightNextEq, rightLookup⟩ :=
+        rightCorrect leftState leftForest
+      rw [rightEncoded] at rightNodesEq rightNextEq rightLookup
+      simp at rightNodesEq rightNextEq rightLookup
+      let rightForest := elaborateSyntaxSuffix leftForest leftState.next rightNodes
+      have leftBelow : leftIndex < leftState.next := by
+        have root := encode_root left state
+        rw [leftEncoded] at root
+        simp at root
+        omega
+      have leftLookup' : rightForest leftIndex = some left :=
+        (elaborateSyntaxSuffix_of_lt leftForest leftState.next rightNodes
+          leftIndex leftBelow).trans leftLookup
+      let parent : Node Sig Name Nat := ⟨tag, [leftIndex, rightIndex]⟩
+      refine ⟨leftNodes ++ rightNodes ++ [parent], ?_, ?_, ?_⟩
+      · simp only [bind_apply, leftEncoded, rightEncoded, emit]
+        rw [rightNodesEq, leftNodesEq]
+        simp [parent, List.append_assoc]
+      · simp only [bind_apply, leftEncoded, rightEncoded, emit,
+          List.length_append, List.length_singleton]
+        omega
+      · rw [elaborateSyntaxSuffix_append, elaborateSyntaxSuffix_append]
+        simp only [List.length_append, bind_apply, leftEncoded, rightEncoded, emit]
+        change elaborateSyntaxSuffix
+          (elaborateSyntaxSuffix leftForest (state.next + leftNodes.length) rightNodes)
+          (state.next + (leftNodes.length + rightNodes.length)) [parent]
+          rightState.next = some output
+        rw [← leftNextEq]
+        change elaborateSyntaxSuffix rightForest
+          (state.next + (leftNodes.length + rightNodes.length)) [parent]
+          rightState.next = some output
+        rw [show state.next + (leftNodes.length + rightNodes.length) =
+          rightState.next by omega]
+        simp [elaborateSyntaxSuffix, Forest.set, parent,
+          elaborates rightForest leftIndex rightIndex leftLookup' rightLookup]
+
+private theorem syntaxEncodes_ternary
+    (first second third output : HolE Sig Name) (tag : Tag Sig Name)
+    (firstCorrect : SyntaxEncodes (encode first) first)
+    (secondCorrect : SyntaxEncodes (encode second) second)
+    (thirdCorrect : SyntaxEncodes (encode third) third)
+    (elaborates : ∀ (forest : Forest Nat (HolE Sig Name)) i j k,
+      forest i = some first → forest j = some second → forest k = some third →
+      Node.elaborateSyntax forest ⟨tag, [i, j, k]⟩ = some output) :
+    SyntaxEncodes (do
+      let i ← encode first
+      let j ← encode second
+      let k ← encode third
+      emit tag [i, j, k]) output := by
+  intro state forest
+  cases firstEncoded : encode first state with
+  | mk i firstState =>
+    obtain ⟨firstNodes, firstNodesEq, firstNextEq, firstLookup⟩ :=
+      firstCorrect state forest
+    rw [firstEncoded] at firstNodesEq firstNextEq firstLookup
+    simp at firstNodesEq firstNextEq firstLookup
+    let firstForest := elaborateSyntaxSuffix forest state.next firstNodes
+    cases secondEncoded : encode second firstState with
+    | mk j secondState =>
+      obtain ⟨secondNodes, secondNodesEq, secondNextEq, secondLookup⟩ :=
+        secondCorrect firstState firstForest
+      rw [secondEncoded] at secondNodesEq secondNextEq secondLookup
+      simp at secondNodesEq secondNextEq secondLookup
+      let secondForest := elaborateSyntaxSuffix firstForest firstState.next secondNodes
+      cases thirdEncoded : encode third secondState with
+      | mk k thirdState =>
+        obtain ⟨thirdNodes, thirdNodesEq, thirdNextEq, thirdLookup⟩ :=
+          thirdCorrect secondState secondForest
+        rw [thirdEncoded] at thirdNodesEq thirdNextEq thirdLookup
+        simp at thirdNodesEq thirdNextEq thirdLookup
+        let thirdForest := elaborateSyntaxSuffix secondForest secondState.next thirdNodes
+        have iBelowFirst : i < firstState.next := by
+          have root := encode_root first state
+          rw [firstEncoded] at root
+          simp at root
+          omega
+        have jBelowSecond : j < secondState.next := by
+          have root := encode_root second firstState
+          rw [secondEncoded] at root
+          simp at root
+          omega
+        have iBelowSecond : i < secondState.next := by omega
+        have iLookupSecond : secondForest i = some first :=
+          (elaborateSyntaxSuffix_of_lt firstForest firstState.next secondNodes
+            i iBelowFirst).trans firstLookup
+        have iLookupThird : thirdForest i = some first :=
+          (elaborateSyntaxSuffix_of_lt secondForest secondState.next thirdNodes
+            i iBelowSecond).trans iLookupSecond
+        have jLookupThird : thirdForest j = some second :=
+          (elaborateSyntaxSuffix_of_lt secondForest secondState.next thirdNodes
+            j jBelowSecond).trans secondLookup
+        let parent : Node Sig Name Nat := ⟨tag, [i, j, k]⟩
+        refine ⟨firstNodes ++ secondNodes ++ thirdNodes ++ [parent], ?_, ?_, ?_⟩
+        · simp only [bind_apply, firstEncoded, secondEncoded, thirdEncoded, emit]
+          rw [thirdNodesEq, secondNodesEq, firstNodesEq]
+          simp [parent, List.append_assoc]
+        · simp only [bind_apply, firstEncoded, secondEncoded, thirdEncoded, emit,
+            List.length_append, List.length_singleton]
+          omega
+        · rw [elaborateSyntaxSuffix_append, elaborateSyntaxSuffix_append,
+            elaborateSyntaxSuffix_append]
+          simp only [List.length_append, bind_apply, firstEncoded, secondEncoded,
+            thirdEncoded, emit]
+          change elaborateSyntaxSuffix
+            (elaborateSyntaxSuffix
+              (elaborateSyntaxSuffix firstForest
+                (state.next + firstNodes.length) secondNodes)
+              (state.next + (firstNodes.length + secondNodes.length)) thirdNodes)
+            (state.next + (firstNodes.length + secondNodes.length + thirdNodes.length))
+            [parent] thirdState.next = some output
+          rw [← firstNextEq]
+          change elaborateSyntaxSuffix
+            (elaborateSyntaxSuffix secondForest
+              (state.next + (firstNodes.length + secondNodes.length)) thirdNodes)
+            (state.next + (firstNodes.length + secondNodes.length + thirdNodes.length))
+            [parent] thirdState.next = some output
+          rw [show state.next + (firstNodes.length + secondNodes.length) =
+            secondState.next by omega]
+          change elaborateSyntaxSuffix thirdForest
+            (state.next + (firstNodes.length + secondNodes.length + thirdNodes.length))
+            [parent] thirdState.next = some output
+          rw [show state.next +
+            (firstNodes.length + secondNodes.length + thirdNodes.length) =
+              thirdState.next by omega]
+          simp [elaborateSyntaxSuffix, Forest.set, parent,
+            elaborates thirdForest i j k iLookupThird jLookupThird thirdLookup]
+
+private theorem syntaxEncodes_quaternary
+    (a b c d output : HolE Sig Name) (tag : Tag Sig Name)
+    (ha : SyntaxEncodes (encode a) a) (hb : SyntaxEncodes (encode b) b)
+    (hc : SyntaxEncodes (encode c) c) (hd : SyntaxEncodes (encode d) d)
+    (elaborates : ∀ (forest : Forest Nat (HolE Sig Name)) i j k l,
+      forest i = some a → forest j = some b → forest k = some c →
+      forest l = some d →
+      Node.elaborateSyntax forest ⟨tag, [i, j, k, l]⟩ = some output) :
+    SyntaxEncodes (do
+      let i ← encode a
+      let j ← encode b
+      let k ← encode c
+      let l ← encode d
+      emit tag [i, j, k, l]) output := by
+  intro state forest
+  cases ea : encode a state with
+  | mk i sa =>
+    obtain ⟨na, hna, hsa, la⟩ := ha state forest
+    rw [ea] at hna hsa la
+    simp at hna hsa la
+    let fa := elaborateSyntaxSuffix forest state.next na
+    cases eb : encode b sa with
+    | mk j sb =>
+      obtain ⟨nb, hnb, hsb, lb⟩ := hb sa fa
+      rw [eb] at hnb hsb lb
+      simp at hnb hsb lb
+      let fb := elaborateSyntaxSuffix fa sa.next nb
+      cases ec : encode c sb with
+      | mk k sc =>
+        obtain ⟨nc, hnc, hsc, lc⟩ := hc sb fb
+        rw [ec] at hnc hsc lc
+        simp at hnc hsc lc
+        let fc := elaborateSyntaxSuffix fb sb.next nc
+        cases ed : encode d sc with
+        | mk l sd =>
+          obtain ⟨nd, hnd, hsd, ld⟩ := hd sc fc
+          rw [ed] at hnd hsd ld
+          simp at hnd hsd ld
+          let fd := elaborateSyntaxSuffix fc sc.next nd
+          have ia : i < sa.next := by
+            have h := encode_root a state
+            rw [ea] at h
+            simp at h
+            omega
+          have jb : j < sb.next := by
+            have h := encode_root b sa
+            rw [eb] at h
+            simp at h
+            omega
+          have kc : k < sc.next := by
+            have h := encode_root c sb
+            rw [ec] at h
+            simp at h
+            omega
+          have i_fb : fb i = some a :=
+            (elaborateSyntaxSuffix_of_lt fa sa.next nb i ia).trans la
+          have i_fc : fc i = some a :=
+            (elaborateSyntaxSuffix_of_lt fb sb.next nc i (by omega)).trans i_fb
+          have j_fc : fc j = some b :=
+            (elaborateSyntaxSuffix_of_lt fb sb.next nc j jb).trans lb
+          have i_fd : fd i = some a :=
+            (elaborateSyntaxSuffix_of_lt fc sc.next nd i (by omega)).trans i_fc
+          have j_fd : fd j = some b :=
+            (elaborateSyntaxSuffix_of_lt fc sc.next nd j (by omega)).trans j_fc
+          have k_fd : fd k = some c :=
+            (elaborateSyntaxSuffix_of_lt fc sc.next nd k kc).trans lc
+          let parent : Node Sig Name Nat := ⟨tag, [i, j, k, l]⟩
+          refine ⟨na ++ nb ++ nc ++ nd ++ [parent], ?_, ?_, ?_⟩
+          · simp only [bind_apply, ea, eb, ec, ed, emit]
+            rw [hnd, hnc, hnb, hna]
+            simp [parent, List.append_assoc]
+          · simp only [bind_apply, ea, eb, ec, ed, emit, List.length_append,
+              List.length_singleton]
+            omega
+          · rw [elaborateSyntaxSuffix_append, elaborateSyntaxSuffix_append,
+              elaborateSyntaxSuffix_append, elaborateSyntaxSuffix_append]
+            simp only [List.length_append, bind_apply, ea, eb, ec, ed, emit]
+            change elaborateSyntaxSuffix
+              (elaborateSyntaxSuffix
+                (elaborateSyntaxSuffix
+                  (elaborateSyntaxSuffix fa (state.next + na.length) nb)
+                  (state.next + (na.length + nb.length)) nc)
+                (state.next + (na.length + nb.length + nc.length)) nd)
+              (state.next + (na.length + nb.length + nc.length + nd.length))
+              [parent] sd.next = some output
+            rw [← hsa]
+            change elaborateSyntaxSuffix
+              (elaborateSyntaxSuffix
+                (elaborateSyntaxSuffix fb
+                  (state.next + (na.length + nb.length)) nc)
+                (state.next + (na.length + nb.length + nc.length)) nd)
+              _ [parent] sd.next = some output
+            rw [show state.next + (na.length + nb.length) = sb.next by omega]
+            change elaborateSyntaxSuffix
+              (elaborateSyntaxSuffix fc
+                (state.next + (na.length + nb.length + nc.length)) nd)
+              _ [parent] sd.next = some output
+            rw [show state.next + (na.length + nb.length + nc.length) = sc.next by omega]
+            change elaborateSyntaxSuffix fd
+              (state.next + (na.length + nb.length + nc.length + nd.length))
+              [parent] sd.next = some output
+            rw [show state.next + (na.length + nb.length + nc.length + nd.length) =
+              sd.next by omega]
+            simp [elaborateSyntaxSuffix, Forest.set, parent,
+              elaborates fd i j k l i_fd j_fd k_fd ld]
+
+/-- Every named unsorted tree is recovered by raw elaboration of the suffix
+emitted by the postorder encoder. -/
+theorem encode_syntaxCorrect (tree : HolE Sig Name) :
+    SyntaxEncodes (encode tree) tree := by
+  induction tree with
+  | boolTy =>
+      exact syntaxEncodes_emit ⟨.tyBool, []⟩ .boolTy (fun _ => rfl)
+  | arr domain codomain domainIH codomainIH =>
+      apply syntaxEncodes_binary domain codomain (.arr domain codomain) .tyArr
+        domainIH codomainIH
+      intro forest i j hi hj
+      simp [Node.elaborateSyntax, hi, hj]
+  | tyApp domain codomain function argument functionIH argumentIH =>
+      apply syntaxEncodes_binary function argument
+        (.tyApp domain codomain function argument) (.tyApp domain codomain)
+        functionIH argumentIH
+      intro forest i j hi hj
+      simp [Node.elaborateSyntax, hi, hj]
+  | tyLam domain codomain name body bodyIH =>
+      have variableCorrect : SyntaxEncodes
+          (encode (.tyFv name domain : HolE Sig Name)) (.tyFv name domain) :=
+        syntaxEncodes_emit ⟨.tyVar name domain, []⟩ (.tyFv name domain) (fun _ => rfl)
+      simpa only [encode, encodeTmVar] using
+        syntaxEncodes_binary (.tyFv name domain) body
+          (.tyLam domain codomain name body) (.tyAbs domain codomain)
+          variableCorrect bodyIH (by
+            intro forest i j hi hj
+            simp [Node.elaborateSyntax, hi, hj])
+  | tyFv name kind =>
+      exact syntaxEncodes_emit ⟨.tyVar name kind, []⟩ (.tyFv name kind) (fun _ => rfl)
+  | sub carrier name predicate carrierIH predicateIH =>
+      have variableCorrect : SyntaxEncodes
+          (encode (.tmFv name carrier : HolE Sig Name)) (.tmFv name carrier) := by
+        simpa only [encode, encodeTmVar] using
+          syntaxEncodes_unary carrier (.tmFv name carrier) (.tmVar name) carrierIH (by
+            intro forest i hi
+            simp [Node.elaborateSyntax, hi])
+      simpa only [encode, encodeTmVar] using
+        syntaxEncodes_ternary carrier (.tmFv name carrier) predicate
+          (.sub carrier name predicate) .tySub carrierIH variableCorrect predicateIH (by
+            intro forest i j k hi hj hk
+            simp [Node.elaborateSyntax, hi, hj, hk])
+  | tyExists name predicate predicateIH =>
+      have variableCorrect : SyntaxEncodes
+          (encode (.tyFv name .star : HolE Sig Name)) (.tyFv name .star) :=
+        syntaxEncodes_emit ⟨.tyVar name .star, []⟩ (.tyFv name .star) (fun _ => rfl)
+      simpa only [encode, encodeTmVar] using
+        syntaxEncodes_binary (.tyFv name .star) predicate (.tyExists name predicate)
+          .tyExists variableCorrect predicateIH (by
+            intro forest i j hi hj
+            simp [Node.elaborateSyntax, hi, hj])
+  | model name predicate predicateIH =>
+      have variableCorrect : SyntaxEncodes
+          (encode (.tyFv name .star : HolE Sig Name)) (.tyFv name .star) :=
+        syntaxEncodes_emit ⟨.tyVar name .star, []⟩ (.tyFv name .star) (fun _ => rfl)
+      simpa only [encode, encodeTmVar] using
+        syntaxEncodes_binary (.tyFv name .star) predicate (.model name predicate)
+          .tyModel variableCorrect predicateIH (by
+            intro forest i j hi hj
+            simp [Node.elaborateSyntax, hi, hj])
+  | primFam kind symbol =>
+      exact syntaxEncodes_emit ⟨.primFam kind symbol, []⟩ (.primFam kind symbol) (fun _ => rfl)
+  | primTm symbol =>
+      exact syntaxEncodes_emit ⟨.primTm symbol, []⟩ (.primTm symbol) (fun _ => rfl)
+  | tmFv name type typeIH =>
+      simpa only [encode, encodeTmVar] using
+        syntaxEncodes_unary type (.tmFv name type) (.tmVar name) typeIH (by
+          intro forest i hi
+          simp [Node.elaborateSyntax, hi])
+  | app function argument functionIH argumentIH =>
+      apply syntaxEncodes_binary function argument (.app function argument) .tmApp
+        functionIH argumentIH
+      intro forest i j hi hj
+      simp [Node.elaborateSyntax, hi, hj]
+  | lam name domain body domainIH bodyIH =>
+      have variableCorrect : SyntaxEncodes
+          (encode (.tmFv name domain : HolE Sig Name)) (.tmFv name domain) := by
+        simpa only [encode, encodeTmVar] using
+          syntaxEncodes_unary domain (.tmFv name domain) (.tmVar name) domainIH (by
+            intro forest i hi
+            simp [Node.elaborateSyntax, hi])
+      simpa only [encode, encodeTmVar] using
+        syntaxEncodes_binary (.tmFv name domain) body (.lam name domain body)
+          .tmAbs variableCorrect bodyIH (by
+            intro forest i j hi hj
+            simp [Node.elaborateSyntax, hi, hj])
+  | bool value =>
+      exact syntaxEncodes_emit ⟨.tmBool value, []⟩ (.bool value) (fun _ => rfl)
+  | eq type left right typeIH leftIH rightIH =>
+      apply syntaxEncodes_ternary type left right (.eq type left right) .tmEq
+        typeIH leftIH rightIH
+      intro forest i j k hi hj hk
+      simp [Node.elaborateSyntax, hi, hj, hk]
+  | eps type predicate typeIH predicateIH =>
+      apply syntaxEncodes_binary type predicate (.eps type predicate) .tmEps
+        typeIH predicateIH
+      intro forest i j hi hj
+      simp [Node.elaborateSyntax, hi, hj]
+  | abs carrier name predicate value carrierIH predicateIH valueIH =>
+      have variableCorrect : SyntaxEncodes
+          (encode (.tmFv name carrier : HolE Sig Name)) (.tmFv name carrier) := by
+        simpa only [encode, encodeTmVar] using
+          syntaxEncodes_unary carrier (.tmFv name carrier) (.tmVar name) carrierIH (by
+            intro forest i hi
+            simp [Node.elaborateSyntax, hi])
+      simpa only [encode, encodeTmVar] using
+        syntaxEncodes_quaternary carrier (.tmFv name carrier) predicate value
+          (.abs carrier name predicate value) .tmQuotAbs carrierIH variableCorrect
+          predicateIH valueIH (by
+            intro forest i j k l hi hj hk hl
+            simp [Node.elaborateSyntax, hi, hj, hk, hl])
+  | rep carrier name predicate value carrierIH predicateIH valueIH =>
+      have variableCorrect : SyntaxEncodes
+          (encode (.tmFv name carrier : HolE Sig Name)) (.tmFv name carrier) := by
+        simpa only [encode, encodeTmVar] using
+          syntaxEncodes_unary carrier (.tmFv name carrier) (.tmVar name) carrierIH (by
+            intro forest i hi
+            simp [Node.elaborateSyntax, hi])
+      simpa only [encode, encodeTmVar] using
+        syntaxEncodes_quaternary carrier (.tmFv name carrier) predicate value
+          (.rep carrier name predicate value) .tmQuotRep carrierIH variableCorrect
+          predicateIH valueIH (by
+            intro forest i j k l hi hj hk hl
+            simp [Node.elaborateSyntax, hi, hj, hk, hl])
+
+/-- Raw decoding is a left inverse of postorder encoding at every absolute
+offset. -/
+@[simp] theorem decodeSyntax_run (tree : HolE Sig Name) (offset : Nat) :
+    (run tree offset).decodeSyntax = some tree := by
+  let initial : State Sig Name := ⟨offset, []⟩
+  cases encoded : encode tree initial with
+  | mk root state =>
+    obtain ⟨suffix, nodesEq, nextEq, lookup⟩ :=
+      encode_syntaxCorrect tree initial emptyForest
+    rw [encoded] at nodesEq nextEq lookup
+    simp [initial] at nodesEq nextEq lookup
+    have rootGe : offset ≤ root := by
+      by_cases above : offset ≤ root
+      · exact above
+      · have below : root < offset := Nat.lt_of_not_ge above
+        have unchanged := elaborateSyntaxSuffix_of_lt emptyForest offset suffix root below
+        rw [unchanged] at lookup
+        simp [emptyForest] at lookup
+    have rootEq : root = offset + suffix.length - 1 := by
+      have rootNext := encode_root tree initial
+      rw [encoded] at rootNext
+      simp at rootNext
+      omega
+    have nonempty : 0 < suffix.length := by
+      have rootNext := encode_root tree initial
+      rw [encoded] at rootNext
+      simp at rootNext
+      omega
+    have above : offset ≤ offset + suffix.length - 1 := by omega
+    have below : offset + suffix.length - 1 < offset + suffix.length := by omega
+    unfold Result.decodeSyntax run
+    rw [encoded]
+    simp only
+    rw [nodesEq]
+    change elaborateForest emptyForest (suffix.map SyntaxNode.mk) offset
+      (offset + suffix.length - 1) = some tree
+    rw [elaborateSyntaxForest_eq_suffix suffix offset
+      (offset + suffix.length - 1) above below]
+    rw [← rootEq]
+    exact lookup
+
+/-! ## The concrete postorder equivalence -/
+
+/-- A finite node-list encoding with one distinguished root. -/
+abbrev RootEncoding := Result
+
+/-- Encode a tree at the canonical zero offset. -/
+def postorder (tree : HolE Sig Name) : RootEncoding Sig Name := run tree 0
+
+/-- Decode the raw tree carried by a finite root encoding. -/
+def unpostorder (encoding : RootEncoding Sig Name) : Option (HolE Sig Name) :=
+  encoding.decodeSyntax
+
+@[simp] theorem unpostorder_postorder (tree : HolE Sig Name) :
+    unpostorder (postorder tree) = some tree := decodeSyntax_run tree 0
+
+theorem postorder_injective :
+    Function.Injective (@postorder Sig Name) := by
+  intro left right equality
+  have := congrArg unpostorder equality
+  simpa using this
+
+/-- The postorder map bundled with its injectivity proof. -/
+structure PostorderEmbedding (Sig : Signature.{u}) (Name : Type) where
+  toFun : HolE Sig Name → RootEncoding Sig Name
+  injective : Function.Injective toFun
+
+def postorderEmbedding : PostorderEmbedding Sig Name :=
+  ⟨postorder, postorder_injective⟩
+
+/-- Root encodings which decode to a finite named tree. -/
+def ValidRootEncoding (Sig : Signature.{u}) (Name : Type) :=
+  { encoding : RootEncoding Sig Name // ∃ tree, unpostorder encoding = some tree }
+
+/-- Decoding equivalence on valid finite root encodings. -/
+def ValidRootEncoding.Equivalent
+    (left right : ValidRootEncoding Sig Name) : Prop :=
+  unpostorder left.val = unpostorder right.val
+
+def ValidRootEncoding.decodingSetoid : Setoid (ValidRootEncoding Sig Name) where
+  r := ValidRootEncoding.Equivalent
+  iseqv := ⟨fun _ => rfl, fun equality => equality.symm,
+    fun left middle => left.trans middle⟩
+
+abbrev PostorderQuotient (Sig : Signature.{u}) (Name : Type) :=
+  Quotient (ValidRootEncoding.decodingSetoid (Sig := Sig) (Name := Name))
+
+def postorderValid (tree : HolE Sig Name) : ValidRootEncoding Sig Name :=
+  ⟨postorder tree, tree, unpostorder_postorder tree⟩
+
+/-- Every valid finite root encoding is decoding-equivalent to a canonical
+postorder encoding. -/
+theorem postorder_surjective_upToEquivalent
+    (encoding : ValidRootEncoding Sig Name) :
+    ∃ tree, ValidRootEncoding.Equivalent (postorderValid tree) encoding := by
+  obtain ⟨tree, decodes⟩ := encoding.property
+  exact ⟨tree, (unpostorder_postorder tree).trans decodes.symm⟩
+
+/-- Postorder is injective on trees and surjective onto valid root encodings
+up to decoding equivalence. -/
+theorem postorder_bijective_upToEquivalent :
+    Function.Injective (@postorder Sig Name) ∧
+      ∀ encoding : ValidRootEncoding Sig Name,
+        ∃ tree, ValidRootEncoding.Equivalent (postorderValid tree) encoding :=
+  ⟨postorder_injective, postorder_surjective_upToEquivalent⟩
+
+def postorderQuotient (tree : HolE Sig Name) : PostorderQuotient Sig Name :=
+  Quotient.mk _ (postorderValid tree)
+
 example (offset : Nat) :
     (run (.boolTy : HolE Sig Name) offset).decode = some .boolTy := by
   simp [Result.decode, run, encode, emit, elaborateForest, elaborateList,
@@ -532,7 +1165,7 @@ example :
     let result := run (.lam 7 .boolTy (.bool true) : HolE Sig Nat) 10
     result.root = 13 ∧ result.next = 14 ∧
       result.nodes[1]? = some ⟨.tmVar 7, [10]⟩ := by
-  simp [run, encode, emit, bind_apply]
+  simp [run, encode, encodeTmVar, emit, bind_apply]
 
 /-- Batch encoding preserves input order in its public roots. -/
 example :

@@ -130,6 +130,12 @@ abbrev CodePublicEncoding.coproduct [MapIndices N] [HasCoproduct Code]
     (left right : CodePublicEncoding N Code) : CodePublicEncoding N Code :=
   left.concat right
 
+/-- List-style name for concatenation through the code's concrete
+coproduct. -/
+abbrev CodePublicEncoding.append [MapIndices N] [HasCoproduct Code]
+    (left right : CodePublicEncoding N Code) : CodePublicEncoding N Code :=
+  left.concat right
+
 @[simp] theorem CodePublicEncoding.concat_exports_length [MapIndices N]
     [HasCoproduct Code] (left right : CodePublicEncoding N Code) :
     (left.concat right).encoding.exports.length =
