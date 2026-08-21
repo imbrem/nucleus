@@ -3,7 +3,7 @@
 `operations.json` inventories the intended one-to-one correspondence between
 pure Lean arena operations and their Rust kernel implementations.
 `traces.json` supplies normalized, language-neutral examples for the first
-empty/Boolean slice. The schemas version the formats; `validate.jq` checks
+empty/Star/Boolean slice. The schemas version the formats; `validate.jq` checks
 cross-file invariants that JSON Schema cannot express.
 
 The registry records every old arena, the successful new arena, the tracked

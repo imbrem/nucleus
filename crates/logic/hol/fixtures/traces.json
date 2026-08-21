@@ -19,6 +19,26 @@
       }
     },
     {
+      "id": "kind-star.ok",
+      "operation": "kind.star",
+      "oldArenas": [
+        {
+          "rows": [],
+          "assumptions": []
+        }
+      ],
+      "input": {},
+      "casUse": "none",
+      "expected": {
+        "result": "ok",
+        "newArena": {
+          "rows": [{ "tag": "kindStar" }],
+          "assumptions": []
+        },
+        "output": { "ref": 0, "class": "kind" }
+      }
+    },
+    {
       "id": "bool-type.ok",
       "operation": "type.bool",
       "oldArenas": [

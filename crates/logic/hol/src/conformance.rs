@@ -106,6 +106,13 @@ fn run(trace: &Value) -> Result<Value, String> {
                 .map_err(|_| "negative output reference".to_owned())?;
             (kernel, json!({ "ref": output_ref, "class": "type" }))
         }
+        "kind.star" => {
+            let mut kernel = sole_old_arena(trace)?;
+            let output = kernel.star().map_err(|error| error.to_string())?;
+            let output_ref = usize::try_from(output.index())
+                .map_err(|_| "negative output reference".to_owned())?;
+            (kernel, json!({ "ref": output_ref, "class": "kind" }))
+        }
         "term.bool" => {
             let mut kernel = sole_old_arena(trace)?;
             let value = trace

@@ -23,9 +23,41 @@
         "receiver": "constructor"
       },
       "fixtures": ["empty.ok"]
+  },
+  {
+    "id": "kind.star",
+    "kind": "transition",
+    "oldArenas": [
+      {
+        "role": "kernel",
+        "sound": "same-implicit-cas"
+      }
+    ],
+    "newArena": {
+      "role": "kernel",
+      "sound": "same-implicit-cas"
     },
-    {
-      "id": "type.bool",
+    "assumptions": "preserve",
+    "casUse": "none",
+    "errors": [
+      "arena-full",
+      "index-overflow"
+    ],
+    "lean": {
+      "definition": "Nucleus.Hol.Ethane.Kernel.DenseOperations.star",
+      "preservationTheorem": "Nucleus.Hol.Ethane.Kernel.DenseOperations.star_sound",
+      "stateModel": "pure-arena-transition"
+    },
+    "rust": {
+      "symbol": "covalence_logic_hol::dense::Kernel::star",
+      "receiver": "mutable"
+    },
+    "fixtures": [
+      "kind-star.ok"
+    ]
+  },
+  {
+    "id": "type.bool",
       "kind": "transition",
       "oldArenas": [
         {
