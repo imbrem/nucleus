@@ -17,35 +17,33 @@ is thirteen lines. In short:
 - **Expected malformed input, warnings, and recoverable outcomes are not fatal
   failures by default.**
 
-## Read this part before you cite the policy
+## What the codebase actually does
 
-The codebase does not yet match it, and a review that assumes it does will be
-wrong. Counting error types on `main`:
+Every error type in hand-written code now uses snafu — twenty-four of them
+across eleven crates — and both binaries render with miette. The one remaining
+hand-rolled `impl Error` is in generated wit-bindgen code. `covalence-lib-error`
+has thirteen dependents.
 
-| Mechanism | Types | Where |
-|---|---:|---|
-| Hand-rolled `impl Display` + `impl Error` | 17 | `repl`, `lib/sqlite`, `data/num`, `logic/lrat`, `data/cas`, `bin/cas-shell`, `logic/sat`, `lib/hash` |
-| `#[derive(Snafu)]` | 7 | `nucleus`, `lib/hash`, `neutron`, `data/array` |
-| `miette` | 0 | — |
-| `anyhow`, `thiserror` | 0 | — |
+So the policy is descriptive, not aspirational, and you should follow it
+literally. Do not introduce `thiserror` or `anyhow`.
 
-So: **snafu is the direction, hand-rolled `Display` is the incumbent, and the
-miette half of the policy has no users at all.** `crates/bin/nucleus` and
-`crates/bin/cas-serve` return `Box<dyn Error>`; `crates/repl` hand-rolls.
-`covalence-lib-error` has four dependents out of twenty-eight crates.
+The exceptions are real and worth knowing, because they are not oversights:
 
-Write new error types with snafu. Do not convert existing hand-rolled types as a
-drive-by — that is a migration, not a cleanup. Do not introduce `thiserror` or
-`anyhow`.
-
-None of the seventeen hand-rolled types implement `Error::source()`; every one is
-`impl Error for X {}`, flattening the chain into the `Display` string by hand. Do
-not copy that. Snafu gives you a real `source` for free.
+- **`crates/browser`** raises `wasm_bindgen::JsError` and **`crates/ffi/python`**
+  raises `PyErr`. Those are the host's error vocabulary at a boundary, which is
+  the convention's "rendering policy belongs in surface-specific crates".
+- **`crates/data/container`** defines no errors; it is infallible by
+  construction.
+- **`nucleus::SignError::Backend`** carries
+  `source: Box<dyn Error + Send + Sync>` because it crosses an open `dyn Signer`
+  trait, where the concrete error is not knowable.
+- **`crates/logic/metamath`** still uses `thiserror`. It is mid-rewrite; see
+  #844. Do not copy it.
 
 ## The snafu idiom
 
-Depend on `covalence-lib-error`, never on `snafu` directly. No crate imports
-`snafu` or `miette` any other way, and that part *is* settled.
+Depend on `covalence-lib-error`, never on `snafu` or `miette` directly. No
+crate in the workspace does otherwise.
 
 Because the dependency is the facade, **`crate_root` is mandatory**: the derive
 emits absolute `::snafu::…` paths that will not resolve otherwise.
@@ -86,18 +84,49 @@ pub enum ConnectionError {
 
 propagated as `sqlite::Connection::open(&path).context(OpenSnafu)?`.
 
-Both `crate_root` spellings are in use. Prefer
+Both `crate_root` spellings are in use, roughly evenly. Prefer
 `crate_root(covalence_lib_error::snafu)` for new code — it needs no companion
 `use covalence_lib_error::snafu;` alias line.
 
-Everything else snafu offers is currently unused: no `visibility`, `transparent`,
-`context(false)`, `Whatever`, `ensure!`, `OptionExt`, or `Backtrace` fields
-anywhere. Reach for them if a case genuinely needs one, but you are setting a
-precedent, so say why.
+Wrapping another crate's error unchanged is `#[snafu(transparent)]`; wrapping it
+while adding a message of your own is `#[snafu(context(false))]`. Between them
+they replace the hand-written `From` impls this codebase used to carry — see
+`crates/repl/src/lib.rs`.
 
-The dominant propagation idiom repo-wide is still `map_err` with a manual
-variant — about seventy sites — rather than `.context(XxxSnafu)`, of which there
-are nineteen, all in `crates/neutron`. Prefer `.context()` in new snafu code.
+`map_err` with a manual variant is still the majority idiom by count, mostly
+predating the conversion. Prefer `.context(XxxSnafu)` in new code: it is what
+gives you a real `source` rather than a flattened message.
+
+## Rendering: miette, in binaries only
+
+A binary that reports failures to a person returns `miette::Result` from `main`
+— `crates/bin/nucleus` and `crates/bin/cas-serve` both do. Everything below them
+returns typed snafu errors; rendering happens once, at the top.
+
+```rust
+use covalence_lib_error::miette::{self, Context, IntoDiagnostic, miette};
+
+fn main() -> miette::Result<()> {
+    let bytes = std::fs::read(path)
+        .into_diagnostic()
+        .with_context(|| format!("could not read `{path}`"))?;
+```
+
+`.into_diagnostic()` lifts any `Error` into a report; `.context()` says what was
+being attempted. That context is the point — it turns
+`No such file or directory (os error 2)` into a message naming the file, with
+the cause chained beneath it. Add one at every `?` in a binary.
+
+Miette is built with its `fancy` renderer unconditionally. Without it the output
+is worse than printing `Display`, and it costs nothing but compile time: the
+renderer is dead code wherever no report is constructed, so the Wasm bundle is
+byte-identical either way.
+
+**Do not return `miette::Result` from a library.** A caller that wants to match
+on a failure cannot, and a report is not matchable. `crates/repl` is the test
+case — it is orchestration, but its callers do
+`matches!(…, Err(ReplError::UnknownConnection { .. }))`, so it stays snafu and
+its two hosts render.
 
 ## `# Errors` doc sections are mandatory
 

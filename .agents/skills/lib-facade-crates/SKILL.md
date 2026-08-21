@@ -33,7 +33,9 @@ Depending on a third-party crate directly is fine when none of that applies.
 **Nothing enforces this.** `glu deps` checks manifest fields, not dependency
 routing. Treat it as a convention to apply with judgement, not an invariant.
 Three of the ten current facades — `serde`, `json`, `cbor` — have no consumers
-at all, so the pattern is applied ahead of demand as well as behind it.
+at all, so the pattern gets applied ahead of demand as well as behind it. A
+facade with no consumers is not a bug, but it is not evidence for the pattern
+either.
 
 ## The three shapes a facade takes
 
