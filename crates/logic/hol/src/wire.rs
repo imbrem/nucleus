@@ -1,119 +1,80 @@
-//! Untrusted D0 dense-arena wire values.
+//! Untrusted D0 dense-arena wire decoding.
 //!
 //! This module mirrors the root-only Boolean subset of Lean's
 //! `Nucleus.Hol.Ethane.Amber.Arena.Dense.Cbor.decodeSyntax?`. Signed indices
 //! use the intended i64-bounded profile of
-//! `Nucleus.Hol.Ethane.Amber.Serialization.intIndex` (the Lean companion must
-//! enforce the same bound), and row envelopes correspond to
-//! `Nucleus.Hol.Ethane.Amber.SyntaxRow.ofView?`.
+//! `Nucleus.Hol.Ethane.Amber.Serialization.intIndex`, and row envelopes
+//! correspond to `Nucleus.Hol.Ethane.Amber.SyntaxRow.ofView?`.
 //!
-//! Successful decoding establishes only wire shape. It never constructs a
-//! checked [`crate::Kernel`] or establishes arena validity or logical
-//! soundness.
+//! Successful decoding establishes only wire shape and returns a bare
+//! [`crate::dense::Arena`]. It never constructs a checked [`crate::Kernel`] or
+//! establishes arena validity or logical soundness.
 
 use std::collections::BTreeSet;
 
 use covalence_data_cbor::{Value, ValueKind};
 
-/// One exactly representable signed wire index.
+use crate::{Row, dense};
+
+/// Decodes the strict root-only D0 envelope into an untrusted dense arena.
 ///
-/// The generic CBOR value remains arbitrary precision. Constructing `RawDense`
-/// narrows its offset to the exact `i64` domain and rejects overflow.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SignedIndex(i64);
+/// Exactly the fields `tag`, `parent`, `offset`, and `defs` are accepted. The
+/// parent must be CBOR null. Rows are checked against the exact shared D0
+/// Boolean row vocabulary.
+///
+/// This is a deliberately strict profile of Lean
+/// `Nucleus.Hol.Ethane.Amber.Arena.Dense.Cbor.decodeSyntax?`: the generic Lean
+/// decoder reserves and ignores unique extension fields, while this MVP entry
+/// point rejects them.
+///
+/// # Errors
+///
+/// Returns a precise [`DecodeError`] for malformed or unsupported input.
+pub fn decode_root(value: &Value) -> Result<dense::Arena, DecodeError> {
+    let ValueKind::Map(fields) = value.kind() else {
+        return Err(DecodeError::ExpectedObject);
+    };
 
-impl SignedIndex {
-    #[must_use]
-    pub const fn get(self) -> i64 {
-        self.0
-    }
-}
-
-/// One raw row admitted by the D0 wire-shape decoder.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RawRow {
-    BoolTy,
-    Bool(bool),
-}
-
-/// A self-contained dense arena decoded from an untrusted CBOR value.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RawDense {
-    offset: SignedIndex,
-    defs: Vec<RawRow>,
-}
-
-impl RawDense {
-    /// Decodes the strict root-only D0 envelope.
-    ///
-    /// Exactly the fields `tag`, `parent`, `offset`, and `defs` are accepted.
-    /// The parent must be CBOR null. Rows are checked against the exact D0
-    /// Boolean tags, envelope arities, child order, and extra-field shape.
-    ///
-    /// This is a deliberately strict profile of Lean
-    /// `Nucleus.Hol.Ethane.Amber.Arena.Dense.Cbor.decodeSyntax?`: the generic
-    /// Lean decoder reserves and ignores unique extension fields, while this
-    /// MVP entry point rejects them.
-    ///
-    /// # Errors
-    ///
-    /// Returns a precise [`DecodeError`] for malformed or unsupported input.
-    pub fn decode_root(value: &Value) -> Result<Self, DecodeError> {
-        let ValueKind::Map(fields) = value.kind() else {
-            return Err(DecodeError::ExpectedObject);
+    let mut seen = BTreeSet::new();
+    let mut tag = None;
+    let mut parent = None;
+    let mut offset = None;
+    let mut defs = None;
+    for (key, value) in fields.iter() {
+        let ValueKind::Text(key) = key.kind() else {
+            return Err(DecodeError::NonTextField);
         };
-
-        let mut seen = BTreeSet::new();
-        let mut tag = None;
-        let mut parent = None;
-        let mut offset = None;
-        let mut defs = None;
-        for (key, value) in fields.iter() {
-            let ValueKind::Text(key) = key.kind() else {
-                return Err(DecodeError::NonTextField);
-            };
-            if !seen.insert(key.as_ref()) {
-                return Err(DecodeError::DuplicateField(key.to_string()));
-            }
-            match key.as_ref() {
-                "tag" => tag = Some(value),
-                "parent" => parent = Some(value),
-                "offset" => offset = Some(value),
-                "defs" => defs = Some(value),
-                _ => return Err(DecodeError::UnknownField(key.to_string())),
-            }
+        if !seen.insert(key.as_ref()) {
+            return Err(DecodeError::DuplicateField(key.to_string()));
         }
-
-        match required(tag, "tag")?.kind() {
-            ValueKind::Text(tag) if tag.as_ref() == "arena.dense" => {}
-            _ => return Err(DecodeError::WrongObjectTag),
+        match key.as_ref() {
+            "tag" => tag = Some(value),
+            "parent" => parent = Some(value),
+            "offset" => offset = Some(value),
+            "defs" => defs = Some(value),
+            _ => return Err(DecodeError::UnknownField(key.to_string())),
         }
-        if !matches!(required(parent, "parent")?.kind(), ValueKind::Simple(22)) {
-            return Err(DecodeError::ParentNotRoot);
-        }
-        let offset = decode_index(required(offset, "offset")?)?;
-        let ValueKind::Array(defs) = required(defs, "defs")?.kind() else {
-            return Err(DecodeError::ExpectedDefsArray);
-        };
-        let defs = defs
-            .iter()
-            .enumerate()
-            .map(|(index, row)| {
-                decode_row(row).map_err(|reason| DecodeError::InvalidRow { index, reason })
-            })
-            .collect::<Result<_, _>>()?;
-        Ok(Self { offset, defs })
     }
 
-    #[must_use]
-    pub const fn offset(&self) -> SignedIndex {
-        self.offset
+    match required(tag, "tag")?.kind() {
+        ValueKind::Text(tag) if tag.as_ref() == "arena.dense" => {}
+        _ => return Err(DecodeError::WrongObjectTag),
     }
-
-    #[must_use]
-    pub fn defs(&self) -> &[RawRow] {
-        &self.defs
+    if !matches!(required(parent, "parent")?.kind(), ValueKind::Simple(22)) {
+        return Err(DecodeError::ParentNotRoot);
     }
+    let offset = decode_index(required(offset, "offset")?)?;
+    let ValueKind::Array(defs) = required(defs, "defs")?.kind() else {
+        return Err(DecodeError::ExpectedDefsArray);
+    };
+    let rows = defs
+        .iter()
+        .enumerate()
+        .map(|(index, row)| {
+            decode_row(row).map_err(|reason| DecodeError::InvalidRow { index, reason })
+        })
+        .collect::<Result<_, _>>()?;
+    Ok(dense::Arena::from_untrusted(offset, rows))
 }
 
 /// A strict root dense-decoding failure.
@@ -159,16 +120,14 @@ fn required<'a>(value: Option<&'a Value>, field: &'static str) -> Result<&'a Val
     value.ok_or(DecodeError::MissingField(field))
 }
 
-fn decode_index(value: &Value) -> Result<SignedIndex, DecodeError> {
+fn decode_index(value: &Value) -> Result<i64, DecodeError> {
     match value.kind() {
-        ValueKind::Integer(value) => i64::try_from(value)
-            .map(SignedIndex)
-            .map_err(|_| DecodeError::OffsetOverflow),
+        ValueKind::Integer(value) => i64::try_from(value).map_err(|_| DecodeError::OffsetOverflow),
         _ => Err(DecodeError::InvalidOffset),
     }
 }
 
-fn decode_row(value: &Value) -> Result<RawRow, RowError> {
+fn decode_row(value: &Value) -> Result<Row, RowError> {
     let ValueKind::Array(envelope) = value.kind() else {
         return Err(RowError::ExpectedEnvelope);
     };
@@ -186,7 +145,7 @@ fn decode_row(value: &Value) -> Result<RawRow, RowError> {
     };
 
     match tag.as_ref() {
-        "ty.bool" if children.is_empty() && extra.is_empty() => Ok(RawRow::BoolTy),
+        "ty.bool" if children.is_empty() && extra.is_empty() => Ok(Row::BoolTy),
         "tm.bool" if !children.is_empty() => Err(RowError::WrongArity),
         "tm.bool" => decode_bool_extra(extra),
         "ty.bool" => Err(RowError::WrongArity),
@@ -194,7 +153,7 @@ fn decode_row(value: &Value) -> Result<RawRow, RowError> {
     }
 }
 
-fn decode_bool_extra(extra: &[Value]) -> Result<RawRow, RowError> {
+fn decode_bool_extra(extra: &[Value]) -> Result<Row, RowError> {
     let [field] = extra else {
         return Err(RowError::WrongArity);
     };
@@ -211,8 +170,8 @@ fn decode_bool_extra(extra: &[Value]) -> Result<RawRow, RowError> {
         return Err(RowError::ExpectedBoolExtra);
     }
     match value {
-        20 => Ok(RawRow::Bool(false)),
-        21 => Ok(RawRow::Bool(true)),
+        20 => Ok(Row::Bool(false)),
+        21 => Ok(Row::Bool(true)),
         _ => Err(RowError::ExpectedBoolExtra),
     }
 }
@@ -221,7 +180,9 @@ fn decode_bool_extra(extra: &[Value]) -> Result<RawRow, RowError> {
 mod tests {
     use covalence_data_cbor::{Int, Value};
 
-    use super::{DecodeError, RawDense, RawRow, RowError};
+    use crate::Row;
+
+    use super::{DecodeError, RowError, decode_root};
 
     fn bool_ty() -> Value {
         Value::array([
@@ -256,109 +217,91 @@ mod tests {
     }
 
     #[test]
-    fn decodes_root_boolean_rows_and_i64_boundaries() {
-        let positive = RawDense::decode_root(&root(
+    fn decodes_untrusted_dense_arena_with_shared_rows() {
+        let arena = decode_root(&root(
             Value::from(i64::MAX),
             vec![bool_ty(), bool_const(false), bool_const(true)],
         ))
         .unwrap();
-        assert_eq!(positive.offset().get(), i64::MAX);
+        assert_eq!(arena.offset(), i64::MAX);
         assert_eq!(
-            positive.defs(),
-            &[RawRow::BoolTy, RawRow::Bool(false), RawRow::Bool(true)]
+            arena.rows(),
+            &[Row::BoolTy, Row::Bool(false), Row::Bool(true)]
         );
 
-        let negative = RawDense::decode_root(&root(Value::from(i64::MIN), vec![])).unwrap();
-        assert_eq!(negative.offset().get(), i64::MIN);
+        let minimum = decode_root(&root(Value::from(i64::MIN), vec![])).unwrap();
+        assert_eq!(minimum.offset(), i64::MIN);
     }
 
     #[test]
     fn rejects_parent_unknown_duplicate_and_missing_fields() {
         let mut fields = root_fields(Value::from(0_i64), vec![]);
         fields[1].1 = Value::array(Vec::<Value>::new());
-        let parented = Value::map(fields);
         assert_eq!(
-            RawDense::decode_root(&parented),
+            decode_root(&Value::map(fields)),
             Err(DecodeError::ParentNotRoot)
         );
 
         let mut fields = root_fields(Value::from(0_i64), vec![]);
         fields.push((Value::from("metadata"), Value::null()));
-        let unknown = Value::map(fields);
         assert_eq!(
-            RawDense::decode_root(&unknown),
+            decode_root(&Value::map(fields)),
             Err(DecodeError::UnknownField("metadata".to_owned()))
         );
 
         let mut fields = root_fields(Value::from(0_i64), vec![]);
         fields.push((Value::from("defs"), Value::array(Vec::<Value>::new())));
-        let duplicate = Value::map(fields);
         assert_eq!(
-            RawDense::decode_root(&duplicate),
+            decode_root(&Value::map(fields)),
             Err(DecodeError::DuplicateField("defs".to_owned()))
         );
 
         let mut fields = root_fields(Value::from(0_i64), vec![]);
         fields.pop();
-        let missing = Value::map(fields);
         assert_eq!(
-            RawDense::decode_root(&missing),
+            decode_root(&Value::map(fields)),
             Err(DecodeError::MissingField("defs"))
         );
     }
 
     #[test]
-    fn accepts_arbitrary_integer_values_inside_i64() {
-        let positive = Value::from(Int::from(42_i64));
-        assert_eq!(
-            RawDense::decode_root(&root(positive, vec![]))
-                .unwrap()
-                .offset()
-                .get(),
-            42
-        );
-        let negative = Value::from(Int::from(-42_i64));
-        assert_eq!(
-            RawDense::decode_root(&root(negative, vec![]))
-                .unwrap()
-                .offset()
-                .get(),
-            -42
-        );
-    }
-
-    #[test]
-    fn rejects_arbitrary_bignum_overflow_and_wrong_boolean_shapes() {
+    fn preserves_bigint_then_checks_i64() {
+        for value in [42_i64, -42] {
+            assert_eq!(
+                decode_root(&root(Value::from(Int::from(value)), vec![]))
+                    .unwrap()
+                    .offset(),
+                value
+            );
+        }
         for bytes in [[1_u8; 33], [0xfe_u8; 33]] {
             let arbitrary = Int::from_canonical_bytes(&bytes).unwrap();
             assert_eq!(
-                RawDense::decode_root(&root(Value::from(arbitrary), vec![])),
+                decode_root(&root(Value::from(arbitrary), vec![])),
                 Err(DecodeError::OffsetOverflow)
             );
         }
+        for overflow in [i128::from(i64::MAX) + 1, i128::from(i64::MIN) - 1] {
+            assert_eq!(
+                decode_root(&root(Value::from(Int::from(overflow)), vec![])),
+                Err(DecodeError::OffsetOverflow)
+            );
+        }
+    }
 
+    #[test]
+    fn rejects_wrong_boolean_shape() {
         let bad_bool = Value::array([
             Value::from("tm.bool"),
             Value::array([Value::from(0_i64)]),
             Value::array(Vec::<Value>::new()),
         ]);
         assert_eq!(
-            RawDense::decode_root(&root(Value::from(0_i64), vec![bad_bool])),
+            decode_root(&root(Value::from(0_i64), vec![bad_bool])),
             Err(DecodeError::InvalidRow {
                 index: 0,
                 reason: RowError::WrongArity
             })
         );
-    }
-
-    #[test]
-    fn rejects_offsets_one_step_outside_i64() {
-        for overflow in [i128::from(i64::MAX) + 1, i128::from(i64::MIN) - 1] {
-            let value = Value::from(Int::from(overflow));
-            assert_eq!(
-                RawDense::decode_root(&root(value, vec![])),
-                Err(DecodeError::OffsetOverflow)
-            );
-        }
     }
 }

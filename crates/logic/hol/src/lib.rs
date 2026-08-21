@@ -1,36 +1,49 @@
-//! Persistent arena interface for the Nucleus HOL kernel.
+//! Arena-parametric interface for the Nucleus HOL kernel.
 //!
-//! A [`Kernel`] owns an [`Arena`] that the implementation has checked. Kernel
-//! identity is not part of the logic: values may be passed between kernels,
-//! and facts carry their assumptions explicitly. The CAS relative to which an
-//! arena is sound is ghost state in the formal model and is deliberately not
-//! stored here.
+//! [`Kernel`] is an owning wrapper asserting that its arena is sound. The
+//! representation boundary is generic, but mutation is deliberately not:
+//! each concrete arena representation receives its own inherent kernel API.
+//! The CAS relative to which an arena is sound is ghost state in the formal
+//! model and is not stored here.
+
+use std::rc::Rc;
+use std::sync::Arc;
 
 pub mod wire;
 
-/// An address in the dense arena representation.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct Address(u64);
-
-/// A portable HOL type handle.
-///
-/// Handles do not contain a kernel identity. Their representation is private,
-/// so clients cannot manufacture values that bypass kernel admission.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Ty(TyRepr);
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum TyRepr {
-    Bool,
+/// The single syntax-row vocabulary shared by all arena representations and
+/// untrusted wire decoding.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Row {
+    BoolTy,
+    Bool(bool),
 }
 
-/// A portable HOL term handle.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Tm(TmRepr);
+/// A portable handle to a checked HOL type row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Ty {
+    index: i64,
+}
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum TmRepr {
-    Bool(bool),
+impl Ty {
+    #[must_use]
+    pub const fn index(self) -> i64 {
+        self.index
+    }
+}
+
+/// A portable handle to a checked HOL term row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Tm {
+    index: i64,
+}
+
+impl Tm {
+    #[must_use]
+    pub const fn index(self) -> i64 {
+        self.index
+    }
 }
 
 /// A portable fact with an explicit set of assumptions.
@@ -55,47 +68,188 @@ impl Fact {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum Entry {
-    Type(Ty),
-    Term(Tm),
-    #[allow(dead_code, reason = "proof rules are added in the next vertical slice")]
-    Fact(Fact),
+mod sealed {
+    pub trait Sealed {}
 }
 
-/// A dense arena whose admitted entries are assumed sound by [`Kernel`].
+/// A sealed common read boundary for arena representations.
 ///
-/// Fields and insertion primitives are private. This prevents callers from
-/// constructing an unchecked arena and wrapping it as a kernel.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct Arena {
-    entries: Vec<Entry>,
+/// This trait intentionally has no mutation capability. Concrete kernel
+/// representations expose specialized inherent operations instead.
+pub trait Arena: sealed::Sealed {
+    fn rows(&self) -> &[Row];
 }
 
-impl Arena {
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
-    #[must_use]
-    pub const fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    fn push(&mut self, entry: Entry) -> Result<Address, Error> {
-        let address = u64::try_from(self.entries.len()).map_err(|_| Error::ArenaFull)?;
-        self.entries.push(entry);
-        Ok(Address(address))
+impl<T: Arena + ?Sized> sealed::Sealed for Arc<T> {}
+impl<T: Arena + ?Sized> Arena for Arc<T> {
+    fn rows(&self) -> &[Row] {
+        (**self).rows()
     }
 }
 
-/// A semantic rejection. Rejection never yields a replacement arena.
+impl<T: Arena + ?Sized> sealed::Sealed for Rc<T> {}
+impl<T: Arena + ?Sized> Arena for Rc<T> {
+    fn rows(&self) -> &[Row] {
+        (**self).rows()
+    }
+}
+
+/// An owning wrapper over an arena admitted as sound.
+///
+/// Fields and constructors from arbitrary arenas are private: decoding a bare
+/// arena is not sufficient to manufacture this witness.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Kernel<A: Arena> {
+    arena: A,
+}
+
+impl<A: Arena> Kernel<A> {
+    #[must_use]
+    pub const fn arena(&self) -> &A {
+        &self.arena
+    }
+
+    #[must_use]
+    pub fn into_arena(self) -> A {
+        self.arena
+    }
+}
+
+/// A representation-erased arena value for read-only dispatch.
+///
+/// Rust cannot give this enum the name `Arena` because the sealed public trait
+/// already occupies that type-namespace name.
+#[non_exhaustive]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AnyArena {
+    Dense(dense::Arena),
+}
+
+impl sealed::Sealed for AnyArena {}
+impl Arena for AnyArena {
+    fn rows(&self) -> &[Row] {
+        match self {
+            Self::Dense(arena) => arena.rows(),
+        }
+    }
+}
+
+/// Dense root-arena storage and its specialized kernel operations.
+pub mod dense {
+    use super::{Arena as ArenaTrait, Error, Kernel as GenericKernel, Row, Tm, Ty, sealed};
+
+    /// A dense signed-offset arena.
+    ///
+    /// This value alone is untrusted. Only a `Kernel<Arena>` is an
+    /// assumed-sound kernel witness.
+    #[derive(Clone, Debug, Default, Eq, PartialEq)]
+    pub struct Arena {
+        pub(crate) offset: i64,
+        pub(crate) rows: Vec<Row>,
+    }
+
+    impl Arena {
+        #[must_use]
+        pub const fn offset(&self) -> i64 {
+            self.offset
+        }
+
+        #[must_use]
+        pub const fn is_empty(&self) -> bool {
+            self.rows.is_empty()
+        }
+
+        #[must_use]
+        pub const fn len(&self) -> usize {
+            self.rows.len()
+        }
+
+        #[must_use]
+        pub fn rows(&self) -> &[Row] {
+            &self.rows
+        }
+
+        pub(crate) fn from_untrusted(offset: i64, rows: Vec<Row>) -> Self {
+            Self { offset, rows }
+        }
+
+        fn push(&mut self, row: Row) -> Result<i64, Error> {
+            let length = i64::try_from(self.rows.len()).map_err(|_| Error::ArenaFull)?;
+            let index = self
+                .offset
+                .checked_add(length)
+                .ok_or(Error::IndexOverflow)?;
+            self.rows.push(row);
+            Ok(index)
+        }
+    }
+
+    impl sealed::Sealed for Arena {}
+    impl ArenaTrait for Arena {
+        fn rows(&self) -> &[Row] {
+            self.rows()
+        }
+    }
+
+    /// The dense kernel specialization.
+    pub type Kernel = GenericKernel<Arena>;
+
+    impl GenericKernel<Arena> {
+        /// Constructs the empty, sound dense arena.
+        ///
+        /// Lean: `Nucleus.Hol.Ethane.Kernel.empty` and
+        /// `Nucleus.Hol.Ethane.Kernel.empty_sound`.
+        #[must_use]
+        pub const fn empty() -> Self {
+            Self {
+                arena: Arena {
+                    offset: 0,
+                    rows: Vec::new(),
+                },
+            }
+        }
+
+        /// Appends the Boolean type. Repeated calls append repeated rows;
+        /// caching and deduplication belong outside the kernel.
+        ///
+        /// Lean: `Nucleus.Hol.Ethane.Kernel.boolTy` and
+        /// `Nucleus.Hol.Ethane.Kernel.boolTy_sound`.
+        ///
+        /// # Errors
+        ///
+        /// Returns an error if the signed dense index cannot be represented.
+        pub fn bool_ty(&mut self) -> Result<Ty, Error> {
+            let index = self.arena.push(Row::BoolTy)?;
+            Ok(Ty { index })
+        }
+
+        /// Appends a Boolean constant. Repeated calls append repeated rows.
+        ///
+        /// Lean: `Nucleus.Hol.Ethane.Kernel.bool` and
+        /// `Nucleus.Hol.Ethane.Kernel.bool_sound`.
+        ///
+        /// # Errors
+        ///
+        /// Returns an error if the signed dense index cannot be represented.
+        pub fn bool_const(&mut self, value: bool) -> Result<Tm, Error> {
+            let index = self.arena.push(Row::Bool(value))?;
+            Ok(Tm { index })
+        }
+    }
+
+    impl Default for GenericKernel<Arena> {
+        fn default() -> Self {
+            Self::empty()
+        }
+    }
+}
+
+/// A semantic rejection. Rejection leaves the kernel unchanged.
 #[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Error {
-    /// The dense address space has been exhausted.
     ArenaFull,
+    IndexOverflow,
 }
 
 impl std::fmt::Display for Error {
@@ -106,132 +260,43 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-/// An owning wrapper over an arena admitted as sound.
-///
-/// The ideal interface is persistent: operations borrow one kernel and return
-/// a new one. Mutable methods are equivalent implementation conveniences.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct Kernel {
-    arena: Arena,
-}
-
-impl Kernel {
-    /// Constructs the empty, sound arena.
-    ///
-    /// Lean: `Nucleus.Hol.Ethane.Kernel.empty` and
-    /// `Nucleus.Hol.Ethane.Kernel.empty_sound`.
-    #[must_use]
-    pub const fn empty() -> Self {
-        Self {
-            arena: Arena {
-                entries: Vec::new(),
-            },
-        }
-    }
-
-    #[must_use]
-    pub const fn arena(&self) -> &Arena {
-        &self.arena
-    }
-
-    #[must_use]
-    pub fn into_arena(self) -> Arena {
-        self.arena
-    }
-
-    /// Adds the Boolean type and returns the replacement kernel.
-    ///
-    /// Lean: `Nucleus.Hol.Ethane.Kernel.boolTy` and
-    /// `Nucleus.Hol.Ethane.Kernel.boolTy_sound`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::ArenaFull`] if no dense address remains.
-    pub fn bool_ty(&self) -> Result<(Self, Ty), Error> {
-        let mut next = self.clone();
-        let ty = Ty(TyRepr::Bool);
-        next.arena.push(Entry::Type(ty.clone()))?;
-        Ok((next, ty))
-    }
-
-    /// Adds a Boolean constant and returns the replacement kernel.
-    ///
-    /// Lean: `Nucleus.Hol.Ethane.Kernel.bool` and
-    /// `Nucleus.Hol.Ethane.Kernel.bool_sound`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::ArenaFull`] if no dense address remains.
-    pub fn bool_const(&self, value: bool) -> Result<(Self, Tm), Error> {
-        let mut next = self.clone();
-        let term = Tm(TmRepr::Bool(value));
-        next.arena.push(Entry::Term(term.clone()))?;
-        Ok((next, term))
-    }
-
-    /// In-place optimization of [`Kernel::bool_ty`].
-    ///
-    /// On success it has exactly the same arena and output as the persistent
-    /// operation; on rejection `self` is unchanged.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::ArenaFull`] if no dense address remains.
-    pub fn bool_ty_mut(&mut self) -> Result<Ty, Error> {
-        let ty = Ty(TyRepr::Bool);
-        self.arena.push(Entry::Type(ty.clone()))?;
-        Ok(ty)
-    }
-
-    /// In-place optimization of [`Kernel::bool_const`].
-    ///
-    /// On rejection `self` is unchanged.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::ArenaFull`] if no dense address remains.
-    pub fn bool_const_mut(&mut self, value: bool) -> Result<Tm, Error> {
-        let term = Tm(TmRepr::Bool(value));
-        self.arena.push(Entry::Term(term.clone()))?;
-        Ok(term)
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::Kernel;
+    use std::rc::Rc;
+    use std::sync::Arc;
+
+    use super::{Row, dense};
 
     #[test]
-    fn persistent_operations_leave_the_old_kernel_available() {
-        let old = Kernel::empty();
-        let (with_type, _bool_ty) = old.bool_ty().unwrap();
-        let (with_true, _true_term) = with_type.bool_const(true).unwrap();
+    fn dense_operations_append_and_duplicate() {
+        let mut kernel = dense::Kernel::empty();
+        let first_type = kernel.bool_ty().unwrap();
+        let second_type = kernel.bool_ty().unwrap();
+        let false_term = kernel.bool_const(false).unwrap();
+        let duplicate = kernel.bool_const(false).unwrap();
 
-        assert!(old.arena().is_empty());
-        assert_eq!(with_type.arena().len(), 1);
-        assert_eq!(with_true.arena().len(), 2);
+        assert_eq!((first_type.index(), second_type.index()), (0, 1));
+        assert_eq!((false_term.index(), duplicate.index()), (2, 3));
+        assert_eq!(
+            kernel.arena().rows(),
+            &[Row::BoolTy, Row::BoolTy, Row::Bool(false), Row::Bool(false)]
+        );
     }
 
     #[test]
-    fn mutable_boolean_type_matches_persistent_operation() {
-        let initial = Kernel::empty();
-        let (persistent, persistent_ty) = initial.bool_ty().unwrap();
-        let mut optimized = initial;
-        let optimized_ty = optimized.bool_ty_mut().unwrap();
+    fn arc_and_rc_are_read_only_arena_boundaries() {
+        fn rows<A: super::Arena>(arena: &A) -> &[Row] {
+            arena.rows()
+        }
 
-        assert_eq!(optimized, persistent);
-        assert_eq!(optimized_ty, persistent_ty);
-    }
+        let mut kernel = dense::Kernel::empty();
+        kernel.bool_ty().unwrap();
+        let arena = kernel.into_arena();
+        let arc = Arc::new(arena.clone());
+        let rc = Rc::new(arena);
 
-    #[test]
-    fn mutable_boolean_matches_persistent_operation() {
-        let (initial, _bool_ty) = Kernel::empty().bool_ty().unwrap();
-        let (persistent, persistent_term) = initial.bool_const(false).unwrap();
-        let mut optimized = initial;
-        let optimized_term = optimized.bool_const_mut(false).unwrap();
-
-        assert_eq!(optimized, persistent);
-        assert_eq!(optimized_term, persistent_term);
+        assert_eq!(rows(&arc), &[Row::BoolTy]);
+        assert_eq!(rows(&rc), &[Row::BoolTy]);
     }
 }
 
