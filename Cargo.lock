@@ -460,6 +460,7 @@ dependencies = [
 name = "covalence-logic-hol"
 version = "0.0.0"
 dependencies = [
+ "covalence-data-cbor",
  "serde_json",
 ]
 

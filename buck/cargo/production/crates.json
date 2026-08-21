@@ -662,6 +662,13 @@
       ]
     },
     {
+      "source": "workspace#covalence-logic-hol@0.0.0",
+      "target": "workspace#covalence-data-cbor@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "workspace#covalence-logic-lrat@0.0.0",
       "target": "workspace#covalence-logic-sat@0.0.0",
       "kinds": [
