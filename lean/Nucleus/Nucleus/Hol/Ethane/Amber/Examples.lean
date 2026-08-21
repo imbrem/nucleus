@@ -1,5 +1,5 @@
 import Nucleus.Hol.Ethane.Amber.Arena.Dense.Cbor
-import Nucleus.Hol.Ethane.Amber.Segment.Cbor
+import Nucleus.Hol.Ethane.Amber.Segment
 
 /-! # Executable Amber specification examples -/
 
@@ -37,17 +37,29 @@ example :
   simp [parented, Cbor.FitsDense, Cbor.FitsParent, Cbor.FitsView,
     Row.view, Arena.Row.children]
 
-private def segmented : Segmented.Syntax O256 Nucleus.HolE.EmptySig UInt64 :=
-  ⟨[⟨zeroKey, 3, 2⟩], [.bool false]⟩
+private def segmentRange : RangeMap.Range O256 :=
+  ⟨-3, 2, -7, zeroKey⟩
 
-/-- Segment slices have an independent, exact CBOR representation. -/
-example :
-    Cbor.decodeSegmentedSyntax? Arena.Cbor.uint64Names Arena.Cbor.emptySymbols
-      (Cbor.encodeSegmentedSyntax Arena.Cbor.uint64Names Arena.Cbor.emptySymbols
-        segmented) = some segmented := by
-  apply Cbor.decodeSegmentedSyntax?_encode
-  simp [segmented, Cbor.FitsSegmented, Cbor.FitsSegment, Cbor.FitsView,
-    Row.view, Arena.Row.children]
+private def segment : Arena.Segment.Syntax O256 Nucleus.HolE.EmptySig UInt64 :=
+  ⟨RangeMap.singleton segmentRange.start segmentRange.length segmentRange.offset
+      segmentRange.target (by simp [segmentRange]),
+    1, [.bool false]⟩
+
+/-- Signed destination and source coordinates are preserved by segment lookup. -/
+example : segment.sourceAt? (-2) = some (zeroKey, -6) := by
+  have member : segmentRange ∈ segment.imports.ranges := by
+    simp [segment, segmentRange, RangeMap.singleton]
+  have within : 1 < segmentRange.length := by simp [segmentRange]
+  have found := RangeMap.lookup?_start_add (ranges := segment.imports)
+    member within
+  have lookup : segment.imports.lookup? (-2) = some {
+      target := zeroKey
+      sourceIndex := -6
+      localOffset := 1
+    } := by
+    simpa [segmentRange] using found
+  simp only [Arena.Segment.sourceAt?, Arena.Segment.importAt?, lookup,
+    Option.map_some]
 
 /-- The array-backed Rust model uses signed indices by default. -/
 example :
