@@ -4,38 +4,46 @@ import Nucleus.RangeMap
 
 namespace Nucleus.RangeMap.Examples
 
-def sample : RangeMap String :=
-  (ofList?
-    [{ start := 2, length := 3, target := "left" },
-     { start := 8, length := 2, target := "right" }]).get (by
-      simp [Valid, Range.stop])
+def negative : RangeMap String :=
+  singleton (-3) 2 40 "negative" (by decide)
 
-example : sample.lookupWithOffset? 3 = some ("left", 1) := by
+example : negative.lookup? (-3) = some {
+    target := "negative", sourceIndex := 40, localOffset := 0 } := by
   decide
 
-example : sample.lookup? 6 = none := by
+example : negative.lookup? (-2) = some {
+    target := "negative", sourceIndex := 41, localOffset := 1 } := by
   decide
 
-def shifted : RangeMap Nat :=
-  singleton 10 4 20 (by decide)
-
-example : shifted.natOffsetMap.lookup? 12 = some 22 := by
+example : negative.lookup? (-1) = none := by
   decide
 
-example : shifted.lookupIntWithOffset? (-1) = none := rfl
+def crossingZero : RangeMap String :=
+  singleton (-3) 8 10 "crossing" (by decide)
 
-example : shifted.natOffsetMapOnInt.lookup? 12 = some 22 := by
+example : crossingZero.lookup? 4 = some {
+    target := "crossing", sourceIndex := 17, localOffset := 7 } := by
   decide
 
-example : shifted.natOffsetMap.NoDuplicates := by
-  rw [natOffsetMap, noDuplicates_toOffsetMap_iff]
-  intro left right leftMember rightMember leftOffset rightOffset
-    leftWithin rightWithin equality
-  simp only [shifted, singleton, List.mem_cons, List.not_mem_nil, or_false] at leftMember
-  simp only [shifted, singleton, List.mem_cons, List.not_mem_nil, or_false] at rightMember
-  subst left
-  subst right
-  change 20 + leftOffset = 20 + rightOffset at equality
-  omega
+def positive : RangeMap String :=
+  singleton 2 5 (-10) "positive" (by decide)
+
+example : positive.lookup? 6 = some {
+    target := "positive", sourceIndex := -6, localOffset := 4 } := by
+  decide
+
+def overlapping : Raw String where
+  ranges :=
+    [{ start := -3, length := 4, offset := 10, target := "first" },
+     { start := -1, length := 5, offset := 20, target := "second" }]
+
+example : overlapping.normalize.ranges =
+    [{ start := -3, length := 4, offset := 10, target := "first" },
+     { start := 1, length := 3, offset := 22, target := "second" }] := by
+  decide
+
+example : overlapping.normalize.lookup? 2 = some {
+    target := "second", sourceIndex := 23, localOffset := 1 } := by
+  decide
 
 end Nucleus.RangeMap.Examples
