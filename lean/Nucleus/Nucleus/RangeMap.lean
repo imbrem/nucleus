@@ -614,6 +614,10 @@ def lookupNat? (ranges : RangeMap α) (index : Nat) : Option (Hit α) :=
 def MapsTo (ranges : RangeMap α) (index : Int) (hit : Hit α) : Prop :=
   ∃ range ∈ ranges.ranges, range.Contains index ∧ hit = range.hit index
 
+/-- Whether some row covers an index. -/
+def Contains (ranges : RangeMap α) (index : Int) : Prop :=
+  ∃ hit, ranges.MapsTo index hit
+
 private theorem lookupRanges?_some_exists
     {raw : List (Range α)} {index : Int} {hit : Hit α}
     (found : lookupRanges? raw index = some hit) :
@@ -659,6 +663,24 @@ private theorem lookupRanges?_of_mem
   · exact lookupRanges?_some_exists
   · rintro ⟨range, member, contains, rfl⟩
     exact lookupRanges?_of_mem ranges.valid member contains
+
+theorem mapsTo_unique {ranges : RangeMap α} {index : Int} {left right : Hit α}
+    (leftMaps : ranges.MapsTo index left) (rightMaps : ranges.MapsTo index right) :
+    left = right := by
+  apply Option.some.inj
+  rw [← lookup?_eq_some_iff.mpr leftMaps, ← lookup?_eq_some_iff.mpr rightMaps]
+
+@[simp] theorem contains_iff_lookup_isSome {ranges : RangeMap α} {index : Int} :
+    ranges.Contains index ↔ (ranges.lookup? index).isSome := by
+  simp only [Contains, Option.isSome_iff_exists, lookup?_eq_some_iff]
+
+@[simp] theorem contains_iff_exists_range {ranges : RangeMap α} {index : Int} :
+    ranges.Contains index ↔ ∃ range ∈ ranges.ranges, range.Contains index := by
+  constructor
+  · rintro ⟨hit, range, member, contains, _⟩
+    exact ⟨range, member, contains⟩
+  · rintro ⟨range, member, contains⟩
+    exact ⟨range.hit index, range, member, contains, rfl⟩
 
 @[simp] theorem lookup?_start_add
     {ranges : RangeMap α} {range : Range α} (member : range ∈ ranges.ranges)
