@@ -3,6 +3,7 @@
 use std::fmt;
 use std::str::FromStr;
 
+use covalence_lib_error::snafu::Snafu;
 use covalence_lib_hash::O256;
 
 /// A value: what the reader produces and what evaluation returns.
@@ -108,24 +109,16 @@ impl fmt::Display for Value {
 }
 
 /// Input which is not an s-expression.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
 pub enum ReadError {
     /// A `)` with no `(`.
+    #[snafu(display("unexpected )"))]
     UnexpectedClose,
     /// End of input inside a list, string, or escape.
+    #[snafu(display("unterminated expression"))]
     Unterminated,
 }
-
-impl fmt::Display for ReadError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::UnexpectedClose => formatter.write_str("unexpected )"),
-            Self::Unterminated => formatter.write_str("unterminated expression"),
-        }
-    }
-}
-
-impl std::error::Error for ReadError {}
 
 /// Reads every form in `input`.
 ///

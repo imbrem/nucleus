@@ -293,21 +293,6 @@
       ]
     },
     {
-      "id": "workspace#covalence-lib-parse@0.0.0",
-      "name": "covalence-lib-parse",
-      "version": "0.0.0",
-      "path": "crates/lib/parse",
-      "category": "tcb",
-      "targets": [
-        {
-          "name": "covalence_lib_parse",
-          "kinds": [
-            "lib"
-          ]
-        }
-      ]
-    },
-    {
       "id": "workspace#covalence-lib-python@0.0.0",
       "name": "covalence-lib-python",
       "version": "0.0.0",
@@ -384,39 +369,6 @@
           "name": "covalence_logic_lrat",
           "kinds": [
             "lib"
-          ]
-        }
-      ]
-    },
-    {
-      "id": "workspace#covalence-logic-metamath@0.0.0",
-      "name": "covalence-logic-metamath",
-      "version": "0.0.0",
-      "path": "crates/logic/metamath",
-      "category": "tcb",
-      "targets": [
-        {
-          "name": "corpus",
-          "kinds": [
-            "test"
-          ]
-        },
-        {
-          "name": "covalence_logic_metamath",
-          "kinds": [
-            "lib"
-          ]
-        },
-        {
-          "name": "parse_robustness",
-          "kinds": [
-            "test"
-          ]
-        },
-        {
-          "name": "soundness",
-          "kinds": [
-            "test"
           ]
         }
       ]
@@ -521,6 +473,13 @@
     },
     {
       "source": "workspace#covalence-bin-cas-shell@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-bin-cas-shell@0.0.0",
       "target": "workspace#covalence-lib-sqlite@0.0.0",
       "kinds": [
         "normal"
@@ -619,6 +578,13 @@
     },
     {
       "source": "workspace#covalence-data-cas@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-cas@0.0.0",
       "target": "workspace#covalence-lib-hash@0.0.0",
       "kinds": [
         "normal"
@@ -634,6 +600,13 @@
     {
       "source": "workspace#covalence-data-num@0.0.0",
       "target": "workspace#covalence-lib-bigint@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-num@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
       "kinds": [
         "normal"
       ]
@@ -668,13 +641,6 @@
     },
     {
       "source": "workspace#covalence-ffi-python@0.0.0",
-      "target": "workspace#covalence-logic-metamath@0.0.0",
-      "kinds": [
-        "normal"
-      ]
-    },
-    {
-      "source": "workspace#covalence-ffi-python@0.0.0",
       "target": "workspace#covalence-logic-sat@0.0.0",
       "kinds": [
         "normal"
@@ -695,6 +661,20 @@
       ]
     },
     {
+      "source": "workspace#covalence-lib-sqlite@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-lrat@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "workspace#covalence-logic-lrat@0.0.0",
       "target": "workspace#covalence-logic-sat@0.0.0",
       "kinds": [
@@ -702,8 +682,8 @@
       ]
     },
     {
-      "source": "workspace#covalence-logic-metamath@0.0.0",
-      "target": "workspace#covalence-lib-parse@0.0.0",
+      "source": "workspace#covalence-logic-sat@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
       "kinds": [
         "normal"
       ]
@@ -774,6 +754,13 @@
     {
       "source": "workspace#covalence-repl@0.0.0",
       "target": "workspace#covalence-data-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-repl@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
       "kinds": [
         "normal"
       ]

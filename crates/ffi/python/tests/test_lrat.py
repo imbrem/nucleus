@@ -28,7 +28,7 @@ def test_rup_refutes_a_unit_contradiction() -> None:
 def test_rejection_is_transactional() -> None:
     kernel = Kernel(Formula([Clause([1]), Clause([-1])]))
 
-    with pytest.raises(LratError, match="UnknownClause"):
+    with pytest.raises(LratError, match="clause 99, which is not live"):
         kernel.learn_rup(3, Clause([]), [99])
 
     assert kernel.high_water == 2
@@ -43,7 +43,7 @@ def test_forget_preserves_the_high_water_mark() -> None:
 
     assert kernel.clause(3) is None
     assert kernel.high_water == 3
-    with pytest.raises(LratError, match="NonFreshId"):
+    with pytest.raises(LratError, match="clause identifier 3 is not fresh"):
         kernel.learn_rup(3, Clause([1]), [1])
 
 
@@ -86,7 +86,7 @@ def test_parsers_expose_typed_steps() -> None:
 def test_verify_is_transactional_over_the_complete_proof() -> None:
     kernel = Kernel(Formula([Clause([1]), Clause([-1])]))
 
-    with pytest.raises(LratError, match="NoRefutation"):
+    with pytest.raises(LratError, match="does not derive the empty clause"):
         kernel.verify(iter([Step.rup(3, Clause([1]), [1])]))
 
     assert kernel.high_water == 2

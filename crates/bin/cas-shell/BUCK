@@ -102,6 +102,7 @@ rust_library(
     srcs = _RUST_SOURCES,
     tests = [":covalence_bin_cas_shell-unit-test"],
     named_deps = {
+        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
         "libsqlite3_sys": "nucleus//buck/cargo/production:libsqlite3-sys-0.38.1",
     },
@@ -136,6 +137,7 @@ rust_test(
     edition = "2024",
     srcs = _RUST_SOURCES,
     named_deps = {
+        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
         "libsqlite3_sys": "nucleus//buck/cargo/production:libsqlite3-sys-0.38.1",
     },

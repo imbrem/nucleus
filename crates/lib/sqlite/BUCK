@@ -115,6 +115,7 @@ rust_library(
     tests = [":covalence_lib_sqlite-unit-test"],
     named_deps = {
         "bitflags": "nucleus//buck/cargo/production:bitflags-2.13.1",
+        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "indexmap": "nucleus//buck/cargo/production:indexmap-2.14.0",
         "libsqlite3_sys": "nucleus//buck/cargo/production:libsqlite3-sys-0.38.1",
     },
@@ -155,6 +156,7 @@ rust_test(
     ],
     named_deps = {
         "bitflags": "nucleus//buck/cargo/production:bitflags-2.13.1",
+        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "indexmap": "nucleus//buck/cargo/production:indexmap-2.14.0",
         "libsqlite3_sys": "nucleus//buck/cargo/production:libsqlite3-sys-0.38.1",
     },

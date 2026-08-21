@@ -1,9 +1,11 @@
 #![allow(unsafe_code)]
 //! `SQLite` result codes and errors.
 
-use std::error;
+use std::borrow::Cow;
 use std::ffi::{CStr, c_int};
 use std::fmt;
+
+use covalence_lib_error::snafu::Snafu;
 
 use crate::ffi;
 
@@ -70,17 +72,34 @@ impl ResultCode {
 
 impl fmt::Display for ResultCode {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{} ({})", describe(*self, None), self.0)
+    }
+}
+
+/// The message captured with a failure, or `SQLite`'s own static description
+/// of the result code when nothing more specific was available.
+///
+/// Shared by [`ResultCode`] and [`Error`] so both render a failure the same
+/// way: the most specific text there is, followed by the raw code.
+fn describe(code: ResultCode, message: Option<&str>) -> Cow<'_, str> {
+    match message {
+        Some(message) => Cow::Borrowed(message),
         // SAFETY: `sqlite3_errstr` accepts any integer and returns a pointer to
         // a NUL-terminated string held in static storage; it is never freed and
         // is not invalidated by other API calls.
-        let text = unsafe { CStr::from_ptr(ffi::sqlite3_errstr(self.0)) };
-        write!(formatter, "{} ({})", text.to_string_lossy(), self.0)
+        None => unsafe { CStr::from_ptr(ffi::sqlite3_errstr(code.0)) }.to_string_lossy(),
     }
 }
 
 /// An `SQLite` failure: a result code and, when one was available, the
 /// connection's error message at the time of the failure.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+// SNAFU names the context selector after the type with `Error` trimmed, which
+// leaves nothing to name it with here. The selector stays private either way:
+// the constructors below are how an `SQLite` failure is built.
+#[snafu(context(suffix(SqliteSnafu)))]
+#[snafu(display("{} ({})", describe(*code, message.as_deref()), code.get()))]
 pub struct Error {
     code: ResultCode,
     message: Option<Box<str>>,
@@ -117,17 +136,6 @@ impl Error {
         self.message.as_deref()
     }
 }
-
-impl fmt::Display for Error {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.message {
-            Some(message) => write!(formatter, "{message} ({})", self.code.get()),
-            None => self.code.fmt(formatter),
-        }
-    }
-}
-
-impl error::Error for Error {}
 
 #[cfg(test)]
 mod tests {

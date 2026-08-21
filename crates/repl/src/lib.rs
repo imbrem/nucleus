@@ -10,6 +10,7 @@ pub use sexpr::Value;
 use std::sync::Arc;
 
 use covalence_data_cas::{AdmissionError, CasStats, MemoryCas};
+use covalence_lib_error::snafu::Snafu;
 use covalence_lib_hash::O256;
 use covalence_lib_sqlite::Connection;
 use covalence_lib_sqlite::vfs::{
@@ -42,64 +43,45 @@ impl std::fmt::Display for ConnectionId {
 }
 
 /// What a [`Repl`] can fail to do.
-#[derive(Debug)]
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
 pub enum ReplError {
     /// The content-addressed mount could not be registered with `SQLite`.
-    Mount(RegisterError),
+    #[snafu(display("could not mount the store: {source}"), context(false))]
+    Mount {
+        /// Why registration was refused.
+        source: RegisterError,
+    },
     /// Bytes exceeded the store's admission limit.
-    Admission(AdmissionError),
+    #[snafu(transparent)]
+    Admission {
+        /// The limit and the length that exceeded it.
+        source: AdmissionError,
+    },
     /// `SQLite` refused an operation.
-    Sqlite(covalence_lib_sqlite::Error),
+    #[snafu(transparent)]
+    Sqlite {
+        /// The result code and message `SQLite` reported.
+        source: covalence_lib_sqlite::Error,
+    },
     /// No connection carries this handle.
-    UnknownConnection(ConnectionId),
+    #[snafu(display("no connection {id}"))]
+    UnknownConnection {
+        /// The handle that resolved to nothing.
+        id: ConnectionId,
+    },
     /// An operation needing a selected connection ran with none selected.
+    #[snafu(display("no connection is selected"))]
     NoSelection,
     /// `SQLite` would not report which VFS backs a database.
-    VfsIdentity(VfsIdentityError),
+    #[snafu(transparent)]
+    VfsIdentity {
+        /// Why the pointer could not be read.
+        source: VfsIdentityError,
+    },
     /// `SQLite` did not use the requested mount.
+    #[snafu(display("database was not opened through the content-addressed mount"))]
     NotMounted,
-}
-
-impl std::fmt::Display for ReplError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Mount(error) => write!(formatter, "could not mount the store: {error}"),
-            Self::Admission(error) => write!(formatter, "{error}"),
-            Self::Sqlite(error) => write!(formatter, "{error}"),
-            Self::UnknownConnection(id) => write!(formatter, "no connection {id}"),
-            Self::NoSelection => formatter.write_str("no connection is selected"),
-            Self::VfsIdentity(error) => write!(formatter, "{error}"),
-            Self::NotMounted => {
-                formatter.write_str("database was not opened through the content-addressed mount")
-            }
-        }
-    }
-}
-
-impl std::error::Error for ReplError {}
-
-impl From<RegisterError> for ReplError {
-    fn from(error: RegisterError) -> Self {
-        Self::Mount(error)
-    }
-}
-
-impl From<AdmissionError> for ReplError {
-    fn from(error: AdmissionError) -> Self {
-        Self::Admission(error)
-    }
-}
-
-impl From<covalence_lib_sqlite::Error> for ReplError {
-    fn from(error: covalence_lib_sqlite::Error) -> Self {
-        Self::Sqlite(error)
-    }
-}
-
-impl From<VfsIdentityError> for ReplError {
-    fn from(error: VfsIdentityError) -> Self {
-        Self::VfsIdentity(error)
-    }
 }
 
 /// One connection and the description under which it was opened.
@@ -341,7 +323,7 @@ impl Repl {
             .connections
             .iter()
             .position(|entry| entry.id == id)
-            .ok_or(ReplError::UnknownConnection(id))?;
+            .ok_or(ReplError::UnknownConnection { id })?;
         self.connections.remove(index);
         if self.selected == Some(id) {
             self.selected = self.connections.last().map(|entry| entry.id);
@@ -365,7 +347,7 @@ impl Repl {
         self.connections
             .iter()
             .find(|entry| entry.id == id)
-            .ok_or(ReplError::UnknownConnection(id))
+            .ok_or(ReplError::UnknownConnection { id })
     }
 }
 
@@ -500,7 +482,7 @@ mod tests {
         let mut repl = repl();
         assert!(matches!(
             repl.close(ConnectionId(99)),
-            Err(ReplError::UnknownConnection(_))
+            Err(ReplError::UnknownConnection { .. })
         ));
     }
 

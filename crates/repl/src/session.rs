@@ -3,6 +3,7 @@
 //! I/O is returned as a [`Response`] for the terminal or browser to perform.
 
 use covalence_data_cas::MemoryCas;
+use covalence_lib_error::snafu::Snafu;
 use covalence_lib_hash::{O256, o256};
 
 use crate::sexpr::{ReadError, Value, read};
@@ -66,23 +67,57 @@ impl From<O256> for Value {
 }
 
 /// Failure to evaluate a form.
-#[derive(Debug)]
+#[derive(Debug, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
 pub enum SessionError {
     /// The input is not an s-expression.
-    Read(ReadError),
+    #[snafu(transparent)]
+    Read {
+        /// Where the reader gave up.
+        source: ReadError,
+    },
     /// No procedure by this name.
-    Unbound(String),
+    #[snafu(display("unbound: {name}; try (help)"))]
+    Unbound {
+        /// The operator that resolved to nothing.
+        name: String,
+    },
     /// A form was applied to the wrong arguments.
-    Usage(&'static str),
+    #[snafu(display("usage: {usage}"))]
+    Usage {
+        /// How the form is called.
+        usage: &'static str,
+    },
     /// The argument is not a content address.
-    NotAnAddress(Value),
+    #[snafu(display("{value} is not an address"))]
+    NotAnAddress {
+        /// The argument that was supplied instead.
+        value: Value,
+    },
     /// Building a sample database failed.
-    Sqlite(covalence_lib_sqlite::Error),
+    #[snafu(transparent)]
+    Sqlite {
+        /// The result code and message `SQLite` reported.
+        source: covalence_lib_sqlite::Error,
+    },
     /// No kernel carries this handle.
-    UnknownKernel(i64),
+    #[snafu(display("no kernel {id}"))]
+    UnknownKernel {
+        /// The handle that resolved to nothing.
+        id: i64,
+    },
     /// The command needs a kernel of a different kind.
-    WrongKernel(&'static str),
+    #[snafu(display("{message}"))]
+    WrongKernel {
+        /// What the command needed instead.
+        message: &'static str,
+    },
     /// Bytes did not hash to the address they were asked for.
+    #[snafu(display(
+        "content does not match its address: asked for {}, received {}",
+        expected.hex(),
+        actual.hex()
+    ))]
     NotWhatWasAskedFor {
         /// The address requested.
         expected: O256,
@@ -90,48 +125,11 @@ pub enum SessionError {
         actual: O256,
     },
     /// The store or a connection failed.
-    Repl(ReplError),
-}
-
-impl std::fmt::Display for SessionError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Read(error) => write!(formatter, "{error}"),
-            Self::Unbound(name) => write!(formatter, "unbound: {name}; try (help)"),
-            Self::Usage(usage) => write!(formatter, "usage: {usage}"),
-            Self::NotAnAddress(value) => write!(formatter, "{value} is not an address"),
-            Self::Sqlite(error) => write!(formatter, "{error}"),
-            Self::UnknownKernel(id) => write!(formatter, "no kernel {id}"),
-            Self::WrongKernel(message) => formatter.write_str(message),
-            Self::NotWhatWasAskedFor { expected, actual } => write!(
-                formatter,
-                "content does not match its address: asked for {}, received {}",
-                expected.hex(),
-                actual.hex()
-            ),
-            Self::Repl(error) => write!(formatter, "{error}"),
-        }
-    }
-}
-
-impl std::error::Error for SessionError {}
-
-impl From<ReplError> for SessionError {
-    fn from(error: ReplError) -> Self {
-        Self::Repl(error)
-    }
-}
-
-impl From<covalence_lib_sqlite::Error> for SessionError {
-    fn from(error: covalence_lib_sqlite::Error) -> Self {
-        Self::Sqlite(error)
-    }
-}
-
-impl From<ReadError> for SessionError {
-    fn from(error: ReadError) -> Self {
-        Self::Read(error)
-    }
+    #[snafu(transparent)]
+    Repl {
+        /// What the REPL could not do.
+        source: ReplError,
+    },
 }
 
 /// What `(help)` returns.
@@ -346,12 +344,16 @@ impl Session {
             unreachable!("Value::list collapses the empty list to Nil, so List is never empty")
         });
         let Some(name) = operator.as_text() else {
-            return Err(SessionError::Unbound(operator.to_string()));
+            return Err(SessionError::Unbound {
+                name: operator.to_string(),
+            });
         };
         if name == "quote" {
             return match arguments {
                 [quoted] => Ok(Response::Value(quoted.clone())),
-                _ => Err(SessionError::Usage("(quote FORM)")),
+                _ => Err(SessionError::Usage {
+                    usage: "(quote FORM)",
+                }),
             };
         }
         // Arguments evaluate before application, as in any applicative-order
@@ -390,7 +392,9 @@ impl Session {
             ("quit" | "exit", []) => Ok(Response::Quit),
             ("help", []) => Ok(Response::value(HELP.to_owned())),
             ("sqlite", _) => Ok(Response::Shell(self.shell_arguments(arguments)?)),
-            _ => Err(SessionError::Unbound(name.to_owned())),
+            _ => Err(SessionError::Unbound {
+                name: name.to_owned(),
+            }),
         }
     }
 
@@ -403,7 +407,9 @@ impl Session {
         Ok(Some(match (name, arguments) {
             ("put", [path]) => Response::ReadFile(
                 path.as_text()
-                    .ok_or(SessionError::Usage("(put \"PATH\")"))?
+                    .ok_or(SessionError::Usage {
+                        usage: "(put \"PATH\")",
+                    })?
                     .to_owned(),
             ),
             ("forget", [value]) => {
@@ -423,7 +429,9 @@ impl Session {
                     limit
                         .as_integer()
                         .and_then(|limit| usize::try_from(limit).ok())
-                        .ok_or(SessionError::Usage("(objects [N])"))?,
+                        .ok_or(SessionError::Usage {
+                            usage: "(objects [N])",
+                        })?,
                 ),
             ),
             ("samples", []) => Response::Value(self.samples()?),
@@ -442,11 +450,11 @@ impl Session {
             ("open", [value]) => {
                 let id = match value.as_address() {
                     Some(address) => self.repl.open_address(address)?,
-                    None => self.repl.open_uri(
-                        value
-                            .as_text()
-                            .ok_or(SessionError::Usage("(open ADDRESS)"))?,
-                    )?,
+                    None => self
+                        .repl
+                        .open_uri(value.as_text().ok_or(SessionError::Usage {
+                            usage: "(open ADDRESS)",
+                        })?)?,
                 };
                 Response::value(Value::Integer(count(id.get())))
             }
@@ -502,12 +510,12 @@ impl Session {
             }
             ("kernel", []) => Response::value(Value::Integer(count(self.selected))),
             ("kernel", [value]) => {
-                let id = value
-                    .as_integer()
-                    .ok_or(SessionError::Usage("(kernel N)"))?;
-                let index = usize::try_from(id).map_err(|_| SessionError::UnknownKernel(id))?;
+                let id = value.as_integer().ok_or(SessionError::Usage {
+                    usage: "(kernel N)",
+                })?;
+                let index = usize::try_from(id).map_err(|_| SessionError::UnknownKernel { id })?;
                 if index >= self.endpoints.len() {
-                    return Err(SessionError::UnknownKernel(id));
+                    return Err(SessionError::UnknownKernel { id });
                 }
                 self.selected = index;
                 Response::value(Value::Integer(id))
@@ -518,9 +526,9 @@ impl Session {
                     // Fetching from the store you are already inside is not a
                     // fetch; saying so is more use than silently succeeding.
                     Endpoint::Local => {
-                        return Err(SessionError::WrongKernel(
-                            "the local kernel is already here; (connect \"URL\") to a remote one first",
-                        ));
+                        return Err(SessionError::WrongKernel {
+                            message: "the local kernel is already here; (connect \"URL\") to a remote one first",
+                        });
                     }
                     Endpoint::Http(base) => Response::Fetch {
                         url: format!("{}/cas/{}", base.trim_end_matches('/'), address.hex()),
@@ -541,7 +549,9 @@ impl Session {
         let url = url
             .as_text()
             .filter(|url| url.starts_with("http://") || url.starts_with("https://"))
-            .ok_or(SessionError::Usage("(connect \"http://…\")"))?;
+            .ok_or(SessionError::Usage {
+                usage: "(connect \"http://…\")",
+            })?;
         let endpoint = Endpoint::Http(url.to_owned());
         let id = self
             .endpoints
@@ -608,7 +618,9 @@ impl Session {
                 None => argument
                     .as_text()
                     .map(str::to_owned)
-                    .ok_or(SessionError::Usage("(sqlite [ADDRESS | \"ARG\"]...)")),
+                    .ok_or(SessionError::Usage {
+                        usage: "(sqlite [ADDRESS | \"ARG\"]...)",
+                    }),
             })
             .collect()
     }
@@ -616,7 +628,9 @@ impl Session {
     fn address(value: &Value) -> Result<O256, SessionError> {
         value
             .as_address()
-            .ok_or_else(|| SessionError::NotAnAddress(value.clone()))
+            .ok_or_else(|| SessionError::NotAnAddress {
+                value: value.clone(),
+            })
     }
 
     fn connection(value: &Value) -> Result<ConnectionId, SessionError> {
@@ -624,7 +638,9 @@ impl Session {
             .as_integer()
             .and_then(|id| u64::try_from(id).ok())
             .map(ConnectionId::from_raw)
-            .ok_or(SessionError::Usage("(select N)"))
+            .ok_or(SessionError::Usage {
+                usage: "(select N)",
+            })
     }
 }
 

@@ -3,20 +3,16 @@
 pub mod cnf {
     //! Conjunctive normal form formulas.
 
+    use covalence_lib_error::snafu::{self, Snafu};
+
     /// A malformed CNF value.
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    #[derive(Clone, Copy, Debug, Eq, PartialEq, Snafu)]
+    #[snafu(crate_root(snafu))]
     pub enum Error {
         /// Zero and the minimum signed integer cannot represent literals.
+        #[snafu(display("CNF literal must be nonzero and negatable"))]
         InvalidLiteral,
     }
-
-    impl std::fmt::Display for Error {
-        fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            output.write_str("CNF literal must be nonzero and negatable")
-        }
-    }
-
-    impl std::error::Error for Error {}
 
     /// A signed, nonzero propositional literal.
     #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

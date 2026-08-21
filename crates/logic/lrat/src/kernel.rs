@@ -6,6 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use covalence_lib_error::snafu::{self, Snafu};
 use covalence_logic_sat::cnf::{Clause, Formula, Literal};
 
 /// A monotonically allocated clause identifier.
@@ -20,26 +21,38 @@ pub struct RatGroup {
 
 /// A semantic rejection category. Rejection never changes kernel state.
 #[non_exhaustive]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Snafu)]
+#[snafu(crate_root(snafu))]
 pub enum Error {
+    /// The identifier is not above the high-water mark, so it names a clause
+    /// the kernel has already allocated.
+    #[snafu(display("clause identifier {id} is not fresh"))]
     NonFreshId { id: ClauseId },
+    /// A hint or RAT group named an identifier with no live clause.
+    #[snafu(display("step {step} names clause {clause}, which is not live"))]
     UnknownClause { step: ClauseId, clause: ClauseId },
+    /// A hint neither closed the trail nor extended it by exactly one unit.
+    #[snafu(display("hint {clause} in step {step} is not unit under the trail"))]
     UselessHint { step: ClauseId, clause: ClauseId },
+    /// Reverse unit propagation ran out of hints without reaching a conflict.
+    #[snafu(display("step {step} does not propagate to a conflict"))]
     NoConflict { step: ClauseId },
+    /// The declared pivot is not the clause's first literal.
+    #[snafu(display("step {step} does not begin with its declared pivot"))]
     BadPivot { step: ClauseId },
+    /// A RAT group named a clause not containing the negated pivot.
+    #[snafu(display("clause {clause} in step {step} does not contain the negated pivot"))]
     WrongOpposingClause { step: ClauseId, clause: ClauseId },
+    /// Two RAT groups in one step named the same opposing clause.
+    #[snafu(display("step {step} gives more than one RAT group for clause {clause}"))]
     DuplicateRatGroup { step: ClauseId, clause: ClauseId },
+    /// A live clause containing the negated pivot has no RAT group.
+    #[snafu(display("step {step} gives no RAT group for clause {clause}"))]
     IncompleteRat { step: ClauseId, clause: ClauseId },
+    /// The proof ended without deriving the empty clause.
+    #[snafu(display("the proof does not derive the empty clause"))]
     NoRefutation,
 }
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(output, "typed LRAT rejection: {self:?}")
-    }
-}
-
-impl std::error::Error for Error {}
 
 /// The standalone clause kernel.
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -294,6 +294,7 @@ name = "covalence-bin-cas-shell"
 version = "0.0.0"
 dependencies = [
  "cc",
+ "covalence-lib-error",
  "covalence-lib-sqlite",
  "libsqlite3-sys",
  "wit-bindgen-rt",
@@ -339,6 +340,7 @@ name = "covalence-data-cas"
 version = "0.0.0"
 dependencies = [
  "bytes",
+ "covalence-lib-error",
  "covalence-lib-hash",
  "indexmap",
 ]
@@ -373,6 +375,7 @@ name = "covalence-data-num"
 version = "0.0.0"
 dependencies = [
  "covalence-lib-bigint",
+ "covalence-lib-error",
 ]
 
 [[package]]
@@ -474,6 +477,7 @@ name = "covalence-lib-sqlite"
 version = "0.0.0"
 dependencies = [
  "bitflags",
+ "covalence-lib-error",
  "indexmap",
  "libsqlite3-sys",
  "sqlite-wasm-rs",
@@ -483,6 +487,7 @@ dependencies = [
 name = "covalence-logic-lrat"
 version = "0.0.0"
 dependencies = [
+ "covalence-lib-error",
  "covalence-logic-sat",
 ]
 
@@ -499,6 +504,9 @@ dependencies = [
 [[package]]
 name = "covalence-logic-sat"
 version = "0.0.0"
+dependencies = [
+ "covalence-lib-error",
+]
 
 [[package]]
 name = "covalence-neutron"
@@ -535,6 +543,7 @@ version = "0.0.0"
 dependencies = [
  "bytes",
  "covalence-data-cas",
+ "covalence-lib-error",
  "covalence-lib-hash",
  "covalence-lib-sqlite",
  "covalence-neutron",
