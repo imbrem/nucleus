@@ -13,6 +13,7 @@ import Nucleus.Encoding.Base128
 import Nucleus.RangeMap
 import Nucleus.RangeMap.Examples
 import Nucleus.Lrat
+import Nucleus.Metamath
 import Nucleus.SExpr
 
 /-!
@@ -20,6 +21,6 @@ import Nucleus.SExpr
 
 The root of the Lean development. It currently exports the self-contained,
 locally nameless monomorphic HOL specification, its JSON tree and flat-array
-codecs, the scalar-parametric JSON trees, CBOR data models, and LRAT proof
-checker.
+codecs, the scalar-parametric JSON trees, CBOR data models, the LRAT proof
+checker, and the Metamath proof checker with its soundness proof.
 -/
