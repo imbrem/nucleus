@@ -7,6 +7,9 @@ license.workspace = true
 description = "Persistent arena interface for the Nucleus HOL kernel"
 publish = false
 
+[dependencies]
+covalence-lib-cbor = { path = "../../lib/cbor" }
+
 [dev-dependencies]
 serde_json = "1.0"
 

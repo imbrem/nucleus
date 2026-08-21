@@ -6,6 +6,8 @@
 //! arena is sound is ghost state in the formal model and is deliberately not
 //! stored here.
 
+pub mod wire;
+
 /// An address in the dense arena representation.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct Address(u64);
