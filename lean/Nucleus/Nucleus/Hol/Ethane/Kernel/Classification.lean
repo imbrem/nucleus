@@ -52,6 +52,7 @@ theorem bool_hasType {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
 /-- A checked semantic value retained by the implementation-facing classifier. -/
 inductive Checked {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
     {types : List Kind} (typeScope : TyScope types) where
+  | kind (value : Kind)
   | type (value : Ty Sig) (kinded : Nucleus.Hol.Ethane.Kinded typeScope value)
   | term (value : Tm Sig) (type : Ty Sig)
       (typed : Nucleus.Hol.Ethane.HasType typeScope .nil
@@ -59,12 +60,13 @@ inductive Checked {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
 
 namespace Checked
 
-/-- Forget typing evidence while retaining the exact elaborated syntax. -/
-def expression {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
+/-- Forget typing evidence while retaining the exact elaborated arena value. -/
+def value {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
     {types : List Kind} {typeScope : TyScope types} :
-    Checked (Sig := Sig) typeScope → Syn Sig
-  | .type value _ => value.erase
-  | .term value _ _ => value.erase
+    Checked (Sig := Sig) typeScope → Nucleus.Hol.Ethane.Arena.Value Sig Nat
+  | .kind value => .kind value
+  | .type value _ => .syntax value.erase
+  | .term value _ _ => .syntax value.erase
 
 end Checked
 
@@ -112,12 +114,13 @@ noncomputable def classify {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
     Nucleus.Hol.Ethane.Arena.Row Sig Nat Int →
       Option (Checked (Sig := Sig) typeScope)
   | .boolTy => some (.type .boolTy (boolTy_kinded typeScope))
+  | .kindStar => some (.kind .star)
   | .bool value => some (.term (.bool value) .boolTy (bool_hasType typeScope value))
   | .tmFv name typeReference =>
       match view typeReference with
       | some (.type type typeKinded) =>
           some (.term (.tmFv name type) type (tmFv_hasType name typeKinded))
-      | some (.term ..) | none => none
+      | some (.kind ..) | some (.term ..) | none => none
   | _ => none
 
 /-- Every checked value is derived from its raw row and the preceding checked
@@ -214,7 +217,7 @@ def view (state : ClassifiedArena Sig typeScope Raw Sound) :
 def valueView (state : ClassifiedArena Sig typeScope Raw Sound) :
     Int → Option (Nucleus.Hol.Ethane.Arena.Value Sig Nat) :=
   fun reference => (state.view reference).map fun checked =>
-    .syntax checked.expression
+    checked.value
 
 /-- A handle proves that a reference denotes a checked type in this arena. -/
 structure TypeHandle (state : ClassifiedArena Sig typeScope Raw Sound) where
@@ -222,6 +225,13 @@ structure TypeHandle (state : ClassifiedArena Sig typeScope Raw Sound) where
   type : Ty Sig
   kinded : Nucleus.Hol.Ethane.Kinded typeScope type
   checked : state.view reference.value = some (.type type kinded)
+  backward : reference.value < RowArena.next (Sig := Sig) state.raw
+
+/-- A handle proves that a reference denotes a checked kind in this arena. -/
+structure KindHandle (state : ClassifiedArena Sig typeScope Raw Sound) where
+  reference : I64Ref
+  kind : Kind
+  checked : state.view reference.value = some (.kind kind)
   backward : reference.value < RowArena.next (Sig := Sig) state.raw
 
 /-- A checked type handle discharges the semantic `TmFvReady` premise without
@@ -233,7 +243,7 @@ def TypeHandle.tmFvReady {state : ClassifiedArena Sig typeScope Raw Sound}
   backward := handle.backward
   typeWitness :=
     { type := handle.type
-      resolves := by simp [valueView, handle.checked, Checked.expression]
+      resolves := by simp [valueView, handle.checked, Checked.value]
       kinded := handle.kinded }
 
 /-- Persistent Boolean-type transition, extending both the raw arena and the
@@ -277,6 +287,47 @@ def boolTy (state : ClassifiedArena Sig typeScope Raw Sound)
     simp [CheckedView.set]
   · change RowArena.next (Sig := Sig) state.raw <
       RowArena.next (Sig := Sig) (RowArena.push state.raw .boolTy)
+    rw [RowArena.next_push]
+    omega
+
+/-- Persistent `Star : Kind` transition. -/
+def star (state : ClassifiedArena Sig typeScope Raw Sound)
+    (nextValid : I64Valid (RowArena.next (Sig := Sig) state.raw))
+    (preserves : Sound state.raw →
+      Sound (RowArena.push (Sig := Sig) state.raw .kindStar)) :
+    Σ next : ClassifiedArena Sig typeScope Raw Sound, KindHandle next := by
+  let checked : Checked (Sig := Sig) typeScope := .kind .star
+  let next : ClassifiedArena Sig typeScope Raw Sound :=
+    { raw := RowArena.push (Sig := Sig) state.raw .kindStar
+      base := state.base
+      checked := state.checked ++ [checked]
+      derived := by
+        rw [RowArena.rows_push, RowArena.offset_push]
+        simpa [checked] using
+          state.derived.append (row := .kindStar) (value := checked) rfl
+      offsetValid := by
+        rw [RowArena.offset_push]
+        exact state.offsetValid
+      nextBound := by
+        rw [RowArena.next_push]
+        have upper := nextValid.2
+        omega
+      sound := preserves state.sound }
+  refine ⟨next, {
+    reference := ⟨RowArena.next (Sig := Sig) state.raw, nextValid⟩
+    kind := .star
+    checked := ?_
+    backward := ?_ }⟩
+  · have lengths := state.derived.length_eq
+    dsimp [next, view]
+    rw [RowArena.offset_push]
+    change state.base.extend (RowArena.offset (Sig := Sig) state.raw)
+      (state.checked ++ [checked]) (RowArena.next (Sig := Sig) state.raw) =
+        some checked
+    rw [CheckedView.extend_append, RowArena.next_eq, lengths]
+    simp [CheckedView.set]
+  · change RowArena.next (Sig := Sig) state.raw <
+      RowArena.next (Sig := Sig) (RowArena.push state.raw .kindStar)
     rw [RowArena.next_push]
     omega
 
