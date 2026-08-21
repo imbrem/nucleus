@@ -1,0 +1,86 @@
+{
+  "format": "nucleus.ethane.kernel-traces.v0",
+  "status": "contract",
+  "arenaEncoding": "normalized dense rows with zero-based absolute references",
+  "traces": [
+    {
+      "id": "empty.ok",
+      "operation": "kernel.empty",
+      "oldArenas": [],
+      "input": {},
+      "casUse": "none",
+      "expected": {
+        "result": "ok",
+        "newArena": {
+          "rows": [],
+          "assumptions": []
+        },
+        "output": {}
+      }
+    },
+    {
+      "id": "bool-type.ok",
+      "operation": "type.bool",
+      "oldArenas": [
+        {
+          "rows": [],
+          "assumptions": []
+        }
+      ],
+      "input": {},
+      "casUse": "none",
+      "expected": {
+        "result": "ok",
+        "newArena": {
+          "rows": [{ "tag": "boolTy" }],
+          "assumptions": []
+        },
+        "output": { "ref": 0, "class": "type" }
+      }
+    },
+    {
+      "id": "bool-false.ok",
+      "operation": "term.bool",
+      "oldArenas": [
+        {
+          "rows": [{ "tag": "boolTy" }],
+          "assumptions": []
+        }
+      ],
+      "input": { "value": false },
+      "casUse": "none",
+      "expected": {
+        "result": "ok",
+        "newArena": {
+          "rows": [{ "tag": "boolTy" }, { "tag": "bool", "value": false }],
+          "assumptions": []
+        },
+        "output": { "ref": 1, "class": "term" }
+      }
+    },
+    {
+      "id": "bool-true.ok",
+      "operation": "term.bool",
+      "oldArenas": [
+        {
+          "rows": [{ "tag": "boolTy" }, { "tag": "bool", "value": false }],
+          "assumptions": []
+        }
+      ],
+      "input": { "value": true },
+      "casUse": "none",
+      "expected": {
+        "result": "ok",
+        "newArena": {
+          "rows": [
+            { "tag": "boolTy" },
+            { "tag": "bool", "value": false },
+            { "tag": "bool", "value": true }
+          ],
+          "assumptions": []
+        },
+        "output": { "ref": 2, "class": "term" }
+      }
+    }
+  ]
+}

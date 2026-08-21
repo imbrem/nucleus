@@ -4,7 +4,17 @@ use serde_json::{Value, json};
 
 use super::{Entry, Kernel, TmRepr, TyRepr};
 
-const TRACES: &str = include_str!("../../../../theories/ethane/conformance/traces.json");
+const TRACES: &str = include_str!("../fixtures/traces.json");
+
+#[test]
+fn cargo_fixture_matches_the_shared_contract_bytes() {
+    let shared = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../theories/ethane/conformance/traces.json");
+    if shared.is_file() {
+        let shared = std::fs::read_to_string(shared).expect("read shared contract traces");
+        assert_eq!(TRACES, shared, "crate fixture drifted from shared contract");
+    }
+}
 
 fn rows(arena: &Value) -> Result<&Vec<Value>, String> {
     arena

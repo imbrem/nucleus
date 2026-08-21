@@ -3467,6 +3467,14 @@
       ]
     },
     {
+      "id": "workspace#covalence-logic-hol@0.0.0",
+      "name": "covalence-logic-hol",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151"
+      ]
+    },
+    {
       "id": "workspace#covalence-neutron@0.0.0",
       "name": "covalence-neutron",
       "category": "tcb",
