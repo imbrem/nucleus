@@ -330,6 +330,14 @@ def star (state : ClassifiedArena Sig typeScope Raw Sound)
     rw [RowArena.next_push]
     omega
 
+/-- The state returned by `star` retains its supplied soundness invariant. -/
+theorem star_sound (state : ClassifiedArena Sig typeScope Raw Sound)
+    (nextValid : I64Valid (RowArena.next (Sig := Sig) state.raw))
+    (preserves : Sound state.raw →
+      Sound (RowArena.push (Sig := Sig) state.raw .kindStar)) :
+    Sound (star state nextValid preserves).1.raw :=
+  (star state nextValid preserves).1.sound
+
 /-- Persistent Boolean-term transition with a derived term classification. -/
 def bool (state : ClassifiedArena Sig typeScope Raw Sound) (value : Bool)
     (nextValid : I64Valid (RowArena.next (Sig := Sig) state.raw))

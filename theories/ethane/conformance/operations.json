@@ -44,8 +44,8 @@
       "index-overflow"
     ],
     "lean": {
-      "definition": "Nucleus.Hol.Ethane.Kernel.DenseOperations.star",
-      "preservationTheorem": "Nucleus.Hol.Ethane.Kernel.DenseOperations.star_sound",
+      "definition": "Nucleus.Hol.Ethane.Kernel.ClassifiedArena.star",
+      "preservationTheorem": "Nucleus.Hol.Ethane.Kernel.ClassifiedArena.star_sound",
       "stateModel": "pure-arena-transition"
     },
     "rust": {
