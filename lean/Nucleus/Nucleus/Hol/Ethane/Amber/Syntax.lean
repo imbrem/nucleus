@@ -46,13 +46,14 @@ inductive SyntaxExtra (Sig : Signature.{u}) (Name : Type) where
 
 namespace SyntaxRow
 
-abbrev T (Sig : Signature.{u}) (Name : Type) := Arena.Row Sig Name Nat
+abbrev T (Sig : Signature.{u}) (Name : Type) (Ix : Type := Int) :=
+  Arena.Row Sig Name Ix
 abbrev Extra (Sig : Signature.{u}) (Name : Type) := SyntaxExtra Sig Name
-abbrev View (Sig : Signature.{u}) (Name : Type) :=
-  Row.View SyntaxTag Nat (Extra Sig Name)
+abbrev View (Sig : Signature.{u}) (Name : Type) (Ix : Type := Int) :=
+  Row.View SyntaxTag Ix (Extra Sig Name)
 
 /-- Separate the tag from all constructor payloads. -/
-def tag : T Sig Name → SyntaxTag
+def tag : T Sig Name Ix → SyntaxTag
   | .pair .. => .pair
   | .kindStar => .kindStar
   | .kindArr .. => .kindArr
@@ -73,7 +74,7 @@ def tag : T Sig Name → SyntaxTag
   | .eps .. => .eps
 
 /-- Scalar fields in constructor order. -/
-def extra : T Sig Name → List (Extra Sig Name)
+def extra : T Sig Name Ix → List (Extra Sig Name)
   | .tyLam name .. | .tyFv name .. | .tyExists name .. | .model name .. |
       .tmFv name .. | .lam name .. => [.name name]
   | @Arena.Row.primFam _ _ _ kind symbol _ => [.fam ⟨kind, symbol⟩]
@@ -82,21 +83,21 @@ def extra : T Sig Name → List (Extra Sig Name)
   | .pair .. | .kindStar | .kindArr .. | .boolTy | .arr .. | .tyApp .. |
       .app .. | .eq .. | .eps .. => []
 
-instance : Row (T Sig Name) SyntaxTag Nat (Extra Sig Name) where
+instance : Row (T Sig Name Ix) SyntaxTag Ix (Extra Sig Name) where
   tag := tag
   children := Arena.Row.children
   extra := extra
 
-@[simp] theorem row_tag (row : T Sig Name) : Row.tag row = tag row := rfl
+@[simp] theorem row_tag (row : T Sig Name Ix) : Row.tag row = tag row := rfl
 
-@[simp] theorem row_children (row : T Sig Name) :
+@[simp] theorem row_children (row : T Sig Name Ix) :
     Row.children row = Arena.Row.children row := rfl
 
-@[simp] theorem row_extra (row : T Sig Name) : Row.extra row = extra row := rfl
+@[simp] theorem row_extra (row : T Sig Name Ix) : Row.extra row = extra row := rfl
 
 /-- Check a generic row view against the exact Ethane constructor arities and
 payload variants. -/
-def ofView? : View Sig Name → Option (T Sig Name)
+def ofView? : View Sig Name Ix → Option (T Sig Name Ix)
   | ⟨.pair, [left, right], []⟩ => some (.pair left right)
   | ⟨.kindStar, [], []⟩ => some .kindStar
   | ⟨.kindArr, [domain, codomain], []⟩ => some (.kindArr domain codomain)
@@ -118,7 +119,7 @@ def ofView? : View Sig Name → Option (T Sig Name)
   | ⟨.eps, [type, predicate], []⟩ => some (.eps type predicate)
   | _ => none
 
-@[simp] theorem ofView?_view (row : T Sig Name) :
+@[simp] theorem ofView?_view (row : T Sig Name Ix) :
     ofView? (Row.view row) = some row := by
   cases row <;> rfl
 

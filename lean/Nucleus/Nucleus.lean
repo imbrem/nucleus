@@ -8,6 +8,7 @@ import Nucleus.O256
 import Nucleus.Probability
 import Nucleus.Json
 import Nucleus.Cbor
+import Nucleus.Structured
 import Nucleus.Encoding.Base128
 import Nucleus.RangeMap
 import Nucleus.RangeMap.Examples

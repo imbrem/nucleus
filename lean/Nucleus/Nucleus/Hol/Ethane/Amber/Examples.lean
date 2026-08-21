@@ -1,4 +1,4 @@
-import Nucleus.Hol.Ethane.Amber.Memory
+import Nucleus.Hol.Ethane.Amber.Arena.Dense.Cbor
 import Nucleus.Hol.Ethane.Amber.Segment.Cbor
 
 /-! # Executable Amber specification examples -/
@@ -49,13 +49,33 @@ example :
   simp [segmented, Cbor.FitsSegmented, Cbor.FitsSegment, Cbor.FitsView,
     Row.view, Arena.Row.children]
 
-/-- The array-backed Rust model uses the same checked append invariant as the
-mathematical forest. -/
+/-- The array-backed Rust model uses signed indices by default. -/
 example :
-    let memory : Memory.Syntax O256 Nucleus.HolE.EmptySig UInt64 :=
-      ⟨none, #[.bool true]⟩
-    memory.Valid := by
-  simp [Memory.Valid, Memory.toDense, Dense.Valid, Dense.RowsValid,
-    Dense.RowValid, Dense.offset, Arena.Row.children]
+    let arena : Amber.Arena.Dense.Syntax O256 Nucleus.HolE.EmptySig UInt64 :=
+      ⟨none, 0, #[.bool true]⟩
+    arena.Valid := by
+  simp [Amber.Arena.Dense.Valid, Amber.Arena.Dense.RowsValid,
+    Amber.Arena.Dense.RowValid, Nucleus.Hol.Ethane.Arena.Row.children]
+
+private def signedDense :
+    Amber.Arena.Dense.Cbor.Syntax O256 Nucleus.HolE.EmptySig UInt64 :=
+  ⟨none, -3, #[.bool true]⟩
+
+/-- Signed offsets and literal syntax names round-trip through the tagged
+dictionary format. -/
+example :
+    Amber.Arena.Dense.Cbor.decodeSyntax?
+      (S := Amber.Serialization.StringMapV0)
+      Arena.Cbor.uint64Names Arena.Cbor.emptySymbols
+      (Amber.Arena.Dense.Cbor.encodeSyntax
+        (S := Amber.Serialization.StringMapV0)
+        Arena.Cbor.uint64Names Arena.Cbor.emptySymbols signedDense) =
+      some signedDense := by
+  apply Amber.Arena.Dense.Cbor.decodeSyntax?_encode
+  constructor
+  · change 2 < 2 ^ 64
+    norm_num
+  · simp [signedDense, Amber.Arena.Dense.Cbor.FitsView,
+      Row.view, Arena.Row.children]
 
 end Nucleus.Hol.Ethane.Amber.Examples

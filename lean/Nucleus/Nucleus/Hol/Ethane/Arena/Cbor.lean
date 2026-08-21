@@ -1,4 +1,4 @@
-import Nucleus.Cbor.General
+import Nucleus.Cbor.Containers
 import Nucleus.Hol.Ethane.Arena
 import Nucleus.HolE.Semantics
 
@@ -22,20 +22,16 @@ open Nucleus
 universe u
 set_option relaxedAutoImplicit true
 
-private def arrayItems : List Nucleus.Cbor → CborSyn .array
-  | [] => .arrayNil
-  | value :: values => .arrayCons value (arrayItems values)
-
-def array (values : List Nucleus.Cbor) : Nucleus.Cbor := .array (arrayItems values)
+def array (values : List Nucleus.Cbor) : Nucleus.Cbor :=
+  Nucleus.Cbor.arrayOfList values
 
 def text (value : String) : Nucleus.Cbor := .primitive (.text value)
 
 def unsigned (value : Nat) : Nucleus.Cbor :=
   .primitive (.integer (.unsigned (UInt64.ofNat value)))
 
-private def asArray? : Nucleus.Cbor → Option (List Nucleus.Cbor)
-  | .array values => some values.toArrayList
-  | _ => none
+private def asArray? : Nucleus.Cbor → Option (List Nucleus.Cbor) :=
+  Nucleus.Cbor.asArray?
 
 private def asNat? : Nucleus.Cbor → Option Nat
   | .primitive (.integer (.unsigned value)) => some value.toNat
@@ -82,14 +78,9 @@ def emptySymbols : SignatureCodec Nucleus.HolE.EmptySig where
   decodeTm _ := none
   decodeTm_encode symbol := nomatch symbol
 
-@[simp] private theorem arrayItems_toArrayList (values : List Nucleus.Cbor) :
-    (arrayItems values).toArrayList = values := by
-  induction values with
-  | nil => simp [arrayItems, CborSyn.toArrayList]
-  | cons value values ih => simp [arrayItems, CborSyn.toArrayList, ih]
-
 @[simp] private theorem asArray?_array (values : List Nucleus.Cbor) :
-    asArray? (array values) = some values := by simp [array, asArray?]
+    asArray? (array values) = some values := by
+  simp [array, asArray?]
 
 /-- The direct recursive references of a row fit CBOR's unsigned argument. -/
 def FitsRow (row : Row Sig Name Nat) : Prop :=

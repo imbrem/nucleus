@@ -1,4 +1,5 @@
 import Nucleus.Cbor.Reasonable
+import Nucleus.Cbor.Containers
 
 /-!
 # RFC 8949 binary CBOR
@@ -41,14 +42,6 @@ private def takeBytes (n : UInt64) (input : List UInt8) :
     Option (List UInt8 × List UInt8) :=
   if n.toNat ≤ input.length then some (input.take n.toNat, input.drop n.toNat) else none
 
-private def arrayOfList : List Cbor → CborSyn .array
-  | [] => .arrayNil
-  | x :: xs => .arrayCons x (arrayOfList xs)
-
-private def mapOfList : List (Cbor × Cbor) → CborSyn .map
-  | [] => .mapNil
-  | (k, v) :: xs => .mapCons k v (mapOfList xs)
-
 mutual
   private def parseItem : Nat → List UInt8 → Option (Cbor × List UInt8)
     | 0, _ => none
@@ -82,17 +75,17 @@ mutual
         | 4 => match arg with
           | some n => do
               let (items, remaining) ← parseItems fuel n.toNat rest
-              some (.array (arrayOfList items), remaining)
+              some (.array (CborSyn.arrayOfList items), remaining)
           | none => do
               let (items, remaining) ← parseIndefItems fuel rest
-              some (.array (arrayOfList items), remaining)
+              some (.array (CborSyn.arrayOfList items), remaining)
         | 5 => match arg with
           | some n => do
               let (items, remaining) ← parsePairs fuel n.toNat rest
-              some (.map (mapOfList items), remaining)
+              some (.map (CborSyn.mapOfList items), remaining)
           | none => do
               let (items, remaining) ← parseIndefPairs fuel rest
-              some (.map (mapOfList items), remaining)
+              some (.map (CborSyn.mapOfList items), remaining)
         | 6 => match arg with
           | some n => do
               let (item, remaining) ← parseItem fuel rest
