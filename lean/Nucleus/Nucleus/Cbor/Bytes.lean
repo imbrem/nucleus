@@ -1,4 +1,4 @@
-import Mathlib.Data.Nat.Basic
+import Nucleus.Bytes
 
 /-!
 # CBOR byte strings
@@ -9,25 +9,7 @@ extend this API without exposing representation choices to the data model.
 -/
 
 namespace Nucleus
-
-/-- An uninterpreted finite sequence of octets. -/
-structure Bytes where
-  data : ByteArray
-  deriving DecidableEq
-
 namespace Bytes
-
-/-- Number of octets. -/
-def length (bytes : Bytes) : Nat := bytes.data.size
-
-/-- Append one octet in place using `ByteArray`'s compact buffer operation. -/
-def push (bytes : Bytes) (byte : UInt8) : Bytes := ⟨bytes.data.push byte⟩
-
-/-- Empty byte string. -/
-def empty : Bytes := ⟨ByteArray.empty⟩
-
-/-- Concatenate compact byte strings. -/
-def append (left right : Bytes) : Bytes := ⟨left.data.append right.data⟩
 
 /-- The largest argument representable by a CBOR definite-length head. -/
 def maxDefiniteLength : Nat := 2 ^ 64 - 1
