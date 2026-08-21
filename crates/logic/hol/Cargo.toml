@@ -1,0 +1,12 @@
+[package]
+name = "covalence-logic-hol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Persistent arena interface for the Nucleus HOL kernel"
+publish = false
+
+[lints]
+workspace = true
+
