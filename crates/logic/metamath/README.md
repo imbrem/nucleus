@@ -24,6 +24,16 @@ let database = parse(source)?;
 let theorem_count = verify_all(&database)?;
 ```
 
+## Deviations from the spec
+
+Comment text is not held to the spec's character repertoire. §4.1 restricts a
+database to printable ASCII plus whitespace, but prose comments in real
+databases — this crate's own `demo0.mm` fixture included — carry typographic
+characters such as an em-dash, and rejecting them buys nothing: comments are
+stripped before anything is interpreted. **Tokens** are checked in full, so a
+label, math symbol, or keyword may not smuggle in a non-ASCII or control
+character.
+
 ## Upstream corpus
 
 The corpus is not a Git submodule: it is large, changes frequently, and is not
