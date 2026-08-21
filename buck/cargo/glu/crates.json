@@ -13,6 +13,12 @@
           "kinds": [
             "bin"
           ]
+        },
+        {
+          "name": "lean_audit",
+          "kinds": [
+            "test"
+          ]
         }
       ]
     }

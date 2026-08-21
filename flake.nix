@@ -52,6 +52,10 @@
         gluCargoArtifacts = craneLib.buildDepsOnly gluArgs;
         glu = craneLib.buildPackage (gluArgs // {
           cargoArtifacts = gluCargoArtifacts;
+          nativeBuildInputs = [ pkgs.git pkgs.makeWrapper ];
+          postFixup = ''
+            wrapProgram $out/bin/glu --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.git ]}
+          '';
         });
         native-check = rustPlatform.buildRustPackage {
           pname = "nucleus-native-check";
