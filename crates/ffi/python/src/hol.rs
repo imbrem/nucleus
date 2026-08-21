@@ -6,7 +6,7 @@
 use covalence_lib_python::exceptions::create_exception;
 use covalence_lib_python::prelude::*;
 use covalence_lib_python::pyo3::types::PyType;
-use covalence_logic_hol::{Error, Kernel, Tm, Ty};
+use covalence_logic_hol::{Error, Tm, Ty, dense};
 
 create_exception!(
     covalence,
@@ -22,6 +22,10 @@ fn rejection(error: &Error) -> PyErr {
 /// An opaque, portable HOL type handle.
 #[pyclass(frozen, module = "covalence.logic.hol", name = "Ty")]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
+#[expect(
+    dead_code,
+    reason = "the opaque handle intentionally exposes no type operations yet"
+)]
 pub struct PyTy(Ty);
 
 /// An opaque, portable HOL term handle.
@@ -37,9 +41,9 @@ pub struct PyTm(Tm);
 ///
 /// The compiled class has a distinct private name because the extension also
 /// contains the LRAT kernel. `covalence.logic.hol` exports it as `Kernel`.
-#[pyclass(frozen, module = "covalence.logic.hol", name = "HolKernel")]
+#[pyclass(module = "covalence.logic.hol", name = "HolKernel")]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
-pub struct PyKernel(Kernel);
+pub struct PyKernel(dense::Kernel);
 
 #[pymethods]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
@@ -47,22 +51,23 @@ impl PyKernel {
     /// Construct an empty admitted arena.
     #[staticmethod]
     fn empty() -> Self {
-        Self(Kernel::empty())
+        Self(dense::Kernel::empty())
     }
 
-    /// Return a replacement kernel and a Boolean type handle.
-    fn bool_ty(&self, python: Python<'_>) -> PyResult<(Py<Self>, Py<PyTy>)> {
-        let (kernel, ty) = self.0.bool_ty().map_err(|error| rejection(&error))?;
-        Ok((Py::new(python, Self(kernel))?, Py::new(python, PyTy(ty))?))
+    /// Insert and return a Boolean type handle.
+    fn bool_ty(&mut self) -> PyResult<PyTy> {
+        self.0
+            .bool_ty()
+            .map(PyTy)
+            .map_err(|error| rejection(&error))
     }
 
-    /// Return a replacement kernel and a Boolean constant handle.
-    fn bool_const(&self, python: Python<'_>, value: bool) -> PyResult<(Py<Self>, Py<PyTm>)> {
-        let (kernel, term) = self
-            .0
+    /// Insert and return a Boolean constant handle.
+    fn bool_const(&mut self, value: bool) -> PyResult<PyTm> {
+        self.0
             .bool_const(value)
-            .map_err(|error| rejection(&error))?;
-        Ok((Py::new(python, Self(kernel))?, Py::new(python, PyTm(term))?))
+            .map(PyTm)
+            .map_err(|error| rejection(&error))
     }
 }
 
