@@ -9,6 +9,8 @@ import Nucleus.Probability
 import Nucleus.Json
 import Nucleus.Cbor
 import Nucleus.Encoding.Base128
+import Nucleus.RangeMap
+import Nucleus.RangeMap.Examples
 import Nucleus.Lrat
 import Nucleus.SExpr
 
