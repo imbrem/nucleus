@@ -75,6 +75,53 @@ structure Node (Sig : Signature.{u}) (Name : Type) (ι : Type w) where
   tag : Tag Sig Name
   children : List ι
 
+/-! ## Finite-depth rooted DAGs -/
+
+/-- Node families whose immediate dependencies can be observed. -/
+class Children (N : Type u → Type v) where
+  children : N ι → List ι
+
+instance : Children (Node Sig Name) where
+  children := Node.children
+
+/-- The child-to-parent dependency relation induced by a partial node forest. -/
+def dependency [Children N] (forest : ι → Option (N ι)) (child parent : ι) : Prop :=
+  ∃ node, forest parent = some node ∧ child ∈ Children.children node
+
+/-- A rooted node forest whose live dependency graph has finite depth.
+
+Only accessibility from `root` is required, so unreachable garbage may be
+cyclic or infinite without affecting the represented value. -/
+structure RootedDAG (N : Type u → Type v) (ι : Type u) [Children N] where
+  forest : ι → Option (N ι)
+  root : ι
+  finiteDepth : Acc (dependency forest) root
+
+namespace RootedDAG
+
+/-- Observe a rooted DAG through any decoder appropriate to its node family. -/
+def decode [Children N] (decoder : (ι → Option (N ι)) → ι → D)
+    (dag : RootedDAG N ι) : D :=
+  decoder dag.forest dag.root
+
+/-- Two finite-depth DAGs are equivalent when their canonical decodings agree. -/
+def Equivalent [Children N] (decoder : (ι → Option (N ι)) → ι → D)
+    (left right : RootedDAG N ι) : Prop :=
+  left.decode decoder = right.decode decoder
+
+def decodingSetoid [Children N]
+    (decoder : (ι → Option (N ι)) → ι → D) : Setoid (RootedDAG N ι) where
+  r := Equivalent decoder
+  iseqv := ⟨fun _ => rfl, fun equality => equality.symm,
+    fun left middle => left.trans middle⟩
+
+end RootedDAG
+
+/-- Arbitrarily indexed finite-depth rooted DAGs modulo canonical decoding. -/
+abbrev DAGQuotient (N : Type u → Type v) (ι : Type u) [Children N]
+    (decoder : (ι → Option (N ι)) → ι → D) :=
+  Quotient (RootedDAG.decodingSetoid decoder)
+
 namespace Node
 
 private def not (proposition : HolE Sig Name) : HolE Sig Name :=
