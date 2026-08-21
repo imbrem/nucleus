@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nucleus.dev/schema/ethane-kernel-operations-v0.json",
+  "title": "Ethane kernel operation correspondence registry (v0)",
+  "type": "object",
+  "required": ["format", "status", "operations"],
+  "additionalProperties": false,
+  "properties": {
+    "format": { "const": "nucleus.ethane.kernel-operations.v0" },
+    "status": { "enum": ["contract", "checked", "complete"] },
+    "operations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/operation" }
+    }
+  },
+  "$defs": {
+    "identifier": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]*$" },
+    "nonempty": { "type": "string", "minLength": 1 },
+    "operation": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "oldArenas",
+        "newArena",
+        "assumptions",
+        "casUse",
+        "errors",
+        "lean",
+        "rust",
+        "fixtures"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "kind": {
+          "enum": ["constructor", "transition", "multi-arena-transition"]
+        },
+        "oldArenas": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["role", "sound"],
+            "additionalProperties": false,
+            "properties": {
+              "role": { "$ref": "#/$defs/identifier" },
+              "sound": { "const": "same-implicit-cas" }
+            }
+          }
+        },
+        "newArena": {
+          "type": "object",
+          "required": ["role", "sound"],
+          "additionalProperties": false,
+          "properties": {
+            "role": { "$ref": "#/$defs/identifier" },
+            "sound": { "const": "same-implicit-cas" }
+          }
+        },
+        "assumptions": {
+          "enum": ["none", "preserve", "union", "audited-discharge"]
+        },
+        "casUse": {
+          "enum": ["none", "lookup", "validate", "insert"]
+        },
+        "errors": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "lean": {
+          "type": "object",
+          "required": ["definition", "preservationTheorem"],
+          "additionalProperties": false,
+          "properties": {
+            "definition": { "$ref": "#/$defs/nonempty" },
+            "preservationTheorem": { "$ref": "#/$defs/nonempty" }
+          }
+        },
+        "rust": {
+          "type": "object",
+          "required": ["symbol", "mutableSymbol"],
+          "additionalProperties": false,
+          "properties": {
+            "symbol": { "$ref": "#/$defs/nonempty" },
+            "mutableSymbol": {
+              "oneOf": [{ "$ref": "#/$defs/nonempty" }, { "type": "null" }]
+            }
+          }
+        },
+        "fixtures": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,79 @@
+{
+  "format": "nucleus.ethane.kernel-operations.v0",
+  "status": "contract",
+  "operations": [
+    {
+      "id": "kernel.empty",
+      "kind": "constructor",
+      "oldArenas": [],
+      "newArena": {
+        "role": "kernel",
+        "sound": "same-implicit-cas"
+      },
+      "assumptions": "none",
+      "casUse": "none",
+      "errors": [],
+      "lean": {
+        "definition": "Nucleus.Hol.Ethane.Kernel.empty",
+        "preservationTheorem": "Nucleus.Hol.Ethane.Kernel.empty_sound"
+      },
+      "rust": {
+        "symbol": "nucleus_hol::Kernel::empty",
+        "mutableSymbol": null
+      },
+      "fixtures": ["empty.ok"]
+    },
+    {
+      "id": "type.bool",
+      "kind": "transition",
+      "oldArenas": [
+        {
+          "role": "kernel",
+          "sound": "same-implicit-cas"
+        }
+      ],
+      "newArena": {
+        "role": "kernel",
+        "sound": "same-implicit-cas"
+      },
+      "assumptions": "preserve",
+      "casUse": "none",
+      "errors": [],
+      "lean": {
+        "definition": "Nucleus.Hol.Ethane.Kernel.boolTy",
+        "preservationTheorem": "Nucleus.Hol.Ethane.Kernel.boolTy_sound"
+      },
+      "rust": {
+        "symbol": "nucleus_hol::Kernel::bool_ty",
+        "mutableSymbol": "nucleus_hol::Kernel::bool_ty_mut"
+      },
+      "fixtures": ["bool-type.ok"]
+    },
+    {
+      "id": "term.bool",
+      "kind": "transition",
+      "oldArenas": [
+        {
+          "role": "kernel",
+          "sound": "same-implicit-cas"
+        }
+      ],
+      "newArena": {
+        "role": "kernel",
+        "sound": "same-implicit-cas"
+      },
+      "assumptions": "preserve",
+      "casUse": "none",
+      "errors": [],
+      "lean": {
+        "definition": "Nucleus.Hol.Ethane.Kernel.bool",
+        "preservationTheorem": "Nucleus.Hol.Ethane.Kernel.bool_sound"
+      },
+      "rust": {
+        "symbol": "nucleus_hol::Kernel::bool_const",
+        "mutableSymbol": "nucleus_hol::Kernel::bool_const_mut"
+      },
+      "fixtures": ["bool-false.ok", "bool-true.ok"]
+    }
+  ]
+}
