@@ -115,13 +115,20 @@ pub struct PyDatabase(Database);
 #[pymethods]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 impl PyDatabase {
+    // Parsing and verification are pure Rust that touches no Python object, and
+    // on a database the size of `set.mm` they run for seconds. Detaching from
+    // the interpreter keeps other threads live for the duration. The `MmError`
+    // is converted to a `PyErr` *inside* the closure — `new_err` is lazy and
+    // needs no interpreter — so the detached call never yields the oversized
+    // error variant across the boundary.
+
     #[staticmethod]
-    fn parse(source: &str) -> PyResult<Self> {
-        parse(source).map(Self).map_err(rejection)
+    fn parse(python: Python<'_>, source: &str) -> PyResult<Self> {
+        python.detach(|| parse(source).map_err(rejection)).map(Self)
     }
 
     #[staticmethod]
-    fn load(path: &str) -> PyResult<Self> {
+    fn load(python: Python<'_>, path: &str) -> PyResult<Self> {
         let path = std::path::Path::new(path);
         let filename = path
             .file_name()
@@ -129,13 +136,13 @@ impl PyDatabase {
             .ok_or_else(|| MetamathError::new_err("path has no UTF-8 filename"))?;
         let resolver =
             FileResolver::new(path.parent().unwrap_or_else(|| std::path::Path::new(".")));
-        parse_with_resolver(filename, &resolver)
+        python
+            .detach(|| parse_with_resolver(filename, &resolver).map_err(rejection))
             .map(Self)
-            .map_err(rejection)
     }
 
-    fn validate(&self) -> PyResult<usize> {
-        verify_all(&self.0).map_err(rejection)
+    fn validate(&self, python: Python<'_>) -> PyResult<usize> {
+        python.detach(|| verify_all(&self.0).map_err(rejection))
     }
 
     #[getter]

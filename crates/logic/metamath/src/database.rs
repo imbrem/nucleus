@@ -10,7 +10,9 @@
 //! hypotheses, essential hypotheses, variable declarations, and `$d`
 //! restrictions are scoped, while `$c`/`$a`/`$p` are global.
 
-use fnv::FnvHashMap;
+use std::collections::hash_map::Entry;
+
+use fnv::{FnvHashMap, FnvHashSet};
 
 use crate::error::MmError;
 use crate::expr::Expr;
@@ -232,11 +234,15 @@ impl Database {
     }
 
     fn register_label(&mut self, label: &str, idx: usize) -> Result<(), MmError> {
-        if self.labels.contains_key(label) {
-            return Err(MmError::DuplicateLabel(label.to_string()));
+        // `entry` hashes the label once; the `contains_key` + `insert` pair
+        // hashed it twice for every labelled statement in the database.
+        match self.labels.entry(label.to_string()) {
+            Entry::Occupied(entry) => Err(MmError::DuplicateLabel(entry.key().clone())),
+            Entry::Vacant(entry) => {
+                entry.insert(idx);
+                Ok(())
+            }
         }
-        self.labels.insert(label.to_string(), idx);
-        Ok(())
     }
 
     pub fn add_float(&mut self, hyp: FloatHyp) -> Result<(), MmError> {
@@ -377,24 +383,51 @@ impl Database {
             disjoints: rename_pairs(&fr.disjoints),
         };
 
-        // Symbols map: check injectivity + kind consistency.
-        let mut symbols: FnvHashMap<String, bool> = FnvHashMap::default();
-        for (name, is_var) in &self.symbols {
-            let renamed = f(name);
-            match symbols.insert(renamed.clone(), *is_var) {
-                Some(prev) if prev != *is_var => {
-                    return Err(MmError::Parse(format!(
-                        "symbol renaming collides on `{renamed}` (constant and variable)"
-                    )));
+        // Symbols map: check injectivity + kind consistency. The walk is sorted
+        // by source symbol because `self.symbols` is a hash map: iterating it
+        // directly visits symbols in table-layout order, so which of several
+        // colliding pairs gets reported is arbitrary and shifts whenever an
+        // unrelated symbol is declared. Sorting pins the diagnostic to the
+        // lexicographically first collision, which stays put as `f` is
+        // debugged.
+        let mut sources: Vec<(&str, bool)> = self
+            .symbols
+            .iter()
+            .map(|(name, is_var)| (name.as_str(), *is_var))
+            .collect();
+        sources.sort_unstable();
+
+        let kind = |is_var: bool| if is_var { "variable" } else { "constant" };
+        // renamed → (kind, the source symbol that claimed it), so a collision
+        // can name *both* sides rather than just the image they share.
+        let mut claimed: FnvHashMap<String, (bool, &str)> = FnvHashMap::default();
+        for (name, is_var) in sources {
+            match claimed.entry(f(name)) {
+                Entry::Occupied(entry) => {
+                    let renamed = entry.key();
+                    let (prev_var, prev) = *entry.get();
+                    return Err(MmError::Parse(if prev_var != is_var {
+                        format!(
+                            "symbol renaming collides on `{renamed}`: `{prev}` is a {} and `{name}` is a {}",
+                            kind(prev_var),
+                            kind(is_var)
+                        )
+                    } else {
+                        format!(
+                            "symbol renaming is not injective: `{prev}` and `{name}` both map to `{renamed}`"
+                        )
+                    }));
                 }
-                Some(_) => {
-                    return Err(MmError::Parse(format!(
-                        "symbol renaming is not injective: two symbols map to `{renamed}`"
-                    )));
+                Entry::Vacant(entry) => {
+                    entry.insert((is_var, name));
                 }
-                None => {}
             }
         }
+        // Drop the provenance now that every rename has been checked.
+        let symbols: FnvHashMap<String, bool> = claimed
+            .into_iter()
+            .map(|(renamed, (is_var, _))| (renamed, is_var))
+            .collect();
 
         let statements = self
             .statements
@@ -465,28 +498,37 @@ impl Database {
             .flat_map(|s| s.disjoints.iter())
             .collect();
 
-        // Mandatory variable set: from the conclusion and from active $e.
-        let mut mandatory_vars: Vec<String> = Vec::new();
-        let push_var = |name: &str, set: &mut Vec<String>| {
-            if self.is_variable(name) && !set.contains(&name.to_string()) {
-                set.push(name.to_string());
+        // Mandatory variable set: from the conclusion and from active $e. The
+        // `Vec` fixes first-occurrence order — the order the "missing `$f`"
+        // diagnostic below reports in — while the set answers membership, which
+        // as a `Vec::contains` scan was quadratic in the mandatory-variable
+        // count. Both borrow the name from the symbol table, so neither
+        // allocates per symbol *occurrence*.
+        let mut mandatory_vars: Vec<&str> = Vec::new();
+        let mut mandatory: FnvHashSet<&str> = FnvHashSet::default();
+        let mut push_var = |name: &str| {
+            if let Some((declared, is_variable)) = self.symbols.get_key_value(name) {
+                if *is_variable && mandatory.insert(declared.as_str()) {
+                    mandatory_vars.push(declared.as_str());
+                }
             }
         };
-        self.collect_vars(conclusion, label, &mut |n| push_var(n, &mut mandatory_vars))?;
+        self.collect_vars(conclusion, label, &mut push_var)?;
         for h in &active_essentials {
-            self.collect_vars(&h.expr, &h.label, &mut |n| push_var(n, &mut mandatory_vars))?;
+            self.collect_vars(&h.expr, &h.label, &mut push_var)?;
         }
 
         // Mandatory $f: active floats whose variable is mandatory, in order.
         let floats: Vec<FloatHyp> = active_floats
             .iter()
-            .filter(|f| mandatory_vars.contains(&f.var))
+            .filter(|f| mandatory.contains(f.var.as_str()))
             .map(|f| (*f).clone())
             .collect();
 
         // Every mandatory variable must have a floating hypothesis.
+        let typed: FnvHashSet<&str> = floats.iter().map(|f| f.var.as_str()).collect();
         for v in &mandatory_vars {
-            if !floats.iter().any(|f| &f.var == v) {
+            if !typed.contains(v) {
                 return Err(MmError::MalformedExpr {
                     label: label.to_string(),
                     message: format!("variable `{v}` has no active floating hypothesis (`$f`)"),
@@ -498,7 +540,7 @@ impl Database {
 
         let disjoints: Vec<(String, String)> = active_disjoints
             .iter()
-            .filter(|(a, b)| mandatory_vars.contains(a) && mandatory_vars.contains(b))
+            .filter(|(a, b)| mandatory.contains(a.as_str()) && mandatory.contains(b.as_str()))
             .map(|(a, b)| ((*a).clone(), (*b).clone()))
             .collect();
 

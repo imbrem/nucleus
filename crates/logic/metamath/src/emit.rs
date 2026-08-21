@@ -55,6 +55,14 @@
 //!   round-tripped. (Emitting such a `$f` twice with the same label would be a
 //!   duplicate-label error; different labels would break proof references — so
 //!   this is a genuine limitation, not a silent bug.)
+//! * **Essential re-labelling is not collision-checked.** Each block's `$e` is
+//!   re-labelled `<assertion>__<orig>`, and nothing verifies that name is free:
+//!   a source database already containing a label of exactly that shape (say an
+//!   assertion `th` with essential `h`, alongside an unrelated `th__h`) would
+//!   have the generated label clash with it. The clash is loud rather than
+//!   silent — the emitted source fails to re-parse with a duplicate-label error,
+//!   so no wrong database is produced — but the emitter cannot currently emit
+//!   such a database at all.
 //! * **No comment/`$[ $]` preservation.** The output is a *normalised* database,
 //!   equivalent under re-parse but not byte-identical to the original source.
 
@@ -180,19 +188,21 @@ fn emit_assertion(out: &mut String, a: &Assertion) {
 
 /// Deduplicate `$d` pairs (unordered), dropping any degenerate `(x, x)`.
 fn dedup_pairs(pairs: &[(String, String)]) -> Vec<(String, String)> {
-    let mut seen: HashSet<(String, String)> = HashSet::new();
+    // `seen` borrows from `pairs`, so the membership test costs nothing: only a
+    // pair that survives deduplication is ever cloned.
+    let mut seen: HashSet<(&str, &str)> = HashSet::new();
     let mut out = Vec::new();
     for (x, y) in pairs {
         if x == y {
             continue;
         }
         let key = if x <= y {
-            (x.clone(), y.clone())
+            (x.as_str(), y.as_str())
         } else {
-            (y.clone(), x.clone())
+            (y.as_str(), x.as_str())
         };
-        if seen.insert(key.clone()) {
-            out.push(key);
+        if seen.insert(key) {
+            out.push((key.0.to_owned(), key.1.to_owned()));
         }
     }
     out
