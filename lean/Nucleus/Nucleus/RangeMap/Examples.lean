@@ -46,4 +46,16 @@ example : overlapping.normalize.lookup? 2 = some {
     target := "second", sourceIndex := 23, localOffset := 1 } := by
   decide
 
+def duplicateKeys : Multimap String :=
+  (Multimap.ofList?
+    [{ start := 0, length := 2, offset := 10, target := "first" },
+     { start := 0, length := 2, offset := 10, target := "second" }]).get (by
+      simp [Multimap.ofList?, MultimapValid, Range.KeyLE])
+
+example : duplicateKeys.ranges.length = 2 := rfl
+
+example : duplicateKeys.normalize.ranges =
+    [{ start := 0, length := 2, offset := 10, target := "first" }] := by
+  decide
+
 end Nucleus.RangeMap.Examples

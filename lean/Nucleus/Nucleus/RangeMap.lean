@@ -8,7 +8,7 @@ import Mathlib.Tactic
 This module separates three representations:
 
 * `RangeMap.Raw` is an unchecked list of ranges.
-* `RangeMap.Multimap` is positive-length and strictly sorted by `(start, offset)`;
+* `RangeMap.Multimap` is positive-length and non-strictly sorted by `(start, offset)`;
   source intervals may overlap.
 * `RangeMap α` is positive-length and nonoverlapping, so lookup is a partial
   function.
@@ -162,10 +162,13 @@ end Range
 structure Raw (α : Type u) where
   ranges : List (Range α)
 
-/-- Positive, strictly `(start, offset)`-sorted rows; overlaps are permitted. -/
+/--
+Positive, non-strictly `(start, offset)`-sorted rows. Overlaps and duplicate
+keys are permitted.
+-/
 def MultimapValid (ranges : List (Range α)) : Prop :=
   (∀ range ∈ ranges, 0 < range.length) ∧
-    ranges.Pairwise Range.KeyLT
+    ranges.Pairwise Range.KeyLE
 
 instance (ranges : List (Range α)) : Decidable (MultimapValid ranges) := by
   unfold MultimapValid
@@ -538,7 +541,7 @@ def toMultimap (ranges : RangeMap α) : Multimap α where
   ranges := ranges.ranges
   valid := by
     rcases ranges.valid with ⟨positive, ordered⟩
-    exact ⟨positive, keyLT_pairwise_of_valid positive ordered⟩
+    exact ⟨positive, keyLE_pairwise_of_valid positive ordered⟩
 
 private theorem starts_nodup_of_valid {ranges : List (Range α)}
     (positive : ∀ range ∈ ranges, 0 < range.length)
