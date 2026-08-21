@@ -425,6 +425,14 @@ def natOffsetMap (ranges : RangeMap Nat) : OffsetMap Nat Nat :=
 def intOffsetMap (ranges : RangeMap Int) : OffsetMap Nat Int :=
   ranges.toOffsetMap fun target offset => target + Int.ofNat offset
 
+/-- Natural targets with the integer-indexed source view. -/
+def natOffsetMapOnInt (ranges : RangeMap Nat) : OffsetMap Int Nat :=
+  ranges.natOffsetMap.intDomain
+
+/-- Integer targets with the integer-indexed source view. -/
+def intOffsetMapOnInt (ranges : RangeMap Int) : OffsetMap Int Int :=
+  ranges.intOffsetMap.intDomain
+
 /--
 Range-level characterization of injectivity for an offset interpretation.
 Offsets in two target ranges may coincide only when their source indices do.

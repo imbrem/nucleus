@@ -22,6 +22,11 @@ def shifted : RangeMap Nat :=
 example : shifted.natOffsetMap.lookup? 12 = some 22 := by
   decide
 
+example : shifted.lookupIntWithOffset? (-1) = none := rfl
+
+example : shifted.natOffsetMapOnInt.lookup? 12 = some 22 := by
+  decide
+
 example : shifted.natOffsetMap.NoDuplicates := by
   rw [natOffsetMap, noDuplicates_toOffsetMap_iff]
   intro left right leftMember rightMember leftOffset rightOffset
