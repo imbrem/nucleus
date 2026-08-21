@@ -29,10 +29,11 @@ def test_public_apis_follow_their_crate_paths() -> None:
 
 
 def test_lrat_follows_its_crate_path() -> None:
-    assert covalence.logic.__all__ == ["lrat", "sat"]
+    assert covalence.logic.__all__ == ["lrat", "metamath", "sat"]
     assert covalence.logic.lrat.__name__ == "covalence.logic.lrat"
     assert covalence.logic.lrat.Kernel is _covalence.Kernel
     assert covalence.logic.lrat.RatGroup is _covalence.RatGroup
+    assert covalence.logic.metamath.Database is _covalence.Database
     assert covalence.logic.sat.__name__ == "covalence.logic.sat"
     assert covalence.logic.sat.Formula is _covalence.Formula
 
@@ -58,6 +59,7 @@ def test_the_package_ships_typing_metadata() -> None:
     assert (root / "lib" / "hash.py").is_file()
     assert (root / "logic" / "__init__.py").is_file()
     assert (root / "logic" / "lrat.py").is_file()
+    assert (root / "logic" / "metamath.py").is_file()
     assert (root / "logic" / "sat.py").is_file()
     assert (root / "data" / "__init__.py").is_file()
     assert (root / "data" / "cbor.py").is_file()

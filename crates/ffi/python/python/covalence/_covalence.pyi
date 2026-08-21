@@ -78,6 +78,46 @@ class InvalidBase64Error(ValueError):
 class LratError(ValueError):
     """A typed LRAT operation was rejected."""
 
+class MetamathError(ValueError):
+    """A Metamath database could not be parsed or validated."""
+
+class Expression:
+    """A typecode followed by a flat Metamath symbol sequence."""
+
+    typecode: str
+    body: list[str]
+    def __str__(self) -> str: ...
+    def __repr__(self) -> str: ...
+
+class Assertion:
+    """An inspectable Metamath axiom or theorem."""
+
+    label: str
+    conclusion: Expression
+    hypothesis_labels: list[str]
+    disjoint_pairs: list[tuple[str, str]]
+    proof_encoding: str | None
+    is_theorem: bool
+    def __repr__(self) -> str: ...
+
+class Database:
+    """A parsed Metamath database."""
+
+    statement_count: int
+    assertion_count: int
+    theorem_count: int
+    @staticmethod
+    def parse(source: str, /) -> Database: ...
+    @staticmethod
+    def load(path: str, /) -> Database: ...
+    def validate(self) -> int: ...
+    def symbols(self, kind: str | None = None, /) -> list[str]: ...
+    def labels(self) -> list[str]: ...
+    def assertion(self, label: str, /) -> Assertion | None: ...
+    def assertions(self) -> list[Assertion]: ...
+    def __len__(self) -> int: ...
+    def __repr__(self) -> str: ...
+
 class CnfError(ValueError):
     """A conjunctive-normal-form value was malformed."""
 

@@ -360,6 +360,35 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#borsh@1.8.0",
+      "name": "borsh",
+      "version": "1.8.0",
+      "checksum": "a88b7ea17d208c4193f2c1e6de3c35fe71f98c96982d5ced308bdcc749ff6e1f",
+      "edition": "2018",
+      "features": [
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Near Inc <hello@near.org>",
+        "CARGO_PKG_DESCRIPTION": "Binary Object Representation Serializer for Hashing\n",
+        "CARGO_PKG_HOMEPAGE": "https://borsh.io",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/near/borsh-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "bytes": ":bytes-1.12.1"
+          }
+        }
+      ],
+      "buildscript": {
+        "named_deps": {
+          "cfg_aliases": ":cfg_aliases-0.2.2"
+        }
+      }
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#bumpalo@3.20.3",
       "name": "bumpalo",
       "version": "3.20.3",
@@ -431,6 +460,23 @@
         "CARGO_PKG_DESCRIPTION": "A macro to ergonomically define an item depending on a large number of #[cfg]\nparameters. Structured like an if-else chain, the first matching branch is the\nitem that gets emitted.\n",
         "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
         "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/cfg-if"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#cfg_aliases@0.2.2",
+      "name": "cfg_aliases",
+      "version": "0.2.2",
+      "checksum": "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527",
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Zicklag <zicklag@katharostech.com>",
+        "CARGO_PKG_DESCRIPTION": "A tiny utility to help save you a lot of effort with long winded `#[cfg()]` checks.",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/katharostech/cfg_aliases",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/katharostech/cfg_aliases"
       },
       "targets": [
         {}
@@ -903,6 +949,28 @@
       },
       "targets": [
         {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#fnv@1.0.7",
+      "name": "fnv",
+      "version": "1.0.7",
+      "checksum": "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1",
+      "edition": "2015",
+      "features": [
+        "default",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Alex Crichton <alex@alexcrichton.com>",
+        "CARGO_PKG_DESCRIPTION": "Fowler–Noll–Vo hash function",
+        "CARGO_PKG_LICENSE": "Apache-2.0 / MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/servo/rust-fnv"
+      },
+      "targets": [
+        {
+          "crate_root": "lib.rs"
+        }
       ]
     },
     {
@@ -2593,6 +2661,31 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#smol_str@0.3.6",
+      "name": "smol_str",
+      "version": "0.3.6",
+      "checksum": "4aaa7368fcf4852a4c2dd92df0cace6a71f2091ca0a23391ce7f3a31833f1523",
+      "edition": "2024",
+      "features": [
+        "default",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Aleksey Kladov <aleksey.kladov@gmail.com>:Lukas Wirth <lukastw97@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "small-string optimized string type with O(1) clone",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/rust-analyzer/tree/master/lib/smol_str"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "borsh": ":borsh-1.8.0",
+            "serde_core": ":serde_core-1.0.229"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#snafu@0.9.2",
       "name": "snafu",
       "version": "0.9.2",
@@ -2810,6 +2903,54 @@
         {}
       ],
       "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.19",
+      "name": "thiserror",
+      "version": "2.0.19",
+      "checksum": "09a43598840e33d5b0331f38c5e30d13bb11c11210a4b58f0d9b18a5a5eefcd9",
+      "edition": "2021",
+      "features": [
+        "default",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "David Tolnay <dtolnay@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "derive(Error)",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/dtolnay/thiserror"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "thiserror_impl": ":thiserror-impl-2.0.19"
+          }
+        }
+      ],
+      "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@2.0.19",
+      "name": "thiserror-impl",
+      "version": "2.0.19",
+      "checksum": "43cbfe0cf76104d42a574802844187e84a305e531ed54455f11fbde0f10541cd",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "David Tolnay <dtolnay@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Implementation detail of the `thiserror` crate",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/dtolnay/thiserror"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "proc_macro2": ":proc-macro2-1.0.107",
+            "quote": ":quote-1.0.47",
+            "syn": ":syn-3.0.3"
+          },
+          "proc_macro": true
+        }
+      ]
     },
     {
       "id": "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
@@ -3467,6 +3608,16 @@
       ]
     },
     {
+      "id": "workspace#covalence-logic-metamath@0.0.0",
+      "name": "covalence-logic-metamath",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#fnv@1.0.7",
+        "registry+https://github.com/rust-lang/crates.io-index#smol_str@0.3.6",
+        "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.19"
+      ]
+    },
+    {
       "id": "workspace#covalence-neutron@0.0.0",
       "name": "covalence-neutron",
       "category": "tcb",
@@ -3910,6 +4061,20 @@
       "target": "registry+https://github.com/rust-lang/crates.io-index#generic-array@0.14.7",
       "kinds": [
         "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#borsh@1.8.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#borsh@1.8.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cfg_aliases@0.2.2",
+      "kinds": [
+        "build"
       ]
     },
     {
@@ -5069,6 +5234,20 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#smol_str@0.3.6",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#borsh@1.8.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#smol_str@0.3.6",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde_core@1.0.229",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#snafu-derive@0.9.2",
       "target": "registry+https://github.com/rust-lang/crates.io-index#heck@0.5.0",
       "kinds": [
@@ -5162,6 +5341,34 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#syn@3.0.3",
       "target": "registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@2.0.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@2.0.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@2.0.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#syn@3.0.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.19",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@2.0.19",
       "kinds": [
         "normal"
       ]
