@@ -6,7 +6,7 @@
 use covalence_lib_python::exceptions::create_exception;
 use covalence_lib_python::prelude::*;
 use covalence_lib_python::pyo3::types::PyType;
-use covalence_logic_hol::{Error, Tm, Ty, dense};
+use covalence_logic_hol::{Error, Kind, Tm, Ty, dense};
 
 create_exception!(
     covalence,
@@ -27,6 +27,15 @@ fn rejection(error: &Error) -> PyErr {
     reason = "the opaque handle intentionally exposes no type operations yet"
 )]
 pub struct PyTy(Ty);
+
+/// An opaque, portable HOL kind handle.
+#[pyclass(frozen, module = "covalence.logic.hol", name = "Kind")]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+#[expect(
+    dead_code,
+    reason = "the opaque handle intentionally exposes no kind operations yet"
+)]
+pub struct PyKind(Kind);
 
 /// An opaque, portable HOL term handle.
 #[pyclass(frozen, module = "covalence.logic.hol", name = "Tm")]
@@ -62,6 +71,11 @@ impl PyKernel {
             .map_err(|error| rejection(&error))
     }
 
+    /// Insert and return the kind `Star`.
+    fn star(&mut self) -> PyResult<PyKind> {
+        self.0.star().map(PyKind).map_err(|error| rejection(&error))
+    }
+
     /// Insert and return a Boolean constant handle.
     fn bool_const(&mut self, value: bool) -> PyResult<PyTm> {
         self.0
@@ -73,6 +87,7 @@ impl PyKernel {
 
 pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyKernel>()?;
+    module.add_class::<PyKind>()?;
     module.add_class::<PyTy>()?;
     module.add_class::<PyTm>()?;
     let error = PyType::new::<HolError>(module.py());

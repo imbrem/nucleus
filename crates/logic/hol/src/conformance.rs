@@ -35,6 +35,9 @@ fn checked_arena(normalized: &Value) -> Result<dense::Kernel, String> {
     let mut kernel = dense::Kernel::empty();
     for row in rows(normalized)? {
         match row.get("tag").and_then(Value::as_str) {
+            Some("kindStar") => {
+                kernel.star().map_err(|error| error.to_string())?;
+            }
             Some("boolTy") => {
                 kernel.bool_ty().map_err(|error| error.to_string())?;
             }
@@ -60,6 +63,7 @@ fn normalized_arena(kernel: &dense::Kernel) -> Value {
         .rows()
         .iter()
         .map(|row| match row {
+            Row::KindStar => json!({ "tag": "kindStar" }),
             Row::BoolTy => json!({ "tag": "boolTy" }),
             Row::Bool(value) => json!({ "tag": "bool", "value": value }),
         })

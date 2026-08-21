@@ -145,10 +145,11 @@ fn decode_row(value: &Value) -> Result<Row, RowError> {
     };
 
     match tag.as_ref() {
+        "kind.star" if children.is_empty() && extra.is_empty() => Ok(Row::KindStar),
         "ty.bool" if children.is_empty() && extra.is_empty() => Ok(Row::BoolTy),
         "tm.bool" if !children.is_empty() => Err(RowError::WrongArity),
         "tm.bool" => decode_bool_extra(extra),
-        "ty.bool" => Err(RowError::WrongArity),
+        "kind.star" | "ty.bool" => Err(RowError::WrongArity),
         _ => Err(RowError::UnknownTag),
     }
 }

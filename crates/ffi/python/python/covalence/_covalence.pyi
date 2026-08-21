@@ -87,6 +87,9 @@ class HolError(ValueError):
 class Ty:
     """An opaque, portable HOL type handle."""
 
+class Kind:
+    """An opaque, portable HOL kind handle."""
+
 class Tm:
     """An opaque, portable HOL term handle."""
 
@@ -95,6 +98,7 @@ class HolKernel:
 
     @staticmethod
     def empty() -> HolKernel: ...
+    def star(self) -> Kind: ...
     def bool_ty(self) -> Ty: ...
     def bool_const(self, value: bool, /) -> Tm: ...
 

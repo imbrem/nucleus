@@ -16,8 +16,22 @@ pub mod wire;
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Row {
+    KindStar,
     BoolTy,
     Bool(bool),
+}
+
+/// A portable handle to a checked HOL kind row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Kind {
+    index: i64,
+}
+
+impl Kind {
+    #[must_use]
+    pub const fn index(self) -> i64 {
+        self.index
+    }
 }
 
 /// A portable handle to a checked HOL type row.
@@ -136,7 +150,7 @@ impl Arena for AnyArena {
 
 /// Dense root-arena storage and its specialized kernel operations.
 pub mod dense {
-    use super::{Arena as ArenaTrait, Error, Kernel as GenericKernel, Row, Tm, Ty, sealed};
+    use super::{Arena as ArenaTrait, Error, Kernel as GenericKernel, Kind, Row, Tm, Ty, sealed};
 
     /// A dense signed-offset arena.
     ///
@@ -223,6 +237,16 @@ pub mod dense {
             Ok(Ty { index })
         }
 
+        /// Appends the kind `Star`, whose sort is `Kind`.
+        ///
+        /// # Errors
+        ///
+        /// Returns an error if the signed dense index cannot be represented.
+        pub fn star(&mut self) -> Result<Kind, Error> {
+            let index = self.arena.push(Row::KindStar)?;
+            Ok(Kind { index })
+        }
+
         /// Appends a Boolean constant. Repeated calls append repeated rows.
         ///
         /// Lean: `Nucleus.Hol.Ethane.Kernel.bool` and
@@ -270,16 +294,24 @@ mod tests {
     #[test]
     fn dense_operations_append_and_duplicate() {
         let mut kernel = dense::Kernel::empty();
+        let star = kernel.star().unwrap();
         let first_type = kernel.bool_ty().unwrap();
         let second_type = kernel.bool_ty().unwrap();
         let false_term = kernel.bool_const(false).unwrap();
         let duplicate = kernel.bool_const(false).unwrap();
 
-        assert_eq!((first_type.index(), second_type.index()), (0, 1));
-        assert_eq!((false_term.index(), duplicate.index()), (2, 3));
+        assert_eq!(star.index(), 0);
+        assert_eq!((first_type.index(), second_type.index()), (1, 2));
+        assert_eq!((false_term.index(), duplicate.index()), (3, 4));
         assert_eq!(
             kernel.arena().rows(),
-            &[Row::BoolTy, Row::BoolTy, Row::Bool(false), Row::Bool(false)]
+            &[
+                Row::KindStar,
+                Row::BoolTy,
+                Row::BoolTy,
+                Row::Bool(false),
+                Row::Bool(false)
+            ]
         );
     }
 

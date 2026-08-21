@@ -32,6 +32,7 @@ def test_lrat_follows_its_crate_path() -> None:
     assert covalence.logic.__all__ == ["hol", "lrat", "sat"]
     assert covalence.logic.hol.__name__ == "covalence.logic.hol"
     assert covalence.logic.hol.Kernel is _covalence.HolKernel
+    assert covalence.logic.hol.Kind is _covalence.Kind
     assert covalence.logic.hol.Ty is _covalence.Ty
     assert covalence.logic.hol.Tm is _covalence.Tm
     assert covalence.logic.lrat.__name__ == "covalence.logic.lrat"

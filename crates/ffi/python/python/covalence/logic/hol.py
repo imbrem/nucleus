@@ -6,8 +6,8 @@ Handles carry no kernel identity and may be supplied across kernels as later
 operations begin accepting them.
 """
 
-from .._covalence import HolError, HolKernel, Tm, Ty
+from .._covalence import HolError, HolKernel, Kind, Tm, Ty
 
 Kernel = HolKernel
 
-__all__ = ["HolError", "Kernel", "Tm", "Ty"]
+__all__ = ["HolError", "Kernel", "Kind", "Tm", "Ty"]
