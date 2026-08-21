@@ -16,8 +16,41 @@
 //! the [`Proof::Compressed`] letter scheme (decoded by `decompress_proof`,
 //! which recovers the `A`–`T` / `U`–`Y` base-20/5 integers, the `Z` save
 //! markers, and the mandatory-hyp / label-block / heap addressing).
+//!
+//! ## Why the checker re-imposes the reading order
+//!
+//! A read-as-you-go verifier (`mmverify.py`) cannot cite a label it has not yet
+//! read: its label table *is* the prefix of the database processed so far. This
+//! crate parses the whole file before checking anything, so every label is
+//! visible to every proof — and left unguarded a theorem could cite *itself*
+//! (or two theorems each other) and thereby "prove" an arbitrary statement.
+//! [`replay`] restores the discipline positionally: a cited label must occur
+//! **strictly earlier** in the statement list than the theorem being proved.
+//!
+//! ## Why `$e` premises are checked for activity but `$f` floats are not
+//!
+//! An essential hypothesis belongs to the `${ ... $}` block that declares it;
+//! a proof that helps itself to another block's premise proves anything. The
+//! `$e` hypotheses active where an assertion is stated are *exactly* its
+//! mandatory [`Frame::essentials`] (frame construction takes all of them), so
+//! membership there **is** the activity test — precise, with no legitimate
+//! proof rejected.
+//!
+//! Floats are weaker. A proof may legitimately cite an active but *non*-mandatory
+//! `$f` to introduce a dummy (working) variable — `set.mm` does so around
+//! 200 000 times — so frame membership is the wrong test for them, and a parsed
+//! [`Database`] does not retain `${ ... $}` markers (they leave no
+//! [`Statement`]), so the float's original scope cannot be recovered here.
+//! Floats are therefore held to the ordering check alone. That leaves one
+//! residual gap: a database that gives the *same* variable two different
+//! typecodes in two disjoint scopes could cite the out-of-scope typing. Dummy
+//! variables remain constrained by the `$d` check below, which consults the
+//! proving theorem's own in-scope `$d` set, so a foreign float buys nothing
+//! wherever distinctness is required.
 
 use std::collections::BTreeSet;
+
+use fnv::FnvHashMap;
 
 use crate::database::{Assertion, Database, Frame, Proof, Statement};
 use crate::error::MmError;
@@ -26,14 +59,64 @@ use crate::subst::{Subst, apply_subst, vars_in_body};
 
 /// Verify every `$p` theorem in the database. Returns the number verified.
 pub fn verify_all(db: &Database) -> Result<usize, MmError> {
+    // One shared position table for the whole run: every proof needs it, and it
+    // depends only on the database.
+    let order = LabelOrder::new(db);
     let mut count = 0;
     for assertion in db.assertions() {
         if assertion.proof.is_some() {
-            verify_assertion(db, assertion)?;
+            replay_ordered(db, assertion, &order, &mut ())?;
             count += 1;
         }
     }
     Ok(count)
+}
+
+/// Where each labelled statement sits in [`Database::statements`].
+///
+/// The checker rejects a proof that cites a label declared no earlier than the
+/// theorem being proved (see the module docs), which needs both statements'
+/// source positions. The table is derived from the public statement list rather
+/// than read out of the database, and is built **once** per [`verify_all`] —
+/// the standalone [`replay`] / [`verify_assertion`] entry points build one for
+/// their single call, which is why bulk verification should go through
+/// [`verify_all`].
+struct LabelOrder<'a> {
+    positions: FnvHashMap<&'a str, usize>,
+}
+
+impl<'a> LabelOrder<'a> {
+    fn new(db: &'a Database) -> Self {
+        let statements = db.statements();
+        let mut positions = FnvHashMap::with_capacity_and_hasher(statements.len(), <_>::default());
+        for (index, statement) in statements.iter().enumerate() {
+            if let Some(label) = statement_label(statement) {
+                positions.insert(label, index);
+            }
+        }
+        Self { positions }
+    }
+
+    /// The source position of `label`, if the database declares it.
+    fn lookup(&self, label: &str) -> Option<usize> {
+        self.positions.get(label).copied()
+    }
+
+    /// The source position of `label`, or `usize::MAX` if the database declares
+    /// no such label — nothing in the database then precedes it.
+    fn position(&self, label: &str) -> usize {
+        self.lookup(label).unwrap_or(usize::MAX)
+    }
+}
+
+/// The label a statement declares, if any. `$c`, `$v`, and `$d` are unlabelled.
+fn statement_label(statement: &Statement) -> Option<&str> {
+    match statement {
+        Statement::Float(f) => Some(&f.label),
+        Statement::Essential(h) => Some(&h.label),
+        Statement::Assert(a) => Some(&a.label),
+        Statement::Constant(_) | Statement::Variable(_) | Statement::Disjoint(_) => None,
+    }
 }
 
 /// An observer notified of every event of a proof replay, in order.
@@ -75,6 +158,11 @@ impl ReplayObserver for () {}
 
 /// Verify a single `$p` assertion's proof against the database. `$a` axioms
 /// (no proof) verify trivially.
+///
+/// `assertion` is located in `db` by its own label, so the ordering check binds
+/// here exactly as it does under [`verify_all`]. Verifying a whole database one
+/// call at a time nevertheless costs a position table per call; use
+/// [`verify_all`], which builds one for the run.
 pub fn verify_assertion(db: &Database, assertion: &Assertion) -> Result<(), MmError> {
     replay(db, assertion, &mut ())
 }
@@ -89,17 +177,28 @@ pub fn replay(
     assertion: &Assertion,
     obs: &mut dyn ReplayObserver,
 ) -> Result<(), MmError> {
+    replay_ordered(db, assertion, &LabelOrder::new(db), obs)
+}
+
+/// [`replay`] against a position table the caller already has.
+fn replay_ordered(
+    db: &Database,
+    assertion: &Assertion,
+    order: &LabelOrder<'_>,
+    obs: &mut dyn ReplayObserver,
+) -> Result<(), MmError> {
     let Some(proof) = &assertion.proof else {
         return Ok(());
     };
     let theorem = &assertion.label;
+    let ctx = Context::new(db, assertion, order);
 
     let mut stack: Vec<Expr> = Vec::new();
 
     match proof {
         Proof::Normal(labels) => {
             for label in labels {
-                step_label(db, assertion, label, &mut stack, obs)?;
+                step_label(&ctx, label, &mut stack, obs)?;
             }
         }
         Proof::Compressed { labels, letters } => {
@@ -108,7 +207,7 @@ pub fn replay(
             for step in &steps {
                 match step {
                     ProofStep::Label(label) => {
-                        step_label(db, assertion, label, &mut stack, obs)?;
+                        step_label(&ctx, label, &mut stack, obs)?;
                     }
                     ProofStep::Save => {
                         let top = stack
@@ -154,38 +253,104 @@ pub fn replay(
     Ok(())
 }
 
+/// Everything a replay needs that is fixed for the whole of one proof.
+///
+/// The `$d` set in particular used to be rebuilt inside the step loop — once
+/// per *assertion application*, allocating two `String`s per pair — and that
+/// dominated verification time on `set.mm`. It depends only on the theorem
+/// being proved, so it is built once here and keyed on borrowed names.
+struct Context<'a> {
+    db: &'a Database,
+    /// The theorem whose proof is being replayed.
+    current: &'a Assertion,
+    order: &'a LabelOrder<'a>,
+    /// `current`'s own position in the statement list: a cited label must come
+    /// strictly before it. `usize::MAX` when `current` is not itself a statement
+    /// of `db` (a synthetic assertion — then nothing in `db` is a forward
+    /// reference).
+    position: usize,
+    /// `current.scope_disjoints` as a set of normalised unordered pairs.
+    disjoints: BTreeSet<(&'a str, &'a str)>,
+}
+
+impl<'a> Context<'a> {
+    fn new(db: &'a Database, current: &'a Assertion, order: &'a LabelOrder<'a>) -> Self {
+        Self {
+            db,
+            current,
+            order,
+            position: order.position(&current.label),
+            disjoints: current
+                .scope_disjoints
+                .iter()
+                .map(|(a, b)| ordered_pair(a, b))
+                .collect(),
+        }
+    }
+
+    /// The label of the theorem being proved, for diagnostics.
+    fn theorem(&self) -> &str {
+        &self.current.label
+    }
+}
+
 /// Execute a single label step (shared by both proof encodings): push a
 /// hypothesis expression, or apply an assertion.
 fn step_label(
-    db: &Database,
-    current: &Assertion,
+    ctx: &Context<'_>,
     label: &str,
     stack: &mut Vec<Expr>,
     obs: &mut dyn ReplayObserver,
 ) -> Result<(), MmError> {
-    let theorem = &current.label;
-    let stmt = db
-        .statement_by_label(label)
+    let theorem = ctx.theorem();
+    // One lookup both resolves the label and locates it: the position *is* the
+    // index of the statement it names.
+    let position = ctx
+        .order
+        .lookup(label)
         .ok_or_else(|| MmError::UnknownLabel {
-            theorem: theorem.clone(),
+            theorem: theorem.to_string(),
             label: label.to_string(),
         })?;
 
-    match stmt {
+    // A proof may cite only what a read-as-you-go verifier would already have
+    // read. Without this a theorem cites itself and proves anything.
+    if position >= ctx.position {
+        return Err(MmError::ForwardReference {
+            theorem: theorem.to_string(),
+            label: label.to_string(),
+        });
+    }
+
+    match &ctx.db.statements()[position] {
         Statement::Float(f) => {
             stack.push(crate::expr::make_expr(&f.typecode, [f.var.as_str()]));
             obs.float_hyp(label, stack.last().unwrap(), stack.len());
         }
         Statement::Essential(h) => {
+            // The active `$e` premises are exactly the mandatory ones, so this
+            // is the scope check: an unrelated block's premise is not free.
+            if !ctx
+                .current
+                .frame
+                .essentials
+                .iter()
+                .any(|e| e.label == label)
+            {
+                return Err(MmError::InactiveHypothesis {
+                    theorem: theorem.to_string(),
+                    label: label.to_string(),
+                });
+            }
             stack.push(h.expr.clone());
             obs.essential_hyp(label, stack.last().unwrap(), stack.len());
         }
         Statement::Assert(target) => {
-            apply_assertion(db, current, target, label, stack, obs)?;
+            apply_assertion(ctx, target, label, stack, obs)?;
         }
         _ => {
             return Err(MmError::UnknownLabel {
-                theorem: theorem.clone(),
+                theorem: theorem.to_string(),
                 label: label.to_string(),
             });
         }
@@ -274,39 +439,7 @@ fn decompress_proof(
             continue;
         }
 
-        // Decode one proof integer.
-        let mut n: usize = 0;
-        loop {
-            let c = letters[i];
-            i += 1;
-            if (b'A'..=b'T').contains(&c) {
-                // Terminal digit: value 1-20.
-                let t = (c - b'A') as usize + 1;
-                n = n * 20 + t;
-                break;
-            } else if (b'U'..=b'Y').contains(&c) {
-                // Continuation digit: value 1-5.
-                let d = (c - b'U') as usize + 1;
-                n = n * 5 + d;
-            } else if c == b'Z' || c == b'?' {
-                return Err(MmError::CompressedProofError {
-                    theorem: theorem.to_owned(),
-                    message: format!("unexpected `{}` mid-integer", c as char),
-                });
-            } else {
-                return Err(MmError::CompressedProofError {
-                    theorem: theorem.to_owned(),
-                    message: format!("invalid character `{}` in letter block", c as char),
-                });
-            }
-
-            if i >= letters.len() {
-                return Err(MmError::CompressedProofError {
-                    theorem: theorem.to_owned(),
-                    message: "letter block ends mid-integer".into(),
-                });
-            }
-        }
+        let n = decode_integer(letters, &mut i, theorem)?;
 
         // Resolve proof integer n (1-based).
         if n == 0 {
@@ -347,23 +480,73 @@ fn decompress_proof(
     Ok(steps)
 }
 
+/// Decode one proof integer from `letters` starting at `*i`, advancing `*i`
+/// past it. The caller must have checked that `*i < letters.len()`.
+///
+/// The accumulation is **checked**. A proof integer is a big-endian mixed-radix
+/// number with no bound on its digit run, and the letter block is untrusted
+/// input by construction: a long enough run of `U`–`Y` continuation digits
+/// would otherwise panic in debug and, worse, silently wrap in release onto a
+/// small — and therefore *valid* — hypothesis or heap index.
+fn decode_integer(letters: &[u8], i: &mut usize, theorem: &str) -> Result<usize, MmError> {
+    let mut n: usize = 0;
+    loop {
+        let c = letters[*i];
+        *i += 1;
+        // Terminal digits `A`-`T` (values 1-20) end the integer; continuation
+        // digits `U`-`Y` (values 1-5) extend it.
+        let (radix, digit, terminal) = if (b'A'..=b'T').contains(&c) {
+            (20, (c - b'A') as usize + 1, true)
+        } else if (b'U'..=b'Y').contains(&c) {
+            (5, (c - b'U') as usize + 1, false)
+        } else if c == b'Z' || c == b'?' {
+            return Err(MmError::CompressedProofError {
+                theorem: theorem.to_owned(),
+                message: format!("unexpected `{}` mid-integer", c as char),
+            });
+        } else {
+            return Err(MmError::CompressedProofError {
+                theorem: theorem.to_owned(),
+                message: format!("invalid character `{}` in letter block", c as char),
+            });
+        };
+
+        n = n
+            .checked_mul(radix)
+            .and_then(|n| n.checked_add(digit))
+            .ok_or_else(|| MmError::CompressedProofError {
+                theorem: theorem.to_owned(),
+                message: "proof integer is too large to address any proof step".into(),
+            })?;
+
+        if terminal {
+            return Ok(n);
+        }
+        if *i >= letters.len() {
+            return Err(MmError::CompressedProofError {
+                theorem: theorem.to_owned(),
+                message: "letter block ends mid-integer".into(),
+            });
+        }
+    }
+}
+
 /// Apply `target` (the asserted rule) within the proof of `current`, popping
 /// the mandatory hypotheses off `stack`, checking everything, and pushing the
 /// substituted conclusion.
 fn apply_assertion(
-    db: &Database,
-    current: &Assertion,
+    ctx: &Context<'_>,
     target: &Assertion,
     step: &str,
     stack: &mut Vec<Expr>,
     obs: &mut dyn ReplayObserver,
 ) -> Result<(), MmError> {
-    let theorem = &current.label;
+    let theorem = ctx.theorem();
     let frame = &target.frame;
     let n = frame.mandatory_count();
     if stack.len() < n {
         return Err(MmError::StackUnderflow {
-            theorem: theorem.clone(),
+            theorem: theorem.to_string(),
             step: step.to_string(),
         });
     }
@@ -375,7 +558,7 @@ fn apply_assertion(
     for (i, f) in frame.floats.iter().enumerate() {
         let arg = &args[i];
         let arg_tc = typecode_of(arg).ok_or_else(|| MmError::TypecodeMismatch {
-            theorem: theorem.clone(),
+            theorem: theorem.to_string(),
             step: step.to_string(),
             var: f.var.clone(),
             expected: f.typecode.clone(),
@@ -383,7 +566,7 @@ fn apply_assertion(
         })?;
         if arg_tc != f.typecode {
             return Err(MmError::TypecodeMismatch {
-                theorem: theorem.clone(),
+                theorem: theorem.to_string(),
                 step: step.to_string(),
                 var: f.var.clone(),
                 expected: f.typecode.clone(),
@@ -400,7 +583,7 @@ fn apply_assertion(
         let expected = apply_subst(&h.expr, &subst);
         if &expected != arg {
             return Err(MmError::HypothesisMismatch {
-                theorem: theorem.clone(),
+                theorem: theorem.to_string(),
                 step: step.to_string(),
                 expected: render(&expected),
                 found: render(arg),
@@ -409,7 +592,7 @@ fn apply_assertion(
     }
 
     // --- check distinct-variable ($d) conditions ---
-    check_disjoints(db, current, target, step, &subst)?;
+    check_disjoints(ctx, target, step, &subst)?;
 
     // --- push the substituted conclusion ---
     stack.push(apply_subst(&target.conclusion, &subst));
@@ -440,9 +623,12 @@ fn apply_assertion(
 /// used only inside the proof — not the mandatory-filtered `frame.disjoints`.
 /// The mandatory subset is too small: a perfectly legal `$d` over a proof-local
 /// dummy variable would be invisible there, causing a spurious rejection.
+///
+/// That set lives on the [`Context`], built once per replay: it is the same for
+/// every step of a proof, and rebuilding it here (with two `String`s allocated
+/// per pair) cost roughly a quarter of `set.mm`'s verification time.
 fn check_disjoints(
-    db: &Database,
-    current: &Assertion,
+    ctx: &Context<'_>,
     target: &Assertion,
     step: &str,
     subst: &Subst,
@@ -450,15 +636,8 @@ fn check_disjoints(
     if target.frame.disjoints.is_empty() {
         return Ok(());
     }
-    let is_var = |s: &str| db.is_variable(s);
-
-    // The current theorem's full in-scope $d pairs, as an unordered-pair set
-    // for fast lookup.
-    let current_dv: BTreeSet<(String, String)> = current
-        .scope_disjoints
-        .iter()
-        .map(|(a, b)| ordered_pair(a, b))
-        .collect();
+    let current = ctx.current;
+    let is_var = |s: &str| ctx.db.is_variable(s);
 
     for (a, b) in &target.frame.disjoints {
         let img_a = subst.get(a).map(|v| v.as_slice()).unwrap_or(&[]);
@@ -479,7 +658,7 @@ fn check_disjoints(
                     });
                 }
                 // (2) the obligation must be discharged by the current frame.
-                if !current_dv.contains(&ordered_pair(x, y)) {
+                if !ctx.disjoints.contains(&ordered_pair(x, y)) {
                     return Err(MmError::DisjointViolation {
                         theorem: current.label.clone(),
                         step: step.to_string(),
@@ -494,35 +673,22 @@ fn check_disjoints(
     Ok(())
 }
 
-/// Order a variable pair so `(a, b)` and `(b, a)` compare equal.
-fn ordered_pair(a: &str, b: &str) -> (String, String) {
-    if a <= b {
-        (a.to_string(), b.to_string())
-    } else {
-        (b.to_string(), a.to_string())
-    }
+/// Order a variable pair so `(a, b)` and `(b, a)` compare equal. Borrowed, so
+/// normalising a pair for lookup costs no allocation.
+fn ordered_pair<'a>(a: &'a str, b: &'a str) -> (&'a str, &'a str) {
+    if a <= b { (a, b) } else { (b, a) }
 }
 
-/// Decode a single compressed proof integer (test helper).
+/// Decode a single compressed proof integer (test helper). Delegates to
+/// [`decode_integer`] rather than restating the digit scheme, so the tested
+/// decoder is the one the verifier runs.
 #[cfg(test)]
 fn decode_compressed_integer(letters: &[u8]) -> Option<usize> {
-    let mut n: usize = 0;
-    let mut i = 0;
-    while i < letters.len() {
-        let c = letters[i];
-        i += 1;
-        if (b'A'..=b'T').contains(&c) {
-            let t = (c - b'A') as usize + 1;
-            n = n * 20 + t;
-            return Some(n);
-        } else if (b'U'..=b'Y').contains(&c) {
-            let d = (c - b'U') as usize + 1;
-            n = n * 5 + d;
-        } else {
-            return None;
-        }
+    if letters.is_empty() {
+        return None;
     }
-    None // incomplete
+    let mut i = 0;
+    decode_integer(letters, &mut i, "<test>").ok()
 }
 
 #[cfg(test)]

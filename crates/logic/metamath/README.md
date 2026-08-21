@@ -8,6 +8,15 @@ It is deliberately **not** part of the Nucleus TCB. `DatabaseSink` lets the
 same parser drive a future in-HOL validator, whose kernel results—not this
 checker—will carry authority.
 
+Because the whole database is parsed before anything is checked, the checker
+re-imposes by position what a read-as-you-go verifier gets for free: a proof may
+cite only labels declared **strictly earlier** than the theorem it proves
+(`MmError::ForwardReference`), and may cite only its own `$e` premises
+(`MmError::InactiveHypothesis`). Databases that relied on either being
+unchecked—a theorem citing itself, or another block's hypothesis—no longer
+validate. `$f` floats are exempt from the scope test: citing an active but
+non-mandatory float is how a proof introduces a dummy variable.
+
 ```rust
 use covalence_logic_metamath::{parse, verify_all};
 

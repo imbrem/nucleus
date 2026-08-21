@@ -21,6 +21,18 @@ pub enum MmError {
     #[error("proof of `{theorem}` references unknown label `{label}`")]
     UnknownLabel { theorem: String, label: String },
 
+    #[error(
+        "proof of `{theorem}` references `{label}`, which is not declared until later \
+         in the database"
+    )]
+    ForwardReference { theorem: String, label: String },
+
+    #[error(
+        "proof of `{theorem}` references `{label}`, an essential hypothesis (`$e`) that is \
+         not active where `{theorem}` is asserted"
+    )]
+    InactiveHypothesis { theorem: String, label: String },
+
     #[error("stack underflow while applying `{step}` in proof of `{theorem}`")]
     StackUnderflow { theorem: String, step: String },
 
