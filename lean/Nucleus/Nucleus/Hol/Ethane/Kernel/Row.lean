@@ -32,10 +32,10 @@ inductive Tag where
   deriving DecidableEq, Repr
 
 /-- Mechanical Serde view. Rust uses `SmallVec<[i64; MAX_CHILDREN]>`; a Lean
-list carries the same ordered child sequence without imposing storage policy. -/
+array carries the same executable ordered child sequence. -/
 structure RowSerde where
   tag : Tag
-  ixs : List Int64
+  ixs : Array Int64
   eq : Option Int64 := none
   sort : Option Int64 := none
   deriving DecidableEq, Repr
@@ -51,13 +51,13 @@ def Row.toSerde (row : Row) : RowSerde :=
       | .boolTy => .boolTy
       | .bool false => .boolFalse
       | .bool true => .boolTrue
-    ixs := []
+    ixs := #[]
     eq := row.eq
     sort := row.sort }
 
 /-- Validate constructor arity and recover a semantic row. -/
 def Row.ofSerde (row : RowSerde) : Except RowError Row := do
-  if row.ixs.length = 0 then
+  if row.ixs.size = 0 then
     let expr := match row.tag with
       | .kindStar => .kindStar
       | .boolTy => .boolTy
@@ -65,7 +65,7 @@ def Row.ofSerde (row : RowSerde) : Except RowError Row := do
       | .boolTrue => .bool true
     .ok { expr, eq := row.eq, sort := row.sort }
   else
-    .error (.wrongChildCount 0 row.ixs.length)
+    .error (.wrongChildCount 0 row.ixs.size)
 
 @[simp] theorem Row.ofSerde_toSerde (row : Row) :
     Row.ofSerde row.toSerde = .ok row := by
@@ -77,7 +77,7 @@ def Row.ofSerde (row : RowSerde) : Except RowError Row := do
 
 theorem Row.ofSerde_wrongArity (tag : Tag) (child : Int64)
     (eq sort : Option Int64) :
-    Row.ofSerde ⟨tag, [child], eq, sort⟩ =
+    Row.ofSerde ⟨tag, #[child], eq, sort⟩ =
       .error (.wrongChildCount 0 1) := by
   simp [Row.ofSerde]
 
