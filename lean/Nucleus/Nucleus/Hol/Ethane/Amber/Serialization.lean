@@ -43,7 +43,7 @@ structure ObjectSchema where
   defsField : String
   metadataField : String
   denseTag : String
-  sparseTag : String
+  segmentTag : String
   deriving DecidableEq
 
 namespace ObjectSchema
@@ -216,7 +216,7 @@ def objectSchemaV0 : ObjectSchema where
   defsField := "defs"
   metadataField := "metadata"
   denseTag := "arena.dense"
-  sparseTag := "arena.sparse"
+  segmentTag := "arena.segment"
 
 def syntaxVocabularyV0 : SyntaxVocabulary := syntaxVocabulary!
   "pair"
