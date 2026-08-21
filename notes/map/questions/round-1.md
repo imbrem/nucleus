@@ -1,0 +1,284 @@
+# Questions, round 1
+
+Opened 2026-08-19. Cited elsewhere as `[?1.A]` and so on. Write answers under
+each question; this file is the log, so nothing gets deleted.
+
+---
+
+## 1.A — What landed of `Nucleus.Hol`, and by which route?
+
+`lean/Nucleus/Nucleus/Hol/` is on `main` at 8,373 lines with `Signature.lean`,
+`Soundness.lean`, `Intrinsic.lean` [v:3]. PR #701, described as the
+signature-parametric kernel, is still open [v:6]. The 2026-08-17 plan treats
+landing #701 as the Day-0 decision [n:notes/plans/2026-08-hol-kernel-mvp.md].
+
+Matters because: that plan's critical path may already be done, which would
+change what the next fortnight is for.
+
+**Partial answer, 2026-08-19, from the repo [v:17]:** the directory is on
+`main` — 30 files, 8,373 lines — and it arrived through the HolE merges #728 and
+#729. #701's tip is _not_ an ancestor of `main`, although the directory's
+contents are identical on both branches right now. So the namespace is in the
+trunk while the PR stays open. The author's reading is that no Nucleus HOL has
+landed, which is a statement about what counts as landing rather than about the
+files; the remaining question is which sense the notes should use.
+
+**Answer:**
+
+---
+
+## 1.B — What does a negative `SRef` mean?
+
+`SRef::neg` exists with no doc comment [v:5]. The dump mentions "the variant
+with SAT style negative indices" [d], which reads as polarity.
+
+**Answered 2026-08-19 [d].** A negative `SRef` is the logical negation of the
+positive reference, as an endpoint of the implication relation `A ⇒ B`. The
+SQLite-backed SAT work is the context; `crates/logic/sat` already carries the
+same convention in `Literal(i64)`, negatable and nonzero [v:16].
+
+So the argument in `03-arena.md` §3 stands: the sign is spent, and indices stay
+unsigned.
+
+---
+
+## 1.C — Field names
+
+`03-arena.md` §3 uses `tag, elem, schema, links, base, segments, defs, ctx,
+premises, conclusions, meta`. The dump floats `imports`/`links`, `offset`/`count`
+versus `start`/`end`, `class` versus `kind` [d]. The spike uses `kind` in
+`Link` and `start`/`end` in `Segment` [v:5].
+
+Matters because: renaming after fixtures exist is annoying, and the JSON
+projection makes these user-facing.
+
+**Answer:**
+
+---
+
+## 1.D — Where does the E-class freshness obligation get checked?
+
+**Reframed 2026-08-19 [d].** The design's point is that E-class identity carries
+no context: a class is a set of indices and nothing else. The price is that a
+class over indices with `x` free is only usable under a binder for `x` when `x`
+does not occur in the context assumptions.
+
+The open part is who checks it. The structural validator cannot — it does not
+know the consumer's binder. Candidates: the rule that consumes a class under a
+binder, a side condition on the `eq` fact itself, or a discipline that only
+locally closed classes cross a binder at all.
+
+**Answer:**
+
+---
+
+## 1.E — Must `ty[i] < i`?
+
+**Answered 2026-08-19 [d].** No. `ty[i]` is unconstrained. A type is not part of
+the syntax — only a node's child indices are — so `ty` is a predicate attached
+after the fact and carries no ordering obligation. The question was malformed:
+it treated a claim as though it were structure.
+
+---
+
+## 1.F — Does `HolLN/Array.lean` port to the HolE arena?
+
+It has an arena, `validate`, `elaborate`, and a JSON codec for rows
+[n:notes/plans/2026-08-hol-kernel-mvp.md]. Not read in detail this session.
+
+Matters because: it decides whether the Lean side of P1 is a port or a new
+model.
+
+**Answer:**
+
+---
+
+## 1.G — What does an absent `ctx` mean?
+
+Empty context, or "this arena makes no derivability claims"? And is one default
+context per arena enough, or does each dense column need its own?
+
+Matters because: it sets whether `eq` columns are usable in an arena that never
+declares a context.
+
+**Answer:**
+
+---
+
+## 1.H — Where does this land, and when?
+
+The arena work is a spike stack. Is the goal to get #746 or a successor onto
+`main` in this push, or to keep iterating off-trunk until the design has been
+used? `AGENTS.md` sets a high bar for merging and says the decision is human
+[n:AGENTS.md §2].
+
+Matters because: it decides whether P1 in the plan targets a merge or another
+spike.
+
+**Answer:**
+
+---
+
+## 1.I — Is `elem` needed in v0?
+
+The only value is `"hol"`. It is one string per arena and it makes format
+confusion between arena kinds impossible later.
+
+**Answer:**
+
+---
+
+## 1.J — Should `Claims(link, stage)` carry a stage?
+
+Alternative: `Claims(link)` means everything the linked object claims, and the
+importer takes it or leaves it.
+
+Matters because: a stage argument lets an importer assume only the syntactic
+half of an import, which is the cheap half to check.
+
+**Answer:**
+
+---
+
+## 1.K — Is annotation erasure really free?
+
+**H5** in `03-arena.md` §8 claims `TM_BV(k, α)` erases to Lean's `bv k`, that
+the annotation is determined by the enclosing binder in any valid arena, and
+that no soundness argument therefore changes.
+
+Two things to check. First, whether the `(ty, dem)` fold really discharges every
+obligation the binder-stack walk would, including for `sub`, `abs` and `rep`,
+which bind a term variable in their predicate at `depth 1` [v:13]. Second,
+whether the elaboration in `HolSurface/RustMapping.lean` can absorb the extra
+field without restructuring.
+
+Matters because: if erasure is not free, typed de Bruijn stops being a surface
+convenience and becomes a change to the spec, at which point named levels are
+the cheaper option.
+
+**Answer:**
+
+---
+
+## 1.L — Write both folds before choosing?
+
+`fvs` under names and `dem` under typed de Bruijn are each roughly forty lines.
+Writing both settles two things argument cannot: how often the `dem` agreement
+condition actually fires on real arenas, and how much of the checker changes
+between the two.
+
+Matters because: §8 currently recommends on the balance of arguments, which is
+weaker evidence than either fold running.
+
+**Answer:**
+
+---
+
+## 1.M — How does free variable identity survive an import?
+
+Free variables are `(name : Nat, type)` in Lean [v:13], so identity is a number.
+Two arenas built independently will reuse the same numbers for different
+variables. Merging or importing one into the other has to reconcile that.
+
+Three shapes, none chosen:
+
+- rename on import, which rewrites nodes and so breaks sharing and addresses;
+- make identity arena-relative, which makes a shared node's meaning depend on
+  which arena it arrived from — dangerous, and probably disqualifying;
+- make identity global, derived from content or from a namespace link, so
+  independent arenas cannot collide.
+
+Matters because: it is the deciding question between named binders and typed de
+Bruijn. Under de Bruijn the problem is confined to leaves; under names the
+identity also sits on every binder, so any renaming has to go under binders.
+Both disciplines have named free variables, so neither escapes it entirely.
+
+**Answer:**
+
+---
+
+## 1.N — Out-of-window imported variables: error or opaque?
+
+A segment declares `var_count`. On resolution the source may mention a variable
+at or above it. Two options: reject the arena, or map the excess to an opaque
+value nothing is provable about, which is what the dump proposes for padding
+generally [d].
+
+Rejecting is fail-closed and matches covalence's rule
+[c:notes/vibes/kernel/substrate-expressions.md]. Opaque is more forgiving for
+lazy imports and keeps a large import usable when only part of it is wanted.
+
+Matters because: it decides whether `var_count` is a bound the importer asserts
+about the source, or a filter the importer applies to it. The filter reading is
+strictly more useful and slightly more dangerous.
+
+Related: §11 shows the opaque behaviour factors as `trim ; substitution`, so on
+the substitution side it need not be a mode. The same factoring may apply here,
+which would make this question "is trimming a separate segment operation?"
+rather than a policy flag.
+
+**Answer:**
+
+---
+
+## 1.O — How early is the pointwise/range reconciliation worth building?
+
+§10 notes that a one-element segment at `at(H, IX, 10)` and a range segment
+importing `3..25` from `H` can be reconciled by arithmetic, with neither
+resolved. Listed as P4a.
+
+Matters because: it may belong before P4's e-graph rather than after, since it
+is what turns derived addresses into something the checker can reason about
+rather than only something the outside world can cite.
+
+**Answer:**
+
+---
+
+## 1.P — How much substitution composition becomes syntax?
+
+§11 keeps substitution _application_ in the kernel and _composition_ in
+userspace. That lands on the safe side of the λσ hazard: composition as syntax
+is what breaks strong normalization for well-typed terms in the explicit
+substitution literature [x, §1 of `05-pointers.md`]. Currently by accident.
+
+Matters because: a substitution arena class at v2 makes composition a stored
+object, which is a step toward syntax. Whether stored-but-eagerly-applied is
+safe should be settled before the class exists, not after.
+
+**Answer:**
+
+---
+
+## 1.Q — Variable-normalized form or closure for open-term names?
+
+§11 gives two conventions for naming an open term. Variable-normalized form is
+what term indexing uses; naming the closure needs no convention at all but
+changes the type.
+
+Matters because: this fixes what a userspace name for "Fermat over x, y, z, n"
+actually is, and it should be pinned somewhere even though it is not TCB, since
+otherwise the name is not a function of the term.
+
+**Answer:**
+
+---
+
+## 1.R — What shape is the lambda node?
+
+Two options, given that a variable is `(name, type)` on the node:
+
+- `{tag: "hol.tm.lam", ix: [var_node, body]}` — the binder points at a
+  `hol.tm.var` node, so "which variable" is unambiguous and the domain comes
+  from that node. HOL Light's `Abs(Var(...), body)` is this.
+- `{tag: "hol.tm.lam", var: n, ix: [domain, body]}` — name and domain given
+  separately, and no node kind appears in a binder position.
+
+**Answered 2026-08-19 by the spec [v:18].** `HolE/Named/Syntax.lean` has
+
+```lean
+| lam (name : Name) (domain : Expr Sig Name (.kind .star)) (body : Expr Sig Name .tm)
+```
+
+Name and domain on the binder. The arena follows, so `hol.tm.lam` carries `var`
+and two children, and no validator condition about what its first child's tag is.
