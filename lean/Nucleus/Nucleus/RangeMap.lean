@@ -343,6 +343,16 @@ theorem mapsTo_unique {ranges : RangeMap α} {index : Nat}
     ranges.Contains index ↔ (ranges.lookup? index).isSome := by
   simp only [Contains, Option.isSome_iff_exists, lookup?_eq_some_iff]
 
+@[simp] theorem contains_iff_exists_range {ranges : RangeMap α} {index : Nat} :
+    ranges.Contains index ↔
+      ∃ range ∈ ranges.ranges, range.Contains index := by
+  constructor
+  · rintro ⟨target, offset, range, member, contains, _, _⟩
+    exact ⟨range, member, contains⟩
+  · rintro ⟨range, member, contains⟩
+    exact ⟨range.target, index - range.start,
+      range, member, contains, rfl, rfl⟩
+
 @[simp] theorem lookupWithOffset?_map (f : α → β) (ranges : RangeMap α) (index : Nat) :
     (map f ranges).lookupWithOffset? index =
       (ranges.lookupWithOffset? index).map fun result => (f result.1, result.2) := by
