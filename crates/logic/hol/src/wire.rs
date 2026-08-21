@@ -13,12 +13,12 @@
 
 use std::collections::BTreeSet;
 
-use covalence_lib_cbor::Value;
+use covalence_data_cbor::{Value, ValueKind};
 
 /// One exactly representable signed wire index.
 ///
-/// CBOR major type 1 retains its standard `-1-n` meaning. D0 narrows both
-/// native CBOR integer forms to the exact `i64` domain and rejects overflow.
+/// The generic CBOR value remains arbitrary precision. Constructing `RawDense`
+/// narrows its offset to the exact `i64` domain and rejects overflow.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SignedIndex(i64);
 
@@ -59,7 +59,7 @@ impl RawDense {
     ///
     /// Returns a precise [`DecodeError`] for malformed or unsupported input.
     pub fn decode_root(value: &Value) -> Result<Self, DecodeError> {
-        let Value::Map(fields) = value else {
+        let ValueKind::Map(fields) = value.kind() else {
             return Err(DecodeError::ExpectedObject);
         };
 
@@ -68,31 +68,31 @@ impl RawDense {
         let mut parent = None;
         let mut offset = None;
         let mut defs = None;
-        for (key, value) in fields {
-            let Value::Text(key) = key else {
+        for (key, value) in fields.iter() {
+            let ValueKind::Text(key) = key.kind() else {
                 return Err(DecodeError::NonTextField);
             };
-            if !seen.insert(key.as_str()) {
-                return Err(DecodeError::DuplicateField(key.clone()));
+            if !seen.insert(key.as_ref()) {
+                return Err(DecodeError::DuplicateField(key.to_string()));
             }
-            match key.as_str() {
+            match key.as_ref() {
                 "tag" => tag = Some(value),
                 "parent" => parent = Some(value),
                 "offset" => offset = Some(value),
                 "defs" => defs = Some(value),
-                _ => return Err(DecodeError::UnknownField(key.clone())),
+                _ => return Err(DecodeError::UnknownField(key.to_string())),
             }
         }
 
-        match required(tag, "tag")? {
-            Value::Text(tag) if tag == "arena.dense" => {}
+        match required(tag, "tag")?.kind() {
+            ValueKind::Text(tag) if tag.as_ref() == "arena.dense" => {}
             _ => return Err(DecodeError::WrongObjectTag),
         }
-        if !matches!(required(parent, "parent")?, Value::Null) {
+        if !matches!(required(parent, "parent")?.kind(), ValueKind::Simple(22)) {
             return Err(DecodeError::ParentNotRoot);
         }
         let offset = decode_index(required(offset, "offset")?)?;
-        let Value::Array(defs) = required(defs, "defs")? else {
+        let ValueKind::Array(defs) = required(defs, "defs")?.kind() else {
             return Err(DecodeError::ExpectedDefsArray);
         };
         let defs = defs
@@ -160,90 +160,105 @@ fn required<'a>(value: Option<&'a Value>, field: &'static str) -> Result<&'a Val
 }
 
 fn decode_index(value: &Value) -> Result<SignedIndex, DecodeError> {
-    let Value::Integer(value) = value else {
-        return Err(DecodeError::InvalidOffset);
-    };
-    let value = i128::from(*value);
-    i64::try_from(value)
-        .map(SignedIndex)
-        .map_err(|_| DecodeError::OffsetOverflow)
+    match value.kind() {
+        ValueKind::Integer(value) => i64::try_from(value)
+            .map(SignedIndex)
+            .map_err(|_| DecodeError::OffsetOverflow),
+        _ => Err(DecodeError::InvalidOffset),
+    }
 }
 
 fn decode_row(value: &Value) -> Result<RawRow, RowError> {
-    let Value::Array(envelope) = value else {
+    let ValueKind::Array(envelope) = value.kind() else {
         return Err(RowError::ExpectedEnvelope);
     };
-    let [tag, children, extra] = envelope.as_slice() else {
+    let [tag, children, extra] = envelope.as_ref() else {
         return Err(RowError::WrongEnvelopeArity);
     };
-    let Value::Text(tag) = tag else {
+    let ValueKind::Text(tag) = tag.kind() else {
         return Err(RowError::ExpectedTag);
     };
-    let Value::Array(children) = children else {
+    let ValueKind::Array(children) = children.kind() else {
         return Err(RowError::ExpectedChildren);
     };
-    let Value::Array(extra) = extra else {
+    let ValueKind::Array(extra) = extra.kind() else {
         return Err(RowError::ExpectedExtra);
     };
 
-    match tag.as_str() {
+    match tag.as_ref() {
         "ty.bool" if children.is_empty() && extra.is_empty() => Ok(RawRow::BoolTy),
         "tm.bool" if !children.is_empty() => Err(RowError::WrongArity),
-        "tm.bool" => match extra.as_slice() {
-            [Value::Array(field)] => match field.as_slice() {
-                [Value::Text(tag), Value::Bool(value)] if tag == "extra.bool" => {
-                    Ok(RawRow::Bool(*value))
-                }
-                _ => Err(RowError::ExpectedBoolExtra),
-            },
-            _ => Err(RowError::WrongArity),
-        },
+        "tm.bool" => decode_bool_extra(extra),
         "ty.bool" => Err(RowError::WrongArity),
         _ => Err(RowError::UnknownTag),
     }
 }
 
+fn decode_bool_extra(extra: &[Value]) -> Result<RawRow, RowError> {
+    let [field] = extra else {
+        return Err(RowError::WrongArity);
+    };
+    let ValueKind::Array(field) = field.kind() else {
+        return Err(RowError::ExpectedBoolExtra);
+    };
+    let [tag, value] = field.as_ref() else {
+        return Err(RowError::ExpectedBoolExtra);
+    };
+    let (ValueKind::Text(tag), ValueKind::Simple(value)) = (tag.kind(), value.kind()) else {
+        return Err(RowError::ExpectedBoolExtra);
+    };
+    if tag.as_ref() != "extra.bool" {
+        return Err(RowError::ExpectedBoolExtra);
+    }
+    match value {
+        20 => Ok(RawRow::Bool(false)),
+        21 => Ok(RawRow::Bool(true)),
+        _ => Err(RowError::ExpectedBoolExtra),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use covalence_lib_cbor::Value;
+    use covalence_data_cbor::{Int, Value};
 
     use super::{DecodeError, RawDense, RawRow, RowError};
 
     fn bool_ty() -> Value {
-        Value::Array(vec![
-            Value::Text("ty.bool".to_owned()),
-            Value::Array(vec![]),
-            Value::Array(vec![]),
+        Value::array([
+            Value::from("ty.bool"),
+            Value::array(Vec::<Value>::new()),
+            Value::array(Vec::<Value>::new()),
         ])
     }
 
     fn bool_const(value: bool) -> Value {
-        Value::Array(vec![
-            Value::Text("tm.bool".to_owned()),
-            Value::Array(vec![]),
-            Value::Array(vec![Value::Array(vec![
-                Value::Text("extra.bool".to_owned()),
-                Value::Bool(value),
+        Value::array([
+            Value::from("tm.bool"),
+            Value::array(Vec::<Value>::new()),
+            Value::array([Value::array([
+                Value::from("extra.bool"),
+                Value::bool(value),
             ])]),
         ])
     }
 
+    fn root_fields(offset: Value, defs: Vec<Value>) -> Vec<(Value, Value)> {
+        vec![
+            (Value::from("tag"), Value::from("arena.dense")),
+            (Value::from("parent"), Value::null()),
+            (Value::from("offset"), offset),
+            (Value::from("defs"), Value::array(defs)),
+        ]
+    }
+
     fn root(offset: Value, defs: Vec<Value>) -> Value {
-        Value::Map(vec![
-            (
-                Value::Text("tag".to_owned()),
-                Value::Text("arena.dense".to_owned()),
-            ),
-            (Value::Text("parent".to_owned()), Value::Null),
-            (Value::Text("offset".to_owned()), offset),
-            (Value::Text("defs".to_owned()), Value::Array(defs)),
-        ])
+        Value::map(root_fields(offset, defs))
     }
 
     #[test]
     fn decodes_root_boolean_rows_and_i64_boundaries() {
         let positive = RawDense::decode_root(&root(
-            Value::Integer(i64::MAX.into()),
+            Value::from(i64::MAX),
             vec![bool_ty(), bool_const(false), bool_const(true)],
         ))
         .unwrap();
@@ -253,48 +268,39 @@ mod tests {
             &[RawRow::BoolTy, RawRow::Bool(false), RawRow::Bool(true)]
         );
 
-        let negative =
-            RawDense::decode_root(&root(Value::Integer(i64::MIN.into()), vec![])).unwrap();
+        let negative = RawDense::decode_root(&root(Value::from(i64::MIN), vec![])).unwrap();
         assert_eq!(negative.offset().get(), i64::MIN);
     }
 
     #[test]
     fn rejects_parent_unknown_duplicate_and_missing_fields() {
-        let mut parented = root(Value::Integer(0.into()), vec![]);
-        let Value::Map(fields) = &mut parented else {
-            unreachable!()
-        };
-        fields[1].1 = Value::Array(vec![]);
+        let mut fields = root_fields(Value::from(0_i64), vec![]);
+        fields[1].1 = Value::array(Vec::<Value>::new());
+        let parented = Value::map(fields);
         assert_eq!(
             RawDense::decode_root(&parented),
             Err(DecodeError::ParentNotRoot)
         );
 
-        let mut unknown = root(Value::Integer(0.into()), vec![]);
-        let Value::Map(fields) = &mut unknown else {
-            unreachable!()
-        };
-        fields.push((Value::Text("metadata".to_owned()), Value::Null));
+        let mut fields = root_fields(Value::from(0_i64), vec![]);
+        fields.push((Value::from("metadata"), Value::null()));
+        let unknown = Value::map(fields);
         assert_eq!(
             RawDense::decode_root(&unknown),
             Err(DecodeError::UnknownField("metadata".to_owned()))
         );
 
-        let mut duplicate = root(Value::Integer(0.into()), vec![]);
-        let Value::Map(fields) = &mut duplicate else {
-            unreachable!()
-        };
-        fields.push((Value::Text("defs".to_owned()), Value::Array(vec![])));
+        let mut fields = root_fields(Value::from(0_i64), vec![]);
+        fields.push((Value::from("defs"), Value::array(Vec::<Value>::new())));
+        let duplicate = Value::map(fields);
         assert_eq!(
             RawDense::decode_root(&duplicate),
             Err(DecodeError::DuplicateField("defs".to_owned()))
         );
 
-        let mut missing = root(Value::Integer(0.into()), vec![]);
-        let Value::Map(fields) = &mut missing else {
-            unreachable!()
-        };
+        let mut fields = root_fields(Value::from(0_i64), vec![]);
         fields.pop();
+        let missing = Value::map(fields);
         assert_eq!(
             RawDense::decode_root(&missing),
             Err(DecodeError::MissingField("defs"))
@@ -302,20 +308,42 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_native_offsets_and_wrong_boolean_shapes() {
-        let tagged_bignum = Value::Tag(2, Box::new(Value::Bytes(vec![1; 9])));
+    fn accepts_arbitrary_integer_values_inside_i64() {
+        let positive = Value::from(Int::from(42_i64));
         assert_eq!(
-            RawDense::decode_root(&root(tagged_bignum, vec![])),
-            Err(DecodeError::InvalidOffset)
+            RawDense::decode_root(&root(positive, vec![]))
+                .unwrap()
+                .offset()
+                .get(),
+            42
         );
+        let negative = Value::from(Int::from(-42_i64));
+        assert_eq!(
+            RawDense::decode_root(&root(negative, vec![]))
+                .unwrap()
+                .offset()
+                .get(),
+            -42
+        );
+    }
 
-        let bad_bool = Value::Array(vec![
-            Value::Text("tm.bool".to_owned()),
-            Value::Array(vec![Value::Integer(0.into())]),
-            Value::Array(vec![]),
+    #[test]
+    fn rejects_arbitrary_bignum_overflow_and_wrong_boolean_shapes() {
+        for bytes in [[1_u8; 33], [0xfe_u8; 33]] {
+            let arbitrary = Int::from_canonical_bytes(&bytes).unwrap();
+            assert_eq!(
+                RawDense::decode_root(&root(Value::from(arbitrary), vec![])),
+                Err(DecodeError::OffsetOverflow)
+            );
+        }
+
+        let bad_bool = Value::array([
+            Value::from("tm.bool"),
+            Value::array([Value::from(0_i64)]),
+            Value::array(Vec::<Value>::new()),
         ]);
         assert_eq!(
-            RawDense::decode_root(&root(Value::Integer(0.into()), vec![bad_bool])),
+            RawDense::decode_root(&root(Value::from(0_i64), vec![bad_bool])),
             Err(DecodeError::InvalidRow {
                 index: 0,
                 reason: RowError::WrongArity
@@ -326,7 +354,7 @@ mod tests {
     #[test]
     fn rejects_offsets_one_step_outside_i64() {
         for overflow in [i128::from(i64::MAX) + 1, i128::from(i64::MIN) - 1] {
-            let value = Value::Integer(overflow.try_into().unwrap());
+            let value = Value::from(Int::from(overflow));
             assert_eq!(
                 RawDense::decode_root(&root(value, vec![])),
                 Err(DecodeError::OffsetOverflow)
