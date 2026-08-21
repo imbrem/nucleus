@@ -158,6 +158,22 @@ theorem callCollisionMass_eq (inputs : Finset Bytes) :
         ((2 ^ 256) ^ totalCallBudget inputs : Nat) := by
   exact Hash.collisionMass_eq
 
+theorem callCollisionMass_le_pow_sub (inputs : Finset Bytes) :
+    callCollisionMass inputs ≤
+      ((((2 ^ 256) ^ totalCallBudget inputs -
+        (2 ^ 256 + 1 - totalCallBudget inputs) ^ totalCallBudget inputs : Nat) : ℚ) /
+        ((2 ^ 256) ^ totalCallBudget inputs : Nat)) := by
+  exact Hash.collisionMass_le_pow_sub
+
+theorem birthdayBound_le_linear (calls : Nat) (atMost : calls ≤ 2 ^ 128) :
+    Hash.birthdayBound calls 256 ≤ (calls : ℚ) / 2 ^ 128 := by
+  unfold Hash.birthdayBound
+  have castBound : (calls : ℚ) ≤ (2 : ℚ) ^ 128 := by exact_mod_cast atMost
+  rw [show (2 : ℚ) ^ 256 = 2 ^ 128 * 2 ^ 128 by
+    rw [show 256 = 128 + 128 by omega, pow_add]]
+  rw [div_le_div_iff₀ (by positivity) (by positivity)]
+  nlinarith [show (0 : ℚ) ≤ calls by positivity, show (0 : ℚ) < 2 ^ 128 by positivity]
+
 @[simp] theorem callCollisionMass_eq_one (inputs : Finset Bytes)
     (more : 2 ^ 256 < totalCallBudget inputs) : callCollisionMass inputs = 1 := by
   exact Hash.collisionMass_eq_one more

@@ -82,6 +82,9 @@ noncomputable def collisionEvent (count width : Nat) : Finset (Sample count widt
 noncomputable def collisionMass (count width : Nat) : ℚ :=
   FiniteUniform.mass (collisionEvent count width)
 
+def birthdayBound (count width : Nat) : ℚ :=
+  (count : ℚ) ^ 2 / 2 ^ width
+
 theorem hasCollision_of_card_lt (h : 2 ^ width < count)
     (sample : Sample count width) : sample.HasCollision := by
   obtain ⟨i, j, hij, heq⟩ := Fintype.exists_ne_map_eq_of_card_lt sample (by simpa using h)
@@ -132,5 +135,15 @@ theorem collisionMass_eq :
       (((2 ^ width) ^ count - (2 ^ width).descFactorial count : Nat) : ℚ) /
         ((2 ^ width) ^ count : Nat) := by
   simp [collisionMass, FiniteUniform.mass, collisionEvent_card]
+
+theorem collisionMass_le_pow_sub :
+    collisionMass count width ≤
+      ((((2 ^ width) ^ count - (2 ^ width + 1 - count) ^ count : Nat) : ℚ) /
+        ((2 ^ width) ^ count : Nat)) := by
+  rw [collisionMass_eq]
+  apply div_le_div_of_nonneg_right
+  · exact_mod_cast Nat.sub_le_sub_left
+      ((2 ^ width).pow_sub_le_descFactorial count) ((2 ^ width) ^ count)
+  · positivity
 
 end Nucleus.Hash
