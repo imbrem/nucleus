@@ -76,12 +76,12 @@ def tag : T Sig Name Ix → SyntaxTag
 /-- Scalar fields in constructor order. -/
 def extra : T Sig Name Ix → List (Extra Sig Name)
   | .tyLam name .. | .tyFv name .. | .tyExists name .. | .model name .. |
-      .tmFv name .. | .lam name .. => [.name name]
+      .tmFv name .. => [.name name]
   | @Arena.Row.primFam _ _ _ kind symbol _ => [.fam ⟨kind, symbol⟩]
   | .primTm symbol => [.tm symbol]
   | .bool value => [.bool value]
   | .pair .. | .kindStar | .kindArr .. | .boolTy | .arr .. | .tyApp .. |
-      .app .. | .eq .. | .eps .. => []
+      .app .. | .lam .. | .eq .. | .eps .. => []
 
 instance : Row (T Sig Name Ix) SyntaxTag Ix (Extra Sig Name) where
   tag := tag
@@ -113,7 +113,7 @@ def ofView? : View Sig Name Ix → Option (T Sig Name Ix)
   | ⟨.primTm, [], [.tm symbol]⟩ => some (.primTm symbol)
   | ⟨.tmFv, [type], [.name name]⟩ => some (.tmFv name type)
   | ⟨.app, [function, argument], []⟩ => some (.app function argument)
-  | ⟨.lam, [domain, body], [.name name]⟩ => some (.lam name domain body)
+  | ⟨.lam, [binder, body], []⟩ => some (.lam binder body)
   | ⟨.bool, [], [.bool value]⟩ => some (.bool value)
   | ⟨.eq, [type, operands], []⟩ => some (.eq type operands)
   | ⟨.eps, [type, predicate], []⟩ => some (.eps type predicate)
