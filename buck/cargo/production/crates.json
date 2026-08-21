@@ -293,6 +293,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-lib-parse@0.0.0",
+      "name": "covalence-lib-parse",
+      "version": "0.0.0",
+      "path": "crates/lib/parse",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_lib_parse",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-lib-python@0.0.0",
       "name": "covalence-lib-python",
       "version": "0.0.0",

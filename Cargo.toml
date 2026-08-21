@@ -6,6 +6,7 @@ members = [
   "crates/lib/cbor",
   "crates/lib/hash",
   "crates/lib/json",
+  "crates/lib/parse",
   "crates/lib/python",
   "crates/lib/rand",
   "crates/lib/serde",
