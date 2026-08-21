@@ -11,16 +11,16 @@ def sample : RangeMap String :=
       simp [Valid, Range.stop])
 
 example : sample.lookupWithOffset? 3 = some ("left", 1) := by
-  native_decide
+  decide
 
 example : sample.lookup? 6 = none := by
-  native_decide
+  decide
 
 def shifted : RangeMap Nat :=
   singleton 10 4 20 (by decide)
 
 example : shifted.natOffsetMap.lookup? 12 = some 22 := by
-  native_decide
+  decide
 
 example : shifted.natOffsetMap.NoDuplicates := by
   rw [natOffsetMap, noDuplicates_toOffsetMap_iff]
