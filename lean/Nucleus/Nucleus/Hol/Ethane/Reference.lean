@@ -104,6 +104,29 @@ def Proves.complete {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
   ⟨loweredHypotheses, loweredConclusion, hypothesesLowering,
     conclusionLowering, derivation⟩
 
+/-- Every empty-signature Ethane equality is valid in the deterministic
+classical interpretation.  The statement mentions the lowered endpoints
+because Ethane's named semantics is defined by that lowering. -/
+theorem EqTm.classicallySound
+    {types : List Kind} {depth : Nat} {typeScope : TyScope types}
+    {termScope : TmScope EmptySig depth}
+    {Γ : BoundCtx EmptySig types depth} {left right : Tm EmptySig}
+    {type : Ty EmptySig}
+    (conversion : EqTm typeScope termScope Γ left right type) :
+    Nucleus.HolE.CSemEq (Γ := Γ) conversion.loweredLeft
+      conversion.loweredRight conversion.loweredType :=
+  conversion.derivation.sound_of_laws Nucleus.HolE.classicalEqTmRuleLaws
+
+/-- Every empty-signature Ethane proof is semantically valid. -/
+theorem Proves.classicallySound
+    {types : List Kind} {depth : Nat} {typeScope : TyScope types}
+    {termScope : TmScope EmptySig depth}
+    {Γ : BoundCtx EmptySig types depth} {hypotheses : List (Tm EmptySig)}
+    {conclusion : Tm EmptySig}
+    (proof : Proves typeScope termScope Γ hypotheses conclusion) :
+    Nucleus.HolE.CEntails (Γ := Γ) proof.loweredHypotheses proof.loweredConclusion :=
+  proof.derivation.sound
+
 /-- The reference empty-signature Ethane theory cannot prove false. -/
 theorem Proves.consistent
     (proof : Proves (.nil : TyScope []) (.nil : TmScope EmptySig 0)
