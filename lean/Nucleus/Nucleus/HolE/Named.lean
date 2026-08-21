@@ -4,6 +4,7 @@ import Nucleus.HolE.Named.Dense
 import Nucleus.HolE.Named.Dense.Indexed
 import Nucleus.HolE.Named.Dense.Representation
 import Nucleus.HolE.Named.Dense.Postorder
+import Nucleus.HolE.Named.Dense.Alternative
 import Nucleus.HolE.Named.Dense.Monadic
 import Nucleus.HolE.Named.Dense.Encoding
 import Nucleus.HolE.Named.Dense.Coded
