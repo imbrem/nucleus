@@ -30,7 +30,53 @@ inductive Binder where
   | conjunction
   deriving DecidableEq
 
+def Binder.code : Binder → Nat
+  | .modelType => 0
+  | .representation => 1
+  | .abstraction => 2
+  | .carrierValue => 3
+  | .subtypeValue => 4
+  | .witness => 5
+  | .conjunction => 6
+
+theorem Binder.code_injective : Function.Injective Binder.code := by
+  intro left right equality
+  cases left <;> cases right <;> simp_all [Binder.code]
+
 abbrev HygienicName (Name : Type) := Binder ⊕ Name
+
+/-- A collision-free materialization of tagged names into the kernel's `Nat`
+name space.  Private binders use even numbers; caller names use odd numbers. -/
+def encodeNat : HygienicName Nat → Nat
+  | .inl binder => 2 * binder.code
+  | .inr name => 2 * name + 1
+
+theorem encodeNat_injective : Function.Injective encodeNat := by
+  intro left right equality
+  cases left with
+  | inl left =>
+      cases right with
+      | inl right =>
+          simp only [encodeNat] at equality
+          have codes : left.code = right.code := by omega
+          exact congrArg Sum.inl (Binder.code_injective codes)
+      | inr right =>
+          simp only [encodeNat] at equality
+          omega
+  | inr left =>
+      cases right with
+      | inl right =>
+          simp only [encodeNat] at equality
+          omega
+      | inr right =>
+          simp only [encodeNat] at equality
+          have : left = right := by omega
+          exact congrArg Sum.inr this
+
+/-- Turn a hygienically tagged expression into ordinary `Nat`-named Ethane
+syntax without introducing capture. -/
+def materialize (expression : Expr Sig (HygienicName Nat) sort) : Expr Sig Nat sort :=
+  expression.mapNames encodeNat
 
 private def liftTy (A : Ty Sig Name) : Ty Sig (HygienicName Name) :=
   A.mapNames Sum.inr
@@ -121,5 +167,22 @@ def abs (A : Ty Sig Name) (P : Tm Sig Name) : Tm Sig (HygienicName Name) :=
   let abstraction := tmVar (Sig := Sig) .abstraction absType
   let compatible := laws A' P' (rep A P) abstraction
   .eps absType (.lam (.inl .abstraction) absType compatible)
+
+/-- Serialization-facing subtype sentence with ordinary natural-number
+names. -/
+def existsTypeNat (A : Ty Sig Nat) (P : Tm Sig Nat) : Tm Sig Nat :=
+  materialize (existsType A P)
+
+/-- Serialization-facing guarded subtype type. -/
+def subNat (A : Ty Sig Nat) (P : Tm Sig Nat) : Ty Sig Nat :=
+  materialize (sub A P)
+
+/-- Serialization-facing representation operation. -/
+def repNat (A : Ty Sig Nat) (P : Tm Sig Nat) : Tm Sig Nat :=
+  materialize (rep A P)
+
+/-- Serialization-facing abstraction operation. -/
+def absNat (A : Ty Sig Nat) (P : Tm Sig Nat) : Tm Sig Nat :=
+  materialize (abs A P)
 
 end Nucleus.Hol.Ethane.Subtype
