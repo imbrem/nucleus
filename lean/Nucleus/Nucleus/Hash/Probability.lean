@@ -12,7 +12,7 @@ abbrev Sample (count width : Nat) := Fin count → Hash width
 
 namespace Sample
 
-variable {count width : Nat}
+variable {count width prefixWidth : Nat}
 
 def toList (sample : Sample count width) : List (Hash width) :=
   List.ofFn sample
@@ -29,13 +29,59 @@ noncomputable instance (sample : Sample count width) : Decidable sample.HasColli
 
 end Sample
 
-variable {count width : Nat}
+variable {count width prefixWidth : Nat}
 
 noncomputable def uniform (width : Nat) : PMF (Hash width) :=
   FiniteUniform.pmf (Hash width)
 
 noncomputable def uniformSamples (count width : Nat) : PMF (Sample count width) :=
   FiniteUniform.pmf (Sample count width)
+
+/-- All hashes with a fixed most-significant prefix. -/
+noncomputable def prefixEvent (fixed : Hash prefixWidth) (suffixWidth : Nat) :
+    Finset (Hash (prefixWidth + suffixWidth)) :=
+  Finset.univ.image fun suffix : Hash suffixWidth => fixed ++ suffix
+
+@[simp] theorem prefixEvent_card (fixed : Hash prefixWidth) (suffixWidth : Nat) :
+    (prefixEvent fixed suffixWidth).card = 2 ^ suffixWidth := by
+  rw [prefixEvent, Finset.card_image_of_injective]
+  · simp
+  · intro left right equal
+    have suffixes := congrArg (BitVec.extractLsb' 0 suffixWidth) equal
+    simpa only [BitVec.extractLsb'_append_eq_right] using suffixes
+
+/-- A uniform hash has any fixed `prefixWidth`-bit prefix with mass `2⁻prefixWidth`. -/
+@[simp] theorem prefixMass (fixed : Hash prefixWidth) (suffixWidth : Nat) :
+    FiniteUniform.mass (prefixEvent fixed suffixWidth) = 1 / 2 ^ prefixWidth := by
+  simp only [FiniteUniform.mass, prefixEvent_card, Fintype.card_congr BitVec.equivFin.toEquiv,
+    Fintype.card_fin, pow_add, Nat.cast_pow, Nat.cast_ofNat]
+  field_simp
+  norm_num
+  ac_rfl
+
+@[simp] theorem zeroPrefixMass (prefixWidth suffixWidth : Nat) :
+    FiniteUniform.mass (prefixEvent (0#prefixWidth) suffixWidth) = 1 / 2 ^ prefixWidth :=
+  prefixMass _ _
+
+/-- Hashes agreeing with `expected` on every selected bit. -/
+noncomputable def maskEvent (mask expected : Hash width) : Finset (Hash width) :=
+  Finset.univ.filter fun value => value &&& mask = expected &&& mask
+
+@[simp] theorem mem_maskEvent (value mask expected : Hash width) :
+    value ∈ maskEvent mask expected ↔ value &&& mask = expected &&& mask := by
+  simp [maskEvent]
+
+/-- XOR by a fixed hash is a permutation. -/
+def xorEquiv (mask : Hash width) : Hash width ≃ Hash width where
+  toFun value := value ^^^ mask
+  invFun value := value ^^^ mask
+  left_inv value := by simp [BitVec.xor_assoc]
+  right_inv value := by simp [BitVec.xor_assoc]
+
+/-- XOR by an arbitrary fixed value preserves uniform event mass. -/
+@[simp] theorem mass_image_xor (mask : Hash width) (event : Finset (Hash width)) :
+    FiniteUniform.mass (event.image (xorEquiv mask)) = FiniteUniform.mass event := by
+  simp [FiniteUniform.mass, Finset.card_image_of_injective, (xorEquiv mask).injective]
 
 /-- Probability that one uniform hash belongs to `seen`. -/
 noncomputable def seenMass (seen : Finset (Hash width)) : ℚ :=
