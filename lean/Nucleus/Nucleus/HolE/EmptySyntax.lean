@@ -66,6 +66,15 @@ structure Term {types : List Kind} {depth : Nat}
 
 namespace Term
 
+/-- Checked terms are determined by their raw syntax; typing certificates are
+proof-irrelevant. -/
+theorem ext_raw {left right : Term Γ A} (equality : left.raw = right.raw) :
+    left = right := by
+  cases left
+  cases right
+  cases equality
+  rfl
+
 def bv (Γ : Ctx types depth) (index : Fin depth) :
     Term Γ ⟨Γ.raw index, Γ.typed index⟩ :=
   ⟨.bv index, .bv (Γ.typed index) rfl⟩
@@ -132,6 +141,12 @@ def weaken {types : List Kind} {depth : Nat} {Γ : Ctx types depth}
 def openBound (body : Term (Γ.extend A) B) (argument : Term Γ A) : Term Γ B :=
   ⟨HolE.openBound body.raw argument.raw,
     body.typing.openBound Γ.typed argument.typing⟩
+
+/-- Instantiate a unary body into an arbitrary checked context. -/
+def instantiateOne (body : Term (Ctx.empty.extend A) B)
+    (argument : Term Γ A) : Term Γ B :=
+  ⟨HolE.instantiateOne body.raw argument.raw,
+    body.typing.instantiateOne argument.typing⟩
 
 def openType (predicate : Term (types := kind :: types) Ctx.empty FamK.boolTy)
     (argument : FamK types kind) :

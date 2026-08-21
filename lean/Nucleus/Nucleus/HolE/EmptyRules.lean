@@ -52,6 +52,18 @@ def lam (domain : Ty types) {B : Ty types}
   ⟨.lam (Term.lam domain leftBody).typing (Term.lam domain rightBody).typing
     domain.kinded bodies.raw⟩
 
+def eq {left₁ left₂ right₁ right₂ : Term Γ A}
+    (left : TermEq Γ left₁ left₂) (right : TermEq Γ right₁ right₂) :
+    TermEq Γ (Term.eq A left₁ right₁) (Term.eq A left₂ right₂) :=
+  ⟨.eq (Term.eq A left₁ right₁).typing (Term.eq A left₂ right₂).typing
+    A.kinded left.raw right.raw⟩
+
+def eps {left right : Term Γ (A.arr FamK.boolTy)}
+    (predicates : TermEq Γ left right) :
+    TermEq Γ (Term.eps A left) (Term.eps A right) :=
+  ⟨.eps (Term.eps A left).typing (Term.eps A right).typing
+    A.kinded predicates.raw⟩
+
 def beta (body : Term (Γ.extend A) B) (argument : Term Γ A) :
     TermEq Γ (Term.app (Term.lam A body) argument) (Term.openBound body argument) :=
   ⟨.beta body.raw argument.raw A.kinded Γ.typed

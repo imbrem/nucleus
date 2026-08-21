@@ -9,10 +9,12 @@ Named expressions are alpha-equivalent when they lower to the same locally
 nameless expression.  Family conversion is the corresponding pullback of the
 HolE kernel relation.
 
-`Model` is deliberately opaque to beta and eta.  Its binder is still an
-ordinary binder, so renaming that binder is alpha conversion.  The one-step
-family beta relation below has congruence rules for arrows, application, and
-family lambda, but intentionally no congruence rule for `model`.
+`Model` is deliberately opaque: family conversion never inspects or converts
+its predicate.  In the locally nameless kernel, its sole congruence premise is
+literal predicate equality.  Renaming the *outer named binder* can lower to
+that same literal predicate; this is representation-level alpha invariance,
+not a recursive alpha, beta, or eta rule beneath `Model`.  The one-step family
+beta relation below intentionally has no congruence rule for `model`.
 -/
 
 namespace Nucleus.Hol.Ethane
@@ -116,8 +118,9 @@ def complete {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
     FamEq typeScope left right :=
   ⟨loweredLeft, loweredRight, leftLowering, rightLowering, derivation⟩
 
-/-- Renaming the bound type variable of `Model` is alpha conversion, hence a
-kernel family conversion.  No conversion of the predicate is performed. -/
+/-- Renaming only the named presentation of the `Model` binder can produce the
+same locally nameless predicate.  The kernel certificate is `.model rfl`: no
+conversion, including alpha conversion, is performed inside that predicate. -/
 noncomputable def modelAlpha {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
     [Nucleus.HolE.SigFamilyEquality Sig]
     {types : List Kind} {typeScope : TyScope types}

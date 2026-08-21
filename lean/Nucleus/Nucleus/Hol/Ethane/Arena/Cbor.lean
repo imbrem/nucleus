@@ -223,4 +223,28 @@ private theorem traverse_encodeRows (names : NameCodec Name)
     traverse_encodeRows names symbols rows rowsFit,
     asNat?_unsigned root rootFits]
 
+/-- Encode one Ethane expression through its canonical dense arena. -/
+def encodeExpression (names : NameCodec Name) (symbols : SignatureCodec Sig)
+    (expression : Syn Sig Name) : Nucleus.Cbor :=
+  encodeRooted names symbols (Encoder.run expression)
+
+/-- Decode an Ethane expression by validating the CBOR arena and elaborating
+its public root. -/
+def decodeExpression? (names : NameCodec Name) (symbols : SignatureCodec Sig)
+    (value : Nucleus.Cbor) : Option (Syn Sig Name) :=
+  match decodeRooted? names symbols value with
+  | none => none
+  | some arena => Rooted.decode arena
+
+/-- The complete syntax-to-CBOR path round-trips whenever its natural-number
+indices fit the concrete 64-bit CBOR representation. -/
+@[simp] theorem decodeExpression?_encode (names : NameCodec Name)
+    (symbols : SignatureCodec Sig) (expression : Syn Sig Name)
+    (fits : FitsRooted (Encoder.run expression)) :
+    decodeExpression? names symbols (encodeExpression names symbols expression) =
+      some expression := by
+  unfold decodeExpression? encodeExpression
+  rw [decodeRooted?_encode names symbols (Encoder.run expression) fits]
+  exact Encoder.decode_run expression
+
 end Nucleus.Hol.Ethane.Arena.Cbor

@@ -47,6 +47,58 @@ def instantiateOne (predicate : Tm Sig types 1)
     (replacement : Tm Sig types depth) : Tm Sig types depth :=
   instantiate (fun _ => replacement) predicate
 
+/-- Type substitution and bound-term renaming act on independent namespaces. -/
+theorem instantiateTypes_rename (term : Tm Sig source m)
+    (σ : TySub Sig source target) (ρ : Fin m → Fin n) :
+    instantiateTypes σ (rename ρ term) =
+      rename ρ (instantiateTypes σ term) := by
+  cases term with
+  | primTm | bv | fv | bool | tyExists => simp [rename, instantiateTypes]
+  | app function argument =>
+      simp only [rename, instantiateTypes]
+      rw [instantiateTypes_rename function σ ρ,
+        instantiateTypes_rename argument σ ρ]
+  | lam A body =>
+      simp only [rename, instantiateTypes]
+      rw [instantiateTypes_rename body σ (liftRen ρ)]
+  | eq A left right =>
+      simp only [rename, instantiateTypes]
+      rw [instantiateTypes_rename left σ ρ,
+        instantiateTypes_rename right σ ρ]
+  | eps A predicate =>
+      simp only [rename, instantiateTypes]
+      rw [instantiateTypes_rename predicate σ ρ]
+  | abs A predicate value | rep A predicate value =>
+      simp only [rename, instantiateTypes]
+      rw [instantiateTypes_rename value σ ρ]
+termination_by sizeOf term
+
+@[simp] theorem instantiateTypes_weaken (term : Tm Sig source depth)
+    (σ : TySub Sig source target) :
+    instantiateTypes σ (weaken term) = weaken (instantiateTypes σ term) := by
+  exact instantiateTypes_rename term σ Fin.succ
+
+@[simp] theorem instantiateTypes_head_zero
+    (replacement : Fam Sig types kind) :
+    instantiateTypes (fun {_} => headTySub replacement)
+      (.tyBv (.zero : TyVar (kind :: types) kind)) = replacement := rfl
+
+@[simp] theorem instantiateTypes_head_rename_succ
+    (expression : Expr Sig types sort depth)
+    (replacement : Fam Sig types kind) :
+    instantiateTypes (fun {_} => headTySub replacement)
+      (renameTypes (fun {_} v => v.succ) expression) =
+      expression := by
+  exact openType_weakenTypes expression replacement
+
+@[simp] theorem openBound_zero_eq_instantiateOne
+    (body : Tm Sig types 1) (replacement : Tm Sig types 0) :
+    openBound body replacement = instantiateOne body replacement := by
+  unfold openBound instantiateOne
+  apply congrArg (fun substitution => instantiate substitution body)
+  funext index
+  exact Fin.cases rfl (fun impossible => Fin.elim0 impossible) index
+
 @[simp] theorem rename_bv (ρ : Fin m → Fin n) (i : Fin m) :
     rename (Sig := Sig) (types := types) ρ (.bv i) = .bv (ρ i) := by
   simp [rename]
@@ -202,6 +254,13 @@ theorem rename_instantiate_fusion (term : Tm Sig types m)
       simp only [rename, instantiate]
       rw [rename_instantiate_fusion value]
 termination_by sizeOf term
+
+@[simp] theorem instantiateOne_weaken_zero
+    (body : Tm Sig types 1) (replacement : Tm Sig types 0) :
+    instantiateOne body (weaken replacement) =
+      weaken (instantiateOne body replacement) := by
+  unfold instantiateOne weaken
+  rw [rename_instantiate_fusion]
 
 @[simp] theorem instantiate_liftSub_weaken (term : Tm Sig types m)
     (σ : Fin m → Tm Sig types n) :
