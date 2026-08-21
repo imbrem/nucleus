@@ -9,6 +9,7 @@ import Nucleus.Hol.Ethane.Equivalence
 import Nucleus.Hol.Ethane.FV
 import Nucleus.Hol.Ethane.Arena
 import Nucleus.Hol.Ethane.Arena.Cbor
+import Nucleus.Hol.Ethane.Amber
 
 /-!
 # Ethane
@@ -17,5 +18,6 @@ Ethane is the named, model-only HOL dialect.  The root module exports its
 unsorted syntax, sort-indexed syntax, typing relation, lowering, borrowed HolE
 semantics, reference proof theory, and the checked derivation and semantics of
 its guarded subtype package.  Native proof certificates remain a separate
-layer above this syntax boundary.
+layer above this syntax boundary.  `Ethane.Amber` is its first named dense
+forest, CAS, CBOR, and in-memory representation.
 -/
