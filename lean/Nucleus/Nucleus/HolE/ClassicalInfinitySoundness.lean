@@ -11,20 +11,23 @@ set_option relaxedAutoImplicit true
 
 namespace Infinity
 
-private def IEval {types depth} {Γ : BoundCtx ClassicalSig types depth}
+/-- Proof-relevant evaluation of an intrinsically checked term.  Although
+introduced for the infinity sentence, this interface is generic over every
+`InfinityTm` and is reused by other checked object-language constructions. -/
+def IEval {types depth} {Γ : BoundCtx ClassicalSig types depth}
     {A : Ty ClassicalSig types} (term : InfinityTm ClassicalSig Γ A)
     (env : CTypeEnv types) (bound : CBoundEnv depth)
     (expected : CPointed) (value : expected.carrier) : Prop :=
   ∀ checking : CHasType Γ term.tm A,
     cSem checking env bound expected = ⟨value⟩
 
-private noncomputable def iValue {types depth}
+noncomputable def iValue {types depth}
     {Γ : BoundCtx ClassicalSig types depth} {A : Ty ClassicalSig types}
     (term : InfinityTm ClassicalSig Γ A) (env : CTypeEnv types)
     (bound : CBoundEnv depth) (expected : CPointed) : expected.carrier :=
   (cSem term.typing.certificate env bound expected).down
 
-private theorem IEval.canonical {types depth}
+theorem IEval.canonical {types depth}
     {Γ : BoundCtx ClassicalSig types depth} {A : Ty ClassicalSig types}
     (term : InfinityTm ClassicalSig Γ A) (env : CTypeEnv types)
     (bound : CBoundEnv depth) (expected : CPointed) :
@@ -34,7 +37,7 @@ private theorem IEval.canonical {types depth}
   unfold iValue
   rfl
 
-private theorem IEval.value_unique {types depth}
+theorem IEval.value_unique {types depth}
     {Γ : BoundCtx ClassicalSig types depth} {A : Ty ClassicalSig types}
     {term : InfinityTm ClassicalSig Γ A} {env : CTypeEnv types}
     {bound : CBoundEnv depth} {expected : CPointed} {x y : expected.carrier}
@@ -44,7 +47,7 @@ private theorem IEval.value_unique {types depth}
     (hy term.typing.certificate)
   exact congrArg ULift.down equal
 
-private theorem IEval.boolean (literal : Bool) (env : CTypeEnv types)
+theorem IEval.boolean (literal : Bool) (env : CTypeEnv types)
     (bound : CBoundEnv depth) :
     IEval (Γ := Γ) (InfinityTm.boolean literal) env bound cBool literal := by
   intro checking
@@ -52,7 +55,7 @@ private theorem IEval.boolean (literal : Bool) (env : CTypeEnv types)
   change ULift.up (alignCValue cBool cBool literal) = ULift.up literal
   exact congrArg ULift.up (alignCValue_self cBool literal)
 
-private theorem IEval.bv {types : List Kind} {depth : Nat}
+theorem IEval.bv {types : List Kind} {depth : Nat}
     {Γ : BoundCtx ClassicalSig types depth} {X : Ty ClassicalSig types}
     (hA : Kinded X) (index : Fin depth)
     (lookup : Γ index = X) (env : CTypeEnv types) (bound : CBoundEnv depth)
@@ -65,7 +68,7 @@ private theorem IEval.bv {types : List Kind} {depth : Nat}
   rw [cSem_certificate_coherent checking explicit env]
   exact congrArg ULift.up atIndex
 
-private theorem IEval.app {types : List Kind} {depth : Nat}
+theorem IEval.app {types : List Kind} {depth : Nat}
     {Γ : BoundCtx ClassicalSig types depth} {X Y : Ty ClassicalSig types}
     (function : InfinityTm ClassicalSig Γ (.arr X Y))
     (argument : InfinityTm ClassicalSig Γ X)
@@ -93,11 +96,11 @@ private theorem IEval.app {types : List Kind} {depth : Nat}
   rw [hf cf, hx cx]
   exact congrArg ULift.up (alignCValue_self _ _)
 
-private noncomputable def classicalEqBool {T : Type} (x y : T) : Bool := by
+noncomputable def classicalEqBool {T : Type} (x y : T) : Bool := by
   classical
   exact decide (x = y)
 
-private theorem IEval.eq {types : List Kind} {depth : Nat}
+theorem IEval.eq {types : List Kind} {depth : Nat}
     {Γ : BoundCtx ClassicalSig types depth} {X : Ty ClassicalSig types}
     (hA : Kinded X) (left right : InfinityTm ClassicalSig Γ X)
     (cA : CKinded X) (env : CTypeEnv types) (bound : CBoundEnv depth)
@@ -118,7 +121,7 @@ private theorem IEval.eq {types : List Kind} {depth : Nat}
   by_cases equal : x = y <;>
     simp [classicalEqBool, equal, alignCValue_bool]
 
-private theorem IEval.lam {types : List Kind} {depth : Nat}
+theorem IEval.lam {types : List Kind} {depth : Nat}
     {Γ : BoundCtx ClassicalSig types depth} {X Y : Ty ClassicalSig types}
     (hX : Kinded X)
     (body : InfinityTm ClassicalSig (extendBound X Γ) Y)
@@ -149,13 +152,13 @@ private theorem IEval.lam {types : List Kind} {depth : Nat}
   funext argument
   exact congrArg ULift.down (bodyEval argument cb)
 
-private noncomputable def epsilonValue (carrier : CPointed)
+noncomputable def epsilonValue (carrier : CPointed)
     (predicate : carrier.carrier → Bool) : carrier.carrier := by
   classical
   exact if witness : ∃ value, predicate value = true then
     Classical.choose witness else carrier.point
 
-private theorem IEval.eps {types : List Kind} {depth : Nat}
+theorem IEval.eps {types : List Kind} {depth : Nat}
     {Γ : BoundCtx ClassicalSig types depth} {X : Ty ClassicalSig types}
     (hX : Kinded X)
     (predicate : InfinityTm ClassicalSig Γ (.arr X .boolTy))
@@ -184,7 +187,7 @@ private theorem IEval.eps {types : List Kind} {depth : Nat}
     epsilonValue carrier meaning
   exact (alignCValue_self carrier _).trans (by rfl)
 
-private theorem epsilonValue_spec (carrier : CPointed)
+theorem epsilonValue_spec (carrier : CPointed)
     (predicate : carrier.carrier → Bool) (witness : carrier.carrier)
     (holds : predicate witness = true) :
     predicate (epsilonValue carrier predicate) = true := by
@@ -194,7 +197,7 @@ private theorem epsilonValue_spec (carrier : CPointed)
   simp only [epsilonValue, dif_pos existsWitness]
   exact Classical.choose_spec existsWitness
 
-private theorem IEval.forallTm {types : List Kind} {depth : Nat}
+theorem IEval.forallTm {types : List Kind} {depth : Nat}
     {Γ : BoundCtx ClassicalSig types depth} {X : Ty ClassicalSig types}
     (hX : Kinded X)
     (body : InfinityTm ClassicalSig (extendBound X Γ) .boolTy)
@@ -224,7 +227,7 @@ private theorem IEval.forallTm {types : List Kind} {depth : Nat}
       env bound cBool true := same ▸ equality
   simpa only [InfinityTm.forallTm] using equality'
 
-private theorem IEval.existsTm {types : List Kind} {depth : Nat}
+theorem IEval.existsTm {types : List Kind} {depth : Nat}
     {Γ : BoundCtx ClassicalSig types depth} {X : Ty ClassicalSig types}
     (hX : Kinded X)
     (body : InfinityTm ClassicalSig (extendBound X Γ) .boolTy)
@@ -248,7 +251,7 @@ private theorem IEval.existsTm {types : List Kind} {depth : Nat}
     (meaning (epsilonValue (cSem cX env) meaning)) at applied
   simpa only [InfinityTm.existsTm, selectedHolds] using applied
 
-private theorem IEval.not_of_false {types : List Kind} {depth : Nat}
+theorem IEval.not_of_false {types : List Kind} {depth : Nat}
     {Γ : BoundCtx ClassicalSig types depth}
     (proposition : InfinityTm ClassicalSig Γ .boolTy)
     (env : CTypeEnv types) (bound : CBoundEnv depth)
@@ -263,7 +266,105 @@ private theorem IEval.not_of_false {types : List Kind} {depth : Nat}
       InfinityTm.falsehood) env bound cBool true := same ▸ equality
   simpa only [InfinityTm.not] using equality'
 
-private theorem IEval.and_of_true {types : List Kind} {depth : Nat}
+/-- The equality-only conjunction macro computes Boolean conjunction. -/
+theorem IEval.and_value {types : List Kind} {depth : Nat}
+    {Γ : BoundCtx ClassicalSig types depth}
+    (left right : InfinityTm ClassicalSig Γ .boolTy)
+    (env : CTypeEnv types) (bound : CBoundEnv depth)
+    (leftValue rightValue : Bool)
+    (leftWeakened : ∀ f : (cSem
+      (CChecks.arr (types := types) CChecks.boolTy
+        (CChecks.arr CChecks.boolTy CChecks.boolTy)) env).carrier,
+      IEval (left.weaken (C := .arr .boolTy (.arr .boolTy .boolTy))) env
+        (extendCBoundEnv (cSem
+          (CChecks.arr CChecks.boolTy (CChecks.arr CChecks.boolTy CChecks.boolTy)) env)
+          f bound) cBool leftValue)
+    (rightWeakened : ∀ f : (cSem
+      (CChecks.arr (types := types) CChecks.boolTy
+        (CChecks.arr CChecks.boolTy CChecks.boolTy)) env).carrier,
+      IEval (right.weaken (C := .arr .boolTy (.arr .boolTy .boolTy))) env
+        (extendCBoundEnv (cSem
+          (CChecks.arr CChecks.boolTy (CChecks.arr CChecks.boolTy CChecks.boolTy)) env)
+          f bound) cBool rightValue) :
+    IEval (InfinityTm.and left right) env bound cBool
+      (leftValue && rightValue) := by
+  let functionTy : Ty ClassicalSig types :=
+    .arr .boolTy (.arr .boolTy .boolTy)
+  let cFunction : CKinded functionTy :=
+    .arr .boolTy (.arr .boolTy .boolTy)
+  let functionSemantic : CPointed := cSem cFunction env
+  let lhsFunction : functionSemantic.carrier → Bool :=
+    fun f => f leftValue rightValue
+  let rhsFunction : functionSemantic.carrier → Bool := fun f => f true true
+  have lhs : IEval
+      (InfinityTm.lam (.arr .boolTy (.arr .boolTy .boolTy)) (by
+        let f : InfinityTm ClassicalSig (extendBound functionTy Γ) functionTy :=
+          InfinityTm.bv (.arr .boolTy (.arr .boolTy .boolTy)) 0 rfl
+        exact (f.app left.weaken).app right.weaken))
+      env bound ⟨functionSemantic.carrier → Bool, fun _ => false⟩
+      lhsFunction := by
+    apply IEval.lam (.arr .boolTy (.arr .boolTy .boolTy)) _ cFunction .boolTy
+      env bound lhsFunction
+    intro f
+    let extended := extendCBoundEnv functionSemantic f bound
+    let fTm : InfinityTm ClassicalSig (extendBound functionTy Γ) functionTy :=
+      InfinityTm.bv (.arr .boolTy (.arr .boolTy .boolTy)) 0 rfl
+    have fEval : IEval fTm env extended functionSemantic f := by
+      apply IEval.bv _ 0 rfl env extended functionSemantic f
+      exact extendCBoundEnv_zero functionSemantic f bound functionSemantic
+        |>.trans (alignCValue_self functionSemantic f)
+    have first := IEval.app fTm left.weaken .boolTy
+      (.arr .boolTy .boolTy) env extended f leftValue fEval (leftWeakened f)
+    exact IEval.app (fTm.app left.weaken) right.weaken .boolTy .boolTy
+      env extended (f leftValue) rightValue first (rightWeakened f)
+  have rhs : IEval
+      (InfinityTm.lam (.arr .boolTy (.arr .boolTy .boolTy)) (by
+        let f : InfinityTm ClassicalSig (extendBound functionTy Γ) functionTy :=
+          InfinityTm.bv (.arr .boolTy (.arr .boolTy .boolTy)) 0 rfl
+        exact (f.app InfinityTm.truth).app InfinityTm.truth))
+      env bound ⟨functionSemantic.carrier → Bool, fun _ => false⟩
+      rhsFunction := by
+    apply IEval.lam (.arr .boolTy (.arr .boolTy .boolTy)) _ cFunction .boolTy
+      env bound rhsFunction
+    intro f
+    let extended := extendCBoundEnv functionSemantic f bound
+    let fTm : InfinityTm ClassicalSig (extendBound functionTy Γ) functionTy :=
+      InfinityTm.bv (.arr .boolTy (.arr .boolTy .boolTy)) 0 rfl
+    have fEval : IEval fTm env extended functionSemantic f := by
+      apply IEval.bv _ 0 rfl env extended functionSemantic f
+      exact extendCBoundEnv_zero functionSemantic f bound functionSemantic
+        |>.trans (alignCValue_self functionSemantic f)
+    have trueEval : IEval (InfinityTm.truth (Γ := extendBound functionTy Γ))
+        env extended cBool true := IEval.boolean true env extended
+    have first := IEval.app fTm InfinityTm.truth .boolTy
+      (.arr .boolTy .boolTy) env extended f true fEval trueEval
+    exact IEval.app (fTm.app InfinityTm.truth) InfinityTm.truth .boolTy .boolTy
+      env extended (f true) true first trueEval
+  have equality := IEval.eq (.arr (.arr .boolTy (.arr .boolTy .boolTy)) .boolTy)
+    _ _ (.arr cFunction .boolTy) env bound lhsFunction rhsFunction lhs rhs
+  have result : classicalEqBool lhsFunction rhsFunction =
+      (leftValue && rightValue) := by
+    cases leftValue <;> cases rightValue
+    · have different : lhsFunction ≠ rhsFunction := by
+        intro functionsEqual
+        have atFirst := congrFun functionsEqual (fun first _ => first)
+        simp [lhsFunction, rhsFunction] at atFirst
+      simp [classicalEqBool, different]
+    · have different : lhsFunction ≠ rhsFunction := by
+        intro functionsEqual
+        have atFirst := congrFun functionsEqual (fun first _ => first)
+        simp [lhsFunction, rhsFunction] at atFirst
+      simp [classicalEqBool, different]
+    · have different : lhsFunction ≠ rhsFunction := by
+        intro functionsEqual
+        have atSecond := congrFun functionsEqual (fun _ second => second)
+        simp [lhsFunction, rhsFunction] at atSecond
+      simp [classicalEqBool, different]
+    · have same : lhsFunction = rhsFunction := rfl
+      simp [classicalEqBool, same]
+  exact result ▸ equality
+
+theorem IEval.and_of_true {types : List Kind} {depth : Nat}
     {Γ : BoundCtx ClassicalSig types depth}
     (left right : InfinityTm ClassicalSig Γ .boolTy)
     (env : CTypeEnv types) (bound : CBoundEnv depth)

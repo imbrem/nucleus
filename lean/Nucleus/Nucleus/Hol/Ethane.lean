@@ -1,6 +1,7 @@
 import Nucleus.Hol.Ethane.Reference
 import Nucleus.Hol.Ethane.Subtype
 import Nucleus.Hol.Ethane.Subtype.Semantics
+import Nucleus.Hol.Ethane.Subtype.Checked
 import Nucleus.Hol.Ethane.Conversion
 import Nucleus.Hol.Ethane.Equivalence
 import Nucleus.Hol.Ethane.FV

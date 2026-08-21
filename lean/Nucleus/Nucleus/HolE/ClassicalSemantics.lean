@@ -63,6 +63,14 @@ theorem alignCValue_of_eq {source target : CPointed} (equal : source = target)
   subst target
   simp
 
+/-- Transporting a value across an equality of pointed types and back is the
+identity. -/
+theorem alignCValue_roundtrip {source target : CPointed}
+    (equal : source = target) (value : source.carrier) :
+    alignCValue target source (alignCValue source target value) = value := by
+  subst target
+  simp
+
 def CGuarded {A : Type} (predicate : A → Bool) (value : A) : Prop :=
   predicate value = true ∨ ¬ ∃ witness, predicate witness = true
 

@@ -36,7 +36,8 @@ private theorem cSem_rename_as
     cSem (checking.renameTypes ρ) env = cSem renamed env :=
   cSem_certificate_coherent _ _ env
 
-private theorem cSem_kind_normalize
+/-- Normalize the context and syntax wrapper of a renamed family certificate. -/
+theorem cSem_kind_normalize
     {types target : List Kind} {kind : Kind}
     {family : Fam ClassicalSig types kind} (ρ : TyRen types target)
     (renamed : CChecks (renameBoundCtx ρ emptyBound) (renameTypes ρ family)
@@ -67,7 +68,8 @@ private theorem cSem_kind_normalize
     exact (heq_of_eq (CChecks.unique renamed transported)).trans htransport
   exact congrArg (fun packed : Packed => cSem packed.2 env) packedEq
 
-private theorem cSem_tm_normalize
+/-- Normalize the context and syntax wrapper of a renamed term certificate. -/
+theorem cSem_tm_normalize
     {types target : List Kind} {depth : Nat}
     {Γ : BoundCtx ClassicalSig types depth}
     {term : Tm ClassicalSig types depth} {A : Ty ClassicalSig types}

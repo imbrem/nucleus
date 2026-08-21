@@ -1,5 +1,6 @@
 import Nucleus.Hol.Ethane.Syntax
 import Nucleus.HolE.Named.Typing
+import Nucleus.HolE.Named.MapLower
 
 /-!
 # Ethane sorting and typing

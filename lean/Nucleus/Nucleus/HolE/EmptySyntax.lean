@@ -26,9 +26,9 @@ abbrev Ty (types : List Kind) := FamK types .star
 
 namespace FamK
 
-def boolTy : Ty types := ⟨.boolTy, .boolTy⟩
+abbrev boolTy : Ty types := ⟨.boolTy, .boolTy⟩
 
-def arr (domain codomain : Ty types) : Ty types :=
+abbrev arr (domain codomain : Ty types) : Ty types :=
   ⟨.arr domain.raw codomain.raw, .arr domain.kinded codomain.kinded⟩
 
 def app (function : FamK types (.arr domain codomain))
