@@ -127,7 +127,10 @@ end SyntaxRow
 
 /-- Ethane rows elaborate using the existing, constructor-by-constructor
 definition. -/
-instance : Elaborates (Arena.Row Sig Name Nat) (Arena.Value Sig Name) where
+instance : Elaborates (Arena.Row Sig Name Nat) (Arena.Value Sig Name) Nat where
+  elaborate := Arena.Row.elaborate
+
+instance : Elaborates (Arena.Row Sig Name Int) (Arena.Value Sig Name) Int where
   elaborate := Arena.Row.elaborate
 
 /-- An Amber forest of Ethane syntax rows. -/

@@ -1,12 +1,15 @@
 import Nucleus.Hol.Ethane.Amber.Syntax
+import Nucleus.RangeMap
 
 /-!
-# Segment forests
+# Segment arenas
 
-A segmented Amber forest replaces one parent prefix with an ordered list of
-CAS slices.  Each slice contributes a contiguous range from an independently
-addressed forest.  The concatenated ranges form the absolute prefix seen by
-local rows.
+A segment arena imports a sorted, nonoverlapping range map and overlays local
+definitions at an explicit signed offset. Each destination range names a CAS
+object and a signed source offset in that object.
+
+Local definitions own their whole interval and shadow imports there. Imports
+may be gapped and may use negative indices.
 -/
 
 namespace Nucleus.Hol.Ethane.Amber
@@ -15,125 +18,278 @@ open Nucleus.Hol.Ethane
 universe u v
 set_option relaxedAutoImplicit true
 
-/-- One checked half-open slice of a CAS-addressed denotation. -/
-structure Segment (Key : Type u) where
-  key : Key
-  start : Nat
-  length : Nat
-  deriving DecidableEq
+namespace Arena
 
-/-- Multiple imported slices followed by a dense local suffix. -/
-structure Segmented (Key : Type u) (R : Type v) where
-  segments : List (Segment Key)
-  rows : List R
-  deriving DecidableEq
+/-- A range-mapped import layer with local definitions overlaid at `offset`. -/
+structure Segment (Key : Type u) (R : Type v) where
+  imports : RangeMap Key
+  offset : Int
+  defs : List R
 
 namespace Segment
 
-/-- Resolve and bounds-check one slice. -/
-def resolve? (resolve : Dense.Resolver Key Value) (segment : Segment Key) :
-    Option (List Value) := do
-  let values ← resolve segment.key
-  if segment.start + segment.length ≤ values.length then
-    some ((values.drop segment.start).take segment.length)
-  else
-    none
+/-- One ranged import from another arena. -/
+abbrev Import (Key : Type u) := RangeMap.Single Key
 
-@[simp] theorem resolve?_length {resolve : Dense.Resolver Key Value}
-    {segment : Segment Key} {values : List Value}
-    (resolved : segment.resolve? resolve = some values) :
-    values.length = segment.length := by
-  unfold resolve? at resolved
-  cases sourceEq : resolve segment.key with
-  | none => rw [sourceEq] at resolved; contradiction
-  | some source =>
-      rw [sourceEq] at resolved
-      simp only [Option.bind_eq_bind, Option.bind_some] at resolved
-      by_cases inBounds : segment.start + segment.length ≤ source.length
-      · rw [if_pos inBounds] at resolved
-        injection resolved with valuesEq
-        subst values
-        simp [List.length_take, List.length_drop]
-        omega
-      · rw [if_neg inBounds] at resolved
-        contradiction
+namespace Import
+
+/-- Change the CAS key without changing either coordinate interval. -/
+def mapKey (f : Key → Key') (source : Import Key) : Import Key' :=
+  { source with target := f source.target }
+
+end Import
+
+/-! ## Arena operations -/
+
+/-- Map CAS keys through the range map's functor without changing its domain. -/
+def mapKeys (f : Key → Key') (arena : Segment Key R) : Segment Key' R :=
+  ⟨arena.imports.map f, arena.offset, arena.defs⟩
+
+@[simp] theorem mapKeys_id (arena : Segment Key R) :
+    arena.mapKeys id = arena := by
+  cases arena
+  simp [mapKeys]
+
+@[simp] theorem mapKeys_comp (g : Key' → Key'') (f : Key → Key')
+    (arena : Segment Key R) :
+    (arena.mapKeys f).mapKeys g = arena.mapKeys (g ∘ f) := by
+  cases arena
+  simp [mapKeys, Function.comp_def]
+
+/-- The ranged import and local offset containing a destination index. -/
+def importAt? (arena : Segment Key R) (index : Int) :
+    Option (RangeMap.Hit Key) :=
+  arena.imports.lookup? index
+
+/-- Natural-index view of `importAt?`. -/
+def importAtNat? (arena : Segment Key R) (index : Nat) :
+    Option (RangeMap.Hit Key) :=
+  arena.importAt? (Int.ofNat index)
+
+/-- Resolve a destination index to its source key and source index. -/
+def sourceAt? (arena : Segment Key R) (index : Int) : Option (Key × Int) :=
+  (arena.importAt? index).map fun hit => (hit.target, hit.sourceIndex)
+
+/-- Natural-index view of `sourceAt?`. -/
+def sourceAtNat? (arena : Segment Key R) (index : Nat) : Option (Key × Int) :=
+  arena.sourceAt? (Int.ofNat index)
+
+@[simp] theorem importAtNat?_eq (arena : Segment Key R) (index : Nat) :
+    arena.importAtNat? index = arena.importAt? (Int.ofNat index) := rfl
+
+@[simp] theorem sourceAtNat?_eq (arena : Segment Key R) (index : Nat) :
+    arena.sourceAtNat? index = arena.sourceAt? (Int.ofNat index) := rfl
+
+/-- First signed index after the local overlay. -/
+def next (arena : Segment Key R) : Int :=
+  arena.offset + Int.ofNat arena.defs.length
+
+/-- Membership in the interval owned by local definitions. -/
+def Owns (arena : Segment Key R) (index : Int) : Prop :=
+  arena.offset ≤ index ∧ index < arena.next
+
+instance (arena : Segment Key R) (index : Int) : Decidable (arena.Owns index) :=
+  inferInstanceAs (Decidable (arena.offset ≤ index ∧ index < arena.next))
+
+/-- The imported map does not contain any index shadowed by local definitions. -/
+def Unshadowed (arena : Segment Key R) : Prop :=
+  ∀ index, arena.Owns index → arena.imports.lookup? index = none
+
+/-- A row may refer only to indices before its own index. -/
+def RowValid [Row R Tag Int Extra] (next : Int) (row : R) : Prop :=
+  ∀ child ∈ Row.children row, child < next
+
+/-- Left-to-right validity of a signed local overlay. -/
+def RowsValid [Row R Tag Int Extra] : Int → List R → Prop
+  | _, [] => True
+  | next, row :: rows => RowValid next row ∧ RowsValid (next + 1) rows
+
+/-- Every local reference points before its row. -/
+def Valid [Row R Tag Int Extra] (arena : Segment Key R) : Prop :=
+  RowsValid arena.offset arena.defs
+
+/-- Whether one row may be appended. -/
+def CanPush [Row R Tag Int Extra] (arena : Segment Key R) (row : R) : Prop :=
+  RowValid arena.next row
+
+/-- Append one local definition without changing the imported ranges. -/
+def push (arena : Segment Key R) (row : R) : Segment Key R :=
+  { arena with defs := arena.defs ++ [row] }
+
+@[simp] theorem next_push (arena : Segment Key R) (row : R) :
+    (arena.push row).next = arena.next + 1 := by
+  simp [push, next]
+  omega
+
+theorem rowsValid_append [Row R Tag Int Extra] (next : Int)
+    (left right : List R) :
+    RowsValid next (left ++ right) ↔
+      RowsValid next left ∧ RowsValid (next + left.length) right := by
+  induction left generalizing next with
+  | nil => simp [RowsValid]
+  | cons row left ih =>
+      simp only [List.cons_append, RowsValid, List.length_cons]
+      rw [ih (next + 1)]
+      constructor
+      · rintro ⟨rowValid, leftValid, rightValid⟩
+        refine ⟨⟨rowValid, leftValid⟩, ?_⟩
+        simpa [Int.ofNat_eq_natCast, Int.natCast_add, add_assoc, add_comm,
+          add_left_comm] using rightValid
+      · rintro ⟨⟨rowValid, leftValid⟩, rightValid⟩
+        refine ⟨rowValid, leftValid, ?_⟩
+        simpa [Int.ofNat_eq_natCast, Int.natCast_add, add_assoc, add_comm,
+          add_left_comm] using rightValid
+
+@[simp] theorem valid_push_iff [Row R Tag Int Extra]
+    (arena : Segment Key R) (row : R) :
+    Valid (arena.push row) ↔ Valid arena ∧ CanPush arena row := by
+  change RowsValid arena.offset (arena.defs ++ [row]) ↔
+    RowsValid arena.offset arena.defs ∧ RowValid arena.next row
+  rw [rowsValid_append]
+  simp [next, RowsValid]
+
+theorem Valid.push [Row R Tag Int Extra] {arena : Segment Key R}
+    (arenaValid : arena.Valid) {row : R} (rowValid : arena.CanPush row) :
+    (arena.push row).Valid :=
+  (valid_push_iff arena row).2 ⟨arenaValid, rowValid⟩
+
+/-- A resolver distinguishes an unavailable source from an available source
+whose denotation is partial at a particular index. -/
+abbrev Resolver (Key : Type u) (Value : Type v) :=
+  Key → Option (Int → Option Value)
+
+/-- Resolve one imported destination. The outer `Option` records source
+availability; the inner one records whether the source denotes this index.
+An unmapped destination is available with no value. -/
+def resolveAt? (resolve : Resolver Key Value) (arena : Segment Key R)
+    (index : Int) : Option (Option Value) :=
+  match arena.sourceAt? index with
+  | none => some none
+  | some (key, sourceIndex) =>
+      match resolve key with
+      | none => none
+      | some source => some (source sourceIndex)
+
+@[simp] theorem resolveAt?_unmapped (resolve : Resolver Key Value)
+    (arena : Segment Key R) {index : Int} (unmapped : arena.sourceAt? index = none) :
+    arena.resolveAt? resolve index = some none := by
+  simp [resolveAt?, unmapped]
+
+@[simp] theorem resolveAt?_unavailable (resolve : Resolver Key Value)
+    (arena : Segment Key R) {index sourceIndex : Int} {key : Key}
+    (mapped : arena.sourceAt? index = some (key, sourceIndex))
+    (unavailable : resolve key = none) :
+    arena.resolveAt? resolve index = none := by
+  simp [resolveAt?, mapped, unavailable]
+
+@[simp] theorem resolveAt?_available (resolve : Resolver Key Value)
+    (arena : Segment Key R) {index sourceIndex : Int} {key : Key}
+    {source : Int → Option Value}
+    (mapped : arena.sourceAt? index = some (key, sourceIndex))
+    (available : resolve key = some source) :
+    arena.resolveAt? resolve index = some (source sourceIndex) := by
+  simp [resolveAt?, mapped, available]
+
+/-- Flatten source unavailability and pointwise absence for elaboration. -/
+def imported (resolve : Resolver Key Value) (arena : Segment Key R)
+    (index : Int) : Option Value :=
+  (arena.resolveAt? resolve index).join
+
+/-- Lookup while elaborating a prefix of the local definitions. The entire
+local domain shadows imports, including rows not elaborated yet. -/
+def lookup (imports : Int → Option Value) (offset stop : Int)
+    (values : List (Option Value)) (index : Int) : Option Value :=
+  if _inside : offset ≤ index ∧ index < stop then
+    (values[(index - offset).toNat]?).join
+  else
+    imports index
+
+@[simp] theorem lookup_local (imports : Int → Option Value)
+    (offset stop index : Int) (values : List (Option Value))
+    (inside : offset ≤ index ∧ index < stop) :
+    lookup imports offset stop values index =
+      (values[(index - offset).toNat]?).join := by
+  simp [lookup, inside]
+
+@[simp] theorem lookup_imported (imports : Int → Option Value)
+    (offset stop index : Int) (values : List (Option Value))
+    (outside : ¬(offset ≤ index ∧ index < stop)) :
+    lookup imports offset stop values index = imports index := by
+  simp [lookup, outside]
+
+/-- Elaborate local rows from left to right. -/
+def elaborateRows [Elaborates R Value Int]
+    (imports : Int → Option Value) (offset stop : Int) :
+    List (Option Value) → List R → List (Option Value)
+  | values, [] => values
+  | values, row :: rows =>
+      let value := Elaborates.elaborate (lookup imports offset stop values) row
+      elaborateRows imports offset stop (values ++ [value]) rows
+
+/-- A signed, partially interpreted segment arena. -/
+structure Denotation (Value : Type u) where
+  imported : Int → Option Value
+  offset : Int
+  suffix : List (Option Value)
+
+namespace Denotation
+
+/-- First signed index after the local overlay. -/
+def next (denotation : Denotation Value) : Int :=
+  denotation.offset + Int.ofNat denotation.suffix.length
+
+/-- Local definitions take precedence over imported ranges. -/
+def get (denotation : Denotation Value) (index : Int) : Option Value :=
+  lookup denotation.imported denotation.offset denotation.next
+    denotation.suffix index
+
+@[simp] theorem get_local (denotation : Denotation Value) (index : Int)
+    (inside : denotation.offset ≤ index ∧ index < denotation.next) :
+    denotation.get index =
+      (denotation.suffix[(index - denotation.offset).toNat]?).join := by
+  exact lookup_local _ _ _ _ _ inside
+
+@[simp] theorem get_imported (denotation : Denotation Value) (index : Int)
+    (outside : ¬(denotation.offset ≤ index ∧ index < denotation.next)) :
+    denotation.get index = denotation.imported index := by
+  exact lookup_imported _ _ _ _ _ outside
+
+/-- Every local row elaborated successfully. -/
+def Complete (denotation : Denotation Value) : Prop :=
+  ∀ value ∈ denotation.suffix, value.isSome
+
+end Denotation
+
+/-- Interpret imports lazily and elaborate the local overlay. -/
+def denote [Elaborates R Value Int] (resolve : Resolver Key Value)
+    (arena : Segment Key R) : Denotation Value :=
+  let imports := arena.imported resolve
+  ⟨imports, arena.offset,
+    elaborateRows imports arena.offset arena.next [] arena.defs⟩
+
+@[simp] theorem elaborateRows_length [Elaborates R Value Int]
+    (imports : Int → Option Value) (offset stop : Int)
+    (values : List (Option Value)) (rows : List R) :
+    (elaborateRows imports offset stop values rows).length =
+      values.length + rows.length := by
+  induction rows generalizing values with
+  | nil => simp [elaborateRows]
+  | cons row rows ih =>
+      simp only [elaborateRows, ih, List.length_append, List.length_cons,
+        List.length_nil]
+      omega
+
+@[simp] theorem denote_next [Elaborates R Value Int]
+    (resolve : Resolver Key Value) (arena : Segment Key R) :
+    (arena.denote resolve).next = arena.next := by
+  simp [denote, Denotation.next, next]
+
+/-- Segment arena containing signed Ethane syntax references. -/
+abbrev Syntax (Key : Type) (Sig : Signature.{u}) (Name : Type := Nat) :=
+  Segment Key (Nucleus.Hol.Ethane.Arena.Row Sig Name Int)
 
 end Segment
 
-namespace Segmented
-
-/-- Number of absolute indices supplied by all segments. -/
-def offset (forest : Segmented Key R) : Nat :=
-  (forest.segments.map Segment.length).sum
-
-/-- First unallocated absolute index. -/
-def next (forest : Segmented Key R) : Nat := forest.offset + forest.rows.length
-
-/-- The same backward-edge invariant used by dense parent overlays. -/
-def Valid [Row R Tag Nat Extra] (forest : Segmented Key R) : Prop :=
-  Dense.RowsValid forest.offset forest.rows
-
-/-- Resolve slices in order and concatenate their values. -/
-def resolveSegments? (resolve : Dense.Resolver Key Value) :
-    List (Segment Key) → Option (List Value)
-  | [] => some []
-  | segment :: segments =>
-      return (← segment.resolve? resolve) ++ (← resolveSegments? resolve segments)
-
-/-- Resolve all imports and elaborate the local suffix. -/
-def denote? [Elaborates R Value] (resolve : Dense.Resolver Key Value)
-    (forest : Segmented Key R) : Option (Dense.Denotation Value) := do
-  let base ← resolveSegments? resolve forest.segments
-  return ⟨base, Dense.elaborateLocal base forest.rows⟩
-
-theorem resolveSegments?_length {resolve : Dense.Resolver Key Value}
-    {segments : List (Segment Key)} {values : List Value}
-    (resolved : resolveSegments? resolve segments = some values) :
-    values.length = (segments.map Segment.length).sum := by
-  induction segments generalizing values with
-  | nil =>
-      change some [] = some values at resolved
-      injection resolved with valuesEq
-      subst values
-      rfl
-  | cons segment segments ih =>
-      simp only [resolveSegments?] at resolved
-      cases segmentEq : segment.resolve? resolve with
-      | none => rw [segmentEq] at resolved; contradiction
-      | some segmentValues =>
-          rw [segmentEq] at resolved
-          cases restEq : resolveSegments? resolve segments with
-          | none => rw [restEq] at resolved; contradiction
-          | some rest =>
-              rw [restEq] at resolved
-              injection resolved with valuesEq
-              subst values
-              rw [List.length_append, Segment.resolve?_length segmentEq, ih restEq]
-              simp
-
-theorem denote?_size [Elaborates R Value]
-    {resolve : Dense.Resolver Key Value} {forest : Segmented Key R}
-    {denotation : Dense.Denotation Value}
-    (denotes : forest.denote? resolve = some denotation) :
-    denotation.size = forest.next := by
-  unfold denote? at denotes
-  cases segmentsEq : resolveSegments? resolve forest.segments with
-  | none => rw [segmentsEq] at denotes; contradiction
-  | some base =>
-      rw [segmentsEq] at denotes
-      have denotationEq :
-          Dense.Denotation.mk base (Dense.elaborateLocal base forest.rows) = denotation :=
-        Option.some.inj denotes
-      subst denotation
-      change base.length + (Dense.elaborateLocal base forest.rows).length =
-        forest.offset + forest.rows.length
-      rw [Dense.elaborateLocal_length, resolveSegments?_length segmentsEq]
-      rfl
-
-/-- Segmented Ethane syntax forest. -/
-abbrev Syntax (Key : Type) (Sig : Signature.{u}) (Name : Type := Nat) :=
-  Segmented Key (Arena.Row Sig Name Nat)
-
-end Segmented
+end Arena
 
 end Nucleus.Hol.Ethane.Amber

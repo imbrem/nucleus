@@ -21,8 +21,8 @@ set_option relaxedAutoImplicit true
 
 /-- A row interpreter.  Forest shape remains governed only by `Row`; this
 second class is needed only when a client asks for denoted values. -/
-class Elaborates (R : Type u) (Value : Type v) where
-  elaborate : (Nat → Option Value) → R → Option Value
+class Elaborates (R : Type u) (Value : Type v) (Ix : Type := Nat) where
+  elaborate : (Ix → Option Value) → R → Option Value
 
 /-- A CAS parent and the exact number of values it contributes. -/
 structure Parent (Key : Type u) where
