@@ -1,4 +1,5 @@
-import Nucleus.Hash.Probability
+import Nucleus.Hash.Basic
+import Nucleus.Probability.FiniteUniform
 
 /-! # Probability distributions on fixed-width hashes -/
 
@@ -39,22 +40,34 @@ noncomputable def constant (value : Hash width) : HashEMF width where
     simp [PMF.uniformOfFinset_apply]
 
 noncomputable def uniform (width : Nat) : HashEMF width where
-  pmf := Hash.uniform width
+  pmf := FiniteUniform.pmf (Hash width)
   values := Finset.univ
   nonempty := Finset.univ_nonempty
   pmf_eq := rfl
 
-private theorem prefixEvent_nonempty (fixed : Hash prefixWidth) (suffixWidth : Nat) :
-    (Hash.prefixEvent fixed suffixWidth).Nonempty := by
+noncomputable def prefixValues (fixed : Hash prefixWidth) (suffixWidth : Nat) :
+    Finset (Hash (prefixWidth + suffixWidth)) :=
+  Finset.univ.image fun suffix : Hash suffixWidth => fixed ++ suffix
+
+@[simp] theorem prefixValues_card (fixed : Hash prefixWidth) (suffixWidth : Nat) :
+    (prefixValues fixed suffixWidth).card = 2 ^ suffixWidth := by
+  rw [prefixValues, Finset.card_image_of_injective]
+  · simp
+  · intro left right equal
+    have suffixes := congrArg (BitVec.extractLsb' 0 suffixWidth) equal
+    simpa only [BitVec.extractLsb'_append_eq_right] using suffixes
+
+private theorem prefixValues_nonempty (fixed : Hash prefixWidth) (suffixWidth : Nat) :
+    (prefixValues fixed suffixWidth).Nonempty := by
   refine ⟨fixed ++ 0#suffixWidth, ?_⟩
-  simp [Hash.prefixEvent]
+  simp [prefixValues]
 
 noncomputable def uniformPrefix (fixed : Hash prefixWidth) (suffixWidth : Nat) :
     HashEMF (prefixWidth + suffixWidth) where
-  pmf := PMF.uniformOfFinset (Hash.prefixEvent fixed suffixWidth)
-    (prefixEvent_nonempty fixed suffixWidth)
-  values := Hash.prefixEvent fixed suffixWidth
-  nonempty := prefixEvent_nonempty fixed suffixWidth
+  pmf := PMF.uniformOfFinset (prefixValues fixed suffixWidth)
+    (prefixValues_nonempty fixed suffixWidth)
+  values := prefixValues fixed suffixWidth
+  nonempty := prefixValues_nonempty fixed suffixWidth
   pmf_eq := rfl
 
 noncomputable def support (distribution : HashPMF width) : Finset (Hash width) :=
@@ -84,6 +97,33 @@ noncomputable def map (operation : Hash width → Hash width)
     (distribution : HashPMF width) : HashPMF width where
   pmf := distribution.pmf.map operation
 
+noncomputable def HashEMF.mapEquiv (equivalence : Hash width ≃ Hash width)
+    (distribution : HashEMF width) : HashEMF width where
+  pmf := distribution.pmf.map equivalence
+  values := distribution.values.image equivalence
+  nonempty := distribution.nonempty.image equivalence
+  pmf_eq := by
+    rw [distribution.pmf_eq]
+    apply PMF.ext
+    intro output
+    rw [PMF.map_apply, tsum_eq_single (equivalence.symm output)]
+    · have exists_iff :
+          (∃ value ∈ distribution.values, equivalence value = output) ↔
+            equivalence.symm output ∈ distribution.values := by
+        constructor
+        · rintro ⟨value, member, rfl⟩
+          simpa using member
+        · intro member
+          exact ⟨equivalence.symm output, member, equivalence.apply_symm_apply output⟩
+      simp only [PMF.uniformOfFinset_apply]
+      rw [Finset.card_image_of_injective _ equivalence.injective]
+      simp [exists_iff]
+    · intro other different
+      have unequal : output ≠ equivalence other := by
+        intro equal
+        exact different (equivalence.injective (by simpa using equal.symm))
+      simp [unequal]
+
 noncomputable instance : HXor (HashPMF width) (HashPMF width) (HashPMF width) :=
   ⟨map₂ (· ^^^ ·)⟩
 
@@ -94,6 +134,18 @@ noncomputable instance : HOr (HashPMF width) (HashPMF width) (HashPMF width) :=
   ⟨map₂ (· ||| ·)⟩
 
 noncomputable instance : Complement (HashPMF width) := ⟨map (~~~ ·)⟩
+
+private def complementEquiv (width : Nat) : Hash width ≃ Hash width where
+  toFun := (~~~ ·)
+  invFun := (~~~ ·)
+  left_inv value := by simp
+  right_inv value := by simp
+
+noncomputable instance : Complement (HashEMF width) :=
+  ⟨HashEMF.mapEquiv (complementEquiv width)⟩
+
+@[simp] theorem complement_toHashPMF (distribution : HashEMF width) :
+    (~~~distribution : HashEMF width).toHashPMF = ~~~distribution.toHashPMF := rfl
 
 noncomputable instance : Add (HashPMF width) := ⟨map₂ (· + ·)⟩
 
@@ -107,7 +159,7 @@ theorem map_uniform_xor (mask : Hash width) :
   intro output
   rw [PMF.map_apply]
   rw [tsum_eq_single (output ^^^ mask)]
-  · simp [uniform, Hash.uniform, FiniteUniform.pmf, BitVec.xor_assoc]
+  · simp [uniform, FiniteUniform.pmf, BitVec.xor_assoc]
   · intro other hne
     simp only [ite_eq_right_iff]
     intro equal

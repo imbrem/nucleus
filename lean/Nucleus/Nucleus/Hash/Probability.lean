@@ -1,7 +1,6 @@
 import Mathlib.Data.Fintype.CardEmbedding
 import Mathlib.Data.Fintype.Pigeonhole
-import Nucleus.Hash.Basic
-import Nucleus.Probability.FiniteUniform
+import Nucleus.Hash.PMF
 
 /-! # Uniform finite hash samples -/
 
@@ -31,36 +30,22 @@ end Sample
 
 variable {count width prefixWidth : Nat}
 
-noncomputable def uniform (width : Nat) : PMF (Hash width) :=
-  FiniteUniform.pmf (Hash width)
-
 noncomputable def uniformSamples (count width : Nat) : PMF (Sample count width) :=
   FiniteUniform.pmf (Sample count width)
 
-/-- All hashes with a fixed most-significant prefix. -/
-noncomputable def prefixEvent (fixed : Hash prefixWidth) (suffixWidth : Nat) :
-    Finset (Hash (prefixWidth + suffixWidth)) :=
-  Finset.univ.image fun suffix : Hash suffixWidth => fixed ++ suffix
-
-@[simp] theorem prefixEvent_card (fixed : Hash prefixWidth) (suffixWidth : Nat) :
-    (prefixEvent fixed suffixWidth).card = 2 ^ suffixWidth := by
-  rw [prefixEvent, Finset.card_image_of_injective]
-  · simp
-  · intro left right equal
-    have suffixes := congrArg (BitVec.extractLsb' 0 suffixWidth) equal
-    simpa only [BitVec.extractLsb'_append_eq_right] using suffixes
-
 /-- A uniform hash has any fixed `prefixWidth`-bit prefix with mass `2⁻prefixWidth`. -/
 @[simp] theorem prefixMass (fixed : Hash prefixWidth) (suffixWidth : Nat) :
-    FiniteUniform.mass (prefixEvent fixed suffixWidth) = 1 / 2 ^ prefixWidth := by
-  simp only [FiniteUniform.mass, prefixEvent_card, Fintype.card_congr BitVec.equivFin.toEquiv,
+    FiniteUniform.mass (HashPMF.prefixValues fixed suffixWidth) = 1 / 2 ^ prefixWidth := by
+  simp only [FiniteUniform.mass, HashPMF.prefixValues_card,
+    Fintype.card_congr BitVec.equivFin.toEquiv,
     Fintype.card_fin, pow_add, Nat.cast_pow, Nat.cast_ofNat]
   field_simp
   norm_num
   ac_rfl
 
 @[simp] theorem zeroPrefixMass (prefixWidth suffixWidth : Nat) :
-    FiniteUniform.mass (prefixEvent (0#prefixWidth) suffixWidth) = 1 / 2 ^ prefixWidth :=
+    FiniteUniform.mass (HashPMF.prefixValues (0#prefixWidth) suffixWidth) =
+      1 / 2 ^ prefixWidth :=
   prefixMass _ _
 
 /-- Hashes agreeing with `expected` on every selected bit. -/
