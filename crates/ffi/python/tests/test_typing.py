@@ -13,6 +13,7 @@ import covalence
 from covalence import _covalence
 from covalence.data import cbor as public_cbor
 from covalence.lib import hash as public_hash
+from covalence.logic import hol as public_hol
 from covalence.logic import lrat as public_lrat
 from covalence.logic import sat as public_sat
 
@@ -65,10 +66,21 @@ def test_every_declared_name_exists() -> None:
 
 def test_every_public_name_is_reexported() -> None:
     """Public modules select names from the private compiled module."""
-    for public_module in (public_cbor, public_hash, public_lrat, public_sat):
+    for public_module in (
+        public_cbor,
+        public_hash,
+        public_lrat,
+        public_sat,
+    ):
         assert set(public_module.__all__) <= _exported_names()
         for name in public_module.__all__:
             assert getattr(public_module, name) is getattr(_covalence, name)
+
+    # Both logic crates expose `Kernel`; the private extension uses a distinct
+    # name for HOL and its public module supplies the ergonomic alias.
+    assert public_hol.Kernel is _covalence.HolKernel
+    for name in ("HolError", "Tm", "Ty"):
+        assert getattr(public_hol, name) is getattr(_covalence, name)
 
 
 def test_declared_members_exist_on_each_class() -> None:
@@ -122,6 +134,10 @@ def test_the_stub_does_not_omit_class_members() -> None:
         "Sha1",
         "GitHash",
         "Kernel",
+        "HolKernel",
+        "Kind",
+        "Ty",
+        "Tm",
         "RatGroup",
         "Literal",
         "Clause",

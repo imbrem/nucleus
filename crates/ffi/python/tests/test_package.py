@@ -29,7 +29,12 @@ def test_public_apis_follow_their_crate_paths() -> None:
 
 
 def test_lrat_follows_its_crate_path() -> None:
-    assert covalence.logic.__all__ == ["lrat", "sat"]
+    assert covalence.logic.__all__ == ["hol", "lrat", "sat"]
+    assert covalence.logic.hol.__name__ == "covalence.logic.hol"
+    assert covalence.logic.hol.Kernel is _covalence.HolKernel
+    assert covalence.logic.hol.Kind is _covalence.Kind
+    assert covalence.logic.hol.Ty is _covalence.Ty
+    assert covalence.logic.hol.Tm is _covalence.Tm
     assert covalence.logic.lrat.__name__ == "covalence.logic.lrat"
     assert covalence.logic.lrat.Kernel is _covalence.Kernel
     assert covalence.logic.lrat.RatGroup is _covalence.RatGroup
@@ -57,6 +62,7 @@ def test_the_package_ships_typing_metadata() -> None:
     assert (root / "lib" / "__init__.py").is_file()
     assert (root / "lib" / "hash.py").is_file()
     assert (root / "logic" / "__init__.py").is_file()
+    assert (root / "logic" / "hol.py").is_file()
     assert (root / "logic" / "lrat.py").is_file()
     assert (root / "logic" / "sat.py").is_file()
     assert (root / "data" / "__init__.py").is_file()
@@ -73,5 +79,7 @@ def test_public_names_are_declared() -> None:
         assert hasattr(covalence.lib.hash, name), name
     for name in covalence.logic.lrat.__all__:
         assert hasattr(covalence.logic.lrat, name), name
+    for name in covalence.logic.hol.__all__:
+        assert hasattr(covalence.logic.hol, name), name
     for name in covalence.logic.sat.__all__:
         assert hasattr(covalence.logic.sat, name), name

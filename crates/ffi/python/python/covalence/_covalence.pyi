@@ -81,6 +81,27 @@ class LratError(ValueError):
 class CnfError(ValueError):
     """A conjunctive-normal-form value was malformed."""
 
+class HolError(ValueError):
+    """An HOL kernel operation was rejected."""
+
+class Ty:
+    """An opaque, portable HOL type handle."""
+
+class Kind:
+    """An opaque, portable HOL kind handle."""
+
+class Tm:
+    """An opaque, portable HOL term handle."""
+
+class HolKernel:
+    """An owning wrapper over an admitted HOL arena."""
+
+    @staticmethod
+    def empty() -> HolKernel: ...
+    def star(self) -> Kind: ...
+    def bool_ty(self) -> Ty: ...
+    def bool_const(self, value: bool, /) -> Tm: ...
+
 class Literal:
     """A signed, nonzero propositional literal."""
 

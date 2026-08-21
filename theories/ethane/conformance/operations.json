@@ -1,0 +1,114 @@
+{
+  "format": "nucleus.ethane.kernel-operations.v0",
+  "status": "contract",
+  "operations": [
+    {
+      "id": "kernel.empty",
+      "kind": "constructor",
+      "oldArenas": [],
+      "newArena": {
+        "role": "kernel",
+        "sound": "same-implicit-cas"
+      },
+      "assumptions": "none",
+      "casUse": "none",
+      "errors": [],
+      "lean": {
+        "definition": "Nucleus.Hol.Ethane.Kernel.empty",
+        "preservationTheorem": "Nucleus.Hol.Ethane.Kernel.empty_sound",
+        "stateModel": "pure-arena-constructor"
+      },
+      "rust": {
+        "symbol": "covalence_logic_hol::dense::Kernel::empty",
+        "receiver": "constructor"
+      },
+      "fixtures": ["empty.ok"]
+  },
+  {
+    "id": "kind.star",
+    "kind": "transition",
+    "oldArenas": [
+      {
+        "role": "kernel",
+        "sound": "same-implicit-cas"
+      }
+    ],
+    "newArena": {
+      "role": "kernel",
+      "sound": "same-implicit-cas"
+    },
+    "assumptions": "preserve",
+    "casUse": "none",
+    "errors": [
+      "arena-full",
+      "index-overflow"
+    ],
+    "lean": {
+      "definition": "Nucleus.Hol.Ethane.Kernel.ClassifiedArena.star",
+      "preservationTheorem": "Nucleus.Hol.Ethane.Kernel.ClassifiedArena.star_sound",
+      "stateModel": "pure-arena-transition"
+    },
+    "rust": {
+      "symbol": "covalence_logic_hol::dense::Kernel::star",
+      "receiver": "mutable"
+    },
+    "fixtures": [
+      "kind-star.ok"
+    ]
+  },
+  {
+    "id": "type.bool",
+      "kind": "transition",
+      "oldArenas": [
+        {
+          "role": "kernel",
+          "sound": "same-implicit-cas"
+        }
+      ],
+      "newArena": {
+        "role": "kernel",
+        "sound": "same-implicit-cas"
+      },
+      "assumptions": "preserve",
+      "casUse": "none",
+      "errors": ["arena-full", "index-overflow"],
+      "lean": {
+        "definition": "Nucleus.Hol.Ethane.Kernel.boolTy",
+        "preservationTheorem": "Nucleus.Hol.Ethane.Kernel.boolTy_sound",
+        "stateModel": "pure-arena-transition"
+      },
+      "rust": {
+        "symbol": "covalence_logic_hol::dense::Kernel::bool_ty",
+        "receiver": "mutable"
+      },
+      "fixtures": ["bool-type.ok"]
+    },
+    {
+      "id": "term.bool",
+      "kind": "transition",
+      "oldArenas": [
+        {
+          "role": "kernel",
+          "sound": "same-implicit-cas"
+        }
+      ],
+      "newArena": {
+        "role": "kernel",
+        "sound": "same-implicit-cas"
+      },
+      "assumptions": "preserve",
+      "casUse": "none",
+      "errors": ["arena-full", "index-overflow"],
+      "lean": {
+        "definition": "Nucleus.Hol.Ethane.Kernel.bool",
+        "preservationTheorem": "Nucleus.Hol.Ethane.Kernel.bool_sound",
+        "stateModel": "pure-arena-transition"
+      },
+      "rust": {
+        "symbol": "covalence_logic_hol::dense::Kernel::bool_const",
+        "receiver": "mutable"
+      },
+      "fixtures": ["bool-false.ok", "bool-true.ok"]
+    }
+  ]
+}

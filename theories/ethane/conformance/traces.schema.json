@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nucleus.dev/schema/ethane-kernel-traces-v0.json",
+  "title": "Ethane kernel normalized contract traces (v0)",
+  "type": "object",
+  "required": ["format", "status", "arenaEncoding", "traces"],
+  "additionalProperties": false,
+  "properties": {
+    "format": { "const": "nucleus.ethane.kernel-traces.v0" },
+    "status": { "enum": ["contract", "checked", "complete"] },
+    "arenaEncoding": {
+      "const": "normalized dense rows with zero-based absolute references"
+    },
+    "traces": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/trace" }
+    }
+  },
+  "$defs": {
+    "identifier": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]*$" },
+    "row": {
+      "type": "object",
+      "required": ["tag", "ixs"],
+      "additionalProperties": false,
+      "properties": {
+        "tag": {
+          "enum": ["kind.star", "ty.bool", "tm.bool.false", "tm.bool.true"]
+        },
+        "ixs": {
+          "type": "array",
+          "maxItems": 2,
+          "items": {
+            "type": "integer",
+            "minimum": -9223372036854775808,
+            "maximum": 9223372036854775807
+          }
+        },
+        "eq": {
+          "type": "integer",
+          "minimum": -9223372036854775808,
+          "maximum": 9223372036854775807
+        },
+        "sort": {
+          "type": "integer",
+          "minimum": -9223372036854775808,
+          "maximum": 9223372036854775807
+        }
+      }
+    },
+    "arena": {
+      "type": "object",
+      "required": ["rows"],
+      "additionalProperties": false,
+      "properties": {
+        "rows": { "type": "array", "items": { "$ref": "#/$defs/row" } }
+      }
+    },
+    "trace": {
+      "type": "object",
+      "required": [
+        "id",
+        "operation",
+        "oldArenas",
+        "input",
+        "casUse",
+        "expected"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/identifier" },
+        "operation": { "$ref": "#/$defs/identifier" },
+        "oldArenas": { "type": "array", "items": { "$ref": "#/$defs/arena" } },
+        "input": { "type": "object" },
+        "casUse": { "const": "none" },
+        "expected": {
+          "type": "object",
+          "required": ["result", "newArena", "output"],
+          "additionalProperties": false,
+          "properties": {
+            "result": { "const": "ok" },
+            "newArena": { "$ref": "#/$defs/arena" },
+            "output": {
+              "oneOf": [
+                { "type": "object", "maxProperties": 0 },
+                {
+                  "type": "object",
+                  "required": ["ref", "class"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "ref": { "type": "integer", "minimum": 0 },
+                    "class": { "enum": ["type", "term"] }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}
