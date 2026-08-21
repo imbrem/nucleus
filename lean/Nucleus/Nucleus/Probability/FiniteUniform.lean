@@ -25,4 +25,9 @@ noncomputable def pmf (α : Type*) [Fintype α] [Nonempty α] : PMF α :=
     mass (Finset.univ : Finset α) = 1 := by
   simp [mass, Fintype.card_ne_zero]
 
+theorem mass_le_one [Fintype α] [Nonempty α] (event : Finset α) : mass event ≤ 1 := by
+  have card_pos : (0 : ℚ) < Fintype.card α := by exact_mod_cast Fintype.card_pos
+  rw [mass, div_le_one card_pos]
+  exact_mod_cast Finset.card_le_univ event
+
 end Nucleus.FiniteUniform
