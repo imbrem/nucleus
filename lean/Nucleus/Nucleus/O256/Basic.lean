@@ -1,34 +1,35 @@
-import Mathlib.Data.List.OfFn
+import Nucleus.Hash.Basic
+import Nucleus.Bytes
 
 /-! # 256-bit objects -/
 
 namespace Nucleus
 
-/-- Exactly 32 octets.  The concrete hash algorithm belongs to the CAS. -/
-abbrev O256 := Fin 32 → UInt8
+/-- A 256-bit hash. -/
+abbrev O256 := Hash 256
 
 namespace O256
 
-/-- Octets in index order. -/
-def bytes (value : O256) : List UInt8 := List.ofFn value
+/-- Big-endian bytes, matching unsigned and lexicographic O256 order. -/
+def bytes (value : O256) : List UInt8 :=
+  List.ofFn fun i : Fin 32 =>
+    UInt8.ofBitVec (value.extractLsb' ((31 - i.val) * 8) 8)
 
 @[simp] theorem bytes_length (value : O256) : value.bytes.length = 32 := by
   simp [bytes]
 
-/-- Check a list for the exact O256 width. -/
+/-- Parse exactly 32 big-endian bytes. -/
 def ofList? (values : List UInt8) : Option O256 :=
-  if width : values.length = 32 then
-    some fun index => values[index.val]'(by rw [width]; exact index.isLt)
+  if values.length = 32 then
+    some <| BitVec.ofNat 256 <| values.foldl (fun value byte => value * 256 + byte.toNat) 0
   else
     none
 
-@[simp] theorem ofList?_bytes (value : O256) : ofList? value.bytes = some value := by
-  unfold ofList?
-  rw [dif_pos (bytes_length value)]
-  congr 1
-  funext index
-  change (List.ofFn value)[index.val] = value index
-  rw [List.getElem_ofFn]
+/-- Compact byte encoding. -/
+def encode (value : O256) : Bytes := ⟨value.bytes.toByteArray⟩
+
+@[simp] theorem encode_length (value : O256) : value.encode.length = 32 := by
+  simp [encode, Bytes.length, bytes_length]
 
 end O256
 

@@ -2,6 +2,10 @@ import Nucleus.HolLN
 import Nucleus.Hol
 import Nucleus.HolLN.Array
 import Nucleus.HolLN.Json
+import Nucleus.HashSeq
+import Nucleus.Hash
+import Nucleus.O256
+import Nucleus.Probability
 import Nucleus.Json
 import Nucleus.Cbor
 import Nucleus.Encoding.Base128

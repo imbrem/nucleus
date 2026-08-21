@@ -16,6 +16,7 @@ use std::{
 
 use covalence_lib_error::snafu;
 use snafu::Snafu;
+use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 pub mod blake3;
 mod git;
@@ -109,6 +110,7 @@ where
 /// }
 /// ```
 #[repr(transparent)]
+#[derive(FromBytes, Immutable, IntoBytes, KnownLayout)]
 pub struct Obj<N: Namespace> {
     bytes: N::Bytes,
     namespace: PhantomData<fn(N) -> N>,
