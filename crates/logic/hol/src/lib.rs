@@ -232,3 +232,6 @@ mod tests {
         assert_eq!(optimized_term, persistent_term);
     }
 }
+
+#[cfg(test)]
+mod conformance;
