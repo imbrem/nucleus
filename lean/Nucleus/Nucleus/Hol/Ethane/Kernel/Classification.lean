@@ -24,11 +24,6 @@ set_option relaxedAutoImplicit true
 def I64Valid (value : Int) : Prop :=
   -(2 ^ 63 : Int) ≤ value ∧ value < (2 ^ 63 : Int)
 
-/-- A signed arena reference proved representable by the Rust boundary type. -/
-structure I64Ref where
-  value : Int
-  valid : I64Valid value
-
 theorem boolTy_kinded {Sig : Signature} [Nucleus.HolE.SigTyping Sig]
     {types : List Kind} (typeScope : TyScope types) :
     Nucleus.Hol.Ethane.Kinded typeScope (.boolTy : Ty Sig) := by
@@ -221,25 +216,25 @@ def valueView (state : ClassifiedArena Sig typeScope Raw Sound) :
 
 /-- A handle proves that a reference denotes a checked type in this arena. -/
 structure TypeHandle (state : ClassifiedArena Sig typeScope Raw Sound) where
-  reference : I64Ref
+  reference : Int64
   type : Ty Sig
   kinded : Nucleus.Hol.Ethane.Kinded typeScope type
-  checked : state.view reference.value = some (.type type kinded)
-  backward : reference.value < RowArena.next (Sig := Sig) state.raw
+  checked : state.view reference.toInt = some (.type type kinded)
+  backward : reference.toInt < RowArena.next (Sig := Sig) state.raw
 
 /-- A handle proves that a reference denotes a checked kind in this arena. -/
 structure KindHandle (state : ClassifiedArena Sig typeScope Raw Sound) where
-  reference : I64Ref
+  reference : Int64
   kind : Kind
-  checked : state.view reference.value = some (.kind kind)
-  backward : reference.value < RowArena.next (Sig := Sig) state.raw
+  checked : state.view reference.toInt = some (.kind kind)
+  backward : reference.toInt < RowArena.next (Sig := Sig) state.raw
 
 /-- A checked type handle discharges the semantic `TmFvReady` premise without
 an external ghost classification assertion. -/
 def TypeHandle.tmFvReady {state : ClassifiedArena Sig typeScope Raw Sound}
     (handle : TypeHandle state) :
     TmFvReady typeScope (RowArena.next (Sig := Sig) state.raw) state.valueView
-      handle.reference.value where
+      handle.reference.toInt where
   backward := handle.backward
   typeWitness :=
     { type := handle.type
@@ -272,20 +267,22 @@ def boolTy (state : ClassifiedArena Sig typeScope Raw Sound)
         omega
       sound := preserves state.sound }
   refine ⟨next, {
-    reference := ⟨RowArena.next (Sig := Sig) state.raw, nextValid⟩
+    reference := Int64.ofInt (RowArena.next (Sig := Sig) state.raw)
     type := .boolTy
     kinded := boolTy_kinded typeScope
     checked := ?_
     backward := ?_ }⟩
   · have lengths := state.derived.length_eq
     dsimp [next, view]
+    rw [Int64.toInt_ofInt_of_le nextValid.1 nextValid.2]
     rw [RowArena.offset_push]
     change state.base.extend (RowArena.offset (Sig := Sig) state.raw)
       (state.checked ++ [checked]) (RowArena.next (Sig := Sig) state.raw) =
         some checked
     rw [CheckedView.extend_append, RowArena.next_eq, lengths]
     simp [CheckedView.set]
-  · change RowArena.next (Sig := Sig) state.raw <
+  · rw [Int64.toInt_ofInt_of_le nextValid.1 nextValid.2]
+    change RowArena.next (Sig := Sig) state.raw <
       RowArena.next (Sig := Sig) (RowArena.push state.raw .boolTy)
     rw [RowArena.next_push]
     omega
@@ -314,19 +311,21 @@ def star (state : ClassifiedArena Sig typeScope Raw Sound)
         omega
       sound := preserves state.sound }
   refine ⟨next, {
-    reference := ⟨RowArena.next (Sig := Sig) state.raw, nextValid⟩
+    reference := Int64.ofInt (RowArena.next (Sig := Sig) state.raw)
     kind := .star
     checked := ?_
     backward := ?_ }⟩
   · have lengths := state.derived.length_eq
     dsimp [next, view]
+    rw [Int64.toInt_ofInt_of_le nextValid.1 nextValid.2]
     rw [RowArena.offset_push]
     change state.base.extend (RowArena.offset (Sig := Sig) state.raw)
       (state.checked ++ [checked]) (RowArena.next (Sig := Sig) state.raw) =
         some checked
     rw [CheckedView.extend_append, RowArena.next_eq, lengths]
     simp [CheckedView.set]
-  · change RowArena.next (Sig := Sig) state.raw <
+  · rw [Int64.toInt_ofInt_of_le nextValid.1 nextValid.2]
+    change RowArena.next (Sig := Sig) state.raw <
       RowArena.next (Sig := Sig) (RowArena.push state.raw .kindStar)
     rw [RowArena.next_push]
     omega

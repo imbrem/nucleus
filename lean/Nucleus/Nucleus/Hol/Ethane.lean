@@ -12,6 +12,7 @@ import Nucleus.Hol.Ethane.Arena.Cbor
 import Nucleus.Hol.Ethane.Amber
 import Nucleus.Hol.Ethane.Kernel.Contract
 import Nucleus.Hol.Ethane.Kernel.Classification
+import Nucleus.Hol.Ethane.Kernel.Row
 import Nucleus.Hol.Ethane.Kernel.TypedFreeVariable
 
 /-!

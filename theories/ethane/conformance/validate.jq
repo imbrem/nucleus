@@ -40,11 +40,6 @@ $registry[0] as $registry
       ($trace.casUse == $operation.casUse) and
       ($operation.fixtures | index($trace.id) != null))) | not then
     error("trace does not match its operation contract")
-  elif ($traces.traces | all(.expected.newArena.assumptions as $new |
-      if (.oldArenas | length) == 0 then $new == []
-      else all(.oldArenas[]; .assumptions == $new)
-      end)) | not then
-    error("initial fixtures must preserve their tracked assumptions")
   else
     {
       registry: $registry.format,

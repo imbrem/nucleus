@@ -9,17 +9,11 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
+pub mod dense;
+mod row;
 pub mod wire;
 
-/// The single syntax-row vocabulary shared by all arena representations and
-/// untrusted wire decoding.
-#[non_exhaustive]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Row {
-    KindStar,
-    BoolTy,
-    Bool(bool),
-}
+use row::{Expr, Row};
 
 /// A portable handle to a checked HOL kind row.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -60,28 +54,6 @@ impl Tm {
     }
 }
 
-/// A portable fact with an explicit set of assumptions.
-///
-/// There is no public unchecked constructor. Future proof rules will be the
-/// only way to obtain a `Fact`.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Fact {
-    assumptions: Vec<Tm>,
-    conclusion: Tm,
-}
-
-impl Fact {
-    #[must_use]
-    pub fn assumptions(&self) -> impl ExactSizeIterator<Item = &Tm> {
-        self.assumptions.iter()
-    }
-
-    #[must_use]
-    pub const fn conclusion(&self) -> &Tm {
-        &self.conclusion
-    }
-}
-
 mod sealed {
     pub trait Sealed {}
 }
@@ -90,34 +62,24 @@ mod sealed {
 ///
 /// This trait intentionally has no mutation capability. Concrete kernel
 /// representations expose specialized inherent operations instead.
-pub trait Arena: sealed::Sealed {
-    fn rows(&self) -> &[Row];
-}
+pub trait ArenaRepr: sealed::Sealed {}
 
-impl<T: Arena + ?Sized> sealed::Sealed for Arc<T> {}
-impl<T: Arena + ?Sized> Arena for Arc<T> {
-    fn rows(&self) -> &[Row] {
-        (**self).rows()
-    }
-}
+impl<T: ArenaRepr + ?Sized> sealed::Sealed for Arc<T> {}
+impl<T: ArenaRepr + ?Sized> ArenaRepr for Arc<T> {}
 
-impl<T: Arena + ?Sized> sealed::Sealed for Rc<T> {}
-impl<T: Arena + ?Sized> Arena for Rc<T> {
-    fn rows(&self) -> &[Row] {
-        (**self).rows()
-    }
-}
+impl<T: ArenaRepr + ?Sized> sealed::Sealed for Rc<T> {}
+impl<T: ArenaRepr + ?Sized> ArenaRepr for Rc<T> {}
 
 /// An owning wrapper over an arena admitted as sound.
 ///
 /// Fields and constructors from arbitrary arenas are private: decoding a bare
 /// arena is not sufficient to manufacture this witness.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Kernel<A: Arena> {
-    arena: A,
+pub struct Kernel<A: ArenaRepr> {
+    pub(crate) arena: A,
 }
 
-impl<A: Arena> Kernel<A> {
+impl<A: ArenaRepr> Kernel<A> {
     #[must_use]
     pub const fn arena(&self) -> &A {
         &self.arena
@@ -130,143 +92,14 @@ impl<A: Arena> Kernel<A> {
 }
 
 /// A representation-erased arena value for read-only dispatch.
-///
-/// Rust cannot give this enum the name `Arena` because the sealed public trait
-/// already occupies that type-namespace name.
 #[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum AnyArena {
+pub enum Arena {
     Dense(dense::Arena),
 }
 
-impl sealed::Sealed for AnyArena {}
-impl Arena for AnyArena {
-    fn rows(&self) -> &[Row] {
-        match self {
-            Self::Dense(arena) => arena.rows(),
-        }
-    }
-}
-
-/// Dense root-arena storage and its specialized kernel operations.
-pub mod dense {
-    use super::{Arena as ArenaTrait, Error, Kernel as GenericKernel, Kind, Row, Tm, Ty, sealed};
-
-    /// A dense signed-offset arena.
-    ///
-    /// This value alone is untrusted. Only a `Kernel<Arena>` is an
-    /// assumed-sound kernel witness.
-    #[derive(Clone, Debug, Default, Eq, PartialEq)]
-    pub struct Arena {
-        pub(crate) offset: i64,
-        pub(crate) rows: Vec<Row>,
-    }
-
-    impl Arena {
-        #[must_use]
-        pub const fn offset(&self) -> i64 {
-            self.offset
-        }
-
-        #[must_use]
-        pub const fn is_empty(&self) -> bool {
-            self.rows.is_empty()
-        }
-
-        #[must_use]
-        pub const fn len(&self) -> usize {
-            self.rows.len()
-        }
-
-        #[must_use]
-        pub fn rows(&self) -> &[Row] {
-            &self.rows
-        }
-
-        pub(crate) fn from_untrusted(offset: i64, rows: Vec<Row>) -> Self {
-            Self { offset, rows }
-        }
-
-        fn push(&mut self, row: Row) -> Result<i64, Error> {
-            let length = i64::try_from(self.rows.len()).map_err(|_| Error::ArenaFull)?;
-            let index = self
-                .offset
-                .checked_add(length)
-                .ok_or(Error::IndexOverflow)?;
-            self.rows.push(row);
-            Ok(index)
-        }
-    }
-
-    impl sealed::Sealed for Arena {}
-    impl ArenaTrait for Arena {
-        fn rows(&self) -> &[Row] {
-            self.rows()
-        }
-    }
-
-    /// The dense kernel specialization.
-    pub type Kernel = GenericKernel<Arena>;
-
-    impl GenericKernel<Arena> {
-        /// Constructs the empty, sound dense arena.
-        ///
-        /// Lean: `Nucleus.Hol.Ethane.Kernel.empty` and
-        /// `Nucleus.Hol.Ethane.Kernel.empty_sound`.
-        #[must_use]
-        pub const fn empty() -> Self {
-            Self {
-                arena: Arena {
-                    offset: 0,
-                    rows: Vec::new(),
-                },
-            }
-        }
-
-        /// Appends the Boolean type. Repeated calls append repeated rows;
-        /// caching and deduplication belong outside the kernel.
-        ///
-        /// Lean: `Nucleus.Hol.Ethane.Kernel.boolTy` and
-        /// `Nucleus.Hol.Ethane.Kernel.boolTy_sound`.
-        ///
-        /// # Errors
-        ///
-        /// Returns an error if the signed dense index cannot be represented.
-        pub fn bool_ty(&mut self) -> Result<Ty, Error> {
-            let index = self.arena.push(Row::BoolTy)?;
-            Ok(Ty { index })
-        }
-
-        /// Appends the kind `Star`, whose sort is `Kind`.
-        ///
-        /// # Errors
-        ///
-        /// Returns an error if the signed dense index cannot be represented.
-        pub fn star(&mut self) -> Result<Kind, Error> {
-            let index = self.arena.push(Row::KindStar)?;
-            Ok(Kind { index })
-        }
-
-        /// Appends a Boolean constant. Repeated calls append repeated rows.
-        ///
-        /// Lean: `Nucleus.Hol.Ethane.Kernel.bool` and
-        /// `Nucleus.Hol.Ethane.Kernel.bool_sound`.
-        ///
-        /// # Errors
-        ///
-        /// Returns an error if the signed dense index cannot be represented.
-        pub fn bool_const(&mut self, value: bool) -> Result<Tm, Error> {
-            let index = self.arena.push(Row::Bool(value))?;
-            Ok(Tm { index })
-        }
-    }
-
-    impl Default for GenericKernel<Arena> {
-        fn default() -> Self {
-            Self::empty()
-        }
-    }
-}
+impl sealed::Sealed for Arena {}
+impl ArenaRepr for Arena {}
 
 /// A semantic rejection. Rejection leaves the kernel unchanged.
 #[non_exhaustive]
@@ -289,7 +122,7 @@ mod tests {
     use std::rc::Rc;
     use std::sync::Arc;
 
-    use super::{Row, dense};
+    use super::{Expr, Row, dense};
 
     #[test]
     fn dense_operations_append_and_duplicate() {
@@ -306,20 +139,18 @@ mod tests {
         assert_eq!(
             kernel.arena().rows(),
             &[
-                Row::KindStar,
-                Row::BoolTy,
-                Row::BoolTy,
-                Row::Bool(false),
-                Row::Bool(false)
+                Row::syntax(Expr::KindStar),
+                Row::syntax(Expr::BoolTy),
+                Row::syntax(Expr::BoolTy),
+                Row::syntax(Expr::Bool(false)),
+                Row::syntax(Expr::Bool(false))
             ]
         );
     }
 
     #[test]
     fn arc_and_rc_are_read_only_arena_boundaries() {
-        fn rows<A: super::Arena>(arena: &A) -> &[Row] {
-            arena.rows()
-        }
+        fn accepts_representation<A: super::ArenaRepr>(_: &A) {}
 
         let mut kernel = dense::Kernel::empty();
         kernel.bool_ty().unwrap();
@@ -327,10 +158,9 @@ mod tests {
         let arc = Arc::new(arena.clone());
         let rc = Rc::new(arena);
 
-        assert_eq!(rows(&arc), &[Row::BoolTy]);
-        assert_eq!(rows(&rc), &[Row::BoolTy]);
+        accepts_representation(&arc);
+        accepts_representation(&rc);
+        assert_eq!(arc.rows(), &[Row::syntax(Expr::BoolTy)]);
+        assert_eq!(rc.rows(), &[Row::syntax(Expr::BoolTy)]);
     }
 }
-
-#[cfg(test)]
-mod conformance;

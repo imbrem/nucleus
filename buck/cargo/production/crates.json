@@ -366,6 +366,12 @@
       "category": "tcb",
       "targets": [
         {
+          "name": "conformance",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "covalence_logic_hol",
           "kinds": [
             "lib"
@@ -663,7 +669,7 @@
     },
     {
       "source": "workspace#covalence-logic-hol@0.0.0",
-      "target": "workspace#covalence-data-cbor@0.0.0",
+      "target": "workspace#covalence-lib-cbor@0.0.0",
       "kinds": [
         "normal"
       ]

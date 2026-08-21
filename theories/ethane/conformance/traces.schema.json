@@ -19,34 +19,40 @@
   "$defs": {
     "identifier": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]*$" },
     "row": {
-      "oneOf": [
-        {
-          "type": "object",
-          "required": ["tag"],
-          "additionalProperties": false,
-          "properties": { "tag": { "const": "boolTy" } }
+      "type": "object",
+      "required": ["tag", "ixs"],
+      "additionalProperties": false,
+      "properties": {
+        "tag": {
+          "enum": ["kind.star", "ty.bool", "tm.bool.false", "tm.bool.true"]
         },
-        {
-          "type": "object",
-          "required": ["tag", "value"],
-          "additionalProperties": false,
-          "properties": {
-            "tag": { "const": "bool" },
-            "value": { "type": "boolean" }
+        "ixs": {
+          "type": "array",
+          "maxItems": 2,
+          "items": {
+            "type": "integer",
+            "minimum": -9223372036854775808,
+            "maximum": 9223372036854775807
           }
+        },
+        "eq": {
+          "type": "integer",
+          "minimum": -9223372036854775808,
+          "maximum": 9223372036854775807
+        },
+        "sort": {
+          "type": "integer",
+          "minimum": -9223372036854775808,
+          "maximum": 9223372036854775807
         }
-      ]
+      }
     },
     "arena": {
       "type": "object",
-      "required": ["rows", "assumptions"],
+      "required": ["rows"],
       "additionalProperties": false,
       "properties": {
-        "rows": { "type": "array", "items": { "$ref": "#/$defs/row" } },
-        "assumptions": {
-          "type": "array",
-          "items": { "type": "integer", "minimum": 0 }
-        }
+        "rows": { "type": "array", "items": { "$ref": "#/$defs/row" } }
       }
     },
     "trace": {

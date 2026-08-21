@@ -28,7 +28,9 @@ rust_library(
     srcs = _RUST_SOURCES,
     tests = [":covalence_logic_hol-unit-test"],
     named_deps = {
-        "covalence_data_cbor": "nucleus//crates/data/cbor:covalence_data_cbor",
+        "covalence_lib_cbor": "nucleus//crates/lib/cbor:covalence_lib_cbor",
+        "serde": "nucleus//buck/cargo/production:serde-1.0.229",
+        "smallvec": "nucleus//buck/cargo/production:smallvec-1.15.2",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -57,8 +59,43 @@ rust_test(
     edition = "2024",
     srcs = _RUST_SOURCES,
     named_deps = {
-        "covalence_data_cbor": "nucleus//crates/data/cbor:covalence_data_cbor",
+        "covalence_lib_cbor": "nucleus//crates/lib/cbor:covalence_lib_cbor",
+        "serde": "nucleus//buck/cargo/production:serde-1.0.229",
         "serde_json": "nucleus//buck/cargo/production:serde_json-1.0.151",
+        "smallvec": "nucleus//buck/cargo/production:smallvec-1.15.2",
+    },
+    env = {
+        "CARGO_PKG_AUTHORS": "",
+        "CARGO_PKG_DESCRIPTION": "Persistent arena interface for the Nucleus HOL kernel",
+        "CARGO_PKG_HOMEPAGE": "",
+        "CARGO_PKG_LICENSE": "CC0-1.0",
+        "CARGO_PKG_LICENSE_FILE": "",
+        "CARGO_PKG_NAME": "covalence-logic-hol",
+        "CARGO_PKG_README": "",
+        "CARGO_PKG_REPOSITORY": "",
+        "CARGO_PKG_RUST_VERSION": "",
+        "CARGO_PKG_VERSION": "0.0.0",
+        "CARGO_PKG_VERSION_MAJOR": "0",
+        "CARGO_PKG_VERSION_MINOR": "0",
+        "CARGO_PKG_VERSION_PATCH": "0",
+        "CARGO_PKG_VERSION_PRE": "",
+        "CARGO_MANIFEST_DIR": "$(location :package_files)",
+    },
+    visibility = ["PUBLIC"],
+)
+
+rust_test(
+    name = "conformance",
+    crate = "conformance",
+    crate_root = "tests/conformance.rs",
+    edition = "2024",
+    srcs = _RUST_SOURCES,
+    named_deps = {
+        "covalence_lib_cbor": "nucleus//crates/lib/cbor:covalence_lib_cbor",
+        "covalence_logic_hol": ":covalence_logic_hol",
+        "serde": "nucleus//buck/cargo/production:serde-1.0.229",
+        "serde_json": "nucleus//buck/cargo/production:serde_json-1.0.151",
+        "smallvec": "nucleus//buck/cargo/production:smallvec-1.15.2",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",

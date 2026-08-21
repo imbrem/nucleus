@@ -12,8 +12,7 @@
       "expected": {
         "result": "ok",
         "newArena": {
-          "rows": [],
-          "assumptions": []
+          "rows": []
         },
         "output": {}
       }
@@ -23,8 +22,7 @@
       "operation": "kind.star",
       "oldArenas": [
         {
-          "rows": [],
-          "assumptions": []
+          "rows": []
         }
       ],
       "input": {},
@@ -32,10 +30,17 @@
       "expected": {
         "result": "ok",
         "newArena": {
-          "rows": [{ "tag": "kindStar" }],
-          "assumptions": []
+          "rows": [
+            {
+              "tag": "kind.star",
+              "ixs": []
+            }
+          ]
         },
-        "output": { "ref": 0, "class": "kind" }
+        "output": {
+          "ref": 0,
+          "class": "kind"
+        }
       }
     },
     {
@@ -43,8 +48,7 @@
       "operation": "type.bool",
       "oldArenas": [
         {
-          "rows": [],
-          "assumptions": []
+          "rows": []
         }
       ],
       "input": {},
@@ -52,10 +56,17 @@
       "expected": {
         "result": "ok",
         "newArena": {
-          "rows": [{ "tag": "boolTy" }],
-          "assumptions": []
+          "rows": [
+            {
+              "tag": "ty.bool",
+              "ixs": []
+            }
+          ]
         },
-        "output": { "ref": 0, "class": "type" }
+        "output": {
+          "ref": 0,
+          "class": "type"
+        }
       }
     },
     {
@@ -63,19 +74,36 @@
       "operation": "term.bool",
       "oldArenas": [
         {
-          "rows": [{ "tag": "boolTy" }],
-          "assumptions": []
+          "rows": [
+            {
+              "tag": "ty.bool",
+              "ixs": []
+            }
+          ]
         }
       ],
-      "input": { "value": false },
+      "input": {
+        "value": false
+      },
       "casUse": "none",
       "expected": {
         "result": "ok",
         "newArena": {
-          "rows": [{ "tag": "boolTy" }, { "tag": "bool", "value": false }],
-          "assumptions": []
+          "rows": [
+            {
+              "tag": "ty.bool",
+              "ixs": []
+            },
+            {
+              "tag": "tm.bool.false",
+              "ixs": []
+            }
+          ]
         },
-        "output": { "ref": 1, "class": "term" }
+        "output": {
+          "ref": 1,
+          "class": "term"
+        }
       }
     },
     {
@@ -83,23 +111,44 @@
       "operation": "term.bool",
       "oldArenas": [
         {
-          "rows": [{ "tag": "boolTy" }, { "tag": "bool", "value": false }],
-          "assumptions": []
+          "rows": [
+            {
+              "tag": "ty.bool",
+              "ixs": []
+            },
+            {
+              "tag": "tm.bool.false",
+              "ixs": []
+            }
+          ]
         }
       ],
-      "input": { "value": true },
+      "input": {
+        "value": true
+      },
       "casUse": "none",
       "expected": {
         "result": "ok",
         "newArena": {
           "rows": [
-            { "tag": "boolTy" },
-            { "tag": "bool", "value": false },
-            { "tag": "bool", "value": true }
-          ],
-          "assumptions": []
+            {
+              "tag": "ty.bool",
+              "ixs": []
+            },
+            {
+              "tag": "tm.bool.false",
+              "ixs": []
+            },
+            {
+              "tag": "tm.bool.true",
+              "ixs": []
+            }
+          ]
         },
-        "output": { "ref": 2, "class": "term" }
+        "output": {
+          "ref": 2,
+          "class": "term"
+        }
       }
     }
   ]

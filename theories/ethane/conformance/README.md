@@ -16,15 +16,16 @@ method on `Kernel<dense::Arena>` (`dense::Kernel` for short). Mutation is only
 an implementation optimization: rejection must leave the Rust kernel
 unchanged.
 
-`Row` is the single syntax-row vocabulary shared by wire decoding and every
-arena representation. `Arena` is a sealed common read boundary, and
-`Kernel<A>` is the owning wrapper asserting that `A` is sound. There is no
-common mutation trait: dense and future segment arenas receive separate
-inherent operation implementations because their mutation mechanics differ.
+The private `Row` is the single semantic vocabulary shared by wire decoding
+and every arena representation. `RowSerde` is only its mechanical wire view.
+`ArenaRepr` is the sealed representation capability, `Arena` is the public
+representation-erased enum, and `Kernel<A>` is the owning wrapper asserting
+that `A` is sound. There is no common mutation trait: dense and future segment
+arenas receive separate inherent operation implementations.
 
 All soundness annotations refer to the same implicit ideal CAS. Rust need not
-carry that CAS at runtime. Kernel identity is deliberately absent from the
-fixtures: arenas track assumptions, so terms and facts may cross kernels.
+carry that CAS at runtime. Facts are the optional `eq` and `sort` references
+carried by rows; there is no standalone fact value or arena-level fact list.
 
 Run the dependency-free structural validator from the repository root:
 
