@@ -18,6 +18,16 @@ $registry[0] as $registry
       (.kind == "transition" and (.oldArenas | length) == 1) or
       (.kind == "multi-arena-transition" and (.oldArenas | length) > 1))) | not then
     error("operation kind and old arena count disagree")
+  elif ($registry.operations | all(
+      if .kind == "constructor" then .rust.receiver == "constructor"
+      else .rust.receiver == "mutable"
+      end)) | not then
+    error("operation kind and Rust receiver disagree")
+  elif ($registry.operations | all(
+      if .kind == "constructor" then .lean.stateModel == "pure-arena-constructor"
+      else .lean.stateModel == "pure-arena-transition"
+      end)) | not then
+    error("operation kind and Lean state model disagree")
   elif ($registry.operations | all(.fixtures as $fixtures |
       $fixtures | all(. as $fixture | ids($traces.traces) | index($fixture) != null))) | not then
     error("registry refers to a missing fixture")

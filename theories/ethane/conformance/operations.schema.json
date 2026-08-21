@@ -70,22 +70,23 @@
         },
         "lean": {
           "type": "object",
-          "required": ["definition", "preservationTheorem"],
+          "required": ["definition", "preservationTheorem", "stateModel"],
           "additionalProperties": false,
           "properties": {
             "definition": { "$ref": "#/$defs/nonempty" },
-            "preservationTheorem": { "$ref": "#/$defs/nonempty" }
+            "preservationTheorem": { "$ref": "#/$defs/nonempty" },
+            "stateModel": {
+              "enum": ["pure-arena-constructor", "pure-arena-transition"]
+            }
           }
         },
         "rust": {
           "type": "object",
-          "required": ["symbol", "mutableSymbol"],
+          "required": ["symbol", "receiver"],
           "additionalProperties": false,
           "properties": {
             "symbol": { "$ref": "#/$defs/nonempty" },
-            "mutableSymbol": {
-              "oneOf": [{ "$ref": "#/$defs/nonempty" }, { "type": "null" }]
-            }
+            "receiver": { "enum": ["constructor", "mutable"] }
           }
         },
         "fixtures": {

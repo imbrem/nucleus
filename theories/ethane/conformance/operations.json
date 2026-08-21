@@ -15,11 +15,12 @@
       "errors": [],
       "lean": {
         "definition": "Nucleus.Hol.Ethane.Kernel.empty",
-        "preservationTheorem": "Nucleus.Hol.Ethane.Kernel.empty_sound"
+        "preservationTheorem": "Nucleus.Hol.Ethane.Kernel.empty_sound",
+        "stateModel": "pure-arena-constructor"
       },
       "rust": {
-        "symbol": "covalence_logic_hol::Kernel::empty",
-        "mutableSymbol": null
+        "symbol": "covalence_logic_hol::dense::Kernel::empty",
+        "receiver": "constructor"
       },
       "fixtures": ["empty.ok"]
     },
@@ -38,14 +39,15 @@
       },
       "assumptions": "preserve",
       "casUse": "none",
-      "errors": [],
+      "errors": ["arena-full", "index-overflow"],
       "lean": {
         "definition": "Nucleus.Hol.Ethane.Kernel.boolTy",
-        "preservationTheorem": "Nucleus.Hol.Ethane.Kernel.boolTy_sound"
+        "preservationTheorem": "Nucleus.Hol.Ethane.Kernel.boolTy_sound",
+        "stateModel": "pure-arena-transition"
       },
       "rust": {
-        "symbol": "covalence_logic_hol::Kernel::bool_ty",
-        "mutableSymbol": "covalence_logic_hol::Kernel::bool_ty_mut"
+        "symbol": "covalence_logic_hol::dense::Kernel::bool_ty",
+        "receiver": "mutable"
       },
       "fixtures": ["bool-type.ok"]
     },
@@ -64,14 +66,15 @@
       },
       "assumptions": "preserve",
       "casUse": "none",
-      "errors": [],
+      "errors": ["arena-full", "index-overflow"],
       "lean": {
         "definition": "Nucleus.Hol.Ethane.Kernel.bool",
-        "preservationTheorem": "Nucleus.Hol.Ethane.Kernel.bool_sound"
+        "preservationTheorem": "Nucleus.Hol.Ethane.Kernel.bool_sound",
+        "stateModel": "pure-arena-transition"
       },
       "rust": {
-        "symbol": "covalence_logic_hol::Kernel::bool_const",
-        "mutableSymbol": "covalence_logic_hol::Kernel::bool_const_mut"
+        "symbol": "covalence_logic_hol::dense::Kernel::bool_const",
+        "receiver": "mutable"
       },
       "fixtures": ["bool-false.ok", "bool-true.ok"]
     }
