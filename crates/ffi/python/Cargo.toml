@@ -28,6 +28,7 @@ extension-module = ["covalence-lib-python/extension-module"]
 cid = "0.11"
 covalence-data-cbor = { path = "../../data/cbor" }
 covalence-lib-python = { path = "../../lib/python" }
+covalence-logic-hol = { path = "../../logic/hol" }
 covalence-logic-lrat = { path = "../../logic/lrat" }
 covalence-logic-sat = { path = "../../logic/sat" }
 # `random` is left off: drawing an object needs a caller-supplied CSPRNG, and

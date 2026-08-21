@@ -18,7 +18,7 @@
         "preservationTheorem": "Nucleus.Hol.Ethane.Kernel.empty_sound"
       },
       "rust": {
-        "symbol": "nucleus_hol::Kernel::empty",
+        "symbol": "covalence_logic_hol::Kernel::empty",
         "mutableSymbol": null
       },
       "fixtures": ["empty.ok"]
@@ -44,8 +44,8 @@
         "preservationTheorem": "Nucleus.Hol.Ethane.Kernel.boolTy_sound"
       },
       "rust": {
-        "symbol": "nucleus_hol::Kernel::bool_ty",
-        "mutableSymbol": "nucleus_hol::Kernel::bool_ty_mut"
+        "symbol": "covalence_logic_hol::Kernel::bool_ty",
+        "mutableSymbol": "covalence_logic_hol::Kernel::bool_ty_mut"
       },
       "fixtures": ["bool-type.ok"]
     },
@@ -70,8 +70,8 @@
         "preservationTheorem": "Nucleus.Hol.Ethane.Kernel.bool_sound"
       },
       "rust": {
-        "symbol": "nucleus_hol::Kernel::bool_const",
-        "mutableSymbol": "nucleus_hol::Kernel::bool_const_mut"
+        "symbol": "covalence_logic_hol::Kernel::bool_const",
+        "mutableSymbol": "covalence_logic_hol::Kernel::bool_const_mut"
       },
       "fixtures": ["bool-false.ok", "bool-true.ok"]
     }

@@ -15,7 +15,7 @@ create_exception!(
     "An HOL kernel operation was rejected."
 );
 
-fn rejection(error: Error) -> PyErr {
+fn rejection(error: &Error) -> PyErr {
     HolError::new_err(error.to_string())
 }
 
@@ -27,6 +27,10 @@ pub struct PyTy(Ty);
 /// An opaque, portable HOL term handle.
 #[pyclass(frozen, module = "covalence.logic.hol", name = "Tm")]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
+#[expect(
+    dead_code,
+    reason = "the opaque handle intentionally exposes no term operations yet"
+)]
 pub struct PyTm(Tm);
 
 /// An owning wrapper over an admitted HOL arena.
@@ -48,13 +52,16 @@ impl PyKernel {
 
     /// Return a replacement kernel and a Boolean type handle.
     fn bool_ty(&self, python: Python<'_>) -> PyResult<(Py<Self>, Py<PyTy>)> {
-        let (kernel, ty) = self.0.bool_ty().map_err(rejection)?;
+        let (kernel, ty) = self.0.bool_ty().map_err(|error| rejection(&error))?;
         Ok((Py::new(python, Self(kernel))?, Py::new(python, PyTy(ty))?))
     }
 
     /// Return a replacement kernel and a Boolean constant handle.
     fn bool_const(&self, python: Python<'_>, value: bool) -> PyResult<(Py<Self>, Py<PyTm>)> {
-        let (kernel, term) = self.0.bool_const(value).map_err(rejection)?;
+        let (kernel, term) = self
+            .0
+            .bool_const(value)
+            .map_err(|error| rejection(&error))?;
         Ok((Py::new(python, Self(kernel))?, Py::new(python, PyTm(term))?))
     }
 }

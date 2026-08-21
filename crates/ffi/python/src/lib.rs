@@ -18,6 +18,7 @@ use covalence_lib_python::prelude::*;
 
 mod cbor;
 mod hash;
+mod hol;
 mod lrat;
 mod sat;
 
@@ -29,5 +30,6 @@ fn _covalence(module: &Bound<'_, PyModule>) -> PyResult<()> {
     cbor::register(module)?;
     hash::register(module)?;
     sat::register(module)?;
-    lrat::register(module)
+    lrat::register(module)?;
+    hol::register(module)
 }

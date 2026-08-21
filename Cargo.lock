@@ -367,6 +367,7 @@ dependencies = [
  "covalence-data-cbor",
  "covalence-lib-hash",
  "covalence-lib-python",
+ "covalence-logic-hol",
  "covalence-logic-lrat",
  "covalence-logic-sat",
 ]
@@ -454,6 +455,10 @@ dependencies = [
  "libsqlite3-sys",
  "sqlite-wasm-rs",
 ]
+
+[[package]]
+name = "covalence-logic-hol"
+version = "0.0.0"
 
 [[package]]
 name = "covalence-logic-lrat"

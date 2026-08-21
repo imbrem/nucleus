@@ -115,6 +115,9 @@ pub struct Kernel {
 
 impl Kernel {
     /// Constructs the empty, sound arena.
+    ///
+    /// Lean: `Nucleus.Hol.Ethane.Kernel.empty` and
+    /// `Nucleus.Hol.Ethane.Kernel.empty_sound`.
     #[must_use]
     pub const fn empty() -> Self {
         Self {
@@ -136,6 +139,9 @@ impl Kernel {
 
     /// Adds the Boolean type and returns the replacement kernel.
     ///
+    /// Lean: `Nucleus.Hol.Ethane.Kernel.boolTy` and
+    /// `Nucleus.Hol.Ethane.Kernel.boolTy_sound`.
+    ///
     /// # Errors
     ///
     /// Returns [`Error::ArenaFull`] if no dense address remains.
@@ -147,6 +153,9 @@ impl Kernel {
     }
 
     /// Adds a Boolean constant and returns the replacement kernel.
+    ///
+    /// Lean: `Nucleus.Hol.Ethane.Kernel.bool` and
+    /// `Nucleus.Hol.Ethane.Kernel.bool_sound`.
     ///
     /// # Errors
     ///
