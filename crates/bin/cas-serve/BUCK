@@ -30,6 +30,7 @@ rust_binary(
     named_deps = {
         "covalence_data_cas": "nucleus//crates/data/cas:covalence_data_cas",
         "covalence_data_cas_http": "nucleus//crates/data/cas-http:covalence_data_cas_http",
+        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -60,6 +61,7 @@ rust_test(
     named_deps = {
         "covalence_data_cas": "nucleus//crates/data/cas:covalence_data_cas",
         "covalence_data_cas_http": "nucleus//crates/data/cas-http:covalence_data_cas_http",
+        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",

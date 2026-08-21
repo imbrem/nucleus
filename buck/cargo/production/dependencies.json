@@ -2,6 +2,41 @@
   "generatedBy": "glu 0.0.0",
   "packages": [
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#addr2line@0.25.1",
+      "name": "addr2line",
+      "version": "0.25.1",
+      "checksum": "1b5d307320b3181d6d7954e663bd7c774a838b8220fe0593c86d9fb09f498b4b",
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "A cross-platform symbolication library written in Rust, using `gimli`",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/gimli-rs/addr2line"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "gimli": ":gimli-0.32.3"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#adler2@2.0.1",
+      "name": "adler2",
+      "version": "2.0.1",
+      "checksum": "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Jonas Schievink <jonasschievink@gmail.com>:oyvindln <oyvindln@users.noreply.github.com>",
+        "CARGO_PKG_DESCRIPTION": "A simple clean-room implementation of the Adler-32 checksum",
+        "CARGO_PKG_LICENSE": "0BSD OR MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/oyvindln/adler2"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#arrayref@0.3.9",
       "name": "arrayref",
       "version": "0.3.9",
@@ -194,6 +229,55 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#backtrace@0.3.76",
+      "name": "backtrace",
+      "version": "0.3.76",
+      "checksum": "bb531853791a215d7c62a30daf0dde835f381ab5de4589cfe7c649d2cbe92bd6",
+      "edition": "2021",
+      "features": [
+        "default",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "The Rust Project Developers",
+        "CARGO_PKG_DESCRIPTION": "A library to acquire a stack trace (backtrace) at runtime in a Rust program.\n",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/rust-lang/backtrace-rs",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/backtrace-rs"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "addr2line": ":addr2line-0.25.1",
+            "cfg_if": ":cfg-if-1.0.4",
+            "libc": ":libc-0.2.189",
+            "miniz_oxide": ":miniz_oxide-0.8.9",
+            "object": ":object-0.37.3",
+            "rustc_demangle": ":rustc-demangle-0.1.28"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#backtrace-ext@0.2.1",
+      "name": "backtrace-ext",
+      "version": "0.2.1",
+      "checksum": "537beee3be4a18fb023b570f80e3ae28003db9167a751266b259926e25539d50",
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "minor conveniences on top of the backtrace crate",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/gankra/backtrace-ext"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "backtrace": ":backtrace-0.3.76"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#base-x@0.2.11",
       "name": "base-x",
       "version": "0.2.11",
@@ -295,6 +379,9 @@
       "version": "2.13.1",
       "checksum": "b588b76d00fde79687d7646a9b5bdf3cc0f655e0bbd080335a95d7e96f3587da",
       "edition": "2021",
+      "features": [
+        "std"
+      ],
       "env": {
         "CARGO_PKG_AUTHORS": "The Rust Project Developers",
         "CARGO_PKG_DESCRIPTION": "A macro to generate structures which behave like bitflags.\n",
@@ -937,6 +1024,29 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#errno@0.3.14",
+      "name": "errno",
+      "version": "0.3.14",
+      "checksum": "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb",
+      "edition": "2018",
+      "features": [
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Chris Wong <lambda.fairy@gmail.com>:Dan Gohman <dev@sunfishcode.online>",
+        "CARGO_PKG_DESCRIPTION": "Cross-platform interface to the `errno` variable.",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/lambda-fairy/rust-errno"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "libc": ":libc-0.2.189"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#find-msvc-tools@0.1.9",
       "name": "find-msvc-tools",
       "version": "0.1.9",
@@ -1169,6 +1279,25 @@
         }
       ],
       "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#gimli@0.32.3",
+      "name": "gimli",
+      "version": "0.32.3",
+      "checksum": "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7",
+      "edition": "2018",
+      "features": [
+        "read",
+        "read-core"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "A library for reading and writing the DWARF debugging format.",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/gimli-rs/gimli"
+      },
+      "targets": [
+        {}
+      ]
     },
     {
       "id": "registry+https://github.com/rust-lang/crates.io-index#half@2.7.1",
@@ -1475,6 +1604,22 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#is_ci@1.2.0",
+      "name": "is_ci",
+      "version": "1.2.0",
+      "checksum": "7655c9839580ee829dfacba1d1278c2b7883e50a277ff7541299489d6bdfdc45",
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Kat Marchán <kzm@zkat.tech>",
+        "CARGO_PKG_DESCRIPTION": "Super lightweight CI environment checker. Just tells you if you're in CI or not without much fuss.",
+        "CARGO_PKG_LICENSE": "ISC",
+        "CARGO_PKG_REPOSITORY": "https://github.com/zkat/is_ci"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#itoa@1.0.18",
       "name": "itoa",
       "version": "1.0.18",
@@ -1564,6 +1709,30 @@
       }
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#linux-raw-sys@0.12.1",
+      "name": "linux-raw-sys",
+      "version": "0.12.1",
+      "checksum": "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53",
+      "edition": "2021",
+      "features": [
+        "auxvec",
+        "elf",
+        "errno",
+        "general",
+        "ioctl",
+        "no_std"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Dan Gohman <dev@sunfishcode.online>",
+        "CARGO_PKG_DESCRIPTION": "Generated bindings for Linux's userspace API",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/sunfishcode/linux-raw-sys"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#log@0.4.33",
       "name": "log",
       "version": "0.4.33",
@@ -1651,7 +1820,10 @@
       "edition": "2018",
       "features": [
         "default",
-        "derive"
+        "derive",
+        "fancy",
+        "fancy-base",
+        "fancy-no-backtrace"
       ],
       "env": {
         "CARGO_PKG_AUTHORS": "Kat Marchán <kzm@zkat.tech>",
@@ -1662,8 +1834,16 @@
       "targets": [
         {
           "named_deps": {
+            "backtrace": ":backtrace-0.3.76",
+            "backtrace_ext": ":backtrace-ext-0.2.1",
             "cfg_if": ":cfg-if-1.0.4",
             "miette_derive": ":miette-derive-7.6.0",
+            "owo_colors": ":owo-colors-4.3.0",
+            "supports_color": ":supports-color-3.0.2",
+            "supports_hyperlinks": ":supports-hyperlinks-3.2.0",
+            "supports_unicode": ":supports-unicode-3.0.0",
+            "terminal_size": ":terminal_size-0.4.4",
+            "textwrap": ":textwrap-0.16.2",
             "unicode_width": ":unicode-width-0.1.14"
           }
         }
@@ -1706,6 +1886,27 @@
       },
       "targets": [
         {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#miniz_oxide@0.8.9",
+      "name": "miniz_oxide",
+      "version": "0.8.9",
+      "checksum": "1fa76a2c86f704bdb222d66965fb3d63269ce38518b83cb0575fca855ebb6316",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Frommi <daniil.liferenko@gmail.com>:oyvindln <oyvindln@users.noreply.github.com>:Rich Geldreich richgel99@gmail.com",
+        "CARGO_PKG_DESCRIPTION": "DEFLATE compression and decompression library rewritten in Rust based on miniz",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide",
+        "CARGO_PKG_LICENSE": "MIT OR Zlib OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "adler2": ":adler2-2.0.1"
+          }
+        }
       ]
     },
     {
@@ -1866,6 +2067,36 @@
       }
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#object@0.37.3",
+      "name": "object",
+      "version": "0.37.3",
+      "checksum": "ff76201f031d8863c38aa7f905eca4f53abbfa15f609db4277d44cd8938f33fe",
+      "edition": "2018",
+      "features": [
+        "archive",
+        "coff",
+        "elf",
+        "macho",
+        "pe",
+        "read_core",
+        "unaligned",
+        "xcoff"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "A unified interface for reading and writing object file formats.",
+        "CARGO_PKG_LICENSE": "Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/gimli-rs/object"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "memchr": ":memchr-2.8.3"
+          }
+        }
+      ],
+      "buildscript": {}
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#once_cell@1.21.4",
       "name": "once_cell",
       "version": "1.21.4",
@@ -1886,6 +2117,23 @@
       "targets": [
         {}
       ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#owo-colors@4.3.0",
+      "name": "owo-colors",
+      "version": "4.3.0",
+      "checksum": "d211803b9b6b570f68772237e415a029d5a50c65d382910b879fb19d3271f94d",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "jam1garner <8260240+jam1garner@users.noreply.github.com>",
+        "CARGO_PKG_DESCRIPTION": "Zero-allocation terminal colors that'll make people go owo",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/owo-colors/owo-colors"
+      },
+      "targets": [
+        {}
+      ],
+      "buildscript": {}
     },
     {
       "id": "registry+https://github.com/rust-lang/crates.io-index#percent-encoding@2.3.2",
@@ -2295,6 +2543,23 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#rustc-demangle@0.1.28",
+      "name": "rustc-demangle",
+      "version": "0.1.28",
+      "checksum": "b74b56ffa8bb2830709a538c2cbcae9aa062db0d2a42563bfb09bdaae44020eb",
+      "edition": "2015",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Alex Crichton <alex@alexcrichton.com>",
+        "CARGO_PKG_DESCRIPTION": "Rust compiler symbol demangling.\n",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/rust-lang/rustc-demangle",
+        "CARGO_PKG_LICENSE": "MIT/Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/rust-lang/rustc-demangle"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#rustc_version@0.4.1",
       "name": "rustc_version",
       "version": "0.4.1",
@@ -2312,6 +2577,36 @@
           }
         }
       ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#rustix@1.1.4",
+      "name": "rustix",
+      "version": "1.1.4",
+      "checksum": "b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190",
+      "edition": "2021",
+      "features": [
+        "alloc",
+        "default",
+        "std",
+        "termios"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Dan Gohman <dev@sunfishcode.online>:Jakub Konka <kubkon@jakubkonka.com>",
+        "CARGO_PKG_DESCRIPTION": "Safe Rust bindings to POSIX/Unix/Linux/Winsock-like syscalls",
+        "CARGO_PKG_LICENSE": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/bytecodealliance/rustix"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "bitflags": ":bitflags-2.13.1",
+            "libc": ":libc-0.2.189",
+            "libc_errno": ":errno-0.3.14",
+            "linux_raw_sys": ":linux-raw-sys-0.12.1"
+          }
+        }
+      ],
+      "buildscript": {}
     },
     {
       "id": "registry+https://github.com/rust-lang/crates.io-index#rustversion@1.0.23",
@@ -2802,6 +3097,58 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#supports-color@3.0.2",
+      "name": "supports-color",
+      "version": "3.0.2",
+      "checksum": "c64fc7232dd8d2e4ac5ce4ef302b1d81e0b80d055b9d77c7c4f51f6aa4c867d6",
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Kat Marchán <kzm@zkat.tech>",
+        "CARGO_PKG_DESCRIPTION": "Detects whether a terminal supports color, and gives details about that support.",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/zkat/supports-color"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "is_ci": ":is_ci-1.2.0"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#supports-hyperlinks@3.2.0",
+      "name": "supports-hyperlinks",
+      "version": "3.2.0",
+      "checksum": "e396b6523b11ccb83120b115a0b7366de372751aa6edf19844dfb13a6af97e91",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Kat Marchán <kzm@zkat.tech>",
+        "CARGO_PKG_DESCRIPTION": "Detects whether a terminal supports rendering hyperlinks.",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/zkat/supports-hyperlinks"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#supports-unicode@3.0.0",
+      "name": "supports-unicode",
+      "version": "3.0.0",
+      "checksum": "b7401a30af6cb5818bb64852270bb722533397edcfc7344954a38f420819ece2",
+      "edition": "2018",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Kat Marchán <kzm@zkat.tech>",
+        "CARGO_PKG_DESCRIPTION": "Detects whether a terminal supports unicode.",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/zkat/supports-unicode"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119",
       "name": "syn",
       "version": "2.0.119",
@@ -2903,6 +3250,51 @@
         {}
       ],
       "buildscript": {}
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#terminal_size@0.4.4",
+      "name": "terminal_size",
+      "version": "0.4.4",
+      "checksum": "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Andrew Chin <achin@eminence32.net>",
+        "CARGO_PKG_DESCRIPTION": "Gets the size of your Linux or Windows terminal",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/eminence/terminal-size"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "rustix": ":rustix-1.1.4"
+          }
+        }
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#textwrap@0.16.2",
+      "name": "textwrap",
+      "version": "0.16.2",
+      "checksum": "c13547615a44dc9c452a8a534638acdf07120d4b6847c8178705da06306a3057",
+      "edition": "2021",
+      "features": [
+        "unicode-linebreak",
+        "unicode-width"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "Martin Geisler <martin@geisler.net>",
+        "CARGO_PKG_DESCRIPTION": "Library for word wrapping, indenting, and dedenting strings. Has optional support for Unicode and emojis as well as machine hyphenation.",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/mgeisler/textwrap"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "unicode_linebreak": ":unicode-linebreak-0.1.5",
+            "unicode_width": ":unicode-width-0.2.2"
+          }
+        }
+      ]
     },
     {
       "id": "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.19",
@@ -3202,10 +3594,48 @@
       ]
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#unicode-linebreak@0.1.5",
+      "name": "unicode-linebreak",
+      "version": "0.1.5",
+      "checksum": "3b09c83c3c29d37506a3e260c08c03743a6bb66a9cd432c6934ab501a190571f",
+      "edition": "2021",
+      "env": {
+        "CARGO_PKG_AUTHORS": "Axel Forsman <axelsfor@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Implementation of the Unicode Line Breaking Algorithm",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/axelf4/unicode-linebreak",
+        "CARGO_PKG_LICENSE": "Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/axelf4/unicode-linebreak"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#unicode-width@0.1.14",
       "name": "unicode-width",
       "version": "0.1.14",
       "checksum": "7dd6e30e90baa6f72411720665d41d89b9a3d039dc45b8faea1ddd07f617f6af",
+      "edition": "2021",
+      "features": [
+        "cjk",
+        "default"
+      ],
+      "env": {
+        "CARGO_PKG_AUTHORS": "kwantam <kwantam@gmail.com>:Manish Goregaokar <manishsmail@gmail.com>",
+        "CARGO_PKG_DESCRIPTION": "Determine displayed width of `char` and `str` types\naccording to Unicode Standard Annex #11 rules.\n",
+        "CARGO_PKG_HOMEPAGE": "https://github.com/unicode-rs/unicode-width",
+        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+        "CARGO_PKG_REPOSITORY": "https://github.com/unicode-rs/unicode-width"
+      },
+      "targets": [
+        {}
+      ]
+    },
+    {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#unicode-width@0.2.2",
+      "name": "unicode-width",
+      "version": "0.2.2",
+      "checksum": "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254",
       "edition": "2021",
       "features": [
         "cjk",
@@ -3679,6 +4109,13 @@
   ],
   "edges": [
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#addr2line@0.25.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#gimli@0.32.3",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#axum-core@0.5.6",
       "target": "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
       "kinds": [
@@ -4036,6 +4473,55 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#backtrace-ext@0.2.1",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#backtrace@0.3.76",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#backtrace@0.3.76",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#addr2line@0.25.1",
+      "kinds": [
+        "normal (cfg(not(all(windows, target_env = \"msvc\", not(target_vendor = \"uwp\")))))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#backtrace@0.3.76",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#backtrace@0.3.76",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
+      "kinds": [
+        "normal (cfg(not(all(windows, target_env = \"msvc\", not(target_vendor = \"uwp\")))))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#backtrace@0.3.76",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#miniz_oxide@0.8.9",
+      "kinds": [
+        "normal (cfg(not(all(windows, target_env = \"msvc\", not(target_vendor = \"uwp\")))))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#backtrace@0.3.76",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#object@0.37.3",
+      "kinds": [
+        "normal (cfg(not(all(windows, target_env = \"msvc\", not(target_vendor = \"uwp\")))))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#backtrace@0.3.76",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustc-demangle@0.1.28",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#base256emoji@1.0.2",
       "target": "registry+https://github.com/rust-lang/crates.io-index#const-str@0.4.3",
       "kinds": [
@@ -4376,6 +4862,15 @@
       "target": "registry+https://github.com/rust-lang/crates.io-index#signature@2.2.0",
       "kinds": [
         "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#errno@0.3.14",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
+      "kinds": [
+        "normal (cfg(target_os = \"hermit\"))",
+        "normal (cfg(target_os = \"wasi\"))",
+        "normal (cfg(unix))"
       ]
     },
     {
@@ -4814,6 +5309,20 @@
     },
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#miette@7.6.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#backtrace-ext@0.2.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#miette@7.6.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#backtrace@0.3.76",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#miette@7.6.0",
       "target": "registry+https://github.com/rust-lang/crates.io-index#cfg-if@1.0.4",
       "kinds": [
         "normal"
@@ -4828,7 +5337,56 @@
     },
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#miette@7.6.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#owo-colors@4.3.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#miette@7.6.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#supports-color@3.0.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#miette@7.6.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#supports-hyperlinks@3.2.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#miette@7.6.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#supports-unicode@3.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#miette@7.6.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#terminal_size@0.4.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#miette@7.6.0",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#textwrap@0.16.2",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#miette@7.6.0",
       "target": "registry+https://github.com/rust-lang/crates.io-index#unicode-width@0.1.14",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#miniz_oxide@0.8.9",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#adler2@2.0.1",
       "kinds": [
         "normal"
       ]
@@ -4913,6 +5471,13 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19",
       "target": "registry+https://github.com/rust-lang/crates.io-index#libm@0.2.16",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#object@0.37.3",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3",
       "kinds": [
         "normal"
       ]
@@ -5112,6 +5677,38 @@
       "target": "registry+https://github.com/rust-lang/crates.io-index#semver@1.0.28",
       "kinds": [
         "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#rustix@1.1.4",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#bitflags@2.13.1",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#rustix@1.1.4",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#errno@0.3.14",
+      "kinds": [
+        "normal (cfg(all(not(rustix_use_libc), not(miri), target_os = \"linux\", any(target_endian = \"little\", any(target_arch = \"s390x\", target_arch = \"powerpc\")), any(target_arch = \"arm\", all(target_arch = \"aarch64\", target_pointer_width = \"64\"), target_arch = \"riscv64\", all(rustix_use_experimental_asm, target_arch = \"powerpc\"), all(rustix_use_experimental_asm, target_arch = \"powerpc64\"), all(rustix_use_experimental_asm, target_arch = \"s390x\"), all(rustix_use_experimental_asm, target_arch = \"mips\"), all(rustix_use_experimental_asm, target_arch = \"mips32r6\"), all(rustix_use_experimental_asm, target_arch = \"mips64\"), all(rustix_use_experimental_asm, target_arch = \"mips64r6\"), target_arch = \"x86\", all(target_arch = \"x86_64\", target_pointer_width = \"64\")))))",
+        "normal (cfg(all(not(windows), any(rustix_use_libc, miri, not(all(target_os = \"linux\", any(target_endian = \"little\", any(target_arch = \"s390x\", target_arch = \"powerpc\")), any(target_arch = \"arm\", all(target_arch = \"aarch64\", target_pointer_width = \"64\"), target_arch = \"riscv64\", all(rustix_use_experimental_asm, target_arch = \"powerpc\"), all(rustix_use_experimental_asm, target_arch = \"powerpc64\"), all(rustix_use_experimental_asm, target_arch = \"s390x\"), all(rustix_use_experimental_asm, target_arch = \"mips\"), all(rustix_use_experimental_asm, target_arch = \"mips32r6\"), all(rustix_use_experimental_asm, target_arch = \"mips64\"), all(rustix_use_experimental_asm, target_arch = \"mips64r6\"), target_arch = \"x86\", all(target_arch = \"x86_64\", target_pointer_width = \"64\"))))))))",
+        "normal (cfg(windows))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#rustix@1.1.4",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
+      "kinds": [
+        "normal (cfg(all(not(rustix_use_libc), not(miri), target_os = \"linux\", any(target_endian = \"little\", any(target_arch = \"s390x\", target_arch = \"powerpc\")), any(target_arch = \"arm\", all(target_arch = \"aarch64\", target_pointer_width = \"64\"), target_arch = \"riscv64\", all(rustix_use_experimental_asm, target_arch = \"powerpc\"), all(rustix_use_experimental_asm, target_arch = \"powerpc64\"), all(rustix_use_experimental_asm, target_arch = \"s390x\"), all(rustix_use_experimental_asm, target_arch = \"mips\"), all(rustix_use_experimental_asm, target_arch = \"mips32r6\"), all(rustix_use_experimental_asm, target_arch = \"mips64\"), all(rustix_use_experimental_asm, target_arch = \"mips64r6\"), target_arch = \"x86\", all(target_arch = \"x86_64\", target_pointer_width = \"64\")))))",
+        "normal (cfg(all(not(windows), any(rustix_use_libc, miri, not(all(target_os = \"linux\", any(target_endian = \"little\", any(target_arch = \"s390x\", target_arch = \"powerpc\")), any(target_arch = \"arm\", all(target_arch = \"aarch64\", target_pointer_width = \"64\"), target_arch = \"riscv64\", all(rustix_use_experimental_asm, target_arch = \"powerpc\"), all(rustix_use_experimental_asm, target_arch = \"powerpc64\"), all(rustix_use_experimental_asm, target_arch = \"s390x\"), all(rustix_use_experimental_asm, target_arch = \"mips\"), all(rustix_use_experimental_asm, target_arch = \"mips32r6\"), all(rustix_use_experimental_asm, target_arch = \"mips64\"), all(rustix_use_experimental_asm, target_arch = \"mips64r6\"), target_arch = \"x86\", all(target_arch = \"x86_64\", target_pointer_width = \"64\"))))))))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#rustix@1.1.4",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#linux-raw-sys@0.12.1",
+      "kinds": [
+        "normal (cfg(all(any(target_os = \"linux\", target_os = \"android\"), any(rustix_use_libc, miri, not(all(target_os = \"linux\", any(target_endian = \"little\", any(target_arch = \"s390x\", target_arch = \"powerpc\")), any(target_arch = \"arm\", all(target_arch = \"aarch64\", target_pointer_width = \"64\"), target_arch = \"riscv64\", all(rustix_use_experimental_asm, target_arch = \"powerpc\"), all(rustix_use_experimental_asm, target_arch = \"powerpc64\"), all(rustix_use_experimental_asm, target_arch = \"s390x\"), all(rustix_use_experimental_asm, target_arch = \"mips\"), all(rustix_use_experimental_asm, target_arch = \"mips32r6\"), all(rustix_use_experimental_asm, target_arch = \"mips64\"), all(rustix_use_experimental_asm, target_arch = \"mips64r6\"), target_arch = \"x86\", all(target_arch = \"x86_64\", target_pointer_width = \"64\"))))))))",
+        "normal (cfg(all(not(rustix_use_libc), not(miri), target_os = \"linux\", any(target_endian = \"little\", any(target_arch = \"s390x\", target_arch = \"powerpc\")), any(target_arch = \"arm\", all(target_arch = \"aarch64\", target_pointer_width = \"64\"), target_arch = \"riscv64\", all(rustix_use_experimental_asm, target_arch = \"powerpc\"), all(rustix_use_experimental_asm, target_arch = \"powerpc64\"), all(rustix_use_experimental_asm, target_arch = \"s390x\"), all(rustix_use_experimental_asm, target_arch = \"mips\"), all(rustix_use_experimental_asm, target_arch = \"mips32r6\"), all(rustix_use_experimental_asm, target_arch = \"mips64\"), all(rustix_use_experimental_asm, target_arch = \"mips64r6\"), target_arch = \"x86\", all(target_arch = \"x86_64\", target_pointer_width = \"64\")))))"
       ]
     },
     {
@@ -5339,6 +5936,13 @@
       ]
     },
     {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#supports-color@3.0.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#is_ci@1.2.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119",
       "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
       "kinds": [
@@ -5376,6 +5980,27 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#syn@3.0.3",
       "target": "registry+https://github.com/rust-lang/crates.io-index#unicode-ident@1.0.24",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#terminal_size@0.4.4",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#rustix@1.1.4",
+      "kinds": [
+        "normal (cfg(unix))"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#textwrap@0.16.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#unicode-linebreak@0.1.5",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#textwrap@0.16.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#unicode-width@0.2.2",
       "kinds": [
         "normal"
       ]

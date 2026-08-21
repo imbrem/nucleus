@@ -12,6 +12,7 @@ name = "nucleus"
 path = "src/main.rs"
 
 [dependencies]
+covalence-lib-error = { path = "../../lib/error" }
 covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["blake3"] }
 covalence-repl = { path = "../../repl" }
 
