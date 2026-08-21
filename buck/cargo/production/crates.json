@@ -406,6 +406,18 @@
           "kinds": [
             "lib"
           ]
+        },
+        {
+          "name": "parse_robustness",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
+          "name": "soundness",
+          "kinds": [
+            "test"
+          ]
         }
       ]
     },
