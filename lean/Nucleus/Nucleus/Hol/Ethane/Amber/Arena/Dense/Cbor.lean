@@ -332,6 +332,27 @@ def decodeSyntax? [Strategy S Ix] [HasCodec S Key]
     ⟨syntaxExtra (S := S) (Ix := Ix) names symbols⟩
   decode? (S := S) SyntaxRow.ofView? value
 
+/-- Strict root-arena decoder for the D0 wire contract.
+
+The reusable dense decoder admits parent links and unique extension fields for
+later formats. D0 admits neither: its parent is null and its input CBOR tree
+must be exactly the canonical encoding of the decoded arena. Exact syntax-row
+tags, arities, scalar variants, and child order are checked first by
+`decodeSyntax?` through `SyntaxRow.ofView?`. -/
+def decodeD0Syntax? [Strategy S Int] [HasCodec S Key]
+    (names : Nucleus.Hol.Ethane.Arena.Cbor.NameCodec Name)
+    (symbols : Nucleus.Hol.Ethane.Arena.Cbor.SignatureCodec Sig)
+    (value : Nucleus.Cbor) : Option (Syntax Key Sig Name Int) := do
+  let arena ← decodeSyntax? (S := S) names symbols value
+  if _ : arena.I64Valid then
+    match arena.parent with
+    | some _ => none
+    | none =>
+        if value = encodeSyntax (S := S) names symbols arena then some arena
+        else none
+  else
+    none
+
 @[simp] theorem decodeSyntax?_encode [Strategy S Ix] [HasCodec S Key]
     (names : Nucleus.Hol.Ethane.Arena.Cbor.NameCodec Name)
     (symbols : Nucleus.Hol.Ethane.Arena.Cbor.SignatureCodec Sig)
@@ -342,5 +363,89 @@ def decodeSyntax? [Strategy S Ix] [HasCodec S Key]
   letI : HasCodec S (SyntaxExtra Sig Name) :=
     ⟨syntaxExtra (S := S) (Ix := Ix) names symbols⟩
   exact decode?_encode (S := S) SyntaxRow.ofView? SyntaxRow.ofView?_view arena fits
+
+/-- Canonical root arenas round-trip through the strict D0 decoder. -/
+@[simp] theorem decodeD0Syntax?_encode [Strategy S Int] [HasCodec S Key]
+    (names : Nucleus.Hol.Ethane.Arena.Cbor.NameCodec Name)
+    (symbols : Nucleus.Hol.Ethane.Arena.Cbor.SignatureCodec Sig)
+    (arena : Syntax Key Sig Name Int) (root : arena.parent = none)
+    (i64 : arena.I64Valid)
+    (fits : SyntaxFits (S := S) arena) :
+    decodeD0Syntax? (S := S) (Key := Key) names symbols
+      (encodeSyntax (S := S) names symbols arena) = some arena := by
+  simp [decodeD0Syntax?, decodeSyntax?_encode names symbols arena fits, root,
+    i64]
+
+/-- Parented arenas are outside D0 even though the generic dense codec can
+round-trip them for later milestones. -/
+@[simp] theorem decodeD0Syntax?_encode_parented
+    [Strategy S Int] [HasCodec S Key]
+    (names : Nucleus.Hol.Ethane.Arena.Cbor.NameCodec Name)
+    (symbols : Nucleus.Hol.Ethane.Arena.Cbor.SignatureCodec Sig)
+    (arena : Syntax Key Sig Name Int) (parented : arena.parent ≠ none)
+    (i64 : arena.I64Valid)
+    (fits : SyntaxFits (S := S) arena) :
+    decodeD0Syntax? (S := S) (Key := Key) names symbols
+      (encodeSyntax (S := S) names symbols arena) = none := by
+  cases parentEq : arena.parent with
+  | none => exact (parented parentEq).elim
+  | some _ =>
+      simp [decodeD0Syntax?, decodeSyntax?_encode names symbols arena fits,
+        i64, parentEq]
+
+/-- General CBOR integers are parsed first, then rejected here when they do
+not fit the modeled Rust dense representation. -/
+theorem decodeD0Syntax?_reject_i64_overflow
+    [Strategy S Int] [HasCodec S Key]
+    (names : Nucleus.Hol.Ethane.Arena.Cbor.NameCodec Name)
+    (symbols : Nucleus.Hol.Ethane.Arena.Cbor.SignatureCodec Sig)
+    (value : Nucleus.Cbor) (arena : Syntax Key Sig Name Int)
+    (decoded : decodeSyntax? (S := S) names symbols value = some arena)
+    (overflow : ¬arena.I64Valid) :
+    decodeD0Syntax? (S := S) (Key := Key) names symbols value = none := by
+  simp [decodeD0Syntax?, decoded, overflow]
+
+/-- A uniquely keyed extension may be accepted by the reusable decoder, but
+the strict D0 decoder rejects it (as it does any non-canonical root object). -/
+theorem decodeD0Syntax?_reject_extension
+    [Strategy S Int] [HasCodec S Key]
+    (names : Nucleus.Hol.Ethane.Arena.Cbor.NameCodec Name)
+    (symbols : Nucleus.Hol.Ethane.Arena.Cbor.SignatureCodec Sig)
+    (value : Nucleus.Cbor) (arena : Syntax Key Sig Name Int)
+    (decoded : decodeSyntax? (S := S) names symbols value = some arena)
+    (i64 : arena.I64Valid)
+    (extended : value ≠ encodeSyntax (S := S) names symbols arena) :
+    decodeD0Syntax? (S := S) (Key := Key) names symbols value = none := by
+  cases parentEq : arena.parent <;>
+    simp [decodeD0Syntax?, decoded, i64, extended, parentEq]
+
+/-! ## D0 semantic fixtures -/
+
+/-- Deterministic semantic fixture for the strict D0 boundary. It exercises
+the initial row vocabulary, exact child order, Boolean payloads, and a negative
+signed offset without depending on an RFC byte encoder. -/
+def d0Fixture : Syntax O256 Nucleus.HolE.EmptySig UInt64 Int :=
+  ⟨none, -4, #[
+    .kindStar,
+    .boolTy,
+    .tmFv 0 (-3),
+    .lam 1 (-3) (-2),
+    .bool true,
+    .app (-1) 0,
+    .pair 1 0,
+    .eq (-3) 2,
+    .bool false
+  ]⟩
+
+/-- Canonical CBOR semantic tree for `d0Fixture`. -/
+def d0FixtureCbor : Nucleus.Cbor :=
+  encodeSyntax (S := Serialization.StringMapV0)
+    Nucleus.Hol.Ethane.Arena.Cbor.uint64Names
+    Nucleus.Hol.Ethane.Arena.Cbor.emptySymbols d0Fixture
+
+/-- General wire parsing admits this mathematical offset, while strict D0
+rejects it through `I64Valid`. -/
+def d0OverflowFixture : Syntax O256 Nucleus.HolE.EmptySig UInt64 Int :=
+  ⟨none, (2 ^ 63 : Int), #[]⟩
 
 end Nucleus.Hol.Ethane.Amber.Arena.Dense.Cbor

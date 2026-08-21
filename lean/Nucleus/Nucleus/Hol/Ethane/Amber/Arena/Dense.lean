@@ -1,4 +1,3 @@
-import Mathlib.Tactic
 import Nucleus.Hol.Ethane.Amber.Serialization
 import Nucleus.Hol.Ethane.Amber.Syntax
 
@@ -30,6 +29,30 @@ structure Dense (Key : Type u) (R : Type v) (Ix : Type := Int) where
   deriving DecidableEq
 
 namespace Dense
+
+/-- An index representable by the Rust dense arena's signed `i64` boundary.
+This is deliberately separate from the general CBOR integer codec: decoding
+may produce a wider mathematical integer which the Rust-view validator then
+rejects. -/
+def I64Fits (index : Int) : Prop :=
+  -(2 ^ 63 : Int) ≤ index ∧ index < (2 ^ 63 : Int)
+
+/-- Every index stored by the modeled Rust dense representation fits `i64`.
+`List.Forall` keeps the predicate decidable without requiring equality on row
+payloads. -/
+def I64Valid [Row R Tag Int Extra] (arena : Dense Key R Int) : Prop :=
+  I64Fits arena.offset ∧
+    arena.defs.toList.Forall fun row =>
+      (Row.children row).Forall I64Fits
+
+instance (index : Int) : Decidable (I64Fits index) := by
+  unfold I64Fits
+  infer_instance
+
+instance [Row R Tag Int Extra] (arena : Dense Key R Int) :
+    Decidable arena.I64Valid := by
+  unfold I64Valid
+  infer_instance
 
 /-- The next absolute index assigned by `push`. -/
 def next [AddMonoidWithOne Ix] (arena : Dense Key R Ix) : Ix :=

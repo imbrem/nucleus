@@ -1,5 +1,6 @@
 import Nucleus.Hash.Basic
 import Nucleus.Bytes
+import Lean.Elab.Tactic.BVDecide
 
 /-! # 256-bit objects -/
 
@@ -21,9 +22,21 @@ def bytes (value : O256) : List UInt8 :=
 /-- Parse exactly 32 big-endian bytes. -/
 def ofList? (values : List UInt8) : Option O256 :=
   if values.length = 32 then
-    some <| BitVec.ofNat 256 <| values.foldl (fun value byte => value * 256 + byte.toNat) 0
+    some <| values.foldl
+      (fun value byte => value.extractLsb' 0 248 ++ byte.toBitVec) (0#256)
   else
     none
+
+/-- Parsing the canonical big-endian bytes recovers the original object. -/
+@[simp] theorem ofList?_bytes (value : O256) :
+    ofList? value.bytes = some value := by
+  simp only [ofList?, bytes, List.ofFn_succ, Fin.isValue,
+    Fin.coe_ofNat_eq_mod, Nat.zero_mod, tsub_zero, Nat.reduceMul,
+    Fin.val_succ, Nat.reduceSubDiff, one_mul, Fin.val_eq_zero, zero_add,
+    tsub_self, zero_mul, List.ofFn_zero, List.length_cons, List.length_nil,
+    Nat.reduceAdd, ↓reduceIte, List.foldl_cons, BitVec.extractLsb'_zero,
+    List.foldl_nil, Option.some.injEq]
+  bv_decide
 
 /-- Compact byte encoding. -/
 def encode (value : O256) : Bytes := ⟨value.bytes.toByteArray⟩
