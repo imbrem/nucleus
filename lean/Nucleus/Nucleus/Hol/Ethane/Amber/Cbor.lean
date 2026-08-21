@@ -1,5 +1,6 @@
 import Nucleus.Hol.Ethane.Amber.Syntax
 import Nucleus.Hol.Ethane.Arena.Cbor
+import Nucleus.Cbor.Containers
 import Nucleus.O256.Basic
 
 /-!
@@ -24,20 +25,16 @@ open Nucleus Nucleus.Hol.Ethane
 universe u v w x
 set_option relaxedAutoImplicit true
 
-private def arrayItems : List Nucleus.Cbor → CborSyn .array
-  | [] => .arrayNil
-  | value :: values => .arrayCons value (arrayItems values)
-
-def array (values : List Nucleus.Cbor) : Nucleus.Cbor := .array (arrayItems values)
+def array (values : List Nucleus.Cbor) : Nucleus.Cbor :=
+  Nucleus.Cbor.arrayOfList values
 def text (value : String) : Nucleus.Cbor := .primitive (.text value)
 def null : Nucleus.Cbor := .primitive .null
 
 def unsigned (value : Nat) : Nucleus.Cbor :=
   .primitive (.integer (.unsigned (UInt64.ofNat value)))
 
-private def asArray? : Nucleus.Cbor → Option (List Nucleus.Cbor)
-  | .array values => some values.toArrayList
-  | _ => none
+private def asArray? : Nucleus.Cbor → Option (List Nucleus.Cbor) :=
+  Nucleus.Cbor.asArray?
 
 private def asNat? : Nucleus.Cbor → Option Nat
   | .primitive (.integer (.unsigned value)) => some value.toNat
@@ -52,14 +49,9 @@ private def bool : Bool → Nucleus.Cbor
   | false => .primitive .false
   | true => .primitive .true
 
-@[simp] private theorem arrayItems_toArrayList (values : List Nucleus.Cbor) :
-    (arrayItems values).toArrayList = values := by
-  induction values with
-  | nil => simp [arrayItems, CborSyn.toArrayList]
-  | cons value values ih => simp [arrayItems, CborSyn.toArrayList, ih]
-
 @[simp] private theorem asArray?_array (values : List Nucleus.Cbor) :
-    asArray? (array values) = some values := by simp [array, asArray?]
+    asArray? (array values) = some values := by
+  simp [array, asArray?]
 
 private theorem uint64_ofNat_toNat (value : Nat) (fits : value < 2 ^ 64) :
     (UInt64.ofNat value).toNat = value := by
@@ -267,7 +259,9 @@ def FitsParent : Option (Parent Key) → Prop
   cases parent with
   | none => rfl
   | some parent =>
-      simp [encodeParent, decodeParent?, array, asArray?, CasKey.decode_encode,
+      simp [encodeParent, decodeParent?, array, asArray?,
+        Nucleus.Cbor.arrayOfList, Nucleus.Cbor.asArray?,
+        ArrayLike.observe_construct, CasKey.decode_encode,
         asNat?_unsigned parent.size fits]
 
 /-- All unsigned references in a dense forest fit CBOR. -/

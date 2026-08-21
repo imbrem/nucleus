@@ -9,9 +9,8 @@ open Nucleus Nucleus.Hol.Ethane
 universe u
 set_option relaxedAutoImplicit true
 
-private def segmentArray? : Nucleus.Cbor → Option (List Nucleus.Cbor)
-  | .array values => some values.toArrayList
-  | _ => none
+private def segmentArray? : Nucleus.Cbor → Option (List Nucleus.Cbor) :=
+  Nucleus.Cbor.asArray?
 
 private def segmentNat? : Nucleus.Cbor → Option Nat
   | .primitive (.integer (.unsigned value)) => some value.toNat
@@ -24,7 +23,7 @@ private def segmentTraverse (decode : Nucleus.Cbor → Option α) :
 
 @[simp] private theorem segmentArray?_array (values : List Nucleus.Cbor) :
     segmentArray? (array values) = some values := by
-  simp [segmentArray?, array]
+  exact Nucleus.Cbor.asArray?_arrayOfList values
 
 @[simp] private theorem segmentNat?_unsigned (value : Nat)
     (fits : value < 2 ^ 64) : segmentNat? (unsigned value) = some value := by
