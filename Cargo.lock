@@ -490,6 +490,7 @@ dependencies = [
 name = "covalence-logic-metamath"
 version = "0.0.0"
 dependencies = [
+ "covalence-lib-parse",
  "fnv",
  "smol_str",
  "thiserror",

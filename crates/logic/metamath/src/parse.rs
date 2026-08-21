@@ -6,9 +6,16 @@
 //! (uncompressed) label sequences and the [`Proof::Compressed`] `( labels )
 //! LETTERS` form.
 //!
-//! Metamath tokenisation is whitespace-separated tokens (the language has no
-//! string literals or nested delimiters at the token level), so the lexer is a
-//! hand-rolled scanner.
+//! Metamath is whitespace-delimited and has no nested delimiters at the token
+//! level — no string literals, no bracketing below a statement — so there is
+//! nothing for a grammar to do underneath a token. The reader is therefore a
+//! whitespace split feeding a [`winnow`](covalence_lib_parse::winnow) grammar
+//! **over a token slice**, the shape [`covalence_lib_parse`] prescribes for
+//! token-oriented formats, rather than a byte-level grammar.
+//!
+//! Tokens are `&str` borrowed from the source buffer. A database is tens of
+//! megabytes of two- and three-character tokens, and owning each one costs more
+//! than reading the file: the sink decides what to keep.
 //!
 //! The reader drives a [`DatabaseSink`]: [`parse`] / [`parse_with_resolver`]
 //! build the in-memory [`crate::Database`] (the canonical sink), but the same
@@ -22,9 +29,10 @@
 //!
 //! * **`${ ... $}` nesting is a loop, not recursion.** One stack frame per open
 //!   block let a few hundred thousand `${` abort the whole process with a stack
-//!   overflow — not a failure mode a validator may inflict on its host. The
-//!   nesting depth is an integer, and the same counter answers "is this `$c` in
-//!   the outermost scope?", which the spec requires it to be.
+//!   overflow — not a failure mode a validator may inflict on its host. So the
+//!   grammar covers a *single* statement and a loop drives it; the nesting
+//!   depth is an integer, and the same counter answers "is this `$c` in the
+//!   outermost scope?", which the spec requires it to be.
 //! * **Tokens are checked against the spec's character classes** — see
 //!   [`is_label_char`] and [`is_math_symbol_char`]. Without this a label such as
 //!   `tz(e` is read happily and resurfaces much later as a confusing
@@ -35,6 +43,14 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+
+use covalence_lib_parse::winnow::{
+    ModalResult, Parser,
+    combinator::{opt, repeat, terminated},
+    error::{ErrMode, ParserError},
+    stream::{Stream, StreamIsPartial},
+    token::any,
+};
 
 use crate::database::{Database, DatabaseSink, Proof, SymbolKind};
 use crate::error::MmError;
@@ -178,9 +194,8 @@ pub(crate) fn validate_math_symbol(token: &str, ctx: &str) -> Result<(), MmError
 
 /// Parse a `.mm` source string into a [`Database`] (no file inclusion).
 pub fn parse(input: &str) -> Result<Database, MmError> {
-    let tokens = tokenize(input)?;
     let mut db = Database::new();
-    parse_tokens(&tokens, &mut db)?;
+    parse_into(input, &mut db)?;
     db.finish()
 }
 
@@ -191,8 +206,7 @@ pub fn parse(input: &str) -> Result<Database, MmError> {
 /// The reader drives the high-level
 /// `DatabaseSink` API; the backend decides what to build.
 pub fn parse_into(input: &str, sink: &mut impl DatabaseSink) -> Result<(), MmError> {
-    let tokens = tokenize(input)?;
-    parse_tokens(&tokens, sink)
+    parse_tokens(&tokenize(input)?, sink)
 }
 
 /// Like [`parse_into`] but resolving `$[ ... $]` includes via `resolver`.
@@ -207,9 +221,16 @@ pub fn parse_into_with_resolver(
             path: filename.to_owned(),
             message: e.to_string(),
         })?;
+    // A database that includes nothing is one buffer, and its tokens borrow it.
+    // Whether it does is a question about *tokens*: a `$[` inside a comment is
+    // prose, not a directive.
+    let tokens = tokenize(&contents)?;
+    if !tokens.contains(&"$[") {
+        return parse_tokens(&tokens, sink);
+    }
     let mut seen = HashSet::new();
     seen.insert(key.clone());
-    let mut tokens = Vec::new();
+    let mut spliced = String::new();
     let mut scan = IncludeScan::new();
     expand_includes(
         &contents,
@@ -217,9 +238,9 @@ pub fn parse_into_with_resolver(
         Some(&key),
         &mut seen,
         &mut scan,
-        &mut tokens,
+        &mut spliced,
     )?;
-    parse_tokens(&tokens, sink)
+    parse_tokens(&tokenize(&spliced)?, sink)
 }
 
 /// Parse a Metamath database starting from `filename`, resolving `$[ ... $]`
@@ -228,26 +249,8 @@ pub fn parse_with_resolver(
     filename: &str,
     resolver: &dyn SourceResolver,
 ) -> Result<Database, MmError> {
-    let (key, contents) = resolver
-        .resolve(filename, None)
-        .map_err(|e| MmError::FileError {
-            path: filename.to_owned(),
-            message: e.to_string(),
-        })?;
-    let mut seen = HashSet::new();
-    seen.insert(key.clone());
-    let mut tokens = Vec::new();
-    let mut scan = IncludeScan::new();
-    expand_includes(
-        &contents,
-        resolver,
-        Some(&key),
-        &mut seen,
-        &mut scan,
-        &mut tokens,
-    )?;
     let mut db = Database::new();
-    parse_tokens(&tokens, &mut db)?;
+    parse_into_with_resolver(filename, resolver, &mut db)?;
     db.finish()
 }
 
@@ -279,7 +282,14 @@ impl IncludeScan {
     }
 }
 
-/// Tokenise `input`, recursively expanding `$[ file $]` includes into `out`.
+/// Tokenise `input`, recursively splicing the sources named by `$[ file $]`
+/// into `out` — one token per line, comments already stripped.
+///
+/// Inclusion assembles a database from several buffers, so its tokens cannot
+/// all borrow the one the caller read; splicing the *sources* and tokenising
+/// the result once keeps them borrowed from a single buffer again. The second
+/// tokenisation that costs is paid only where inclusion is actually used, and
+/// never by [`parse`].
 ///
 /// Metamath spec §4.1.2 permits an inclusion only *between* statements and only
 /// at the outermost scope; anywhere else it is rejected rather than spliced,
@@ -291,7 +301,7 @@ fn expand_includes(
     referrer: Option<&str>,
     seen: &mut HashSet<String>,
     scan: &mut IncludeScan,
-    out: &mut Vec<String>,
+    out: &mut String,
 ) -> Result<(), MmError> {
     let raw = tokenize(input)?;
     let mut it = raw.into_iter();
@@ -299,7 +309,7 @@ fn expand_includes(
         // Only a `$` keyword can move the scan, and one byte rules out every
         // label and math symbol — nearly every token in a real database.
         if tok.starts_with('$') {
-            match tok.as_str() {
+            match tok {
                 "$[" => {
                     if scan.depth > 0 || !scan.between_statements {
                         return Err(MmError::Parse(
@@ -319,9 +329,9 @@ fn expand_includes(
                     }
                     let (key, contents) =
                         resolver
-                            .resolve(&filename, referrer)
+                            .resolve(filename, referrer)
                             .map_err(|e| MmError::FileError {
-                                path: filename.clone(),
+                                path: filename.to_owned(),
                                 message: e.to_string(),
                             })?;
                     if seen.insert(key.clone()) {
@@ -344,7 +354,8 @@ fn expand_includes(
         } else {
             scan.between_statements = false;
         }
-        out.push(tok);
+        out.push_str(tok);
+        out.push('\n');
     }
     Ok(())
 }
@@ -353,14 +364,15 @@ fn expand_includes(
 // Tokeniser
 // ---------------------------------------------------------------------------
 
-/// Whitespace-tokenise, stripping `$( ... $)` comments.
+/// Whitespace-tokenise, stripping `$( ... $)` comments. Every token borrows
+/// from `input`.
 ///
 /// Only the surviving tokens are held to the spec's character classes; a
 /// comment may say anything at all. See the README for why that deviation is
 /// deliberate.
-fn tokenize(input: &str) -> Result<Vec<String>, MmError> {
+fn tokenize(input: &str) -> Result<Vec<&str>, MmError> {
     let mut out = Vec::new();
-    let mut raw = input.split_ascii_whitespace().peekable();
+    let mut raw = input.split_ascii_whitespace();
     while let Some(tok) = raw.next() {
         if tok == "$(" {
             // Consume to matching `$)`.
@@ -379,291 +391,332 @@ fn tokenize(input: &str) -> Result<Vec<String>, MmError> {
         if tok == "$)" {
             return Err(MmError::Parse("unmatched `$)`".into()));
         }
-        out.push(tok.to_string());
+        out.push(tok);
     }
     Ok(out)
 }
 
 // ---------------------------------------------------------------------------
-// Parser: token stream → DatabaseSink
+// Grammar: token stream → DatabaseSink
 // ---------------------------------------------------------------------------
 
-/// Parse the whole token stream into `sink`.
-fn parse_tokens(tokens: &[String], sink: &mut impl DatabaseSink) -> Result<(), MmError> {
-    let mut p = Parser {
-        toks: tokens,
-        pos: 0,
+/// A stream of borrowed `.mm` tokens.
+///
+/// The grammar is written against winnow's [`Stream`] rather than against
+/// `&[&str]`, so a reader that tokenises differently — lazily, or out of a
+/// memory-mapped file — reuses it without touching a combinator.
+trait TokenStream<'a>: Stream<Token = &'a str> + StreamIsPartial {}
+
+impl<'a, I: Stream<Token = &'a str> + StreamIsPartial> TokenStream<'a> for I {}
+
+/// The grammar's error.
+///
+/// Every diagnostic the reader commits to rides in `Fatal`; `NoMatch` is a leaf
+/// parser saying only "not mine", which is how a `repeat` ends and therefore
+/// the *common* case, not an exceptional one — so it carries no payload and
+/// costs no allocation. The diagnostic is boxed for the same reason: a fault is
+/// returned by value from every parser in the grammar, and an [`MmError`] is
+/// wide enough that carrying one inline would cost the succeeding path too.
+#[derive(Debug)]
+enum Fault {
+    NoMatch,
+    Fatal(Box<MmError>),
+}
+
+impl<I: Stream> ParserError<I> for Fault {
+    type Inner = Self;
+
+    fn from_input(_input: &I) -> Self {
+        Fault::NoMatch
+    }
+
+    fn into_inner(self) -> Result<Self::Inner, Self> {
+        Ok(self)
+    }
+}
+
+/// Commit to `error`: the reader has read enough to know the input is wrong, so
+/// no other branch of the grammar is worth trying.
+fn fatal(error: MmError) -> ErrMode<Fault> {
+    ErrMode::Cut(Fault::Fatal(Box::new(error)))
+}
+
+/// Commit to the parse diagnostic `message`.
+fn reject(message: String) -> ErrMode<Fault> {
+    fatal(MmError::Parse(message))
+}
+
+/// The [`MmError`] a grammar failure carries.
+///
+/// Winnow's error mode stops here: it is how this module's parsers talk to each
+/// other, and the crate's callers see [`MmError`] alone. Only the leaves
+/// backtrack, and each of them sits inside a `repeat` or an `opt` that consumes
+/// the backtrack, so what arrives is a committed diagnostic.
+fn diagnostic(fault: ErrMode<Fault>) -> MmError {
+    match fault {
+        ErrMode::Cut(Fault::Fatal(error)) | ErrMode::Backtrack(Fault::Fatal(error)) => *error,
+        _ => MmError::Parse("unexpected end of input".into()),
+    }
+}
+
+/// Read every statement in `tokens` into `sink`.
+///
+/// `${ ... $}` nesting is a loop rather than one recursive parser call per
+/// block: `.mm` files are untrusted input, and a stack frame per open block
+/// turned a few hundred thousand `${` into a process-killing stack overflow.
+/// `depth` doubles as the answer to "may a `$c` appear here?" — the spec
+/// confines constant declarations to the outermost scope.
+///
+/// A `$}` at depth 0 is an unmatched-scope error, and a `${` still open at end
+/// of input is an unclosed-scope error.
+fn parse_tokens(tokens: &[&str], sink: &mut impl DatabaseSink) -> Result<(), MmError> {
+    let mut input = tokens;
+    let mut depth: usize = 0;
+    while !input.is_empty() {
+        statement(&mut input, &mut depth, sink).map_err(diagnostic)?;
+    }
+    if depth > 0 {
+        return Err(MmError::Parse("unclosed `${`".into()));
+    }
+    Ok(())
+}
+
+/// Read the one statement `input` starts with into `sink`.
+fn statement<'a, I: TokenStream<'a>>(
+    input: &mut I,
+    depth: &mut usize,
+    sink: &mut impl DatabaseSink,
+) -> ModalResult<(), Fault> {
+    match any.parse_next(input)? {
+        "$}" if *depth == 0 => Err(reject("unmatched `$}`".into())),
+        "$}" => {
+            *depth -= 1;
+            sink.pop_scope().map_err(fatal)
+        }
+        "${" => {
+            *depth += 1;
+            sink.push_scope();
+            Ok(())
+        }
+        "$c" if *depth > 0 => Err(reject("`$c` is only allowed in the outermost scope".into())),
+        "$c" => {
+            let symbols = symbol_list("$c").parse_next(input)?;
+            sink.declare(SymbolKind::Constant, &symbols).map_err(fatal)
+        }
+        "$v" => {
+            let symbols = symbol_list("$v").parse_next(input)?;
+            sink.declare(SymbolKind::Variable, &symbols).map_err(fatal)
+        }
+        "$d" => {
+            let vars = symbol_list("$d").parse_next(input)?;
+            // Distinctness is a relation between two variables: a `$d` naming
+            // fewer restricts nothing, so accepting one silently turns a typo
+            // into a hypothesis that was never imposed.
+            if vars.len() < 2 {
+                return Err(reject(format!(
+                    "`$d` needs two or more variables, got {}",
+                    vars.len()
+                )));
+            }
+            sink.add_disjoint(&vars).map_err(fatal)
+        }
+        kw if kw.starts_with('$') => Err(reject(format!(
+            "unexpected keyword `{kw}` (expected a label or `$c/$v/$d/${{/$}}`)"
+        ))),
+        // A label introduces a $f/$e/$a/$p statement.
+        label => labelled(input, label, sink),
+    }
+}
+
+/// Read the `$f`, `$e`, `$a` or `$p` statement introduced by `label`.
+fn labelled<'a, I: TokenStream<'a>>(
+    input: &mut I,
+    label: &'a str,
+    sink: &mut impl DatabaseSink,
+) -> ModalResult<(), Fault> {
+    validate_label(label, "label").map_err(fatal)?;
+    let Some(kw) = opt(any).parse_next(input)? else {
+        return Err(reject(format!("expected keyword after label `{label}`")));
     };
-    p.parse_statements(sink)
+    match kw {
+        "$f" => {
+            let body = symbol_list("$f").parse_next(input)?;
+            if body.len() != 2 {
+                return Err(reject(format!(
+                    "`{label}` $f must be `typecode var`, got {body:?}"
+                )));
+            }
+            sink.add_float(label, body[0], body[1]).map_err(fatal)
+        }
+        "$e" => {
+            let symbols = symbol_list("$e").parse_next(input)?;
+            let expr = expression(label, &symbols).map_err(fatal)?;
+            sink.add_essential(label, expr).map_err(fatal)
+        }
+        "$a" => assertion(input, label, false, sink),
+        "$p" => assertion(input, label, true, sink),
+        other => Err(reject(format!(
+            "unexpected keyword `{other}` after label `{label}`"
+        ))),
+    }
 }
 
-struct Parser<'a> {
-    toks: &'a [String],
-    pos: usize,
-}
-
-impl<'a> Parser<'a> {
-    fn peek(&self) -> Option<&'a str> {
-        self.toks.get(self.pos).map(String::as_str)
-    }
-
-    fn next(&mut self) -> Option<&'a str> {
-        let t = self.toks.get(self.pos).map(String::as_str);
-        if t.is_some() {
-            self.pos += 1;
+/// Read the conclusion of the assertion `label`, and — for a `$p` — its proof.
+fn assertion<'a, I: TokenStream<'a>>(
+    input: &mut I,
+    label: &'a str,
+    provable: bool,
+    sink: &mut impl DatabaseSink,
+) -> ModalResult<(), Fault> {
+    let symbols: Vec<&'a str> = repeat(0.., math_symbol(label)).parse_next(input)?;
+    let proof = match opt(any).parse_next(input)? {
+        // A `$p` whose conclusion just stops is a theorem nobody proved, which
+        // is not the same claim as the `$a` it now looks like.
+        Some("$.") if provable => {
+            return Err(reject(format!("`{label}` $p has no proof (missing `$=`)")));
         }
-        t
-    }
-
-    /// Parse every statement in the token stream, tracking `${ ... $}` nesting
-    /// in an explicit `depth`.
-    ///
-    /// Nesting is a loop rather than one recursive call per block: `.mm` files
-    /// are untrusted input, and a stack frame per open block turned a few
-    /// hundred thousand `${` into a process-killing stack overflow. `depth`
-    /// doubles as the answer to "may a `$c` appear here?" — the spec confines
-    /// constant declarations to the outermost scope.
-    ///
-    /// A `$}` at depth 0 is an unmatched-scope error, and a `${` still open at
-    /// end of input is an unclosed-scope error.
-    fn parse_statements(&mut self, sink: &mut impl DatabaseSink) -> Result<(), MmError> {
-        let mut depth: usize = 0;
-        while let Some(tok) = self.peek() {
-            match tok {
-                "$}" if depth == 0 => {
-                    return Err(MmError::Parse("unmatched `$}`".into()));
-                }
-                "$}" => {
-                    self.next();
-                    depth -= 1;
-                    sink.pop_scope()?;
-                }
-                "${" => {
-                    self.next();
-                    depth += 1;
-                    sink.push_scope();
-                }
-                "$c" if depth > 0 => {
-                    return Err(MmError::Parse(
-                        "`$c` is only allowed in the outermost scope".into(),
-                    ));
-                }
-                "$c" => {
-                    self.next();
-                    let syms = self.read_until_dot("$c")?;
-                    sink.declare(SymbolKind::Constant, &str_refs(&syms))?;
-                }
-                "$v" => {
-                    self.next();
-                    let syms = self.read_until_dot("$v")?;
-                    sink.declare(SymbolKind::Variable, &str_refs(&syms))?;
-                }
-                "$d" => {
-                    self.next();
-                    let syms = self.read_until_dot("$d")?;
-                    // Distinctness is a relation between two variables: a `$d`
-                    // naming fewer restricts nothing, so accepting one silently
-                    // turns a typo into a hypothesis that was never imposed.
-                    if syms.len() < 2 {
-                        return Err(MmError::Parse(format!(
-                            "`$d` needs two or more variables, got {}",
-                            syms.len()
-                        )));
-                    }
-                    sink.add_disjoint(&str_refs(&syms))?;
-                }
-                kw if kw.starts_with('$') => {
-                    return Err(MmError::Parse(format!(
-                        "unexpected keyword `{kw}` (expected a label or `$c/$v/$d/${{/$}}`)"
-                    )));
-                }
-                _ => {
-                    // A label introduces a $f/$e/$a/$p statement.
-                    let label = self.next().unwrap().to_string();
-                    validate_label(&label, "label")?;
-                    let kw = self.next().ok_or_else(|| {
-                        MmError::Parse(format!("expected keyword after label `{label}`"))
-                    })?;
-                    match kw {
-                        "$f" => self.parse_float(sink, label)?,
-                        "$e" => self.parse_essential(sink, label)?,
-                        "$a" => self.parse_assert(sink, label, false)?,
-                        "$p" => self.parse_assert(sink, label, true)?,
-                        other => {
-                            return Err(MmError::Parse(format!(
-                                "unexpected keyword `{other}` after label `{label}`"
-                            )));
-                        }
-                    }
-                }
-            }
-        }
-        if depth > 0 {
-            return Err(MmError::Parse("unclosed `${`".into()));
-        }
-        Ok(())
-    }
-
-    /// Read math symbols up to and consuming `$.`.
-    fn read_until_dot(&mut self, ctx: &str) -> Result<Vec<String>, MmError> {
-        let mut out = Vec::new();
-        loop {
-            match self.next() {
-                Some("$.") => return Ok(out),
-                Some(t) if t.starts_with('$') => {
-                    return Err(MmError::Parse(format!(
-                        "unexpected `{t}` in {ctx} (expected `$.`)"
-                    )));
-                }
-                Some(t) => {
-                    validate_math_symbol(t, ctx)?;
-                    out.push(t.to_string());
-                }
-                None => return Err(MmError::Parse(format!("unterminated {ctx}"))),
-            }
-        }
-    }
-
-    fn parse_float(&mut self, sink: &mut impl DatabaseSink, label: String) -> Result<(), MmError> {
-        let body = self.read_until_dot("$f")?;
-        if body.len() != 2 {
-            return Err(MmError::Parse(format!(
-                "`{label}` $f must be `typecode var`, got {body:?}"
+        Some("$.") => None,
+        Some("$=") if provable => Some(proof(input, label)?),
+        Some("$=") => {
+            return Err(reject(format!(
+                "`{label}` is a `$a` axiom and cannot have a proof (`$=`)"
             )));
         }
-        sink.add_float(&label, &body[0], &body[1])
-    }
+        Some(t) => return Err(reject(format!("unexpected `{t}` in `{label}`"))),
+        None => return Err(reject(format!("unterminated `{label}`"))),
+    };
+    let conclusion = expression(label, &symbols).map_err(fatal)?;
+    sink.add_assertion(label, conclusion, proof).map_err(fatal)
+}
 
-    fn parse_essential(
-        &mut self,
-        sink: &mut impl DatabaseSink,
-        label: String,
-    ) -> Result<(), MmError> {
-        let syms = self.read_until_dot("$e")?;
-        let expr = self.make_expr(&label, &syms)?;
-        sink.add_essential(&label, expr)
+/// Read a proof body (the part after `$=`): either a normal label sequence up
+/// to `$.`, or a compressed `( labels ) LETTERS $.` block.
+fn proof<'a, I: TokenStream<'a>>(input: &mut I, label: &'a str) -> ModalResult<Proof, Fault> {
+    // A compressed proof announces itself with the `(` opening its label block.
+    if opt(any.verify(|t: &str| t == "("))
+        .parse_next(input)?
+        .is_some()
+    {
+        return compressed_proof(input, label);
     }
+    terminated(repeat(0.., proof_step(label)), end_of_proof(label))
+        .map(Proof::Normal)
+        .parse_next(input)
+}
 
-    fn parse_assert(
-        &mut self,
-        sink: &mut impl DatabaseSink,
-        label: String,
-        provable: bool,
-    ) -> Result<(), MmError> {
-        // Read the conclusion symbols up to `$.` (axiom) or `$=` (theorem).
-        let mut syms = Vec::new();
-        let proof: Option<Proof> = loop {
-            match self.next() {
-                Some("$.") => break None,
-                Some("$=") if provable => {
-                    break Some(self.read_proof(&label)?);
-                }
-                Some("$=") => {
-                    return Err(MmError::Parse(format!(
-                        "`{label}` is a `$a` axiom and cannot have a proof (`$=`)"
-                    )));
-                }
-                Some(t) if t.starts_with('$') => {
-                    return Err(MmError::Parse(format!("unexpected `{t}` in `{label}`")));
-                }
-                Some(t) => {
-                    validate_math_symbol(t, &label)?;
-                    syms.push(t.to_string());
-                }
-                None => return Err(MmError::Parse(format!("unterminated `{label}`"))),
+/// Read a compressed proof: `( label1 label2 ... ) LETTERS... $.`, with the `(`
+/// already consumed.
+fn compressed_proof<'a, I: TokenStream<'a>>(
+    input: &mut I,
+    label: &'a str,
+) -> ModalResult<Proof, Fault> {
+    // Label block until `)`. Every entry is a label, so a missing `)` is caught
+    // at the first keyword instead of swallowing the rest of the database as
+    // proof text.
+    let mut labels = Vec::new();
+    loop {
+        match opt(any).parse_next(input)? {
+            Some(")") => break,
+            Some(t) => {
+                validate_label(t, "compressed-proof label").map_err(fatal)?;
+                labels.push(t.to_owned());
             }
-        };
-        if provable && proof.is_none() {
-            return Err(MmError::Parse(format!(
-                "`{label}` $p has no proof (missing `$=`)"
-            )));
-        }
-        let conclusion = self.make_expr(&label, &syms)?;
-        sink.add_assertion(&label, conclusion, proof)
-    }
-
-    /// Read a proof body (the part after `$=`): either a normal label sequence
-    /// up to `$.`, or a compressed `( labels ) LETTERS $.` block.
-    fn read_proof(&mut self, label: &str) -> Result<Proof, MmError> {
-        if self.peek() == Some("(") {
-            return self.read_compressed_proof(label);
-        }
-        let mut labels = Vec::new();
-        loop {
-            match self.next() {
-                Some("$.") => return Ok(Proof::Normal(labels)),
-                Some("?") => {
-                    return Err(MmError::Parse(format!(
-                        "`{label}` contains an incomplete-proof placeholder `?`"
-                    )));
-                }
-                Some(t) if t.starts_with('$') => {
-                    return Err(MmError::Parse(format!(
-                        "unexpected `{t}` in proof of `{label}`"
-                    )));
-                }
-                Some(t) => {
-                    validate_label(t, "proof step label")?;
-                    labels.push(t.to_string());
-                }
-                None => return Err(MmError::Parse(format!("unterminated proof of `{label}`"))),
+            None => {
+                return Err(reject(format!(
+                    "unterminated compressed-proof label block in `{label}`"
+                )));
             }
         }
     }
-
-    /// Read a compressed proof: `( label1 label2 ... ) LETTERS... $.` (the `(`
-    /// is at the current position).
-    fn read_compressed_proof(&mut self, label: &str) -> Result<Proof, MmError> {
-        // Consume `(`.
-        self.next();
-        // Label block until `)`. Every entry is a label, so a missing `)` is
-        // caught at the first keyword instead of swallowing the rest of the
-        // database as proof text.
-        let mut labels = Vec::new();
-        loop {
-            match self.next() {
-                Some(")") => break,
-                Some(t) => {
-                    validate_label(t, "compressed-proof label")?;
-                    labels.push(t.to_string());
-                }
-                None => {
-                    return Err(MmError::Parse(format!(
-                        "unterminated compressed-proof label block in `{label}`"
-                    )));
-                }
+    // Letter block: concatenate all tokens until `$.`. Its alphabet (`A`–`Z`
+    // plus `?`) is the decoder's business, in `verify`.
+    let mut letters = Vec::new();
+    loop {
+        match opt(any).parse_next(input)? {
+            Some("$.") => break,
+            Some(t) => letters.extend_from_slice(t.as_bytes()),
+            None => {
+                return Err(reject(format!(
+                    "unterminated compressed-proof letter block in `{label}`"
+                )));
             }
         }
-        // Letter block: concatenate all tokens until `$.`. Its alphabet (`A`–`Z`
-        // plus `?`) is the decoder's business, in `verify`.
-        let mut letters = Vec::new();
-        loop {
-            match self.next() {
-                Some("$.") => break,
-                Some(t) => letters.extend_from_slice(t.as_bytes()),
-                None => {
-                    return Err(MmError::Parse(format!(
-                        "unterminated compressed-proof letter block in `{label}`"
-                    )));
-                }
-            }
-        }
-        Ok(Proof::Compressed { labels, letters })
     }
+    Ok(Proof::Compressed { labels, letters })
+}
 
-    /// Build an [`Expr`] from a symbol list (the first being the typecode),
-    /// validating it is non-empty.
-    fn make_expr(&self, label: &str, syms: &[String]) -> Result<Expr, MmError> {
-        from_symbols(syms.iter().map(String::as_str)).ok_or_else(|| MmError::MalformedExpr {
-            label: label.to_string(),
-            message: "expression is empty (needs at least a typecode)".into(),
-        })
+/// `<math symbol>... $.`: the body of a `$c`, `$v`, `$d`, `$f` or `$e`.
+///
+/// How many symbols each of those admits — two for a `$f`, two or more for a
+/// `$d` — is the caller's to say, since only the caller knows which it read.
+fn symbol_list<'a, I: TokenStream<'a>>(
+    ctx: &'a str,
+) -> impl Parser<I, Vec<&'a str>, ErrMode<Fault>> {
+    terminated(repeat(0.., math_symbol(ctx)), end_of_statement(ctx))
+}
+
+/// One math symbol: any token outside the `$` keyword space.
+///
+/// Backtracking on a keyword is what ends a symbol list. A token that is no
+/// keyword but no legal symbol either cuts instead: `p$h` is a typo inside the
+/// statement being read, not the start of the next one.
+fn math_symbol<'a, I: TokenStream<'a>>(ctx: &'a str) -> impl Parser<I, &'a str, ErrMode<Fault>> {
+    move |input: &mut I| {
+        let token = any
+            .verify(|token: &str| !token.starts_with('$'))
+            .parse_next(input)?;
+        validate_math_symbol(token, ctx).map_err(fatal)?;
+        Ok(token)
     }
 }
 
-/// Borrow a `&[String]` as a `Vec<&str>` for the `DatabaseSink` API.
-fn str_refs(v: &[String]) -> Vec<&str> {
-    v.iter().map(String::as_str).collect()
+/// The `$.` closing a symbol list.
+///
+/// Whatever stopped [`math_symbol`] is named here rather than reported as a
+/// bare "expected `$.`", which leaves the author to guess which token the
+/// reader objected to.
+fn end_of_statement<'a, I: TokenStream<'a>>(ctx: &'a str) -> impl Parser<I, (), ErrMode<Fault>> {
+    move |input: &mut I| match opt(any).parse_next(input)? {
+        Some("$.") => Ok(()),
+        Some(t) => Err(reject(format!("unexpected `{t}` in {ctx} (expected `$.`)"))),
+        None => Err(reject(format!("unterminated {ctx}"))),
+    }
+}
+
+/// One step of a normal proof: the label of an assertion or hypothesis.
+fn proof_step<'a, I: TokenStream<'a>>(label: &'a str) -> impl Parser<I, String, ErrMode<Fault>> {
+    move |input: &mut I| {
+        let token = any
+            .verify(|token: &str| !token.starts_with('$'))
+            .parse_next(input)?;
+        // `?` is the placeholder for a step nobody has supplied. A database may
+        // carry one; a proof this crate accepts may not.
+        if token == "?" {
+            return Err(reject(format!(
+                "`{label}` contains an incomplete-proof placeholder `?`"
+            )));
+        }
+        validate_label(token, "proof step label").map_err(fatal)?;
+        Ok(token.to_owned())
+    }
+}
+
+/// The `$.` closing a normal proof.
+fn end_of_proof<'a, I: TokenStream<'a>>(label: &'a str) -> impl Parser<I, (), ErrMode<Fault>> {
+    move |input: &mut I| match opt(any).parse_next(input)? {
+        Some("$.") => Ok(()),
+        Some(t) => Err(reject(format!("unexpected `{t}` in proof of `{label}`"))),
+        None => Err(reject(format!("unterminated proof of `{label}`"))),
+    }
+}
+
+/// Build the [`Expr`] a `$e`, `$a` or `$p` states, whose first symbol is the
+/// typecode.
+fn expression(label: &str, symbols: &[&str]) -> Result<Expr, MmError> {
+    from_symbols(symbols.iter().copied()).ok_or_else(|| MmError::MalformedExpr {
+        label: label.to_string(),
+        message: "expression is empty (needs at least a typecode)".into(),
+    })
 }
 
 #[cfg(test)]

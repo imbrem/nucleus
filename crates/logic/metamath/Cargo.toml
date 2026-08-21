@@ -8,6 +8,7 @@ description = "Untrusted Metamath parser and proof validator"
 publish = false
 
 [dependencies]
+covalence-lib-parse = { path = "../../lib/parse" }
 fnv = "1"
 smol_str = "0.3"
 thiserror = "2"
