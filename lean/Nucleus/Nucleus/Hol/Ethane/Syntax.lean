@@ -290,6 +290,12 @@ def ofHolE : {sort : HolSort} → Nucleus.HolE.Named.Expr Sig Name sort → Opti
     Syn.check sort expression.erase = some expression := by
   induction expression <;> simp_all [erase, Syn.check]
 
+/-- Erasing the sort index does not identify distinct sorted expressions. -/
+theorem erase_injective : Function.Injective (@erase Sig Name sort) := by
+  intro left right equality
+  have checked := congrArg (Syn.check sort) equality
+  simpa using checked
+
 @[simp] theorem syn_toHolE_erase (expression : Expr Sig Name sort) :
     expression.erase.toHolE = Nucleus.HolE.Named.Unsorted.erase expression.toHolE := by
   induction expression <;> simp_all [erase, toHolE, Syn.toHolE,
