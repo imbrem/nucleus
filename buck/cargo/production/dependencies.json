@@ -3236,6 +3236,33 @@
       "buildscript": {}
     },
     {
+      "id": "registry+https://github.com/rust-lang/crates.io-index#winnow@1.0.4",
+      "name": "winnow",
+      "version": "1.0.4",
+      "checksum": "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81",
+      "edition": "2021",
+      "features": [
+        "alloc",
+        "ascii",
+        "binary",
+        "default",
+        "parser",
+        "std"
+      ],
+      "env": {
+        "CARGO_PKG_DESCRIPTION": "A byte-oriented, zero-copy, parser combinators library",
+        "CARGO_PKG_LICENSE": "MIT",
+        "CARGO_PKG_REPOSITORY": "https://github.com/winnow-rs/winnow"
+      },
+      "targets": [
+        {
+          "named_deps": {
+            "memchr": ":memchr-2.8.3"
+          }
+        }
+      ]
+    },
+    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#zerocopy@0.8.55",
       "name": "zerocopy",
       "version": "0.8.55",
@@ -3430,6 +3457,14 @@
       "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151"
+      ]
+    },
+    {
+      "id": "workspace#covalence-lib-parse@0.0.0",
+      "name": "covalence-lib-parse",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#winnow@1.0.4"
       ]
     },
     {
@@ -5438,6 +5473,13 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen@0.2.121",
       "target": "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen-shared@0.2.121",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#winnow@1.0.4",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3",
       "kinds": [
         "normal"
       ]
