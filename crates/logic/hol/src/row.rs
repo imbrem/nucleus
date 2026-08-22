@@ -363,7 +363,9 @@ impl From<Row> for RowSerde {
 }
 
 fn ordinary<const N: usize>(tag: Tag, children: [Ref; N], value: Option<Value>) -> Fields {
-    (tag, Some(children.into_iter().collect()), value, None, None)
+    let children: SmallVec<_> = children.into_iter().collect();
+    let children = (!children.is_empty()).then_some(children);
+    (tag, children, value, None, None)
 }
 
 const fn foreign(tag: Tag, src: ImportId, ix: Ref) -> Fields {
@@ -375,11 +377,11 @@ impl TryFrom<RowSerde> for Row {
 
     fn try_from(row: RowSerde) -> Result<Self, Self::Error> {
         let expression = match (row.tag, row.ixs.as_deref(), row.val, row.src, row.ix) {
-            (Tag::Kind(KindTag::Star), Some([]), None, None, None) => Expr::KindStar,
+            (Tag::Kind(KindTag::Star), None, None, None, None) => Expr::KindStar,
             (Tag::Kind(KindTag::Arr), Some([domain, codomain]), None, None, None) => {
                 Expr::KindArr(*domain, *codomain)
             }
-            (Tag::Ty(TyTag::Bool), Some([]), None, None, None) => Expr::BoolTy,
+            (Tag::Ty(TyTag::Bool), None, None, None, None) => Expr::BoolTy,
             (Tag::Ty(TyTag::Arr), Some([domain, codomain]), None, None, None) => {
                 Expr::TyArr(*domain, *codomain)
             }
@@ -413,9 +415,7 @@ impl TryFrom<RowSerde> for Row {
             (Tag::Tm(TmTag::Lam), Some([binder, body]), None, None, None) => {
                 Expr::Lam(*binder, *body)
             }
-            (Tag::Tm(TmTag::Bool), Some([]), Some(Value::Bool(value)), None, None) => {
-                Expr::Bool(value)
-            }
+            (Tag::Tm(TmTag::Bool), None, Some(Value::Bool(value)), None, None) => Expr::Bool(value),
             (Tag::Tm(TmTag::Eq), Some([left, right]), None, None, None) => Expr::Eq(*left, *right),
             (Tag::Tm(TmTag::Eps), Some([ty, predicate]), None, None, None) => Expr::Eps {
                 ty: *ty,
@@ -543,6 +543,26 @@ mod tests {
                         Cbor::Array(vec![Cbor::Integer(1.into()), Cbor::Integer(2.into())]),
                     ),
                 ]
+            );
+        }
+    }
+
+    #[test]
+    fn leaf_rows_omit_the_child_field() {
+        for row in [
+            Row::new(Expr::KindStar),
+            Row::new(Expr::BoolTy),
+            Row::new(Expr::Bool(false)),
+        ] {
+            let mut bytes = Vec::new();
+            into_writer(&row, &mut bytes).unwrap();
+            let Cbor::Map(fields) = from_reader(bytes.as_slice()).unwrap() else {
+                panic!("row must be a CBOR map")
+            };
+            assert!(
+                fields
+                    .iter()
+                    .all(|(key, _)| key != &Cbor::Text("ixs".into()))
             );
         }
     }
