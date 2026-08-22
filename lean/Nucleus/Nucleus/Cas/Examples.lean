@@ -4,13 +4,13 @@ import Nucleus.Cas.Basic
 
 namespace Nucleus.CasExamples
 
-/-- A tiny naming function which makes collisions easy to exhibit. -/
-def constantName (_ : Bytes) : O256 := 0
+/- A tiny naming strategy which makes collisions easy to exhibit. -/
+local instance constantName : Name Bytes O256 where
+  name _ := 0
 
-def emptyPair : CasPair constantName := CasPair.ofBlob constantName Bytes.empty
+def emptyPair : CasPair := CasPair.ofBlob Bytes.empty
 
-def oneBytePair : CasPair constantName :=
-  CasPair.ofBlob constantName (Bytes.empty.push 1)
+def oneBytePair : CasPair := CasPair.ofBlob (Bytes.empty.push 1)
 
 /-- Checked construction does not assume that the naming function is injective. -/
 example : emptyPair.hash = oneBytePair.hash := rfl
@@ -27,7 +27,7 @@ example : ((Cas.singleton emptyPair).insert oneBytePair).HasCollision := by
 
 /-- Checking rejects no valid assertion and returns a checked LCF atom. -/
 example :
-    ∃ pair, emptyPair.assertion.check? constantName = some pair :=
+    ∃ pair, emptyPair.assertion.check? = some pair :=
   CasAssertion.check?_complete emptyPair.valid
 
 /-- A singleton is collision-free, so its relational lookup is functional. -/
