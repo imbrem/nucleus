@@ -10,7 +10,7 @@ mod row;
 pub mod wire;
 
 pub use kernel::{EqualityIx, Kernel, KernelError, KindIx, TmIx, TyIx};
-pub use resolve::{ResolveError, Resolver};
+pub use resolve::{ResolveError, Resolver, TrustedResolver};
 pub use row::{KindTag, Sort, Tag, TmTag, TyTag};
 
 use std::{collections::BTreeSet, num::NonZeroU64};

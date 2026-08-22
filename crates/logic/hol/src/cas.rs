@@ -5,7 +5,7 @@ use std::{collections::BTreeMap, sync::Arc, sync::RwLock};
 use covalence_data_cas::{Cas, CasObject};
 use covalence_lib_hash::O256;
 
-use crate::{Arena, Link, Resolver, wire};
+use crate::{Arena, Link, Resolver, TrustedResolver, resolve::trusted_resolver, wire};
 
 /// A CAS or arena-decoding failure.
 #[derive(Debug)]
@@ -90,6 +90,9 @@ impl<C: Cas> Resolver for CasResolver<C> {
         Ok(Some(Arc::clone(cache.entry(address).or_insert(arena))))
     }
 }
+
+impl<C: Cas> trusted_resolver::Sealed for CasResolver<C> {}
+impl<C: Cas> TrustedResolver for CasResolver<C> {}
 
 #[cfg(test)]
 mod tests {

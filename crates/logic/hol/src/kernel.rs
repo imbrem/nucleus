@@ -19,7 +19,7 @@
 use std::sync::Arc;
 
 use crate::{
-    Arena, Import, ImportId, Link, Meta, Ref, ResolveError, Resolver, Sort,
+    Arena, Import, ImportId, Link, Meta, Ref, ResolveError, Resolver, Sort, TrustedResolver,
     resolve::{Syntax, Value, resolve_at},
     row::{Expr, Row},
 };
@@ -164,7 +164,7 @@ impl EqualityIx {
     }
 }
 
-impl<R: Resolver> Kernel<R> {
+impl<R: TrustedResolver> Kernel<R> {
     /// Validate an untrusted arena.
     ///
     /// The MVP accepts reflexive inline equality claims. Beta and congruence
@@ -918,7 +918,7 @@ fn imported<R: Resolver>(
     }
 }
 
-fn validate_meta<R: Resolver>(
+fn validate_meta<R: TrustedResolver>(
     owner: &Arena,
     resolver: &Arc<R>,
     record: Meta,
@@ -963,6 +963,9 @@ mod tests {
             Ok(None)
         }
     }
+
+    impl crate::resolve::trusted_resolver::Sealed for NoLinks {}
+    impl TrustedResolver for NoLinks {}
 
     #[test]
     fn checked_boolean_context_and_reflexive_equality_are_accepted() {

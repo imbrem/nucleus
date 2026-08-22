@@ -20,6 +20,21 @@ pub trait Resolver {
     fn resolve(&self, link: &Link) -> Result<Option<Arc<Arena>>, Self::Error>;
 }
 
+/// A resolver suitable for the checked kernel's fixed Lean `Resolver` model.
+///
+/// A successful lookup is immutable: after `resolve(link)` returns arena
+/// `A`, every later successful lookup of the same link must return `A`.
+/// Absence and errors may remain retryable.
+///
+/// Implementations are sealed because violating successful-result stability
+/// can invalidate retained checked equality and import witnesses.
+#[allow(private_bounds)]
+pub trait TrustedResolver: Resolver + trusted_resolver::Sealed {}
+
+pub(crate) mod trusted_resolver {
+    pub trait Sealed {}
+}
+
 /// A recoverable failure while resolving one row graph.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResolveError<E> {
