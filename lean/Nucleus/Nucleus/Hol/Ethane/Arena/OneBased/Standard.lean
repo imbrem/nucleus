@@ -464,11 +464,39 @@ theorem zero_wellFormed :
       Nucleus.Hol.Ethane.Standard.zero) :=
   Value.rustCheck_sound zero_checked
 
-private theorem forestEncoding (expression : EmptySyn) :
+theorem forest_encoding (expression : EmptySyn) :
     (Nucleus.Hol.Ethane.Arena.Encoder.run expression).forest
         (Nucleus.Hol.Ethane.Arena.Encoder.run expression).root =
       some (.syntax expression) :=
   Nucleus.Hol.Ethane.Arena.Encoder.run_forest_root expression
+
+/-- The one-based infinity root and the established forest encoder agree on
+the exact named infinity sentence. -/
+theorem infinity_forest_correspondence :
+    resolveAt? resolutionFuel noLinks Builder.arena roots.infinity =
+        some (.term .boolTy Nucleus.Hol.Ethane.Standard.infinity) ∧
+      (Nucleus.Hol.Ethane.Arena.Encoder.run
+          Nucleus.Hol.Ethane.Standard.infinity.erase).forest
+          (Nucleus.Hol.Ethane.Arena.Encoder.run
+            Nucleus.Hol.Ethane.Standard.infinity.erase).root =
+        some ((Value.term .boolTy
+          Nucleus.Hol.Ethane.Standard.infinity).toForestValue) := by
+  exact ⟨infinity_resolves,
+    forest_encoding Nucleus.Hol.Ethane.Standard.infinity.erase⟩
+
+/-- The one-based Peano-existence root and the established forest encoder
+agree on the exact named sentence. -/
+theorem natExists_forest_correspondence :
+    resolveAt? resolutionFuel noLinks Builder.arena roots.natExists =
+        some (.term .boolTy Nucleus.Hol.Ethane.Standard.natExists) ∧
+      (Nucleus.Hol.Ethane.Arena.Encoder.run
+          Nucleus.Hol.Ethane.Standard.natExists.erase).forest
+          (Nucleus.Hol.Ethane.Arena.Encoder.run
+            Nucleus.Hol.Ethane.Standard.natExists.erase).root =
+        some ((Value.term .boolTy
+          Nucleus.Hol.Ethane.Standard.natExists).toForestValue) := by
+  exact ⟨natExists_resolves,
+    forest_encoding Nucleus.Hol.Ethane.Standard.natExists.erase⟩
 
 /-- The one-based natural root and the established forest encoder agree on
 the exact named natural-type syntax. -/
@@ -480,7 +508,39 @@ theorem nat_forest_correspondence :
           (Nucleus.Hol.Ethane.Arena.Encoder.run
             Nucleus.Hol.Ethane.Standard.nat.erase).root =
         some ((Value.family .star Nucleus.Hol.Ethane.Standard.nat).toForestValue) := by
-  exact ⟨nat_resolves, forestEncoding Nucleus.Hol.Ethane.Standard.nat.erase⟩
+  exact ⟨nat_resolves, forest_encoding Nucleus.Hol.Ethane.Standard.nat.erase⟩
+
+/-- The one-based successor root and the established forest encoder agree on
+the exact named Hilbert-choice term. -/
+theorem succ_forest_correspondence :
+    resolveAt? resolutionFuel noLinks Builder.arena roots.succ =
+        some (.term
+          (.arr Nucleus.Hol.Ethane.Standard.nat Nucleus.Hol.Ethane.Standard.nat)
+          Nucleus.Hol.Ethane.Standard.succ) ∧
+      (Nucleus.Hol.Ethane.Arena.Encoder.run
+          Nucleus.Hol.Ethane.Standard.succ.erase).forest
+          (Nucleus.Hol.Ethane.Arena.Encoder.run
+            Nucleus.Hol.Ethane.Standard.succ.erase).root =
+        some ((Value.term
+          (.arr Nucleus.Hol.Ethane.Standard.nat Nucleus.Hol.Ethane.Standard.nat)
+          Nucleus.Hol.Ethane.Standard.succ).toForestValue) := by
+  exact ⟨succ_resolves,
+    forest_encoding Nucleus.Hol.Ethane.Standard.succ.erase⟩
+
+/-- The one-based zero root and the established forest encoder agree on the
+exact named Hilbert-choice term. -/
+theorem zero_forest_correspondence :
+    resolveAt? resolutionFuel noLinks Builder.arena roots.zero =
+        some (.term Nucleus.Hol.Ethane.Standard.nat
+          Nucleus.Hol.Ethane.Standard.zero) ∧
+      (Nucleus.Hol.Ethane.Arena.Encoder.run
+          Nucleus.Hol.Ethane.Standard.zero.erase).forest
+          (Nucleus.Hol.Ethane.Arena.Encoder.run
+            Nucleus.Hol.Ethane.Standard.zero.erase).root =
+        some ((Value.term Nucleus.Hol.Ethane.Standard.nat
+          Nucleus.Hol.Ethane.Standard.zero).toForestValue) := by
+  exact ⟨zero_resolves,
+    forest_encoding Nucleus.Hol.Ethane.Standard.zero.erase⟩
 
 /-- Every exported root is a local row of the standard arena. -/
 theorem roots_within_bounds :
