@@ -8,7 +8,7 @@ The package is a mixed one: hand-written Python in `python/covalence`, and the
 compiled extension module staged beside it as `covalence._covalence`. The
 compiled module is private; ordinary Python modules such as `covalence.lib.hash`
 name the public surface. This keeps that surface independent of the Rust module
-and leaves room for composition modules: `covalence.cas` now combines the
+and leaves room for composition modules: `covalence.cas` combines the
 checked logic objects and userspace providers, while a later
 `covalence.nucleus` can do the same for the full stack.
 

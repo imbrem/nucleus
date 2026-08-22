@@ -224,8 +224,7 @@ impl CasStatistics for IndexCas {
 
 /// A synchronized, optionally bounded wrapper around [`IndexCas`].
 ///
-/// This remains available to existing shared consumers. New users which do
-/// not need shared insertion can use `IndexCas` directly.
+/// Use [`IndexCas`] directly when insertion does not require shared access.
 pub struct SharedIndexCas {
     index: RwLock<IndexCas>,
     limit: u64,
