@@ -9,7 +9,7 @@ mod resolve;
 mod row;
 pub mod wire;
 
-pub use kernel::{Kernel, KernelError, KindIx, TmIx, TyIx};
+pub use kernel::{EqualityIx, Kernel, KernelError, KindIx, TmIx, TyIx};
 pub use resolve::{ResolveError, Resolver};
 pub use row::{KindTag, Sort, Tag, TmTag, TyTag};
 

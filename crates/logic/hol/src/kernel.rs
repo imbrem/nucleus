@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::{
     Arena, Import, ImportId, Link, Meta, Ref, ResolveError, Resolver, Sort,
-    resolve::{Value, resolve_at},
+    resolve::{Syntax, Value, resolve_at},
     row::{Expr, Row},
 };
 
@@ -21,6 +21,9 @@ pub enum KernelError<E> {
     InvalidConclusion(Meta),
     InvalidConstructor { expected: Sort, actual: Sort },
     MissingDefinition(Ref),
+    ForeignEquality,
+    EqualityEndpointMismatch,
+    EqualityCongruenceMismatch,
     Resolve(ResolveError<E>),
 }
 
@@ -77,6 +80,13 @@ impl<E: std::fmt::Debug + std::fmt::Display> std::fmt::Display for KernelError<E
             Self::MissingDefinition(reference) => {
                 write!(output, "definition {} does not exist", reference.get())
             }
+            Self::ForeignEquality => output.write_str("equality belongs to another kernel"),
+            Self::EqualityEndpointMismatch => {
+                output.write_str("equality proof endpoints do not compose")
+            }
+            Self::EqualityCongruenceMismatch => {
+                output.write_str("application children do not match equality endpoints")
+            }
             Self::Resolve(error) => write!(output, "could not resolve kernel data: {error:?}"),
         }
     }
@@ -95,6 +105,7 @@ impl<E: std::fmt::Debug + std::fmt::Display> std::error::Error for KernelError<E
 pub struct Kernel<R> {
     arena: Arena,
     resolver: Arc<R>,
+    identity: Arc<()>,
 }
 
 macro_rules! checked_index {
@@ -114,6 +125,26 @@ macro_rules! checked_index {
 checked_index!(KindIx);
 checked_index!(TyIx);
 checked_index!(TmIx);
+
+/// An opaque equality capability owned by one checked kernel lineage.
+#[derive(Clone, Debug)]
+pub struct EqualityIx {
+    identity: Arc<()>,
+    left: Ref,
+    right: Ref,
+}
+
+impl EqualityIx {
+    #[must_use]
+    pub const fn left(&self) -> Ref {
+        self.left
+    }
+
+    #[must_use]
+    pub const fn right(&self) -> Ref {
+        self.right
+    }
+}
 
 impl<R: Resolver> Kernel<R> {
     /// Validate an untrusted arena.
@@ -157,7 +188,11 @@ impl<R: Resolver> Kernel<R> {
             }
         }
 
-        Ok(Self { arena, resolver })
+        Ok(Self {
+            arena,
+            resolver,
+            identity: Arc::new(()),
+        })
     }
 
     #[must_use]
@@ -497,13 +532,127 @@ impl<R: Resolver> Kernel<R> {
         fuel: usize,
         left: TmIx,
         right: TmIx,
-    ) -> Result<(), KernelError<R::Error>> {
+    ) -> Result<EqualityIx, KernelError<R::Error>> {
         let mut candidate = self.arena.clone();
         if !candidate.set_eq(left.reference(), right.reference()) {
             return Err(KernelError::MissingDefinition(left.reference()));
         }
-        *self = Self::try_from_arena(candidate, Arc::clone(&self.resolver), fuel)?;
-        Ok(())
+        self.replace_arena_checked(candidate, fuel)?;
+        Ok(self.equality(left.reference(), right.reference()))
+    }
+
+    /// Recover the checked equality attached to an inline member.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the left reference has no such checked member.
+    pub fn equality_at(&self, left: Ref, right: Ref) -> Result<EqualityIx, KernelError<R::Error>> {
+        if self.arena.eq(left) != Some(right) {
+            return Err(KernelError::InvalidEqualityClaim(left));
+        }
+        Ok(self.equality(left, right))
+    }
+
+    /// Apply symmetry to an opaque equality capability.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the capability belongs to another kernel.
+    pub fn equality_symm(
+        &self,
+        equality: &EqualityIx,
+    ) -> Result<EqualityIx, KernelError<R::Error>> {
+        self.check_equality_owner(equality)?;
+        Ok(self.equality(equality.right, equality.left))
+    }
+
+    /// Compose two opaque equality capabilities.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for foreign capabilities or mismatched middle
+    /// endpoints.
+    pub fn equality_trans(
+        &self,
+        left: &EqualityIx,
+        right: &EqualityIx,
+    ) -> Result<EqualityIx, KernelError<R::Error>> {
+        self.check_equality_owner(left)?;
+        self.check_equality_owner(right)?;
+        if left.right != right.left {
+            return Err(KernelError::EqualityEndpointMismatch);
+        }
+        Ok(self.equality(left.left, right.right))
+    }
+
+    /// Apply application congruence to two checked equality capabilities.
+    ///
+    /// The application rows must use the function and argument endpoints in
+    /// the same order as the supplied capabilities. All six terms are checked
+    /// again in the current arena before the result capability is returned.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for foreign capabilities, mismatched application
+    /// children, unresolved terms, or incompatible function and argument
+    /// types.
+    pub fn equality_app(
+        &self,
+        fuel: usize,
+        left_app: TmIx,
+        right_app: TmIx,
+        function: &EqualityIx,
+        argument: &EqualityIx,
+    ) -> Result<EqualityIx, KernelError<R::Error>> {
+        self.check_equality_owner(function)?;
+        self.check_equality_owner(argument)?;
+
+        let expected_left = Expr::App(function.left, argument.left);
+        let expected_right = Expr::App(function.right, argument.right);
+        if self.arena.row(left_app.reference()).map(Row::expr) != Some(&expected_left)
+            || self.arena.row(right_app.reference()).map(Row::expr) != Some(&expected_right)
+        {
+            return Err(KernelError::EqualityCongruenceMismatch);
+        }
+
+        for reference in [
+            left_app.reference(),
+            right_app.reference(),
+            function.left,
+            function.right,
+            argument.left,
+            argument.right,
+        ] {
+            self.tm_at(fuel, reference)?;
+        }
+
+        let left_function = resolve_at(&self.arena, self.resolver(), function.left, fuel)?;
+        let right_function = resolve_at(&self.arena, self.resolver(), function.right, fuel)?;
+        let left_argument = resolve_at(&self.arena, self.resolver(), argument.left, fuel)?;
+        let right_argument = resolve_at(&self.arena, self.resolver(), argument.right, fuel)?;
+        let left_application =
+            resolve_at(&self.arena, self.resolver(), left_app.reference(), fuel)?;
+        let right_application =
+            resolve_at(&self.arena, self.resolver(), right_app.reference(), fuel)?;
+
+        let Value::Tm {
+            ty: Syntax::Arr(domain, codomain),
+            ..
+        } = &left_function
+        else {
+            return Err(KernelError::EqualityCongruenceMismatch);
+        };
+        let compatible = matches!(&right_function,
+            Value::Tm { ty, .. } if ty == &Syntax::Arr(domain.clone(), codomain.clone()))
+            && matches!(&left_argument, Value::Tm { ty, .. } if ty == domain.as_ref())
+            && matches!(&right_argument, Value::Tm { ty, .. } if ty == domain.as_ref())
+            && matches!(&left_application, Value::Tm { ty, .. } if ty == codomain.as_ref())
+            && matches!(&right_application, Value::Tm { ty, .. } if ty == codomain.as_ref());
+        if !compatible {
+            return Err(KernelError::EqualityCongruenceMismatch);
+        }
+
+        Ok(self.equality(left_app.reference(), right_app.reference()))
     }
 
     fn push_checked(
@@ -520,7 +669,7 @@ impl<R: Resolver> Kernel<R> {
         if actual != expected {
             return Err(KernelError::InvalidConstructor { expected, actual });
         }
-        *self = Self::try_from_arena(candidate, Arc::clone(&self.resolver), fuel)?;
+        self.replace_arena_checked(candidate, fuel)?;
         Ok(reference)
     }
 
@@ -533,7 +682,7 @@ impl<R: Resolver> Kernel<R> {
         let source = candidate
             .push_import(import)
             .ok_or(KernelError::TooManyImports)?;
-        *self = Self::try_from_arena(candidate, Arc::clone(&self.resolver), fuel)?;
+        self.replace_arena_checked(candidate, fuel)?;
         Ok(source)
     }
 
@@ -549,8 +698,35 @@ impl<R: Resolver> Kernel<R> {
         } else {
             candidate.push_assumption(record);
         }
-        *self = Self::try_from_arena(candidate, Arc::clone(&self.resolver), fuel)?;
+        self.replace_arena_checked(candidate, fuel)?;
         Ok(())
+    }
+
+    fn replace_arena_checked(
+        &mut self,
+        arena: Arena,
+        fuel: usize,
+    ) -> Result<(), KernelError<R::Error>> {
+        let mut checked = Self::try_from_arena(arena, Arc::clone(&self.resolver), fuel)?;
+        checked.identity = Arc::clone(&self.identity);
+        *self = checked;
+        Ok(())
+    }
+
+    fn equality(&self, left: Ref, right: Ref) -> EqualityIx {
+        EqualityIx {
+            identity: Arc::clone(&self.identity),
+            left,
+            right,
+        }
+    }
+
+    fn check_equality_owner(&self, equality: &EqualityIx) -> Result<(), KernelError<R::Error>> {
+        if Arc::ptr_eq(&self.identity, &equality.identity) {
+            Ok(())
+        } else {
+            Err(KernelError::ForeignEquality)
+        }
     }
 
     fn index_at(
@@ -747,8 +923,29 @@ mod tests {
         let identity = kernel.lam(4, variable, variable).unwrap();
         let truth = kernel.bool(5, true).unwrap();
         let application = kernel.app(6, identity, truth).unwrap();
-        kernel.assert_eq(6, application, truth).unwrap();
+        let beta = kernel.assert_eq(6, application, truth).unwrap();
+        let symmetric = kernel.equality_symm(&beta).unwrap();
+        let transitive = kernel.equality_trans(&beta, &symmetric).unwrap();
+        let identity_equality = kernel.assert_eq(7, identity, identity).unwrap();
+        let truth_equality = kernel.assert_eq(7, truth, truth).unwrap();
+        let second_application = kernel.app(8, identity, truth).unwrap();
+        let congruent = kernel
+            .equality_app(
+                8,
+                application,
+                second_application,
+                &identity_equality,
+                &truth_equality,
+            )
+            .unwrap();
         let proposition = kernel.eq(7, application, truth).unwrap();
+
+        assert_eq!(symmetric.left(), truth.reference());
+        assert_eq!(symmetric.right(), application.reference());
+        assert_eq!(transitive.left(), application.reference());
+        assert_eq!(transitive.right(), application.reference());
+        assert_eq!(congruent.left(), application.reference());
+        assert_eq!(congruent.right(), second_application.reference());
 
         assert_eq!(
             kernel.arena().tag(bool_ty.reference()),
@@ -877,6 +1074,19 @@ mod tests {
         assert!(matches!(
             kernel.assert_wf(3, source, reference(1), bogus_sort.reference()),
             Err(KernelError::InvalidConclusion(Meta::Wf { .. }))
+        ));
+    }
+
+    #[test]
+    fn equality_capabilities_cannot_cross_kernel_lineages() {
+        let mut first = Kernel::try_from_arena(Arena::empty(), Arc::new(NoLinks), 3).unwrap();
+        let first_true = first.bool(3, true).unwrap();
+        let equality = first.assert_eq(3, first_true, first_true).unwrap();
+
+        let second = Kernel::try_from_arena(Arena::empty(), Arc::new(NoLinks), 1).unwrap();
+        assert!(matches!(
+            second.equality_symm(&equality),
+            Err(KernelError::ForeignEquality)
         ));
     }
 

@@ -66,6 +66,258 @@ theorem equal_self {value : Value} (wellFormed : value.WellFormed) :
           exact .term ⟨Nucleus.Hol.Ethane.Reference.EqTm.complete
             termLowering termLowering typeLowering (.refl (.exact typing))⟩
 
+/-- Kernel equality is symmetric in every value category. -/
+theorem Equal.symm {left right : Value} (equality : Equal left right) :
+    Equal right left := by
+  cases equality with
+  | kind kind => exact .kind kind
+  | family conversion =>
+      rcases conversion with ⟨conversion⟩
+      exact .family ⟨conversion.symm⟩
+  | term conversion =>
+      rcases conversion with ⟨conversion⟩
+      exact .term ⟨{
+        loweredLeft := conversion.loweredRight
+        loweredRight := conversion.loweredLeft
+        loweredType := conversion.loweredType
+        leftLowering := conversion.rightLowering
+        rightLowering := conversion.leftLowering
+        typeLowering := conversion.typeLowering
+        derivation := conversion.derivation.symm }⟩
+
+theorem WellFormed.family_kinded {kind : Kind}
+    {expression : EmptyExpr (.kind kind)}
+    (wellFormed : WellFormed (.family kind expression)) :
+    ∃ lowered,
+      expression.lowerFam (.nil : TyScope []) = some lowered ∧
+      Nucleus.HolE.Kinded lowered := by
+  rcases wellFormed with
+    ⟨lowered, classification, expressionLowering,
+      classificationLowering, kinding⟩
+  cases classification with
+  | kind => exact ⟨lowered, expressionLowering, kinding⟩
+
+/-- A checked term exposes its exact locally nameless type derivation. -/
+theorem WellFormed.term_typing {type : EmptyTy} {term : EmptyTm}
+    (wellFormed : WellFormed (.term type term)) :
+    ∃ loweredTerm loweredType,
+      term.lowerTm (.nil : TyScope []) (.nil : TmScope ArenaSig 0) =
+        some loweredTerm ∧
+      type.lowerTy (.nil : TyScope []) = some loweredType ∧
+      Nucleus.HolE.HasType Nucleus.HolE.emptyBound loweredTerm loweredType := by
+  rcases wellFormed with
+    ⟨loweredTerm, classification, termLowering,
+      classificationLowering, typing⟩
+  cases classification with
+  | tm loweredType =>
+      have typeLowering : type.lowerTy (.nil : TyScope []) =
+          some loweredType := by
+        change (do
+          let lowered ← type.lowerTy (.nil : TyScope [])
+          pure (Nucleus.HolE.Classification.tm lowered)) =
+            some (Nucleus.HolE.Classification.tm loweredType)
+          at classificationLowering
+        cases lowered : type.lowerTy (.nil : TyScope []) <;>
+          simp [lowered] at classificationLowering
+        simpa [lowered] using classificationLowering
+      exact ⟨loweredTerm, loweredType, termLowering, typeLowering, typing⟩
+
+/-- Kernel equality is transitive.  The middle well-formedness premise is
+needed only by the underlying family-conversion transitivity rule. -/
+theorem Equal.trans {left middle right : Value}
+    (leftMiddle : Equal left middle) (middleWellFormed : middle.WellFormed)
+    (middleRight : Equal middle right) : Equal left right := by
+  cases leftMiddle with
+  | kind kind =>
+      cases middleRight
+      exact .kind kind
+  | family leftConversion =>
+      rename_i kind leftFamily middleFamily
+      cases middleRight with
+      | family rightConversion =>
+        rcases leftConversion with ⟨leftConversion⟩
+        rcases rightConversion with ⟨rightConversion⟩
+        rcases WellFormed.family_kinded middleWellFormed with
+          ⟨loweredMiddle, middleLowering, middleKinded⟩
+        change Nucleus.HolE.Named.lowerFam (.nil : TyScope [])
+          middleFamily.toHolE = some loweredMiddle at middleLowering
+        rw [leftConversion.rightLowering] at middleLowering
+        have same := Option.some.inj middleLowering
+        subst loweredMiddle
+        exact .family ⟨leftConversion.trans middleKinded rightConversion⟩
+  | term leftConversion =>
+      cases middleRight with
+      | term rightConversion =>
+        rcases leftConversion with ⟨leftConversion⟩
+        rcases rightConversion with ⟨rightConversion⟩
+        have rightMiddleLowering := rightConversion.leftLowering
+        rw [leftConversion.rightLowering] at rightMiddleLowering
+        have middleSame := Option.some.inj rightMiddleLowering
+        have rightTypeLowering := rightConversion.typeLowering
+        rw [leftConversion.typeLowering] at rightTypeLowering
+        have typeSame := Option.some.inj rightTypeLowering
+        have rightDerivation : Nucleus.HolE.EqTm Nucleus.HolE.emptyBound
+            leftConversion.loweredRight rightConversion.loweredRight
+            leftConversion.loweredType := by
+          simpa only [middleSame, typeSame] using rightConversion.derivation
+        exact .term ⟨{
+          loweredLeft := leftConversion.loweredLeft
+          loweredRight := rightConversion.loweredRight
+          loweredType := leftConversion.loweredType
+          leftLowering := leftConversion.leftLowering
+          rightLowering := rightConversion.rightLowering
+          typeLowering := leftConversion.typeLowering
+          derivation := leftConversion.derivation.trans rightDerivation }⟩
+
+/-- Application is congruent for checked term equality. -/
+theorem Equal.app {domain codomain : EmptyTy}
+    {leftFunction rightFunction leftArgument rightArgument : EmptyTm}
+    (functionEquality : Equal
+      (.term (.arr domain codomain) leftFunction)
+      (.term (.arr domain codomain) rightFunction))
+    (argumentEquality : Equal
+      (.term domain leftArgument) (.term domain rightArgument))
+    (leftFunctionWellFormed : WellFormed
+      (.term (.arr domain codomain) leftFunction))
+    (rightFunctionWellFormed : WellFormed
+      (.term (.arr domain codomain) rightFunction))
+    (leftArgumentWellFormed : WellFormed (.term domain leftArgument))
+    (rightArgumentWellFormed : WellFormed (.term domain rightArgument)) :
+    Equal (.term codomain (.app leftFunction leftArgument))
+      (.term codomain (.app rightFunction rightArgument)) := by
+  cases functionEquality with
+  | term functionConversion =>
+    cases argumentEquality with
+    | term argumentConversion =>
+      rcases functionConversion with ⟨functionConversion⟩
+      rcases argumentConversion with ⟨argumentConversion⟩
+      rcases leftFunctionWellFormed.term_typing with
+        ⟨loweredLeftFunction, loweredLeftFunctionType,
+          leftFunctionLowering, leftFunctionTypeLowering,
+          leftFunctionTyping⟩
+      rcases rightFunctionWellFormed.term_typing with
+        ⟨loweredRightFunction, loweredRightFunctionType,
+          rightFunctionLowering, rightFunctionTypeLowering,
+          rightFunctionTyping⟩
+      rcases leftArgumentWellFormed.term_typing with
+        ⟨loweredLeftArgument, loweredLeftArgumentType,
+          leftArgumentLowering, leftArgumentTypeLowering,
+          leftArgumentTyping⟩
+      rcases rightArgumentWellFormed.term_typing with
+        ⟨loweredRightArgument, loweredRightArgumentType,
+          rightArgumentLowering, rightArgumentTypeLowering,
+          rightArgumentTyping⟩
+      rw [functionConversion.leftLowering] at leftFunctionLowering
+      rw [functionConversion.rightLowering] at rightFunctionLowering
+      rw [argumentConversion.leftLowering] at leftArgumentLowering
+      rw [argumentConversion.rightLowering] at rightArgumentLowering
+      have leftFunctionSame := Option.some.inj leftFunctionLowering
+      have rightFunctionSame := Option.some.inj rightFunctionLowering
+      have leftArgumentSame := Option.some.inj leftArgumentLowering
+      have rightArgumentSame := Option.some.inj rightArgumentLowering
+      subst loweredLeftFunction
+      subst loweredRightFunction
+      subst loweredLeftArgument
+      subst loweredRightArgument
+      rw [functionConversion.typeLowering] at leftFunctionTypeLowering
+      rw [functionConversion.typeLowering] at rightFunctionTypeLowering
+      rw [argumentConversion.typeLowering] at leftArgumentTypeLowering
+      rw [argumentConversion.typeLowering] at rightArgumentTypeLowering
+      have leftFunctionTypeSame := Option.some.inj leftFunctionTypeLowering
+      have rightFunctionTypeSame := Option.some.inj rightFunctionTypeLowering
+      have leftArgumentTypeSame := Option.some.inj leftArgumentTypeLowering
+      have rightArgumentTypeSame := Option.some.inj rightArgumentTypeLowering
+      subst loweredLeftFunctionType
+      subst loweredRightFunctionType
+      subst loweredLeftArgumentType
+      subst loweredRightArgumentType
+      have functionTypeLowering := functionConversion.typeLowering
+      have domainLowering := argumentConversion.typeLowering
+      change Nucleus.HolE.Named.lowerFam (.nil : TyScope [])
+        ((domain.toHolE).arr codomain.toHolE) =
+          some functionConversion.loweredType at functionTypeLowering
+      change Nucleus.HolE.Named.lowerFam (.nil : TyScope []) domain.toHolE =
+        some argumentConversion.loweredType at domainLowering
+      simp only [Nucleus.HolE.Named.lowerFam, domainLowering] at functionTypeLowering
+      cases codomainLowering : Nucleus.HolE.Named.lowerFam
+          (.nil : TyScope []) codomain.toHolE with
+      | none =>
+          simp [codomainLowering] at functionTypeLowering
+      | some loweredCodomain =>
+          have functionTypeShape :
+              Nucleus.HolE.Expr.arr argumentConversion.loweredType
+                loweredCodomain = functionConversion.loweredType := by
+            have equality :
+                some (Nucleus.HolE.Expr.arr argumentConversion.loweredType
+                  loweredCodomain) = some functionConversion.loweredType := by
+              simpa [codomainLowering] using functionTypeLowering
+            exact Option.some.inj equality
+          have leftFunctionTyping' : Nucleus.HolE.HasType Nucleus.HolE.emptyBound
+              functionConversion.loweredLeft
+              (.arr argumentConversion.loweredType loweredCodomain) := by
+            simpa only [functionTypeShape] using leftFunctionTyping
+          have rightFunctionTyping' : Nucleus.HolE.HasType Nucleus.HolE.emptyBound
+              functionConversion.loweredRight
+              (.arr argumentConversion.loweredType loweredCodomain) := by
+            simpa only [functionTypeShape] using rightFunctionTyping
+          have functionDerivation : Nucleus.HolE.EqTm Nucleus.HolE.emptyBound
+              functionConversion.loweredLeft functionConversion.loweredRight
+              (.arr argumentConversion.loweredType loweredCodomain) := by
+            simpa only [functionTypeShape] using functionConversion.derivation
+          have leftExpected :
+              (Nucleus.Hol.Ethane.Expr.app leftFunction leftArgument).lowerTm
+                (.nil : TyScope []) (.nil : TmScope ArenaSig 0) =
+              some (.app functionConversion.loweredLeft
+                argumentConversion.loweredLeft) := by
+            have functionLowering := functionConversion.leftLowering
+            have argumentLowering := argumentConversion.leftLowering
+            change Nucleus.HolE.Named.lowerTm (.nil : TyScope [])
+              (.nil : TmScope ArenaSig 0) leftFunction.toHolE =
+                some functionConversion.loweredLeft at functionLowering
+            change Nucleus.HolE.Named.lowerTm (.nil : TyScope [])
+              (.nil : TmScope ArenaSig 0) leftArgument.toHolE =
+                some argumentConversion.loweredLeft at argumentLowering
+            change Nucleus.HolE.Named.lowerTm (.nil : TyScope [])
+              (.nil : TmScope ArenaSig 0)
+              (.app leftFunction.toHolE leftArgument.toHolE) = _
+            simp only [Nucleus.HolE.Named.lowerTm]
+            rw [functionLowering, argumentLowering]
+            rfl
+          have rightExpected :
+              (Nucleus.Hol.Ethane.Expr.app rightFunction rightArgument).lowerTm
+                (.nil : TyScope []) (.nil : TmScope ArenaSig 0) =
+              some (.app functionConversion.loweredRight
+                argumentConversion.loweredRight) := by
+            have functionLowering := functionConversion.rightLowering
+            have argumentLowering := argumentConversion.rightLowering
+            change Nucleus.HolE.Named.lowerTm (.nil : TyScope [])
+              (.nil : TmScope ArenaSig 0) rightFunction.toHolE =
+                some functionConversion.loweredRight at functionLowering
+            change Nucleus.HolE.Named.lowerTm (.nil : TyScope [])
+              (.nil : TmScope ArenaSig 0) rightArgument.toHolE =
+                some argumentConversion.loweredRight at argumentLowering
+            change Nucleus.HolE.Named.lowerTm (.nil : TyScope [])
+              (.nil : TmScope ArenaSig 0)
+              (.app rightFunction.toHolE rightArgument.toHolE) = _
+            simp only [Nucleus.HolE.Named.lowerTm]
+            rw [functionLowering, argumentLowering]
+            rfl
+          exact .term ⟨{
+            loweredLeft := .app functionConversion.loweredLeft
+              argumentConversion.loweredLeft
+            loweredRight := .app functionConversion.loweredRight
+              argumentConversion.loweredRight
+            loweredType := loweredCodomain
+            leftLowering := leftExpected
+            rightLowering := rightExpected
+            typeLowering := codomainLowering
+            derivation := .app
+              (.app leftFunctionTyping' leftArgumentTyping)
+              (.app rightFunctionTyping' rightArgumentTyping)
+              leftFunctionTyping' leftArgumentTyping
+              rightFunctionTyping' rightArgumentTyping
+              functionDerivation argumentConversion.derivation }⟩
+
 /-- A well-typed root beta step is an Ethane kernel equality. -/
 theorem equal_beta {type : EmptyTy} {source target : EmptyTm}
     (wellFormed : WellFormed (.term type source))
@@ -443,6 +695,82 @@ theorem valid_conclusion_sound (kernel : Kernel resolve)
   rcases kernel.conclusion_sound member with
     ⟨depth, entry, imported, lookup, resolved, valid⟩
   exact ⟨entry, imported, lookup, resolved, depth, valid⟩
+
+/-- An opaque checked equality handle over two arena references. -/
+structure Equality (kernel : Kernel resolve) (left right : Ref) where
+  leftValue : Value
+  rightValue : Value
+  leftResolves : Resolves resolve kernel.arena left leftValue
+  rightResolves : Resolves resolve kernel.arena right rightValue
+  equality : Value.Equal leftValue rightValue
+
+/-- Recover an equality handle from a checked inline member. -/
+theorem Equality.ofMember (kernel : Kernel resolve) {left right : Ref}
+    (member : kernel.arena.eq? left = some right) :
+    Nonempty (Equality kernel left right) := by
+  rcases kernel.equality_sound member with
+    ⟨leftValue, rightValue, leftResolves, rightResolves, equality⟩
+  exact ⟨⟨leftValue, rightValue, leftResolves, rightResolves, equality⟩⟩
+
+/-- Checked equality handles are symmetric without mutating the arena. -/
+def Equality.symm {kernel : Kernel resolve} {left right : Ref}
+    (equality : Equality kernel left right) : Equality kernel right left :=
+  ⟨equality.rightValue, equality.leftValue, equality.rightResolves,
+    equality.leftResolves, equality.equality.symm⟩
+
+/-- Checked equality handles compose when their independently resolved middle
+values agree.  The executable API checks this equality before returning. -/
+def Equality.trans {kernel : Kernel resolve} {left middle right : Ref}
+    (leftMiddle : Equality kernel left middle)
+    (middleRight : Equality kernel middle right)
+    (sameMiddle : leftMiddle.rightValue = middleRight.leftValue)
+    (middleWellFormed : leftMiddle.rightValue.WellFormed) :
+    Equality kernel left right := by
+  have transported : Value.Equal leftMiddle.rightValue middleRight.rightValue :=
+    sameMiddle ▸ middleRight.equality
+  exact ⟨leftMiddle.leftValue, middleRight.rightValue,
+    leftMiddle.leftResolves, middleRight.rightResolves,
+    leftMiddle.equality.trans middleWellFormed transported⟩
+
+/-- Application congruence for checked equality handles.  The endpoint
+equalities state the executable check that the two application rows contain
+the handles' function and argument references. -/
+def Equality.app {kernel : Kernel resolve}
+    {leftFunctionRef rightFunctionRef leftArgumentRef rightArgumentRef : Ref}
+    {leftApplicationRef rightApplicationRef : Ref}
+    (functionEquality : Equality kernel leftFunctionRef rightFunctionRef)
+    (argumentEquality : Equality kernel leftArgumentRef rightArgumentRef)
+    {domain codomain : EmptyTy}
+    {leftFunction rightFunction leftArgument rightArgument : EmptyTm}
+    (leftFunctionValue : functionEquality.leftValue =
+      .term (.arr domain codomain) leftFunction)
+    (rightFunctionValue : functionEquality.rightValue =
+      .term (.arr domain codomain) rightFunction)
+    (leftArgumentValue : argumentEquality.leftValue =
+      .term domain leftArgument)
+    (rightArgumentValue : argumentEquality.rightValue =
+      .term domain rightArgument)
+    (leftApplicationResolves : Resolves resolve kernel.arena
+      leftApplicationRef (.term codomain (.app leftFunction leftArgument)))
+    (rightApplicationResolves : Resolves resolve kernel.arena
+      rightApplicationRef (.term codomain (.app rightFunction rightArgument)))
+    (leftFunctionWellFormed : Value.WellFormed
+      (.term (.arr domain codomain) leftFunction))
+    (rightFunctionWellFormed : Value.WellFormed
+      (.term (.arr domain codomain) rightFunction))
+    (leftArgumentWellFormed : Value.WellFormed (.term domain leftArgument))
+    (rightArgumentWellFormed : Value.WellFormed (.term domain rightArgument)) :
+    Equality kernel leftApplicationRef rightApplicationRef := by
+  have functionValueEquality := functionEquality.equality
+  rw [leftFunctionValue, rightFunctionValue] at functionValueEquality
+  have argumentValueEquality := argumentEquality.equality
+  rw [leftArgumentValue, rightArgumentValue] at argumentValueEquality
+  exact ⟨.term codomain (.app leftFunction leftArgument),
+    .term codomain (.app rightFunction rightArgument),
+    leftApplicationResolves, rightApplicationResolves,
+    functionValueEquality.app argumentValueEquality
+      leftFunctionWellFormed rightFunctionWellFormed
+      leftArgumentWellFormed rightArgumentWellFormed⟩
 
 end Kernel
 
