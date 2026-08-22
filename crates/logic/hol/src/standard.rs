@@ -381,6 +381,7 @@ mod tests {
     use crate::{
         Import, Kernel, Link, Resolver, TrustedResolver,
         resolve::{Kind, Syntax, Value, resolve_at},
+        wire,
     };
 
     use super::*;
@@ -398,6 +399,38 @@ mod tests {
 
     impl crate::resolve::trusted_resolver::Sealed for NoLinks {}
     impl TrustedResolver for NoLinks {}
+
+    fn decode_hex(text: &str) -> Vec<u8> {
+        let digits = text
+            .bytes()
+            .filter(|byte| !byte.is_ascii_whitespace())
+            .collect::<Vec<_>>();
+        assert_eq!(digits.len() % 2, 0);
+        digits
+            .chunks_exact(2)
+            .map(|pair| {
+                let digit = |byte: u8| match byte {
+                    b'0'..=b'9' => byte - b'0',
+                    b'a'..=b'f' => byte - b'a' + 10,
+                    _ => panic!("standard fixture must contain lowercase hexadecimal"),
+                };
+                digit(pair[0]) << 4 | digit(pair[1])
+            })
+            .collect()
+    }
+
+    #[test]
+    fn standard_cbor_fixture_is_stable() {
+        let init = Init::new();
+        let fixture = decode_hex(include_str!("../fixtures/standard.cbor.hex"));
+        let mut encoded = Vec::new();
+        wire::serialize(init.arena(), &mut encoded).unwrap();
+        assert_eq!(encoded, fixture);
+        assert_eq!(
+            wire::deserialize(fixture.as_slice()).unwrap(),
+            *init.arena()
+        );
+    }
 
     #[test]
     fn standard_roots_are_checked_core_ethane_definitions() {
