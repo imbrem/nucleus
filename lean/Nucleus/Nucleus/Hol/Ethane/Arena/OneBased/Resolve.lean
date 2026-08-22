@@ -229,13 +229,20 @@ def SortingClaim (resolve : Resolver) (arena : Arena) (reference : Ref) : Prop :
     Resolves resolve arena sort classifier ∧
     value.HasSort classifier
 
-/-- Sorting denotation of a virtual sort-specific reference row. -/
+/-- A foreign value is available through one entry of the owner's import
+table.  This formulation deliberately hides whether that entry is literal or
+content addressed. -/
+def ForeignResolves (resolve : Resolver) (arena : Arena) (source : ImportId)
+    (foreignRef : Ref) (value : Value) : Prop :=
+  ∃ fuel, resolveForeignAt? fuel resolve arena source foreignRef = some value
+
+/-- Sorting denotation of a sort-specific reference row, without choosing a
+local row to contain it.  Kinds have no classifier expression in Ethane, so a
+`meta.wf` record can witness only a type-family or term reference. -/
 def ProxySortingClaim (expected : TagSort) (resolve : Resolver) (arena : Arena)
     (source : ImportId) (foreignRef sort : Ref) : Prop :=
-  ∃ entry imported value classifier,
-    arena.import? source = some entry ∧
-    resolveImport? resolve entry = some imported ∧
-    Resolves resolve imported foreignRef value ∧
+  ∃ value classifier,
+    ForeignResolves resolve arena source foreignRef value ∧
     value.tagSort = expected ∧
     Resolves resolve arena sort classifier ∧
     value.HasSort classifier
@@ -322,6 +329,189 @@ theorem resolveAt?_kindRef (fuel : Nat) (resolve : Resolver) (arena : Arena)
   simp only [resolveAt?, lookup, elaborateExpr, resolveForeignAt?]
   cases resolveForeignUsing? (resolveAt? fuel resolve) resolve arena source foreignRef <;> rfl
 
+theorem foreignResolves_iff_import (resolve : Resolver) (arena : Arena)
+    (source : ImportId) (foreignRef : Ref) (value : Value) :
+    ForeignResolves resolve arena source foreignRef value ↔
+      ∃ entry imported,
+        arena.import? source = some entry ∧
+        resolveImport? resolve entry = some imported ∧
+        Resolves resolve imported foreignRef value := by
+  constructor
+  · rintro ⟨fuel, resolved⟩
+    unfold resolveForeignAt? resolveForeignUsing? at resolved
+    split at resolved
+    next => contradiction
+    next entry importLookup =>
+      split at resolved
+      next => contradiction
+      next imported importResolved =>
+        exact ⟨entry, imported, importLookup, importResolved, fuel, resolved⟩
+  · rintro ⟨entry, imported, importLookup, importResolved, fuel, resolved⟩
+    exact ⟨fuel, by
+      simp only [resolveForeignAt?, resolveForeignUsing?, importLookup,
+        importResolved]
+      exact resolved⟩
+
+theorem resolves_tmRef_iff (resolve : Resolver) (arena : Arena)
+    (reference : Ref) (source : ImportId) (foreignRef : Ref)
+    (eq sort : Option Ref)
+    (lookup : arena.row? reference =
+      some ⟨.tmRef source foreignRef, eq, sort⟩) (value : Value) :
+    Resolves resolve arena reference value ↔
+      value.tagSort = .tm ∧
+      ForeignResolves resolve arena source foreignRef value := by
+  constructor
+  · rintro ⟨fuel, resolved⟩
+    cases fuel with
+    | zero => contradiction
+    | succ fuel =>
+      rw [resolveAt?_tmRef fuel resolve arena reference source foreignRef eq sort lookup]
+        at resolved
+      cases foreign : resolveForeignAt? fuel resolve arena source foreignRef with
+      | none =>
+        rw [foreign] at resolved
+        contradiction
+      | some actual =>
+        rw [foreign] at resolved
+        change (if actual.tagSort = .tm then some actual else none) =
+          some value at resolved
+        by_cases category : actual.tagSort = .tm
+        · rw [if_pos category] at resolved
+          have same : actual = value := Option.some.inj resolved
+          subst actual
+          exact ⟨category, fuel, foreign⟩
+        · rw [if_neg category] at resolved
+          contradiction
+  · rintro ⟨category, fuel, foreign⟩
+    refine ⟨fuel + 1, ?_⟩
+    rw [resolveAt?_tmRef fuel resolve arena reference source foreignRef eq sort lookup,
+      foreign]
+    simp [category]
+
+theorem resolves_tyRef_iff (resolve : Resolver) (arena : Arena)
+    (reference : Ref) (source : ImportId) (foreignRef : Ref)
+    (eq sort : Option Ref)
+    (lookup : arena.row? reference =
+      some ⟨.tyRef source foreignRef, eq, sort⟩) (value : Value) :
+    Resolves resolve arena reference value ↔
+      value.tagSort = .ty ∧
+      ForeignResolves resolve arena source foreignRef value := by
+  constructor
+  · rintro ⟨fuel, resolved⟩
+    cases fuel with
+    | zero => contradiction
+    | succ fuel =>
+      rw [resolveAt?_tyRef fuel resolve arena reference source foreignRef eq sort lookup]
+        at resolved
+      cases foreign : resolveForeignAt? fuel resolve arena source foreignRef with
+      | none =>
+        rw [foreign] at resolved
+        contradiction
+      | some actual =>
+        rw [foreign] at resolved
+        change (if actual.tagSort = .ty then some actual else none) =
+          some value at resolved
+        by_cases category : actual.tagSort = .ty
+        · rw [if_pos category] at resolved
+          have same : actual = value := Option.some.inj resolved
+          subst actual
+          exact ⟨category, fuel, foreign⟩
+        · rw [if_neg category] at resolved
+          contradiction
+  · rintro ⟨category, fuel, foreign⟩
+    refine ⟨fuel + 1, ?_⟩
+    rw [resolveAt?_tyRef fuel resolve arena reference source foreignRef eq sort lookup,
+      foreign]
+    simp [category]
+
+theorem resolves_kindRef_iff (resolve : Resolver) (arena : Arena)
+    (reference : Ref) (source : ImportId) (foreignRef : Ref)
+    (eq sort : Option Ref)
+    (lookup : arena.row? reference =
+      some ⟨.kindRef source foreignRef, eq, sort⟩) (value : Value) :
+    Resolves resolve arena reference value ↔
+      value.tagSort = .kind ∧
+      ForeignResolves resolve arena source foreignRef value := by
+  constructor
+  · rintro ⟨fuel, resolved⟩
+    cases fuel with
+    | zero => contradiction
+    | succ fuel =>
+      rw [resolveAt?_kindRef fuel resolve arena reference source foreignRef eq sort lookup]
+        at resolved
+      cases foreign : resolveForeignAt? fuel resolve arena source foreignRef with
+      | none =>
+        rw [foreign] at resolved
+        contradiction
+      | some actual =>
+        rw [foreign] at resolved
+        change (if actual.tagSort = .kind then some actual else none) =
+          some value at resolved
+        by_cases category : actual.tagSort = .kind
+        · rw [if_pos category] at resolved
+          have same : actual = value := Option.some.inj resolved
+          subst actual
+          exact ⟨category, fuel, foreign⟩
+        · rw [if_neg category] at resolved
+          contradiction
+  · rintro ⟨category, fuel, foreign⟩
+    refine ⟨fuel + 1, ?_⟩
+    rw [resolveAt?_kindRef fuel resolve arena reference source foreignRef eq sort lookup,
+      foreign]
+    simp [category]
+
+theorem sortingClaim_tmRef_iff (resolve : Resolver) (arena : Arena)
+    (reference : Ref) (source : ImportId) (foreignRef sort : Ref)
+    (eq : Option Ref)
+    (lookup : arena.row? reference =
+      some ⟨.tmRef source foreignRef, eq, some sort⟩) :
+    SortingClaim resolve arena reference ↔
+      ProxySortingClaim .tm resolve arena source foreignRef sort := by
+  constructor
+  · rintro ⟨actualSort, value, classifier, sortMember, valueResolved,
+      classifierResolved, sorted⟩
+    have actualSortEq : actualSort = sort := by
+      have reversed : sort = actualSort := by
+        simpa [Arena.sort?, lookup] using sortMember
+      exact reversed.symm
+    subst actualSort
+    rw [resolves_tmRef_iff resolve arena reference source foreignRef eq
+      (some sort) lookup value] at valueResolved
+    exact ⟨value, classifier, valueResolved.2, valueResolved.1,
+      classifierResolved, sorted⟩
+  · rintro ⟨value, classifier, foreignResolved, category,
+      classifierResolved, sorted⟩
+    exact ⟨sort, value, classifier, by simp [Arena.sort?, lookup],
+      (resolves_tmRef_iff resolve arena reference source foreignRef eq
+        (some sort) lookup value).2 ⟨category, foreignResolved⟩,
+      classifierResolved, sorted⟩
+
+theorem sortingClaim_tyRef_iff (resolve : Resolver) (arena : Arena)
+    (reference : Ref) (source : ImportId) (foreignRef sort : Ref)
+    (eq : Option Ref)
+    (lookup : arena.row? reference =
+      some ⟨.tyRef source foreignRef, eq, some sort⟩) :
+    SortingClaim resolve arena reference ↔
+      ProxySortingClaim .ty resolve arena source foreignRef sort := by
+  constructor
+  · rintro ⟨actualSort, value, classifier, sortMember, valueResolved,
+      classifierResolved, sorted⟩
+    have actualSortEq : actualSort = sort := by
+      have reversed : sort = actualSort := by
+        simpa [Arena.sort?, lookup] using sortMember
+      exact reversed.symm
+    subst actualSort
+    rw [resolves_tyRef_iff resolve arena reference source foreignRef eq
+      (some sort) lookup value] at valueResolved
+    exact ⟨value, classifier, valueResolved.2, valueResolved.1,
+      classifierResolved, sorted⟩
+  · rintro ⟨value, classifier, foreignResolved, category,
+      classifierResolved, sorted⟩
+    exact ⟨sort, value, classifier, by simp [Arena.sort?, lookup],
+      (resolves_tyRef_iff resolve arena reference source foreignRef eq
+        (some sort) lookup value).2 ⟨category, foreignResolved⟩,
+      classifierResolved, sorted⟩
+
 theorem metaWf_iff_proxy (resolve : Resolver) (arena : Arena)
     (source : ImportId) (foreignRef sort : Ref) :
     MetaClaim resolve arena (.wf source foreignRef sort) ↔
@@ -330,20 +520,59 @@ theorem metaWf_iff_proxy (resolve : Resolver) (arena : Arena)
   constructor
   · rintro ⟨entry, imported, value, classifier, importLookup, resolvedImport,
       valueResolved, classifierResolved, sorted⟩
+    have foreignResolved :
+        ForeignResolves resolve arena source foreignRef value :=
+      (foreignResolves_iff_import resolve arena source foreignRef value).2
+        ⟨entry, imported, importLookup, resolvedImport, valueResolved⟩
     cases value with
     | kind value => cases classifier <;> simp [Value.HasSort] at sorted
     | family kind expression =>
         right
-        exact ⟨entry, imported, .family kind expression, classifier, importLookup,
-          resolvedImport, valueResolved, rfl, classifierResolved, sorted⟩
+        exact ⟨.family kind expression, classifier, foreignResolved, rfl,
+          classifierResolved, sorted⟩
     | term type expression =>
         left
-        exact ⟨entry, imported, .term type expression, classifier, importLookup,
-          resolvedImport, valueResolved, rfl, classifierResolved, sorted⟩
+        exact ⟨.term type expression, classifier, foreignResolved, rfl,
+          classifierResolved, sorted⟩
   · rintro (claim | claim) <;>
-      rcases claim with ⟨entry, imported, value, classifier, importLookup,
-        resolvedImport, valueResolved, _category, classifierResolved, sorted⟩ <;>
+      rcases claim with ⟨value, classifier, foreignResolved,
+        _category, classifierResolved, sorted⟩ <;>
+      rcases (foreignResolves_iff_import resolve arena source foreignRef value).1
+        foreignResolved with
+        ⟨entry, imported, importLookup, resolvedImport, valueResolved⟩ <;>
       exact ⟨entry, imported, value, classifier, importLookup, resolvedImport,
         valueResolved, classifierResolved, sorted⟩
+
+/-- `meta.wf` is exactly the inline sorting claim of an actual term proxy. -/
+theorem metaWf_iff_tmRef_sortingClaim (resolve : Resolver) (arena : Arena)
+    (reference : Ref) (source : ImportId) (foreignRef sort : Ref)
+    (eq : Option Ref)
+    (lookup : arena.row? reference =
+      some ⟨.tmRef source foreignRef, eq, some sort⟩)
+    (category : ProxySortingClaim .tm resolve arena source foreignRef sort) :
+    MetaClaim resolve arena (.wf source foreignRef sort) ↔
+      SortingClaim resolve arena reference := by
+  rw [metaWf_iff_proxy, sortingClaim_tmRef_iff resolve arena reference source
+    foreignRef sort eq lookup]
+  constructor
+  · intro _claim
+    exact category
+  · exact Or.inl
+
+/-- `meta.wf` is exactly the inline sorting claim of an actual type proxy. -/
+theorem metaWf_iff_tyRef_sortingClaim (resolve : Resolver) (arena : Arena)
+    (reference : Ref) (source : ImportId) (foreignRef sort : Ref)
+    (eq : Option Ref)
+    (lookup : arena.row? reference =
+      some ⟨.tyRef source foreignRef, eq, some sort⟩)
+    (category : ProxySortingClaim .ty resolve arena source foreignRef sort) :
+    MetaClaim resolve arena (.wf source foreignRef sort) ↔
+      SortingClaim resolve arena reference := by
+  rw [metaWf_iff_proxy, sortingClaim_tyRef_iff resolve arena reference source
+    foreignRef sort eq lookup]
+  constructor
+  · intro _claim
+    exact category
+  · exact Or.inr
 
 end Nucleus.Hol.Ethane.OneBased
