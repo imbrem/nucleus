@@ -1,0 +1,16 @@
+[package]
+name = "covalence-logic-cas"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Opaque checked whole-object CAS facts"
+publish = false
+
+[dependencies]
+bytes = "1"
+covalence-lib-error = { path = "../../lib/error" }
+covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["blake3"] }
+
+[lints]
+workspace = true

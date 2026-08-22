@@ -69,6 +69,7 @@ genrule(
         "lib-hash": "//crates/lib/hash:package_files",
         "lib-rand": "//crates/lib/rand:package_files",
         "lib-sqlite": "//crates/lib/sqlite:package_files",
+        "logic-cas": "//crates/logic/cas:package_files",
         "neutron": "//crates/neutron:package_files",
         "nucleus": "//crates/nucleus:package_files",
         "proton": "//crates/proton:package_files",
