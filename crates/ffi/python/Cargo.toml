@@ -29,6 +29,7 @@ cid = "0.11"
 covalence-data-cbor = { path = "../../data/cbor" }
 covalence-lib-python = { path = "../../lib/python" }
 covalence-logic-lrat = { path = "../../logic/lrat" }
+covalence-logic-metamath = { path = "../../logic/metamath" }
 covalence-logic-sat = { path = "../../logic/sat" }
 # `random` is left off: drawing an object needs a caller-supplied CSPRNG, and
 # there is no Python binding for one to supply. The rest of the crate's

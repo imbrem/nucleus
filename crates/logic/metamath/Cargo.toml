@@ -1,0 +1,17 @@
+[package]
+name = "covalence-logic-metamath"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Untrusted Metamath parser and proof validator"
+publish = false
+
+[dependencies]
+covalence-lib-parse = { path = "../../lib/parse" }
+fnv = "1"
+smol_str = "0.3"
+thiserror = "2"
+
+[lints]
+workspace = true
