@@ -245,7 +245,7 @@ pub trait CasShared: Cas {
 
 #[cfg(test)]
 mod tests {
-    use std::{convert::Infallible, io, ops::Range};
+    use std::{collections::BTreeSet, convert::Infallible, io, ops::Range};
 
     use super::*;
 
@@ -305,6 +305,33 @@ mod tests {
 
         assert_eq!(CasAssertion::from(&fact), expected);
         assert_eq!(fact.into_assertion(), expected);
+    }
+
+    #[test]
+    fn assertions_and_facts_have_lexicographic_value_order() {
+        let facts = [
+            CasFact::from_bytes(Bytes::from_static(b"c")),
+            CasFact::from_bytes(Bytes::from_static(b"a")),
+            CasFact::from_bytes(Bytes::from_static(b"b")),
+        ];
+        let fact_set = facts.clone().into_iter().collect::<BTreeSet<_>>();
+        let assertion_set = facts
+            .iter()
+            .map(CasAssertion::from)
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(fact_set.len(), facts.len());
+        assert_eq!(assertion_set.len(), facts.len());
+        assert_eq!(
+            fact_set
+                .iter()
+                .map(|fact| (fact.hash(), fact.bytes().clone()))
+                .collect::<Vec<_>>(),
+            assertion_set
+                .iter()
+                .map(|assertion| (assertion.hash, assertion.blob.clone()))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[derive(Clone)]
