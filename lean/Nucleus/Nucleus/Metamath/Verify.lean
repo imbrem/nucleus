@@ -14,8 +14,10 @@ accepts, the conclusion is derivable**, in the sense of
 `Nucleus.Metamath.Provable`. The checker is an algorithm; `Provable` is the
 specification; nothing about the checker is taken as definitional.
 
-Two side conditions appear here that the Rust checker does not currently
-enforce, and the soundness proof is what makes clear they are load-bearing:
+Two side conditions appear here that the Rust checker did not originally
+enforce, and the soundness proof is what makes clear they are load-bearing.
+Both are enforced there now; `Nucleus.Metamath.VerifyTest` keeps the databases
+that separate the two behaviours, since they are what the conditions are *for*:
 
 * a cited assertion must occur **strictly earlier** in the database
   (`VerifyError.forwardReference`). Without it a theorem may cite itself, or two

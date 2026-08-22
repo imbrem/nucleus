@@ -20,10 +20,19 @@ Parsing is not modelled. The Rust crate this specifies,
 computing base — a parser suggests structure, and authority comes from
 re-deriving it — so the development starts from an already-parsed database.
 
-The soundness proof forced two side conditions into the checker that the Rust
-implementation does not yet enforce: cited assertions must occur earlier in the
-database, and cited hypotheses must be active in the current frame.
-`Nucleus.Metamath.VerifyTest` exhibits the databases that separate the two, and
-is imported here rather than left standalone so that the separation is checked
-on every build.
+The soundness proof forced two side conditions into the checker: cited
+assertions must occur earlier in the database, and cited hypotheses must be
+active in the current frame. `crates/logic/metamath` enforces both, having
+accepted proofs of false statements without them.
+
+One gap remains, and it is a gap in the Rust data model rather than in its
+checker. `Assertion.context` here carries `scopeFloats`, the floating
+hypotheses active where an assertion is stated; the Rust `Database` retains the
+corresponding `scope_disjoints` but not `scope_floats`, so its activity test
+covers `$e` and not `$f`. Until that field exists the two check different
+predicates, and this specification is the stricter of the two.
+
+`Nucleus.Metamath.VerifyTest` exhibits the databases that separate the
+behaviours, and is imported here rather than left standalone so that the
+separation is checked on every build.
 -/

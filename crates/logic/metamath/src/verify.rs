@@ -123,9 +123,9 @@ fn statement_label(statement: &Statement) -> Option<&str> {
 ///
 /// This is the **only** extension point on the checker: [`replay`] is the single
 /// replay implementation, and [`verify_assertion`] is `replay` with a no-op
-/// observer. Anything that needs to *watch* a verifying replay (the proof-trace
-/// builder in [`crate::trace`], say) implements this rather than forking a
-/// second, divergeable verifier. Observers are passive — they cannot influence
+/// observer. Anything that needs to *watch* a verifying replay — a proof-trace
+/// builder, say — implements this rather than forking a second, divergeable
+/// verifier. Observers are passive — they cannot influence
 /// the stack, the substitution, or any check.
 pub trait ReplayObserver {
     /// A `$f` floating hypothesis pushed `pushed`; `depth` is the resulting
