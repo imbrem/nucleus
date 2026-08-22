@@ -548,8 +548,10 @@ dependencies = [
 name = "covalence-logic-hol"
 version = "0.0.0"
 dependencies = [
+ "covalence-data-cas",
  "covalence-lib-cbor",
  "covalence-lib-hash",
+ "covalence-logic-cas",
  "serde",
  "smallvec",
 ]

@@ -825,6 +825,13 @@
     },
     {
       "source": "workspace#covalence-logic-hol@0.0.0",
+      "target": "workspace#covalence-data-cas@0.0.0",
+      "kinds": [
+        "dev"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-hol@0.0.0",
       "target": "workspace#covalence-lib-cbor@0.0.0",
       "kinds": [
         "normal"
@@ -833,6 +840,13 @@
     {
       "source": "workspace#covalence-logic-hol@0.0.0",
       "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-hol@0.0.0",
+      "target": "workspace#covalence-logic-cas@0.0.0",
       "kinds": [
         "normal"
       ]

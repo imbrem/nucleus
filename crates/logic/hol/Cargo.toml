@@ -10,8 +10,12 @@ publish = false
 [dependencies]
 covalence-lib-cbor = { path = "../../lib/cbor" }
 covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["serde"] }
+covalence-logic-cas = { path = "../cas" }
 serde = { version = "1", features = ["derive"] }
 smallvec = { version = "1", features = ["serde"] }
+
+[dev-dependencies]
+covalence-data-cas = { path = "../../data/cas" }
 
 [lints]
 workspace = true
