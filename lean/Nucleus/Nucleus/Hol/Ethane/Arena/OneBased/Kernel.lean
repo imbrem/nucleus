@@ -16,6 +16,7 @@ established by the arena that records it.
 namespace Nucleus.Hol.Ethane.OneBased
 
 open Nucleus
+set_option relaxedAutoImplicit true
 
 namespace Value
 /-- Kernel equality for two resolved values.  Kind equality is syntactic;
@@ -57,8 +58,8 @@ theorem equal_self {value : Value} (wellFormed : value.WellFormed) :
             change (do
               let lowered ← type.lowerTy (.nil : TyScope [])
               pure (Nucleus.HolE.Classification.tm lowered)) =
-                some (Nucleus.HolE.Classification.tm loweredType) at
-                  classificationLowering
+                some (Nucleus.HolE.Classification.tm loweredType)
+              at classificationLowering
             cases lowered : type.lowerTy (.nil : TyScope []) <;>
               simp [lowered] at classificationLowering
             simpa [lowered] using classificationLowering
@@ -80,7 +81,7 @@ theorem equal_beta {type : EmptyTy} {source target : EmptyTm}
       have namedTyping : Nucleus.HolE.Named.HasType
           (.nil : TyScope []) (.nil : TmScope ArenaSig 0)
           Nucleus.HolE.emptyBound source.toHolE type.toHolE := by
-        exact ⟨loweredSource, loweredType, sourceLowering,
+        exact ⟨loweredSource, .tm loweredType, sourceLowering,
           classificationLowering, sourceTyping⟩
       obtain ⟨conversion⟩ := step.toTmConv
         (fun index => Fin.elim0 index) namedTyping
@@ -102,15 +103,26 @@ def identityBetaStep (name : Nat) (domain : EmptyTy) (argument : EmptyTm)
       (.nil : TmScope ArenaSig 0) = some loweredArgument) :
     Nucleus.HolE.Named.TmBeta
       (.nil : TyScope []) (.nil : TmScope ArenaSig 0)
-      (.app (.lam name domain (.tmFv name domain)) argument).toHolE
+      (Nucleus.Hol.Ethane.Expr.app
+        (Nucleus.Hol.Ethane.Expr.lam name domain
+          (Nucleus.Hol.Ethane.Expr.tmFv name domain)) argument).toHolE
       argument.toHolE where
   domain := loweredDomain
   body := .bv 0
   argument := loweredArgument
   sourceLowering := by
+    change Nucleus.HolE.Named.lowerFam (.nil : TyScope []) domain.toHolE =
+      some loweredDomain at domainLowering
+    change Nucleus.HolE.Named.lowerTm (.nil : TyScope [])
+      (.nil : TmScope ArenaSig 0) argument.toHolE =
+        some loweredArgument at argumentLowering
     simp [Nucleus.Hol.Ethane.Expr.toHolE, Nucleus.HolE.Named.lowerTm,
       Nucleus.HolE.Named.lookupTm, domainLowering, argumentLowering]
-  targetLowering := argumentLowering
+  targetLowering := by
+    change Nucleus.HolE.Named.lowerTm (.nil : TyScope [])
+      (.nil : TmScope ArenaSig 0) argument.toHolE =
+        some loweredArgument at argumentLowering
+    simpa [Nucleus.HolE.openBound, Nucleus.HolE.instantiate] using argumentLowering
 
 end Value
 
@@ -158,9 +170,9 @@ def BetaEqualityClaim (resolve : Resolver) (arena : Arena)
         Resolves resolve arena reference (.term type source) ∧
         Resolves resolve arena right (.term type target) ∧
         Value.WellFormed (.term type source) ∧
-        Nucleus.HolE.Named.TmBeta
+        Nonempty (Nucleus.HolE.Named.TmBeta
           (.nil : TyScope []) (.nil : TmScope ArenaSig 0)
-          source.toHolE target.toHolE
+          source.toHolE target.toHolE)
 
 theorem betaEqualityClaim_sound
     (claim : BetaEqualityClaim resolve arena reference) :
@@ -171,7 +183,7 @@ theorem betaEqualityClaim_sound
   rename_i right member
   rw [member] at claim
   rcases claim with ⟨type, source, target, sourceResolves, targetResolves,
-    wellFormed, step⟩
+    wellFormed, ⟨step⟩⟩
   exact ⟨.term type source, .term type target, sourceResolves, targetResolves,
     Value.equal_beta wellFormed step⟩
 
@@ -202,10 +214,26 @@ theorem identityBetaEqualityClaim_sound
   rcases claim with ⟨type, domain, name, argument, loweredDomain,
     loweredArgument, sourceResolves, targetResolves, wellFormed,
     domainLowering, argumentLowering⟩
-  let source := .app (.lam name domain (.tmFv name domain)) argument
+  let source : EmptyTm :=
+    Nucleus.Hol.Ethane.Expr.app
+      (Nucleus.Hol.Ethane.Expr.lam name domain
+        (Nucleus.Hol.Ethane.Expr.tmFv name domain)) argument
   exact ⟨.term type source, .term type argument, sourceResolves, targetResolves,
     Value.equal_beta wellFormed
       (Value.identityBetaStep name domain argument domainLowering argumentLowering)⟩
+
+/-- The equality alternatives implemented by the initial Rust checker. -/
+def ExecutableEqualityClaim (resolve : Resolver) (arena : Arena)
+    (reference : Ref) : Prop :=
+  ReflexiveEqualityClaim resolve arena reference ∨
+  IdentityBetaEqualityClaim resolve arena reference
+
+theorem executableEqualityClaim_sound
+    (claim : ExecutableEqualityClaim resolve arena reference) :
+    EqualityClaim resolve arena reference := by
+  cases claim with
+  | inl reflexive => exact reflexiveEqualityClaim_sound reflexive
+  | inr beta => exact identityBetaEqualityClaim_sound beta
 
 /-- Meaning of the optional sorting member on one row. -/
 def SortingMemberClaim (resolve : Resolver) (arena : Arena)
@@ -233,6 +261,24 @@ structure Arena.LocallyValid (resolve : Resolver) (arena : Arena) : Prop where
   context : ∀ reference ∈ arena.ctx, ContextClaim resolve arena reference
   axioms : ∀ name ∈ arena.axs, AllowedAxiom name
 
+/-- The local checks implemented by the initial Rust validator. -/
+structure Arena.ExecutableLocallyValid (resolve : Resolver)
+    (arena : Arena) : Prop where
+  structural : arena.StructurallyValid
+  sorts : ∀ reference, SortingMemberClaim resolve arena reference
+  equalities : ∀ reference, ExecutableEqualityClaim resolve arena reference
+  context : ∀ reference ∈ arena.ctx, ContextClaim resolve arena reference
+  axioms : ∀ name ∈ arena.axs, AllowedAxiom name
+
+theorem Arena.ExecutableLocallyValid.sound
+    (valid : Arena.ExecutableLocallyValid resolve arena) :
+    Arena.LocallyValid resolve arena where
+  structural := valid.structural
+  sorts := valid.sorts
+  equalities reference := executableEqualityClaim_sound (valid.equalities reference)
+  context := valid.context
+  axioms := valid.axioms
+
 /-- Metadata checked relative to a caller-supplied class of trusted arenas. -/
 def KernelMetaClaim (trusted : Arena → Prop) (resolve : Resolver)
     (arena : Arena) : Meta → Prop
@@ -244,6 +290,18 @@ def KernelMetaClaim (trusted : Arena → Prop) (resolve : Resolver)
         resolveImport? resolve entry = some imported ∧
         trusted imported
 
+theorem KernelMetaClaim.mono
+    {trusted stronger : Arena → Prop} {resolve : Resolver} {arena : Arena}
+    {record : Meta}
+    (implication : ∀ candidate, trusted candidate → stronger candidate)
+    (claim : KernelMetaClaim trusted resolve arena record) :
+    KernelMetaClaim stronger resolve arena record := by
+  cases record with
+  | wf source foreignRef sort => exact claim
+  | valid source =>
+      rcases claim with ⟨entry, imported, lookup, resolved, valid⟩
+      exact ⟨entry, imported, lookup, resolved, implication imported valid⟩
+
 /-- Kernel validity at a finite import-trust depth.  Each `meta.valid` edge
 strictly decreases the depth, so cyclic trust requires an independent finite
 witness rather than being accepted coinductively. -/
@@ -254,6 +312,28 @@ def Arena.KernelValidAt : Nat → Resolver → Arena → Prop
       ∀ record ∈ arena.assert,
         KernelMetaClaim (Arena.KernelValidAt depth resolve) resolve arena record
 
+/-- The complete subset accepted by the initial Rust validator, including its
+finite recursive validation of trusted imports. -/
+def Arena.ExecutableKernelValidAt : Nat → Resolver → Arena → Prop
+  | 0, _, _ => False
+  | depth + 1, resolve, arena =>
+      arena.ExecutableLocallyValid resolve ∧
+      ∀ record ∈ arena.assert,
+        KernelMetaClaim (Arena.ExecutableKernelValidAt depth resolve)
+          resolve arena record
+
+theorem Arena.executableKernelValidAt_sound :
+    ∀ (depth) (resolve : Resolver) (arena : Arena),
+      Arena.ExecutableKernelValidAt depth resolve arena →
+      Arena.KernelValidAt depth resolve arena
+  | 0, _, _, valid => by contradiction
+  | depth + 1, resolve, arena, valid => by
+      exact ⟨valid.1.sound, fun record member =>
+        KernelMetaClaim.mono
+          (fun imported importedValid =>
+            Arena.executableKernelValidAt_sound depth resolve imported importedValid)
+          (valid.2 record member)⟩
+
 /-- A raw arena is a valid checked-kernel state relative to a resolver.
 
 The resolver is a parameter because successful CAS resolution is persistent
@@ -261,6 +341,15 @@ but absence is retryable.  No premise in `assume` is silently promoted to an
 assertion. -/
 def Arena.KernelValid (resolve : Resolver) (arena : Arena) : Prop :=
   ∃ depth, arena.KernelValidAt depth resolve
+
+/-- Passing the executable validator is sufficient for abstract kernel
+validity. -/
+theorem Arena.executableKernelValid_sound
+    {resolve : Resolver} {arena : Arena}
+    (valid : ∃ depth, Arena.ExecutableKernelValidAt depth resolve arena) :
+    Arena.KernelValid resolve arena := by
+  rcases valid with ⟨depth, valid⟩
+  exact ⟨depth, Arena.executableKernelValidAt_sound depth resolve arena valid⟩
 
 /-- An arena paired with the proof that its exposed claims were checked. -/
 structure Kernel (resolve : Resolver) where
@@ -279,8 +368,8 @@ namespace Arena
   simp [sort?]
 
 /-- The empty arena is a checked kernel for every resolver. -/
-theorem empty_kernelValid (resolve : Resolver) : empty.KernelValid resolve where
-  intro
+theorem empty_kernelValid (resolve : Resolver) : empty.KernelValid resolve := by
+  refine ⟨1, ?_⟩
   exact ⟨{
     structural := by simp [StructurallyValid, empty, defs, RowsValid]
     sorts := by simp [SortingMemberClaim]
@@ -309,7 +398,8 @@ theorem equality_sound (kernel : Kernel resolve) {reference right : Ref}
   | zero => contradiction
   | succ depth =>
   have claim := valid.1.equalities reference
-  simp [EqualityClaim, member] at claim
+  unfold EqualityClaim at claim
+  rw [member] at claim
   exact claim
 
 /-- Every context entry is a genuinely well-typed Boolean term. -/
