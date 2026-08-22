@@ -383,7 +383,8 @@ dependencies = [
  "bytes",
  "covalence-lib-error",
  "covalence-lib-hash",
- "indexmap",
+ "covalence-logic-cas",
+ "hashbrown 0.17.1",
 ]
 
 [[package]]
@@ -424,9 +425,11 @@ name = "covalence-ffi-python"
 version = "0.0.0"
 dependencies = [
  "cid",
+ "covalence-data-cas",
  "covalence-data-cbor",
  "covalence-lib-hash",
  "covalence-lib-python",
+ "covalence-logic-cas",
  "covalence-logic-lrat",
  "covalence-logic-metamath",
  "covalence-logic-sat",

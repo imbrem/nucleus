@@ -6,7 +6,8 @@ use std::sync::RwLock;
 use bytes::Bytes;
 use covalence_lib_error::snafu::{self, Snafu};
 use covalence_lib_hash::O256;
-use indexmap::IndexMap;
+use covalence_logic_cas::{CasFact, TrustedCas};
+use hashbrown::HashTable;
 
 use crate::{Cas, CasObject};
 
@@ -22,6 +23,32 @@ pub struct AdmissionError {
     pub len: u64,
     /// Largest length this store admits.
     pub limit: u64,
+}
+
+/// Failure to select one checked fact from a [`MemoryCas`].
+///
+/// Absence and a genuine hash collision are deliberately distinct. A
+/// colliding address retains both facts as witnesses instead of selecting one
+/// blob arbitrarily.
+#[derive(Clone, Debug, Eq, PartialEq, Snafu)]
+#[snafu(crate_root(snafu))]
+pub enum MemoryCasError {
+    /// No fact in the store carries the requested address.
+    #[snafu(display("CAS object {address} is not resident"))]
+    Missing {
+        /// Requested address.
+        address: O256,
+    },
+    /// At least two distinct complete blobs carry the requested address.
+    #[snafu(display("CAS address {address} has distinct checked collision witnesses"))]
+    Collision {
+        /// Colliding address.
+        address: O256,
+        /// One checked collision witness.
+        first: Box<CasFact>,
+        /// A distinct checked collision witness.
+        second: Box<CasFact>,
+    },
 }
 
 /// A range request which does not lie inside the addressed object.
@@ -40,7 +67,7 @@ pub struct InvalidRange {
 /// Resident object counts and sizes.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct CasStats {
-    /// Number of distinct addresses currently resolvable.
+    /// Number of distinct checked hash/blob pairs currently resident.
     pub objects: u64,
     /// Sum of the lengths of every resident object.
     pub bytes: u64,
@@ -48,10 +75,107 @@ pub struct CasStats {
     pub largest: u64,
 }
 
-/// A whole-object, in-memory [`Cas`] with deterministic iteration.
+/// A whole-object, in-memory [`Cas`] whose trusted contents are [`CasFact`]s.
+///
+/// Facts live in one insertion-ordered [`Vec`]. The address index uses
+/// [`HashTable`], hashbrown's safe public wrapper around its private
+/// `RawTable`. This retains the requested raw-table-plus-vector layout without
+/// pinning an obsolete hashbrown release merely to reach its unsafe internals.
+///
+/// The index maps one address to every fact with that address. Exact duplicate
+/// insertion is idempotent, while distinct collision witnesses are both
+/// retained. [`TrustedCas::get`] reports such an address as ambiguous.
 pub struct MemoryCas {
-    objects: RwLock<IndexMap<O256, Bytes>>,
+    objects: RwLock<Objects>,
     limit: u64,
+}
+
+#[derive(Debug)]
+struct AddressEntry {
+    address: O256,
+    indices: Vec<usize>,
+}
+
+#[derive(Debug, Default)]
+struct Objects {
+    facts: Vec<CasFact>,
+    index: HashTable<AddressEntry>,
+}
+
+impl Objects {
+    fn entry(&self, address: O256) -> Option<&AddressEntry> {
+        self.index
+            .find(address_hash(address), |entry| entry.address == address)
+    }
+
+    fn facts_at(&self, address: O256) -> impl Iterator<Item = &CasFact> {
+        self.entry(address)
+            .into_iter()
+            .flat_map(|entry| entry.indices.iter())
+            .map(|&index| &self.facts[index])
+    }
+
+    fn insert(&mut self, fact: CasFact) -> bool {
+        let address = fact.hash();
+        if self.facts_at(address).any(|resident| resident == &fact) {
+            return false;
+        }
+
+        let fact_index = self.facts.len();
+        self.facts.push(fact);
+        let hash = address_hash(address);
+        if let Some(entry) = self.index.find_mut(hash, |entry| entry.address == address) {
+            entry.indices.push(fact_index);
+        } else {
+            self.index.insert_unique(
+                hash,
+                AddressEntry {
+                    address,
+                    indices: vec![fact_index],
+                },
+                |entry| address_hash(entry.address),
+            );
+        }
+        true
+    }
+
+    fn remove(&mut self, address: O256) -> bool {
+        let before = self.facts.len();
+        self.facts.retain(|fact| fact.hash() != address);
+        if self.facts.len() == before {
+            return false;
+        }
+        self.rebuild_index();
+        true
+    }
+
+    fn rebuild_index(&mut self) {
+        self.index.clear();
+        for (index, fact) in self.facts.iter().enumerate() {
+            let address = fact.hash();
+            let hash = address_hash(address);
+            if let Some(entry) = self.index.find_mut(hash, |entry| entry.address == address) {
+                entry.indices.push(index);
+            } else {
+                self.index.insert_unique(
+                    hash,
+                    AddressEntry {
+                        address,
+                        indices: vec![index],
+                    },
+                    |entry| address_hash(entry.address),
+                );
+            }
+        }
+    }
+}
+
+/// Uses 64 already-uniform bits of the content address as the table hash.
+fn address_hash(address: O256) -> u64 {
+    let bytes = address.as_bytes();
+    u64::from_le_bytes([
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+    ])
 }
 
 impl Default for MemoryCas {
@@ -71,7 +195,7 @@ impl MemoryCas {
     #[must_use]
     pub fn with_limit(limit: u64) -> Self {
         Self {
-            objects: RwLock::new(IndexMap::new()),
+            objects: RwLock::new(Objects::default()),
             limit,
         }
     }
@@ -100,36 +224,92 @@ impl MemoryCas {
                 limit: self.limit,
             });
         }
-        let address = O256::from_bytes(&bytes);
-        self.objects_mut().entry(address).or_insert(bytes);
+        let fact = CasFact::from_bytes(bytes);
+        let address = fact.hash();
+        self.objects_mut().insert(fact);
         Ok(address)
     }
 
-    /// Drops `address` from the index.
+    /// Admits an already checked whole-object fact.
     ///
-    /// Returns whether the address was resolvable beforehand. Bytes already
-    /// handed out stay valid; only future resolutions are affected.
-    pub fn remove(&self, address: O256) -> bool {
-        // Preserve insertion order.
-        self.objects_mut().shift_remove(&address).is_some()
+    /// Returns `true` when this exact hash/blob pair was new. A repeated pair
+    /// is an idempotent no-op. A distinct fact with the same address is kept as
+    /// a collision witness rather than replacing the resident fact.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AdmissionError`] when the fact exceeds [`Self::limit`].
+    pub fn insert_fact(&self, fact: CasFact) -> Result<bool, AdmissionError> {
+        let len = fact.bytes().len() as u64;
+        if len > self.limit {
+            return Err(AdmissionError {
+                len,
+                limit: self.limit,
+            });
+        }
+        Ok(self.objects_mut().insert(fact))
     }
 
-    /// Returns whether `address` currently resolves.
+    /// Drops every fact carrying `address` from the relation and index.
+    ///
+    /// Returns whether the address was present beforehand. Bytes already
+    /// handed out stay valid; only future resolutions are affected.
+    pub fn remove(&self, address: O256) -> bool {
+        self.objects_mut().remove(address)
+    }
+
+    /// Returns whether at least one resident fact carries `address`.
     #[must_use]
     pub fn contains(&self, address: O256) -> bool {
-        self.objects().contains_key(&address)
+        self.objects().entry(address).is_some()
     }
 
     /// Returns the complete bytes for `address`, if it resolves.
     #[must_use]
     pub fn get(&self, address: O256) -> Option<Bytes> {
-        self.objects().get(&address).cloned()
+        self.get_fact(address).ok().map(|fact| fact.bytes().clone())
     }
 
-    /// Returns every resolvable address.
+    /// Gets the unique checked fact carrying `address`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MemoryCasError::Missing`] when no fact carries `address`, or
+    /// [`MemoryCasError::Collision`] with two witnesses when distinct facts
+    /// carry it.
+    pub fn get_fact(&self, address: O256) -> Result<CasFact, MemoryCasError> {
+        let objects = self.objects();
+        let mut facts = objects.facts_at(address);
+        let Some(first) = facts.next() else {
+            return Err(MemoryCasError::Missing { address });
+        };
+        let Some(second) = facts.next() else {
+            return Ok(first.clone());
+        };
+        Err(MemoryCasError::Collision {
+            address,
+            first: Box::new(first.clone()),
+            second: Box::new(second.clone()),
+        })
+    }
+
+    /// Returns every resident checked pair in insertion order.
+    ///
+    /// Colliding pairs remain distinct, while exact duplicate insertion does
+    /// not add a second entry.
+    #[must_use]
+    pub fn facts(&self) -> Vec<CasFact> {
+        self.objects().facts.clone()
+    }
+
+    /// Returns every address carried by at least one resident fact.
     #[must_use]
     pub fn addresses(&self) -> Vec<O256> {
-        self.objects().keys().copied().collect()
+        self.objects()
+            .index
+            .iter()
+            .map(|entry| entry.address)
+            .collect()
     }
 
     /// Summarises what this store currently holds.
@@ -137,24 +317,24 @@ impl MemoryCas {
     pub fn stats(&self) -> CasStats {
         let objects = self.objects();
         let mut stats = CasStats {
-            objects: objects.len() as u64,
+            objects: objects.facts.len() as u64,
             ..CasStats::default()
         };
-        for bytes in objects.values() {
-            let len = bytes.len() as u64;
+        for fact in &objects.facts {
+            let len = fact.bytes().len() as u64;
             stats.bytes += len;
             stats.largest = stats.largest.max(len);
         }
         stats
     }
 
-    fn objects(&self) -> std::sync::RwLockReadGuard<'_, IndexMap<O256, Bytes>> {
+    fn objects(&self) -> std::sync::RwLockReadGuard<'_, Objects> {
         self.objects
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    fn objects_mut(&self) -> std::sync::RwLockWriteGuard<'_, IndexMap<O256, Bytes>> {
+    fn objects_mut(&self) -> std::sync::RwLockWriteGuard<'_, Objects> {
         self.objects
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -205,6 +385,14 @@ impl Cas for MemoryCas {
     }
 }
 
+impl TrustedCas for MemoryCas {
+    type Error = MemoryCasError;
+
+    fn get(&self, address: O256) -> Result<CasFact, Self::Error> {
+        self.get_fact(address)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,6 +413,38 @@ mod tests {
         let second = cas.insert(&b"hello"[..]).unwrap();
         assert_eq!(first, second);
         assert_eq!(cas.stats().objects, 1);
+    }
+
+    #[test]
+    fn checked_fact_admission_is_relation_membership() {
+        let cas = MemoryCas::new();
+        let fact = CasFact::from_bytes(Bytes::from_static(b"checked"));
+
+        assert!(cas.insert_fact(fact.clone()).unwrap());
+        assert!(!cas.insert_fact(fact.clone()).unwrap());
+        assert_eq!(cas.facts(), vec![fact.clone()]);
+        assert_eq!(
+            covalence_logic_cas::get_exact(&cas, fact.hash()).unwrap(),
+            fact
+        );
+    }
+
+    #[test]
+    fn checked_lookup_distinguishes_absence() {
+        let cas = MemoryCas::new();
+        let address = O256::from_bytes(b"absent");
+
+        assert_eq!(
+            cas.get_fact(address).unwrap_err(),
+            MemoryCasError::Missing { address }
+        );
+        assert!(matches!(
+            covalence_logic_cas::get_exact(&cas, address),
+            Err(covalence_logic_cas::GetError::Provider {
+                source: MemoryCasError::Missing { address: missing },
+                ..
+            }) if missing == address
+        ));
     }
 
     #[test]

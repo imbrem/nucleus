@@ -1,6 +1,13 @@
-//! Synchronous content-addressed storage.
+//! Untrusted userspace content-addressed storage.
 //!
-//! Opening pins an immutable object, so later removal affects only new opens.
+//! [`MemoryCas`] stores opaque checked facts and implements
+//! [`covalence_logic_cas::TrustedCas`]. The word "trusted" in that trait names
+//! its checked result, not this store or its indexing policy.
+//!
+//! [`Cas`] and [`CasObject`] are the pre-fact range-reading API, retained while
+//! existing consumers are restacked. Opening through that compatibility API
+//! pins immutable bytes, so later removal affects only new opens. It introduces
+//! no range or length LCF facts.
 
 mod memory;
 
@@ -8,14 +15,19 @@ mod memory;
 pub use bytes::Bytes;
 
 pub use memory::{
-    AdmissionError, CasStats, InvalidRange, MAX_OBJECT_BYTES, MemoryCas, ResidentObject,
+    AdmissionError, CasStats, InvalidRange, MAX_OBJECT_BYTES, MemoryCas, MemoryCasError,
+    ResidentObject,
 };
 
 use std::ops::Range;
 
 use covalence_lib_hash::O256;
 
-/// A trusted, immutable content-addressed byte source.
+/// Legacy immutable byte-source interface retained during the fact restack.
+///
+/// This interface does not introduce checked LCF facts. New whole-object
+/// consumers should use [`covalence_logic_cas::TrustedCas`] and
+/// [`covalence_logic_cas::get_exact`].
 pub trait Cas {
     /// Implementation-specific failure.
     type Error;
