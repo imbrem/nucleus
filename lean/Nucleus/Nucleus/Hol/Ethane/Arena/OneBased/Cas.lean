@@ -69,9 +69,11 @@ theorem ByteCas.resolver_mono [Hash32] {left right : ByteCas} (extension : left 
   cases leftFetch : left.fetch link.blake3 with
   | unknown => simp [leftFetch] at resolved
   | known leftArena =>
-      simp [leftFetch] at resolved
-      subst leftArena
-      exact (Unknown.known_le_iff.mp monotone).symm
+      simp only [leftFetch] at resolved
+      have equal : leftArena = arena := Option.some.inj resolved
+      subst arena
+      rw [leftFetch, Unknown.known_le_iff] at monotone
+      rw [monotone]
 
 /-- A cache is sound when every hit agrees with authenticated CAS decoding. -/
 def CacheSound [Hash32] (cas : ByteCas) (cache : O256 → Option Arena) : Prop :=
@@ -89,8 +91,10 @@ theorem cachedFetch_eq [Hash32] {cas : ByteCas} {cache : O256 → Option Arena}
     (sound : CacheSound cas cache) (address : O256) :
     cachedFetch cas cache address = cas.fetch address := by
   cases hit : cache address with
-  | none => rfl
-  | some arena => exact sound address arena hit
+  | none => simp [cachedFetch, hit]
+  | some arena =>
+      simp only [cachedFetch, hit]
+      exact (sound address arena hit).symm
 
 def cachedResolver [Hash32] (cas : ByteCas) (cache : O256 → Option Arena) : Resolver :=
   fun link => match cachedFetch cas cache link.blake3 with
