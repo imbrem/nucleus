@@ -85,12 +85,14 @@ impl<E: std::fmt::Debug + std::fmt::Display> std::error::Error for KernelError<E
 /// An arena whose exposed claims satisfy `OneBased.Arena.KernelValid`.
 ///
 /// Raw CBOR decoding returns [`Arena`], never `Kernel`. Construction runs the
-/// checked validation pass. The resolver is a ghost parameter in Lean; Rust
-/// callers must retain the successful-resolution persistence promised by
-/// their CAS implementation.
+/// checked validation pass. The resolver is retained by the kernel, matching
+/// the fixed resolver parameter of `OneBased.Kernel` in Lean. Consequently a
+/// checked state cannot later be interpreted or extended with a different
+/// resolver.
 #[derive(Clone, Debug)]
-pub struct Kernel {
+pub struct Kernel<R> {
     arena: Arena,
+    resolver: Arc<R>,
 }
 
 macro_rules! checked_index {
@@ -111,7 +113,7 @@ checked_index!(KindIx);
 checked_index!(TyIx);
 checked_index!(TmIx);
 
-impl Kernel {
+impl<R: Resolver> Kernel<R> {
     /// Validate an untrusted arena.
     ///
     /// The MVP accepts reflexive inline equality claims. Beta and congruence
@@ -121,9 +123,9 @@ impl Kernel {
     ///
     /// Returns the first failed representation, resolution, sorting, typing,
     /// equality, context, metadata, or axiom check.
-    pub fn try_from_arena<R: Resolver>(
+    pub fn try_from_arena(
         arena: Arena,
-        resolver: &R,
+        resolver: Arc<R>,
         fuel: usize,
     ) -> Result<Self, KernelError<R::Error>> {
         validate_structure(&arena)?;
@@ -136,24 +138,24 @@ impl Kernel {
 
         for position in 1..=arena.len() {
             let reference = reference(position)?;
-            validate_sort(&arena, resolver, reference, fuel)?;
-            validate_reflexive_equality(&arena, resolver, reference, fuel)?;
+            validate_sort(&arena, resolver.as_ref(), reference, fuel)?;
+            validate_reflexive_equality(&arena, resolver.as_ref(), reference, fuel)?;
         }
 
         for reference in arena.context() {
-            let value = resolve_at(&arena, resolver, reference, fuel)?;
+            let value = resolve_at(&arena, resolver.as_ref(), reference, fuel)?;
             if !is_checked_bool(&value) {
                 return Err(KernelError::InvalidContext(reference));
             }
         }
 
         for record in arena.assertions() {
-            if !validate_meta(&arena, resolver, *record, fuel)? {
+            if !validate_meta(&arena, &resolver, *record, fuel)? {
                 return Err(KernelError::InvalidConclusion(*record));
             }
         }
 
-        Ok(Self { arena })
+        Ok(Self { arena, resolver })
     }
 
     #[must_use]
@@ -166,17 +168,18 @@ impl Kernel {
         self.arena
     }
 
+    #[must_use]
+    pub fn resolver(&self) -> &R {
+        self.resolver.as_ref()
+    }
+
     /// Append `kind.star` and recheck the resulting state.
     ///
     /// # Errors
     ///
     /// Returns an error if allocation or kernel revalidation fails.
-    pub fn star<R: Resolver>(
-        &mut self,
-        resolver: &R,
-        fuel: usize,
-    ) -> Result<KindIx, KernelError<R::Error>> {
-        self.push_checked(resolver, fuel, Row::new(Expr::KindStar), Sort::Kind)
+    pub fn star(&mut self, fuel: usize) -> Result<KindIx, KernelError<R::Error>> {
+        self.push_checked(fuel, Row::new(Expr::KindStar), Sort::Kind)
             .map(KindIx)
     }
 
@@ -185,12 +188,8 @@ impl Kernel {
     /// # Errors
     ///
     /// Returns an error if allocation or kernel revalidation fails.
-    pub fn bool_ty<R: Resolver>(
-        &mut self,
-        resolver: &R,
-        fuel: usize,
-    ) -> Result<TyIx, KernelError<R::Error>> {
-        self.push_checked(resolver, fuel, Row::new(Expr::BoolTy), Sort::Ty)
+    pub fn bool_ty(&mut self, fuel: usize) -> Result<TyIx, KernelError<R::Error>> {
+        self.push_checked(fuel, Row::new(Expr::BoolTy), Sort::Ty)
             .map(TyIx)
     }
 
@@ -199,15 +198,13 @@ impl Kernel {
     /// # Errors
     ///
     /// Returns an error if the type handle is invalid or revalidation fails.
-    pub fn tm_fv<R: Resolver>(
+    pub fn tm_fv(
         &mut self,
-        resolver: &R,
         fuel: usize,
         name: u64,
         ty: TyIx,
     ) -> Result<TmIx, KernelError<R::Error>> {
         self.push_checked(
-            resolver,
             fuel,
             Row::new(Expr::TmFv {
                 name,
@@ -223,15 +220,13 @@ impl Kernel {
     /// # Errors
     ///
     /// Returns an error if the operands do not form a typed lambda.
-    pub fn lam<R: Resolver>(
+    pub fn lam(
         &mut self,
-        resolver: &R,
         fuel: usize,
         binder: TmIx,
         body: TmIx,
     ) -> Result<TmIx, KernelError<R::Error>> {
         self.push_checked(
-            resolver,
             fuel,
             Row::new(Expr::Lam(binder.reference(), body.reference())),
             Sort::Tm,
@@ -244,15 +239,13 @@ impl Kernel {
     /// # Errors
     ///
     /// Returns an error if the argument does not have the function's domain.
-    pub fn app<R: Resolver>(
+    pub fn app(
         &mut self,
-        resolver: &R,
         fuel: usize,
         function: TmIx,
         argument: TmIx,
     ) -> Result<TmIx, KernelError<R::Error>> {
         self.push_checked(
-            resolver,
             fuel,
             Row::new(Expr::App(function.reference(), argument.reference())),
             Sort::Tm,
@@ -265,15 +258,13 @@ impl Kernel {
     /// # Errors
     ///
     /// Returns an error if the operands do not have one strict common type.
-    pub fn eq<R: Resolver>(
+    pub fn eq(
         &mut self,
-        resolver: &R,
         fuel: usize,
         left: TmIx,
         right: TmIx,
     ) -> Result<TmIx, KernelError<R::Error>> {
         self.push_checked(
-            resolver,
             fuel,
             Row::new(Expr::Eq(left.reference(), right.reference())),
             Sort::Tm,
@@ -286,13 +277,8 @@ impl Kernel {
     /// # Errors
     ///
     /// Returns an error if allocation or kernel revalidation fails.
-    pub fn bool<R: Resolver>(
-        &mut self,
-        resolver: &R,
-        fuel: usize,
-        value: bool,
-    ) -> Result<TmIx, KernelError<R::Error>> {
-        self.push_checked(resolver, fuel, Row::new(Expr::Bool(value)), Sort::Tm)
+    pub fn bool(&mut self, fuel: usize, value: bool) -> Result<TmIx, KernelError<R::Error>> {
+        self.push_checked(fuel, Row::new(Expr::Bool(value)), Sort::Tm)
             .map(TmIx)
     }
 
@@ -302,9 +288,8 @@ impl Kernel {
     /// # Errors
     ///
     /// Returns an error if either handle is invalid or the claim is unproved.
-    pub fn assert_eq<R: Resolver>(
+    pub fn assert_eq(
         &mut self,
-        resolver: &R,
         fuel: usize,
         left: TmIx,
         right: TmIx,
@@ -313,13 +298,12 @@ impl Kernel {
         if !candidate.set_eq(left.reference(), right.reference()) {
             return Err(KernelError::MissingDefinition(left.reference()));
         }
-        *self = Self::try_from_arena(candidate, resolver, fuel)?;
+        *self = Self::try_from_arena(candidate, Arc::clone(&self.resolver), fuel)?;
         Ok(())
     }
 
-    fn push_checked<R: Resolver>(
+    fn push_checked(
         &mut self,
-        resolver: &R,
         fuel: usize,
         row: Row,
         expected: Sort,
@@ -328,11 +312,11 @@ impl Kernel {
         let reference = candidate
             .push_row(row)
             .ok_or(KernelError::TooManyDefinitions)?;
-        let actual = candidate.check_wf(resolver, reference, fuel)?;
+        let actual = candidate.check_wf(self.resolver.as_ref(), reference, fuel)?;
         if actual != expected {
             return Err(KernelError::InvalidConstructor { expected, actual });
         }
-        *self = Self::try_from_arena(candidate, resolver, fuel)?;
+        *self = Self::try_from_arena(candidate, Arc::clone(&self.resolver), fuel)?;
         Ok(reference)
     }
 }
@@ -421,21 +405,21 @@ fn imported<R: Resolver>(
 
 fn validate_meta<R: Resolver>(
     owner: &Arena,
-    resolver: &R,
+    resolver: &Arc<R>,
     record: Meta,
     fuel: usize,
 ) -> Result<bool, KernelError<R::Error>> {
     Ok(match record {
         Meta::Valid { src } => {
-            let arena = imported(owner, resolver, src)?;
+            let arena = imported(owner, resolver.as_ref(), src)?;
             let remaining = fuel.checked_sub(1).ok_or(ResolveError::FuelExhausted)?;
-            Kernel::try_from_arena((*arena).clone(), resolver, remaining)?;
+            Kernel::try_from_arena((*arena).clone(), Arc::clone(resolver), remaining)?;
             true
         }
         Meta::Wf { src, ix, sort } => {
-            let arena = imported(owner, resolver, src)?;
-            let value = resolve_at(&arena, resolver, ix, fuel)?;
-            let classifier = resolve_at(owner, resolver, sort, fuel)?;
+            let arena = imported(owner, resolver.as_ref(), src)?;
+            let value = resolve_at(&arena, resolver.as_ref(), ix, fuel)?;
+            let classifier = resolve_at(owner, resolver.as_ref(), sort, fuel)?;
             value.has_sort(&classifier)
         }
     })
@@ -479,7 +463,7 @@ mod tests {
             vec![],
             vec![],
         );
-        assert!(Kernel::try_from_arena(arena, &NoLinks, 4).is_ok());
+        assert!(Kernel::try_from_arena(arena, Arc::new(NoLinks), 4).is_ok());
     }
 
     #[test]
@@ -501,19 +485,19 @@ mod tests {
             vec![],
             vec![],
         );
-        assert!(Kernel::try_from_arena(arena, &NoLinks, 6).is_ok());
+        assert!(Kernel::try_from_arena(arena, Arc::new(NoLinks), 6).is_ok());
     }
 
     #[test]
     fn checked_mutations_build_the_beta_demo_without_forging() {
-        let mut kernel = Kernel::try_from_arena(Arena::empty(), &NoLinks, 1).unwrap();
-        let bool_ty = kernel.bool_ty(&NoLinks, 2).unwrap();
-        let variable = kernel.tm_fv(&NoLinks, 3, 7, bool_ty).unwrap();
-        let identity = kernel.lam(&NoLinks, 4, variable, variable).unwrap();
-        let truth = kernel.bool(&NoLinks, 5, true).unwrap();
-        let application = kernel.app(&NoLinks, 6, identity, truth).unwrap();
-        kernel.assert_eq(&NoLinks, 6, application, truth).unwrap();
-        let proposition = kernel.eq(&NoLinks, 7, application, truth).unwrap();
+        let mut kernel = Kernel::try_from_arena(Arena::empty(), Arc::new(NoLinks), 1).unwrap();
+        let bool_ty = kernel.bool_ty(2).unwrap();
+        let variable = kernel.tm_fv(3, 7, bool_ty).unwrap();
+        let identity = kernel.lam(4, variable, variable).unwrap();
+        let truth = kernel.bool(5, true).unwrap();
+        let application = kernel.app(6, identity, truth).unwrap();
+        kernel.assert_eq(6, application, truth).unwrap();
+        let proposition = kernel.eq(7, application, truth).unwrap();
 
         assert_eq!(
             kernel.arena().tag(bool_ty.reference()),
@@ -533,11 +517,11 @@ mod tests {
             sort: reference(1),
         };
         let arena = Arena::from_parts(vec![], [], vec![], [], vec![assumed], vec![]);
-        assert!(Kernel::try_from_arena(arena, &NoLinks, 1).is_ok());
+        assert!(Kernel::try_from_arena(arena, Arc::new(NoLinks), 1).is_ok());
 
         let asserted = Arena::from_parts(vec![], [], vec![], [], vec![], vec![assumed]);
         assert!(matches!(
-            Kernel::try_from_arena(asserted, &NoLinks, 1),
+            Kernel::try_from_arena(asserted, Arc::new(NoLinks), 1),
             Err(KernelError::Resolve(ResolveError::MissingImport(_)))
         ));
     }
@@ -554,7 +538,7 @@ mod tests {
                 src: ImportId::new(1).unwrap(),
             }],
         );
-        assert!(Kernel::try_from_arena(valid, &NoLinks, 2).is_ok());
+        assert!(Kernel::try_from_arena(valid, Arc::new(NoLinks), 2).is_ok());
 
         let invalid_import = Arena::from_parts(
             vec![],
@@ -575,7 +559,7 @@ mod tests {
             }],
         );
         assert!(matches!(
-            Kernel::try_from_arena(invalid, &NoLinks, 2),
+            Kernel::try_from_arena(invalid, Arc::new(NoLinks), 2),
             Err(KernelError::UnsupportedAxiom(_))
         ));
     }
@@ -591,7 +575,7 @@ mod tests {
             vec![],
         );
         assert!(matches!(
-            Kernel::try_from_arena(forward, &NoLinks, 2),
+            Kernel::try_from_arena(forward, Arc::new(NoLinks), 2),
             Err(KernelError::ForwardReference { .. })
         ));
 
@@ -604,7 +588,7 @@ mod tests {
             vec![],
         );
         assert!(matches!(
-            Kernel::try_from_arena(unchecked, &NoLinks, 2),
+            Kernel::try_from_arena(unchecked, Arc::new(NoLinks), 2),
             Err(KernelError::InvalidContext(_))
         ));
     }
