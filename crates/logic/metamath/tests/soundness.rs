@@ -216,7 +216,7 @@ fn an_overflowing_proof_integer_is_an_error_not_a_panic() {
     let db = parse(&input).unwrap();
     let error = verify_all(&db).unwrap_err();
     assert!(
-        matches!(&error, MmError::CompressedProofError { theorem, .. } if theorem == "th"),
+        matches!(&error, MmError::ProofIntegerOverflow { theorem } if theorem == "th"),
         "{error}"
     );
 }
@@ -230,7 +230,7 @@ fn a_proof_integer_at_the_edge_of_usize_is_an_error_not_a_wrap() {
     let db = parse(&input).unwrap();
     let error = verify_all(&db).unwrap_err();
     assert!(
-        matches!(&error, MmError::CompressedProofError { theorem, .. } if theorem == "th"),
+        matches!(&error, MmError::ProofIntegerOverflow { theorem } if theorem == "th"),
         "{error}"
     );
 }
@@ -244,9 +244,9 @@ fn a_long_but_representable_proof_integer_is_still_decoded() {
     let input = database(&format!("th $p |- ph $= ( wph ) {letters} $.\n"));
     let db = parse(&input).unwrap();
     let error = verify_all(&db).unwrap_err();
-    let MmError::CompressedProofError { theorem, message } = &error else {
+    let MmError::HeapOutOfRange { theorem, len, .. } = &error else {
         panic!("{error}");
     };
     assert_eq!(theorem, "th");
-    assert!(message.contains("heap backreference"), "{message}");
+    assert_eq!(*len, 0);
 }

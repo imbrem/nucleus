@@ -75,6 +75,7 @@ use crate::database::{Assertion, Database, Proof, Statement};
 /// [`parse`](crate::parse())) to a database with the same symbols and the same assertion
 /// statements (labels, conclusions, and mandatory frames). See the module docs
 /// for the normalisation performed.
+#[must_use]
 pub fn to_mm_string(db: &Database) -> String {
     let mut out = String::new();
 
@@ -97,10 +98,10 @@ pub fn to_mm_string(db: &Database) -> String {
     //    statement list, so dedup-by-label is just a guard.
     let mut seen: HashSet<&str> = HashSet::new();
     for stmt in db.statements() {
-        if let Statement::Float(f) = stmt {
-            if seen.insert(f.label.as_str()) {
-                let _ = writeln!(out, "{} $f {} {} $.", f.label, f.typecode, f.var);
-            }
+        if let Statement::Float(f) = stmt
+            && seen.insert(f.label.as_str())
+        {
+            let _ = writeln!(out, "{} $f {} {} $.", f.label, f.typecode, f.var);
         }
     }
     out.push('\n');
@@ -215,9 +216,11 @@ mod tests {
 
     const DEMO0: &str = include_str!("../tests/fixtures/demo0.mm");
 
-    fn assertions_snapshot(
-        db: &Database,
-    ) -> Vec<(String, String, Vec<String>, Vec<(String, String)>)> {
+    /// Label, conclusion, essential expressions, and float signature of every
+    /// assertion — enough to say two databases agree without comparing scopes.
+    type Snapshot = Vec<(String, String, Vec<String>, Vec<(String, String)>)>;
+
+    fn assertions_snapshot(db: &Database) -> Snapshot {
         let mut v: Vec<_> = db
             .assertions()
             .map(|a| {

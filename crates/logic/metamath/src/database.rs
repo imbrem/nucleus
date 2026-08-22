@@ -51,6 +51,7 @@ impl Frame {
     /// The mandatory hypotheses in RPN-application order: all `$f` first
     /// (database order), then all `$e` (database order). This is the order in
     /// which they are popped off the proof stack.
+    #[must_use]
     pub fn mandatory_count(&self) -> usize {
         self.floats.len() + self.essentials.len()
     }
@@ -77,6 +78,15 @@ pub enum Proof {
 pub enum SymbolKind {
     Constant,
     Variable,
+}
+
+impl std::fmt::Display for SymbolKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Constant => "constant",
+            Self::Variable => "variable",
+        })
+    }
 }
 
 /// An assertion: an axiom (`$a`) or a theorem (`$p`).
@@ -149,6 +159,8 @@ impl Default for Database {
 }
 
 impl Database {
+    /// An empty database with only the global scope open.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             symbols: FnvHashMap::default(),
@@ -161,16 +173,19 @@ impl Database {
     // --- queries -----------------------------------------------------------
 
     /// Whether `name` is a declared variable.
+    #[must_use]
     pub fn is_variable(&self, name: &str) -> bool {
         self.symbols.get(name).copied().unwrap_or(false)
     }
 
     /// Whether `name` is a declared symbol (constant or variable).
+    #[must_use]
     pub fn is_symbol(&self, name: &str) -> bool {
         self.symbols.contains_key(name)
     }
 
     /// All statements in source order.
+    #[must_use]
     pub fn statements(&self) -> &[Statement] {
         &self.statements
     }
@@ -190,6 +205,7 @@ impl Database {
     }
 
     /// Look up a labelled statement.
+    #[must_use]
     pub fn statement_by_label(&self, label: &str) -> Option<&Statement> {
         self.labels.get(label).map(|&i| &self.statements[i])
     }
@@ -204,25 +220,33 @@ impl Database {
 
     // --- construction (the database-building API; used by a reader/parser) --
 
+    /// Declare `$c` constants.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a name is already declared.
     pub fn declare_constants(&mut self, names: Vec<String>) -> Result<(), MmError> {
         for n in &names {
             if self.symbols.insert(n.clone(), false).is_some() {
-                return Err(MmError::Parse(format!("symbol `{n}` re-declared")));
+                return Err(MmError::Redeclared { symbol: n.clone() });
             }
         }
         self.statements.push(Statement::Constant(names));
         Ok(())
     }
 
+    /// Declare `$v` variables.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a name is already declared as a constant.
     pub fn declare_variables(&mut self, names: Vec<String>) -> Result<(), MmError> {
         for n in &names {
             // A variable may be re-declared in a disjoint scope; we keep it
             // simple and allow re-declaration as a variable.
             match self.symbols.get(n) {
                 Some(false) => {
-                    return Err(MmError::Parse(format!(
-                        "symbol `{n}` declared as both constant and variable"
-                    )));
+                    return Err(MmError::KindConflict { symbol: n.clone() });
                 }
                 _ => {
                     self.symbols.insert(n.clone(), true);
@@ -237,7 +261,9 @@ impl Database {
         // `entry` hashes the label once; the `contains_key` + `insert` pair
         // hashed it twice for every labelled statement in the database.
         match self.labels.entry(label.to_string()) {
-            Entry::Occupied(entry) => Err(MmError::DuplicateLabel(entry.key().clone())),
+            Entry::Occupied(entry) => Err(MmError::DuplicateLabel {
+                label: entry.key().clone(),
+            }),
             Entry::Vacant(entry) => {
                 entry.insert(idx);
                 Ok(())
@@ -245,6 +271,12 @@ impl Database {
         }
     }
 
+    /// Add a `$f` floating hypothesis to the active scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the typecode is undeclared, the variable is not a
+    /// declared variable, or the label is already taken.
     pub fn add_float(&mut self, hyp: FloatHyp) -> Result<(), MmError> {
         if !self.is_symbol(&hyp.typecode) {
             return Err(MmError::UnknownSymbol {
@@ -253,54 +285,80 @@ impl Database {
             });
         }
         if !self.is_variable(&hyp.var) {
-            return Err(MmError::Parse(format!(
-                "`{}`: `{}` is not a declared variable",
-                hyp.label, hyp.var
-            )));
+            return Err(MmError::UndeclaredVariable {
+                context: hyp.label.clone(),
+                symbol: hyp.var.clone(),
+            });
         }
         let idx = self.statements.len();
         self.register_label(&hyp.label, idx)?;
-        self.scopes.last_mut().unwrap().floats.push(hyp.clone());
+        self.active_scope().floats.push(hyp.clone());
         self.statements.push(Statement::Float(hyp));
         Ok(())
     }
 
+    /// Add a `$e` essential hypothesis to the active scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the label is already taken.
     pub fn add_essential(&mut self, hyp: Hypothesis) -> Result<(), MmError> {
         let idx = self.statements.len();
         self.register_label(&hyp.label, idx)?;
-        self.scopes.last_mut().unwrap().essentials.push(hyp.clone());
+        self.active_scope().essentials.push(hyp.clone());
         self.statements.push(Statement::Essential(hyp));
         Ok(())
     }
 
+    /// Add a `$d` distinct-variable restriction to the active scope, expanded
+    /// pairwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a name is not a declared variable, or when one is
+    /// named twice.
     pub fn add_disjoint(&mut self, vars: Vec<String>) -> Result<(), MmError> {
         for v in &vars {
             if !self.is_variable(v) {
-                return Err(MmError::Parse(format!("`{v}` in $d is not a variable")));
+                return Err(MmError::UndeclaredVariable {
+                    context: "$d".to_owned(),
+                    symbol: v.clone(),
+                });
             }
         }
         // Expand into pairwise restrictions in the current scope.
         for i in 0..vars.len() {
             for j in (i + 1)..vars.len() {
                 if vars[i] == vars[j] {
-                    return Err(MmError::Parse(format!(
-                        "$d lists `{}` twice (a variable is never distinct from itself)",
-                        vars[i]
-                    )));
+                    return Err(MmError::DisjointRepeatsVariable {
+                        var: vars[i].clone(),
+                    });
                 }
-                self.scopes
-                    .last_mut()
-                    .unwrap()
-                    .disjoints
-                    .push((vars[i].clone(), vars[j].clone()));
+                let pair = (vars[i].clone(), vars[j].clone());
+                self.active_scope().disjoints.push(pair);
             }
         }
         self.statements.push(Statement::Disjoint(vars));
         Ok(())
     }
 
+    /// The innermost open scope. There is always at least the global one:
+    /// [`Database::new`] seeds it and [`Database::pop_scope`] refuses to remove
+    /// it.
+    fn active_scope(&mut self) -> &mut Scope {
+        self.scopes
+            .last_mut()
+            .expect("the global scope is never popped")
+    }
+
     /// Add an assertion (`$a` or `$p`), computing its mandatory frame from the
     /// active scope stack.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the conclusion uses an undeclared symbol, when a
+    /// mandatory variable has no active `$f`, or when the label is already
+    /// taken.
     pub fn add_assertion(
         &mut self,
         label: String,
@@ -328,21 +386,32 @@ impl Database {
         Ok(())
     }
 
+    /// Open a `${ ... $}` scope.
     pub fn push_scope(&mut self) {
         self.scopes.push(Scope::default());
     }
 
+    /// Close the innermost `${ ... $}` scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no scope is open.
     pub fn pop_scope(&mut self) -> Result<(), MmError> {
         if self.scopes.len() <= 1 {
-            return Err(MmError::Parse("unmatched `$}`".into()));
+            return Err(MmError::UnmatchedScopeClose);
         }
         self.scopes.pop();
         Ok(())
     }
 
+    /// Finish construction, checking that every `${` was closed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a `${` block is still open.
     pub fn finish(self) -> Result<Self, MmError> {
         if self.scopes.len() != 1 {
-            return Err(MmError::Parse("unclosed `${` at end of input".into()));
+            return Err(MmError::UnclosedScope);
         }
         Ok(self)
     }
@@ -358,6 +427,10 @@ impl Database {
     ///
     /// This is a whole-database primitive for experiments with equivalent
     /// symbol presentations.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `f` maps two declared symbols onto one name.
     pub fn map_symbols(&self, f: &dyn Fn(&str) -> String) -> Result<Database, MmError> {
         let rename_expr = |e: &Expr| {
             Expr::new(
@@ -397,26 +470,36 @@ impl Database {
             .collect();
         sources.sort_unstable();
 
-        let kind = |is_var: bool| if is_var { "variable" } else { "constant" };
+        let kind = |is_var: bool| {
+            if is_var {
+                SymbolKind::Variable
+            } else {
+                SymbolKind::Constant
+            }
+        };
         // renamed → (kind, the source symbol that claimed it), so a collision
         // can name *both* sides rather than just the image they share.
         let mut claimed: FnvHashMap<String, (bool, &str)> = FnvHashMap::default();
         for (name, is_var) in sources {
             match claimed.entry(f(name)) {
                 Entry::Occupied(entry) => {
-                    let renamed = entry.key();
+                    let renamed = entry.key().clone();
                     let (prev_var, prev) = *entry.get();
-                    return Err(MmError::Parse(if prev_var != is_var {
-                        format!(
-                            "symbol renaming collides on `{renamed}`: `{prev}` is a {} and `{name}` is a {}",
-                            kind(prev_var),
-                            kind(is_var)
-                        )
+                    return Err(if prev_var == is_var {
+                        MmError::RenamingNotInjective {
+                            renamed,
+                            first: prev.to_owned(),
+                            second: name.to_owned(),
+                        }
                     } else {
-                        format!(
-                            "symbol renaming is not injective: `{prev}` and `{name}` both map to `{renamed}`"
-                        )
-                    }));
+                        MmError::RenamingCollision {
+                            renamed,
+                            previous: prev.to_owned(),
+                            previous_kind: kind(prev_var),
+                            symbol: name.to_owned(),
+                            kind: kind(is_var),
+                        }
+                    });
                 }
                 Entry::Vacant(entry) => {
                     entry.insert((is_var, name));
@@ -469,6 +552,7 @@ impl Database {
     /// Render this database to canonical `.mm` source (see the `emit` module).
     /// The result re-parses to a structurally-equivalent database (same symbols
     /// and assertion statements/frames), normalising scope structure.
+    #[must_use]
     pub fn to_mm_string(&self) -> String {
         crate::emit::to_mm_string(self)
     }
@@ -507,10 +591,11 @@ impl Database {
         let mut mandatory_vars: Vec<&str> = Vec::new();
         let mut mandatory: FnvHashSet<&str> = FnvHashSet::default();
         let mut push_var = |name: &str| {
-            if let Some((declared, is_variable)) = self.symbols.get_key_value(name) {
-                if *is_variable && mandatory.insert(declared.as_str()) {
-                    mandatory_vars.push(declared.as_str());
-                }
+            if let Some((declared, is_variable)) = self.symbols.get_key_value(name)
+                && *is_variable
+                && mandatory.insert(declared.as_str())
+            {
+                mandatory_vars.push(declared.as_str());
             }
         };
         self.collect_vars(conclusion, label, &mut push_var)?;
@@ -529,9 +614,9 @@ impl Database {
         let typed: FnvHashSet<&str> = floats.iter().map(|f| f.var.as_str()).collect();
         for v in &mandatory_vars {
             if !typed.contains(v) {
-                return Err(MmError::MalformedExpr {
-                    label: label.to_string(),
-                    message: format!("variable `{v}` has no active floating hypothesis (`$f`)"),
+                return Err(MmError::UntypedVariable {
+                    label: label.to_owned(),
+                    var: (*v).to_owned(),
                 });
             }
         }
@@ -559,15 +644,11 @@ impl Database {
         label: &str,
         f: &mut impl FnMut(&str),
     ) -> Result<(), MmError> {
-        let syms = crate::expr::expr_symbols(expr).ok_or_else(|| MmError::MalformedExpr {
-            label: label.to_string(),
-            message: "expression contains a non-symbol element".into(),
-        })?;
-        for s in syms {
+        for s in expr.symbols() {
             if !self.is_symbol(s) {
                 return Err(MmError::UnknownSymbol {
-                    label: label.to_string(),
-                    symbol: s.to_string(),
+                    label: label.to_owned(),
+                    symbol: s.to_owned(),
                 });
             }
             f(s);
@@ -583,20 +664,48 @@ impl Database {
 /// same trait, constructing kernel theorems as declarations stream through it,
 /// without the reader knowing which backend it is feeding. The method set
 /// mirrors `Database`'s own construction methods.
+/// Every method may fail: a sink that builds something as it reads (a HOL
+/// backend, say) reports what it could not build. An implementation outside this
+/// crate reports its own failure through
+/// [`MmError::Backend`](crate::MmError::Backend), whose `source` carries it.
 pub trait DatabaseSink {
     /// Declare one or more `$c` constants or `$v` variables.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the sink rejects a declaration.
     fn declare(&mut self, kind: SymbolKind, names: &[&str]) -> Result<(), MmError>;
     /// Open a `${ ... $}` scope.
     fn push_scope(&mut self);
     /// Close a `${ ... $}` scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no scope is open.
     fn pop_scope(&mut self) -> Result<(), MmError>;
     /// Add a `$f` floating hypothesis `label $f typecode var`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the sink rejects the hypothesis.
     fn add_float(&mut self, label: &str, typecode: &str, var: &str) -> Result<(), MmError>;
     /// Add a `$e` essential hypothesis `label $e <expr>`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the sink rejects the hypothesis.
     fn add_essential(&mut self, label: &str, expr: Expr) -> Result<(), MmError>;
     /// Add a `$d` distinct-variable restriction over `vars`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the sink rejects the restriction.
     fn add_disjoint(&mut self, vars: &[&str]) -> Result<(), MmError>;
     /// Add a `$a` axiom (`proof = None`) or `$p` theorem (`proof = Some(_)`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the sink rejects the assertion.
     fn add_assertion(
         &mut self,
         label: &str,
@@ -607,7 +716,7 @@ pub trait DatabaseSink {
 
 impl DatabaseSink for Database {
     fn declare(&mut self, kind: SymbolKind, names: &[&str]) -> Result<(), MmError> {
-        let names: Vec<String> = names.iter().map(|s| s.to_string()).collect();
+        let names: Vec<String> = names.iter().copied().map(ToOwned::to_owned).collect();
         match kind {
             SymbolKind::Constant => self.declare_constants(names),
             SymbolKind::Variable => self.declare_variables(names),
@@ -644,7 +753,7 @@ impl DatabaseSink for Database {
     }
 
     fn add_disjoint(&mut self, vars: &[&str]) -> Result<(), MmError> {
-        Database::add_disjoint(self, vars.iter().map(|s| s.to_string()).collect())
+        Database::add_disjoint(self, vars.iter().copied().map(ToOwned::to_owned).collect())
     }
 
     fn add_assertion(

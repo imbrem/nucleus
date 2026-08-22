@@ -19,10 +19,10 @@ is thirteen lines. In short:
 
 ## What the codebase actually does
 
-Every error type in hand-written code now uses snafu — twenty-three of them
-across eleven crates, plus one in the facade's own test — and both binaries
+Every error type in hand-written code now uses snafu — twenty-four of them
+across twelve crates, plus one in the facade's own test — and both binaries
 render with miette. The one remaining hand-rolled `impl Error` is in generated
-wit-bindgen code. `covalence-lib-error` has thirteen dependents.
+wit-bindgen code. `covalence-lib-error` has fourteen dependents.
 
 So the policy is descriptive, not aspirational, and you should follow it
 literally. Do not introduce `thiserror` or `anyhow`.
@@ -37,8 +37,6 @@ The exceptions are real and worth knowing, because they are not oversights:
 - **`nucleus::SignError::Backend`** carries
   `source: Box<dyn Error + Send + Sync>` because it crosses an open `dyn Signer`
   trait, where the concrete error is not knowable.
-- **`crates/logic/metamath`** still uses `thiserror`. It is mid-rewrite; see
-  #844. Do not copy it.
 
 ## The snafu idiom
 

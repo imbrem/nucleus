@@ -9,23 +9,101 @@
 //! On the primitive flat [`Expr`] the typecode is always a constant (never a
 //! variable), so it is copied verbatim, and the body symbols are spliced.
 
-use std::collections::BTreeMap;
-
 use crate::expr::{Expr, Symbol};
 
 /// A variable substitution: variable name → replacement body (a sequence of
 /// math symbols, i.e. an expression with its typecode stripped).
 ///
-/// We use a `BTreeMap` for deterministic iteration in diagnostics.
-pub type Subst = BTreeMap<String, Vec<Symbol>>;
+/// An **association list**, not a map. A substitution has exactly one entry per
+/// floating hypothesis of the frame being applied, and mandatory frames are
+/// small: 5.04 floats on average across `set.mm`, 40 at the widest. At that
+/// size a linear scan of one contiguous allocation beats a `BTreeMap`'s pointer
+/// chase into a boxed node, and lookup is the hot operation — `apply_subst`
+/// performs one per symbol of every schema it instantiates, and misses on most
+/// of them, since a body is mostly constants.
+///
+/// Entries stay in insertion order, which is the frame's own float order, so
+/// iteration is as deterministic for diagnostics as the `BTreeMap` was.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Subst {
+    entries: Vec<(Symbol, Vec<Symbol>)>,
+}
+
+impl Subst {
+    /// An empty substitution.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
+    /// An empty substitution with room for `capacity` bindings. The count is
+    /// known up front — it is the frame's float count — so the one allocation
+    /// this makes can be the only one.
+    #[must_use]
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            entries: Vec::with_capacity(capacity),
+        }
+    }
+
+    /// The body `name` is replaced by, if it is substituted at all.
+    #[must_use]
+    pub fn get(&self, name: &str) -> Option<&[Symbol]> {
+        self.entries
+            .iter()
+            .find(|(var, _)| var.as_str() == name)
+            .map(|(_, body)| body.as_slice())
+    }
+
+    /// Bind `name` to `body`, returning the binding it replaced.
+    pub fn insert(&mut self, name: Symbol, body: Vec<Symbol>) -> Option<Vec<Symbol>> {
+        if let Some((_, existing)) = self.entries.iter_mut().find(|(var, _)| *var == name) {
+            return Some(std::mem::replace(existing, body));
+        }
+        self.entries.push((name, body));
+        None
+    }
+
+    /// The bindings, in insertion order.
+    pub fn iter(&self) -> impl Iterator<Item = (&Symbol, &[Symbol])> {
+        self.entries
+            .iter()
+            .map(|(var, body)| (var, body.as_slice()))
+    }
+
+    /// How many variables are substituted.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether nothing is substituted.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+impl FromIterator<(Symbol, Vec<Symbol>)> for Subst {
+    fn from_iter<I: IntoIterator<Item = (Symbol, Vec<Symbol>)>>(iter: I) -> Self {
+        let mut subst = Self::new();
+        for (name, body) in iter {
+            subst.insert(name, body);
+        }
+        subst
+    }
+}
 
 /// Apply a substitution to a schema expression, splicing each substituted
 /// variable's replacement body in place. The typecode is never substituted.
+#[must_use]
 pub fn apply_subst(schema: &Expr, subst: &Subst) -> Expr {
     let mut body = Vec::with_capacity(schema.body.len());
     for sym in &schema.body {
         if let Some(replacement) = subst.get(sym.as_str()) {
-            body.extend(replacement.iter().cloned());
+            body.extend_from_slice(replacement);
         } else {
             body.push(sym.clone());
         }
@@ -59,7 +137,7 @@ mod tests {
     fn subst(pairs: &[(&str, Expr)]) -> Subst {
         pairs
             .iter()
-            .map(|(v, e)| (v.to_string(), e.body.clone()))
+            .map(|(v, e)| (Symbol::from(*v), e.body.clone()))
             .collect()
     }
 
@@ -89,6 +167,32 @@ mod tests {
         let schema = make_expr("wff", ["0", "=", "0"]);
         let s = subst(&[]);
         assert_eq!(render(&apply_subst(&schema, &s)), "wff 0 = 0");
+    }
+
+    #[test]
+    fn insert_replaces_an_existing_binding() {
+        // The scan has to find a repeated name rather than shadow it with a
+        // second entry, which `get` would never reach.
+        let mut s = Subst::new();
+        assert_eq!(s.insert(Symbol::new("ph"), vec![Symbol::new("a")]), None);
+        assert_eq!(
+            s.insert(Symbol::new("ph"), vec![Symbol::new("b")]),
+            Some(vec![Symbol::new("a")])
+        );
+        assert_eq!(s.len(), 1);
+        assert_eq!(s.get("ph"), Some(&[Symbol::new("b")][..]));
+    }
+
+    #[test]
+    fn iteration_follows_insertion_order() {
+        // Diagnostics used to iterate a `BTreeMap`, so order was sorted and
+        // therefore reproducible; insertion order has to be reproducible too.
+        let s = subst(&[
+            ("ps", make_expr("wff", ["b"])),
+            ("ph", make_expr("wff", ["a"])),
+        ]);
+        let names: Vec<&str> = s.iter().map(|(var, _)| var.as_str()).collect();
+        assert_eq!(names, ["ps", "ph"]);
     }
 
     #[test]
