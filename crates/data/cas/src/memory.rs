@@ -4,6 +4,7 @@ use std::ops::Range;
 use std::sync::RwLock;
 
 use bytes::Bytes;
+use covalence_lib_error::snafu::{self, Snafu};
 use covalence_lib_hash::O256;
 use indexmap::IndexMap;
 
@@ -13,7 +14,9 @@ use crate::{Cas, CasObject};
 pub const MAX_OBJECT_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Refusal to admit bytes into a [`MemoryCas`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Snafu)]
+#[snafu(crate_root(snafu))]
+#[snafu(display("object of {len} bytes exceeds the {limit} byte admission limit"))]
 pub struct AdmissionError {
     /// Length of the rejected candidate.
     pub len: u64,
@@ -21,20 +24,10 @@ pub struct AdmissionError {
     pub limit: u64,
 }
 
-impl std::fmt::Display for AdmissionError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "object of {} bytes exceeds the {} byte admission limit",
-            self.len, self.limit
-        )
-    }
-}
-
-impl std::error::Error for AdmissionError {}
-
 /// A range request which does not lie inside the addressed object.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Snafu)]
+#[snafu(crate_root(snafu))]
+#[snafu(display("range {start}..{end} lies outside an object of {len} bytes"))]
 pub struct InvalidRange {
     /// Requested inclusive start offset.
     pub start: u64,
@@ -43,18 +36,6 @@ pub struct InvalidRange {
     /// Actual length of the addressed object.
     pub len: u64,
 }
-
-impl std::fmt::Display for InvalidRange {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "range {}..{} lies outside an object of {} bytes",
-            self.start, self.end, self.len
-        )
-    }
-}
-
-impl std::error::Error for InvalidRange {}
 
 /// Resident object counts and sizes.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

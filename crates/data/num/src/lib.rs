@@ -4,11 +4,11 @@
 //! signed arbitrary-precision integer. Their backing representation is private;
 //! use canonical bytes at storage and runtime boundaries.
 
-use std::error::Error;
 use std::fmt;
 use std::ops::{Add, Mul, Neg, Sub};
 
 use covalence_lib_bigint::{BigInt, BigUint, Sign};
+use covalence_lib_error::snafu::{self, Snafu};
 
 /// Default maximum accepted canonical encoding size (one MiB).
 ///
@@ -43,9 +43,11 @@ impl Default for DecodeLimit {
 }
 
 /// A canonical integer decoding error.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Snafu)]
+#[snafu(crate_root(snafu))]
 pub enum DecodeError {
     /// The input exceeded the caller's resource limit.
+    #[snafu(display("encoding is {actual} bytes; limit is {limit}"))]
     LimitExceeded {
         /// Actual input length.
         actual: usize,
@@ -53,46 +55,24 @@ pub enum DecodeError {
         limit: usize,
     },
     /// The input was empty.
+    #[snafu(display("integer encoding is empty"))]
     Empty,
     /// The representation was not the unique encoding of its value.
+    #[snafu(display("integer encoding is not canonical"))]
     NonCanonical,
 }
 
-impl fmt::Display for DecodeError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::LimitExceeded { actual, limit } => {
-                write!(formatter, "encoding is {actual} bytes; limit is {limit}")
-            }
-            Self::Empty => formatter.write_str("integer encoding is empty"),
-            Self::NonCanonical => formatter.write_str("integer encoding is not canonical"),
-        }
-    }
-}
-
-impl Error for DecodeError {}
-
 /// An arithmetic operation that is not defined for the supplied operands.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Snafu)]
+#[snafu(crate_root(snafu))]
 pub enum ArithmeticError {
     /// A natural-number subtraction would produce a negative result.
+    #[snafu(display("natural-number subtraction would be negative"))]
     NegativeResult,
     /// Division by zero was requested.
+    #[snafu(display("division by zero"))]
     DivisionByZero,
 }
-
-impl fmt::Display for ArithmeticError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NegativeResult => {
-                formatter.write_str("natural-number subtraction would be negative")
-            }
-            Self::DivisionByZero => formatter.write_str("division by zero"),
-        }
-    }
-}
-
-impl Error for ArithmeticError {}
 
 /// A non-negative arbitrary-precision integer, including zero.
 #[derive(Clone, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -303,16 +283,10 @@ macro_rules! impl_unsigned {
 impl_unsigned!(u8, u16, u32, u64, u128, usize);
 
 /// A value cannot be represented by the requested primitive or sign domain.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Snafu)]
+#[snafu(crate_root(snafu))]
+#[snafu(display("value is outside the destination type's range"))]
 pub struct PrimitiveConversionError;
-
-impl fmt::Display for PrimitiveConversionError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("value is outside the destination type's range")
-    }
-}
-
-impl Error for PrimitiveConversionError {}
 
 macro_rules! impl_signed {
     ($($type:ty),+ $(,)?) => {$(

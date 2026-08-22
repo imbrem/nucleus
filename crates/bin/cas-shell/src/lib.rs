@@ -11,6 +11,8 @@ mod component;
 
 use std::ffi::{CString, NulError, c_char, c_int};
 
+use covalence_lib_error::snafu::Snafu;
+
 // Ensure the shell's SQLite symbols resolve to this library.
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use libsqlite3_sys as _;
@@ -25,37 +27,22 @@ unsafe extern "C" {
 }
 
 /// Failure to encode shell arguments.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
 pub enum ShellError {
     /// An argument contains an interior NUL byte.
+    #[snafu(display("argument {argument} contains an interior NUL byte"))]
     InteriorNul {
         /// Index of the offending argument, counting `argv[0]`.
         argument: usize,
     },
     /// More arguments were supplied than `argc` can express.
+    #[snafu(display("{count} arguments exceed the C argument limit"))]
     TooManyArguments {
         /// Number of arguments supplied.
         count: usize,
     },
 }
-
-impl std::fmt::Display for ShellError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::InteriorNul { argument } => {
-                write!(
-                    formatter,
-                    "argument {argument} contains an interior NUL byte"
-                )
-            }
-            Self::TooManyArguments { count } => {
-                write!(formatter, "{count} arguments exceed the C argument limit")
-            }
-        }
-    }
-}
-
-impl std::error::Error for ShellError {}
 
 /// Runs the shell with arguments after `argv[0]`.
 ///

@@ -1,5 +1,7 @@
 //! Untrusted text and binary LRAT parsing.
 
+use covalence_lib_error::snafu::{self, Snafu};
+
 use crate::{Clause, Kernel, Literal, RatGroup, kernel::Error};
 
 /// One parsed LRAT proof step.
@@ -47,18 +49,13 @@ impl Step {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// Input which is not a well-formed LRAT proof.
+#[derive(Clone, Debug, Eq, PartialEq, Snafu)]
+#[snafu(crate_root(snafu))]
+#[snafu(display("malformed LRAT proof at {at}"))]
 pub struct ParseError {
     at: usize,
 }
-
-impl std::fmt::Display for ParseError {
-    fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(output, "malformed LRAT proof at {}", self.at)
-    }
-}
-
-impl std::error::Error for ParseError {}
 
 fn error(at: usize) -> ParseError {
     ParseError { at }

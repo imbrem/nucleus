@@ -14,6 +14,7 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+covalence-lib-error = { path = "../../lib/error" }
 covalence-lib-sqlite = { path = "../../lib/sqlite", features = ["vfs-register"] }
 
 [target.'cfg(target_os = "wasi")'.dependencies]

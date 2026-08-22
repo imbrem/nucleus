@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 covalence-data-cas = { path = "../../data/cas" }
 covalence-data-cas-http = { path = "../../data/cas-http" }
+covalence-lib-error = { path = "../../lib/error" }
 
 [lints]
 workspace = true

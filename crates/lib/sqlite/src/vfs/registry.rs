@@ -7,6 +7,7 @@ use std::num::NonZeroUsize;
 use std::ptr;
 use std::sync::{LazyLock, Mutex};
 
+use covalence_lib_error::snafu::Snafu;
 use indexmap::IndexMap;
 
 use super::{Vfs, ffi};
@@ -107,61 +108,43 @@ impl RegisteredVfs {
 }
 
 /// Failure to obtain the VFS used by an attached database.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
 pub enum VfsIdentityError {
     /// The `SQLite` database name contains an interior NUL byte.
+    #[snafu(display("invalid SQLite database name"))]
     InvalidDatabaseName,
     /// `sqlite3_file_control` returned a non-OK result code.
-    FileControlFailed(c_int),
+    #[snafu(display("sqlite3_file_control failed with code {code}"))]
+    FileControlFailed {
+        /// The result code `SQLite` returned.
+        code: c_int,
+    },
     /// `SQLite` returned success without setting the VFS pointer.
+    #[snafu(display("SQLite returned a null VFS pointer"))]
     MissingPointer,
 }
 
-impl fmt::Display for VfsIdentityError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidDatabaseName => formatter.write_str("invalid SQLite database name"),
-            Self::FileControlFailed(code) => {
-                write!(formatter, "sqlite3_file_control failed with code {code}")
-            }
-            Self::MissingPointer => formatter.write_str("SQLite returned a null VFS pointer"),
-        }
-    }
-}
-
-impl std::error::Error for VfsIdentityError {}
-
 /// Errors returned by [`register`].
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
 pub enum RegisterError {
     /// The VFS name is empty or contains an interior NUL byte.
+    #[snafu(display("invalid VFS name"))]
     InvalidName,
     /// A VFS with this name is already registered with `SQLite`.
+    #[snafu(display("a VFS with this name is already registered"))]
     AlreadyRegistered,
     /// The process-local unique-name space has been exhausted.
+    #[snafu(display("the process-local VFS name space is exhausted"))]
     NameSpaceExhausted,
     /// `sqlite3_vfs_register` returned a non-OK result code.
-    RegistrationFailed(c_int),
+    #[snafu(display("sqlite3_vfs_register failed with code {code}"))]
+    RegistrationFailed {
+        /// The result code `SQLite` returned.
+        code: c_int,
+    },
 }
-
-impl fmt::Display for RegisterError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidName => formatter.write_str("invalid VFS name"),
-            Self::AlreadyRegistered => {
-                formatter.write_str("a VFS with this name is already registered")
-            }
-            Self::NameSpaceExhausted => {
-                formatter.write_str("the process-local VFS name space is exhausted")
-            }
-            Self::RegistrationFailed(code) => {
-                write!(formatter, "sqlite3_vfs_register failed with code {code}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for RegisterError {}
 
 /// Registry of VFS instances installed in `SQLite`'s process-global list.
 struct Registry {
@@ -208,7 +191,7 @@ impl Registry {
         }
 
         let pointer = ffi::register(name.ffi.clone(), vfs, as_default)
-            .map_err(RegisterError::RegistrationFailed)?;
+            .map_err(|code| RegisterError::RegistrationFailed { code })?;
         let Some(identity) = VfsIdentity::from_pointer(pointer) else {
             unreachable!("Box::into_raw returned a null VFS pointer");
         };
@@ -301,7 +284,7 @@ impl ConnectionVfsExt for crate::Connection {
             )
         };
         if result != crate::ffi::SQLITE_OK {
-            return Err(VfsIdentityError::FileControlFailed(result));
+            return Err(VfsIdentityError::FileControlFailed { code: result });
         }
         VfsIdentity::from_pointer(pointer).ok_or(VfsIdentityError::MissingPointer)
     }

@@ -1,8 +1,7 @@
 //! Explicit multihash and CID conversions for object identifiers.
 
-use std::fmt;
-
 use cid::{CidGeneric, multihash::Multihash};
+use covalence_lib_error::snafu::{self, Snafu};
 
 use crate::{Blake3, Cov, CtxKeyNamespace, Git, Namespace, Obj, Sha1, Sha256};
 
@@ -12,16 +11,34 @@ const SHA2_256: u64 = 0x12;
 const BLAKE3_256: u64 = 0x1e;
 
 /// A multihash or CID does not describe the requested object namespace.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct InvalidMultiformat(&'static str);
-
-impl fmt::Display for InvalidMultiformat {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.0)
-    }
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Snafu)]
+#[snafu(crate_root(snafu))]
+pub enum InvalidMultiformat {
+    /// The multihash names a hash function other than the namespace's.
+    #[snafu(display("expected multihash code {expected:#x}, found {actual:#x}"))]
+    MultihashCode {
+        /// Code this namespace uses.
+        expected: u64,
+        /// Code carried by the input.
+        actual: u64,
+    },
+    /// The digest is not as wide as the namespace's identifiers.
+    #[snafu(display("expected a {expected}-byte digest, found {actual}"))]
+    DigestLength {
+        /// Width this namespace uses.
+        expected: usize,
+        /// Width carried by the input.
+        actual: usize,
+    },
+    /// The CID names a codec other than raw.
+    #[snafu(display("expected CID codec {expected:#x}, found {actual:#x}"))]
+    CidCodec {
+        /// The only codec these identifiers use.
+        expected: u64,
+        /// Codec carried by the input.
+        actual: u64,
+    },
 }
-
-impl std::error::Error for InvalidMultiformat {}
 
 /// A namespace with a standard multihash code.
 ///
@@ -74,10 +91,16 @@ impl<N: MultiformatNamespace> Obj<N> {
     /// Returns an error when the code or digest width does not match this namespace.
     pub fn from_multihash(hash: &Multihash<32>) -> Result<Self, InvalidMultiformat> {
         if hash.code() != N::MULTIHASH_CODE {
-            return Err(InvalidMultiformat("wrong multihash code"));
+            return Err(InvalidMultiformat::MultihashCode {
+                expected: N::MULTIHASH_CODE,
+                actual: hash.code(),
+            });
         }
         if hash.digest().len() != N::BYTES {
-            return Err(InvalidMultiformat("wrong multihash digest length"));
+            return Err(InvalidMultiformat::DigestLength {
+                expected: N::BYTES,
+                actual: hash.digest().len(),
+            });
         }
         let mut bytes = N::Bytes::default();
         bytes.as_mut().copy_from_slice(hash.digest());
@@ -97,7 +120,10 @@ impl<N: MultiformatNamespace> Obj<N> {
     /// Returns an error when the codec, hash code, or digest width does not match.
     pub fn from_raw_cid(cid: &CidGeneric<32>) -> Result<Self, InvalidMultiformat> {
         if cid.codec() != RAW {
-            return Err(InvalidMultiformat("wrong CID codec"));
+            return Err(InvalidMultiformat::CidCodec {
+                expected: RAW,
+                actual: cid.codec(),
+            });
         }
         Self::from_multihash(cid.hash())
     }

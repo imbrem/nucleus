@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 covalence-lib-bigint = { path = "../../lib/bigint" }
+covalence-lib-error = { path = "../../lib/error" }
 
 [lints]
 workspace = true

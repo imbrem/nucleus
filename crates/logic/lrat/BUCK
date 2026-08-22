@@ -32,6 +32,7 @@ rust_library(
     ],
     tests = [":covalence_logic_lrat-unit-test"],
     named_deps = {
+        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_logic_sat": "nucleus//crates/logic/sat:covalence_logic_sat",
     },
     env = {
@@ -65,6 +66,7 @@ rust_test(
         "parse",
     ],
     named_deps = {
+        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_logic_sat": "nucleus//crates/logic/sat:covalence_logic_sat",
     },
     env = {

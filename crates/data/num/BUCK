@@ -29,6 +29,7 @@ rust_library(
     tests = [":covalence_data_num-unit-test"],
     named_deps = {
         "covalence_lib_bigint": "nucleus//crates/lib/bigint:covalence_lib_bigint",
+        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -58,6 +59,7 @@ rust_test(
     srcs = _RUST_SOURCES,
     named_deps = {
         "covalence_lib_bigint": "nucleus//crates/lib/bigint:covalence_lib_bigint",
+        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",

@@ -8,6 +8,14 @@
 //! reports or structured, user-understandable diagnostics. Rendering policy
 //! belongs in surface-specific crates rather than here.
 //!
+//! Miette is built with its `fancy` renderer. Without it, returning
+//! [`miette::Result`] from `main` prints `Diagnostic { message: … }` and a note
+//! telling the reader to recompile with the feature — worse than printing the
+//! error's own `Display`, which is why nothing used miette before it was turned
+//! on. It costs twenty crates of compile time and nothing else: the renderer is
+//! dead code wherever no report is constructed, so the Wasm bundle is
+//! byte-identical with and without it.
+//!
 //! Expected malformed input, warnings, and recoverable outcomes are not fatal
 //! failures by default. Shared diagnostic and outcome types can be added when
 //! concrete consumers establish their requirements.
