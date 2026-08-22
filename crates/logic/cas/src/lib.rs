@@ -21,7 +21,7 @@ pub use covalence_lib_hash::O256;
 
 pub use fact::{CasAssertion, CasCheckError, CasFact};
 
-use std::ops::{Deref, Range};
+use std::ops::{Deref, DerefMut, Range};
 
 use covalence_lib_error::snafu::Snafu;
 
@@ -30,6 +30,34 @@ impl Deref for CasFact {
 
     fn deref(&self) -> &Self::Target {
         self.as_assertion()
+    }
+}
+
+impl Deref for CasAssertion {
+    type Target = Bytes;
+
+    fn deref(&self) -> &Self::Target {
+        &self.blob
+    }
+}
+
+// An assertion is unchecked data. Mutating its `Bytes` view deliberately does
+// not recompute the claimed hash; a later `check()` validates the new pair.
+impl DerefMut for CasAssertion {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.blob
+    }
+}
+
+impl AsRef<[u8]> for CasAssertion {
+    fn as_ref(&self) -> &[u8] {
+        self.blob.as_ref()
+    }
+}
+
+impl AsRef<[u8]> for CasFact {
+    fn as_ref(&self) -> &[u8] {
+        self.bytes().as_ref()
     }
 }
 
@@ -48,53 +76,41 @@ impl From<&CasFact> for CasAssertion {
 /// A read-only source of content-addressed bytes.
 ///
 /// Implementations are untrusted. The raw operations are useful when a caller
-/// does not need an LCF fact. [`Self::get_fact`] may avoid hashing when a
-/// provider already holds checked facts, while [`CasExt::get_checked`] still
-/// verifies that the returned fact answers the requested address.
+/// does not need an LCF fact. Returned [`Bytes`] values own or share the
+/// storage needed to remain valid independently of the CAS.
+/// [`Self::get_fact`] may avoid hashing when a provider already holds checked
+/// facts, while [`CasExt::get_checked`] still verifies that the returned fact
+/// answers the requested address.
 pub trait Cas {
     /// Implementation-specific lookup or I/O failure.
     type Error: std::error::Error + 'static;
 
-    /// An immutable object pinned independently of the CAS.
-    type Object: CasObject<Error = Self::Error>;
-
-    /// Opens and pins `address`, or returns `None` when it is absent.
+    /// Gets all bytes at `address`, or returns `None` when it is absent.
     ///
     /// # Errors
     ///
-    /// Returns an implementation-specific lookup or I/O failure.
-    fn open(&self, address: O256) -> Result<Option<Self::Object>, Self::Error>;
-
-    /// Gets all bytes at `address`, or `None` when it is absent.
-    ///
-    /// # Errors
-    ///
-    /// Returns an implementation-specific lookup, I/O, or read failure.
-    fn get(&self, address: O256) -> Result<Option<Bytes>, Self::Error> {
-        self.open(address)?
-            .map(|object| object.read(0..object.len()))
-            .transpose()
-    }
+    /// Returns an implementation-specific lookup or read failure.
+    fn get_bytes(&self, address: O256) -> Result<Option<Bytes>, Self::Error>;
 
     /// Gets the length at `address`, or `None` when it is absent.
     ///
     /// # Errors
     ///
-    /// Returns an implementation-specific lookup or I/O failure.
+    /// Returns an implementation-specific lookup or read failure.
     fn len(&self, address: O256) -> Result<Option<u64>, Self::Error> {
-        Ok(self.open(address)?.map(|object| object.len()))
+        self.get_bytes(address).map(|bytes| {
+            bytes.map(|bytes| {
+                u64::try_from(bytes.len()).unwrap_or_else(|_| panic!("CAS object exceeds u64"))
+            })
+        })
     }
 
     /// Gets exactly `range`, or `None` when `address` is absent.
     ///
     /// # Errors
     ///
-    /// Returns an implementation-specific lookup, I/O, or range failure.
-    fn get_range(&self, address: O256, range: Range<u64>) -> Result<Option<Bytes>, Self::Error> {
-        self.open(address)?
-            .map(|object| object.read(range))
-            .transpose()
-    }
+    /// Returns an implementation-specific lookup, read, or range failure.
+    fn get_range(&self, address: O256, range: Range<u64>) -> Result<Option<Bytes>, Self::Error>;
 
     /// Gets a checked whole-object fact, if present.
     ///
@@ -108,7 +124,7 @@ pub trait Cas {
     /// Returns [`CasLookupError::Provider`] for provider failures or
     /// [`CasLookupError::Check`] when raw bytes do not match `address`.
     fn get_fact(&self, address: O256) -> Result<Option<CasFact>, CasLookupError<Self::Error>> {
-        self.get(address)
+        self.get_bytes(address)
             .map_err(|source| CasLookupError::Provider {
                 requested: address,
                 source,
@@ -121,27 +137,6 @@ pub trait Cas {
             })
             .transpose()
     }
-}
-
-/// An immutable object pinned by [`Cas::open`].
-pub trait CasObject {
-    /// Implementation-specific read failure.
-    type Error: std::error::Error + 'static;
-
-    /// Returns the object's length.
-    fn len(&self) -> u64;
-
-    /// Returns whether the object is empty.
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    /// Reads exactly `range`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an implementation-specific I/O or range failure.
-    fn read(&self, range: Range<u64>) -> Result<Bytes, Self::Error>;
 }
 
 /// Failure to resolve a checked fact for a requested address.
@@ -264,7 +259,7 @@ pub trait CasShared: Cas {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, convert::Infallible, io, ops::Range};
+    use std::{collections::BTreeSet, io, ops::Range};
 
     use super::*;
 
@@ -327,6 +322,20 @@ mod tests {
     }
 
     #[test]
+    fn assertions_and_facts_borrow_their_blob_bytes() {
+        let mut assertion =
+            CasAssertion::new(O256::from_bytes(b"claimed"), Bytes::from_static(b"blob"));
+        assert_eq!(AsRef::<[u8]>::as_ref(&assertion), b"blob");
+
+        assertion.clear();
+        assert!(assertion.blob.is_empty());
+        assert!(assertion.check().is_err());
+
+        let fact = CasFact::from_bytes(Bytes::from_static(b"checked"));
+        assert_eq!(AsRef::<[u8]>::as_ref(&fact), b"checked");
+    }
+
+    #[test]
     fn assertions_and_facts_have_lexicographic_value_order() {
         let facts = [
             CasFact::from_bytes(Bytes::from_static(b"c")),
@@ -353,31 +362,29 @@ mod tests {
         );
     }
 
-    #[derive(Clone)]
-    struct TestObject(Bytes);
-
-    impl CasObject for TestObject {
-        type Error = Infallible;
-
-        fn len(&self) -> u64 {
-            self.0.len() as u64
-        }
-
-        fn read(&self, range: Range<u64>) -> Result<Bytes, Self::Error> {
-            let start = usize::try_from(range.start).expect("test range fits usize");
-            let end = usize::try_from(range.end).expect("test range fits usize");
-            Ok(self.0.slice(start..end))
-        }
-    }
-
     struct LyingCas(CasFact);
 
     impl Cas for LyingCas {
-        type Error = Infallible;
-        type Object = TestObject;
+        type Error = io::Error;
 
-        fn open(&self, _address: O256) -> Result<Option<Self::Object>, Self::Error> {
-            Ok(Some(TestObject(self.0.bytes().clone())))
+        fn get_bytes(&self, _address: O256) -> Result<Option<Bytes>, Self::Error> {
+            Ok(Some(self.0.bytes().clone()))
+        }
+
+        fn get_range(
+            &self,
+            _address: O256,
+            range: Range<u64>,
+        ) -> Result<Option<Bytes>, Self::Error> {
+            let start = usize::try_from(range.start)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "range start"))?;
+            let end = usize::try_from(range.end)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "range end"))?;
+            let bytes = self.0.bytes();
+            if start > end || end > bytes.len() {
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, "range"));
+            }
+            Ok(Some(bytes.slice(start..end)))
         }
 
         fn get_fact(&self, _address: O256) -> Result<Option<CasFact>, CasLookupError<Self::Error>> {
@@ -406,23 +413,16 @@ mod tests {
 
     impl Cas for FailingCas {
         type Error = io::Error;
-        type Object = FailingObject;
 
-        fn open(&self, _address: O256) -> Result<Option<Self::Object>, Self::Error> {
+        fn get_bytes(&self, _address: O256) -> Result<Option<Bytes>, Self::Error> {
             Err(io::Error::other("offline"))
         }
-    }
 
-    struct FailingObject;
-
-    impl CasObject for FailingObject {
-        type Error = io::Error;
-
-        fn len(&self) -> u64 {
-            0
-        }
-
-        fn read(&self, _range: Range<u64>) -> Result<Bytes, Self::Error> {
+        fn get_range(
+            &self,
+            _address: O256,
+            _range: Range<u64>,
+        ) -> Result<Option<Bytes>, Self::Error> {
             Err(io::Error::other("offline"))
         }
     }
