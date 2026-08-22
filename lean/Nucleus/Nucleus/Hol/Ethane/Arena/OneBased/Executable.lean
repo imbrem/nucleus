@@ -233,6 +233,45 @@ def revalidate (arena : Arena) (fuel : Nat)
     (accepted : arena.RustValidAt fuel resolve) : RustKernel resolve :=
   ⟨arena, fuel, accepted⟩
 
+end RustKernel
+
+namespace Arena
+
+/-- Append one raw import exactly as `Arena::push_import` does in Rust. -/
+def pushImportRaw (arena : Arena) (entry : Import) : Arena :=
+  match arena with
+  | .mk imports axs defs ctx assume assert =>
+      .mk (imports ++ [entry]) axs defs ctx assume assert
+
+/-- Append one raw premise exactly as `Arena::push_assumption` does in Rust. -/
+def pushAssumptionRaw (arena : Arena) (record : Meta) : Arena :=
+  match arena with
+  | .mk imports axs defs ctx assume assert =>
+      .mk imports axs defs ctx (assume ++ [record]) assert
+
+/-- Append one raw conclusion exactly as `Arena::push_assertion` does in Rust. -/
+def pushAssertionRaw (arena : Arena) (record : Meta) : Arena :=
+  match arena with
+  | .mk imports axs defs ctx assume assert =>
+      .mk imports axs defs ctx assume (assert ++ [record])
+
+/-- Replace one row's inline equality member.  Failure means the one-based
+reference was outside the dense definition vector. -/
+def setEq? (arena : Arena) (reference right : Ref) : Option Arena :=
+  let position := reference.value.toNat - 1
+  match arena.defs[position]? with
+  | none => none
+  | some _ =>
+      match arena with
+      | .mk imports axs defs ctx assume assert =>
+          some (.mk imports axs
+            (defs.modify position fun row => { row with eq := some right })
+            ctx assume assert)
+
+end Arena
+
+namespace RustKernel
+
 /-- A successful checked row append, including the handle and classification
 evidence returned to the caller. -/
 structure PushResult (before : RustKernel resolve) (row : detail.Row)
@@ -267,6 +306,49 @@ abbrev EqResult (before : RustKernel resolve) (left right : Ref) :=
 abbrev BoolResult (before : RustKernel resolve) (value : Bool) :=
   PushResult before ⟨.bool value, none, none⟩ .tm
 
+abbrev KindRefResult (before : RustKernel resolve)
+    (source : ImportId) (foreign : Ref) :=
+  PushResult before ⟨.kindRef source foreign, none, none⟩ .kind
+
+abbrev TyRefResult (before : RustKernel resolve)
+    (source : ImportId) (foreign : Ref) :=
+  PushResult before ⟨.tyRef source foreign, none, none⟩ .ty
+
+abbrev TmRefResult (before : RustKernel resolve)
+    (source : ImportId) (foreign : Ref) :=
+  PushResult before ⟨.tmRef source foreign, none, none⟩ .tm
+
+/-- Successful recovery of a checked handle for an existing row. -/
+structure IndexResult (kernel : RustKernel resolve) (reference : Ref)
+    (expected : TagSort) where
+  value : Value
+  resolved : ResolvesAt kernel.fuel resolve kernel.arena reference value
+  category : value.tagSort = expected
+  wellFormed : value.check = true
+
+/-- Successful import-table mutation and complete revalidation. -/
+structure ImportResult (before : RustKernel resolve) (entry : Import) where
+  after : RustKernel resolve
+  source : ImportId
+  appended : after.arena = before.arena.pushImportRaw entry
+  lookup : after.arena.import? source = some entry
+
+/-- Successful premise insertion.  Premises are deliberately not checked or
+copied into conclusions. -/
+structure AssumeResult (before : RustKernel resolve) (record : Meta) where
+  after : RustKernel resolve
+  appended : after.arena = before.arena.pushAssumptionRaw record
+
+/-- Successful checked conclusion insertion. -/
+structure AssertResult (before : RustKernel resolve) (record : Meta) where
+  after : RustKernel resolve
+  appended : after.arena = before.arena.pushAssertionRaw record
+
+/-- Successful inline equality update followed by complete revalidation. -/
+structure AssertEqResult (before : RustKernel resolve) (left right : Ref) where
+  after : RustKernel resolve
+  updated : before.arena.setEq? left right = some after.arena
+
 /-- Every public checked append returns another abstract valid kernel. -/
 theorem PushResult.valid {resolve : Resolver} {before : RustKernel resolve}
     {row : detail.Row} {expected : TagSort}
@@ -281,6 +363,36 @@ theorem PushResult.value_wellFormed {resolve : Resolver}
     (result : PushResult (resolve := resolve) before row expected) :
     result.value.WellFormed :=
   Value.check_sound result.wellFormed
+
+theorem IndexResult.value_wellFormed {resolve : Resolver}
+    {kernel : RustKernel resolve} {reference : Ref} {expected : TagSort}
+    (result : IndexResult kernel reference expected) :
+    result.value.WellFormed :=
+  Value.check_sound result.wellFormed
+
+theorem ImportResult.valid {resolve : Resolver}
+    {before : RustKernel resolve} {entry : Import}
+    (result : ImportResult before entry) :
+    result.after.arena.KernelValid resolve :=
+  by simpa [toKernel] using result.after.toKernel.valid
+
+theorem AssumeResult.valid {resolve : Resolver}
+    {before : RustKernel resolve} {record : Meta}
+    (result : AssumeResult before record) :
+    result.after.arena.KernelValid resolve :=
+  by simpa [toKernel] using result.after.toKernel.valid
+
+theorem AssertResult.valid {resolve : Resolver}
+    {before : RustKernel resolve} {record : Meta}
+    (result : AssertResult before record) :
+    result.after.arena.KernelValid resolve :=
+  by simpa [toKernel] using result.after.toKernel.valid
+
+theorem AssertEqResult.valid {resolve : Resolver}
+    {before : RustKernel resolve} {left right : Ref}
+    (result : AssertEqResult before left right) :
+    result.after.arena.KernelValid resolve :=
+  by simpa [toKernel] using result.after.toKernel.valid
 
 end RustKernel
 
