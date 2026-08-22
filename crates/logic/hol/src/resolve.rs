@@ -131,12 +131,12 @@ impl<R: Resolver + ?Sized> ResolverExt for R {}
 /// This is a flat cursor, not a reconstructed syntax tree. Its accessors read
 /// one row in place and do not follow ordinary child references.
 #[derive(Clone, Debug)]
-pub struct ResolvedRef {
+pub struct Expr {
     table: Table,
     reference: Ref,
 }
 
-impl ResolvedRef {
+impl Expr {
     /// Returns the local reference within [`Self::table`].
     #[must_use]
     pub const fn reference(&self) -> Ref {
@@ -159,7 +159,7 @@ impl ResolvedRef {
     ///
     /// # Panics
     ///
-    /// Panics only if the private `ResolvedRef` invariant is broken.
+    /// Panics only if the private `Expr` invariant is broken.
     #[must_use]
     pub fn tag(&self) -> Tag {
         self.arena()
@@ -183,7 +183,7 @@ impl ResolvedRef {
     ///
     /// # Panics
     ///
-    /// Panics only if the private `ResolvedRef` invariant is broken.
+    /// Panics only if the private `Expr` invariant is broken.
     #[must_use]
     pub fn children(&self) -> impl ExactSizeIterator<Item = Ref> + '_ {
         self.arena()
@@ -213,9 +213,9 @@ impl ResolvedRef {
 impl Table {
     /// Returns a flat cursor for a row in this table.
     #[must_use]
-    pub fn resolved(&self, reference: Ref) -> Option<ResolvedRef> {
+    pub fn expr(&self, reference: Ref) -> Option<Expr> {
         self.tag(reference)?;
-        Some(ResolvedRef {
+        Some(Expr {
             table: self.clone(),
             reference,
         })
@@ -260,10 +260,10 @@ impl Arena {
         resolver: &mut R,
         source: ImportId,
         foreign: Ref,
-    ) -> Result<ResolvedRef, ResolveError<R::Error>> {
+    ) -> Result<Expr, ResolveError<R::Error>> {
         let table = self.resolve_import(resolver, source)?;
         table
-            .resolved(foreign)
+            .expr(foreign)
             .ok_or(ResolveError::MissingReference { reference: foreign })
     }
 
@@ -281,7 +281,7 @@ impl Arena {
         &self,
         resolver: &mut R,
         reference: Ref,
-    ) -> Result<ResolvedRef, ResolveError<R::Error>> {
+    ) -> Result<Expr, ResolveError<R::Error>> {
         let expected = self
             .tag(reference)
             .ok_or(ResolveError::MissingReference { reference })?

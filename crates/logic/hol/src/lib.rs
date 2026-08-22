@@ -8,7 +8,7 @@ mod row;
 mod table;
 pub mod wire;
 
-pub use resolve::{ResolveError, ResolvedRef, Resolver, ResolverExt};
+pub use resolve::{Expr, ResolveError, Resolver, ResolverExt};
 pub use row::{KindTag, Sort, Tag, TmTag, TyTag};
 pub use table::Table;
 
