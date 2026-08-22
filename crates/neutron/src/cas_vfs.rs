@@ -4,7 +4,7 @@ use std::io;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use covalence_data_cas::{Cas, CasObject};
+use covalence_data_cas::{CasObject, ObjectCas};
 use covalence_lib_hash::O256;
 use covalence_lib_sqlite::vfs::{
     AccessCheck, DeviceCharacteristics, File, LockLevel, OpenFlags, OpenKind, OpenedFile,
@@ -45,7 +45,7 @@ pub fn register_cas<C>(
     as_default: bool,
 ) -> Result<RegisteredVfs, RegisterError>
 where
-    C: Cas + Send + Sync + ?Sized + 'static,
+    C: ObjectCas + Send + Sync + ?Sized + 'static,
     C::Object: Send + Sync,
     C::Error: std::error::Error + Send + Sync + 'static,
 {
@@ -80,7 +80,7 @@ fn source_error(error: impl std::error::Error + Send + Sync + 'static) -> io::Er
 // SQLite may call a registered VFS from any thread.
 impl<C> Vfs for CasVfs<C>
 where
-    C: Cas + Send + Sync + ?Sized + 'static,
+    C: ObjectCas + Send + Sync + ?Sized + 'static,
     C::Object: Send + Sync,
     C::Error: std::error::Error + Send + Sync + 'static,
 {
@@ -280,8 +280,30 @@ mod tests {
         reads: Arc<Mutex<Vec<Range<u64>>>>,
     }
 
-    impl Cas for Recorder {
+    impl covalence_data_cas::Cas for Recorder {
         type Error = io::Error;
+
+        fn get_bytes(&self, address: O256) -> io::Result<Option<Bytes>> {
+            Ok((address == ADDRESS).then(|| self.data.clone()))
+        }
+
+        fn get_range(&self, address: O256, range: Range<u64>) -> io::Result<Option<Bytes>> {
+            if address != ADDRESS {
+                return Ok(None);
+            }
+            let start = usize::try_from(range.start)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "range too large"))?;
+            let end = usize::try_from(range.end)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "range too large"))?;
+            self.data
+                .get(start..end)
+                .map(Bytes::copy_from_slice)
+                .map(Some)
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "range out of bounds"))
+        }
+    }
+
+    impl ObjectCas for Recorder {
         type Object = RecorderObject;
 
         fn open(&self, address: O256) -> io::Result<Option<Self::Object>> {

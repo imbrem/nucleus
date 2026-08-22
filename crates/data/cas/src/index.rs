@@ -4,9 +4,9 @@ use bytes::Bytes;
 use covalence_lib_error::snafu::{self, Snafu};
 use covalence_lib_hash::O256;
 use covalence_lib_table::HashTable;
-use covalence_logic_cas::{Cas, CasFact, CasLookupError, CasMut, CasObject, CasShared};
+use covalence_logic_cas::{Cas, CasFact, CasLookupError, CasMut, CasShared};
 
-use crate::CasStatistics;
+use crate::{CasObject, CasStatistics, ObjectCas};
 
 /// Refusal to admit bytes into a bounded [`SharedIndexCas`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Snafu)]
@@ -176,16 +176,29 @@ fn resident_addr64(facts: &[Option<CasFact>], id: u64) -> u64 {
 
 impl Cas for IndexCas {
     type Error = InvalidRange;
+
+    fn get_bytes(&self, address: O256) -> Result<Option<Bytes>, Self::Error> {
+        Ok(self.fact_at(address).map(|fact| fact.bytes().clone()))
+    }
+
+    fn get_range(&self, address: O256, range: Range<u64>) -> Result<Option<Bytes>, Self::Error> {
+        self.fact_at(address)
+            .map(|fact| ResidentObject(fact.bytes().clone()).read(range))
+            .transpose()
+    }
+
+    fn get_fact(&self, address: O256) -> Result<Option<CasFact>, CasLookupError<Self::Error>> {
+        Ok(self.fact_at(address).cloned())
+    }
+}
+
+impl ObjectCas for IndexCas {
     type Object = ResidentObject;
 
     fn open(&self, address: O256) -> Result<Option<Self::Object>, Self::Error> {
         Ok(self
             .fact_at(address)
             .map(|fact| ResidentObject(fact.bytes().clone())))
-    }
-
-    fn get_fact(&self, address: O256) -> Result<Option<CasFact>, CasLookupError<Self::Error>> {
-        Ok(self.fact_at(address).cloned())
     }
 }
 
@@ -366,16 +379,29 @@ impl SharedIndexCas {
 
 impl Cas for SharedIndexCas {
     type Error = InvalidRange;
+
+    fn get_bytes(&self, address: O256) -> Result<Option<Bytes>, Self::Error> {
+        Ok(self.fact_at(address).map(|fact| fact.bytes().clone()))
+    }
+
+    fn get_range(&self, address: O256, range: Range<u64>) -> Result<Option<Bytes>, Self::Error> {
+        self.fact_at(address)
+            .map(|fact| ResidentObject(fact.bytes().clone()).read(range))
+            .transpose()
+    }
+
+    fn get_fact(&self, address: O256) -> Result<Option<CasFact>, CasLookupError<Self::Error>> {
+        Ok(self.fact_at(address))
+    }
+}
+
+impl ObjectCas for SharedIndexCas {
     type Object = ResidentObject;
 
     fn open(&self, address: O256) -> Result<Option<Self::Object>, Self::Error> {
         Ok(self
             .fact_at(address)
             .map(|fact| ResidentObject(fact.bytes().clone())))
-    }
-
-    fn get_fact(&self, address: O256) -> Result<Option<CasFact>, CasLookupError<Self::Error>> {
-        Ok(self.fact_at(address))
     }
 }
 
@@ -492,14 +518,17 @@ mod tests {
     }
 
     #[test]
-    fn shared_wrapper_preserves_existing_objects_after_removal() {
+    fn shared_wrapper_preserves_returned_data_after_removal() {
         let cas = SharedIndexCas::new();
         let address = cas.insert(Bytes::from_static(b"hello")).unwrap();
         let object = cas.open(address).unwrap().unwrap();
+        let bytes = cas.get_bytes(address).unwrap().unwrap();
 
         assert!(cas.remove(address));
         assert_eq!(object.read(0..5).unwrap(), Bytes::from_static(b"hello"));
+        assert_eq!(bytes, Bytes::from_static(b"hello"));
         assert!(cas.open(address).unwrap().is_none());
+        assert!(cas.get_bytes(address).unwrap().is_none());
     }
 
     #[test]
