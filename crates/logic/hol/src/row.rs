@@ -383,4 +383,48 @@ mod tests {
         into_writer(&bad, &mut bytes).unwrap();
         assert!(from_reader::<Row, _>(bytes.as_slice()).is_err());
     }
+
+    #[test]
+    fn wrong_payload_is_rejected() {
+        let bad = Cbor::Map(vec![
+            (Cbor::Text("tag".into()), Cbor::Text("tm.bool".into())),
+            (Cbor::Text("ixs".into()), Cbor::Array(Vec::new())),
+            (Cbor::Text("val".into()), Cbor::Integer(0.into())),
+        ]);
+        let mut bytes = Vec::new();
+        into_writer(&bad, &mut bytes).unwrap();
+        assert!(from_reader::<Row, _>(bytes.as_slice()).is_err());
+    }
+
+    #[test]
+    fn unknown_field_is_rejected() {
+        let bad = Cbor::Map(vec![
+            (Cbor::Text("tag".into()), Cbor::Text("kind.star".into())),
+            (Cbor::Text("ixs".into()), Cbor::Array(Vec::new())),
+            (Cbor::Text("unknown".into()), Cbor::Null),
+        ]);
+        let mut bytes = Vec::new();
+        into_writer(&bad, &mut bytes).unwrap();
+        assert!(from_reader::<Row, _>(bytes.as_slice()).is_err());
+    }
+
+    #[test]
+    fn lambda_has_only_binder_and_body_children() {
+        let row = Row::new(Expr::Lam(-2, -1));
+        let mut bytes = Vec::new();
+        into_writer(&row, &mut bytes).unwrap();
+        let Cbor::Map(fields) = from_reader(bytes.as_slice()).unwrap() else {
+            panic!("row must be a CBOR map")
+        };
+
+        assert!(fields.contains(&(
+            Cbor::Text("ixs".into()),
+            Cbor::Array(vec![Cbor::Integer((-2).into()), Cbor::Integer((-1).into())]),
+        )));
+        assert!(
+            !fields
+                .iter()
+                .any(|(key, _)| key == &Cbor::Text("val".into()))
+        );
+    }
 }
