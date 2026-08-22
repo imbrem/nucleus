@@ -1,4 +1,20 @@
 //! Checked Ethane kernel wrapper.
+//!
+//! The executable boundary has a direct specification in
+//! `Nucleus.Hol.Ethane.Arena.OneBased.Executable`:
+//!
+//! | Rust operation | Lean specification |
+//! | --- | --- |
+//! | `try_from_arena` | `Arena.RustValidAt`, `Arena.rustValid_sound` |
+//! | `kind_at`, `ty_at`, `tm_at` | `RustKernel.IndexResult` |
+//! | `star`, `bool_ty` | `RustKernel.StarResult`, `BoolTyResult` |
+//! | `tm_fv`, `lam`, `app`, `eq`, `bool` | the corresponding `RustKernel.*Result` |
+//! | import and reference methods | `ImportResult`, `KindRefResult`, `TyRefResult`, `TmRefResult` |
+//! | `assume_valid`, `assume_wf` | `AssumeResult` |
+//! | `assert_valid`, `assert_wf` | `AssertResult` |
+//! | `add_context`, `add_axiom` | `ContextResult`, `AxiomResult` |
+//! | `assert_eq` | `AssertEqResult`, `Kernel.Equality.ofMember` |
+//! | equality symmetry, transitivity, application | `Kernel.Equality.symm`, `.trans`, `.app` |
 
 use std::sync::Arc;
 
