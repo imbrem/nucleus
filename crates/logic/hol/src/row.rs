@@ -15,7 +15,7 @@ type Fields = (
 );
 
 /// One non-recursive, unvalidated Ethane expression.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Expr {
     KindStar,
     KindArr(Ref, Ref),
