@@ -148,6 +148,8 @@ pub struct EqualityIx {
     identity: Arc<()>,
     left: Ref,
     right: Ref,
+    left_value: Value,
+    right_value: Value,
 }
 
 impl EqualityIx {
@@ -589,7 +591,7 @@ impl<R: Resolver> Kernel<R> {
             return Err(KernelError::MissingDefinition(left.reference()));
         }
         self.replace_arena_checked(candidate, fuel)?;
-        Ok(self.equality(left.reference(), right.reference()))
+        self.equality(fuel, left.reference(), right.reference())
     }
 
     /// Recover the checked equality attached to an inline member.
@@ -597,11 +599,16 @@ impl<R: Resolver> Kernel<R> {
     /// # Errors
     ///
     /// Returns an error if the left reference has no such checked member.
-    pub fn equality_at(&self, left: Ref, right: Ref) -> Result<EqualityIx, KernelError<R::Error>> {
+    pub fn equality_at(
+        &self,
+        fuel: usize,
+        left: Ref,
+        right: Ref,
+    ) -> Result<EqualityIx, KernelError<R::Error>> {
         if self.arena.eq(left) != Some(right) {
             return Err(KernelError::InvalidEqualityClaim(left));
         }
-        Ok(self.equality(left, right))
+        self.equality(fuel, left, right)
     }
 
     /// Apply symmetry to an opaque equality capability.
@@ -614,7 +621,13 @@ impl<R: Resolver> Kernel<R> {
         equality: &EqualityIx,
     ) -> Result<EqualityIx, KernelError<R::Error>> {
         self.check_equality_owner(equality)?;
-        Ok(self.equality(equality.right, equality.left))
+        Ok(EqualityIx {
+            identity: Arc::clone(&self.identity),
+            left: equality.right,
+            right: equality.left,
+            left_value: equality.right_value.clone(),
+            right_value: equality.left_value.clone(),
+        })
     }
 
     /// Compose two opaque equality capabilities.
@@ -630,10 +643,19 @@ impl<R: Resolver> Kernel<R> {
     ) -> Result<EqualityIx, KernelError<R::Error>> {
         self.check_equality_owner(left)?;
         self.check_equality_owner(right)?;
-        if left.right != right.left {
+        if left.right != right.left
+            || left.right_value != right.left_value
+            || !left.right_value.is_well_formed()
+        {
             return Err(KernelError::EqualityEndpointMismatch);
         }
-        Ok(self.equality(left.left, right.right))
+        Ok(EqualityIx {
+            identity: Arc::clone(&self.identity),
+            left: left.left,
+            right: right.right,
+            left_value: left.left_value.clone(),
+            right_value: right.right_value.clone(),
+        })
     }
 
     /// Apply application congruence to two checked equality capabilities.
@@ -703,7 +725,13 @@ impl<R: Resolver> Kernel<R> {
             return Err(KernelError::EqualityCongruenceMismatch);
         }
 
-        Ok(self.equality(left_app.reference(), right_app.reference()))
+        Ok(EqualityIx {
+            identity: Arc::clone(&self.identity),
+            left: left_app.reference(),
+            right: right_app.reference(),
+            left_value: left_application,
+            right_value: right_application,
+        })
     }
 
     fn push_checked(
@@ -764,12 +792,21 @@ impl<R: Resolver> Kernel<R> {
         Ok(())
     }
 
-    fn equality(&self, left: Ref, right: Ref) -> EqualityIx {
-        EqualityIx {
+    fn equality(
+        &self,
+        fuel: usize,
+        left: Ref,
+        right: Ref,
+    ) -> Result<EqualityIx, KernelError<R::Error>> {
+        let left_value = resolve_at(&self.arena, self.resolver(), left, fuel)?;
+        let right_value = resolve_at(&self.arena, self.resolver(), right, fuel)?;
+        Ok(EqualityIx {
             identity: Arc::clone(&self.identity),
             left,
             right,
-        }
+            left_value,
+            right_value,
+        })
     }
 
     fn check_equality_owner(&self, equality: &EqualityIx) -> Result<(), KernelError<R::Error>> {
