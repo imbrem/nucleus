@@ -1,117 +1,431 @@
 //! Raw, unvalidated Ethane syntax arenas.
 //!
-//! This crate fixes the representation boundary only. Deserialization does
+//! Deserialization establishes only the representation invariants. It does
 //! not establish kinding, typing, equality, or provability.
 
 mod row;
 pub mod wire;
 
-pub use row::Tag;
+pub use row::{KindTag, Sort, Tag, TmTag, TyTag};
 
+use std::{collections::BTreeSet, num::NonZeroU64};
+
+use covalence_lib_hash::O256;
 use row::Row;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-enum Parent {}
-
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct Dense {
-    parent: Option<Parent>,
-    offset: i64,
-    defs: Vec<Row>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(tag = "tag")]
-enum ArenaRepr {
-    #[serde(rename = "arena.dense")]
-    Dense(Dense),
-}
-
-/// A raw Ethane arena.
-///
-/// The concrete rows are intentionally hidden. The public API observes a row
-/// only through an arena-relative signed index.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+/// A one-based local definition reference. `Ref(n)` addresses `defs[n - 1]`.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[repr(transparent)]
 #[serde(transparent)]
-pub struct Arena(ArenaRepr);
+pub struct Ref(NonZeroU64);
 
-impl Arena {
-    /// Returns an empty root dense arena.
+impl Ref {
     #[must_use]
-    pub const fn empty() -> Self {
-        Self(ArenaRepr::Dense(Dense {
-            parent: None,
-            offset: 0,
-            defs: Vec::new(),
-        }))
-    }
-
-    #[must_use]
-    pub const fn offset(&self) -> i64 {
-        self.dense().offset
-    }
-
-    #[must_use]
-    pub const fn len(&self) -> usize {
-        self.dense().defs.len()
-    }
-
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.dense().defs.is_empty()
-    }
-
-    /// Returns the constructor tag at `index`, if that row is local.
-    #[must_use]
-    pub fn tag(&self, index: i64) -> Option<Tag> {
-        self.row(index).map(Row::tag)
-    }
-
-    /// Returns the optional equality member at `index`.
-    ///
-    /// `None` means either that the row is unavailable or that it has no
-    /// equality member.
-    #[must_use]
-    pub fn eq(&self, index: i64) -> Option<i64> {
-        self.row(index).and_then(Row::eq)
-    }
-
-    /// Returns the optional sort member at `index`.
-    ///
-    /// `None` means either that the row is unavailable or that it has no sort
-    /// member.
-    #[must_use]
-    pub fn sort(&self, index: i64) -> Option<i64> {
-        self.row(index).and_then(Row::sort)
-    }
-
-    const fn dense(&self) -> &Dense {
-        match &self.0 {
-            ArenaRepr::Dense(arena) => arena,
+    pub const fn new(value: u64) -> Option<Self> {
+        match NonZeroU64::new(value) {
+            Some(value) => Some(Self(value)),
+            None => None,
         }
     }
 
-    fn row(&self, index: i64) -> Option<&Row> {
-        let relative = index.checked_sub(self.offset())?;
-        let position = usize::try_from(relative).ok()?;
-        self.dense().defs.get(position)
-    }
-
-    #[cfg(test)]
-    fn from_rows(offset: i64, defs: Vec<Row>) -> Self {
-        Self(ArenaRepr::Dense(Dense {
-            parent: None,
-            offset,
-            defs,
-        }))
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0.get()
     }
 }
 
-impl Default for Arena {
-    fn default() -> Self {
-        Self::empty()
+impl From<Ref> for u64 {
+    fn from(value: Ref) -> Self {
+        value.get()
+    }
+}
+
+impl TryFrom<u64> for Ref {
+    type Error = ZeroRef;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        Self::new(value).ok_or(ZeroRef)
+    }
+}
+
+/// A one-based index into an arena's import array.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[repr(transparent)]
+#[serde(transparent)]
+pub struct ImportId(NonZeroU64);
+
+impl ImportId {
+    #[must_use]
+    pub const fn new(value: u64) -> Option<Self> {
+        match NonZeroU64::new(value) {
+            Some(value) => Some(Self(value)),
+            None => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0.get()
+    }
+}
+
+impl From<ImportId> for u64 {
+    fn from(value: ImportId) -> Self {
+        value.get()
+    }
+}
+
+impl TryFrom<u64> for ImportId {
+    type Error = ZeroRef;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        Self::new(value).ok_or(ZeroRef)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ZeroRef;
+
+impl std::fmt::Display for ZeroRef {
+    fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        output.write_str("references are one-based")
+    }
+}
+
+impl std::error::Error for ZeroRef {}
+
+/// The only link format fixed by this representation layer.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LinkFormat {
+    Cbor,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+enum LinkTag {
+    #[serde(rename = "link")]
+    Link,
+}
+
+/// A lazy BLAKE3-addressed arena import.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Link {
+    pub format: LinkFormat,
+    pub blake3: O256,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct LinkSerde {
+    tag: LinkTag,
+    format: LinkFormat,
+    blake3: O256,
+}
+
+impl Serialize for Link {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        LinkSerde {
+            tag: LinkTag::Link,
+            format: self.format,
+            blake3: self.blake3,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Link {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let link = LinkSerde::deserialize(deserializer)?;
+        let LinkTag::Link = link.tag;
+        Ok(Self {
+            format: link.format,
+            blake3: link.blake3,
+        })
+    }
+}
+
+/// One raw import table entry.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Import {
+    Null,
+    Literal(Box<Arena>),
+    Link(Link),
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(untagged)]
+enum ImportSerde {
+    Null(Option<Never>),
+    Literal(Box<Arena>),
+    Link(Link),
+}
+
+#[derive(Deserialize, Serialize)]
+enum Never {}
+
+impl From<Import> for ImportSerde {
+    fn from(value: Import) -> Self {
+        match value {
+            Import::Null => Self::Null(None),
+            Import::Literal(arena) => Self::Literal(arena),
+            Import::Link(link) => Self::Link(link),
+        }
+    }
+}
+
+impl From<ImportSerde> for Import {
+    fn from(value: ImportSerde) -> Self {
+        match value {
+            ImportSerde::Null(None) => Self::Null,
+            ImportSerde::Null(Some(value)) => match value {},
+            ImportSerde::Literal(arena) => Self::Literal(arena),
+            ImportSerde::Link(link) => Self::Link(link),
+        }
+    }
+}
+
+impl Serialize for Import {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        ImportSerde::from(self.clone()).serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Import {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(ImportSerde::deserialize(deserializer)?.into())
+    }
+}
+
+/// Raw metadata appearing in either the assumption or assertion list.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "tag", deny_unknown_fields)]
+pub enum Meta {
+    #[serde(rename = "meta.valid")]
+    Valid { src: ImportId },
+    #[serde(rename = "meta.wf")]
+    Wf { src: ImportId, ix: Ref, sort: Ref },
+}
+
+mod sealed {
+    pub trait Sealed {}
+}
+
+/// Read-only operations shared by arena representations.
+pub trait ArenaRepr: sealed::Sealed {
+    type Ref: Copy + Eq + Ord;
+
+    fn len(&self) -> usize;
+    fn tag(&self, reference: Self::Ref) -> Option<Tag>;
+    fn eq(&self, reference: Self::Ref) -> Option<Self::Ref>;
+    fn sort(&self, reference: Self::Ref) -> Option<Self::Ref>;
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct Dense {
+    defs: Vec<Row>,
+}
+
+impl sealed::Sealed for Dense {}
+
+impl ArenaRepr for Dense {
+    type Ref = Ref;
+
+    fn len(&self) -> usize {
+        self.defs.len()
+    }
+
+    fn tag(&self, reference: Ref) -> Option<Tag> {
+        self.row(reference).map(Row::tag)
+    }
+
+    fn eq(&self, reference: Ref) -> Option<Ref> {
+        self.row(reference).and_then(Row::eq)
+    }
+
+    fn sort(&self, reference: Ref) -> Option<Ref> {
+        self.row(reference).and_then(Row::sort)
+    }
+}
+
+impl Dense {
+    fn row(&self, reference: Ref) -> Option<&Row> {
+        let position = usize::try_from(reference.get() - 1).ok()?;
+        self.defs.get(position)
+    }
+}
+
+/// A one-based dense Ethane arena.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Arena {
+    imports: Vec<Import>,
+    axs: BTreeSet<String>,
+    dense: Dense,
+    ctx: BTreeSet<Ref>,
+    assume: Vec<Meta>,
+    assert: Vec<Meta>,
+}
+
+impl Arena {
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self {
+            imports: Vec::new(),
+            axs: BTreeSet::new(),
+            dense: Dense { defs: Vec::new() },
+            ctx: BTreeSet::new(),
+            assume: Vec::new(),
+            assert: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.dense.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.dense.is_empty()
+    }
+
+    #[must_use]
+    pub fn tag(&self, reference: Ref) -> Option<Tag> {
+        self.dense.tag(reference)
+    }
+
+    #[must_use]
+    pub fn eq(&self, reference: Ref) -> Option<Ref> {
+        ArenaRepr::eq(&self.dense, reference)
+    }
+
+    #[must_use]
+    pub fn sort(&self, reference: Ref) -> Option<Ref> {
+        self.dense.sort(reference)
+    }
+
+    #[must_use]
+    pub fn imports(&self) -> &[Import] {
+        &self.imports
+    }
+
+    #[must_use]
+    pub fn axioms(&self) -> impl ExactSizeIterator<Item = &str> {
+        self.axs.iter().map(String::as_str)
+    }
+
+    #[must_use]
+    pub fn context(&self) -> impl ExactSizeIterator<Item = Ref> + '_ {
+        self.ctx.iter().copied()
+    }
+
+    #[must_use]
+    pub fn assumptions(&self) -> &[Meta] {
+        &self.assume
+    }
+
+    #[must_use]
+    pub fn assertions(&self) -> &[Meta] {
+        &self.assert
+    }
+
+    #[cfg(test)]
+    fn from_parts(
+        imports: Vec<Import>,
+        axs: impl IntoIterator<Item = String>,
+        defs: Vec<Row>,
+        ctx: impl IntoIterator<Item = Ref>,
+        assume: Vec<Meta>,
+        assert: Vec<Meta>,
+    ) -> Self {
+        Self {
+            imports,
+            axs: axs.into_iter().collect(),
+            dense: Dense { defs },
+            ctx: ctx.into_iter().collect(),
+            assume,
+            assert,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize, Serialize)]
+enum ArenaTag {
+    #[serde(rename = "arena")]
+    Arena,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ArenaSerde {
+    tag: ArenaTag,
+    imports: Vec<Import>,
+    axs: Vec<String>,
+    defs: Vec<Row>,
+    ctx: Vec<Ref>,
+    assume: Vec<Meta>,
+    assert: Vec<Meta>,
+}
+
+impl From<Arena> for ArenaSerde {
+    fn from(arena: Arena) -> Self {
+        Self {
+            tag: ArenaTag::Arena,
+            imports: arena.imports,
+            axs: arena.axs.into_iter().collect(),
+            defs: arena.dense.defs,
+            ctx: arena.ctx.into_iter().collect(),
+            assume: arena.assume,
+            assert: arena.assert,
+        }
+    }
+}
+
+impl From<ArenaSerde> for Arena {
+    fn from(arena: ArenaSerde) -> Self {
+        let ArenaTag::Arena = arena.tag;
+        Self {
+            imports: arena.imports,
+            axs: arena.axs.into_iter().collect(),
+            dense: Dense { defs: arena.defs },
+            ctx: arena.ctx.into_iter().collect(),
+            assume: arena.assume,
+            assert: arena.assert,
+        }
+    }
+}
+
+impl Serialize for Arena {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        ArenaSerde::from(self.clone()).serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Arena {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(ArenaSerde::deserialize(deserializer)?.into())
     }
 }
 
@@ -120,23 +434,31 @@ mod tests {
     use super::*;
     use row::Expr;
 
+    const fn reference(value: u64) -> Ref {
+        Ref::new(value).unwrap()
+    }
+
     #[test]
-    fn members_are_looked_up_by_absolute_index() {
-        let arena = Arena::from_rows(
-            -2,
+    fn members_use_one_based_dense_lookup() {
+        let arena = Arena::from_parts(
+            vec![],
+            [],
             vec![
-                Row::new(Expr::KindStar).with_sort(7),
-                Row::new(Expr::BoolTy).with_eq(-2).with_sort(8),
+                Row::new(Expr::KindStar).with_sort(reference(2)),
+                Row::new(Expr::BoolTy)
+                    .with_eq(reference(1))
+                    .with_sort(reference(2)),
             ],
+            [],
+            vec![],
+            vec![],
         );
 
-        assert_eq!(arena.tag(-2), Some(Tag::KindStar));
-        assert_eq!(arena.eq(-2), None);
-        assert_eq!(arena.sort(-2), Some(7));
-        assert_eq!(arena.tag(-1), Some(Tag::BoolTy));
-        assert_eq!(arena.eq(-1), Some(-2));
-        assert_eq!(arena.sort(-1), Some(8));
-        assert_eq!(arena.tag(-3), None);
-        assert_eq!(arena.tag(0), None);
+        assert_eq!(arena.tag(reference(1)), Some(Tag::Kind(KindTag::Star)));
+        assert_eq!(arena.eq(reference(1)), None);
+        assert_eq!(arena.sort(reference(1)), Some(reference(2)));
+        assert_eq!(arena.tag(reference(2)), Some(Tag::Ty(TyTag::Bool)));
+        assert_eq!(arena.eq(reference(2)), Some(reference(1)));
+        assert_eq!(arena.tag(reference(3)), None);
     }
 }
