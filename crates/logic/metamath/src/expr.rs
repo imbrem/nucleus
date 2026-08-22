@@ -25,7 +25,7 @@ pub type Symbol = smol_str::SmolStr;
 ///
 /// Faithful to Metamath semantics: `( wff ( ph -> ps ) )` is
 /// `typecode = "wff"`, `body = ["(", "ph", "->", "ps", ")"]` — *not* a nested
-/// tree. Substitution splices symbol sequences in place (see [`crate::subst`]).
+/// tree. Substitution splices symbol sequences in place (see the `subst` module).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Expr {
     /// The typecode constant (e.g. `wff`, `term`, `class`, `|-`).
