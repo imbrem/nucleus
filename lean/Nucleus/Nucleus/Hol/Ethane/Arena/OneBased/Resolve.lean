@@ -18,10 +18,10 @@ namespace Nucleus.Hol.Ethane.OneBased
 open Nucleus
 
 abbrev ArenaSig : Signature := fun _ => Empty
-abbrev EmptySyn := Nucleus.Hol.Ethane.Syn ArenaSig UInt64
-abbrev EmptyExpr (sort : HolSort) := Nucleus.Hol.Ethane.Expr ArenaSig UInt64 sort
-abbrev EmptyTy := Nucleus.Hol.Ethane.Ty ArenaSig UInt64
-abbrev EmptyTm := Nucleus.Hol.Ethane.Tm ArenaSig UInt64
+abbrev EmptySyn := Nucleus.Hol.Ethane.Syn ArenaSig Nat
+abbrev EmptyExpr (sort : HolSort) := Nucleus.Hol.Ethane.Expr ArenaSig Nat sort
+abbrev EmptyTy := Nucleus.Hol.Ethane.Ty ArenaSig Nat
+abbrev EmptyTm := Nucleus.Hol.Ethane.Tm ArenaSig Nat
 
 /-- A fully classified value reconstructed from raw arena rows. -/
 inductive Value where
@@ -49,7 +49,7 @@ def HasSort : Value → Value → Prop
 
 /-- Forget classifications into the existing Ethane forest value. -/
 def toForestValue : Value →
-    Nucleus.Hol.Ethane.Arena.Value ArenaSig UInt64
+    Nucleus.Hol.Ethane.Arena.Value ArenaSig Nat
   | .kind value => .kind value
   | .family _ expression | .term _ expression => .syntax expression.erase
 
@@ -106,7 +106,7 @@ private noncomputable def sameSyntax (left right : EmptySyn) : Bool := by
   classical
   exact decide (left = right)
 
-private def tyFvName? {kind : Kind} : EmptyExpr (.kind kind) → Option UInt64
+private def tyFvName? {kind : Kind} : EmptyExpr (.kind kind) → Option Nat
   | .tyFv name _ => some name
   | _ => none
 
@@ -138,16 +138,16 @@ noncomputable def elaborateExpr
           return Value.family (.arr domain codomain) (.tyLam name body)
   | .tyFv name kind => do
       let Value.kind kind ← lookupLocal kind | none
-      return Value.family kind (.tyFv name kind)
+      return Value.family kind (.tyFv name.toNat kind)
   | .tyExists name predicate => do
       let Value.term .boolTy predicate ← lookupLocal predicate | none
-      return Value.term .boolTy (.tyExists name predicate)
+      return Value.term .boolTy (.tyExists name.toNat predicate)
   | .model name predicate => do
       let Value.term .boolTy predicate ← lookupLocal predicate | none
-      return Value.family .star (.model name predicate)
+      return Value.family .star (.model name.toNat predicate)
   | .tmFv name type => do
       let Value.family .star type ← lookupLocal type | none
-      return Value.term type (.tmFv name type)
+      return Value.term type (.tmFv name.toNat type)
   | .app function argument => do
       let Value.term (.arr domain codomain) function ← lookupLocal function | none
       let Value.term actual argument ← lookupLocal argument | none
