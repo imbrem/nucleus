@@ -242,7 +242,7 @@ def Expr.tag : Expr → Tag
   | .tyRef .. => .ty .ref
   | .kindRef .. => .kind .ref
 
-/-- Exact field-level Serde view.  `ixs = none` is reserved for imports. -/
+/-- Exact field-level Serde view. Empty ordinary child lists are omitted. -/
 structure RowView where
   tag : Tag
   ixs : Option (List Ref) := none
@@ -262,7 +262,8 @@ structure Row where
 
 def Row.toView (row : Row) : RowView :=
   let ordinary (tag : Tag) (ixs : List Ref) (val : Option Value := none) : RowView :=
-    { tag, ixs := some ixs, val, eq := row.eq, sort := row.sort }
+    { tag, ixs := if ixs.isEmpty then none else some ixs,
+      val, eq := row.eq, sort := row.sort }
   let foreign (tag : Tag) (src : ImportId) (ix : Ref) : RowView :=
     { tag, src := some src, ix := some ix, eq := row.eq, sort := row.sort }
   match row.expr with
@@ -287,9 +288,9 @@ def Row.toView (row : Row) : RowView :=
 
 def Row.ofView? (view : RowView) : Option Row := do
   let expr ← match view.tag, view.ixs, view.val, view.src, view.ix with
-    | .kind .star, some [], none, none, none => some .kindStar
+    | .kind .star, none, none, none, none => some .kindStar
     | .kind .arr, some [a, b], none, none, none => some (.kindArr a b)
-    | .ty .bool, some [], none, none, none => some .boolTy
+    | .ty .bool, none, none, none, none => some .boolTy
     | .ty .arr, some [a, b], none, none, none => some (.tyArr a b)
     | .ty .app, some [a, b], none, none, none => some (.tyApp a b)
     | .ty .lam, some [binder, body], none, none, none => some (.tyLam binder body)
@@ -301,7 +302,7 @@ def Row.ofView? (view : RowView) : Option Row := do
     | .tm .fv, some [type], some (.nat name), none, none => some (.tmFv name type)
     | .tm .app, some [f, a], none, none, none => some (.app f a)
     | .tm .lam, some [binder, body], none, none, none => some (.lam binder body)
-    | .tm .bool, some [], some (.bool value), none, none => some (.bool value)
+    | .tm .bool, none, some (.bool value), none, none => some (.bool value)
     | .tm .eq, some [left, right], none, none, none => some (.eq left right)
     | .tm .eps, some [type, predicate], none, none, none => some (.eps type predicate)
     | .tm .ref, none, none, some src, some ix => some (.tmRef src ix)

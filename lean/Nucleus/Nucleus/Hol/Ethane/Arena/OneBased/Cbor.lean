@@ -49,6 +49,15 @@ private def traverse (decode : Nucleus.Cbor → Option α) :
   | [] => some []
   | value :: values => return (← decode value) :: (← traverse decode values)
 
+private theorem traverse_encode (encode : α → Nucleus.Cbor)
+    (decode : Nucleus.Cbor → Option α)
+    (roundtrip : ∀ value, decode (encode value) = some value)
+    (values : List α) :
+    traverse decode (values.map encode) = some values := by
+  induction values with
+  | nil => rfl
+  | cons value values ih => simp [traverse, roundtrip, ih]
+
 private def encodeRef (reference : Ref) : Nucleus.Cbor := unsigned reference.value
 private def decodeRef? (value : Nucleus.Cbor) : Option Ref := do
   Ref.ofUInt64? (← asUnsigned? value)
@@ -170,6 +179,11 @@ private def decodeMeta? (value : Nucleus.Cbor) : Option Meta := do
         (← decodeRef? (← required? "sort" fields))
   | _ => none
 
+@[simp] theorem decodeMeta?_encodeMeta (record : Meta) :
+    decodeMeta? (encodeMeta record) = some record := by
+  cases record <;>
+    simp [decodeMeta?, encodeMeta, fields?, field?, required?, object, text, asText?]
+
 private def bytesOfO256 (value : O256) : Bytes := ⟨value.bytes.toByteArray⟩
 private def o256OfBytes? (value : Bytes) : Option O256 :=
   O256.ofList? value.data.data.toList
@@ -188,49 +202,14 @@ private def decodeLink? (value : Nucleus.Cbor) : Option Link := do
     | _ => none
   return { blake3 := ← o256OfBytes? bytes }
 
-private instance : Inhabited Nucleus.Cbor := ⟨null⟩
+@[simp] private theorem o256OfBytes?_bytesOfO256 (value : O256) :
+    o256OfBytes? (bytesOfO256 value) = some value := by
+  simp [o256OfBytes?, bytesOfO256]
 
-mutual
-
-partial def encodeImport : Import → Nucleus.Cbor
-  | .null => null
-  | .literal arena => encodeArena arena
-  | .link link => encodeLink link
-
-partial def encodeArena (arena : Arena) : Nucleus.Cbor :=
-  let view := arena.toView
-  object [
-    ("tag", text "arena"),
-    ("imports", array (view.imports.map encodeImport)),
-    ("axs", array (view.axs.map text)),
-    ("defs", array (view.defs.map encodeRow)),
-    ("ctx", array (view.ctx.map encodeRef)),
-    ("assume", array (view.assume.map encodeMeta)),
-    ("assert", array (view.assert.map encodeMeta))]
-
-end
-
-mutual
-
-partial def decodeImport? (value : Nucleus.Cbor) : Option Import := do
-  if value = null then some .null
-  else match field? "tag" (← Nucleus.Cbor.asTextMap? value) with
-    | some (.primitive (.text "link")) => return .link (← decodeLink? value)
-    | some (.primitive (.text "arena")) => return .literal (← decodeArena? value)
-    | _ => none
-
-partial def decodeArena? (value : Nucleus.Cbor) : Option Arena := do
-  let fields ← fields? ["tag", "imports", "axs", "defs", "ctx", "assume", "assert"] value
-  if (← asText? (← required? "tag" fields)) != "arena" then none else pure ()
-  let imports ← decodeList decodeImport? (← required? "imports" fields)
-  let axs ← decodeList asText? (← required? "axs" fields)
-  let defs ← decodeList decodeRow? (← required? "defs" fields)
-  let ctx ← decodeList decodeRef? (← required? "ctx" fields)
-  let assume ← decodeList decodeMeta? (← required? "assume" fields)
-  let assert ← decodeList decodeMeta? (← required? "assert" fields)
-  return View.normalize { imports, axs, defs, ctx, assume, assert }
-
-end
+@[simp] theorem decodeLink?_encodeLink (link : Link) :
+    decodeLink? (encodeLink link) = some link := by
+  cases link
+  simp [decodeLink?, encodeLink, fields?, field?, required?, object, text, asText?]
 
 set_option maxHeartbeats 1000000 in
 -- The exhaustive proof normalizes the strict field parser once for every row shape.
@@ -246,5 +225,236 @@ private theorem decodeRowView?_encodeRow (row : detail.Row) :
 @[simp] theorem decodeRow?_encodeRow (row : detail.Row) :
     decodeRow? (encodeRow row) = some row := by
   simp [decodeRow?, decodeRowView?_encodeRow, detail.Row.ofView?_toView]
+
+mutual
+
+def encodeImport : Import → Nucleus.Cbor
+  | .null => null
+  | .literal arena => encodeArena arena
+  | .link link => encodeLink link
+
+def encodeArena : Arena → Nucleus.Cbor
+  | .mk imports axs defs ctx assume assert => object [
+      ("tag", text "arena"),
+      ("imports", array (encodeImports imports)),
+      ("axs", array ((axs.sort (· ≤ ·)).map text)),
+      ("defs", array (defs.map encodeRow)),
+      ("ctx", array ((ctx.sort (· ≤ ·)).map encodeRef)),
+      ("assume", array (assume.map encodeMeta)),
+      ("assert", array (assert.map encodeMeta))]
+
+def encodeImports : List Import → List Nucleus.Cbor
+  | [] => []
+  | entry :: entries => encodeImport entry :: encodeImports entries
+
+end
+
+private def decodeArenaUsing? (decodeImport : Nucleus.Cbor → Option Import)
+    (value : Nucleus.Cbor) : Option Arena := do
+  let fields ← fields? ["tag", "imports", "axs", "defs", "ctx", "assume", "assert"] value
+  if (← asText? (← required? "tag" fields)) != "arena" then none else pure ()
+  let imports ← decodeList decodeImport (← required? "imports" fields)
+  let axs ← decodeList asText? (← required? "axs" fields)
+  let defs ← decodeList decodeRow? (← required? "defs" fields)
+  let ctx ← decodeList decodeRef? (← required? "ctx" fields)
+  let assume ← decodeList decodeMeta? (← required? "assume" fields)
+  let assert ← decodeList decodeMeta? (← required? "assert" fields)
+  return View.normalize { imports, axs, defs, ctx, assume, assert }
+
+def decodeImportWithFuel? : Nat → Nucleus.Cbor → Option Import
+  | 0, _ => none
+  | fuel + 1, value => do
+      if value = null then some .null
+      else match field? "tag" (← Nucleus.Cbor.asTextMap? value) with
+        | some (.primitive (.text "link")) => return .link (← decodeLink? value)
+        | some (.primitive (.text "arena")) =>
+            return .literal (← decodeArenaUsing? (decodeImportWithFuel? fuel) value)
+        | _ => none
+
+/-- Decode an arena with a bound on nested literal imports. -/
+def decodeArenaWithFuel? (fuel : Nat) (value : Nucleus.Cbor) : Option Arena :=
+  decodeArenaUsing? (decodeImportWithFuel? fuel) value
+
+private theorem size_array (values : List Nucleus.Cbor) :
+    (array values).size = 1 + (values.map Nucleus.CborSyn.size).sum := by
+  simp [array, Nucleus.Cbor.arrayOfList, ArrayLike.array, Nucleus.CborSyn.arrayOfList,
+    Nucleus.CborSyn.size]
+
+private theorem size_object (fields : List (String × Nucleus.Cbor)) :
+    (object fields).size =
+      1 + (fields.map fun field => 1 + field.2.size).sum := by
+  simp [object, Nucleus.Cbor.textMapOfList, ObjectLike.object,
+    Nucleus.CborSyn.textMapOfList, Nucleus.CborSyn.size]
+
+mutual
+
+private def importFuel : Import → Nat
+  | .null => 1
+  | .literal arena => arenaFuel arena + 1
+  | .link _ => 1
+
+private def arenaFuel : Arena → Nat
+  | .mk imports _ _ _ _ _ => importsFuel imports
+
+private def importsFuel : List Import → Nat
+  | [] => 0
+  | entry :: entries => max (importFuel entry) (importsFuel entries)
+
+end
+
+private def ImportSizeBound (entry : Import) : Prop :=
+  importFuel entry ≤ (encodeImport entry).size
+
+private def ArenaSizeBound (arena : Arena) : Prop :=
+  arenaFuel arena + 1 ≤ (encodeArena arena).size
+
+private def ImportsSizeBound (entries : List Import) : Prop :=
+  importsFuel entries ≤ (encodeImports entries).map Nucleus.CborSyn.size |>.sum
+
+private theorem nullSizeBound : ImportSizeBound .null := by
+  simp [ImportSizeBound, importFuel, encodeImport, null, Nucleus.CborSyn.size]
+
+private theorem literalSizeBound (arena : Arena) (ih : ArenaSizeBound arena) :
+    ImportSizeBound (.literal arena) := by
+  simpa [ImportSizeBound, ArenaSizeBound, importFuel, encodeImport] using ih
+
+private theorem linkSizeBound (link : Link) : ImportSizeBound (.link link) := by
+  simp [ImportSizeBound, importFuel, encodeImport, encodeLink, size_object]
+
+private theorem nilSizeBound : ImportsSizeBound [] := by
+  simp [ImportsSizeBound, importsFuel, encodeImports]
+
+private theorem consSizeBound (head : Import) (tail : List Import)
+    (headIH : ImportSizeBound head) (tailIH : ImportsSizeBound tail) :
+    ImportsSizeBound (head :: tail) := by
+  simp only [ImportsSizeBound, importsFuel, encodeImports, List.map_cons, List.sum_cons] at *
+  omega
+
+private theorem arenaSizeBound (imports : List Import) (axs : Finset String)
+    (defs : List detail.Row) (ctx : Finset Ref) (assume assert : List Meta)
+    (importsIH : ImportsSizeBound imports) :
+    ArenaSizeBound (.mk imports axs defs ctx assume assert) := by
+  simp only [ArenaSizeBound, arenaFuel, encodeArena, size_object, size_array]
+  omega
+
+private theorem arenaFuel_lt_size (arena : Arena) :
+    arenaFuel arena < (encodeArena arena).size := by
+  have bound : ArenaSizeBound arena := by
+    exact Arena.rec
+      (motive_1 := ImportSizeBound)
+      (motive_2 := ArenaSizeBound)
+      (motive_3 := ImportsSizeBound)
+      nullSizeBound literalSizeBound linkSizeBound arenaSizeBound
+      nilSizeBound consSizeBound arena
+  exact bound
+
+private theorem importFuel_le_size (entry : Import) :
+    importFuel entry ≤ (encodeImport entry).size := by
+  exact Import.rec
+    (motive_1 := ImportSizeBound)
+    (motive_2 := ArenaSizeBound)
+    (motive_3 := ImportsSizeBound)
+    nullSizeBound literalSizeBound linkSizeBound arenaSizeBound
+    nilSizeBound consSizeBound entry
+
+/-- Decode a raw import. The structural CBOR size bounds literal nesting. -/
+def decodeImport? (value : Nucleus.Cbor) : Option Import :=
+  decodeImportWithFuel? value.size value
+
+/-- Decode a raw arena. The structural CBOR size bounds literal nesting. -/
+def decodeArena? (value : Nucleus.Cbor) : Option Arena :=
+  decodeArenaWithFuel? value.size value
+
+
+private def ImportRoundtrip (entry : Import) : Prop :=
+  ∀ fuel, importFuel entry ≤ fuel →
+    decodeImportWithFuel? fuel (encodeImport entry) = some entry
+
+private def ArenaRoundtrip (arena : Arena) : Prop :=
+  ∀ fuel, arenaFuel arena ≤ fuel →
+    decodeArenaWithFuel? fuel (encodeArena arena) = some arena
+
+private def ImportsRoundtrip (entries : List Import) : Prop :=
+  ∀ fuel, importsFuel entries ≤ fuel →
+    traverse (decodeImportWithFuel? fuel) (encodeImports entries) = some entries
+
+private theorem nullRoundtrip : ImportRoundtrip .null := by
+  intro fuel sufficient
+  cases fuel with
+  | zero => simp [importFuel] at sufficient
+  | succ fuel => simp [decodeImportWithFuel?, encodeImport, null]
+
+private theorem literalRoundtrip (arena : Arena) (ih : ArenaRoundtrip arena) :
+    ImportRoundtrip (.literal arena) := by
+  intro fuel sufficient
+  cases fuel with
+  | zero => simp [importFuel] at sufficient
+  | succ fuel =>
+      have arenaSufficient : arenaFuel arena ≤ fuel := by
+        simpa [importFuel, Nat.add_le_add_iff_right] using sufficient
+      simp [decodeImportWithFuel?, encodeImport, encodeArena, fields?, field?, object,
+        text, ih fuel arenaSufficient, decodeArenaWithFuel?]
+
+private theorem linkRoundtrip (link : Link) : ImportRoundtrip (.link link) := by
+  intro fuel sufficient
+  cases fuel with
+  | zero => simp [importFuel] at sufficient
+  | succ fuel =>
+      simp [decodeImportWithFuel?, encodeImport, encodeLink, fields?, field?, object,
+        text, decodeLink?_encodeLink]
+
+private theorem nilRoundtrip : ImportsRoundtrip [] := by
+  intro _ _
+  rfl
+
+private theorem consRoundtrip (head : Import) (tail : List Import)
+    (headIH : ImportRoundtrip head) (tailIH : ImportsRoundtrip tail) :
+    ImportsRoundtrip (head :: tail) := by
+  intro fuel sufficient
+  have headSufficient : importFuel head ≤ fuel :=
+    le_trans (Nat.le_max_left _ _) sufficient
+  have tailSufficient : importsFuel tail ≤ fuel :=
+    le_trans (Nat.le_max_right _ _) sufficient
+  simp [encodeImports, traverse, headIH fuel headSufficient, tailIH fuel tailSufficient]
+
+private theorem arenaRoundtrip (imports : List Import) (axs : Finset String)
+    (defs : List detail.Row) (ctx : Finset Ref) (assume assert : List Meta)
+    (importsIH : ImportsRoundtrip imports) :
+    ArenaRoundtrip (.mk imports axs defs ctx assume assert) := by
+  intro fuel sufficient
+  simp [ArenaRoundtrip] at *
+  simp [decodeArenaWithFuel?, decodeArenaUsing?, encodeArena, fields?, field?, required?,
+    object, text, array, decodeList, importsIH fuel sufficient, traverse_encode,
+    View.normalize]
+
+@[simp] theorem decodeImportWithFuel?_encodeImport (entry : Import) (fuel : Nat)
+    (sufficient : importFuel entry ≤ fuel) :
+    decodeImportWithFuel? fuel (encodeImport entry) = some entry := by
+  exact Import.rec
+    (motive_1 := ImportRoundtrip)
+    (motive_2 := ArenaRoundtrip)
+    (motive_3 := ImportsRoundtrip)
+    nullRoundtrip literalRoundtrip linkRoundtrip arenaRoundtrip
+    nilRoundtrip consRoundtrip entry fuel sufficient
+
+@[simp] theorem decodeArenaWithFuel?_encodeArena (arena : Arena) (fuel : Nat)
+    (sufficient : arenaFuel arena ≤ fuel) :
+    decodeArenaWithFuel? fuel (encodeArena arena) = some arena := by
+  exact Arena.rec
+    (motive_1 := ImportRoundtrip)
+    (motive_2 := ArenaRoundtrip)
+    (motive_3 := ImportsRoundtrip)
+    nullRoundtrip literalRoundtrip linkRoundtrip arenaRoundtrip
+    nilRoundtrip consRoundtrip arena fuel sufficient
+
+@[simp] theorem decodeImport?_encodeImport (entry : Import) :
+    decodeImport? (encodeImport entry) = some entry := by
+  apply decodeImportWithFuel?_encodeImport
+  exact importFuel_le_size entry
+
+@[simp] theorem decodeArena?_encodeArena (arena : Arena) :
+    decodeArena? (encodeArena arena) = some arena := by
+  apply decodeArenaWithFuel?_encodeArena
+  exact Nat.le_of_lt (arenaFuel_lt_size arena)
 
 end Nucleus.Hol.Ethane.OneBased.Cbor
