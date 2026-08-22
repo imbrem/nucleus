@@ -6,9 +6,8 @@
 //! transport, is the trusted object. This keeps concrete storage policy out of
 //! the logic layer.
 //!
-//! This first slice intentionally includes only whole objects. Range and
-//! length assertions require their own derivation or proof-checking rules and
-//! are not represented here.
+//! Only whole objects are represented here. Range and length assertions
+//! require their own derivation or proof-checking rules.
 //!
 //! The corresponding Lean theory names the unchecked proposition
 //! `Nucleus.CasAssertion.Valid` and the checked atom `Nucleus.CasPair`; see
@@ -22,9 +21,29 @@ pub use covalence_lib_hash::O256;
 
 pub use fact::{CasAssertion, CasCheckError, CasFact};
 
-use std::ops::Range;
+use std::ops::{Deref, Range};
 
 use covalence_lib_error::snafu::Snafu;
+
+impl Deref for CasFact {
+    type Target = CasAssertion;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_assertion()
+    }
+}
+
+impl From<CasFact> for CasAssertion {
+    fn from(fact: CasFact) -> Self {
+        fact.into_assertion()
+    }
+}
+
+impl From<&CasFact> for CasAssertion {
+    fn from(fact: &CasFact) -> Self {
+        fact.as_assertion().clone()
+    }
+}
 
 /// A read-only source of content-addressed bytes.
 ///
@@ -367,7 +386,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_get_rejects_fact_for_another_address() {
+    fn checked_lookup_rejects_fact_for_another_address() {
         let returned = CasFact::from_bytes(Bytes::from_static(b"returned"));
         let requested = O256::from_bytes(b"requested");
         let cas = LyingCas(returned.clone());
@@ -409,7 +428,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_get_preserves_provider_failure() {
+    fn checked_lookup_preserves_provider_failure() {
         let requested = O256::from_bytes(b"requested");
         let error = FailingCas.get_checked(requested).unwrap_err();
 

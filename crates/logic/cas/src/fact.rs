@@ -1,5 +1,3 @@
-use std::ops::Deref;
-
 use covalence_lib_error::snafu::Snafu;
 
 use crate::{Bytes, O256};
@@ -114,6 +112,10 @@ impl CasFact {
         &self.assertion.blob
     }
 
+    pub(crate) const fn as_assertion(&self) -> &CasAssertion {
+        &self.assertion
+    }
+
     /// Forgets the checked invariant and returns the ordinary assertion.
     #[must_use]
     pub fn into_assertion(self) -> CasAssertion {
@@ -126,25 +128,5 @@ impl TryFrom<CasAssertion> for CasFact {
 
     fn try_from(assertion: CasAssertion) -> Result<Self, Self::Error> {
         assertion.check()
-    }
-}
-
-impl Deref for CasFact {
-    type Target = CasAssertion;
-
-    fn deref(&self) -> &Self::Target {
-        &self.assertion
-    }
-}
-
-impl From<CasFact> for CasAssertion {
-    fn from(fact: CasFact) -> Self {
-        fact.into_assertion()
-    }
-}
-
-impl From<&CasFact> for CasAssertion {
-    fn from(fact: &CasFact) -> Self {
-        fact.assertion.clone()
     }
 }
