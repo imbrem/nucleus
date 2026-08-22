@@ -225,18 +225,42 @@ def AllowedAxiom : String → Prop
   | "ax.inf" => True
   | _ => False
 
-/-- A raw arena is a valid checked-kernel state relative to a resolver.
-
-The resolver is a parameter because successful CAS resolution is persistent
-but absence is retryable.  No premise in `assume` is silently promoted to an
-assertion. -/
-structure Arena.KernelValid (resolve : Resolver) (arena : Arena) : Prop where
+/-- Local validity, excluding the recursively trusted metadata conclusions. -/
+structure Arena.LocallyValid (resolve : Resolver) (arena : Arena) : Prop where
   structural : arena.StructurallyValid
   sorts : ∀ reference, SortingMemberClaim resolve arena reference
   equalities : ∀ reference, EqualityClaim resolve arena reference
   context : ∀ reference ∈ arena.ctx, ContextClaim resolve arena reference
   axioms : ∀ name ∈ arena.axs, AllowedAxiom name
-  conclusions : arena.Conclusions resolve
+
+/-- Metadata checked relative to a caller-supplied class of trusted arenas. -/
+def KernelMetaClaim (trusted : Arena → Prop) (resolve : Resolver)
+    (arena : Arena) : Meta → Prop
+  | .wf source foreignRef sort =>
+      MetaClaim resolve arena (.wf source foreignRef sort)
+  | .valid source =>
+      ∃ entry imported,
+        arena.import? source = some entry ∧
+        resolveImport? resolve entry = some imported ∧
+        trusted imported
+
+/-- Kernel validity at a finite import-trust depth.  Each `meta.valid` edge
+strictly decreases the depth, so cyclic trust requires an independent finite
+witness rather than being accepted coinductively. -/
+def Arena.KernelValidAt : Nat → Resolver → Arena → Prop
+  | 0, _, _ => False
+  | depth + 1, resolve, arena =>
+      arena.LocallyValid resolve ∧
+      ∀ record ∈ arena.assert,
+        KernelMetaClaim (Arena.KernelValidAt depth resolve) resolve arena record
+
+/-- A raw arena is a valid checked-kernel state relative to a resolver.
+
+The resolver is a parameter because successful CAS resolution is persistent
+but absence is retryable.  No premise in `assume` is silently promoted to an
+assertion. -/
+def Arena.KernelValid (resolve : Resolver) (arena : Arena) : Prop :=
+  ∃ depth, arena.KernelValidAt depth resolve
 
 /-- An arena paired with the proof that its exposed claims were checked. -/
 structure Kernel (resolve : Resolver) where
@@ -256,12 +280,13 @@ namespace Arena
 
 /-- The empty arena is a checked kernel for every resolver. -/
 theorem empty_kernelValid (resolve : Resolver) : empty.KernelValid resolve where
-  structural := by simp [StructurallyValid, empty, defs, RowsValid]
-  sorts := by simp [SortingMemberClaim]
-  equalities := by simp [EqualityClaim]
-  context := by simp [empty, ctx]
-  axioms := by simp [empty, axs]
-  conclusions := by simp [Conclusions, empty, assert]
+  intro
+  exact ⟨{
+    structural := by simp [StructurallyValid, empty, defs, RowsValid]
+    sorts := by simp [SortingMemberClaim]
+    equalities := by simp [EqualityClaim]
+    context := by simp [empty, ctx]
+    axioms := by simp [empty, axs] }, by simp [empty, assert]⟩
 
 end Arena
 
@@ -279,7 +304,11 @@ theorem equality_sound (kernel : Kernel resolve) {reference right : Ref}
       Resolves resolve kernel.arena reference leftValue ∧
       Resolves resolve kernel.arena right rightValue ∧
       Value.Equal leftValue rightValue := by
-  have claim := kernel.valid.equalities reference
+  rcases kernel.valid with ⟨depth, valid⟩
+  cases depth with
+  | zero => contradiction
+  | succ depth =>
+  have claim := valid.1.equalities reference
   simp [EqualityClaim, member] at claim
   exact claim
 
@@ -288,15 +317,42 @@ theorem context_sound (kernel : Kernel resolve) {reference : Ref}
     (member : reference ∈ kernel.arena.ctx) :
     ∃ expression,
       Resolves resolve kernel.arena reference (.term .boolTy expression) ∧
-      Value.WellFormed (.term .boolTy expression) :=
-  kernel.valid.context reference member
+      Value.WellFormed (.term .boolTy expression) := by
+  rcases kernel.valid with ⟨depth, valid⟩
+  cases depth with
+  | zero => contradiction
+  | succ depth => exact valid.1.context reference member
 
 /-- Assertions are checked conclusions; assumptions are intentionally absent
 from this theorem. -/
 theorem conclusion_sound (kernel : Kernel resolve) {record : Meta}
     (member : record ∈ kernel.arena.assert) :
-    MetaClaim resolve kernel.arena record :=
-  kernel.valid.conclusions record member
+    ∃ depth, KernelMetaClaim (Arena.KernelValidAt depth resolve)
+      resolve kernel.arena record := by
+  rcases kernel.valid with ⟨depth, valid⟩
+  cases depth with
+  | zero => contradiction
+  | succ depth => exact ⟨depth, valid.2 record member⟩
+
+/-- An asserted `meta.wf` has the original sorting meaning. -/
+theorem wf_conclusion_sound (kernel : Kernel resolve)
+    {source : ImportId} {foreignRef sort : Ref}
+    (member : Meta.wf source foreignRef sort ∈ kernel.arena.assert) :
+    MetaClaim resolve kernel.arena (.wf source foreignRef sort) := by
+  rcases kernel.conclusion_sound member with ⟨depth, claim⟩
+  exact claim
+
+/-- An asserted `meta.valid` carries a recursively checked imported kernel,
+not merely a promise that its raw rows happened to resolve. -/
+theorem valid_conclusion_sound (kernel : Kernel resolve)
+    {source : ImportId} (member : Meta.valid source ∈ kernel.arena.assert) :
+    ∃ entry imported,
+      kernel.arena.import? source = some entry ∧
+      resolveImport? resolve entry = some imported ∧
+      imported.KernelValid resolve := by
+  rcases kernel.conclusion_sound member with
+    ⟨depth, entry, imported, lookup, resolved, valid⟩
+  exact ⟨entry, imported, lookup, resolved, depth, valid⟩
 
 end Kernel
 

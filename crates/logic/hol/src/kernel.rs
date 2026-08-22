@@ -428,15 +428,9 @@ fn validate_meta<R: Resolver>(
     Ok(match record {
         Meta::Valid { src } => {
             let arena = imported(owner, resolver, src)?;
-            let mut all_resolve = true;
-            for position in 1..=arena.len() {
-                let reference = reference(position)?;
-                if resolve_at(&arena, resolver, reference, fuel).is_err() {
-                    all_resolve = false;
-                    break;
-                }
-            }
-            all_resolve
+            let remaining = fuel.checked_sub(1).ok_or(ResolveError::FuelExhausted)?;
+            Kernel::try_from_arena((*arena).clone(), resolver, remaining)?;
+            true
         }
         Meta::Wf { src, ix, sort } => {
             let arena = imported(owner, resolver, src)?;
@@ -545,6 +539,44 @@ mod tests {
         assert!(matches!(
             Kernel::try_from_arena(asserted, &NoLinks, 1),
             Err(KernelError::Resolve(ResolveError::MissingImport(_)))
+        ));
+    }
+
+    #[test]
+    fn valid_metadata_checks_the_imported_kernel_recursively() {
+        let valid = Arena::from_parts(
+            vec![Import::Literal(Box::new(Arena::empty()))],
+            [],
+            vec![],
+            [],
+            vec![],
+            vec![Meta::Valid {
+                src: ImportId::new(1).unwrap(),
+            }],
+        );
+        assert!(Kernel::try_from_arena(valid, &NoLinks, 2).is_ok());
+
+        let invalid_import = Arena::from_parts(
+            vec![],
+            ["ax.unknown".to_owned()],
+            vec![],
+            [],
+            vec![],
+            vec![],
+        );
+        let invalid = Arena::from_parts(
+            vec![Import::Literal(Box::new(invalid_import))],
+            [],
+            vec![],
+            [],
+            vec![],
+            vec![Meta::Valid {
+                src: ImportId::new(1).unwrap(),
+            }],
+        );
+        assert!(matches!(
+            Kernel::try_from_arena(invalid, &NoLinks, 2),
+            Err(KernelError::UnsupportedAxiom(_))
         ));
     }
 
