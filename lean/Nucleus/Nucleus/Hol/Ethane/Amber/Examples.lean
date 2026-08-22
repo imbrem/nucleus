@@ -1,4 +1,5 @@
 import Nucleus.Hol.Ethane.Amber.Arena.Dense.Cbor
+import Nucleus.Hol.Ethane.Amber.Cbor
 import Nucleus.Hol.Ethane.Amber.Segment
 
 /-! # Executable Amber specification examples -/
@@ -7,22 +8,26 @@ namespace Nucleus.Hol.Ethane.Amber.Examples
 
 open Nucleus Nucleus.Hol.Ethane
 
-private def zeroKey : O256 := fun _ => 0
+private def zeroKey : O256 := BitVec.ofNat 256 0
 
 private def truth : Syn Nucleus.HolE.EmptySig UInt64 := .bool true
 
 /-- The concrete O256/CBOR specialization round-trips one canonical Ethane
 expression. -/
 example :
-    Cbor.decodeExpression? (Key := O256) Arena.Cbor.uint64Names
+    Nucleus.Hol.Ethane.Amber.Cbor.decodeExpression? (Key := O256)
+      Arena.Cbor.uint64Names
       Arena.Cbor.emptySymbols
-      (Cbor.encodeExpression (Key := O256) Arena.Cbor.uint64Names
+      (Nucleus.Hol.Ethane.Amber.Cbor.encodeExpression (Key := O256)
+        Arena.Cbor.uint64Names
         Arena.Cbor.emptySymbols truth) = some truth := by
-  apply Cbor.decodeExpression?_encode
-  change Cbor.FitsDense
+  apply Nucleus.Hol.Ethane.Amber.Cbor.decodeExpression?_encode
+  change Nucleus.Hol.Ethane.Amber.Cbor.FitsDense
     (⟨none, [Arena.Row.bool true]⟩ :
       SyntaxForest O256 Nucleus.HolE.EmptySig UInt64)
-  simp [Cbor.FitsDense, Cbor.FitsParent, Cbor.FitsView,
+  simp [Nucleus.Hol.Ethane.Amber.Cbor.FitsDense,
+    Nucleus.Hol.Ethane.Amber.Cbor.FitsParent,
+    Nucleus.Hol.Ethane.Amber.Cbor.FitsView,
     Row.view, Arena.Row.children]
 
 private def parented : SyntaxForest O256 Nucleus.HolE.EmptySig UInt64 :=
@@ -30,11 +35,15 @@ private def parented : SyntaxForest O256 Nucleus.HolE.EmptySig UInt64 :=
 
 /-- Parent metadata and syntax rows survive the concrete CBOR boundary. -/
 example :
-    Cbor.decodeSyntaxForest? Arena.Cbor.uint64Names Arena.Cbor.emptySymbols
-      (Cbor.encodeSyntaxForest Arena.Cbor.uint64Names Arena.Cbor.emptySymbols parented) =
+    Nucleus.Hol.Ethane.Amber.Cbor.decodeSyntaxForest?
+      Arena.Cbor.uint64Names Arena.Cbor.emptySymbols
+      (Nucleus.Hol.Ethane.Amber.Cbor.encodeSyntaxForest
+        Arena.Cbor.uint64Names Arena.Cbor.emptySymbols parented) =
       some parented := by
-  apply Cbor.decodeSyntaxForest?_encode
-  simp [parented, Cbor.FitsDense, Cbor.FitsParent, Cbor.FitsView,
+  apply Nucleus.Hol.Ethane.Amber.Cbor.decodeSyntaxForest?_encode
+  simp [parented, Nucleus.Hol.Ethane.Amber.Cbor.FitsDense,
+    Nucleus.Hol.Ethane.Amber.Cbor.FitsParent,
+    Nucleus.Hol.Ethane.Amber.Cbor.FitsView,
     Row.view, Arena.Row.children]
 
 private def segmentRange : RangeMap.Range O256 :=
