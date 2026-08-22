@@ -382,8 +382,8 @@ impl Syntax {
         })
     }
 
-    // Mirrors `OneBased.checkFam`. A type variable is kinded exactly when its
-    // syntactic (name, kind) pair is bound by an enclosing type constructor.
+    // Mirrors `OneBased.inferNamedFam`. A type variable is kinded exactly when
+    // its syntactic (name, kind) pair is bound by an enclosing type constructor.
     fn infer_family(&self, scope: &[(u64, Kind)]) -> Option<Kind> {
         Some(match self {
             Self::BoolTy => Kind::Star,
@@ -450,7 +450,7 @@ impl Syntax {
         })
     }
 
-    // Mirrors `OneBased.inferTm`. Term binders need no separate environment:
+    // Mirrors `OneBased.inferNamedTm`. Term binders need no separate environment:
     // exact (name, type) capture preserves the type already carried by a free
     // variable occurrence.
     fn infer_term(&self, scope: &[(u64, Kind)]) -> Option<Self> {
@@ -536,8 +536,8 @@ impl Arena {
 
     /// Resolve one row and run the logical kind/type checker.
     ///
-    /// This is the Rust implementation of `OneBased.Value.check`; its Lean
-    /// soundness theorem is `OneBased.Value.check_sound`.
+    /// This is the Rust implementation of `OneBased.Value.rustCheck`; its Lean
+    /// soundness theorem is `OneBased.Value.rustCheck_sound`.
     ///
     /// # Errors
     ///

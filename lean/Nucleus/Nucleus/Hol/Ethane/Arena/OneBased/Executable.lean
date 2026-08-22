@@ -1,4 +1,5 @@
 import Nucleus.Hol.Ethane.Arena.OneBased.Kernel
+import Nucleus.Hol.Ethane.Arena.OneBased.NamedInference
 
 /-!
 # Executable one-based kernel validation
@@ -44,7 +45,7 @@ def ReflexiveEqualityClaimAt (fuel : Nat) (resolve : Resolver) (arena : Arena)
       ∃ value,
         ResolvesAt fuel resolve arena reference value ∧
         ResolvesAt fuel resolve arena right value ∧
-        value.WellFormed
+        value.rustCheck = true
 
 /-- Exact-fuel identity-beta specialization, retained as a small executable
 example of the general root-beta relation below. -/
@@ -57,8 +58,8 @@ def IdentityBetaEqualityClaimAt (fuel : Nat) (resolve : Resolver)
         ResolvesAt fuel resolve arena reference
           (.term type (.app (.lam name domain (.tmFv name domain)) argument)) ∧
         ResolvesAt fuel resolve arena right (.term type argument) ∧
-        Value.WellFormed
-          (.term type (.app (.lam name domain (.tmFv name domain)) argument)) ∧
+        (Value.term type
+          (.app (.lam name domain (.tmFv name domain)) argument)).rustCheck = true ∧
         domain.lowerTy (.nil : TyScope []) = some loweredDomain ∧
         argument.lowerTm (.nil : TyScope []) (.nil : TmScope ArenaSig 0) =
           some loweredArgument
@@ -79,8 +80,7 @@ def RootBetaEqualityClaimAt (fuel : Nat) (resolve : Resolver)
         ResolvesAt fuel resolve arena reference
           (.term type (.app (.lam name domain body) argument)) ∧
         ResolvesAt fuel resolve arena right (.term type target) ∧
-        Value.WellFormed
-          (.term type (.app (.lam name domain body) argument)) ∧
+        (Value.term type (.app (.lam name domain body) argument)).rustCheck = true ∧
         domain.lowerTy (.nil : TyScope []) = some loweredDomain ∧
         body.lowerTm (.nil : TyScope [])
           (.cons ⟨name, domain.toHolE⟩ (.nil : TmScope ArenaSig 0)) =
@@ -101,7 +101,7 @@ def ContextClaimAt (fuel : Nat) (resolve : Resolver) (arena : Arena)
     (reference : Ref) : Prop :=
   ∃ expression,
     ResolvesAt fuel resolve arena reference (.term .boolTy expression) ∧
-    Value.WellFormed (.term .boolTy expression)
+    (Value.term .boolTy expression).rustCheck = true
 
 /-- Local portion of one Rust validation pass. -/
 structure Arena.RustLocallyValidAt (fuel : Nat) (resolve : Resolver)
@@ -164,7 +164,8 @@ theorem reflexiveEqualityClaimAt_sound
   rename_i right member
   rw [member] at claim
   rcases claim with ⟨value, left, right, wellFormed⟩
-  exact ⟨value, left.resolves, right.resolves, wellFormed⟩
+  exact ⟨value, left.resolves, right.resolves,
+    Value.rustCheck_sound wellFormed⟩
 
 theorem identityBetaEqualityClaimAt_sound
     (claim : IdentityBetaEqualityClaimAt fuel resolve arena reference) :
@@ -178,7 +179,8 @@ theorem identityBetaEqualityClaimAt_sound
     loweredArgument, sourceResolved, targetResolved, wellFormed,
     domainLowering, argumentLowering⟩
   exact ⟨type, domain, name, argument, loweredDomain, loweredArgument,
-    sourceResolved.resolves, targetResolved.resolves, wellFormed,
+    sourceResolved.resolves, targetResolved.resolves,
+    Value.rustCheck_sound wellFormed,
     domainLowering, argumentLowering⟩
 
 theorem rootBetaEqualityClaimAt_sound
@@ -195,7 +197,8 @@ theorem rootBetaEqualityClaimAt_sound
     domainLowering, bodyLowering, argumentLowering, targetLowering⟩
   exact ⟨type, domain, name, body, argument, target,
     loweredDomain, loweredBody, loweredArgument,
-    sourceResolved.resolves, targetResolved.resolves, wellFormed,
+    sourceResolved.resolves, targetResolved.resolves,
+    Value.rustCheck_sound wellFormed,
     domainLowering, bodyLowering, argumentLowering, targetLowering⟩
 
 theorem executableEqualityClaimAt_sound
@@ -209,7 +212,7 @@ theorem contextClaimAt_sound
     (claim : ContextClaimAt fuel resolve arena reference) :
     ContextClaim resolve arena reference := by
   rcases claim with ⟨expression, resolved, wellFormed⟩
-  exact ⟨expression, resolved.resolves, wellFormed⟩
+  exact ⟨expression, resolved.resolves, Value.rustCheck_sound wellFormed⟩
 
 theorem Arena.RustLocallyValidAt.sound
     (valid : Arena.RustLocallyValidAt fuel resolve arena) :
@@ -342,7 +345,7 @@ structure PushResult (before : RustKernel resolve) (row : detail.Row)
   value : Value
   resolved : ResolvesAt after.fuel resolve after.arena reference value
   category : value.tagSort = expected
-  wellFormed : value.check = true
+  wellFormed : value.rustCheck = true
 
 abbrev StarResult (before : RustKernel resolve) :=
   PushResult before ⟨.kindStar, none, none⟩ .kind
@@ -383,7 +386,7 @@ structure IndexResult (kernel : RustKernel resolve) (reference : Ref)
   value : Value
   resolved : ResolvesAt kernel.fuel resolve kernel.arena reference value
   category : value.tagSort = expected
-  wellFormed : value.check = true
+  wellFormed : value.rustCheck = true
 
 /-- Successful import-table mutation and complete revalidation. -/
 structure ImportResult (before : RustKernel resolve) (entry : Import) where
@@ -433,13 +436,13 @@ theorem PushResult.value_wellFormed {resolve : Resolver}
     {before : RustKernel resolve} {row : detail.Row} {expected : TagSort}
     (result : PushResult (resolve := resolve) before row expected) :
     result.value.WellFormed :=
-  Value.check_sound result.wellFormed
+  Value.rustCheck_sound result.wellFormed
 
 theorem IndexResult.value_wellFormed {resolve : Resolver}
     {kernel : RustKernel resolve} {reference : Ref} {expected : TagSort}
     (result : IndexResult kernel reference expected) :
     result.value.WellFormed :=
-  Value.check_sound result.wellFormed
+  Value.rustCheck_sound result.wellFormed
 
 theorem ImportResult.valid {resolve : Resolver}
     {before : RustKernel resolve} {entry : Import}
