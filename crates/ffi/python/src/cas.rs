@@ -1,81 +1,60 @@
-//! Whole-object CAS facts and userspace providers at the Python boundary.
-//!
-//! Python may construct [`PyCasAssertion`] values, but only Rust's complete
-//! blob checker can create [`PyCasFact`]. Stores and callbacks remain ordinary
-//! userspace objects: their result is safe precisely because the checked fact
-//! constructor is not available to them.
+//! Whole-object CAS facts and indexed userspace storage for Python.
 
 #![allow(clippy::needless_pass_by_value)]
 
-use covalence_data_cas::{AdmissionError, MemoryCas, MemoryCasError};
+use std::hash::{DefaultHasher, Hash, Hasher};
+
+use covalence_data_cas::IndexCas;
 use covalence_lib_python::exceptions::create_exception;
 use covalence_lib_python::prelude::*;
 use covalence_lib_python::pyo3::{
-    exceptions::{PyLookupError, PyRuntimeError},
+    basic::CompareOp,
+    exceptions::PyLookupError,
     types::{PyBytes, PyType},
 };
-use covalence_logic_cas::{
-    Bytes as CasBytes, CasAssertion, CasFact, GetError, InvalidCasAssertion, TrustedCas, get_exact,
-};
+use covalence_logic_cas::{Bytes as CasBytes, CasAssertion, CasFact};
 
 use crate::hash::PyO256;
 
 create_exception!(
     covalence,
-    CasDigestMismatchError,
+    CasCheckError,
     PyValueError,
+    "A CAS assertion or proof failed validation."
+);
+create_exception!(
+    covalence,
+    CasDigestMismatchError,
+    CasCheckError,
     "A whole-object CAS assertion carried the wrong content hash."
 );
 create_exception!(
     covalence,
-    CasAddressMismatchError,
-    PyValueError,
-    "A CAS provider returned a checked fact for another address."
+    CasLookupError,
+    PyLookupError,
+    "A CAS lookup failed."
 );
 create_exception!(
     covalence,
     CasNotFoundError,
-    PyLookupError,
-    "A CAS provider does not contain the requested address."
+    CasLookupError,
+    "A CAS does not contain the requested address."
 );
 create_exception!(
     covalence,
-    CasCollisionError,
-    PyRuntimeError,
-    "A CAS address has distinct checked collision witnesses."
-);
-create_exception!(
-    covalence,
-    CasAdmissionError,
-    PyValueError,
-    "A CAS refused to admit a checked fact."
+    CasAddressMismatchError,
+    CasLookupError,
+    "A CAS returned a checked fact for another address."
 );
 
-fn digest_error(error: InvalidCasAssertion) -> PyErr {
+fn check_error(error: covalence_logic_cas::CasCheckError) -> PyErr {
     CasDigestMismatchError::new_err(error.to_string())
 }
 
-fn admission_error(error: AdmissionError) -> PyErr {
-    CasAdmissionError::new_err(error.to_string())
-}
-
-fn memory_error(error: MemoryCasError) -> PyErr {
-    match error {
-        MemoryCasError::Missing { .. } => CasNotFoundError::new_err(error.to_string()),
-        MemoryCasError::Collision { .. } => CasCollisionError::new_err(error.to_string()),
-    }
-}
-
-fn exact_memory_error(error: GetError<MemoryCasError>) -> PyErr {
-    match error {
-        GetError::Provider { source, .. } => memory_error(source),
-        GetError::WrongAddress {
-            requested,
-            returned,
-        } => CasAddressMismatchError::new_err(format!(
-            "CAS returned address {returned} for request {requested}"
-        )),
-    }
+fn hash_value(value: &impl Hash) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// An ordinary, unchecked claim about one complete content-addressed blob.
@@ -95,10 +74,10 @@ impl PyCasAssertion {
     /// Constructs an unchecked assertion without hashing its blob.
     #[new]
     fn new(hash: PyRef<'_, PyO256>, blob: Bytes) -> Self {
-        Self(CasAssertion {
-            hash: PyO256::value(&hash),
-            blob: CasBytes::copy_from_slice(blob.as_slice()),
-        })
+        Self(CasAssertion::new(
+            PyO256::value(&hash),
+            CasBytes::copy_from_slice(blob.as_slice()),
+        ))
     }
 
     /// Claimed content address.
@@ -107,22 +86,20 @@ impl PyCasAssertion {
         PyO256::wrap(python, self.0.hash)
     }
 
-    /// Complete claimed bytes, copied into immutable Python `bytes`.
+    /// Complete claimed bytes.
     #[getter]
     fn blob<'py>(&self, python: Python<'py>) -> Bound<'py, PyBytes> {
         PyBytes::new(python, &self.0.blob)
     }
 
-    /// Hashes every byte and introduces a checked fact on success.
+    /// Checks every byte and introduces a fact on success.
     ///
     /// # Errors
     ///
     /// Raises `CasDigestMismatchError` when the claimed address is wrong.
-    fn try_into(&self, python: Python<'_>) -> PyResult<Py<PyCasFact>> {
+    fn check(&self, python: Python<'_>) -> PyResult<Py<PyCasFact>> {
         let assertion = self.0.clone();
-        let fact = python
-            .detach(|| CasFact::try_from(assertion))
-            .map_err(digest_error)?;
+        let fact = python.detach(|| assertion.check()).map_err(check_error)?;
         PyCasFact::wrap(python, fact)
     }
 
@@ -134,19 +111,20 @@ impl PyCasAssertion {
         )
     }
 
-    fn __eq__(&self, other: &Self) -> bool {
-        self.0 == other.0
+    fn __richcmp__(&self, other: &Self, op: CompareOp) -> bool {
+        op.matches(self.0.cmp(&other.0))
     }
 
-    fn __ne__(&self, other: &Self) -> bool {
-        self.0 != other.0
+    fn __hash__(&self) -> u64 {
+        hash_value(&self.0)
     }
 }
 
 /// An opaque checked fact about a complete content-addressed blob.
 ///
-/// There is deliberately no Python constructor. Use
-/// [`PyCasAssertion::try_into`] or [`Self::from_bytes`].
+/// `CasFact` is separate from `CasAssertion`: callers can explicitly forget
+/// checkedness through [`Self::assertion`], but unchecked data is never a fact
+/// merely by inheritance.
 #[pyclass(frozen, module = "covalence.cas", name = "CasFact")]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 pub struct PyCasFact(CasFact);
@@ -160,7 +138,37 @@ impl PyCasFact {
 #[pymethods]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 impl PyCasFact {
-    /// Hashes complete bytes and returns the resulting checked fact.
+    /// Checks a specific address and complete blob.
+    ///
+    /// # Errors
+    ///
+    /// Raises `CasDigestMismatchError` when `hash` is not the blob's address.
+    #[new]
+    fn new(python: Python<'_>, hash: PyRef<'_, PyO256>, blob: Bytes) -> PyResult<Py<Self>> {
+        let hash = PyO256::value(&hash);
+        let blob = CasBytes::copy_from_slice(blob.as_slice());
+        let fact = python
+            .detach(|| CasFact::new(hash, blob))
+            .map_err(check_error)?;
+        Self::wrap(python, fact)
+    }
+
+    /// Checks an existing assertion.
+    ///
+    /// # Errors
+    ///
+    /// Raises `CasDigestMismatchError` when the assertion is false.
+    #[staticmethod]
+    fn from_assertion(
+        python: Python<'_>,
+        assertion: PyRef<'_, PyCasAssertion>,
+    ) -> PyResult<Py<Self>> {
+        let assertion = assertion.0.clone();
+        let fact = python.detach(|| assertion.check()).map_err(check_error)?;
+        Self::wrap(python, fact)
+    }
+
+    /// Hashes complete bytes and returns the resulting fact.
     #[staticmethod]
     fn from_bytes(python: Python<'_>, blob: Bytes) -> PyResult<Py<Self>> {
         let blob = CasBytes::copy_from_slice(blob.as_slice());
@@ -174,13 +182,13 @@ impl PyCasFact {
         PyO256::wrap(python, self.0.hash())
     }
 
-    /// Complete checked bytes, copied into immutable Python `bytes`.
+    /// Complete checked bytes.
     #[getter]
     fn blob<'py>(&self, python: Python<'py>) -> Bound<'py, PyBytes> {
         PyBytes::new(python, self.0.bytes())
     }
 
-    /// Forgets checkedness and returns an immutable assertion snapshot.
+    /// Returns the underlying assertion, forgetting checkedness.
     #[getter]
     fn assertion(&self) -> PyCasAssertion {
         PyCasAssertion::wrap(CasAssertion::from(&self.0))
@@ -194,134 +202,148 @@ impl PyCasFact {
         )
     }
 
-    fn __eq__(&self, other: &Self) -> bool {
-        self.0 == other.0
+    fn __richcmp__(&self, other: &Self, op: CompareOp) -> bool {
+        op.matches(self.0.cmp(&other.0))
     }
 
-    fn __ne__(&self, other: &Self) -> bool {
-        self.0 != other.0
+    fn __hash__(&self) -> u64 {
+        hash_value(&self.0)
     }
 }
 
-/// A relation-style in-memory CAS backed by `Vec<CasFact>` and `HashTable`.
-#[pyclass(module = "covalence.cas", name = "MemoryCas")]
+/// An insertion-ordered userspace CAS with stable integer IDs.
+#[pyclass(module = "covalence.cas", name = "IndexCas")]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
-pub struct PyMemoryCas(MemoryCas);
+pub struct PyIndexCas(IndexCas);
 
 #[pymethods]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
-impl PyMemoryCas {
+impl PyIndexCas {
     #[new]
-    #[pyo3(signature = (limit=None))]
-    fn new(limit: Option<u64>) -> Self {
-        Self(limit.map_or_else(MemoryCas::new, MemoryCas::with_limit))
+    fn new() -> Self {
+        Self(IndexCas::new())
     }
 
-    /// Largest blob this instance admits.
-    #[getter]
-    fn limit(&self) -> u64 {
-        self.0.limit()
+    /// Hashes and inserts complete bytes, returning their stable ID.
+    fn put(&mut self, blob: Bytes) -> u64 {
+        self.0.insert(CasBytes::copy_from_slice(blob.as_slice()))
     }
 
-    /// Hashes, checks, and admits complete bytes.
+    /// Inserts a checked fact, returning its stable ID.
+    fn insert(&mut self, fact: PyRef<'_, PyCasFact>) -> u64 {
+        self.0.insert_fact(fact.0.clone())
+    }
+
+    /// Returns the stable ID for an address, if resident.
+    fn id(&self, address: PyRef<'_, PyO256>) -> Option<u64> {
+        self.0.id(PyO256::value(&address))
+    }
+
+    /// Hashes bytes and returns the stable ID of their address, if resident.
+    fn id_bytes(&self, blob: Bytes) -> Option<u64> {
+        self.0.id_bytes(blob.as_slice())
+    }
+
+    /// Returns the fact at an integer ID, if resident.
+    fn fact(&self, python: Python<'_>, id: u64) -> PyResult<Option<Py<PyCasFact>>> {
+        self.0
+            .fact(id)
+            .cloned()
+            .map(|fact| PyCasFact::wrap(python, fact))
+            .transpose()
+    }
+
+    /// Returns raw bytes for an address.
     ///
     /// # Errors
     ///
-    /// Raises `CasAdmissionError` when `blob` exceeds this store's limit.
-    fn put(&self, python: Python<'_>, blob: Bytes) -> PyResult<Py<PyCasFact>> {
-        let blob = CasBytes::copy_from_slice(blob.as_slice());
-        let fact = python.detach(|| CasFact::from_bytes(blob));
-        self.0.insert_fact(fact.clone()).map_err(admission_error)?;
+    /// Raises `CasNotFoundError` when the address is absent.
+    fn get<'py>(
+        &self,
+        python: Python<'py>,
+        address: PyRef<'_, PyO256>,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let address = PyO256::value(&address);
+        let fact = self
+            .0
+            .fact_at(address)
+            .ok_or_else(|| CasNotFoundError::new_err(address.to_string()))?;
+        Ok(PyBytes::new(python, fact.bytes()))
+    }
+
+    /// Returns the checked fact for an address.
+    ///
+    /// # Errors
+    ///
+    /// Raises `CasNotFoundError` when the address is absent.
+    fn get_fact(&self, python: Python<'_>, address: PyRef<'_, PyO256>) -> PyResult<Py<PyCasFact>> {
+        let address = PyO256::value(&address);
+        let fact = self
+            .0
+            .fact_at(address)
+            .cloned()
+            .ok_or_else(|| CasNotFoundError::new_err(address.to_string()))?;
         PyCasFact::wrap(python, fact)
     }
 
-    /// Admits a checked fact, returning whether it was a new relation member.
-    ///
-    /// # Errors
-    ///
-    /// Raises `CasAdmissionError` when the fact exceeds this store's limit.
-    fn insert(&self, fact: PyRef<'_, PyCasFact>) -> PyResult<bool> {
-        self.0.insert_fact(fact.0.clone()).map_err(admission_error)
-    }
-
-    /// Gets the unique checked fact for exactly `address`.
-    ///
-    /// # Errors
-    ///
-    /// Raises `CasNotFoundError` when absent and `CasCollisionError` when the
-    /// address has distinct checked witnesses.
-    fn get(&self, python: Python<'_>, address: PyRef<'_, PyO256>) -> PyResult<Py<PyCasFact>> {
-        let fact = get_exact(&self.0, PyO256::value(&address)).map_err(exact_memory_error)?;
-        PyCasFact::wrap(python, fact)
-    }
-
-    /// Returns whether at least one checked pair carries `address`.
+    /// Returns whether an address is resident.
     fn contains(&self, address: PyRef<'_, PyO256>) -> bool {
-        self.0.contains(PyO256::value(&address))
+        self.0.id(PyO256::value(&address)).is_some()
     }
 
-    /// Removes every fact carrying `address`.
-    fn remove(&self, address: PyRef<'_, PyO256>) -> bool {
+    /// Removes an address without changing any other fact ID.
+    fn remove(&mut self, address: PyRef<'_, PyO256>) -> bool {
         self.0.remove(PyO256::value(&address))
     }
 
-    /// Returns every checked pair in insertion order.
-    #[getter]
-    fn facts(&self, python: Python<'_>) -> PyResult<Vec<Py<PyCasFact>>> {
+    /// Returns all `(id, fact)` pairs in insertion order.
+    fn items(&self, python: Python<'_>) -> PyResult<Vec<(u64, Py<PyCasFact>)>> {
         self.0
             .facts()
-            .into_iter()
-            .map(|fact| PyCasFact::wrap(python, fact))
+            .map(|(id, fact)| Ok((id, PyCasFact::wrap(python, fact.clone())?)))
             .collect()
     }
 
     fn __len__(&self) -> usize {
-        self.0.facts().len()
+        self.0.fact_count()
     }
 }
 
-/// Adapts an arbitrary Python object's `get(address)` method to `TrustedCas`.
-struct PythonCasAdapter(Py<PyAny>);
-
-impl TrustedCas for PythonCasAdapter {
-    type Error = PyErr;
-
-    fn get(&self, address: covalence_logic_cas::O256) -> Result<CasFact, Self::Error> {
-        Python::attach(|python| {
-            let address = PyO256::wrap(python, address)?;
-            let returned = self.0.bind(python).call_method1("get", (address,))?;
-            let fact = returned.extract::<PyRef<'_, PyCasFact>>()?;
-            Ok(fact.0.clone())
-        })
-    }
-}
-
-/// Calls an arbitrary Python CAS and enforces that its fact answers `address`.
+/// Gets a checked fact from an arbitrary Python CAS.
 ///
-/// The object need only provide `get(O256) -> CasFact`. Its storage, network,
-/// retry, and verification logic remains ordinary Python. Provider exceptions
-/// propagate unchanged.
+/// Providers may optimize `get_fact(address) -> CasFact`; otherwise their
+/// `get(address)` method must return raw bytes, which are hashed here. Provider
+/// exceptions propagate unchanged.
 #[pyfunction]
-#[pyo3(crate = "covalence_lib_python::pyo3", name = "get_exact")]
-fn get_exact_python(
+#[pyo3(crate = "covalence_lib_python::pyo3", name = "get_checked")]
+fn get_checked_python(
     python: Python<'_>,
     provider: Py<PyAny>,
     address: PyRef<'_, PyO256>,
 ) -> PyResult<Py<PyCasFact>> {
     let requested = PyO256::value(&address);
-    let adapter = PythonCasAdapter(provider);
-    let fact = match get_exact(&adapter, requested) {
-        Ok(fact) => fact,
-        Err(GetError::Provider { source, .. }) => return Err(source),
-        Err(GetError::WrongAddress {
-            requested,
-            returned,
-        }) => {
+    let provider = provider.bind(python);
+    let address = PyO256::wrap(python, requested)?;
+
+    if provider.hasattr("get_fact")? {
+        let returned = provider.call_method1("get_fact", (address,))?;
+        let fact = returned.extract::<PyRef<'_, PyCasFact>>()?;
+        let fact = fact.0.clone();
+        if fact.hash() != requested {
             return Err(CasAddressMismatchError::new_err(format!(
-                "CAS returned address {returned} for request {requested}"
+                "CAS returned address {} for request {requested}",
+                fact.hash()
             )));
         }
-    };
+        return PyCasFact::wrap(python, fact);
+    }
+
+    let returned = provider.call_method1("get", (address,))?;
+    let blob = returned.extract::<Bytes>()?;
+    let blob = CasBytes::copy_from_slice(blob.as_slice());
+    let fact = python
+        .detach(|| CasFact::new(requested, blob))
+        .map_err(check_error)?;
     PyCasFact::wrap(python, fact)
 }
 
@@ -329,33 +351,27 @@ fn get_exact_python(
 pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyCasAssertion>()?;
     module.add_class::<PyCasFact>()?;
-    module.add_class::<PyMemoryCas>()?;
+    module.add_class::<PyIndexCas>()?;
 
     let python = module.py();
     for (name, exception) in [
+        ("CasCheckError", PyType::new::<CasCheckError>(python)),
         (
             "CasDigestMismatchError",
             PyType::new::<CasDigestMismatchError>(python),
         ),
+        ("CasLookupError", PyType::new::<CasLookupError>(python)),
+        ("CasNotFoundError", PyType::new::<CasNotFoundError>(python)),
         (
             "CasAddressMismatchError",
             PyType::new::<CasAddressMismatchError>(python),
-        ),
-        ("CasNotFoundError", PyType::new::<CasNotFoundError>(python)),
-        (
-            "CasCollisionError",
-            PyType::new::<CasCollisionError>(python),
-        ),
-        (
-            "CasAdmissionError",
-            PyType::new::<CasAdmissionError>(python),
         ),
     ] {
         exception.setattr("__module__", "covalence.cas")?;
         module.add(name, exception)?;
     }
 
-    let function = wrap_pyfunction!(get_exact_python, module)?;
+    let function = wrap_pyfunction!(get_checked_python, module)?;
     function.setattr("__module__", "covalence.cas")?;
     module.add_function(function)
 }

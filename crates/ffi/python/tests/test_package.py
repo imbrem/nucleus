@@ -20,6 +20,7 @@ def test_public_apis_follow_their_crate_paths() -> None:
     assert covalence.__all__ == ["cas", "data", "lib", "logic", "__version__"]
     assert covalence.cas.__name__ == "covalence.cas"
     assert covalence.cas.CasFact is _covalence.CasFact
+    assert covalence.cas.IndexCas is _covalence.IndexCas
     assert covalence.data.__all__ == ["cbor"]
     assert covalence.data.cbor.__name__ == "covalence.data.cbor"
     assert covalence.data.cbor.Cbor is _covalence.Cbor

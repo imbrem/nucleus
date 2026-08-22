@@ -62,18 +62,18 @@ True
 ```
 
 `covalence.cas` exposes the whole-object CAS LCF boundary. `CasAssertion` is
-ordinary unchecked data; `try_into()` hashes the complete blob in Rust before
-it can return the opaque `CasFact`. Stores are userspace policy. The included
-`MemoryCas` stores checked facts, while `get_exact()` accepts any duck-typed
-Python object with a `get(O256) -> CasFact` method and rejects a checked fact
-for the wrong requested address.
+ordinary unchecked data; `check()` hashes the complete blob in Rust before it
+can return the opaque `CasFact`. Stores are userspace policy. `IndexCas` assigns
+stable integer IDs, while `get_checked()` checks bytes returned by any
+duck-typed Python CAS. A provider with `get_fact()` may avoid rehashing, but the
+fact's address is still compared with the request.
 
 ```python
 >>> from covalence.cas import CasAssertion
 >>> from covalence.lib.hash import O256
 >>> blob = b"provided by Python"
 >>> address = O256.hash(blob)
->>> fact = CasAssertion(address, blob).try_into()
+>>> fact = CasAssertion(address, blob).check()
 >>> fact.hash == address and fact.blob == blob
 True
 ```

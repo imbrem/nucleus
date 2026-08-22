@@ -1,48 +1,53 @@
-"""LCF-style checked facts and ordinary userspace CAS providers.
+"""LCF-style whole-object CAS facts and userspace storage.
 
-``CasAssertion`` is unchecked data. Calling :meth:`CasAssertion.try_into`
-hashes the complete blob in Rust and returns an opaque ``CasFact`` only when
-the claim is true. ``MemoryCas`` and arbitrary Python providers are not part of
-that trusted boundary; they can only return already checked facts.
-
-The :class:`TrustedCas` protocol describes the deliberately duck-typed
-provider shape. :func:`get_exact` always checks that a provider's returned
-fact carries the requested address, even though the fact itself is valid.
+``CasAssertion`` is unchecked data. Its ``check()`` method hashes the complete
+blob before returning an opaque ``CasFact``. Storage implementations remain
+ordinary userspace code; only successful checking introduces a fact.
 """
 
+from collections.abc import Buffer
 from typing import Protocol
 
 from ._covalence import (
     CasAddressMismatchError,
-    CasAdmissionError,
     CasAssertion,
-    CasCollisionError,
+    CasCheckError,
     CasDigestMismatchError,
     CasFact,
+    CasLookupError,
     CasNotFoundError,
-    MemoryCas,
-    get_exact,
+    IndexCas,
+    get_checked,
 )
 from .lib.hash import O256
 
 
-class TrustedCas(Protocol):
-    """Any Python object able to return checked whole-object facts."""
+class Cas(Protocol):
+    """A read-only source of untrusted content-addressed bytes."""
 
-    def get(self, address: O256, /) -> CasFact:
+    def get(self, address: O256, /) -> Buffer:
+        """Return complete bytes for ``address`` or raise an exception."""
+        ...
+
+
+class CheckedCas(Cas, Protocol):
+    """A CAS able to avoid rehashing by returning checked facts."""
+
+    def get_fact(self, address: O256, /) -> CasFact:
         """Return a checked candidate for ``address`` or raise an exception."""
         ...
 
 
 __all__ = [
+    "Cas",
     "CasAddressMismatchError",
-    "CasAdmissionError",
     "CasAssertion",
-    "CasCollisionError",
+    "CasCheckError",
     "CasDigestMismatchError",
     "CasFact",
+    "CasLookupError",
     "CasNotFoundError",
-    "MemoryCas",
-    "TrustedCas",
-    "get_exact",
+    "CheckedCas",
+    "IndexCas",
+    "get_checked",
 ]

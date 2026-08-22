@@ -77,9 +77,8 @@ def test_every_public_name_is_reexported() -> None:
     ):
         names = set(public_module.__all__)
         if public_module is public_cas:
-            # The duck-typed provider Protocol is intentionally pure Python;
-            # every concrete fact/store/checker remains the compiled API.
-            names.remove("TrustedCas")
+            # The duck-typed provider protocols are intentionally pure Python.
+            names -= {"Cas", "CheckedCas"}
         assert names <= _exported_names()
         for name in names:
             assert getattr(public_module, name) is getattr(_covalence, name)
@@ -105,6 +104,7 @@ MACHINERY = frozenset(
         "__init__",
         "__module__",
         "__new__",
+        "__slotnames__",
         "__static_attributes__",
         "__weakref__",
     }
@@ -146,7 +146,7 @@ def test_the_stub_does_not_omit_class_members() -> None:
         "Database",
         "CasAssertion",
         "CasFact",
-        "MemoryCas",
+        "IndexCas",
     ):
         missing = sorted(
             _runtime_members(getattr(_covalence, name)) - _declared_members(name)

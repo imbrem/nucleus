@@ -1,4 +1,4 @@
-"""Whole-object CAS facts keep storage and Python outside the LCF boundary."""
+"""Whole-object CAS facts keep storage and Python outside the mint boundary."""
 
 import array
 import pickle
@@ -6,13 +6,14 @@ import pickle
 import pytest
 from covalence.cas import (
     CasAddressMismatchError,
-    CasAdmissionError,
     CasAssertion,
+    CasCheckError,
     CasDigestMismatchError,
     CasFact,
+    CasLookupError,
     CasNotFoundError,
-    MemoryCas,
-    get_exact,
+    IndexCas,
+    get_checked,
 )
 from covalence.lib.hash import O256
 
@@ -24,7 +25,7 @@ from covalence.lib.hash import O256
 def test_whole_assertions_check_buffer_inputs(buffer: object) -> None:
     address = O256.hash(b"whole blob")
     assertion = CasAssertion(address, buffer)
-    fact = assertion.try_into()
+    fact = assertion.check()
 
     assert assertion.hash == address
     assert assertion.blob == b"whole blob"
@@ -39,7 +40,7 @@ def test_mutable_buffer_is_snapshotted_before_checking() -> None:
     source[:] = b"after!"
 
     assert assertion.blob == b"before"
-    assert assertion.try_into().blob == b"before"
+    assert assertion.check().blob == b"before"
 
 
 def test_non_bytes_input_is_rejected() -> None:
@@ -51,24 +52,32 @@ def test_non_bytes_input_is_rejected() -> None:
         CasAssertion(O256.hash(b"blob"), non_contiguous)
 
 
-def test_wrong_claimed_hash_is_rejected_by_the_rust_checker() -> None:
+def test_check_errors_form_one_value_error_family() -> None:
     assertion = CasAssertion(O256.hash(b"other"), b"blob")
 
-    with pytest.raises(CasDigestMismatchError, match="does not match"):
-        assertion.try_into()
+    with pytest.raises(CasDigestMismatchError, match="does not match") as caught:
+        assertion.check()
+    assert isinstance(caught.value, CasCheckError)
+    assert isinstance(caught.value, ValueError)
 
 
-def test_checked_fact_can_be_introduced_by_hashing_bytes() -> None:
-    fact = CasFact.from_bytes(b"computed")
+def test_fact_convenience_constructors_all_check() -> None:
+    address = O256.hash(b"computed")
+    assertion = CasAssertion(address, b"computed")
 
-    assert fact.hash == O256.hash(b"computed")
-    assert fact.blob == b"computed"
-    assert fact.assertion.try_into() == fact
+    assert CasFact(address, b"computed") == assertion.check()
+    assert CasFact.from_assertion(assertion) == assertion.check()
+    assert CasFact.from_bytes(b"computed") == assertion.check()
+
+    with pytest.raises(CasDigestMismatchError):
+        CasFact(O256.hash(b"other"), b"computed")
 
 
-def test_checked_fact_cannot_be_constructed_subclassed_pickled_or_mutated() -> None:
+def test_fact_is_a_refinement_not_an_assertion_subclass() -> None:
     fact = CasFact.from_bytes(b"opaque")
 
+    assert not isinstance(fact, CasAssertion)
+    assert fact.assertion.check() == fact
     with pytest.raises(TypeError):
         CasFact()
     with pytest.raises(TypeError):
@@ -82,90 +91,106 @@ def test_checked_fact_cannot_be_constructed_subclassed_pickled_or_mutated() -> N
         pickle.dumps(fact)
 
 
-def test_memory_cas_stores_checked_facts_and_deduplicates_exact_pairs() -> None:
-    cas = MemoryCas()
-    fact = CasFact.from_bytes(b"resident")
+def test_assertions_and_facts_are_ordered_and_hashable() -> None:
+    facts = [CasFact.from_bytes(blob) for blob in (b"c", b"a", b"b")]
+    assertions = [fact.assertion for fact in facts]
 
-    assert cas.insert(fact)
-    assert not cas.insert(fact)
-    assert len(cas) == 1
-    assert cas.facts == [fact]
-    assert cas.contains(fact.hash)
-    assert cas.get(fact.hash) == fact
-
-
-def test_memory_cas_put_remove_and_absence() -> None:
-    cas = MemoryCas()
-    fact = cas.put(b"resident")
-
-    assert get_exact(cas, fact.hash) == fact
-    assert cas.remove(fact.hash)
-    assert not cas.remove(fact.hash)
-    with pytest.raises(CasNotFoundError):
-        cas.get(fact.hash)
+    assert sorted(facts) == sorted(facts, key=lambda fact: (fact.hash, fact.blob))
+    assert sorted(assertions) == sorted(
+        assertions, key=lambda assertion: (assertion.hash, assertion.blob)
+    )
+    assert len(set(facts + [facts[0]])) == 3
+    assert len(set(assertions + [assertions[0]])) == 3
 
 
-def test_memory_cas_enforces_its_admission_limit_without_mutation() -> None:
-    cas = MemoryCas(limit=4)
+def test_index_cas_exposes_stable_ids_for_hashes_and_bytes() -> None:
+    cas = IndexCas()
+    first = CasFact.from_bytes(b"first")
+    second = CasFact.from_bytes(b"second")
 
-    with pytest.raises(CasAdmissionError):
-        cas.put(b"large")
-    assert cas.facts == []
+    first_id = cas.insert(first)
+    second_id = cas.put(b"second")
+    assert first_id == 0
+    assert second_id == 1
+    assert cas.insert(first) == first_id
+    assert cas.id(first.hash) == first_id
+    assert cas.id_bytes(b"first") == first_id
+    assert cas.fact(first_id) == first
+    assert cas.items() == [(first_id, first), (second_id, second)]
+    assert cas.get(first.hash) == b"first"
+    assert cas.get_fact(first.hash) == first
+
+    assert cas.remove(first.hash)
+    assert cas.fact(first_id) is None
+    assert cas.fact(second_id) == second
+    assert cas.put(b"third") == 2
+
+
+def test_index_lookup_errors_share_one_lookup_base() -> None:
+    cas = IndexCas()
+    address = O256.hash(b"absent")
+
+    with pytest.raises(CasNotFoundError) as caught:
+        cas.get(address)
+    assert isinstance(caught.value, CasLookupError)
+    assert isinstance(caught.value, LookupError)
 
 
 class DictCas:
-    """An arbitrary Python provider which stores raw, unchecked bytes."""
+    """An arbitrary Python CAS storing raw, unchecked bytes."""
 
     def __init__(self, blobs: dict[object, bytes]) -> None:
         self.blobs = blobs
 
-    def get(self, address: O256) -> CasFact:
+    def get(self, address: O256) -> bytes:
         try:
-            blob = self.blobs[address]
+            return self.blobs[address]
         except KeyError as error:
             raise CasNotFoundError(str(address)) from error
-        return CasAssertion(address, blob).try_into()
 
 
-def test_plain_python_dict_provider_supplies_arbitrary_resolution_logic() -> None:
+def test_raw_python_cas_is_checked_at_the_boundary() -> None:
     blob = b"provided by Python"
     address = O256.hash(blob)
-    provider = DictCas({address: blob})
+    fact = get_checked(DictCas({address: blob}), address)
 
-    fact = get_exact(provider, address)
     assert fact.hash == address
     assert fact.blob == blob
 
 
-def test_python_provider_cannot_return_a_fact_for_the_wrong_address() -> None:
+def test_checked_provider_avoids_rehash_but_must_answer_the_request() -> None:
     requested = O256.hash(b"requested")
     returned = CasFact.from_bytes(b"returned")
 
     class LyingCas:
-        def get(self, _address: O256) -> CasFact:
+        def get(self, _address: O256) -> bytes:
+            raise AssertionError("optimized lookup should be used")
+
+        def get_fact(self, _address: O256) -> CasFact:
             return returned
 
-    with pytest.raises(CasAddressMismatchError, match="returned address"):
-        get_exact(LyingCas(), requested)
+    with pytest.raises(CasAddressMismatchError, match="returned address") as caught:
+        get_checked(LyingCas(), requested)
+    assert isinstance(caught.value, CasLookupError)
 
 
-def test_python_provider_cannot_return_an_unchecked_or_wrong_typed_value() -> None:
+def test_raw_provider_returning_wrong_bytes_fails_the_check() -> None:
     requested = O256.hash(b"requested")
 
-    class UncheckedCas:
-        def get(self, address: O256) -> object:
-            return CasAssertion(address, b"requested")
+    class LyingCas:
+        def get(self, _address: O256) -> bytes:
+            return b"returned"
 
-    with pytest.raises(TypeError, match="CasFact"):
-        get_exact(UncheckedCas(), requested)
+    with pytest.raises(CasDigestMismatchError):
+        get_checked(LyingCas(), requested)
 
 
 def test_python_provider_failure_propagates_unchanged() -> None:
     requested = O256.hash(b"requested")
 
     class OfflineCas:
-        def get(self, _address: O256) -> CasFact:
+        def get(self, _address: O256) -> bytes:
             raise ConnectionError("offline")
 
     with pytest.raises(ConnectionError, match="offline"):
-        get_exact(OfflineCas(), requested)
+        get_checked(OfflineCas(), requested)
