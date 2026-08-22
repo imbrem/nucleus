@@ -690,6 +690,13 @@
     },
     {
       "source": "workspace#covalence-ffi-python@0.0.0",
+      "target": "workspace#covalence-data-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-ffi-python@0.0.0",
       "target": "workspace#covalence-data-cbor@0.0.0",
       "kinds": [
         "normal"
@@ -705,6 +712,13 @@
     {
       "source": "workspace#covalence-ffi-python@0.0.0",
       "target": "workspace#covalence-lib-python@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-ffi-python@0.0.0",
+      "target": "workspace#covalence-logic-hol@0.0.0",
       "kinds": [
         "normal"
       ]
