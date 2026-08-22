@@ -1,14 +1,55 @@
+use std::ops::Deref;
+
 use covalence_lib_error::snafu::Snafu;
 
-use crate::{Bytes, CasAssertion, O256};
+use crate::{Bytes, O256};
 
-/// An unchecked whole-object assertion whose claimed hash is incorrect.
+/// An unchecked claim that `blob` has the given content hash.
 ///
-/// This is the failed branch of Lean's `Nucleus.CasAssertion.check?`.
+/// Constructing an assertion establishes no invariant. Call [`Self::check`]
+/// to hash the complete blob and introduce a [`CasFact`].
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct CasAssertion {
+    /// Claimed `O256` hash of the complete blob.
+    pub hash: O256,
+    /// Complete claimed blob.
+    pub blob: Bytes,
+}
+
+impl CasAssertion {
+    /// Constructs an unchecked assertion without hashing `blob`.
+    #[must_use]
+    pub fn new(hash: O256, blob: impl Into<Bytes>) -> Self {
+        Self {
+            hash,
+            blob: blob.into(),
+        }
+    }
+
+    /// Checks the claimed address against every byte of the blob.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CasCheckError`] when the computed and claimed addresses
+    /// differ.
+    pub fn check(self) -> Result<CasFact, CasCheckError> {
+        let computed = O256::from_bytes(&self.blob);
+        if computed == self.hash {
+            Ok(CasFact { assertion: self })
+        } else {
+            Err(CasCheckError {
+                claimed: self.hash,
+                computed,
+            })
+        }
+    }
+}
+
+/// Failure to validate a whole-object CAS assertion.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Snafu)]
 #[snafu(crate_root(covalence_lib_error::snafu))]
 #[snafu(display("claimed hash {claimed} does not match computed hash {computed}"))]
-pub struct InvalidCasAssertion {
+pub struct CasCheckError {
     /// Hash claimed by the assertion.
     pub claimed: O256,
     /// Hash computed over all of the assertion's bytes.
@@ -24,8 +65,7 @@ pub struct InvalidCasAssertion {
 /// In Lean, [`Self::from_bytes`] corresponds to `Nucleus.CasPair.ofBlob`, the
 /// projections correspond to `Nucleus.CasPair.hash` and
 /// `Nucleus.CasPair.blob`, and the invariant is `Nucleus.CasPair.valid_hash`.
-/// Conversion from [`CasAssertion`] corresponds to
-/// `Nucleus.CasAssertion.check?`.
+/// [`CasAssertion::check`] corresponds to `Nucleus.CasAssertion.check?`.
 ///
 /// ```compile_fail
 /// use bytes::Bytes;
@@ -34,12 +74,21 @@ pub struct InvalidCasAssertion {
 /// let assertion = CasFact::from_bytes(Bytes::new()).into_assertion();
 /// let forged = CasFact { assertion };
 /// ```
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct CasFact {
     assertion: CasAssertion,
 }
 
 impl CasFact {
+    /// Checks a specific address and complete blob, then introduces a fact.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CasCheckError`] when `hash` is not the blob's address.
+    pub fn new(hash: O256, blob: impl Into<Bytes>) -> Result<Self, CasCheckError> {
+        CasAssertion::new(hash, blob).check()
+    }
+
     /// Hashes the complete bytes and introduces a checked fact.
     ///
     /// `Bytes` is reference counted, so passing an existing [`Bytes`] value
@@ -48,7 +97,9 @@ impl CasFact {
     pub fn from_bytes(bytes: impl Into<Bytes>) -> Self {
         let blob = bytes.into();
         let hash = O256::from_bytes(&blob);
-        Self::from_valid(CasAssertion { hash, blob })
+        Self {
+            assertion: CasAssertion { hash, blob },
+        }
     }
 
     /// Returns the hash of the complete blob.
@@ -68,29 +119,21 @@ impl CasFact {
     pub fn into_assertion(self) -> CasAssertion {
         self.assertion
     }
-
-    /// The sole unchecked representation constructor.
-    ///
-    /// Every caller in this module has either computed `assertion.hash` from
-    /// the complete blob or compared that computation with the claimed hash.
-    const fn from_valid(assertion: CasAssertion) -> Self {
-        Self { assertion }
-    }
 }
 
 impl TryFrom<CasAssertion> for CasFact {
-    type Error = InvalidCasAssertion;
+    type Error = CasCheckError;
 
     fn try_from(assertion: CasAssertion) -> Result<Self, Self::Error> {
-        let computed = O256::from_bytes(&assertion.blob);
-        if computed == assertion.hash {
-            Ok(Self::from_valid(assertion))
-        } else {
-            Err(InvalidCasAssertion {
-                claimed: assertion.hash,
-                computed,
-            })
-        }
+        assertion.check()
+    }
+}
+
+impl Deref for CasFact {
+    type Target = CasAssertion;
+
+    fn deref(&self) -> &Self::Target {
+        &self.assertion
     }
 }
 
