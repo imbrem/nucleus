@@ -36,15 +36,27 @@ def and : Tm EmptySig :=
     .lam 101 .boolTy <|
       .and logicFunctionName (.tmFv 100 .boolTy) (.tmFv 101 .boolTy)
 
+private def app₂ (function left right : Tm EmptySig) : Tm EmptySig :=
+  .app (.app function left) right
+
+private def notTm (proposition : Tm EmptySig) : Tm EmptySig :=
+  .app not proposition
+
+private def andTm (left right : Tm EmptySig) : Tm EmptySig :=
+  app₂ and left right
+
 def or : Tm EmptySig :=
   .lam 100 .boolTy <|
     .lam 101 .boolTy <|
-      .or logicFunctionName (.tmFv 100 .boolTy) (.tmFv 101 .boolTy)
+      notTm <| andTm (notTm (.tmFv 100 .boolTy)) (notTm (.tmFv 101 .boolTy))
 
 def imp : Tm EmptySig :=
   .lam 100 .boolTy <|
     .lam 101 .boolTy <|
-      .imp logicFunctionName (.tmFv 100 .boolTy) (.tmFv 101 .boolTy)
+      notTm <| andTm (.tmFv 100 .boolTy) (notTm (.tmFv 101 .boolTy))
+
+private def impTm (antecedent consequent : Tm EmptySig) : Tm EmptySig :=
+  app₂ imp antecedent consequent
 
 def reflectsEquality (carrier : Ty EmptySig) (function : Tm EmptySig) :
     Tm EmptySig :=
@@ -57,11 +69,11 @@ def reflectsEquality (carrier : Ty EmptySig) (function : Tm EmptySig) :
 def missesPoint (carrier : Ty EmptySig) (function zero : Tm EmptySig) :
     Tm EmptySig :=
   let x := Expr.tmFv xName carrier
-  .forallTm xName carrier <| .not (.eq carrier (.app function x) zero)
+  .forallTm xName carrier <| notTm (.eq carrier (.app function x) zero)
 
 def infinityStructure (carrier : Ty EmptySig) (function zero : Tm EmptySig) :
     Tm EmptySig :=
-  .and logicFunctionName (reflectsEquality carrier function)
+  andTm (reflectsEquality carrier function)
     (missesPoint carrier function zero)
 
 def peanoStructure (carrier : Ty EmptySig) (function zero : Tm EmptySig) :
@@ -71,13 +83,13 @@ def peanoStructure (carrier : Ty EmptySig) (function zero : Tm EmptySig) :
   let value := Expr.tmFv valueName carrier
   let base := Expr.app predicate zero
   let step := .forallTm valueName carrier <|
-    .imp logicFunctionName (.app predicate value)
+    impTm (.app predicate value)
       (.app predicate (.app function value))
-  let cases := .and logicFunctionName base step
+  let cases := andTm base step
   let all := .forallTm valueName carrier (.app predicate value)
   let induction := .forallTm predicateName predicateTy <|
-    .imp logicFunctionName cases all
-  .and logicFunctionName (infinityStructure carrier function zero) induction
+    impTm cases all
+  andTm (infinityStructure carrier function zero) induction
 
 def infinityTypePredicate (carrier : Ty EmptySig) : Tm EmptySig :=
   let endomap := Expr.arr carrier carrier
