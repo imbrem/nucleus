@@ -184,7 +184,7 @@ fn validate_reflexive_equality<R: Resolver>(
     };
     let left = resolve_at(arena, resolver, reference, fuel)?;
     let right = resolve_at(arena, resolver, right, fuel)?;
-    if left == right && left.is_well_formed() {
+    if (left == right && left.is_well_formed()) || left.is_identity_beta_to(&right) {
         Ok(())
     } else {
         Err(KernelError::InvalidEqualityClaim(reference))
@@ -286,6 +286,28 @@ mod tests {
             vec![],
         );
         assert!(Kernel::try_from_arena(arena, &NoLinks, 4).is_ok());
+    }
+
+    #[test]
+    fn checked_identity_beta_is_accepted() {
+        let arena = Arena::from_parts(
+            vec![],
+            [],
+            vec![
+                Row::new(Expr::BoolTy),
+                Row::new(Expr::TmFv {
+                    name: 7,
+                    ty: reference(1),
+                }),
+                Row::new(Expr::Lam(reference(2), reference(2))),
+                Row::new(Expr::Bool(true)),
+                Row::new(Expr::App(reference(3), reference(4))).with_eq(reference(4)),
+            ],
+            [],
+            vec![],
+            vec![],
+        );
+        assert!(Kernel::try_from_arena(arena, &NoLinks, 6).is_ok());
     }
 
     #[test]

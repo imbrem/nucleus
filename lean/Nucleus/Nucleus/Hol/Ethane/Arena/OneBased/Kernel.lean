@@ -65,6 +65,34 @@ theorem equal_self {value : Value} (wellFormed : value.WellFormed) :
           exact .term ⟨Nucleus.Hol.Ethane.Reference.EqTm.complete
             termLowering termLowering typeLowering (.refl (.exact typing))⟩
 
+/-- A well-typed root beta step is an Ethane kernel equality. -/
+theorem equal_beta {type : EmptyTy} {source target : EmptyTm}
+    (wellFormed : WellFormed (.term type source))
+    (step : Nucleus.HolE.Named.TmBeta
+      (.nil : TyScope []) (.nil : TmScope ArenaSig 0)
+      source.toHolE target.toHolE) :
+    Equal (.term type source) (.term type target) := by
+  rcases wellFormed with
+    ⟨loweredSource, loweredClassification, sourceLowering,
+      classificationLowering, sourceTyping⟩
+  cases loweredClassification with
+  | tm loweredType =>
+      have namedTyping : Nucleus.HolE.Named.HasType
+          (.nil : TyScope []) (.nil : TmScope ArenaSig 0)
+          Nucleus.HolE.emptyBound source.toHolE type.toHolE := by
+        exact ⟨loweredSource, loweredType, sourceLowering,
+          classificationLowering, sourceTyping⟩
+      obtain ⟨conversion⟩ := step.toTmConv
+        (fun index => Fin.elim0 index) namedTyping
+      exact .term ⟨{
+        loweredLeft := conversion.loweredLeft
+        loweredRight := conversion.loweredRight
+        loweredType := conversion.loweredType
+        leftLowering := conversion.leftLowering
+        rightLowering := conversion.rightLowering
+        typeLowering := conversion.typeLowering
+        derivation := conversion.derivation }⟩
+
 end Value
 
 /-- Meaning of the optional equality member on one row. -/
@@ -100,6 +128,33 @@ theorem reflexiveEqualityClaim_sound
   rw [member] at claim
   rcases claim with ⟨value, left, right, wellFormed⟩
   exact ⟨value, value, left, right, Value.equal_self wellFormed⟩
+
+/-- A checked root beta equality member. -/
+def BetaEqualityClaim (resolve : Resolver) (arena : Arena)
+    (reference : Ref) : Prop :=
+  match arena.eq? reference with
+  | none => True
+  | some right =>
+      ∃ type source target,
+        Resolves resolve arena reference (.term type source) ∧
+        Resolves resolve arena right (.term type target) ∧
+        Value.WellFormed (.term type source) ∧
+        Nucleus.HolE.Named.TmBeta
+          (.nil : TyScope []) (.nil : TmScope ArenaSig 0)
+          source.toHolE target.toHolE
+
+theorem betaEqualityClaim_sound
+    (claim : BetaEqualityClaim resolve arena reference) :
+    EqualityClaim resolve arena reference := by
+  unfold BetaEqualityClaim at claim
+  unfold EqualityClaim
+  split <;> try trivial
+  rename_i right member
+  rw [member] at claim
+  rcases claim with ⟨type, source, target, sourceResolves, targetResolves,
+    wellFormed, step⟩
+  exact ⟨.term type source, .term type target, sourceResolves, targetResolves,
+    Value.equal_beta wellFormed step⟩
 
 /-- Meaning of the optional sorting member on one row. -/
 def SortingMemberClaim (resolve : Resolver) (arena : Arena)

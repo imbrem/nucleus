@@ -130,6 +130,35 @@ impl Value {
             _ => false,
         }
     }
+
+    /// The first executable beta slice: `(λx. x) a = a` with exact typed-name
+    /// identity. General capture-avoiding substitution extends this predicate.
+    pub(crate) fn is_identity_beta_to(&self, target: &Self) -> bool {
+        let (
+            Self::Tm {
+                ty: source_ty,
+                expression: Syntax::App(function, argument),
+            },
+            Self::Tm {
+                ty: target_ty,
+                expression: target_expression,
+            },
+        ) = (self, target)
+        else {
+            return false;
+        };
+        let Syntax::Lam { name, domain, body } = function.as_ref() else {
+            return false;
+        };
+        source_ty == target_ty
+            && body.as_ref()
+                == &Syntax::TmFv {
+                    name: *name,
+                    ty: domain.clone(),
+                }
+            && argument.as_ref() == target_expression
+            && self.is_well_formed()
+    }
 }
 
 impl Syntax {
