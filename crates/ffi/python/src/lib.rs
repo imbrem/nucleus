@@ -16,6 +16,7 @@
 
 use covalence_lib_python::prelude::*;
 
+mod cas;
 mod cbor;
 mod hash;
 mod lrat;
@@ -29,6 +30,7 @@ fn _covalence(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("__version__", env!("CARGO_PKG_VERSION"))?;
     cbor::register(module)?;
     hash::register(module)?;
+    cas::register(module)?;
     sat::register(module)?;
     lrat::register(module)?;
     metamath::register(module)

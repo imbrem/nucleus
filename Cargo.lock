@@ -383,7 +383,8 @@ dependencies = [
  "bytes",
  "covalence-lib-error",
  "covalence-lib-hash",
- "indexmap",
+ "covalence-lib-table",
+ "covalence-logic-cas",
 ]
 
 [[package]]
@@ -424,9 +425,11 @@ name = "covalence-ffi-python"
 version = "0.0.0"
 dependencies = [
  "cid",
+ "covalence-data-cas",
  "covalence-data-cbor",
  "covalence-lib-hash",
  "covalence-lib-python",
+ "covalence-logic-cas",
  "covalence-logic-lrat",
  "covalence-logic-metamath",
  "covalence-logic-sat",
@@ -522,6 +525,14 @@ dependencies = [
  "indexmap",
  "libsqlite3-sys",
  "sqlite-wasm-rs",
+]
+
+[[package]]
+name = "covalence-lib-table"
+version = "0.0.0"
+dependencies = [
+ "hashbrown 0.17.1",
+ "indexmap",
 ]
 
 [[package]]

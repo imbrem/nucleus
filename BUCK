@@ -160,8 +160,10 @@ genrule(
     name = "python",
     srcs = named_sources(
         {
+            "data-cas": "//crates/data/cas:package_files",
             "lib-error": "//crates/lib/error:package_files",
             "lib-hash": "//crates/lib/hash:package_files",
+            "logic-cas": "//crates/logic/cas:package_files",
         },
         _CARGO_ONLY_CRATE_SOURCES + [
             "Cargo.lock",

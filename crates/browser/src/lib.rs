@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use covalence_data_cas::{Cas, CasObject, ResidentObject};
+use covalence_data_cas::{CasObject, ObjectCas, ResidentObject};
 use covalence_lib_hash::O256;
 use covalence_lib_sqlite::{Connection, Step as SqliteStep, ValueType};
 use covalence_repl::{Response, Session};

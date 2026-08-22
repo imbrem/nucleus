@@ -3950,8 +3950,7 @@
       "name": "covalence-data-cas",
       "category": "tcb",
       "dependencies": [
-        "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
-        "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0"
+        "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1"
       ]
     },
     {
@@ -4070,6 +4069,15 @@
         "registry+https://github.com/rust-lang/crates.io-index#bitflags@2.13.1",
         "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
         "registry+https://github.com/rust-lang/crates.io-index#libsqlite3-sys@0.38.1"
+      ]
+    },
+    {
+      "id": "workspace#covalence-lib-table@0.0.0",
+      "name": "covalence-lib-table",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#hashbrown@0.17.1",
+        "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0"
       ]
     },
     {

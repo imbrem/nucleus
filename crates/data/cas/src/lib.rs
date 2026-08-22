@@ -1,61 +1,38 @@
-//! Synchronous content-addressed storage.
-//!
-//! Opening pins an immutable object, so later removal affects only new opens.
+//! Userspace content-addressed storage.
 
-mod memory;
+mod index;
 
-/// Bytes returned by [`CasObject::read`].
 pub use bytes::Bytes;
 
-pub use memory::{
-    AdmissionError, CasStats, InvalidRange, MAX_OBJECT_BYTES, MemoryCas, ResidentObject,
-};
+pub use index::{AdmissionError, CasStats, IndexCas, InvalidRange, ResidentObject, SharedIndexCas};
+
+pub use covalence_logic_cas::{Cas, CasMut, CasShared};
 
 use std::ops::Range;
 
 use covalence_lib_hash::O256;
 
-/// A trusted, immutable content-addressed byte source.
-pub trait Cas {
-    /// Implementation-specific failure.
-    type Error;
-
-    /// An object opened from this source.
+/// A CAS which can pin an object independently of subsequent store changes.
+///
+/// This userspace extension is useful for consumers such as virtual file
+/// systems. The foundational [`Cas`] trait returns [`Bytes`] directly and does
+/// not require an object type.
+pub trait ObjectCas: Cas {
+    /// An immutable object pinned independently of the CAS.
     type Object: CasObject<Error = Self::Error>;
 
-    /// Opens and pins `address`, or returns `None` when absent.
+    /// Opens and pins `address`, or returns `None` when it is absent.
     ///
     /// # Errors
     ///
-    /// Returns an error when the source fails to answer at all, as distinct
-    /// from answering that the address does not resolve.
+    /// Returns an implementation-specific lookup or I/O failure.
     fn open(&self, address: O256) -> Result<Option<Self::Object>, Self::Error>;
-
-    /// Returns the length of `address`, or `None` when it does not resolve.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the source cannot determine the length.
-    fn len(&self, address: O256) -> Result<Option<u64>, Self::Error> {
-        Ok(self.open(address)?.map(|object| object.len()))
-    }
-
-    /// Reads exactly `range`, or returns `None` when absent.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the range cannot be served or authenticated.
-    fn read(&self, address: O256, range: Range<u64>) -> Result<Option<Bytes>, Self::Error> {
-        self.open(address)?
-            .map(|object| object.read(range))
-            .transpose()
-    }
 }
 
-/// An immutable object pinned by [`Cas::open`].
+/// An immutable object pinned by [`ObjectCas::open`].
 pub trait CasObject {
-    /// Implementation-specific failure.
-    type Error;
+    /// Implementation-specific read failure.
+    type Error: std::error::Error + 'static;
 
     /// Returns the object's length.
     fn len(&self) -> u64;
@@ -65,11 +42,16 @@ pub trait CasObject {
         self.len() == 0
     }
 
-    /// Returns exactly `range`; invalid or short reads fail.
+    /// Reads exactly `range`.
     ///
     /// # Errors
     ///
-    /// Returns an error when the range is invalid, cannot be served, or cannot
-    /// be authenticated.
+    /// Returns an implementation-specific I/O or range failure.
     fn read(&self, range: Range<u64>) -> Result<Bytes, Self::Error>;
+}
+
+/// Optional statistics for a concrete CAS view.
+pub trait CasStatistics {
+    /// Returns statistics for this view of the CAS.
+    fn stats(&self) -> CasStats;
 }

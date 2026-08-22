@@ -12,7 +12,7 @@
 
 use std::sync::Arc;
 
-use covalence_data_cas::MemoryCas;
+use covalence_data_cas::SharedIndexCas;
 use covalence_data_cas_http::serve;
 use covalence_lib_error::miette::{self, Context, IntoDiagnostic, miette};
 
@@ -34,7 +34,7 @@ fn main() -> miette::Result<()> {
         }
     }
 
-    let cas = Arc::new(MemoryCas::new());
+    let cas = Arc::new(SharedIndexCas::new());
     for path in &paths {
         let bytes = std::fs::read(path)
             .into_diagnostic()

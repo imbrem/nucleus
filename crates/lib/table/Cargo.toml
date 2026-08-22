@@ -1,0 +1,15 @@
+[package]
+name = "covalence-lib-table"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Table collection facade for Covalence"
+publish = false
+
+[dependencies]
+hashbrown = { version = "0.17", default-features = false }
+indexmap = "2"
+
+[lints]
+workspace = true
