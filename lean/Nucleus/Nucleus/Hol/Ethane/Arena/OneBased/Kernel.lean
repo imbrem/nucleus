@@ -33,6 +33,38 @@ inductive Equal : Value → Value → Prop where
         Nucleus.HolE.emptyBound left right type)) :
       Equal (.term type left) (.term type right)
 
+/-- Reflexivity is available only after logical well-formedness has been
+checked.  This is the first equality rule implemented by the Rust MVP. -/
+theorem equal_self {value : Value} (wellFormed : value.WellFormed) :
+    Equal value value := by
+  cases value with
+  | kind value => exact .kind value
+  | family kind expression =>
+      rcases wellFormed with
+        ⟨loweredExpression, loweredClassification, lowering,
+          classificationLowering, kinding⟩
+      cases loweredClassification with
+      | kind =>
+          exact .family ⟨Nucleus.HolE.Named.FamEq.refl lowering⟩
+  | term type expression =>
+      rcases wellFormed with
+        ⟨loweredExpression, loweredClassification, termLowering,
+          classificationLowering, typing⟩
+      cases loweredClassification with
+      | tm loweredType =>
+          have typeLowering :
+              type.lowerTy (.nil : TyScope []) = some loweredType := by
+            change (do
+              let lowered ← type.lowerTy (.nil : TyScope [])
+              pure (Nucleus.HolE.Classification.tm lowered)) =
+                some (Nucleus.HolE.Classification.tm loweredType) at
+                  classificationLowering
+            cases lowered : type.lowerTy (.nil : TyScope []) <;>
+              simp [lowered] at classificationLowering
+            simpa [lowered] using classificationLowering
+          exact .term ⟨Nucleus.Hol.Ethane.Reference.EqTm.complete
+            termLowering termLowering typeLowering (.refl (.exact typing))⟩
+
 end Value
 
 /-- Meaning of the optional equality member on one row. -/
@@ -44,6 +76,30 @@ def EqualityClaim (resolve : Resolver) (arena : Arena) (reference : Ref) : Prop 
         Resolves resolve arena reference leftValue ∧
         Resolves resolve arena right rightValue ∧
         Value.Equal leftValue rightValue
+
+/-- The executable MVP equality check: both references resolve to the same
+well-formed value.  More conversion rules extend this relation without
+changing `EqualityClaim`. -/
+def ReflexiveEqualityClaim (resolve : Resolver) (arena : Arena)
+    (reference : Ref) : Prop :=
+  match arena.eq? reference with
+  | none => True
+  | some right =>
+      ∃ value,
+        Resolves resolve arena reference value ∧
+        Resolves resolve arena right value ∧
+        value.WellFormed
+
+theorem reflexiveEqualityClaim_sound
+    (claim : ReflexiveEqualityClaim resolve arena reference) :
+    EqualityClaim resolve arena reference := by
+  unfold ReflexiveEqualityClaim at claim
+  unfold EqualityClaim
+  split <;> try trivial
+  rename_i right member
+  rw [member] at claim
+  rcases claim with ⟨value, left, right, wellFormed⟩
+  exact ⟨value, value, left, right, Value.equal_self wellFormed⟩
 
 /-- Meaning of the optional sorting member on one row. -/
 def SortingMemberClaim (resolve : Resolver) (arena : Arena)
