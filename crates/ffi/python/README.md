@@ -8,7 +8,9 @@ The package is a mixed one: hand-written Python in `python/covalence`, and the
 compiled extension module staged beside it as `covalence._covalence`. The
 compiled module is private; ordinary Python modules such as `covalence.lib.hash`
 name the public surface. This keeps that surface independent of the Rust module
-and leaves room for later `covalence.cas` and `covalence.nucleus` modules.
+and leaves room for composition modules: `covalence.cas` now combines the
+checked logic objects and userspace providers, while a later
+`covalence.nucleus` can do the same for the full stack.
 
 There is one extension module for the whole project, not one per Rust crate.
 `crates/ffi/python` is where Covalence crates are composed into a Python API;
@@ -59,10 +61,39 @@ recursively converts those scalar types, lists, and dictionaries.
 True
 ```
 
+`covalence.cas` exposes the whole-object CAS LCF boundary. `CasAssertion` is
+ordinary unchecked data; `try_into()` hashes the complete blob in Rust before
+it can return the opaque `CasFact`. Stores are userspace policy. The included
+`MemoryCas` stores checked facts, while `get_exact()` accepts any duck-typed
+Python object with a `get(O256) -> CasFact` method and rejects a checked fact
+for the wrong requested address.
+
+```python
+>>> from covalence.cas import CasAssertion
+>>> from covalence.lib.hash import O256
+>>> blob = b"provided by Python"
+>>> address = O256.hash(blob)
+>>> fact = CasAssertion(address, blob).try_into()
+>>> fact.hash == address and fact.blob == blob
+True
+```
+
+The checked-in dictionary-backed provider is runnable directly:
+
+```sh
+glu python crates/ffi/python/examples/dict_cas.py
+```
+
+It deliberately stores raw bytes in a plain Python `dict` and performs the
+check only when resolving. Files, HTTP, SQLite, generated data, or any other
+Python logic can use the same protocol without becoming part of the trusted
+constructor boundary.
+
 | Path                | Contents                                       |
 | ------------------- | ---------------------------------------------- |
 | `src/`              | The `#[pymodule]` and its bindings             |
 | `python/covalence/` | The importable package, `py.typed`, and `.pyi` |
+| `examples/`         | checked-in runnable API demonstrations         |
 | `tests/`            | pytest suite, run against the staged package   |
 
 ## Building and running

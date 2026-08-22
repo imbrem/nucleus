@@ -26,8 +26,10 @@ extension-module = ["covalence-lib-python/extension-module"]
 
 [dependencies]
 cid = "0.11"
+covalence-data-cas = { path = "../../data/cas" }
 covalence-data-cbor = { path = "../../data/cbor" }
 covalence-lib-python = { path = "../../lib/python" }
+covalence-logic-cas = { path = "../../logic/cas" }
 covalence-logic-lrat = { path = "../../logic/lrat" }
 covalence-logic-metamath = { path = "../../logic/metamath" }
 covalence-logic-sat = { path = "../../logic/sat" }

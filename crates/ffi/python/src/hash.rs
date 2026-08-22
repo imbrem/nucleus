@@ -212,7 +212,7 @@ macro_rules! object {
 
         impl $wrapper {
             /// Wraps a Rust value as a new Python object of this class.
-            fn wrap(python: Python<'_>, value: Obj<$namespace>) -> PyResult<Py<Self>> {
+            pub(crate) fn wrap(python: Python<'_>, value: Obj<$namespace>) -> PyResult<Py<Self>> {
                 Py::new(python, Self::initializer(PyObj::new(value.as_ref())))
             }
 
@@ -224,7 +224,7 @@ macro_rules! object {
             ///
             /// Unused by namespaces that only hash and compare.
             #[allow(dead_code)]
-            fn value(slf: &PyRef<'_, Self>) -> Obj<$namespace> {
+            pub(crate) fn value(slf: &PyRef<'_, Self>) -> Obj<$namespace> {
                 Obj::from_array(slf.as_super().array::<$bytes>())
             }
         }
