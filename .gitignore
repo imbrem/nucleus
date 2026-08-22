@@ -10,7 +10,8 @@ node_modules/
 /packages/nucleus/dist/
 /packages/nucleus/generated/
 .direnv/
-.claude/
+.claude/*
+!.claude/skills/
 .lake/
 /lean-docs/
 .glu.json
