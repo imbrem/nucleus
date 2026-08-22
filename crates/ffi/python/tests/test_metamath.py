@@ -1,5 +1,4 @@
 import pytest
-
 from covalence.logic.metamath import Database, MetamathError
 
 DEMO = """
