@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::{
-    Arena, Import, ImportId, Meta, Ref, ResolveError, Resolver, Sort,
+    Arena, Import, ImportId, Link, Meta, Ref, ResolveError, Resolver, Sort,
     resolve::{Value, resolve_at},
     row::{Expr, Row},
 };
@@ -12,6 +12,7 @@ use crate::{
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum KernelError<E> {
     TooManyDefinitions,
+    TooManyImports,
     ForwardReference { owner: Ref, child: Ref },
     UnsupportedAxiom(String),
     InvalidSortingClaim(Ref),
@@ -35,6 +36,7 @@ impl<E: std::fmt::Debug + std::fmt::Display> std::fmt::Display for KernelError<E
             Self::TooManyDefinitions => {
                 output.write_str("arena has more than u64::MAX definitions")
             }
+            Self::TooManyImports => output.write_str("arena has more than u64::MAX imports"),
             Self::ForwardReference { owner, child } => write!(
                 output,
                 "definition {} has forward local child {}",
@@ -173,6 +175,36 @@ impl<R: Resolver> Kernel<R> {
         self.resolver.as_ref()
     }
 
+    /// Recover a checked kind handle for an existing definition.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the reference is absent, unresolved, or not a
+    /// well-formed kind.
+    pub fn kind_at(&self, fuel: usize, reference: Ref) -> Result<KindIx, KernelError<R::Error>> {
+        self.index_at(fuel, reference, Sort::Kind).map(KindIx)
+    }
+
+    /// Recover a checked type handle for an existing definition.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the reference is absent, unresolved, or not a
+    /// well-kinded type.
+    pub fn ty_at(&self, fuel: usize, reference: Ref) -> Result<TyIx, KernelError<R::Error>> {
+        self.index_at(fuel, reference, Sort::Ty).map(TyIx)
+    }
+
+    /// Recover a checked term handle for an existing definition.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the reference is absent, unresolved, or not a
+    /// well-typed term.
+    pub fn tm_at(&self, fuel: usize, reference: Ref) -> Result<TmIx, KernelError<R::Error>> {
+        self.index_at(fuel, reference, Sort::Tm).map(TmIx)
+    }
+
     /// Append `kind.star` and recheck the resulting state.
     ///
     /// # Errors
@@ -282,6 +314,178 @@ impl<R: Resolver> Kernel<R> {
             .map(TmIx)
     }
 
+    /// Append a literal raw arena import. The import conveys no trust by
+    /// itself.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the import table overflows or the resulting state
+    /// no longer validates.
+    pub fn import_literal(
+        &mut self,
+        fuel: usize,
+        arena: Arena,
+    ) -> Result<ImportId, KernelError<R::Error>> {
+        self.push_import_checked(fuel, Import::Literal(Box::new(arena)))
+    }
+
+    /// Append a lazy content-addressed import.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the import table overflows or the resulting state
+    /// no longer validates.
+    pub fn import_link(
+        &mut self,
+        fuel: usize,
+        link: Link,
+    ) -> Result<ImportId, KernelError<R::Error>> {
+        self.push_import_checked(fuel, Import::Link(link))
+    }
+
+    /// Append a checked term proxy into an import.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the foreign reference resolves to a
+    /// well-typed term.
+    pub fn tm_ref(
+        &mut self,
+        fuel: usize,
+        source: ImportId,
+        foreign: Ref,
+    ) -> Result<TmIx, KernelError<R::Error>> {
+        self.push_checked(
+            fuel,
+            Row::new(Expr::TmRef {
+                src: source,
+                ix: foreign,
+            }),
+            Sort::Tm,
+        )
+        .map(TmIx)
+    }
+
+    /// Append a checked type proxy into an import.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the foreign reference resolves to a
+    /// well-kinded type.
+    pub fn ty_ref(
+        &mut self,
+        fuel: usize,
+        source: ImportId,
+        foreign: Ref,
+    ) -> Result<TyIx, KernelError<R::Error>> {
+        self.push_checked(
+            fuel,
+            Row::new(Expr::TyRef {
+                src: source,
+                ix: foreign,
+            }),
+            Sort::Ty,
+        )
+        .map(TyIx)
+    }
+
+    /// Append a checked kind proxy into an import.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the foreign reference resolves to a kind.
+    pub fn kind_ref(
+        &mut self,
+        fuel: usize,
+        source: ImportId,
+        foreign: Ref,
+    ) -> Result<KindIx, KernelError<R::Error>> {
+        self.push_checked(
+            fuel,
+            Row::new(Expr::KindRef {
+                src: source,
+                ix: foreign,
+            }),
+            Sort::Kind,
+        )
+        .map(KindIx)
+    }
+
+    /// Record imported-kernel validity as a premise. This does not promote it
+    /// to a checked conclusion.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the existing conclusions cease to validate.
+    pub fn assume_valid(
+        &mut self,
+        fuel: usize,
+        source: ImportId,
+    ) -> Result<(), KernelError<R::Error>> {
+        self.push_meta_checked(fuel, Meta::Valid { src: source }, false)
+    }
+
+    /// Establish imported-kernel validity as a recursively checked
+    /// conclusion.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the import resolves to a valid kernel.
+    pub fn assert_valid(
+        &mut self,
+        fuel: usize,
+        source: ImportId,
+    ) -> Result<(), KernelError<R::Error>> {
+        self.push_meta_checked(fuel, Meta::Valid { src: source }, true)
+    }
+
+    /// Record foreign sorting as an explicit premise.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the existing conclusions cease to validate.
+    pub fn assume_wf(
+        &mut self,
+        fuel: usize,
+        source: ImportId,
+        foreign: Ref,
+        sort: Ref,
+    ) -> Result<(), KernelError<R::Error>> {
+        self.push_meta_checked(
+            fuel,
+            Meta::Wf {
+                src: source,
+                ix: foreign,
+                sort,
+            },
+            false,
+        )
+    }
+
+    /// Establish foreign sorting as a checked conclusion.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the foreign expression has the supplied local
+    /// classifier.
+    pub fn assert_wf(
+        &mut self,
+        fuel: usize,
+        source: ImportId,
+        foreign: Ref,
+        sort: Ref,
+    ) -> Result<(), KernelError<R::Error>> {
+        self.push_meta_checked(
+            fuel,
+            Meta::Wf {
+                src: source,
+                ix: foreign,
+                sort,
+            },
+            true,
+        )
+    }
+
     /// Attach an equality assertion and recheck the complete state. The MVP
     /// accepts reflexivity and the checked identity-beta shape.
     ///
@@ -317,6 +521,53 @@ impl<R: Resolver> Kernel<R> {
             return Err(KernelError::InvalidConstructor { expected, actual });
         }
         *self = Self::try_from_arena(candidate, Arc::clone(&self.resolver), fuel)?;
+        Ok(reference)
+    }
+
+    fn push_import_checked(
+        &mut self,
+        fuel: usize,
+        import: Import,
+    ) -> Result<ImportId, KernelError<R::Error>> {
+        let mut candidate = self.arena.clone();
+        let source = candidate
+            .push_import(import)
+            .ok_or(KernelError::TooManyImports)?;
+        *self = Self::try_from_arena(candidate, Arc::clone(&self.resolver), fuel)?;
+        Ok(source)
+    }
+
+    fn push_meta_checked(
+        &mut self,
+        fuel: usize,
+        record: Meta,
+        conclusion: bool,
+    ) -> Result<(), KernelError<R::Error>> {
+        let mut candidate = self.arena.clone();
+        if conclusion {
+            candidate.push_assertion(record);
+        } else {
+            candidate.push_assumption(record);
+        }
+        *self = Self::try_from_arena(candidate, Arc::clone(&self.resolver), fuel)?;
+        Ok(())
+    }
+
+    fn index_at(
+        &self,
+        fuel: usize,
+        reference: Ref,
+        expected: Sort,
+    ) -> Result<Ref, KernelError<R::Error>> {
+        if self.arena.tag(reference).is_none() {
+            return Err(KernelError::MissingDefinition(reference));
+        }
+        let actual = self
+            .arena
+            .check_wf(self.resolver.as_ref(), reference, fuel)?;
+        if actual != expected {
+            return Err(KernelError::InvalidConstructor { expected, actual });
+        }
         Ok(reference)
     }
 }
@@ -561,6 +812,71 @@ mod tests {
         assert!(matches!(
             Kernel::try_from_arena(invalid, Arc::new(NoLinks), 2),
             Err(KernelError::UnsupportedAxiom(_))
+        ));
+    }
+
+    #[test]
+    fn checked_imports_keep_premises_and_conclusions_distinct() {
+        let imported = Arena::from_parts(
+            vec![],
+            [],
+            vec![Row::new(Expr::BoolTy), Row::new(Expr::Bool(true))],
+            [],
+            vec![],
+            vec![],
+        );
+        let mut kernel = Kernel::try_from_arena(Arena::empty(), Arc::new(NoLinks), 4).unwrap();
+        let local_bool = kernel.bool_ty(4).unwrap();
+        let source = kernel.import_literal(4, imported).unwrap();
+        let imported_bool = kernel.ty_ref(4, source, reference(1)).unwrap();
+        let imported_true = kernel.tm_ref(4, source, reference(2)).unwrap();
+
+        kernel.assume_valid(4, source).unwrap();
+        kernel.assert_valid(4, source).unwrap();
+        kernel
+            .assert_wf(4, source, reference(2), local_bool.reference())
+            .unwrap();
+
+        assert_eq!(
+            kernel.arena().tag(imported_bool.reference()),
+            Some(crate::Tag::Ty(crate::TyTag::Ref))
+        );
+        assert_eq!(
+            kernel.arena().tag(imported_true.reference()),
+            Some(crate::Tag::Tm(crate::TmTag::Ref))
+        );
+        assert_eq!(kernel.arena().assumptions(), &[Meta::Valid { src: source }]);
+        assert_eq!(
+            kernel.arena().assertions(),
+            &[
+                Meta::Valid { src: source },
+                Meta::Wf {
+                    src: source,
+                    ix: reference(2),
+                    sort: local_bool.reference(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn kind_references_are_checked_but_have_no_meta_wf_classifier() {
+        let imported = Arena::from_parts(
+            vec![],
+            [],
+            vec![Row::new(Expr::KindStar)],
+            [],
+            vec![],
+            vec![],
+        );
+        let mut kernel = Kernel::try_from_arena(Arena::empty(), Arc::new(NoLinks), 3).unwrap();
+        let source = kernel.import_literal(3, imported).unwrap();
+        assert!(kernel.kind_ref(3, source, reference(1)).is_ok());
+
+        let bogus_sort = kernel.star(3).unwrap();
+        assert!(matches!(
+            kernel.assert_wf(3, source, reference(1), bogus_sort.reference()),
+            Err(KernelError::InvalidConclusion(Meta::Wf { .. }))
         ));
     }
 
