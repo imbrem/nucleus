@@ -57,7 +57,7 @@ impl Init {
         let not = build_not(&mut arena, bool_ty, falsehood);
         let and = build_and(&mut arena, bool_ty, truth);
         let or = build_or(&mut arena, bool_ty, not, and);
-        let imp = build_imp(&mut arena, bool_ty, not, or);
+        let imp = build_imp(&mut arena, bool_ty, not, and);
 
         let mut builder = Builder {
             arena,
@@ -170,12 +170,13 @@ fn build_or(arena: &mut Arena, bool_ty: Ref, not: Ref, and: Ref) -> Ref {
     required(arena.push_lam(p_binder, right))
 }
 
-fn build_imp(arena: &mut Arena, bool_ty: Ref, not: Ref, or: Ref) -> Ref {
+fn build_imp(arena: &mut Arena, bool_ty: Ref, not: Ref, and: Ref) -> Ref {
     let p = required(arena.push_tm_fv(LOGIC_P_NAME, bool_ty));
     let q = required(arena.push_tm_fv(LOGIC_Q_NAME, bool_ty));
-    let not_p = required(arena.push_app(not, p));
-    let partial = required(arena.push_app(or, not_p));
-    let body = required(arena.push_app(partial, q));
+    let not_q = required(arena.push_app(not, q));
+    let partial = required(arena.push_app(and, p));
+    let both = required(arena.push_app(partial, not_q));
+    let body = required(arena.push_app(not, both));
     let q_binder = required(arena.push_tm_fv(LOGIC_Q_NAME, bool_ty));
     let right = required(arena.push_lam(q_binder, body));
     let p_binder = required(arena.push_tm_fv(LOGIC_P_NAME, bool_ty));
