@@ -8,6 +8,7 @@ description = "Raw Ethane HOL arena representation"
 publish = false
 
 [dependencies]
+covalence-data-cas = { path = "../../data/cas" }
 covalence-lib-cbor = { path = "../../lib/cbor" }
 covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
