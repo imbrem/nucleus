@@ -93,6 +93,25 @@ theorem equal_beta {type : EmptyTy} {source target : EmptyTm}
         typeLowering := conversion.typeLowering
         derivation := conversion.derivation }⟩
 
+/-- The exact identity-redex shape recognized by the first Rust beta checker. -/
+def identityBetaStep (name : Nat) (domain : EmptyTy) (argument : EmptyTm)
+    {loweredDomain : Nucleus.HolE.Ty ArenaSig []}
+    {loweredArgument : Nucleus.HolE.Tm ArenaSig [] 0}
+    (domainLowering : domain.lowerTy (.nil : TyScope []) = some loweredDomain)
+    (argumentLowering : argument.lowerTm (.nil : TyScope [])
+      (.nil : TmScope ArenaSig 0) = some loweredArgument) :
+    Nucleus.HolE.Named.TmBeta
+      (.nil : TyScope []) (.nil : TmScope ArenaSig 0)
+      (.app (.lam name domain (.tmFv name domain)) argument).toHolE
+      argument.toHolE where
+  domain := loweredDomain
+  body := .bv 0
+  argument := loweredArgument
+  sourceLowering := by
+    simp [Nucleus.Hol.Ethane.Expr.toHolE, Nucleus.HolE.Named.lowerTm,
+      Nucleus.HolE.Named.lookupTm, domainLowering, argumentLowering]
+  targetLowering := argumentLowering
+
 end Value
 
 /-- Meaning of the optional equality member on one row. -/
@@ -155,6 +174,38 @@ theorem betaEqualityClaim_sound
     wellFormed, step⟩
   exact ⟨.term type source, .term type target, sourceResolves, targetResolves,
     Value.equal_beta wellFormed step⟩
+
+/-- The equality subset implemented by `Value::is_identity_beta_to`. -/
+def IdentityBetaEqualityClaim (resolve : Resolver) (arena : Arena)
+    (reference : Ref) : Prop :=
+  match arena.eq? reference with
+  | none => True
+  | some right =>
+      ∃ type domain name argument loweredDomain loweredArgument,
+        Resolves resolve arena reference
+          (.term type (.app (.lam name domain (.tmFv name domain)) argument)) ∧
+        Resolves resolve arena right (.term type argument) ∧
+        Value.WellFormed
+          (.term type (.app (.lam name domain (.tmFv name domain)) argument)) ∧
+        domain.lowerTy (.nil : TyScope []) = some loweredDomain ∧
+        argument.lowerTm (.nil : TyScope []) (.nil : TmScope ArenaSig 0) =
+          some loweredArgument
+
+theorem identityBetaEqualityClaim_sound
+    (claim : IdentityBetaEqualityClaim resolve arena reference) :
+    EqualityClaim resolve arena reference := by
+  unfold IdentityBetaEqualityClaim at claim
+  unfold EqualityClaim
+  split <;> try trivial
+  rename_i right member
+  rw [member] at claim
+  rcases claim with ⟨type, domain, name, argument, loweredDomain,
+    loweredArgument, sourceResolves, targetResolves, wellFormed,
+    domainLowering, argumentLowering⟩
+  let source := .app (.lam name domain (.tmFv name domain)) argument
+  exact ⟨.term type source, .term type argument, sourceResolves, targetResolves,
+    Value.equal_beta wellFormed
+      (Value.identityBetaStep name domain argument domainLowering argumentLowering)⟩
 
 /-- Meaning of the optional sorting member on one row. -/
 def SortingMemberClaim (resolve : Resolver) (arena : Arena)
