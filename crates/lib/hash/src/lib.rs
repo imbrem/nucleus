@@ -20,6 +20,7 @@ use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 pub mod blake3;
 mod git;
+mod hasher;
 #[cfg(feature = "multiformats")]
 mod multiformats;
 #[cfg(feature = "serde")]
@@ -29,6 +30,11 @@ pub use blake3::{
     Blake3, Blake3Hash, COV, COV_ROOT, Cov, CtxKey, CtxKeyNamespace, Sha256, Sha256Hash,
 };
 pub use git::{Git, GitHash, Sha1};
+#[cfg(feature = "blake3")]
+pub use hasher::Blake3Hasher;
+pub use hasher::IdentityHasher;
+#[cfg(feature = "sha256")]
+pub use hasher::Sha256Hasher;
 #[cfg(feature = "multiformats")]
 pub use multiformats::{InvalidMultiformat, MultiformatNamespace};
 
@@ -144,6 +150,26 @@ impl<N: Namespace> Obj<N> {
     #[must_use]
     pub const fn into_bytes(self) -> N::Bytes {
         self.bytes
+    }
+
+    /// Returns the first 64 address bits as a little-endian table hash.
+    #[must_use]
+    pub fn addr64(&self) -> u64 {
+        let bytes = self.bytes.as_ref();
+        let mut prefix = [0; 8];
+        let length = prefix.len().min(bytes.len());
+        prefix[..length].copy_from_slice(&bytes[..length]);
+        u64::from_le_bytes(prefix)
+    }
+
+    /// Returns the first 32 address bits as a little-endian table hash.
+    #[must_use]
+    pub fn addr32(&self) -> u32 {
+        let bytes = self.bytes.as_ref();
+        let mut prefix = [0; 4];
+        let length = prefix.len().min(bytes.len());
+        prefix[..length].copy_from_slice(&bytes[..length]);
+        u32::from_le_bytes(prefix)
     }
 
     /// Changes the namespace claim without changing the bytes.
@@ -263,7 +289,7 @@ impl<N: Namespace> Ord for Obj<N> {
 }
 impl<N: Namespace> Hash for Obj<N> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.bytes.hash(state);
+        state.write(self.bytes.as_ref());
     }
 }
 impl<N: Namespace> fmt::Display for Obj<N> {
@@ -878,6 +904,43 @@ mod tests {
         assert!(low < high);
         assert_eq!(hash(low), hash(GitHash::from_array([0; 20])));
         assert_ne!(hash(low), hash(high));
+    }
+
+    #[test]
+    fn object_hash_writes_only_its_underlying_bytes() {
+        #[derive(Default)]
+        struct RecordingHasher(Vec<u8>);
+
+        impl Hasher for RecordingHasher {
+            fn finish(&self) -> u64 {
+                0
+            }
+
+            fn write(&mut self, bytes: &[u8]) {
+                self.0.extend_from_slice(bytes);
+            }
+        }
+
+        let bytes = [0xa5; 32];
+        let mut hasher = RecordingHasher::default();
+        O256::from_array(bytes).hash(&mut hasher);
+        assert_eq!(hasher.0, bytes);
+    }
+
+    #[test]
+    fn table_address_prefixes_are_little_endian_and_zero_padded() {
+        let mut bytes = [0; 32];
+        bytes[..8].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
+        let address = O256::from_array(bytes);
+        assert_eq!(address.addr32(), u32::from_le_bytes([1, 2, 3, 4]));
+        assert_eq!(
+            address.addr64(),
+            u64::from_le_bytes([1, 2, 3, 4, 5, 6, 7, 8])
+        );
+
+        let short = OpaqueObj::<1>::from_array([9]);
+        assert_eq!(short.addr32(), 9);
+        assert_eq!(short.addr64(), 9);
     }
 
     #[test]
