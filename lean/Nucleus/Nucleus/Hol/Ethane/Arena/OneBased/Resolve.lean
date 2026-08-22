@@ -99,18 +99,55 @@ def resolveImport? (resolve : Resolver) : Import → Option Arena
 @[simp] theorem resolveImport?_link (resolve : Resolver) (link : Link) :
     resolveImport? resolve (.link link) = resolve link := rfl
 
+/-- Executable structural equality for empty-signature Ethane syntax. -/
+def sameSyntax : EmptySyn → EmptySyn → Bool
+  | .boolTy, .boolTy => true
+  | .arr leftDomain leftCodomain, .arr rightDomain rightCodomain =>
+      sameSyntax leftDomain rightDomain && sameSyntax leftCodomain rightCodomain
+  | .tyApp leftDomain leftCodomain leftFunction leftArgument,
+      .tyApp rightDomain rightCodomain rightFunction rightArgument =>
+      decide (leftDomain = rightDomain) && decide (leftCodomain = rightCodomain) &&
+        sameSyntax leftFunction rightFunction && sameSyntax leftArgument rightArgument
+  | .tyLam leftDomain leftCodomain leftName leftBody,
+      .tyLam rightDomain rightCodomain rightName rightBody =>
+      decide (leftDomain = rightDomain) && decide (leftCodomain = rightCodomain) &&
+        decide (leftName = rightName) && sameSyntax leftBody rightBody
+  | .tyFv leftName leftKind, .tyFv rightName rightKind =>
+      decide (leftName = rightName) && decide (leftKind = rightKind)
+  | .tyExists leftName leftPredicate, .tyExists rightName rightPredicate =>
+      decide (leftName = rightName) && sameSyntax leftPredicate rightPredicate
+  | .model leftName leftPredicate, .model rightName rightPredicate =>
+      decide (leftName = rightName) && sameSyntax leftPredicate rightPredicate
+  | .primFam _ symbol, _ => nomatch symbol
+  | .primTm symbol, _ => nomatch symbol
+  | .tmFv leftName leftType, .tmFv rightName rightType =>
+      decide (leftName = rightName) && sameSyntax leftType rightType
+  | .app leftFunction leftArgument, .app rightFunction rightArgument =>
+      sameSyntax leftFunction rightFunction && sameSyntax leftArgument rightArgument
+  | .lam leftName leftDomain leftBody, .lam rightName rightDomain rightBody =>
+      decide (leftName = rightName) && sameSyntax leftDomain rightDomain &&
+        sameSyntax leftBody rightBody
+  | .bool left, .bool right => decide (left = right)
+  | .eq leftType leftLeft leftRight, .eq rightType rightLeft rightRight =>
+      sameSyntax leftType rightType && sameSyntax leftLeft rightLeft &&
+        sameSyntax leftRight rightRight
+  | .eps leftType leftPredicate, .eps rightType rightPredicate =>
+      sameSyntax leftType rightType && sameSyntax leftPredicate rightPredicate
+  | _, _ => false
+
+theorem sameSyntax_eq_true_iff (left right : EmptySyn) :
+    sameSyntax left right = true ↔ left = right := by
+  induction left generalizing right <;> cases right <;>
+    simp_all [sameSyntax, Bool.and_eq_true, and_assoc] <;> aesop
+
 /-- Elaborate one expression after all referenced values have been resolved.
 The domain and codomain kinds of `ty.app` and `ty.lam`, and the operand type
 of `tm.eq`, are recovered from their children. -/
-private noncomputable def sameSyntax (left right : EmptySyn) : Bool := by
-  classical
-  exact decide (left = right)
-
 private def tyFvName? {kind : Kind} : EmptyExpr (.kind kind) → Option Nat
   | .tyFv name _ => some name
   | _ => none
 
-noncomputable def elaborateExpr
+def elaborateExpr
     (lookupLocal : Ref → Option Value)
     (lookupForeign : ImportId → Ref → Option Value) : detail.Expr → Option Value
   | .kindStar => some (Value.kind .star)
@@ -184,7 +221,7 @@ noncomputable def elaborateExpr
       if value.tagSort = .kind then some value else none
 
 /-- Apply an arena lookup function through the owner's import table. -/
-noncomputable def resolveForeignUsing?
+def resolveForeignUsing?
     (resolveValue : Arena → Ref → Option Value) (resolve : Resolver)
     (owner : Arena) (source : ImportId) (foreignRef : Ref) : Option Value :=
   match owner.import? source with
@@ -196,7 +233,7 @@ noncomputable def resolveForeignUsing?
 
 /-- Resolve a row graph. Every local or imported edge consumes one unit of
 fuel, so cycles and excessive nesting return `none`. -/
-noncomputable def resolveAt? : Nat → Resolver → Arena → Ref → Option Value
+def resolveAt? : Nat → Resolver → Arena → Ref → Option Value
   | 0, _, _, _ => none
   | fuel + 1, resolve, arena, reference =>
       match arena.row? reference with
@@ -208,7 +245,7 @@ noncomputable def resolveAt? : Nat → Resolver → Arena → Ref → Option Val
             row.expr
 
 /-- Resolve one foreign reference through the owner's import table. -/
-noncomputable def resolveForeignAt? (fuel : Nat) (resolve : Resolver)
+def resolveForeignAt? (fuel : Nat) (resolve : Resolver)
     (owner : Arena) (source : ImportId) (foreignRef : Ref) : Option Value :=
   resolveForeignUsing? (resolveAt? fuel resolve) resolve owner source foreignRef
 

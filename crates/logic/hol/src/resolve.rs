@@ -20,6 +20,21 @@ pub trait Resolver {
     fn resolve(&self, link: &Link) -> Result<Option<Arc<Arena>>, Self::Error>;
 }
 
+/// A resolver suitable for the checked kernel's fixed Lean `Resolver` model.
+///
+/// A successful lookup is immutable: after `resolve(link)` returns arena
+/// `A`, every later successful lookup of the same link must return `A`.
+/// Absence and errors may remain retryable.
+///
+/// Implementations are sealed because violating successful-result stability
+/// can invalidate retained checked equality and import witnesses.
+#[allow(private_bounds)]
+pub trait TrustedResolver: Resolver + trusted_resolver::Sealed {}
+
+pub(crate) mod trusted_resolver {
+    pub trait Sealed {}
+}
+
 /// A recoverable failure while resolving one row graph.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResolveError<E> {
@@ -31,16 +46,17 @@ pub enum ResolveError<E> {
     Resolver(E),
     CategoryMismatch { expected: Sort, actual: Sort },
     IllSorted,
+    IllTyped,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum Kind {
+pub(crate) enum Kind {
     Star,
     Arr(Box<Self>, Box<Self>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum Syntax {
+pub(crate) enum Syntax {
     BoolTy,
     Arr(Box<Self>, Box<Self>),
     TyApp {
@@ -90,10 +106,90 @@ enum Syntax {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum Value {
+pub(crate) enum Value {
     Kind(Kind),
     Ty { kind: Kind, expression: Syntax },
     Tm { ty: Syntax, expression: Syntax },
+}
+
+/// Locally nameless image used only by the root-beta checker.
+///
+/// Type and term binders have independent De Bruijn indices. Constructor
+/// annotations recoverable from children are omitted, just as they are from
+/// the corresponding Lean `HolE.Expr` constructors.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum LoweredSyntax {
+    BoolTy,
+    Arr(Box<Self>, Box<Self>),
+    TyApp(Box<Self>, Box<Self>),
+    TyLam(Box<Self>),
+    TyBv(usize),
+    TyExists(Box<Self>),
+    Model(Box<Self>),
+    TmFv {
+        name: u64,
+        ty: Box<Self>,
+    },
+    TmBv(usize),
+    App(Box<Self>, Box<Self>),
+    Lam {
+        domain: Box<Self>,
+        body: Box<Self>,
+    },
+    Bool(bool),
+    Eq {
+        ty: Box<Self>,
+        left: Box<Self>,
+        right: Box<Self>,
+    },
+    Eps {
+        ty: Box<Self>,
+        predicate: Box<Self>,
+    },
+}
+
+impl LoweredSyntax {
+    /// Open the term variable at `depth`. The replacement was lowered in the
+    /// empty term scope, so it has no free De Bruijn indices to shift.
+    fn open_bound(&self, replacement: &Self, depth: usize) -> Self {
+        match self {
+            Self::TmBv(index) if *index == depth => replacement.clone(),
+            Self::TmBv(index) if *index > depth => Self::TmBv(index - 1),
+            Self::TmBv(index) => Self::TmBv(*index),
+            // Term substitution does not enter types. `tyExists` also stores
+            // a term at independent term depth zero, so ambient term
+            // substitution leaves its predicate untouched.
+            Self::BoolTy
+            | Self::Arr(..)
+            | Self::TyApp(..)
+            | Self::TyLam(..)
+            | Self::TyBv(_)
+            | Self::TyExists(_)
+            | Self::Model(_) => self.clone(),
+            Self::TmFv { name, ty } => Self::TmFv {
+                name: *name,
+                ty: ty.clone(),
+            },
+            Self::App(function, argument) => Self::App(
+                Box::new(function.open_bound(replacement, depth)),
+                Box::new(argument.open_bound(replacement, depth)),
+            ),
+            Self::Lam { domain, body } => Self::Lam {
+                domain: domain.clone(),
+                body: Box::new(body.open_bound(replacement, depth + 1)),
+            },
+            Self::Bool(value) => Self::Bool(*value),
+            Self::Eq { ty, left, right } => Self::Eq {
+                ty: ty.clone(),
+                left: Box::new(left.open_bound(replacement, depth)),
+                right: Box::new(right.open_bound(replacement, depth)),
+            },
+            Self::Eps { ty, predicate } => Self::Eps {
+                ty: ty.clone(),
+                predicate: Box::new(predicate.open_bound(replacement, depth)),
+            },
+        }
+    }
 }
 
 impl Value {
@@ -103,6 +199,319 @@ impl Value {
             Self::Ty { .. } => Sort::Ty,
             Self::Tm { .. } => Sort::Tm,
         }
+    }
+
+    pub(crate) fn is_well_formed(&self) -> bool {
+        match self {
+            Self::Kind(_) => true,
+            Self::Ty { kind, expression } => expression.infer_family(&[]) == Some(kind.clone()),
+            Self::Tm { ty, expression } => {
+                ty.infer_family(&[]) == Some(Kind::Star)
+                    && expression.infer_term(&[]) == Some(ty.clone())
+            }
+        }
+    }
+
+    pub(crate) fn has_sort(&self, classifier: &Self) -> bool {
+        match (self, classifier) {
+            (Self::Ty { kind: expected, .. }, Self::Kind(actual)) => expected == actual,
+            (
+                Self::Tm { ty: expected, .. },
+                Self::Ty {
+                    kind: Kind::Star,
+                    expression: actual,
+                },
+            ) => expected == actual,
+            _ => false,
+        }
+    }
+
+    /// Check one general root beta contraction modulo alpha conversion.
+    ///
+    /// Both named endpoints are lowered to the same locally nameless form
+    /// used by Lean. Opening the lowered body is capture avoiding without a
+    /// fresh-name operation in the checked kernel.
+    pub(crate) fn is_root_beta_to(&self, target: &Self) -> bool {
+        let (
+            Self::Tm {
+                ty: source_ty,
+                expression: Syntax::App(function, argument),
+            },
+            Self::Tm {
+                ty: target_ty,
+                expression: target_expression,
+            },
+        ) = (self, target)
+        else {
+            return false;
+        };
+        let Syntax::Lam { name, domain, body } = function.as_ref() else {
+            return false;
+        };
+        if source_ty != target_ty || !self.is_well_formed() {
+            return false;
+        }
+
+        let mut type_scope = Vec::new();
+        if domain.lower_family(&mut type_scope).is_none() {
+            return false;
+        }
+        let mut body_scope = vec![(*name, domain.as_ref().clone())];
+        let Some(lowered_body) = body.lower_term(&mut type_scope, &mut body_scope) else {
+            return false;
+        };
+        let mut argument_scope = Vec::new();
+        let Some(lowered_argument) = argument.lower_term(&mut type_scope, &mut argument_scope)
+        else {
+            return false;
+        };
+        let mut target_scope = Vec::new();
+        let Some(lowered_target) = target_expression.lower_term(&mut type_scope, &mut target_scope)
+        else {
+            return false;
+        };
+        lowered_target == lowered_body.open_bound(&lowered_argument, 0)
+    }
+}
+
+impl Syntax {
+    /// Lower a named family exactly as `HolE.Named.lowerFam` does.
+    fn lower_family(&self, scope: &mut Vec<(u64, Kind)>) -> Option<LoweredSyntax> {
+        Some(match self {
+            Self::BoolTy => LoweredSyntax::BoolTy,
+            Self::Arr(domain, codomain) => LoweredSyntax::Arr(
+                Box::new(domain.lower_family(scope)?),
+                Box::new(codomain.lower_family(scope)?),
+            ),
+            Self::TyApp {
+                function, argument, ..
+            } => LoweredSyntax::TyApp(
+                Box::new(function.lower_family(scope)?),
+                Box::new(argument.lower_family(scope)?),
+            ),
+            Self::TyLam {
+                domain, name, body, ..
+            } => {
+                scope.push((*name, domain.clone()));
+                let lowered = body.lower_family(scope);
+                scope.pop();
+                LoweredSyntax::TyLam(Box::new(lowered?))
+            }
+            Self::TyFv { name, kind } => {
+                let index = scope
+                    .iter()
+                    .rev()
+                    .position(|entry| entry == &(*name, kind.clone()))?;
+                LoweredSyntax::TyBv(index)
+            }
+            Self::Model { name, predicate } => {
+                scope.push((*name, Kind::Star));
+                let mut term_scope = Vec::new();
+                let lowered = predicate.lower_term(scope, &mut term_scope);
+                scope.pop();
+                LoweredSyntax::Model(Box::new(lowered?))
+            }
+            Self::TyExists { .. }
+            | Self::TmFv { .. }
+            | Self::App(..)
+            | Self::Lam { .. }
+            | Self::Bool(_)
+            | Self::Eq { .. }
+            | Self::Eps { .. } => return None,
+        })
+    }
+
+    /// Lower a named term exactly as `HolE.Named.lowerTm` does.
+    fn lower_term(
+        &self,
+        type_scope: &mut Vec<(u64, Kind)>,
+        term_scope: &mut Vec<(u64, Syntax)>,
+    ) -> Option<LoweredSyntax> {
+        Some(match self {
+            Self::TyExists { name, predicate } => {
+                type_scope.push((*name, Kind::Star));
+                let mut reset_term_scope = Vec::new();
+                let lowered = predicate.lower_term(type_scope, &mut reset_term_scope);
+                type_scope.pop();
+                LoweredSyntax::TyExists(Box::new(lowered?))
+            }
+            Self::TmFv { name, ty } => {
+                if let Some(index) = term_scope
+                    .iter()
+                    .rev()
+                    .position(|entry| entry == &(*name, ty.as_ref().clone()))
+                {
+                    LoweredSyntax::TmBv(index)
+                } else {
+                    LoweredSyntax::TmFv {
+                        name: *name,
+                        ty: Box::new(ty.lower_family(type_scope)?),
+                    }
+                }
+            }
+            Self::App(function, argument) => LoweredSyntax::App(
+                Box::new(function.lower_term(type_scope, term_scope)?),
+                Box::new(argument.lower_term(type_scope, term_scope)?),
+            ),
+            Self::Lam { name, domain, body } => {
+                let lowered_domain = domain.lower_family(type_scope)?;
+                term_scope.push((*name, domain.as_ref().clone()));
+                let lowered_body = body.lower_term(type_scope, term_scope);
+                term_scope.pop();
+                LoweredSyntax::Lam {
+                    domain: Box::new(lowered_domain),
+                    body: Box::new(lowered_body?),
+                }
+            }
+            Self::Bool(value) => LoweredSyntax::Bool(*value),
+            Self::Eq { ty, left, right } => LoweredSyntax::Eq {
+                ty: Box::new(ty.lower_family(type_scope)?),
+                left: Box::new(left.lower_term(type_scope, term_scope)?),
+                right: Box::new(right.lower_term(type_scope, term_scope)?),
+            },
+            Self::Eps { ty, predicate } => LoweredSyntax::Eps {
+                ty: Box::new(ty.lower_family(type_scope)?),
+                predicate: Box::new(predicate.lower_term(type_scope, term_scope)?),
+            },
+            Self::BoolTy
+            | Self::Arr(..)
+            | Self::TyApp { .. }
+            | Self::TyLam { .. }
+            | Self::TyFv { .. }
+            | Self::Model { .. } => return None,
+        })
+    }
+
+    // Mirrors `OneBased.inferNamedFam`. A type variable is kinded exactly when
+    // its syntactic (name, kind) pair is bound by an enclosing type constructor.
+    fn infer_family(&self, scope: &[(u64, Kind)]) -> Option<Kind> {
+        Some(match self {
+            Self::BoolTy => Kind::Star,
+            Self::Arr(domain, codomain) => {
+                if domain.infer_family(scope)? != Kind::Star
+                    || codomain.infer_family(scope)? != Kind::Star
+                {
+                    return None;
+                }
+                Kind::Star
+            }
+            Self::TyApp {
+                domain,
+                codomain,
+                function,
+                argument,
+            } => {
+                let expected = Kind::Arr(Box::new(domain.clone()), Box::new(codomain.clone()));
+                if function.infer_family(scope)? != expected
+                    || argument.infer_family(scope)? != *domain
+                {
+                    return None;
+                }
+                codomain.clone()
+            }
+            Self::TyLam {
+                domain,
+                codomain,
+                name,
+                body,
+            } => {
+                let mut extended = scope.to_vec();
+                extended.push((*name, domain.clone()));
+                if body.infer_family(&extended)? != *codomain {
+                    return None;
+                }
+                Kind::Arr(Box::new(domain.clone()), Box::new(codomain.clone()))
+            }
+            Self::TyFv { name, kind } => {
+                if !scope
+                    .iter()
+                    .rev()
+                    .any(|bound| bound == &(*name, kind.clone()))
+                {
+                    return None;
+                }
+                kind.clone()
+            }
+            Self::Model { name, predicate } => {
+                let mut extended = scope.to_vec();
+                extended.push((*name, Kind::Star));
+                if predicate.infer_term(&extended)? != Self::BoolTy {
+                    return None;
+                }
+                Kind::Star
+            }
+            Self::TyExists { .. }
+            | Self::TmFv { .. }
+            | Self::App(..)
+            | Self::Lam { .. }
+            | Self::Bool(_)
+            | Self::Eq { .. }
+            | Self::Eps { .. } => return None,
+        })
+    }
+
+    // Mirrors `OneBased.inferNamedTm`. Term binders need no separate environment:
+    // exact (name, type) capture preserves the type already carried by a free
+    // variable occurrence.
+    fn infer_term(&self, scope: &[(u64, Kind)]) -> Option<Self> {
+        Some(match self {
+            Self::TyExists { name, predicate } => {
+                let mut extended = scope.to_vec();
+                extended.push((*name, Kind::Star));
+                if predicate.infer_term(&extended)? != Self::BoolTy {
+                    return None;
+                }
+                Self::BoolTy
+            }
+            Self::TmFv { ty, .. } => {
+                if ty.infer_family(scope)? != Kind::Star {
+                    return None;
+                }
+                ty.as_ref().clone()
+            }
+            Self::App(function, argument) => {
+                let Self::Arr(domain, codomain) = function.infer_term(scope)? else {
+                    return None;
+                };
+                if argument.infer_term(scope)? != *domain {
+                    return None;
+                }
+                *codomain
+            }
+            Self::Lam { domain, body, .. } => {
+                if domain.infer_family(scope)? != Kind::Star {
+                    return None;
+                }
+                let codomain = body.infer_term(scope)?;
+                Self::Arr(domain.clone(), Box::new(codomain))
+            }
+            Self::Bool(_) => Self::BoolTy,
+            Self::Eq {
+                ty, left, right, ..
+            } => {
+                if ty.infer_family(scope)? != Kind::Star
+                    || left.infer_term(scope)? != **ty
+                    || right.infer_term(scope)? != **ty
+                {
+                    return None;
+                }
+                Self::BoolTy
+            }
+            Self::Eps { ty, predicate } => {
+                if ty.infer_family(scope)? != Kind::Star
+                    || predicate.infer_term(scope)? != Self::Arr(ty.clone(), Box::new(Self::BoolTy))
+                {
+                    return None;
+                }
+                ty.as_ref().clone()
+            }
+            Self::BoolTy
+            | Self::Arr(..)
+            | Self::TyApp { .. }
+            | Self::TyLam { .. }
+            | Self::TyFv { .. }
+            | Self::Model { .. } => return None,
+        })
     }
 }
 
@@ -124,9 +533,32 @@ impl Arena {
     ) -> Result<Sort, ResolveError<R::Error>> {
         resolve_at(self, resolver, reference, fuel).map(|value| value.sort())
     }
+
+    /// Resolve one row and run the logical kind/type checker.
+    ///
+    /// This is the Rust implementation of `OneBased.Value.rustCheck`; its Lean
+    /// soundness theorem is `OneBased.Value.rustCheck_sound`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IllTyped` when resolution succeeds but the value is not closed
+    /// and well formed in the empty binder scopes.
+    pub fn check_wf<R: Resolver>(
+        &self,
+        resolver: &R,
+        reference: Ref,
+        fuel: usize,
+    ) -> Result<Sort, ResolveError<R::Error>> {
+        let value = resolve_at(self, resolver, reference, fuel)?;
+        if value.is_well_formed() {
+            Ok(value.sort())
+        } else {
+            Err(ResolveError::IllTyped)
+        }
+    }
 }
 
-fn resolve_at<R: Resolver>(
+pub(crate) fn resolve_at<R: Resolver>(
     arena: &Arena,
     resolver: &R,
     reference: Ref,
@@ -456,6 +888,9 @@ mod tests {
         assert_eq!(arena.resolve_sort(&NoLinks, reference(3), 4), Ok(Sort::Tm));
         assert_eq!(arena.resolve_sort(&NoLinks, reference(5), 5), Ok(Sort::Tm));
         assert_eq!(arena.resolve_sort(&NoLinks, reference(6), 6), Ok(Sort::Tm));
+        assert_eq!(arena.check_wf(&NoLinks, reference(3), 4), Ok(Sort::Tm));
+        assert_eq!(arena.check_wf(&NoLinks, reference(5), 5), Ok(Sort::Tm));
+        assert_eq!(arena.check_wf(&NoLinks, reference(6), 6), Ok(Sort::Tm));
     }
 
     #[test]
@@ -480,6 +915,12 @@ mod tests {
 
         assert_eq!(arena.resolve_sort(&NoLinks, reference(3), 4), Ok(Sort::Ty));
         assert_eq!(arena.resolve_sort(&NoLinks, reference(5), 5), Ok(Sort::Ty));
+        assert_eq!(arena.check_wf(&NoLinks, reference(3), 4), Ok(Sort::Ty));
+        assert_eq!(arena.check_wf(&NoLinks, reference(5), 5), Ok(Sort::Ty));
+        assert_eq!(
+            arena.check_wf(&NoLinks, reference(2), 3),
+            Err(ResolveError::IllTyped)
+        );
     }
 
     struct OneLink {

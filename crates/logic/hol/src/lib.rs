@@ -4,11 +4,14 @@
 //! not establish kinding, typing, equality, or provability.
 
 pub mod cas;
+mod kernel;
 mod resolve;
 mod row;
+pub mod standard;
 pub mod wire;
 
-pub use resolve::{ResolveError, Resolver};
+pub use kernel::{EqualityIx, Kernel, KernelError, KindIx, TmIx, TyIx};
+pub use resolve::{ResolveError, Resolver, TrustedResolver};
 pub use row::{KindTag, Sort, Tag, TmTag, TyTag};
 
 use std::{collections::BTreeSet, num::NonZeroU64};
@@ -521,6 +524,17 @@ impl Arena {
         let reference = Ref::new(next)?;
         self.dense.defs.push(row);
         Some(reference)
+    }
+
+    fn set_eq(&mut self, reference: Ref, right: Ref) -> bool {
+        let Ok(position) = usize::try_from(reference.get() - 1) else {
+            return false;
+        };
+        let Some(row) = self.dense.defs.get_mut(position) else {
+            return false;
+        };
+        row.set_eq(right);
+        true
     }
 
     #[cfg(test)]
