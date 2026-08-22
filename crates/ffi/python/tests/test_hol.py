@@ -132,6 +132,16 @@ def test_imported_validity_is_checked_not_promoted_from_a_premise() -> None:
     assert successor_of_zero.reference > succ_proxy.reference
     assert (bool_proxy.reference, true_proxy.reference) == (1, 2)
 
+    address = session.store(standard)
+    linked = session.check(Arena())
+    linked_source = linked.import_link(Link(address))
+    linked_nat = linked.ty_ref(linked_source, roots["nat"])
+    linked_zero = linked.tm_ref(linked_source, roots["zero"])
+    linked_succ = linked.tm_ref(linked_source, roots["succ"])
+    linked_successor_of_zero = linked.app(linked_succ, linked_zero)
+    assert linked_nat.reference > 0
+    assert linked_successor_of_zero.reference > linked_succ.reference
+
     bad = Arena()
     source = bad.add_null_import()
     bad.assume_valid(source)
