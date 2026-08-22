@@ -36,8 +36,23 @@ def test_checked_handles_build_identity_beta_without_forging() -> None:
     true = kernel.bool(True)
     redex = kernel.app(identity, true)
     equality = kernel.assert_eq(redex, true)
+    symmetric = kernel.equality_symm(equality)
+    reflexive = kernel.equality_trans(equality, symmetric)
+
+    identity_equality = kernel.assert_eq(identity, identity)
+    true_equality = kernel.assert_eq(true, true)
+    second_redex = kernel.app(identity, true)
+    congruent = kernel.equality_app(
+        redex, second_redex, identity_equality, true_equality
+    )
 
     assert (equality.left, equality.right) == (redex.reference, true.reference)
+    assert (symmetric.left, symmetric.right) == (true.reference, redex.reference)
+    assert (reflexive.left, reflexive.right) == (redex.reference, redex.reference)
+    assert (congruent.left, congruent.right) == (
+        redex.reference,
+        second_redex.reference,
+    )
     assert kernel.arena.definition(redex.reference).equal == true.reference
 
     other = session.check(Arena())
@@ -86,6 +101,15 @@ def test_imported_validity_is_checked_not_promoted_from_a_premise() -> None:
     assert validity.source == source
     assert checked.arena.assumptions[0].tag == "meta.valid"
     assert checked.arena.assertions[0].tag == "meta.valid"
+
+    imported_bool = Arena()
+    imported_true = imported_bool.bool(True)
+    source = checked.import_literal(imported_bool)
+    local_bool = checked.bool_ty()
+    checked.assume_wf(source, imported_true, local_bool.reference)
+    checked.assert_wf(source, imported_true, local_bool.reference)
+    assert checked.arena.assumptions[-1].tag == "meta.wf"
+    assert checked.arena.assertions[-1].tag == "meta.wf"
 
     bad = Arena()
     source = bad.add_null_import()

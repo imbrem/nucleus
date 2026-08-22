@@ -12,8 +12,8 @@ use covalence_lib_hash::O256;
 use covalence_lib_python::prelude::*;
 use covalence_lib_python::pyo3::{types::PyBytes, types::PyType};
 use covalence_logic_hol::{
-    Arena, Import, ImportId, Kernel, KindIx, Link, LinkFormat, Meta, Ref, Sort, TmIx, TyIx,
-    cas::CasResolver, wire,
+    Arena, EqualityIx, Import, ImportId, Kernel, KindIx, Link, LinkFormat, Meta, Ref, Sort, TmIx,
+    TyIx, cas::CasResolver, wire,
 };
 
 use crate::hash::PyO256;
@@ -534,11 +534,11 @@ impl PySession {
     }
 
     fn check(&self, arena: &PyArena) -> PyResult<PyKernel> {
-        let kernel = Kernel::try_from_arena(arena.arena.clone(), self.resolver.as_ref(), self.fuel)
-            .map_err(value_error)?;
+        let kernel =
+            Kernel::try_from_arena(arena.arena.clone(), Arc::clone(&self.resolver), self.fuel)
+                .map_err(value_error)?;
         Ok(PyKernel {
             kernel,
-            resolver: Arc::clone(&self.resolver),
             fuel: self.fuel,
             owner: NEXT_OWNER.fetch_add(1, Ordering::Relaxed),
         })
@@ -586,11 +586,10 @@ checked_handle!(PyTm, "HolTm", TmIx);
     name = "HolEquality"
 )]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct PyEquality {
-    _owner: u64,
-    left: TmIx,
-    right: TmIx,
+    owner: u64,
+    proof: EqualityIx,
 }
 
 /// Evidence that one checked kernel established imported-kernel validity.
@@ -621,12 +620,12 @@ impl PyValidity {
 impl PyEquality {
     #[getter]
     fn left(&self) -> u64 {
-        self.left.reference().get()
+        self.proof.left().get()
     }
 
     #[getter]
     fn right(&self) -> u64 {
-        self.right.reference().get()
+        self.proof.right().get()
     }
 }
 
@@ -634,8 +633,7 @@ impl PyEquality {
 #[pyclass(module = "covalence.logic.hol", name = "HolKernel")]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 pub struct PyKernel {
-    kernel: Kernel,
-    resolver: Arc<Resolver>,
+    kernel: Kernel<Resolver>,
     fuel: usize,
     owner: u64,
 }
@@ -665,11 +663,7 @@ impl PyKernel {
     fn kind(&self, reference_value: u64) -> PyResult<PyKind> {
         let index = self
             .kernel
-            .kind_at(
-                self.resolver.as_ref(),
-                self.fuel,
-                reference(reference_value)?,
-            )
+            .kind_at(self.fuel, reference(reference_value)?)
             .map_err(value_error)?;
         Ok(PyKind {
             owner: self.owner,
@@ -680,11 +674,7 @@ impl PyKernel {
     fn ty(&self, reference_value: u64) -> PyResult<PyTy> {
         let index = self
             .kernel
-            .ty_at(
-                self.resolver.as_ref(),
-                self.fuel,
-                reference(reference_value)?,
-            )
+            .ty_at(self.fuel, reference(reference_value)?)
             .map_err(value_error)?;
         Ok(PyTy {
             owner: self.owner,
@@ -695,11 +685,7 @@ impl PyKernel {
     fn tm(&self, reference_value: u64) -> PyResult<PyTm> {
         let index = self
             .kernel
-            .tm_at(
-                self.resolver.as_ref(),
-                self.fuel,
-                reference(reference_value)?,
-            )
+            .tm_at(self.fuel, reference(reference_value)?)
             .map_err(value_error)?;
         Ok(PyTm {
             owner: self.owner,
@@ -709,14 +695,14 @@ impl PyKernel {
 
     fn import_literal(&mut self, arena: &PyArena) -> PyResult<u64> {
         self.kernel
-            .import_literal(self.resolver.as_ref(), self.fuel, arena.arena.clone())
+            .import_literal(self.fuel, arena.arena.clone())
             .map(ImportId::get)
             .map_err(value_error)
     }
 
     fn import_link(&mut self, link: &PyLink) -> PyResult<u64> {
         self.kernel
-            .import_link(self.resolver.as_ref(), self.fuel, link.0)
+            .import_link(self.fuel, link.0)
             .map(ImportId::get)
             .map_err(value_error)
     }
@@ -724,12 +710,7 @@ impl PyKernel {
     fn kind_ref(&mut self, source_value: u64, foreign: u64) -> PyResult<PyKind> {
         let index = self
             .kernel
-            .kind_ref(
-                self.resolver.as_ref(),
-                self.fuel,
-                source(source_value)?,
-                reference(foreign)?,
-            )
+            .kind_ref(self.fuel, source(source_value)?, reference(foreign)?)
             .map_err(value_error)?;
         Ok(PyKind {
             owner: self.owner,
@@ -740,12 +721,7 @@ impl PyKernel {
     fn ty_ref(&mut self, source_value: u64, foreign: u64) -> PyResult<PyTy> {
         let index = self
             .kernel
-            .ty_ref(
-                self.resolver.as_ref(),
-                self.fuel,
-                source(source_value)?,
-                reference(foreign)?,
-            )
+            .ty_ref(self.fuel, source(source_value)?, reference(foreign)?)
             .map_err(value_error)?;
         Ok(PyTy {
             owner: self.owner,
@@ -756,12 +732,7 @@ impl PyKernel {
     fn tm_ref(&mut self, source_value: u64, foreign: u64) -> PyResult<PyTm> {
         let index = self
             .kernel
-            .tm_ref(
-                self.resolver.as_ref(),
-                self.fuel,
-                source(source_value)?,
-                reference(foreign)?,
-            )
+            .tm_ref(self.fuel, source(source_value)?, reference(foreign)?)
             .map_err(value_error)?;
         Ok(PyTm {
             owner: self.owner,
@@ -771,14 +742,14 @@ impl PyKernel {
 
     fn assume_valid(&mut self, source_value: u64) -> PyResult<()> {
         self.kernel
-            .assume_valid(self.resolver.as_ref(), self.fuel, source(source_value)?)
+            .assume_valid(self.fuel, source(source_value)?)
             .map_err(value_error)
     }
 
     fn assert_valid(&mut self, source_value: u64) -> PyResult<PyValidity> {
         let source = source(source_value)?;
         self.kernel
-            .assert_valid(self.resolver.as_ref(), self.fuel, source)
+            .assert_valid(self.fuel, source)
             .map_err(value_error)?;
         Ok(PyValidity {
             _owner: self.owner,
@@ -786,11 +757,30 @@ impl PyKernel {
         })
     }
 
+    fn assume_wf(&mut self, source_value: u64, foreign: u64, classifier: u64) -> PyResult<()> {
+        self.kernel
+            .assume_wf(
+                self.fuel,
+                source(source_value)?,
+                reference(foreign)?,
+                reference(classifier)?,
+            )
+            .map_err(value_error)
+    }
+
+    fn assert_wf(&mut self, source_value: u64, foreign: u64, classifier: u64) -> PyResult<()> {
+        self.kernel
+            .assert_wf(
+                self.fuel,
+                source(source_value)?,
+                reference(foreign)?,
+                reference(classifier)?,
+            )
+            .map_err(value_error)
+    }
+
     fn star(&mut self) -> PyResult<PyKind> {
-        let index = self
-            .kernel
-            .star(self.resolver.as_ref(), self.fuel)
-            .map_err(value_error)?;
+        let index = self.kernel.star(self.fuel).map_err(value_error)?;
         Ok(PyKind {
             owner: self.owner,
             index,
@@ -798,10 +788,7 @@ impl PyKernel {
     }
 
     fn bool_ty(&mut self) -> PyResult<PyTy> {
-        let index = self
-            .kernel
-            .bool_ty(self.resolver.as_ref(), self.fuel)
-            .map_err(value_error)?;
+        let index = self.kernel.bool_ty(self.fuel).map_err(value_error)?;
         Ok(PyTy {
             owner: self.owner,
             index,
@@ -812,7 +799,7 @@ impl PyKernel {
         self.same(ty.owner)?;
         let index = self
             .kernel
-            .tm_fv(self.resolver.as_ref(), self.fuel, name, ty.index)
+            .tm_fv(self.fuel, name, ty.index)
             .map_err(value_error)?;
         Ok(PyTm {
             owner: self.owner,
@@ -825,7 +812,7 @@ impl PyKernel {
         self.same(body.owner)?;
         let index = self
             .kernel
-            .lam(self.resolver.as_ref(), self.fuel, binder.index, body.index)
+            .lam(self.fuel, binder.index, body.index)
             .map_err(value_error)?;
         Ok(PyTm {
             owner: self.owner,
@@ -838,12 +825,7 @@ impl PyKernel {
         self.same(argument.owner)?;
         let index = self
             .kernel
-            .app(
-                self.resolver.as_ref(),
-                self.fuel,
-                function.index,
-                argument.index,
-            )
+            .app(self.fuel, function.index, argument.index)
             .map_err(value_error)?;
         Ok(PyTm {
             owner: self.owner,
@@ -856,7 +838,7 @@ impl PyKernel {
         self.same(right.owner)?;
         let index = self
             .kernel
-            .eq(self.resolver.as_ref(), self.fuel, left.index, right.index)
+            .eq(self.fuel, left.index, right.index)
             .map_err(value_error)?;
         Ok(PyTm {
             owner: self.owner,
@@ -865,10 +847,7 @@ impl PyKernel {
     }
 
     fn bool(&mut self, value: bool) -> PyResult<PyTm> {
-        let index = self
-            .kernel
-            .bool(self.resolver.as_ref(), self.fuel, value)
-            .map_err(value_error)?;
+        let index = self.kernel.bool(self.fuel, value).map_err(value_error)?;
         Ok(PyTm {
             owner: self.owner,
             index,
@@ -878,13 +857,65 @@ impl PyKernel {
     fn assert_eq(&mut self, left: &PyTm, right: &PyTm) -> PyResult<PyEquality> {
         self.same(left.owner)?;
         self.same(right.owner)?;
-        self.kernel
-            .assert_eq(self.resolver.as_ref(), self.fuel, left.index, right.index)
+        let proof = self
+            .kernel
+            .assert_eq(self.fuel, left.index, right.index)
             .map_err(value_error)?;
         Ok(PyEquality {
-            _owner: self.owner,
-            left: left.index,
-            right: right.index,
+            owner: self.owner,
+            proof,
+        })
+    }
+
+    fn equality_symm(&self, equality: &PyEquality) -> PyResult<PyEquality> {
+        self.same(equality.owner)?;
+        let proof = self
+            .kernel
+            .equality_symm(&equality.proof)
+            .map_err(value_error)?;
+        Ok(PyEquality {
+            owner: self.owner,
+            proof,
+        })
+    }
+
+    fn equality_trans(&self, left: &PyEquality, right: &PyEquality) -> PyResult<PyEquality> {
+        self.same(left.owner)?;
+        self.same(right.owner)?;
+        let proof = self
+            .kernel
+            .equality_trans(&left.proof, &right.proof)
+            .map_err(value_error)?;
+        Ok(PyEquality {
+            owner: self.owner,
+            proof,
+        })
+    }
+
+    fn equality_app(
+        &self,
+        left_app: &PyTm,
+        right_app: &PyTm,
+        function: &PyEquality,
+        argument: &PyEquality,
+    ) -> PyResult<PyEquality> {
+        self.same(left_app.owner)?;
+        self.same(right_app.owner)?;
+        self.same(function.owner)?;
+        self.same(argument.owner)?;
+        let proof = self
+            .kernel
+            .equality_app(
+                self.fuel,
+                left_app.index,
+                right_app.index,
+                &function.proof,
+                &argument.proof,
+            )
+            .map_err(value_error)?;
+        Ok(PyEquality {
+            owner: self.owner,
+            proof,
         })
     }
 
