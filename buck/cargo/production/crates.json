@@ -408,6 +408,12 @@
           ]
         },
         {
+          "name": "hol_ax",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
           "name": "parse_robustness",
           "kinds": [
             "test"
