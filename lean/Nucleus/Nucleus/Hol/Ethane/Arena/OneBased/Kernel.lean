@@ -1,4 +1,5 @@
 import Nucleus.Hol.Ethane.Arena.OneBased.Cas
+import Nucleus.Hol.Ethane.Arena.OneBased.Inference
 import Nucleus.Hol.Ethane.Reference
 import Nucleus.HolE.Named.ConversionLaws
 
@@ -17,18 +18,6 @@ namespace Nucleus.Hol.Ethane.OneBased
 open Nucleus
 
 namespace Value
-
-/-- Logical well-formedness of a resolved value in the empty binder scopes.
-Kinds are already intrinsically formed; families and terms carry the existing
-Ethane kinding or typing certificate. -/
-def WellFormed : Value → Prop
-  | .kind _ => True
-  | .family _ expression =>
-      Nucleus.Hol.Ethane.Kinded (.nil : TyScope []) expression
-  | .term type expression =>
-      Nucleus.Hol.Ethane.HasType (.nil : TyScope [])
-        (.nil : TmScope ArenaSig 0) Nucleus.HolE.emptyBound expression type
-
 /-- Kernel equality for two resolved values.  Kind equality is syntactic;
 family and term equality are certificates in the existing HolE kernel. -/
 inductive Equal : Value → Value → Prop where
