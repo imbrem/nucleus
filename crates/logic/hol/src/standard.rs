@@ -73,6 +73,12 @@ pub struct Init {
 
 impl Init {
     /// Construct all definitions using only the core one-based Ethane rows.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the implementation no longer matches the frozen row count or
+    /// public root manifest. Such a mismatch is a release-blocking internal
+    /// error, not malformed input.
     #[must_use]
     pub fn new() -> Self {
         let mut arena = Arena::empty();
