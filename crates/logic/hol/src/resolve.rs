@@ -31,6 +31,7 @@ pub enum ResolveError<E> {
     Resolver(E),
     CategoryMismatch { expected: Sort, actual: Sort },
     IllSorted,
+    IllTyped,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -104,6 +105,151 @@ impl Value {
             Self::Tm { .. } => Sort::Tm,
         }
     }
+
+    fn is_well_formed(&self) -> bool {
+        match self {
+            Self::Kind(_) => true,
+            Self::Ty { kind, expression } => expression.infer_family(&[]) == Some(kind.clone()),
+            Self::Tm { ty, expression } => {
+                ty.infer_family(&[]) == Some(Kind::Star)
+                    && expression.infer_term(&[]) == Some(ty.clone())
+            }
+        }
+    }
+}
+
+impl Syntax {
+    // Mirrors `OneBased.checkFam`. A type variable is kinded exactly when its
+    // syntactic (name, kind) pair is bound by an enclosing type constructor.
+    fn infer_family(&self, scope: &[(u64, Kind)]) -> Option<Kind> {
+        Some(match self {
+            Self::BoolTy => Kind::Star,
+            Self::Arr(domain, codomain) => {
+                if domain.infer_family(scope)? != Kind::Star
+                    || codomain.infer_family(scope)? != Kind::Star
+                {
+                    return None;
+                }
+                Kind::Star
+            }
+            Self::TyApp {
+                domain,
+                codomain,
+                function,
+                argument,
+            } => {
+                let expected = Kind::Arr(Box::new(domain.clone()), Box::new(codomain.clone()));
+                if function.infer_family(scope)? != expected
+                    || argument.infer_family(scope)? != *domain
+                {
+                    return None;
+                }
+                codomain.clone()
+            }
+            Self::TyLam {
+                domain,
+                codomain,
+                name,
+                body,
+            } => {
+                let mut extended = scope.to_vec();
+                extended.push((*name, domain.clone()));
+                if body.infer_family(&extended)? != *codomain {
+                    return None;
+                }
+                Kind::Arr(Box::new(domain.clone()), Box::new(codomain.clone()))
+            }
+            Self::TyFv { name, kind } => {
+                if !scope
+                    .iter()
+                    .rev()
+                    .any(|bound| bound == &(*name, kind.clone()))
+                {
+                    return None;
+                }
+                kind.clone()
+            }
+            Self::Model { name, predicate } => {
+                let mut extended = scope.to_vec();
+                extended.push((*name, Kind::Star));
+                if predicate.infer_term(&extended)? != Self::BoolTy {
+                    return None;
+                }
+                Kind::Star
+            }
+            Self::TyExists { .. }
+            | Self::TmFv { .. }
+            | Self::App(..)
+            | Self::Lam { .. }
+            | Self::Bool(_)
+            | Self::Eq { .. }
+            | Self::Eps { .. } => return None,
+        })
+    }
+
+    // Mirrors `OneBased.inferTm`. Term binders need no separate environment:
+    // exact (name, type) capture preserves the type already carried by a free
+    // variable occurrence.
+    fn infer_term(&self, scope: &[(u64, Kind)]) -> Option<Self> {
+        Some(match self {
+            Self::TyExists { name, predicate } => {
+                let mut extended = scope.to_vec();
+                extended.push((*name, Kind::Star));
+                if predicate.infer_term(&extended)? != Self::BoolTy {
+                    return None;
+                }
+                Self::BoolTy
+            }
+            Self::TmFv { ty, .. } => {
+                if ty.infer_family(scope)? != Kind::Star {
+                    return None;
+                }
+                ty.as_ref().clone()
+            }
+            Self::App(function, argument) => {
+                let Self::Arr(domain, codomain) = function.infer_term(scope)? else {
+                    return None;
+                };
+                if argument.infer_term(scope)? != *domain {
+                    return None;
+                }
+                *codomain
+            }
+            Self::Lam { domain, body, .. } => {
+                if domain.infer_family(scope)? != Kind::Star {
+                    return None;
+                }
+                let codomain = body.infer_term(scope)?;
+                Self::Arr(domain.clone(), Box::new(codomain))
+            }
+            Self::Bool(_) => Self::BoolTy,
+            Self::Eq {
+                ty, left, right, ..
+            } => {
+                if ty.infer_family(scope)? != Kind::Star
+                    || left.infer_term(scope)? != **ty
+                    || right.infer_term(scope)? != **ty
+                {
+                    return None;
+                }
+                Self::BoolTy
+            }
+            Self::Eps { ty, predicate } => {
+                if ty.infer_family(scope)? != Kind::Star
+                    || predicate.infer_term(scope)? != Self::Arr(ty.clone(), Box::new(Self::BoolTy))
+                {
+                    return None;
+                }
+                ty.as_ref().clone()
+            }
+            Self::BoolTy
+            | Self::Arr(..)
+            | Self::TyApp { .. }
+            | Self::TyLam { .. }
+            | Self::TyFv { .. }
+            | Self::Model { .. } => return None,
+        })
+    }
 }
 
 impl Arena {
@@ -123,6 +269,29 @@ impl Arena {
         fuel: usize,
     ) -> Result<Sort, ResolveError<R::Error>> {
         resolve_at(self, resolver, reference, fuel).map(|value| value.sort())
+    }
+
+    /// Resolve one row and run the logical kind/type checker.
+    ///
+    /// This is the Rust implementation of `OneBased.Value.check`; its Lean
+    /// soundness theorem is `OneBased.Value.check_sound`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `IllTyped` when resolution succeeds but the value is not closed
+    /// and well formed in the empty binder scopes.
+    pub fn check_wf<R: Resolver>(
+        &self,
+        resolver: &R,
+        reference: Ref,
+        fuel: usize,
+    ) -> Result<Sort, ResolveError<R::Error>> {
+        let value = resolve_at(self, resolver, reference, fuel)?;
+        if value.is_well_formed() {
+            Ok(value.sort())
+        } else {
+            Err(ResolveError::IllTyped)
+        }
     }
 }
 
@@ -456,6 +625,9 @@ mod tests {
         assert_eq!(arena.resolve_sort(&NoLinks, reference(3), 4), Ok(Sort::Tm));
         assert_eq!(arena.resolve_sort(&NoLinks, reference(5), 5), Ok(Sort::Tm));
         assert_eq!(arena.resolve_sort(&NoLinks, reference(6), 6), Ok(Sort::Tm));
+        assert_eq!(arena.check_wf(&NoLinks, reference(3), 4), Ok(Sort::Tm));
+        assert_eq!(arena.check_wf(&NoLinks, reference(5), 5), Ok(Sort::Tm));
+        assert_eq!(arena.check_wf(&NoLinks, reference(6), 6), Ok(Sort::Tm));
     }
 
     #[test]
@@ -480,6 +652,12 @@ mod tests {
 
         assert_eq!(arena.resolve_sort(&NoLinks, reference(3), 4), Ok(Sort::Ty));
         assert_eq!(arena.resolve_sort(&NoLinks, reference(5), 5), Ok(Sort::Ty));
+        assert_eq!(arena.check_wf(&NoLinks, reference(3), 4), Ok(Sort::Ty));
+        assert_eq!(arena.check_wf(&NoLinks, reference(5), 5), Ok(Sort::Ty));
+        assert_eq!(
+            arena.check_wf(&NoLinks, reference(2), 3),
+            Err(ResolveError::IllTyped)
+        );
     }
 
     struct OneLink {
