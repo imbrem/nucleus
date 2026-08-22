@@ -854,6 +854,17 @@ impl PyKernel {
         })
     }
 
+    fn add_context(&mut self, proposition: &PyTm) -> PyResult<()> {
+        self.same(proposition.owner)?;
+        self.kernel
+            .add_context(self.fuel, proposition.index)
+            .map_err(value_error)
+    }
+
+    fn add_axiom(&mut self, name: &str) -> PyResult<()> {
+        self.kernel.add_axiom(self.fuel, name).map_err(value_error)
+    }
+
     fn assert_eq(&mut self, left: &PyTm, right: &PyTm) -> PyResult<PyEquality> {
         self.same(left.owner)?;
         self.same(right.owner)?;

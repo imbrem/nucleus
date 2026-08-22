@@ -45,6 +45,10 @@ def test_checked_handles_build_identity_beta_without_forging() -> None:
     congruent = kernel.equality_app(
         redex, second_redex, identity_equality, true_equality
     )
+    kernel.add_context(true)
+    kernel.add_context(true)
+    kernel.add_axiom("ax.inf")
+    kernel.add_axiom("ax.inf")
 
     assert (equality.left, equality.right) == (redex.reference, true.reference)
     assert (symmetric.left, symmetric.right) == (true.reference, redex.reference)
@@ -54,6 +58,8 @@ def test_checked_handles_build_identity_beta_without_forging() -> None:
         second_redex.reference,
     )
     assert kernel.arena.definition(redex.reference).equal == true.reference
+    assert kernel.arena.context == [true.reference]
+    assert kernel.arena.axioms == ["ax.inf"]
 
     other = session.check(Arena())
     with pytest.raises(ValueError, match="different kernel"):
