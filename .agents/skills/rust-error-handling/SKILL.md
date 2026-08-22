@@ -19,10 +19,10 @@ is thirteen lines. In short:
 
 ## What the codebase actually does
 
-Every error type in hand-written code now uses snafu — twenty-four of them
-across eleven crates — and both binaries render with miette. The one remaining
-hand-rolled `impl Error` is in generated wit-bindgen code. `covalence-lib-error`
-has thirteen dependents.
+Every error type in hand-written code now uses snafu — twenty-three of them
+across eleven crates, plus one in the facade's own test — and both binaries
+render with miette. The one remaining hand-rolled `impl Error` is in generated
+wit-bindgen code. `covalence-lib-error` has thirteen dependents.
 
 So the policy is descriptive, not aspirational, and you should follow it
 literally. Do not introduce `thiserror` or `anyhow`.

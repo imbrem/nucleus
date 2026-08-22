@@ -6,12 +6,12 @@ description: How Nucleus wraps third-party Rust dependencies in `crates/lib/*` f
 # `crates/lib/*` facade crates
 
 A crate under `crates/lib/` owns one third-party dependency on behalf of the
-workspace and re-exports it. **The module doc saying *when to reach for it* is
+workspace and re-exports it. **The module doc saying _when to reach for it_ is
 the payload; the re-export is just the mechanism.** A facade whose docs say
 nothing has not earned its place.
 
 Read `crates/lib/error/src/lib.rs` before writing a new one — it is the
-archetype, and its docs explain *when* to reach for each of the two libraries it
+archetype, and its docs explain _when_ to reach for each of the two libraries it
 re-exports rather than just naming them.
 
 ## When a dependency needs a facade
@@ -21,7 +21,7 @@ Reach for a facade when:
 
 - the dependency's type vocabulary would otherwise leak into a public API
   across many crates;
-- there is a policy about *when* to use it that is worth stating once
+- there is a policy about _when_ to use it that is worth stating once
   (`crates/lib/error` — snafu for domain errors, miette for surface
   diagnostics);
 - we may want to swap the implementation later.
@@ -39,11 +39,11 @@ either.
 
 ## The three shapes a facade takes
 
-| Shape | Examples | What it contains |
-|---|---|---|
-| Bare re-export | `serde`, `json`, `rand`, `cbor` | `pub use <crate>;` and often `pub use <crate>::*;` |
-| Re-export plus stated policy | `error`, `bigint`, `crypto`, `python` | the same, plus prose on when and how to use it |
-| Real code | `hash`, `sqlite` | its own API; `sqlite` re-exports only `ffi`, `hash` re-exports nothing |
+| Shape                        | Examples                              | What it contains                                                       |
+| ---------------------------- | ------------------------------------- | ---------------------------------------------------------------------- |
+| Bare re-export               | `serde`, `json`, `rand`, `cbor`       | `pub use <crate>;` and often `pub use <crate>::*;`                     |
+| Re-export plus stated policy | `error`, `bigint`, `crypto`, `python` | the same, plus prose on when and how to use it                         |
+| Real code                    | `hash`, `sqlite`                      | its own API; `sqlite` re-exports only `ffi`, `hash` re-exports nothing |
 
 Two useful variants: `crates/lib/bigint` re-exports only `BigInt`, `BigUint`,
 `Sign` and says product crates should expose semantic value types instead;
@@ -98,7 +98,7 @@ There is no `[workspace.dependencies]` table; every crate pins inline. The
 granularity is genuinely inconsistent — `serde = "1.0"` in one crate and
 `serde = "1"` in another — so match the neighbours and do not agonise.
 
-One rule *is* real: **an exact `=` pin means the crate is coupled to something
+One rule _is_ real: **an exact `=` pin means the crate is coupled to something
 outside Cargo's control.** All seven occurrences are of that kind
 (`libsqlite3-sys`, `sqlite-wasm-rs`, `wasm-bindgen`, `wit-bindgen-rt`). Use `=`
 only for that reason, and say why in the crate's docs — see
