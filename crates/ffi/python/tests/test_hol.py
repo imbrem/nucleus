@@ -1,5 +1,7 @@
 """The public Ethane path keeps raw syntax separate from checked handles."""
 
+from pathlib import Path
+
 import pytest
 from covalence.logic.hol import Arena, Kernel, Kind, Link, Session, Tm, Ty
 
@@ -100,22 +102,34 @@ def test_literal_link_and_retryable_missing_import_agree() -> None:
 def test_imported_validity_is_checked_not_promoted_from_a_premise() -> None:
     session = Session()
     checked = session.check(Arena())
-    standard = Arena()
-    standard_bool = standard.bool_ty()
-    standard_true = standard.bool(True)
+    standard = Arena.standard()
+    roots = Arena.standard_roots()
+    fixture = Path(__file__).parents[3] / "logic/hol/fixtures/standard.cbor.hex"
+    assert standard.to_cbor() == bytes.fromhex(fixture.read_text())
+    assert len(standard) == 296
+    assert standard.definition(roots["nat"]).tag == "ty.model"
+    assert standard.definition(roots["zero"]).tag == "tm.eps"
+    assert standard.definition(roots["succ"]).tag == "tm.eps"
+
     source = checked.import_literal(standard)
-    bool_proxy = checked.ty_ref(source, standard_bool)
-    true_proxy = checked.tm_ref(source, standard_true)
+    bool_proxy = checked.ty_ref(source, roots["bool_ty"])
+    true_proxy = checked.tm_ref(source, roots["truth"])
+    nat_proxy = checked.ty_ref(source, roots["nat"])
+    zero_proxy = checked.tm_ref(source, roots["zero"])
+    succ_proxy = checked.tm_ref(source, roots["succ"])
+    successor_of_zero = checked.app(succ_proxy, zero_proxy)
     checked.assume_valid(source)
     validity = checked.assert_valid(source)
-    checked.assume_wf(source, standard_true, bool_proxy.reference)
-    checked.assert_wf(source, standard_true, bool_proxy.reference)
+    checked.assume_wf(source, roots["truth"], bool_proxy.reference)
+    checked.assert_wf(source, roots["truth"], bool_proxy.reference)
 
     assert validity.source == source
     assert checked.arena.assumptions[0].tag == "meta.valid"
     assert checked.arena.assertions[0].tag == "meta.valid"
     assert checked.arena.assumptions[-1].tag == "meta.wf"
     assert checked.arena.assertions[-1].tag == "meta.wf"
+    assert nat_proxy.reference > 0
+    assert successor_of_zero.reference > succ_proxy.reference
     assert (bool_proxy.reference, true_proxy.reference) == (1, 2)
 
     bad = Arena()

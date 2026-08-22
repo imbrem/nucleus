@@ -2,9 +2,12 @@
 
 #![allow(clippy::needless_pass_by_value)]
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
+use std::{
+    collections::BTreeMap,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use covalence_data_cas::MemoryCas;
@@ -13,7 +16,10 @@ use covalence_lib_python::prelude::*;
 use covalence_lib_python::pyo3::{types::PyBytes, types::PyType};
 use covalence_logic_hol::{
     Arena, EqualityIx, Import, ImportId, Kernel, KindIx, Link, LinkFormat, Meta, Ref, Sort, TmIx,
-    TyIx, cas::CasResolver, wire,
+    TyIx,
+    cas::CasResolver,
+    standard::{Init as StandardInit, ROOTS as STANDARD_ROOTS},
+    wire,
 };
 
 use crate::hash::PyO256;
@@ -247,6 +253,36 @@ impl PyArena {
         Ok(Self {
             arena: wire::deserialize(bytes.as_slice()).map_err(value_error)?,
         })
+    }
+
+    /// Returns the checked-in ordinary Ethane initialization arena.
+    #[classmethod]
+    fn standard(_class: &Bound<'_, PyType>) -> Self {
+        Self {
+            arena: StandardInit::new().into_arena(),
+        }
+    }
+
+    /// Stable one-based references exported by `standard()`.
+    #[staticmethod]
+    fn standard_roots() -> BTreeMap<&'static str, u64> {
+        [
+            ("star", STANDARD_ROOTS.star.get()),
+            ("bool_ty", STANDARD_ROOTS.bool_ty.get()),
+            ("truth", STANDARD_ROOTS.truth.get()),
+            ("falsehood", STANDARD_ROOTS.falsehood.get()),
+            ("not", STANDARD_ROOTS.not.get()),
+            ("and", STANDARD_ROOTS.and.get()),
+            ("or", STANDARD_ROOTS.or.get()),
+            ("imp", STANDARD_ROOTS.imp.get()),
+            ("infinity", STANDARD_ROOTS.infinity.get()),
+            ("nat_exists", STANDARD_ROOTS.nat_exists.get()),
+            ("nat", STANDARD_ROOTS.nat.get()),
+            ("zero", STANDARD_ROOTS.zero.get()),
+            ("succ", STANDARD_ROOTS.succ.get()),
+        ]
+        .into_iter()
+        .collect()
     }
 
     fn to_cbor<'py>(&self, python: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
