@@ -13,7 +13,6 @@ namespace Nucleus.Hol.Ethane.OneBased
 
 open Nucleus
 set_option relaxedAutoImplicit true
-set_option linter.unusedSimpArgs false
 
 /-- The executable type equality used by the named checker. -/
 def sameFamily (left right : EmptyTy) : Bool :=
@@ -218,6 +217,7 @@ def NamedTmSoundBelow (fuel : Nat) : Prop :=
           type.lowerTy typeScope = some loweredType ∧
           Nucleus.HolE.HasType Γ loweredTerm loweredType
 
+set_option linter.unusedSimpArgs false in
 private theorem named_checker_sound_below (fuel : Nat) :
     NamedFamSoundBelow fuel ∧ NamedTmSoundBelow fuel := by
   induction fuel with
