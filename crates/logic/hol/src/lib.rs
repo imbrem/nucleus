@@ -345,6 +345,172 @@ impl Arena {
         &self.assert
     }
 
+    /// Append one raw import entry.
+    ///
+    /// This is a representation operation, not a trust decision. A checked
+    /// A checked layer must resolve and validate every import it relies on.
+    pub fn push_import(&mut self, import: Import) -> Option<ImportId> {
+        let next = u64::try_from(self.imports.len()).ok()?.checked_add(1)?;
+        let source = ImportId::new(next)?;
+        self.imports.push(import);
+        Some(source)
+    }
+
+    /// Add an unvalidated axiom capability name.
+    pub fn insert_axiom(&mut self, name: impl Into<String>) {
+        self.axs.insert(name.into());
+    }
+
+    /// Add an unvalidated Boolean-context reference.
+    pub fn insert_context(&mut self, reference: Ref) {
+        self.ctx.insert(reference);
+    }
+
+    /// Append unvalidated premise metadata.
+    pub fn push_assumption(&mut self, record: Meta) {
+        self.assume.push(record);
+    }
+
+    /// Append unvalidated conclusion metadata.
+    pub fn push_assertion(&mut self, record: Meta) {
+        self.assert.push(record);
+    }
+
+    /// The ordinary children of one local row.
+    #[must_use]
+    pub fn children(&self, reference: Ref) -> Option<impl ExactSizeIterator<Item = Ref>> {
+        Some(self.dense.row(reference)?.expr().children().into_iter())
+    }
+
+    /// The variable or binder name stored by one local row.
+    #[must_use]
+    pub fn name(&self, reference: Ref) -> Option<u64> {
+        match *self.dense.row(reference)?.expr() {
+            row::Expr::TyFv { name, .. }
+            | row::Expr::TyExists { name, .. }
+            | row::Expr::Model { name, .. }
+            | row::Expr::TmFv { name, .. } => Some(name),
+            _ => None,
+        }
+    }
+
+    /// The literal value stored by a `tm.bool` row.
+    #[must_use]
+    pub fn bool_value(&self, reference: Ref) -> Option<bool> {
+        match self.dense.row(reference)?.expr() {
+            row::Expr::Bool(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// The source and foreign reference stored by a proxy row.
+    #[must_use]
+    pub fn foreign(&self, reference: Ref) -> Option<(ImportId, Ref)> {
+        match *self.dense.row(reference)?.expr() {
+            row::Expr::TmRef { src, ix }
+            | row::Expr::TyRef { src, ix }
+            | row::Expr::KindRef { src, ix } => Some((src, ix)),
+            _ => None,
+        }
+    }
+
+    /// Append a raw `kind.star` row.
+    pub fn push_kind_star(&mut self) -> Option<Ref> {
+        self.push_row(Row::new(row::Expr::KindStar))
+    }
+
+    /// Append a raw `kind.arr` row.
+    pub fn push_kind_arr(&mut self, domain: Ref, codomain: Ref) -> Option<Ref> {
+        self.push_row(Row::new(row::Expr::KindArr(domain, codomain)))
+    }
+
+    /// Append a raw `ty.bool` row.
+    pub fn push_bool_ty(&mut self) -> Option<Ref> {
+        self.push_row(Row::new(row::Expr::BoolTy))
+    }
+
+    /// Append a raw `ty.arr` row.
+    pub fn push_ty_arr(&mut self, domain: Ref, codomain: Ref) -> Option<Ref> {
+        self.push_row(Row::new(row::Expr::TyArr(domain, codomain)))
+    }
+
+    /// Append a raw `ty.app` row.
+    pub fn push_ty_app(&mut self, function: Ref, argument: Ref) -> Option<Ref> {
+        self.push_row(Row::new(row::Expr::TyApp(function, argument)))
+    }
+
+    /// Append a raw `ty.lam` row. The first child is the binder variable.
+    pub fn push_ty_lam(&mut self, binder: Ref, body: Ref) -> Option<Ref> {
+        self.push_row(Row::new(row::Expr::TyLam(binder, body)))
+    }
+
+    /// Append a raw typed type-variable row.
+    pub fn push_ty_fv(&mut self, name: u64, kind: Ref) -> Option<Ref> {
+        self.push_row(Row::new(row::Expr::TyFv { name, kind }))
+    }
+
+    /// Append a raw type-existential proposition row.
+    pub fn push_ty_exists(&mut self, name: u64, predicate: Ref) -> Option<Ref> {
+        self.push_row(Row::new(row::Expr::TyExists { name, predicate }))
+    }
+
+    /// Append a raw model-type row.
+    pub fn push_model(&mut self, name: u64, predicate: Ref) -> Option<Ref> {
+        self.push_row(Row::new(row::Expr::Model { name, predicate }))
+    }
+
+    /// Append a raw typed term-variable row.
+    pub fn push_tm_fv(&mut self, name: u64, ty: Ref) -> Option<Ref> {
+        self.push_row(Row::new(row::Expr::TmFv { name, ty }))
+    }
+
+    /// Append a raw `tm.app` row.
+    pub fn push_app(&mut self, function: Ref, argument: Ref) -> Option<Ref> {
+        self.push_row(Row::new(row::Expr::App(function, argument)))
+    }
+
+    /// Append a raw `tm.lam` row. The first child is the binder variable.
+    pub fn push_lam(&mut self, binder: Ref, body: Ref) -> Option<Ref> {
+        self.push_row(Row::new(row::Expr::Lam(binder, body)))
+    }
+
+    /// Append a raw Boolean literal row.
+    pub fn push_bool(&mut self, value: bool) -> Option<Ref> {
+        self.push_row(Row::new(row::Expr::Bool(value)))
+    }
+
+    /// Append a raw object-language equality row.
+    pub fn push_tm_eq(&mut self, left: Ref, right: Ref) -> Option<Ref> {
+        self.push_row(Row::new(row::Expr::Eq(left, right)))
+    }
+
+    /// Append a raw choice row.
+    pub fn push_eps(&mut self, ty: Ref, predicate: Ref) -> Option<Ref> {
+        self.push_row(Row::new(row::Expr::Eps { ty, predicate }))
+    }
+
+    /// Append a raw term proxy into an import.
+    pub fn push_tm_ref(&mut self, src: ImportId, ix: Ref) -> Option<Ref> {
+        self.push_row(Row::new(row::Expr::TmRef { src, ix }))
+    }
+
+    /// Append a raw type proxy into an import.
+    pub fn push_ty_ref(&mut self, src: ImportId, ix: Ref) -> Option<Ref> {
+        self.push_row(Row::new(row::Expr::TyRef { src, ix }))
+    }
+
+    /// Append a raw kind proxy into an import.
+    pub fn push_kind_ref(&mut self, src: ImportId, ix: Ref) -> Option<Ref> {
+        self.push_row(Row::new(row::Expr::KindRef { src, ix }))
+    }
+
+    fn push_row(&mut self, row: Row) -> Option<Ref> {
+        let next = u64::try_from(self.dense.defs.len()).ok()?.checked_add(1)?;
+        let reference = Ref::new(next)?;
+        self.dense.defs.push(row);
+        Some(reference)
+    }
+
     #[cfg(test)]
     fn from_parts(
         imports: Vec<Import>,

@@ -88,6 +88,33 @@ impl Expr {
             Self::KindRef { .. } => Tag::Kind(KindTag::Ref),
         }
     }
+
+    pub(crate) fn children(&self) -> SmallVec<[Ref; MAX_CHILDREN]> {
+        match *self {
+            Self::KindStar
+            | Self::BoolTy
+            | Self::Bool(_)
+            | Self::TmRef { .. }
+            | Self::TyRef { .. }
+            | Self::KindRef { .. } => SmallVec::new(),
+            Self::KindArr(left, right)
+            | Self::TyArr(left, right)
+            | Self::TyApp(left, right)
+            | Self::TyLam(left, right)
+            | Self::App(left, right)
+            | Self::Lam(left, right)
+            | Self::Eq(left, right) => SmallVec::from_slice(&[left, right]),
+            Self::Eps { ty, predicate } => SmallVec::from_slice(&[ty, predicate]),
+            Self::TyFv { kind: child, .. }
+            | Self::TyExists {
+                predicate: child, ..
+            }
+            | Self::Model {
+                predicate: child, ..
+            }
+            | Self::TmFv { ty: child, .. } => SmallVec::from_slice(&[child]),
+        }
+    }
 }
 
 /// One raw definition and its optional, unvalidated inline members.
@@ -99,7 +126,6 @@ pub(crate) struct Row {
 }
 
 impl Row {
-    #[cfg(test)]
     #[must_use]
     pub(crate) const fn new(expr: Expr) -> Self {
         Self {
@@ -125,6 +151,10 @@ impl Row {
 
     pub(crate) const fn tag(&self) -> Tag {
         self.expr.tag()
+    }
+
+    pub(crate) const fn expr(&self) -> &Expr {
+        &self.expr
     }
 
     pub(crate) const fn eq(&self) -> Option<Ref> {
