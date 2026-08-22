@@ -100,22 +100,23 @@ def test_literal_link_and_retryable_missing_import_agree() -> None:
 def test_imported_validity_is_checked_not_promoted_from_a_premise() -> None:
     session = Session()
     checked = session.check(Arena())
-    source = checked.import_literal(Arena())
+    standard = Arena()
+    standard_bool = standard.bool_ty()
+    standard_true = standard.bool(True)
+    source = checked.import_literal(standard)
+    bool_proxy = checked.ty_ref(source, standard_bool)
+    true_proxy = checked.tm_ref(source, standard_true)
     checked.assume_valid(source)
     validity = checked.assert_valid(source)
+    checked.assume_wf(source, standard_true, bool_proxy.reference)
+    checked.assert_wf(source, standard_true, bool_proxy.reference)
 
     assert validity.source == source
     assert checked.arena.assumptions[0].tag == "meta.valid"
     assert checked.arena.assertions[0].tag == "meta.valid"
-
-    imported_bool = Arena()
-    imported_true = imported_bool.bool(True)
-    source = checked.import_literal(imported_bool)
-    local_bool = checked.bool_ty()
-    checked.assume_wf(source, imported_true, local_bool.reference)
-    checked.assert_wf(source, imported_true, local_bool.reference)
     assert checked.arena.assumptions[-1].tag == "meta.wf"
     assert checked.arena.assertions[-1].tag == "meta.wf"
+    assert (bool_proxy.reference, true_proxy.reference) == (1, 2)
 
     bad = Arena()
     source = bad.add_null_import()
