@@ -3297,54 +3297,6 @@
       ]
     },
     {
-      "id": "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.19",
-      "name": "thiserror",
-      "version": "2.0.19",
-      "checksum": "09a43598840e33d5b0331f38c5e30d13bb11c11210a4b58f0d9b18a5a5eefcd9",
-      "edition": "2021",
-      "features": [
-        "default",
-        "std"
-      ],
-      "env": {
-        "CARGO_PKG_AUTHORS": "David Tolnay <dtolnay@gmail.com>",
-        "CARGO_PKG_DESCRIPTION": "derive(Error)",
-        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
-        "CARGO_PKG_REPOSITORY": "https://github.com/dtolnay/thiserror"
-      },
-      "targets": [
-        {
-          "named_deps": {
-            "thiserror_impl": ":thiserror-impl-2.0.19"
-          }
-        }
-      ],
-      "buildscript": {}
-    },
-    {
-      "id": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@2.0.19",
-      "name": "thiserror-impl",
-      "version": "2.0.19",
-      "checksum": "43cbfe0cf76104d42a574802844187e84a305e531ed54455f11fbde0f10541cd",
-      "edition": "2021",
-      "env": {
-        "CARGO_PKG_AUTHORS": "David Tolnay <dtolnay@gmail.com>",
-        "CARGO_PKG_DESCRIPTION": "Implementation detail of the `thiserror` crate",
-        "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
-        "CARGO_PKG_REPOSITORY": "https://github.com/dtolnay/thiserror"
-      },
-      "targets": [
-        {
-          "named_deps": {
-            "proc_macro2": ":proc-macro2-1.0.107",
-            "quote": ":quote-1.0.47",
-            "syn": ":syn-3.0.3"
-          },
-          "proc_macro": true
-        }
-      ]
-    },
-    {
       "id": "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
       "name": "tokio",
       "version": "1.53.1",
@@ -4078,8 +4030,7 @@
       "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#fnv@1.0.7",
-        "registry+https://github.com/rust-lang/crates.io-index#smol_str@0.3.6",
-        "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.19"
+        "registry+https://github.com/rust-lang/crates.io-index#smol_str@0.3.6"
       ]
     },
     {
@@ -6001,34 +5952,6 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#textwrap@0.16.2",
       "target": "registry+https://github.com/rust-lang/crates.io-index#unicode-width@0.2.2",
-      "kinds": [
-        "normal"
-      ]
-    },
-    {
-      "source": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@2.0.19",
-      "target": "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
-      "kinds": [
-        "normal"
-      ]
-    },
-    {
-      "source": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@2.0.19",
-      "target": "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
-      "kinds": [
-        "normal"
-      ]
-    },
-    {
-      "source": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@2.0.19",
-      "target": "registry+https://github.com/rust-lang/crates.io-index#syn@3.0.3",
-      "kinds": [
-        "normal"
-      ]
-    },
-    {
-      "source": "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.19",
-      "target": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@2.0.19",
       "kinds": [
         "normal"
       ]

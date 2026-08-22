@@ -54,10 +54,14 @@ use fnv::FnvHashMap;
 
 use crate::database::{Assertion, Database, Frame, Proof, Statement};
 use crate::error::MmError;
-use crate::expr::{Expr, body_of, render, typecode_of};
+use crate::expr::{Expr, render};
 use crate::subst::{Subst, apply_subst, vars_in_body};
 
 /// Verify every `$p` theorem in the database. Returns the number verified.
+///
+/// # Errors
+///
+/// Returns the first failure: any proof that does not check.
 pub fn verify_all(db: &Database) -> Result<usize, MmError> {
     // One shared position table for the whole run: every proof needs it, and it
     // depends only on the database.
@@ -163,6 +167,10 @@ impl ReplayObserver for () {}
 /// here exactly as it does under [`verify_all`]. Verifying a whole database one
 /// call at a time nevertheless costs a position table per call; use
 /// [`verify_all`], which builds one for the run.
+///
+/// # Errors
+///
+/// Returns an error when the proof does not check.
 pub fn verify_assertion(db: &Database, assertion: &Assertion) -> Result<(), MmError> {
     replay(db, assertion, &mut ())
 }
@@ -172,6 +180,11 @@ pub fn verify_assertion(db: &Database, assertion: &Assertion) -> Result<(), MmEr
 /// **This is the verifier.** [`verify_assertion`] is exactly this function with
 /// a no-op observer, so an observed replay performs bit-for-bit the same checks
 /// — no separate code path exists to drift out of sync.
+///
+/// # Errors
+///
+/// Returns an error when the proof does not check. `obs` is told only about
+/// events that have already passed every check.
 pub fn replay(
     db: &Database,
     assertion: &Assertion,
@@ -212,9 +225,8 @@ fn replay_ordered(
                     ProofStep::Save => {
                         let top = stack
                             .last()
-                            .ok_or_else(|| MmError::CompressedProofError {
+                            .ok_or_else(|| MmError::EmptySaveStack {
                                 theorem: theorem.clone(),
-                                message: "`Z` save with an empty stack".into(),
                             })?
                             .clone();
                         obs.save(&top, stack.len());
@@ -223,9 +235,10 @@ fn replay_ordered(
                     ProofStep::Heap(idx) => {
                         let e = heap
                             .get(*idx)
-                            .ok_or_else(|| MmError::CompressedProofError {
+                            .ok_or_else(|| MmError::HeapOutOfRange {
                                 theorem: theorem.clone(),
-                                message: format!("heap backreference {idx} out of range"),
+                                index: *idx,
+                                len: heap.len(),
                             })?
                             .clone();
                         stack.push(e);
@@ -381,6 +394,11 @@ pub enum ProofStep {
 /// against a stack, pushing the top on `Save` to a heap and re-pushing on
 /// `Heap` — exactly as [`verify_assertion`] does — which is how a compressed
 /// proof is replayed *without* expanding its sharing.
+///
+/// # Errors
+///
+/// Returns an error when a compressed proof does not decode: a label block
+/// entry no statement declares, or a malformed letter block.
 pub fn proof_steps(db: &Database, assertion: &Assertion) -> Result<Vec<ProofStep>, MmError> {
     match &assertion.proof {
         None => Ok(Vec::new()),
@@ -426,9 +444,8 @@ fn decompress_proof(
         let b = letters[i];
 
         if b == b'?' {
-            return Err(MmError::CompressedProofError {
-                theorem: theorem.to_owned(),
-                message: "incomplete proof (contains `?`)".into(),
+            return Err(MmError::IncompleteProof {
+                label: theorem.to_owned(),
             });
         }
 
@@ -443,9 +460,8 @@ fn decompress_proof(
 
         // Resolve proof integer n (1-based).
         if n == 0 {
-            return Err(MmError::CompressedProofError {
+            return Err(MmError::ZeroProofInteger {
                 theorem: theorem.to_owned(),
-                message: "proof integer 0 is invalid".into(),
             });
         }
 
@@ -466,11 +482,10 @@ fn decompress_proof(
             // Heap backreference.
             let hidx = n - mand_count - label_count - 1;
             if hidx >= heap_count {
-                return Err(MmError::CompressedProofError {
+                return Err(MmError::HeapOutOfRange {
                     theorem: theorem.to_owned(),
-                    message: format!(
-                        "heap backreference {hidx} out of range (heap has {heap_count} entries)"
-                    ),
+                    index: hidx,
+                    len: heap_count,
                 });
             }
             steps.push(ProofStep::Heap(hidx));
@@ -500,32 +515,30 @@ fn decode_integer(letters: &[u8], i: &mut usize, theorem: &str) -> Result<usize,
         } else if (b'U'..=b'Y').contains(&c) {
             (5, (c - b'U') as usize + 1, false)
         } else if c == b'Z' || c == b'?' {
-            return Err(MmError::CompressedProofError {
+            return Err(MmError::UnexpectedLetter {
                 theorem: theorem.to_owned(),
-                message: format!("unexpected `{}` mid-integer", c as char),
+                letter: c as char,
             });
         } else {
-            return Err(MmError::CompressedProofError {
+            return Err(MmError::InvalidLetter {
                 theorem: theorem.to_owned(),
-                message: format!("invalid character `{}` in letter block", c as char),
+                letter: c as char,
             });
         };
 
         n = n
             .checked_mul(radix)
             .and_then(|n| n.checked_add(digit))
-            .ok_or_else(|| MmError::CompressedProofError {
+            .ok_or_else(|| MmError::ProofIntegerOverflow {
                 theorem: theorem.to_owned(),
-                message: "proof integer is too large to address any proof step".into(),
             })?;
 
         if terminal {
             return Ok(n);
         }
         if *i >= letters.len() {
-            return Err(MmError::CompressedProofError {
+            return Err(MmError::TruncatedProofInteger {
                 theorem: theorem.to_owned(),
-                message: "letter block ends mid-integer".into(),
             });
         }
     }
@@ -557,13 +570,7 @@ fn apply_assertion(
     let mut subst = Subst::new();
     for (i, f) in frame.floats.iter().enumerate() {
         let arg = &args[i];
-        let arg_tc = typecode_of(arg).ok_or_else(|| MmError::TypecodeMismatch {
-            theorem: theorem.to_string(),
-            step: step.to_string(),
-            var: f.var.clone(),
-            expected: f.typecode.clone(),
-            found: render(arg),
-        })?;
+        let arg_tc = arg.typecode();
         if arg_tc != f.typecode {
             return Err(MmError::TypecodeMismatch {
                 theorem: theorem.to_string(),
@@ -573,8 +580,7 @@ fn apply_assertion(
                 found: arg_tc.to_string(),
             });
         }
-        let body = body_of(arg).unwrap_or(&[]).to_vec();
-        subst.insert(f.var.clone(), body);
+        subst.insert(f.var.clone(), arg.body().to_vec());
     }
 
     // --- check essentials ---
@@ -640,8 +646,8 @@ fn check_disjoints(
     let is_var = |s: &str| ctx.db.is_variable(s);
 
     for (a, b) in &target.frame.disjoints {
-        let img_a = subst.get(a).map(|v| v.as_slice()).unwrap_or(&[]);
-        let img_b = subst.get(b).map(|v| v.as_slice()).unwrap_or(&[]);
+        let img_a = subst.get(a).map_or(&[][..], Vec::as_slice);
+        let img_b = subst.get(b).map_or(&[][..], Vec::as_slice);
         let vars_a = vars_in_body(img_a, &is_var);
         let vars_b = vars_in_body(img_b, &is_var);
 
@@ -659,12 +665,11 @@ fn check_disjoints(
                 }
                 // (2) the obligation must be discharged by the current frame.
                 if !ctx.disjoints.contains(&ordered_pair(x, y)) {
-                    return Err(MmError::DisjointViolation {
+                    return Err(MmError::DisjointNotDeclared {
                         theorem: current.label.clone(),
                         step: step.to_string(),
-                        a: a.clone(),
-                        b: b.clone(),
-                        shared: format!("{x},{y} not declared $d in `{}`", current.label),
+                        x: x.to_owned(),
+                        y: y.to_owned(),
                     });
                 }
             }

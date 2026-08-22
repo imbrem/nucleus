@@ -36,6 +36,7 @@ pub struct Expr {
 
 impl Expr {
     /// Construct an expression from a typecode and a body sequence.
+    #[must_use]
     pub fn new(typecode: impl Into<Symbol>, body: Vec<Symbol>) -> Self {
         Self {
             typecode: typecode.into(),
@@ -44,11 +45,13 @@ impl Expr {
     }
 
     /// The typecode (head symbol) of the expression.
+    #[must_use]
     pub fn typecode(&self) -> &str {
         self.typecode.as_str()
     }
 
     /// The body (everything after the typecode) as a symbol slice.
+    #[must_use]
     pub fn body(&self) -> &[Symbol] {
         &self.body
     }
@@ -59,6 +62,7 @@ impl Expr {
     }
 
     /// Render to the flat Metamath surface form (`typecode sym sym ...`).
+    #[must_use]
     pub fn render(&self) -> String {
         let mut out = String::from(self.typecode.as_str());
         for s in &self.body {
@@ -82,24 +86,6 @@ pub fn from_symbols<'a>(symbols: impl IntoIterator<Item = &'a str>) -> Option<Ex
     Some(Expr::new(typecode, it.map(Symbol::from).collect()))
 }
 
-/// The typecode (head symbol) of an expression. Always `Some` for the primitive
-/// type; returns `Option` for source-compatibility with the `SExpr` model.
-pub fn typecode_of(e: &Expr) -> Option<&str> {
-    Some(e.typecode())
-}
-
-/// The body (everything after the typecode) of an expression. Always `Some` for
-/// the primitive type; kept as `Option` for source-compatibility.
-pub fn body_of(e: &Expr) -> Option<&[Symbol]> {
-    Some(e.body())
-}
-
-/// All symbol names in an expression (typecode included), in order. Always
-/// `Some` for the primitive type; kept as `Option` for source-compatibility.
-pub fn expr_symbols(e: &Expr) -> Option<Vec<&str>> {
-    Some(e.symbols().collect())
-}
-
 /// Render an expression back to its flat Metamath surface form
 /// (`typecode sym sym ...`), for diagnostics.
 pub fn render(e: &Expr) -> String {
@@ -113,8 +99,8 @@ mod tests {
     #[test]
     fn roundtrip() {
         let e = make_expr("wff", ["(", "ph", "->", "ps", ")"]);
-        assert_eq!(typecode_of(&e), Some("wff"));
-        let body: Vec<&str> = body_of(&e).unwrap().iter().map(Symbol::as_str).collect();
+        assert_eq!(e.typecode(), "wff");
+        let body: Vec<&str> = e.body().iter().map(Symbol::as_str).collect();
         assert_eq!(body, ["(", "ph", "->", "ps", ")"]);
         assert_eq!(render(&e), "wff ( ph -> ps )");
     }
@@ -127,6 +113,6 @@ mod tests {
     #[test]
     fn symbols_all() {
         let e = make_expr("term", ["0"]);
-        assert_eq!(expr_symbols(&e), Some(vec!["term", "0"]));
+        assert_eq!(e.symbols().collect::<Vec<_>>(), vec!["term", "0"]);
     }
 }
