@@ -78,12 +78,12 @@ def test_literal_link_and_retryable_missing_import_agree() -> None:
 
 def test_imported_validity_is_checked_not_promoted_from_a_premise() -> None:
     session = Session()
-    arena = Arena()
-    source = arena.add_literal_import(Arena())
-    arena.assume_valid(source)
-    arena.assert_valid(source)
-    checked = session.check(arena)
+    checked = session.check(Arena())
+    source = checked.import_literal(Arena())
+    checked.assume_valid(source)
+    validity = checked.assert_valid(source)
 
+    assert validity.source == source
     assert checked.arena.assumptions[0].tag == "meta.valid"
     assert checked.arena.assertions[0].tag == "meta.valid"
 

@@ -148,6 +148,7 @@ def test_the_stub_does_not_omit_class_members() -> None:
         "HolTy",
         "HolTm",
         "HolEquality",
+        "HolValidity",
         "HolKernel",
     ):
         missing = sorted(

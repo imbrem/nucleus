@@ -30,6 +30,9 @@ from .._covalence import (
 from .._covalence import (
     HolTy as Ty,
 )
+from .._covalence import (
+    HolValidity as Validity,
+)
 
 __all__ = [
     "Arena",
@@ -42,4 +45,5 @@ __all__ = [
     "Session",
     "Tm",
     "Ty",
+    "Validity",
 ]

@@ -593,6 +593,29 @@ pub struct PyEquality {
     right: TmIx,
 }
 
+/// Evidence that one checked kernel established imported-kernel validity.
+#[pyclass(
+    frozen,
+    skip_from_py_object,
+    module = "covalence.logic.hol",
+    name = "HolValidity"
+)]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+#[derive(Clone, Copy)]
+pub struct PyValidity {
+    _owner: u64,
+    source: ImportId,
+}
+
+#[pymethods]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+impl PyValidity {
+    #[getter]
+    fn source(&self) -> u64 {
+        self.source.get()
+    }
+}
+
 #[pymethods]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 impl PyEquality {
@@ -681,6 +704,85 @@ impl PyKernel {
         Ok(PyTm {
             owner: self.owner,
             index,
+        })
+    }
+
+    fn import_literal(&mut self, arena: &PyArena) -> PyResult<u64> {
+        self.kernel
+            .import_literal(self.resolver.as_ref(), self.fuel, arena.arena.clone())
+            .map(ImportId::get)
+            .map_err(value_error)
+    }
+
+    fn import_link(&mut self, link: &PyLink) -> PyResult<u64> {
+        self.kernel
+            .import_link(self.resolver.as_ref(), self.fuel, link.0)
+            .map(ImportId::get)
+            .map_err(value_error)
+    }
+
+    fn kind_ref(&mut self, source_value: u64, foreign: u64) -> PyResult<PyKind> {
+        let index = self
+            .kernel
+            .kind_ref(
+                self.resolver.as_ref(),
+                self.fuel,
+                source(source_value)?,
+                reference(foreign)?,
+            )
+            .map_err(value_error)?;
+        Ok(PyKind {
+            owner: self.owner,
+            index,
+        })
+    }
+
+    fn ty_ref(&mut self, source_value: u64, foreign: u64) -> PyResult<PyTy> {
+        let index = self
+            .kernel
+            .ty_ref(
+                self.resolver.as_ref(),
+                self.fuel,
+                source(source_value)?,
+                reference(foreign)?,
+            )
+            .map_err(value_error)?;
+        Ok(PyTy {
+            owner: self.owner,
+            index,
+        })
+    }
+
+    fn tm_ref(&mut self, source_value: u64, foreign: u64) -> PyResult<PyTm> {
+        let index = self
+            .kernel
+            .tm_ref(
+                self.resolver.as_ref(),
+                self.fuel,
+                source(source_value)?,
+                reference(foreign)?,
+            )
+            .map_err(value_error)?;
+        Ok(PyTm {
+            owner: self.owner,
+            index,
+        })
+    }
+
+    fn assume_valid(&mut self, source_value: u64) -> PyResult<()> {
+        self.kernel
+            .assume_valid(self.resolver.as_ref(), self.fuel, source(source_value)?)
+            .map_err(value_error)
+    }
+
+    fn assert_valid(&mut self, source_value: u64) -> PyResult<PyValidity> {
+        let source = source(source_value)?;
+        self.kernel
+            .assert_valid(self.resolver.as_ref(), self.fuel, source)
+            .map_err(value_error)?;
+        Ok(PyValidity {
+            _owner: self.owner,
+            source,
         })
     }
 
@@ -801,5 +903,6 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyTy>()?;
     module.add_class::<PyTm>()?;
     module.add_class::<PyEquality>()?;
+    module.add_class::<PyValidity>()?;
     module.add_class::<PyKernel>()
 }
