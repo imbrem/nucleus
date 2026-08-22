@@ -9,6 +9,8 @@ import Nucleus.Hol.Ethane.Equivalence
 import Nucleus.Hol.Ethane.FV
 import Nucleus.Hol.Ethane.Arena
 import Nucleus.Hol.Ethane.Arena.Cbor
+import Nucleus.Hol.Ethane.Dense
+import Nucleus.Hol.Ethane.Dense.Cbor
 import Nucleus.Hol.Ethane.Amber
 
 /-!
