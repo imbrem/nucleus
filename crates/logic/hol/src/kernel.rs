@@ -3,8 +3,9 @@
 use std::sync::Arc;
 
 use crate::{
-    Arena, Import, ImportId, Meta, Ref, ResolveError, Resolver,
+    Arena, Import, ImportId, Meta, Ref, ResolveError, Resolver, Sort,
     resolve::{Value, resolve_at},
+    row::{Expr, Row},
 };
 
 /// A recoverable failure while validating an untrusted arena as a kernel.
@@ -17,6 +18,8 @@ pub enum KernelError<E> {
     InvalidEqualityClaim(Ref),
     InvalidContext(Ref),
     InvalidConclusion(Meta),
+    InvalidConstructor { expected: Sort, actual: Sort },
+    MissingDefinition(Ref),
     Resolve(ResolveError<E>),
 }
 
@@ -63,6 +66,15 @@ impl<E: std::fmt::Debug + std::fmt::Display> std::fmt::Display for KernelError<E
             Self::InvalidConclusion(record) => {
                 write!(output, "invalid metadata conclusion {record:?}")
             }
+            Self::InvalidConstructor { expected, actual } => {
+                write!(
+                    output,
+                    "constructor produced {actual:?}, expected {expected:?}"
+                )
+            }
+            Self::MissingDefinition(reference) => {
+                write!(output, "definition {} does not exist", reference.get())
+            }
             Self::Resolve(error) => write!(output, "could not resolve kernel data: {error:?}"),
         }
     }
@@ -80,6 +92,24 @@ impl<E: std::fmt::Debug + std::fmt::Display> std::error::Error for KernelError<E
 pub struct Kernel {
     arena: Arena,
 }
+
+macro_rules! checked_index {
+    ($name:ident) => {
+        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        pub struct $name(Ref);
+
+        impl $name {
+            #[must_use]
+            pub const fn reference(self) -> Ref {
+                self.0
+            }
+        }
+    };
+}
+
+checked_index!(KindIx);
+checked_index!(TyIx);
+checked_index!(TmIx);
 
 impl Kernel {
     /// Validate an untrusted arena.
@@ -134,6 +164,176 @@ impl Kernel {
     #[must_use]
     pub fn into_arena(self) -> Arena {
         self.arena
+    }
+
+    /// Append `kind.star` and recheck the resulting state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if allocation or kernel revalidation fails.
+    pub fn star<R: Resolver>(
+        &mut self,
+        resolver: &R,
+        fuel: usize,
+    ) -> Result<KindIx, KernelError<R::Error>> {
+        self.push_checked(resolver, fuel, Row::new(Expr::KindStar), Sort::Kind)
+            .map(KindIx)
+    }
+
+    /// Append the Boolean type and recheck the resulting state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if allocation or kernel revalidation fails.
+    pub fn bool_ty<R: Resolver>(
+        &mut self,
+        resolver: &R,
+        fuel: usize,
+    ) -> Result<TyIx, KernelError<R::Error>> {
+        self.push_checked(resolver, fuel, Row::new(Expr::BoolTy), Sort::Ty)
+            .map(TyIx)
+    }
+
+    /// Append a typed free term variable.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the type handle is invalid or revalidation fails.
+    pub fn tm_fv<R: Resolver>(
+        &mut self,
+        resolver: &R,
+        fuel: usize,
+        name: u64,
+        ty: TyIx,
+    ) -> Result<TmIx, KernelError<R::Error>> {
+        self.push_checked(
+            resolver,
+            fuel,
+            Row::new(Expr::TmFv {
+                name,
+                ty: ty.reference(),
+            }),
+            Sort::Tm,
+        )
+        .map(TmIx)
+    }
+
+    /// Append a binary-binder term lambda.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the operands do not form a typed lambda.
+    pub fn lam<R: Resolver>(
+        &mut self,
+        resolver: &R,
+        fuel: usize,
+        binder: TmIx,
+        body: TmIx,
+    ) -> Result<TmIx, KernelError<R::Error>> {
+        self.push_checked(
+            resolver,
+            fuel,
+            Row::new(Expr::Lam(binder.reference(), body.reference())),
+            Sort::Tm,
+        )
+        .map(TmIx)
+    }
+
+    /// Append term application.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the argument does not have the function's domain.
+    pub fn app<R: Resolver>(
+        &mut self,
+        resolver: &R,
+        fuel: usize,
+        function: TmIx,
+        argument: TmIx,
+    ) -> Result<TmIx, KernelError<R::Error>> {
+        self.push_checked(
+            resolver,
+            fuel,
+            Row::new(Expr::App(function.reference(), argument.reference())),
+            Sort::Tm,
+        )
+        .map(TmIx)
+    }
+
+    /// Append object-language equality. The operand type is inferred.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the operands do not have one strict common type.
+    pub fn eq<R: Resolver>(
+        &mut self,
+        resolver: &R,
+        fuel: usize,
+        left: TmIx,
+        right: TmIx,
+    ) -> Result<TmIx, KernelError<R::Error>> {
+        self.push_checked(
+            resolver,
+            fuel,
+            Row::new(Expr::Eq(left.reference(), right.reference())),
+            Sort::Tm,
+        )
+        .map(TmIx)
+    }
+
+    /// Append either Boolean term.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if allocation or kernel revalidation fails.
+    pub fn bool<R: Resolver>(
+        &mut self,
+        resolver: &R,
+        fuel: usize,
+        value: bool,
+    ) -> Result<TmIx, KernelError<R::Error>> {
+        self.push_checked(resolver, fuel, Row::new(Expr::Bool(value)), Sort::Tm)
+            .map(TmIx)
+    }
+
+    /// Attach an equality assertion and recheck the complete state. The MVP
+    /// accepts reflexivity and the checked identity-beta shape.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if either handle is invalid or the claim is unproved.
+    pub fn assert_eq<R: Resolver>(
+        &mut self,
+        resolver: &R,
+        fuel: usize,
+        left: TmIx,
+        right: TmIx,
+    ) -> Result<(), KernelError<R::Error>> {
+        let mut candidate = self.arena.clone();
+        if !candidate.set_eq(left.reference(), right.reference()) {
+            return Err(KernelError::MissingDefinition(left.reference()));
+        }
+        *self = Self::try_from_arena(candidate, resolver, fuel)?;
+        Ok(())
+    }
+
+    fn push_checked<R: Resolver>(
+        &mut self,
+        resolver: &R,
+        fuel: usize,
+        row: Row,
+        expected: Sort,
+    ) -> Result<Ref, KernelError<R::Error>> {
+        let mut candidate = self.arena.clone();
+        let reference = candidate
+            .push_row(row)
+            .ok_or(KernelError::TooManyDefinitions)?;
+        let actual = candidate.check_wf(resolver, reference, fuel)?;
+        if actual != expected {
+            return Err(KernelError::InvalidConstructor { expected, actual });
+        }
+        *self = Self::try_from_arena(candidate, resolver, fuel)?;
+        Ok(reference)
     }
 }
 
@@ -308,6 +508,27 @@ mod tests {
             vec![],
         );
         assert!(Kernel::try_from_arena(arena, &NoLinks, 6).is_ok());
+    }
+
+    #[test]
+    fn checked_mutations_build_the_beta_demo_without_forging() {
+        let mut kernel = Kernel::try_from_arena(Arena::empty(), &NoLinks, 1).unwrap();
+        let bool_ty = kernel.bool_ty(&NoLinks, 2).unwrap();
+        let variable = kernel.tm_fv(&NoLinks, 3, 7, bool_ty).unwrap();
+        let identity = kernel.lam(&NoLinks, 4, variable, variable).unwrap();
+        let truth = kernel.bool(&NoLinks, 5, true).unwrap();
+        let application = kernel.app(&NoLinks, 6, identity, truth).unwrap();
+        kernel.assert_eq(&NoLinks, 6, application, truth).unwrap();
+        let proposition = kernel.eq(&NoLinks, 7, application, truth).unwrap();
+
+        assert_eq!(
+            kernel.arena().tag(bool_ty.reference()),
+            Some(crate::Tag::Ty(crate::TyTag::Bool))
+        );
+        assert_eq!(
+            kernel.arena().tag(proposition.reference()),
+            Some(crate::Tag::Tm(crate::TmTag::Eq))
+        );
     }
 
     #[test]

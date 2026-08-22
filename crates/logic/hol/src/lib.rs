@@ -9,7 +9,7 @@ mod resolve;
 mod row;
 pub mod wire;
 
-pub use kernel::{Kernel, KernelError};
+pub use kernel::{Kernel, KernelError, KindIx, TmIx, TyIx};
 pub use resolve::{ResolveError, Resolver};
 pub use row::{KindTag, Sort, Tag, TmTag, TyTag};
 
@@ -523,6 +523,17 @@ impl Arena {
         let reference = Ref::new(next)?;
         self.dense.defs.push(row);
         Some(reference)
+    }
+
+    fn set_eq(&mut self, reference: Ref, right: Ref) -> bool {
+        let Ok(position) = usize::try_from(reference.get() - 1) else {
+            return false;
+        };
+        let Some(row) = self.dense.defs.get_mut(position) else {
+            return false;
+        };
+        row.set_eq(right);
+        true
     }
 
     #[cfg(test)]
