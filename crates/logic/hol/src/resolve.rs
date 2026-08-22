@@ -35,13 +35,13 @@ pub enum ResolveError<E> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum Kind {
+pub(crate) enum Kind {
     Star,
     Arr(Box<Self>, Box<Self>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum Syntax {
+pub(crate) enum Syntax {
     BoolTy,
     Arr(Box<Self>, Box<Self>),
     TyApp {
@@ -91,7 +91,7 @@ enum Syntax {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum Value {
+pub(crate) enum Value {
     Kind(Kind),
     Ty { kind: Kind, expression: Syntax },
     Tm { ty: Syntax, expression: Syntax },
@@ -106,7 +106,7 @@ impl Value {
         }
     }
 
-    fn is_well_formed(&self) -> bool {
+    pub(crate) fn is_well_formed(&self) -> bool {
         match self {
             Self::Kind(_) => true,
             Self::Ty { kind, expression } => expression.infer_family(&[]) == Some(kind.clone()),
@@ -114,6 +114,20 @@ impl Value {
                 ty.infer_family(&[]) == Some(Kind::Star)
                     && expression.infer_term(&[]) == Some(ty.clone())
             }
+        }
+    }
+
+    pub(crate) fn has_sort(&self, classifier: &Self) -> bool {
+        match (self, classifier) {
+            (Self::Ty { kind: expected, .. }, Self::Kind(actual)) => expected == actual,
+            (
+                Self::Tm { ty: expected, .. },
+                Self::Ty {
+                    kind: Kind::Star,
+                    expression: actual,
+                },
+            ) => expected == actual,
+            _ => false,
         }
     }
 }
@@ -295,7 +309,7 @@ impl Arena {
     }
 }
 
-fn resolve_at<R: Resolver>(
+pub(crate) fn resolve_at<R: Resolver>(
     arena: &Arena,
     resolver: &R,
     reference: Ref,

@@ -4,10 +4,12 @@
 //! not establish kinding, typing, equality, or provability.
 
 pub mod cas;
+mod kernel;
 mod resolve;
 mod row;
 pub mod wire;
 
+pub use kernel::{Kernel, KernelError};
 pub use resolve::{ResolveError, Resolver};
 pub use row::{KindTag, Sort, Tag, TmTag, TyTag};
 
