@@ -11,6 +11,7 @@ use crate::{Arena, Link, Resolver, wire};
 #[derive(Debug)]
 pub enum Error<E> {
     Cas(E),
+    WrongAddress { expected: O256, actual: O256 },
     Decode(wire::DecodeError),
 }
 
@@ -18,6 +19,10 @@ impl<E: std::fmt::Display> std::fmt::Display for Error<E> {
     fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Cas(error) => write!(output, "CAS lookup failed: {error}"),
+            Self::WrongAddress { expected, actual } => write!(
+                output,
+                "CAS returned content with address {actual:?} for {expected:?}"
+            ),
             Self::Decode(error) => write!(output, "linked arena failed to decode: {error}"),
         }
     }
@@ -70,6 +75,13 @@ impl<C: Cas> Resolver for CasResolver<C> {
             return Ok(None);
         };
         let bytes = object.read(0..object.len()).map_err(Error::Cas)?;
+        let actual = O256::from_bytes(bytes.as_ref());
+        if actual != address {
+            return Err(Error::WrongAddress {
+                expected: address,
+                actual,
+            });
+        }
         let arena = Arc::new(wire::deserialize(bytes.as_ref()).map_err(Error::Decode)?);
         let mut cache = self
             .cache
@@ -81,10 +93,40 @@ impl<C: Cas> Resolver for CasResolver<C> {
 
 #[cfg(test)]
 mod tests {
+    use std::{convert::Infallible, ops::Range};
+
     use covalence_data_cas::MemoryCas;
+    use covalence_data_cas::{Bytes, CasObject};
 
     use super::*;
     use crate::{LinkFormat, Resolver};
+
+    struct LyingObject(Bytes);
+
+    impl CasObject for LyingObject {
+        type Error = Infallible;
+
+        fn len(&self) -> u64 {
+            self.0.len() as u64
+        }
+
+        fn read(&self, range: Range<u64>) -> Result<Bytes, Self::Error> {
+            let start = usize::try_from(range.start).unwrap();
+            let end = usize::try_from(range.end).unwrap();
+            Ok(self.0.slice(start..end))
+        }
+    }
+
+    struct LyingCas(Bytes);
+
+    impl Cas for LyingCas {
+        type Error = Infallible;
+        type Object = LyingObject;
+
+        fn open(&self, _: O256) -> Result<Option<Self::Object>, Self::Error> {
+            Ok(Some(LyingObject(self.0.clone())))
+        }
+    }
 
     #[test]
     fn absence_is_retryable_and_success_is_cached() {
@@ -120,5 +162,29 @@ mod tests {
 
         assert!(matches!(resolver.resolve(&link), Err(Error::Decode(_))));
         assert!(resolver.cached(address).is_none());
+    }
+
+    #[test]
+    fn content_is_authenticated_even_for_a_lying_cas() {
+        let mut encoded = Vec::new();
+        wire::serialize(&Arena::empty(), &mut encoded).unwrap();
+        let bytes = Bytes::from(encoded);
+        let actual = O256::from_bytes(bytes.as_ref());
+        let expected = O256::from_bytes(b"a different object");
+        assert_ne!(actual, expected);
+
+        let resolver = CasResolver::new(LyingCas(bytes));
+        let link = Link {
+            format: LinkFormat::Cbor,
+            blake3: expected,
+        };
+        assert!(matches!(
+            resolver.resolve(&link),
+            Err(Error::WrongAddress {
+                expected: found_expected,
+                actual: found_actual,
+            }) if found_expected == expected && found_actual == actual
+        ));
+        assert!(resolver.cached(expected).is_none());
     }
 }
