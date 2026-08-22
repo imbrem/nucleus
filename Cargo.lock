@@ -525,6 +525,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "covalence-logic-cas"
+version = "0.0.0"
+dependencies = [
+ "bytes",
+ "covalence-lib-error",
+ "covalence-lib-hash",
+]
+
+[[package]]
 name = "covalence-logic-lrat"
 version = "0.0.0"
 dependencies = [

@@ -374,6 +374,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-logic-cas@0.0.0",
+      "name": "covalence-logic-cas",
+      "version": "0.0.0",
+      "path": "crates/logic/cas",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_logic_cas",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-logic-lrat@0.0.0",
       "name": "covalence-logic-lrat",
       "version": "0.0.0",
@@ -732,6 +747,20 @@
     {
       "source": "workspace#covalence-lib-sqlite@0.0.0",
       "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-cas@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-cas@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
       "kinds": [
         "normal"
       ]
