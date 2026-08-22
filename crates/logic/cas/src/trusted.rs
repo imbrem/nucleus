@@ -16,7 +16,7 @@ use crate::{CasFact, O256};
 pub trait TrustedCas {
     /// Implementation-specific lookup failure, including absence when
     /// applicable.
-    type Error;
+    type Error: std::error::Error + 'static;
 
     /// Gets a checked fact in response to `address`.
     ///
@@ -34,7 +34,7 @@ pub trait TrustedCas {
 #[snafu(crate_root(covalence_lib_error::snafu))]
 pub enum GetError<E>
 where
-    E: std::error::Error + Send + Sync + 'static,
+    E: std::error::Error + 'static,
 {
     /// The provider failed to return a fact.
     #[snafu(display("could not get CAS object {requested}: {source}"))]
@@ -56,7 +56,7 @@ where
 
 impl<E> GetError<E>
 where
-    E: std::error::Error + Send + Sync + 'static,
+    E: std::error::Error + 'static,
 {
     /// Returns the requested address associated with this failure.
     #[must_use]
@@ -80,7 +80,6 @@ where
 pub fn get_exact<C>(cas: &C, requested: O256) -> Result<CasFact, GetError<C::Error>>
 where
     C: TrustedCas + ?Sized,
-    C::Error: std::error::Error + Send + Sync + 'static,
 {
     let fact = cas
         .get(requested)
