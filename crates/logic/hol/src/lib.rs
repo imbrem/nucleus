@@ -511,10 +511,6 @@ impl Arena {
         self.imports.get(position)
     }
 
-    fn row(&self, reference: Ref) -> Option<&Row> {
-        self.dense.row(reference)
-    }
-
     fn push_row(&mut self, row: Row) -> Option<Ref> {
         let next = u64::try_from(self.dense.defs.len()).ok()?.checked_add(1)?;
         let reference = Ref::new(next)?;

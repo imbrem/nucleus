@@ -1,552 +1,286 @@
-//! Fuel-bounded resolution of raw Ethane rows.
+//! Direct navigation across raw Ethane arena imports.
 
 use std::sync::Arc;
 
-use crate::{Arena, Import, ImportId, Link, Ref, Sort, row::Expr};
+use crate::{Arena, Import, ImportId, Link, Ref, Sort, Tag};
 
 /// Supplies an arena for a content-addressed link.
 ///
-/// Returning `Ok(None)` means the object is currently unavailable and may be
-/// retried later. Resolver failures are not cached by this representation.
+/// A resolver is untrusted: this raw layer uses the returned arena only as
+/// data. The checked layer accepts opaque arena facts instead. Mutable access
+/// permits callers to implement caching without putting synchronization or
+/// storage policy in the arena crate.
 pub trait Resolver {
     type Error;
 
-    /// Return the linked arena when it is currently available.
+    /// Returns the linked arena when it is currently available.
     ///
     /// # Errors
     ///
-    /// Returns a resolver-specific error when lookup itself fails. Temporary
-    /// absence is represented by `Ok(None)`.
-    fn resolve(&self, link: &Link) -> Result<Option<Arc<Arena>>, Self::Error>;
+    /// Returns a resolver-specific lookup failure. Temporary absence is
+    /// represented by `Ok(None)`.
+    fn resolve(&mut self, link: &Link) -> Result<Option<Arc<Arena>>, Self::Error>;
 }
 
-/// A recoverable failure while resolving one row graph.
+/// A borrowed literal import or a shared linked arena.
+///
+/// Literal imports remain allocation-free. Link ownership is supplied by the
+/// resolver and is not part of the serialized arena.
+#[derive(Clone, Debug)]
+pub enum ResolvedArena<'a> {
+    Literal(&'a Arena),
+    Linked(Arc<Arena>),
+}
+
+impl AsRef<Arena> for ResolvedArena<'_> {
+    fn as_ref(&self) -> &Arena {
+        match self {
+            Self::Literal(arena) => arena,
+            Self::Linked(arena) => arena,
+        }
+    }
+}
+
+/// One reference paired with the arena that owns it.
+///
+/// This is a flat cursor, not a reconstructed syntax tree. Its accessors read
+/// the row in place and do not follow ordinary child references.
+#[derive(Clone, Debug)]
+pub struct ResolvedRef<'a> {
+    arena: ResolvedArena<'a>,
+    reference: Ref,
+}
+
+impl ResolvedRef<'_> {
+    #[must_use]
+    pub const fn reference(&self) -> Ref {
+        self.reference
+    }
+
+    #[must_use]
+    pub fn arena(&self) -> &Arena {
+        self.arena.as_ref()
+    }
+
+    #[must_use]
+    pub fn tag(&self) -> Tag {
+        // Construction checks that the reference exists.
+        self.arena()
+            .tag(self.reference)
+            .expect("resolved references name an existing row")
+    }
+
+    #[must_use]
+    pub fn eq(&self) -> Option<Ref> {
+        self.arena().eq(self.reference)
+    }
+
+    #[must_use]
+    pub fn sort(&self) -> Option<Ref> {
+        self.arena().sort(self.reference)
+    }
+
+    #[must_use]
+    pub fn children(&self) -> impl ExactSizeIterator<Item = Ref> + '_ {
+        self.arena()
+            .children(self.reference)
+            .expect("resolved references name an existing row")
+    }
+
+    #[must_use]
+    pub fn name(&self) -> Option<u64> {
+        self.arena().name(self.reference)
+    }
+
+    #[must_use]
+    pub fn bool_value(&self) -> Option<bool> {
+        self.arena().bool_value(self.reference)
+    }
+
+    #[must_use]
+    pub fn foreign(&self) -> Option<(ImportId, Ref)> {
+        self.arena().foreign(self.reference)
+    }
+}
+
+/// A recoverable failure while following an explicit import or proxy row.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResolveError<E> {
-    FuelExhausted,
     MissingReference(Ref),
     MissingImport(ImportId),
     NullImport(ImportId),
     Unavailable(Link),
     Resolver(E),
+    NotProxy(Ref),
     CategoryMismatch { expected: Sort, actual: Sort },
-    IllSorted,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum Kind {
-    Star,
-    Arr(Box<Self>, Box<Self>),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum Syntax {
-    BoolTy,
-    Arr(Box<Self>, Box<Self>),
-    TyApp {
-        domain: Kind,
-        codomain: Kind,
-        function: Box<Self>,
-        argument: Box<Self>,
-    },
-    TyLam {
-        domain: Kind,
-        codomain: Kind,
-        name: u64,
-        body: Box<Self>,
-    },
-    TyFv {
-        name: u64,
-        kind: Kind,
-    },
-    TyExists {
-        name: u64,
-        predicate: Box<Self>,
-    },
-    Model {
-        name: u64,
-        predicate: Box<Self>,
-    },
-    TmFv {
-        name: u64,
-        ty: Box<Self>,
-    },
-    App(Box<Self>, Box<Self>),
-    Lam {
-        name: u64,
-        domain: Box<Self>,
-        body: Box<Self>,
-    },
-    Bool(bool),
-    Eq {
-        ty: Box<Self>,
-        left: Box<Self>,
-        right: Box<Self>,
-    },
-    Eps {
-        ty: Box<Self>,
-        predicate: Box<Self>,
-    },
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum Value {
-    Kind(Kind),
-    Ty { kind: Kind, expression: Syntax },
-    Tm { ty: Syntax, expression: Syntax },
-}
-
-impl Value {
-    const fn sort(&self) -> Sort {
-        match self {
-            Self::Kind(_) => Sort::Kind,
-            Self::Ty { .. } => Sort::Ty,
-            Self::Tm { .. } => Sort::Tm,
-        }
-    }
 }
 
 impl Arena {
-    /// Resolve and classify one local reference.
-    ///
-    /// Every local or imported edge consumes one unit of fuel. This prevents
-    /// cycles from becoming an unrecoverable failure.
+    /// Returns a flat cursor for a local row.
+    #[must_use]
+    pub fn resolved(&self, reference: Ref) -> Option<ResolvedRef<'_>> {
+        self.tag(reference)?;
+        Some(ResolvedRef {
+            arena: ResolvedArena::Literal(self),
+            reference,
+        })
+    }
+
+    /// Resolves one import-table entry without traversing its definitions.
     ///
     /// # Errors
     ///
-    /// Returns a precise, retryable resolution error for unavailable imports,
-    /// bad references, category mismatches, ill-sorted rows, or fuel exhaustion.
-    pub fn resolve_sort<R: Resolver>(
-        &self,
-        resolver: &R,
-        reference: Ref,
-        fuel: usize,
-    ) -> Result<Sort, ResolveError<R::Error>> {
-        resolve_at(self, resolver, reference, fuel).map(|value| value.sort())
-    }
-}
-
-fn resolve_at<R: Resolver>(
-    arena: &Arena,
-    resolver: &R,
-    reference: Ref,
-    fuel: usize,
-) -> Result<Value, ResolveError<R::Error>> {
-    let remaining = fuel.checked_sub(1).ok_or(ResolveError::FuelExhausted)?;
-    let row = arena
-        .row(reference)
-        .ok_or(ResolveError::MissingReference(reference))?;
-
-    let local = |child| resolve_at(arena, resolver, child, remaining);
-    let foreign = |source: ImportId, foreign: Ref| {
-        let entry = arena
+    /// Distinguishes an absent or null import, temporary link absence, and a
+    /// resolver failure.
+    pub fn resolve_import<'a, R: Resolver>(
+        &'a self,
+        resolver: &mut R,
+        source: ImportId,
+    ) -> Result<ResolvedArena<'a>, ResolveError<R::Error>> {
+        let entry = self
             .import(source)
             .ok_or(ResolveError::MissingImport(source))?;
         match entry {
             Import::Null => Err(ResolveError::NullImport(source)),
-            Import::Literal(imported) => resolve_at(imported, resolver, foreign, remaining),
-            Import::Link(link) => {
-                let imported = resolver
-                    .resolve(link)
-                    .map_err(ResolveError::Resolver)?
-                    .ok_or(ResolveError::Unavailable(*link))?;
-                resolve_at(&imported, resolver, foreign, remaining)
-            }
+            Import::Literal(arena) => Ok(ResolvedArena::Literal(arena)),
+            Import::Link(link) => resolver
+                .resolve(link)
+                .map_err(ResolveError::Resolver)?
+                .map(ResolvedArena::Linked)
+                .ok_or(ResolveError::Unavailable(*link)),
         }
-    };
-
-    elaborate(row.expr(), local, foreign)
-}
-
-fn expect_kind<E>(value: Value) -> Result<Kind, ResolveError<E>> {
-    match value {
-        Value::Kind(kind) => Ok(kind),
-        value => Err(ResolveError::CategoryMismatch {
-            expected: Sort::Kind,
-            actual: value.sort(),
-        }),
     }
-}
 
-fn expect_ty<E>(value: Value) -> Result<(Kind, Syntax), ResolveError<E>> {
-    match value {
-        Value::Ty { kind, expression } => Ok((kind, expression)),
-        value => Err(ResolveError::CategoryMismatch {
-            expected: Sort::Ty,
-            actual: value.sort(),
-        }),
+    /// Resolves one foreign reference without elaborating or copying its row.
+    ///
+    /// # Errors
+    ///
+    /// In addition to import failures, returns `MissingReference` when the
+    /// foreign arena has no such row.
+    pub fn resolve_foreign<'a, R: Resolver>(
+        &'a self,
+        resolver: &mut R,
+        source: ImportId,
+        foreign: Ref,
+    ) -> Result<ResolvedRef<'a>, ResolveError<R::Error>> {
+        let arena = self.resolve_import(resolver, source)?;
+        if arena.as_ref().tag(foreign).is_none() {
+            return Err(ResolveError::MissingReference(foreign));
+        }
+        Ok(ResolvedRef {
+            arena,
+            reference: foreign,
+        })
     }
-}
 
-fn expect_tm<E>(value: Value) -> Result<(Syntax, Syntax), ResolveError<E>> {
-    match value {
-        Value::Tm { ty, expression } => Ok((ty, expression)),
-        value => Err(ResolveError::CategoryMismatch {
-            expected: Sort::Tm,
-            actual: value.sort(),
-        }),
+    /// Follows one `tm.ref`, `ty.ref`, or `kind.ref` row.
+    ///
+    /// The target's declared tag category must match the proxy tag. No child
+    /// is traversed and no recursive syntax value is allocated.
+    ///
+    /// # Errors
+    ///
+    /// Returns `NotProxy` for an ordinary row and `CategoryMismatch` for a
+    /// proxy whose foreign row declares another category.
+    pub fn resolve_proxy<'a, R: Resolver>(
+        &'a self,
+        resolver: &mut R,
+        reference: Ref,
+    ) -> Result<ResolvedRef<'a>, ResolveError<R::Error>> {
+        let expected = self
+            .tag(reference)
+            .ok_or(ResolveError::MissingReference(reference))?
+            .sort();
+        let (source, foreign) = self
+            .foreign(reference)
+            .ok_or(ResolveError::NotProxy(reference))?;
+        let target = self.resolve_foreign(resolver, source, foreign)?;
+        let actual = target.tag().sort();
+        if actual == expected {
+            Ok(target)
+        } else {
+            Err(ResolveError::CategoryMismatch { expected, actual })
+        }
     }
-}
-
-// Keeping the constructor table together makes its correspondence with
-// `OneBased.elaborateExpr` directly auditable.
-#[allow(clippy::too_many_lines)]
-fn elaborate<E>(
-    expression: &Expr,
-    mut local: impl FnMut(Ref) -> Result<Value, ResolveError<E>>,
-    mut foreign: impl FnMut(ImportId, Ref) -> Result<Value, ResolveError<E>>,
-) -> Result<Value, ResolveError<E>> {
-    Ok(match *expression {
-        Expr::KindStar => Value::Kind(Kind::Star),
-        Expr::KindArr(domain, codomain) => Value::Kind(Kind::Arr(
-            Box::new(expect_kind(local(domain)?)?),
-            Box::new(expect_kind(local(codomain)?)?),
-        )),
-        Expr::BoolTy => Value::Ty {
-            kind: Kind::Star,
-            expression: Syntax::BoolTy,
-        },
-        Expr::TyArr(domain, codomain) => {
-            let (domain_kind, domain) = expect_ty(local(domain)?)?;
-            let (codomain_kind, codomain) = expect_ty(local(codomain)?)?;
-            if domain_kind != Kind::Star || codomain_kind != Kind::Star {
-                return Err(ResolveError::IllSorted);
-            }
-            Value::Ty {
-                kind: Kind::Star,
-                expression: Syntax::Arr(Box::new(domain), Box::new(codomain)),
-            }
-        }
-        Expr::TyApp(function, argument) => {
-            let (function_kind, function) = expect_ty(local(function)?)?;
-            let (argument_kind, argument) = expect_ty(local(argument)?)?;
-            let Kind::Arr(domain, codomain) = function_kind else {
-                return Err(ResolveError::IllSorted);
-            };
-            if argument_kind != *domain {
-                return Err(ResolveError::IllSorted);
-            }
-            Value::Ty {
-                kind: (*codomain).clone(),
-                expression: Syntax::TyApp {
-                    domain: *domain,
-                    codomain: *codomain,
-                    function: Box::new(function),
-                    argument: Box::new(argument),
-                },
-            }
-        }
-        Expr::TyLam(binder, body) => {
-            let (domain, binder) = expect_ty(local(binder)?)?;
-            let Syntax::TyFv { name, kind } = binder else {
-                return Err(ResolveError::IllSorted);
-            };
-            if kind != domain {
-                return Err(ResolveError::IllSorted);
-            }
-            let (codomain, body) = expect_ty(local(body)?)?;
-            Value::Ty {
-                kind: Kind::Arr(Box::new(domain.clone()), Box::new(codomain.clone())),
-                expression: Syntax::TyLam {
-                    domain,
-                    codomain,
-                    name,
-                    body: Box::new(body),
-                },
-            }
-        }
-        Expr::TyFv { name, kind } => {
-            let kind = expect_kind(local(kind)?)?;
-            Value::Ty {
-                kind: kind.clone(),
-                expression: Syntax::TyFv { name, kind },
-            }
-        }
-        Expr::TyExists { name, predicate } => {
-            let (ty, predicate) = expect_tm(local(predicate)?)?;
-            if ty != Syntax::BoolTy {
-                return Err(ResolveError::IllSorted);
-            }
-            Value::Tm {
-                ty: Syntax::BoolTy,
-                expression: Syntax::TyExists {
-                    name,
-                    predicate: Box::new(predicate),
-                },
-            }
-        }
-        Expr::Model { name, predicate } => {
-            let (ty, predicate) = expect_tm(local(predicate)?)?;
-            if ty != Syntax::BoolTy {
-                return Err(ResolveError::IllSorted);
-            }
-            Value::Ty {
-                kind: Kind::Star,
-                expression: Syntax::Model {
-                    name,
-                    predicate: Box::new(predicate),
-                },
-            }
-        }
-        Expr::TmFv { name, ty } => {
-            let (kind, ty) = expect_ty(local(ty)?)?;
-            if kind != Kind::Star {
-                return Err(ResolveError::IllSorted);
-            }
-            Value::Tm {
-                ty: ty.clone(),
-                expression: Syntax::TmFv {
-                    name,
-                    ty: Box::new(ty),
-                },
-            }
-        }
-        Expr::App(function, argument) => {
-            let (function_ty, function) = expect_tm(local(function)?)?;
-            let (argument_ty, argument) = expect_tm(local(argument)?)?;
-            let Syntax::Arr(domain, codomain) = function_ty else {
-                return Err(ResolveError::IllSorted);
-            };
-            if argument_ty != *domain {
-                return Err(ResolveError::IllSorted);
-            }
-            Value::Tm {
-                ty: (*codomain).clone(),
-                expression: Syntax::App(Box::new(function), Box::new(argument)),
-            }
-        }
-        Expr::Lam(binder, body) => {
-            let (domain, binder) = expect_tm(local(binder)?)?;
-            let Syntax::TmFv { name, ty } = binder else {
-                return Err(ResolveError::IllSorted);
-            };
-            if *ty != domain {
-                return Err(ResolveError::IllSorted);
-            }
-            let (codomain, body) = expect_tm(local(body)?)?;
-            Value::Tm {
-                ty: Syntax::Arr(Box::new(domain.clone()), Box::new(codomain)),
-                expression: Syntax::Lam {
-                    name,
-                    domain: Box::new(domain),
-                    body: Box::new(body),
-                },
-            }
-        }
-        Expr::Bool(value) => Value::Tm {
-            ty: Syntax::BoolTy,
-            expression: Syntax::Bool(value),
-        },
-        Expr::Eq(left, right) => {
-            let (ty, left) = expect_tm(local(left)?)?;
-            let (actual, right) = expect_tm(local(right)?)?;
-            if actual != ty {
-                return Err(ResolveError::IllSorted);
-            }
-            Value::Tm {
-                ty: Syntax::BoolTy,
-                expression: Syntax::Eq {
-                    ty: Box::new(ty),
-                    left: Box::new(left),
-                    right: Box::new(right),
-                },
-            }
-        }
-        Expr::Eps { ty, predicate } => {
-            let (kind, ty) = expect_ty(local(ty)?)?;
-            let (predicate_ty, predicate) = expect_tm(local(predicate)?)?;
-            if kind != Kind::Star {
-                return Err(ResolveError::IllSorted);
-            }
-            let Syntax::Arr(domain, codomain) = predicate_ty else {
-                return Err(ResolveError::IllSorted);
-            };
-            if *domain != ty || *codomain != Syntax::BoolTy {
-                return Err(ResolveError::IllSorted);
-            }
-            Value::Tm {
-                ty: ty.clone(),
-                expression: Syntax::Eps {
-                    ty: Box::new(ty),
-                    predicate: Box::new(predicate),
-                },
-            }
-        }
-        Expr::TmRef { src, ix } => {
-            let value = foreign(src, ix)?;
-            if value.sort() != Sort::Tm {
-                return Err(ResolveError::CategoryMismatch {
-                    expected: Sort::Tm,
-                    actual: value.sort(),
-                });
-            }
-            value
-        }
-        Expr::TyRef { src, ix } => {
-            let value = foreign(src, ix)?;
-            if value.sort() != Sort::Ty {
-                return Err(ResolveError::CategoryMismatch {
-                    expected: Sort::Ty,
-                    actual: value.sort(),
-                });
-            }
-            value
-        }
-        Expr::KindRef { src, ix } => {
-            let value = foreign(src, ix)?;
-            if value.sort() != Sort::Kind {
-                return Err(ResolveError::CategoryMismatch {
-                    expected: Sort::Kind,
-                    actual: value.sort(),
-                });
-            }
-            value
-        }
-    })
 }
 
 #[cfg(test)]
 mod tests {
     use std::convert::Infallible;
 
+    use super::*;
+    use crate::{Import, LinkFormat};
     use covalence_lib_hash::O256;
 
-    use super::*;
-    use crate::{LinkFormat, row::Row};
-
-    const fn reference(value: u64) -> Ref {
-        Ref::new(value).unwrap()
-    }
-
-    const fn import(value: u64) -> ImportId {
-        ImportId::new(value).unwrap()
-    }
-
-    struct NoLinks;
-
-    impl Resolver for NoLinks {
-        type Error = Infallible;
-
-        fn resolve(&self, _: &Link) -> Result<Option<Arc<Arena>>, Self::Error> {
-            Ok(None)
-        }
-    }
-
-    #[test]
-    fn implicit_lambda_application_and_equality_annotations_are_recovered() {
-        let arena = Arena::from_parts(
-            vec![],
-            [],
-            vec![
-                Row::new(Expr::BoolTy),
-                Row::new(Expr::TmFv {
-                    name: 7,
-                    ty: reference(1),
-                }),
-                Row::new(Expr::Lam(reference(2), reference(2))),
-                Row::new(Expr::Bool(true)),
-                Row::new(Expr::App(reference(3), reference(4))),
-                Row::new(Expr::Eq(reference(5), reference(4))),
-            ],
-            [],
-            vec![],
-            vec![],
-        );
-
-        assert_eq!(arena.resolve_sort(&NoLinks, reference(3), 4), Ok(Sort::Tm));
-        assert_eq!(arena.resolve_sort(&NoLinks, reference(5), 5), Ok(Sort::Tm));
-        assert_eq!(arena.resolve_sort(&NoLinks, reference(6), 6), Ok(Sort::Tm));
-    }
-
-    #[test]
-    fn implicit_type_application_and_lambda_kinds_are_recovered() {
-        let arena = Arena::from_parts(
-            vec![],
-            [],
-            vec![
-                Row::new(Expr::KindStar),
-                Row::new(Expr::TyFv {
-                    name: 3,
-                    kind: reference(1),
-                }),
-                Row::new(Expr::TyLam(reference(2), reference(2))),
-                Row::new(Expr::BoolTy),
-                Row::new(Expr::TyApp(reference(3), reference(4))),
-            ],
-            [],
-            vec![],
-            vec![],
-        );
-
-        assert_eq!(arena.resolve_sort(&NoLinks, reference(3), 4), Ok(Sort::Ty));
-        assert_eq!(arena.resolve_sort(&NoLinks, reference(5), 5), Ok(Sort::Ty));
-    }
-
     struct OneLink {
-        link: Link,
+        address: O256,
         arena: Arc<Arena>,
     }
 
     impl Resolver for OneLink {
         type Error = Infallible;
 
-        fn resolve(&self, link: &Link) -> Result<Option<Arc<Arena>>, Self::Error> {
-            Ok((link == &self.link).then(|| Arc::clone(&self.arena)))
+        fn resolve(&mut self, link: &Link) -> Result<Option<Arc<Arena>>, Self::Error> {
+            Ok((link.blake3 == self.address).then(|| Arc::clone(&self.arena)))
         }
     }
 
-    #[test]
-    fn literal_and_successful_link_imports_resolve_identically() {
-        let imported = Arena::from_parts(
-            vec![],
-            [],
-            vec![Row::new(Expr::Bool(true))],
-            [],
-            vec![],
-            vec![],
-        );
-        let link = Link {
-            format: LinkFormat::Cbor,
-            blake3: O256::from_array([0x5a; 32]),
-        };
-        let resolver = OneLink {
-            link,
-            arena: Arc::new(imported.clone()),
-        };
-        let literal = Arena::from_parts(
-            vec![Import::Literal(Box::new(imported))],
-            [],
-            vec![Row::new(Expr::TmRef {
-                src: import(1),
-                ix: reference(1),
-            })],
-            [],
-            vec![],
-            vec![],
-        );
-        let linked = Arena::from_parts(
-            vec![Import::Link(link)],
-            [],
-            vec![Row::new(Expr::TmRef {
-                src: import(1),
-                ix: reference(1),
-            })],
-            [],
-            vec![],
-            vec![],
-        );
+    fn reference(value: u64) -> Ref {
+        Ref::new(value).unwrap()
+    }
 
-        assert_eq!(
-            literal.resolve_sort(&resolver, reference(1), 3),
-            Ok(Sort::Tm)
-        );
-        assert_eq!(
-            linked.resolve_sort(&resolver, reference(1), 3),
-            Ok(Sort::Tm)
-        );
-        assert_eq!(
-            linked.resolve_sort(&NoLinks, reference(1), 3),
-            Err(ResolveError::Unavailable(link))
-        );
+    #[test]
+    fn literal_and_link_proxies_read_the_same_flat_row() {
+        let mut imported = Arena::empty();
+        let target = imported.push_bool_ty().unwrap();
+        let imported = Arc::new(imported);
+        let address = O256::from_array([1; 32]);
+
+        let mut owner = Arena::empty();
+        let literal = owner
+            .push_import(Import::Literal(Box::new((*imported).clone())))
+            .unwrap();
+        let linked = owner
+            .push_import(Import::Link(Link {
+                format: LinkFormat::Cbor,
+                blake3: address,
+            }))
+            .unwrap();
+        let literal_proxy = owner.push_ty_ref(literal, target).unwrap();
+        let linked_proxy = owner.push_ty_ref(linked, target).unwrap();
+        let mut resolver = OneLink {
+            address,
+            arena: imported,
+        };
+
+        let literal = owner.resolve_proxy(&mut resolver, literal_proxy).unwrap();
+        let linked = owner.resolve_proxy(&mut resolver, linked_proxy).unwrap();
+        assert_eq!(literal.reference(), linked.reference());
+        assert_eq!(literal.tag(), linked.tag());
+        assert_eq!(literal.children().collect::<Vec<_>>(), Vec::<Ref>::new());
+    }
+
+    #[test]
+    fn proxy_resolution_checks_only_the_declared_category() {
+        let mut imported = Arena::empty();
+        let target = imported.push_bool_ty().unwrap();
+        let mut owner = Arena::empty();
+        let source = owner
+            .push_import(Import::Literal(Box::new(imported)))
+            .unwrap();
+        let proxy = owner.push_tm_ref(source, target).unwrap();
+        let mut resolver = OneLink {
+            address: O256::from_array([2; 32]),
+            arena: Arc::new(Arena::empty()),
+        };
+
+        assert!(matches!(
+            owner.resolve_proxy(&mut resolver, proxy),
+            Err(ResolveError::CategoryMismatch {
+                expected: Sort::Tm,
+                actual: Sort::Ty,
+            })
+        ));
+        assert_eq!(owner.resolved(reference(100)).map(|node| node.tag()), None);
     }
 }
