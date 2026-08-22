@@ -12,6 +12,7 @@ import Nucleus.Hol.Ethane.Arena.Cbor
 import Nucleus.Hol.Ethane.Arena.OneBased
 import Nucleus.Hol.Ethane.Arena.OneBased.Cbor
 import Nucleus.Hol.Ethane.Arena.OneBased.Executable
+import Nucleus.Hol.Ethane.Arena.OneBased.Standard
 import Nucleus.Hol.Ethane.Amber
 import Nucleus.Hol.Ethane.Standard
 import Nucleus.HolE.Peano

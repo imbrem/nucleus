@@ -37,6 +37,33 @@ pub struct Roots {
     pub succ: Ref,
 }
 
+const fn reference(value: u64) -> Ref {
+    match Ref::new(value) {
+        Some(reference) => reference,
+        None => panic!("standard arena references are nonzero"),
+    }
+}
+
+/// Number of rows in the stable ordinary initialization arena.
+pub const ROW_COUNT: usize = 296;
+
+/// Stable one-based references exported by the ordinary initialization arena.
+pub const ROOTS: Roots = Roots {
+    star: reference(1),
+    bool_ty: reference(2),
+    truth: reference(4),
+    falsehood: reference(3),
+    not: reference(8),
+    and: reference(27),
+    or: reference(38),
+    imp: reference(48),
+    infinity: reference(89),
+    nat_exists: reference(161),
+    nat: reference(162),
+    zero: reference(296),
+    succ: reference(232),
+};
+
 /// One freshly constructed ordinary initialization arena and its roots.
 #[derive(Clone, Debug)]
 pub struct Init {
@@ -80,23 +107,27 @@ impl Init {
         let zero = builder.chosen_zero(nat, succ);
         builder.arena.insert_axiom("ax.inf");
 
+        let generated_roots = Roots {
+            star,
+            bool_ty,
+            truth,
+            falsehood,
+            not,
+            and,
+            or,
+            imp,
+            infinity,
+            nat_exists,
+            nat,
+            zero,
+            succ,
+        };
+        assert_eq!(builder.arena.len(), ROW_COUNT);
+        assert_eq!(generated_roots, ROOTS);
+
         Self {
             arena: builder.arena,
-            roots: Roots {
-                star,
-                bool_ty,
-                truth,
-                falsehood,
-                not,
-                and,
-                or,
-                imp,
-                infinity,
-                nat_exists,
-                nat,
-                zero,
-                succ,
-            },
+            roots: ROOTS,
         }
     }
 
