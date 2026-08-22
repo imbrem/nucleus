@@ -112,6 +112,86 @@ pub(crate) enum Value {
     Tm { ty: Syntax, expression: Syntax },
 }
 
+/// Locally nameless image used only by the root-beta checker.
+///
+/// Type and term binders have independent De Bruijn indices. Constructor
+/// annotations recoverable from children are omitted, just as they are from
+/// the corresponding Lean `HolE.Expr` constructors.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum LoweredSyntax {
+    BoolTy,
+    Arr(Box<Self>, Box<Self>),
+    TyApp(Box<Self>, Box<Self>),
+    TyLam(Box<Self>),
+    TyBv(usize),
+    TyExists(Box<Self>),
+    Model(Box<Self>),
+    TmFv {
+        name: u64,
+        ty: Box<Self>,
+    },
+    TmBv(usize),
+    App(Box<Self>, Box<Self>),
+    Lam {
+        domain: Box<Self>,
+        body: Box<Self>,
+    },
+    Bool(bool),
+    Eq {
+        ty: Box<Self>,
+        left: Box<Self>,
+        right: Box<Self>,
+    },
+    Eps {
+        ty: Box<Self>,
+        predicate: Box<Self>,
+    },
+}
+
+impl LoweredSyntax {
+    /// Open the term variable at `depth`. The replacement was lowered in the
+    /// empty term scope, so it has no free De Bruijn indices to shift.
+    fn open_bound(&self, replacement: &Self, depth: usize) -> Self {
+        match self {
+            Self::TmBv(index) if *index == depth => replacement.clone(),
+            Self::TmBv(index) if *index > depth => Self::TmBv(index - 1),
+            Self::TmBv(index) => Self::TmBv(*index),
+            // Term substitution does not enter types. `tyExists` also stores
+            // a term at independent term depth zero, so ambient term
+            // substitution leaves its predicate untouched.
+            Self::BoolTy
+            | Self::Arr(..)
+            | Self::TyApp(..)
+            | Self::TyLam(..)
+            | Self::TyBv(_)
+            | Self::TyExists(_)
+            | Self::Model(_) => self.clone(),
+            Self::TmFv { name, ty } => Self::TmFv {
+                name: *name,
+                ty: ty.clone(),
+            },
+            Self::App(function, argument) => Self::App(
+                Box::new(function.open_bound(replacement, depth)),
+                Box::new(argument.open_bound(replacement, depth)),
+            ),
+            Self::Lam { domain, body } => Self::Lam {
+                domain: domain.clone(),
+                body: Box::new(body.open_bound(replacement, depth + 1)),
+            },
+            Self::Bool(value) => Self::Bool(*value),
+            Self::Eq { ty, left, right } => Self::Eq {
+                ty: ty.clone(),
+                left: Box::new(left.open_bound(replacement, depth)),
+                right: Box::new(right.open_bound(replacement, depth)),
+            },
+            Self::Eps { ty, predicate } => Self::Eps {
+                ty: ty.clone(),
+                predicate: Box::new(predicate.open_bound(replacement, depth)),
+            },
+        }
+    }
+}
+
 impl Value {
     const fn sort(&self) -> Sort {
         match self {
@@ -146,9 +226,12 @@ impl Value {
         }
     }
 
-    /// The first executable beta slice: `(λx. x) a = a` with exact typed-name
-    /// identity. General capture-avoiding substitution extends this predicate.
-    pub(crate) fn is_identity_beta_to(&self, target: &Self) -> bool {
+    /// Check one general root beta contraction modulo alpha conversion.
+    ///
+    /// Both named endpoints are lowered to the same locally nameless form
+    /// used by Lean. Opening the lowered body is capture avoiding without a
+    /// fresh-name operation in the checked kernel.
+    pub(crate) fn is_root_beta_to(&self, target: &Self) -> bool {
         let (
             Self::Tm {
                 ty: source_ty,
@@ -165,18 +248,140 @@ impl Value {
         let Syntax::Lam { name, domain, body } = function.as_ref() else {
             return false;
         };
-        source_ty == target_ty
-            && body.as_ref()
-                == &Syntax::TmFv {
-                    name: *name,
-                    ty: domain.clone(),
-                }
-            && argument.as_ref() == target_expression
-            && self.is_well_formed()
+        if source_ty != target_ty || !self.is_well_formed() {
+            return false;
+        }
+
+        let mut type_scope = Vec::new();
+        if domain.lower_family(&mut type_scope).is_none() {
+            return false;
+        }
+        let mut body_scope = vec![(*name, domain.as_ref().clone())];
+        let Some(lowered_body) = body.lower_term(&mut type_scope, &mut body_scope) else {
+            return false;
+        };
+        let mut argument_scope = Vec::new();
+        let Some(lowered_argument) = argument.lower_term(&mut type_scope, &mut argument_scope)
+        else {
+            return false;
+        };
+        let mut target_scope = Vec::new();
+        let Some(lowered_target) = target_expression.lower_term(&mut type_scope, &mut target_scope)
+        else {
+            return false;
+        };
+        lowered_target == lowered_body.open_bound(&lowered_argument, 0)
     }
 }
 
 impl Syntax {
+    /// Lower a named family exactly as `HolE.Named.lowerFam` does.
+    fn lower_family(&self, scope: &mut Vec<(u64, Kind)>) -> Option<LoweredSyntax> {
+        Some(match self {
+            Self::BoolTy => LoweredSyntax::BoolTy,
+            Self::Arr(domain, codomain) => LoweredSyntax::Arr(
+                Box::new(domain.lower_family(scope)?),
+                Box::new(codomain.lower_family(scope)?),
+            ),
+            Self::TyApp {
+                function, argument, ..
+            } => LoweredSyntax::TyApp(
+                Box::new(function.lower_family(scope)?),
+                Box::new(argument.lower_family(scope)?),
+            ),
+            Self::TyLam {
+                domain, name, body, ..
+            } => {
+                scope.push((*name, domain.clone()));
+                let lowered = body.lower_family(scope);
+                scope.pop();
+                LoweredSyntax::TyLam(Box::new(lowered?))
+            }
+            Self::TyFv { name, kind } => {
+                let index = scope
+                    .iter()
+                    .rev()
+                    .position(|entry| entry == &(*name, kind.clone()))?;
+                LoweredSyntax::TyBv(index)
+            }
+            Self::Model { name, predicate } => {
+                scope.push((*name, Kind::Star));
+                let mut term_scope = Vec::new();
+                let lowered = predicate.lower_term(scope, &mut term_scope);
+                scope.pop();
+                LoweredSyntax::Model(Box::new(lowered?))
+            }
+            Self::TyExists { .. }
+            | Self::TmFv { .. }
+            | Self::App(..)
+            | Self::Lam { .. }
+            | Self::Bool(_)
+            | Self::Eq { .. }
+            | Self::Eps { .. } => return None,
+        })
+    }
+
+    /// Lower a named term exactly as `HolE.Named.lowerTm` does.
+    fn lower_term(
+        &self,
+        type_scope: &mut Vec<(u64, Kind)>,
+        term_scope: &mut Vec<(u64, Syntax)>,
+    ) -> Option<LoweredSyntax> {
+        Some(match self {
+            Self::TyExists { name, predicate } => {
+                type_scope.push((*name, Kind::Star));
+                let mut reset_term_scope = Vec::new();
+                let lowered = predicate.lower_term(type_scope, &mut reset_term_scope);
+                type_scope.pop();
+                LoweredSyntax::TyExists(Box::new(lowered?))
+            }
+            Self::TmFv { name, ty } => {
+                if let Some(index) = term_scope
+                    .iter()
+                    .rev()
+                    .position(|entry| entry == &(*name, ty.as_ref().clone()))
+                {
+                    LoweredSyntax::TmBv(index)
+                } else {
+                    LoweredSyntax::TmFv {
+                        name: *name,
+                        ty: Box::new(ty.lower_family(type_scope)?),
+                    }
+                }
+            }
+            Self::App(function, argument) => LoweredSyntax::App(
+                Box::new(function.lower_term(type_scope, term_scope)?),
+                Box::new(argument.lower_term(type_scope, term_scope)?),
+            ),
+            Self::Lam { name, domain, body } => {
+                let lowered_domain = domain.lower_family(type_scope)?;
+                term_scope.push((*name, domain.as_ref().clone()));
+                let lowered_body = body.lower_term(type_scope, term_scope);
+                term_scope.pop();
+                LoweredSyntax::Lam {
+                    domain: Box::new(lowered_domain),
+                    body: Box::new(lowered_body?),
+                }
+            }
+            Self::Bool(value) => LoweredSyntax::Bool(*value),
+            Self::Eq { ty, left, right } => LoweredSyntax::Eq {
+                ty: Box::new(ty.lower_family(type_scope)?),
+                left: Box::new(left.lower_term(type_scope, term_scope)?),
+                right: Box::new(right.lower_term(type_scope, term_scope)?),
+            },
+            Self::Eps { ty, predicate } => LoweredSyntax::Eps {
+                ty: Box::new(ty.lower_family(type_scope)?),
+                predicate: Box::new(predicate.lower_term(type_scope, term_scope)?),
+            },
+            Self::BoolTy
+            | Self::Arr(..)
+            | Self::TyApp { .. }
+            | Self::TyLam { .. }
+            | Self::TyFv { .. }
+            | Self::Model { .. } => return None,
+        })
+    }
+
     // Mirrors `OneBased.checkFam`. A type variable is kinded exactly when its
     // syntactic (name, kind) pair is bound by an enclosing type constructor.
     fn infer_family(&self, scope: &[(u64, Kind)]) -> Option<Kind> {

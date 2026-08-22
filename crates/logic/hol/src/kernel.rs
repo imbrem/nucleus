@@ -13,7 +13,7 @@
 //! | `assume_valid`, `assume_wf` | `AssumeResult` |
 //! | `assert_valid`, `assert_wf` | `AssertResult` |
 //! | `add_context`, `add_axiom` | `ContextResult`, `AxiomResult` |
-//! | `assert_eq` | `AssertEqResult`, `Kernel.Equality.ofMember` |
+//! | `assert_eq` | `RootBetaEqualityClaimAt`, `rootBetaEqualityClaimAt_sound`, `AssertEqResult` |
 //! | equality symmetry, transitivity, application | `Kernel.Equality.symm`, `.trans`, `.app` |
 
 use std::sync::Arc;
@@ -167,8 +167,8 @@ impl EqualityIx {
 impl<R: TrustedResolver> Kernel<R> {
     /// Validate an untrusted arena.
     ///
-    /// The MVP accepts reflexive inline equality claims. Beta and congruence
-    /// extend the equality checker without weakening this constructor.
+    /// Inline claims may use reflexivity or general root beta modulo alpha.
+    /// Congruence is exposed separately as an opaque capability.
     ///
     /// # Errors
     ///
@@ -574,8 +574,8 @@ impl<R: TrustedResolver> Kernel<R> {
         )
     }
 
-    /// Attach an equality assertion and recheck the complete state. The MVP
-    /// accepts reflexivity and the checked identity-beta shape.
+    /// Attach an equality assertion and recheck the complete state. The
+    /// checker accepts reflexivity and general root beta modulo alpha.
     ///
     /// # Errors
     ///
@@ -883,7 +883,7 @@ fn validate_reflexive_equality<R: Resolver>(
     };
     let left = resolve_at(arena, resolver, reference, fuel)?;
     let right = resolve_at(arena, resolver, right, fuel)?;
-    if (left == right && left.is_well_formed()) || left.is_identity_beta_to(&right) {
+    if (left == right && left.is_well_formed()) || left.is_root_beta_to(&right) {
         Ok(())
     } else {
         Err(KernelError::InvalidEqualityClaim(reference))
@@ -1004,6 +1004,36 @@ mod tests {
             vec![],
         );
         assert!(Kernel::try_from_arena(arena, Arc::new(NoLinks), 6).is_ok());
+    }
+
+    #[test]
+    fn checked_beta_avoids_capture_and_accepts_alpha_renaming() {
+        let mut kernel = Kernel::try_from_arena(Arena::empty(), Arc::new(NoLinks), 1).unwrap();
+        let bool_ty = kernel.bool_ty(2).unwrap();
+        let x = kernel.tm_fv(3, 1, bool_ty).unwrap();
+        let y = kernel.tm_fv(4, 2, bool_ty).unwrap();
+
+        // (fun x => fun y => x) y
+        let inner = kernel.lam(5, y, x).unwrap();
+        let outer = kernel.lam(6, x, inner).unwrap();
+        let application = kernel.app(7, outer, y).unwrap();
+
+        // Alpha-renaming the inner binder is required to keep the free y free.
+        let z = kernel.tm_fv(8, 3, bool_ty).unwrap();
+        let capture_avoiding_target = kernel.lam(9, z, y).unwrap();
+        let beta = kernel
+            .assert_eq(9, application, capture_avoiding_target)
+            .unwrap();
+        assert_eq!(beta.left(), application.reference());
+        assert_eq!(beta.right(), capture_avoiding_target.reference());
+
+        // Naive textual substitution would incorrectly produce fun y => y.
+        let captured_target = kernel.lam(10, y, y).unwrap();
+        assert!(matches!(
+            kernel.assert_eq(10, application, captured_target),
+            Err(KernelError::InvalidEqualityClaim(reference))
+                if reference == application.reference()
+        ));
     }
 
     #[test]

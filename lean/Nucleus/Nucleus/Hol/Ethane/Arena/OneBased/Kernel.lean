@@ -376,6 +376,44 @@ def identityBetaStep (name : Nat) (domain : EmptyTy) (argument : EmptyTm)
         some loweredArgument at argumentLowering
     simpa [Nucleus.HolE.openBound, Nucleus.HolE.instantiate] using argumentLowering
 
+/-- Build the named root-beta certificate from the four locally nameless
+lowerings computed by the executable checker.  Comparing the opened body
+rather than substituting names makes the check capture avoiding and accepts
+alpha-equivalent targets. -/
+def rootBetaStep (name : Nat) (domain : EmptyTy) (body argument target : EmptyTm)
+    {loweredDomain : Nucleus.HolE.Ty ArenaSig []}
+    {loweredBody : Nucleus.HolE.Tm ArenaSig [] 1}
+    {loweredArgument : Nucleus.HolE.Tm ArenaSig [] 0}
+    (domainLowering : domain.lowerTy (.nil : TyScope []) = some loweredDomain)
+    (bodyLowering : body.lowerTm (.nil : TyScope [])
+      (.cons ⟨name, domain.toHolE⟩ (.nil : TmScope ArenaSig 0)) =
+        some loweredBody)
+    (argumentLowering : argument.lowerTm (.nil : TyScope [])
+      (.nil : TmScope ArenaSig 0) = some loweredArgument)
+    (targetLowering : target.lowerTm (.nil : TyScope [])
+      (.nil : TmScope ArenaSig 0) =
+        some (Nucleus.HolE.openBound loweredBody loweredArgument)) :
+    Nucleus.HolE.Named.TmBeta
+      (.nil : TyScope []) (.nil : TmScope ArenaSig 0)
+      (Nucleus.Hol.Ethane.Expr.app
+        (Nucleus.Hol.Ethane.Expr.lam name domain body) argument).toHolE
+      target.toHolE where
+  domain := loweredDomain
+  body := loweredBody
+  argument := loweredArgument
+  sourceLowering := by
+    change Nucleus.HolE.Named.lowerFam (.nil : TyScope []) domain.toHolE =
+      some loweredDomain at domainLowering
+    change Nucleus.HolE.Named.lowerTm (.nil : TyScope [])
+      (.cons ⟨name, domain.toHolE⟩ (.nil : TmScope ArenaSig 0)) body.toHolE =
+        some loweredBody at bodyLowering
+    change Nucleus.HolE.Named.lowerTm (.nil : TyScope [])
+      (.nil : TmScope ArenaSig 0) argument.toHolE =
+        some loweredArgument at argumentLowering
+    simp [Nucleus.Hol.Ethane.Expr.toHolE, Nucleus.HolE.Named.lowerTm,
+      domainLowering, bodyLowering, argumentLowering]
+  targetLowering := targetLowering
+
 end Value
 
 /-- Meaning of the optional equality member on one row. -/
@@ -439,7 +477,7 @@ theorem betaEqualityClaim_sound
   exact ⟨.term type source, .term type target, sourceResolves, targetResolves,
     Value.equal_beta wellFormed step⟩
 
-/-- The equality subset implemented by `Value::is_identity_beta_to`. -/
+/-- The identity-redex specialization used by focused examples. -/
 def IdentityBetaEqualityClaim (resolve : Resolver) (arena : Arena)
     (reference : Ref) : Prop :=
   match arena.eq? reference with
@@ -474,18 +512,62 @@ theorem identityBetaEqualityClaim_sound
     Value.equal_beta wellFormed
       (Value.identityBetaStep name domain argument domainLowering argumentLowering)⟩
 
+/-- General root beta, implemented by lowering the named redex and target and
+checking that the target is exactly the locally nameless opened body. -/
+def RootBetaEqualityClaim (resolve : Resolver) (arena : Arena)
+    (reference : Ref) : Prop :=
+  match arena.eq? reference with
+  | none => True
+  | some right =>
+      ∃ (type domain : EmptyTy) (name : Nat)
+        (body argument target : EmptyTm)
+        (loweredDomain : Nucleus.HolE.Ty ArenaSig [])
+        (loweredBody : Nucleus.HolE.Tm ArenaSig [] 1)
+        (loweredArgument : Nucleus.HolE.Tm ArenaSig [] 0),
+        Resolves resolve arena reference
+          (.term type (.app (.lam name domain body) argument)) ∧
+        Resolves resolve arena right (.term type target) ∧
+        Value.WellFormed
+          (.term type (.app (.lam name domain body) argument)) ∧
+        domain.lowerTy (.nil : TyScope []) = some loweredDomain ∧
+        body.lowerTm (.nil : TyScope [])
+          (.cons ⟨name, domain.toHolE⟩ (.nil : TmScope ArenaSig 0)) =
+            some loweredBody ∧
+        argument.lowerTm (.nil : TyScope []) (.nil : TmScope ArenaSig 0) =
+          some loweredArgument ∧
+        target.lowerTm (.nil : TyScope []) (.nil : TmScope ArenaSig 0) =
+          some (Nucleus.HolE.openBound loweredBody loweredArgument)
+
+theorem rootBetaEqualityClaim_sound
+    (claim : RootBetaEqualityClaim resolve arena reference) :
+    EqualityClaim resolve arena reference := by
+  unfold RootBetaEqualityClaim at claim
+  unfold EqualityClaim
+  split <;> try trivial
+  rename_i right member
+  rw [member] at claim
+  rcases claim with ⟨type, domain, name, body, argument, target,
+    loweredDomain, loweredBody, loweredArgument,
+    sourceResolves, targetResolves, wellFormed,
+    domainLowering, bodyLowering, argumentLowering, targetLowering⟩
+  exact ⟨.term type (.app (.lam name domain body) argument),
+    .term type target, sourceResolves, targetResolves,
+    Value.equal_beta wellFormed
+      (Value.rootBetaStep name domain body argument target
+        domainLowering bodyLowering argumentLowering targetLowering)⟩
+
 /-- The equality alternatives implemented by the initial Rust checker. -/
 def ExecutableEqualityClaim (resolve : Resolver) (arena : Arena)
     (reference : Ref) : Prop :=
   ReflexiveEqualityClaim resolve arena reference ∨
-  IdentityBetaEqualityClaim resolve arena reference
+  RootBetaEqualityClaim resolve arena reference
 
 theorem executableEqualityClaim_sound
     (claim : ExecutableEqualityClaim resolve arena reference) :
     EqualityClaim resolve arena reference := by
   cases claim with
   | inl reflexive => exact reflexiveEqualityClaim_sound reflexive
-  | inr beta => exact identityBetaEqualityClaim_sound beta
+  | inr beta => exact rootBetaEqualityClaim_sound beta
 
 /-- Meaning of the optional sorting member on one row. -/
 def SortingMemberClaim (resolve : Resolver) (arena : Arena)

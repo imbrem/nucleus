@@ -46,7 +46,8 @@ def ReflexiveEqualityClaimAt (fuel : Nat) (resolve : Resolver) (arena : Arena)
         ResolvesAt fuel resolve arena right value ∧
         value.WellFormed
 
-/-- Exact-fuel identity-beta check used for an inline equality member. -/
+/-- Exact-fuel identity-beta specialization, retained as a small executable
+example of the general root-beta relation below. -/
 def IdentityBetaEqualityClaimAt (fuel : Nat) (resolve : Resolver)
     (arena : Arena) (reference : Ref) : Prop :=
   match arena.eq? reference with
@@ -62,11 +63,38 @@ def IdentityBetaEqualityClaimAt (fuel : Nat) (resolve : Resolver)
         argument.lowerTm (.nil : TyScope []) (.nil : TmScope ArenaSig 0) =
           some loweredArgument
 
+/-- Exact-fuel general root-beta check used by the Rust validator.  The
+lowered target must be the locally nameless opening of the lowered body by the
+lowered argument. -/
+def RootBetaEqualityClaimAt (fuel : Nat) (resolve : Resolver)
+    (arena : Arena) (reference : Ref) : Prop :=
+  match arena.eq? reference with
+  | none => True
+  | some right =>
+      ∃ (type domain : EmptyTy) (name : Nat)
+        (body argument target : EmptyTm)
+        (loweredDomain : Nucleus.HolE.Ty ArenaSig [])
+        (loweredBody : Nucleus.HolE.Tm ArenaSig [] 1)
+        (loweredArgument : Nucleus.HolE.Tm ArenaSig [] 0),
+        ResolvesAt fuel resolve arena reference
+          (.term type (.app (.lam name domain body) argument)) ∧
+        ResolvesAt fuel resolve arena right (.term type target) ∧
+        Value.WellFormed
+          (.term type (.app (.lam name domain body) argument)) ∧
+        domain.lowerTy (.nil : TyScope []) = some loweredDomain ∧
+        body.lowerTm (.nil : TyScope [])
+          (.cons ⟨name, domain.toHolE⟩ (.nil : TmScope ArenaSig 0)) =
+            some loweredBody ∧
+        argument.lowerTm (.nil : TyScope []) (.nil : TmScope ArenaSig 0) =
+          some loweredArgument ∧
+        target.lowerTm (.nil : TyScope []) (.nil : TmScope ArenaSig 0) =
+          some (Nucleus.HolE.openBound loweredBody loweredArgument)
+
 /-- Exact equality alternatives in the current Rust validator. -/
 def ExecutableEqualityClaimAt (fuel : Nat) (resolve : Resolver)
     (arena : Arena) (reference : Ref) : Prop :=
   ReflexiveEqualityClaimAt fuel resolve arena reference ∨
-  IdentityBetaEqualityClaimAt fuel resolve arena reference
+  RootBetaEqualityClaimAt fuel resolve arena reference
 
 /-- Exact-fuel Boolean-context check. -/
 def ContextClaimAt (fuel : Nat) (resolve : Resolver) (arena : Arena)
@@ -153,12 +181,29 @@ theorem identityBetaEqualityClaimAt_sound
     sourceResolved.resolves, targetResolved.resolves, wellFormed,
     domainLowering, argumentLowering⟩
 
+theorem rootBetaEqualityClaimAt_sound
+    (claim : RootBetaEqualityClaimAt fuel resolve arena reference) :
+    RootBetaEqualityClaim resolve arena reference := by
+  unfold RootBetaEqualityClaimAt at claim
+  unfold RootBetaEqualityClaim
+  split <;> try trivial
+  rename_i right member
+  rw [member] at claim
+  rcases claim with ⟨type, domain, name, body, argument, target,
+    loweredDomain, loweredBody, loweredArgument,
+    sourceResolved, targetResolved, wellFormed,
+    domainLowering, bodyLowering, argumentLowering, targetLowering⟩
+  exact ⟨type, domain, name, body, argument, target,
+    loweredDomain, loweredBody, loweredArgument,
+    sourceResolved.resolves, targetResolved.resolves, wellFormed,
+    domainLowering, bodyLowering, argumentLowering, targetLowering⟩
+
 theorem executableEqualityClaimAt_sound
     (claim : ExecutableEqualityClaimAt fuel resolve arena reference) :
     ExecutableEqualityClaim resolve arena reference := by
   cases claim with
   | inl reflexive => exact Or.inl (reflexiveEqualityClaimAt_sound reflexive)
-  | inr beta => exact Or.inr (identityBetaEqualityClaimAt_sound beta)
+  | inr beta => exact Or.inr (rootBetaEqualityClaimAt_sound beta)
 
 theorem contextClaimAt_sound
     (claim : ContextClaimAt fuel resolve arena reference) :
