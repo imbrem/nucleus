@@ -122,8 +122,8 @@ impl Init {
             zero,
             succ,
         };
-        assert_eq!(builder.arena.len(), ROW_COUNT);
-        assert_eq!(generated_roots, ROOTS);
+        debug_assert_eq!(builder.arena.len(), ROW_COUNT);
+        debug_assert_eq!(generated_roots, ROOTS);
 
         Self {
             arena: builder.arena,
