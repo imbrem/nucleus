@@ -2943,7 +2943,8 @@
       "edition": "2018",
       "features": [
         "const_generics",
-        "const_new"
+        "const_new",
+        "serde"
       ],
       "env": {
         "CARGO_PKG_AUTHORS": "The Servo Project Developers",
@@ -2952,7 +2953,11 @@
         "CARGO_PKG_REPOSITORY": "https://github.com/servo/rust-smallvec"
       },
       "targets": [
-        {}
+        {
+          "named_deps": {
+            "serde": ":serde-1.0.229"
+          }
+        }
       ]
     },
     {
@@ -4086,6 +4091,15 @@
       "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1"
+      ]
+    },
+    {
+      "id": "workspace#covalence-logic-hol@0.0.0",
+      "name": "covalence-logic-hol",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+        "registry+https://github.com/rust-lang/crates.io-index#smallvec@1.15.2"
       ]
     },
     {
@@ -5877,6 +5891,13 @@
     {
       "source": "registry+https://github.com/rust-lang/crates.io-index#signature@2.2.0",
       "target": "registry+https://github.com/rust-lang/crates.io-index#rand_core@0.6.4",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "registry+https://github.com/rust-lang/crates.io-index#smallvec@1.15.2",
+      "target": "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
       "kinds": [
         "normal"
       ]
