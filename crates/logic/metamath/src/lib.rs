@@ -22,4 +22,7 @@ pub use parse::{
     FileResolver, MemoryResolver, SourceResolver, parse, parse_into, parse_into_with_resolver,
     parse_with_resolver,
 };
+// `ReplayObserver::assertion` takes a `&Subst`, so an out-of-crate observer
+// needs to be able to name it.
+pub use subst::Subst;
 pub use verify::{ProofStep, ReplayObserver, proof_steps, replay, verify_all, verify_assertion};

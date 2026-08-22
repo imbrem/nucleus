@@ -54,7 +54,7 @@ use fnv::FnvHashMap;
 
 use crate::database::{Assertion, Database, Frame, Proof, Statement};
 use crate::error::MmError;
-use crate::expr::{Expr, render};
+use crate::expr::{Expr, Symbol, render};
 use crate::subst::{Subst, apply_subst, vars_in_body};
 
 /// Verify every `$p` theorem in the database. Returns the number verified.
@@ -567,7 +567,7 @@ fn apply_assertion(
     let args: Vec<Expr> = stack.split_off(stack.len() - n);
 
     // --- build substitution from floats ---
-    let mut subst = Subst::new();
+    let mut subst = Subst::with_capacity(frame.floats.len());
     for (i, f) in frame.floats.iter().enumerate() {
         let arg = &args[i];
         let arg_tc = arg.typecode();
@@ -580,7 +580,7 @@ fn apply_assertion(
                 found: arg_tc.to_string(),
             });
         }
-        subst.insert(f.var.clone(), arg.body().to_vec());
+        subst.insert(Symbol::from(f.var.as_str()), arg.body().to_vec());
     }
 
     // --- check essentials ---
@@ -646,8 +646,8 @@ fn check_disjoints(
     let is_var = |s: &str| ctx.db.is_variable(s);
 
     for (a, b) in &target.frame.disjoints {
-        let img_a = subst.get(a).map_or(&[][..], Vec::as_slice);
-        let img_b = subst.get(b).map_or(&[][..], Vec::as_slice);
+        let img_a = subst.get(a.as_str()).unwrap_or(&[]);
+        let img_b = subst.get(b.as_str()).unwrap_or(&[]);
         let vars_a = vars_in_body(img_a, &is_var);
         let vars_b = vars_in_body(img_b, &is_var);
 
