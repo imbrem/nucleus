@@ -2,7 +2,7 @@
 //!
 //! I/O is returned as a [`Response`] for the terminal or browser to perform.
 
-use covalence_data_cas::MemoryCas;
+use covalence_data_cas::SharedIndexCas;
 use covalence_lib_error::snafu::Snafu;
 use covalence_lib_hash::{O256, o256};
 
@@ -281,7 +281,7 @@ impl Session {
 
     /// Borrows the store.
     #[must_use]
-    pub fn store(&self) -> &std::sync::Arc<MemoryCas> {
+    pub fn store(&self) -> &std::sync::Arc<SharedIndexCas> {
         self.repl.cas()
     }
 
@@ -787,7 +787,11 @@ mod tests {
 
         // Real SQLite images, not placeholder bytes.
         for address in session.repl().addresses() {
-            let bytes = session.repl().cas().read(address, 0..16).expect("read");
+            let bytes = session
+                .repl()
+                .cas()
+                .get_range(address, 0..16)
+                .expect("read");
             assert_eq!(&bytes.expect("resident")[..15], b"SQLite format 3");
         }
 

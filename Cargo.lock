@@ -383,8 +383,8 @@ dependencies = [
  "bytes",
  "covalence-lib-error",
  "covalence-lib-hash",
+ "covalence-lib-table",
  "covalence-logic-cas",
- "hashbrown 0.17.1",
 ]
 
 [[package]]
@@ -525,6 +525,14 @@ dependencies = [
  "indexmap",
  "libsqlite3-sys",
  "sqlite-wasm-rs",
+]
+
+[[package]]
+name = "covalence-lib-table"
+version = "0.0.0"
+dependencies = [
+ "hashbrown 0.17.1",
+ "indexmap",
 ]
 
 [[package]]

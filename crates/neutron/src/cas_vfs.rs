@@ -390,12 +390,12 @@ mod tests {
 
     #[test]
     fn a_mounted_cas_opens_databases_by_address() {
-        use covalence_data_cas::MemoryCas;
+        use covalence_data_cas::SharedIndexCas;
 
         use sqlite::vfs::ConnectionVfsExt;
         use sqlite::{Connection, OpenFlags};
 
-        let cas = Arc::new(MemoryCas::new());
+        let cas = Arc::new(SharedIndexCas::new());
         let address = cas.insert(database_image("cas-vfs-by-address")).unwrap();
 
         // A private name stands in for CAS_VFS_NAME: the test process must not
@@ -421,12 +421,12 @@ mod tests {
 
     #[test]
     fn a_mounted_cas_attaches_through_a_vfs_uri() {
-        use covalence_data_cas::MemoryCas;
+        use covalence_data_cas::SharedIndexCas;
 
         use sqlite::Connection;
         use sqlite::vfs::ConnectionVfsExt;
 
-        let cas = Arc::new(MemoryCas::new());
+        let cas = Arc::new(SharedIndexCas::new());
         let address = cas.insert(database_image("cas-vfs-uri")).unwrap();
         // SAFETY: this name is unique to this test and nothing else registers it.
         let mounted = register_cas(Arc::clone(&cas), "covalence-test-cas-uri", false).unwrap();
@@ -462,11 +462,11 @@ mod tests {
 
     #[test]
     fn an_open_database_survives_its_address_being_dropped() {
-        use covalence_data_cas::MemoryCas;
+        use covalence_data_cas::SharedIndexCas;
 
         use sqlite::Connection;
 
-        let cas = Arc::new(MemoryCas::new());
+        let cas = Arc::new(SharedIndexCas::new());
         let address = cas.insert(database_image("cas-vfs-dropped")).unwrap();
         // SAFETY: this name is unique to this test and nothing else registers it.
         let mounted = register_cas(Arc::clone(&cas), "covalence-test-cas-dropped", false).unwrap();
@@ -496,11 +496,11 @@ mod tests {
 
     #[test]
     fn an_unknown_address_does_not_resolve() {
-        use covalence_data_cas::MemoryCas;
+        use covalence_data_cas::SharedIndexCas;
 
         use sqlite::{Connection, OpenFlags};
 
-        let cas = Arc::new(MemoryCas::new());
+        let cas = Arc::new(SharedIndexCas::new());
         // SAFETY: this name is unique to this test and nothing else registers it.
         let mounted = register_cas(Arc::clone(&cas), "covalence-test-cas-absent", false).unwrap();
 
