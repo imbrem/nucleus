@@ -7,6 +7,7 @@ pub mod cas;
 mod kernel;
 mod resolve;
 mod row;
+pub mod standard;
 pub mod wire;
 
 pub use kernel::{EqualityIx, Kernel, KernelError, KindIx, TmIx, TyIx};
