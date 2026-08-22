@@ -349,6 +349,41 @@ impl<R: Resolver> Kernel<R> {
             .map(TmIx)
     }
 
+    /// Add a checked Boolean term to the normalized assumption context.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the handle denotes a well-typed Boolean term
+    /// in the current arena or complete revalidation fails.
+    pub fn add_context(
+        &mut self,
+        fuel: usize,
+        proposition: TmIx,
+    ) -> Result<(), KernelError<R::Error>> {
+        let value = resolve_at(&self.arena, self.resolver(), proposition.reference(), fuel)?;
+        if !is_checked_bool(&value) {
+            return Err(KernelError::InvalidContext(proposition.reference()));
+        }
+        let mut candidate = self.arena.clone();
+        candidate.insert_context(proposition.reference());
+        self.replace_arena_checked(candidate, fuel)
+    }
+
+    /// Enable one named axiom capability and revalidate the kernel.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unsupported capability name or if complete
+    /// revalidation fails.
+    pub fn add_axiom(&mut self, fuel: usize, name: &str) -> Result<(), KernelError<R::Error>> {
+        if name != "ax.inf" {
+            return Err(KernelError::UnsupportedAxiom(name.to_owned()));
+        }
+        let mut candidate = self.arena.clone();
+        candidate.insert_axiom(name);
+        self.replace_arena_checked(candidate, fuel)
+    }
+
     /// Append a literal raw arena import. The import conveys no trust by
     /// itself.
     ///
@@ -938,6 +973,10 @@ mod tests {
                 &truth_equality,
             )
             .unwrap();
+        kernel.add_context(8, truth).unwrap();
+        kernel.add_context(8, truth).unwrap();
+        kernel.add_axiom(8, "ax.inf").unwrap();
+        kernel.add_axiom(8, "ax.inf").unwrap();
         let proposition = kernel.eq(7, application, truth).unwrap();
 
         assert_eq!(symmetric.left(), truth.reference());
@@ -946,6 +985,11 @@ mod tests {
         assert_eq!(transitive.right(), application.reference());
         assert_eq!(congruent.left(), application.reference());
         assert_eq!(congruent.right(), second_application.reference());
+        assert_eq!(
+            kernel.arena().context().collect::<Vec<_>>(),
+            vec![truth.reference()]
+        );
+        assert_eq!(kernel.arena().axioms().collect::<Vec<_>>(), vec!["ax.inf"]);
 
         assert_eq!(
             kernel.arena().tag(bool_ty.reference()),

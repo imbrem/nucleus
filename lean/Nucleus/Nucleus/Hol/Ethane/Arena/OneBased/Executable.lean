@@ -255,6 +255,20 @@ def pushAssertionRaw (arena : Arena) (record : Meta) : Arena :=
   | .mk imports axs defs ctx assume assert =>
       .mk imports axs defs ctx assume (assert ++ [record])
 
+/-- Insert one Boolean-context reference exactly as Rust's `BTreeSet`-backed
+`Arena::insert_context` does. -/
+def insertContextRaw (arena : Arena) (reference : Ref) : Arena :=
+  match arena with
+  | .mk imports axs defs ctx assume assert =>
+      .mk imports axs defs (insert reference ctx) assume assert
+
+/-- Insert one named axiom capability exactly as Rust's `BTreeSet`-backed
+`Arena::insert_axiom` does. -/
+def insertAxiomRaw (arena : Arena) (name : String) : Arena :=
+  match arena with
+  | .mk imports axs defs ctx assume assert =>
+      .mk imports (insert name axs) defs ctx assume assert
+
 /-- Replace one row's inline equality member.  Failure means the one-based
 reference was outside the dense definition vector. -/
 def setEq? (arena : Arena) (reference right : Ref) : Option Arena :=
@@ -349,6 +363,18 @@ structure AssertEqResult (before : RustKernel resolve) (left right : Ref) where
   after : RustKernel resolve
   updated : before.arena.setEq? left right = some after.arena
 
+/-- Successful checked context insertion and complete revalidation. -/
+structure ContextResult (before : RustKernel resolve) (reference : Ref) where
+  after : RustKernel resolve
+  inserted : after.arena = before.arena.insertContextRaw reference
+  checked : ContextClaimAt after.fuel resolve after.arena reference
+
+/-- Successful checked axiom-capability insertion and complete revalidation. -/
+structure AxiomResult (before : RustKernel resolve) (name : String) where
+  after : RustKernel resolve
+  inserted : after.arena = before.arena.insertAxiomRaw name
+  allowed : AllowedAxiom name
+
 /-- Every public checked append returns another abstract valid kernel. -/
 theorem PushResult.valid {resolve : Resolver} {before : RustKernel resolve}
     {row : detail.Row} {expected : TagSort}
@@ -391,6 +417,24 @@ theorem AssertResult.valid {resolve : Resolver}
 theorem AssertEqResult.valid {resolve : Resolver}
     {before : RustKernel resolve} {left right : Ref}
     (result : AssertEqResult before left right) :
+    result.after.arena.KernelValid resolve :=
+  by simpa [toKernel] using result.after.toKernel.valid
+
+theorem ContextResult.valid {resolve : Resolver}
+    {before : RustKernel resolve} {reference : Ref}
+    (result : ContextResult before reference) :
+    result.after.arena.KernelValid resolve :=
+  by simpa [toKernel] using result.after.toKernel.valid
+
+theorem ContextResult.claim {resolve : Resolver}
+    {before : RustKernel resolve} {reference : Ref}
+    (result : ContextResult before reference) :
+    ContextClaim resolve result.after.arena reference :=
+  contextClaimAt_sound result.checked
+
+theorem AxiomResult.valid {resolve : Resolver}
+    {before : RustKernel resolve} {name : String}
+    (result : AxiomResult before name) :
     result.after.arena.KernelValid resolve :=
   by simpa [toKernel] using result.after.toKernel.valid
 
