@@ -18,23 +18,23 @@ namespace Arena
 
 def pushImportRaw (arena : Arena) (entry : Import) : Arena :=
   match arena with
-  | .mk imports axs defs ctx assume assert =>
-      .mk (imports ++ [entry]) axs defs ctx assume assert
+  | .mk imports axs defs synFacts synFree ctx assume assert =>
+      .mk (imports ++ [entry]) axs defs synFacts synFree ctx assume assert
 
 def pushAssumptionRaw (arena : Arena) (record : Meta) : Arena :=
   match arena with
-  | .mk imports axs defs ctx assume assert =>
-      .mk imports axs defs ctx (assume ++ [record]) assert
+  | .mk imports axs defs synFacts synFree ctx assume assert =>
+      .mk imports axs defs synFacts synFree ctx (assume ++ [record]) assert
 
 def insertContextRaw (arena : Arena) (reference : Ref) : Arena :=
   match arena with
-  | .mk imports axs defs ctx assume assert =>
-      .mk imports axs defs (insert reference ctx) assume assert
+  | .mk imports axs defs synFacts synFree ctx assume assert =>
+      .mk imports axs defs synFacts synFree (insert reference ctx) assume assert
 
 def insertAxiomRaw (arena : Arena) (name : String) : Arena :=
   match arena with
-  | .mk imports axs defs ctx assume assert =>
-      .mk imports (insert name axs) defs ctx assume assert
+  | .mk imports axs defs synFacts synFree ctx assume assert =>
+      .mk imports (insert name axs) defs synFacts synFree ctx assume assert
 
 /-- Replace one inline equality parent. `none` is the root marker used by
 path compression. -/
@@ -44,10 +44,10 @@ def setEq? (arena : Arena) (reference : Ref) (parent : Option Ref) : Option Aren
   | none => none
   | some _ =>
       match arena with
-      | .mk imports axs defs ctx assume assert =>
+      | .mk imports axs defs synFacts synFree ctx assume assert =>
           some (.mk imports axs
             (defs.modify position fun row => { row with eq := parent })
-            ctx assume assert)
+            synFacts synFree ctx assume assert)
 
 end Arena
 

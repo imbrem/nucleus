@@ -87,8 +87,8 @@ def Arena.CanPush (arena : Arena) (row : detail.Row) : Prop :=
 /-- Append one raw row without claiming that it is logically valid. -/
 def Arena.pushRaw (arena : Arena) (row : detail.Row) : Arena :=
   match arena with
-  | .mk imports axs defs ctx assume assert =>
-      .mk imports axs (defs ++ [row]) ctx assume assert
+  | .mk imports axs defs synFacts synFree ctx assume assert =>
+      .mk imports axs (defs ++ [row]) synFacts synFree ctx assume assert
 
 theorem rowsValid_append (allocated : Nat) (left right : List detail.Row) :
     RowsValid allocated (left ++ right) ↔
@@ -110,7 +110,7 @@ theorem rowsValid_append (allocated : Nat) (left right : List detail.Row) :
     (arena.pushRaw row).StructurallyValid ↔
       arena.StructurallyValid ∧ arena.CanPush row := by
   cases arena with
-  | mk imports axs defs ctx assume assert =>
+  | mk imports axs defs synFacts synFree ctx assume assert =>
       change RowsValid 0 (defs ++ [row]) ↔
         RowsValid 0 defs ∧ RowValid defs.length row
       rw [rowsValid_append]
