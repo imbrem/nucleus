@@ -11,7 +11,7 @@ mod syn;
 mod table;
 pub mod wire;
 
-pub use kernel::{Kernel, KernelError};
+pub use kernel::{CopyMap, Kernel, KernelError};
 pub use resolve::{Expr, ResolveError, Resolver, ResolverExt};
 pub use row::{KindTag, Sort, Tag, TmTag, TyTag};
 pub use syn::{SynFact, SynRel};

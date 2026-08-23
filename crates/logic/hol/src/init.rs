@@ -121,6 +121,16 @@ impl Compiled {
         &self.arena
     }
 
+    /// Creates a kernel initialized with this compiled arena prefix.
+    ///
+    /// Kernels created from compiled prefixes with the same arena address and
+    /// length can copy prefix references between one another as identities.
+    /// Manifest names and migration metadata do not affect that identity.
+    #[must_use]
+    pub fn kernel(&self) -> Kernel {
+        Kernel::with_init_prefix(self.arena.clone())
+    }
+
     /// Returns the complete source-manifest hash used for this compilation.
     ///
     /// Unlike [`Arena::addr`], this changes when stable names or migration
@@ -401,6 +411,48 @@ mod tests {
         let migrated = compile(&migrated).unwrap();
         assert_eq!(migrated.arena().addr(), compiled.arena().addr());
         assert_ne!(migrated.manifest_addr(), compiled.manifest_addr());
+    }
+
+    #[test]
+    fn copy_uses_compiled_arena_identity_and_rejects_prefix_mismatch_atomically() {
+        let manifest: Manifest = serde_json::from_str(FIXTURE).unwrap();
+        let compiled = compile(&manifest).unwrap();
+        let mut metadata_changed = manifest.clone();
+        metadata_changed.migration.push_str(" (metadata only)");
+        let metadata_changed = compile(&metadata_changed).unwrap();
+        assert_eq!(compiled.arena().addr(), metadata_changed.arena().addr());
+        assert_ne!(compiled.manifest_addr(), metadata_changed.manifest_addr());
+
+        let root = compiled.get("false").unwrap();
+        let source = compiled.kernel();
+        let mut destination = metadata_changed.kernel();
+        let original_len = destination.len();
+        let copied = destination.copy_term_from(&source, root).unwrap();
+        assert_eq!(copied.get(root), Some(root));
+        assert_eq!(copied.roots(), [root]);
+        assert_eq!(destination.len(), original_len);
+
+        let mut arena_changed = manifest;
+        let RawNode::TmFv { name, .. } = &mut arena_changed.declarations[4].body[0].node else {
+            panic!("fixture row must be a free variable");
+        };
+        *name += 1;
+        let arena_changed = compile(&arena_changed).unwrap();
+        assert_ne!(compiled.arena().addr(), arena_changed.arena().addr());
+        let mut mismatched = arena_changed.kernel();
+        let before = mismatched.arena().clone();
+        assert!(matches!(
+            mismatched.copy_term_from(&source, root),
+            Err(KernelError::InitPrefixMismatch)
+        ));
+        assert_eq!(*mismatched.arena(), before);
+
+        let mut empty = Kernel::new();
+        assert!(matches!(
+            empty.copy_terms_from(&source, &[]),
+            Err(KernelError::InitPrefixMismatch)
+        ));
+        assert!(empty.is_empty());
     }
 
     #[test]
