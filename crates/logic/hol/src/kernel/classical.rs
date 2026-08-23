@@ -693,12 +693,14 @@ impl Kernel {
         &self,
         propositions: &[PropId],
     ) -> Result<SmallVec<[PropId; 2]>, KernelError> {
-        let mut canonical = SmallVec::from_slice(propositions);
-        canonical.sort_unstable();
-        canonical.dedup();
-        for proposition in &canonical {
+        let mut sorted = propositions.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        for proposition in &sorted {
             self.validate_prop(*proposition)?;
         }
+        let mut canonical = SmallVec::<[PropId; 2]>::new();
+        canonical.extend_from_slice(&sorted);
         Ok(canonical)
     }
     fn expand_right(
@@ -1001,6 +1003,38 @@ mod tests {
         expected.sort_unstable();
         assert_eq!(kernel.theorem(theorem).unwrap().premises(), expected);
         assert_eq!(kernel.theorem(theorem).unwrap().conclusions(), expected);
+        assert!(
+            !kernel.theorem(theorem).unwrap().premises.spilled(),
+            "len={} capacity={}",
+            kernel.theorem(theorem).unwrap().premises.len(),
+            kernel.theorem(theorem).unwrap().premises.capacity()
+        );
+
+        let widened = kernel
+            .weaken(theorem, &[p.negated()], &[q.negated()])
+            .unwrap();
+        assert!(kernel.theorem(widened).unwrap().premises.spilled());
+    }
+
+    #[test]
+    fn weakening_canonicalizes_hostile_unsorted_input_before_admission() {
+        let Fixture { mut kernel, p, q } = fixture();
+        let identity = kernel.identity(p).unwrap();
+        let theorem = kernel
+            .weaken(identity, &[q, p.negated(), q, p], &[q.negated(), p, q])
+            .unwrap();
+        let mut expected_premises = vec![p, p.negated(), q];
+        expected_premises.sort_unstable();
+        let mut expected_conclusions = vec![p, q, q.negated()];
+        expected_conclusions.sort_unstable();
+        assert_eq!(
+            kernel.theorem(theorem).unwrap().premises(),
+            expected_premises
+        );
+        assert_eq!(
+            kernel.theorem(theorem).unwrap().conclusions(),
+            expected_conclusions
+        );
     }
 
     #[test]
@@ -1018,6 +1052,23 @@ mod tests {
         ));
         assert_eq!(kernel.assume(q.negated()).unwrap(), p_id);
         assert!(kernel.theorem(q_id).is_ok());
+    }
+
+    #[test]
+    fn deletion_with_an_absent_handle_is_atomic_and_reuse_is_lifo() {
+        let Fixture { mut kernel, p, q } = fixture();
+        let first = kernel.identity(p).unwrap();
+        let second = kernel.identity(q).unwrap();
+        let absent = ThmId::new(second.get() + 1).unwrap();
+        assert!(kernel.remove_theorems(&[first, absent]).is_err());
+        assert!(kernel.theorem(first).is_ok());
+        assert!(kernel.theorem(second).is_ok());
+
+        kernel.remove_theorems(&[first, second]).unwrap();
+        assert!(kernel.theorem(first).is_err());
+        assert!(kernel.theorem(second).is_err());
+        assert_eq!(kernel.identity(p.negated()).unwrap(), second);
+        assert_eq!(kernel.identity(q.negated()).unwrap(), first);
     }
 
     #[test]
