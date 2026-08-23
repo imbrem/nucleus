@@ -564,6 +564,7 @@ name = "covalence-logic-lrat"
 version = "0.0.0"
 dependencies = [
  "covalence-lib-error",
+ "covalence-logic-hol",
  "covalence-logic-sat",
 ]
 

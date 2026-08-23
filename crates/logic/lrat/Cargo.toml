@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Parser-independent typed LRAT clause validation"
+description = "Userspace LRAT proof loading through the checked HOL kernel"
 publish = false
 
 [features]
@@ -13,6 +13,7 @@ parse = []
 
 [dependencies]
 covalence-lib-error = { path = "../../lib/error" }
+covalence-logic-hol = { path = "../hol" }
 covalence-logic-sat = { path = "../sat" }
 
 [lints]

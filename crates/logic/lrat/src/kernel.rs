@@ -9,15 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use covalence_lib_error::snafu::{self, Snafu};
 use covalence_logic_sat::cnf::{Clause, Formula, Literal};
 
-/// A monotonically allocated clause identifier.
-pub type ClauseId = u64;
-
-/// One explicitly delimited RAT resolvent check.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RatGroup {
-    pub opposing_clause_id: ClauseId,
-    pub resolvent_rup_hints: Vec<ClauseId>,
-}
+use crate::{ClauseId, RatGroup};
 
 /// A semantic rejection category. Rejection never changes kernel state.
 #[non_exhaustive]
