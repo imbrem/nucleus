@@ -1,0 +1,6 @@
+# Ethane compact builtin registry v1. This is syntax, not the init manifest.
+# version	family	code	name	operands	result
+1	op1	0	not	bool	bool
+1	op2	0	and	bool,bool	bool
+1	op2	1	or	bool,bool	bool
+1	op2	2	imp	bool,bool	bool

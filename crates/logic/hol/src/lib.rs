@@ -3,6 +3,7 @@
 //! Deserialization establishes only the representation invariants. It does
 //! not establish kinding, typing, equality, or provability.
 
+pub mod builtin;
 pub mod init;
 mod kernel;
 mod resolve;
