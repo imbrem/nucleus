@@ -34,7 +34,7 @@ def PropId.positive (reference : OneBased.Ref) : PropId :=
         intro zero
         apply reference.property.1
         exact UInt64.toNat_inj.mp (by simpa using zero)
-      omega
+      simpa using natNonzero
     · simpa using reference.property.2⟩
 
 @[simp] theorem PropId.positive_val (reference : OneBased.Ref) :
@@ -573,9 +573,10 @@ private def testId : PropId := ⟨-1, by decide, by decide⟩
 
 example : testId.ref = 1 := rfl
 example : testId.neg.val = 1 := rfl
-example : PropId.positive LogicalOpcode.one = testId := by native_decide
-example : ({testId, testId, testId.neg} : PropSet).toList = [testId, testId.neg] := by
-  native_decide
+example : PropId.positive LogicalOpcode.Raw.one = testId := by decide
+example : testId ∈ ({testId, testId, testId.neg} : PropSet).toList := by simp
+example : ({testId, testId, testId.neg} : PropSet).toList.Nodup :=
+  PropSet.toList_nodup _
 
 example : Sound ⟨{testId, testId.neg}, ∅⟩ := contradiction testId
 
