@@ -7,7 +7,7 @@
 # Buffer intentionally accepts bytes, bytearray, memoryview, and other
 # contiguous buffer exporters.
 
-from collections.abc import Buffer, Iterable, Sequence
+from collections.abc import Buffer, Sequence
 
 __version__: str
 
