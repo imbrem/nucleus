@@ -36,6 +36,10 @@ impl PropId {
     /// # Errors
     ///
     /// Returns an error when the reference exceeds the signed wire space.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if `Ref` violates its nonzero representation invariant.
     pub fn positive(reference: Ref) -> Result<Self, PropIdError> {
         let magnitude =
             i64::try_from(reference.get()).map_err(|_| PropIdError { value: i64::MIN })?;
@@ -65,6 +69,11 @@ impl PropId {
     }
 
     /// Returns the complementary proposition.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if `PropId` violates its nonzero, non-`i64::MIN`
+    /// representation invariants.
     #[must_use]
     pub const fn negated(self) -> Self {
         // Constructors exclude MIN and zero.
@@ -78,6 +87,10 @@ impl PropId {
     }
 
     /// Returns the underlying unsigned local term reference.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if `PropId` violates its nonzero representation invariant.
     #[must_use]
     pub const fn reference(self) -> Ref {
         let magnitude = self.get().unsigned_abs();
@@ -401,6 +414,11 @@ impl Kernel {
     ///
     /// Returns an error and changes nothing if any handle is absent, deleted,
     /// or repeated.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the private theorem table violates its indexing
+    /// invariant after every requested handle has been validated.
     pub fn remove_theorems(&mut self, ids: &[ThmId]) -> Result<(), KernelError> {
         let mut sorted = ids.to_vec();
         sorted.sort_unstable();
