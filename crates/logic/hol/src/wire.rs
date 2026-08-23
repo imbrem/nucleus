@@ -4,13 +4,36 @@ use std::io::{Read, Write};
 
 use crate::Arena;
 
-/// Deserializes an unvalidated arena.
+/// Deserializes an unvalidated arena from the complete contents of `reader`.
+///
+/// Decoding is whole-object: bytes after the arena are a decode failure, not
+/// padding. Two byte strings that differ only in a suffix would otherwise be
+/// two content addresses for one arena.
 ///
 /// # Errors
 ///
-/// Returns an error for malformed CBOR or a representation invariant failure.
-pub fn deserialize(reader: impl Read) -> Result<Arena, DecodeError> {
-    covalence_lib_cbor::from_reader(reader).map_err(|error| DecodeError(error.to_string()))
+/// Returns an error for malformed CBOR, a representation invariant failure, or
+/// any byte left unread once the arena has been decoded.
+pub fn deserialize(mut reader: impl Read) -> Result<Arena, DecodeError> {
+    let arena = covalence_lib_cbor::from_reader(&mut reader)
+        .map_err(|error| DecodeError(error.to_string()))?;
+    if reader_is_exhausted(&mut reader)? {
+        Ok(arena)
+    } else {
+        Err(DecodeError("trailing bytes after the arena".to_owned()))
+    }
+}
+
+fn reader_is_exhausted(reader: &mut impl Read) -> Result<bool, DecodeError> {
+    let mut trailing = [0_u8; 1];
+    loop {
+        return match reader.read(&mut trailing) {
+            Ok(0) => Ok(true),
+            Ok(_) => Ok(false),
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => Err(DecodeError(error.to_string())),
+        };
+    }
 }
 
 /// Serializes a raw arena through its exact Serde view.
