@@ -219,8 +219,8 @@ impl Kernel {
         let rhs = self.theorem(right)?.clone();
         let mut left_conclusions = lhs.conclusions.clone();
         let mut right_premises = rhs.premises.clone();
-        if !remove_one(&mut left_conclusions, proposition)
-            || !remove_one(&mut right_premises, proposition)
+        if !remove_sorted(&mut left_conclusions, proposition)
+            || !remove_sorted(&mut right_premises, proposition)
         {
             return Err(KernelError::InvalidTheoremRule { rule: "cut" });
         }
@@ -267,7 +267,7 @@ impl Kernel {
     pub fn not_left(&mut self, theorem: ThmId, p: PropId) -> Result<(), KernelError> {
         let source = self.theorem(theorem)?.clone();
         let mut conclusions = source.conclusions.clone();
-        if !remove_one(&mut conclusions, p) {
+        if !remove_sorted(&mut conclusions, p) {
             return Err(KernelError::InvalidTheoremRule { rule: "not left" });
         }
         let mut premises = source.premises;
@@ -286,7 +286,7 @@ impl Kernel {
     pub fn not_right(&mut self, theorem: ThmId, p: PropId) -> Result<(), KernelError> {
         let source = self.theorem(theorem)?.clone();
         let mut premises = source.premises.clone();
-        if !remove_one(&mut premises, p) {
+        if !remove_sorted(&mut premises, p) {
             return Err(KernelError::InvalidTheoremRule { rule: "not right" });
         }
         let mut conclusions = source.conclusions;
@@ -329,7 +329,7 @@ impl Kernel {
         let rhs = self.theorem(right_theorem)?.clone();
         let mut left_conc = lhs.conclusions.clone();
         let mut right_conc = rhs.conclusions.clone();
-        if !remove_one(&mut left_conc, left) || !remove_one(&mut right_conc, right) {
+        if !remove_sorted(&mut left_conc, left) || !remove_sorted(&mut right_conc, right) {
             return Err(KernelError::InvalidTheoremRule { rule: "and right" });
         }
         let mut premises = lhs.premises;
@@ -356,7 +356,7 @@ impl Kernel {
         let rhs = self.theorem(right_theorem)?.clone();
         let mut left_prem = lhs.premises.clone();
         let mut right_prem = rhs.premises.clone();
-        if !remove_one(&mut left_prem, left) || !remove_one(&mut right_prem, right) {
+        if !remove_sorted(&mut left_prem, left) || !remove_sorted(&mut right_prem, right) {
             return Err(KernelError::InvalidTheoremRule { rule: "or left" });
         }
         let mut premises = left_prem;
@@ -402,7 +402,8 @@ impl Kernel {
         let rhs = self.theorem(right_theorem)?.clone();
         let mut left_conc = lhs.conclusions.clone();
         let mut right_prem = rhs.premises.clone();
-        if !remove_one(&mut left_conc, antecedent) || !remove_one(&mut right_prem, consequent) {
+        if !remove_sorted(&mut left_conc, antecedent) || !remove_sorted(&mut right_prem, consequent)
+        {
             return Err(KernelError::InvalidTheoremRule { rule: "imp left" });
         }
         let mut premises = lhs.premises;
@@ -424,7 +425,8 @@ impl Kernel {
         let source = self.theorem(theorem)?.clone();
         let mut premises = source.premises.clone();
         let mut conclusions = source.conclusions.clone();
-        if !remove_one(&mut premises, antecedent) || !remove_one(&mut conclusions, consequent) {
+        if !remove_sorted(&mut premises, antecedent) || !remove_sorted(&mut conclusions, consequent)
+        {
             return Err(KernelError::InvalidTheoremRule { rule: "imp right" });
         }
         conclusions.push(implication);
@@ -447,7 +449,8 @@ impl Kernel {
         let rhs = self.theorem(right)?.clone();
         let mut left_conc = lhs.conclusions.clone();
         let mut right_conc = rhs.conclusions.clone();
-        if !remove_one(&mut left_conc, pivot) || !remove_one(&mut right_conc, pivot.negated()) {
+        if !remove_sorted(&mut left_conc, pivot) || !remove_sorted(&mut right_conc, pivot.negated())
+        {
             return Err(KernelError::InvalidTheoremRule { rule: "resolution" });
         }
         let mut premises = lhs.premises;
@@ -474,7 +477,7 @@ impl Kernel {
     ) -> Result<ThmId, KernelError> {
         let source = self.theorem(theorem)?.clone();
         let mut conc = source.conclusions.clone();
-        if !remove_one(&mut conc, formula) {
+        if !remove_sorted(&mut conc, formula) {
             return Err(KernelError::InvalidTheoremRule {
                 rule: "conclusion expansion",
             });
@@ -501,7 +504,7 @@ impl Kernel {
     ) -> Result<ThmId, KernelError> {
         let source = self.theorem(theorem)?.clone();
         let mut conclusions = source.conclusions.clone();
-        if !remove_one(&mut conclusions, formula) {
+        if !remove_sorted(&mut conclusions, formula) {
             return Err(KernelError::InvalidTheoremRule {
                 rule: "conclusion flattening",
             });
@@ -531,7 +534,7 @@ impl Kernel {
     ) -> Result<ThmId, KernelError> {
         let source = self.theorem(theorem)?.clone();
         let mut premises = source.premises.clone();
-        if !remove_one(&mut premises, formula) {
+        if !remove_sorted(&mut premises, formula) {
             return Err(KernelError::InvalidTheoremRule {
                 rule: "premise flattening",
             });
@@ -852,7 +855,7 @@ impl Kernel {
             TreeSide::Conjunctive => &mut premises,
             TreeSide::Disjunctive => &mut conclusions,
         };
-        if leaves.iter().any(|leaf| !remove_one(context, *leaf)) {
+        if leaves.iter().any(|leaf| !remove_sorted(context, *leaf)) {
             return Err(KernelError::InvalidTheoremRule {
                 rule: "opcode tree folding",
             });
@@ -868,21 +871,21 @@ enum TreeSide {
     Disjunctive,
 }
 
-fn remove_one(values: &mut PropVec, needle: PropId) -> bool {
-    match values.iter().position(|value| *value == needle) {
-        Some(index) => {
+fn remove_sorted(values: &mut PropVec, needle: PropId) -> bool {
+    match values.binary_search(&needle) {
+        Ok(index) => {
             values.remove(index);
             true
         }
-        None => false,
+        Err(_) => false,
     }
 }
 
 fn remove_pair(values: &mut PropVec, left: PropId, right: PropId) -> bool {
-    if !remove_one(values, left) {
+    if !remove_sorted(values, left) {
         return false;
     }
-    left == right || remove_one(values, right)
+    left == right || remove_sorted(values, right)
 }
 
 #[cfg(test)]
