@@ -616,7 +616,7 @@ impl Arena {
             let SynSlot::Free(free) = *slot else {
                 return None;
             };
-            self.syn_free = free.free;
+            self.syn_free = free.next;
             *slot = SynSlot::Fact(fact);
             return Some(id);
         }
@@ -657,7 +657,7 @@ impl Arena {
             return false;
         }
         *slot = SynSlot::Free(SynFree {
-            free: self.syn_free,
+            next: self.syn_free,
         });
         self.syn_free = Some(id);
         true
@@ -682,7 +682,7 @@ impl Arena {
                     continue;
                 };
                 self.syn_facts[position] = SynSlot::Free(SynFree {
-                    free: self.syn_free,
+                    next: self.syn_free,
                 });
                 self.syn_free = Some(value);
             }

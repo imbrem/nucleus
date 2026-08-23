@@ -54,7 +54,7 @@ pub struct SynFact {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SynFree {
-    pub(crate) free: Option<SynFactId>,
+    pub(crate) next: Option<SynFactId>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -110,6 +110,7 @@ impl SynFact {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{Arena, wire};
 
     #[test]
     fn relations_form_the_expected_refinement_chain() {
@@ -127,5 +128,20 @@ mod tests {
             std::mem::size_of::<SynSlot>(),
             std::mem::size_of::<SynFact>()
         );
+    }
+
+    #[test]
+    fn half_present_endpoints_round_trip_as_reserved_raw_data() {
+        let input = Ref::new(1).unwrap();
+        let output = Ref::new(2).unwrap();
+        let fact = SynFact::new(SynRel::Syn, Some(input), None, input, output);
+        let mut arena = Arena::empty();
+        let id = arena.push_syn_fact(fact).unwrap();
+
+        let mut encoded = Vec::new();
+        wire::serialize(&arena, &mut encoded).unwrap();
+        let decoded = wire::deserialize(encoded.as_slice()).unwrap();
+
+        assert_eq!(decoded.syn_fact(id), Some(fact));
     }
 }
