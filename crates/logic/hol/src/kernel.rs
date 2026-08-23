@@ -1013,7 +1013,7 @@ mod tests {
     use std::convert::Infallible;
 
     use super::*;
-    use crate::{KindTag, LinkFormat, Table, TmTag, TyTag, init};
+    use crate::{KindTag, LinkFormat, SynRel, Table, TmTag, TyTag, init};
     use covalence_lib_json::serde_json;
 
     struct OneTable(Table);
@@ -1094,6 +1094,61 @@ mod tests {
             Err(KernelError::InitPrefixMismatch)
         ));
         assert_eq!(init.get("bool"), Some(bool_ty));
+    }
+
+    #[test]
+    fn logical_lowering_produces_checked_direct_syntactic_facts() {
+        let manifest: init::Manifest = serde_json::from_str(include_str!(
+            "../../../../theories/init-boolean.checked.json"
+        ))
+        .unwrap();
+        let init = init::compile(&manifest).unwrap();
+        let truth = init.get("true").unwrap();
+
+        let mut unary = Kernel::with_init(&init);
+        let compact = unary.op1(Op1::Not, truth).unwrap();
+        let id = unary.logical_lower_fact(None, &init, compact).unwrap();
+        let fact = unary.syn_fact(id).unwrap();
+        assert_eq!(fact.rel(), SynRel::Syn);
+        assert_eq!(fact.input(), compact);
+        assert_eq!(fact.var(), None);
+        assert_eq!(fact.val(), None);
+
+        let mut unary_direct = Kernel::with_init(&init);
+        let direct_compact = unary_direct.op1(Op1::Not, truth).unwrap();
+        let direct_expansion = unary_direct.lower_logical(&init, direct_compact).unwrap();
+        assert_eq!(fact.output(), direct_expansion);
+        unary.union_syn_fact(id).unwrap();
+        assert!(unary.equivalent(compact, fact.output()).unwrap());
+
+        for op in [Op2::And, Op2::Or, Op2::Imp] {
+            let mut binary = Kernel::with_init(&init);
+            let compact = binary.op2(op, truth, truth).unwrap();
+            let id = binary.logical_lower_fact(None, &init, compact).unwrap();
+            let fact = binary.syn_fact(id).unwrap();
+
+            let mut direct = Kernel::with_init(&init);
+            let direct_compact = direct.op2(op, truth, truth).unwrap();
+            let direct_expansion = direct.lower_logical(&init, direct_compact).unwrap();
+            assert_eq!(fact.rel(), SynRel::Syn);
+            assert_eq!(fact.input(), compact);
+            assert_eq!(fact.output(), direct_expansion);
+        }
+
+        let mut initialized = Kernel::with_init(&init);
+        assert!(initialized.logical_lower_fact(None, &init, truth).is_err());
+        assert_eq!(initialized.syn_fact_len(), 0);
+
+        let mut bare = Kernel::new();
+        let star = bare.star().unwrap();
+        let bool_ty = bare.bool_ty(star).unwrap();
+        let bare_truth = bare.bool(bool_ty, true).unwrap();
+        let compact = bare.op1(Op1::Not, bare_truth).unwrap();
+        assert!(matches!(
+            bare.logical_lower_fact(None, &init, compact),
+            Err(KernelError::InitPrefixMismatch)
+        ));
+        assert_eq!(bare.syn_fact_len(), 0);
     }
 
     #[test]

@@ -5,11 +5,37 @@
 
 use std::{collections::BTreeSet, convert::Infallible};
 
-use crate::{Ref, Sort, SynFact, SynFactId, SynRel, row::Expr as Node};
+use crate::{Ref, Sort, SynFact, SynFactId, SynRel, init::Compiled, row::Expr as Node};
 
 use super::{Kernel, KernelError};
 
 impl Kernel {
+    /// Records that a compact logical opcode is syntactically equal to its
+    /// canonical opcode-free init expansion.
+    ///
+    /// `target` replaces that one-based slot when present; `None` allocates.
+    /// The expansion is appended to this kernel using the named definition in
+    /// `init`, exactly as in [`Kernel::lower_logical`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the source is not a logical opcode row, the init
+    /// prefix is absent or mismatched, checked lowering fails, or the
+    /// replacement slot is absent.
+    pub fn logical_lower_fact(
+        &mut self,
+        target: Option<SynFactId>,
+        init: &Compiled,
+        source: Ref,
+    ) -> Result<SynFactId, KernelError> {
+        let expansion = self.lower_logical(init, source)?;
+        self.require_compatible_endpoints::<Infallible>(source, expansion)?;
+        self.put_fact(
+            target,
+            SynFact::new(SynRel::Syn, None, None, source, expansion),
+        )
+    }
+
     /// Number of allocated syntactic-fact slots, including removed slots.
     #[must_use]
     pub fn syn_fact_len(&self) -> usize {
