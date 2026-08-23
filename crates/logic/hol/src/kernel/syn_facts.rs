@@ -3,7 +3,7 @@
 //! Lookup policy and proof search are intentionally absent. Userspace may
 //! index these slots however it likes and may discard temporary suffixes.
 
-use std::convert::Infallible;
+use std::{collections::BTreeSet, convert::Infallible};
 
 use crate::{Ref, Sort, SynFact, SynFactId, SynRel, row::Expr as Node};
 
@@ -318,6 +318,15 @@ impl Kernel {
         } else {
             if !self.same_variable::<Infallible>(shape.input_binder, shape.output_binder)? {
                 return Err(Self::invalid_fact("binder congruence"));
+            }
+            // The binder row is carried through unchanged, so the replacement
+            // must not reach the type it advertises. A `ty.lam` binder carries
+            // a kind, which no substitution can touch.
+            if let (Some(var), Node::Lam(..)) = (var, input_node) {
+                let classifier = self.classifier_as::<Infallible>(shape.input_binder)?;
+                if self.contains_variable::<Infallible>(classifier, var)? {
+                    return Err(Self::invalid_fact("binder classifier"));
+                }
             }
             (None, None)
         };
@@ -775,24 +784,32 @@ impl Kernel {
         Ok(())
     }
 
+    /// Whether `[… / var] input` leaves the leaf row `input` untouched.
+    ///
+    /// A different name is not enough on its own: a `tm.fv` row carries its
+    /// type, and `ty.model` puts a term inside a type, so the classifier can
+    /// mention the variable being replaced. A `ty.fv` row carries a kind, and
+    /// kinds contain no named syntax at any depth, so nothing there can change.
     fn require_substitution_leaf<E>(&self, var: Ref, input: Ref) -> Result<(), KernelError<E>>
     where
         E: std::error::Error + 'static,
     {
         let node = *self.row::<E>(input)?.expr();
-        let var_node = *self.row::<E>(var)?.expr();
-        let unchanged_variable = match (var_node, node) {
-            (Node::TyFv { .. }, Node::TyFv { .. })
-            | (Node::TmFv { .. }, Node::TyFv { .. })
-            | (Node::TmFv { .. }, Node::TmFv { .. }) => !Self::same_variable_name(var_node, node),
-            _ => false,
-        };
-        let unchanged_literal = matches!(node, Node::KindStar | Node::BoolTy | Node::Bool(_));
-        if unchanged_literal || unchanged_variable {
-            Ok(())
-        } else {
-            Err(Self::invalid_fact("substitution leaf"))
+        if matches!(node, Node::KindStar | Node::BoolTy | Node::Bool(_)) {
+            return Ok(());
         }
+        let var_node = *self.row::<E>(var)?.expr();
+        if !Self::is_variable(node) || Self::same_variable_name(var_node, node) {
+            return Err(Self::invalid_fact("substitution leaf"));
+        }
+        if matches!(node, Node::TyFv { .. }) {
+            return Ok(());
+        }
+        let classifier = self.classifier_as::<E>(input)?;
+        if self.contains_variable::<E>(classifier, var)? {
+            return Err(Self::invalid_fact("substitution leaf"));
+        }
+        Ok(())
     }
 
     fn require_compatible_endpoints<E>(&self, input: Ref, output: Ref) -> Result<(), KernelError<E>>
@@ -1035,22 +1052,25 @@ impl Kernel {
         self.require_star::<E>(kind)
     }
 
+    /// Whether `variable` may occur anywhere beneath `root`.
+    ///
+    /// Rows form a directed acyclic graph with sharing, so the walk needs a
+    /// visited set: without one a term of `n` rows can present exponentially
+    /// many paths. An unresolved proxy is conservatively reported as an
+    /// occurrence, which is the rejecting answer for every caller.
     fn contains_variable<E>(&self, root: Ref, variable: Ref) -> Result<bool, KernelError<E>>
     where
         E: std::error::Error + 'static,
     {
+        let needle = *self.row::<E>(variable)?.expr();
+        let mut visited = BTreeSet::new();
         let mut pending = vec![root];
-        let mut fuel = self.arena.len().saturating_add(1);
         while let Some(reference) = pending.pop() {
-            if fuel == 0 {
-                return Ok(true);
+            if !visited.insert(reference) {
+                continue;
             }
-            fuel -= 1;
             let node = *self.row::<E>(reference)?.expr();
-            if Self::same_variable_name(node, *self.row::<E>(variable)?.expr()) {
-                return Ok(true);
-            }
-            if Self::is_proxy(node) {
+            if Self::same_variable_name(node, needle) || Self::is_proxy(node) {
                 return Ok(true);
             }
             pending.extend(node.children());
