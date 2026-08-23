@@ -144,11 +144,10 @@ impl Kernel {
 
     /// Establishes that substitution leaves one non-target leaf unchanged.
     ///
-    /// Imported references are opaque and therefore count as leaves.
-    ///
     /// # Errors
     ///
-    /// Returns an error unless `input` is a leaf or a distinct free variable.
+    /// Returns an error unless `input` is a literal leaf or a distinct free
+    /// variable. Proxy rows require a future checked closedness fact.
     pub fn syn_sub_leaf(
         &mut self,
         target: Option<SynFactId>,
@@ -165,7 +164,8 @@ impl Kernel {
             | (Node::TmFv { .. }, Node::TmFv { .. }) => !Self::same_variable_name(var_node, node),
             _ => false,
         };
-        if (Self::is_variable(node) || !node.children().is_empty()) && !unchanged_variable {
+        let unchanged_literal = matches!(node, Node::KindStar | Node::BoolTy | Node::Bool(_));
+        if !unchanged_literal && !unchanged_variable {
             return Err(Self::invalid_fact("substitution leaf"));
         }
         self.put_fact(
@@ -236,6 +236,7 @@ impl Kernel {
         if Self::is_binder(input_node)
             || Self::is_binder(output_node)
             || !Self::same_head(input_node, output_node)
+            || (var.is_some() && Self::is_proxy(input_node))
         {
             return Err(Self::invalid_fact("constructor congruence"));
         }
@@ -778,6 +779,13 @@ impl Kernel {
         )
     }
 
+    const fn is_proxy(node: Node) -> bool {
+        matches!(
+            node,
+            Node::TmRef { .. } | Node::TyRef { .. } | Node::KindRef { .. }
+        )
+    }
+
     const fn same_head(left: Node, right: Node) -> bool {
         match (left, right) {
             (Node::KindStar, Node::KindStar)
@@ -982,13 +990,14 @@ impl Kernel {
                 return Ok(true);
             }
             fuel -= 1;
-            if Self::same_variable_name(
-                *self.row::<E>(reference)?.expr(),
-                *self.row::<E>(variable)?.expr(),
-            ) {
+            let node = *self.row::<E>(reference)?.expr();
+            if Self::same_variable_name(node, *self.row::<E>(variable)?.expr()) {
                 return Ok(true);
             }
-            pending.extend(self.row::<E>(reference)?.expr().children());
+            if Self::is_proxy(node) {
+                return Ok(true);
+            }
+            pending.extend(node.children());
         }
         Ok(false)
     }
@@ -997,7 +1006,17 @@ impl Kernel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Arena, wire};
+    use crate::{Arena, Link, Resolver, Table, wire};
+
+    struct NoResolver;
+
+    impl Resolver for NoResolver {
+        type Error = Infallible;
+
+        fn resolve(&mut self, _link: &Link) -> Result<Table, Self::Error> {
+            unreachable!("literal imports do not consult the resolver")
+        }
+    }
 
     fn bool_kernel() -> (Kernel, Ref, Ref) {
         let mut kernel = Kernel::new();
@@ -1137,6 +1156,42 @@ mod tests {
                     &[classifier],
                 )
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn substitution_leaf_rejects_an_import_without_closedness_evidence() {
+        let mut imported = Kernel::new();
+        let imported_star = imported.star().unwrap();
+        let imported_bool = imported.bool_ty(imported_star).unwrap();
+        let imported_variable = imported.tm_fv(4, imported_bool).unwrap();
+
+        let (mut kernel, _, bool_ty) = bool_kernel();
+        let variable = kernel.tm_fv(4, bool_ty).unwrap();
+        let truth = kernel.bool(bool_ty, true).unwrap();
+        let source = kernel.import_literal(imported.into_arena()).unwrap();
+        let proxy = kernel
+            .tm_ref(&mut NoResolver, source, imported_variable, bool_ty)
+            .unwrap();
+
+        assert!(kernel.syn_sub_leaf(None, variable, truth, proxy).is_err());
+        assert!(
+            kernel
+                .syn_congr(
+                    None,
+                    SynRel::Syn,
+                    Some(variable),
+                    Some(truth),
+                    proxy,
+                    proxy,
+                    &[],
+                )
+                .is_err()
+        );
+        assert!(
+            kernel
+                .contains_variable::<Infallible>(proxy, variable)
+                .unwrap()
         );
     }
 
