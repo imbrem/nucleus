@@ -1,11 +1,11 @@
-//! Completeness gaps found while reviewing the syntactic-fact cache.
+//! Known completeness limits of the syntactic-fact cache.
 //!
 //! Nothing here is a soundness problem: every case is the kernel refusing a
-//! derivation it should accept. Each gap gets two tests, one that passes and
-//! pins down what the kernel does today, and one marked `#[ignore]` that states
-//! what it should do. Run the second set with
+//! derivation it should accept. Each limit has an active test that specifies
+//! the implemented boundary and an ignored test that specifies the desired
+//! extension. Run the ignored set with
 //! `cargo test -p covalence-logic-hol -- --ignored`; each must start passing
-//! when its gap closes, and its companion must be updated in the same change.
+//! when the corresponding extension is implemented.
 
 mod support;
 
@@ -13,7 +13,7 @@ use covalence_logic_hol::{KernelError, SynRel};
 use support::Fix;
 
 #[test]
-fn today_a_type_substitution_cannot_be_pushed_into_a_term() {
+fn type_substitution_into_a_term_is_not_implemented() {
     // Every congruence checks that its two endpoints carry union-find-equal
     // classifiers. That is right for a direct fact, but a substitution fact
     // relates endpoints whose classifiers the substitution itself rewrites, so
@@ -70,7 +70,7 @@ fn a_type_substitution_must_reach_the_terms_it_retypes() {
 }
 
 #[test]
-fn today_an_annotation_that_moves_blocks_its_own_substitution() {
+fn substitution_of_a_moving_annotation_is_not_implemented() {
     // The same restriction from the other side. `[true / x] (y : model 9 x)`
     // has a provable annotation obligation, `[true / x] (model 9 x) = model 9
     // true`, but the congruence built from it is refused because `model 9 x`

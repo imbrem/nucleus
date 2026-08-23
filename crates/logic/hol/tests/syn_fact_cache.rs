@@ -242,7 +242,7 @@ fn removal_order_leaks_into_the_content_address() {
 }
 
 #[test]
-fn clearing_the_cache_restores_the_pre_cache_address() {
+fn clearing_the_cache_restores_the_cache_free_address() {
     let mut fix = Fix::new();
     let empty = fix.arena().addr();
     let ids = refls(&mut fix, 3);
@@ -258,7 +258,7 @@ fn clearing_the_cache_restores_the_pre_cache_address() {
 }
 
 #[test]
-fn a_cache_free_arena_encodes_exactly_as_it_did_before_the_cache_existed() {
+fn a_cache_free_arena_omits_the_cache_fields() {
     let mut fix = Fix::new();
     let with_rows = encode(fix.arena());
     let id = refl(&mut fix, SynRel::Syn);

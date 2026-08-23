@@ -13,7 +13,7 @@ from hol_support import (
     Rows,
     basis,
     beta,
-    child_ids,
+    child_facts,
     fact_view,
     substitute,
     unify,
@@ -175,24 +175,19 @@ def test_a_removed_handle_reports_its_slot_as_absent() -> None:
         kernel.syn_refine(fact, "conv")
 
 
-def test_congruence_evidence_is_passed_by_slot_id() -> None:
-    """`syn_congr` is the one rule taking IDs rather than checked handles.
-
-    `child_ids` exists so the tests read the same as the rest of the suite.
-    The kernel re-derives every premise from the slot, so an ID that names
-    something else is rejected on its contents rather than on its provenance.
-    """
+def test_congruence_evidence_uses_checked_handles() -> None:
+    """Congruence applies the same ownership checks as every evidence rule."""
     base = basis()
     kernel = base.kernel
     left, right = bool_pair(base)
 
     assert kernel.syn_congr("syn", left, right, [])
     with pytest.raises(TypeError):
-        kernel.syn_congr("syn", left, right, [kernel.syn_refl("syn", left)])
-    with pytest.raises(ValueError, match="one-based"):
         kernel.syn_congr("syn", left, right, [0])
     with pytest.raises(ValueError, match=REJECTED):
-        kernel.syn_congr("syn", left, right, child_ids([kernel.syn_refl("syn", left)]))
+        kernel.syn_congr(
+            "syn", left, right, child_facts([kernel.syn_refl("syn", left)])
+        )
 
 
 # --- relation rules -------------------------------------------------------
@@ -359,6 +354,7 @@ def test_the_leaf_case_refuses_rows_substitution_must_enter() -> None:
     truth = base.literal(True)
     type_variable = kernel.ty_fv(3, base.star)
     other_type_variable = kernel.ty_fv(4, base.star)
+    term_at_type_variable = kernel.tm_fv(5, type_variable)
     function_ty = kernel.ty_arr(base.bool_ty, base.bool_ty)
 
     # The variable itself is replaced, not left alone.
@@ -366,7 +362,9 @@ def test_the_leaf_case_refuses_rows_substitution_must_enter() -> None:
         kernel.syn_sub_leaf(term_variable, truth, term_variable)
     # A type substitution has to descend into a term variable's type child.
     with pytest.raises(ValueError, match=REJECTED):
-        kernel.syn_sub_leaf(type_variable, other_type_variable, term_variable)
+        kernel.syn_sub_leaf(type_variable, other_type_variable, term_at_type_variable)
+    # A term variable with an unrelated annotation is invariant.
+    assert kernel.syn_sub_leaf(type_variable, other_type_variable, term_variable)
     # Compound rows are not leaves.
     with pytest.raises(ValueError, match=REJECTED):
         kernel.syn_sub_leaf(term_variable, truth, function_ty)
@@ -394,7 +392,7 @@ def test_syntactic_identity_disables_a_substitution() -> None:
 
     unify(kernel, variable, duplicate)
     identity = kernel.syn_congr(
-        "syn", variable, duplicate, [kernel.syn_refl("syn", base.bool_ty).id]
+        "syn", variable, duplicate, [kernel.syn_refl("syn", base.bool_ty)]
     )
     equal_bodies = kernel.syn_congr("syn", body, other_body, [])
 
@@ -432,7 +430,7 @@ def test_constructor_congruence_relates_matching_heads() -> None:
     same_function = kernel.syn_refl("syn", function)
     equal_arguments = kernel.syn_congr("syn", left_argument, right_argument, [])
     fact = kernel.syn_congr(
-        "syn", left, right, child_ids([same_function, equal_arguments])
+        "syn", left, right, child_facts([same_function, equal_arguments])
     )
 
     assert fact_view(fact) == ("syn", None, None, left, right)
@@ -451,7 +449,7 @@ def test_child_evidence_may_be_finer_than_the_parent(relation: str, child: str) 
     equation_right = kernel.eq(base.bool_ty, right, right)
 
     fact = kernel.syn_congr(
-        relation, equation_left, equation_right, child_ids([equal, equal])
+        relation, equation_left, equation_right, child_facts([equal, equal])
     )
     assert fact.relation == relation
 
@@ -465,13 +463,13 @@ def test_constructor_congruence_refuses_binders_and_mismatched_heads() -> None:
     truth = base.literal(True)
 
     with pytest.raises(ValueError, match=REJECTED):
-        kernel.syn_congr("syn", lam, lam, child_ids([refl, refl]))
+        kernel.syn_congr("syn", lam, lam, child_facts([refl, refl]))
     with pytest.raises(ValueError, match=REJECTED):
         kernel.syn_congr("syn", truth, base.bool_ty, [])
     with pytest.raises(ValueError, match=REJECTED):
         kernel.syn_congr("syn", truth, base.literal(False), [])
     with pytest.raises(ValueError, match=REJECTED):
-        kernel.syn_congr("syn", truth, truth, child_ids([refl]))
+        kernel.syn_congr("syn", truth, truth, child_facts([refl]))
 
 
 def test_substitution_congruence_refuses_the_variable_it_replaces() -> None:
@@ -483,7 +481,7 @@ def test_substitution_congruence_refuses_the_variable_it_replaces() -> None:
 
     with pytest.raises(ValueError, match=REJECTED):
         kernel.syn_congr(
-            "syn", variable, variable, child_ids([unchanged]), var=variable, val=truth
+            "syn", variable, variable, child_facts([unchanged]), var=variable, val=truth
         )
 
 

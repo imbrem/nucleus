@@ -35,7 +35,7 @@ __all__ = [
     "arena_view",
     "basis",
     "beta",
-    "child_ids",
+    "child_facts",
     "definition_view",
     "fact_view",
     "implicit_binder",
@@ -113,9 +113,9 @@ def arena_view(arena: Arena) -> dict[str, object]:
     }
 
 
-def child_ids(facts: Iterable[SynFact]) -> list[int]:
-    """Slot IDs for `Kernel.syn_congr`, which takes IDs rather than handles."""
-    return [fact.id for fact in facts]
+def child_facts(facts: Iterable[SynFact]) -> list[SynFact]:
+    """Checked child evidence for `Kernel.syn_congr`."""
+    return list(facts)
 
 
 class Basis:
@@ -243,7 +243,7 @@ def prove_congruence(
         return kernel.syn_implicit_binder_congr(
             "syn", left, right, witness, children[0]
         )
-    return kernel.syn_congr("syn", left, right, child_ids(children))
+    return kernel.syn_congr("syn", left, right, child_facts(children))
 
 
 def unify(kernel: Kernel, left: int, right: int, rows: Rows | None = None) -> None:
@@ -306,15 +306,18 @@ def _same_variable(one: Definition, other: Definition) -> bool:
     )
 
 
-def _is_substitution_leaf(variable: Definition, row: Definition) -> bool:
-    """Exactly the rows `Kernel.syn_sub_leaf` accepts, per the rule catalogue."""
+def _is_substitution_leaf(variable: Definition, row: Definition, rows: Rows) -> bool:
+    """Whether substitution leaves `row` and its annotation unchanged."""
     if row.tag in LEAF_TAGS:
         return True
     if row.tag not in VARIABLE_TAGS:
         return False
-    if variable.tag == "ty.fv":
-        return row.tag == "ty.fv" and row.name != variable.name
-    return row.tag == "ty.fv" or row.name != variable.name
+    if row.tag == "ty.fv":
+        return variable.tag != "ty.fv" or row.name != variable.name
+    if variable.tag == "tm.fv" and row.name == variable.name:
+        return False
+    annotation = row.children[0]
+    return not rows.mentions(annotation, variable.name, _sort(variable.tag))
 
 
 def substitute(
@@ -361,7 +364,7 @@ def _substitute(
         raise CannotProveError("substitution cannot descend into an import proxy")
     if row.tag == variable.tag and row.name == variable.name:
         raise CannotProveError("two rows spell the same variable")
-    if _is_substitution_leaf(variable, row):
+    if _is_substitution_leaf(variable, row, rows):
         return source, kernel.syn_sub_leaf(var, val, source)
     if row.tag in BINDER_TAGS:
         return _substitute_binder(kernel, var, val, source, rows, memo)
@@ -378,7 +381,7 @@ def _substitute(
         "syn",
         source,
         output,
-        child_ids(fact for _, fact in children),
+        child_facts(fact for _, fact in children),
         var=var,
         val=val,
     )
@@ -415,6 +418,12 @@ def _substitute_binder(
         raise CannotProveError("replacement would be captured by the binder")
 
     crosses_binder = row.tag == "tm.lam" and variable.tag == "ty.fv"
+    if (
+        not crosses_binder
+        and binder_row.tag == "tm.fv"
+        and rows.mentions(binder_row.children[0], variable.name, _sort(variable.tag))
+    ):
+        raise CannotProveError("substitution reaches the binder's type annotation")
     if crosses_binder:
         new_binder, binder_fact = substitute(kernel, var, val, binder, rows, memo)
     else:

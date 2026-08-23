@@ -11,7 +11,14 @@ rather than as silence.
 import pytest
 from covalence.lib.hash import O256
 from covalence.logic.hol import Arena, Kernel, Link
-from hol_support import CannotProveError, basis, child_ids, fact_view, substitute, unify
+from hol_support import (
+    CannotProveError,
+    basis,
+    child_facts,
+    fact_view,
+    substitute,
+    unify,
+)
 
 REJECTED = "does not establish"
 
@@ -99,8 +106,7 @@ def test_evidence_does_not_cross_kernels_even_at_the_same_slot() -> None:
         left.kernel.syn_trans(right_fact, left_fact)
 
 
-def test_a_slot_id_is_re_read_rather_than_trusted() -> None:
-    """Congruence takes IDs, so the check has to be on the slot's contents."""
+def test_congruence_rejects_a_stale_child_handle() -> None:
     base = basis()
     kernel = base.kernel
     truth = base.literal(True)
@@ -109,15 +115,13 @@ def test_a_slot_id_is_re_read_rather_than_trusted() -> None:
 
     stale = kernel.syn_refl("syn", truth)
     assert kernel.remove_syn_fact(stale)
-    # The slot is now a fact about `false`, so the derivation that the old
-    # contents would have licensed is refused.
     reused = kernel.syn_refl("syn", falsehood)
     assert reused.id == stale.id
 
     equation = kernel.eq(base.bool_ty, truth, truth)
     other_equation = kernel.eq(base.bool_ty, other, other)
-    with pytest.raises(ValueError, match=REJECTED):
-        kernel.syn_congr("syn", equation, other_equation, [stale.id, stale.id])
+    with pytest.raises(ValueError, match="overwritten slot"):
+        kernel.syn_congr("syn", equation, other_equation, [stale, stale])
 
 
 def test_a_kernel_cannot_be_seeded_from_unchecked_wire_data() -> None:
@@ -161,10 +165,9 @@ def test_editing_the_arena_copy_cannot_reach_back_into_the_kernel() -> None:
 def test_import_proxies_are_not_reachable_from_a_checked_kernel() -> None:
     """`kind_ref`, `ty_ref`, and `tm_ref` need a resolver with no binding yet.
 
-    A kernel can record imports but never point at one, so the rules that
-    treat a proxy conservatively — substitution leaves, congruence roots, and
-    freshness scans — cannot be exercised through the kernel today. The raw
-    arena still builds the rows, which is what the wire tests cover.
+    A kernel can record imports but never point at one, so its proxy rules are
+    unreachable through this binding. Raw arenas expose the proxy constructors
+    needed to test their wire representation.
     """
     assert all(hasattr(Arena, name) for name in ("kind_ref", "ty_ref", "tm_ref"))
     assert not any(hasattr(Kernel, name) for name in ("kind_ref", "ty_ref", "tm_ref"))
@@ -207,7 +210,7 @@ def test_type_substitution_into_a_term_is_out_of_reach() -> None:
             "syn",
             typed,
             retyped,
-            child_ids([replacement]),
+            child_facts([replacement]),
             var=parameter,
             val=base.bool_ty,
         )

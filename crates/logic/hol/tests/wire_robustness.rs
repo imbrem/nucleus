@@ -25,18 +25,17 @@ fn rejects(label: &str, arena: ArenaCbor) {
 
 #[test]
 fn a_fact_free_arena_stays_off_the_wire_entirely() {
-    // Omitting both new fields must be the canonical encoding of an arena with
-    // no cache, so every address minted before the cache existed is preserved.
-    let legacy = ArenaCbor::new().bytes();
-    let decoded = wire::deserialize(legacy.as_slice()).expect("legacy bytes decode");
+    // Empty optional cache fields are absent from the canonical encoding.
+    let canonical = ArenaCbor::new().bytes();
+    let decoded = wire::deserialize(canonical.as_slice()).expect("canonical bytes decode");
 
     assert_eq!(decoded, Arena::empty());
     assert_eq!(
         encode(&decoded),
-        legacy,
+        canonical,
         "the encoder must not add the fields"
     );
-    assert_eq!(O256::from_bytes(&legacy), Arena::empty().addr());
+    assert_eq!(O256::from_bytes(&canonical), Arena::empty().addr());
 }
 
 #[test]
@@ -288,7 +287,7 @@ fn slot_references_are_not_resolved_against_the_definition_table() {
 }
 
 #[test]
-fn the_arena_object_still_rejects_unknown_fields() {
+fn the_arena_object_rejects_unknown_fields() {
     rejects(
         "an unknown arena field",
         ArenaCbor::new().extra("syn_cache", Value::Array(vec![])),

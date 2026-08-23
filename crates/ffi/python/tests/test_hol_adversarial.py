@@ -1,20 +1,15 @@
-"""Attacks on the Ethane Python boundary, from outside the kernel.
+"""Adversarial tests of the public Ethane Python boundary.
 
-Everything here is written as a caller who wants a theorem they have not
-earned: reusing evidence across kernels, resurrecting handles whose slots were
-recycled, feeding the checked layer arenas the raw layer was happy to build,
-and hammering the API with sequences no well-behaved client would produce.
-
-Two tests are marked expected-failure. Those are defects found while writing
-this suite, kept as executable descriptions of the intended behaviour rather
-than deleted or rewritten to assert the bug.
+The suite exercises cross-kernel evidence, recycled fact slots, unchecked
+arena imports, malformed rule applications, and arbitrary public API
+sequences. Every rejected operation must leave the checked state unchanged.
 """
 
 import random
 
 import pytest
 from covalence.logic.hol import Arena, Kernel, Link
-from hol_support import (
+from hol_invariants import (
     assert_kernel_invariants,
     bool_kernel,
     call_names,
@@ -127,19 +122,8 @@ def test_removing_evidence_twice_is_an_error_not_a_silent_no_op() -> None:
         kernel.remove_syn_fact(fact)
 
 
-@pytest.mark.xfail(
-    reason="syn_congr children are slot numbers, not checked handles",
-    strict=False,
-)
 def test_congruence_children_respect_the_handle_discipline() -> None:
-    """A dead handle's number should be as dead as the handle.
-
-    Every other rule takes a `SynFact` and re-checks its payload against the
-    slot it names. `children` is a list of raw integers, so evidence a caller
-    believes it is supplying is silently replaced by whatever now occupies the
-    same slot. Marked expected-failure: taking handles here too would make the
-    integer and the handle agree again.
-    """
+    """Congruence validates ownership and the current payload of each child."""
     kernel, rows = loaded_kernel()
     function = kernel.tm_fv(3, rows["function_ty"])
     argument = kernel.tm_fv(4, rows["bool_ty"])
@@ -151,38 +135,14 @@ def test_congruence_children_respect_the_handle_discipline() -> None:
     assert kernel.syn_refl("conv", function).id == stale.id
 
     with pytest.raises(ValueError, match="overwritten slot"):
+        kernel.syn_congr("conv", node, node, [stale, argument_refl])
+    with pytest.raises(TypeError):
         kernel.syn_congr("conv", node, node, [stale.id, argument_refl.id])
 
-
-def test_congruence_children_take_whatever_occupies_the_slot() -> None:
-    """Today's behaviour, recorded so the defect above has a precise shape."""
-    kernel, rows = loaded_kernel()
-    function = kernel.tm_fv(3, rows["function_ty"])
-    argument = kernel.tm_fv(4, rows["bool_ty"])
-    node = kernel.app(function, argument)
-
-    stale = kernel.syn_refl("syn", function)
-    argument_refl = kernel.syn_refl("syn", argument)
-    kernel.remove_syn_fact(stale)
-    refilled = kernel.syn_refl("conv", function)
-    assert refilled.id == stale.id
-
-    # The handle is dead...
-    with pytest.raises(ValueError, match="overwritten slot"):
-        kernel.syn_refine(stale, "conv")
-    # ...but its number is not, and it now names different evidence.
-    reborn = kernel.syn_congr("conv", node, node, [stale.id, argument_refl.id])
-    assert reborn.relation == "conv"
-    assert_kernel_invariants(kernel)
-
-
-def test_congruence_children_reject_absent_and_zero_slots() -> None:
-    kernel, rows = loaded_kernel()
-    equation = kernel.eq(rows["bool_ty"], rows["truth"], rows["truth"])
-    with pytest.raises(ValueError, match="one-based"):
-        kernel.syn_congr("syn", equation, equation, [0, 0])
-    with pytest.raises(ValueError, match="is absent"):
-        kernel.syn_congr("syn", equation, equation, [99, 99])
+    other, other_rows = loaded_kernel()
+    foreign = other.syn_refl("syn", other_rows["truth"])
+    with pytest.raises(ValueError, match="different kernel"):
+        kernel.syn_congr("conv", node, node, [foreign, argument_refl])
 
 
 UNSOUND_ATTEMPTS = [
@@ -278,7 +238,7 @@ def test_a_rejected_rule_changes_nothing(name: str, message: str) -> None:
 
 
 def test_truth_and_falsity_never_join_one_class() -> None:
-    """The headline unsoundness, attempted every way the API allows."""
+    """No public equality rule can join distinct Boolean literals."""
     kernel, rows = loaded_kernel()
     truth, falsity = rows["truth"], rows["falsity"]
 
@@ -314,8 +274,8 @@ def test_the_fact_cache_leaks_into_the_content_address() -> None:
     """Evidence is part of the encoding, so the cache is part of the identity.
 
     Truncation restores the address exactly; removal does not, because a
-    removed slot stays allocated as a free-list entry. Worth knowing before
-    treating `addr()` as a hash of a kernel's logical content.
+    removed slot stays allocated as a free-list entry. The address therefore
+    identifies the complete kernel encoding, including cached evidence.
     """
     kernel, rows = loaded_kernel()
     baseline = kernel.addr()
@@ -352,7 +312,7 @@ def test_an_unvalidated_import_cannot_reach_the_checked_rows() -> None:
     assert kernel.arena.context == []
     assert kernel.arena.assertions == []
     assert_kernel_invariants(kernel)
-    # And the kernel still has no way to name a row inside that import.
+    # The kernel has no operation for naming a row inside that import.
     assert not hasattr(kernel, "tm_ref")
     assert not hasattr(kernel, "ty_ref")
     assert not hasattr(kernel, "kind_ref")
@@ -401,11 +361,9 @@ def test_opaque_handles_are_not_accepted_where_references_are() -> None:
             call()
 
 
-def test_a_fact_handle_is_not_a_slot_number() -> None:
+def test_fact_cache_lookups_use_slots_and_rules_use_handles() -> None:
     kernel, rows = loaded_kernel()
     fact = kernel.syn_refl("syn", rows["star"])
-    with pytest.raises(TypeError):
-        kernel.syn_congr("syn", rows["truth"], rows["truth"], [fact])
     with pytest.raises(TypeError):
         kernel.syn_fact(fact)
     with pytest.raises(TypeError):
@@ -430,7 +388,12 @@ def test_two_kernels_share_nothing() -> None:
 def _random_step(kernel: Kernel, chance: random.Random) -> None:
     references = list(range(1, len(kernel) + 1))
     pick = lambda: chance.choice(references)  # noqa: E731
-    slots = list(range(1, kernel.syn_fact_len() + 1))
+    facts = []
+    for slot in range(1, kernel.syn_fact_len() + 1):
+        try:
+            facts.append(kernel.syn_fact(slot))
+        except ValueError:
+            pass
     steps = [
         lambda: kernel.star(),
         lambda: kernel.kind_arr(pick(), pick()),
@@ -455,22 +418,14 @@ def _random_step(kernel: Kernel, chance: random.Random) -> None:
             chance.choice(["syn", "alpha", "conv"]),
             pick(),
             pick(),
-            [chance.choice(slots) for _ in range(chance.randrange(3))] if slots else [],
+            [chance.choice(facts) for _ in range(chance.randrange(3))] if facts else [],
         ),
         lambda: kernel.tm_eta(pick()),
+        lambda: kernel.tm_beta(pick(), chance.choice(facts)) if facts else None,
+        lambda: kernel.union_syn_fact(chance.choice(facts)) if facts else None,
         lambda: (
-            kernel.tm_beta(pick(), kernel.syn_fact(chance.choice(slots)))
-            if slots
-            else None
-        ),
-        lambda: (
-            kernel.union_syn_fact(kernel.syn_fact(chance.choice(slots)))
-            if slots
-            else None
-        ),
-        lambda: (
-            kernel.truncate_syn_facts(chance.randrange(len(slots) + 1))
-            if slots
+            kernel.truncate_syn_facts(chance.randrange(kernel.syn_fact_len() + 1))
+            if kernel.syn_fact_len()
             else None
         ),
     ]

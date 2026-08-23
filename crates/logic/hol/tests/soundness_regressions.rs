@@ -1,9 +1,7 @@
-//! Regression tests for kernel rules that used to mint facts the semantics
-//! does not justify.
+//! Soundness boundary tests for checked kernel rules.
 //!
-//! Each test names the issue it guards. They are deliberately phrased as
-//! derivations a caller could actually run, not as unit tests of an internal
-//! predicate, so that a future refactor cannot satisfy them vacuously.
+//! The tests are derivations a caller can run, rather than unit tests of an
+//! internal predicate, so they exercise the complete checked path.
 
 mod support;
 
@@ -102,8 +100,7 @@ fn the_bad_leaf_no_longer_composes_into_a_beta_conversion() {
 #[test]
 fn the_universal_leaf_inherits_the_same_obligation() {
     // `syn_sub_leaf_forall` quantifies over every compatible replacement, so it
-    // needs at least what the concrete rule needs. Both go through
-    // `require_substitution_leaf`; this pins that they still do.
+    // carries every invariant required by the concrete rule.
     let Guarded {
         mut fix,
         subject,
@@ -121,7 +118,7 @@ fn the_universal_leaf_inherits_the_same_obligation() {
 }
 
 #[test]
-fn a_leaf_is_still_unchanged_when_the_annotation_cannot_mention_the_variable() {
+fn a_leaf_is_unchanged_when_the_annotation_cannot_mention_the_variable() {
     // The fix must not cost the ordinary case: a `bool`-typed variable is
     // invariant under any substitution for a differently named variable.
     let mut fix = Fix::new();
@@ -200,7 +197,7 @@ fn binder_congruence_may_not_carry_an_annotation_the_substitution_rewrites() {
 }
 
 #[test]
-fn binder_congruence_still_works_when_the_binder_is_out_of_reach() {
+fn binder_congruence_works_when_the_binder_is_out_of_reach() {
     let mut fix = Fix::new();
     let arrow = fix.bool_arrow();
     let binder = fix.var(0);
@@ -264,10 +261,8 @@ fn eta_at_depth(depth: u32) -> Result<SynFactId, KernelError> {
 
 #[test]
 fn freshness_stays_decidable_as_terms_share_subterms() {
-    // The occurrence walk used to spend one step of fuel per arena row and then
-    // give up with a conservative "occurs", so a shared subterm made every
-    // freshness-guarded rule stop working at about ten rows. `λv. f v` is an
-    // eta redex whatever the type looks like.
+    // Shared subterms do not exhaust a global search budget. `λv. f v` is an
+    // eta redex at every depth represented here.
     for depth in 0..14 {
         assert!(
             eta_at_depth(depth).is_ok(),
@@ -277,7 +272,7 @@ fn freshness_stays_decidable_as_terms_share_subterms() {
 }
 
 #[test]
-fn freshness_still_rejects_a_genuine_occurrence_at_depth() {
+fn freshness_rejects_a_genuine_occurrence_at_depth() {
     // The visited set makes the walk exact, not permissive: `λv. (g v) v` is
     // not an eta redex however large and shared the types get.
     let mut fix = Fix::new();
@@ -306,7 +301,7 @@ fn freshness_still_rejects_a_genuine_occurrence_at_depth() {
 
 #[test]
 fn a_decoded_arena_consumes_every_byte_it_was_given() {
-    // Padding used to be ignored, so one arena had unlimited content addresses.
+    // A valid arena followed by any suffix is not a single encoded arena.
     let canonical = ArenaCbor::new().bytes();
     assert!(wire::deserialize(canonical.as_slice()).is_ok());
 
@@ -322,7 +317,7 @@ fn a_decoded_arena_consumes_every_byte_it_was_given() {
 }
 
 #[test]
-fn truncated_bytes_are_still_a_decode_failure() {
+fn truncated_bytes_are_a_decode_failure() {
     let canonical = ArenaCbor::new().defs(vec![]).bytes();
     for length in 1..canonical.len() {
         assert!(

@@ -9,7 +9,8 @@ way in. A raw arena that started rejecting ill-kinded rows would be a bug.
 
 import pytest
 from covalence.lib.hash import O256
-from covalence.logic.hol import Arena, Definition, Link, Meta
+from covalence.logic.hol import Arena, Definition, Kernel, Link, Meta
+from hol_invariants import import_depth, nested_import_arena, nested_import_cbor
 from hol_support import arena_view, definition_view, meta_view
 
 ONE_BASED = "one-based"
@@ -258,6 +259,30 @@ def test_nested_literal_imports_round_trip_as_arenas() -> None:
     assert link.format == "cbor"
 
 
+def test_nested_literal_imports_round_trip_at_the_supported_limit() -> None:
+    assert nested_import_cbor(0) == Arena().to_cbor()
+    assert nested_import_cbor(3) == nested_import_arena(3).to_cbor()
+
+    deep = Arena.from_cbor(nested_import_cbor(127))
+    assert import_depth(deep) == 127
+    assert deep.to_cbor() == nested_import_cbor(127)
+
+
+def test_literal_import_construction_enforces_the_wire_depth_limit() -> None:
+    deepest = nested_import_arena(127)
+
+    with pytest.raises(ValueError, match="at most 127 levels"):
+        Arena().add_literal_import(deepest)
+    with pytest.raises(ValueError, match="at most 127 levels"):
+        Kernel().import_literal(deepest)
+
+
+def test_decoding_refuses_literal_imports_beyond_the_depth_limit() -> None:
+    for depth in (128, 1_000, 20_000):
+        with pytest.raises(ValueError, match="RecursionLimitExceeded"):
+            Arena.from_cbor(nested_import_cbor(depth))
+
+
 def test_the_import_getter_hands_back_copies() -> None:
     """Reaching into an import cannot edit the arena that holds it."""
     inner = Arena()
@@ -328,6 +353,12 @@ def test_truncating_a_valid_encoding_is_rejected() -> None:
 
     with pytest.raises(ValueError, match="invalid Ethane arena"):
         Arena.from_cbor(encoded[: len(encoded) // 2])
+
+
+@pytest.mark.parametrize("suffix", [b"\x00", b"junk", Arena().to_cbor()])
+def test_decoding_rejects_trailing_bytes(suffix: bytes) -> None:
+    with pytest.raises(ValueError, match="invalid Ethane arena"):
+        Arena.from_cbor(Arena().to_cbor() + suffix)
 
 
 @pytest.mark.parametrize("wrap", [bytes, bytearray, memoryview])
