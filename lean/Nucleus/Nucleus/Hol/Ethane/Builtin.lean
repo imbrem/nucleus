@@ -1,4 +1,5 @@
 import Nucleus.Cbor.Wire
+import Nucleus.Hol.Ethane.Logic
 
 /-!
 # Ethane compact builtin wire contract, version 1
@@ -10,6 +11,10 @@ Natural and byte operations are intentionally not reserved by this version.
 -/
 
 namespace Nucleus.Hol.Ethane.Builtin
+
+set_option relaxedAutoImplicit true
+set_option maxRecDepth 100000
+set_option linter.style.nativeDecide false
 
 def version : Nat := 1
 def op1RowTag : String := "tm.op1.v1"
@@ -37,7 +42,12 @@ def registry : List RegistryEntry := [
   ⟨"op2", 2, "imp", ["bool", "bool"], "bool"⟩]
 
 example : registrySource =
-    "# Ethane compact builtin registry v1. This is syntax, not the init manifest.\n# version\tfamily\tcode\tname\toperands\tresult\n1\top1\t0\tnot\tbool\tbool\n1\top2\t0\tand\tbool,bool\tbool\n1\top2\t1\tor\tbool,bool\tbool\n1\top2\t2\timp\tbool,bool\tbool\n" := rfl
+    "# Ethane compact builtin registry v1. This is syntax, not the init manifest.\n" ++
+    "# version\tfamily\tcode\tname\toperands\tresult\n" ++
+    "1\top1\t0\tnot\tbool\tbool\n" ++
+    "1\top2\t0\tand\tbool,bool\tbool\n" ++
+    "1\top2\t1\tor\tbool,bool\tbool\n" ++
+    "1\top2\t2\timp\tbool,bool\tbool\n" := by decide
 
 inductive Op1 where
   | not
@@ -52,7 +62,14 @@ def ofCode? : UInt8 → Option Op1
   | 0 => some .not
   | _ => none
 
+def ofUInt64? (value : UInt64) : Option Op1 :=
+  if value.toNat < 256 then ofCode? value.toUInt8 else none
+
 @[simp] theorem ofCode?_code (op : Op1) : ofCode? op.code = some op := by
+  cases op
+  rfl
+
+@[simp] theorem ofUInt64?_code (op : Op1) : ofUInt64? op.code.toUInt64 = some op := by
   cases op
   rfl
 
@@ -77,10 +94,74 @@ def ofCode? : UInt8 → Option Op2
   | 2 => some .imp
   | _ => none
 
+def ofUInt64? (value : UInt64) : Option Op2 :=
+  if value.toNat < 256 then ofCode? value.toUInt8 else none
+
 @[simp] theorem ofCode?_code (op : Op2) : ofCode? op.code = some op := by
   cases op <;> rfl
 
+@[simp] theorem ofUInt64?_code (op : Op2) : ofUInt64? op.code.toUInt64 = some op := by
+  cases op <;> rfl
+
 end Op2
+
+/-! ## Exact opcode-free init definitions
+
+These terms transcribe `theories/init-boolean.checked.json` constructor for
+constructor. Lowering retains the two applications made by Rust; beta
+contraction is a separate conversion fact, not part of macro expansion.
+-/
+
+namespace Init
+
+def boolToBool : Ty Sig Nat := .arr .boolTy .boolTy
+def boolToBoolToBool : Ty Sig Nat := .arr .boolTy boolToBool
+
+def truth : Tm Sig Nat :=
+  let x : Tm Sig Nat := .tmFv 0 .boolTy
+  let identity : Tm Sig Nat := .lam 0 .boolTy x
+  .eq boolToBool identity identity
+
+def falsehood : Tm Sig Nat :=
+  let x : Tm Sig Nat := .tmFv 1 .boolTy
+  let identity : Tm Sig Nat := .lam 1 .boolTy x
+  let constantTrue : Tm Sig Nat := .lam 2 .boolTy truth
+  .eq boolToBool identity constantTrue
+
+def not : Tm Sig Nat :=
+  let x : Tm Sig Nat := .tmFv 3 .boolTy
+  .lam 3 .boolTy (.eq .boolTy x falsehood)
+
+def and : Tm Sig Nat :=
+  let p : Tm Sig Nat := .tmFv 4 .boolTy
+  let q : Tm Sig Nat := .tmFv 5 .boolTy
+  let body : Tm Sig Nat := .eq .boolTy (.eq .boolTy p q) q
+  .lam 4 .boolTy (.lam 5 .boolTy body)
+
+def or : Tm Sig Nat :=
+  let p : Tm Sig Nat := .tmFv 6 .boolTy
+  let q : Tm Sig Nat := .tmFv 7 .boolTy
+  let body : Tm Sig Nat := .eq .boolTy (.eq .boolTy p q) p
+  .lam 6 .boolTy (.lam 7 .boolTy body)
+
+def imp : Tm Sig Nat :=
+  let p : Tm Sig Nat := .tmFv 8 .boolTy
+  let q : Tm Sig Nat := .tmFv 9 .boolTy
+  let body : Tm Sig Nat := .eq .boolTy (.eq .boolTy p truth) q
+  .lam 8 .boolTy (.lam 9 .boolTy body)
+
+end Init
+
+def Op1.lower (op : Op1) (operand : Tm Sig Nat) : Tm Sig Nat :=
+  match op with
+  | .not => .app Init.not operand
+
+def Op2.lower (op : Op2) (left right : Tm Sig Nat) : Tm Sig Nat :=
+  let definition := match op with
+    | .and => Init.and
+    | .or => Init.or
+    | .imp => Init.imp
+  .app (.app definition left) right
 
 private def text (value : String) : Nucleus.Cbor := .primitive (.text value)
 private def unsigned (value : UInt8) : Nucleus.Cbor :=
@@ -163,13 +244,13 @@ example : op2Row .imp 1 2 =
 private def wire (xs : List UInt8) : Nucleus.Bytes := ⟨xs.toByteArray⟩
 
 example : Nucleus.CborWire.deterministic? (op1Row .not 1) = some (wire [
-    0xa3, 0x63, 0x74, 0x61, 0x67, 0x69, 0x74, 0x6d, 0x2e, 0x6f, 0x70, 0x31,
-    0x2e, 0x76, 0x31, 0x63, 0x69, 0x78, 0x73, 0x81, 0x01, 0x63, 0x76, 0x61,
+    0xa3, 0x63, 0x69, 0x78, 0x73, 0x81, 0x01, 0x63, 0x74, 0x61, 0x67, 0x69,
+    0x74, 0x6d, 0x2e, 0x6f, 0x70, 0x31, 0x2e, 0x76, 0x31, 0x63, 0x76, 0x61,
     0x6c, 0x00]) := by native_decide
 
 example : Nucleus.CborWire.deterministic? (op2Row .imp 1 2) = some (wire [
-    0xa3, 0x63, 0x74, 0x61, 0x67, 0x69, 0x74, 0x6d, 0x2e, 0x6f, 0x70, 0x32,
-    0x2e, 0x76, 0x31, 0x63, 0x69, 0x78, 0x73, 0x82, 0x01, 0x02, 0x63, 0x76,
+    0xa3, 0x63, 0x69, 0x78, 0x73, 0x82, 0x01, 0x02, 0x63, 0x74, 0x61, 0x67,
+    0x69, 0x74, 0x6d, 0x2e, 0x6f, 0x70, 0x32, 0x2e, 0x76, 0x31, 0x63, 0x76,
     0x61, 0x6c, 0x02]) := by native_decide
 
 example : Op1.ofCode? 1 = none := rfl
