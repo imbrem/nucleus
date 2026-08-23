@@ -3,10 +3,14 @@
 //! Deserialization establishes only the representation invariants. It does
 //! not establish kinding, typing, equality, or provability.
 
+mod resolve;
 mod row;
+mod table;
 pub mod wire;
 
+pub use resolve::{Expr, ResolveError, Resolver, ResolverExt};
 pub use row::{KindTag, Sort, Tag, TmTag, TyTag};
+pub use table::Table;
 
 use std::{collections::BTreeSet, num::NonZeroU64};
 
@@ -348,7 +352,7 @@ impl Arena {
     /// Append one raw import entry.
     ///
     /// This is a representation operation, not a trust decision. A checked
-    /// A checked layer must resolve and validate every import it relies on.
+    /// layer must resolve and validate every import it relies on.
     pub fn push_import(&mut self, import: Import) -> Option<ImportId> {
         let next = u64::try_from(self.imports.len()).ok()?.checked_add(1)?;
         let source = ImportId::new(next)?;
@@ -502,6 +506,11 @@ impl Arena {
     /// Append a raw kind proxy into an import.
     pub fn push_kind_ref(&mut self, src: ImportId, ix: Ref) -> Option<Ref> {
         self.push_row(Row::new(row::Expr::KindRef { src, ix }))
+    }
+
+    fn import(&self, source: ImportId) -> Option<&Import> {
+        let position = usize::try_from(source.get() - 1).ok()?;
+        self.imports.get(position)
     }
 
     fn push_row(&mut self, row: Row) -> Option<Ref> {

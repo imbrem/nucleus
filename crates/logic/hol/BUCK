@@ -29,7 +29,9 @@ rust_library(
     tests = [":covalence_logic_hol-unit-test"],
     named_deps = {
         "covalence_lib_cbor": "nucleus//crates/lib/cbor:covalence_lib_cbor",
+        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
+        "covalence_logic_cas": "nucleus//crates/logic/cas:covalence_logic_cas",
         "serde": "nucleus//buck/cargo/production:serde-1.0.229",
         "smallvec": "nucleus//buck/cargo/production:smallvec-1.15.2",
     },
@@ -61,7 +63,9 @@ rust_test(
     srcs = _RUST_SOURCES,
     named_deps = {
         "covalence_lib_cbor": "nucleus//crates/lib/cbor:covalence_lib_cbor",
+        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
+        "covalence_logic_cas": "nucleus//crates/logic/cas:covalence_logic_cas",
         "serde": "nucleus//buck/cargo/production:serde-1.0.229",
         "smallvec": "nucleus//buck/cargo/production:smallvec-1.15.2",
     },
