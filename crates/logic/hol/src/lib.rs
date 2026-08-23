@@ -41,14 +41,29 @@ macro_rules! id_type {
     };
 }
 
-id_type! {
-    /// A one-based local definition reference. `Ref(n)` addresses `defs[n - 1]`.
-    pub struct Ref(NonZeroU64);
+/// A one-based local definition reference. `Ref(n)` addresses `defs[n - 1]`.
+///
+/// References are globally bounded by the lossless signed proposition wire
+/// space: `0 < n < i64::MAX`.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[repr(transparent)]
+pub struct Ref(NonZeroU64);
+
+/// A value outside the global local-reference range.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, covalence_lib_error::snafu::Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+#[snafu(display("reference {value} is outside the supported range"))]
+pub struct RefError {
+    /// Rejected integer.
+    pub value: u64,
 }
 
 impl Ref {
     #[must_use]
     pub const fn new(value: u64) -> Option<Self> {
+        if value >= i64::MAX as u64 {
+            return None;
+        }
         match NonZeroU64::new(value) {
             Some(value) => Some(Self(value)),
             None => None,
@@ -62,10 +77,35 @@ impl Ref {
 }
 
 impl TryFrom<u64> for Ref {
-    type Error = ZeroId;
+    type Error = RefError;
 
     fn try_from(value: u64) -> Result<Self, Self::Error> {
-        Self::new(value).ok_or(ZeroId)
+        Self::new(value).ok_or(RefError { value })
+    }
+}
+
+impl From<Ref> for u64 {
+    fn from(value: Ref) -> Self {
+        value.get()
+    }
+}
+
+impl Serialize for Ref {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.get().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Ref {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = u64::deserialize(deserializer)?;
+        Self::new(value).ok_or_else(|| serde::de::Error::custom(RefError { value }))
     }
 }
 
@@ -866,5 +906,20 @@ mod tests {
 
         arena.push_kind_star().unwrap();
         assert_ne!(arena.addr(), empty);
+    }
+
+    #[test]
+    fn references_are_strictly_bounded_by_the_signed_wire_space() {
+        let largest = i64::MAX as u64 - 1;
+        assert_eq!(Ref::new(0), None);
+        assert_eq!(Ref::new(largest).unwrap().get(), largest);
+        assert_eq!(Ref::new(i64::MAX as u64), None);
+        assert_eq!(Ref::new(u64::MAX), None);
+
+        for rejected in [0, i64::MAX as u64, u64::MAX] {
+            let mut bytes = Vec::new();
+            covalence_lib_cbor::into_writer(&rejected, &mut bytes).unwrap();
+            assert!(covalence_lib_cbor::from_reader::<Ref, _>(bytes.as_slice()).is_err());
+        }
     }
 }

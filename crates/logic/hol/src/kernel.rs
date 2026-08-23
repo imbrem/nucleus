@@ -46,12 +46,6 @@ where
     /// The theorem slot space no longer fits in `ThmId`.
     #[snafu(display("kernel has too many theorem slots"))]
     TooManyTheorems,
-    /// A proposition encoding cannot denote a local Boolean term.
-    #[snafu(display("invalid proposition identifier {value}"))]
-    InvalidPropId {
-        /// Rejected signed encoding.
-        value: i64,
-    },
     /// A proposition set is absent from this kernel.
     #[snafu(display("proposition set {id:?} is absent"))]
     MissingPropSet {
