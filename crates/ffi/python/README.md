@@ -95,6 +95,19 @@ evidence from being reused after its slot is overwritten or across kernels.
 True
 ```
 
+`load_standard_proof` runs a portable WASM proof component implementing the
+`nucleus:proof/standard-proof` world and returns the checked kernel transferred
+by its `prove` entry point. The component receives no inherited filesystem,
+network, environment, or command-line capabilities.
+
+```python
+>>> from covalence.logic.hol import load_standard_proof
+>>> with open("proof.wasm", "rb") as source:
+...     kernel = load_standard_proof(source.read())
+>>> len(kernel) >= 0
+True
+```
+
 The checked-in dictionary-backed provider is runnable directly:
 
 ```sh

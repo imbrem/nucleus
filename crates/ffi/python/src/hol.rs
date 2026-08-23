@@ -8,7 +8,7 @@ use std::{
 };
 
 use covalence_lib_python::prelude::*;
-use covalence_lib_python::pyo3::{types::PyBytes, types::PyType};
+use covalence_lib_python::pyo3::{exceptions::PyRuntimeError, types::PyBytes, types::PyType};
 use covalence_logic_hol::{
     Arena, Import, ImportId, Kernel, Link, LinkFormat, Meta, Ref, Sort, SynFact, SynFactId, SynRel,
     wire,
@@ -417,6 +417,13 @@ pub struct PyKernel {
 }
 
 impl PyKernel {
+    pub(crate) fn from_kernel(kernel: Kernel) -> Self {
+        Self {
+            kernel,
+            id: KernelId::fresh(),
+        }
+    }
+
     fn checked_fact(&self, fact: &PySynFact) -> PyResult<SynFactId> {
         if self.id != fact.owner {
             return Err(PyValueError::new_err(
@@ -439,6 +446,17 @@ impl PyKernel {
             fact: self.kernel.syn_fact(id).map_err(value_error)?,
         })
     }
+}
+
+/// Runs a standard portable proof component and returns its checked kernel.
+#[pyfunction]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+fn load_standard_proof(python: Python<'_>, component: Bytes) -> PyResult<PyKernel> {
+    let component = component.as_slice().to_vec();
+    python
+        .detach(|| covalence_nucleus::load_standard_proof(&component))
+        .map(PyKernel::from_kernel)
+        .map_err(|error| PyRuntimeError::new_err(error.to_string()))
 }
 
 #[pymethods]
@@ -986,7 +1004,10 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyTy>()?;
     module.add_class::<PyTm>()?;
     module.add_class::<PySynFact>()?;
-    module.add_class::<PyKernel>()
+    module.add_class::<PyKernel>()?;
+    let function = wrap_pyfunction!(load_standard_proof, module)?;
+    function.setattr("__module__", "covalence.logic.hol")?;
+    module.add_function(function)
 }
 
 #[pymethods]
