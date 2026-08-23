@@ -100,6 +100,27 @@ fn the_bad_leaf_no_longer_composes_into_a_beta_conversion() {
 }
 
 #[test]
+fn the_universal_leaf_inherits_the_same_obligation() {
+    // `syn_sub_leaf_forall` quantifies over every compatible replacement, so it
+    // needs at least what the concrete rule needs. Both go through
+    // `require_substitution_leaf`; this pins that they still do.
+    let Guarded {
+        mut fix,
+        subject,
+        annotated,
+        ..
+    } = guarded();
+
+    let error = fix
+        .syn_sub_leaf_forall(None, subject, annotated)
+        .expect_err("the annotation mentions `x`");
+    assert_eq!(invalid(&error), "substitution leaf");
+
+    let plain = fix.var(2);
+    assert!(fix.syn_sub_leaf_forall(None, subject, plain).is_ok());
+}
+
+#[test]
 fn a_leaf_is_still_unchanged_when_the_annotation_cannot_mention_the_variable() {
     // The fix must not cost the ordinary case: a `bool`-typed variable is
     // invariant under any substitution for a differently named variable.
