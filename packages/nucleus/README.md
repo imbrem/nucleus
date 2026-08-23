@@ -1,5 +1,15 @@
 # Browser SQLite shell
 
+The package also includes `proof.html`, a small browser host for standard
+Nucleus proof components. It accepts a component URL or local `.wasm` file,
+runs the proof through checked kernel operations, and reports the returned
+kernel's CBOR address and row statistics. Diagnostic arena JSON is generated
+only when opened (or immediately for small kernels).
+
+The browser adapter intentionally implements only the proof operations used by
+the demo component. Unimplemented imports fail instead of manufacturing an
+unchecked result; the host surface can grow alongside the checked Rust API.
+
 The browser runs the upstream SQLite shell as a separate WebAssembly component.
 JavaScript supplies an immutable VFS with `open`, `size`, and ranged `readAt`
 operations. The default adapter reads the REPL local CAS; another host can

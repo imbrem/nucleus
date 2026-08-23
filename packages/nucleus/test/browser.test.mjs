@@ -150,6 +150,35 @@ test("the browser runs the same REPL as the CLI", async (context) => {
   assert.match(result.help, /\(connect "URL"\)/);
 });
 
+test("the browser runs a standard proof component", async (context) => {
+  const origin = await servePackage(context);
+  const page = await openPage(context, origin);
+  const component = await readFile(
+    join(
+      repository,
+      "target/wasm32-wasip1/debug/covalence_proof_demo.wasm",
+    ),
+  );
+
+  const result = await page.evaluate(async (bytes) => {
+    const kernel = await window.nucleus.loadStandardProof(
+      new Uint8Array(bytes),
+    );
+    const stats = kernel.stats();
+    return {
+      address: kernel.addr(),
+      rows: stats.rows.toString(),
+      synFacts: stats.synFacts.toString(),
+      arena: kernel.debugJson(),
+    };
+  }, Array.from(component));
+
+  assert.match(result.address, /^[0-9a-f]{64}$/);
+  assert.equal(result.rows, "3");
+  assert.equal(result.synFacts, "0");
+  assert.equal(result.arena.defs.length, 3);
+});
+
 test("the REPL connects to a kernel over HTTP and fetches from it", async (context) => {
   const origin = await servePackage(context);
   const kernel = await startKernel(context);

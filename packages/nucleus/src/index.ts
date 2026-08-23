@@ -2,7 +2,13 @@ import init, { Repl, Step } from "../generated/nucleus.js";
 import { runShell } from "./shell.js";
 
 export { init, Repl, runShell };
+export {
+  fetchStandardProof,
+  loadStandardProof,
+} from "./proof.js";
+export { ProofKernel } from "./proof-host.js";
 export type { Step };
+export type { ProofStats, SynRel } from "./proof-host.js";
 export type { ShellOptions, ShellResult } from "./shell.js";
 export type { ReadOnlyVfs, VfsError, VfsFile } from "./vfs-host.js";
 

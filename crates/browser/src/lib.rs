@@ -7,11 +7,181 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use covalence_data_cas::{CasObject, ObjectCas, ResidentObject};
 use covalence_lib_hash::O256;
 use covalence_lib_sqlite::{Connection, Step as SqliteStep, ValueType};
+use covalence_logic_hol::{Kernel, Ref, SynFactId, SynRel};
 use covalence_repl::{Response, Session};
 use wasm_bindgen::prelude::*;
 
 /// Generates unique VFS names within one wasm instance.
 static NEXT_MOUNT: AtomicU64 = AtomicU64::new(0);
+
+/// The checked Ethane kernel used by browser proof components.
+///
+/// This is a deliberately small first surface. Methods added here remain
+/// checked operations on [`Kernel`]; JavaScript orchestration and proof search
+/// stay outside the trusted Rust boundary.
+#[wasm_bindgen]
+pub struct ProofKernel {
+    kernel: Kernel,
+}
+
+#[wasm_bindgen]
+impl ProofKernel {
+    /// Creates an empty checked kernel.
+    #[wasm_bindgen(constructor)]
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            kernel: Kernel::new(),
+        }
+    }
+
+    /// Introduces the kind `*` and returns its one-based row reference.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the arena index space is exhausted.
+    #[wasm_bindgen(js_name = kindStar)]
+    pub fn kind_star(&mut self) -> Result<u64, JsError> {
+        self.kernel.star().map(Ref::get).map_err(to_js)
+    }
+
+    /// Introduces the Boolean type with classifier `star`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `star` is a checked kind `*` row.
+    #[wasm_bindgen(js_name = boolType)]
+    pub fn bool_type(&mut self, star: u64) -> Result<u64, JsError> {
+        self.kernel
+            .bool_ty(proof_ref(star)?)
+            .map(Ref::get)
+            .map_err(to_js)
+    }
+
+    /// Introduces a Boolean literal.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `bool_type` is the checked Boolean type.
+    #[wasm_bindgen(js_name = boolLit)]
+    pub fn bool_lit(&mut self, bool_type: u64, value: bool) -> Result<u64, JsError> {
+        self.kernel
+            .bool(proof_ref(bool_type)?, value)
+            .map(Ref::get)
+            .map_err(to_js)
+    }
+
+    /// Inserts syntactic reflexivity and returns its one-based fact slot.
+    ///
+    /// Relations are encoded as `0 = syn`, `1 = alpha`, and `2 = conv`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid relation, row, or replacement slot.
+    #[wasm_bindgen(js_name = synRefl)]
+    pub fn syn_refl(
+        &mut self,
+        relation: u8,
+        input: u64,
+        target: Option<u64>,
+    ) -> Result<u64, JsError> {
+        let relation = match relation {
+            0 => SynRel::Syn,
+            1 => SynRel::Alpha,
+            2 => SynRel::Conv,
+            _ => return Err(JsError::new("unknown syntactic relation")),
+        };
+        self.kernel
+            .syn_refl(proof_target(target)?, relation, proof_ref(input)?)
+            .map(SynFactId::get)
+            .map_err(to_js)
+    }
+
+    /// Unions the equality asserted by one checked syntactic fact.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `fact` names live evidence in this kernel.
+    #[wasm_bindgen(js_name = unionSynFact)]
+    pub fn union_syn_fact(&mut self, fact: u64) -> Result<(), JsError> {
+        self.kernel.union_syn_fact(proof_fact(fact)?).map_err(to_js)
+    }
+
+    /// Number of allocated syntactic-fact slots, including removed slots.
+    #[wasm_bindgen(js_name = synFactCount)]
+    #[must_use]
+    pub fn syn_fact_count(&self) -> u64 {
+        u64::try_from(self.kernel.syn_fact_len()).unwrap_or(u64::MAX)
+    }
+
+    /// Removes one cached syntactic fact.
+    #[wasm_bindgen(js_name = removeSynFact)]
+    #[must_use]
+    pub fn remove_syn_fact(&mut self, fact: u64) -> bool {
+        SynFactId::new(fact).is_some_and(|fact| self.kernel.remove_syn_fact(fact))
+    }
+
+    /// Retains only the first `len` syntactic-fact slots.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `len` does not fit in browser memory.
+    #[wasm_bindgen(js_name = truncateSynFacts)]
+    pub fn truncate_syn_facts(&mut self, len: u64) -> Result<(), JsError> {
+        let len = usize::try_from(len)
+            .map_err(|_| JsError::new("syntactic-fact count does not fit in browser memory"))?;
+        self.kernel.truncate_syn_facts(len);
+        Ok(())
+    }
+
+    /// Hashes the kernel's current CBOR arena encoding.
+    #[must_use]
+    pub fn addr(&self) -> String {
+        self.kernel.addr().to_string()
+    }
+
+    /// Number of checked local arena rows.
+    #[wasm_bindgen(js_name = rowCount)]
+    #[must_use]
+    pub fn row_count(&self) -> u64 {
+        u64::try_from(self.kernel.len()).unwrap_or(u64::MAX)
+    }
+
+    /// Serializes the raw arena view as indented JSON for diagnostics.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JSON serialization fails.
+    #[wasm_bindgen(js_name = debugJson)]
+    pub fn debug_json(&self) -> Result<String, JsError> {
+        covalence_lib_json::to_string_pretty(self.kernel.arena()).map_err(to_js)
+    }
+}
+
+impl Default for ProofKernel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Computes the 32-byte content address used by checked browser CAS blobs.
+#[wasm_bindgen(js_name = hashBytes)]
+#[must_use]
+pub fn hash_bytes(value: &[u8]) -> Vec<u8> {
+    O256::from_bytes(value).as_ref().to_vec()
+}
+
+fn proof_ref(value: u64) -> Result<Ref, JsError> {
+    Ref::new(value).ok_or_else(|| JsError::new("arena references are one-based"))
+}
+
+fn proof_fact(value: u64) -> Result<SynFactId, JsError> {
+    SynFactId::new(value).ok_or_else(|| JsError::new("syntactic-fact slots are one-based"))
+}
+
+fn proof_target(value: Option<u64>) -> Result<Option<SynFactId>, JsError> {
+    value.map(proof_fact).transpose()
+}
 
 /// A wasm-friendly form of `covalence_repl::Response`.
 #[wasm_bindgen]
