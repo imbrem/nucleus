@@ -240,8 +240,8 @@ impl Kernel {
             return Err(Self::invalid_fact("constructor congruence"));
         }
         if var.is_some_and(|var| {
-            self.same_variable::<Infallible>(var, input)
-                .unwrap_or(false)
+            self.row::<Infallible>(var)
+                .is_ok_and(|row| Self::same_variable_name(*row.expr(), input_node))
         }) && val.is_some()
         {
             return Err(Self::invalid_fact("constructor congruence"));
@@ -1110,6 +1110,34 @@ mod tests {
             )
             .unwrap();
         assert_eq!(kernel.syn_fact(fact).unwrap().output(), output);
+    }
+
+    #[test]
+    fn variable_congruence_rejects_duplicate_classifier_rows() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let first_bool = kernel.bool_ty(star).unwrap();
+        let second_bool = kernel.bool_ty(star).unwrap();
+        let variable = kernel.tm_fv(4, first_bool).unwrap();
+        let duplicate = kernel.tm_fv(4, second_bool).unwrap();
+        let truth = kernel.bool(first_bool, true).unwrap();
+        let classifier = kernel
+            .syn_sub_leaf(None, variable, truth, second_bool)
+            .unwrap();
+
+        assert!(
+            kernel
+                .syn_congr(
+                    None,
+                    SynRel::Syn,
+                    Some(variable),
+                    Some(truth),
+                    duplicate,
+                    duplicate,
+                    &[classifier],
+                )
+                .is_err()
+        );
     }
 
     #[test]

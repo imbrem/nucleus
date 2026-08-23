@@ -343,6 +343,23 @@ impl Arena {
         }
     }
 
+    /// Returns the address of this arena's current CBOR encoding.
+    ///
+    /// Mutable arenas recompute their address on every call. [`Table::addr`]
+    /// returns the address cached when the table was introduced instead.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the arena's internal Serde implementation rejects
+    /// encoding to an in-memory buffer.
+    #[must_use]
+    pub fn addr(&self) -> O256 {
+        let mut bytes = Vec::new();
+        wire::serialize(self, &mut bytes)
+            .expect("serializing an Ethane arena into memory cannot fail");
+        O256::from_bytes(&bytes)
+    }
+
     #[must_use]
     pub fn len(&self) -> usize {
         self.dense.len()
@@ -625,7 +642,11 @@ impl Arena {
         }
     }
 
-    pub(crate) fn remove_syn_fact(&mut self, id: SynFactId) -> bool {
+    /// Removes an occupied syntactic-fact slot and links it into the free list.
+    ///
+    /// Returns `false` when `id` is absent or already free.
+    #[must_use]
+    pub fn remove_syn_fact(&mut self, id: SynFactId) -> bool {
         let Ok(position) = usize::try_from(id.get() - 1) else {
             return false;
         };
@@ -642,7 +663,9 @@ impl Arena {
         true
     }
 
-    pub(crate) fn truncate_syn_facts(&mut self, len: usize) {
+    /// Drops all syntactic-fact slots at or above `len` and rebuilds the free
+    /// list over the retained prefix.
+    pub fn truncate_syn_facts(&mut self, len: usize) {
         self.syn_facts.truncate(len);
         self.rebuild_syn_free();
     }
@@ -791,5 +814,15 @@ mod tests {
         assert_eq!(arena.tag(reference(2)), Some(Tag::Ty(TyTag::Bool)));
         assert_eq!(arena.eq(reference(2)), Some(reference(1)));
         assert_eq!(arena.tag(reference(3)), None);
+    }
+
+    #[test]
+    fn mutable_arena_address_tracks_current_state() {
+        let mut arena = Arena::empty();
+        let empty = arena.addr();
+        assert_eq!(arena.addr(), empty);
+
+        arena.push_kind_star().unwrap();
+        assert_ne!(arena.addr(), empty);
     }
 }

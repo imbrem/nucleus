@@ -6,7 +6,7 @@
 //! member. Concrete resolvers, caches, ergonomic typed objects, and indexes
 //! over the union-find belong in userspace.
 
-use std::convert::Infallible;
+use std::{convert::Infallible, ops::Deref};
 
 use covalence_lib_error::snafu::Snafu;
 use smallvec::SmallVec;
@@ -108,6 +108,14 @@ where
 #[derive(Debug, Default)]
 pub struct Kernel {
     arena: Arena,
+}
+
+impl Deref for Kernel {
+    type Target = Arena;
+
+    fn deref(&self) -> &Self::Target {
+        &self.arena
+    }
 }
 
 impl Kernel {
@@ -966,7 +974,7 @@ mod tests {
         let source = owner
             .import_link(Link {
                 format: LinkFormat::Cbor,
-                blake3: table.address(),
+                blake3: table.addr(),
             })
             .unwrap();
         let mut resolver = OneTable(table);

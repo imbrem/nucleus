@@ -35,7 +35,7 @@ impl Table {
 
     /// Returns the address of bytes that decode to this arena.
     #[must_use]
-    pub const fn address(&self) -> O256 {
+    pub const fn addr(&self) -> O256 {
         self.address
     }
 
@@ -88,7 +88,7 @@ mod tests {
         let address = bytes.hash();
 
         let table = Table::try_from(bytes).unwrap();
-        assert_eq!(table.address(), address);
+        assert_eq!(table.addr(), address);
         assert!(table.is_empty());
     }
 
@@ -103,6 +103,7 @@ mod tests {
         let table = Table::from_arena(Arena::empty()).unwrap();
         let mut encoded = Vec::new();
         wire::serialize(&table, &mut encoded).unwrap();
-        assert_eq!(table.address(), O256::from_bytes(&encoded));
+        assert_eq!(table.addr(), O256::from_bytes(&encoded));
+        assert_eq!(table.addr(), table.as_ref().addr());
     }
 }

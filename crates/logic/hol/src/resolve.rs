@@ -112,7 +112,7 @@ pub trait ResolverExt: Resolver + sealed::ResolverExt {
                 link: *link,
                 source,
             })?;
-        let returned = table.address();
+        let returned = table.addr();
         if returned == link.blake3 {
             Ok(table)
         } else {
@@ -332,7 +332,7 @@ mod tests {
         let linked = owner
             .push_import(Import::Link(Link {
                 format: LinkFormat::Cbor,
-                blake3: table.address(),
+                blake3: table.addr(),
             }))
             .unwrap();
         let literal_proxy = owner.push_ty_ref(literal, target).unwrap();
@@ -341,7 +341,7 @@ mod tests {
 
         let literal = owner.resolve_proxy(&mut resolver, literal_proxy).unwrap();
         let linked = owner.resolve_proxy(&mut resolver, linked_proxy).unwrap();
-        assert_eq!(literal.table().address(), linked.table().address());
+        assert_eq!(literal.table().addr(), linked.table().addr());
         assert_eq!(literal.reference(), linked.reference());
         assert_eq!(literal.tag(), linked.tag());
         assert_eq!(literal.children().collect::<Vec<_>>(), Vec::<Ref>::new());
@@ -370,7 +370,7 @@ mod tests {
     #[test]
     fn checked_resolution_rejects_an_unrelated_table() {
         let table = Table::from_arena(Arena::empty()).unwrap();
-        let returned = table.address();
+        let returned = table.addr();
         let requested = O256::from_array([9; 32]);
         assert_ne!(requested, returned);
         let link = Link {
