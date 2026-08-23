@@ -103,6 +103,7 @@ def test_lookup_is_one_based_and_bounded() -> None:
     assert arena.definition(1).reference == 1
     assert arena.definition(len(arena)).reference == len(arena)
     assert arena.definition(len(arena) + 1) is None
+    assert arena.definition(2**63 - 1) is None
     assert arena.definition(2**63) is None
     with pytest.raises(ValueError, match=ONE_BASED):
         arena.definition(0)

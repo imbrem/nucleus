@@ -13,10 +13,16 @@ use smallvec::SmallVec;
 
 use crate::{
     Arena, Import, ImportId, Link, Meta, Ref, ResolveError, Resolver, Sort, SynFactId, Tag,
+    builtin::{Op1, Op2},
+    init::Compiled,
     row::{Expr as Node, Row},
 };
 
+mod classical;
 mod syn_facts;
+
+use classical::ClassicalState;
+pub use classical::{PropId, PropIdError, PropVec, Thm, ThmId};
 
 /// A recoverable failure at the checked kernel boundary.
 #[derive(Debug, Snafu)]
@@ -34,6 +40,21 @@ where
     /// The syntactic-fact slot space no longer fits in `SynFactId`.
     #[snafu(display("kernel has too many syntactic facts"))]
     TooManySynFacts,
+    /// The theorem slot space no longer fits in `ThmId`.
+    #[snafu(display("kernel has too many theorem slots"))]
+    TooManyTheorems,
+    /// A theorem index is absent or has been removed.
+    #[snafu(display("theorem {id:?} is absent"))]
+    MissingTheorem {
+        /// Missing one-based theorem slot.
+        id: ThmId,
+    },
+    /// A checked sequent rule does not match its evidence.
+    #[snafu(display("theorem evidence does not establish {rule}"))]
+    InvalidTheoremRule {
+        /// Name of the rejected rule.
+        rule: &'static str,
+    },
     /// A reference does not name a local row.
     #[snafu(display("reference {reference:?} does not name a kernel row"))]
     MissingDefinition {
@@ -86,6 +107,9 @@ where
         /// Supplied classifier.
         actual: Ref,
     },
+    /// Logical lowering was requested against a different init prefix.
+    #[snafu(display("kernel does not contain the requested init definition prefix"))]
+    InitPrefixMismatch,
     /// The requested axiom capability is unavailable in Ethane.
     #[snafu(display("unsupported axiom capability {name}"))]
     UnsupportedAxiom {
@@ -108,6 +132,7 @@ where
 #[derive(Debug, Default)]
 pub struct Kernel {
     arena: Arena,
+    classical: ClassicalState,
 }
 
 impl Deref for Kernel {
@@ -124,6 +149,16 @@ impl Kernel {
     pub const fn new() -> Self {
         Self {
             arena: Arena::empty(),
+            classical: ClassicalState::new(),
+        }
+    }
+
+    /// Creates a checked kernel whose exact prefix is the compiled init table.
+    #[must_use]
+    pub fn with_init(init: &Compiled) -> Self {
+        Self {
+            arena: init.arena().clone(),
+            classical: ClassicalState::new(),
         }
     }
 
@@ -451,6 +486,77 @@ impl Kernel {
     pub fn bool(&mut self, bool_ty: Ref, value: bool) -> Result<Ref, KernelError> {
         self.require_bool_type::<Infallible>(bool_ty)?;
         self.push::<Infallible>(Row::new(Node::Bool(value)).with_sort(bool_ty))
+    }
+
+    /// Appends a checked unary Boolean builtin.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the operand is a Boolean term.
+    pub fn op1(&mut self, op: Op1, operand: Ref) -> Result<Ref, KernelError> {
+        let bool_ty = self.require_bool_term::<Infallible>(operand)?;
+        self.push::<Infallible>(Row::new(Node::Op1(op, operand)).with_sort(bool_ty))
+    }
+
+    /// Appends a checked binary Boolean builtin.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless both operands are Boolean terms.
+    pub fn op2(&mut self, op: Op2, left: Ref, right: Ref) -> Result<Ref, KernelError> {
+        let bool_ty = self.require_bool_term::<Infallible>(left)?;
+        let right_ty = self.require_bool_term::<Infallible>(right)?;
+        if !self.equivalent(bool_ty, right_ty)? {
+            return Err(KernelError::ClassifierMismatch {
+                expected: bool_ty,
+                actual: right_ty,
+            });
+        }
+        self.push::<Infallible>(Row::new(Node::Op2(op, left, right)).with_sort(bool_ty))
+    }
+
+    /// Canonically lowers one compact logical row through its named init definition.
+    ///
+    /// The kernel must have been created with [`Kernel::with_init`], and `init`
+    /// must be that same prefix. Lowering is ordinary checked application, so
+    /// the resulting raw term is identical to direct construction from the
+    /// authoritative opcode-free definition.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `reference` is not an opcode row, the init prefix
+    /// is absent/mismatched, or checked application rejects an operand.
+    pub fn lower_logical(&mut self, init: &Compiled, reference: Ref) -> Result<Ref, KernelError> {
+        if !self.arena.has_definition_prefix(init.arena()) {
+            return Err(KernelError::InitPrefixMismatch);
+        }
+        let row = self.row::<Infallible>(reference)?;
+        let actual = row.tag();
+        let node = *row.expr();
+        match node {
+            Node::Op1(op, operand) => {
+                let definition = init.get(op.name()).ok_or(KernelError::WrongForm {
+                    reference,
+                    expected: "named logical init definition",
+                    actual,
+                })?;
+                self.app(definition, operand)
+            }
+            Node::Op2(op, left, right) => {
+                let definition = init.get(op.name()).ok_or(KernelError::WrongForm {
+                    reference,
+                    expected: "named logical init definition",
+                    actual,
+                })?;
+                let partial = self.app(definition, left)?;
+                self.app(partial, right)
+            }
+            _ => Err(KernelError::WrongForm {
+                reference,
+                expected: "tm.op1.v1 or tm.op2.v1",
+                actual,
+            }),
+        }
     }
 
     /// Appends object-language equality.
@@ -929,7 +1035,13 @@ mod tests {
     use std::convert::Infallible;
 
     use super::*;
-    use crate::{KindTag, LinkFormat, Table, TmTag, TyTag};
+    use crate::{KindTag, LinkFormat, SynRel, Table, TmTag, TyTag, init};
+    use covalence_lib_json::serde_json;
+
+    #[cfg(not(feature = "buck-test-fixtures"))]
+    const INIT_FIXTURE: &str = include_str!("../../../../theories/init-boolean.checked.json");
+    #[cfg(feature = "buck-test-fixtures")]
+    const INIT_FIXTURE: &str = include_str!("../theories/init-boolean.checked.json");
 
     struct OneTable(Table);
 
@@ -956,6 +1068,113 @@ mod tests {
         assert_eq!(kernel.classifier(application).unwrap(), bool_ty);
         assert_eq!(kernel.arena().tag(identity), Some(Tag::Tm(TmTag::Lam)));
         assert_eq!(kernel.arena().context().collect::<Vec<_>>(), [equation]);
+    }
+
+    #[test]
+    fn logical_rows_are_boolean_checked_and_lower_canonically() {
+        let manifest: init::Manifest = serde_json::from_str(INIT_FIXTURE).unwrap();
+        let init = init::compile(&manifest).unwrap();
+        let bool_ty = init.get("bool").unwrap();
+        let truth = init.get("true").unwrap();
+        let falsehood = init.get("false").unwrap();
+
+        for operand in [falsehood, truth] {
+            let op = Op1::Not;
+            let mut lowered = Kernel::with_init(&init);
+            let compact = lowered.op1(op, operand).unwrap();
+            assert_eq!(lowered.arena().op1(compact), Some(op));
+            let result = lowered.lower_logical(&init, compact).unwrap();
+
+            let mut direct = Kernel::with_init(&init);
+            let direct_compact = direct.op1(op, operand).unwrap();
+            assert_eq!(direct_compact, compact);
+            let expected = direct.app(init.get(op.name()).unwrap(), operand).unwrap();
+            assert_eq!(result, expected);
+            assert_eq!(lowered.into_arena(), direct.into_arena());
+        }
+
+        for op in [Op2::And, Op2::Or, Op2::Imp] {
+            for left in [falsehood, truth] {
+                for right in [falsehood, truth] {
+                    let mut lowered = Kernel::with_init(&init);
+                    let compact = lowered.op2(op, left, right).unwrap();
+                    assert_eq!(lowered.arena().op2(compact), Some(op));
+                    let result = lowered.lower_logical(&init, compact).unwrap();
+
+                    let mut direct = Kernel::with_init(&init);
+                    let direct_compact = direct.op2(op, left, right).unwrap();
+                    assert_eq!(direct_compact, compact);
+                    let partial = direct.app(init.get(op.name()).unwrap(), left).unwrap();
+                    let expected = direct.app(partial, right).unwrap();
+                    assert_eq!(result, expected);
+                    assert_eq!(lowered.into_arena(), direct.into_arena());
+                }
+            }
+        }
+
+        let mut wrong = Kernel::new();
+        let star = wrong.star().unwrap();
+        let wrong_bool = wrong.bool_ty(star).unwrap();
+        assert!(wrong.op1(Op1::Not, wrong_bool).is_err());
+        assert!(wrong.op2(Op2::And, wrong_bool, wrong_bool).is_err());
+        let raw_compact = wrong.arena.push_op1(Op1::Not, wrong_bool).unwrap();
+        assert!(matches!(
+            wrong.lower_logical(&init, raw_compact),
+            Err(KernelError::InitPrefixMismatch)
+        ));
+        assert_eq!(init.get("bool"), Some(bool_ty));
+    }
+
+    #[test]
+    fn logical_lowering_produces_checked_direct_syntactic_facts() {
+        let manifest: init::Manifest = serde_json::from_str(INIT_FIXTURE).unwrap();
+        let init = init::compile(&manifest).unwrap();
+        let truth = init.get("true").unwrap();
+
+        let mut unary = Kernel::with_init(&init);
+        let compact = unary.op1(Op1::Not, truth).unwrap();
+        let id = unary.logical_lower_fact(None, &init, compact).unwrap();
+        let fact = unary.syn_fact(id).unwrap();
+        assert_eq!(fact.rel(), SynRel::Syn);
+        assert_eq!(fact.input(), compact);
+        assert_eq!(fact.var(), None);
+        assert_eq!(fact.val(), None);
+
+        let mut unary_direct = Kernel::with_init(&init);
+        let direct_compact = unary_direct.op1(Op1::Not, truth).unwrap();
+        let direct_expansion = unary_direct.lower_logical(&init, direct_compact).unwrap();
+        assert_eq!(fact.output(), direct_expansion);
+        unary.union_syn_fact(id).unwrap();
+        assert!(unary.equivalent(compact, fact.output()).unwrap());
+
+        for op in [Op2::And, Op2::Or, Op2::Imp] {
+            let mut binary = Kernel::with_init(&init);
+            let compact = binary.op2(op, truth, truth).unwrap();
+            let id = binary.logical_lower_fact(None, &init, compact).unwrap();
+            let fact = binary.syn_fact(id).unwrap();
+
+            let mut direct = Kernel::with_init(&init);
+            let direct_compact = direct.op2(op, truth, truth).unwrap();
+            let direct_expansion = direct.lower_logical(&init, direct_compact).unwrap();
+            assert_eq!(fact.rel(), SynRel::Syn);
+            assert_eq!(fact.input(), compact);
+            assert_eq!(fact.output(), direct_expansion);
+        }
+
+        let mut initialized = Kernel::with_init(&init);
+        assert!(initialized.logical_lower_fact(None, &init, truth).is_err());
+        assert_eq!(initialized.syn_fact_len(), 0);
+
+        let mut bare = Kernel::new();
+        let star = bare.star().unwrap();
+        let bool_ty = bare.bool_ty(star).unwrap();
+        let bare_truth = bare.bool(bool_ty, true).unwrap();
+        let compact = bare.op1(Op1::Not, bare_truth).unwrap();
+        assert!(matches!(
+            bare.logical_lower_fact(None, &init, compact),
+            Err(KernelError::InitPrefixMismatch)
+        ));
+        assert_eq!(bare.syn_fact_len(), 0);
     }
 
     #[test]
