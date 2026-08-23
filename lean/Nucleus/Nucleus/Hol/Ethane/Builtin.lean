@@ -1,4 +1,5 @@
 import Nucleus.Cbor.Wire
+import Nucleus.Hol.Ethane.Logic
 
 /-!
 # Ethane compact builtin wire contract, version 1
@@ -52,7 +53,14 @@ def ofCode? : UInt8 → Option Op1
   | 0 => some .not
   | _ => none
 
+def ofUInt64? (value : UInt64) : Option Op1 :=
+  if value.toNat < 256 then ofCode? value.toUInt8 else none
+
 @[simp] theorem ofCode?_code (op : Op1) : ofCode? op.code = some op := by
+  cases op
+  rfl
+
+@[simp] theorem ofUInt64?_code (op : Op1) : ofUInt64? op.code.toUInt64 = some op := by
   cases op
   rfl
 
@@ -77,10 +85,74 @@ def ofCode? : UInt8 → Option Op2
   | 2 => some .imp
   | _ => none
 
+def ofUInt64? (value : UInt64) : Option Op2 :=
+  if value.toNat < 256 then ofCode? value.toUInt8 else none
+
 @[simp] theorem ofCode?_code (op : Op2) : ofCode? op.code = some op := by
   cases op <;> rfl
 
+@[simp] theorem ofUInt64?_code (op : Op2) : ofUInt64? op.code.toUInt64 = some op := by
+  cases op <;> rfl
+
 end Op2
+
+/-! ## Exact opcode-free init definitions
+
+These terms transcribe `theories/init-boolean.checked.json` constructor for
+constructor. Lowering retains the two applications made by Rust; beta
+contraction is a separate conversion fact, not part of macro expansion.
+-/
+
+namespace Init
+
+def boolToBool : Ty Sig Nat := .arr .boolTy .boolTy
+def boolToBoolToBool : Ty Sig Nat := .arr .boolTy boolToBool
+
+def truth : Tm Sig Nat :=
+  let x : Tm Sig Nat := .tmFv 0 .boolTy
+  let identity : Tm Sig Nat := .lam 0 .boolTy x
+  .eq boolToBool identity identity
+
+def falsehood : Tm Sig Nat :=
+  let x : Tm Sig Nat := .tmFv 1 .boolTy
+  let identity : Tm Sig Nat := .lam 1 .boolTy x
+  let constantTrue : Tm Sig Nat := .lam 2 .boolTy truth
+  .eq boolToBool identity constantTrue
+
+def not : Tm Sig Nat :=
+  let x : Tm Sig Nat := .tmFv 3 .boolTy
+  .lam 3 .boolTy (.eq .boolTy x falsehood)
+
+def and : Tm Sig Nat :=
+  let p : Tm Sig Nat := .tmFv 4 .boolTy
+  let q : Tm Sig Nat := .tmFv 5 .boolTy
+  let body : Tm Sig Nat := .eq .boolTy (.eq .boolTy p q) q
+  .lam 4 .boolTy (.lam 5 .boolTy body)
+
+def or : Tm Sig Nat :=
+  let p : Tm Sig Nat := .tmFv 6 .boolTy
+  let q : Tm Sig Nat := .tmFv 7 .boolTy
+  let body : Tm Sig Nat := .eq .boolTy (.eq .boolTy p q) p
+  .lam 6 .boolTy (.lam 7 .boolTy body)
+
+def imp : Tm Sig Nat :=
+  let p : Tm Sig Nat := .tmFv 8 .boolTy
+  let q : Tm Sig Nat := .tmFv 9 .boolTy
+  let body : Tm Sig Nat := .eq .boolTy (.eq .boolTy p truth) q
+  .lam 8 .boolTy (.lam 9 .boolTy body)
+
+end Init
+
+def Op1.lower (op : Op1) (operand : Tm Sig Nat) : Tm Sig Nat :=
+  match op with
+  | .not => .app Init.not operand
+
+def Op2.lower (op : Op2) (left right : Tm Sig Nat) : Tm Sig Nat :=
+  let definition := match op with
+    | .and => Init.and
+    | .or => Init.or
+    | .imp => Init.imp
+  .app (.app definition left) right
 
 private def text (value : String) : Nucleus.Cbor := .primitive (.text value)
 private def unsigned (value : UInt8) : Nucleus.Cbor :=

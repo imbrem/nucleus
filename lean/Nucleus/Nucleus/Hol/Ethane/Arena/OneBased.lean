@@ -1,4 +1,5 @@
 import Nucleus.Hol.Ethane.Arena
+import Nucleus.Hol.Ethane.Builtin
 import Nucleus.O256.Basic
 import Mathlib.Data.Finset.Sort
 import Mathlib.Order.Basic
@@ -209,6 +210,8 @@ inductive TmTag where
   | app
   | lam
   | bool
+  | op1
+  | op2
   | eq
   | eps
   | ref
@@ -222,6 +225,8 @@ def name : TmTag → String
   | .app => "tm.app"
   | .lam => "tm.lam"
   | .bool => "tm.bool"
+  | .op1 => Nucleus.Hol.Ethane.Builtin.op1RowTag
+  | .op2 => Nucleus.Hol.Ethane.Builtin.op2RowTag
   | .eq => "tm.eq"
   | .eps => "tm.eps"
   | .ref => "tm.ref"
@@ -261,6 +266,8 @@ def ofName? : String → Option Tag
   | "tm.app" => some (.tm .app)
   | "tm.lam" => some (.tm .lam)
   | "tm.bool" => some (.tm .bool)
+  | "tm.op1.v1" => some (.tm .op1)
+  | "tm.op2.v1" => some (.tm .op2)
   | "tm.eq" => some (.tm .eq)
   | "tm.eps" => some (.tm .eps)
   | "tm.ref" => some (.tm .ref)
@@ -282,6 +289,8 @@ namespace detail
 inductive Value where
   | nat (value : UInt64)
   | bool (value : Bool)
+  | op1 (op : Nucleus.Hol.Ethane.Builtin.Op1) (operand : Ref)
+  | op2 (op : Nucleus.Hol.Ethane.Builtin.Op2) (left right : Ref)
   deriving DecidableEq, Repr
 
 /-- A private expression row after exact arity and payload validation. -/
@@ -323,6 +332,8 @@ def Expr.tag : Expr → Tag
   | .app .. => .tm .app
   | .lam .. => .tm .lam
   | .bool .. => .tm .bool
+  | .op1 .. => .tm .op1
+  | .op2 .. => .tm .op2
   | .eq .. => .tm .eq
   | .eps .. => .tm .eps
   | .tmRef .. => .tm .ref
@@ -367,6 +378,8 @@ def Row.toView (row : Row) : RowView :=
   | .app f a => ordinary (.tm .app) [f, a]
   | .lam binder body => ordinary (.tm .lam) [binder, body]
   | .bool value => ordinary (.tm .bool) [] (some (.bool value))
+  | .op1 op operand => ordinary (.tm .op1) [operand] (some (.nat op.code.toUInt64))
+  | .op2 op left right => ordinary (.tm .op2) [left, right] (some (.nat op.code.toUInt64))
   | .eq left right => ordinary (.tm .eq) [left, right]
   | .eps type predicate => ordinary (.tm .eps) [type, predicate]
   | .tmRef src ix => foreign (.tm .ref) src ix
@@ -390,6 +403,10 @@ def Row.ofView? (view : RowView) : Option Row := do
     | .tm .app, some [f, a], none, none, none => some (.app f a)
     | .tm .lam, some [binder, body], none, none, none => some (.lam binder body)
     | .tm .bool, none, some (.bool value), none, none => some (.bool value)
+    | .tm .op1, some [operand], some (.nat code), none, none =>
+        return .op1 (← Nucleus.Hol.Ethane.Builtin.Op1.ofUInt64? code) operand
+    | .tm .op2, some [left, right], some (.nat code), none, none =>
+        return .op2 (← Nucleus.Hol.Ethane.Builtin.Op2.ofUInt64? code) left right
     | .tm .eq, some [left, right], none, none, none => some (.eq left right)
     | .tm .eps, some [type, predicate], none, none, none => some (.eps type predicate)
     | .tm .ref, none, none, some src, some ix => some (.tmRef src ix)

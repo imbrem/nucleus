@@ -8,6 +8,7 @@ import Nucleus.Hol.Ethane.Conversion
 import Nucleus.Hol.Ethane.Equivalence
 import Nucleus.Hol.Ethane.FV
 import Nucleus.Hol.Ethane.Builtin
+import Nucleus.Hol.Ethane.LogicalOpcode
 import Nucleus.Hol.Ethane.Arena
 import Nucleus.Hol.Ethane.Arena.Cbor
 import Nucleus.Hol.Ethane.Arena.OneBased

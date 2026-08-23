@@ -171,6 +171,18 @@ noncomputable def elaborateExpr
       let some sort := declaredSort | none
       let Value.family .star advertisedType ← lookupLocal sort | none
       return Value.term advertisedType (.bool value)
+  | .op1 op operand => do
+      let Value.term _ operand ← lookupLocal operand | none
+      let some sort := declaredSort | none
+      let Value.family .star advertisedType ← lookupLocal sort | none
+      return Value.term advertisedType (op.lower operand)
+  | .op2 op left right => do
+      let Value.term _ left ← lookupLocal left | none
+      let Value.term _ right ← lookupLocal right | none
+      let some sort := declaredSort | none
+      let Value.family .star advertisedType ← lookupLocal sort | none
+      return Value.term advertisedType
+        (op.lower left right)
   | .eq left right => do
       let Value.term syntacticType left ← lookupLocal left | none
       let Value.term _ right ← lookupLocal right | none
