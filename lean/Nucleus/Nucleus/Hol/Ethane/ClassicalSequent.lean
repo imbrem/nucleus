@@ -512,7 +512,7 @@ theorem trueRight {admissible : Valuation → Prop} (truth : PropId)
 | `and_left` / `and_right` | `checkedAndLeft` / `checkedAndRight` |
 | `or_left` / `or_right` | `checkedOrLeft` / `checkedOrRight` |
 | `imp_left` / `imp_right` | `checkedImpLeft` / `checkedImpRight` |
-| `expand_conclusion` | `andConcBranch`, `orConc`, `impConc`, `notConc` |
+| `expand_conclusion` | `checked*Conclusion*` normalized signed bridges |
 | `flatten_conclusion` / `fold_conclusion` | `flattenConclusion` / `foldConclusion` |
 | `flatten_premise` / `fold_premise` | `flattenPremise` / `foldPremise` |
 
@@ -778,78 +778,252 @@ theorem checkedImpRight {arena : OneBased.Arena} {parent left right : OneBased.R
     ArenaSound arena ⟨prem, insert (PropId.positive parent) conc⟩ :=
   impRight source (fun _valuation respects => checkedOp2_equation respects checked)
 
+/-! ## Exact normalized conclusion expansion
+
+Rust `expand_conclusion` replaces one signed formula by a canonical set of
+signed formulas.  The following rule captures that operation directly (all
+replacements stay on the right), unlike the ordinary implication sequent rule.
+-/
+
+set_option linter.unusedTactic false
+set_option linter.unnecessarySeqFocus false
+set_option linter.unreachableTactic false
+
+theorem replaceConclusion {admissible : Valuation → Prop} {formula : PropId}
+    {prem rest replacements : PropSet}
+    (source : SoundUnder admissible ⟨prem, insert formula rest⟩)
+    (equation : ∀ valuation, admissible valuation →
+      formula.eval valuation → ∃ id ∈ replacements, id.eval valuation) :
+    SoundUnder admissible ⟨prem, replacements ∪ rest⟩ := by
+  intro valuation allowed premises
+  obtain ⟨id, member, truth⟩ := source valuation allowed premises
+  simp only [Finset.mem_insert] at member
+  rcases member with rfl | member
+  · obtain ⟨replacement, replacementMember, replacementTruth⟩ :=
+      equation valuation allowed truth
+    exact ⟨replacement, by simp [replacementMember], replacementTruth⟩
+  · exact ⟨id, by simp [member], truth⟩
+
+theorem checkedFalseConclusion {arena : OneBased.Arena} {reference : OneBased.Ref}
+    {prem rest : PropSet}
+    (source : ArenaSound arena ⟨prem, insert (PropId.positive reference) rest⟩)
+    (checked : CheckedBool arena reference false) : ArenaSound arena ⟨prem, rest⟩ := by
+  simpa only [ArenaSound, Finset.empty_union] using
+    replaceConclusion (replacements := ∅) source (fun valuation respects => by
+    intro truth
+    exact (checkedFalse_equation (valuation := valuation) respects checked truth).elim)
+
+theorem checkedNegatedTrueConclusion {arena : OneBased.Arena} {reference : OneBased.Ref}
+    {prem rest : PropSet}
+    (source : ArenaSound arena ⟨prem, insert (PropId.positive reference).neg rest⟩)
+    (checked : CheckedBool arena reference true) : ArenaSound arena ⟨prem, rest⟩ := by
+  simpa only [ArenaSound, Finset.empty_union] using
+    replaceConclusion (replacements := ∅) source (fun valuation respects truth => by
+      have negated := (PropId.eval_neg valuation (PropId.positive reference)).mp truth
+      exact (negated (checkedTrue_equation respects checked)).elim)
+
+theorem checkedOrConclusion {arena : OneBased.Arena} {parent left right : OneBased.Ref}
+    {prem rest : PropSet}
+    (source : ArenaSound arena ⟨prem, insert (PropId.positive parent) rest⟩)
+    (checked : CheckedOp2 arena parent .or left right) :
+    ArenaSound arena ⟨prem, {PropId.positive left, PropId.positive right} ∪ rest⟩ :=
+  replaceConclusion source (fun valuation respects => by
+    have equation := checkedOp2_equation (valuation := valuation) respects checked
+    simp only [Op2Equation] at equation
+    rw [equation]
+    simp <;> tauto)
+
+theorem checkedAndConclusionLeft {arena : OneBased.Arena}
+    {parent selected other : OneBased.Ref} {prem rest : PropSet}
+    (source : ArenaSound arena ⟨prem, insert (PropId.positive parent) rest⟩)
+    (checked : CheckedOp2 arena parent .and selected other) :
+    ArenaSound arena ⟨prem, {PropId.positive selected} ∪ rest⟩ :=
+  replaceConclusion source (fun valuation respects => by
+    have equation := checkedOp2_equation (valuation := valuation) respects checked
+    simp only [Op2Equation] at equation
+    rw [equation]
+    simp <;> tauto)
+
+theorem checkedAndConclusionRight {arena : OneBased.Arena}
+    {parent left right : OneBased.Ref} {prem rest : PropSet}
+    (source : ArenaSound arena ⟨prem, insert (PropId.positive parent) rest⟩)
+    (checked : CheckedOp2 arena parent .and left right) :
+    ArenaSound arena ⟨prem, {PropId.positive right} ∪ rest⟩ :=
+  replaceConclusion source (fun valuation respects => by
+    have equation := checkedOp2_equation (valuation := valuation) respects checked
+    simp only [Op2Equation] at equation
+    rw [equation]
+    simp <;> tauto)
+
+theorem checkedImpConclusion {arena : OneBased.Arena} {parent left right : OneBased.Ref}
+    {prem rest : PropSet}
+    (source : ArenaSound arena ⟨prem, insert (PropId.positive parent) rest⟩)
+    (checked : CheckedOp2 arena parent .imp left right) :
+    ArenaSound arena
+      ⟨prem, {(PropId.positive left).neg, PropId.positive right} ∪ rest⟩ :=
+  replaceConclusion source (fun valuation respects => by
+    have equation := checkedOp2_equation (valuation := valuation) respects checked
+    simp only [Op2Equation] at equation
+    rw [equation]
+    simp [PropId.eval_neg] <;> tauto)
+
+theorem checkedNotConclusion {arena : OneBased.Arena} {parent operand : OneBased.Ref}
+    {prem rest : PropSet}
+    (source : ArenaSound arena ⟨prem, insert (PropId.positive parent) rest⟩)
+    (checked : CheckedOp1 arena parent .not operand) :
+    ArenaSound arena ⟨prem, {(PropId.positive operand).neg} ∪ rest⟩ :=
+  replaceConclusion source (fun valuation respects => by
+    have equation := checkedOp1_equation (valuation := valuation) respects checked
+    simp only [Op1Equation] at equation
+    rw [equation]
+    simp [PropId.eval_neg] <;> tauto)
+
+theorem checkedNegatedNotConclusion {arena : OneBased.Arena}
+    {parent operand : OneBased.Ref} {prem rest : PropSet}
+    (source : ArenaSound arena ⟨prem, insert (PropId.positive parent).neg rest⟩)
+    (checked : CheckedOp1 arena parent .not operand) :
+    ArenaSound arena ⟨prem, {PropId.positive operand} ∪ rest⟩ :=
+  replaceConclusion source (fun valuation respects => by
+    have equation := checkedOp1_equation (valuation := valuation) respects checked
+    simp only [Op1Equation] at equation
+    rw [PropId.eval_neg, equation]
+    simp <;> tauto)
+
+theorem checkedNegatedAndConclusion {arena : OneBased.Arena}
+    {parent left right : OneBased.Ref} {prem rest : PropSet}
+    (source : ArenaSound arena ⟨prem, insert (PropId.positive parent).neg rest⟩)
+    (checked : CheckedOp2 arena parent .and left right) :
+    ArenaSound arena
+      ⟨prem, {(PropId.positive left).neg, (PropId.positive right).neg} ∪ rest⟩ :=
+  replaceConclusion source (fun valuation respects => by
+    have equation := checkedOp2_equation (valuation := valuation) respects checked
+    simp only [Op2Equation] at equation
+    rw [PropId.eval_neg, equation]
+    simp [PropId.eval_neg] <;> tauto)
+
+theorem checkedNegatedOrConclusionLeft {arena : OneBased.Arena}
+    {parent selected other : OneBased.Ref} {prem rest : PropSet}
+    (source : ArenaSound arena ⟨prem, insert (PropId.positive parent).neg rest⟩)
+    (checked : CheckedOp2 arena parent .or selected other) :
+    ArenaSound arena ⟨prem, {(PropId.positive selected).neg} ∪ rest⟩ :=
+  replaceConclusion source (fun valuation respects => by
+    have equation := checkedOp2_equation (valuation := valuation) respects checked
+    simp only [Op2Equation] at equation
+    rw [PropId.eval_neg, equation]
+    simp [PropId.eval_neg] <;> tauto)
+
+theorem checkedNegatedOrConclusionRight {arena : OneBased.Arena}
+    {parent left right : OneBased.Ref} {prem rest : PropSet}
+    (source : ArenaSound arena ⟨prem, insert (PropId.positive parent).neg rest⟩)
+    (checked : CheckedOp2 arena parent .or left right) :
+    ArenaSound arena ⟨prem, {(PropId.positive right).neg} ∪ rest⟩ :=
+  replaceConclusion source (fun valuation respects => by
+    have equation := checkedOp2_equation (valuation := valuation) respects checked
+    simp only [Op2Equation] at equation
+    rw [PropId.eval_neg, equation]
+    simp [PropId.eval_neg] <;> tauto)
+
+theorem checkedNegatedImpLeftBranch {arena : OneBased.Arena}
+    {parent left right : OneBased.Ref} {prem rest : PropSet}
+    (source : ArenaSound arena ⟨prem, insert (PropId.positive parent).neg rest⟩)
+    (checked : CheckedOp2 arena parent .imp left right) :
+    ArenaSound arena ⟨prem, {PropId.positive left} ∪ rest⟩ :=
+  replaceConclusion source (fun valuation respects => by
+    have equation := checkedOp2_equation (valuation := valuation) respects checked
+    simp only [Op2Equation] at equation
+    rw [PropId.eval_neg, equation]
+    simp <;> tauto)
+
+theorem checkedNegatedImpRightBranch {arena : OneBased.Arena}
+    {parent left right : OneBased.Ref} {prem rest : PropSet}
+    (source : ArenaSound arena ⟨prem, insert (PropId.positive parent).neg rest⟩)
+    (checked : CheckedOp2 arena parent .imp left right) :
+    ArenaSound arena ⟨prem, {(PropId.positive right).neg} ∪ rest⟩ :=
+  replaceConclusion source (fun valuation respects => by
+    have equation := checkedOp2_equation (valuation := valuation) respects checked
+    simp only [Op2Equation] at equation
+    rw [PropId.eval_neg, equation]
+    simp [PropId.eval_neg] <;> tauto)
+
 /-- Expand conjunction in the premise. -/
-theorem andPrem {parent left right : PropId} {rest conc : PropSet}
-    (source : Sound ⟨insert parent rest, conc⟩)
-    (equation : ∀ valuation, Op2Equation valuation parent .and left right) :
-    Sound ⟨insert left (insert right rest), conc⟩ := by
-  intro valuation premises
-  apply source valuation
+theorem andPrem {admissible : Valuation → Prop} {parent left right : PropId}
+    {rest conc : PropSet} (source : SoundUnder admissible ⟨insert parent rest, conc⟩)
+    (equation : ∀ valuation, admissible valuation →
+      Op2Equation valuation parent .and left right) :
+    SoundUnder admissible ⟨insert left (insert right rest), conc⟩ := by
+  intro valuation allowed premises
+  apply source valuation allowed
   intro id member
   simp only [Finset.mem_insert] at member
   rcases member with rfl | member
-  · exact (equation valuation).mpr ⟨premises left (by simp), premises right (by simp)⟩
+  · exact (equation valuation allowed).mpr
+      ⟨premises left (by simp), premises right (by simp)⟩
   · exact premises id (by simp [member])
 
 /-- The branch-selecting one-step RHS projection used by
 `Kernel::expand_conclusion` for conjunction. -/
-theorem andConcBranch {parent selected other : PropId} {prem rest : PropSet}
-    (source : Sound ⟨prem, insert parent rest⟩)
-    (equation : ∀ valuation, Op2Equation valuation parent .and selected other) :
-    Sound ⟨prem, insert selected rest⟩ := by
-  intro valuation premises
-  obtain ⟨id, member, truth⟩ := source valuation premises
+theorem andConcBranch {admissible : Valuation → Prop}
+    {parent selected other : PropId} {prem rest : PropSet}
+    (source : SoundUnder admissible ⟨prem, insert parent rest⟩)
+    (equation : ∀ valuation, admissible valuation →
+      Op2Equation valuation parent .and selected other) :
+    SoundUnder admissible ⟨prem, insert selected rest⟩ := by
+  intro valuation allowed premises
+  obtain ⟨id, member, truth⟩ := source valuation allowed premises
   simp only [Finset.mem_insert] at member
   rcases member with rfl | member
-  · exact ⟨selected, by simp, ((equation valuation).mp truth).1⟩
+  · exact ⟨selected, by simp, ((equation valuation allowed).mp truth).1⟩
   · exact ⟨id, by simp [member], truth⟩
 
 /-- Expand disjunction in the conclusion. -/
-theorem orConc {parent left right : PropId} {prem rest : PropSet}
-    (source : Sound ⟨prem, insert parent rest⟩)
-    (equation : ∀ valuation, Op2Equation valuation parent .or left right) :
-    Sound ⟨prem, insert left (insert right rest)⟩ := by
-  intro valuation premises
-  obtain ⟨id, member, truth⟩ := source valuation premises
+theorem orConc {admissible : Valuation → Prop} {parent left right : PropId}
+    {prem rest : PropSet} (source : SoundUnder admissible ⟨prem, insert parent rest⟩)
+    (equation : ∀ valuation, admissible valuation →
+      Op2Equation valuation parent .or left right) :
+    SoundUnder admissible ⟨prem, insert left (insert right rest)⟩ := by
+  intro valuation allowed premises
+  obtain ⟨id, member, truth⟩ := source valuation allowed premises
   simp only [Finset.mem_insert] at member
   rcases member with rfl | member
-  · rcases (equation valuation).mp truth with leftTruth | rightTruth
+  · rcases (equation valuation allowed).mp truth with leftTruth | rightTruth
     · exact ⟨left, by simp, leftTruth⟩
     · exact ⟨right, by simp, rightTruth⟩
   · exact ⟨id, by simp [member], truth⟩
 
 /-- Expand conjunction in the conclusion.  Both branches are required. -/
-theorem andConc {parent left right : PropId} {prem rest : PropSet}
-    (leftSource : Sound ⟨prem, insert left rest⟩)
-    (rightSource : Sound ⟨prem, insert right rest⟩)
-    (equation : ∀ valuation, Op2Equation valuation parent .and left right) :
-    Sound ⟨prem, insert parent rest⟩ := by
-  intro valuation premises
-  obtain ⟨leftId, leftMember, leftTruth⟩ := leftSource valuation premises
-  obtain ⟨rightId, rightMember, rightTruth⟩ := rightSource valuation premises
+theorem andConc {admissible : Valuation → Prop} {parent left right : PropId}
+    {prem rest : PropSet} (leftSource : SoundUnder admissible ⟨prem, insert left rest⟩)
+    (rightSource : SoundUnder admissible ⟨prem, insert right rest⟩)
+    (equation : ∀ valuation, admissible valuation →
+      Op2Equation valuation parent .and left right) :
+    SoundUnder admissible ⟨prem, insert parent rest⟩ := by
+  intro valuation allowed premises
+  obtain ⟨leftId, leftMember, leftTruth⟩ := leftSource valuation allowed premises
+  obtain ⟨rightId, rightMember, rightTruth⟩ := rightSource valuation allowed premises
   simp only [Finset.mem_insert] at leftMember rightMember
   rcases leftMember with rfl | leftMember
   · rcases rightMember with rfl | rightMember
-    · exact ⟨parent, by simp, (equation valuation).mpr ⟨leftTruth, rightTruth⟩⟩
+    · exact ⟨parent, by simp, (equation valuation allowed).mpr ⟨leftTruth, rightTruth⟩⟩
     · exact ⟨rightId, by simp [rightMember], rightTruth⟩
   · exact ⟨leftId, by simp [leftMember], leftTruth⟩
 
 /-- Expand disjunction in a premise.  Both branches are required. -/
-theorem orPrem {parent left right : PropId} {rest conc : PropSet}
-    (leftSource : Sound ⟨insert left rest, conc⟩)
-    (rightSource : Sound ⟨insert right rest, conc⟩)
-    (equation : ∀ valuation, Op2Equation valuation parent .or left right) :
-    Sound ⟨insert parent rest, conc⟩ := by
-  intro valuation premises
+theorem orPrem {admissible : Valuation → Prop} {parent left right : PropId}
+    {rest conc : PropSet} (leftSource : SoundUnder admissible ⟨insert left rest, conc⟩)
+    (rightSource : SoundUnder admissible ⟨insert right rest, conc⟩)
+    (equation : ∀ valuation, admissible valuation →
+      Op2Equation valuation parent .or left right) :
+    SoundUnder admissible ⟨insert parent rest, conc⟩ := by
+  intro valuation allowed premises
   have parentTruth := premises parent (by simp)
-  rcases (equation valuation).mp parentTruth with leftTruth | rightTruth
-  · exact leftSource valuation (by
+  rcases (equation valuation allowed).mp parentTruth with leftTruth | rightTruth
+  · exact leftSource valuation allowed (by
       intro id member
       simp only [Finset.mem_insert] at member
       rcases member with rfl | member
       · exact leftTruth
       · exact premises id (by simp [member]))
-  · exact rightSource valuation (by
+  · exact rightSource valuation allowed (by
       intro id member
       simp only [Finset.mem_insert] at member
       rcases member with rfl | member
@@ -857,30 +1031,33 @@ theorem orPrem {parent left right : PropId} {rest conc : PropSet}
       · exact premises id (by simp [member]))
 
 /-- Expand implication in the conclusion (`p -> q` becomes `p |- q`). -/
-theorem impConc {parent left right : PropId} {prem rest : PropSet}
-    (source : Sound ⟨prem, insert parent rest⟩)
-    (equation : ∀ valuation, Op2Equation valuation parent .imp left right) :
-    Sound ⟨insert left prem, insert right rest⟩ := by
-  intro valuation premises
-  obtain ⟨id, member, truth⟩ := source valuation fun id member => premises id (by simp [member])
-  simp only [Finset.mem_insert] at member
-  rcases member with rfl | member
-  · exact ⟨right, by simp, (equation valuation).mp truth (premises left (by simp))⟩
-  · exact ⟨id, by simp [member], truth⟩
-
-/-- Expand implication in a premise.  This is the classical two-branch rule. -/
-theorem impPrem {parent left right : PropId} {rest conc : PropSet}
-    (antecedent : Sound ⟨rest, insert left conc⟩)
-    (consequent : Sound ⟨insert right rest, conc⟩)
-    (equation : ∀ valuation, Op2Equation valuation parent .imp left right) :
-    Sound ⟨insert parent rest, conc⟩ := by
-  intro valuation premises
-  obtain ⟨id, member, truth⟩ := antecedent valuation fun id member =>
+theorem impConc {admissible : Valuation → Prop} {parent left right : PropId}
+    {prem rest : PropSet} (source : SoundUnder admissible ⟨prem, insert parent rest⟩)
+    (equation : ∀ valuation, admissible valuation →
+      Op2Equation valuation parent .imp left right) :
+    SoundUnder admissible ⟨insert left prem, insert right rest⟩ := by
+  intro valuation allowed premises
+  obtain ⟨id, member, truth⟩ := source valuation allowed fun id member =>
     premises id (by simp [member])
   simp only [Finset.mem_insert] at member
   rcases member with rfl | member
-  · have rightTruth := (equation valuation).mp (premises parent (by simp)) truth
-    exact consequent valuation (by
+  · exact ⟨right, by simp, (equation valuation allowed).mp truth (premises left (by simp))⟩
+  · exact ⟨id, by simp [member], truth⟩
+
+/-- Expand implication in a premise.  This is the classical two-branch rule. -/
+theorem impPrem {admissible : Valuation → Prop} {parent left right : PropId}
+    {rest conc : PropSet} (antecedent : SoundUnder admissible ⟨rest, insert left conc⟩)
+    (consequent : SoundUnder admissible ⟨insert right rest, conc⟩)
+    (equation : ∀ valuation, admissible valuation →
+      Op2Equation valuation parent .imp left right) :
+    SoundUnder admissible ⟨insert parent rest, conc⟩ := by
+  intro valuation allowed premises
+  obtain ⟨id, member, truth⟩ := antecedent valuation allowed fun id member =>
+    premises id (by simp [member])
+  simp only [Finset.mem_insert] at member
+  rcases member with rfl | member
+  · have rightTruth := (equation valuation allowed).mp (premises parent (by simp)) truth
+    exact consequent valuation allowed (by
       intro id member
       simp only [Finset.mem_insert] at member
       rcases member with rfl | member
@@ -889,31 +1066,34 @@ theorem impPrem {parent left right : PropId} {rest conc : PropSet}
   · exact ⟨id, member, truth⟩
 
 /-- Expand negation in a premise by moving its operand to the conclusion. -/
-theorem notPrem {parent operand : PropId} {rest conc : PropSet}
-    (source : Sound ⟨insert parent rest, conc⟩)
-    (equation : ∀ valuation, Op1Equation valuation parent .not operand) :
-    Sound ⟨rest, insert operand conc⟩ := by
-  intro valuation premises
+theorem notPrem {admissible : Valuation → Prop} {parent operand : PropId}
+    {rest conc : PropSet} (source : SoundUnder admissible ⟨insert parent rest, conc⟩)
+    (equation : ∀ valuation, admissible valuation →
+      Op1Equation valuation parent .not operand) :
+    SoundUnder admissible ⟨rest, insert operand conc⟩ := by
+  intro valuation allowed premises
   by_cases truth : operand.eval valuation
   · exact ⟨operand, by simp, truth⟩
-  · obtain ⟨id, member, valid⟩ := source valuation (by
+  · obtain ⟨id, member, valid⟩ := source valuation allowed (by
       intro id member
       simp only [Finset.mem_insert] at member
       rcases member with rfl | member
-      · exact (equation valuation).mpr truth
+      · exact (equation valuation allowed).mpr truth
       · exact premises id member)
     exact ⟨id, by simp [member], valid⟩
 
 /-- Expand negation in a conclusion by moving its operand to the premise. -/
-theorem notConc {parent operand : PropId} {prem rest : PropSet}
-    (source : Sound ⟨prem, insert parent rest⟩)
-    (equation : ∀ valuation, Op1Equation valuation parent .not operand) :
-    Sound ⟨insert operand prem, rest⟩ := by
-  intro valuation premises
-  obtain ⟨id, member, truth⟩ := source valuation fun id member => premises id (by simp [member])
+theorem notConc {admissible : Valuation → Prop} {parent operand : PropId}
+    {prem rest : PropSet} (source : SoundUnder admissible ⟨prem, insert parent rest⟩)
+    (equation : ∀ valuation, admissible valuation →
+      Op1Equation valuation parent .not operand) :
+    SoundUnder admissible ⟨insert operand prem, rest⟩ := by
+  intro valuation allowed premises
+  obtain ⟨id, member, truth⟩ := source valuation allowed fun id member =>
+    premises id (by simp [member])
   simp only [Finset.mem_insert] at member
   rcases member with rfl | member
-  · exact ((equation valuation).mp truth (premises operand (by simp))).elim
+  · exact ((equation valuation allowed).mp truth (premises operand (by simp))).elim
   · exact ⟨id, member, truth⟩
 
 /-- A recursively expanded proposition set, characterized semantically. -/
@@ -1019,5 +1199,36 @@ example (source : Sound ⟨∅, {testId}⟩) : Sound ⟨{testId.neg}, ∅⟩ :=
 example (source : Sound ⟨{testId}, ∅⟩) : Sound ⟨∅, {testId.neg}⟩ :=
   fun valuation => polarityRight (admissible := fun _ => True) (proposition := testId)
     (prem := ∅) (conc := ∅) (soundUnder_of_sound source) valuation trivial
+
+/-! Compositional regressions: checked opcode theorems remain consumable by
+the same structural, polarity, and resolution rules used during LRAT replay. -/
+
+example {arena : OneBased.Arena} {parent left right : OneBased.Ref}
+    (checked : CheckedOp2 arena parent .and left right) :
+    ArenaSound arena
+      ⟨insert (PropId.positive parent).neg
+        ({PropId.positive left} ∪ {PropId.positive right}), ∅⟩ := by
+  have conjunction := checkedAndRight
+    (leftPrem := {PropId.positive left}) (leftConc := ∅)
+    (rightPrem := {PropId.positive right}) (rightConc := ∅)
+    (identity (admissible := ArenaValuation arena) (PropId.positive left))
+    (identity (admissible := ArenaValuation arena) (PropId.positive right)) checked
+  simpa [ArenaSound] using polarityLeft conjunction
+
+example {arena : OneBased.Arena} {parent left right : OneBased.Ref}
+    {otherPrem otherConc : PropSet}
+    (checked : CheckedOp2 arena parent .and left right)
+    (complement : ArenaSound arena
+      ⟨otherPrem, insert (PropId.positive parent).neg otherConc⟩) :
+    ArenaSound arena
+      ⟨({PropId.positive left} ∪ {PropId.positive right}) ∪ otherPrem,
+        otherConc.erase (PropId.positive parent).neg⟩ := by
+  have conjunction := checkedAndRight
+    (leftPrem := {PropId.positive left}) (leftConc := ∅)
+    (rightPrem := {PropId.positive right}) (rightConc := ∅)
+    (identity (admissible := ArenaValuation arena) (PropId.positive left))
+    (identity (admissible := ArenaValuation arena) (PropId.positive right)) checked
+  simpa [ArenaSound] using
+    resolution (PropId.positive parent) conjunction complement (by simp) (by simp)
 
 end Nucleus.Hol.Ethane.ClassicalSequent
