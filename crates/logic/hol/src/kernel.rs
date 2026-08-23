@@ -1128,7 +1128,9 @@ impl Kernel {
         E: std::error::Error + 'static,
     {
         if fuel == 0 {
-            return Ok(false);
+            // Running out of traversal budget cannot establish freshness.
+            // Reject the reduction conservatively rather than risk capture.
+            return Ok(true);
         }
         let next = fuel - 1;
         match *self.row::<E>(reference)?.expr() {
@@ -1429,7 +1431,9 @@ impl Kernel {
         E: std::error::Error + 'static,
     {
         if fuel == 0 {
-            return Ok(false);
+            // Running out of traversal budget cannot establish freshness.
+            // Reject the reduction conservatively rather than risk capture.
+            return Ok(true);
         }
         let next = fuel - 1;
         match *self.row::<E>(reference)?.expr() {
