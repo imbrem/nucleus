@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nucleus proof loader</title>
+    <script type="importmap">
+      {
+        "imports": {
+          "@bytecodealliance/jco": "./node_modules/@bytecodealliance/jco/dist/browser.js",
+          "@bytecodealliance/jco-transpile/component": "./node_modules/@bytecodealliance/jco-transpile/vendor/js-component-bindgen-component.js",
+          "@bytecodealliance/preview2-shim/cli": "./node_modules/@bytecodealliance/preview2-shim/dist/browser/cli.js",
+          "@bytecodealliance/preview2-shim/clocks": "./node_modules/@bytecodealliance/preview2-shim/dist/browser/clocks.js",
+          "@bytecodealliance/preview2-shim/filesystem": "./node_modules/@bytecodealliance/preview2-shim/dist/browser/filesystem.js",
+          "@bytecodealliance/preview2-shim/io": "./node_modules/@bytecodealliance/preview2-shim/dist/browser/io.js",
+          "@bytecodealliance/preview2-shim/random": "./node_modules/@bytecodealliance/preview2-shim/dist/browser/random.js"
+        }
+      }
+    </script>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      body {
+        max-width: 58rem;
+        margin: 3rem auto;
+        padding: 0 1.25rem;
+      }
+      form {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 0.75rem;
+      }
+      input,
+      button {
+        font: inherit;
+        padding: 0.55rem;
+      }
+      #file {
+        grid-column: 1 / -1;
+      }
+      #status[data-state="error"] {
+        color: #c33;
+      }
+      #status[data-state="ok"] {
+        color: #287a3e;
+      }
+      output {
+        display: block;
+        margin-top: 1.5rem;
+      }
+      dl {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: 0.35rem 1rem;
+      }
+      dt {
+        font-weight: 600;
+      }
+      dd {
+        margin: 0;
+        overflow-wrap: anywhere;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Nucleus proof loader</h1>
+    <p>
+      Run a standard proof component and inspect the checked kernel it returns.
+    </p>
+
+    <form id="proof-form">
+      <input
+        id="url"
+        type="url"
+        placeholder="https://example.test/proof.wasm"
+        aria-label="Proof component URL"
+      />
+      <button type="submit">Load URL</button>
+      <input id="file" type="file" accept=".wasm,application/wasm" />
+    </form>
+
+    <p id="status" role="status">Choose a component or enter its URL.</p>
+    <output id="result" hidden>
+      <dl>
+        <dt>Kernel address</dt>
+        <dd id="address"></dd>
+        <dt>Rows</dt>
+        <dd id="rows"></dd>
+        <dt>Syntactic facts</dt>
+        <dd id="facts"></dd>
+      </dl>
+    </output>
+
+    <script type="module">
+      import { init } from "./dist/index.js";
+      import {
+        kernelAddress,
+        loadStandardProof,
+        proofStats,
+      } from "./dist/proof.js";
+
+      await init();
+      const form = document.getElementById("proof-form");
+      const url = document.getElementById("url");
+      const file = document.getElementById("file");
+      const status = document.getElementById("status");
+      const result = document.getElementById("result");
+      let kernel;
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (!url.value) return;
+        await run(async () => {
+          const response = await fetch(url.value);
+          if (!response.ok)
+            throw new Error(`proof server returned ${response.status}`);
+          return response.arrayBuffer();
+        });
+      });
+
+      file.addEventListener("change", async () => {
+        const selected = file.files?.[0];
+        if (selected) await run(() => selected.arrayBuffer());
+      });
+
+      async function run(read) {
+        status.dataset.state = "";
+        status.textContent = "Running proof…";
+        result.hidden = true;
+        try {
+          kernel?.[Symbol.dispose]?.();
+          kernel = await loadStandardProof(await read());
+          const stats = proofStats(kernel);
+          document.getElementById("address").textContent =
+            kernelAddress(kernel);
+          document.getElementById("rows").textContent = stats.rows.toString();
+          document.getElementById("facts").textContent =
+            stats.synFacts.toString();
+          result.hidden = false;
+          status.dataset.state = "ok";
+          status.textContent = "Proof succeeded.";
+        } catch (error) {
+          status.dataset.state = "error";
+          status.textContent =
+            error instanceof Error ? error.message : String(error);
+        }
+      }
+
+      document.body.dataset.ready = "yes";
+      const initial = new URL(location.href).searchParams.get("proof");
+      if (initial) {
+        url.value = initial;
+        form.requestSubmit();
+      }
+    </script>
+  </body>
+</html>
