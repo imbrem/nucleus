@@ -36,6 +36,24 @@ fn fact_target(value: Option<u64>) -> PyResult<Option<SynFactId>> {
     value.map(fact_id).transpose()
 }
 
+const MAX_LITERAL_IMPORT_DEPTH: usize = 127;
+
+fn ensure_literal_import_can_be_wrapped(arena: &Arena) -> PyResult<()> {
+    let mut pending = vec![(arena, 0_usize)];
+    while let Some((current, depth)) = pending.pop() {
+        if depth >= MAX_LITERAL_IMPORT_DEPTH {
+            return Err(PyValueError::new_err(format!(
+                "literal imports may nest at most {MAX_LITERAL_IMPORT_DEPTH} levels"
+            )));
+        }
+        pending.extend(current.imports().iter().filter_map(|import| match import {
+            Import::Literal(child) => Some((child.as_ref(), depth + 1)),
+            Import::Null | Import::Link(_) => None,
+        }));
+    }
+    Ok(())
+}
+
 fn parse_relation(value: &str) -> PyResult<SynRel> {
     match value {
         "syn" => Ok(SynRel::Syn),
@@ -615,6 +633,7 @@ impl PyKernel {
     }
 
     fn import_literal(&mut self, arena: &PyArena) -> PyResult<u64> {
+        ensure_literal_import_can_be_wrapped(&arena.arena)?;
         self.kernel
             .import_literal(arena.arena.clone())
             .map(ImportId::get)
@@ -774,14 +793,14 @@ impl PyKernel {
         relation: &str,
         input: u64,
         output: u64,
-        children: Vec<u64>,
+        children: Vec<PyRef<'_, PySynFact>>,
         var: Option<u64>,
         val: Option<u64>,
         target: Option<u64>,
     ) -> PyResult<PySynFact> {
         let evidence = children
-            .into_iter()
-            .map(fact_id)
+            .iter()
+            .map(|fact| self.checked_fact(fact))
             .collect::<PyResult<Vec<_>>>()?;
         let id = self
             .kernel
@@ -1064,6 +1083,7 @@ impl PyArena {
     }
 
     fn add_literal_import(&mut self, arena: &Self) -> PyResult<u64> {
+        ensure_literal_import_can_be_wrapped(&arena.arena)?;
         imported(
             self.arena
                 .push_import(Import::Literal(Box::new(arena.arena.clone()))),
