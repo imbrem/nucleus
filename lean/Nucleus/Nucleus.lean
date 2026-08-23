@@ -14,6 +14,7 @@ import Nucleus.Encoding.Base128
 import Nucleus.RangeMap
 import Nucleus.RangeMap.Examples
 import Nucleus.Lrat
+import Nucleus.Hol.Ethane.ClassicalSequent
 import Nucleus.Metamath
 import Nucleus.SExpr
 
