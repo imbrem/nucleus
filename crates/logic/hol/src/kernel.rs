@@ -1016,6 +1016,11 @@ mod tests {
     use crate::{KindTag, LinkFormat, SynRel, Table, TmTag, TyTag, init};
     use covalence_lib_json::serde_json;
 
+    #[cfg(not(feature = "buck-test-fixtures"))]
+    const INIT_FIXTURE: &str = include_str!("../../../../theories/init-boolean.checked.json");
+    #[cfg(feature = "buck-test-fixtures")]
+    const INIT_FIXTURE: &str = include_str!("../theories/init-boolean.checked.json");
+
     struct OneTable(Table);
 
     impl Resolver for OneTable {
@@ -1045,42 +1050,44 @@ mod tests {
 
     #[test]
     fn logical_rows_are_boolean_checked_and_lower_canonically() {
-        let manifest: init::Manifest = serde_json::from_str(include_str!(
-            "../../../../theories/init-boolean.checked.json"
-        ))
-        .unwrap();
+        let manifest: init::Manifest = serde_json::from_str(INIT_FIXTURE).unwrap();
         let init = init::compile(&manifest).unwrap();
         let bool_ty = init.get("bool").unwrap();
         let truth = init.get("true").unwrap();
+        let falsehood = init.get("false").unwrap();
 
-        {
+        for operand in [falsehood, truth] {
             let op = Op1::Not;
             let mut lowered = Kernel::with_init(&init);
-            let compact = lowered.op1(op, truth).unwrap();
+            let compact = lowered.op1(op, operand).unwrap();
             assert_eq!(lowered.arena().op1(compact), Some(op));
             let result = lowered.lower_logical(&init, compact).unwrap();
 
             let mut direct = Kernel::with_init(&init);
-            let direct_compact = direct.op1(op, truth).unwrap();
+            let direct_compact = direct.op1(op, operand).unwrap();
             assert_eq!(direct_compact, compact);
-            let expected = direct.app(init.get(op.name()).unwrap(), truth).unwrap();
+            let expected = direct.app(init.get(op.name()).unwrap(), operand).unwrap();
             assert_eq!(result, expected);
             assert_eq!(lowered.into_arena(), direct.into_arena());
         }
 
         for op in [Op2::And, Op2::Or, Op2::Imp] {
-            let mut lowered = Kernel::with_init(&init);
-            let compact = lowered.op2(op, truth, truth).unwrap();
-            assert_eq!(lowered.arena().op2(compact), Some(op));
-            let result = lowered.lower_logical(&init, compact).unwrap();
+            for left in [falsehood, truth] {
+                for right in [falsehood, truth] {
+                    let mut lowered = Kernel::with_init(&init);
+                    let compact = lowered.op2(op, left, right).unwrap();
+                    assert_eq!(lowered.arena().op2(compact), Some(op));
+                    let result = lowered.lower_logical(&init, compact).unwrap();
 
-            let mut direct = Kernel::with_init(&init);
-            let direct_compact = direct.op2(op, truth, truth).unwrap();
-            assert_eq!(direct_compact, compact);
-            let partial = direct.app(init.get(op.name()).unwrap(), truth).unwrap();
-            let expected = direct.app(partial, truth).unwrap();
-            assert_eq!(result, expected);
-            assert_eq!(lowered.into_arena(), direct.into_arena());
+                    let mut direct = Kernel::with_init(&init);
+                    let direct_compact = direct.op2(op, left, right).unwrap();
+                    assert_eq!(direct_compact, compact);
+                    let partial = direct.app(init.get(op.name()).unwrap(), left).unwrap();
+                    let expected = direct.app(partial, right).unwrap();
+                    assert_eq!(result, expected);
+                    assert_eq!(lowered.into_arena(), direct.into_arena());
+                }
+            }
         }
 
         let mut wrong = Kernel::new();
@@ -1098,10 +1105,7 @@ mod tests {
 
     #[test]
     fn logical_lowering_produces_checked_direct_syntactic_facts() {
-        let manifest: init::Manifest = serde_json::from_str(include_str!(
-            "../../../../theories/init-boolean.checked.json"
-        ))
-        .unwrap();
+        let manifest: init::Manifest = serde_json::from_str(INIT_FIXTURE).unwrap();
         let init = init::compile(&manifest).unwrap();
         let truth = init.get("true").unwrap();
 

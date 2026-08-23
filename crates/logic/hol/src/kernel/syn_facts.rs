@@ -1255,23 +1255,38 @@ mod tests {
             )
             .unwrap();
 
-        let left_unchanged = kernel.syn_sub_leaf(None, variable, truth, truth).unwrap();
-        let binary_input = kernel
-            .op2(crate::builtin::Op2::And, truth, variable)
-            .unwrap();
-        let binary_output = kernel.op2(crate::builtin::Op2::And, truth, truth).unwrap();
-        kernel
-            .syn_congr(
-                None,
-                SynRel::Syn,
-                Some(variable),
-                Some(truth),
-                binary_input,
-                binary_output,
-                &[left_unchanged, replaced],
-            )
-            .unwrap();
+        for op in [
+            crate::builtin::Op2::And,
+            crate::builtin::Op2::Or,
+            crate::builtin::Op2::Imp,
+        ] {
+            let left_unchanged = kernel.syn_sub_leaf(None, variable, truth, truth).unwrap();
+            let binary_input = kernel.op2(op, truth, variable).unwrap();
+            let binary_output = kernel.op2(op, truth, truth).unwrap();
+            kernel
+                .syn_congr(
+                    None,
+                    SynRel::Syn,
+                    Some(variable),
+                    Some(truth),
+                    binary_input,
+                    binary_output,
+                    &[left_unchanged, replaced],
+                )
+                .unwrap();
+            assert!(
+                kernel
+                    .contains_variable::<Infallible>(binary_input, variable)
+                    .unwrap()
+            );
+            assert!(
+                !kernel
+                    .contains_variable::<Infallible>(binary_output, variable)
+                    .unwrap()
+            );
+        }
 
+        let binary_output = kernel.op2(crate::builtin::Op2::And, truth, truth).unwrap();
         let wrong_opcode = kernel.op2(crate::builtin::Op2::Or, truth, truth).unwrap();
         let left_refl = kernel.syn_refl(None, SynRel::Syn, truth).unwrap();
         let right_refl = kernel.syn_refl(None, SynRel::Syn, truth).unwrap();
