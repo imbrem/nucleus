@@ -415,6 +415,54 @@
           "kinds": [
             "lib"
           ]
+        },
+        {
+          "name": "imports",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
+          "name": "kernel_rows",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
+          "name": "known_gaps",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
+          "name": "soundness_regressions",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
+          "name": "syn_fact_cache",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
+          "name": "syn_fact_conversion",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
+          "name": "syn_fact_rules",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
+          "name": "wire_robustness",
+          "kinds": [
+            "test"
+          ]
         }
       ]
     },
