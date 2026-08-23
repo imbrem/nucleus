@@ -1321,6 +1321,23 @@ mod tests {
     }
 
     #[test]
+    fn every_in_place_rule_preserves_the_exact_theorem_on_rejection() {
+        let Fixture { mut kernel, p, q } = fixture();
+        let theorem = kernel.identity(p).unwrap();
+        let original = kernel.theorem(theorem).unwrap().clone();
+        let missing = PropId::from_raw(-999_999).unwrap();
+
+        assert!(kernel.weaken(theorem, &[missing], &[]).is_err());
+        assert_eq!(kernel.theorem(theorem).unwrap(), &original);
+
+        assert!(kernel.not_left(theorem, q).is_err());
+        assert_eq!(kernel.theorem(theorem).unwrap(), &original);
+
+        assert!(kernel.not_right(theorem, q).is_err());
+        assert_eq!(kernel.theorem(theorem).unwrap(), &original);
+    }
+
+    #[test]
     fn copy_delete_and_free_reuse_follow_ephemeral_slot_semantics() {
         let Fixture { mut kernel, p, q } = fixture();
         let source = kernel.identity(p).unwrap();
