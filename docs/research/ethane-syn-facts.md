@@ -37,11 +37,20 @@ This is semantic completeness work, not a soundness gap in the checked rules.
 
 Every displayed expression is an existing, well-formed row. Equality of row
 letters in a premise means equality of references, not merely a proved
-relation. `compatible(b,c)` means equal syntactic categories and, for terms,
-convertible advertised types. These common conditions appear in Lean as
-[`Value.WellFormed` and `Value.Compatible`](../../lean/Nucleus/Nucleus/Hol/Ethane/Arena/OneBased/SynFacts.lean).
+relation. `compatible(b,c)` means equal syntactic categories and, for every
+non-`Kind` row, union-find-equivalent advertised classifiers. Semantically,
+types therefore have the same kind and terms have convertible advertised
+types. These common conditions appear as `Value.WellFormed` and
+`Value.Compatible` in
+[`SynFacts.lean`](../../lean/Nucleus/Nucleus/Hol/Ethane/Arena/OneBased/SynFacts.lean).
 The complete fact denotation is `SynMeaning`; `SynFact.Valid` adds resolution,
 well-formedness, and endpoint compatibility.
+
+Every mint method also accepts `target : Option<SynFactId>`. `null` reuses the
+one-based free-list head or appends a slot. A non-null target overwrites only
+an occupied slot; missing and free targets are errors. These IDs are ephemeral:
+removal and truncation permit reuse. Lean specifies this with `SynArena.push`,
+`SynArena.replace`, `FullKernel.push`, and `FullKernel.replace`.
 
 ## Relation rules
 
@@ -121,7 +130,15 @@ l is *, 2, true, false, or a free variable with a different name from x
 [a/x]l =_syn l
 ```
 
-An imported proxy is not a leaf for this rule. Lean:
+The free-variable line abbreviates exactly these cases:
+
+- type variable `x` and a differently named type variable `l`;
+- term variable `x` and any type variable `l`;
+- term variable `x` and a differently named term variable `l`.
+
+A type variable `x` with a term-variable `l` is rejected because substitution
+must descend into `l`'s type child. An imported proxy is not a leaf for this
+rule. Lean:
 `detail.Expr.ActiveSubstitutionLeaf`, `NamedSubstitution.congr` with an empty
 child derivation, and `SynInference.substitution`.
 
@@ -133,6 +150,9 @@ l is *, 2, true, false, or a free variable with a different name from x
 ----------------------------------------------------------------------- sub-leaf-∀
 [·/x]l =_syn l
 ```
+
+The accepted variable combinations are exactly the three cases listed for
+`syn_sub_leaf` above.
 
 Lean: `SynInference.universalSubstitution` quantifies over compatible
 well-formed replacements; each instance uses `NamedSubstitution.leaf` (and
@@ -167,7 +187,12 @@ compatible(C(b₁,...,bₙ), C(c₁,...,cₙ))
 
 Child facts may refine `R`. The direct and universal forms use respectively
 no endpoints and `[null/x]` on every premise and conclusion. A variable whose
-name is `x`, a binder, and an active-substitution proxy are rejected here.
+name is `x` and every binder are rejected here. At a free-variable root,
+child facts must refine `syn` even when the parent relation is `alpha` or
+`conv`; this prevents a coarser classifier relation from changing variable
+identity. Concrete and universal substitution reject proxy roots, while a
+direct fact may relate matching proxies with the same import and foreign
+index.
 Lean: `NamedSubstitution.SameHead`, `NamedSubstitution.congr`,
 `Value.Congruence`, and `SynInference.congr`.
 
@@ -177,21 +202,33 @@ For `B` equal to `ty.lam` or `tm.lam`:
 
 ```text
 binder premise    body premise    freshness/shadowing obligations
-compatible(B(x,b), B(x,c))
+compatible(B(x,b), B(x',c))
 -------------------------------------------------------------- congr-B
-[a/z]B(x,b) =_R B(x,c)
+[a/z]B(x,b) =_R B(x',c)
 ```
 
 The exact child endpoints are determined as follows.
 
 - If `z` is the binder, substitution is shadowed: both child premises are
   direct.
+- A type substitution through `tm.lam` crosses the binder. The binders must
+  have the same numeric name, and the binder child itself needs the same
+  concrete or universal substitution evidence; its classifier may change.
+- In every other case the two binder rows must be exactly the same typed
+  variable and their evidence is direct.
+- Same-category, same-name binders with different classifier references are
+  rejected as ambiguous.
 - If `z` and the binder have different categories, substitution crosses the
-  binder. This includes type substitution through `tm.lam`.
+  body. This includes term substitution through `ty.lam`.
 - For a concrete same-category substitution below a non-shadowing binder,
   `x` must not occur in `a`.
 - A universal same-category substitution cannot cross a non-shadowing binder,
   because some replacement could contain the binder.
+
+Binder and body evidence may use relations finer than `R`; their references
+and selected endpoint modes must match exactly. The complete input/output
+rows must be compatible. Freshness scanning treats an import proxy or fuel
+exhaustion as a possible occurrence and rejects the rule.
 
 Lean: the `tyLamShadow`, `tyLamCongr`, `lamTmShadow`, `lamTmCongr`, and
 `lamTyCongr` constructors of `Value.NamedSubstitution`, plus
@@ -213,6 +250,13 @@ There is no `conv` instance for `Model`. Lean: the `tyExists*` and `model*`
 constructors of `Value.NamedSubstitution`, `Value.Congruence`, and the theorem
 `Value.no_conversion_congruence_under_model`.
 
+Input and output must have the same constructor and stored name. The witness
+must carry the literal `kind.star` classifier. Universal type substitution
+cannot cross this type binder; concrete type substitution must prove
+freshness. Term substitution crosses it. Body evidence may refine `R` and
+must use the endpoint mode selected by shadowing. Proxies make the freshness
+check fail conservatively.
+
 ## Alpha rules
 
 ### Explicit binder renaming: `Kernel::syn_alpha_binder`
@@ -225,7 +269,10 @@ B(x,b) =_alpha B(y,c)
 ```
 
 The freshness premise is omitted when `x` and `y` are the same typed
-variable. Lean: `Nucleus.Hol.Ethane.Expr.Alpha`, `Value.Alpha`,
+variable. Each displayed alpha premise may in fact be a direct `syn` or
+`alpha` fact, since either refines `alpha`; its references and substitution
+endpoints must match exactly. A proxy in the scanned body conservatively
+fails freshness. Lean: `Nucleus.Hol.Ethane.Expr.Alpha`, `Value.Alpha`,
 `NamedSubstitution`, and `SynInference.direct`.
 
 ### Implicit binder renaming: `Kernel::syn_alpha_implicit_binder`
@@ -238,7 +285,9 @@ B(x,b) =_alpha B(y,c)
 ```
 
 `B` is either `tyExists` or `Model`. This is alpha-equivalence, not conversion
-congruence beneath `Model`. Lean: `Nucleus.Hol.Ethane.Expr.Alpha`,
+congruence beneath `Model`. The body premise may be `syn` or `alpha`; both
+binder witnesses must be literal `ty.fv` rows of kind `star`, and proxy
+freshness is rejected conservatively. Lean: `Nucleus.Hol.Ethane.Expr.Alpha`,
 `Value.Alpha`, `NamedSubstitution`, and `SynInference.direct`.
 
 ## Root conversion rules
@@ -252,7 +301,9 @@ congruence beneath `Model`. Lean: `Nucleus.Hol.Ethane.Expr.Alpha`,
 ```
 
 The application shape is checked from rows and its result is required to be
-classifier-compatible with `c`. Lean: `Nucleus.HolE.Named.FamBeta`,
+classifier-compatible with `c`. The stored substitution premise may be
+`syn`, `alpha`, or `conv`; each refines the displayed conversion premise.
+Lean: `Nucleus.HolE.Named.FamBeta`,
 `Value.equal_family_beta`, `SynInference.familyBeta`, and
 `SynInference.familyBeta_sound`.
 
@@ -263,6 +314,9 @@ classifier-compatible with `c`. Lean: `Nucleus.HolE.Named.FamBeta`,
 -------------------------- beta-tm
 (tm.lam x. b) a =_conv c
 ```
+
+The stored substitution premise may be `syn`, `alpha`, or `conv`, and the
+source/output rows must be classifier-compatible.
 
 Lean: `Nucleus.HolE.Named.TmBeta`, `Value.equal_term_beta`,
 `SynInference.termBeta`, and `SynInference.termBeta_sound`.
@@ -285,17 +339,29 @@ No beta or eta rule reduces beneath `Model`; see
 
 ## Equality union and cache operations
 
-`Kernel::union_syn_fact` consumes only a direct fact `b =_R c` and joins the
-two row references in the arena union-find. The kernel's semantic invariant
-states that every such edge is true; its closure is formalized by
+`Kernel::union_syn_fact` consumes only a direct fact `b =_R c`, for any of
+`syn`, `alpha`, or `conv`, and joins the two row references in the arena
+union-find. This is sound because both finer relations refine semantic
+conversion. The kernel's semantic invariant states that every such edge is
+true; its closure is formalized by
 [`EqClass`](../../lean/Nucleus/Nucleus/Hol/Ethane/Arena/OneBased/UnionFind.lean)
-and `KernelValid.equivalent`.
+and queried semantically by `Kernel.find_sound`.
 
 `syn_fact`, `syn_fact_len`, `remove_syn_fact`, and `truncate_syn_facts` are
-cache operations, not inference rules. Removal and truncation cannot add a
-claim. Their exact free-list behavior and preservation of `SynArena.Sound` and
-`FullKernelValid` are proved by `SynArena.Sound.remove`,
-`SynArena.Sound.truncate`, `FullKernel.remove`, and `FullKernel.truncate`.
+cache operations, not inference rules. `syn_fact_len` counts occupied and free
+slots. `syn_fact` rejects a missing or free one-based slot. Removal replaces
+an occupied slot with a link to the old free-list head; truncation retains a
+prefix and rebuilds an ascending free chain over the retained holes. Neither
+operation can add a claim. Their exact behavior and preservation of
+`SynArena.Sound`, `SynArena.FreeListSafe`, and `FullKernelValid` are specified
+by `SynArena.remove`, `SynArena.truncate`, `SynArena.Sound.remove`,
+`SynArena.Sound.truncate`, `SynArena.FreeListSafe.remove`,
+`SynArena.FreeListSafe.truncate`, `FullKernel.remove`, and
+`FullKernel.truncate`.
+
+Removal returns `false` without mutation for a missing or already-free slot.
+Truncation is total; a length beyond the table size retains every slot and
+still rebuilds the free chain.
 
 ## Imported proxies
 
@@ -309,3 +375,14 @@ A future theorem-import interface may supply a checked universal fact
 `[·/x]proxy =_R proxy`. Once supplied, the existing refinement and generalized
 transitivity rules can consume it without inspecting the imported table. No
 unchecked closedness assumption is part of the current kernel.
+
+## Exact-checker correspondence still to prove
+
+The cited Lean declarations prove the denotation of the rules and the safety
+of the fact table. For most mint methods there is not yet a theorem stating
+that every concrete Rust row test constructs the cited `SynInference`.
+Outstanding bridges include the non-binding and binder case splits, beta
+composition with cached substitution, the eta occurrence scanner, and the
+`SynFact.Valid`-to-`UnionResult` step for `union_syn_fact`. These are exact
+implementation-correspondence obligations; they do not leave the semantic
+meaning of a fact unspecified.
