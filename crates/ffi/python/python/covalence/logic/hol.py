@@ -27,6 +27,7 @@ from .._covalence import (
 from .._covalence import (
     HolTy as Ty,
 )
+from .._covalence import load_standard_proof
 
 __all__ = [
     "Arena",
@@ -38,4 +39,5 @@ __all__ = [
     "SynFact",
     "Tm",
     "Ty",
+    "load_standard_proof",
 ]

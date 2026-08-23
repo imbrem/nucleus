@@ -21,27 +21,22 @@ filegroup(
 )
 
 rust_library(
-    name = "covalence_lib_wasm",
-    crate = "covalence_lib_wasm",
+    name = "covalence_proof_demo",
+    crate = "covalence_proof_demo",
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
-    features = [
-        "component-host",
-        "default",
-    ],
-    tests = [":covalence_lib_wasm-unit-test"],
+    tests = [":covalence_proof_demo-unit-test"],
     named_deps = {
-        "wasmtime": "nucleus//buck/cargo/production:wasmtime-46.0.1",
-        "wasmtime_wasi": "nucleus//buck/cargo/production:wasmtime-wasi-46.0.1",
+        "wit_bindgen_rt": "nucleus//buck/cargo/production:wit-bindgen-rt-0.44.0",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "WebAssembly runtimes shared by Covalence hosts and guests",
+        "CARGO_PKG_DESCRIPTION": "Minimal portable Nucleus proof component",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",
-        "CARGO_PKG_NAME": "covalence-lib-wasm",
+        "CARGO_PKG_NAME": "covalence-proof-demo",
         "CARGO_PKG_README": "",
         "CARGO_PKG_REPOSITORY": "",
         "CARGO_PKG_RUST_VERSION": "",
@@ -56,26 +51,21 @@ rust_library(
 )
 
 rust_test(
-    name = "covalence_lib_wasm-unit-test",
-    crate = "covalence_lib_wasm",
+    name = "covalence_proof_demo-unit-test",
+    crate = "covalence_proof_demo",
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
-    features = [
-        "component-host",
-        "default",
-    ],
     named_deps = {
-        "wasmtime": "nucleus//buck/cargo/production:wasmtime-46.0.1",
-        "wasmtime_wasi": "nucleus//buck/cargo/production:wasmtime-wasi-46.0.1",
+        "wit_bindgen_rt": "nucleus//buck/cargo/production:wit-bindgen-rt-0.44.0",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
-        "CARGO_PKG_DESCRIPTION": "WebAssembly runtimes shared by Covalence hosts and guests",
+        "CARGO_PKG_DESCRIPTION": "Minimal portable Nucleus proof component",
         "CARGO_PKG_HOMEPAGE": "",
         "CARGO_PKG_LICENSE": "CC0-1.0",
         "CARGO_PKG_LICENSE_FILE": "",
-        "CARGO_PKG_NAME": "covalence-lib-wasm",
+        "CARGO_PKG_NAME": "covalence-proof-demo",
         "CARGO_PKG_README": "",
         "CARGO_PKG_REPOSITORY": "",
         "CARGO_PKG_RUST_VERSION": "",

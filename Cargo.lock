@@ -573,6 +573,7 @@ dependencies = [
  "covalence-logic-lrat",
  "covalence-logic-metamath",
  "covalence-logic-sat",
+ "covalence-nucleus",
 ]
 
 [[package]]
@@ -747,12 +748,23 @@ name = "covalence-nucleus"
 version = "0.0.0"
 dependencies = [
  "bytes",
+ "covalence-data-cas",
  "covalence-lib-crypto",
  "covalence-lib-error",
  "covalence-lib-hash",
  "covalence-lib-sqlite",
+ "covalence-lib-wasm",
+ "covalence-logic-cas",
+ "covalence-logic-hol",
  "covalence-neutron",
  "wasm-bindgen",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "covalence-proof-demo"
+version = "0.0.0"
+dependencies = [
  "wit-bindgen-rt",
 ]
 

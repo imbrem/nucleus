@@ -582,6 +582,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-proof-demo@0.0.0",
+      "name": "covalence-proof-demo",
+      "version": "0.0.0",
+      "path": "crates/proof/demo",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_proof_demo",
+          "kinds": [
+            "cdylib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-proton@0.0.0",
       "name": "covalence-proton",
       "version": "0.0.0",
@@ -859,6 +874,13 @@
       ]
     },
     {
+      "source": "workspace#covalence-ffi-python@0.0.0",
+      "target": "workspace#covalence-nucleus@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "workspace#covalence-lib-hash@0.0.0",
       "target": "workspace#covalence-lib-error@0.0.0",
       "kinds": [
@@ -979,6 +1001,13 @@
     },
     {
       "source": "workspace#covalence-nucleus@0.0.0",
+      "target": "workspace#covalence-data-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus@0.0.0",
       "target": "workspace#covalence-lib-crypto@0.0.0",
       "kinds": [
         "normal"
@@ -1001,6 +1030,27 @@
     {
       "source": "workspace#covalence-nucleus@0.0.0",
       "target": "workspace#covalence-lib-sqlite@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus@0.0.0",
+      "target": "workspace#covalence-lib-wasm@0.0.0",
+      "kinds": [
+        "normal (cfg(not(target_arch = \"wasm32\")))"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus@0.0.0",
+      "target": "workspace#covalence-logic-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus@0.0.0",
+      "target": "workspace#covalence-logic-hol@0.0.0",
       "kinds": [
         "normal"
       ]

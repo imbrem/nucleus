@@ -9,8 +9,23 @@ boundary between the checked kernel and the raw arena it can hand out.
 
 import pytest
 from covalence.lib.hash import O256
-from covalence.logic.hol import Arena, Kernel, Kind, Link, SynFact, Tm, Ty
+from covalence.logic.hol import (
+    Arena,
+    Kernel,
+    Kind,
+    Link,
+    SynFact,
+    Tm,
+    Ty,
+    load_standard_proof,
+)
 from hol_support import Rows, basis, beta, prove_congruence, unify
+
+
+def test_standard_proof_loader_rejects_non_components() -> None:
+    with pytest.raises(RuntimeError, match="proof component failed"):
+        load_standard_proof(b"not a WebAssembly component")
+
 
 MISSING = "does not name a kernel row"
 WRONG_CATEGORY = "was required"
