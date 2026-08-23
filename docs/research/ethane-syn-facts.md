@@ -63,7 +63,8 @@ b =_R b
 ```
 
 Lean: `SynRel.holds_refl`, `Value.compatible_refl`,
-`SynInference.direct`, and `SynInference.sound`.
+`SynFact.Valid.refl`, and `SynFact.Checked.refl`. The last two construct the
+exact payload returned by Rust before cache-slot allocation.
 
 ### Refinement: `Kernel::syn_refine`
 
@@ -74,9 +75,10 @@ Lean: `SynRel.holds_refl`, `Value.compatible_refl`,
 ```
 
 The notation also covers direct and universal facts; their endpoint fields
-are copied unchanged. Lean: `SynInference.refine`, `SynRel.Holds.refine`, and
-`SynInference.meaning_refine` (the private proof used by
-`SynInference.sound`).
+are copied unchanged. Lean: `SynInference.refine`, `SynRel.Holds.refine`,
+`SynInference.meaningRefine`, `SynFact.Valid.refine`, and
+`SynFact.Checked.refine`. The `Valid` theorem applies to direct, universal,
+and concrete-substitution facts.
 
 ### Symmetry: `Kernel::syn_symm`
 
@@ -87,8 +89,8 @@ c =_R b
 ```
 
 Only a direct premise is accepted. Reversing a substitution judgment would
-not in general describe a substitution. Lean: `SynRel.Holds.symm` and
-`Value.Compatible.symm`.
+not in general describe a substitution. Lean: `SynRel.Holds.symm`,
+`Value.Compatible.symm`, `SynFact.Valid.symm`, and `SynFact.Checked.symm`.
 
 ### Transitivity: `Kernel::syn_trans`
 
@@ -119,7 +121,7 @@ x is a free variable    compatible(x,a)
 ```
 
 Lean: `Value.Substitutes.varCase`, `NamedSubstitution.hit`, and
-`SynInference.substitution`.
+`SynInference.substitutionVariable`.
 
 ### Unchanged leaf: `Kernel::syn_sub_leaf`
 
@@ -138,9 +140,9 @@ The free-variable line abbreviates exactly these cases:
 
 A type variable `x` with a term-variable `l` is rejected because substitution
 must descend into `l`'s type child. An imported proxy is not a leaf for this
-rule. Lean:
-`detail.Expr.ActiveSubstitutionLeaf`, `NamedSubstitution.congr` with an empty
-child derivation, and `SynInference.substitution`.
+rule. Lean: `detail.Expr.ActiveSubstitutionLeaf`,
+`NamedSubstitution.leaf`, and `SynInference.substitutionUnchanged` once that
+leaf derivation is resolved.
 
 ### Universally unchanged leaf: `Kernel::syn_sub_leaf_forall`
 
@@ -154,7 +156,7 @@ l is *, 2, true, false, or a free variable with a different name from x
 The accepted variable combinations are exactly the three cases listed for
 `syn_sub_leaf` above.
 
-Lean: `SynInference.universalSubstitution` quantifies over compatible
+Lean: `SynInference.universalSubstitutionUnchanged` quantifies over compatible
 well-formed replacements; each instance uses `NamedSubstitution.leaf` (and
 ultimately `NamedSubstitution.congr`) with an empty child derivation.
 
@@ -379,10 +381,14 @@ unchecked closedness assumption is part of the current kernel.
 ## Exact-checker correspondence still to prove
 
 The cited Lean declarations prove the denotation of the rules and the safety
-of the fact table. For most mint methods there is not yet a theorem stating
-that every concrete Rust row test constructs the cited `SynInference`.
-Outstanding bridges include the non-binding and binder case splits, beta
-composition with cached substitution, the eta occurrence scanner, and the
-`SynFact.Valid`-to-`UnionResult` step for `union_syn_fact`. These are exact
+of the fact table. Reflexivity, refinement, and direct symmetry now construct
+the exact valid and checked payload returned by their Rust methods. The leaf
+helpers expose the corresponding proof-relevant substitution rules.
+
+The remaining concrete row-checker bridges are generalized transitivity
+(which first needs the fuel-bounded resolver's uniqueness theorem), the
+non-binding and binder case splits, beta composition with cached
+substitution, the eta occurrence scanner, and the `SynFact.Valid`-to-
+`UnionResult` step for `union_syn_fact`. These are exact
 implementation-correspondence obligations; they do not leave the semantic
 meaning of a fact unspecified.
