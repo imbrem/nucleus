@@ -121,6 +121,9 @@ deriving instance DecidableEq for ThmId
 
 namespace ThmId
 
+def ofUInt64? (value : UInt64) : Option ThmId :=
+  if nonzero : value ≠ 0 then some ⟨value, nonzero⟩ else none
+
 def position (id : ThmId) : Nat := id.val.toNat - 1
 
 theorem position_injective : Function.Injective position := by
@@ -193,6 +196,19 @@ def ThmStore.mutate? (store : ThmStore) (id : ThmId) (replacement : Thm) : Optio
 case has the same logical contract and differs only in vector growth. -/
 def ThmStore.copyReuse? (store : ThmStore) (source : ThmId) : Option (ThmId × ThmStore) :=
   store.lookup source |>.bind store.reuse?
+
+/-- Concrete bounded fresh-append allocation used when the free list is empty. -/
+def ThmStore.append? (store : ThmStore) (replacement : Thm) : Option (ThmId × ThmStore) := do
+  if !store.free.isEmpty then none else pure ()
+  let id ← ThmId.ofUInt64? (UInt64.ofNat (store.thms.length + 1))
+  if id.position = store.thms.length then
+    some (id, { store with
+      thms := store.thms ++ [replacement]
+      live := store.live ++ [true] })
+  else none
+
+def ThmStore.copyFresh? (store : ThmStore) (source : ThmId) : Option (ThmId × ThmStore) :=
+  store.lookup source |>.bind store.append?
 
 /-- Single-theorem removal with the public Boolean result. -/
 def ThmStore.removeTheorem (store : ThmStore) (id : ThmId) : Bool × ThmStore :=
@@ -399,6 +415,123 @@ theorem copyReuse?_preserves_live_sound {admissible : Valuation → Prop}
   | some fact =>
       simp only [found, Option.bind_some] at result
       exact reuse?_preserves_live_sound beforeSound (beforeSound source fact found) result
+
+theorem copyReuse?_distinct_and_preserves_source {before after : ThmStore}
+    {source copied : ThmId} {fact : Thm} (wellFormed : before.WellFormed)
+    (found : before.lookup source = some fact)
+    (result : before.copyReuse? source = some (copied, after)) :
+    copied ≠ source ∧ after.lookup source = some fact := by
+  rcases wellFormed with ⟨_lengths, freeNodup, freeDead⟩
+  unfold ThmStore.copyReuse? at result
+  simp only [found, Option.bind_some] at result
+  unfold ThmStore.reuse? at result
+  cases freeShape : before.free with
+  | nil => simp [freeShape] at result
+  | cons top rest =>
+      simp only [freeShape] at result
+      split at result
+      next inBounds =>
+        simp only [Option.some.injEq, Prod.mk.injEq] at result
+        rcases result with ⟨rfl, rfl⟩
+        have different : top ≠ source := by
+          intro equal
+          subst top
+          have dead := (freeDead source (by simp [freeShape])).2
+          rw [found] at dead
+          contradiction
+        constructor
+        · exact different
+        · simp only [ThmStore.lookup]
+          have positions : source.position ≠ top.position := by
+            intro equal
+            exact different (ThmId.position_injective equal.symm)
+          rw [List.getElem?_set, List.getElem?_set]
+          simp only [Ne.symm positions, ↓reduceIte]
+          simpa only [ThmStore.lookup] using found
+      next => contradiction
+
+theorem copyReuse?_preserves_wellFormed {before after : ThmStore}
+    {source copied : ThmId} (wellFormed : before.WellFormed)
+    (result : before.copyReuse? source = some (copied, after)) : after.WellFormed := by
+  rcases wellFormed with ⟨lengths, freeNodup, freeDead⟩
+  unfold ThmStore.copyReuse? at result
+  cases found : before.lookup source with
+  | none => simp [found] at result
+  | some fact =>
+      simp only [found, Option.bind_some] at result
+      unfold ThmStore.reuse? at result
+      cases freeShape : before.free with
+      | nil => simp [freeShape] at result
+      | cons top rest =>
+          simp only [freeShape] at result
+          split at result
+          next inBounds =>
+            simp only [Option.some.injEq, Prod.mk.injEq] at result
+            rcases result with ⟨rfl, rfl⟩
+            constructor
+            · simpa using lengths
+            constructor
+            · simpa [freeShape] using freeNodup.tail
+            · intro id member
+              have old := freeDead id (by simp [freeShape, member])
+              constructor
+              · simpa using old.1
+              · simp only [ThmStore.lookup]
+                have different : id ≠ top := by
+                  intro equal
+                  subst id
+                  have := freeNodup
+                  simp [freeShape, member] at this
+                have positions : id.position ≠ top.position := fun equal =>
+                  different (ThmId.position_injective equal)
+                rw [List.getElem?_set, List.getElem?_set]
+                simp only [Ne.symm positions, ↓reduceIte]
+                simpa only [ThmStore.lookup] using old.2
+          next => contradiction
+
+theorem freshAppend_distinct_and_preserves_source {before : ThmStore}
+    {source copied : ThmId} {fact : Thm} (found : before.lookup source = some fact)
+    (freshPosition : copied.position = before.thms.length) :
+    copied ≠ source ∧
+      ({ before with thms := before.thms ++ [fact], live := before.live ++ [true] }).lookup source =
+        some fact := by
+  have sourceBound : source.position < before.thms.length := by
+    by_contra outOfBounds
+    simp [ThmStore.lookup, outOfBounds] at found
+  have sourceLiveBound : source.position < before.live.length := by
+    by_contra outOfBounds
+    simp [ThmStore.lookup, outOfBounds] at found
+  constructor
+  · intro equal
+    have positions := congrArg ThmId.position equal
+    omega
+  · simpa [ThmStore.lookup, List.getElem?_append, sourceBound, sourceLiveBound] using found
+
+theorem freshAppend_preserves_wellFormed {before : ThmStore} {fact : Thm}
+    (wellFormed : before.WellFormed) (freeEmpty : before.free = []) :
+    ({ before with thms := before.thms ++ [fact], live := before.live ++ [true] }).WellFormed := by
+  rcases wellFormed with ⟨lengths, _freeNodup, _freeDead⟩
+  constructor
+  · simp [lengths]
+  · simp [freeEmpty]
+
+theorem freshAppend_preserves_live_sound {admissible : Valuation → Prop}
+    {before : ThmStore} {fact : Thm} (lengths : before.thms.length = before.live.length)
+    (beforeSound : before.LiveSoundUnder admissible) (factSound : fact.SoundUnder admissible) :
+    ({ before with thms := before.thms ++ [fact], live := before.live ++ [true] }).LiveSoundUnder
+      admissible := by
+  intro id row live
+  simp only [ThmStore.lookup] at live
+  by_cases old : id.position < before.thms.length
+  · have oldLive : id.position < before.live.length := by omega
+    simpa [List.getElem?_append, old, oldLive] using beforeSound id row (by
+      simpa [ThmStore.lookup, List.getElem?_append, old, oldLive] using live)
+  · have position : id.position = before.thms.length := by
+      by_contra different
+      have beyond : before.thms.length + 1 ≤ id.position := by omega
+      simp [List.getElem?_append, old, lengths, beyond] at live
+    simp [List.getElem?_append, position, lengths] at live
+    simpa [live] using factSound
 
 theorem identity {admissible : Valuation → Prop} (id : PropId) :
     SoundUnder admissible ⟨{id}, {id}⟩ := by
@@ -1259,6 +1392,7 @@ example : testDeadStore.lookup testThmId = none := rfl
 example : testDeadStore.reuse? testFact = some (testThmId, testLiveStore) := rfl
 example : testLiveStore.mutate? testThmId testFact = some testLiveStore := rfl
 example : testCopySource.copyReuse? testThmId = some (testThmId2, testCopyResult) := rfl
+example : testLiveStore.copyFresh? testThmId = some (testThmId2, testCopyResult) := rfl
 private theorem testFact_sound : testFact.Sound := by
   intro valuation premises
   exact ⟨testId, by simp [testFact, testArray, Thm.sequent,
