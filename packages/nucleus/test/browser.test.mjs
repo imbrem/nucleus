@@ -80,10 +80,10 @@ async function waitFor(origin, child) {
  * This is the separate-process, cross-origin half of the demo: a kernel the
  * page reaches only over HTTP.
  */
-async function startKernel(context) {
+async function startKernel(context, files = [fixture]) {
   const child = spawn(
     "cargo",
-    ["run", "--quiet", "-p", "covalence-bin-cas-serve", "--", fixture],
+    ["run", "--quiet", "-p", "covalence-bin-cas-serve", "--", ...files],
     { cwd: repository, stdio: ["ignore", "pipe", "inherit"] },
   );
   context.after(() => child.kill());
@@ -94,12 +94,19 @@ async function startKernel(context) {
       output += chunk;
       const complete = output.trim().split("\n");
       // One line per admitted file, then the base URL.
-      if (complete.length >= 2) resolve(complete);
+      if (complete.length >= files.length + 1) resolve(complete);
     });
     child.on("exit", (code) => reject(new Error(`cas-serve exited ${code}`)));
   });
 
-  return { address: lines[0].split(" ")[0], baseUrl: lines[lines.length - 1] };
+  const addresses = lines
+    .slice(0, files.length)
+    .map((line) => line.split(" ")[0]);
+  return {
+    address: addresses[0],
+    addresses,
+    baseUrl: lines[lines.length - 1],
+  };
 }
 
 async function openPage(context, origin) {
@@ -201,6 +208,38 @@ test("the browser composes the full kernel host with a proof", async (context) =
   );
   assert.match(await page.locator("#address").textContent(), /^[0-9a-f]{64}$/);
   assert.equal(await page.locator("#rows").textContent(), "3");
+});
+
+test("the REPL runs proofs from the selected kernel by content address", async (context) => {
+  const origin = await servePackage(context);
+  const kernel = await startKernel(context, [
+    join(repository, "target/wasm32-wasip1/debug/covalence_proof_demo.wasm"),
+    join(
+      repository,
+      "target/wasm32-wasip1/debug/covalence_proof_invalid_demo.wasm",
+    ),
+  ]);
+  const page = await openPage(context, origin);
+
+  const result = await page.evaluate(async ({ baseUrl, addresses }) => {
+    const { Repl, drive, host } = window.nucleus;
+    const repl = new Repl();
+    const say = async (line) => (await drive(repl, host, line)).output;
+    await say(`(connect ${JSON.stringify(baseUrl)})`);
+    return {
+      valid: await say(`(proof ${addresses[0]})`),
+      invalid: await say(`(proof ${addresses[1]})`),
+      held: repl.addresses(),
+      local: await say("(local)"),
+      missing: await say(`(proof ${"0".repeat(64)})`),
+    };
+  }, kernel);
+
+  assert.match(result.valid, /^[0-9a-f]{64}$/);
+  assert.match(result.invalid, /^error: .*demo invalid proof was rejected/);
+  assert.deepEqual(result.held, kernel.addresses);
+  assert.equal(result.local, "0");
+  assert.match(result.missing, /^error: .*is not resident$/);
 });
 
 test("the REPL connects to a kernel over HTTP and fetches from it", async (context) => {

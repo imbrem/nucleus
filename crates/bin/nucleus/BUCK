@@ -30,6 +30,7 @@ rust_binary(
     named_deps = {
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
+        "covalence_nucleus": "nucleus//crates/nucleus:covalence_nucleus",
         "covalence_repl": "nucleus//crates/repl:covalence_repl",
     },
     env = {
@@ -63,6 +64,7 @@ rust_test(
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
         "covalence_neutron": "nucleus//crates/neutron:covalence_neutron",
+        "covalence_nucleus": "nucleus//crates/nucleus:covalence_nucleus",
         "covalence_repl": "nucleus//crates/repl:covalence_repl",
     },
     env = {
@@ -96,6 +98,7 @@ rust_test(
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
         "covalence_lib_sqlite": "nucleus//crates/lib/sqlite:covalence_lib_sqlite",
         "covalence_neutron": "nucleus//crates/neutron:covalence_neutron",
+        "covalence_nucleus": "nucleus//crates/nucleus:covalence_nucleus",
         "covalence_repl": "nucleus//crates/repl:covalence_repl",
     },
     env = {

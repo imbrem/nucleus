@@ -24,21 +24,21 @@ pub struct Step {
 
 #[wasm_bindgen]
 impl Step {
-    /// One of `output`, `fetch`, `shell`, or `quit`.
+    /// One of `output`, `fetch`, `proof`, `shell`, or `quit`.
     #[wasm_bindgen(getter)]
     #[must_use]
     pub fn kind(&self) -> String {
         self.kind.clone()
     }
 
-    /// Text to show, or the URL to fetch.
+    /// Text to show, or the URL to fetch before a `fetch` or `proof` step.
     #[wasm_bindgen(getter)]
     #[must_use]
     pub fn text(&self) -> String {
         self.text.clone()
     }
 
-    /// For `fetch`, the address the bytes must hash to.
+    /// For `fetch` or `proof`, the object's address.
     #[wasm_bindgen(getter)]
     #[must_use]
     pub fn address(&self) -> String {
@@ -136,6 +136,12 @@ impl Repl {
             Response::Fetch { url, address } => Step {
                 kind: "fetch".to_owned(),
                 text: url,
+                address: address.hex().to_string(),
+                arguments: Vec::new(),
+            },
+            Response::RunProof { url, address } => Step {
+                kind: "proof".to_owned(),
+                text: url.unwrap_or_default(),
                 address: address.hex().to_string(),
                 arguments: Vec::new(),
             },

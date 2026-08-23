@@ -16,6 +16,9 @@ covalence-lib-error = { path = "../../lib/error" }
 covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["blake3"] }
 covalence-repl = { path = "../../repl" }
 
+[target.'cfg(not(target_os = "wasi"))'.dependencies]
+covalence-nucleus = { path = "../../nucleus" }
+
 [dev-dependencies]
 covalence-lib-sqlite = { path = "../../lib/sqlite" }
 covalence-neutron = { path = "../../neutron" }

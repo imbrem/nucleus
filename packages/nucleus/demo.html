@@ -128,7 +128,7 @@
       <strong>nucleus</strong>
       <span class="hint">the same REPL the terminal runs, in a page</span>
       <label for="file">admit a file…</label>
-      <input id="file" type="file" accept=".sqlite,.db,.sqlite3" />
+      <input id="file" type="file" accept=".sqlite,.db,.sqlite3,.wasm" />
     </header>
 
     <div id="transcript"></div>
@@ -185,6 +185,7 @@
           "  (sqlite ADDRESS)                  the real sqlite3, in wasm",
           '  (connect "http://127.0.0.1:8080") a kernel in another process',
           "  (fetch ADDRESS)                   pull an object and verify it",
+          "  (proof ADDRESS)                   fetch, verify, and run a proof",
           "",
           "Paste an address from above wherever ADDRESS appears.",
           "",

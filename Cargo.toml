@@ -30,6 +30,7 @@ members = [
   "crates/neutron",
   "crates/nucleus",
   "crates/proof/demo",
+  "crates/proof/invalid-demo",
   "crates/proof/host",
   "crates/repl",
   "crates/browser",
