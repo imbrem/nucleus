@@ -138,7 +138,7 @@ enum BuildTarget {
 
 #[derive(Debug, Subcommand)]
 enum BuckTask {
-    /// Configure machine-local Buck tool paths.
+    /// Refresh machine-local Buck tool paths.
     Configure,
     /// Regenerate committed Cargo-derived Buck files.
     Sync,
