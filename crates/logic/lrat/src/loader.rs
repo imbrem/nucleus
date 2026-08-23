@@ -367,52 +367,59 @@ impl LratProver {
         temporary: &mut Vec<ThmId>,
     ) -> Result<ThmId, Error> {
         let mut trail = BTreeMap::<PropId, ThmId>::new();
+        let mut conflict = None;
         for literal in literals {
             let falsifying = literal.negated();
             let theorem = self.kernel.identity(falsifying)?;
             temporary.push(theorem);
+            if let Some(opposite) = trail.get(literal) {
+                let contradiction = self.kernel.resolve(*opposite, theorem, *literal)?;
+                temporary.push(contradiction);
+                conflict = Some(contradiction);
+            }
             trail.insert(falsifying, theorem);
         }
 
-        let mut conflict = None;
-        for hint in ordered_hints {
-            let record = self.live.get(hint).ok_or(Error::UnknownClause {
-                step: id,
-                clause: *hint,
-            })?;
-            if record
-                .literals
-                .iter()
-                .any(|literal| trail.contains_key(literal))
-            {
-                return Err(Error::UselessHint {
+        if conflict.is_none() {
+            for hint in ordered_hints {
+                let record = self.live.get(hint).ok_or(Error::UnknownClause {
                     step: id,
                     clause: *hint,
-                });
-            }
-            let mut theorem = record.theorem;
-            let mut open = Vec::new();
-            for literal in record.literals.iter().copied() {
-                if let Some(reason) = trail.get(&literal.negated()) {
-                    theorem = self.kernel.resolve(theorem, *reason, literal)?;
-                    temporary.push(theorem);
-                } else {
-                    open.push(literal);
-                }
-            }
-            match open.as_slice() {
-                [] => {
-                    conflict = Some(theorem);
-                    break;
-                }
-                [unit] => {
-                    trail.insert(*unit, theorem);
-                }
-                _ => {
+                })?;
+                if record
+                    .literals
+                    .iter()
+                    .any(|literal| trail.contains_key(literal))
+                {
                     return Err(Error::UselessHint {
                         step: id,
                         clause: *hint,
                     });
+                }
+                let mut theorem = record.theorem;
+                let mut open = Vec::new();
+                for literal in record.literals.iter().copied() {
+                    if let Some(reason) = trail.get(&literal.negated()) {
+                        theorem = self.kernel.resolve(theorem, *reason, literal)?;
+                        temporary.push(theorem);
+                    } else {
+                        open.push(literal);
+                    }
+                }
+                match open.as_slice() {
+                    [] => {
+                        conflict = Some(theorem);
+                        break;
+                    }
+                    [unit] => {
+                        trail.insert(*unit, theorem);
+                    }
+                    _ => {
+                        return Err(Error::UselessHint {
+                            step: id,
+                            clause: *hint,
+                        });
+                    }
                 }
             }
         }
@@ -430,6 +437,11 @@ impl LratProver {
             } else {
                 self.kernel.weaken(theorem, &[], &[*literal])?
             };
+            temporary.push(theorem);
+        }
+        let formula = PropId::positive(self.formula);
+        if !self.kernel.theorem(theorem)?.premises().contains(&formula) {
+            theorem = self.kernel.weaken(theorem, &[formula], &[])?;
             temporary.push(theorem);
         }
         // A zero-step conflict may still name a live source-clause theorem. Give every
@@ -844,6 +856,20 @@ mod tests {
             vec![vec![proposition], vec![proposition.negated()]]
         );
         result.verify().unwrap();
+    }
+
+    #[test]
+    fn rup_accepts_a_tautology_without_hints() {
+        let (kernel, bool_ty, p, _) = fixture();
+        let mut prover = CnfBuilder::new(kernel, bool_ty).refute().unwrap();
+
+        prover.learn_rup_props(1, &[p, p.negated()], &[]).unwrap();
+
+        let theorem = prover.kernel.theorem(prover.live[&1].theorem).unwrap();
+        let mut expected = [p, p.negated()];
+        expected.sort_unstable();
+        assert_eq!(theorem.premises(), &[PropId::positive(prover.formula)]);
+        assert_eq!(theorem.conclusions(), expected);
     }
 
     #[test]
