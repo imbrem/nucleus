@@ -152,7 +152,7 @@ impl CnfBuilder {
         }
         let formula = build_binary(&mut self.kernel, Op2::And, &terms, true_ref)?;
         let formula_prop = PropId::positive(formula);
-        let root = self.kernel.assume(formula_prop)?;
+        let root = self.kernel.identity(formula_prop)?;
         let mut projected = Vec::with_capacity(canonical_clauses.len());
         project_clauses(&mut self.kernel, root, formula, &terms, &mut projected)?;
 
@@ -369,7 +369,7 @@ impl LratProver {
         let mut trail = BTreeMap::<PropId, ThmId>::new();
         for literal in literals {
             let falsifying = literal.negated();
-            let theorem = self.kernel.assume(falsifying)?;
+            let theorem = self.kernel.identity(falsifying)?;
             temporary.push(theorem);
             trail.insert(falsifying, theorem);
         }
@@ -426,7 +426,7 @@ impl LratProver {
                 .premises()
                 .contains(&falsifying)
             {
-                self.kernel.discharge(theorem, falsifying)?
+                self.kernel.not_right(theorem, falsifying)?
             } else {
                 self.kernel.weaken(theorem, &[], &[*literal])?
             };
@@ -865,7 +865,7 @@ mod tests {
         assert!(prover.kernel.theorem(learned).is_ok());
         let reused = prover
             .kernel
-            .assume(PropId::positive(prover.true_ref))
+            .identity(PropId::positive(prover.true_ref))
             .unwrap();
         assert_eq!(reused, source);
         assert!(prover.kernel.theorem(learned).is_ok());
@@ -898,13 +898,13 @@ mod tests {
         let mut builder = CnfBuilder::new(kernel, bool_ty);
         builder.clause(&[p]).unwrap();
         let mut prover = builder.refute().unwrap();
-        let reusable = prover.kernel.assume(p).unwrap();
+        let reusable = prover.kernel.identity(p).unwrap();
         prover.kernel.remove_theorems(&[reusable]).unwrap();
         assert!(matches!(
             prover.learn_rup_props(2, &[p], &[99]),
             Err(Error::UnknownClause { .. })
         ));
-        assert_eq!(prover.kernel.assume(p).unwrap(), reusable);
+        assert_eq!(prover.kernel.identity(p).unwrap(), reusable);
     }
 
     #[test]
