@@ -12,6 +12,7 @@ members = [
   "crates/lib/serde",
   "crates/lib/sqlite",
   "crates/lib/table",
+  "crates/lib/wasm",
   "crates/logic/cas",
   "crates/logic/lrat",
   "crates/logic/metamath",
