@@ -10,15 +10,19 @@
     clippy::nursery,
     clippy::restriction
 )]
+#[cfg(target_os = "wasi")]
 mod bindings;
 
+#[cfg(target_os = "wasi")]
 use bindings::{
     exports::nucleus::proof::standard::Guest,
     nucleus::proof::host::{Bytes, IndexCas, Kernel, SynRel, cas_get, cas_insert},
 };
 
+#[cfg(target_os = "wasi")]
 struct Component;
 
+#[cfg(target_os = "wasi")]
 impl Guest for Component {
     fn prove() -> Result<Kernel, String> {
         let bytes = Bytes::new(b"nucleus proof demo");
@@ -55,6 +59,7 @@ impl Guest for Component {
     }
 }
 
+#[cfg(target_os = "wasi")]
 #[allow(unsafe_code, clippy::used_underscore_items)]
 mod component_export {
     use super::{Component, bindings};
