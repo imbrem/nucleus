@@ -9,15 +9,20 @@ import Mathlib.Order.Basic
 
 This is the raw object model shared with the Rust dense arena.  It records
 syntax and inline metadata without assigning them any logical validity.
-Local definition and import references are distinct nonzero `UInt64` values.
+Local definition references are nonzero `UInt64` values strictly below
+`i64::MAX`; import references remain arbitrary nonzero `UInt64` values.
 -/
 
 namespace Nucleus.Hol.Ethane.OneBased
 
 open Nucleus
 
-/-- A local reference.  Value `n` addresses definition `n - 1`. -/
-def Ref := { value : UInt64 // value ≠ 0 }
+/-- The exclusive upper bound shared with signed `PropId` on the Rust wire. -/
+def Ref.maxExclusive : Nat := 9_223_372_036_854_775_807
+
+/-- A local reference.  Value `n` addresses definition `n - 1` and always
+admits a lossless positive or negative signed proposition encoding. -/
+def Ref := { value : UInt64 // value ≠ 0 ∧ value.toNat < Ref.maxExclusive }
 
 deriving instance DecidableEq for Ref
 deriving instance Repr for Ref
@@ -30,17 +35,21 @@ instance : LinearOrder Ref := LinearOrder.lift' (fun value => value.1.toNat) (by
 namespace Ref
 
 def ofUInt64? (value : UInt64) : Option Ref :=
-  if nonzero : value ≠ 0 then some ⟨value, nonzero⟩ else none
+  if valid : value ≠ 0 ∧ value.toNat < maxExclusive then some ⟨value, valid⟩ else none
 
 def value (reference : Ref) : UInt64 := reference.1
 
 @[simp] theorem ofUInt64?_value (reference : Ref) :
     ofUInt64? reference.value = some reference := by
-  rcases reference with ⟨value, nonzero⟩
-  simp [ofUInt64?, Ref.value, nonzero]
+  rcases reference with ⟨value, valid⟩
+  simp [ofUInt64?, Ref.value, valid]
 
 @[simp] theorem ofUInt64?_zero : ofUInt64? 0 = none := by
   simp [ofUInt64?]
+
+@[simp] theorem ofUInt64?_maxExclusive :
+    ofUInt64? (UInt64.ofNat maxExclusive) = none := by
+  decide
 
 end Ref
 
