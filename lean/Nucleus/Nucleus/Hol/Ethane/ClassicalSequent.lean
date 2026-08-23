@@ -3,11 +3,11 @@ import Nucleus.Hol.Ethane.LogicalOpcode
 /-!
 # Canonical signed classical sequents
 
-This file specifies the semantic contract for the compact theorem table.  A
+This file specifies the semantic contract for compact checked theorems.  A
 `PropId` is a nonzero signed integer.  Deliberately following the kernel wire
 contract, a negative integer denotes the positive proposition and a positive
-integer denotes its negation.  `PropSet` is a finite set, so normalization is
-intrinsically sorted and duplicate-free when serialized with `toList`.
+integer denotes its negation. Each theorem directly owns two small canonical
+arrays; there is no proposition-set identity or interning table.
 -/
 
 namespace Nucleus.Hol.Ethane.ClassicalSequent
@@ -91,6 +91,48 @@ theorem PropSet.merge_wire_unique {left right merged : PropSet}
     (equal : merged = left.merge right) :
     merged.toList = (left.merge right).toList := congrArg PropSet.toList equal
 
+/-! ## Direct theorem storage
+
+`CanonicalArray` is the proof-level counterpart of `SmallVec<[PropId; 2]>`:
+the inline capacity is operationally irrelevant, while sortedness and absence
+of duplicates are semantic representation invariants.
+-/
+
+structure CanonicalArray where
+  values : List PropId
+  sorted : values.SortedLT
+  nodup : values.Nodup
+
+def CanonicalArray.asSet (array : CanonicalArray) : PropSet := array.values.toFinset
+
+@[simp] theorem CanonicalArray.mem_asSet (id : PropId) (array : CanonicalArray) :
+    id ∈ array.asSet ↔ id ∈ array.values := by simp [CanonicalArray.asSet]
+
+/-- A Rust `Thm`: both canonical sides are owned directly by the row. -/
+structure Thm where
+  premises : CanonicalArray
+  conclusions : CanonicalArray
+
+/-- Ephemeral one-based theorem handle; its position may be reused. -/
+abbrev ThmId := { value : Nat // value ≠ 0 }
+
+/-- The actual storage shape: theorem vector, parallel live bitmap, and a
+free-list of reusable one-based handles. -/
+structure ThmStore where
+  thms : List Thm
+  live : List Bool
+  free : List ThmId
+
+def ThmStore.lookup (store : ThmStore) (id : ThmId) : Option Thm :=
+  let position := id.val - 1
+  match store.thms[position]?, store.live[position]? with
+  | some fact, some true => some fact
+  | _, _ => none
+
+def ThmStore.WellFormed (store : ThmStore) : Prop :=
+  store.thms.length = store.live.length ∧
+    store.free.Nodup ∧ ∀ id ∈ store.free, store.lookup id = none
+
 /-- A compact theorem row: `prem |- conc`. -/
 structure Sequent where
   prem : PropSet
@@ -123,8 +165,44 @@ def PropId.eval (valuation : Valuation) (id : PropId) : Prop :=
 def Holds (valuation : Valuation) (sequent : Sequent) : Prop :=
   (∀ id ∈ sequent.prem, id.eval valuation) → ∃ id ∈ sequent.conc, id.eval valuation
 
-/-- Kernel-table soundness means every live theorem row is classically valid. -/
+/-- Kernel soundness of one sequent. -/
 def Sound (sequent : Sequent) : Prop := ∀ valuation, Holds valuation sequent
+
+def Thm.sequent (fact : Thm) : Sequent :=
+  ⟨fact.premises.asSet, fact.conclusions.asSet⟩
+
+def Thm.Sound (fact : Thm) : Prop :=
+  Nucleus.Hol.Ethane.ClassicalSequent.Sound fact.sequent
+
+/-- Every row currently selected by the bitmap is true. Dead vector contents
+and free-list order carry no logical meaning. -/
+def ThmStore.LiveSound (store : ThmStore) : Prop :=
+  ∀ id fact, store.lookup id = some fact → fact.Sound
+
+/-- Deletion preserves truth because it can only make prior lookups absent. -/
+theorem deletion_preserves_live_sound {before after : ThmStore}
+    (sound : before.LiveSound)
+    (onlyRemoves : ∀ id fact, after.lookup id = some fact →
+      before.lookup id = some fact) :
+    after.LiveSound := by
+  intro id fact live
+  exact sound id fact (onlyRemoves id fact live)
+
+/-- Reusing a free slot preserves truth when the replacement row is checked
+and every other live vector position retains its previous lookup. -/
+theorem reuse_preserves_live_sound {before after : ThmStore} (reused : ThmId)
+    (replacement : Thm) (beforeSound : before.LiveSound)
+    (replacementSound : replacement.Sound)
+    (inserted : after.lookup reused = some replacement)
+    (preserved : ∀ id, id ≠ reused → after.lookup id = before.lookup id) :
+    after.LiveSound := by
+  intro id fact live
+  by_cases same : id = reused
+  · subst id
+    have equal : replacement = fact := Option.some.inj (inserted.symm.trans live)
+    subst fact
+    exact replacementSound
+  · exact beforeSound id fact ((preserved id same).symm.trans live)
 
 theorem identity (id : PropId) : Sound ⟨{id}, {id}⟩ := by
   intro valuation premises
