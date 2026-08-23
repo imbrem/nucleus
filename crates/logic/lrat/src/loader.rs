@@ -173,13 +173,13 @@ impl CnfBuilder {
         let mut refutation = None;
         for (index, literals) in self.clauses.into_iter().enumerate() {
             let (term, source) = canonical[&literals];
-            let theorem = self.kernel.weaken(source, &[], &[])?;
+            let theorem = self.kernel.copy_theorem(source)?;
             let id = u64::try_from(index)
                 .ok()
                 .and_then(|value| value.checked_add(1))
                 .ok_or(Error::TooManyClauses)?;
             if literals.is_empty() {
-                refutation = Some(self.kernel.weaken(theorem, &[], &[])?);
+                refutation = Some(self.kernel.copy_theorem(theorem)?);
             }
             live.insert(
                 id,
@@ -306,7 +306,7 @@ impl LratProver {
         let theorem = match result {
             Ok(theorem) => theorem,
             Err(error) => {
-                self.reclaim(&mut temporary, None)?;
+                self.reclaim(&mut temporary, None);
                 return Err(error);
             }
         };
@@ -314,22 +314,22 @@ impl LratProver {
         let term = match build_clause(&mut self.kernel, &literals, self.false_ref) {
             Ok(term) => term,
             Err(error) => {
-                self.reclaim(&mut temporary, None)?;
+                self.reclaim(&mut temporary, None);
                 return Err(error);
             }
         };
         let refutation = if literals.is_empty() {
-            match self.kernel.weaken(theorem, &[], &[]) {
+            match self.kernel.copy_theorem(theorem) {
                 Ok(refutation) => Some(refutation),
                 Err(source) => {
-                    self.reclaim(&mut temporary, None)?;
+                    self.reclaim(&mut temporary, None);
                     return Err(Error::Kernel { source });
                 }
             }
         } else {
             None
         };
-        self.reclaim(&mut temporary, Some(theorem))?;
+        self.reclaim(&mut temporary, Some(theorem));
 
         let is_empty = literals.is_empty();
         self.live.insert(
@@ -347,16 +347,16 @@ impl LratProver {
         Ok(())
     }
 
-    fn reclaim(&mut self, temporary: &mut Vec<ThmId>, keep: Option<ThmId>) -> Result<(), Error> {
+    fn reclaim(&mut self, temporary: &mut Vec<ThmId>, keep: Option<ThmId>) {
         temporary.sort_unstable();
         temporary.dedup();
         if let Some(keep) = keep {
             temporary.retain(|candidate| *candidate != keep);
         }
-        if !temporary.is_empty() {
-            self.kernel.remove_theorems(temporary)?;
+        for theorem in temporary.drain(..) {
+            let removed = self.kernel.remove_theorem(theorem);
+            debug_assert!(removed, "temporary theorem handles are live and distinct");
         }
-        Ok(())
     }
 
     fn derive_rup(
@@ -424,32 +424,30 @@ impl LratProver {
             }
         }
 
-        let mut theorem = conflict.ok_or(Error::NoConflict { step: id })?;
+        let conflict = conflict.ok_or(Error::NoConflict { step: id })?;
+        // Hinted conflicts can be persistent live-clause theorems. All subsequent
+        // polarity transfer and weakening rules mutate in place, so take a private
+        // copy before changing any evidence.
+        let theorem = self.kernel.copy_theorem(conflict)?;
+        temporary.push(theorem);
         for literal in literals {
             let falsifying = literal.negated();
-            theorem = if self
+            if self
                 .kernel
                 .theorem(theorem)?
                 .premises()
                 .contains(&falsifying)
             {
-                self.kernel.not_right(theorem, falsifying)?
+                self.kernel.not_right(theorem, falsifying)?;
             } else {
-                self.kernel.weaken(theorem, &[], &[*literal])?
-            };
-            temporary.push(theorem);
+                self.kernel.weaken(theorem, &[], &[*literal])?;
+            }
         }
         let formula = PropId::positive(self.formula);
         if !self.kernel.theorem(theorem)?.premises().contains(&formula) {
-            theorem = self.kernel.weaken(theorem, &[formula], &[])?;
-            temporary.push(theorem);
+            self.kernel.weaken(theorem, &[formula], &[])?;
         }
-        // A zero-step conflict may still name a live source-clause theorem. Give every
-        // learned clause its own handle so forgetting either clause cannot invalidate
-        // the other, including when the kernel reuses a slot from its free list.
-        let owned = self.kernel.weaken(theorem, &[], &[])?;
-        temporary.push(owned);
-        Ok(owned)
+        Ok(theorem)
     }
 
     /// Forgets live clauses and their ephemeral theorem handles atomically.
@@ -482,7 +480,13 @@ impl LratProver {
                     })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        self.kernel.remove_theorems(&theorems)?;
+        for theorem in &theorems {
+            self.kernel.theorem(*theorem)?;
+        }
+        for theorem in theorems {
+            let removed = self.kernel.remove_theorem(theorem);
+            debug_assert!(removed, "live clauses own distinct theorem handles");
+        }
         for id in ids {
             self.live.remove(id);
         }
@@ -923,6 +927,26 @@ mod tests {
     }
 
     #[test]
+    fn rup_mutation_uses_a_copy_before_reusing_the_learned_slot() {
+        let (kernel, bool_ty, p, q) = fixture();
+        let mut builder = CnfBuilder::new(kernel, bool_ty);
+        builder.clause(&[p]).unwrap();
+        let mut prover = builder.refute().unwrap();
+        let source = prover.live[&1].theorem;
+        let source_before = prover.kernel.theorem(source).unwrap().clone();
+
+        prover.learn_rup_props(2, &[p, q], &[1]).unwrap();
+        let learned = prover.live[&2].theorem;
+        assert_ne!(source, learned);
+        assert_eq!(prover.kernel.theorem(source).unwrap(), &source_before);
+
+        prover.forget(&[2]).unwrap();
+        let reused = prover.kernel.identity(p).unwrap();
+        assert_eq!(reused, learned);
+        assert_eq!(prover.kernel.theorem(source).unwrap(), &source_before);
+    }
+
+    #[test]
     fn duplicate_initial_clauses_own_distinct_handles_across_slot_reuse() {
         let (kernel, bool_ty, p, _) = fixture();
         let mut builder = CnfBuilder::new(kernel, bool_ty);
@@ -950,7 +974,7 @@ mod tests {
         builder.clause(&[p]).unwrap();
         let mut prover = builder.refute().unwrap();
         let reusable = prover.kernel.identity(p).unwrap();
-        prover.kernel.remove_theorems(&[reusable]).unwrap();
+        assert!(prover.kernel.remove_theorem(reusable));
         assert!(matches!(
             prover.learn_rup_props(2, &[p], &[99]),
             Err(Error::UnknownClause { .. })
