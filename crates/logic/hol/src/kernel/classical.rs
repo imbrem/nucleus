@@ -694,6 +694,16 @@ mod tests {
     }
 
     #[test]
+    fn checked_theorems_never_enter_the_raw_arena_wire_state() {
+        let Fixture { mut kernel, p, .. } = fixture();
+        let before = kernel.arena().clone();
+        let theorem = kernel.assume(p).unwrap();
+        assert!(kernel.theorem(theorem).is_ok());
+        assert_eq!(kernel.arena(), &before);
+        assert_eq!(kernel.into_arena(), before);
+    }
+
+    #[test]
     fn weakening_resolution_and_discharge_form_sound_sequents() {
         let Fixture { mut kernel, p, q } = fixture();
         let assumed_p = kernel.assume(p).unwrap();
