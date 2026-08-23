@@ -78,6 +78,23 @@ fact's address is still compared with the request.
 True
 ```
 
+`covalence.logic.hol` exposes the one-based Ethane arena in two layers.
+`Arena` is mutable wire data and may contain unchecked rows. `Kernel` starts
+empty and can only grow through checked row and syntactic-fact rules. Both
+layers retain the low-level integer-index API. A kernel can additionally
+return opaque `Kind`, `Ty`, and `Tm` handles, while `SynFact` snapshots prevent
+evidence from being reused after its slot is overwritten or across kernels.
+
+```python
+>>> from covalence.logic.hol import Kernel
+>>> kernel = Kernel()
+>>> star = kernel.star()
+>>> bool_ty = kernel.bool_ty(star)
+>>> truth = kernel.bool(bool_ty, True)
+>>> kernel.tm(truth).reference == truth
+True
+```
+
 The checked-in dictionary-backed provider is runnable directly:
 
 ```sh
