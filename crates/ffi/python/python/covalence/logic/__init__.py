@@ -1,5 +1,5 @@
 """Python APIs corresponding to Covalence logic crates."""
 
-from . import lrat, metamath, sat
+from . import hol, lrat, metamath, sat
 
-__all__ = ["lrat", "metamath", "sat"]
+__all__ = ["hol", "lrat", "metamath", "sat"]
