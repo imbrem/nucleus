@@ -94,7 +94,8 @@ impl Kernel {
         )
     }
 
-    /// Composes two direct facts, choosing the coarser input relation.
+    /// Composes any checked left fact with a direct right fact, choosing the
+    /// coarser input relation and preserving the left substitution endpoints.
     ///
     /// # Errors
     ///
@@ -105,7 +106,7 @@ impl Kernel {
         left: SynFactId,
         right: SynFactId,
     ) -> Result<SynFactId, KernelError> {
-        let left = self.direct_fact::<Infallible>(left, "transitivity")?;
+        let left = self.fact::<Infallible>(left)?;
         let right = self.direct_fact::<Infallible>(right, "transitivity")?;
         if left.output() != right.input() {
             return Err(Self::invalid_fact("transitivity"));
@@ -119,7 +120,7 @@ impl Kernel {
         };
         self.put_fact(
             target,
-            SynFact::new(rel, None, None, left.input(), right.output()),
+            SynFact::new(rel, left.var(), left.val(), left.input(), right.output()),
         )
     }
 
@@ -147,7 +148,8 @@ impl Kernel {
     /// # Errors
     ///
     /// Returns an error unless `input` is a literal leaf or a distinct free
-    /// variable. Proxy rows require a future checked closedness fact.
+    /// variable. An import proxy is opaque: callers must instead supply a
+    /// checked universal fact obtained from theorem-import machinery.
     pub fn syn_sub_leaf(
         &mut self,
         target: Option<SynFactId>,
@@ -156,21 +158,31 @@ impl Kernel {
         input: Ref,
     ) -> Result<SynFactId, KernelError> {
         self.require_substitution_pair::<Infallible>(var, val)?;
-        let node = *self.row::<Infallible>(input)?.expr();
-        let var_node = *self.row::<Infallible>(var)?.expr();
-        let unchanged_variable = match (var_node, node) {
-            (Node::TyFv { .. }, Node::TyFv { .. })
-            | (Node::TmFv { .. }, Node::TyFv { .. })
-            | (Node::TmFv { .. }, Node::TmFv { .. }) => !Self::same_variable_name(var_node, node),
-            _ => false,
-        };
-        let unchanged_literal = matches!(node, Node::KindStar | Node::BoolTy | Node::Bool(_));
-        if !unchanged_literal && !unchanged_variable {
-            return Err(Self::invalid_fact("substitution leaf"));
-        }
+        self.require_substitution_leaf::<Infallible>(var, input)?;
         self.put_fact(
             target,
             SynFact::new(SynRel::Syn, Some(var), Some(val), input, input),
+        )
+    }
+
+    /// Establishes that every compatible substitution leaves one
+    /// non-target leaf unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `var` is a free variable and `input` is a
+    /// literal leaf or a free variable with a distinct name.
+    pub fn syn_sub_leaf_forall(
+        &mut self,
+        target: Option<SynFactId>,
+        var: Ref,
+        input: Ref,
+    ) -> Result<SynFactId, KernelError> {
+        self.require_substitution_variable::<Infallible>(var)?;
+        self.require_substitution_leaf::<Infallible>(var, input)?;
+        self.put_fact(
+            target,
+            SynFact::new(SynRel::Syn, Some(var), None, input, input),
         )
     }
 
@@ -243,8 +255,7 @@ impl Kernel {
         if var.is_some_and(|var| {
             self.row::<Infallible>(var)
                 .is_ok_and(|row| Self::same_variable_name(*row.expr(), input_node))
-        }) && val.is_some()
-        {
+        }) {
             return Err(Self::invalid_fact("constructor congruence"));
         }
         let child_rel = if Self::is_variable(input_node) {
@@ -608,9 +619,14 @@ impl Kernel {
     where
         E: std::error::Error + 'static,
     {
-        self.arena
+        let fact = self
+            .arena
             .syn_fact(id)
-            .ok_or(KernelError::MissingSynFact { id })
+            .ok_or(KernelError::MissingSynFact { id })?;
+        if fact.var().is_none() && fact.val().is_some() {
+            return Err(Self::invalid_fact("reserved substitution endpoints"));
+        }
+        Ok(fact)
     }
 
     fn direct_fact<E>(&self, id: SynFactId, rule: &'static str) -> Result<SynFact, KernelError<E>>
@@ -720,13 +736,16 @@ impl Kernel {
     {
         match (var, val) {
             (Some(var), Some(val)) => self.require_substitution_pair(var, val)?,
+            (Some(var), None) => {
+                self.require_substitution_variable(var)?;
+            }
             (None, None) => {}
             _ => return Err(Self::invalid_fact("partial substitution")),
         }
         Ok(())
     }
 
-    fn require_substitution_pair<E>(&self, var: Ref, val: Ref) -> Result<(), KernelError<E>>
+    fn require_substitution_variable<E>(&self, var: Ref) -> Result<Sort, KernelError<E>>
     where
         E: std::error::Error + 'static,
     {
@@ -734,7 +753,14 @@ impl Kernel {
         if !Self::is_variable(var_node) {
             return Err(Self::invalid_fact("substitution variable"));
         }
-        let category = self.category_as::<E>(var)?;
+        self.category_as::<E>(var)
+    }
+
+    fn require_substitution_pair<E>(&self, var: Ref, val: Ref) -> Result<(), KernelError<E>>
+    where
+        E: std::error::Error + 'static,
+    {
+        let category = self.require_substitution_variable::<E>(var)?;
         self.require_category::<E>(val, category)?;
         if category != Sort::Kind {
             let var_classifier = self.classifier_as::<E>(var)?;
@@ -747,6 +773,26 @@ impl Kernel {
             }
         }
         Ok(())
+    }
+
+    fn require_substitution_leaf<E>(&self, var: Ref, input: Ref) -> Result<(), KernelError<E>>
+    where
+        E: std::error::Error + 'static,
+    {
+        let node = *self.row::<E>(input)?.expr();
+        let var_node = *self.row::<E>(var)?.expr();
+        let unchanged_variable = match (var_node, node) {
+            (Node::TyFv { .. }, Node::TyFv { .. })
+            | (Node::TmFv { .. }, Node::TyFv { .. })
+            | (Node::TmFv { .. }, Node::TmFv { .. }) => !Self::same_variable_name(var_node, node),
+            _ => false,
+        };
+        let unchanged_literal = matches!(node, Node::KindStar | Node::BoolTy | Node::Bool(_));
+        if unchanged_literal || unchanged_variable {
+            Ok(())
+        } else {
+            Err(Self::invalid_fact("substitution leaf"))
+        }
     }
 
     fn require_compatible_endpoints<E>(&self, input: Ref, output: Ref) -> Result<(), KernelError<E>>
@@ -891,8 +937,12 @@ impl Kernel {
     where
         E: std::error::Error + 'static,
     {
-        let (Some(var), Some(val)) = (var, val) else {
-            return Ok((None, None));
+        let Some(var) = var else {
+            return if val.is_none() {
+                Ok((None, None))
+            } else {
+                Err(Self::invalid_fact("partial substitution"))
+            };
         };
         if self.same_variable::<E>(binder, var)? {
             return Ok((None, None));
@@ -900,6 +950,12 @@ impl Kernel {
         if Self::same_variable_name(*self.row::<E>(binder)?.expr(), *self.row::<E>(var)?.expr()) {
             return Err(Self::invalid_fact("ambiguous binder identity"));
         }
+        let Some(val) = val else {
+            if self.category_as::<E>(binder)? == self.category_as::<E>(var)? {
+                return Err(Self::invalid_fact("universal binder freshness"));
+            }
+            return Ok((Some(var), None));
+        };
         if self.contains_variable::<E>(val, binder)? {
             return Err(Self::invalid_fact("binder freshness"));
         }
@@ -1129,6 +1185,129 @@ mod tests {
             )
             .unwrap();
         assert_eq!(kernel.syn_fact(fact).unwrap().output(), output);
+    }
+
+    #[test]
+    fn transitivity_preserves_an_active_left_substitution() {
+        let (mut kernel, _, bool_ty) = bool_kernel();
+        let variable = kernel.tm_fv(4, bool_ty).unwrap();
+        let first_truth = kernel.bool(bool_ty, true).unwrap();
+        let second_truth = kernel.bool(bool_ty, true).unwrap();
+
+        let substituted = kernel.syn_sub_var(None, variable, first_truth).unwrap();
+        let equal_truths = kernel
+            .syn_congr(
+                None,
+                SynRel::Syn,
+                None,
+                None,
+                first_truth,
+                second_truth,
+                &[],
+            )
+            .unwrap();
+        let composed = kernel.syn_trans(None, substituted, equal_truths).unwrap();
+        let fact = kernel.syn_fact(composed).unwrap();
+
+        assert_eq!(fact.rel(), SynRel::Syn);
+        assert_eq!(fact.var(), Some(variable));
+        assert_eq!(fact.val(), Some(first_truth));
+        assert_eq!(fact.input(), variable);
+        assert_eq!(fact.output(), second_truth);
+    }
+
+    #[test]
+    fn transitivity_keeps_the_direct_form_and_chooses_the_coarser_relation() {
+        let (mut kernel, _, bool_ty) = bool_kernel();
+        let first = kernel.bool(bool_ty, true).unwrap();
+        let middle = kernel.bool(bool_ty, true).unwrap();
+        let last = kernel.bool(bool_ty, true).unwrap();
+        let left = kernel
+            .syn_congr(None, SynRel::Syn, None, None, first, middle, &[])
+            .unwrap();
+        let right = kernel
+            .syn_congr(None, SynRel::Alpha, None, None, middle, last, &[])
+            .unwrap();
+        let composed = kernel.syn_trans(None, left, right).unwrap();
+        let fact = kernel.syn_fact(composed).unwrap();
+
+        assert_eq!(fact.rel(), SynRel::Alpha);
+        assert_eq!(fact.var(), None);
+        assert_eq!(fact.val(), None);
+        assert_eq!(fact.input(), first);
+        assert_eq!(fact.output(), last);
+    }
+
+    #[test]
+    fn transitivity_still_requires_a_direct_right_fact() {
+        let (mut kernel, _, bool_ty) = bool_kernel();
+        let variable = kernel.tm_fv(4, bool_ty).unwrap();
+        let truth = kernel.bool(bool_ty, true).unwrap();
+        let active = kernel.syn_sub_var(None, variable, truth).unwrap();
+
+        assert!(kernel.syn_trans(None, active, active).is_err());
+    }
+
+    #[test]
+    fn universal_leaf_facts_compose_by_congruence_and_transitivity() {
+        let (mut kernel, _, bool_ty) = bool_kernel();
+        let function_ty = kernel.ty_arr(bool_ty, bool_ty).unwrap();
+        let function = kernel.tm_fv(3, function_ty).unwrap();
+        let variable = kernel.tm_fv(4, bool_ty).unwrap();
+        let first_truth = kernel.bool(bool_ty, true).unwrap();
+        let second_truth = kernel.bool(bool_ty, true).unwrap();
+        let first_application = kernel.app(function, first_truth).unwrap();
+        let second_application = kernel.app(function, second_truth).unwrap();
+
+        let function_unchanged = kernel
+            .syn_sub_leaf_forall(None, variable, function)
+            .unwrap();
+        let truth_unchanged = kernel
+            .syn_sub_leaf_forall(None, variable, first_truth)
+            .unwrap();
+        let universal_application = kernel
+            .syn_congr(
+                None,
+                SynRel::Syn,
+                Some(variable),
+                None,
+                first_application,
+                first_application,
+                &[function_unchanged, truth_unchanged],
+            )
+            .unwrap();
+        let function_refl = kernel.syn_refl(None, SynRel::Syn, function).unwrap();
+        let equal_truths = kernel
+            .syn_congr(
+                None,
+                SynRel::Syn,
+                None,
+                None,
+                first_truth,
+                second_truth,
+                &[],
+            )
+            .unwrap();
+        let equal_applications = kernel
+            .syn_congr(
+                None,
+                SynRel::Syn,
+                None,
+                None,
+                first_application,
+                second_application,
+                &[function_refl, equal_truths],
+            )
+            .unwrap();
+        let composed = kernel
+            .syn_trans(None, universal_application, equal_applications)
+            .unwrap();
+        let fact = kernel.syn_fact(composed).unwrap();
+
+        assert_eq!(fact.var(), Some(variable));
+        assert_eq!(fact.val(), None);
+        assert_eq!(fact.input(), first_application);
+        assert_eq!(fact.output(), second_application);
     }
 
     #[test]
