@@ -691,6 +691,13 @@
     },
     {
       "source": "workspace#covalence-browser@0.0.0",
+      "target": "workspace#covalence-logic-hol@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-browser@0.0.0",
       "target": "workspace#covalence-neutron@0.0.0",
       "kinds": [
         "normal"

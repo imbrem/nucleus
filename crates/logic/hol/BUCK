@@ -61,13 +61,6 @@ rust_test(
     crate_root = "src/lib.rs",
     edition = "2024",
     srcs = _RUST_SOURCES,
-    mapped_srcs = {
-        "nucleus//:hol_init_checked_manifest": "theories/init-boolean.checked.json",
-        "nucleus//:hol_init_checked_schema": "theories/init-boolean.checked.schema.json",
-    },
-    features = [
-        "buck-test-fixtures",
-    ],
     named_deps = {
         "covalence_lib_cbor": "nucleus//crates/lib/cbor:covalence_lib_cbor",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",

@@ -105,7 +105,9 @@ impl PropId {
 pub struct ThmId(NonZeroU64);
 
 impl ThmId {
-    const fn new(value: u64) -> Option<Self> {
+    /// Constructs a one-based theorem handle.
+    #[must_use]
+    pub const fn new(value: u64) -> Option<Self> {
         match NonZeroU64::new(value) {
             Some(v) => Some(Self(v)),
             None => None,
@@ -318,18 +320,6 @@ impl Kernel {
         let mut conclusions = source.conclusions;
         conclusions.push(p.negated());
         self.push_sequent(&premises, &conclusions)
-    }
-
-    /// Discharges one premise into its complementary conclusion.
-    ///
-    /// This is the classical polarity-transfer rule
-    /// `Γ, p |- Δ` to `Γ |- Δ, ¬p`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error unless `premise` occurs on the left side.
-    pub fn discharge(&mut self, theorem: ThmId, premise: PropId) -> Result<ThmId, KernelError> {
-        self.not_right(theorem, premise)
     }
 
     /// Folds two conjunct premises into their checked conjunction opcode.
@@ -1052,7 +1042,33 @@ mod tests {
     }
 
     #[test]
-    fn weakening_resolution_and_discharge_form_sound_sequents() {
+    fn conclusion_constant_expansion_eliminates_exactly_signed_false() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let bool_ty = kernel.bool_ty(star).unwrap();
+        let falsehood = PropId::positive(kernel.bool(bool_ty, false).unwrap());
+        let truth = PropId::positive(kernel.bool(bool_ty, true).unwrap());
+
+        for signed_false in [falsehood, truth.negated()] {
+            let identity = kernel.identity(signed_false).unwrap();
+            let expanded = kernel
+                .expand_conclusion(identity, signed_false, None)
+                .unwrap();
+            assert!(kernel.theorem(expanded).unwrap().conclusions().is_empty());
+        }
+
+        for signed_true in [truth, falsehood.negated()] {
+            let identity = kernel.identity(signed_true).unwrap();
+            assert!(
+                kernel
+                    .expand_conclusion(identity, signed_true, None)
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn weakening_resolution_and_polarity_transfer_form_sound_sequents() {
         let Fixture { mut kernel, p, q } = fixture();
         let assumed_p = kernel.identity(p).unwrap();
         let assumed_not_p = kernel.identity(p.negated()).unwrap();
@@ -1065,7 +1081,7 @@ mod tests {
         let assumed_not_p = kernel.identity(p.negated()).unwrap();
         let contradiction = kernel.resolve(assumed_p, assumed_not_p, p).unwrap();
         let with_q = kernel.weaken(contradiction, &[q], &[]).unwrap();
-        let discharged = kernel.discharge(with_q, q).unwrap();
+        let discharged = kernel.not_right(with_q, q).unwrap();
         assert_eq!(
             kernel.theorem(discharged).unwrap().conclusions(),
             [q.negated()]
