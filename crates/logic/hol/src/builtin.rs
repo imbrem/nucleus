@@ -5,6 +5,9 @@
 //! reserves every unassigned `u8` value independently in each arity family.
 //! Future meanings must use a new code or a new row-tag version: an existing
 //! `(family, code)` pair may never change meaning.
+//!
+//! See `docs/research/ethane-builtins-v1.md` for the lowering, equality,
+//! resource, and compatibility policy that implementations must follow.
 
 /// The registry version carried by the eventual versioned row tags.
 pub const VERSION: u8 = 1;
@@ -84,25 +87,14 @@ mod tests {
     use std::fmt::Write as _;
 
     use super::*;
-    use covalence_lib_cbor::{Value, from_reader, into_writer};
+    use crate::Ref;
+    use crate::row::{Expr, Row};
+    use covalence_lib_cbor::{from_reader, into_writer};
 
     const MANIFEST: &str = include_str!("../builtins-v1.tsv");
 
-    fn row(tag: &str, code: u8, operands: &[u64]) -> Value {
-        Value::Map(vec![
-            (Value::Text("tag".into()), Value::Text(tag.into())),
-            (
-                Value::Text("ixs".into()),
-                Value::Array(
-                    operands
-                        .iter()
-                        .copied()
-                        .map(|value| Value::Integer(value.into()))
-                        .collect(),
-                ),
-            ),
-            (Value::Text("val".into()), Value::Integer(code.into())),
-        ])
+    const fn reference(value: u64) -> Ref {
+        Ref::new(value).unwrap()
     }
 
     #[test]
@@ -124,6 +116,26 @@ mod tests {
         assert_eq!(Op2::from_code(0), Some(Op2::And));
         assert_eq!(Op2::from_code(1), Some(Op2::Or));
         assert_eq!(Op2::from_code(2), Some(Op2::Imp));
+        for entry in entries {
+            let columns: Vec<_> = entry.split('\t').collect();
+            assert_eq!(columns.len(), 6);
+            assert_eq!(columns[0], VERSION.to_string());
+            assert_eq!(columns[5], "bool");
+            let code: u8 = columns[2].parse().unwrap();
+            match columns[1] {
+                "op1" => {
+                    let op = Op1::from_code(code).unwrap();
+                    assert_eq!(columns[3], op.name());
+                    assert_eq!(columns[4], "bool");
+                }
+                "op2" => {
+                    let op = Op2::from_code(code).unwrap();
+                    assert_eq!(columns[3], op.name());
+                    assert_eq!(columns[4], "bool,bool");
+                }
+                family => panic!("unknown builtin family {family}"),
+            }
+        }
     }
 
     #[test]
@@ -136,28 +148,30 @@ mod tests {
 
     #[test]
     fn row_level_v1_goldens_freeze_tags_codes_and_operand_order() {
-        for (value, golden) in [
+        let one = reference(1);
+        let two = reference(2);
+        for (row, golden) in [
             (
-                row(OP1_ROW_TAG, Op1::Not.code(), &[1]),
+                Row::new(Expr::Op1(Op1::Not, one)),
                 "a36374616769746d2e6f70312e76316369787381016376616c00",
             ),
             (
-                row(OP2_ROW_TAG, Op2::And.code(), &[1, 2]),
+                Row::new(Expr::Op2(Op2::And, one, two)),
                 "a36374616769746d2e6f70322e7631636978738201026376616c00",
             ),
             (
-                row(OP2_ROW_TAG, Op2::Or.code(), &[1, 2]),
+                Row::new(Expr::Op2(Op2::Or, one, two)),
                 "a36374616769746d2e6f70322e7631636978738201026376616c01",
             ),
             (
-                row(OP2_ROW_TAG, Op2::Imp.code(), &[1, 2]),
+                Row::new(Expr::Op2(Op2::Imp, one, two)),
                 "a36374616769746d2e6f70322e7631636978738201026376616c02",
             ),
         ] {
             let mut bytes = Vec::new();
-            into_writer(&value, &mut bytes).unwrap();
+            into_writer(&row, &mut bytes).unwrap();
             assert_eq!(hex(&bytes), golden);
-            assert_eq!(from_reader::<Value, _>(bytes.as_slice()).unwrap(), value);
+            assert_eq!(from_reader::<Row, _>(bytes.as_slice()).unwrap(), row);
         }
     }
 
