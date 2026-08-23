@@ -8,7 +8,7 @@
 
 #![allow(dead_code)]
 
-use std::{convert::Infallible, fmt};
+use std::{collections::BTreeSet, convert::Infallible, fmt};
 
 use covalence_lib_cbor::{Value, into_writer};
 use covalence_logic_hol::{
@@ -480,6 +480,33 @@ impl Lcg {
     }
 }
 
+/// Whether a variable of the given name may occur anywhere beneath `root`,
+/// recomputed from outside the kernel over the public row accessors.
+///
+/// Proxies are opaque, so an import counts as a possible occurrence — the same
+/// conservative reading the kernel takes.
+pub fn occurs(arena: &Arena, root: Ref, name: u64) -> bool {
+    let mut visited = BTreeSet::new();
+    let mut pending = vec![root];
+    while let Some(reference) = pending.pop() {
+        if !visited.insert(reference) {
+            continue;
+        }
+        if arena.foreign(reference).is_some() {
+            return true;
+        }
+        if matches!(
+            arena.tag(reference),
+            Some(Tag::Ty(TyTag::Fv) | Tag::Tm(TmTag::Fv))
+        ) && arena.name(reference) == Some(name)
+        {
+            return true;
+        }
+        pending.extend(arena.children(reference).into_iter().flatten());
+    }
+    false
+}
+
 /// Every invariant the kernel promises about an occupied fact slot, checked
 /// from outside the kernel.
 ///
@@ -507,6 +534,19 @@ pub fn assert_cache_invariants(kernel: &Kernel) {
                     kernel.category(var).expect("resident"),
                     kernel.category(val).expect("resident"),
                     "{id:?}: replacement changes syntactic category"
+                );
+            } else {
+                // A universal fact quantifies over every compatible
+                // replacement, so it can only be true of an input the variable
+                // does not reach. Every rule that mints one preserves this, but
+                // no single rule checks it, so it is worth pinning from here.
+                let name = kernel
+                    .arena()
+                    .name(var)
+                    .expect("a free-variable row carries a name");
+                assert!(
+                    !occurs(kernel.arena(), fact.input(), name),
+                    "{id:?}: a universal fact mentions the variable it quantifies over"
                 );
             }
         }
