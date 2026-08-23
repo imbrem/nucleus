@@ -22,7 +22,7 @@ mod classical;
 mod syn_facts;
 
 use classical::ClassicalState;
-pub use classical::{HolTheorem, PropId, PropIdError, PropSetId, Sequent, ThmId};
+pub use classical::{HolTheorem, PropId, PropIdError, Thm, ThmId};
 
 /// A recoverable failure at the checked kernel boundary.
 #[derive(Debug, Snafu)]
@@ -40,19 +40,10 @@ where
     /// The syntactic-fact slot space no longer fits in `SynFactId`.
     #[snafu(display("kernel has too many syntactic facts"))]
     TooManySynFacts,
-    /// The proposition-set index no longer fits in `PropSetId`.
-    #[snafu(display("kernel has too many proposition sets"))]
-    TooManyPropSets,
     /// The theorem slot space no longer fits in `ThmId`.
     #[snafu(display("kernel has too many theorem slots"))]
     TooManyTheorems,
-    /// A proposition set is absent from this kernel.
-    #[snafu(display("proposition set {id:?} is absent"))]
-    MissingPropSet {
-        /// Missing one-based set index.
-        id: PropSetId,
-    },
-    /// A theorem slot is absent or has been removed.
+    /// A theorem index is absent or has been removed.
     #[snafu(display("theorem {id:?} is absent"))]
     MissingTheorem {
         /// Missing one-based theorem slot.
