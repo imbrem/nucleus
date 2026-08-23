@@ -20,6 +20,18 @@
       ]
     },
     {
+      "name": "bool->bool->bool",
+      "dependencies": ["bool", "bool->bool"],
+      "body": [
+        {
+          "id": "root",
+          "tag": "ty.arr",
+          "domain": "bool",
+          "codomain": "bool->bool"
+        }
+      ]
+    },
+    {
       "name": "true",
       "dependencies": ["bool", "bool->bool"],
       "body": [
@@ -87,6 +99,114 @@
           "function_ty": "bool->bool",
           "binder": "x",
           "body": "is_false"
+        }
+      ]
+    },
+    {
+      "name": "and",
+      "dependencies": ["bool", "bool->bool", "bool->bool->bool"],
+      "body": [
+        { "id": "p", "tag": "tm.fv", "name": 4, "ty": "bool" },
+        { "id": "q", "tag": "tm.fv", "name": 5, "ty": "bool" },
+        {
+          "id": "p_eq_q",
+          "tag": "tm.eq",
+          "bool_ty": "bool",
+          "left": "p",
+          "right": "q"
+        },
+        {
+          "id": "body",
+          "tag": "tm.eq",
+          "bool_ty": "bool",
+          "left": "p_eq_q",
+          "right": "q"
+        },
+        {
+          "id": "q_lam",
+          "tag": "tm.lam",
+          "function_ty": "bool->bool",
+          "binder": "q",
+          "body": "body"
+        },
+        {
+          "id": "root",
+          "tag": "tm.lam",
+          "function_ty": "bool->bool->bool",
+          "binder": "p",
+          "body": "q_lam"
+        }
+      ]
+    },
+    {
+      "name": "or",
+      "dependencies": ["bool", "bool->bool", "bool->bool->bool"],
+      "body": [
+        { "id": "p", "tag": "tm.fv", "name": 6, "ty": "bool" },
+        { "id": "q", "tag": "tm.fv", "name": 7, "ty": "bool" },
+        {
+          "id": "p_eq_q",
+          "tag": "tm.eq",
+          "bool_ty": "bool",
+          "left": "p",
+          "right": "q"
+        },
+        {
+          "id": "body",
+          "tag": "tm.eq",
+          "bool_ty": "bool",
+          "left": "p_eq_q",
+          "right": "p"
+        },
+        {
+          "id": "q_lam",
+          "tag": "tm.lam",
+          "function_ty": "bool->bool",
+          "binder": "q",
+          "body": "body"
+        },
+        {
+          "id": "root",
+          "tag": "tm.lam",
+          "function_ty": "bool->bool->bool",
+          "binder": "p",
+          "body": "q_lam"
+        }
+      ]
+    },
+    {
+      "name": "imp",
+      "dependencies": ["bool", "bool->bool", "bool->bool->bool", "true"],
+      "body": [
+        { "id": "p", "tag": "tm.fv", "name": 8, "ty": "bool" },
+        { "id": "q", "tag": "tm.fv", "name": 9, "ty": "bool" },
+        {
+          "id": "p_eq_true",
+          "tag": "tm.eq",
+          "bool_ty": "bool",
+          "left": "p",
+          "right": "true"
+        },
+        {
+          "id": "body",
+          "tag": "tm.eq",
+          "bool_ty": "bool",
+          "left": "p_eq_true",
+          "right": "q"
+        },
+        {
+          "id": "q_lam",
+          "tag": "tm.lam",
+          "function_ty": "bool->bool",
+          "binder": "q",
+          "body": "body"
+        },
+        {
+          "id": "root",
+          "tag": "tm.lam",
+          "function_ty": "bool->bool->bool",
+          "binder": "p",
+          "body": "q_lam"
         }
       ]
     }

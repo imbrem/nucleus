@@ -345,27 +345,42 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(
             first.names().map(|(name, _)| name).collect::<Vec<_>>(),
-            ["bool", "bool->bool", "false", "not", "star", "true"]
+            [
+                "and",
+                "bool",
+                "bool->bool",
+                "bool->bool->bool",
+                "false",
+                "imp",
+                "not",
+                "or",
+                "star",
+                "true",
+            ]
         );
-        assert_eq!(first.arena().len(), 14);
+        assert_eq!(first.arena().len(), 33);
         assert_eq!(first.get("star"), Ref::new(1));
         assert_eq!(first.get("bool"), Ref::new(2));
         assert_eq!(first.get("bool->bool"), Ref::new(3));
-        assert_eq!(first.get("true"), Ref::new(6));
-        assert_eq!(first.get("false"), Ref::new(11));
-        assert_eq!(first.get("not"), Ref::new(14));
+        assert_eq!(first.get("bool->bool->bool"), Ref::new(4));
+        assert_eq!(first.get("true"), Ref::new(7));
+        assert_eq!(first.get("false"), Ref::new(12));
+        assert_eq!(first.get("not"), Ref::new(15));
+        assert_eq!(first.get("and"), Ref::new(21));
+        assert_eq!(first.get("or"), Ref::new(27));
+        assert_eq!(first.get("imp"), Ref::new(33));
 
         let mut bytes = Vec::new();
         wire::serialize(first.arena(), &mut bytes).unwrap();
         assert_eq!(wire::deserialize(bytes.as_slice()).unwrap(), *first.arena());
         assert_eq!(
             first.arena().addr(),
-            O256::from_hex("64582137d813f1d11a144f41b409c9312727a2d9c8808579ce781f975a73e1bb")
+            O256::from_hex("fdc14876fecbb5c84b5692a88fd3e80c91fc6f72799a91787eb8871d143e0ade")
                 .unwrap()
         );
         assert_eq!(
             first.manifest_addr(),
-            O256::from_hex("a7c1fd3c6304047b8ff60fcf3d4411c5b2eff9d297bbb12d0737d71aa5403f54")
+            O256::from_hex("ae74e6a0bc7efe384c699afbc805822a9fe145e6f04366145923b071d41888d0")
                 .unwrap()
         );
     }
