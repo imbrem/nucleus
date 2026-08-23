@@ -1,11 +1,9 @@
-"""Parser-independent typed LRAT clause validation.
+"""Untrusted typed LRAT parsing.
 
-The kernel accepts clauses and proof hints as Python sequences. Failed proof
-steps raise :class:`LratError` and leave the kernel unchanged.
+Proof admission lives in userspace Rust and drives the checked HOL kernel.
 """
 
 from .._covalence import (
-    Kernel,
     LratError,
     RatGroup,
     Step,
@@ -14,7 +12,6 @@ from .._covalence import (
 )
 
 __all__ = [
-    "Kernel",
     "LratError",
     "RatGroup",
     "Step",

@@ -18,7 +18,11 @@ use crate::{
     row::{Expr as Node, Row},
 };
 
+mod classical;
 mod syn_facts;
+
+use classical::ClassicalState;
+pub use classical::{PropId, PropIdError, PropVec, Thm, ThmId};
 
 /// A recoverable failure at the checked kernel boundary.
 #[derive(Debug, Snafu)]
@@ -36,6 +40,21 @@ where
     /// The syntactic-fact slot space no longer fits in `SynFactId`.
     #[snafu(display("kernel has too many syntactic facts"))]
     TooManySynFacts,
+    /// The theorem slot space no longer fits in `ThmId`.
+    #[snafu(display("kernel has too many theorem slots"))]
+    TooManyTheorems,
+    /// A theorem index is absent or has been removed.
+    #[snafu(display("theorem {id:?} is absent"))]
+    MissingTheorem {
+        /// Missing one-based theorem slot.
+        id: ThmId,
+    },
+    /// A checked sequent rule does not match its evidence.
+    #[snafu(display("theorem evidence does not establish {rule}"))]
+    InvalidTheoremRule {
+        /// Name of the rejected rule.
+        rule: &'static str,
+    },
     /// A reference does not name a local row.
     #[snafu(display("reference {reference:?} does not name a kernel row"))]
     MissingDefinition {
@@ -113,6 +132,7 @@ where
 #[derive(Debug, Default)]
 pub struct Kernel {
     arena: Arena,
+    classical: ClassicalState,
 }
 
 impl Deref for Kernel {
@@ -129,6 +149,7 @@ impl Kernel {
     pub const fn new() -> Self {
         Self {
             arena: Arena::empty(),
+            classical: ClassicalState::new(),
         }
     }
 
@@ -137,6 +158,7 @@ impl Kernel {
     pub fn with_init(init: &Compiled) -> Self {
         Self {
             arena: init.arena().clone(),
+            classical: ClassicalState::new(),
         }
     }
 
