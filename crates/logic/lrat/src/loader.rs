@@ -822,6 +822,31 @@ mod tests {
     }
 
     #[test]
+    fn rup_refutes_an_arbitrary_compound_hol_predicate() {
+        let (mut kernel, bool_ty, _, q) = fixture();
+        let predicate_ty = kernel.ty_arr(bool_ty, bool_ty).unwrap();
+        let predicate = kernel.tm_fv(3, predicate_ty).unwrap();
+        let application = kernel.app(predicate, q.reference()).unwrap();
+        let proposition = PropId::positive(application);
+
+        // The SAT atom is a Boolean-valued HOL application, not a Boolean
+        // variable. RUP treats it only as an opaque proposition and therefore
+        // remains valid for arbitrary predicate semantics.
+        let mut builder = CnfBuilder::new(kernel, bool_ty);
+        builder.clause(&[proposition]).unwrap();
+        builder.clause(&[proposition.negated()]).unwrap();
+        let mut prover = builder.refute().unwrap();
+        prover.learn_rup_props(3, &[], &[1, 2]).unwrap();
+
+        let result = prover.done().unwrap();
+        assert_eq!(
+            result.reconstruct().unwrap(),
+            vec![vec![proposition], vec![proposition.negated()]]
+        );
+        result.verify().unwrap();
+    }
+
+    #[test]
     fn rup_can_learn_a_nonempty_weakened_clause() {
         let (kernel, bool_ty, p, q) = fixture();
         let mut builder = CnfBuilder::new(kernel, bool_ty);
