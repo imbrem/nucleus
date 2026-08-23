@@ -1,0 +1,1171 @@
+//! Small checked rules for the arena's syntactic-fact cache.
+//!
+//! Lookup policy and proof search are intentionally absent. Userspace may
+//! index these slots however it likes and may discard temporary suffixes.
+
+use std::convert::Infallible;
+
+use crate::{Ref, Sort, SynFact, SynFactId, SynRel, row::Expr as Node};
+
+use super::{Kernel, KernelError};
+
+impl Kernel {
+    /// Number of allocated syntactic-fact slots, including removed slots.
+    #[must_use]
+    pub fn syn_fact_len(&self) -> usize {
+        self.arena.syn_fact_slot_count()
+    }
+
+    /// Returns one checked syntactic fact.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the one-based slot is absent or was removed.
+    pub fn syn_fact(&self, id: SynFactId) -> Result<SynFact, KernelError> {
+        self.fact::<Infallible>(id)
+    }
+
+    /// Removes one cached fact. Removing evidence cannot add a theorem.
+    #[must_use]
+    pub fn remove_syn_fact(&mut self, id: SynFactId) -> bool {
+        self.arena.remove_syn_fact(id)
+    }
+
+    /// Drops every syntactic-fact slot at or above `len`.
+    ///
+    /// This supports temporary userspace proof searches without putting a
+    /// cache or garbage collector in the trusted kernel.
+    pub fn truncate_syn_facts(&mut self, len: usize) {
+        self.arena.truncate_syn_facts(len);
+    }
+
+    /// Inserts reflexivity in any of the three nested relations.
+    ///
+    /// `target` replaces that one-based slot when present; `None` allocates.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the expression or replacement slot is absent.
+    pub fn syn_refl(
+        &mut self,
+        target: Option<SynFactId>,
+        rel: SynRel,
+        input: Ref,
+    ) -> Result<SynFactId, KernelError> {
+        self.row::<Infallible>(input)?;
+        self.put_fact::<Infallible>(target, SynFact::new(rel, None, None, input, input))
+    }
+
+    /// Weakens a fact along `syn ≤ alpha ≤ conv`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the source relation refines `rel`.
+    pub fn syn_refine(
+        &mut self,
+        target: Option<SynFactId>,
+        source: SynFactId,
+        rel: SynRel,
+    ) -> Result<SynFactId, KernelError> {
+        let fact = self.fact::<Infallible>(source)?;
+        if !fact.rel().refines(rel) {
+            return Err(Self::invalid_fact("relation refinement"));
+        }
+        self.put_fact(
+            target,
+            SynFact::new(rel, fact.var(), fact.val(), fact.input(), fact.output()),
+        )
+    }
+
+    /// Reverses a direct fact.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an active substitution fact.
+    pub fn syn_symm(
+        &mut self,
+        target: Option<SynFactId>,
+        source: SynFactId,
+    ) -> Result<SynFactId, KernelError> {
+        let fact = self.direct_fact::<Infallible>(source, "symmetry")?;
+        self.put_fact(
+            target,
+            SynFact::new(fact.rel(), None, None, fact.output(), fact.input()),
+        )
+    }
+
+    /// Composes two direct facts, choosing the coarser input relation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the middle references agree exactly.
+    pub fn syn_trans(
+        &mut self,
+        target: Option<SynFactId>,
+        left: SynFactId,
+        right: SynFactId,
+    ) -> Result<SynFactId, KernelError> {
+        let left = self.direct_fact::<Infallible>(left, "transitivity")?;
+        let right = self.direct_fact::<Infallible>(right, "transitivity")?;
+        if left.output() != right.input() {
+            return Err(Self::invalid_fact("transitivity"));
+        }
+        let rel = if left.rel().refines(right.rel()) {
+            right.rel()
+        } else if right.rel().refines(left.rel()) {
+            left.rel()
+        } else {
+            return Err(Self::invalid_fact("transitivity"));
+        };
+        self.put_fact(
+            target,
+            SynFact::new(rel, None, None, left.input(), right.output()),
+        )
+    }
+
+    /// Establishes the variable case `[val / var] var = val`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `var` is a free variable and `val` has its
+    /// syntactic category and a compatible classifier.
+    pub fn syn_sub_var(
+        &mut self,
+        target: Option<SynFactId>,
+        var: Ref,
+        val: Ref,
+    ) -> Result<SynFactId, KernelError> {
+        self.require_substitution_pair::<Infallible>(var, val)?;
+        self.put_fact(
+            target,
+            SynFact::new(SynRel::Syn, Some(var), Some(val), var, val),
+        )
+    }
+
+    /// Establishes that substitution leaves one non-target leaf unchanged.
+    ///
+    /// Imported references are opaque and therefore count as leaves.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `input` is a leaf or a distinct free variable.
+    pub fn syn_sub_leaf(
+        &mut self,
+        target: Option<SynFactId>,
+        var: Ref,
+        val: Ref,
+        input: Ref,
+    ) -> Result<SynFactId, KernelError> {
+        self.require_substitution_pair::<Infallible>(var, val)?;
+        let node = *self.row::<Infallible>(input)?.expr();
+        let var_node = *self.row::<Infallible>(var)?.expr();
+        let unchanged_variable = match (var_node, node) {
+            (Node::TyFv { .. }, Node::TyFv { .. })
+            | (Node::TmFv { .. }, Node::TyFv { .. })
+            | (Node::TmFv { .. }, Node::TmFv { .. }) => !Self::same_variable_name(var_node, node),
+            _ => false,
+        };
+        if (Self::is_variable(node) || !node.children().is_empty()) && !unchanged_variable {
+            return Err(Self::invalid_fact("substitution leaf"));
+        }
+        self.put_fact(
+            target,
+            SynFact::new(SynRel::Syn, Some(var), Some(val), input, input),
+        )
+    }
+
+    /// Uses a direct syntactic equality `var = val` to disable substitution.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `variable_equality` and `body_equality` are
+    /// direct syntactic facts with the requested endpoints.
+    #[allow(clippy::too_many_arguments)]
+    pub fn syn_sub_identity(
+        &mut self,
+        target: Option<SynFactId>,
+        var: Ref,
+        val: Ref,
+        input: Ref,
+        output: Ref,
+        variable_equality: SynFactId,
+        body_equality: SynFactId,
+    ) -> Result<SynFactId, KernelError> {
+        self.require_substitution_pair::<Infallible>(var, val)?;
+        self.require_direct::<Infallible>(
+            variable_equality,
+            SynRel::Syn,
+            var,
+            val,
+            "identity substitution",
+        )?;
+        let body = self.direct_fact::<Infallible>(body_equality, "identity substitution")?;
+        if body.input() != input || body.output() != output {
+            return Err(Self::invalid_fact("identity substitution"));
+        }
+        self.put_fact(
+            target,
+            SynFact::new(body.rel(), Some(var), Some(val), input, output),
+        )
+    }
+
+    /// Applies congruence to a non-binding constructor.
+    ///
+    /// Child facts must have the same substitution endpoints and relate the
+    /// corresponding input and output children. Finer child relations may be
+    /// used for a coarser parent relation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a binder, different constructor data, or
+    /// mismatched child evidence.
+    #[allow(clippy::too_many_arguments)]
+    pub fn syn_congr(
+        &mut self,
+        target: Option<SynFactId>,
+        rel: SynRel,
+        var: Option<Ref>,
+        val: Option<Ref>,
+        input: Ref,
+        output: Ref,
+        children: &[SynFactId],
+    ) -> Result<SynFactId, KernelError> {
+        self.require_optional_substitution::<Infallible>(var, val)?;
+        let input_node = *self.row::<Infallible>(input)?.expr();
+        let output_node = *self.row::<Infallible>(output)?.expr();
+        if Self::is_binder(input_node)
+            || Self::is_binder(output_node)
+            || !Self::same_head(input_node, output_node)
+        {
+            return Err(Self::invalid_fact("constructor congruence"));
+        }
+        if var.is_some_and(|var| {
+            self.same_variable::<Infallible>(var, input)
+                .unwrap_or(false)
+        }) && val.is_some()
+        {
+            return Err(Self::invalid_fact("constructor congruence"));
+        }
+        let child_rel = if Self::is_variable(input_node) {
+            SynRel::Syn
+        } else {
+            rel
+        };
+        self.require_children::<Infallible>(
+            child_rel,
+            var,
+            val,
+            &input_node.children(),
+            &output_node.children(),
+            children,
+            "constructor congruence",
+        )?;
+        self.require_compatible_endpoints::<Infallible>(input, output)?;
+        self.put_fact(target, SynFact::new(rel, var, val, input, output))
+    }
+
+    /// Applies congruence beneath an explicit binder without renaming it.
+    ///
+    /// The replacement must not mention a binder it crosses.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the binder and body facts match the local
+    /// substitution rule exactly.
+    #[allow(clippy::too_many_arguments)]
+    pub fn syn_binder_congr(
+        &mut self,
+        target: Option<SynFactId>,
+        rel: SynRel,
+        var: Option<Ref>,
+        val: Option<Ref>,
+        input: Ref,
+        output: Ref,
+        binder: SynFactId,
+        body: SynFactId,
+    ) -> Result<SynFactId, KernelError> {
+        self.require_optional_substitution::<Infallible>(var, val)?;
+        let input_node = *self.row::<Infallible>(input)?.expr();
+        let output_node = *self.row::<Infallible>(output)?.expr();
+        let shape = Self::binder_shape::<Infallible>(input_node, output_node)?;
+        let body_substitution =
+            self.binder_substitution::<Infallible>(shape.input_binder, var, val)?;
+        let type_substitution_through_term_binder = matches!(input_node, Node::Lam(..))
+            && match var {
+                Some(var) => self.category_as::<Infallible>(var)? == Sort::Ty,
+                None => false,
+            };
+        let binder_substitution = if type_substitution_through_term_binder {
+            if !Self::same_variable_name(
+                *self.row::<Infallible>(shape.input_binder)?.expr(),
+                *self.row::<Infallible>(shape.output_binder)?.expr(),
+            ) {
+                return Err(Self::invalid_fact("binder congruence"));
+            }
+            (var, val)
+        } else {
+            if !self.same_variable::<Infallible>(shape.input_binder, shape.output_binder)? {
+                return Err(Self::invalid_fact("binder congruence"));
+            }
+            (None, None)
+        };
+        self.require_fact_match::<Infallible>(
+            binder,
+            rel,
+            binder_substitution.0,
+            binder_substitution.1,
+            shape.input_binder,
+            shape.output_binder,
+            "binder congruence",
+        )?;
+        self.require_fact_match::<Infallible>(
+            body,
+            rel,
+            body_substitution.0,
+            body_substitution.1,
+            shape.input_body,
+            shape.output_body,
+            "binder congruence",
+        )?;
+        self.require_compatible_endpoints::<Infallible>(input, output)?;
+        self.put_fact(target, SynFact::new(rel, var, val, input, output))
+    }
+
+    /// Applies congruence beneath the implicit type binder of `Model` or
+    /// `tyExists` without renaming it.
+    ///
+    /// `binder` is an explicit `ty.fv` witness for the stored binder name.
+    /// Conversion congruence is deliberately unavailable under `Model`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the witness and body fact match the local rule
+    /// and the replacement is fresh for a binder it crosses.
+    #[allow(clippy::too_many_arguments)]
+    pub fn syn_implicit_binder_congr(
+        &mut self,
+        target: Option<SynFactId>,
+        rel: SynRel,
+        var: Option<Ref>,
+        val: Option<Ref>,
+        input: Ref,
+        output: Ref,
+        binder: Ref,
+        body: SynFactId,
+    ) -> Result<SynFactId, KernelError> {
+        self.require_optional_substitution::<Infallible>(var, val)?;
+        let input_node = *self.row::<Infallible>(input)?.expr();
+        let output_node = *self.row::<Infallible>(output)?.expr();
+        let (name, input_body, output_body, is_model) =
+            Self::same_implicit_binder(input_node, output_node)
+                .ok_or_else(|| Self::invalid_fact("implicit binder congruence"))?;
+        if is_model && rel == SynRel::Conv {
+            return Err(Self::invalid_fact("conversion under model"));
+        }
+        self.require_implicit_binder::<Infallible>(binder, name)?;
+        let body_substitution = self.binder_substitution::<Infallible>(binder, var, val)?;
+        self.require_fact_match::<Infallible>(
+            body,
+            rel,
+            body_substitution.0,
+            body_substitution.1,
+            input_body,
+            output_body,
+            "implicit binder congruence",
+        )?;
+        self.require_compatible_endpoints::<Infallible>(input, output)?;
+        self.put_fact(target, SynFact::new(rel, var, val, input, output))
+    }
+
+    /// Renames an explicit `ty.lam` or `tm.lam` binder using one substitution
+    /// fact for the body.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the new binder is fresh in the old body and
+    /// the supplied facts establish the classifier and body obligations.
+    pub fn syn_alpha_binder(
+        &mut self,
+        target: Option<SynFactId>,
+        input: Ref,
+        output: Ref,
+        binder_classifier: SynFactId,
+        body_substitution: SynFactId,
+    ) -> Result<SynFactId, KernelError> {
+        let input_node = *self.row::<Infallible>(input)?.expr();
+        let output_node = *self.row::<Infallible>(output)?.expr();
+        let shape = Self::binder_shape::<Infallible>(input_node, output_node)?;
+        let left_binder = shape.input_binder;
+        let right_binder = shape.output_binder;
+        let left_classifier = self.classifier_as::<Infallible>(left_binder)?;
+        let right_classifier = self.classifier_as::<Infallible>(right_binder)?;
+        self.require_direct::<Infallible>(
+            binder_classifier,
+            SynRel::Alpha,
+            left_classifier,
+            right_classifier,
+            "explicit alpha binder",
+        )?;
+        self.require_fact_match::<Infallible>(
+            body_substitution,
+            SynRel::Alpha,
+            Some(left_binder),
+            Some(right_binder),
+            shape.input_body,
+            shape.output_body,
+            "explicit alpha binder",
+        )?;
+        if !self.same_variable::<Infallible>(left_binder, right_binder)?
+            && self.contains_variable::<Infallible>(shape.input_body, right_binder)?
+        {
+            return Err(Self::invalid_fact("explicit alpha binder freshness"));
+        }
+        self.require_compatible_endpoints::<Infallible>(input, output)?;
+        self.put_fact(
+            target,
+            SynFact::new(SynRel::Alpha, None, None, input, output),
+        )
+    }
+
+    /// Alpha-renames the implicit type binder of `Model` or `tyExists`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the explicit binder witnesses match the stored
+    /// names, the new binder is fresh, and the body substitution is proved.
+    #[allow(clippy::too_many_arguments)]
+    pub fn syn_alpha_implicit_binder(
+        &mut self,
+        target: Option<SynFactId>,
+        input: Ref,
+        output: Ref,
+        input_binder: Ref,
+        output_binder: Ref,
+        body_substitution: SynFactId,
+    ) -> Result<SynFactId, KernelError> {
+        let input_node = *self.row::<Infallible>(input)?.expr();
+        let output_node = *self.row::<Infallible>(output)?.expr();
+        let (left_name, left_body, right_name, right_body) =
+            Self::renamed_implicit_binder(input_node, output_node)
+                .ok_or_else(|| Self::invalid_fact("implicit alpha binder"))?;
+        self.require_implicit_binder::<Infallible>(input_binder, left_name)?;
+        self.require_implicit_binder::<Infallible>(output_binder, right_name)?;
+        self.require_fact_match::<Infallible>(
+            body_substitution,
+            SynRel::Alpha,
+            Some(input_binder),
+            Some(output_binder),
+            left_body,
+            right_body,
+            "implicit alpha binder",
+        )?;
+        if !self.same_variable::<Infallible>(input_binder, output_binder)?
+            && self.contains_variable::<Infallible>(left_body, output_binder)?
+        {
+            return Err(Self::invalid_fact("implicit alpha binder freshness"));
+        }
+        self.require_compatible_endpoints::<Infallible>(input, output)?;
+        self.put_fact(
+            target,
+            SynFact::new(SynRel::Alpha, None, None, input, output),
+        )
+    }
+
+    /// Introduces a root type-family beta conversion from a cached
+    /// substitution fact.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `source` is `(ty.lam binder body) argument`
+    /// and the evidence relates `[argument / binder] body` to its output.
+    pub fn ty_beta_fact(
+        &mut self,
+        target: Option<SynFactId>,
+        source: Ref,
+        substitution: SynFactId,
+    ) -> Result<SynFactId, KernelError> {
+        self.require_category::<Infallible>(source, Sort::Ty)?;
+        let Node::TyApp(function, argument) = *self.row::<Infallible>(source)?.expr() else {
+            return Err(Self::invalid_fact("type beta"));
+        };
+        let Node::TyLam(binder, body) = *self.row::<Infallible>(function)?.expr() else {
+            return Err(Self::invalid_fact("type beta"));
+        };
+        let fact = self.fact::<Infallible>(substitution)?;
+        self.require_fact_match::<Infallible>(
+            substitution,
+            SynRel::Conv,
+            Some(binder),
+            Some(argument),
+            body,
+            fact.output(),
+            "type beta",
+        )?;
+        self.require_compatible_endpoints::<Infallible>(source, fact.output())?;
+        self.put_fact(
+            target,
+            SynFact::new(SynRel::Conv, None, None, source, fact.output()),
+        )
+    }
+
+    /// Introduces a root term beta conversion from a cached substitution fact.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `source` is `(lam binder body) argument` and
+    /// the evidence relates `[argument / binder] body` to its output.
+    pub fn tm_beta_fact(
+        &mut self,
+        target: Option<SynFactId>,
+        source: Ref,
+        substitution: SynFactId,
+    ) -> Result<SynFactId, KernelError> {
+        self.require_category::<Infallible>(source, Sort::Tm)?;
+        let Node::App(function, argument) = *self.row::<Infallible>(source)?.expr() else {
+            return Err(Self::invalid_fact("term beta"));
+        };
+        let Node::Lam(binder, body) = *self.row::<Infallible>(function)?.expr() else {
+            return Err(Self::invalid_fact("term beta"));
+        };
+        let fact = self.fact::<Infallible>(substitution)?;
+        self.require_fact_match::<Infallible>(
+            substitution,
+            SynRel::Conv,
+            Some(binder),
+            Some(argument),
+            body,
+            fact.output(),
+            "term beta",
+        )?;
+        self.require_compatible_endpoints::<Infallible>(source, fact.output())?;
+        self.put_fact(
+            target,
+            SynFact::new(SynRel::Conv, None, None, source, fact.output()),
+        )
+    }
+
+    /// Introduces the exact root eta conversion `lam x (f x) = f`.
+    ///
+    /// Alpha variants are obtained by composing cached facts in userspace.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the argument is the binder and the binder does
+    /// not occur in `f`.
+    pub fn tm_eta_fact(
+        &mut self,
+        target: Option<SynFactId>,
+        source: Ref,
+    ) -> Result<SynFactId, KernelError> {
+        self.require_category::<Infallible>(source, Sort::Tm)?;
+        let Node::Lam(binder, body) = *self.row::<Infallible>(source)?.expr() else {
+            return Err(Self::invalid_fact("term eta"));
+        };
+        let Node::App(function, argument) = *self.row::<Infallible>(body)?.expr() else {
+            return Err(Self::invalid_fact("term eta"));
+        };
+        if !self.same_variable::<Infallible>(binder, argument)?
+            || self.contains_variable::<Infallible>(function, binder)?
+        {
+            return Err(Self::invalid_fact("term eta"));
+        }
+        self.require_compatible_endpoints::<Infallible>(source, function)?;
+        self.put_fact(
+            target,
+            SynFact::new(SynRel::Conv, None, None, source, function),
+        )
+    }
+
+    /// Records one direct syntactic fact in the row equality union-find.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an active substitution fact.
+    pub fn union_syn_fact(&mut self, fact: SynFactId) -> Result<(), KernelError> {
+        let fact = self.direct_fact::<Infallible>(fact, "equality union")?;
+        self.union::<Infallible>(fact.input(), fact.output())
+    }
+}
+
+#[derive(Clone, Copy)]
+struct BinderShape {
+    input_binder: Ref,
+    output_binder: Ref,
+    input_body: Ref,
+    output_body: Ref,
+}
+
+impl Kernel {
+    fn invalid_fact<E>(rule: &'static str) -> KernelError<E>
+    where
+        E: std::error::Error + 'static,
+    {
+        KernelError::InvalidSynFact { rule }
+    }
+
+    fn fact<E>(&self, id: SynFactId) -> Result<SynFact, KernelError<E>>
+    where
+        E: std::error::Error + 'static,
+    {
+        self.arena
+            .syn_fact(id)
+            .ok_or(KernelError::MissingSynFact { id })
+    }
+
+    fn direct_fact<E>(&self, id: SynFactId, rule: &'static str) -> Result<SynFact, KernelError<E>>
+    where
+        E: std::error::Error + 'static,
+    {
+        let fact = self.fact(id)?;
+        if fact.var().is_some() || fact.val().is_some() {
+            return Err(Self::invalid_fact(rule));
+        }
+        Ok(fact)
+    }
+
+    fn put_fact<E>(
+        &mut self,
+        target: Option<SynFactId>,
+        fact: SynFact,
+    ) -> Result<SynFactId, KernelError<E>>
+    where
+        E: std::error::Error + 'static,
+    {
+        if let Some(target) = target {
+            if self.arena.replace_syn_fact(target, fact) {
+                return Ok(target);
+            }
+            return Err(KernelError::MissingSynFact { id: target });
+        }
+        self.arena
+            .push_syn_fact(fact)
+            .ok_or(KernelError::TooManySynFacts)
+    }
+
+    fn require_direct<E>(
+        &self,
+        evidence: SynFactId,
+        rel: SynRel,
+        input: Ref,
+        output: Ref,
+        rule: &'static str,
+    ) -> Result<(), KernelError<E>>
+    where
+        E: std::error::Error + 'static,
+    {
+        let fact = self.direct_fact(evidence, rule)?;
+        if !fact.rel().refines(rel) || fact.input() != input || fact.output() != output {
+            return Err(Self::invalid_fact(rule));
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn require_fact_match<E>(
+        &self,
+        evidence: SynFactId,
+        rel: SynRel,
+        var: Option<Ref>,
+        val: Option<Ref>,
+        input: Ref,
+        output: Ref,
+        rule: &'static str,
+    ) -> Result<(), KernelError<E>>
+    where
+        E: std::error::Error + 'static,
+    {
+        let fact = self.fact(evidence)?;
+        if !fact.rel().refines(rel)
+            || fact.var() != var
+            || fact.val() != val
+            || fact.input() != input
+            || fact.output() != output
+        {
+            return Err(Self::invalid_fact(rule));
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn require_children<E>(
+        &self,
+        rel: SynRel,
+        var: Option<Ref>,
+        val: Option<Ref>,
+        inputs: &[Ref],
+        outputs: &[Ref],
+        evidence: &[SynFactId],
+        rule: &'static str,
+    ) -> Result<(), KernelError<E>>
+    where
+        E: std::error::Error + 'static,
+    {
+        if inputs.len() != outputs.len() || inputs.len() != evidence.len() {
+            return Err(Self::invalid_fact(rule));
+        }
+        for ((input, output), fact) in inputs.iter().zip(outputs).zip(evidence) {
+            self.require_fact_match(*fact, rel, var, val, *input, *output, rule)?;
+        }
+        Ok(())
+    }
+
+    fn require_optional_substitution<E>(
+        &self,
+        var: Option<Ref>,
+        val: Option<Ref>,
+    ) -> Result<(), KernelError<E>>
+    where
+        E: std::error::Error + 'static,
+    {
+        match (var, val) {
+            (Some(var), Some(val)) => self.require_substitution_pair(var, val)?,
+            (None, None) => {}
+            _ => return Err(Self::invalid_fact("partial substitution")),
+        }
+        Ok(())
+    }
+
+    fn require_substitution_pair<E>(&self, var: Ref, val: Ref) -> Result<(), KernelError<E>>
+    where
+        E: std::error::Error + 'static,
+    {
+        let var_node = *self.row::<E>(var)?.expr();
+        if !Self::is_variable(var_node) {
+            return Err(Self::invalid_fact("substitution variable"));
+        }
+        let category = self.category_as::<E>(var)?;
+        self.require_category::<E>(val, category)?;
+        if category != Sort::Kind {
+            let var_classifier = self.classifier_as::<E>(var)?;
+            let replacement_classifier = self.classifier_as::<E>(val)?;
+            if !self.equivalent_as::<E>(var_classifier, replacement_classifier)? {
+                return Err(KernelError::ClassifierMismatch {
+                    expected: var_classifier,
+                    actual: replacement_classifier,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn require_compatible_endpoints<E>(&self, input: Ref, output: Ref) -> Result<(), KernelError<E>>
+    where
+        E: std::error::Error + 'static,
+    {
+        let category = self.category_as::<E>(input)?;
+        self.require_category::<E>(output, category)?;
+        if category != Sort::Kind {
+            let input_classifier = self.classifier_as::<E>(input)?;
+            let output_classifier = self.classifier_as::<E>(output)?;
+            if !self.equivalent_as::<E>(input_classifier, output_classifier)? {
+                return Err(KernelError::ClassifierMismatch {
+                    expected: input_classifier,
+                    actual: output_classifier,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    const fn is_variable(node: Node) -> bool {
+        matches!(node, Node::TyFv { .. } | Node::TmFv { .. })
+    }
+
+    const fn is_binder(node: Node) -> bool {
+        matches!(
+            node,
+            Node::TyLam(..) | Node::Lam(..) | Node::TyExists { .. } | Node::Model { .. }
+        )
+    }
+
+    const fn same_head(left: Node, right: Node) -> bool {
+        match (left, right) {
+            (Node::KindStar, Node::KindStar)
+            | (Node::BoolTy, Node::BoolTy)
+            | (Node::KindArr(..), Node::KindArr(..))
+            | (Node::TyArr(..), Node::TyArr(..))
+            | (Node::TyApp(..), Node::TyApp(..))
+            | (Node::App(..), Node::App(..))
+            | (Node::Eq(..), Node::Eq(..))
+            | (Node::Eps { .. }, Node::Eps { .. }) => true,
+            (Node::TyFv { name: left, .. }, Node::TyFv { name: right, .. })
+            | (Node::TmFv { name: left, .. }, Node::TmFv { name: right, .. }) => left == right,
+            (Node::Bool(left), Node::Bool(right)) => left == right,
+            (
+                Node::TmRef {
+                    src: left_src,
+                    ix: left_ix,
+                },
+                Node::TmRef {
+                    src: right_src,
+                    ix: right_ix,
+                },
+            )
+            | (
+                Node::TyRef {
+                    src: left_src,
+                    ix: left_ix,
+                },
+                Node::TyRef {
+                    src: right_src,
+                    ix: right_ix,
+                },
+            )
+            | (
+                Node::KindRef {
+                    src: left_src,
+                    ix: left_ix,
+                },
+                Node::KindRef {
+                    src: right_src,
+                    ix: right_ix,
+                },
+            ) => left_src.get() == right_src.get() && left_ix.get() == right_ix.get(),
+            _ => false,
+        }
+    }
+
+    fn same_variable<E>(&self, left: Ref, right: Ref) -> Result<bool, KernelError<E>>
+    where
+        E: std::error::Error + 'static,
+    {
+        Ok(
+            match (*self.row::<E>(left)?.expr(), *self.row::<E>(right)?.expr()) {
+                (
+                    Node::TyFv {
+                        name: left_name,
+                        kind: left_kind,
+                    },
+                    Node::TyFv {
+                        name: right_name,
+                        kind: right_kind,
+                    },
+                ) => left_name == right_name && left_kind == right_kind,
+                (
+                    Node::TmFv {
+                        name: left_name,
+                        ty: left_ty,
+                    },
+                    Node::TmFv {
+                        name: right_name,
+                        ty: right_ty,
+                    },
+                ) => left_name == right_name && left_ty == right_ty,
+                _ => false,
+            },
+        )
+    }
+
+    fn binder_shape<E>(input: Node, output: Node) -> Result<BinderShape, KernelError<E>>
+    where
+        E: std::error::Error + 'static,
+    {
+        match (input, output) {
+            (Node::TyLam(left_binder, left_body), Node::TyLam(right_binder, right_body))
+            | (Node::Lam(left_binder, left_body), Node::Lam(right_binder, right_body)) => {
+                Ok(BinderShape {
+                    input_binder: left_binder,
+                    output_binder: right_binder,
+                    input_body: left_body,
+                    output_body: right_body,
+                })
+            }
+            _ => Err(Self::invalid_fact("binder congruence")),
+        }
+    }
+
+    fn binder_substitution<E>(
+        &self,
+        binder: Ref,
+        var: Option<Ref>,
+        val: Option<Ref>,
+    ) -> Result<(Option<Ref>, Option<Ref>), KernelError<E>>
+    where
+        E: std::error::Error + 'static,
+    {
+        let (Some(var), Some(val)) = (var, val) else {
+            return Ok((None, None));
+        };
+        if self.same_variable::<E>(binder, var)? {
+            return Ok((None, None));
+        }
+        if Self::same_variable_name(*self.row::<E>(binder)?.expr(), *self.row::<E>(var)?.expr()) {
+            return Err(Self::invalid_fact("ambiguous binder identity"));
+        }
+        if self.contains_variable::<E>(val, binder)? {
+            return Err(Self::invalid_fact("binder freshness"));
+        }
+        Ok((Some(var), Some(val)))
+    }
+
+    const fn same_variable_name(left: Node, right: Node) -> bool {
+        match (left, right) {
+            (Node::TyFv { name: left, .. }, Node::TyFv { name: right, .. })
+            | (Node::TmFv { name: left, .. }, Node::TmFv { name: right, .. }) => left == right,
+            _ => false,
+        }
+    }
+
+    const fn same_implicit_binder(left: Node, right: Node) -> Option<(u64, Ref, Ref, bool)> {
+        match (left, right) {
+            (
+                Node::TyExists {
+                    name: left_name,
+                    predicate: left_body,
+                },
+                Node::TyExists {
+                    name: right_name,
+                    predicate: right_body,
+                },
+            ) if left_name == right_name => Some((left_name, left_body, right_body, false)),
+            (
+                Node::Model {
+                    name: left_name,
+                    predicate: left_body,
+                },
+                Node::Model {
+                    name: right_name,
+                    predicate: right_body,
+                },
+            ) if left_name == right_name => Some((left_name, left_body, right_body, true)),
+            _ => None,
+        }
+    }
+
+    const fn renamed_implicit_binder(left: Node, right: Node) -> Option<(u64, Ref, u64, Ref)> {
+        match (left, right) {
+            (
+                Node::TyExists {
+                    name: left_name,
+                    predicate: left_body,
+                },
+                Node::TyExists {
+                    name: right_name,
+                    predicate: right_body,
+                },
+            )
+            | (
+                Node::Model {
+                    name: left_name,
+                    predicate: left_body,
+                },
+                Node::Model {
+                    name: right_name,
+                    predicate: right_body,
+                },
+            ) => Some((left_name, left_body, right_name, right_body)),
+            _ => None,
+        }
+    }
+
+    fn require_implicit_binder<E>(&self, binder: Ref, name: u64) -> Result<(), KernelError<E>>
+    where
+        E: std::error::Error + 'static,
+    {
+        let Node::TyFv { name: actual, kind } = *self.row::<E>(binder)?.expr() else {
+            return Err(Self::invalid_fact("implicit binder witness"));
+        };
+        if actual != name {
+            return Err(Self::invalid_fact("implicit binder witness"));
+        }
+        self.require_star::<E>(kind)
+    }
+
+    fn contains_variable<E>(&self, root: Ref, variable: Ref) -> Result<bool, KernelError<E>>
+    where
+        E: std::error::Error + 'static,
+    {
+        let mut pending = vec![root];
+        let mut fuel = self.arena.len().saturating_add(1);
+        while let Some(reference) = pending.pop() {
+            if fuel == 0 {
+                return Ok(true);
+            }
+            fuel -= 1;
+            if Self::same_variable_name(
+                *self.row::<E>(reference)?.expr(),
+                *self.row::<E>(variable)?.expr(),
+            ) {
+                return Ok(true);
+            }
+            pending.extend(self.row::<E>(reference)?.expr().children());
+        }
+        Ok(false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Arena, wire};
+
+    fn bool_kernel() -> (Kernel, Ref, Ref) {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let bool_ty = kernel.bool_ty(star).unwrap();
+        (kernel, star, bool_ty)
+    }
+
+    #[test]
+    fn facts_are_one_based_reusable_and_truncatable() {
+        let (mut kernel, star, bool_ty) = bool_kernel();
+        let first = kernel.syn_refl(None, SynRel::Syn, star).unwrap();
+        let second = kernel.syn_refl(None, SynRel::Alpha, bool_ty).unwrap();
+        assert_eq!(first.get(), 1);
+        assert_eq!(second.get(), 2);
+
+        assert!(kernel.remove_syn_fact(first));
+        let reused = kernel.syn_refl(None, SynRel::Conv, bool_ty).unwrap();
+        assert_eq!(reused, first);
+        assert_eq!(kernel.syn_fact(reused).unwrap().rel(), SynRel::Conv);
+
+        kernel.syn_refl(Some(second), SynRel::Syn, star).unwrap();
+        assert_eq!(kernel.syn_fact(second).unwrap().input(), star);
+
+        assert!(kernel.remove_syn_fact(first));
+        kernel.truncate_syn_facts(1);
+        assert_eq!(kernel.syn_fact_len(), 1);
+        assert_eq!(kernel.syn_refl(None, SynRel::Syn, star).unwrap(), first);
+        assert_eq!(kernel.syn_fact_len(), 1);
+    }
+
+    #[test]
+    fn free_list_round_trips_with_the_arena() {
+        let (mut kernel, star, bool_ty) = bool_kernel();
+        let first = kernel.syn_refl(None, SynRel::Syn, star).unwrap();
+        kernel.syn_refl(None, SynRel::Syn, bool_ty).unwrap();
+        assert!(kernel.remove_syn_fact(first));
+
+        let mut encoded = Vec::new();
+        wire::serialize(kernel.arena(), &mut encoded).unwrap();
+        let decoded: Arena = wire::deserialize(encoded.as_slice()).unwrap();
+        assert_eq!(&decoded, kernel.arena());
+        assert!(decoded.syn_fact(first).is_none());
+    }
+
+    #[test]
+    fn alpha_and_beta_are_small_rules_over_cached_substitution() {
+        let (mut kernel, _, bool_ty) = bool_kernel();
+        let left_var = kernel.tm_fv(1, bool_ty).unwrap();
+        let left = kernel.lam(left_var, left_var).unwrap();
+        let right_var = kernel.tm_fv(2, bool_ty).unwrap();
+        let right = kernel.lam(right_var, right_var).unwrap();
+
+        let classifier = kernel.syn_refl(None, SynRel::Syn, bool_ty).unwrap();
+        let left_ty = kernel.classifier(left).unwrap();
+        let right_ty = kernel.classifier(right).unwrap();
+        let function_type = kernel
+            .syn_congr(
+                None,
+                SynRel::Syn,
+                None,
+                None,
+                left_ty,
+                right_ty,
+                &[classifier, classifier],
+            )
+            .unwrap();
+        kernel.union_syn_fact(function_type).unwrap();
+        let renamed_body = kernel.syn_sub_var(None, left_var, right_var).unwrap();
+        let alpha = kernel
+            .syn_alpha_binder(None, left, right, classifier, renamed_body)
+            .unwrap();
+        kernel.union_syn_fact(alpha).unwrap();
+        assert!(kernel.tm_eq(left, right).unwrap());
+
+        let truth = kernel.bool(bool_ty, true).unwrap();
+        let application = kernel.app(left, truth).unwrap();
+        let substitution = kernel.syn_sub_var(None, left_var, truth).unwrap();
+        let beta = kernel
+            .tm_beta_fact(None, application, substitution)
+            .unwrap();
+        assert_eq!(kernel.syn_fact(beta).unwrap().output(), truth);
+        kernel.union_syn_fact(beta).unwrap();
+        assert!(kernel.tm_eq(application, truth).unwrap());
+    }
+
+    #[test]
+    fn congruence_composes_substitution_without_tree_walks() {
+        let (mut kernel, _, bool_ty) = bool_kernel();
+        let bool_to_bool = kernel.ty_arr(bool_ty, bool_ty).unwrap();
+        let function = kernel.tm_fv(3, bool_to_bool).unwrap();
+        let variable = kernel.tm_fv(4, bool_ty).unwrap();
+        let truth = kernel.bool(bool_ty, true).unwrap();
+        let input = kernel.app(function, variable).unwrap();
+        let output = kernel.app(function, truth).unwrap();
+
+        let function_unchanged = kernel
+            .syn_sub_leaf(None, variable, truth, function)
+            .unwrap();
+        let variable_replaced = kernel.syn_sub_var(None, variable, truth).unwrap();
+        let fact = kernel
+            .syn_congr(
+                None,
+                SynRel::Syn,
+                Some(variable),
+                Some(truth),
+                input,
+                output,
+                &[function_unchanged, variable_replaced],
+            )
+            .unwrap();
+        assert_eq!(kernel.syn_fact(fact).unwrap().output(), output);
+    }
+
+    #[test]
+    fn eta_uses_only_shape_and_freshness_then_can_be_discarded() {
+        let (mut kernel, _, bool_ty) = bool_kernel();
+        let function_ty = kernel.ty_arr(bool_ty, bool_ty).unwrap();
+        let function = kernel.tm_fv(1, function_ty).unwrap();
+        let variable = kernel.tm_fv(2, bool_ty).unwrap();
+        let body = kernel.app(function, variable).unwrap();
+        let source = kernel.lam(variable, body).unwrap();
+        let bool_refl = kernel.syn_refl(None, SynRel::Syn, bool_ty).unwrap();
+        let source_ty = kernel.classifier(source).unwrap();
+        let function_type = kernel.classifier(function).unwrap();
+        let type_equality = kernel
+            .syn_congr(
+                None,
+                SynRel::Syn,
+                None,
+                None,
+                source_ty,
+                function_type,
+                &[bool_refl, bool_refl],
+            )
+            .unwrap();
+        kernel.union_syn_fact(type_equality).unwrap();
+        let keep = kernel.syn_fact_len();
+
+        let eta = kernel.tm_eta_fact(None, source).unwrap();
+        assert_eq!(kernel.syn_fact(eta).unwrap().output(), function);
+        kernel.union_syn_fact(eta).unwrap();
+        kernel.truncate_syn_facts(keep);
+        assert!(kernel.syn_fact(eta).is_err());
+        assert!(kernel.tm_eq(source, function).unwrap());
+    }
+
+    #[test]
+    fn conversion_congruence_does_not_enter_model() {
+        let (mut kernel, star, bool_ty) = bool_kernel();
+        let truth = kernel.bool(bool_ty, true).unwrap();
+        let model = kernel.model(9, truth).unwrap();
+        let binder = kernel.ty_fv(9, star).unwrap();
+        let body = kernel.syn_refl(None, SynRel::Conv, truth).unwrap();
+
+        assert!(
+            kernel
+                .syn_implicit_binder_congr(
+                    None,
+                    SynRel::Conv,
+                    None,
+                    None,
+                    model,
+                    model,
+                    binder,
+                    body,
+                )
+                .is_err()
+        );
+    }
+}
