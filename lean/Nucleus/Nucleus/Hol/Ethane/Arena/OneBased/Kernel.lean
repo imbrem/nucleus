@@ -25,21 +25,32 @@ def WellFormed : Value → Prop
   | .family _ expression =>
       Nucleus.Hol.Ethane.Kinded (.nil : TyScope []) expression
   | .term type expression =>
-      Nucleus.Hol.Ethane.HasType (.nil : TyScope [])
-        (.nil : TmScope ArenaSig 0) Nucleus.HolE.emptyBound expression type
+      Nucleus.HolE.Named.HasTypeConv (.nil : TyScope [])
+        (.nil : TmScope ArenaSig 0) Nucleus.HolE.emptyBound
+        expression.toHolE type.toHolE
 
-/-- Equality certified by the existing Ethane/HolE proof theory. -/
+/-- Equality certified by the existing Ethane/HolE proof theory.
+
+Term values deliberately carry their advertised row classifiers separately
+from their syntax.  A primitive term equality therefore proves conversion of
+those classifiers and a term conversion at the left classifier.  Symmetry and
+transitivity below reindex the term certificate when an intermediate row was
+advertised at a different, convertible type. -/
 inductive Equal : Value → Value → Prop where
   | kind (kind : Kind) : Equal (.kind kind) (.kind kind)
   | family {kind : Kind} {left right : EmptyExpr (.kind kind)}
       (conversion : Nonempty (Nucleus.HolE.Named.FamEq
         (.nil : TyScope []) left.toHolE right.toHolE)) :
       Equal (.family kind left) (.family kind right)
-  | term {type : EmptyTy} {left right : EmptyTm}
+  | term {leftType rightType : EmptyTy} {left right : EmptyTm}
+      (leftWellFormed : WellFormed (.term leftType left))
+      (rightWellFormed : WellFormed (.term rightType right))
+      (classifierConversion : Nonempty (Nucleus.HolE.Named.FamEq
+        (.nil : TyScope []) leftType.toHolE rightType.toHolE))
       (conversion : Nonempty (Nucleus.Hol.Ethane.Reference.EqTm
         (.nil : TyScope []) (.nil : TmScope ArenaSig 0)
-        Nucleus.HolE.emptyBound left right type)) :
-      Equal (.term type left) (.term type right)
+        Nucleus.HolE.emptyBound left right leftType)) :
+      Equal (.term leftType left) (.term rightType right)
 
 /-- Reflexivity is available for every well-formed value. -/
 theorem equal_self {value : Value} (wellFormed : value.WellFormed) :
@@ -53,21 +64,60 @@ theorem equal_self {value : Value} (wellFormed : value.WellFormed) :
       cases loweredClassification with
       | kind => exact .family ⟨Nucleus.HolE.Named.FamEq.refl lowering⟩
   | term type expression =>
-      rcases wellFormed with
-        ⟨loweredExpression, loweredClassification, termLowering,
-          classificationLowering, typing⟩
-      cases loweredClassification with
-      | tm loweredType =>
-          have typeLowering : type.lowerTy (.nil : TyScope []) = some loweredType := by
-            change (do
-              let lowered ← type.lowerTy (.nil : TyScope [])
-              pure (Nucleus.HolE.Classification.tm lowered)) =
-                some (Nucleus.HolE.Classification.tm loweredType) at classificationLowering
-            cases lowered : type.lowerTy (.nil : TyScope []) <;>
-              simp [lowered] at classificationLowering
-            simpa [lowered] using classificationLowering
-          exact .term ⟨Nucleus.Hol.Ethane.Reference.EqTm.complete
-            termLowering termLowering typeLowering (.refl (.exact typing))⟩
+      have original := wellFormed
+      rcases wellFormed with ⟨loweredExpression, loweredType, termLowering,
+        typeLowering, typing⟩
+      exact .term original original
+        ⟨Nucleus.HolE.Named.FamEq.refl typeLowering⟩
+        ⟨Nucleus.Hol.Ethane.Reference.EqTm.complete
+          termLowering termLowering typeLowering (.refl typing)⟩
+
+private theorem reindexTermConversion
+    {sourceType targetType : EmptyTy}
+    {source target witness : EmptyTm}
+    (targetTypeWellFormed : WellFormed (.term targetType witness))
+    (classifierConversion : Nucleus.HolE.Named.FamEq
+      (.nil : TyScope []) sourceType.toHolE targetType.toHolE)
+    (conversion : Nucleus.Hol.Ethane.Reference.EqTm
+      (.nil : TyScope []) (.nil : TmScope ArenaSig 0)
+      Nucleus.HolE.emptyBound source target sourceType) :
+    Nonempty (Nucleus.Hol.Ethane.Reference.EqTm
+      (.nil : TyScope []) (.nil : TmScope ArenaSig 0)
+      Nucleus.HolE.emptyBound source target targetType) := by
+  rcases targetTypeWellFormed with
+    ⟨loweredWitness, loweredTargetType, witnessLowering,
+      targetTypeLowering, witnessTyping⟩
+  have sourceTypeLowering := conversion.typeLowering
+  change Nucleus.HolE.Named.lowerFam (.nil : TyScope []) sourceType.toHolE =
+    some conversion.loweredType at sourceTypeLowering
+  rw [classifierConversion.leftLowering] at sourceTypeLowering
+  have sourceTypeSame := Option.some.inj sourceTypeLowering
+  have targetTypeLowering' := targetTypeLowering
+  change Nucleus.HolE.Named.lowerFam (.nil : TyScope []) targetType.toHolE =
+    some loweredTargetType at targetTypeLowering'
+  rw [classifierConversion.rightLowering] at targetTypeLowering'
+  have targetTypeSame := Option.some.inj targetTypeLowering'
+  have familyConversion : Nucleus.HolE.FamEq ArenaSig
+      conversion.loweredType loweredTargetType := by
+    simpa only [sourceTypeSame, targetTypeSame] using
+      classifierConversion.derivation
+  let leftTyping : Nucleus.HolE.HasTypeDefEq Nucleus.HolE.emptyBound
+      conversion.loweredLeft loweredTargetType :=
+    .conv conversion.derivation.leftTyping witnessTyping.typeKinded
+      familyConversion
+  let rightTyping : Nucleus.HolE.HasTypeDefEq Nucleus.HolE.emptyBound
+      conversion.loweredRight loweredTargetType :=
+    .conv conversion.derivation.rightTyping witnessTyping.typeKinded
+      familyConversion
+  exact ⟨{
+    loweredLeft := conversion.loweredLeft
+    loweredRight := conversion.loweredRight
+    loweredType := loweredTargetType
+    leftLowering := conversion.leftLowering
+    rightLowering := conversion.rightLowering
+    typeLowering := by
+      exact targetTypeLowering
+    derivation := .conv leftTyping rightTyping conversion.derivation }⟩
 
 theorem Equal.symm {left right : Value} (equality : Equal left right) :
     Equal right left := by
@@ -76,16 +126,19 @@ theorem Equal.symm {left right : Value} (equality : Equal left right) :
   | family conversion =>
       rcases conversion with ⟨conversion⟩
       exact .family ⟨conversion.symm⟩
-  | term conversion =>
+  | term leftWellFormed rightWellFormed classifierConversion conversion =>
+      rcases classifierConversion with ⟨classifierConversion⟩
       rcases conversion with ⟨conversion⟩
-      exact .term ⟨{
-        loweredLeft := conversion.loweredRight
-        loweredRight := conversion.loweredLeft
-        loweredType := conversion.loweredType
-        leftLowering := conversion.rightLowering
-        rightLowering := conversion.leftLowering
-        typeLowering := conversion.typeLowering
-        derivation := conversion.derivation.symm }⟩
+      obtain ⟨reindexed⟩ := reindexTermConversion rightWellFormed
+        classifierConversion conversion
+      exact .term rightWellFormed leftWellFormed ⟨classifierConversion.symm⟩ ⟨{
+        loweredLeft := reindexed.loweredRight
+        loweredRight := reindexed.loweredLeft
+        loweredType := reindexed.loweredType
+        leftLowering := reindexed.rightLowering
+        rightLowering := reindexed.leftLowering
+        typeLowering := reindexed.typeLowering
+        derivation := reindexed.derivation.symm }⟩
 
 /-- Transitivity requires the middle value to be well formed, matching the
 premise of family-conversion transitivity. -/
@@ -93,9 +146,7 @@ theorem Equal.trans {left middle right : Value}
     (leftMiddle : Equal left middle) (middleWellFormed : middle.WellFormed)
     (middleRight : Equal middle right) : Equal left right := by
   cases leftMiddle with
-  | kind kind =>
-      cases middleRight
-      exact .kind kind
+  | kind kind => cases middleRight; exact .kind kind
   | family leftConversion =>
       cases middleRight with
       | family rightConversion =>
@@ -112,29 +163,42 @@ theorem Equal.trans {left middle right : Value}
               have same := Option.some.inj middleLowering
               subst loweredMiddle
               exact .family ⟨leftConversion.trans middleKinded rightConversion⟩
-  | term leftConversion =>
+  | term leftWellFormed _ leftClassifier leftConversion =>
       cases middleRight with
-      | term rightConversion =>
+      | term _ rightWellFormed rightClassifier rightConversion =>
+          rcases leftClassifier with ⟨leftClassifier⟩
+          rcases rightClassifier with ⟨rightClassifier⟩
           rcases leftConversion with ⟨leftConversion⟩
           rcases rightConversion with ⟨rightConversion⟩
-          have middleLowering := rightConversion.leftLowering
-          rw [leftConversion.rightLowering] at middleLowering
-          have middleSame := Option.some.inj middleLowering
-          have typeLowering := rightConversion.typeLowering
-          rw [leftConversion.typeLowering] at typeLowering
-          have typeSame := Option.some.inj typeLowering
+          obtain ⟨rightAtLeft⟩ := reindexTermConversion leftWellFormed
+            leftClassifier.symm rightConversion
+          have middleTermLowering := rightAtLeft.leftLowering
+          rw [leftConversion.rightLowering] at middleTermLowering
+          have middleTermSame := Option.some.inj middleTermLowering
+          have commonTypeLowering := rightAtLeft.typeLowering
+          rw [leftConversion.typeLowering] at commonTypeLowering
+          have commonTypeSame := Option.some.inj commonTypeLowering
           have rightDerivation : Nucleus.HolE.EqTm Nucleus.HolE.emptyBound
-              leftConversion.loweredRight rightConversion.loweredRight
+              leftConversion.loweredRight rightAtLeft.loweredRight
               leftConversion.loweredType := by
-            simpa only [middleSame, typeSame] using rightConversion.derivation
-          exact .term ⟨{
-            loweredLeft := leftConversion.loweredLeft
-            loweredRight := rightConversion.loweredRight
-            loweredType := leftConversion.loweredType
-            leftLowering := leftConversion.leftLowering
-            rightLowering := rightConversion.rightLowering
-            typeLowering := leftConversion.typeLowering
-            derivation := leftConversion.derivation.trans rightDerivation }⟩
+            simpa only [middleTermSame, commonTypeSame] using rightAtLeft.derivation
+          rcases middleWellFormed with
+            ⟨loweredMiddle, loweredMiddleType, middleLowering,
+              middleTypeLowering, middleTyping⟩
+          change Nucleus.HolE.Named.lowerFam (.nil : TyScope []) _ =
+            some loweredMiddleType at middleTypeLowering
+          rw [leftClassifier.rightLowering] at middleTypeLowering
+          have middleTypeSame := Option.some.inj middleTypeLowering
+          subst loweredMiddleType
+          exact .term leftWellFormed rightWellFormed
+            ⟨leftClassifier.trans middleTyping.typeKinded rightClassifier⟩ ⟨{
+              loweredLeft := leftConversion.loweredLeft
+              loweredRight := rightAtLeft.loweredRight
+              loweredType := leftConversion.loweredType
+              leftLowering := leftConversion.leftLowering
+              rightLowering := rightAtLeft.rightLowering
+              typeLowering := leftConversion.typeLowering
+              derivation := leftConversion.derivation.trans rightDerivation }⟩
 
 end Value
 
@@ -171,8 +235,8 @@ def AllowedAxiom : String → Prop
   | "ax.inf" => True
   | _ => False
 
-/-- Semantic invariant of a checked arena. -/
-structure Arena.KernelValid (resolve : Resolver) (arena : Arena) : Prop where
+/-- Semantic invariant of the cache-free logical portion of an arena. -/
+structure Arena.CoreKernelValid (resolve : Resolver) (arena : Arena) : Prop where
   structural : arena.StructurallyValid
   definitions : ∀ reference row, arena.row? reference = some row →
     ∃ value, Resolves resolve arena reference value ∧ value.WellFormed
@@ -183,6 +247,12 @@ structure Arena.KernelValid (resolve : Resolver) (arena : Arena) : Prop where
   context : ∀ reference ∈ arena.ctx, ContextClaim resolve arena reference
   axioms : ∀ name ∈ arena.axs, AllowedAxiom name
   conclusions : Conclusions resolve arena
+
+/-- Cache slots are semantically inert for the ordinary HOL kernel.  Defining
+core validity through `withoutSyn` makes every cache-only mutation preserve it
+definitionally; `FullKernelValid` adds the cache invariants downstream. -/
+abbrev Arena.KernelValid (resolve : Resolver) (arena : Arena) : Prop :=
+  arena.withoutSyn.CoreKernelValid resolve
 
 /-- An arena paired with its checked semantic invariant. -/
 structure Kernel (resolve : Resolver) where
@@ -200,15 +270,18 @@ namespace Arena
 @[simp] theorem empty_sort? (reference : Ref) : empty.sort? reference = none := by
   simp [sort?]
 
-theorem empty_kernelValid (resolve : Resolver) : empty.KernelValid resolve where
-  structural := by simp [StructurallyValid, empty, defs, RowsValid]
-  definitions := by simp
-  sorts := by simp [SortingMemberClaim]
-  equalities := by simp [EqualityClaim]
-  classes := by simp
-  context := by simp [empty, ctx]
-  axioms := by simp [empty, axs]
-  conclusions := by simp [Conclusions, empty, assert]
+theorem empty_kernelValid (resolve : Resolver) : empty.KernelValid resolve := by
+  change empty.CoreKernelValid resolve
+  constructor
+  · change True
+    trivial
+  · simp
+  · simp [SortingMemberClaim]
+  · simp [EqualityClaim]
+  · simp
+  · simp [empty, ctx]
+  · simp [empty, axs]
+  · simp [Conclusions, empty, assert]
 
 end Arena
 
@@ -226,24 +299,42 @@ theorem equality_sound (kernel : Kernel resolve) {reference right : Ref}
       Value.Equal leftValue rightValue := by
   have claim := kernel.valid.equalities reference
   unfold EqualityClaim at claim
-  rw [member] at claim
-  exact claim
+  have coreMember : kernel.arena.withoutSyn.eq? reference = some right := by
+    simpa using member
+  rw [coreMember] at claim
+  simpa using claim
 
 /-- Immutable union-find lookup returns a semantically equal resident row. -/
 theorem find_sound (kernel : Kernel resolve) {start representative : Ref}
     (startResident : kernel.arena.row? start ≠ none)
     (representativeResident : kernel.arena.row? representative ≠ none)
     (found : FindResult kernel.arena start representative) :
-    ReferenceEqual resolve kernel.arena start representative :=
-  kernel.valid.classes startResident representativeResident found.connected
+    ReferenceEqual resolve kernel.arena start representative := by
+  have startCore : kernel.arena.withoutSyn.row? start ≠ none := by
+    simpa using startResident
+  have representativeCore :
+      kernel.arena.withoutSyn.row? representative ≠ none := by
+    simpa using representativeResident
+  have connectedCore : EqClass kernel.arena.withoutSyn start representative := by
+    have edges : EqEdge kernel.arena.withoutSyn = EqEdge kernel.arena := by
+      funext left right
+      simp [EqEdge]
+    unfold EqClass
+    rw [edges]
+    exact found.connected
+  simpa [ReferenceEqual] using
+    kernel.valid.classes startCore representativeCore connectedCore
 
 theorem context_sound (kernel : Kernel resolve) {reference : Ref}
     (member : reference ∈ kernel.arena.ctx) : ContextClaim resolve kernel.arena reference :=
-  kernel.valid.context reference member
+  by simpa [ContextClaim] using
+    kernel.valid.context reference (by simpa using member)
 
 theorem conclusion_sound (kernel : Kernel resolve) {record : Meta}
     (member : record ∈ kernel.arena.assert) : MetaClaim resolve kernel.arena record :=
-  kernel.valid.conclusions record member
+  by
+    have claim := kernel.valid.conclusions record (by simpa using member)
+    cases record <;> simpa [MetaClaim, FullyResolves] using claim
 
 end Kernel
 

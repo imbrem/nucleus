@@ -76,10 +76,15 @@ namespace Arena
 def import? (arena : Arena) (source : ImportId) : Option Import :=
   arena.imports[(source.value.toNat - 1)]?
 
+@[simp] theorem import?_withoutSyn (arena : Arena) (source : ImportId) :
+    arena.withoutSyn.import? source = arena.import? source := by
+  simp [import?]
+
 @[simp] theorem import?_mk (imports : List Import) (axs : Finset String)
-    (defs : List detail.Row) (ctx : Finset Ref) (assume assert : List Meta)
+    (defs : List detail.Row) (synFacts : List SynSlot) (synFree : Option SynFactId)
+    (ctx : Finset Ref) (assume assert : List Meta)
     (source : ImportId) :
-    (Arena.mk imports axs defs ctx assume assert).import? source =
+    (Arena.mk imports axs defs synFacts synFree ctx assume assert).import? source =
       imports[(source.value.toNat - 1)]? := rfl
 
 end Arena
@@ -100,19 +105,17 @@ def resolveImport? (resolve : Resolver) : Import → Option Arena
     resolveImport? resolve (.link link) = resolve link := rfl
 
 /-- Elaborate one expression after all referenced values have been resolved.
-The domain and codomain kinds of `ty.app` and `ty.lam`, and the operand type
-of `tm.eq`, are recovered from their children. -/
-private noncomputable def sameSyntax (left right : EmptySyn) : Bool := by
-  classical
-  exact decide (left = right)
-
+Term syntax is reconstructed from its children, while its advertised type is
+always the row's `sort` member.  This distinction matters because Rust accepts
+term classifiers modulo the type union-find rather than by literal syntax. -/
 private def tyFvName? {kind : Kind} : EmptyExpr (.kind kind) → Option Nat
   | .tyFv name _ => some name
   | _ => none
 
 noncomputable def elaborateExpr
     (lookupLocal : Ref → Option Value)
-    (lookupForeign : ImportId → Ref → Option Value) : detail.Expr → Option Value
+    (lookupForeign : ImportId → Ref → Option Value)
+    (declaredSort : Option Ref) : detail.Expr → Option Value
   | .kindStar => some (Value.kind .star)
   | .kindArr domain codomain => do
       let Value.kind domain ← lookupLocal domain | none
@@ -140,39 +143,46 @@ noncomputable def elaborateExpr
       let Value.kind kind ← lookupLocal kind | none
       return Value.family kind (.tyFv name.toNat kind)
   | .tyExists name predicate => do
-      let Value.term .boolTy predicate ← lookupLocal predicate | none
-      return Value.term .boolTy (.tyExists name.toNat predicate)
+      let Value.term _ predicate ← lookupLocal predicate | none
+      let some sort := declaredSort | none
+      let Value.family .star advertisedType ← lookupLocal sort | none
+      return Value.term advertisedType (.tyExists name.toNat predicate)
   | .model name predicate => do
-      let Value.term .boolTy predicate ← lookupLocal predicate | none
+      let Value.term _ predicate ← lookupLocal predicate | none
       return Value.family .star (.model name.toNat predicate)
   | .tmFv name type => do
-      let Value.family .star type ← lookupLocal type | none
-      return Value.term type (.tmFv name.toNat type)
+      let Value.family .star syntacticType ← lookupLocal type | none
+      let some sort := declaredSort | none
+      let Value.family .star advertisedType ← lookupLocal sort | none
+      return Value.term advertisedType (.tmFv name.toNat syntacticType)
   | .app function argument => do
-      let Value.term (.arr domain codomain) function ← lookupLocal function | none
-      let Value.term actual argument ← lookupLocal argument | none
-      if sameSyntax actual.erase domain.erase then
-        return Value.term codomain (.app function argument)
-      else none
+      let Value.term _ function ← lookupLocal function | none
+      let Value.term _ argument ← lookupLocal argument | none
+      let some sort := declaredSort | none
+      let Value.family .star advertisedType ← lookupLocal sort | none
+      return Value.term advertisedType (.app function argument)
   | .lam binder body => do
-      let Value.term domain (.tmFv name actual) ← lookupLocal binder | none
-      let Value.term codomain body ← lookupLocal body | none
-      if sameSyntax actual.erase domain.erase then
-        return Value.term (.arr domain codomain) (.lam name domain body)
-      else none
-  | .bool value => some (Value.term .boolTy (.bool value))
+      let Value.term _ (.tmFv name syntacticDomain) ← lookupLocal binder | none
+      let Value.term _ body ← lookupLocal body | none
+      let some sort := declaredSort | none
+      let Value.family .star advertisedType ← lookupLocal sort | none
+      return Value.term advertisedType (.lam name syntacticDomain body)
+  | .bool value => do
+      let some sort := declaredSort | none
+      let Value.family .star advertisedType ← lookupLocal sort | none
+      return Value.term advertisedType (.bool value)
   | .eq left right => do
-      let Value.term type left ← lookupLocal left | none
-      let Value.term actual right ← lookupLocal right | none
-      if sameSyntax actual.erase type.erase then
-        return Value.term .boolTy (.eq type left right)
-      else none
+      let Value.term syntacticType left ← lookupLocal left | none
+      let Value.term _ right ← lookupLocal right | none
+      let some sort := declaredSort | none
+      let Value.family .star advertisedType ← lookupLocal sort | none
+      return Value.term advertisedType (.eq syntacticType left right)
   | .eps type predicate => do
       let Value.family .star type ← lookupLocal type | none
-      let Value.term (.arr domain .boolTy) predicate ← lookupLocal predicate | none
-      if sameSyntax domain.erase type.erase then
-        return Value.term type (.eps type predicate)
-      else none
+      let Value.term _ predicate ← lookupLocal predicate | none
+      let some sort := declaredSort | none
+      let Value.family .star advertisedType ← lookupLocal sort | none
+      return Value.term advertisedType (.eps type predicate)
   | .tmRef source foreignRef => do
       let value ← lookupForeign source foreignRef
       if value.tagSort = .tm then some value else none
@@ -205,7 +215,28 @@ noncomputable def resolveAt? : Nat → Resolver → Arena → Ref → Option Val
           elaborateExpr
             (resolveAt? fuel resolve arena)
             (resolveForeignUsing? (resolveAt? fuel resolve) resolve arena)
+            row.sort
             row.expr
+
+@[simp] theorem resolveAt?_withoutSyn (fuel : Nat) (resolve : Resolver)
+    (arena : Arena) (reference : Ref) :
+    resolveAt? fuel resolve arena.withoutSyn reference =
+      resolveAt? fuel resolve arena reference := by
+  induction fuel generalizing reference with
+  | zero => rfl
+  | succ fuel ih =>
+      have localLookup : resolveAt? fuel resolve arena.withoutSyn =
+          resolveAt? fuel resolve arena := by
+        funext localReference
+        exact ih localReference
+      have foreignLookup :
+          resolveForeignUsing? (resolveAt? fuel resolve) resolve arena.withoutSyn =
+            resolveForeignUsing? (resolveAt? fuel resolve) resolve arena := by
+        funext source foreignReference
+        cases arena
+        rfl
+      simp only [resolveAt?, Arena.row?_withoutSyn]
+      rw [localLookup, foreignLookup]
 
 /-- Resolve one foreign reference through the owner's import table. -/
 noncomputable def resolveForeignAt? (fuel : Nat) (resolve : Resolver)
@@ -215,6 +246,12 @@ noncomputable def resolveForeignAt? (fuel : Nat) (resolve : Resolver)
 /-- A value is available when some finite resolution bound reconstructs it. -/
 def Resolves (resolve : Resolver) (arena : Arena) (reference : Ref) (value : Value) : Prop :=
   ∃ fuel, resolveAt? fuel resolve arena reference = some value
+
+@[simp] theorem resolves_withoutSyn_iff (resolve : Resolver) (arena : Arena)
+    (reference : Ref) (value : Value) :
+    Resolves resolve arena.withoutSyn reference value ↔
+      Resolves resolve arena reference value := by
+  simp [Resolves]
 
 /-- Every local row in a raw arena resolves to a classified value. -/
 def FullyResolves (resolve : Resolver) (arena : Arena) : Prop :=

@@ -1,5 +1,6 @@
 import Nucleus.Hol.Ethane.Arena.OneBased.Kernel
 import Nucleus.Hol.Ethane.Conversion
+import Nucleus.HolE.Normalization.Reduction
 
 /-!
 # Sound equality micro-rules for one-based Ethane kernels
@@ -19,20 +20,10 @@ namespace Value
 
 private theorem termTyping {type : EmptyTy} {term : EmptyTm}
     (wellFormed : WellFormed (.term type term)) :
-    Nucleus.Hol.Ethane.HasType (.nil : TyScope [])
-      (.nil : TmScope ArenaSig 0) Nucleus.HolE.emptyBound term type :=
-  wellFormed
-
-private theorem namedTermTyping {type : EmptyTy} {term : EmptyTm}
-    (wellFormed : WellFormed (.term type term)) :
-    Nucleus.HolE.Named.HasType (.nil : TyScope [])
+    Nucleus.HolE.Named.HasTypeConv (.nil : TyScope [])
       (.nil : TmScope ArenaSig 0) Nucleus.HolE.emptyBound
-      term.toHolE type.toHolE := by
-  rcases termTyping wellFormed with
-    ⟨loweredTerm, loweredClassification, termLowering,
-      classificationLowering, typing⟩
-  exact ⟨loweredTerm, loweredClassification, termLowering,
-    classificationLowering, typing⟩
+      term.toHolE type.toHolE :=
+  wellFormed
 
 /-- Direct named alpha comparison is a sound family equality. No existing
 union-find equality is used to establish the comparison. -/
@@ -52,28 +43,22 @@ theorem equal_family_alpha {kind : Kind}
 /-- Direct named alpha comparison is a sound term equality. -/
 theorem equal_term_alpha {type : EmptyTy} {left right : EmptyTm}
     (leftWellFormed : WellFormed (.term type left))
+    (rightWellFormed : WellFormed (.term type right))
     (equivalent : Nucleus.Hol.Ethane.Expr.Alpha
       (.nil : TyScope []) (.nil : TmScope ArenaSig 0) left right) :
     Equal (.term type left) (.term type right) := by
   rcases equivalent with ⟨alphaLowered, leftAlpha, rightAlpha⟩
   rcases termTyping leftWellFormed with
-    ⟨typedLowered, loweredClassification, leftTyping,
-      typeClassification, typing⟩
-  cases loweredClassification with
-  | tm loweredType =>
-      rw [leftAlpha] at leftTyping
-      have same := Option.some.inj leftTyping
-      subst typedLowered
-      have typeLowering : type.lowerTy (.nil : TyScope []) = some loweredType := by
-        change (do
-          let lowered ← type.lowerTy (.nil : TyScope [])
-          pure (Nucleus.HolE.Classification.tm lowered)) =
-            some (Nucleus.HolE.Classification.tm loweredType) at typeClassification
-        cases lowered : type.lowerTy (.nil : TyScope []) <;>
-          simp [lowered] at typeClassification
-        simpa [lowered] using typeClassification
-      exact .term ⟨Nucleus.Hol.Ethane.Reference.EqTm.complete
-        leftAlpha rightAlpha typeLowering (.refl (.exact typing))⟩
+    ⟨typedLowered, loweredType, leftTyping, typeLowering, typing⟩
+  change Nucleus.Hol.Ethane.Expr.lower (.nil : TyScope [])
+    (.nil : TmScope ArenaSig 0) left = some typedLowered at leftTyping
+  rw [leftAlpha] at leftTyping
+  have same := Option.some.inj leftTyping
+  subst typedLowered
+  exact .term leftWellFormed rightWellFormed
+    ⟨Nucleus.HolE.Named.FamEq.refl typeLowering⟩
+    ⟨Nucleus.Hol.Ethane.Reference.EqTm.complete
+      leftAlpha rightAlpha typeLowering (.refl typing)⟩
 
 /-- A well-kinded root family-beta check is a sound family equality. -/
 theorem equal_family_beta {kind : Kind}
@@ -90,7 +75,13 @@ private theorem equal_term_of_conversion {type : EmptyTy} {left right : EmptyTm}
       (.nil : TyScope []) (.nil : TmScope ArenaSig 0)
       Nucleus.HolE.emptyBound left.toHolE right.toHolE type.toHolE) :
     Equal (.term type left) (.term type right) :=
-  .term ⟨{
+  .term ⟨conversion.loweredLeft, conversion.loweredType,
+      conversion.leftLowering, conversion.typeLowering,
+      conversion.derivation.leftTyping⟩
+    ⟨conversion.loweredRight, conversion.loweredType,
+      conversion.rightLowering, conversion.typeLowering,
+      conversion.derivation.rightTyping⟩
+    ⟨Nucleus.HolE.Named.FamEq.refl conversion.typeLowering⟩ ⟨{
     loweredLeft := conversion.loweredLeft
     loweredRight := conversion.loweredRight
     loweredType := conversion.loweredType
@@ -100,26 +91,68 @@ private theorem equal_term_of_conversion {type : EmptyTy} {left right : EmptyTm}
     derivation := conversion.derivation }⟩
 
 /-- A well-typed root term-beta check is a sound term equality. -/
-theorem equal_term_beta {type : EmptyTy} {source target : EmptyTm}
-    (sourceWellFormed : WellFormed (.term type source))
+theorem equal_term_beta {sourceType targetType : EmptyTy}
+    {source target : EmptyTm}
+    (sourceWellFormed : WellFormed (.term sourceType source))
+    (targetWellFormed : WellFormed (.term targetType target))
+    (classifierConversion : Nonempty (Nucleus.HolE.Named.FamEq
+      (.nil : TyScope []) sourceType.toHolE targetType.toHolE))
     (step : Nucleus.HolE.Named.TmBeta
       (.nil : TyScope []) (.nil : TmScope ArenaSig 0)
       source.toHolE target.toHolE) :
-    Equal (.term type source) (.term type target) := by
-  obtain ⟨conversion⟩ := step.toTmConv
-    (fun index => Fin.elim0 index) (namedTermTyping sourceWellFormed)
-  exact equal_term_of_conversion conversion
+    Equal (.term sourceType source) (.term targetType target) := by
+  have originalSource := sourceWellFormed
+  rcases sourceWellFormed with
+    ⟨loweredSource, loweredType, sourceLowering, typeLowering, typing⟩
+  rw [step.sourceLowering] at sourceLowering
+  have sourceSame := Option.some.inj sourceLowering
+  subst loweredSource
+  let reduction : Nucleus.HolE.Reduction.Beta
+      (.app (.lam step.domain step.body) step.argument)
+      (Nucleus.HolE.openBound step.body step.argument) :=
+    .root step.domain step.body step.argument
+  obtain ⟨derivation⟩ := reduction.eqTmDefEq_nonempty
+    (fun index => Fin.elim0 index) typing
+  exact .term originalSource targetWellFormed classifierConversion ⟨{
+    loweredLeft := .app (.lam step.domain step.body) step.argument
+    loweredRight := Nucleus.HolE.openBound step.body step.argument
+    loweredType := loweredType
+    leftLowering := step.sourceLowering
+    rightLowering := step.targetLowering
+    typeLowering := typeLowering
+    derivation := derivation }⟩
 
 /-- A well-typed root term-eta check is a sound term equality. -/
-theorem equal_term_eta {type : EmptyTy} {source target : EmptyTm}
-    (sourceWellFormed : WellFormed (.term type source))
+theorem equal_term_eta {sourceType targetType : EmptyTy}
+    {source target : EmptyTm}
+    (sourceWellFormed : WellFormed (.term sourceType source))
+    (targetWellFormed : WellFormed (.term targetType target))
+    (classifierConversion : Nonempty (Nucleus.HolE.Named.FamEq
+      (.nil : TyScope []) sourceType.toHolE targetType.toHolE))
     (step : Nucleus.HolE.Named.TmEta
       (.nil : TyScope []) (.nil : TmScope ArenaSig 0)
       source.toHolE target.toHolE) :
-    Equal (.term type source) (.term type target) := by
-  obtain ⟨conversion⟩ := step.toTmConv
-    (fun index => Fin.elim0 index) (namedTermTyping sourceWellFormed)
-  exact equal_term_of_conversion conversion
+    Equal (.term sourceType source) (.term targetType target) := by
+  have originalSource := sourceWellFormed
+  rcases sourceWellFormed with
+    ⟨loweredSource, loweredType, sourceLowering, typeLowering, typing⟩
+  rw [step.sourceLowering] at sourceLowering
+  have sourceSame := Option.some.inj sourceLowering
+  subst loweredSource
+  let reduction : Nucleus.HolE.Reduction.Eta
+      (.lam step.domain (.app (Nucleus.HolE.weaken step.function) (.bv 0)))
+      step.function := .root step.freshName step.fresh
+  obtain ⟨derivation⟩ := reduction.eqTmDefEq_nonempty
+    (fun index => Fin.elim0 index) typing
+  exact .term originalSource targetWellFormed classifierConversion ⟨{
+    loweredLeft := .lam step.domain
+      (.app (Nucleus.HolE.weaken step.function) (.bv 0))
+    loweredRight := step.function
+    loweredType := loweredType
+    leftLowering := step.sourceLowering
+    rightLowering := step.targetLowering
+    typeLowering := typeLowering
+    derivation := derivation }⟩
 
 end Value
 

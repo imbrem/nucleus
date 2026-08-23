@@ -450,6 +450,31 @@ def assert : Arena → List Meta | .mk _ _ _ _ _ _ _ assert => assert
 
 def empty : Arena := .mk [] ∅ [] [] none ∅ [] []
 
+/-- Erase the proof cache while preserving the logical row/import arena. -/
+def withoutSyn : Arena → Arena
+  | .mk imports axs defs _ _ ctx assume assert =>
+      .mk imports axs defs [] none ctx assume assert
+
+@[simp] theorem withoutSyn_empty : empty.withoutSyn = empty := rfl
+
+@[simp] theorem imports_withoutSyn (arena : Arena) :
+    arena.withoutSyn.imports = arena.imports := by cases arena; rfl
+
+@[simp] theorem axs_withoutSyn (arena : Arena) :
+    arena.withoutSyn.axs = arena.axs := by cases arena; rfl
+
+@[simp] theorem defs_withoutSyn (arena : Arena) :
+    arena.withoutSyn.defs = arena.defs := by cases arena; rfl
+
+@[simp] theorem ctx_withoutSyn (arena : Arena) :
+    arena.withoutSyn.ctx = arena.ctx := by cases arena; rfl
+
+@[simp] theorem assume_withoutSyn (arena : Arena) :
+    arena.withoutSyn.assume = arena.assume := by cases arena; rfl
+
+@[simp] theorem assert_withoutSyn (arena : Arena) :
+    arena.withoutSyn.assert = arena.assert := by cases arena; rfl
+
 def row? (arena : Arena) (reference : Ref) : Option detail.Row :=
   arena.defs[(reference.value.toNat - 1)]?
 
@@ -461,6 +486,22 @@ def eq? (arena : Arena) (reference : Ref) : Option Ref :=
 
 def sort? (arena : Arena) (reference : Ref) : Option Ref :=
   (arena.row? reference).bind (·.sort)
+
+@[simp] theorem row?_withoutSyn (arena : Arena) (reference : Ref) :
+    arena.withoutSyn.row? reference = arena.row? reference := by
+  simp [row?]
+
+@[simp] theorem tag?_withoutSyn (arena : Arena) (reference : Ref) :
+    arena.withoutSyn.tag? reference = arena.tag? reference := by
+  simp [tag?]
+
+@[simp] theorem eq?_withoutSyn (arena : Arena) (reference : Ref) :
+    arena.withoutSyn.eq? reference = arena.eq? reference := by
+  simp [eq?]
+
+@[simp] theorem sort?_withoutSyn (arena : Arena) (reference : Ref) :
+    arena.withoutSyn.sort? reference = arena.sort? reference := by
+  simp [sort?]
 
 end Arena
 
