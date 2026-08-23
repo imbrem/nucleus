@@ -12,7 +12,7 @@ mod syn;
 mod table;
 pub mod wire;
 
-pub use kernel::{HolTheorem, Kernel, KernelError, PropId, PropIdError, Thm, ThmId};
+pub use kernel::{HolTheorem, Kernel, KernelError, PropId, PropIdError, PropVec, Thm, ThmId};
 pub use resolve::{Expr, ResolveError, Resolver, ResolverExt};
 pub use row::{KindTag, Sort, Tag, TmTag, TyTag};
 pub use syn::{SynFact, SynRel};
