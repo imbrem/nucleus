@@ -71,6 +71,93 @@ def value (source : ImportId) : UInt64 := source.1
 
 end ImportId
 
+/-! ## Unchecked syntactic-fact wire objects -/
+
+/-- A one-based nonzero `u64` slot ID, matching Rust's `NonZeroU64`. -/
+def SynFactId := { value : UInt64 // value ≠ 0 }
+
+deriving instance DecidableEq for SynFactId
+deriving instance Repr for SynFactId
+
+instance : LinearOrder SynFactId := LinearOrder.lift' (fun value => value.1.toNat) (by
+  intro left right equal
+  apply Subtype.ext
+  exact UInt64.toNat_inj.mp equal)
+
+namespace SynFactId
+
+def ofUInt64? (value : UInt64) : Option SynFactId :=
+  if nonzero : value ≠ 0 then some ⟨value, nonzero⟩ else none
+
+def value (id : SynFactId) : UInt64 := id.1
+
+/-- Convert the one-based wire ID to a zero-based list position. -/
+def position (id : SynFactId) : Nat := id.value.toNat - 1
+
+@[simp] theorem ofUInt64?_value (id : SynFactId) :
+    ofUInt64? id.value = some id := by
+  rcases id with ⟨value, nonzero⟩
+  simp [ofUInt64?, SynFactId.value, nonzero]
+
+@[simp] theorem ofUInt64?_zero : ofUInt64? 0 = none := by
+  simp [ofUInt64?]
+
+end SynFactId
+
+/-- Literal syntax, alpha equivalence, and conversion, in refinement order. -/
+inductive SynRel where
+  | syn
+  | alpha
+  | conv
+  deriving DecidableEq, Repr
+
+namespace SynRel
+
+def rank : SynRel → Nat
+  | .syn => 0
+  | .alpha => 1
+  | .conv => 2
+
+/-- A finer fact may be consumed by a rule requesting a coarser relation. -/
+def Refines (source target : SynRel) : Prop := source.rank ≤ target.rank
+
+instance (source target : SynRel) : Decidable (Refines source target) :=
+  Nat.decLe source.rank target.rank
+
+@[simp] theorem refines_refl (relation : SynRel) : relation.Refines relation := by
+  simp [Refines]
+
+theorem Refines.trans {left middle right : SynRel}
+    (leftMiddle : Refines left middle)
+    (middleRight : Refines middle right) : Refines left right :=
+  Nat.le_trans leftMiddle middleRight
+
+@[simp] theorem syn_refines_alpha : syn.Refines alpha := by simp [Refines, rank]
+@[simp] theorem alpha_refines_conv : alpha.Refines conv := by simp [Refines, rank]
+@[simp] theorem syn_refines_conv : syn.Refines conv := by simp [Refines, rank]
+
+end SynRel
+
+/-- The exact unchecked payload serialized by Rust. -/
+structure SynFact where
+  rel : SynRel
+  var : Option Ref := none
+  val : Option Ref := none
+  input : Ref
+  output : Ref
+  deriving DecidableEq, Repr
+
+/-- Payload of a removed slot. -/
+structure SynFree where
+  next : Option SynFactId := none
+  deriving DecidableEq, Repr
+
+/-- An occupied proof slot or a link in the arena-local free list. -/
+inductive SynSlot where
+  | fact (value : SynFact)
+  | free (value : SynFree)
+  deriving DecidableEq, Repr
+
 /-- The syntactic category declared by a row tag. -/
 inductive TagSort where
   | kind
@@ -342,6 +429,8 @@ inductive Arena where
       (imports : List Import)
       (axs : Finset String)
       (defs : List detail.Row)
+      (synFacts : List SynSlot)
+      (synFree : Option SynFactId)
       (ctx : Finset Ref)
       (assume : List Meta)
       (assert : List Meta)
@@ -353,11 +442,38 @@ namespace Arena
 def imports : Arena → List Import | .mk imports .. => imports
 def axs : Arena → Finset String | .mk _ axs .. => axs
 def defs : Arena → List detail.Row | .mk _ _ defs .. => defs
-def ctx : Arena → Finset Ref | .mk _ _ _ ctx .. => ctx
-def assume : Arena → List Meta | .mk _ _ _ _ assume _ => assume
-def assert : Arena → List Meta | .mk _ _ _ _ _ assert => assert
+def synFacts : Arena → List SynSlot | .mk _ _ _ synFacts .. => synFacts
+def synFree : Arena → Option SynFactId | .mk _ _ _ _ synFree .. => synFree
+def ctx : Arena → Finset Ref | .mk _ _ _ _ _ ctx .. => ctx
+def assume : Arena → List Meta | .mk _ _ _ _ _ _ assume _ => assume
+def assert : Arena → List Meta | .mk _ _ _ _ _ _ _ assert => assert
 
-def empty : Arena := .mk [] ∅ [] ∅ [] []
+def empty : Arena := .mk [] ∅ [] [] none ∅ [] []
+
+/-- Erase the proof cache while preserving the logical row/import arena. -/
+def withoutSyn : Arena → Arena
+  | .mk imports axs defs _ _ ctx assume assert =>
+      .mk imports axs defs [] none ctx assume assert
+
+@[simp] theorem withoutSyn_empty : empty.withoutSyn = empty := rfl
+
+@[simp] theorem imports_withoutSyn (arena : Arena) :
+    arena.withoutSyn.imports = arena.imports := by cases arena; rfl
+
+@[simp] theorem axs_withoutSyn (arena : Arena) :
+    arena.withoutSyn.axs = arena.axs := by cases arena; rfl
+
+@[simp] theorem defs_withoutSyn (arena : Arena) :
+    arena.withoutSyn.defs = arena.defs := by cases arena; rfl
+
+@[simp] theorem ctx_withoutSyn (arena : Arena) :
+    arena.withoutSyn.ctx = arena.ctx := by cases arena; rfl
+
+@[simp] theorem assume_withoutSyn (arena : Arena) :
+    arena.withoutSyn.assume = arena.assume := by cases arena; rfl
+
+@[simp] theorem assert_withoutSyn (arena : Arena) :
+    arena.withoutSyn.assert = arena.assert := by cases arena; rfl
 
 def row? (arena : Arena) (reference : Ref) : Option detail.Row :=
   arena.defs[(reference.value.toNat - 1)]?
@@ -371,6 +487,22 @@ def eq? (arena : Arena) (reference : Ref) : Option Ref :=
 def sort? (arena : Arena) (reference : Ref) : Option Ref :=
   (arena.row? reference).bind (·.sort)
 
+@[simp] theorem row?_withoutSyn (arena : Arena) (reference : Ref) :
+    arena.withoutSyn.row? reference = arena.row? reference := by
+  simp [row?]
+
+@[simp] theorem tag?_withoutSyn (arena : Arena) (reference : Ref) :
+    arena.withoutSyn.tag? reference = arena.tag? reference := by
+  simp [tag?]
+
+@[simp] theorem eq?_withoutSyn (arena : Arena) (reference : Ref) :
+    arena.withoutSyn.eq? reference = arena.eq? reference := by
+  simp [eq?]
+
+@[simp] theorem sort?_withoutSyn (arena : Arena) (reference : Ref) :
+    arena.withoutSyn.sort? reference = arena.sort? reference := by
+  simp [sort?]
+
 end Arena
 
 /-- The field-level Serde view before `axs` and `ctx` normalization. -/
@@ -378,26 +510,31 @@ structure View where
   imports : List Import
   axs : List String
   defs : List detail.Row
+  synFacts : List SynSlot := []
+  synFree : Option SynFactId := none
   ctx : List Ref
   assume : List Meta
   assert : List Meta
 
 def View.normalize (view : View) : Arena :=
-  .mk view.imports view.axs.toFinset view.defs view.ctx.toFinset view.assume view.assert
+  .mk view.imports view.axs.toFinset view.defs view.synFacts view.synFree
+    view.ctx.toFinset view.assume view.assert
 
 def Arena.toView (arena : Arena) : View :=
   { imports := arena.imports
     axs := arena.axs.sort (· ≤ ·)
     defs := arena.defs
+    synFacts := arena.synFacts
+    synFree := arena.synFree
     ctx := arena.ctx.sort (· ≤ ·)
     assume := arena.assume
     assert := arena.assert }
 
 @[simp] theorem normalize_toView (arena : Arena) : arena.toView.normalize = arena := by
   cases arena with
-  | mk imports axs defs ctx assume assert =>
+  | mk imports axs defs synFacts synFree ctx assume assert =>
       simp [Arena.toView, View.normalize, Arena.imports, Arena.axs, Arena.defs,
-        Arena.ctx, Arena.assume, Arena.assert]
+        Arena.synFacts, Arena.synFree, Arena.ctx, Arena.assume, Arena.assert]
 
 @[simp] theorem toView_normalize (view : View) :
     view.normalize.toView =
@@ -405,7 +542,7 @@ def Arena.toView (arena : Arena) : View :=
         axs := view.axs.toFinset.sort (· ≤ ·)
         ctx := view.ctx.toFinset.sort (· ≤ ·) } := by
   simp [Arena.toView, View.normalize, Arena.imports, Arena.axs, Arena.defs,
-    Arena.ctx, Arena.assume, Arena.assert]
+    Arena.synFacts, Arena.synFree, Arena.ctx, Arena.assume, Arena.assert]
 
 theorem toView_axs_nodup (arena : Arena) : arena.toView.axs.Nodup := by
   exact Finset.sort_nodup _ _

@@ -10,6 +10,11 @@ import Nucleus.Hol.Ethane.FV
 import Nucleus.Hol.Ethane.Arena
 import Nucleus.Hol.Ethane.Arena.Cbor
 import Nucleus.Hol.Ethane.Arena.OneBased
+import Nucleus.Hol.Ethane.Arena.OneBased.UnionFind
+import Nucleus.Hol.Ethane.Arena.OneBased.Kernel
+import Nucleus.Hol.Ethane.Arena.OneBased.Rules
+import Nucleus.Hol.Ethane.Arena.OneBased.SynFacts
+import Nucleus.Hol.Ethane.Arena.OneBased.Api
 import Nucleus.Hol.Ethane.Arena.OneBased.Cbor
 import Nucleus.Hol.Ethane.Arena.OneBased.Table
 import Nucleus.Hol.Ethane.Amber

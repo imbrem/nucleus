@@ -3,13 +3,17 @@
 //! Deserialization establishes only the representation invariants. It does
 //! not establish kinding, typing, equality, or provability.
 
+mod kernel;
 mod resolve;
 mod row;
+mod syn;
 mod table;
 pub mod wire;
 
+pub use kernel::{Kernel, KernelError};
 pub use resolve::{Expr, ResolveError, Resolver, ResolverExt};
 pub use row::{KindTag, Sort, Tag, TmTag, TyTag};
+pub use syn::{SynFact, SynRel};
 pub use table::Table;
 
 use std::{collections::BTreeSet, num::NonZeroU64};
@@ -17,12 +21,28 @@ use std::{collections::BTreeSet, num::NonZeroU64};
 use covalence_lib_hash::O256;
 use row::Row;
 use serde::{Deserialize, Serialize};
+use syn::{SynFree, SynSlot};
 
-/// A one-based local definition reference. `Ref(n)` addresses `defs[n - 1]`.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[repr(transparent)]
-#[serde(transparent)]
-pub struct Ref(NonZeroU64);
+macro_rules! id_type {
+    ($(#[$attribute:meta])* $visibility:vis struct $name:ident($storage:ty);) => {
+        $(#[$attribute])*
+        #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+        #[repr(transparent)]
+        #[serde(transparent)]
+        $visibility struct $name($storage);
+
+        impl From<$name> for u64 {
+            fn from(value: $name) -> Self {
+                value.get()
+            }
+        }
+    };
+}
+
+id_type! {
+    /// A one-based local definition reference. `Ref(n)` addresses `defs[n - 1]`.
+    pub struct Ref(NonZeroU64);
+}
 
 impl Ref {
     #[must_use]
@@ -39,25 +59,18 @@ impl Ref {
     }
 }
 
-impl From<Ref> for u64 {
-    fn from(value: Ref) -> Self {
-        value.get()
-    }
-}
-
 impl TryFrom<u64> for Ref {
-    type Error = ZeroRef;
+    type Error = ZeroId;
 
     fn try_from(value: u64) -> Result<Self, Self::Error> {
-        Self::new(value).ok_or(ZeroRef)
+        Self::new(value).ok_or(ZeroId)
     }
 }
 
-/// A one-based index into an arena's import array.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[repr(transparent)]
-#[serde(transparent)]
-pub struct ImportId(NonZeroU64);
+id_type! {
+    /// A one-based index into an arena's import array.
+    pub struct ImportId(NonZeroU64);
+}
 
 impl ImportId {
     #[must_use]
@@ -74,30 +87,55 @@ impl ImportId {
     }
 }
 
-impl From<ImportId> for u64 {
-    fn from(value: ImportId) -> Self {
-        value.get()
+impl TryFrom<u64> for ImportId {
+    type Error = ZeroId;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        Self::new(value).ok_or(ZeroId)
     }
 }
 
-impl TryFrom<u64> for ImportId {
-    type Error = ZeroRef;
+id_type! {
+    /// A one-based slot in an arena's syntactic-fact table.
+    ///
+    /// IDs are ephemeral cache handles. Removing or truncating facts permits
+    /// a later insertion to reuse the same ID for a different fact.
+    pub struct SynFactId(NonZeroU64);
+}
+
+impl SynFactId {
+    #[must_use]
+    pub const fn new(value: u64) -> Option<Self> {
+        match NonZeroU64::new(value) {
+            Some(value) => Some(Self(value)),
+            None => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0.get()
+    }
+}
+
+impl TryFrom<u64> for SynFactId {
+    type Error = ZeroId;
 
     fn try_from(value: u64) -> Result<Self, Self::Error> {
-        Self::new(value).ok_or(ZeroRef)
+        Self::new(value).ok_or(ZeroId)
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ZeroRef;
+pub struct ZeroId;
 
-impl std::fmt::Display for ZeroRef {
+impl std::fmt::Display for ZeroId {
     fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         output.write_str("references are one-based")
     }
 }
 
-impl std::error::Error for ZeroRef {}
+impl std::error::Error for ZeroId {}
 
 /// The only link format fixed by this representation layer.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -269,9 +307,14 @@ impl ArenaRepr for Dense {
 }
 
 impl Dense {
-    fn row(&self, reference: Ref) -> Option<&Row> {
+    pub(crate) fn row(&self, reference: Ref) -> Option<&Row> {
         let position = usize::try_from(reference.get() - 1).ok()?;
         self.defs.get(position)
+    }
+
+    fn row_mut(&mut self, reference: Ref) -> Option<&mut Row> {
+        let position = usize::try_from(reference.get() - 1).ok()?;
+        self.defs.get_mut(position)
     }
 }
 
@@ -281,6 +324,8 @@ pub struct Arena {
     imports: Vec<Import>,
     axs: BTreeSet<String>,
     dense: Dense,
+    syn_facts: Vec<SynSlot>,
+    syn_free: Option<SynFactId>,
     ctx: BTreeSet<Ref>,
     assume: Vec<Meta>,
     assert: Vec<Meta>,
@@ -293,10 +338,29 @@ impl Arena {
             imports: Vec::new(),
             axs: BTreeSet::new(),
             dense: Dense { defs: Vec::new() },
+            syn_facts: Vec::new(),
+            syn_free: None,
             ctx: BTreeSet::new(),
             assume: Vec::new(),
             assert: Vec::new(),
         }
+    }
+
+    /// Returns the address of this arena's current CBOR encoding.
+    ///
+    /// Mutable arenas recompute their address on every call. [`Table::addr`]
+    /// returns the address cached when the table was introduced instead.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the arena's internal Serde implementation rejects
+    /// encoding to an in-memory buffer.
+    #[must_use]
+    pub fn addr(&self) -> O256 {
+        let mut bytes = Vec::new();
+        wire::serialize(self, &mut bytes)
+            .expect("serializing an Ethane arena into memory cannot fail");
+        O256::from_bytes(&bytes)
     }
 
     #[must_use]
@@ -324,6 +388,10 @@ impl Arena {
         self.dense.sort(reference)
     }
 
+    pub(crate) fn row(&self, reference: Ref) -> Option<&Row> {
+        self.dense.row(reference)
+    }
+
     #[must_use]
     pub fn imports(&self) -> &[Import] {
         &self.imports
@@ -347,6 +415,22 @@ impl Arena {
     #[must_use]
     pub fn assertions(&self) -> &[Meta] {
         &self.assert
+    }
+
+    /// Returns one occupied syntactic-fact slot.
+    #[must_use]
+    pub fn syn_fact(&self, id: SynFactId) -> Option<SynFact> {
+        let position = usize::try_from(id.get() - 1).ok()?;
+        match self.syn_facts.get(position)? {
+            SynSlot::Fact(fact) => Some(*fact),
+            SynSlot::Free(_) => None,
+        }
+    }
+
+    /// Returns all syntactic-fact slots, including removed slots.
+    #[must_use]
+    pub fn syn_fact_slot_count(&self) -> usize {
+        self.syn_facts.len()
     }
 
     /// Append one raw import entry.
@@ -513,11 +597,99 @@ impl Arena {
         self.imports.get(position)
     }
 
-    fn push_row(&mut self, row: Row) -> Option<Ref> {
+    pub(crate) fn push_row(&mut self, row: Row) -> Option<Ref> {
         let next = u64::try_from(self.dense.defs.len()).ok()?.checked_add(1)?;
         let reference = Ref::new(next)?;
         self.dense.defs.push(row);
         Some(reference)
+    }
+
+    pub(crate) fn set_eq(&mut self, left: Ref, right: Option<Ref>) -> bool {
+        let Some(row) = self.dense.row_mut(left) else {
+            return false;
+        };
+        row.set_eq(right);
+        true
+    }
+
+    pub(crate) fn push_syn_fact(&mut self, fact: SynFact) -> Option<SynFactId> {
+        if let Some(id) = self.syn_free {
+            let position = usize::try_from(id.get() - 1).ok()?;
+            let slot = self.syn_facts.get_mut(position)?;
+            let SynSlot::Free(free) = *slot else {
+                return None;
+            };
+            self.syn_free = free.next;
+            *slot = SynSlot::Fact(fact);
+            return Some(id);
+        }
+        let next = u64::try_from(self.syn_facts.len()).ok()?.checked_add(1)?;
+        let id = SynFactId::new(next)?;
+        self.syn_facts.push(SynSlot::Fact(fact));
+        Some(id)
+    }
+
+    pub(crate) fn replace_syn_fact(&mut self, id: SynFactId, fact: SynFact) -> bool {
+        let Ok(position) = usize::try_from(id.get() - 1) else {
+            return false;
+        };
+        let Some(slot) = self.syn_facts.get_mut(position) else {
+            return false;
+        };
+        match slot {
+            SynSlot::Fact(slot) => {
+                *slot = fact;
+                true
+            }
+            SynSlot::Free(_) => false,
+        }
+    }
+
+    /// Removes an occupied syntactic-fact slot and links it into the free list.
+    ///
+    /// Returns `false` when `id` is absent or already free.
+    #[must_use]
+    pub fn remove_syn_fact(&mut self, id: SynFactId) -> bool {
+        let Ok(position) = usize::try_from(id.get() - 1) else {
+            return false;
+        };
+        let Some(slot) = self.syn_facts.get_mut(position) else {
+            return false;
+        };
+        if matches!(slot, SynSlot::Free(_)) {
+            return false;
+        }
+        *slot = SynSlot::Free(SynFree {
+            next: self.syn_free,
+        });
+        self.syn_free = Some(id);
+        true
+    }
+
+    /// Retains the first `len` syntactic-fact slots, drops the rest, and
+    /// rebuilds the free list over the retained prefix.
+    pub fn truncate_syn_facts(&mut self, len: usize) {
+        self.syn_facts.truncate(len);
+        self.rebuild_syn_free();
+    }
+
+    fn rebuild_syn_free(&mut self) {
+        self.syn_free = None;
+        for position in (0..self.syn_facts.len()).rev() {
+            if matches!(self.syn_facts[position], SynSlot::Free(_)) {
+                let Some(value) = u64::try_from(position)
+                    .ok()
+                    .and_then(|position| position.checked_add(1))
+                    .and_then(SynFactId::new)
+                else {
+                    continue;
+                };
+                self.syn_facts[position] = SynSlot::Free(SynFree {
+                    next: self.syn_free,
+                });
+                self.syn_free = Some(value);
+            }
+        }
     }
 
     #[cfg(test)]
@@ -533,6 +705,8 @@ impl Arena {
             imports,
             axs: axs.into_iter().collect(),
             dense: Dense { defs },
+            syn_facts: Vec::new(),
+            syn_free: None,
             ctx: ctx.into_iter().collect(),
             assume,
             assert,
@@ -553,6 +727,10 @@ struct ArenaSerde {
     imports: Vec<Import>,
     axs: Vec<String>,
     defs: Vec<Row>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    syn_facts: Vec<SynSlot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    syn_free: Option<SynFactId>,
     ctx: Vec<Ref>,
     assume: Vec<Meta>,
     assert: Vec<Meta>,
@@ -565,6 +743,8 @@ impl From<Arena> for ArenaSerde {
             imports: arena.imports,
             axs: arena.axs.into_iter().collect(),
             defs: arena.dense.defs,
+            syn_facts: arena.syn_facts,
+            syn_free: arena.syn_free,
             ctx: arena.ctx.into_iter().collect(),
             assume: arena.assume,
             assert: arena.assert,
@@ -579,6 +759,8 @@ impl From<ArenaSerde> for Arena {
             imports: arena.imports,
             axs: arena.axs.into_iter().collect(),
             dense: Dense { defs: arena.defs },
+            syn_facts: arena.syn_facts,
+            syn_free: arena.syn_free,
             ctx: arena.ctx.into_iter().collect(),
             assume: arena.assume,
             assert: arena.assert,
@@ -635,5 +817,15 @@ mod tests {
         assert_eq!(arena.tag(reference(2)), Some(Tag::Ty(TyTag::Bool)));
         assert_eq!(arena.eq(reference(2)), Some(reference(1)));
         assert_eq!(arena.tag(reference(3)), None);
+    }
+
+    #[test]
+    fn mutable_arena_address_tracks_current_state() {
+        let mut arena = Arena::empty();
+        let empty = arena.addr();
+        assert_eq!(arena.addr(), empty);
+
+        arena.push_kind_star().unwrap();
+        assert_ne!(arena.addr(), empty);
     }
 }
