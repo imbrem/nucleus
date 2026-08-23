@@ -332,13 +332,12 @@ def test_union_picks_the_smaller_reference_as_representative() -> None:
     assert kernel.arena.definition(third).equal == first
 
 
-def test_the_hol_kernel_is_not_the_lrat_kernel() -> None:
-    """Two crates both call their checked object `Kernel`; the modules differ."""
+def test_the_hol_kernel_is_the_only_production_proof_kernel() -> None:
+    """LRAT parsing no longer exposes a standalone proof authority."""
     from covalence.logic import lrat
 
-    assert Kernel is not lrat.Kernel
     assert Kernel.__module__ == "covalence.logic.hol"
-    assert not isinstance(Kernel(), lrat.Kernel)
+    assert not hasattr(lrat, "Kernel")
 
 
 def test_row_snapshots_expose_the_checked_members() -> None:

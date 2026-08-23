@@ -10,6 +10,10 @@ use covalence_lib_sqlite::{Connection, Step as SqliteStep, ValueType};
 use covalence_repl::{Response, Session};
 use wasm_bindgen::prelude::*;
 
+mod hol;
+
+pub use hol::HolProver;
+
 /// Generates unique VFS names within one wasm instance.
 static NEXT_MOUNT: AtomicU64 = AtomicU64::new(0);
 

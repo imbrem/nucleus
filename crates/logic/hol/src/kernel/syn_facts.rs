@@ -5,11 +5,37 @@
 
 use std::{collections::BTreeSet, convert::Infallible};
 
-use crate::{Ref, Sort, SynFact, SynFactId, SynRel, row::Expr as Node};
+use crate::{Ref, Sort, SynFact, SynFactId, SynRel, init::Compiled, row::Expr as Node};
 
 use super::{Kernel, KernelError};
 
 impl Kernel {
+    /// Records that a compact logical opcode is syntactically equal to its
+    /// canonical opcode-free init expansion.
+    ///
+    /// `target` replaces that one-based slot when present; `None` allocates.
+    /// The expansion is appended to this kernel using the named definition in
+    /// `init`, exactly as in [`Kernel::lower_logical`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the source is not a logical opcode row, the init
+    /// prefix is absent or mismatched, checked lowering fails, or the
+    /// replacement slot is absent.
+    pub fn logical_lower_fact(
+        &mut self,
+        target: Option<SynFactId>,
+        init: &Compiled,
+        source: Ref,
+    ) -> Result<SynFactId, KernelError> {
+        let expansion = self.lower_logical(init, source)?;
+        self.require_compatible_endpoints::<Infallible>(source, expansion)?;
+        self.put_fact(
+            target,
+            SynFact::new(SynRel::Syn, None, None, source, expansion),
+        )
+    }
+
     /// Number of allocated syntactic-fact slots, including removed slots.
     #[must_use]
     pub fn syn_fact_len(&self) -> usize {
@@ -862,6 +888,8 @@ impl Kernel {
             (Node::TyFv { name: left, .. }, Node::TyFv { name: right, .. })
             | (Node::TmFv { name: left, .. }, Node::TmFv { name: right, .. }) => left == right,
             (Node::Bool(left), Node::Bool(right)) => left == right,
+            (Node::Op1(left, ..), Node::Op1(right, ..)) => left.code() == right.code(),
+            (Node::Op2(left, ..), Node::Op2(right, ..)) => left.code() == right.code(),
             (
                 Node::TmRef {
                     src: left_src,
@@ -1205,6 +1233,76 @@ mod tests {
             )
             .unwrap();
         assert_eq!(kernel.syn_fact(fact).unwrap().output(), output);
+    }
+
+    #[test]
+    fn logical_opcode_congruence_tracks_substitution_and_opcode_identity() {
+        let (mut kernel, _, bool_ty) = bool_kernel();
+        let variable = kernel.tm_fv(20, bool_ty).unwrap();
+        let truth = kernel.bool(bool_ty, true).unwrap();
+        let unary_input = kernel.op1(crate::builtin::Op1::Not, variable).unwrap();
+        let unary_output = kernel.op1(crate::builtin::Op1::Not, truth).unwrap();
+        let replaced = kernel.syn_sub_var(None, variable, truth).unwrap();
+        kernel
+            .syn_congr(
+                None,
+                SynRel::Syn,
+                Some(variable),
+                Some(truth),
+                unary_input,
+                unary_output,
+                &[replaced],
+            )
+            .unwrap();
+
+        for op in [
+            crate::builtin::Op2::And,
+            crate::builtin::Op2::Or,
+            crate::builtin::Op2::Imp,
+        ] {
+            let left_unchanged = kernel.syn_sub_leaf(None, variable, truth, truth).unwrap();
+            let binary_input = kernel.op2(op, truth, variable).unwrap();
+            let binary_output = kernel.op2(op, truth, truth).unwrap();
+            kernel
+                .syn_congr(
+                    None,
+                    SynRel::Syn,
+                    Some(variable),
+                    Some(truth),
+                    binary_input,
+                    binary_output,
+                    &[left_unchanged, replaced],
+                )
+                .unwrap();
+            assert!(
+                kernel
+                    .contains_variable::<Infallible>(binary_input, variable)
+                    .unwrap()
+            );
+            assert!(
+                !kernel
+                    .contains_variable::<Infallible>(binary_output, variable)
+                    .unwrap()
+            );
+        }
+
+        let binary_output = kernel.op2(crate::builtin::Op2::And, truth, truth).unwrap();
+        let wrong_opcode = kernel.op2(crate::builtin::Op2::Or, truth, truth).unwrap();
+        let left_refl = kernel.syn_refl(None, SynRel::Syn, truth).unwrap();
+        let right_refl = kernel.syn_refl(None, SynRel::Syn, truth).unwrap();
+        assert!(
+            kernel
+                .syn_congr(
+                    None,
+                    SynRel::Syn,
+                    None,
+                    None,
+                    binary_output,
+                    wrong_opcode,
+                    &[left_refl, right_refl],
+                )
+                .is_err()
+        );
     }
 
     #[test]

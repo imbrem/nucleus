@@ -358,6 +358,7 @@ dependencies = [
  "covalence-data-cas",
  "covalence-lib-hash",
  "covalence-lib-sqlite",
+ "covalence-logic-hol",
  "covalence-neutron",
  "covalence-repl",
  "wasm-bindgen",
@@ -563,6 +564,7 @@ name = "covalence-logic-lrat"
 version = "0.0.0"
 dependencies = [
  "covalence-lib-error",
+ "covalence-logic-hol",
  "covalence-logic-sat",
 ]
 

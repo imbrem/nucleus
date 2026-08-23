@@ -3,6 +3,7 @@
 //! Deserialization establishes only the representation invariants. It does
 //! not establish kinding, typing, equality, or provability.
 
+pub mod builtin;
 pub mod init;
 mod kernel;
 mod resolve;
@@ -11,7 +12,7 @@ mod syn;
 mod table;
 pub mod wire;
 
-pub use kernel::{CopyMap, Kernel, KernelError};
+pub use kernel::{CopyMap, Kernel, KernelError, PropId, PropIdError, PropVec, Thm, ThmId};
 pub use resolve::{Expr, ResolveError, Resolver, ResolverExt};
 pub use row::{KindTag, Sort, Tag, TmTag, TyTag};
 pub use syn::{SynFact, SynRel};
@@ -40,14 +41,29 @@ macro_rules! id_type {
     };
 }
 
-id_type! {
-    /// A one-based local definition reference. `Ref(n)` addresses `defs[n - 1]`.
-    pub struct Ref(NonZeroU64);
+/// A one-based local definition reference. `Ref(n)` addresses `defs[n - 1]`.
+///
+/// References are globally bounded by the lossless signed proposition wire
+/// space: `0 < n < i64::MAX`.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[repr(transparent)]
+pub struct Ref(NonZeroU64);
+
+/// A value outside the global local-reference range.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, covalence_lib_error::snafu::Snafu)]
+#[snafu(crate_root(covalence_lib_error::snafu))]
+#[snafu(display("reference {value} is outside the supported range"))]
+pub struct RefError {
+    /// Rejected integer.
+    pub value: u64,
 }
 
 impl Ref {
     #[must_use]
     pub const fn new(value: u64) -> Option<Self> {
+        if value >= i64::MAX as u64 {
+            return None;
+        }
         match NonZeroU64::new(value) {
             Some(value) => Some(Self(value)),
             None => None,
@@ -61,10 +77,35 @@ impl Ref {
 }
 
 impl TryFrom<u64> for Ref {
-    type Error = ZeroId;
+    type Error = RefError;
 
     fn try_from(value: u64) -> Result<Self, Self::Error> {
-        Self::new(value).ok_or(ZeroId)
+        Self::new(value).ok_or(RefError { value })
+    }
+}
+
+impl From<Ref> for u64 {
+    fn from(value: Ref) -> Self {
+        value.get()
+    }
+}
+
+impl Serialize for Ref {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.get().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Ref {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = u64::deserialize(deserializer)?;
+        Self::new(value).ok_or_else(|| serde::de::Error::custom(RefError { value }))
     }
 }
 
@@ -492,6 +533,24 @@ impl Arena {
         }
     }
 
+    /// The unary builtin stored by a `tm.op1.v1` row.
+    #[must_use]
+    pub fn op1(&self, reference: Ref) -> Option<builtin::Op1> {
+        match self.dense.row(reference)?.expr() {
+            row::Expr::Op1(op, _) => Some(*op),
+            _ => None,
+        }
+    }
+
+    /// The binary builtin stored by a `tm.op2.v1` row.
+    #[must_use]
+    pub fn op2(&self, reference: Ref) -> Option<builtin::Op2> {
+        match self.dense.row(reference)?.expr() {
+            row::Expr::Op2(op, ..) => Some(*op),
+            _ => None,
+        }
+    }
+
     /// The source and foreign reference stored by a proxy row.
     #[must_use]
     pub fn foreign(&self, reference: Ref) -> Option<(ImportId, Ref)> {
@@ -568,6 +627,16 @@ impl Arena {
         self.push_row(Row::new(row::Expr::Bool(value)))
     }
 
+    /// Append a raw unary builtin row.
+    pub fn push_op1(&mut self, op: builtin::Op1, operand: Ref) -> Option<Ref> {
+        self.push_row(Row::new(row::Expr::Op1(op, operand)))
+    }
+
+    /// Append a raw binary builtin row.
+    pub fn push_op2(&mut self, op: builtin::Op2, left: Ref, right: Ref) -> Option<Ref> {
+        self.push_row(Row::new(row::Expr::Op2(op, left, right)))
+    }
+
     /// Append a raw object-language equality row.
     pub fn push_tm_eq(&mut self, left: Ref, right: Ref) -> Option<Ref> {
         self.push_row(Row::new(row::Expr::Eq(left, right)))
@@ -603,6 +672,15 @@ impl Arena {
         let reference = Ref::new(next)?;
         self.dense.defs.push(row);
         Some(reference)
+    }
+
+    pub(crate) fn has_definition_prefix(&self, prefix: &Self) -> bool {
+        self.imports == prefix.imports
+            && self.dense.defs.starts_with(&prefix.dense.defs)
+            && self.axs == prefix.axs
+            && self.ctx == prefix.ctx
+            && self.assume == prefix.assume
+            && self.assert == prefix.assert
     }
 
     pub(crate) fn set_eq(&mut self, left: Ref, right: Option<Ref>) -> bool {
@@ -828,5 +906,20 @@ mod tests {
 
         arena.push_kind_star().unwrap();
         assert_ne!(arena.addr(), empty);
+    }
+
+    #[test]
+    fn references_are_strictly_bounded_by_the_signed_wire_space() {
+        let largest = i64::MAX as u64 - 1;
+        assert_eq!(Ref::new(0), None);
+        assert_eq!(Ref::new(largest).unwrap().get(), largest);
+        assert_eq!(Ref::new(i64::MAX as u64), None);
+        assert_eq!(Ref::new(u64::MAX), None);
+
+        for rejected in [0, i64::MAX as u64, u64::MAX] {
+            let mut bytes = Vec::new();
+            covalence_lib_cbor::into_writer(&rejected, &mut bytes).unwrap();
+            assert!(covalence_lib_cbor::from_reader::<Ref, _>(bytes.as_slice()).is_err());
+        }
     }
 }

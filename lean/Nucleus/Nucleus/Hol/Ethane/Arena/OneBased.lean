@@ -1,4 +1,5 @@
 import Nucleus.Hol.Ethane.Arena
+import Nucleus.Hol.Ethane.Builtin
 import Nucleus.O256.Basic
 import Mathlib.Data.Finset.Sort
 import Mathlib.Order.Basic
@@ -8,15 +9,20 @@ import Mathlib.Order.Basic
 
 This is the raw object model shared with the Rust dense arena.  It records
 syntax and inline metadata without assigning them any logical validity.
-Local definition and import references are distinct nonzero `UInt64` values.
+Local definition references are nonzero `UInt64` values strictly below
+`i64::MAX`; import references remain arbitrary nonzero `UInt64` values.
 -/
 
 namespace Nucleus.Hol.Ethane.OneBased
 
 open Nucleus
 
-/-- A local reference.  Value `n` addresses definition `n - 1`. -/
-def Ref := { value : UInt64 // value ≠ 0 }
+/-- The exclusive upper bound shared with signed `PropId` on the Rust wire. -/
+def Ref.maxExclusive : Nat := 9_223_372_036_854_775_807
+
+/-- A local reference.  Value `n` addresses definition `n - 1` and always
+admits a lossless positive or negative signed proposition encoding. -/
+def Ref := { value : UInt64 // value ≠ 0 ∧ value.toNat < Ref.maxExclusive }
 
 deriving instance DecidableEq for Ref
 deriving instance Repr for Ref
@@ -29,17 +35,21 @@ instance : LinearOrder Ref := LinearOrder.lift' (fun value => value.1.toNat) (by
 namespace Ref
 
 def ofUInt64? (value : UInt64) : Option Ref :=
-  if nonzero : value ≠ 0 then some ⟨value, nonzero⟩ else none
+  if valid : value ≠ 0 ∧ value.toNat < maxExclusive then some ⟨value, valid⟩ else none
 
 def value (reference : Ref) : UInt64 := reference.1
 
 @[simp] theorem ofUInt64?_value (reference : Ref) :
     ofUInt64? reference.value = some reference := by
-  rcases reference with ⟨value, nonzero⟩
-  simp [ofUInt64?, Ref.value, nonzero]
+  rcases reference with ⟨value, valid⟩
+  simp [ofUInt64?, Ref.value, valid]
 
 @[simp] theorem ofUInt64?_zero : ofUInt64? 0 = none := by
   simp [ofUInt64?]
+
+@[simp] theorem ofUInt64?_maxExclusive :
+    ofUInt64? (UInt64.ofNat maxExclusive) = none := by
+  decide
 
 end Ref
 
@@ -209,6 +219,8 @@ inductive TmTag where
   | app
   | lam
   | bool
+  | op1
+  | op2
   | eq
   | eps
   | ref
@@ -222,6 +234,8 @@ def name : TmTag → String
   | .app => "tm.app"
   | .lam => "tm.lam"
   | .bool => "tm.bool"
+  | .op1 => Nucleus.Hol.Ethane.Builtin.op1RowTag
+  | .op2 => Nucleus.Hol.Ethane.Builtin.op2RowTag
   | .eq => "tm.eq"
   | .eps => "tm.eps"
   | .ref => "tm.ref"
@@ -261,6 +275,8 @@ def ofName? : String → Option Tag
   | "tm.app" => some (.tm .app)
   | "tm.lam" => some (.tm .lam)
   | "tm.bool" => some (.tm .bool)
+  | "tm.op1.v1" => some (.tm .op1)
+  | "tm.op2.v1" => some (.tm .op2)
   | "tm.eq" => some (.tm .eq)
   | "tm.eps" => some (.tm .eps)
   | "tm.ref" => some (.tm .ref)
@@ -301,6 +317,8 @@ inductive Expr where
   | app (function argument : Ref)
   | lam (binder body : Ref)
   | bool (value : Bool)
+  | op1 (op : Nucleus.Hol.Ethane.Builtin.Op1) (operand : Ref)
+  | op2 (op : Nucleus.Hol.Ethane.Builtin.Op2) (left right : Ref)
   /-- Equality operands; their common type is recovered during checking. -/
   | eq (left right : Ref)
   | eps (type predicate : Ref)
@@ -323,6 +341,8 @@ def Expr.tag : Expr → Tag
   | .app .. => .tm .app
   | .lam .. => .tm .lam
   | .bool .. => .tm .bool
+  | .op1 .. => .tm .op1
+  | .op2 .. => .tm .op2
   | .eq .. => .tm .eq
   | .eps .. => .tm .eps
   | .tmRef .. => .tm .ref
@@ -367,6 +387,8 @@ def Row.toView (row : Row) : RowView :=
   | .app f a => ordinary (.tm .app) [f, a]
   | .lam binder body => ordinary (.tm .lam) [binder, body]
   | .bool value => ordinary (.tm .bool) [] (some (.bool value))
+  | .op1 op operand => ordinary (.tm .op1) [operand] (some (.nat op.code.toUInt64))
+  | .op2 op left right => ordinary (.tm .op2) [left, right] (some (.nat op.code.toUInt64))
   | .eq left right => ordinary (.tm .eq) [left, right]
   | .eps type predicate => ordinary (.tm .eps) [type, predicate]
   | .tmRef src ix => foreign (.tm .ref) src ix
@@ -390,6 +412,10 @@ def Row.ofView? (view : RowView) : Option Row := do
     | .tm .app, some [f, a], none, none, none => some (.app f a)
     | .tm .lam, some [binder, body], none, none, none => some (.lam binder body)
     | .tm .bool, none, some (.bool value), none, none => some (.bool value)
+    | .tm .op1, some [operand], some (.nat code), none, none =>
+        some (.op1 (← Nucleus.Hol.Ethane.Builtin.Op1.ofUInt64? code) operand)
+    | .tm .op2, some [left, right], some (.nat code), none, none =>
+        some (.op2 (← Nucleus.Hol.Ethane.Builtin.Op2.ofUInt64? code) left right)
     | .tm .eq, some [left, right], none, none, none => some (.eq left right)
     | .tm .eps, some [type, predicate], none, none, none => some (.eps type predicate)
     | .tm .ref, none, none, some src, some ix => some (.tmRef src ix)
@@ -400,7 +426,9 @@ def Row.ofView? (view : RowView) : Option Row := do
 
 @[simp] theorem Row.ofView?_toView (row : Row) : Row.ofView? row.toView = some row := by
   cases row with
-  | mk expr eq sort => cases expr <;> rfl
+  | mk expr eq sort =>
+      cases expr <;> try rfl
+      case mk.op2 op left right => cases op <;> rfl
 
 end detail
 

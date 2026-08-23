@@ -203,6 +203,18 @@ impl Expr {
         self.arena().bool_value(self.reference)
     }
 
+    /// Returns the unary builtin carried by this row.
+    #[must_use]
+    pub fn op1(&self) -> Option<crate::builtin::Op1> {
+        self.arena().op1(self.reference)
+    }
+
+    /// Returns the binary builtin carried by this row.
+    #[must_use]
+    pub fn op2(&self) -> Option<crate::builtin::Op2> {
+        self.arena().op2(self.reference)
+    }
+
     /// Returns the source and index carried by a proxy row.
     #[must_use]
     pub fn foreign(&self) -> Option<(ImportId, Ref)> {

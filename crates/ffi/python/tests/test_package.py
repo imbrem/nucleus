@@ -36,7 +36,7 @@ def test_lrat_follows_its_crate_path() -> None:
     assert covalence.logic.hol.__name__ == "covalence.logic.hol"
     assert covalence.logic.hol.Arena is _covalence.HolArena
     assert covalence.logic.lrat.__name__ == "covalence.logic.lrat"
-    assert covalence.logic.lrat.Kernel is _covalence.Kernel
+    assert not hasattr(covalence.logic.lrat, "Kernel")
     assert covalence.logic.lrat.RatGroup is _covalence.RatGroup
     assert covalence.logic.metamath.Database is _covalence.Database
     assert covalence.logic.sat.__name__ == "covalence.logic.sat"
