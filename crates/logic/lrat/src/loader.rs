@@ -872,6 +872,27 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_initial_clauses_own_distinct_handles_across_slot_reuse() {
+        let (kernel, bool_ty, p, _) = fixture();
+        let mut builder = CnfBuilder::new(kernel, bool_ty);
+        builder.clause(&[p]).unwrap();
+        builder.clause(&[p]).unwrap();
+        builder.clause(&[p.negated()]).unwrap();
+        let mut prover = builder.refute().unwrap();
+
+        let forgotten = prover.live[&1].theorem;
+        let retained = prover.live[&2].theorem;
+        assert_ne!(forgotten, retained);
+        prover.forget(&[1]).unwrap();
+
+        // The next derived theorem may reuse the forgotten slot.  Clause 2 must
+        // still name its independently owned theorem throughout the replay.
+        prover.learn_rup_props(4, &[], &[2, 3]).unwrap();
+        assert!(prover.kernel.theorem(retained).is_ok());
+        prover.done().unwrap().verify().unwrap();
+    }
+
+    #[test]
     fn rejected_rup_reclaims_every_temporary_theorem() {
         let (kernel, bool_ty, p, _) = fixture();
         let mut builder = CnfBuilder::new(kernel, bool_ty);
