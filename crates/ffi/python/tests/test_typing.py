@@ -142,7 +142,6 @@ def test_the_stub_does_not_omit_class_members() -> None:
         "ContextKey",
         "Sha1",
         "GitHash",
-        "Kernel",
         "RatGroup",
         "Literal",
         "Clause",
