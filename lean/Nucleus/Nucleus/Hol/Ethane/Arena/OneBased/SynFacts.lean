@@ -62,8 +62,9 @@ def IsProxy : detail.Expr → Prop
   | .tmRef .. | .tyRef .. | .kindRef .. => True
   | _ => False
 
-/-- Literal leaves accepted by Rust `syn_sub_leaf`.  A free-variable caller
-must additionally establish that its category/name differs from the target. -/
+/-- Root shapes considered by Rust `syn_sub_leaf`. A free-variable caller must
+also establish that its category/name differs from the target; a `tmFv` caller
+must additionally prove that the target does not occur in its type child. -/
 def ActiveSubstitutionLeaf : detail.Expr → Prop
   | .kindStar | .boolTy | .bool _ | .tyFv .. | .tmFv .. => True
   | _ => False
@@ -393,6 +394,8 @@ restriction is imposed by `Congruence` below. -/
 inductive NamedSubstitution (needle replacement : EmptySyn) :
     EmptySyn → EmptySyn → Prop where
   | hit : NamedSubstitution needle replacement needle replacement
+  | miss (absent : ¬ NamedSubstitution.Occurs needle input) :
+      NamedSubstitution needle replacement input input
   | congr (different : ¬ NamedSubstitution.SameVariableName needle input)
       (head : NamedSubstitution.SameHead input output)
       (children : List.Forall₂ (NamedSubstitution needle replacement)
@@ -454,6 +457,43 @@ inductive NamedSubstitution (needle replacement : EmptySyn) :
       (termNeedle : NamedSubstitution.IsTmVariable needle)
       (bodyStep : NamedSubstitution needle replacement body body') :
       NamedSubstitution needle replacement (.model name body) (.model name body')
+
+/-- The exact named-syntax criterion behind Rust
+`require_substitution_leaf`. A term variable is a leaf only when the
+substituted variable is absent from its type annotation; comparing the two
+variable names alone is insufficient because `Model` embeds terms in types. -/
+inductive NamedSubstitution.LeafInvariant (needle : EmptySyn) : EmptySyn → Prop where
+  | boolTy : LeafInvariant needle .boolTy
+  | bool (value : Bool) : LeafInvariant needle (.bool value)
+  | tyFv {name : Nat} {kind : Kind}
+      (different : ¬ SameVariableName needle (.tyFv name kind)) :
+      LeafInvariant needle (.tyFv name kind)
+  | tmFv {name : Nat} {type : EmptySyn}
+      (different : ¬ SameVariableName needle (.tmFv name type))
+      (annotationFree : ¬ Occurs needle type) :
+      LeafInvariant needle (.tmFv name type)
+
+/-- The leaf check supplies precisely the child derivation required by `tmFv`
+congruence. -/
+theorem NamedSubstitution.LeafInvariant.substitution
+    (checked : LeafInvariant needle input) :
+    NamedSubstitution needle replacement input input := by
+  cases checked with
+  | boolTy =>
+      exact .congr (by simp [SameVariableName]) .boolTy (by simp [children])
+  | bool value =>
+      exact .congr (by simp [SameVariableName]) .bool (by simp [children])
+  | tyFv different => exact .congr different .tyFv (by simp [children])
+  | tmFv different annotationFree =>
+      apply NamedSubstitution.congr different .tmFv
+      exact .cons (.miss annotationFree) .nil
+
+/-- Every checked term-variable leaf carries its annotation obligation. -/
+theorem NamedSubstitution.LeafInvariant.tmFv_annotationFree
+    (checked : LeafInvariant needle (.tmFv name type)) :
+    ¬ Occurs needle type := by
+  cases checked with
+  | tmFv _ annotationFree => exact annotationFree
 
 /-- The generic unchanged-leaf derivation used by both concrete and universal
 Rust leaf rules. -/
@@ -605,7 +645,11 @@ inductive SynInference : SynRel → Option Value → Option Value →
 
 namespace SynInference
 
-private theorem meaning_refine
+/-- A semantic cache judgment remains true when its relation is weakened
+along `syn ≤ alpha ≤ conv`.  This is the proposition-level contract of
+Rust `Kernel::syn_refine`; unlike the proof-relevant constructor it does not
+require retaining the inference that originally minted the fact. -/
+theorem meaningRefine
     (source : SynMeaning finer subVar replacement input output)
     (refinement : finer.Refines relation)
     (inputWellFormed : input.WellFormed)
@@ -686,7 +730,7 @@ theorem sound (inference : SynInference relation subVar replacement input output
       exact ⟨_, substitutes, substitutedWellFormed, compatible, related⟩
   | universalSubstitution substitutes => exact substitutes
   | refine source refinement inputWellFormed outputWellFormed sourceSound =>
-      exact meaning_refine sourceSound refinement inputWellFormed outputWellFormed
+      exact meaningRefine sourceSound refinement inputWellFormed outputWellFormed
   | congr rule => exact rule.semantic
   | familyBeta sourceWellFormed targetWellFormed step bodyKinded argumentKinded =>
       exact ⟨Value.Compatible.family _ _ _,
@@ -733,6 +777,36 @@ theorem refine_direct (source : SynRel.Holds finer input output)
     SynInference relation none none input output :=
   .direct compatible
     (source.refine refinement compatible inputWellFormed outputWellFormed)
+
+/-- Proof-relevant form of the primitive Rust `syn_sub_var` rule. -/
+theorem substitutionVariable
+    (variableIsSyntax : subVar.syntax? = some variableSyntax)
+    (replacementIsSyntax : replacement.syntax? = some replacementSyntax)
+    (replacementWellFormed : replacement.WellFormed) :
+    SynInference .syn (some subVar) (some replacement) subVar replacement :=
+  .substitution
+    (Value.Substitutes.varCase variableIsSyntax replacementIsSyntax)
+    replacementWellFormed (Value.compatible_refl replacementWellFormed)
+    (Value.syntaxEqual_refl replacement)
+
+/-- A concrete substitution fact for a leaf or larger expression already
+shown invariant by the named substitution calculus. -/
+theorem substitutionUnchanged
+    (substitutes : Value.Substitutes subVar replacement input input)
+    (inputWellFormed : input.WellFormed) :
+    SynInference .syn (some subVar) (some replacement) input input :=
+  .substitution substitutes inputWellFormed
+    (Value.compatible_refl inputWellFormed) (Value.syntaxEqual_refl input)
+
+/-- Proof-relevant form shared by Rust `syn_sub_leaf_forall` and future
+closed-import rules. -/
+theorem universalSubstitutionUnchanged
+    (free : Value.SubstitutionFree subVar input)
+    (inputWellFormed : input.WellFormed) :
+    SynInference .syn (some subVar) none input input :=
+  .universalSubstitution
+    (Value.universal_syn_of_literal_and_substitution_free free inputWellFormed
+      (Value.compatible_refl inputWellFormed) (Value.syntaxEqual_refl input))
 
 theorem familyBeta_sound {kind : Kind} {source target : EmptyExpr (.kind kind)}
     (_sourceWellFormed : Value.WellFormed (.family kind source))
@@ -805,6 +879,55 @@ theorem Valid.endpointsValid (valid : SynFact.Valid resolve arena fact) :
   · exact Or.inr (Or.inl ⟨_, varEq, valEq⟩)
   · exact Or.inr (Or.inr ⟨_, _, varEq, valEq⟩)
 
+/-- Exact semantic contract of Rust `Kernel::syn_refl`. -/
+theorem Valid.refl (resolved : Resolves resolve arena.withoutSyn reference value)
+    (wellFormed : value.WellFormed) :
+    SynFact.Valid resolve arena
+      { rel := relation, input := reference, output := reference } := by
+  have compatible := Value.compatible_refl wellFormed
+  exact ⟨value, value, resolved, resolved, wellFormed, wellFormed, compatible,
+    compatible, SynRel.holds_refl wellFormed⟩
+
+/-- Exact semantic contract of Rust `Kernel::syn_refine`.  The endpoint and
+substitution references are unchanged; only the relation is weakened. -/
+theorem Valid.refine (valid : SynFact.Valid resolve arena fact)
+    (refinement : fact.rel.Refines relation) :
+    SynFact.Valid resolve arena { fact with rel := relation } := by
+  rcases valid with ⟨input, output, inputResolves, outputResolves,
+    inputWellFormed, outputWellFormed, compatible, meaning⟩
+  refine ⟨input, output, inputResolves, outputResolves, inputWellFormed,
+    outputWellFormed, compatible, ?_⟩
+  cases varEq : fact.var <;> cases valEq : fact.val
+  · simp only [varEq, valEq] at meaning ⊢
+    exact SynInference.meaningRefine meaning refinement
+      inputWellFormed outputWellFormed
+  · simp only [varEq, valEq] at meaning
+  · simp only [varEq, valEq] at meaning ⊢
+    rcases meaning with ⟨subVar, subVarResolves, subVarWellFormed, meaning⟩
+    exact ⟨subVar, subVarResolves, subVarWellFormed,
+      SynInference.meaningRefine meaning refinement
+        inputWellFormed outputWellFormed⟩
+  · simp only [varEq, valEq] at meaning ⊢
+    rcases meaning with ⟨subVar, replacement, subVarResolves,
+      replacementResolves, subVarWellFormed, replacementWellFormed, meaning⟩
+    exact ⟨subVar, replacement, subVarResolves, replacementResolves,
+      subVarWellFormed, replacementWellFormed,
+      SynInference.meaningRefine meaning refinement
+        inputWellFormed outputWellFormed⟩
+
+/-- Exact semantic contract of Rust `Kernel::syn_symm`.  Symmetry is exposed
+only for direct facts, so no substitution judgment is reversed. -/
+theorem Valid.symm (valid : SynFact.Valid resolve arena fact)
+    (direct : fact.Direct) :
+    SynFact.Valid resolve arena
+      { rel := fact.rel, input := fact.output, output := fact.input } := by
+  rcases valid with ⟨input, output, inputResolves, outputResolves,
+    inputWellFormed, outputWellFormed, compatible, meaning⟩
+  rcases direct with ⟨varEq, valEq⟩
+  simp only [varEq, valEq] at meaning
+  exact ⟨output, input, outputResolves, inputResolves, outputWellFormed,
+    inputWellFormed, compatible.symm, compatible.symm, meaning.2.symm⟩
+
 /-- The checked LCF wrapper.  Code consuming facts should accept this type;
 unchecked wire payloads become checked only through `ofInference`. -/
 structure Checked (resolve : Resolver) (arena : Arena) where
@@ -848,6 +971,27 @@ def Checked.ofInference {resolve : Resolver} {arena : Arena} {fact : SynFact}
       replacementResolves, variableWellFormed, replacementWellFormed, derivation⟩
     exact ⟨subVar, replacement, variableResolves, replacementResolves,
       variableWellFormed, replacementWellFormed, derivation.sound⟩
+
+/-- Checked result returned by the logical core of Rust `Kernel::syn_refl`.
+Slot allocation is handled separately by `FullKernel.push`. -/
+def Checked.refl (relation : SynRel)
+    (resolved : Resolves resolve arena.withoutSyn reference value)
+    (wellFormed : value.WellFormed) : Checked resolve arena :=
+  ⟨{ rel := relation, input := reference, output := reference },
+    Valid.refl resolved wellFormed⟩
+
+/-- Checked result returned by the logical core of Rust
+`Kernel::syn_refine`. -/
+def Checked.refine (source : Checked resolve arena)
+    (refinement : source.fact.rel.Refines relation) : Checked resolve arena :=
+  ⟨{ source.fact with rel := relation }, source.valid.refine refinement⟩
+
+/-- Checked result returned by the logical core of Rust `Kernel::syn_symm`. -/
+def Checked.symm (source : Checked resolve arena) (direct : source.fact.Direct) :
+    Checked resolve arena :=
+  ⟨{ rel := source.fact.rel,
+      input := source.fact.output, output := source.fact.input },
+    source.valid.symm direct⟩
 
 end SynFact
 
