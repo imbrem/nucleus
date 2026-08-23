@@ -27,9 +27,7 @@ struct Guarded {
     subject: Ref,
     /// The replacement for `subject`.
     value: Ref,
-    /// `model 9 x`.
-    guard: Ref,
-    /// `y : model 9 x`.
+    /// `y : model 9 x`, whose annotation `[true / x]` has to rewrite.
     annotated: Ref,
 }
 
@@ -39,11 +37,11 @@ fn guarded() -> Guarded {
     let value = fix.lit(true);
     let guard = fix.model(9, subject).expect("model 9 x");
     let annotated = fix.tm_fv(1, guard).expect("y : model 9 x");
+
     Guarded {
         fix,
         subject,
         value,
-        guard,
         annotated,
     }
 }
@@ -57,7 +55,6 @@ fn a_leaf_may_not_ignore_an_annotation_that_mentions_the_substituted_variable() 
         subject,
         value,
         annotated,
-        ..
     } = guarded();
 
     let error = fix
@@ -75,7 +72,6 @@ fn the_bad_leaf_no_longer_composes_into_a_beta_conversion() {
         subject,
         value,
         annotated,
-        guard: _,
     } = guarded();
     let bool_ty = fix.bool_ty;
 
@@ -155,14 +151,11 @@ fn binder_congruence_may_not_carry_an_annotation_the_substitution_rewrites() {
         mut fix,
         subject,
         value,
-        guard,
         annotated,
     } = guarded();
-    let bool_ty = fix.bool_ty;
     let free = fix.var(2);
 
     let input = fix.lam(annotated, free).expect("λ(y : model 9 x). z");
-    let arrow = fix.classifier(input).expect("function type");
     let leaf = fix
         .syn_sub_leaf(None, subject, value, free)
         .expect("`z : bool` cannot mention `x`");
@@ -183,7 +176,6 @@ fn binder_congruence_may_not_carry_an_annotation_the_substitution_rewrites() {
         )
         .expect_err("the binder's type mentions `x`");
     assert_eq!(invalid(&error), "binder classifier");
-    let _ = (guard, arrow, bool_ty);
 }
 
 #[test]
@@ -265,27 +257,30 @@ fn freshness_stays_decidable_as_terms_share_subterms() {
 
 #[test]
 fn freshness_still_rejects_a_genuine_occurrence_at_depth() {
+    // The visited set makes the walk exact, not permissive: `λv. (g v) v` is
+    // not an eta redex however large and shared the types get.
     let mut fix = Fix::new();
     let bool_ty = fix.bool_ty;
     let mut tower = bool_ty;
     for _ in 0..8 {
         tower = fix.ty_arr(tower, tower).expect("doubling");
     }
-    let curried = fix.ty_arr(bool_ty, tower).expect("bool -> tower");
+    let inner = fix.ty_arr(tower, tower).expect("tower -> tower");
+    let curried = fix.ty_arr(tower, inner).expect("tower -> tower -> tower");
     let outer = fix.tm_fv(0, curried).expect("curried function");
-    let binder = fix.var(1);
-    let function = fix.app(outer, binder).expect("partial application");
-    let arrow = fix.ty_arr(bool_ty, tower).expect("bool -> tower");
-    let _ = arrow;
-    let body = fix.app(function, binder);
-    // `function : tower`, whose class contains an arrow only if `tower` is one.
-    if let Ok(body) = body {
-        let source = fix.lam(binder, body).expect("abstraction");
-        assert!(
-            fix.tm_eta_fact(None, source).is_err(),
-            "the binder still occurs in the function"
-        );
-    }
+    let binder = fix.tm_fv(1, tower).expect("binder");
+
+    let function = fix.app(outer, binder).expect("g v");
+    let body = fix.app(function, binder).expect("(g v) v");
+    let source = fix.lam(binder, body).expect("λv. (g v) v");
+
+    assert_eq!(
+        invalid(
+            &fix.tm_eta_fact(None, source)
+                .expect_err("the binder still occurs in the function")
+        ),
+        "term eta"
+    );
 }
 
 #[test]
