@@ -420,14 +420,24 @@ impl LratProver {
         let mut theorem = conflict.ok_or(Error::NoConflict { step: id })?;
         for literal in literals {
             let falsifying = literal.negated();
-            theorem = if self.kernel.theorem(theorem)?.premises.contains(&falsifying) {
+            theorem = if self
+                .kernel
+                .theorem(theorem)?
+                .premises()
+                .contains(&falsifying)
+            {
                 self.kernel.discharge(theorem, falsifying)?
             } else {
                 self.kernel.weaken(theorem, &[], &[*literal])?
             };
             temporary.push(theorem);
         }
-        Ok(theorem)
+        // A zero-step conflict may still name a live source-clause theorem. Give every
+        // learned clause its own handle so forgetting either clause cannot invalidate
+        // the other, including when the kernel reuses a slot from its free list.
+        let owned = self.kernel.weaken(theorem, &[], &[])?;
+        temporary.push(owned);
+        Ok(owned)
     }
 
     /// Forgets live clauses and their ephemeral theorem handles atomically.
@@ -476,7 +486,7 @@ impl LratProver {
         let theorem = self.refutation.ok_or(Error::NoRefutation)?;
         let sequent = self.kernel.theorem(theorem)?;
         let formula = PropId::positive(self.formula);
-        if sequent.premises != [formula] || !sequent.conclusions.is_empty() {
+        if sequent.premises() != [formula] || !sequent.conclusions().is_empty() {
             return Err(Error::NoRefutation);
         }
         Ok(UnsatFormula {
@@ -525,7 +535,7 @@ impl UnsatFormula {
     pub fn verify(&self) -> Result<(), Error> {
         let sequent = self.kernel.theorem(self.refutation)?;
         let formula = PropId::positive(self.formula);
-        if sequent.premises == [formula] && sequent.conclusions.is_empty() {
+        if sequent.premises() == [formula] && sequent.conclusions().is_empty() {
             Ok(())
         } else {
             Err(Error::NoRefutation)
@@ -834,9 +844,31 @@ mod tests {
         let mut expected = [p, q];
         expected.sort_unstable();
         assert_eq!(
-            prover.kernel.theorem(theorem).unwrap().conclusions,
+            prover.kernel.theorem(theorem).unwrap().conclusions(),
             expected
         );
+    }
+
+    #[test]
+    fn learned_clause_owns_its_theorem_across_deletion_and_slot_reuse() {
+        let (kernel, bool_ty, _, _) = fixture();
+        let mut builder = CnfBuilder::new(kernel, bool_ty);
+        builder.clause(&[]).unwrap();
+        let mut prover = builder.refute().unwrap();
+
+        prover.learn_rup_props(2, &[], &[1]).unwrap();
+        let source = prover.live[&1].theorem;
+        let learned = prover.live[&2].theorem;
+        assert_ne!(source, learned);
+
+        prover.forget(&[1]).unwrap();
+        assert!(prover.kernel.theorem(learned).is_ok());
+        let reused = prover
+            .kernel
+            .assume(PropId::positive(prover.true_ref))
+            .unwrap();
+        assert_eq!(reused, source);
+        assert!(prover.kernel.theorem(learned).is_ok());
     }
 
     #[test]
