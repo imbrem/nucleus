@@ -31,7 +31,7 @@ impl Kernel {
         self.arena.remove_syn_fact(id)
     }
 
-    /// Drops every syntactic-fact slot at or above `len`.
+    /// Retains the first `len` syntactic-fact slots and drops the rest.
     ///
     /// This supports temporary userspace proof searches without putting a
     /// cache or garbage collector in the trusted kernel.

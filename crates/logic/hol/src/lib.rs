@@ -97,6 +97,9 @@ impl TryFrom<u64> for ImportId {
 
 id_type! {
     /// A one-based slot in an arena's syntactic-fact table.
+    ///
+    /// IDs are ephemeral cache handles. Removing or truncating facts permits
+    /// a later insertion to reuse the same ID for a different fact.
     pub struct SynFactId(NonZeroU64);
 }
 
@@ -663,8 +666,8 @@ impl Arena {
         true
     }
 
-    /// Drops all syntactic-fact slots at or above `len` and rebuilds the free
-    /// list over the retained prefix.
+    /// Retains the first `len` syntactic-fact slots, drops the rest, and
+    /// rebuilds the free list over the retained prefix.
     pub fn truncate_syn_facts(&mut self, len: usize) {
         self.syn_facts.truncate(len);
         self.rebuild_syn_free();

@@ -32,11 +32,13 @@ impl SynRel {
     }
 }
 
-/// A checked relation between `[val / var] input` and `output`.
+/// A wire relation between `[val / var] input` and `output`.
 ///
 /// With both endpoints absent this is a direct fact; with both present it is
 /// a substitution fact. Half-present endpoints are reserved and currently
-/// have no checked meaning. Slots may be absent after removal.
+/// have no checked meaning. Deserializing an [`Arena`](crate::Arena) does not
+/// check these claims; facts returned by [`Kernel::syn_fact`](crate::Kernel::syn_fact)
+/// have instead been introduced by checked kernel rules.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SynFact {
