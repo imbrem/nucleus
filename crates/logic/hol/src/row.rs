@@ -135,14 +135,13 @@ impl Row {
         }
     }
 
-    #[cfg(test)]
     #[must_use]
+    #[cfg(test)]
     pub(crate) const fn with_eq(mut self, reference: Ref) -> Self {
         self.eq = Some(reference);
         self
     }
 
-    #[cfg(test)]
     #[must_use]
     pub(crate) const fn with_sort(mut self, reference: Ref) -> Self {
         self.sort = Some(reference);
@@ -163,6 +162,10 @@ impl Row {
 
     pub(crate) const fn sort(&self) -> Option<Ref> {
         self.sort
+    }
+
+    pub(crate) const fn set_eq(&mut self, reference: Option<Ref>) {
+        self.eq = reference;
     }
 }
 

@@ -3,11 +3,13 @@
 //! Deserialization establishes only the representation invariants. It does
 //! not establish kinding, typing, equality, or provability.
 
+mod kernel;
 mod resolve;
 mod row;
 mod table;
 pub mod wire;
 
+pub use kernel::{Kernel, KernelError};
 pub use resolve::{Expr, ResolveError, Resolver, ResolverExt};
 pub use row::{KindTag, Sort, Tag, TmTag, TyTag};
 pub use table::Table;
@@ -269,9 +271,14 @@ impl ArenaRepr for Dense {
 }
 
 impl Dense {
-    fn row(&self, reference: Ref) -> Option<&Row> {
+    pub(crate) fn row(&self, reference: Ref) -> Option<&Row> {
         let position = usize::try_from(reference.get() - 1).ok()?;
         self.defs.get(position)
+    }
+
+    fn row_mut(&mut self, reference: Ref) -> Option<&mut Row> {
+        let position = usize::try_from(reference.get() - 1).ok()?;
+        self.defs.get_mut(position)
     }
 }
 
@@ -322,6 +329,10 @@ impl Arena {
     #[must_use]
     pub fn sort(&self, reference: Ref) -> Option<Ref> {
         self.dense.sort(reference)
+    }
+
+    pub(crate) fn row(&self, reference: Ref) -> Option<&Row> {
+        self.dense.row(reference)
     }
 
     #[must_use]
@@ -513,11 +524,19 @@ impl Arena {
         self.imports.get(position)
     }
 
-    fn push_row(&mut self, row: Row) -> Option<Ref> {
+    pub(crate) fn push_row(&mut self, row: Row) -> Option<Ref> {
         let next = u64::try_from(self.dense.defs.len()).ok()?.checked_add(1)?;
         let reference = Ref::new(next)?;
         self.dense.defs.push(row);
         Some(reference)
+    }
+
+    pub(crate) fn set_eq(&mut self, left: Ref, right: Option<Ref>) -> bool {
+        let Some(row) = self.dense.row_mut(left) else {
+            return false;
+        };
+        row.set_eq(right);
+        true
     }
 
     #[cfg(test)]
