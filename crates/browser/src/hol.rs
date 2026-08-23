@@ -122,13 +122,12 @@ impl HolProver {
         theorem: &str,
         premises: &str,
         conclusions: &str,
-    ) -> Result<String, JsError> {
+    ) -> Result<(), JsError> {
         let theorem = parse_thm(theorem).map_err(to_js)?;
         let premises = parse_context(premises).map_err(to_js)?;
         let conclusions = parse_context(conclusions).map_err(to_js)?;
         self.kernel
             .weaken(theorem, &premises, &conclusions)
-            .map(format_thm)
             .map_err(to_js)
     }
 
@@ -167,8 +166,10 @@ impl HolProver {
     ///
     /// Returns an error for invalid IDs or mismatched evidence.
     #[wasm_bindgen(js_name = notLeft)]
-    pub fn not_left(&mut self, theorem: &str, proposition: &str) -> Result<String, JsError> {
-        self.rule1_prop(theorem, proposition, Kernel::not_left)
+    pub fn not_left(&mut self, theorem: &str, proposition: &str) -> Result<(), JsError> {
+        let theorem = parse_thm(theorem).map_err(to_js)?;
+        let proposition = parse_prop(proposition).map_err(to_js)?;
+        self.kernel.not_left(theorem, proposition).map_err(to_js)
     }
 
     /// Applies right polarity transfer.
@@ -177,8 +178,10 @@ impl HolProver {
     ///
     /// Returns an error for invalid IDs or mismatched evidence.
     #[wasm_bindgen(js_name = notRight)]
-    pub fn not_right(&mut self, theorem: &str, proposition: &str) -> Result<String, JsError> {
-        self.rule1_prop(theorem, proposition, Kernel::not_right)
+    pub fn not_right(&mut self, theorem: &str, proposition: &str) -> Result<(), JsError> {
+        let theorem = parse_thm(theorem).map_err(to_js)?;
+        let proposition = parse_prop(proposition).map_err(to_js)?;
+        self.kernel.not_right(theorem, proposition).map_err(to_js)
     }
 
     /// Introduces conjunction on the left.
@@ -338,15 +341,29 @@ impl HolProver {
         self.rule1_prop(theorem, formula, Kernel::fold_conclusion)
     }
 
-    /// Deletes whitespace-separated theorem IDs atomically.
+    /// Copies a theorem into an allocated or reused slot.
     ///
     /// # Errors
     ///
-    /// Returns an error if any ID is malformed, duplicated, absent, or already deleted.
-    #[wasm_bindgen(js_name = removeTheorems)]
-    pub fn remove_theorems(&mut self, theorem_ids: &str) -> Result<(), JsError> {
-        let ids = parse_theorems(theorem_ids).map_err(to_js)?;
-        self.kernel.remove_theorems(&ids).map_err(to_js)
+    /// Returns an error if the source ID is malformed or absent.
+    #[wasm_bindgen(js_name = copyTheorem)]
+    pub fn copy_theorem(&mut self, source: &str) -> Result<String, JsError> {
+        let source = parse_thm(source).map_err(to_js)?;
+        self.kernel
+            .copy_theorem(source)
+            .map(format_thm)
+            .map_err(to_js)
+    }
+
+    /// Removes one theorem, returning whether the handle was live.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `theorem` is not a valid theorem ID.
+    #[wasm_bindgen(js_name = removeTheorem)]
+    pub fn remove_theorem(&mut self, theorem: &str) -> Result<bool, JsError> {
+        let theorem = parse_thm(theorem).map_err(to_js)?;
+        Ok(self.kernel.remove_theorem(theorem))
     }
 
     /// Returns a theorem as JSON containing string-valued proposition arrays.
@@ -480,10 +497,6 @@ fn parse_context(text: &str) -> Result<Vec<PropId>, String> {
     text.split_whitespace().map(parse_prop).collect()
 }
 
-fn parse_theorems(text: &str) -> Result<Vec<ThmId>, String> {
-    text.split_whitespace().map(parse_thm).collect()
-}
-
 fn format_prop(proposition: PropId) -> String {
     proposition.get().to_string()
 }
@@ -520,8 +533,8 @@ mod tests {
         let p = prover.proposition("18446744073709551615").unwrap();
         let q = prover.proposition("2").unwrap();
         let base = prover.kernel.identity(p).unwrap();
-        let widened = prover.kernel.weaken(base, &[q, p, q], &[q, p]).unwrap();
-        let snapshot = prover.snapshot(&format_thm(widened)).unwrap();
+        prover.kernel.weaken(base, &[q, p, q], &[q, p]).unwrap();
+        let snapshot = prover.snapshot(&format_thm(base)).unwrap();
         assert_eq!(
             snapshot,
             format!(
@@ -542,17 +555,82 @@ mod tests {
         let first = prover.kernel.identity(p).unwrap();
         let second = prover.kernel.identity(q).unwrap();
 
-        assert!(prover.kernel.remove_theorems(&[first, first]).is_err());
-        assert!(prover.kernel.theorem(first).is_ok());
+        assert!(prover.kernel.remove_theorem(first));
+        assert!(!prover.kernel.remove_theorem(first));
+        assert!(prover.kernel.theorem(first).is_err());
         assert!(prover.kernel.theorem(second).is_ok());
 
-        prover.kernel.remove_theorems(&[first, second]).unwrap();
-        assert!(prover.kernel.theorem(first).is_err());
+        assert!(prover.kernel.remove_theorem(second));
         assert!(prover.kernel.theorem(second).is_err());
         let reused_second = prover.kernel.identity(p).unwrap();
         let reused_first = prover.kernel.identity(q).unwrap();
         assert_eq!(reused_second, second);
         assert_eq!(reused_first, first);
+    }
+
+    #[test]
+    fn copy_allocates_and_reuses_freed_slots() {
+        let mut prover = prover();
+        let p = prover.proposition("1").unwrap();
+        let q = prover.proposition("2").unwrap();
+        let source = prover.kernel.identity(p).unwrap();
+        let freed = prover.kernel.identity(q).unwrap();
+
+        let copied = prover.kernel.copy_theorem(source).unwrap();
+        assert_ne!(copied, source);
+        assert_ne!(copied, freed);
+        assert_eq!(
+            prover.kernel.theorem(copied).unwrap(),
+            prover.kernel.theorem(source).unwrap()
+        );
+        assert!(prover.kernel.remove_theorem(freed));
+        let reused = prover.kernel.copy_theorem(source).unwrap();
+        assert_eq!(reused, freed);
+        assert_eq!(prover.kernel.theorem(source).unwrap().premises(), [p]);
+        assert_eq!(prover.kernel.theorem(reused).unwrap().premises(), [p]);
+    }
+
+    #[test]
+    fn theorem_lifecycle_boundary_returns_strings_and_booleans() {
+        let mut prover = prover();
+        let p = prover.proposition("1").unwrap();
+        let source = prover.kernel.identity(p).unwrap();
+        let copied = prover.copy_theorem(&format_thm(source)).unwrap();
+
+        assert_ne!(copied, format_thm(source));
+        assert!(prover.remove_theorem(&copied).unwrap());
+        assert!(!prover.remove_theorem(&copied).unwrap());
+    }
+
+    #[test]
+    fn in_place_rules_preserve_handle_and_are_transactional() {
+        let mut prover = prover();
+        let p = prover.proposition("1").unwrap();
+        let q = prover.proposition("2").unwrap();
+        let theorem = prover.kernel.identity(p).unwrap();
+        let theorem_id = format_thm(theorem);
+
+        prover
+            .weaken(&theorem_id, &format_prop(q), &format_prop(q))
+            .unwrap();
+        let weakened = prover.snapshot(&theorem_id).unwrap();
+        assert!(weakened.contains(&format!("\"{}\"", p.get())));
+        assert!(weakened.contains(&format!("\"{}\"", q.get())));
+
+        assert!(prover.kernel.not_left(theorem, q.negated()).is_err());
+        assert_eq!(prover.snapshot(&theorem_id).unwrap(), weakened);
+        prover.not_left(&theorem_id, &format_prop(p)).unwrap();
+        assert_eq!(prover.kernel.theorem(theorem).unwrap().conclusions(), [q]);
+
+        prover.not_right(&theorem_id, &format_prop(q)).unwrap();
+        assert_eq!(
+            prover.kernel.theorem(theorem).unwrap().premises(),
+            [p, p.negated()]
+        );
+        assert_eq!(
+            prover.kernel.theorem(theorem).unwrap().conclusions(),
+            [q, q.negated()]
+        );
     }
 
     #[test]
@@ -611,7 +689,7 @@ mod tests {
         );
         assert!(prover.kernel.resolve(theorem, theorem, p).is_err());
 
-        prover.kernel.remove_theorems(&[theorem]).unwrap();
+        assert!(prover.kernel.remove_theorem(theorem));
         assert!(prover.snapshot(&theorem_id).is_err());
         assert!(prover.kernel.weaken(theorem, &[], &[]).is_err());
     }
