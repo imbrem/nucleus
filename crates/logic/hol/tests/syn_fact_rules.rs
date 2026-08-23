@@ -153,21 +153,39 @@ fn transitivity_needs_the_middle_references_to_agree_exactly() {
 }
 
 #[test]
-fn transitivity_rejects_active_substitution_on_either_side() {
+fn transitivity_carries_the_left_substitution_and_needs_a_direct_right() {
     let mut fix = Fix::new();
     let variable = fix.var(0);
     let value = fix.lit(true);
     let substitution = fix.syn_sub_var(None, variable, value).expect("sub var");
     let direct = fix.syn_refl(None, SynRel::Syn, value).expect("reflexivity");
 
-    assert_eq!(
-        invalid(&fix.syn_trans(None, substitution, direct).expect_err("left")),
-        "transitivity"
-    );
+    // `[true / x] x = true` composed with `true = true` keeps the descriptor.
+    let composed = fix
+        .syn_trans(None, substitution, direct)
+        .expect("transitivity");
+    let fact = fix.syn_fact(composed).expect("minted");
+    assert_eq!(fact.var(), Some(variable));
+    assert_eq!(fact.val(), Some(value));
+    assert_eq!(fact.input(), variable);
+    assert_eq!(fact.output(), value);
+
+    // The right-hand fact must be direct: there is no rule for composing two
+    // substitutions.
     assert_eq!(
         invalid(
             &fix.syn_trans(None, direct, substitution)
                 .expect_err("right")
+        ),
+        "transitivity"
+    );
+    let universal = fix
+        .syn_sub_leaf_forall(None, variable, value)
+        .expect("a literal is unchanged by every replacement");
+    assert_eq!(
+        invalid(
+            &fix.syn_trans(None, direct, universal)
+                .expect_err("universal right")
         ),
         "transitivity"
     );
@@ -500,17 +518,104 @@ fn congruence_requires_the_same_constructor_payload() {
 }
 
 #[test]
-fn congruence_rejects_a_half_specified_substitution() {
+fn a_replacement_without_a_variable_is_reserved_wire_data() {
     let mut fix = Fix::new();
     let truth = fix.lit(true);
     let variable = fix.var(0);
 
-    for (var, val) in [(Some(variable), None), (None, Some(truth))] {
-        let error = fix
-            .syn_congr(None, SynRel::Syn, var, val, truth, truth, &[])
-            .expect_err("half substitution");
-        assert_eq!(invalid(&error), "partial substitution");
+    let error = fix
+        .syn_congr(None, SynRel::Syn, None, Some(truth), truth, truth, &[])
+        .expect_err("a value with nothing to replace");
+    assert_eq!(invalid(&error), "partial substitution");
+
+    // A variable without a value is the universal form, and is checked.
+    assert!(
+        fix.syn_congr(None, SynRel::Syn, Some(variable), None, truth, truth, &[])
+            .is_ok()
+    );
+}
+
+#[test]
+fn a_universal_leaf_holds_for_every_compatible_replacement() {
+    let mut fix = Fix::new();
+    let star = fix.star;
+    let bool_ty = fix.bool_ty;
+    let variable = fix.var(0);
+    let other = fix.var(1);
+    let truth = fix.lit(true);
+
+    for leaf in [star, bool_ty, truth, other] {
+        let id = fix
+            .syn_sub_leaf_forall(None, variable, leaf)
+            .expect("universal leaf");
+        let fact = fix.syn_fact(id).expect("minted");
+        assert_eq!(fact.var(), Some(variable));
+        assert_eq!(fact.val(), None, "a universal fact names no replacement");
+        assert_eq!(fact.input(), leaf);
+        assert_eq!(fact.output(), leaf);
     }
+
+    // The target itself is never unchanged, and neither is a proxy.
+    assert_eq!(
+        invalid(
+            &fix.syn_sub_leaf_forall(None, variable, variable)
+                .expect_err("same variable")
+        ),
+        "substitution leaf"
+    );
+    assert_eq!(
+        invalid(
+            &fix.syn_sub_leaf_forall(None, truth, truth)
+                .expect_err("not a variable")
+        ),
+        "substitution variable"
+    );
+}
+
+#[test]
+fn a_universal_fact_survives_refinement_and_congruence() {
+    let mut fix = Fix::new();
+    let bool_ty = fix.bool_ty;
+    let variable = fix.var(0);
+    let truth = fix.lit(true);
+    let falsity = fix.lit(false);
+    let equation = fix.eq(bool_ty, truth, falsity).expect("true = false");
+
+    let left = fix
+        .syn_sub_leaf_forall(None, variable, truth)
+        .expect("universal leaf");
+    let right = fix
+        .syn_sub_leaf_forall(None, variable, falsity)
+        .expect("universal leaf");
+    let congruence = fix
+        .syn_congr(
+            None,
+            SynRel::Syn,
+            Some(variable),
+            None,
+            equation,
+            equation,
+            &[left, right],
+        )
+        .expect("congruence over a universal substitution");
+    let refined = fix
+        .syn_refine(None, congruence, SynRel::Conv)
+        .expect("refinement");
+
+    let fact = fix.syn_fact(refined).expect("minted");
+    assert_eq!(fact.var(), Some(variable));
+    assert_eq!(fact.val(), None);
+    assert_eq!(fact.rel(), SynRel::Conv);
+
+    // A universal fact is still not an equality between rows.
+    assert_eq!(
+        invalid(&fix.union_syn_fact(refined).expect_err("not direct")),
+        "equality union"
+    );
+    assert_eq!(
+        invalid(&fix.syn_symm(None, refined).expect_err("not direct")),
+        "symmetry"
+    );
 }
 
 #[test]

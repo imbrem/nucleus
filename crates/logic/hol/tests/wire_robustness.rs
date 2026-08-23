@@ -216,9 +216,10 @@ fn an_omitted_free_link_is_a_second_spelling_of_the_same_slot() {
 }
 
 #[test]
-fn half_present_substitution_endpoints_survive_as_reserved_raw_data() {
-    // The representation layer checks no claim a fact makes, so a wire fact
-    // with only one endpoint is preserved verbatim rather than rewritten.
+fn one_sided_substitution_endpoints_survive_verbatim() {
+    // `var` alone is the universal form and `val` alone is reserved, but the
+    // representation layer checks neither claim: both are preserved verbatim
+    // rather than normalized away.
     for present in ["var", "val"] {
         let arena = accepts(
             present,

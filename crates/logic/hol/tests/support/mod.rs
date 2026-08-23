@@ -490,10 +490,9 @@ pub fn assert_cache_invariants(kernel: &Kernel) {
     for (position, slot) in slots(kernel).into_iter().enumerate() {
         let Some(fact) = slot else { continue };
         let id = fact_id(position + 1);
-        assert_eq!(
-            fact.var().is_some(),
-            fact.val().is_some(),
-            "{id:?}: half-present substitution endpoints escaped a checked rule"
+        assert!(
+            fact.var().is_some() || fact.val().is_none(),
+            "{id:?}: a replacement with no variable escaped a checked rule"
         );
         if let Some(var) = fact.var() {
             assert!(
@@ -503,12 +502,13 @@ pub fn assert_cache_invariants(kernel: &Kernel) {
                 ),
                 "{id:?}: substitution target {var:?} is not a free variable row"
             );
-            let val = fact.val().expect("checked above");
-            assert_eq!(
-                kernel.category(var).expect("resident"),
-                kernel.category(val).expect("resident"),
-                "{id:?}: replacement changes syntactic category"
-            );
+            if let Some(val) = fact.val() {
+                assert_eq!(
+                    kernel.category(var).expect("resident"),
+                    kernel.category(val).expect("resident"),
+                    "{id:?}: replacement changes syntactic category"
+                );
+            }
         }
         let input = kernel.category(fact.input()).expect("resident input");
         let output = kernel.category(fact.output()).expect("resident output");
