@@ -94,10 +94,7 @@ impl CnfBuilder {
         if variable == 0 {
             return Err(Error::UnknownVariable { variable });
         }
-        validate_atom(
-            &self.kernel,
-            PropId::positive(atom).map_err(|_| Error::InvalidLiteral { literal: i64::MIN })?,
-        )?;
+        validate_atom(&self.kernel, PropId::positive(atom))?;
         match self.variables.get(&variable) {
             Some(bound) if *bound != atom => Err(Error::ConflictingVariable { variable }),
             Some(_) => Ok(()),
@@ -154,8 +151,7 @@ impl CnfBuilder {
             terms.push(build_clause(&mut self.kernel, literals, false_ref)?);
         }
         let formula = build_binary(&mut self.kernel, Op2::And, &terms, true_ref)?;
-        let formula_prop =
-            PropId::positive(formula).map_err(|_| Error::InvalidLiteral { literal: i64::MIN })?;
+        let formula_prop = PropId::positive(formula);
         let root = self.kernel.assume(formula_prop)?;
         let mut projected = Vec::with_capacity(canonical_clauses.len());
         project_clauses(&mut self.kernel, root, formula, &terms, &mut projected)?;
@@ -167,10 +163,9 @@ impl CnfBuilder {
             .zip(terms.iter().copied())
             .zip(projected)
         {
-            let theorem = self.kernel.flatten_conclusion(
-                theorem,
-                PropId::positive(term).map_err(|_| Error::NonCanonicalFormula { formula: term })?,
-            )?;
+            let theorem = self
+                .kernel
+                .flatten_conclusion(theorem, PropId::positive(term))?;
             canonical.insert(literals, (term, theorem));
         }
 
@@ -480,7 +475,7 @@ impl LratProver {
     pub fn done(self) -> Result<UnsatFormula, Error> {
         let theorem = self.refutation.ok_or(Error::NoRefutation)?;
         let sequent = self.kernel.theorem(theorem)?;
-        let formula = PropId::positive(self.formula).map_err(|_| Error::NoRefutation)?;
+        let formula = PropId::positive(self.formula);
         if sequent.premises != [formula] || !sequent.conclusions.is_empty() {
             return Err(Error::NoRefutation);
         }
@@ -529,7 +524,7 @@ impl UnsatFormula {
     /// Returns an error if the checked witness invariant is absent.
     pub fn verify(&self) -> Result<(), Error> {
         let sequent = self.kernel.theorem(self.refutation)?;
-        let formula = PropId::positive(self.formula).map_err(|_| Error::NoRefutation)?;
+        let formula = PropId::positive(self.formula);
         if sequent.premises == [formula] && sequent.conclusions.is_empty() {
             Ok(())
         } else {
@@ -574,9 +569,7 @@ fn map_dimacs(
             let atom = *variables
                 .get(&variable)
                 .ok_or(Error::UnknownVariable { variable })?;
-            let positive = PropId::positive(atom).map_err(|_| Error::InvalidLiteral {
-                literal: literal.get(),
-            })?;
+            let positive = PropId::positive(atom);
             Ok(if literal.get() > 0 {
                 positive
             } else {
@@ -630,8 +623,7 @@ fn project_clauses(
     match clauses {
         [] => Ok(()),
         [_, rest @ ..] => {
-            let proposition =
-                PropId::positive(formula).map_err(|_| Error::NonCanonicalFormula { formula })?;
+            let proposition = PropId::positive(formula);
             let children: Vec<_> = kernel
                 .children(formula)
                 .ok_or(Error::NonCanonicalFormula { formula })?
@@ -682,18 +674,11 @@ fn decode_literal(kernel: &Kernel, term: Ref, output: &mut Vec<PropId>) -> Resul
             .children(term)
             .and_then(|mut children| children.next())
             .ok_or(Error::NonCanonicalFormula { formula: term })?;
-        validate_atom(
-            kernel,
-            PropId::positive(child).map_err(|_| Error::NonCanonicalFormula { formula: term })?,
-        )?;
-        output.push(
-            PropId::positive(child)
-                .map_err(|_| Error::NonCanonicalFormula { formula: term })?
-                .negated(),
-        );
+        validate_atom(kernel, PropId::positive(child))?;
+        output.push(PropId::positive(child).negated());
         return Ok(());
     }
-    let atom = PropId::positive(term).map_err(|_| Error::NonCanonicalFormula { formula: term })?;
+    let atom = PropId::positive(term);
     validate_atom(kernel, atom)?;
     output.push(atom);
     Ok(())
@@ -710,12 +695,7 @@ mod tests {
         let bool_ty = kernel.bool_ty(star).unwrap();
         let p = kernel.tm_fv(1, bool_ty).unwrap();
         let q = kernel.tm_fv(2, bool_ty).unwrap();
-        (
-            kernel,
-            bool_ty,
-            PropId::positive(p).unwrap(),
-            PropId::positive(q).unwrap(),
-        )
+        (kernel, bool_ty, PropId::positive(p), PropId::positive(q))
     }
 
     fn dimacs(literals: impl IntoIterator<Item = i64>) -> Clause {
