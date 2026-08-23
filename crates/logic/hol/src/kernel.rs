@@ -409,6 +409,37 @@ impl Kernel {
         let domain = self.classifier(binder)?;
         let codomain = self.classifier(body)?;
         let function_ty = self.ty_arr(domain, codomain)?;
+        self.lam_at(function_ty, binder, body)
+    }
+
+    /// Appends a term abstraction at an existing function type.
+    ///
+    /// This avoids manufacturing a duplicate arrow row when a deterministic
+    /// prefix already names the required function type.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `binder` is a free term-variable row and
+    /// `function_ty` is an arrow whose endpoints equal the binder and body
+    /// types.
+    pub fn lam_at(&mut self, function_ty: Ref, binder: Ref, body: Ref) -> Result<Ref, KernelError> {
+        self.require_form::<Infallible>(binder, "tm.fv", |node| matches!(node, Node::TmFv { .. }))?;
+        self.require_category::<Infallible>(body, Sort::Tm)?;
+        let (domain, codomain) = self.type_arrow_member::<Infallible>(function_ty)?;
+        let binder_ty = self.classifier(binder)?;
+        if !self.equivalent(domain, binder_ty)? {
+            return Err(KernelError::ClassifierMismatch {
+                expected: domain,
+                actual: binder_ty,
+            });
+        }
+        let body_ty = self.classifier(body)?;
+        if !self.equivalent(codomain, body_ty)? {
+            return Err(KernelError::ClassifierMismatch {
+                expected: codomain,
+                actual: body_ty,
+            });
+        }
         self.push::<Infallible>(Row::new(Node::Lam(binder, body)).with_sort(function_ty))
     }
 
@@ -925,6 +956,22 @@ mod tests {
         assert_eq!(kernel.classifier(application).unwrap(), bool_ty);
         assert_eq!(kernel.arena().tag(identity), Some(Tag::Tm(TmTag::Lam)));
         assert_eq!(kernel.arena().context().collect::<Vec<_>>(), [equation]);
+    }
+
+    #[test]
+    fn abstraction_can_reuse_a_named_function_type() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let bool_ty = kernel.bool_ty(star).unwrap();
+        let function_ty = kernel.ty_arr(bool_ty, bool_ty).unwrap();
+        let variable = kernel.tm_fv(0, bool_ty).unwrap();
+        let abstraction = kernel.lam_at(function_ty, variable, variable).unwrap();
+
+        assert_eq!(kernel.classifier(abstraction).unwrap(), function_ty);
+        assert!(matches!(
+            kernel.lam_at(bool_ty, variable, variable),
+            Err(KernelError::WrongForm { .. })
+        ));
     }
 
     #[test]

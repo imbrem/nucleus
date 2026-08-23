@@ -1,0 +1,50 @@
+{
+  "format": "nucleus.hol.init.checked-boolean-v0",
+  "migration": "Executable first slice of theories/init.json; merge this raw declaration vocabulary into the shared constructor manifest from issue #745 before expanding beyond Boolean foundations.",
+  "declarations": [
+    {
+      "name": "star",
+      "dependencies": [],
+      "body": [{ "id": "root", "tag": "kind.star" }]
+    },
+    {
+      "name": "bool",
+      "dependencies": ["star"],
+      "body": [{ "id": "root", "tag": "ty.bool", "star": "star" }]
+    },
+    {
+      "name": "bool->bool",
+      "dependencies": ["bool"],
+      "body": [{ "id": "root", "tag": "ty.arr", "domain": "bool", "codomain": "bool" }]
+    },
+    {
+      "name": "true",
+      "dependencies": ["bool", "bool->bool"],
+      "body": [
+        { "id": "x", "tag": "tm.fv", "name": 0, "ty": "bool" },
+        { "id": "identity", "tag": "tm.lam", "function_ty": "bool->bool", "binder": "x", "body": "x" },
+        { "id": "root", "tag": "tm.eq", "bool_ty": "bool", "left": "identity", "right": "identity" }
+      ]
+    },
+    {
+      "name": "false",
+      "dependencies": ["bool", "bool->bool", "true"],
+      "body": [
+        { "id": "x", "tag": "tm.fv", "name": 1, "ty": "bool" },
+        { "id": "identity", "tag": "tm.lam", "function_ty": "bool->bool", "binder": "x", "body": "x" },
+        { "id": "y", "tag": "tm.fv", "name": 2, "ty": "bool" },
+        { "id": "constant_true", "tag": "tm.lam", "function_ty": "bool->bool", "binder": "y", "body": "true" },
+        { "id": "root", "tag": "tm.eq", "bool_ty": "bool", "left": "identity", "right": "constant_true" }
+      ]
+    },
+    {
+      "name": "not",
+      "dependencies": ["bool", "bool->bool", "false"],
+      "body": [
+        { "id": "x", "tag": "tm.fv", "name": 3, "ty": "bool" },
+        { "id": "is_false", "tag": "tm.eq", "bool_ty": "bool", "left": "x", "right": "false" },
+        { "id": "root", "tag": "tm.lam", "function_ty": "bool->bool", "binder": "x", "body": "is_false" }
+      ]
+    }
+  ]
+}

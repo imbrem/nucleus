@@ -15,5 +15,8 @@ covalence-logic-cas = { path = "../cas" }
 serde = { version = "1", features = ["derive"] }
 smallvec = { version = "1", features = ["serde"] }
 
+[dev-dependencies]
+covalence-lib-json = { path = "../../lib/json" }
+
 [lints]
 workspace = true

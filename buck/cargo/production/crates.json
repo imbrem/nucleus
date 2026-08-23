@@ -901,6 +901,13 @@
     },
     {
       "source": "workspace#covalence-logic-hol@0.0.0",
+      "target": "workspace#covalence-lib-json@0.0.0",
+      "kinds": [
+        "dev"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-hol@0.0.0",
       "target": "workspace#covalence-logic-cas@0.0.0",
       "kinds": [
         "normal"
