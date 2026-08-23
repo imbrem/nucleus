@@ -1,0 +1,31 @@
+[package]
+name = "covalence-proof-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Portable Nucleus proof host component"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+bytes = "1"
+covalence-data-cas = { path = "../../data/cas" }
+covalence-lib-hash = { path = "../../lib/hash", default-features = false, features = ["blake3"] }
+covalence-logic-cas = { path = "../../logic/cas" }
+covalence-logic-hol = { path = "../../logic/hol" }
+wit-bindgen-rt = { version = "=0.44.0", features = ["bitflags"] }
+
+[package.metadata.component]
+package = "nucleus:proof-host"
+
+[package.metadata.component.target]
+path = "../../../wit/proof"
+world = "kernel-host"
+
+[package.metadata.component.dependencies]
+
+[lints]
+workspace = true

@@ -769,6 +769,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "covalence-proof-host"
+version = "0.0.0"
+dependencies = [
+ "bytes",
+ "covalence-data-cas",
+ "covalence-lib-hash",
+ "covalence-logic-cas",
+ "covalence-logic-hol",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "covalence-proton"
 version = "0.0.0"
 
