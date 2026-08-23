@@ -79,13 +79,20 @@ impl Runner {
             ],
         )?;
         self.artifact_shell(&generated)?;
+        self.artifact_proof_host(&generated)?;
 
         // Stage the package so this build uses its own configuration.
         copy_dir(&package.join("src"), &staged.join("src"))?;
-        copy_dir(
-            &package.join("node_modules/@bytecodealliance/preview2-shim"),
-            &staged.join("node_modules/@bytecodealliance/preview2-shim"),
-        )?;
+        for dependency in ["jco", "jco-transpile", "preview2-shim"] {
+            copy_dir(
+                &package
+                    .join("node_modules/@bytecodealliance")
+                    .join(dependency),
+                &staged
+                    .join("node_modules/@bytecodealliance")
+                    .join(dependency),
+            )?;
+        }
         fs::copy(package.join("tsconfig.json"), staged.join("tsconfig.json"))
             .wrap_err("could not stage tsconfig.json")?;
         let dist = out.join("dist");
@@ -216,6 +223,62 @@ impl Runner {
         })();
         let cleanup = fs::remove_dir_all(&component_target)
             .wrap_err("could not remove component target directory");
+        result.and(cleanup)
+    }
+
+    fn artifact_proof_host(&self, generated: &Path) -> Result<()> {
+        let temp = env::temp_dir();
+        let temp = if temp.is_absolute() && !temp.starts_with(self.root()) {
+            temp
+        } else {
+            PathBuf::from("/tmp")
+        };
+        let component_target = temp.join(format!("nucleus-proof-host-target-{}", process::id()));
+        fs::create_dir_all(&component_target)
+            .wrap_err("could not create proof host target directory")?;
+        let result = (|| {
+            self.run_with_env(
+                "compile the proof host component",
+                "cargo",
+                [
+                    "component",
+                    "build",
+                    "--locked",
+                    "--target-dir",
+                    as_utf8(&component_target, "temporary target")?,
+                    "--profile",
+                    "wasm-release",
+                    "-p",
+                    "covalence-proof-host",
+                ],
+                &[
+                    ("CARGO_TARGET_DIR", component_target.as_os_str()),
+                    ("TMPDIR", component_target.as_os_str()),
+                ],
+            )?;
+            self.run(
+                "generate proof host bindings",
+                "pnpm",
+                [
+                    "--filter",
+                    "@nucleus/nucleus",
+                    "exec",
+                    "jco",
+                    "transpile",
+                    as_utf8(
+                        &component_target
+                            .join("wasm32-wasip1/wasm-release/covalence_proof_host.wasm"),
+                        "proof host component",
+                    )?,
+                    "--out-dir",
+                    as_utf8(&generated.join("proof-host"), "proof host output")?,
+                    "--name",
+                    "host",
+                ],
+            )
+        })();
+        let cleanup = fs::remove_dir_all(&component_target)
+            .wrap_err("could not remove proof host target directory");
         result.and(cleanup)
     }
 
