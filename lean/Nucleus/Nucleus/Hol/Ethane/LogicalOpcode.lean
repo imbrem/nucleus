@@ -14,6 +14,7 @@ namespace Nucleus.Hol.Ethane.LogicalOpcode
 
 open Nucleus Nucleus.Hol.Ethane Nucleus.Hol.Ethane.OneBased
 set_option relaxedAutoImplicit true
+set_option linter.style.nativeDecide false
 
 namespace Raw
 
@@ -164,15 +165,15 @@ def sameOpcodeHead : OneBased.detail.Expr → OneBased.detail.Expr → Bool
   | .op2 left _ _, .op2 right _ _ => left == right
   | _, _ => false
 
+set_option linter.flexible false in
 theorem sameOpcodeHead_sound {left right : OneBased.detail.Expr}
     (same : sameOpcodeHead left right = true) :
     (∃ op leftOperand rightOperand,
         left = .op1 op leftOperand ∧ right = .op1 op rightOperand) ∨
       ∃ op leftA leftB rightA rightB,
         left = .op2 op leftA leftB ∧ right = .op2 op rightA rightB := by
-  cases left <;> cases right <;>
-    simp_all [sameOpcodeHead] <;>
-    first | exact Or.inl ⟨_, _, _, rfl, rfl⟩ | exact Or.inr ⟨_, _, _, _, _, rfl, rfl⟩
+  cases left <;> cases right <;> simp_all [sameOpcodeHead]
+  exact ⟨.not⟩
 
 theorem same_op1_lower {left right : OneBased.EmptyTm}
     (equal : left = right) :

@@ -12,6 +12,10 @@ Natural and byte operations are intentionally not reserved by this version.
 
 namespace Nucleus.Hol.Ethane.Builtin
 
+set_option relaxedAutoImplicit true
+set_option maxRecDepth 100000
+set_option linter.style.nativeDecide false
+
 def version : Nat := 1
 def op1RowTag : String := "tm.op1.v1"
 def op2RowTag : String := "tm.op2.v1"
@@ -38,7 +42,12 @@ def registry : List RegistryEntry := [
   ⟨"op2", 2, "imp", ["bool", "bool"], "bool"⟩]
 
 example : registrySource =
-    "# Ethane compact builtin registry v1. This is syntax, not the init manifest.\n# version\tfamily\tcode\tname\toperands\tresult\n1\top1\t0\tnot\tbool\tbool\n1\top2\t0\tand\tbool,bool\tbool\n1\top2\t1\tor\tbool,bool\tbool\n1\top2\t2\timp\tbool,bool\tbool\n" := rfl
+    "# Ethane compact builtin registry v1. This is syntax, not the init manifest.\n" ++
+    "# version\tfamily\tcode\tname\toperands\tresult\n" ++
+    "1\top1\t0\tnot\tbool\tbool\n" ++
+    "1\top2\t0\tand\tbool,bool\tbool\n" ++
+    "1\top2\t1\tor\tbool,bool\tbool\n" ++
+    "1\top2\t2\timp\tbool,bool\tbool\n" := by decide
 
 inductive Op1 where
   | not
@@ -235,13 +244,13 @@ example : op2Row .imp 1 2 =
 private def wire (xs : List UInt8) : Nucleus.Bytes := ⟨xs.toByteArray⟩
 
 example : Nucleus.CborWire.deterministic? (op1Row .not 1) = some (wire [
-    0xa3, 0x63, 0x74, 0x61, 0x67, 0x69, 0x74, 0x6d, 0x2e, 0x6f, 0x70, 0x31,
-    0x2e, 0x76, 0x31, 0x63, 0x69, 0x78, 0x73, 0x81, 0x01, 0x63, 0x76, 0x61,
+    0xa3, 0x63, 0x69, 0x78, 0x73, 0x81, 0x01, 0x63, 0x74, 0x61, 0x67, 0x69,
+    0x74, 0x6d, 0x2e, 0x6f, 0x70, 0x31, 0x2e, 0x76, 0x31, 0x63, 0x76, 0x61,
     0x6c, 0x00]) := by native_decide
 
 example : Nucleus.CborWire.deterministic? (op2Row .imp 1 2) = some (wire [
-    0xa3, 0x63, 0x74, 0x61, 0x67, 0x69, 0x74, 0x6d, 0x2e, 0x6f, 0x70, 0x32,
-    0x2e, 0x76, 0x31, 0x63, 0x69, 0x78, 0x73, 0x82, 0x01, 0x02, 0x63, 0x76,
+    0xa3, 0x63, 0x69, 0x78, 0x73, 0x82, 0x01, 0x02, 0x63, 0x74, 0x61, 0x67,
+    0x69, 0x74, 0x6d, 0x2e, 0x6f, 0x70, 0x32, 0x2e, 0x76, 0x31, 0x63, 0x76,
     0x61, 0x6c, 0x02]) := by native_decide
 
 example : Op1.ofCode? 1 = none := rfl

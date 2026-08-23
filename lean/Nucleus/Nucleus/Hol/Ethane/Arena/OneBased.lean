@@ -289,8 +289,6 @@ namespace detail
 inductive Value where
   | nat (value : UInt64)
   | bool (value : Bool)
-  | op1 (op : Nucleus.Hol.Ethane.Builtin.Op1) (operand : Ref)
-  | op2 (op : Nucleus.Hol.Ethane.Builtin.Op2) (left right : Ref)
   deriving DecidableEq, Repr
 
 /-- A private expression row after exact arity and payload validation. -/
@@ -310,6 +308,8 @@ inductive Expr where
   | app (function argument : Ref)
   | lam (binder body : Ref)
   | bool (value : Bool)
+  | op1 (op : Nucleus.Hol.Ethane.Builtin.Op1) (operand : Ref)
+  | op2 (op : Nucleus.Hol.Ethane.Builtin.Op2) (left right : Ref)
   /-- Equality operands; their common type is recovered during checking. -/
   | eq (left right : Ref)
   | eps (type predicate : Ref)
@@ -404,9 +404,9 @@ def Row.ofView? (view : RowView) : Option Row := do
     | .tm .lam, some [binder, body], none, none, none => some (.lam binder body)
     | .tm .bool, none, some (.bool value), none, none => some (.bool value)
     | .tm .op1, some [operand], some (.nat code), none, none =>
-        return .op1 (← Nucleus.Hol.Ethane.Builtin.Op1.ofUInt64? code) operand
+        some (.op1 (← Nucleus.Hol.Ethane.Builtin.Op1.ofUInt64? code) operand)
     | .tm .op2, some [left, right], some (.nat code), none, none =>
-        return .op2 (← Nucleus.Hol.Ethane.Builtin.Op2.ofUInt64? code) left right
+        some (.op2 (← Nucleus.Hol.Ethane.Builtin.Op2.ofUInt64? code) left right)
     | .tm .eq, some [left, right], none, none, none => some (.eq left right)
     | .tm .eps, some [type, predicate], none, none, none => some (.eps type predicate)
     | .tm .ref, none, none, some src, some ix => some (.tmRef src ix)
@@ -417,7 +417,9 @@ def Row.ofView? (view : RowView) : Option Row := do
 
 @[simp] theorem Row.ofView?_toView (row : Row) : Row.ofView? row.toView = some row := by
   cases row with
-  | mk expr eq sort => cases expr <;> rfl
+  | mk expr eq sort =>
+      cases expr <;> try rfl
+      case mk.op2 op left right => cases op <;> rfl
 
 end detail
 
