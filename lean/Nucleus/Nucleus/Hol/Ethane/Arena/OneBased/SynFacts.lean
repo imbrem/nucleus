@@ -62,8 +62,9 @@ def IsProxy : detail.Expr → Prop
   | .tmRef .. | .tyRef .. | .kindRef .. => True
   | _ => False
 
-/-- Literal leaves accepted by Rust `syn_sub_leaf`.  A free-variable caller
-must additionally establish that its category/name differs from the target. -/
+/-- Root shapes considered by Rust `syn_sub_leaf`. A free-variable caller must
+also establish that its category/name differs from the target; a `tmFv` caller
+must additionally prove that the target does not occur in its type child. -/
 def ActiveSubstitutionLeaf : detail.Expr → Prop
   | .kindStar | .boolTy | .bool _ | .tyFv .. | .tmFv .. => True
   | _ => False
@@ -393,6 +394,8 @@ restriction is imposed by `Congruence` below. -/
 inductive NamedSubstitution (needle replacement : EmptySyn) :
     EmptySyn → EmptySyn → Prop where
   | hit : NamedSubstitution needle replacement needle replacement
+  | miss (absent : ¬ NamedSubstitution.Occurs needle input) :
+      NamedSubstitution needle replacement input input
   | congr (different : ¬ NamedSubstitution.SameVariableName needle input)
       (head : NamedSubstitution.SameHead input output)
       (children : List.Forall₂ (NamedSubstitution needle replacement)
@@ -454,6 +457,43 @@ inductive NamedSubstitution (needle replacement : EmptySyn) :
       (termNeedle : NamedSubstitution.IsTmVariable needle)
       (bodyStep : NamedSubstitution needle replacement body body') :
       NamedSubstitution needle replacement (.model name body) (.model name body')
+
+/-- The exact named-syntax criterion behind Rust
+`require_substitution_leaf`. A term variable is a leaf only when the
+substituted variable is absent from its type annotation; comparing the two
+variable names alone is insufficient because `Model` embeds terms in types. -/
+inductive NamedSubstitution.LeafInvariant (needle : EmptySyn) : EmptySyn → Prop where
+  | boolTy : LeafInvariant needle .boolTy
+  | bool (value : Bool) : LeafInvariant needle (.bool value)
+  | tyFv {name : Nat} {kind : Kind}
+      (different : ¬ SameVariableName needle (.tyFv name kind)) :
+      LeafInvariant needle (.tyFv name kind)
+  | tmFv {name : Nat} {type : EmptySyn}
+      (different : ¬ SameVariableName needle (.tmFv name type))
+      (annotationFree : ¬ Occurs needle type) :
+      LeafInvariant needle (.tmFv name type)
+
+/-- The leaf check supplies precisely the child derivation required by `tmFv`
+congruence. -/
+theorem NamedSubstitution.LeafInvariant.substitution
+    (checked : LeafInvariant needle input) :
+    NamedSubstitution needle replacement input input := by
+  cases checked with
+  | boolTy =>
+      exact .congr (by simp [SameVariableName]) .boolTy (by simp [children])
+  | bool value =>
+      exact .congr (by simp [SameVariableName]) .bool (by simp [children])
+  | tyFv different => exact .congr different .tyFv (by simp [children])
+  | tmFv different annotationFree =>
+      apply NamedSubstitution.congr different .tmFv
+      exact .cons (.miss annotationFree) .nil
+
+/-- Every checked term-variable leaf carries its annotation obligation. -/
+theorem NamedSubstitution.LeafInvariant.tmFv_annotationFree
+    (checked : LeafInvariant needle (.tmFv name type)) :
+    ¬ Occurs needle type := by
+  cases checked with
+  | tmFv _ annotationFree => exact annotationFree
 
 /-- The generic unchanged-leaf derivation used by both concrete and universal
 Rust leaf rules. -/

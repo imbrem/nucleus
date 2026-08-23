@@ -132,17 +132,19 @@ l is *, 2, true, false, or a free variable with a different name from x
 [a/x]l =_syn l
 ```
 
-The free-variable line abbreviates exactly these cases:
+The free-variable line abbreviates these cases:
 
 - type variable `x` and a differently named type variable `l`;
 - term variable `x` and any type variable `l`;
-- term variable `x` and a differently named term variable `l`.
+- a term-variable `l` whose name differs from `x` when `x` is also a term
+  variable, provided `x` does not occur in `l`'s type annotation.
 
-A type variable `x` with a term-variable `l` is rejected because substitution
-must descend into `l`'s type child. An imported proxy is not a leaf for this
-rule. Lean: `detail.Expr.ActiveSubstitutionLeaf`,
-`NamedSubstitution.leaf`, and `SynInference.substitutionUnchanged` once that
-leaf derivation is resolved.
+A term-variable annotation is part of its syntax: `Model` can embed a term in
+a type, and a type variable may occur there directly. An imported proxy is not
+a leaf for this rule. Lean: `NamedSubstitution.LeafInvariant`, its
+`substitution` and `tmFv_annotationFree` theorems, and
+`SynInference.substitutionUnchanged` once the resolved leaf derivation is
+available.
 
 ### Universally unchanged leaf: `Kernel::syn_sub_leaf_forall`
 
@@ -153,12 +155,11 @@ l is *, 2, true, false, or a free variable with a different name from x
 [·/x]l =_syn l
 ```
 
-The accepted variable combinations are exactly the three cases listed for
+The accepted cases and annotation obligation are the same as for
 `syn_sub_leaf` above.
 
 Lean: `SynInference.universalSubstitutionUnchanged` quantifies over compatible
-well-formed replacements; each instance uses `NamedSubstitution.leaf` (and
-ultimately `NamedSubstitution.congr`) with an empty child derivation.
+well-formed replacements; each instance uses the same checked leaf invariant.
 
 ### Syntactic identity: `Kernel::syn_sub_identity`
 
