@@ -229,6 +229,11 @@ def Sound (sequent : Sequent) : Prop := ∀ valuation, Holds valuation sequent
 def SoundUnder (admissible : Valuation → Prop) (sequent : Sequent) : Prop :=
   ∀ valuation, admissible valuation → Holds valuation sequent
 
+theorem soundUnder_of_sound {admissible : Valuation → Prop} {sequent : Sequent}
+    (sound : Sound sequent) : SoundUnder admissible sequent := by
+  intro valuation _allowed
+  exact sound valuation
+
 def Thm.sequent (fact : Thm) : Sequent :=
   ⟨fact.premises.asSet, fact.conclusions.asSet⟩
 
@@ -331,29 +336,33 @@ theorem reuse?_preserves_live_sound {admissible : Valuation → Prop}
         exact beforeSound id fact live
     next => contradiction
 
-theorem identity (id : PropId) : Sound ⟨{id}, {id}⟩ := by
-  intro valuation premises
+theorem identity {admissible : Valuation → Prop} (id : PropId) :
+    SoundUnder admissible ⟨{id}, {id}⟩ := by
+  intro valuation _allowed premises
   exact ⟨id, by simp, premises id (by simp)⟩
 
-theorem weaken {source target : Sequent} (sound : Sound source)
-    (prem : source.prem ⊆ target.prem) (conc : source.conc ⊆ target.conc) : Sound target := by
-  intro valuation targetPremises
-  obtain ⟨id, member, truth⟩ := sound valuation fun id member => targetPremises id (prem member)
+theorem weaken {admissible : Valuation → Prop} {source target : Sequent}
+    (sound : SoundUnder admissible source)
+    (prem : source.prem ⊆ target.prem) (conc : source.conc ⊆ target.conc) :
+    SoundUnder admissible target := by
+  intro valuation allowed targetPremises
+  obtain ⟨id, member, truth⟩ := sound valuation allowed fun id member =>
+    targetPremises id (prem member)
   exact ⟨id, conc member, truth⟩
 
 /-- Gentzen cut: remove the same signed proposition from the left conclusion
 and the right premise. -/
-theorem cut (pivot : PropId) {left right : Sequent}
-    (leftSound : Sound left) (rightSound : Sound right)
+theorem cut {admissible : Valuation → Prop} (pivot : PropId) {left right : Sequent}
+    (leftSound : SoundUnder admissible left) (rightSound : SoundUnder admissible right)
     (_leftPivot : pivot ∈ left.conc) (_rightPivot : pivot ∈ right.prem) :
-    Sound ⟨left.prem ∪ right.prem.erase pivot,
+    SoundUnder admissible ⟨left.prem ∪ right.prem.erase pivot,
       left.conc.erase pivot ∪ right.conc⟩ := by
-  intro valuation premises
-  obtain ⟨id, member, truth⟩ := leftSound valuation fun id member =>
+  intro valuation allowed premises
+  obtain ⟨id, member, truth⟩ := leftSound valuation allowed fun id member =>
     premises id (by simp [member])
   by_cases same : id = pivot
   · subst id
-    obtain ⟨rightId, rightMember, rightTruth⟩ := rightSound valuation (by
+    obtain ⟨rightId, rightMember, rightTruth⟩ := rightSound valuation allowed (by
       intro id member
       by_cases pivotMember : id = pivot
       · subst id
@@ -363,21 +372,21 @@ theorem cut (pivot : PropId) {left right : Sequent}
   · exact ⟨id, by simp [member, same], truth⟩
 
 /-- Cut/resolution on complementary signed references. -/
-theorem resolution (pivot : PropId) {left right : Sequent}
-    (leftSound : Sound left) (rightSound : Sound right)
+theorem resolution {admissible : Valuation → Prop} (pivot : PropId) {left right : Sequent}
+    (leftSound : SoundUnder admissible left) (rightSound : SoundUnder admissible right)
     (_leftPivot : pivot ∈ left.conc) (_rightPivot : pivot.neg ∈ right.conc) :
-    Sound ⟨left.prem ∪ right.prem,
+    SoundUnder admissible ⟨left.prem ∪ right.prem,
       left.conc.erase pivot ∪ right.conc.erase pivot.neg⟩ := by
-  intro valuation premises
+  intro valuation allowed premises
   by_cases pivotTrue : pivot.eval valuation
-  · obtain ⟨id, member, truth⟩ := rightSound valuation (by
+  · obtain ⟨id, member, truth⟩ := rightSound valuation allowed (by
       intro id member
       exact premises id (by simp [member]))
     by_cases same : id = pivot.neg
     · subst id
       exact ((PropId.eval_neg valuation pivot).mp truth pivotTrue).elim
     · exact ⟨id, by simp [member, same], truth⟩
-  · obtain ⟨id, member, truth⟩ := leftSound valuation (by
+  · obtain ⟨id, member, truth⟩ := leftSound valuation allowed (by
       intro id member
       exact premises id (by simp [member]))
     by_cases same : id = pivot
@@ -517,11 +526,11 @@ matching the Rust API.
 
 /-- Rust `Kernel::not_left`: move an arbitrary signed conclusion across the
 turnstile, complementing its `PropId` polarity. -/
-theorem polarityLeft {proposition : PropId} {prem conc : PropSet}
-    (source : Sound ⟨prem, insert proposition conc⟩) :
-    Sound ⟨insert proposition.neg prem, conc⟩ := by
-  intro valuation premises
-  obtain ⟨id, member, truth⟩ := source valuation fun id member =>
+theorem polarityLeft {admissible : Valuation → Prop} {proposition : PropId}
+    {prem conc : PropSet} (source : SoundUnder admissible ⟨prem, insert proposition conc⟩) :
+    SoundUnder admissible ⟨insert proposition.neg prem, conc⟩ := by
+  intro valuation allowed premises
+  obtain ⟨id, member, truth⟩ := source valuation allowed fun id member =>
     premises id (by simp [member])
   simp only [Finset.mem_insert] at member
   rcases member with rfl | member
@@ -531,12 +540,12 @@ theorem polarityLeft {proposition : PropId} {prem conc : PropSet}
 
 /-- Rust `Kernel::not_right`: move an arbitrary signed premise across the
 turnstile, complementing its `PropId` polarity. -/
-theorem polarityRight {proposition : PropId} {prem conc : PropSet}
-    (source : Sound ⟨insert proposition prem, conc⟩) :
-    Sound ⟨prem, insert proposition.neg conc⟩ := by
-  intro valuation premises
+theorem polarityRight {admissible : Valuation → Prop} {proposition : PropId}
+    {prem conc : PropSet} (source : SoundUnder admissible ⟨insert proposition prem, conc⟩) :
+    SoundUnder admissible ⟨prem, insert proposition.neg conc⟩ := by
+  intro valuation allowed premises
   by_cases truth : proposition.eval valuation
-  · obtain ⟨id, member, valid⟩ := source valuation (by
+  · obtain ⟨id, member, valid⟩ := source valuation allowed (by
       intro id member
       simp only [Finset.mem_insert] at member
       rcases member with rfl | member
@@ -998,13 +1007,17 @@ example : testLiveStore.delete? testThmId = some testDeadStore := rfl
 example : testDeadStore.lookup testThmId = none := rfl
 example : testDeadStore.reuse? testFact = some (testThmId, testLiveStore) := rfl
 private theorem testFact_sound : testFact.Sound := by
-  simpa [testFact, testArray, Thm.Sound, Thm.sequent, CanonicalArray.asSet] using
-    identity testId
+  intro valuation premises
+  exact ⟨testId, by simp [testFact, testArray, Thm.sequent,
+    CanonicalArray.asSet], premises testId (by simp [testFact, testArray,
+      Thm.sequent, CanonicalArray.asSet])⟩
 
 example (source : Sound ⟨∅, {testId}⟩) : Sound ⟨{testId.neg}, ∅⟩ :=
-  polarityLeft (proposition := testId) (prem := ∅) (conc := ∅) source
+  fun valuation => polarityLeft (admissible := fun _ => True) (proposition := testId)
+    (prem := ∅) (conc := ∅) (soundUnder_of_sound source) valuation trivial
 
 example (source : Sound ⟨{testId}, ∅⟩) : Sound ⟨∅, {testId.neg}⟩ :=
-  polarityRight (proposition := testId) (prem := ∅) (conc := ∅) source
+  fun valuation => polarityRight (admissible := fun _ => True) (proposition := testId)
+    (prem := ∅) (conc := ∅) (soundUnder_of_sound source) valuation trivial
 
 end Nucleus.Hol.Ethane.ClassicalSequent
