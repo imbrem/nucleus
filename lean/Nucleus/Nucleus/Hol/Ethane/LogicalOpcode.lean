@@ -18,8 +18,8 @@ set_option linter.style.nativeDecide false
 
 namespace Raw
 
-def one : OneBased.Ref := ⟨1, by decide⟩
-def two : OneBased.Ref := ⟨2, by decide⟩
+def one : OneBased.Ref := ⟨1, by decide, by decide⟩
+def two : OneBased.Ref := ⟨2, by decide, by decide⟩
 
 def op1Row (op : Builtin.Op1) : OneBased.detail.Row :=
   { expr := .op1 op one }
