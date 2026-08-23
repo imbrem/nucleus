@@ -5,7 +5,7 @@
 mod support;
 
 use covalence_logic_hol::{Kernel, KernelError, Ref, SynRel};
-use support::{Fix, fact_id};
+use support::{Fix, assert_cache_invariants, fact_id};
 
 const RELATIONS: [SynRel; 3] = [SynRel::Syn, SynRel::Alpha, SynRel::Conv];
 
@@ -616,6 +616,7 @@ fn a_universal_fact_survives_refinement_and_congruence() {
         invalid(&fix.syn_symm(None, refined).expect_err("not direct")),
         "symmetry"
     );
+    assert_cache_invariants(&fix.kernel);
 }
 
 #[test]
