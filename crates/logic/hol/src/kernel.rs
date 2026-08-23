@@ -80,6 +80,9 @@ where
         /// Proxy row encountered while traversing the copied syntax.
         reference: Ref,
     },
+    /// Kernels do not share the same deterministic initialization prefix.
+    #[snafu(display("kernel init prefixes do not match"))]
+    InitPrefixMismatch,
     /// A constructor requires a particular row form.
     #[snafu(display("reference {reference:?} has tag {actual:?}, but {expected} was required"))]
     WrongForm {
@@ -164,6 +167,7 @@ impl CopyMap {
 #[derive(Debug, Default)]
 pub struct Kernel {
     arena: Arena,
+    init_prefix: Option<(crate::O256, usize)>,
 }
 
 impl Deref for Kernel {
@@ -180,7 +184,20 @@ impl Kernel {
     pub const fn new() -> Self {
         Self {
             arena: Arena::empty(),
+            init_prefix: None,
         }
+    }
+
+    /// Creates a checked kernel whose first rows are a compiled init prefix.
+    pub(crate) fn with_init_prefix(arena: Arena) -> Self {
+        let init_prefix = Some((arena.addr(), arena.len()));
+        Self { arena, init_prefix }
+    }
+
+    /// Returns the compiled init-prefix address and row count, when present.
+    #[must_use]
+    pub const fn init_prefix(&self) -> Option<(crate::O256, usize)> {
+        self.init_prefix
     }
 
     /// Borrows the underlying raw arena.
@@ -199,15 +216,15 @@ impl Kernel {
     ///
     /// The copy preserves sharing, introduces no import, and retains no
     /// borrow of `source`. Equality, context, proof metadata, and syntactic
-    /// facts are deliberately not copied. Kernels currently have no shared
-    /// deterministic initialization prefix; recognizing such a prefix as
-    /// identity can be added later without changing [`CopyMap`].
+    /// facts are deliberately not copied. References in a matching compiled
+    /// init prefix are identities and are never appended.
     ///
     /// # Errors
     ///
     /// Returns an error if the root is not a term or its reachable syntax is
-    /// missing, cyclic, imported, or fails checked kinding or typing. The
-    /// destination is unchanged on error.
+    /// missing, cyclic, imported, or fails checked kinding or typing, or if
+    /// the kernels have different init prefixes. The destination is unchanged
+    /// on error.
     pub fn copy_term_from(&mut self, source: &Self, root: Ref) -> Result<CopyMap, KernelError> {
         self.copy_terms_from(source, &[root])
     }
@@ -221,22 +238,35 @@ impl Kernel {
     /// # Errors
     ///
     /// Returns an error if a root is not a term or reachable syntax is
-    /// missing, cyclic, imported, or fails checked kinding or typing. All
-    /// validation and capacity checks precede mutation, so failure is atomic.
+    /// missing, cyclic, imported, or fails checked kinding or typing, or if
+    /// the kernels have different init prefixes. All validation and capacity
+    /// checks precede mutation, so failure is atomic.
     pub fn copy_terms_from(
         &mut self,
         source: &Self,
         roots: &[Ref],
     ) -> Result<CopyMap, KernelError> {
+        if self.init_prefix != source.init_prefix {
+            return Err(KernelError::InitPrefixMismatch);
+        }
         for &root in roots {
             source.require_category::<Infallible>(root, Sort::Tm)?;
         }
 
         let mut state = BTreeMap::<Ref, bool>::new();
         let mut order = Vec::new();
+        let mut nodes = BTreeMap::new();
+        let prefix_len = self.init_prefix.map_or(0, |(_, len)| len);
         for &root in roots {
             let mut stack = vec![(root, false)];
             while let Some((reference, expanded)) = stack.pop() {
+                let reference_index = usize::try_from(reference.get())
+                    .map_err(|_| KernelError::TooManyDefinitions)?;
+                if reference_index <= prefix_len {
+                    state.insert(reference, true);
+                    nodes.insert(reference, reference);
+                    continue;
+                }
                 if expanded {
                     state.insert(reference, true);
                     order.push(reference);
@@ -273,7 +303,6 @@ impl Kernel {
             .ok_or(KernelError::TooManyDefinitions)?;
         u64::try_from(final_len).map_err(|_| KernelError::TooManyDefinitions)?;
 
-        let mut nodes = BTreeMap::new();
         for (offset, &source_ref) in order.iter().enumerate() {
             let value = self.arena.len() + offset + 1;
             let destination =
@@ -283,6 +312,7 @@ impl Kernel {
         }
         let mut staged = Self {
             arena: self.arena.clone(),
+            init_prefix: self.init_prefix,
         };
         for &source_ref in &order {
             let row = source.row::<Infallible>(source_ref)?;
