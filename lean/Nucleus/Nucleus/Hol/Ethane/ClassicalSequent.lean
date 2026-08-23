@@ -181,6 +181,25 @@ def ThmStore.reuse? (store : ThmStore) (replacement : Thm) : Option (ThmId × Th
           free := rest })
       else none
 
+/-- Transactional in-place mutation used only by production `weaken`,
+`not_left`, and `not_right`. A missing/dead handle leaves no successor state;
+the checked canonical replacement is committed atomically. -/
+def ThmStore.mutate? (store : ThmStore) (id : ThmId) (replacement : Thm) : Option ThmStore :=
+  if store.lookup id |>.isSome then
+    some { store with thms := store.thms.set id.position replacement }
+  else none
+
+/-- Persistent theorem copy into a removed slot. The fresh-append allocation
+case has the same logical contract and differs only in vector growth. -/
+def ThmStore.copyReuse? (store : ThmStore) (source : ThmId) : Option (ThmId × ThmStore) :=
+  store.lookup source |>.bind store.reuse?
+
+/-- Single-theorem removal with the public Boolean result. -/
+def ThmStore.removeTheorem (store : ThmStore) (id : ThmId) : Bool × ThmStore :=
+  match store.delete? id with
+  | some after => (true, after)
+  | none => (false, store)
+
 /-- A compact theorem row: `prem |- conc`. -/
 structure Sequent where
   prem : PropSet
@@ -335,6 +354,51 @@ theorem reuse?_preserves_live_sound {admissible : Valuation → Prop}
         simp only [Ne.symm samePosition, ↓reduceIte] at live
         exact beforeSound id fact live
     next => contradiction
+
+/-- A successful transactional in-place rule preserves every live theorem.
+This single storage theorem applies to `weaken`, `not_left`, and `not_right`;
+their calculus theorems supply `replacementSound`. -/
+theorem mutate?_preserves_live_sound {admissible : Valuation → Prop}
+    {before after : ThmStore} {id : ThmId} {replacement : Thm}
+    (beforeSound : before.LiveSoundUnder admissible)
+    (replacementSound : replacement.SoundUnder admissible)
+    (result : before.mutate? id replacement = some after) :
+    after.LiveSoundUnder admissible := by
+  simp only [ThmStore.mutate?] at result
+  split at result
+  next liveTarget =>
+    simp only [Option.some.injEq] at result
+    subst after
+    intro queried fact live
+    simp only [ThmStore.lookup] at live ⊢
+    by_cases samePosition : queried.position = id.position
+    · have same : queried = id := ThmId.position_injective samePosition
+      subst queried
+      rw [List.getElem?_set] at live
+      simp only [↓reduceIte] at live
+      have inBounds : id.position < before.thms.length := by
+        by_contra outOfBounds
+        simp [outOfBounds] at live
+      simp only [inBounds] at live
+      split at live <;> simp_all
+    · rw [List.getElem?_set] at live
+      simp only [Ne.symm samePosition, ↓reduceIte] at live
+      exact beforeSound queried fact live
+  next => contradiction
+
+/-- Copying a live theorem into the next reusable slot preserves all live
+truth, while retaining the source handle for persistent consumers. -/
+theorem copyReuse?_preserves_live_sound {admissible : Valuation → Prop}
+    {before after : ThmStore} {source copied : ThmId}
+    (beforeSound : before.LiveSoundUnder admissible)
+    (result : before.copyReuse? source = some (copied, after)) :
+    after.LiveSoundUnder admissible := by
+  unfold ThmStore.copyReuse? at result
+  cases found : before.lookup source with
+  | none => simp [found] at result
+  | some fact =>
+      simp only [found, Option.bind_some] at result
+      exact reuse?_preserves_live_sound beforeSound (beforeSound source fact found) result
 
 theorem identity {admissible : Valuation → Prop} (id : PropId) :
     SoundUnder admissible ⟨{id}, {id}⟩ := by
@@ -1168,10 +1232,15 @@ shape. -/
 
 private def testId : PropId := ⟨-1, by decide, by decide⟩
 private def testThmId : ThmId := ⟨1, by decide⟩
+private def testThmId2 : ThmId := ⟨2, by decide⟩
 private def testArray : CanonicalArray := ⟨[testId], by decide, by decide⟩
 private def testFact : Thm := ⟨testArray, testArray⟩
 private def testLiveStore : ThmStore := ⟨[testFact], [true], []⟩
 private def testDeadStore : ThmStore := ⟨[testFact], [false], [testThmId]⟩
+private def testCopySource : ThmStore :=
+  ⟨[testFact, testFact], [true, false], [testThmId2]⟩
+private def testCopyResult : ThmStore :=
+  ⟨[testFact, testFact], [true, true], []⟩
 
 example : testId.ref = 1 := rfl
 example : testId.neg.val = 1 := rfl
@@ -1184,8 +1253,12 @@ example : Sound ⟨{testId, testId.neg}, ∅⟩ := contradiction testId
 
 example : testLiveStore.lookup testThmId = some testFact := rfl
 example : testLiveStore.delete? testThmId = some testDeadStore := rfl
+example : testLiveStore.removeTheorem testThmId = (true, testDeadStore) := rfl
+example : testDeadStore.removeTheorem testThmId = (false, testDeadStore) := rfl
 example : testDeadStore.lookup testThmId = none := rfl
 example : testDeadStore.reuse? testFact = some (testThmId, testLiveStore) := rfl
+example : testLiveStore.mutate? testThmId testFact = some testLiveStore := rfl
+example : testCopySource.copyReuse? testThmId = some (testThmId2, testCopyResult) := rfl
 private theorem testFact_sound : testFact.Sound := by
   intro valuation premises
   exact ⟨testId, by simp [testFact, testArray, Thm.sequent,
