@@ -9,9 +9,11 @@ whose denotation is checked against resolved, named Ethane syntax; free slots
 contain only allocator links.
 
 The three relations are nested: literal syntax refines named alpha, which
-refines the existing alpha-beta-eta conversion judgment.  A fact with no
-`var`/`val` pair is direct.  A fact with both is about capture-avoiding
-substitution.  Half-present pairs deliberately have no denotation.
+refines the existing alpha-beta-eta conversion judgment.  A fact with neither
+`var` nor `val` is direct; one with both is a concrete capture-avoiding
+substitution. With `var` present and `val` absent, a fact quantifies over every
+well-formed, classifier-compatible replacement. `val` without `var` remains
+reserved.
 
 `Model` remains opaque to conversion.  Alpha-renaming its implicit binder is
 available through named alpha, but the local conversion-congruence interface
@@ -30,21 +32,25 @@ def Direct (fact : SynFact) : Prop := fact.var = none ∧ fact.val = none
 def Active (fact : SynFact) : Prop := ∃ subVar value,
   fact.var = some subVar ∧ fact.val = some value
 
-/-- The checked API accepts both substitution endpoints or neither. -/
-def EndpointsValid (fact : SynFact) : Prop := fact.Direct ∨ fact.Active
+/-- A universal substitution fact leaves `val` absent: it holds for every
+well-formed replacement compatible with `var`. -/
+def Universal (fact : SynFact) : Prop := ∃ subVar,
+  fact.var = some subVar ∧ fact.val = none
+
+/-- The checked API accepts a direct fact, a universal substitution, or a
+concrete substitution.  `var = none, val = some _` remains reserved. -/
+def EndpointsValid (fact : SynFact) : Prop :=
+  fact.Direct ∨ fact.Universal ∨ fact.Active
 
 theorem endpointsValid_iff (fact : SynFact) : fact.EndpointsValid ↔
     (fact.var = none ∧ fact.val = none) ∨
+      (∃ subVar, fact.var = some subVar ∧ fact.val = none) ∨
       ∃ subVar value, fact.var = some subVar ∧ fact.val = some value :=
   Iff.rfl
 
-theorem not_endpointsValid_var_only {rel : SynRel} {subVar input output : Ref} :
-    ¬ EndpointsValid { rel, var := some subVar, val := none, input, output } := by
-  simp [EndpointsValid, Direct, Active]
-
 theorem not_endpointsValid_val_only {rel : SynRel} {value input output : Ref} :
     ¬ EndpointsValid { rel, var := none, val := some value, input, output } := by
-  simp [EndpointsValid, Direct, Active]
+  simp [EndpointsValid, Direct, Universal, Active]
 
 end SynFact
 
@@ -449,6 +455,16 @@ inductive NamedSubstitution (needle replacement : EmptySyn) :
       (bodyStep : NamedSubstitution needle replacement body body') :
       NamedSubstitution needle replacement (.model name body) (.model name body')
 
+/-- The generic unchanged-leaf derivation used by both concrete and universal
+Rust leaf rules. -/
+theorem NamedSubstitution.leaf
+    (different : ¬ NamedSubstitution.SameVariableName needle input)
+    (head : NamedSubstitution.SameHead input input)
+    (noChildren : NamedSubstitution.children input = []) :
+    NamedSubstitution needle replacement input input := by
+  refine NamedSubstitution.congr different head ?_
+  simp [noChildren]
+
 /-- Semantic result of the local capture-avoiding substitution checker.
 Resolved kinds contain no named syntax and are unchanged; all other values
 carry a concrete recursive named-syntax derivation. -/
@@ -478,11 +494,39 @@ def LocalSynMeaning (relation : SynRel) (subVar replacement : Option Value)
     (input output : Value) : Prop :=
   match subVar, replacement with
   | none, none => Compatible input output ∧ SynRel.Holds relation input output
+  | some subVar, none =>
+      ∀ replacement, replacement.WellFormed → Compatible subVar replacement →
+        ∃ substituted, Substitutes subVar replacement input substituted ∧
+          substituted.WellFormed ∧ Compatible substituted output ∧
+          SynRel.Holds relation substituted output
   | some subVar, some replacement =>
       ∃ substituted, Substitutes subVar replacement input substituted ∧
         substituted.WellFormed ∧ Compatible substituted output ∧
         SynRel.Holds relation substituted output
   | _, _ => False
+
+/-- An observational, substitution-level formulation of `subVar` not being
+free in `input`: every compatible well-formed replacement leaves the resolved
+syntax unchanged.  Relating this predicate to the finite named `fvars` set
+requires the usual no-name-confusion hypothesis because the Rust checker
+conservatively rejects equal names with different classifiers. -/
+def SubstitutionFree (subVar input : Value) : Prop :=
+  ∀ replacement, replacement.WellFormed → Compatible subVar replacement →
+    Substitutes subVar replacement input input
+
+/-- Literal equality plus substitution-freeness is sufficient for the
+universal `syn` fact.  This is the proved direction of the expected
+`[·/x]a =_syn b` characterization; the converse needs substitution
+determinism and the finite-FV/no-name-confusion bridge. -/
+theorem universal_syn_of_literal_and_substitution_free
+    (free : SubstitutionFree subVar input)
+    (inputWellFormed : input.WellFormed)
+    (compatible : Compatible input output)
+    (literal : SyntaxEqual input output) :
+    LocalSynMeaning .syn (some subVar) none input output := by
+  intro replacement replacementWellFormed replacementCompatible
+  exact ⟨input, free replacement replacementWellFormed replacementCompatible,
+    inputWellFormed, compatible, literal⟩
 
 /-- A checked structural congruence step.  `underModel` identifies the one
 opaque family constructor; conversion congruence is forbidden there. -/
@@ -516,6 +560,13 @@ inductive SynInference : SynRel → Option Value → Option Value →
       (compatible : Value.Compatible substituted output)
       (related : SynRel.Holds relation substituted output) :
       SynInference relation (some subVar) (some replacement) input output
+  | universalSubstitution
+      (substitutes : ∀ replacement, replacement.WellFormed →
+        Value.Compatible subVar replacement →
+        ∃ substituted, Value.Substitutes subVar replacement input substituted ∧
+          substituted.WellFormed ∧ Value.Compatible substituted output ∧
+          SynRel.Holds relation substituted output) :
+      SynInference relation (some subVar) none input output
   | refine (source : SynInference finer subVar replacement input output)
       (refinement : finer.Refines relation)
       (inputWellFormed : input.WellFormed)
@@ -565,11 +616,65 @@ private theorem meaning_refine
   · exact ⟨source.1, source.2.refine refinement source.1
       inputWellFormed outputWellFormed⟩
   · exact False.elim source
-  · exact False.elim source
+  · intro replacement replacementWellFormed compatibleReplacement
+    rcases source replacement replacementWellFormed compatibleReplacement with
+      ⟨substituted, substitutes, substitutedWellFormed, compatible, related⟩
+    exact ⟨substituted, substitutes, substitutedWellFormed, compatible,
+      related.refine refinement compatible substitutedWellFormed outputWellFormed⟩
   · rcases source with ⟨substituted, substitutes,
       substitutedWellFormed, compatible, related⟩
     exact ⟨substituted, substitutes, substitutedWellFormed, compatible,
       related.refine refinement compatible substitutedWellFormed outputWellFormed⟩
+
+/-- Compose any direct, universal, or concrete-substitution judgment on the
+left with a direct judgment on the right.  The substitution endpoints are
+preserved; both input relations may be weakened to the result relation.  This
+is the semantic rule implemented by Rust `Kernel::syn_trans`. -/
+theorem SynMeaning.trans_direct
+    (left : SynMeaning leftRelation subVar replacement input middle)
+    (right : SynMeaning rightRelation none none middle output)
+    (leftRefines : leftRelation.Refines relation)
+    (rightRefines : rightRelation.Refines relation)
+    (inputWellFormed : input.WellFormed)
+    (middleWellFormed : middle.WellFormed)
+    (outputWellFormed : output.WellFormed) :
+    SynMeaning relation subVar replacement input output := by
+  unfold SynMeaning Value.LocalSynMeaning at left right ⊢
+  rcases right with ⟨middleOutputCompatible, middleOutputRelated⟩
+  cases subVar <;> cases replacement
+  · rcases left with ⟨inputMiddleCompatible, inputMiddleRelated⟩
+    have inputOutputCompatible :=
+      inputMiddleCompatible.trans middleWellFormed middleOutputCompatible
+    exact ⟨inputOutputCompatible,
+      (inputMiddleRelated.refine leftRefines inputMiddleCompatible
+          inputWellFormed middleWellFormed).trans middleWellFormed
+        (middleOutputRelated.refine rightRefines middleOutputCompatible
+          middleWellFormed outputWellFormed)⟩
+  · exact False.elim left
+  · intro universalReplacement universalReplacementWellFormed
+      universalReplacementCompatible
+    rcases left universalReplacement universalReplacementWellFormed
+      universalReplacementCompatible with
+      ⟨substituted, substitutes, substitutedWellFormed,
+        substitutedMiddleCompatible, substitutedMiddleRelated⟩
+    have substitutedOutputCompatible :=
+      substitutedMiddleCompatible.trans middleWellFormed middleOutputCompatible
+    exact ⟨substituted, substitutes, substitutedWellFormed,
+      substitutedOutputCompatible,
+      (substitutedMiddleRelated.refine leftRefines substitutedMiddleCompatible
+          substitutedWellFormed middleWellFormed).trans middleWellFormed
+        (middleOutputRelated.refine rightRefines middleOutputCompatible
+          middleWellFormed outputWellFormed)⟩
+  · rcases left with ⟨substituted, substitutes, substitutedWellFormed,
+        substitutedMiddleCompatible, substitutedMiddleRelated⟩
+    have substitutedOutputCompatible :=
+      substitutedMiddleCompatible.trans middleWellFormed middleOutputCompatible
+    exact ⟨substituted, substitutes, substitutedWellFormed,
+      substitutedOutputCompatible,
+      (substitutedMiddleRelated.refine leftRefines substitutedMiddleCompatible
+          substitutedWellFormed middleWellFormed).trans middleWellFormed
+        (middleOutputRelated.refine rightRefines middleOutputCompatible
+          middleWellFormed outputWellFormed)⟩
 
 /-- Every local inference denotes its advertised direct or substitution
 judgment.  This is the LCF soundness theorem used by the checked constructor. -/
@@ -579,6 +684,7 @@ theorem sound (inference : SynInference relation subVar replacement input output
   | direct compatible related => exact ⟨compatible, related⟩
   | substitution substitutes substitutedWellFormed compatible related =>
       exact ⟨_, substitutes, substitutedWellFormed, compatible, related⟩
+  | universalSubstitution substitutes => exact substitutes
   | refine source refinement inputWellFormed outputWellFormed sourceSound =>
       exact meaning_refine sourceSound refinement inputWellFormed outputWellFormed
   | congr rule => exact rule.semantic
@@ -597,6 +703,28 @@ theorem sound (inference : SynInference relation subVar replacement input output
           exact ⟨Value.Compatible.term classifierConversion,
             Value.equal_term_eta sourceWellFormed targetWellFormed
               classifierConversion step⟩
+
+/-- Proof-relevant form of `Kernel::syn_trans`: the left premise may carry a
+universal or concrete substitution, while the right premise must be direct. -/
+theorem transDirect
+    (left : SynInference leftRelation subVar replacement input middle)
+    (right : SynInference rightRelation none none middle output)
+    (leftRefines : leftRelation.Refines relation)
+    (rightRefines : rightRelation.Refines relation)
+    (inputWellFormed : input.WellFormed)
+    (middleWellFormed : middle.WellFormed)
+    (outputWellFormed : output.WellFormed) :
+    SynInference relation subVar replacement input output := by
+  have meaning := SynMeaning.trans_direct left.sound right.sound leftRefines
+    rightRefines inputWellFormed middleWellFormed outputWellFormed
+  unfold SynMeaning Value.LocalSynMeaning at meaning
+  cases subVar <;> cases replacement
+  · exact .direct meaning.1 meaning.2
+  · exact False.elim meaning
+  · exact .universalSubstitution meaning
+  · rcases meaning with ⟨substituted, substitutes, substitutedWellFormed,
+      compatible, related⟩
+    exact .substitution substitutes substitutedWellFormed compatible related
 
 theorem refine_direct (source : SynRel.Holds finer input output)
     (refinement : finer.Refines relation)
@@ -654,6 +782,11 @@ def Valid (resolve : Resolver) (arena : Arena) (fact : SynFact) : Prop :=
     input.WellFormed ∧ output.WellFormed ∧ input.Compatible output ∧
     match fact.var, fact.val with
     | none, none => SynMeaning fact.rel none none input output
+    | some variableRef, none =>
+        ∃ subVar,
+          Resolves resolve arena.withoutSyn variableRef subVar ∧
+          subVar.WellFormed ∧
+          SynMeaning fact.rel (some subVar) none input output
     | some variableRef, some replacementRef =>
         ∃ subVar replacement,
           Resolves resolve arena.withoutSyn variableRef subVar ∧
@@ -669,8 +802,8 @@ theorem Valid.endpointsValid (valid : SynFact.Valid resolve arena fact) :
   cases varEq : fact.var <;> cases valEq : fact.val
   · exact Or.inl ⟨varEq, valEq⟩
   · simp [varEq, valEq] at valid
-  · simp [varEq, valEq] at valid
-  · exact Or.inr ⟨_, _, varEq, valEq⟩
+  · exact Or.inr (Or.inl ⟨_, varEq, valEq⟩)
+  · exact Or.inr (Or.inr ⟨_, _, varEq, valEq⟩)
 
 /-- The checked LCF wrapper.  Code consuming facts should accept this type;
 unchecked wire payloads become checked only through `ofInference`. -/
@@ -689,6 +822,11 @@ def Checked.ofInference {resolve : Resolver} {arena : Arena} {fact : SynFact}
     (inputCompatible : input.Compatible output)
     (inference : match fact.var, fact.val with
       | none, none => SynInference fact.rel none none input output
+      | some variableRef, none =>
+          ∃ subVar,
+            Resolves resolve arena.withoutSyn variableRef subVar ∧
+            subVar.WellFormed ∧
+            SynInference fact.rel (some subVar) none input output
       | some variableRef, some replacementRef =>
           ∃ subVar replacement,
             Resolves resolve arena.withoutSyn variableRef subVar ∧
@@ -702,7 +840,9 @@ def Checked.ofInference {resolve : Resolver} {arena : Arena} {fact : SynFact}
   · simp only [varEq, valEq] at inference ⊢
     exact SynInference.sound inference
   · simp only [varEq, valEq] at inference
-  · simp only [varEq, valEq] at inference
+  · simp only [varEq, valEq] at inference ⊢
+    rcases inference with ⟨subVar, variableResolves, variableWellFormed, derivation⟩
+    exact ⟨subVar, variableResolves, variableWellFormed, derivation.sound⟩
   · simp only [varEq, valEq] at inference
     rcases inference with ⟨subVar, replacement, variableResolves,
       replacementResolves, variableWellFormed, replacementWellFormed, derivation⟩

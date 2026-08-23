@@ -34,10 +34,11 @@ impl SynRel {
 
 /// A wire relation between `[val / var] input` and `output`.
 ///
-/// With both endpoints absent this is a direct fact; with both present it is
-/// a substitution fact. Half-present endpoints are reserved and currently
-/// have no checked meaning. Deserializing an [`Arena`](crate::Arena) does not
-/// check these claims; facts returned by [`Kernel::syn_fact`](crate::Kernel::syn_fact)
+/// With both endpoints absent this is a direct fact. With `var` present and
+/// `val` absent it holds for every compatible replacement; with both present
+/// it is a concrete substitution fact. `val` without `var` is reserved and has
+/// no checked meaning. Deserializing an [`Arena`](crate::Arena) does not check
+/// these claims; facts returned by [`Kernel::syn_fact`](crate::Kernel::syn_fact)
 /// have instead been introduced by checked kernel rules.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -133,10 +134,25 @@ mod tests {
     }
 
     #[test]
-    fn half_present_endpoints_round_trip_as_reserved_raw_data() {
+    fn universal_endpoints_round_trip() {
         let input = Ref::new(1).unwrap();
         let output = Ref::new(2).unwrap();
         let fact = SynFact::new(SynRel::Syn, Some(input), None, input, output);
+        let mut arena = Arena::empty();
+        let id = arena.push_syn_fact(fact).unwrap();
+
+        let mut encoded = Vec::new();
+        wire::serialize(&arena, &mut encoded).unwrap();
+        let decoded = wire::deserialize(encoded.as_slice()).unwrap();
+
+        assert_eq!(decoded.syn_fact(id), Some(fact));
+    }
+
+    #[test]
+    fn reserved_val_only_endpoints_round_trip_as_raw_data() {
+        let input = Ref::new(1).unwrap();
+        let output = Ref::new(2).unwrap();
+        let fact = SynFact::new(SynRel::Syn, None, Some(output), input, output);
         let mut arena = Arena::empty();
         let id = arena.push_syn_fact(fact).unwrap();
 
