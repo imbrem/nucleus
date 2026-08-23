@@ -6823,6 +6823,15 @@
       ]
     },
     {
+      "id": "workspace#covalence-proof-host@0.0.0",
+      "name": "covalence-proof-host",
+      "category": "tcb",
+      "dependencies": [
+        "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+        "registry+https://github.com/rust-lang/crates.io-index#wit-bindgen-rt@0.44.0"
+      ]
+    },
+    {
       "id": "workspace#covalence-repl@0.0.0",
       "name": "covalence-repl",
       "category": "tcb",

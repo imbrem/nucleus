@@ -597,6 +597,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-proof-host@0.0.0",
+      "name": "covalence-proof-host",
+      "version": "0.0.0",
+      "path": "crates/proof/host",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_proof_host",
+          "kinds": [
+            "cdylib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-proton@0.0.0",
       "name": "covalence-proton",
       "version": "0.0.0",
@@ -1058,6 +1073,34 @@
     {
       "source": "workspace#covalence-nucleus@0.0.0",
       "target": "workspace#covalence-neutron@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-proof-host@0.0.0",
+      "target": "workspace#covalence-data-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-proof-host@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-proof-host@0.0.0",
+      "target": "workspace#covalence-logic-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-proof-host@0.0.0",
+      "target": "workspace#covalence-logic-hol@0.0.0",
       "kinds": [
         "normal"
       ]

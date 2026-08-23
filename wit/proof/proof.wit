@@ -275,3 +275,8 @@ world standard-proof {
     import host;
     export standard;
 }
+
+/// A portable implementation of the complete proof host interface.
+world kernel-host {
+    export host;
+}
