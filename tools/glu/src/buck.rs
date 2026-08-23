@@ -148,9 +148,16 @@ rust_test(
     crate_root = {{ target.crate_root|tojson }},
     edition = {{ target.edition|tojson }},
     srcs = _RUST_SOURCES,
-{%- if target.features %}
+{%- if target.test_mapped_srcs %}
+    mapped_srcs = {
+{%- for source, destination in target.test_mapped_srcs %}
+        {{ source|tojson }}: {{ destination|tojson }},
+{%- endfor %}
+    },
+{%- endif %}
+{%- if target.test_features %}
     features = [
-{%- for feature in target.features %}
+{%- for feature in target.test_features %}
         {{ feature|tojson }},
 {%- endfor %}
     ],
@@ -214,6 +221,7 @@ struct RustTarget {
     /// Kept separate so a dev-dependency cannot leak into the library, which
     /// is the whole reason Cargo distinguishes them.
     test_named_deps: Vec<(String, String)>,
+    test_features: Vec<String>,
     proc_macro: bool,
     buildscript: Option<String>,
     env: Vec<(String, String)>,
@@ -222,6 +230,8 @@ struct RustTarget {
     /// Separate from `env` because pointing the *library* at its package's
     /// binary makes the library depend on the binary that depends on it.
     test_env: Vec<(String, String)>,
+    /// Additional sources and their local paths needed only by test code.
+    test_mapped_srcs: Vec<(String, String)>,
     unit_test: bool,
 }
 
@@ -729,15 +739,17 @@ impl<'a> Graph<'a> {
                 ));
             }
         }
+        let (features, test_features) = buck_features(package, self.features(&package.id))?;
         Ok(Some(RustTarget {
             rule,
             name: target.name.clone(),
             crate_name: target.name.replace('-', "_"),
             crate_root,
             edition: package.edition.to_string(),
-            features: self.features(&package.id),
+            features,
             named_deps,
             test_named_deps,
+            test_features,
             proc_macro: target.kind.contains(&TargetKind::ProcMacro),
             buildscript: buildscript
                 .map(|buildscript| format!("{}-build-script-run", buildscript.name)),
@@ -747,6 +759,7 @@ impl<'a> Graph<'a> {
                 env
             },
             test_env,
+            test_mapped_srcs: buck_test_mapped_srcs(package)?,
             unit_test: is_library(target) || target.kind.contains(&TargetKind::Bin),
         }))
     }
@@ -1185,6 +1198,63 @@ fn buck_builds(package: &Package) -> bool {
         .and_then(|glu| glu.get("buck"))
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(true)
+}
+
+fn buck_metadata_strings(package: &Package, key: &str) -> Result<Vec<String>> {
+    let Some(value) = package.metadata.get("glu").and_then(|glu| glu.get(key)) else {
+        return Ok(Vec::new());
+    };
+    let values = value.as_array().ok_or_else(|| {
+        color_eyre::eyre::eyre!(
+            "package {} metadata.glu.{key} must be an array",
+            package.name,
+        )
+    })?;
+    values
+        .iter()
+        .map(|value| {
+            value.as_str().map(ToOwned::to_owned).ok_or_else(|| {
+                color_eyre::eyre::eyre!(
+                    "package {} metadata.glu.{key} entries must be strings",
+                    package.name,
+                )
+            })
+        })
+        .collect()
+}
+
+fn buck_features(package: &Package, features: Vec<String>) -> Result<(Vec<String>, Vec<String>)> {
+    let mut test_features = features.clone();
+    test_features.extend(buck_metadata_strings(package, "buck-test-features")?);
+    test_features.sort();
+    test_features.dedup();
+    Ok((features, test_features))
+}
+
+/// Extra sources and their local paths needed to compile test code under Buck.
+fn buck_test_mapped_srcs(package: &Package) -> Result<Vec<(String, String)>> {
+    let Some(values) = package
+        .metadata
+        .get("glu")
+        .and_then(|glu| glu.get("buck-test-mapped-srcs"))
+        .and_then(serde_json::Value::as_object)
+    else {
+        return Ok(Vec::new());
+    };
+    values
+        .iter()
+        .map(|(source, destination)| {
+            destination.as_str().map_or_else(
+                || {
+                    Err(color_eyre::eyre::eyre!(
+                        "package {} metadata.glu.buck-test-mapped-srcs values must be strings",
+                        package.name
+                    ))
+                },
+                |destination| Ok((source.clone(), destination.to_owned())),
+            )
+        })
+        .collect::<Result<_>>()
 }
 
 fn is_library(target: &Target) -> bool {

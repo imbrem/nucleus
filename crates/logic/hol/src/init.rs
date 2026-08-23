@@ -7,6 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use covalence_lib_error::snafu::Snafu;
+use covalence_lib_hash::O256;
 use serde::{Deserialize, Serialize};
 
 use crate::{Arena, Kernel, KernelError, Ref};
@@ -24,6 +25,28 @@ pub struct Manifest {
     pub migration: String,
     /// Definitions in dependency order.
     pub declarations: Vec<Declaration>,
+}
+
+impl Manifest {
+    /// Returns the canonical content hash of this complete manifest record.
+    ///
+    /// The hash covers the deterministic CBOR encoding of every manifest
+    /// field, including the format, migration note, declaration names,
+    /// dependencies, and raw rows. This is distinct from [`Arena::addr`],
+    /// which hashes only the compiled arena prefix and deliberately excludes
+    /// names and migration metadata.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if this manifest's derived Serde implementation rejects
+    /// encoding to an in-memory buffer.
+    #[must_use]
+    pub fn addr(&self) -> O256 {
+        let mut bytes = Vec::new();
+        covalence_lib_cbor::into_writer(self, &mut bytes)
+            .expect("serializing a checked init manifest into memory cannot fail");
+        O256::from_bytes(&bytes)
+    }
 }
 
 /// One named raw definition.
@@ -88,6 +111,7 @@ pub enum RawNode {
 pub struct Compiled {
     arena: Arena,
     names: BTreeMap<String, Ref>,
+    manifest_addr: O256,
 }
 
 impl Compiled {
@@ -95,6 +119,15 @@ impl Compiled {
     #[must_use]
     pub const fn arena(&self) -> &Arena {
         &self.arena
+    }
+
+    /// Returns the complete source-manifest hash used for this compilation.
+    ///
+    /// Unlike [`Arena::addr`], this changes when stable names or migration
+    /// metadata change even if the compiled arena prefix stays identical.
+    #[must_use]
+    pub const fn manifest_addr(&self) -> O256 {
+        self.manifest_addr
     }
 
     /// Resolves one stable declaration name.
@@ -281,6 +314,7 @@ pub fn compile(manifest: &Manifest) -> Result<Compiled, CompileError> {
     Ok(Compiled {
         arena: kernel.into_arena(),
         names: globals,
+        manifest_addr: manifest.addr(),
     })
 }
 
@@ -288,10 +322,16 @@ pub fn compile(manifest: &Manifest) -> Result<Compiled, CompileError> {
 mod tests {
     use super::*;
     use crate::wire;
-    use covalence_lib_hash::O256;
     use covalence_lib_json::serde_json;
 
+    #[cfg(not(feature = "buck-test-fixtures"))]
     const FIXTURE: &str = include_str!("../../../../theories/init-boolean.checked.json");
+    #[cfg(feature = "buck-test-fixtures")]
+    const FIXTURE: &str = include_str!("../theories/init-boolean.checked.json");
+    #[cfg(not(feature = "buck-test-fixtures"))]
+    const SCHEMA: &str = include_str!("../../../../theories/init-boolean.checked.schema.json");
+    #[cfg(feature = "buck-test-fixtures")]
+    const SCHEMA: &str = include_str!("../theories/init-boolean.checked.schema.json");
 
     #[test]
     fn fixture_compiles_deterministically_and_round_trips() {
@@ -323,6 +363,44 @@ mod tests {
             O256::from_hex("64582137d813f1d11a144f41b409c9312727a2d9c8808579ce781f975a73e1bb")
                 .unwrap()
         );
+        assert_eq!(
+            first.manifest_addr(),
+            O256::from_hex("a7c1fd3c6304047b8ff60fcf3d4411c5b2eff9d297bbb12d0737d71aa5403f54")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn manifest_hash_covers_names_and_migration_beyond_the_arena_prefix() {
+        let manifest: Manifest = serde_json::from_str(FIXTURE).unwrap();
+        let compiled = compile(&manifest).unwrap();
+
+        let mut renamed = manifest.clone();
+        renamed.declarations.last_mut().unwrap().name = "logical-not".into();
+        let renamed = compile(&renamed).unwrap();
+        assert_eq!(renamed.arena().addr(), compiled.arena().addr());
+        assert_ne!(renamed.manifest_addr(), compiled.manifest_addr());
+
+        let mut migrated = manifest.clone();
+        migrated.migration.push_str(" (updated)");
+        let migrated = compile(&migrated).unwrap();
+        assert_eq!(migrated.arena().addr(), compiled.arena().addr());
+        assert_ne!(migrated.manifest_addr(), compiled.manifest_addr());
+    }
+
+    #[test]
+    fn free_variable_names_match_the_schema_u64_boundaries() {
+        let schema: serde_json::Value = serde_json::from_str(SCHEMA).unwrap();
+        assert_eq!(
+            schema["$defs"]["tmFv"]["properties"]["name"]["maximum"],
+            u64::MAX
+        );
+
+        let at_max = FIXTURE.replacen("\"name\": 0", &format!("\"name\": {}", u64::MAX), 1);
+        assert!(serde_json::from_str::<Manifest>(&at_max).is_ok());
+
+        let above_max = FIXTURE.replacen("\"name\": 0", "\"name\": 18446744073709551616", 1);
+        assert!(serde_json::from_str::<Manifest>(&above_max).is_err());
     }
 
     #[test]
