@@ -21,8 +21,8 @@ pub struct PropId(NonZeroI64);
 
 /// A compact, not-necessarily-canonical sequence of propositions.
 ///
-/// Kernel rule boundaries validate, sort, and deduplicate these sequences
-/// before storing them in a theorem.
+/// Kernel rule boundaries validate these sequences without changing their
+/// order or multiplicity.
 pub type PropVec = SmallVec<[PropId; 2]>;
 
 /// A failure to construct a losslessly negatable proposition identifier.
@@ -128,26 +128,17 @@ pub struct Thm {
 }
 
 impl Thm {
-    /// Returns the canonical sorted, deduplicated premises.
+    /// Returns the valid premises in their stored order, including duplicates.
     #[must_use]
     pub fn premises(&self) -> &[PropId] {
         &self.premises
     }
 
-    /// Returns the canonical sorted, deduplicated conclusions.
+    /// Returns the valid conclusions in their stored order, including duplicates.
     #[must_use]
     pub fn conclusions(&self) -> &[PropId] {
         &self.conclusions
     }
-}
-
-/// A singleton-conclusion theorem view suitable for ordinary HOL consumers.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct HolTheorem<'a> {
-    /// Canonical assumptions.
-    pub assumptions: &'a [PropId],
-    /// The sole signed Boolean conclusion.
-    pub conclusion: PropId,
 }
 
 #[derive(Debug, Default)]
@@ -184,40 +175,23 @@ impl Kernel {
             .ok_or(KernelError::MissingTheorem { id })
     }
 
-    /// Recovers a theorem whose conclusion has exactly one proposition.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error unless the theorem exists and has one conclusion.
-    pub fn hol_theorem(&self, id: ThmId) -> Result<HolTheorem<'_>, KernelError> {
-        let sequent = self.theorem(id)?;
-        let [conclusion] = sequent.conclusions() else {
-            return Err(KernelError::InvalidTheoremRule {
-                rule: "singleton conclusion",
-            });
-        };
-        Ok(HolTheorem {
-            assumptions: sequent.premises(),
-            conclusion: *conclusion,
-        })
-    }
-
     /// Introduces the identity sequent `[p] |- [p]`.
     ///
     /// # Errors
     ///
     /// Returns an error if `p` is not Boolean or allocation fails.
-    pub fn identity(&mut self, p: PropId) -> Result<ThmId, KernelError> {
-        self.push_sequent(&[p], &[p])
+    pub fn identity(&mut self, target: Option<ThmId>, p: PropId) -> Result<ThmId, KernelError> {
+        self.push_sequent(target, &[p], &[p])
     }
 
-    /// Weakens either side by union with the supplied propositions.
+    /// Weakens either side by appending the supplied propositions.
     ///
     /// # Errors
     ///
     /// Returns an error for missing evidence, invalid propositions, or allocation failure.
     pub fn weaken(
         &mut self,
+        target: Option<ThmId>,
         theorem: ThmId,
         premises: &[PropId],
         conclusions: &[PropId],
@@ -227,7 +201,7 @@ impl Kernel {
         premises_out.extend_from_slice(premises);
         let mut conclusions_out = old.conclusions;
         conclusions_out.extend_from_slice(conclusions);
-        self.push_sequent(&premises_out, &conclusions_out)
+        self.push_sequent(target, &premises_out, &conclusions_out)
     }
 
     /// Cuts a proposition occurring on opposite sides of two sequents.
@@ -240,6 +214,7 @@ impl Kernel {
     /// the required conclusion and premise.
     pub fn cut(
         &mut self,
+        target: Option<ThmId>,
         left: ThmId,
         right: ThmId,
         proposition: PropId,
@@ -248,8 +223,8 @@ impl Kernel {
         let rhs = self.theorem(right)?.clone();
         let mut left_conclusions = lhs.conclusions.clone();
         let mut right_premises = rhs.premises.clone();
-        if !remove_sorted(&mut left_conclusions, proposition)
-            || !remove_sorted(&mut right_premises, proposition)
+        if !remove_one(&mut left_conclusions, proposition)
+            || !remove_one(&mut right_premises, proposition)
         {
             return Err(KernelError::InvalidTheoremRule { rule: "cut" });
         }
@@ -257,7 +232,7 @@ impl Kernel {
         premises.extend_from_slice(&right_premises);
         let mut conclusions = left_conclusions;
         conclusions.extend_from_slice(&rhs.conclusions);
-        self.push_sequent(&premises, &conclusions)
+        self.push_sequent(target, &premises, &conclusions)
     }
 
     /// Introduces falsity on the left.
@@ -266,11 +241,15 @@ impl Kernel {
     ///
     /// Returns an error unless `falsehood` is a signed Boolean literal whose
     /// checked constant value is false.
-    pub fn false_left(&mut self, falsehood: PropId) -> Result<ThmId, KernelError> {
+    pub fn false_left(
+        &mut self,
+        target: Option<ThmId>,
+        falsehood: PropId,
+    ) -> Result<ThmId, KernelError> {
         if self.signed_bool_value(falsehood)? != Some(false) {
             return Err(KernelError::InvalidTheoremRule { rule: "false left" });
         }
-        self.push_sequent(&[falsehood], &[])
+        self.push_sequent(target, &[falsehood], &[])
     }
 
     /// Introduces truth on the right.
@@ -279,11 +258,15 @@ impl Kernel {
     ///
     /// Returns an error unless `truth` is a signed Boolean literal whose
     /// checked constant value is true.
-    pub fn true_right(&mut self, truth: PropId) -> Result<ThmId, KernelError> {
+    pub fn true_right(
+        &mut self,
+        target: Option<ThmId>,
+        truth: PropId,
+    ) -> Result<ThmId, KernelError> {
         if self.signed_bool_value(truth)? != Some(true) {
             return Err(KernelError::InvalidTheoremRule { rule: "true right" });
         }
-        self.push_sequent(&[], &[truth])
+        self.push_sequent(target, &[], &[truth])
     }
 
     /// Moves a conclusion to the left with complementary polarity.
@@ -293,15 +276,20 @@ impl Kernel {
     /// # Errors
     ///
     /// Returns an error unless `p` occurs in the conclusion.
-    pub fn not_left(&mut self, theorem: ThmId, p: PropId) -> Result<ThmId, KernelError> {
+    pub fn not_left(
+        &mut self,
+        target: Option<ThmId>,
+        theorem: ThmId,
+        p: PropId,
+    ) -> Result<ThmId, KernelError> {
         let source = self.theorem(theorem)?.clone();
         let mut conclusions = source.conclusions.clone();
-        if !remove_sorted(&mut conclusions, p) {
+        if !remove_one(&mut conclusions, p) {
             return Err(KernelError::InvalidTheoremRule { rule: "not left" });
         }
         let mut premises = source.premises;
         premises.push(p.negated());
-        self.push_sequent(&premises, &conclusions)
+        self.push_sequent(target, &premises, &conclusions)
     }
 
     /// Moves a premise to the right with complementary polarity.
@@ -311,15 +299,20 @@ impl Kernel {
     /// # Errors
     ///
     /// Returns an error unless `p` occurs in the premise.
-    pub fn not_right(&mut self, theorem: ThmId, p: PropId) -> Result<ThmId, KernelError> {
+    pub fn not_right(
+        &mut self,
+        target: Option<ThmId>,
+        theorem: ThmId,
+        p: PropId,
+    ) -> Result<ThmId, KernelError> {
         let source = self.theorem(theorem)?.clone();
         let mut premises = source.premises.clone();
-        if !remove_sorted(&mut premises, p) {
+        if !remove_one(&mut premises, p) {
             return Err(KernelError::InvalidTheoremRule { rule: "not right" });
         }
         let mut conclusions = source.conclusions;
         conclusions.push(p.negated());
-        self.push_sequent(&premises, &conclusions)
+        self.push_sequent(target, &premises, &conclusions)
     }
 
     /// Folds two conjunct premises into their checked conjunction opcode.
@@ -328,7 +321,12 @@ impl Kernel {
     ///
     /// Returns an error unless both operands occur in the premise and
     /// `conjunction` is their positive `tm.and` opcode.
-    pub fn and_left(&mut self, theorem: ThmId, conjunction: PropId) -> Result<ThmId, KernelError> {
+    pub fn and_left(
+        &mut self,
+        target: Option<ThmId>,
+        theorem: ThmId,
+        conjunction: PropId,
+    ) -> Result<ThmId, KernelError> {
         let (left, right) = self.require_binary(conjunction, Op2::And)?;
         let source = self.theorem(theorem)?.clone();
         let mut premises = source.premises.clone();
@@ -337,16 +335,17 @@ impl Kernel {
         }
         premises.push(conjunction);
         let conclusions = source.conclusions.clone();
-        self.push_sequent(&premises, &conclusions)
+        self.push_sequent(target, &premises, &conclusions)
     }
 
-    /// Introduces a checked conjunction on the right, merging contexts.
+    /// Introduces a checked conjunction on the right, concatenating contexts.
     ///
     /// # Errors
     ///
     /// Returns an error unless the left and right operand conclusions occur.
     pub fn and_right(
         &mut self,
+        target: Option<ThmId>,
         left_theorem: ThmId,
         right_theorem: ThmId,
         conjunction: PropId,
@@ -356,7 +355,7 @@ impl Kernel {
         let rhs = self.theorem(right_theorem)?.clone();
         let mut left_conc = lhs.conclusions.clone();
         let mut right_conc = rhs.conclusions.clone();
-        if !remove_sorted(&mut left_conc, left) || !remove_sorted(&mut right_conc, right) {
+        if !remove_one(&mut left_conc, left) || !remove_one(&mut right_conc, right) {
             return Err(KernelError::InvalidTheoremRule { rule: "and right" });
         }
         let mut premises = lhs.premises;
@@ -364,16 +363,17 @@ impl Kernel {
         let mut conclusions = left_conc;
         conclusions.extend_from_slice(&right_conc);
         conclusions.push(conjunction);
-        self.push_sequent(&premises, &conclusions)
+        self.push_sequent(target, &premises, &conclusions)
     }
 
-    /// Introduces a checked disjunction on the left, merging contexts.
+    /// Introduces a checked disjunction on the left, concatenating contexts.
     ///
     /// # Errors
     ///
     /// Returns an error unless the operand premises occur.
     pub fn or_left(
         &mut self,
+        target: Option<ThmId>,
         left_theorem: ThmId,
         right_theorem: ThmId,
         disjunction: PropId,
@@ -383,7 +383,7 @@ impl Kernel {
         let rhs = self.theorem(right_theorem)?.clone();
         let mut left_prem = lhs.premises.clone();
         let mut right_prem = rhs.premises.clone();
-        if !remove_sorted(&mut left_prem, left) || !remove_sorted(&mut right_prem, right) {
+        if !remove_one(&mut left_prem, left) || !remove_one(&mut right_prem, right) {
             return Err(KernelError::InvalidTheoremRule { rule: "or left" });
         }
         let mut premises = left_prem;
@@ -391,7 +391,7 @@ impl Kernel {
         premises.push(disjunction);
         let mut conclusions = lhs.conclusions;
         conclusions.extend_from_slice(&rhs.conclusions);
-        self.push_sequent(&premises, &conclusions)
+        self.push_sequent(target, &premises, &conclusions)
     }
 
     /// Folds two conclusions into their checked disjunction opcode.
@@ -400,7 +400,12 @@ impl Kernel {
     ///
     /// Returns an error unless both operands occur in the conclusion and
     /// `disjunction` is their positive `tm.or` opcode.
-    pub fn or_right(&mut self, theorem: ThmId, disjunction: PropId) -> Result<ThmId, KernelError> {
+    pub fn or_right(
+        &mut self,
+        target: Option<ThmId>,
+        theorem: ThmId,
+        disjunction: PropId,
+    ) -> Result<ThmId, KernelError> {
         let (left, right) = self.require_binary(disjunction, Op2::Or)?;
         let source = self.theorem(theorem)?.clone();
         let mut conclusions = source.conclusions.clone();
@@ -409,7 +414,7 @@ impl Kernel {
         }
         conclusions.push(disjunction);
         let premises = source.premises.clone();
-        self.push_sequent(&premises, &conclusions)
+        self.push_sequent(target, &premises, &conclusions)
     }
 
     /// Introduces a checked implication on the left.
@@ -420,6 +425,7 @@ impl Kernel {
     /// the consequent is a premise of `right`.
     pub fn imp_left(
         &mut self,
+        target: Option<ThmId>,
         left_theorem: ThmId,
         right_theorem: ThmId,
         implication: PropId,
@@ -429,8 +435,7 @@ impl Kernel {
         let rhs = self.theorem(right_theorem)?.clone();
         let mut left_conc = lhs.conclusions.clone();
         let mut right_prem = rhs.premises.clone();
-        if !remove_sorted(&mut left_conc, antecedent) || !remove_sorted(&mut right_prem, consequent)
-        {
+        if !remove_one(&mut left_conc, antecedent) || !remove_one(&mut right_prem, consequent) {
             return Err(KernelError::InvalidTheoremRule { rule: "imp left" });
         }
         let mut premises = lhs.premises;
@@ -438,7 +443,7 @@ impl Kernel {
         premises.push(implication);
         let mut conclusions = left_conc;
         conclusions.extend_from_slice(&rhs.conclusions);
-        self.push_sequent(&premises, &conclusions)
+        self.push_sequent(target, &premises, &conclusions)
     }
 
     /// Introduces a checked implication on the right.
@@ -447,17 +452,21 @@ impl Kernel {
     ///
     /// Returns an error unless the antecedent occurs in the premise and the
     /// consequent occurs in the conclusion.
-    pub fn imp_right(&mut self, theorem: ThmId, implication: PropId) -> Result<ThmId, KernelError> {
+    pub fn imp_right(
+        &mut self,
+        target: Option<ThmId>,
+        theorem: ThmId,
+        implication: PropId,
+    ) -> Result<ThmId, KernelError> {
         let (antecedent, consequent) = self.require_binary(implication, Op2::Imp)?;
         let source = self.theorem(theorem)?.clone();
         let mut premises = source.premises.clone();
         let mut conclusions = source.conclusions.clone();
-        if !remove_sorted(&mut premises, antecedent) || !remove_sorted(&mut conclusions, consequent)
-        {
+        if !remove_one(&mut premises, antecedent) || !remove_one(&mut conclusions, consequent) {
             return Err(KernelError::InvalidTheoremRule { rule: "imp right" });
         }
         conclusions.push(implication);
-        self.push_sequent(&premises, &conclusions)
+        self.push_sequent(target, &premises, &conclusions)
     }
 
     /// Resolves complementary conclusions of two checked sequents.
@@ -468,6 +477,7 @@ impl Kernel {
     /// respective right sides.
     pub fn resolve(
         &mut self,
+        target: Option<ThmId>,
         left: ThmId,
         right: ThmId,
         pivot: PropId,
@@ -476,15 +486,14 @@ impl Kernel {
         let rhs = self.theorem(right)?.clone();
         let mut left_conc = lhs.conclusions.clone();
         let mut right_conc = rhs.conclusions.clone();
-        if !remove_sorted(&mut left_conc, pivot) || !remove_sorted(&mut right_conc, pivot.negated())
-        {
+        if !remove_one(&mut left_conc, pivot) || !remove_one(&mut right_conc, pivot.negated()) {
             return Err(KernelError::InvalidTheoremRule { rule: "resolution" });
         }
         let mut premises = lhs.premises;
         premises.extend_from_slice(&rhs.premises);
         let mut conclusions = left_conc;
         conclusions.extend_from_slice(&right_conc);
-        self.push_sequent(&premises, &conclusions)
+        self.push_sequent(target, &premises, &conclusions)
     }
 
     /// Replaces one right-side connective by a sound one-step expansion.
@@ -498,20 +507,21 @@ impl Kernel {
     /// supported Boolean opcode with an appropriate branch.
     pub fn expand_conclusion(
         &mut self,
+        target: Option<ThmId>,
         theorem: ThmId,
         formula: PropId,
         branch: Option<bool>,
     ) -> Result<ThmId, KernelError> {
         let source = self.theorem(theorem)?.clone();
         let mut conc = source.conclusions.clone();
-        if !remove_sorted(&mut conc, formula) {
+        if !remove_one(&mut conc, formula) {
             return Err(KernelError::InvalidTheoremRule {
                 rule: "conclusion expansion",
             });
         }
         let replacement = self.expand_right(formula, branch)?;
         conc.extend_from_slice(&replacement);
-        self.push_sequent(&source.premises, &conc)
+        self.push_sequent(target, &source.premises, &conc)
     }
 
     /// Recursively flattens a disjunctive opcode tree on the right side.
@@ -526,12 +536,13 @@ impl Kernel {
     /// compound node has a disjunctive normalized form.
     pub fn flatten_conclusion(
         &mut self,
+        target: Option<ThmId>,
         theorem: ThmId,
         formula: PropId,
     ) -> Result<ThmId, KernelError> {
         let source = self.theorem(theorem)?.clone();
         let mut conclusions = source.conclusions.clone();
-        if !remove_sorted(&mut conclusions, formula) {
+        if !remove_one(&mut conclusions, formula) {
             return Err(KernelError::InvalidTheoremRule {
                 rule: "conclusion flattening",
             });
@@ -544,10 +555,8 @@ impl Kernel {
                 None => leaves.push(current),
             }
         }
-        leaves.sort_unstable();
-        leaves.dedup();
         conclusions.extend_from_slice(&leaves);
-        self.push_sequent(&source.premises, &conclusions)
+        self.push_sequent(target, &source.premises, &conclusions)
     }
 
     /// Recursively flattens a conjunctive opcode tree on the left side.
@@ -558,12 +567,13 @@ impl Kernel {
     /// compound node has a conjunctive normalized form.
     pub fn flatten_premise(
         &mut self,
+        target: Option<ThmId>,
         theorem: ThmId,
         formula: PropId,
     ) -> Result<ThmId, KernelError> {
         let source = self.theorem(theorem)?.clone();
         let mut premises = source.premises.clone();
-        if !remove_sorted(&mut premises, formula) {
+        if !remove_one(&mut premises, formula) {
             return Err(KernelError::InvalidTheoremRule {
                 rule: "premise flattening",
             });
@@ -571,7 +581,7 @@ impl Kernel {
         let leaves = self.collect_tree(formula, TreeSide::Conjunctive)?;
         premises.extend_from_slice(&leaves);
         let conclusions = source.conclusions.clone();
-        self.push_sequent(&premises, &conclusions)
+        self.push_sequent(target, &premises, &conclusions)
     }
 
     /// Folds the leaves of a conjunctive opcode tree on the left side.
@@ -579,8 +589,13 @@ impl Kernel {
     /// # Errors
     ///
     /// Returns an error unless every normalized leaf occurs in the premise.
-    pub fn fold_premise(&mut self, theorem: ThmId, formula: PropId) -> Result<ThmId, KernelError> {
-        self.fold_tree(theorem, formula, TreeSide::Conjunctive)
+    pub fn fold_premise(
+        &mut self,
+        target: Option<ThmId>,
+        theorem: ThmId,
+        formula: PropId,
+    ) -> Result<ThmId, KernelError> {
+        self.fold_tree(target, theorem, formula, TreeSide::Conjunctive)
     }
 
     /// Folds the leaves of a disjunctive opcode tree on the right side.
@@ -590,43 +605,73 @@ impl Kernel {
     /// Returns an error unless every normalized leaf occurs in the conclusion.
     pub fn fold_conclusion(
         &mut self,
+        target: Option<ThmId>,
         theorem: ThmId,
         formula: PropId,
     ) -> Result<ThmId, KernelError> {
-        self.fold_tree(theorem, formula, TreeSide::Disjunctive)
+        self.fold_tree(target, theorem, formula, TreeSide::Disjunctive)
     }
 
-    /// Removes theorem handles atomically and makes their slots reusable.
+    /// Copies a checked theorem into `target`, or allocates a new slot.
     ///
     /// # Errors
     ///
-    /// Returns an error and changes nothing if any handle is repeated, absent,
-    /// or already removed.
-    pub fn remove_theorems(&mut self, ids: &[ThmId]) -> Result<(), KernelError> {
-        let mut sorted = ids.to_vec();
-        sorted.sort_unstable();
-        if sorted.windows(2).any(|pair| pair[0] == pair[1]) {
-            return Err(KernelError::InvalidTheoremRule {
-                rule: "theorem deletion",
-            });
+    /// Returns an error if either the source or replacement target is absent.
+    pub fn copy_theorem(
+        &mut self,
+        target: Option<ThmId>,
+        source: ThmId,
+    ) -> Result<ThmId, KernelError> {
+        let theorem = self.theorem(source)?.clone();
+        self.put_theorem(target, theorem)
+    }
+
+    /// Removes one theorem. Removed slots are reused by later allocations.
+    #[must_use]
+    pub fn remove_theorem(&mut self, id: ThmId) -> bool {
+        let Ok(position) = usize::try_from(id.get() - 1) else {
+            return false;
+        };
+        if self.classical.live.get(position) != Some(&true) {
+            return false;
         }
-        for id in &sorted {
-            self.theorem(*id)?;
+        self.classical.live[position] = false;
+        self.classical.free.push(id);
+        true
+    }
+
+    /// Sorts and deduplicates both sides of one live theorem in place.
+    ///
+    /// This presentation-only operation is never required by a proof rule.
+    #[must_use]
+    pub fn normalize_theorem(&mut self, id: ThmId) -> bool {
+        let Ok(position) = usize::try_from(id.get() - 1) else {
+            return false;
+        };
+        if self.classical.live.get(position) != Some(&true) {
+            return false;
         }
-        for id in sorted {
-            let position =
-                usize::try_from(id.get() - 1).map_err(|_| KernelError::MissingTheorem { id })?;
-            self.classical.live[position] = false;
-            self.classical.free.push(id);
-        }
-        Ok(())
+        let theorem = &mut self.classical.thms[position];
+        theorem.premises.sort_unstable();
+        theorem.premises.dedup();
+        theorem.conclusions.sort_unstable();
+        theorem.conclusions.dedup();
+        true
     }
 
     fn validate_prop(&self, proposition: PropId) -> Result<(), KernelError> {
         self.require_bool_term::<std::convert::Infallible>(proposition.reference())
             .map(|_| ())
     }
-    fn push_thm(&mut self, theorem: Thm) -> Result<ThmId, KernelError> {
+    fn put_theorem(&mut self, target: Option<ThmId>, theorem: Thm) -> Result<ThmId, KernelError> {
+        if let Some(id) = target {
+            let position = usize::try_from(id.get() - 1).unwrap_or(usize::MAX);
+            if self.classical.live.get(position) != Some(&true) {
+                return Err(KernelError::MissingTheorem { id });
+            }
+            self.classical.thms[position] = theorem;
+            return Ok(id);
+        }
         if let Some(id) = self.classical.free.pop() {
             let position =
                 usize::try_from(id.get() - 1).expect("resident theorem index fits usize");
@@ -645,15 +690,19 @@ impl Kernel {
     }
     fn push_sequent(
         &mut self,
+        target: Option<ThmId>,
         premises: &[PropId],
         conclusions: &[PropId],
     ) -> Result<ThmId, KernelError> {
-        let premises = self.canonical_props(premises)?;
-        let conclusions = self.canonical_props(conclusions)?;
-        self.push_thm(Thm {
-            premises,
-            conclusions,
-        })
+        let premises = self.valid_props(premises)?;
+        let conclusions = self.valid_props(conclusions)?;
+        self.put_theorem(
+            target,
+            Thm {
+                premises,
+                conclusions,
+            },
+        )
     }
     fn signed_bool_value(&self, proposition: PropId) -> Result<Option<bool>, KernelError> {
         self.validate_prop(proposition)?;
@@ -690,16 +739,11 @@ impl Kernel {
         })?;
         Ok((PropId::positive(left), PropId::positive(right)))
     }
-    fn canonical_props(&self, propositions: &[PropId]) -> Result<PropVec, KernelError> {
-        let mut sorted = propositions.to_vec();
-        sorted.sort_unstable();
-        sorted.dedup();
-        for proposition in &sorted {
+    fn valid_props(&self, propositions: &[PropId]) -> Result<PropVec, KernelError> {
+        for proposition in propositions {
             self.validate_prop(*proposition)?;
         }
-        let mut canonical = PropVec::new();
-        canonical.extend_from_slice(&sorted);
-        Ok(canonical)
+        Ok(PropVec::from_slice(propositions))
     }
     fn expand_right(
         &self,
@@ -856,13 +900,12 @@ impl Kernel {
                 None => leaves.push(current),
             }
         }
-        leaves.sort_unstable();
-        leaves.dedup();
         Ok(leaves)
     }
 
     fn fold_tree(
         &mut self,
+        target: Option<ThmId>,
         theorem: ThmId,
         formula: PropId,
         side: TreeSide,
@@ -870,17 +913,17 @@ impl Kernel {
         let source = self.theorem(theorem)?.clone();
         let leaves = self.collect_tree(formula, side)?;
         let (mut premises, mut conclusions) = (source.premises.clone(), source.conclusions.clone());
-        let target = match side {
+        let context = match side {
             TreeSide::Conjunctive => &mut premises,
             TreeSide::Disjunctive => &mut conclusions,
         };
-        if leaves.iter().any(|leaf| !remove_sorted(target, *leaf)) {
+        if leaves.iter().any(|leaf| !remove_one(context, *leaf)) {
             return Err(KernelError::InvalidTheoremRule {
                 rule: "opcode tree folding",
             });
         }
-        target.push(formula);
-        self.push_sequent(&premises, &conclusions)
+        context.push(formula);
+        self.push_sequent(target, &premises, &conclusions)
     }
 }
 
@@ -890,21 +933,21 @@ enum TreeSide {
     Disjunctive,
 }
 
-fn remove_sorted(values: &mut PropVec, needle: PropId) -> bool {
-    match values.binary_search(&needle) {
-        Ok(index) => {
+fn remove_one(values: &mut PropVec, needle: PropId) -> bool {
+    match values.iter().position(|value| *value == needle) {
+        Some(index) => {
             values.remove(index);
             true
         }
-        Err(_) => false,
+        None => false,
     }
 }
 
 fn remove_pair(values: &mut PropVec, left: PropId, right: PropId) -> bool {
-    if !remove_sorted(values, left) {
+    if !remove_one(values, left) {
         return false;
     }
-    left == right || remove_sorted(values, right)
+    left == right || remove_one(values, right)
 }
 
 #[cfg(test)]
@@ -955,34 +998,43 @@ mod tests {
     }
 
     #[test]
-    fn theorem_sets_are_inline_sorted_and_deduplicated() {
+    fn theorem_contexts_preserve_raw_order_and_duplicates() {
         let Fixture { mut kernel, p, q } = fixture();
-        let identity = kernel.identity(p).unwrap();
-        let theorem = kernel.weaken(identity, &[q, p, q], &[q, p, q]).unwrap();
-        let mut expected = [p, q];
-        expected.sort_unstable();
-        assert_eq!(kernel.theorem(theorem).unwrap().premises(), expected);
-        assert_eq!(kernel.theorem(theorem).unwrap().conclusions(), expected);
-        assert!(
-            !kernel.theorem(theorem).unwrap().premises.spilled(),
-            "len={} capacity={}",
-            kernel.theorem(theorem).unwrap().premises.len(),
-            kernel.theorem(theorem).unwrap().premises.capacity()
-        );
+        let identity = kernel.identity(None, p).unwrap();
+        let theorem = kernel
+            .weaken(None, identity, &[q, p, q], &[q, p, q])
+            .unwrap();
+        assert_eq!(kernel.theorem(theorem).unwrap().premises(), [p, q, p, q]);
+        assert_eq!(kernel.theorem(theorem).unwrap().conclusions(), [p, q, p, q]);
+        assert!(kernel.theorem(theorem).unwrap().premises.spilled());
 
         let widened = kernel
-            .weaken(theorem, &[p.negated()], &[q.negated()])
+            .weaken(None, theorem, &[p.negated()], &[q.negated()])
             .unwrap();
         assert!(kernel.theorem(widened).unwrap().premises.spilled());
     }
 
     #[test]
-    fn weakening_canonicalizes_hostile_unsorted_input_before_admission() {
+    fn weakening_preserves_hostile_unsorted_input_until_explicit_normalization() {
         let Fixture { mut kernel, p, q } = fixture();
-        let identity = kernel.identity(p).unwrap();
+        let identity = kernel.identity(None, p).unwrap();
         let theorem = kernel
-            .weaken(identity, &[q, p.negated(), q, p], &[q.negated(), p, q])
+            .weaken(
+                None,
+                identity,
+                &[q, p.negated(), q, p],
+                &[q.negated(), p, q],
+            )
             .unwrap();
+        assert_eq!(
+            kernel.theorem(theorem).unwrap().premises(),
+            [p, q, p.negated(), q, p]
+        );
+        assert_eq!(
+            kernel.theorem(theorem).unwrap().conclusions(),
+            [p, q.negated(), p, q]
+        );
+        assert!(kernel.normalize_theorem(theorem));
         let mut expected_premises = vec![p, p.negated(), q];
         expected_premises.sort_unstable();
         let mut expected_conclusions = vec![p, q, q.negated()];
@@ -995,47 +1047,48 @@ mod tests {
             kernel.theorem(theorem).unwrap().conclusions(),
             expected_conclusions
         );
+        assert!(kernel.normalize_theorem(theorem));
     }
 
     #[test]
-    fn deletion_is_atomic_and_reuses_only_ephemeral_theorem_slots() {
+    fn deletion_reuses_only_ephemeral_theorem_slots() {
         let Fixture { mut kernel, p, q } = fixture();
-        let p_id = kernel.identity(p).unwrap();
-        let q_id = kernel.identity(q).unwrap();
-        assert!(kernel.remove_theorems(&[p_id, p_id]).is_err());
-        assert!(kernel.theorem(p_id).is_ok());
+        let p_id = kernel.identity(None, p).unwrap();
+        let q_id = kernel.identity(None, q).unwrap();
+        assert!(kernel.remove_theorem(p_id));
+        assert!(!kernel.remove_theorem(p_id));
         assert!(kernel.theorem(q_id).is_ok());
-        kernel.remove_theorems(&[p_id]).unwrap();
         assert!(matches!(
             kernel.theorem(p_id),
             Err(KernelError::MissingTheorem { .. })
         ));
-        assert_eq!(kernel.identity(q.negated()).unwrap(), p_id);
+        assert_eq!(kernel.identity(None, q.negated()).unwrap(), p_id);
         assert!(kernel.theorem(q_id).is_ok());
     }
 
     #[test]
-    fn deletion_with_an_absent_handle_is_atomic_and_reuse_is_lifo() {
+    fn deletion_with_an_absent_handle_is_false_and_reuse_is_lifo() {
         let Fixture { mut kernel, p, q } = fixture();
-        let first = kernel.identity(p).unwrap();
-        let second = kernel.identity(q).unwrap();
+        let first = kernel.identity(None, p).unwrap();
+        let second = kernel.identity(None, q).unwrap();
         let absent = ThmId::new(second.get() + 1).unwrap();
-        assert!(kernel.remove_theorems(&[first, absent]).is_err());
+        assert!(!kernel.remove_theorem(absent));
         assert!(kernel.theorem(first).is_ok());
         assert!(kernel.theorem(second).is_ok());
 
-        kernel.remove_theorems(&[first, second]).unwrap();
+        assert!(kernel.remove_theorem(first));
+        assert!(kernel.remove_theorem(second));
         assert!(kernel.theorem(first).is_err());
         assert!(kernel.theorem(second).is_err());
-        assert_eq!(kernel.identity(p.negated()).unwrap(), second);
-        assert_eq!(kernel.identity(q.negated()).unwrap(), first);
+        assert_eq!(kernel.identity(None, p.negated()).unwrap(), second);
+        assert_eq!(kernel.identity(None, q.negated()).unwrap(), first);
     }
 
     #[test]
     fn checked_theorems_never_enter_the_raw_arena_wire_state() {
         let Fixture { mut kernel, p, .. } = fixture();
         let before = kernel.arena().clone();
-        let theorem = kernel.identity(p).unwrap();
+        let theorem = kernel.identity(None, p).unwrap();
         assert!(kernel.theorem(theorem).is_ok());
         assert_eq!(kernel.arena(), &before);
         assert_eq!(kernel.into_arena(), before);
@@ -1050,18 +1103,18 @@ mod tests {
         let truth = PropId::positive(kernel.bool(bool_ty, true).unwrap());
 
         for signed_false in [falsehood, truth.negated()] {
-            let identity = kernel.identity(signed_false).unwrap();
+            let identity = kernel.identity(None, signed_false).unwrap();
             let expanded = kernel
-                .expand_conclusion(identity, signed_false, None)
+                .expand_conclusion(None, identity, signed_false, None)
                 .unwrap();
             assert!(kernel.theorem(expanded).unwrap().conclusions().is_empty());
         }
 
         for signed_true in [truth, falsehood.negated()] {
-            let identity = kernel.identity(signed_true).unwrap();
+            let identity = kernel.identity(None, signed_true).unwrap();
             assert!(
                 kernel
-                    .expand_conclusion(identity, signed_true, None)
+                    .expand_conclusion(None, identity, signed_true, None)
                     .is_err()
             );
         }
@@ -1070,18 +1123,18 @@ mod tests {
     #[test]
     fn weakening_resolution_and_polarity_transfer_form_sound_sequents() {
         let Fixture { mut kernel, p, q } = fixture();
-        let assumed_p = kernel.identity(p).unwrap();
-        let assumed_not_p = kernel.identity(p.negated()).unwrap();
-        let left = kernel.weaken(assumed_p, &[], &[q]).unwrap();
-        let right = kernel.weaken(assumed_not_p, &[], &[q]).unwrap();
-        let resolved = kernel.resolve(left, right, p).unwrap();
-        assert_eq!(kernel.theorem(resolved).unwrap().conclusions(), [q]);
+        let assumed_p = kernel.identity(None, p).unwrap();
+        let assumed_not_p = kernel.identity(None, p.negated()).unwrap();
+        let left = kernel.weaken(None, assumed_p, &[], &[q]).unwrap();
+        let right = kernel.weaken(None, assumed_not_p, &[], &[q]).unwrap();
+        let resolved = kernel.resolve(None, left, right, p).unwrap();
+        assert_eq!(kernel.theorem(resolved).unwrap().conclusions(), [q, q]);
 
-        let assumed_p = kernel.identity(p).unwrap();
-        let assumed_not_p = kernel.identity(p.negated()).unwrap();
-        let contradiction = kernel.resolve(assumed_p, assumed_not_p, p).unwrap();
-        let with_q = kernel.weaken(contradiction, &[q], &[]).unwrap();
-        let discharged = kernel.not_right(with_q, q).unwrap();
+        let assumed_p = kernel.identity(None, p).unwrap();
+        let assumed_not_p = kernel.identity(None, p.negated()).unwrap();
+        let contradiction = kernel.resolve(None, assumed_p, assumed_not_p, p).unwrap();
+        let with_q = kernel.weaken(None, contradiction, &[q], &[]).unwrap();
+        let discharged = kernel.not_right(None, with_q, q).unwrap();
         assert_eq!(
             kernel.theorem(discharged).unwrap().conclusions(),
             [q.negated()]
@@ -1095,15 +1148,19 @@ mod tests {
         let not_p = PropId::positive(not_p_ref);
         let formula_ref = kernel.op2(Op2::And, p.reference(), not_p_ref).unwrap();
         let formula = PropId::positive(formula_ref);
-        let root = kernel.identity(formula).unwrap();
+        let root = kernel.identity(None, formula).unwrap();
         let p_clause = kernel
-            .expand_conclusion(root, formula, Some(false))
+            .expand_conclusion(None, root, formula, Some(false))
             .unwrap();
-        let not_clause = kernel.expand_conclusion(root, formula, Some(true)).unwrap();
-        let neg_p_clause = kernel.expand_conclusion(not_clause, not_p, None).unwrap();
-        let refutation = kernel.resolve(p_clause, neg_p_clause, p).unwrap();
+        let not_clause = kernel
+            .expand_conclusion(None, root, formula, Some(true))
+            .unwrap();
+        let neg_p_clause = kernel
+            .expand_conclusion(None, not_clause, not_p, None)
+            .unwrap();
+        let refutation = kernel.resolve(None, p_clause, neg_p_clause, p).unwrap();
         let sequent = kernel.theorem(refutation).unwrap();
-        assert_eq!(sequent.premises(), [formula]);
+        assert_eq!(sequent.premises(), [formula, formula]);
         assert!(sequent.conclusions().is_empty());
     }
 
@@ -1114,18 +1171,19 @@ mod tests {
         let implication = kernel.op2(Op2::Imp, p.reference(), q.reference()).unwrap();
         let nested = kernel.op2(Op2::Or, not_p, implication).unwrap();
         let nested = PropId::positive(nested);
-        let theorem = kernel.identity(nested).unwrap();
-        let flattened = kernel.flatten_conclusion(theorem, nested).unwrap();
-        let mut expected = vec![p.negated(), q];
-        expected.sort_unstable();
-        assert_eq!(kernel.theorem(flattened).unwrap().conclusions(), expected);
+        let theorem = kernel.identity(None, nested).unwrap();
+        let flattened = kernel.flatten_conclusion(None, theorem, nested).unwrap();
+        assert_eq!(
+            kernel.theorem(flattened).unwrap().conclusions(),
+            [q, p.negated(), p.negated()]
+        );
 
         let bool_ty = kernel.classifier(p.reference()).unwrap();
         let falsehood = kernel.bool(bool_ty, false).unwrap();
         let falsehood = PropId::positive(falsehood);
-        let false_theorem = kernel.identity(falsehood).unwrap();
+        let false_theorem = kernel.identity(None, falsehood).unwrap();
         let eliminated = kernel
-            .expand_conclusion(false_theorem, falsehood, None)
+            .expand_conclusion(None, false_theorem, falsehood, None)
             .unwrap();
         assert!(kernel.theorem(eliminated).unwrap().conclusions.is_empty());
     }
@@ -1135,9 +1193,11 @@ mod tests {
         let Fixture { mut kernel, p, q } = fixture();
         let conjunction =
             PropId::positive(kernel.op2(Op2::And, p.reference(), q.reference()).unwrap());
-        let conjunction_id = kernel.identity(conjunction).unwrap();
-        let flat_left = kernel.flatten_premise(conjunction_id, conjunction).unwrap();
-        let folded_left = kernel.fold_premise(flat_left, conjunction).unwrap();
+        let conjunction_id = kernel.identity(None, conjunction).unwrap();
+        let flat_left = kernel
+            .flatten_premise(None, conjunction_id, conjunction)
+            .unwrap();
+        let folded_left = kernel.fold_premise(None, flat_left, conjunction).unwrap();
         assert_eq!(
             kernel.theorem(folded_left).unwrap(),
             kernel.theorem(conjunction_id).unwrap()
@@ -1145,11 +1205,13 @@ mod tests {
 
         let disjunction =
             PropId::positive(kernel.op2(Op2::Or, p.reference(), q.reference()).unwrap());
-        let disjunction_id = kernel.identity(disjunction).unwrap();
+        let disjunction_id = kernel.identity(None, disjunction).unwrap();
         let flat_right = kernel
-            .flatten_conclusion(disjunction_id, disjunction)
+            .flatten_conclusion(None, disjunction_id, disjunction)
             .unwrap();
-        let folded_right = kernel.fold_conclusion(flat_right, disjunction).unwrap();
+        let folded_right = kernel
+            .fold_conclusion(None, flat_right, disjunction)
+            .unwrap();
         assert_eq!(
             kernel.theorem(folded_right).unwrap(),
             kernel.theorem(disjunction_id).unwrap()
@@ -1159,11 +1221,13 @@ mod tests {
     #[test]
     fn primitive_resolution_is_valid_for_every_boolean_valuation() {
         let Fixture { mut kernel, p, q } = fixture();
-        let assumed_p = kernel.identity(p).unwrap();
-        let assumed_not_p = kernel.identity(p.negated()).unwrap();
-        let left = kernel.weaken(assumed_p, &[q], &[q]).unwrap();
-        let right = kernel.weaken(assumed_not_p, &[q], &[q.negated()]).unwrap();
-        let result = kernel.resolve(left, right, p).unwrap();
+        let assumed_p = kernel.identity(None, p).unwrap();
+        let assumed_not_p = kernel.identity(None, p.negated()).unwrap();
+        let left = kernel.weaken(None, assumed_p, &[q], &[q]).unwrap();
+        let right = kernel
+            .weaken(None, assumed_not_p, &[q], &[q.negated()])
+            .unwrap();
+        let result = kernel.resolve(None, left, right, p).unwrap();
         for p_value in [false, true] {
             for q_value in [false, true] {
                 assert!(valid(kernel.theorem(left).unwrap(), p, p_value, q, q_value));
@@ -1188,24 +1252,24 @@ mod tests {
     #[test]
     fn identity_is_valid_for_every_valuation() {
         let Fixture { mut kernel, p, q } = fixture();
-        let theorem = kernel.identity(p).unwrap();
+        let theorem = kernel.identity(None, p).unwrap();
         assert_valid(&kernel, theorem, &[p, q]);
     }
 
     #[test]
     fn weakening_is_valid_for_every_valuation() {
         let Fixture { mut kernel, p, q } = fixture();
-        let assumed = kernel.identity(p).unwrap();
-        let theorem = kernel.weaken(assumed, &[q], &[q.negated()]).unwrap();
+        let assumed = kernel.identity(None, p).unwrap();
+        let theorem = kernel.weaken(None, assumed, &[q], &[q.negated()]).unwrap();
         assert_valid(&kernel, theorem, &[p, q]);
     }
 
     #[test]
     fn cut_is_valid_for_every_valuation() {
         let Fixture { mut kernel, p, q } = fixture();
-        let left = kernel.identity(p).unwrap();
-        let right = kernel.identity(p).unwrap();
-        let theorem = kernel.cut(left, right, p).unwrap();
+        let left = kernel.identity(None, p).unwrap();
+        let right = kernel.identity(None, p).unwrap();
+        let theorem = kernel.cut(None, left, right, p).unwrap();
         assert_valid(&kernel, theorem, &[p, q]);
     }
 
@@ -1215,8 +1279,8 @@ mod tests {
         let bool_ty = kernel.classifier(p.reference()).unwrap();
         let falsehood = PropId::positive(kernel.bool(bool_ty, false).unwrap());
         let truth = PropId::positive(kernel.bool(bool_ty, true).unwrap());
-        let false_left = kernel.false_left(falsehood).unwrap();
-        let true_right = kernel.true_right(truth).unwrap();
+        let false_left = kernel.false_left(None, falsehood).unwrap();
+        let true_right = kernel.true_right(None, truth).unwrap();
         assert_valid(&kernel, false_left, &[p, q]);
         assert_valid(&kernel, true_right, &[p, q]);
     }
@@ -1224,16 +1288,16 @@ mod tests {
     #[test]
     fn not_left_is_valid_for_every_valuation() {
         let Fixture { mut kernel, p, q } = fixture();
-        let assumed = kernel.identity(p).unwrap();
-        let theorem = kernel.not_left(assumed, p).unwrap();
+        let assumed = kernel.identity(None, p).unwrap();
+        let theorem = kernel.not_left(None, assumed, p).unwrap();
         assert_valid(&kernel, theorem, &[p, q]);
     }
 
     #[test]
     fn not_right_is_valid_for_every_valuation() {
         let Fixture { mut kernel, p, q } = fixture();
-        let assumed = kernel.identity(p).unwrap();
-        let theorem = kernel.not_right(assumed, p).unwrap();
+        let assumed = kernel.identity(None, p).unwrap();
+        let theorem = kernel.not_right(None, assumed, p).unwrap();
         assert_valid(&kernel, theorem, &[p, q]);
     }
 
@@ -1242,9 +1306,9 @@ mod tests {
         let Fixture { mut kernel, p, q } = fixture();
         let conjunction =
             PropId::positive(kernel.op2(Op2::And, p.reference(), q.reference()).unwrap());
-        let assumed = kernel.identity(p).unwrap();
-        let premise = kernel.weaken(assumed, &[q], &[]).unwrap();
-        let theorem = kernel.and_left(premise, conjunction).unwrap();
+        let assumed = kernel.identity(None, p).unwrap();
+        let premise = kernel.weaken(None, assumed, &[q], &[]).unwrap();
+        let theorem = kernel.and_left(None, premise, conjunction).unwrap();
         assert_valid(&kernel, theorem, &[p, q]);
     }
 
@@ -1253,9 +1317,9 @@ mod tests {
         let Fixture { mut kernel, p, q } = fixture();
         let conjunction =
             PropId::positive(kernel.op2(Op2::And, p.reference(), q.reference()).unwrap());
-        let left = kernel.identity(p).unwrap();
-        let right = kernel.identity(q).unwrap();
-        let theorem = kernel.and_right(left, right, conjunction).unwrap();
+        let left = kernel.identity(None, p).unwrap();
+        let right = kernel.identity(None, q).unwrap();
+        let theorem = kernel.and_right(None, left, right, conjunction).unwrap();
         assert_valid(&kernel, theorem, &[p, q]);
     }
 
@@ -1264,9 +1328,9 @@ mod tests {
         let Fixture { mut kernel, p, q } = fixture();
         let disjunction =
             PropId::positive(kernel.op2(Op2::Or, p.reference(), q.reference()).unwrap());
-        let left = kernel.identity(p).unwrap();
-        let right = kernel.identity(q).unwrap();
-        let theorem = kernel.or_left(left, right, disjunction).unwrap();
+        let left = kernel.identity(None, p).unwrap();
+        let right = kernel.identity(None, q).unwrap();
+        let theorem = kernel.or_left(None, left, right, disjunction).unwrap();
         assert_valid(&kernel, theorem, &[p, q]);
     }
 
@@ -1275,9 +1339,9 @@ mod tests {
         let Fixture { mut kernel, p, q } = fixture();
         let disjunction =
             PropId::positive(kernel.op2(Op2::Or, p.reference(), q.reference()).unwrap());
-        let assumed = kernel.identity(p).unwrap();
-        let premise = kernel.weaken(assumed, &[], &[q]).unwrap();
-        let theorem = kernel.or_right(premise, disjunction).unwrap();
+        let assumed = kernel.identity(None, p).unwrap();
+        let premise = kernel.weaken(None, assumed, &[], &[q]).unwrap();
+        let theorem = kernel.or_right(None, premise, disjunction).unwrap();
         assert_valid(&kernel, theorem, &[p, q]);
     }
 
@@ -1286,9 +1350,9 @@ mod tests {
         let Fixture { mut kernel, p, q } = fixture();
         let implication =
             PropId::positive(kernel.op2(Op2::Imp, p.reference(), q.reference()).unwrap());
-        let left = kernel.identity(p).unwrap();
-        let right = kernel.identity(q).unwrap();
-        let theorem = kernel.imp_left(left, right, implication).unwrap();
+        let left = kernel.identity(None, p).unwrap();
+        let right = kernel.identity(None, q).unwrap();
+        let theorem = kernel.imp_left(None, left, right, implication).unwrap();
         assert_valid(&kernel, theorem, &[p, q]);
     }
 
@@ -1297,34 +1361,69 @@ mod tests {
         let Fixture { mut kernel, p, q } = fixture();
         let implication =
             PropId::positive(kernel.op2(Op2::Imp, p.reference(), q.reference()).unwrap());
-        let assumed = kernel.identity(q).unwrap();
-        let premise = kernel.weaken(assumed, &[p], &[]).unwrap();
-        let theorem = kernel.imp_right(premise, implication).unwrap();
+        let assumed = kernel.identity(None, q).unwrap();
+        let premise = kernel.weaken(None, assumed, &[p], &[]).unwrap();
+        let theorem = kernel.imp_right(None, premise, implication).unwrap();
         assert_valid(&kernel, theorem, &[p, q]);
     }
 
     #[test]
     fn rejected_rules_do_not_allocate_theorem_slots() {
         let Fixture { mut kernel, p, q } = fixture();
-        let first = kernel.identity(p).unwrap();
-        assert!(kernel.cut(first, first, q).is_err());
-        let second = kernel.identity(q).unwrap();
+        let first = kernel.identity(None, p).unwrap();
+        assert!(kernel.cut(None, first, first, q).is_err());
+        let second = kernel.identity(None, q).unwrap();
         assert_eq!(second.get(), first.get() + 1);
-        assert!(kernel.and_left(first, q).is_err());
-        let third = kernel.identity(q.negated()).unwrap();
+        assert!(kernel.and_left(None, first, q).is_err());
+        let third = kernel.identity(None, q.negated()).unwrap();
         assert_eq!(third.get(), second.get() + 1);
     }
 
     #[test]
-    fn canonical_sets_support_idempotent_connective_rules() {
+    fn targets_replace_atomically_and_support_self_targeting_rules() {
+        let Fixture { mut kernel, p, q } = fixture();
+        let unary = kernel.identity(None, p).unwrap();
+        assert_eq!(kernel.weaken(Some(unary), unary, &[q], &[]).unwrap(), unary);
+        assert_eq!(kernel.theorem(unary).unwrap().premises(), [p, q]);
+        let before = kernel.theorem(unary).unwrap().clone();
+        assert!(kernel.and_left(Some(unary), unary, q).is_err());
+        assert_eq!(kernel.theorem(unary).unwrap(), &before);
+
+        let left = kernel.identity(None, p).unwrap();
+        let right = kernel.identity(None, p.negated()).unwrap();
+        assert_eq!(kernel.resolve(Some(left), left, right, p).unwrap(), left);
+        assert_eq!(kernel.theorem(left).unwrap().premises(), [p, p.negated()]);
+        assert!(kernel.theorem(left).unwrap().conclusions().is_empty());
+    }
+
+    #[test]
+    fn copy_delete_and_free_reuse_follow_ephemeral_slot_semantics() {
+        let Fixture { mut kernel, p, q } = fixture();
+        let source = kernel.identity(None, p).unwrap();
+        let target = kernel.identity(None, q).unwrap();
+        assert_eq!(kernel.copy_theorem(Some(target), source).unwrap(), target);
+        assert_eq!(
+            kernel.theorem(target).unwrap(),
+            kernel.theorem(source).unwrap()
+        );
+        assert_eq!(kernel.copy_theorem(Some(source), source).unwrap(), source);
+
+        assert!(kernel.remove_theorem(target));
+        assert!(!kernel.normalize_theorem(target));
+        assert!(kernel.copy_theorem(Some(target), source).is_err());
+        assert_eq!(kernel.identity(None, q.negated()).unwrap(), target);
+    }
+
+    #[test]
+    fn repeated_operands_support_idempotent_connective_rules() {
         let Fixture { mut kernel, p, q } = fixture();
         let conjunction =
             PropId::positive(kernel.op2(Op2::And, p.reference(), p.reference()).unwrap());
         let disjunction =
             PropId::positive(kernel.op2(Op2::Or, p.reference(), p.reference()).unwrap());
-        let identity = kernel.identity(p).unwrap();
-        let and_left = kernel.and_left(identity, conjunction).unwrap();
-        let or_right = kernel.or_right(identity, disjunction).unwrap();
+        let identity = kernel.identity(None, p).unwrap();
+        let and_left = kernel.and_left(None, identity, conjunction).unwrap();
+        let or_right = kernel.or_right(None, identity, disjunction).unwrap();
         assert_valid(&kernel, and_left, &[p, q]);
         assert_valid(&kernel, or_right, &[p, q]);
     }

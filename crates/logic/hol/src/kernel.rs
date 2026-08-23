@@ -22,7 +22,7 @@ mod classical;
 mod syn_facts;
 
 use classical::ClassicalState;
-pub use classical::{HolTheorem, PropId, PropIdError, PropVec, Thm, ThmId};
+pub use classical::{PropId, PropIdError, PropVec, Thm, ThmId};
 
 /// A recoverable failure at the checked kernel boundary.
 #[derive(Debug, Snafu)]
