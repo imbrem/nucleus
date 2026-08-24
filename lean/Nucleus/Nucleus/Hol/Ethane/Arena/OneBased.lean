@@ -9,16 +9,17 @@ import Mathlib.Order.Basic
 
 This is the raw object model shared with the Rust dense arena.  It records
 syntax and inline metadata without assigning them any logical validity.
-Local definition references are nonzero `UInt64` values strictly below
-`i64::MAX`; import references remain arbitrary nonzero `UInt64` values.
+Local definition references are positive `i32` values strictly below
+`i32::MAX`, so signed-literal negation is total. Import and syntactic-fact
+indices are positive `i32` values and may use `i32::MAX`.
 -/
 
 namespace Nucleus.Hol.Ethane.OneBased
 
 open Nucleus
 
-/-- The exclusive upper bound shared with signed `PropId` on the Rust wire. -/
-def Ref.maxExclusive : Nat := 9_223_372_036_854_775_807
+/-- The exclusive upper bound shared with signed `Lit` on the Rust wire. -/
+def Ref.maxExclusive : Nat := 2_147_483_647
 
 /-- A local reference.  Value `n` addresses definition `n - 1` and always
 admits a lossless positive or negative signed proposition encoding. -/
@@ -53,8 +54,9 @@ def value (reference : Ref) : UInt64 := reference.1
 
 end Ref
 
-/-- A one-based index into the import table. -/
-def ImportId := { value : UInt64 // value ≠ 0 }
+/-- A one-based positive-`i32` index into the import table. -/
+def ImportId.maxInclusive : Nat := 2_147_483_647
+def ImportId := { value : UInt64 // value ≠ 0 ∧ value.toNat ≤ ImportId.maxInclusive }
 
 deriving instance DecidableEq for ImportId
 deriving instance Repr for ImportId
@@ -67,24 +69,29 @@ instance : LinearOrder ImportId := LinearOrder.lift' (fun value => value.1.toNat
 namespace ImportId
 
 def ofUInt64? (value : UInt64) : Option ImportId :=
-  if nonzero : value ≠ 0 then some ⟨value, nonzero⟩ else none
+  if valid : value ≠ 0 ∧ value.toNat ≤ maxInclusive then some ⟨value, valid⟩ else none
 
 def value (source : ImportId) : UInt64 := source.1
 
 @[simp] theorem ofUInt64?_value (source : ImportId) :
     ofUInt64? source.value = some source := by
-  rcases source with ⟨value, nonzero⟩
-  simp [ofUInt64?, ImportId.value, nonzero]
+  rcases source with ⟨value, valid⟩
+  simp [ofUInt64?, ImportId.value, valid]
 
 @[simp] theorem ofUInt64?_zero : ofUInt64? 0 = none := by
   simp [ofUInt64?]
+
+@[simp] theorem ofUInt64?_aboveMax :
+    ofUInt64? (UInt64.ofNat (maxInclusive + 1)) = none := by
+  decide
 
 end ImportId
 
 /-! ## Unchecked syntactic-fact wire objects -/
 
-/-- A one-based nonzero `u64` slot ID, matching Rust's `NonZeroU64`. -/
-def SynFactId := { value : UInt64 // value ≠ 0 }
+/-- A one-based positive-`i32` syntactic-fact slot ID. -/
+def SynFactId.maxInclusive : Nat := 2_147_483_647
+def SynFactId := { value : UInt64 // value ≠ 0 ∧ value.toNat ≤ SynFactId.maxInclusive }
 
 deriving instance DecidableEq for SynFactId
 deriving instance Repr for SynFactId
@@ -97,7 +104,7 @@ instance : LinearOrder SynFactId := LinearOrder.lift' (fun value => value.1.toNa
 namespace SynFactId
 
 def ofUInt64? (value : UInt64) : Option SynFactId :=
-  if nonzero : value ≠ 0 then some ⟨value, nonzero⟩ else none
+  if valid : value ≠ 0 ∧ value.toNat ≤ maxInclusive then some ⟨value, valid⟩ else none
 
 def value (id : SynFactId) : UInt64 := id.1
 
@@ -106,11 +113,15 @@ def position (id : SynFactId) : Nat := id.value.toNat - 1
 
 @[simp] theorem ofUInt64?_value (id : SynFactId) :
     ofUInt64? id.value = some id := by
-  rcases id with ⟨value, nonzero⟩
-  simp [ofUInt64?, SynFactId.value, nonzero]
+  rcases id with ⟨value, valid⟩
+  simp [ofUInt64?, SynFactId.value, valid]
 
 @[simp] theorem ofUInt64?_zero : ofUInt64? 0 = none := by
   simp [ofUInt64?]
+
+@[simp] theorem ofUInt64?_aboveMax :
+    ofUInt64? (UInt64.ofNat (maxInclusive + 1)) = none := by
+  decide
 
 end SynFactId
 
