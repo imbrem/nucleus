@@ -497,6 +497,7 @@ version = "0.0.0"
 dependencies = [
  "covalence-data-cas",
  "covalence-lib-hash",
+ "covalence-lib-json",
  "covalence-lib-sqlite",
  "covalence-logic-hol",
  "covalence-neutron",

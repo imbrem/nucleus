@@ -772,6 +772,13 @@
     },
     {
       "source": "workspace#covalence-browser@0.0.0",
+      "target": "workspace#covalence-lib-json@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-browser@0.0.0",
       "target": "workspace#covalence-lib-sqlite@0.0.0",
       "kinds": [
         "normal"
