@@ -3,7 +3,10 @@
 use serde::{Deserialize, Serialize, de};
 use smallvec::SmallVec;
 
-use crate::{ImportId, Ref};
+use crate::{
+    ImportId, Ref,
+    builtin::{Op1, Op2},
+};
 
 const MAX_CHILDREN: usize = 2;
 type Fields = (
@@ -45,6 +48,10 @@ pub(crate) enum Expr {
     /// The children are the binder variable and body, in that order.
     Lam(Ref, Ref),
     Bool(bool),
+    /// Versioned compact unary syntax. Semantics are supplied by lowering.
+    Op1(Op1, Ref),
+    /// Versioned compact binary syntax. Operands are ordered left-to-right.
+    Op2(Op2, Ref, Ref),
     /// Equality: left and right operands. Their common type is inferred.
     Eq(Ref, Ref),
     Eps {
@@ -81,6 +88,8 @@ impl Expr {
             Self::App(..) => Tag::Tm(TmTag::App),
             Self::Lam(..) => Tag::Tm(TmTag::Lam),
             Self::Bool(..) => Tag::Tm(TmTag::Bool),
+            Self::Op1(..) => Tag::Tm(TmTag::Op1),
+            Self::Op2(..) => Tag::Tm(TmTag::Op2),
             Self::Eq(..) => Tag::Tm(TmTag::Eq),
             Self::Eps { .. } => Tag::Tm(TmTag::Eps),
             Self::TmRef { .. } => Tag::Tm(TmTag::Ref),
@@ -103,7 +112,9 @@ impl Expr {
             | Self::TyLam(left, right)
             | Self::App(left, right)
             | Self::Lam(left, right)
-            | Self::Eq(left, right) => SmallVec::from_slice(&[left, right]),
+            | Self::Eq(left, right)
+            | Self::Op2(_, left, right) => SmallVec::from_slice(&[left, right]),
+            Self::Op1(_, operand) => SmallVec::from_slice(&[operand]),
             Self::Eps { ty, predicate } => SmallVec::from_slice(&[ty, predicate]),
             Self::TyFv { kind: child, .. }
             | Self::TyExists {
@@ -227,6 +238,8 @@ pub enum TmTag {
     App,
     Lam,
     Bool,
+    Op1,
+    Op2,
     Eq,
     Eps,
     Ref,
@@ -241,6 +254,8 @@ impl TmTag {
             Self::App => "tm.app",
             Self::Lam => "tm.lam",
             Self::Bool => "tm.bool",
+            Self::Op1 => crate::builtin::OP1_ROW_TAG,
+            Self::Op2 => crate::builtin::OP2_ROW_TAG,
             Self::Eq => "tm.eq",
             Self::Eps => "tm.eps",
             Self::Ref => "tm.ref",
@@ -293,6 +308,8 @@ impl Tag {
             "tm.app" => Self::Tm(TmTag::App),
             "tm.lam" => Self::Tm(TmTag::Lam),
             "tm.bool" => Self::Tm(TmTag::Bool),
+            crate::builtin::OP1_ROW_TAG => Self::Tm(TmTag::Op1),
+            crate::builtin::OP2_ROW_TAG => Self::Tm(TmTag::Op2),
             "tm.eq" => Self::Tm(TmTag::Eq),
             "tm.eps" => Self::Tm(TmTag::Eps),
             "tm.ref" => Self::Tm(TmTag::Ref),
@@ -331,7 +348,11 @@ enum Value {
 #[serde(deny_unknown_fields)]
 struct RowSerde {
     tag: Tag,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "bounded_children"
+    )]
     ixs: Option<SmallVec<[Ref; MAX_CHILDREN]>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     val: Option<Value>,
@@ -343,6 +364,50 @@ struct RowSerde {
     eq: Option<Ref>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     sort: Option<Ref>,
+}
+
+fn bounded_children<'de, D>(
+    deserializer: D,
+) -> Result<Option<SmallVec<[Ref; MAX_CHILDREN]>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct ChildrenVisitor;
+
+    impl<'de> de::Visitor<'de> for ChildrenVisitor {
+        type Value = Option<SmallVec<[Ref; MAX_CHILDREN]>>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(formatter, "an array of at most {MAX_CHILDREN} references")
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            deserializer.deserialize_seq(self)
+        }
+
+        fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+        where
+            A: de::SeqAccess<'de>,
+        {
+            let mut children = SmallVec::new();
+            while let Some(child) = sequence.next_element()? {
+                if children.len() == MAX_CHILDREN {
+                    return Err(de::Error::invalid_length(MAX_CHILDREN + 1, &self));
+                }
+                children.push(child);
+            }
+            Ok(Some(children))
+        }
+    }
+
+    deserializer.deserialize_option(ChildrenVisitor)
 }
 
 impl From<Row> for RowSerde {
@@ -377,6 +442,16 @@ impl From<Row> for RowSerde {
             }
             Expr::Lam(binder, body) => ordinary(Tag::Tm(TmTag::Lam), [binder, body], None),
             Expr::Bool(value) => ordinary(Tag::Tm(TmTag::Bool), [], Some(Value::Bool(value))),
+            Expr::Op1(op, operand) => ordinary(
+                Tag::Tm(TmTag::Op1),
+                [operand],
+                Some(Value::Nat(u64::from(op.code()))),
+            ),
+            Expr::Op2(op, left, right) => ordinary(
+                Tag::Tm(TmTag::Op2),
+                [left, right],
+                Some(Value::Nat(u64::from(op.code()))),
+            ),
             Expr::Eq(left, right) => ordinary(Tag::Tm(TmTag::Eq), [left, right], None),
             Expr::Eps { ty, predicate } => ordinary(Tag::Tm(TmTag::Eps), [ty, predicate], None),
             Expr::TmRef { src, ix } => foreign(Tag::Tm(TmTag::Ref), src, ix),
@@ -449,6 +524,21 @@ impl TryFrom<RowSerde> for Row {
                 Expr::Lam(*binder, *body)
             }
             (Tag::Tm(TmTag::Bool), None, Some(Value::Bool(value)), None, None) => Expr::Bool(value),
+            (Tag::Tm(TmTag::Op1), Some([operand]), Some(Value::Nat(code)), None, None) => {
+                Expr::Op1(
+                    Op1::from_code(u8::try_from(code).map_err(|_| "unknown op1 code")?)
+                        .ok_or("unknown op1 code")?,
+                    *operand,
+                )
+            }
+            (Tag::Tm(TmTag::Op2), Some([left, right]), Some(Value::Nat(code)), None, None) => {
+                Expr::Op2(
+                    Op2::from_code(u8::try_from(code).map_err(|_| "unknown op2 code")?)
+                        .ok_or("unknown op2 code")?,
+                    *left,
+                    *right,
+                )
+            }
             (Tag::Tm(TmTag::Eq), Some([left, right]), None, None, None) => Expr::Eq(*left, *right),
             (Tag::Tm(TmTag::Eps), Some([ty, predicate]), None, None, None) => Expr::Eps {
                 ty: *ty,
@@ -524,6 +614,8 @@ mod tests {
             Row::new(Expr::Lam(one, two)),
             Row::new(Expr::Bool(false)),
             Row::new(Expr::Bool(true)),
+            Row::new(Expr::Op1(Op1::Not, one)),
+            Row::new(Expr::Op2(Op2::And, one, two)),
             Row::new(Expr::Eq(one, two)),
             Row::new(Expr::Eps {
                 ty: one,
@@ -614,6 +706,35 @@ mod tests {
                 Cbor::Text("ixs".into()),
                 Cbor::Array(vec![Cbor::Integer(1.into())]),
             ),
+        ]));
+        for (tag, operands, code) in [
+            (crate::builtin::OP1_ROW_TAG, vec![1, 2], 0),
+            (crate::builtin::OP2_ROW_TAG, vec![1], 0),
+            (crate::builtin::OP1_ROW_TAG, vec![1], 1),
+            (crate::builtin::OP2_ROW_TAG, vec![1, 2], 3),
+            (crate::builtin::OP2_ROW_TAG, vec![1, 2], 256),
+        ] {
+            assert!(decode_bad(vec![
+                (Cbor::Text("tag".into()), Cbor::Text(tag.into())),
+                (
+                    Cbor::Text("ixs".into()),
+                    Cbor::Array(
+                        operands
+                            .into_iter()
+                            .map(|value| Cbor::Integer(value.into()))
+                            .collect(),
+                    ),
+                ),
+                (Cbor::Text("val".into()), Cbor::Integer(code.into())),
+            ]));
+        }
+        assert!(decode_bad(vec![
+            (Cbor::Text("tag".into()), Cbor::Text("tm.op1.v2".into())),
+            (
+                Cbor::Text("ixs".into()),
+                Cbor::Array(vec![Cbor::Integer(1.into())]),
+            ),
+            (Cbor::Text("val".into()), Cbor::Integer(0.into())),
         ]));
         assert!(decode_bad(vec![
             (Cbor::Text("tag".into()), Cbor::Text("tm.bool".into())),

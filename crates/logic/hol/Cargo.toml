@@ -7,6 +7,13 @@ license.workspace = true
 description = "Raw Ethane HOL arena representation"
 publish = false
 
+[package.metadata.glu]
+buck-test-features = ["buck-test-fixtures"]
+buck-test-mapped-srcs = { "nucleus//:hol_init_checked_manifest" = "theories/init-boolean.checked.json", "nucleus//:hol_init_checked_schema" = "theories/init-boolean.checked.schema.json" }
+
+[features]
+buck-test-fixtures = []
+
 [dependencies]
 covalence-lib-cbor = { path = "../../lib/cbor" }
 covalence-lib-error = { path = "../../lib/error" }
@@ -14,6 +21,9 @@ covalence-lib-hash = { path = "../../lib/hash", default-features = false, featur
 covalence-logic-cas = { path = "../cas" }
 serde = { version = "1", features = ["derive"] }
 smallvec = { version = "1", features = ["serde"] }
+
+[dev-dependencies]
+covalence-lib-json = { path = "../../lib/json" }
 
 [lints]
 workspace = true

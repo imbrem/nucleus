@@ -7,7 +7,7 @@
 # Buffer intentionally accepts bytes, bytearray, memoryview, and other
 # contiguous buffer exporters.
 
-from collections.abc import Buffer, Iterable, Sequence
+from collections.abc import Buffer, Sequence
 
 __version__: str
 
@@ -456,34 +456,6 @@ class Step:
     ) -> Step: ...
     @staticmethod
     def forget(ids: Sequence[int], /) -> Step: ...
-
-class Kernel:
-    """A parser-independent typed LRAT clause kernel."""
-
-    def __init__(self, initial: Formula, /) -> None: ...
-    @property
-    def refuted(self) -> bool: ...
-    @property
-    def high_water(self) -> int: ...
-    def clause(self, id: int, /) -> list[int] | None: ...
-    def learn_rup(
-        self, id: int, clause: Clause, ordered_hints: Sequence[int], /
-    ) -> None: ...
-    def learn_rat(
-        self,
-        id: int,
-        clause: Clause,
-        pivot: Literal,
-        prefix_rup_hints: Sequence[int],
-        groups: Sequence[RatGroup],
-        /,
-    ) -> None: ...
-    def forget(self, ids: Sequence[int], /) -> None: ...
-    def verify(
-        self,
-        proof: str | Buffer | Iterable[Step],
-        /,
-    ) -> None: ...
 
 def parse_text(text: str, /) -> list[Step]: ...
 def parse_binary(proof: Buffer, /) -> list[Step]: ...

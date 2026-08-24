@@ -1036,7 +1036,13 @@ impl PyArena {
     }
 
     fn definition(&self, reference_value: u64) -> PyResult<Option<PyDefinition>> {
-        Ok(self.definition_at(reference(reference_value)?))
+        if reference_value == 0 {
+            return Err(PyValueError::new_err("references are one-based"));
+        }
+        let Some(reference) = Ref::new(reference_value) else {
+            return Ok(None);
+        };
+        Ok(self.definition_at(reference))
     }
 
     #[getter]

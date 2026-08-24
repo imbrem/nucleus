@@ -34,6 +34,18 @@ _REPOSITORY_SOURCES = glob([
     "*.yml",
 ])
 
+export_file(
+    name = "hol_init_checked_manifest",
+    src = "theories/init-boolean.checked.json",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "hol_init_checked_schema",
+    src = "theories/init-boolean.checked.schema.json",
+    visibility = ["PUBLIC"],
+)
+
 genrule(
     name = "loc",
     srcs = with_environment(

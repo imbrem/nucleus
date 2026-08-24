@@ -29,7 +29,8 @@ def children : detail.Expr → List Ref
   | .kindStar | .boolTy | .bool _ | .tmRef .. | .tyRef .. | .kindRef .. => []
   | .kindArr left right | .tyArr left right | .tyApp left right |
       .tyLam left right | .app left right | .lam left right |
-      .eq left right | .eps left right => [left, right]
+      .eq left right | .eps left right | .op2 _ left right => [left, right]
+  | .op1 _ child => [child]
   | .tyFv _ child | .tyExists _ child | .model _ child | .tmFv _ child => [child]
 
 @[simp] theorem children_tmRef (source : ImportId) (foreign : Ref) :
@@ -55,6 +56,8 @@ def extras (row : detail.Row) : List RowExtra :=
   let expression := match row.expr with
     | .tyFv name _ | .tyExists name _ | .model name _ | .tmFv name _ => [.nat name]
     | .bool value => [.bool value]
+    | .op1 op _ => [.nat op.code.toUInt64]
+    | .op2 op _ _ => [.nat op.code.toUInt64]
     | .tmRef source foreign | .tyRef source foreign | .kindRef source foreign =>
         [.source source, .foreign foreign]
     | _ => []

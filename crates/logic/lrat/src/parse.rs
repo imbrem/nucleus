@@ -2,7 +2,7 @@
 
 use covalence_lib_error::snafu::{self, Snafu};
 
-use crate::{Clause, Kernel, Literal, RatGroup, kernel::Error};
+use crate::{Clause, Literal, RatGroup};
 
 /// One parsed LRAT proof step.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -22,31 +22,6 @@ pub enum Step {
     Forget {
         ids: Vec<u64>,
     },
-}
-
-impl Step {
-    /// Applies this parsed step through the semantic kernel API.
-    ///
-    /// # Errors
-    ///
-    /// Returns the kernel's semantic rejection without changing its state.
-    pub fn apply(&self, kernel: &mut Kernel) -> Result<(), Error> {
-        match self {
-            Self::LearnRup {
-                id,
-                clause,
-                ordered_hints,
-            } => kernel.learn_rup(*id, clause, ordered_hints),
-            Self::LearnRat {
-                id,
-                clause,
-                pivot,
-                prefix_rup_hints,
-                groups,
-            } => kernel.learn_rat(*id, clause, *pivot, prefix_rup_hints, groups),
-            Self::Forget { ids } => kernel.forget(ids),
-        }
-    }
 }
 
 /// Input which is not a well-formed LRAT proof.

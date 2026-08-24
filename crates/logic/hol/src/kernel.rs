@@ -6,17 +6,23 @@
 //! member. Concrete resolvers, caches, ergonomic typed objects, and indexes
 //! over the union-find belong in userspace.
 
-use std::{convert::Infallible, ops::Deref};
+use std::{collections::BTreeMap, convert::Infallible, ops::Deref};
 
 use covalence_lib_error::snafu::Snafu;
 use smallvec::SmallVec;
 
 use crate::{
     Arena, Import, ImportId, Link, Meta, Ref, ResolveError, Resolver, Sort, SynFactId, Tag,
+    builtin::{Op1, Op2},
+    init::Compiled,
     row::{Expr as Node, Row},
 };
 
+mod classical;
 mod syn_facts;
+
+use classical::ClassicalState;
+pub use classical::{PropId, PropIdError, PropVec, Thm, ThmId};
 
 /// A recoverable failure at the checked kernel boundary.
 #[derive(Debug, Snafu)]
@@ -34,6 +40,21 @@ where
     /// The syntactic-fact slot space no longer fits in `SynFactId`.
     #[snafu(display("kernel has too many syntactic facts"))]
     TooManySynFacts,
+    /// The theorem slot space no longer fits in `ThmId`.
+    #[snafu(display("kernel has too many theorem slots"))]
+    TooManyTheorems,
+    /// A theorem index is absent or has been removed.
+    #[snafu(display("theorem {id:?} is absent"))]
+    MissingTheorem {
+        /// Missing one-based theorem slot.
+        id: ThmId,
+    },
+    /// A checked sequent rule does not match its evidence.
+    #[snafu(display("theorem evidence does not establish {rule}"))]
+    InvalidTheoremRule {
+        /// Name of the rejected rule.
+        rule: &'static str,
+    },
     /// A reference does not name a local row.
     #[snafu(display("reference {reference:?} does not name a kernel row"))]
     MissingDefinition {
@@ -68,6 +89,21 @@ where
         /// Unclassified reference.
         reference: Ref,
     },
+    /// A reachable syntax dependency is cyclic.
+    #[snafu(display("syntax dependency cycle contains reference {reference:?}"))]
+    CyclicSyntax {
+        /// A member of the rejected cycle.
+        reference: Ref,
+    },
+    /// A foreign proxy cannot be detached from its import.
+    #[snafu(display("reference {reference:?} is an imported proxy"))]
+    ImportedProxy {
+        /// Proxy row encountered while traversing the copied syntax.
+        reference: Ref,
+    },
+    /// Kernels do not share the same deterministic initialization prefix.
+    #[snafu(display("kernel init prefixes do not match"))]
+    InitPrefixMismatch,
     /// A constructor requires a particular row form.
     #[snafu(display("reference {reference:?} has tag {actual:?}, but {expected} was required"))]
     WrongForm {
@@ -100,6 +136,50 @@ where
     },
 }
 
+/// The complete source-to-destination correspondence from a term copy.
+///
+/// The map includes copied roots, ordinary syntax children, and classifiers.
+/// It owns no references to either kernel.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CopyMap {
+    nodes: BTreeMap<Ref, Ref>,
+    roots: Vec<Ref>,
+}
+
+impl CopyMap {
+    /// Returns the destination reference corresponding to `source`.
+    #[must_use]
+    pub fn get(&self, source: Ref) -> Option<Ref> {
+        self.nodes.get(&source).copied()
+    }
+
+    /// Returns copied roots in the same order, including repetitions.
+    #[must_use]
+    pub fn roots(&self) -> &[Ref] {
+        &self.roots
+    }
+
+    /// Iterates over every copied source row and its destination row.
+    #[must_use]
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (Ref, Ref)> + '_ {
+        self.nodes
+            .iter()
+            .map(|(&source, &destination)| (source, destination))
+    }
+
+    /// Returns the number of distinct copied rows.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Returns whether no rows were copied.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+}
+
 /// An Ethane arena assembled only through checked row operations.
 ///
 /// `Kernel` is non-generic and stores no resolver. Imported rows accept an
@@ -108,6 +188,8 @@ where
 #[derive(Debug, Default)]
 pub struct Kernel {
     arena: Arena,
+    init_prefix: Option<(crate::O256, usize)>,
+    classical: ClassicalState,
 }
 
 impl Deref for Kernel {
@@ -124,7 +206,35 @@ impl Kernel {
     pub const fn new() -> Self {
         Self {
             arena: Arena::empty(),
+            init_prefix: None,
+            classical: ClassicalState::new(),
         }
+    }
+
+    /// Creates a checked kernel whose exact prefix is the compiled init table.
+    #[must_use]
+    pub fn with_init(init: &Compiled) -> Self {
+        Self {
+            arena: init.arena().clone(),
+            init_prefix: Some((init.arena().addr(), init.arena().len())),
+            classical: ClassicalState::new(),
+        }
+    }
+
+    /// Creates a checked kernel whose first rows are a compiled init prefix.
+    pub(crate) fn with_init_prefix(arena: Arena) -> Self {
+        let init_prefix = Some((arena.addr(), arena.len()));
+        Self {
+            arena,
+            init_prefix,
+            classical: ClassicalState::new(),
+        }
+    }
+
+    /// Returns the compiled init-prefix address and row count, when present.
+    #[must_use]
+    pub const fn init_prefix(&self) -> Option<(crate::O256, usize)> {
+        self.init_prefix
     }
 
     /// Borrows the underlying raw arena.
@@ -137,6 +247,128 @@ impl Kernel {
     #[must_use]
     pub fn into_arena(self) -> Arena {
         self.arena
+    }
+
+    /// Copies one reachable term DAG from an independent kernel.
+    ///
+    /// The copy preserves sharing, introduces no import, and retains no
+    /// borrow of `source`. Equality, context, proof metadata, and syntactic
+    /// facts are deliberately not copied. References in a matching compiled
+    /// init prefix are identities and are never appended.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the root is not a term or its reachable syntax is
+    /// missing, cyclic, imported, or fails checked kinding or typing, or if
+    /// the kernels have different init prefixes. The destination is unchanged
+    /// on error.
+    pub fn copy_term_from(&mut self, source: &Self, root: Ref) -> Result<CopyMap, KernelError> {
+        self.copy_terms_from(source, &[root])
+    }
+
+    /// Copies the union of several reachable term DAGs from another kernel.
+    ///
+    /// Roots retain their input order and repetitions, while every reachable
+    /// source row is appended at most once. An empty root list is a no-op.
+    /// No import row or provenance relationship is introduced.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a root is not a term or reachable syntax is
+    /// missing, cyclic, imported, or fails checked kinding or typing, or if
+    /// the kernels have different init prefixes. All validation and capacity
+    /// checks precede mutation, so failure is atomic.
+    pub fn copy_terms_from(
+        &mut self,
+        source: &Self,
+        roots: &[Ref],
+    ) -> Result<CopyMap, KernelError> {
+        if self.init_prefix != source.init_prefix {
+            return Err(KernelError::InitPrefixMismatch);
+        }
+        for &root in roots {
+            source.require_category::<Infallible>(root, Sort::Tm)?;
+        }
+
+        let mut state = BTreeMap::<Ref, bool>::new();
+        let mut order = Vec::new();
+        let mut nodes = BTreeMap::new();
+        let prefix_len = self.init_prefix.map_or(0, |(_, len)| len);
+        for &root in roots {
+            let mut stack = vec![(root, false)];
+            while let Some((reference, expanded)) = stack.pop() {
+                let reference_index = usize::try_from(reference.get())
+                    .map_err(|_| KernelError::TooManyDefinitions)?;
+                if reference_index <= prefix_len {
+                    state.insert(reference, true);
+                    nodes.insert(reference, reference);
+                    continue;
+                }
+                if expanded {
+                    state.insert(reference, true);
+                    order.push(reference);
+                    continue;
+                }
+                match state.get(&reference) {
+                    Some(true) => continue,
+                    Some(false) => return Err(KernelError::CyclicSyntax { reference }),
+                    None => {}
+                }
+                state.insert(reference, false);
+                let row = source.row::<Infallible>(reference)?;
+                if matches!(
+                    row.expr(),
+                    Node::TmRef { .. } | Node::TyRef { .. } | Node::KindRef { .. }
+                ) {
+                    return Err(KernelError::ImportedProxy { reference });
+                }
+                stack.push((reference, true));
+                let mut dependencies = row.expr().children();
+                if let Some(sort) = row.sort() {
+                    dependencies.push(sort);
+                }
+                for dependency in dependencies.into_iter().rev() {
+                    stack.push((dependency, false));
+                }
+            }
+        }
+
+        let final_len = self
+            .arena
+            .len()
+            .checked_add(order.len())
+            .ok_or(KernelError::TooManyDefinitions)?;
+        u64::try_from(final_len).map_err(|_| KernelError::TooManyDefinitions)?;
+
+        for (offset, &source_ref) in order.iter().enumerate() {
+            let value = self.arena.len() + offset + 1;
+            let destination =
+                Ref::new(u64::try_from(value).map_err(|_| KernelError::TooManyDefinitions)?)
+                    .ok_or(KernelError::TooManyDefinitions)?;
+            nodes.insert(source_ref, destination);
+        }
+        let mut staged = Self {
+            arena: self.arena.clone(),
+            init_prefix: self.init_prefix,
+            classical: ClassicalState::new(),
+        };
+        for &source_ref in &order {
+            let row = source.row::<Infallible>(source_ref)?;
+            let copied = remap_row(row, &nodes);
+            staged
+                .arena
+                .push_row(copied)
+                .ok_or(KernelError::TooManyDefinitions)?;
+        }
+        for &destination in nodes.values() {
+            staged.validate_copy_row(destination)?;
+        }
+        let copied_roots = roots.iter().map(|root| nodes[root]).collect();
+        self.arena = staged.arena;
+        Ok(CopyMap {
+            nodes,
+            roots: copied_roots,
+        })
     }
 
     /// Returns the syntactic category declared by a checked row.
@@ -409,6 +641,37 @@ impl Kernel {
         let domain = self.classifier(binder)?;
         let codomain = self.classifier(body)?;
         let function_ty = self.ty_arr(domain, codomain)?;
+        self.lam_at(function_ty, binder, body)
+    }
+
+    /// Appends a term abstraction at an existing function type.
+    ///
+    /// This avoids manufacturing a duplicate arrow row when a deterministic
+    /// prefix already names the required function type.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `binder` is a free term-variable row and
+    /// `function_ty` is an arrow whose endpoints equal the binder and body
+    /// types.
+    pub fn lam_at(&mut self, function_ty: Ref, binder: Ref, body: Ref) -> Result<Ref, KernelError> {
+        self.require_form::<Infallible>(binder, "tm.fv", |node| matches!(node, Node::TmFv { .. }))?;
+        self.require_category::<Infallible>(body, Sort::Tm)?;
+        let (domain, codomain) = self.type_arrow_member::<Infallible>(function_ty)?;
+        let binder_ty = self.classifier(binder)?;
+        if !self.equivalent(domain, binder_ty)? {
+            return Err(KernelError::ClassifierMismatch {
+                expected: domain,
+                actual: binder_ty,
+            });
+        }
+        let body_ty = self.classifier(body)?;
+        if !self.equivalent(codomain, body_ty)? {
+            return Err(KernelError::ClassifierMismatch {
+                expected: codomain,
+                actual: body_ty,
+            });
+        }
         self.push::<Infallible>(Row::new(Node::Lam(binder, body)).with_sort(function_ty))
     }
 
@@ -420,6 +683,77 @@ impl Kernel {
     pub fn bool(&mut self, bool_ty: Ref, value: bool) -> Result<Ref, KernelError> {
         self.require_bool_type::<Infallible>(bool_ty)?;
         self.push::<Infallible>(Row::new(Node::Bool(value)).with_sort(bool_ty))
+    }
+
+    /// Appends a checked unary Boolean builtin.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the operand is a Boolean term.
+    pub fn op1(&mut self, op: Op1, operand: Ref) -> Result<Ref, KernelError> {
+        let bool_ty = self.require_bool_term::<Infallible>(operand)?;
+        self.push::<Infallible>(Row::new(Node::Op1(op, operand)).with_sort(bool_ty))
+    }
+
+    /// Appends a checked binary Boolean builtin.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless both operands are Boolean terms.
+    pub fn op2(&mut self, op: Op2, left: Ref, right: Ref) -> Result<Ref, KernelError> {
+        let bool_ty = self.require_bool_term::<Infallible>(left)?;
+        let right_ty = self.require_bool_term::<Infallible>(right)?;
+        if !self.equivalent(bool_ty, right_ty)? {
+            return Err(KernelError::ClassifierMismatch {
+                expected: bool_ty,
+                actual: right_ty,
+            });
+        }
+        self.push::<Infallible>(Row::new(Node::Op2(op, left, right)).with_sort(bool_ty))
+    }
+
+    /// Canonically lowers one compact logical row through its named init definition.
+    ///
+    /// The kernel must have been created with [`Kernel::with_init`], and `init`
+    /// must be that same prefix. Lowering is ordinary checked application, so
+    /// the resulting raw term is identical to direct construction from the
+    /// authoritative opcode-free definition.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `reference` is not an opcode row, the init prefix
+    /// is absent/mismatched, or checked application rejects an operand.
+    pub fn lower_logical(&mut self, init: &Compiled, reference: Ref) -> Result<Ref, KernelError> {
+        if !self.arena.has_definition_prefix(init.arena()) {
+            return Err(KernelError::InitPrefixMismatch);
+        }
+        let row = self.row::<Infallible>(reference)?;
+        let actual = row.tag();
+        let node = *row.expr();
+        match node {
+            Node::Op1(op, operand) => {
+                let definition = init.get(op.name()).ok_or(KernelError::WrongForm {
+                    reference,
+                    expected: "named logical init definition",
+                    actual,
+                })?;
+                self.app(definition, operand)
+            }
+            Node::Op2(op, left, right) => {
+                let definition = init.get(op.name()).ok_or(KernelError::WrongForm {
+                    reference,
+                    expected: "named logical init definition",
+                    actual,
+                })?;
+                let partial = self.app(definition, left)?;
+                self.app(partial, right)
+            }
+            _ => Err(KernelError::WrongForm {
+                reference,
+                expected: "tm.op1.v1 or tm.op2.v1",
+                actual,
+            }),
+        }
     }
 
     /// Appends object-language equality.
@@ -615,6 +949,159 @@ impl Kernel {
             .resolve_foreign(resolver, source, foreign)
             .map(|expression| expression.tag().sort())
             .map_err(|source| KernelError::Resolve { source })
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn validate_copy_row(&self, reference: Ref) -> Result<(), KernelError> {
+        let row = self.row::<Infallible>(reference)?;
+        let expected_sort = match *row.expr() {
+            Node::KindStar => None,
+            Node::KindArr(domain, codomain) => {
+                self.require_category::<Infallible>(domain, Sort::Kind)?;
+                self.require_category::<Infallible>(codomain, Sort::Kind)?;
+                None
+            }
+            Node::BoolTy => {
+                let sort = row.sort().ok_or(KernelError::MissingSort { reference })?;
+                self.require_star::<Infallible>(sort)?;
+                Some(sort)
+            }
+            Node::TyArr(domain, codomain) => {
+                let star = self.require_star_type::<Infallible>(domain)?;
+                self.require_star_type::<Infallible>(codomain)?;
+                Some(star)
+            }
+            Node::TyFv { kind, .. } => {
+                self.require_category::<Infallible>(kind, Sort::Kind)?;
+                Some(kind)
+            }
+            Node::TyApp(function, argument) => {
+                self.require_category::<Infallible>(function, Sort::Ty)?;
+                self.require_category::<Infallible>(argument, Sort::Ty)?;
+                let (domain, codomain) =
+                    self.kind_arrow::<Infallible>(self.classifier(function)?)?;
+                let actual = self.classifier(argument)?;
+                if actual != domain {
+                    return Err(KernelError::ClassifierMismatch {
+                        expected: domain,
+                        actual,
+                    });
+                }
+                Some(codomain)
+            }
+            Node::TyLam(binder, body) => {
+                self.require_form::<Infallible>(binder, "ty.fv", |node| {
+                    matches!(node, Node::TyFv { .. })
+                })?;
+                self.require_category::<Infallible>(body, Sort::Ty)?;
+                let sort = row.sort().ok_or(KernelError::MissingSort { reference })?;
+                let (domain, codomain) = self.kind_arrow::<Infallible>(sort)?;
+                if domain != self.classifier(binder)? || codomain != self.classifier(body)? {
+                    return Err(KernelError::ClassifierMismatch {
+                        expected: self.classifier(body)?,
+                        actual: codomain,
+                    });
+                }
+                Some(sort)
+            }
+            Node::Model { predicate, .. } => {
+                let bool_ty = self.require_bool_term::<Infallible>(predicate)?;
+                Some(self.classifier(bool_ty)?)
+            }
+            Node::TyExists { predicate, .. } => {
+                Some(self.require_bool_term::<Infallible>(predicate)?)
+            }
+            Node::TmFv { ty, .. } => {
+                self.require_star_type::<Infallible>(ty)?;
+                Some(ty)
+            }
+            Node::App(function, argument) => {
+                self.require_category::<Infallible>(function, Sort::Tm)?;
+                self.require_category::<Infallible>(argument, Sort::Tm)?;
+                let (domain, codomain) =
+                    self.type_arrow_member::<Infallible>(self.classifier(function)?)?;
+                let actual = self.classifier(argument)?;
+                if domain != actual {
+                    return Err(KernelError::ClassifierMismatch {
+                        expected: domain,
+                        actual,
+                    });
+                }
+                Some(codomain)
+            }
+            Node::Lam(binder, body) => {
+                self.require_form::<Infallible>(binder, "tm.fv", |node| {
+                    matches!(node, Node::TmFv { .. })
+                })?;
+                self.require_category::<Infallible>(body, Sort::Tm)?;
+                let sort = row.sort().ok_or(KernelError::MissingSort { reference })?;
+                let (domain, codomain) = self.type_arrow_member::<Infallible>(sort)?;
+                if domain != self.classifier(binder)? || codomain != self.classifier(body)? {
+                    return Err(KernelError::ClassifierMismatch {
+                        expected: self.classifier(body)?,
+                        actual: codomain,
+                    });
+                }
+                Some(sort)
+            }
+            Node::Bool(_) => {
+                let sort = row.sort().ok_or(KernelError::MissingSort { reference })?;
+                self.require_bool_type::<Infallible>(sort)?;
+                Some(sort)
+            }
+            Node::Op1(_, operand) => Some(self.require_bool_term::<Infallible>(operand)?),
+            Node::Op2(_, left, right) => {
+                let bool_ty = self.require_bool_term::<Infallible>(left)?;
+                let right_ty = self.require_bool_term::<Infallible>(right)?;
+                if !self.equivalent(bool_ty, right_ty)? {
+                    return Err(KernelError::ClassifierMismatch {
+                        expected: bool_ty,
+                        actual: right_ty,
+                    });
+                }
+                Some(bool_ty)
+            }
+            Node::Eq(left, right) => {
+                self.require_category::<Infallible>(left, Sort::Tm)?;
+                self.require_category::<Infallible>(right, Sort::Tm)?;
+                let left_ty = self.classifier(left)?;
+                let right_ty = self.classifier(right)?;
+                if left_ty != right_ty {
+                    return Err(KernelError::ClassifierMismatch {
+                        expected: left_ty,
+                        actual: right_ty,
+                    });
+                }
+                let sort = row.sort().ok_or(KernelError::MissingSort { reference })?;
+                self.require_bool_type::<Infallible>(sort)?;
+                Some(sort)
+            }
+            Node::Eps { ty, predicate } => {
+                self.require_star_type::<Infallible>(ty)?;
+                let (domain, codomain) =
+                    self.type_arrow_member::<Infallible>(self.classifier(predicate)?)?;
+                if domain != ty {
+                    return Err(KernelError::ClassifierMismatch {
+                        expected: ty,
+                        actual: domain,
+                    });
+                }
+                self.require_bool_type::<Infallible>(codomain)?;
+                Some(ty)
+            }
+            Node::TmRef { .. } | Node::TyRef { .. } | Node::KindRef { .. } => {
+                return Err(KernelError::ImportedProxy { reference });
+            }
+        };
+        if row.sort() != expected_sort {
+            return match (expected_sort, row.sort()) {
+                (Some(expected), Some(actual)) => {
+                    Err(KernelError::ClassifierMismatch { expected, actual })
+                }
+                _ => Err(KernelError::MissingSort { reference }),
+            };
+        }
+        Ok(())
     }
 
     fn push<E>(&mut self, row: Row) -> Result<Ref, KernelError<E>>
@@ -893,12 +1380,64 @@ impl Kernel {
     }
 }
 
+fn remap_row(row: &Row, map: &BTreeMap<Ref, Ref>) -> Row {
+    let remap = |reference: Ref| map[&reference];
+    let expr = match *row.expr() {
+        Node::KindStar => Node::KindStar,
+        Node::KindArr(a, b) => Node::KindArr(remap(a), remap(b)),
+        Node::BoolTy => Node::BoolTy,
+        Node::TyArr(a, b) => Node::TyArr(remap(a), remap(b)),
+        Node::TyApp(a, b) => Node::TyApp(remap(a), remap(b)),
+        Node::TyLam(a, b) => Node::TyLam(remap(a), remap(b)),
+        Node::TyFv { name, kind } => Node::TyFv {
+            name,
+            kind: remap(kind),
+        },
+        Node::TyExists { name, predicate } => Node::TyExists {
+            name,
+            predicate: remap(predicate),
+        },
+        Node::Model { name, predicate } => Node::Model {
+            name,
+            predicate: remap(predicate),
+        },
+        Node::TmFv { name, ty } => Node::TmFv {
+            name,
+            ty: remap(ty),
+        },
+        Node::App(a, b) => Node::App(remap(a), remap(b)),
+        Node::Lam(a, b) => Node::Lam(remap(a), remap(b)),
+        Node::Bool(value) => Node::Bool(value),
+        Node::Op1(op, operand) => Node::Op1(op, remap(operand)),
+        Node::Op2(op, left, right) => Node::Op2(op, remap(left), remap(right)),
+        Node::Eq(a, b) => Node::Eq(remap(a), remap(b)),
+        Node::Eps { ty, predicate } => Node::Eps {
+            ty: remap(ty),
+            predicate: remap(predicate),
+        },
+        Node::TmRef { .. } | Node::TyRef { .. } | Node::KindRef { .. } => {
+            unreachable!("imported proxies are rejected before copying")
+        }
+    };
+    let mut copied = Row::new(expr);
+    if let Some(sort) = row.sort() {
+        copied = copied.with_sort(remap(sort));
+    }
+    copied
+}
+
 #[cfg(test)]
 mod tests {
     use std::convert::Infallible;
 
     use super::*;
-    use crate::{KindTag, LinkFormat, Table, TmTag, TyTag};
+    use crate::{KindTag, LinkFormat, SynRel, Table, TmTag, TyTag, init};
+    use covalence_lib_json::serde_json;
+
+    #[cfg(not(feature = "buck-test-fixtures"))]
+    const INIT_FIXTURE: &str = include_str!("../../../../theories/init-boolean.checked.json");
+    #[cfg(feature = "buck-test-fixtures")]
+    const INIT_FIXTURE: &str = include_str!("../theories/init-boolean.checked.json");
 
     struct OneTable(Table);
 
@@ -925,6 +1464,129 @@ mod tests {
         assert_eq!(kernel.classifier(application).unwrap(), bool_ty);
         assert_eq!(kernel.arena().tag(identity), Some(Tag::Tm(TmTag::Lam)));
         assert_eq!(kernel.arena().context().collect::<Vec<_>>(), [equation]);
+    }
+
+    #[test]
+    fn logical_rows_are_boolean_checked_and_lower_canonically() {
+        let manifest: init::Manifest = serde_json::from_str(INIT_FIXTURE).unwrap();
+        let init = init::compile(&manifest).unwrap();
+        let bool_ty = init.get("bool").unwrap();
+        let truth = init.get("true").unwrap();
+        let falsehood = init.get("false").unwrap();
+
+        for operand in [falsehood, truth] {
+            let op = Op1::Not;
+            let mut lowered = Kernel::with_init(&init);
+            let compact = lowered.op1(op, operand).unwrap();
+            assert_eq!(lowered.arena().op1(compact), Some(op));
+            let result = lowered.lower_logical(&init, compact).unwrap();
+
+            let mut direct = Kernel::with_init(&init);
+            let direct_compact = direct.op1(op, operand).unwrap();
+            assert_eq!(direct_compact, compact);
+            let expected = direct.app(init.get(op.name()).unwrap(), operand).unwrap();
+            assert_eq!(result, expected);
+            assert_eq!(lowered.into_arena(), direct.into_arena());
+        }
+
+        for op in [Op2::And, Op2::Or, Op2::Imp] {
+            for left in [falsehood, truth] {
+                for right in [falsehood, truth] {
+                    let mut lowered = Kernel::with_init(&init);
+                    let compact = lowered.op2(op, left, right).unwrap();
+                    assert_eq!(lowered.arena().op2(compact), Some(op));
+                    let result = lowered.lower_logical(&init, compact).unwrap();
+
+                    let mut direct = Kernel::with_init(&init);
+                    let direct_compact = direct.op2(op, left, right).unwrap();
+                    assert_eq!(direct_compact, compact);
+                    let partial = direct.app(init.get(op.name()).unwrap(), left).unwrap();
+                    let expected = direct.app(partial, right).unwrap();
+                    assert_eq!(result, expected);
+                    assert_eq!(lowered.into_arena(), direct.into_arena());
+                }
+            }
+        }
+
+        let mut wrong = Kernel::new();
+        let star = wrong.star().unwrap();
+        let wrong_bool = wrong.bool_ty(star).unwrap();
+        assert!(wrong.op1(Op1::Not, wrong_bool).is_err());
+        assert!(wrong.op2(Op2::And, wrong_bool, wrong_bool).is_err());
+        let raw_compact = wrong.arena.push_op1(Op1::Not, wrong_bool).unwrap();
+        assert!(matches!(
+            wrong.lower_logical(&init, raw_compact),
+            Err(KernelError::InitPrefixMismatch)
+        ));
+        assert_eq!(init.get("bool"), Some(bool_ty));
+    }
+
+    #[test]
+    fn logical_lowering_produces_checked_direct_syntactic_facts() {
+        let manifest: init::Manifest = serde_json::from_str(INIT_FIXTURE).unwrap();
+        let init = init::compile(&manifest).unwrap();
+        let truth = init.get("true").unwrap();
+
+        let mut unary = Kernel::with_init(&init);
+        let compact = unary.op1(Op1::Not, truth).unwrap();
+        let id = unary.logical_lower_fact(None, &init, compact).unwrap();
+        let fact = unary.syn_fact(id).unwrap();
+        assert_eq!(fact.rel(), SynRel::Syn);
+        assert_eq!(fact.input(), compact);
+        assert_eq!(fact.var(), None);
+        assert_eq!(fact.val(), None);
+
+        let mut unary_direct = Kernel::with_init(&init);
+        let direct_compact = unary_direct.op1(Op1::Not, truth).unwrap();
+        let direct_expansion = unary_direct.lower_logical(&init, direct_compact).unwrap();
+        assert_eq!(fact.output(), direct_expansion);
+        unary.union_syn_fact(id).unwrap();
+        assert!(unary.equivalent(compact, fact.output()).unwrap());
+
+        for op in [Op2::And, Op2::Or, Op2::Imp] {
+            let mut binary = Kernel::with_init(&init);
+            let compact = binary.op2(op, truth, truth).unwrap();
+            let id = binary.logical_lower_fact(None, &init, compact).unwrap();
+            let fact = binary.syn_fact(id).unwrap();
+
+            let mut direct = Kernel::with_init(&init);
+            let direct_compact = direct.op2(op, truth, truth).unwrap();
+            let direct_expansion = direct.lower_logical(&init, direct_compact).unwrap();
+            assert_eq!(fact.rel(), SynRel::Syn);
+            assert_eq!(fact.input(), compact);
+            assert_eq!(fact.output(), direct_expansion);
+        }
+
+        let mut initialized = Kernel::with_init(&init);
+        assert!(initialized.logical_lower_fact(None, &init, truth).is_err());
+        assert_eq!(initialized.syn_fact_len(), 0);
+
+        let mut bare = Kernel::new();
+        let star = bare.star().unwrap();
+        let bool_ty = bare.bool_ty(star).unwrap();
+        let bare_truth = bare.bool(bool_ty, true).unwrap();
+        let compact = bare.op1(Op1::Not, bare_truth).unwrap();
+        assert!(matches!(
+            bare.logical_lower_fact(None, &init, compact),
+            Err(KernelError::InitPrefixMismatch)
+        ));
+        assert_eq!(bare.syn_fact_len(), 0);
+    }
+
+    #[test]
+    fn abstraction_can_reuse_a_named_function_type() {
+        let mut kernel = Kernel::new();
+        let star = kernel.star().unwrap();
+        let bool_ty = kernel.bool_ty(star).unwrap();
+        let function_ty = kernel.ty_arr(bool_ty, bool_ty).unwrap();
+        let variable = kernel.tm_fv(0, bool_ty).unwrap();
+        let abstraction = kernel.lam_at(function_ty, variable, variable).unwrap();
+
+        assert_eq!(kernel.classifier(abstraction).unwrap(), function_ty);
+        assert!(matches!(
+            kernel.lam_at(bool_ty, variable, variable),
+            Err(KernelError::WrongForm { .. })
+        ));
     }
 
     #[test]
@@ -991,5 +1653,146 @@ mod tests {
                 sort: bool_ty,
             }]
         );
+    }
+
+    #[test]
+    fn copies_empty_and_repeated_roots_without_imports() {
+        let mut source = Kernel::new();
+        let star = source.star().unwrap();
+        let bool_ty = source.bool_ty(star).unwrap();
+        let truth = source.bool(bool_ty, true).unwrap();
+        let mut destination = Kernel::new();
+
+        assert!(
+            destination
+                .copy_terms_from(&source, &[])
+                .unwrap()
+                .is_empty()
+        );
+        let copied = destination
+            .copy_terms_from(&source, &[truth, truth])
+            .unwrap();
+
+        assert_eq!(copied.len(), 3);
+        assert_eq!(copied.roots(), &[copied.get(truth).unwrap(); 2]);
+        assert!(destination.imports().is_empty());
+        assert_eq!(destination.len(), 3);
+    }
+
+    #[test]
+    fn copies_the_union_of_diamonds_and_preserves_sharing() {
+        let mut source = Kernel::new();
+        let star = source.star().unwrap();
+        let bool_ty = source.bool_ty(star).unwrap();
+        let variable = source.tm_fv(7, bool_ty).unwrap();
+        let left = source.eq(bool_ty, variable, variable).unwrap();
+        let right = source.eq(bool_ty, variable, variable).unwrap();
+        let mut destination = Kernel::new();
+
+        let copied = destination
+            .copy_terms_from(&source, &[left, right])
+            .unwrap();
+        let copied_variable = copied.get(variable).unwrap();
+        let left_children = destination
+            .children(copied.get(left).unwrap())
+            .unwrap()
+            .collect::<Vec<_>>();
+        let right_children = destination
+            .children(copied.get(right).unwrap())
+            .unwrap()
+            .collect::<Vec<_>>();
+
+        assert_eq!(left_children, [copied_variable, copied_variable]);
+        assert_eq!(right_children, [copied_variable, copied_variable]);
+        assert_eq!(copied.len(), 5);
+        drop(source);
+        assert_eq!(destination.category(copied.roots()[0]).unwrap(), Sort::Tm);
+    }
+
+    #[test]
+    fn copies_compact_logical_opcodes_between_kernels() {
+        let mut source = Kernel::new();
+        let star = source.star().unwrap();
+        let bool_ty = source.bool_ty(star).unwrap();
+        let p = source.tm_fv(1, bool_ty).unwrap();
+        let q = source.tm_fv(2, bool_ty).unwrap();
+        let not_p = source.op1(Op1::Not, p).unwrap();
+        let implication = source.op2(Op2::Imp, not_p, q).unwrap();
+        let mut destination = Kernel::new();
+
+        let copied = destination.copy_term_from(&source, implication).unwrap();
+        let copied_not_p = copied.get(not_p).unwrap();
+        let copied_implication = copied.get(implication).unwrap();
+
+        assert_eq!(destination.arena().op1(copied_not_p), Some(Op1::Not));
+        assert_eq!(destination.arena().op2(copied_implication), Some(Op2::Imp));
+        assert_eq!(
+            destination
+                .children(copied_implication)
+                .unwrap()
+                .collect::<Vec<_>>(),
+            [copied_not_p, copied.get(q).unwrap()]
+        );
+    }
+
+    #[test]
+    fn copy_rejects_bad_reachable_syntax_atomically() {
+        let mut source = Kernel::new();
+        let self_ref = Ref::new(1).unwrap();
+        source
+            .arena
+            .push_row(Row::new(Node::App(self_ref, self_ref)).with_sort(self_ref));
+        let mut destination = Kernel::new();
+        let existing = destination.star().unwrap();
+        let before = destination.len();
+
+        assert!(matches!(
+            destination.copy_term_from(&source, self_ref),
+            Err(KernelError::CyclicSyntax { .. })
+        ));
+        assert_eq!(destination.len(), before);
+        assert_eq!(destination.category(existing).unwrap(), Sort::Kind);
+    }
+
+    #[test]
+    fn copy_rejects_dangling_sort_invalid_and_imported_rows_atomically() {
+        let mut destination = Kernel::new();
+
+        let mut dangling = Kernel::new();
+        let missing = Ref::new(2).unwrap();
+        let root = dangling
+            .arena
+            .push_row(Row::new(Node::Bool(true)).with_sort(missing))
+            .unwrap();
+        assert!(matches!(
+            destination.copy_term_from(&dangling, root),
+            Err(KernelError::MissingDefinition { .. })
+        ));
+
+        let mut invalid = Kernel::new();
+        let star = invalid.star().unwrap();
+        let root = invalid
+            .arena
+            .push_row(Row::new(Node::Bool(true)).with_sort(star))
+            .unwrap();
+        assert!(matches!(
+            destination.copy_term_from(&invalid, root),
+            Err(KernelError::WrongCategory { .. })
+        ));
+
+        let mut imported = Kernel::new();
+        let source_id = imported.import_literal(Arena::empty()).unwrap();
+        let root = imported
+            .arena
+            .push_row(Row::new(Node::TmRef {
+                src: source_id,
+                ix: Ref::new(1).unwrap(),
+            }))
+            .unwrap();
+        assert!(matches!(
+            destination.copy_term_from(&imported, root),
+            Err(KernelError::ImportedProxy { .. })
+        ));
+        assert!(destination.is_empty());
     }
 }

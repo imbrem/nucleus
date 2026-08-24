@@ -7,11 +7,15 @@ import Nucleus.Hol.Ethane.Subtype.Soundness
 import Nucleus.Hol.Ethane.Conversion
 import Nucleus.Hol.Ethane.Equivalence
 import Nucleus.Hol.Ethane.FV
+import Nucleus.Hol.Ethane.Builtin
+import Nucleus.Hol.Ethane.LogicalOpcode
+import Nucleus.Hol.Ethane.ClassicalSequent
 import Nucleus.Hol.Ethane.Arena
 import Nucleus.Hol.Ethane.Arena.Cbor
 import Nucleus.Hol.Ethane.Arena.OneBased
 import Nucleus.Hol.Ethane.Arena.OneBased.UnionFind
 import Nucleus.Hol.Ethane.Arena.OneBased.Kernel
+import Nucleus.Hol.Ethane.Arena.OneBased.Copy
 import Nucleus.Hol.Ethane.Arena.OneBased.Rules
 import Nucleus.Hol.Ethane.Arena.OneBased.SynFacts
 import Nucleus.Hol.Ethane.Arena.OneBased.Api
