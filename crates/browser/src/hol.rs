@@ -1,7 +1,7 @@
 //! Lossless browser boundary for the checked classical HOL kernel.
 
 use covalence_logic_hol::{
-    Kernel, PropId, Ref, ThmId,
+    Clause, Cube, Kernel, PropId, Ref, ThmId,
     builtin::{Op1, Op2},
 };
 use wasm_bindgen::prelude::*;
@@ -375,6 +375,58 @@ impl HolProver {
     pub fn theorem_json(&self, theorem: &str) -> Result<String, JsError> {
         self.snapshot(theorem).map_err(to_js)
     }
+
+    /// Weakens a theorem with complete CNF clauses and DNF cubes.
+    ///
+    /// Both matrix arguments are JSON arrays of rows containing signed
+    /// proposition IDs as decimal strings.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed JSON, invalid IDs, a missing theorem,
+    /// or a row containing a non-Boolean proposition.
+    #[wasm_bindgen(js_name = weakenMatrix)]
+    pub fn weaken_matrix(
+        &mut self,
+        theorem: &str,
+        premises_json: &str,
+        conclusions_json: &str,
+    ) -> Result<(), JsError> {
+        let theorem = parse_thm(theorem).map_err(to_js)?;
+        let premises = parse_matrix(premises_json)
+            .map(|rows| rows.into_iter().map(Clause::new).collect::<Vec<_>>())
+            .map_err(to_js)?;
+        let conclusions = parse_matrix(conclusions_json)
+            .map(|rows| rows.into_iter().map(Cube::new).collect::<Vec<_>>())
+            .map_err(to_js)?;
+        self.kernel
+            .weaken_matrix(theorem, &premises, &conclusions)
+            .map_err(to_js)
+    }
+
+    /// Moves an indexed left clause to the right with complemented literals.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a malformed index or absent theorem/clause.
+    #[wasm_bindgen(js_name = moveClauseRight)]
+    pub fn move_clause_right(&mut self, theorem: &str, index: &str) -> Result<(), JsError> {
+        let theorem = parse_thm(theorem).map_err(to_js)?;
+        let index = parse_usize(index, "clause index").map_err(to_js)?;
+        self.kernel.move_clause_right(theorem, index).map_err(to_js)
+    }
+
+    /// Moves an indexed right cube to the left with complemented literals.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a malformed index or absent theorem/cube.
+    #[wasm_bindgen(js_name = moveCubeLeft)]
+    pub fn move_cube_left(&mut self, theorem: &str, index: &str) -> Result<(), JsError> {
+        let theorem = parse_thm(theorem).map_err(to_js)?;
+        let index = parse_usize(index, "cube index").map_err(to_js)?;
+        self.kernel.move_cube_left(theorem, index).map_err(to_js)
+    }
 }
 
 impl HolProver {
@@ -389,23 +441,26 @@ impl HolProver {
         let name = parse_u64(name, "proposition name")?;
         self.kernel
             .tm_fv(name, self.bool_ty)
-            .map(PropId::positive)
+            .map(|reference| PropId::positive(reference.get()))
             .map_err(|error| error.to_string())
     }
 
     fn boolean(&mut self, value: bool) -> Result<PropId, String> {
         self.kernel
             .bool(self.bool_ty, value)
-            .map(PropId::positive)
+            .map(|reference| PropId::positive(reference.get()))
             .map_err(|error| error.to_string())
     }
 
     fn materialize(&mut self, proposition: PropId) -> Result<Ref, String> {
         if proposition.is_positive() {
-            Ok(proposition.reference())
+            Ok(Ref::new(proposition.magnitude()).expect("proposition IDs are nonzero"))
         } else {
             self.kernel
-                .op1(Op1::Not, proposition.reference())
+                .op1(
+                    Op1::Not,
+                    Ref::new(proposition.magnitude()).expect("proposition IDs are nonzero"),
+                )
                 .map_err(|error| error.to_string())
         }
     }
@@ -415,7 +470,7 @@ impl HolProver {
         let right = self.materialize(parse_prop(right)?)?;
         self.kernel
             .op2(op, left, right)
-            .map(PropId::positive)
+            .map(|reference| PropId::positive(reference.get()))
             .map_err(|error| error.to_string())
     }
 
@@ -426,8 +481,8 @@ impl HolProver {
             .map_err(|error| error.to_string())?;
         Ok(format!(
             "{{\"premises\":[{}],\"conclusions\":[{}]}}",
-            json_props(theorem.premises()),
-            json_props(theorem.conclusions())
+            json_rows(theorem.premises().clauses().iter().map(Clause::literals)),
+            json_rows(theorem.conclusions().cubes().iter().map(Cube::literals))
         ))
     }
 
@@ -497,6 +552,23 @@ fn parse_context(text: &str) -> Result<Vec<PropId>, String> {
     text.split_whitespace().map(parse_prop).collect()
 }
 
+fn parse_matrix(text: &str) -> Result<Vec<Vec<PropId>>, String> {
+    let rows: Vec<Vec<String>> = covalence_lib_json::from_str(text)
+        .map_err(|error| format!("invalid matrix JSON: {error}"))?;
+    rows.into_iter()
+        .map(|row| {
+            row.into_iter()
+                .map(|literal| parse_prop(&literal))
+                .collect()
+        })
+        .collect()
+}
+
+fn parse_usize(text: &str, label: &str) -> Result<usize, String> {
+    text.parse()
+        .map_err(|_| format!("{label} must be a decimal usize"))
+}
+
 fn format_prop(proposition: PropId) -> String {
     proposition.get().to_string()
 }
@@ -513,12 +585,37 @@ fn json_props(propositions: &[PropId]) -> String {
         .join(",")
 }
 
+fn json_rows<'a>(rows: impl IntoIterator<Item = &'a [PropId]>) -> String {
+    rows.into_iter()
+        .map(|row| format!("[{}]", json_props(row)))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn prover() -> HolProver {
         HolProver::try_new().unwrap()
+    }
+
+    fn unit_premises(theorem: &covalence_logic_hol::Thm) -> Vec<PropId> {
+        theorem
+            .premises()
+            .clauses()
+            .iter()
+            .map(|clause| clause.literals()[0])
+            .collect()
+    }
+
+    fn unit_conclusions(theorem: &covalence_logic_hol::Thm) -> Vec<PropId> {
+        theorem
+            .conclusions()
+            .cubes()
+            .iter()
+            .map(|cube| cube.literals()[0])
+            .collect()
     }
 
     #[test]
@@ -538,7 +635,7 @@ mod tests {
         assert_eq!(
             snapshot,
             format!(
-                "{{\"premises\":[\"{}\",\"{}\"],\"conclusions\":[\"{}\",\"{}\"]}}",
+                "{{\"premises\":[[\"{}\"],[\"{}\"]],\"conclusions\":[[\"{}\"],[\"{}\"]]}}",
                 p.get().min(q.get()),
                 p.get().max(q.get()),
                 p.get().min(q.get()),
@@ -586,8 +683,8 @@ mod tests {
         assert!(prover.kernel.remove_theorem(freed));
         let reused = prover.kernel.copy_theorem(source).unwrap();
         assert_eq!(reused, freed);
-        assert_eq!(prover.kernel.theorem(source).unwrap().premises(), [p]);
-        assert_eq!(prover.kernel.theorem(reused).unwrap().premises(), [p]);
+        assert_eq!(unit_premises(prover.kernel.theorem(source).unwrap()), [p]);
+        assert_eq!(unit_premises(prover.kernel.theorem(reused).unwrap()), [p]);
     }
 
     #[test]
@@ -600,6 +697,46 @@ mod tests {
         assert_ne!(copied, format_thm(source));
         assert!(prover.remove_theorem(&copied).unwrap());
         assert!(!prover.remove_theorem(&copied).unwrap());
+    }
+
+    #[test]
+    fn matrix_boundary_round_trips_nested_rows_and_indexed_transfer() {
+        let mut prover = prover();
+        let p = prover.proposition("1").unwrap();
+        let q = prover.proposition("2").unwrap();
+        let theorem = prover.kernel.identity(p).unwrap();
+        let theorem_id = format_thm(theorem);
+        let clause_json = format!(r#"[["{}","{}"]]"#, q.get(), p.negated().get());
+        let cube_json = format!(r#"[["{}","{}"]]"#, q.negated().get(), p.get());
+        prover
+            .weaken_matrix(&theorem_id, &clause_json, &cube_json)
+            .unwrap();
+        let snapshot = prover.theorem_json(&theorem_id).unwrap();
+        assert!(snapshot.contains(&format!(r#"["{}","{}"]"#, q.get(), p.negated().get())));
+        assert!(snapshot.contains(&format!(r#"["{}","{}"]"#, p.get(), q.negated().get())));
+
+        let clause_index = prover
+            .kernel
+            .theorem(theorem)
+            .unwrap()
+            .premises()
+            .clauses()
+            .iter()
+            .position(|clause| clause.literals().len() == 2)
+            .unwrap();
+        prover
+            .move_clause_right(&theorem_id, &clause_index.to_string())
+            .unwrap();
+        assert!(
+            prover
+                .kernel
+                .theorem(theorem)
+                .unwrap()
+                .conclusions()
+                .cubes()
+                .iter()
+                .any(|cube| cube.literals().len() == 2)
+        );
     }
 
     #[test]
@@ -620,15 +757,18 @@ mod tests {
         assert!(prover.kernel.not_left(theorem, q.negated()).is_err());
         assert_eq!(prover.snapshot(&theorem_id).unwrap(), weakened);
         prover.not_left(&theorem_id, &format_prop(p)).unwrap();
-        assert_eq!(prover.kernel.theorem(theorem).unwrap().conclusions(), [q]);
+        assert_eq!(
+            unit_conclusions(prover.kernel.theorem(theorem).unwrap()),
+            [q]
+        );
 
         prover.not_right(&theorem_id, &format_prop(q)).unwrap();
         assert_eq!(
-            prover.kernel.theorem(theorem).unwrap().premises(),
+            unit_premises(prover.kernel.theorem(theorem).unwrap()),
             [p, p.negated()]
         );
         assert_eq!(
-            prover.kernel.theorem(theorem).unwrap().conclusions(),
+            unit_conclusions(prover.kernel.theorem(theorem).unwrap()),
             [q, q.negated()]
         );
     }
@@ -705,12 +845,12 @@ mod tests {
         assert!(conjunction.is_positive());
         let children = prover
             .kernel
-            .children(conjunction.reference())
+            .children(Ref::new(conjunction.magnitude()).unwrap())
             .unwrap()
             .collect::<Vec<_>>();
         assert_eq!(children.len(), 2);
         assert_eq!(prover.kernel.arena().op1(children[0]), Some(Op1::Not));
-        assert_eq!(children[1], p.reference());
+        assert_eq!(children[1], Ref::new(p.magnitude()).unwrap());
     }
 
     #[test]
@@ -733,7 +873,7 @@ mod tests {
 
         let folded = prover.kernel.fold_premise(flattened, conjunction).unwrap();
         assert_eq!(
-            prover.kernel.theorem(folded).unwrap().premises(),
+            unit_premises(prover.kernel.theorem(folded).unwrap()),
             [conjunction]
         );
         assert_eq!(
