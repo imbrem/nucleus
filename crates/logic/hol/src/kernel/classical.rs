@@ -802,7 +802,9 @@ impl Kernel {
         side: TreeSide,
     ) -> Result<ThmId, KernelError> {
         let source = self.theorem(theorem)?.clone();
-        let leaves = self.collect_tree(formula, side)?;
+        let mut leaves = self.collect_tree(formula, side)?;
+        leaves.sort_unstable();
+        leaves.dedup();
         let mut premises = source.premises().as_slice().to_vec();
         let mut conclusions = source.conclusions().as_slice().to_vec();
         let matched = match side {
@@ -1234,6 +1236,40 @@ mod tests {
         assert_eq!(
             kernel.theorem(folded_right).unwrap(),
             kernel.theorem(disjunction_id).unwrap()
+        );
+    }
+
+    #[test]
+    fn recursive_tree_folding_treats_repeated_leaves_idempotently() {
+        let Fixture { mut kernel, p, .. } = fixture();
+        let repeated_and = positive(kernel.op2(Op2::And, reference(p), reference(p)).unwrap());
+        let nested_and = positive(
+            kernel
+                .op2(Op2::And, reference(repeated_and), reference(p))
+                .unwrap(),
+        );
+        let and_identity = kernel.identity(nested_and).unwrap();
+        let flat_left = kernel.flatten_premise(and_identity, nested_and).unwrap();
+        assert_eq!(unit_premises(kernel.theorem(flat_left).unwrap()), [p]);
+        let folded_left = kernel.fold_premise(flat_left, nested_and).unwrap();
+        assert_eq!(
+            kernel.theorem(folded_left).unwrap(),
+            kernel.theorem(and_identity).unwrap()
+        );
+
+        let repeated_or = positive(kernel.op2(Op2::Or, reference(p), reference(p)).unwrap());
+        let nested_or = positive(
+            kernel
+                .op2(Op2::Or, reference(repeated_or), reference(p))
+                .unwrap(),
+        );
+        let or_identity = kernel.identity(nested_or).unwrap();
+        let flat_right = kernel.flatten_conclusion(or_identity, nested_or).unwrap();
+        assert_eq!(unit_conclusions(kernel.theorem(flat_right).unwrap()), [p]);
+        let folded_right = kernel.fold_conclusion(flat_right, nested_or).unwrap();
+        assert_eq!(
+            kernel.theorem(folded_right).unwrap(),
+            kernel.theorem(or_identity).unwrap()
         );
     }
 

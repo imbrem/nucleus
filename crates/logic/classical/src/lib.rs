@@ -5,14 +5,23 @@
 //! disjunction of conjunctive [`Cube`]s. The distinct wrappers prevent code
 //! from silently confusing these polarities.
 //!
-//! [`ClassicalArena::store`] is intentionally an untrusted storage operation.
-//! An arena alone makes no logical claim about stored rows; an LCF kernel must
-//! keep the arena private and expose only checked rule methods.
+//! [`ClassicalArena`] is deliberately raw storage, not a logical authority.
+//! Its [`ClassicalArena::store`] and [`ClassicalArena::replace`] operations can
+//! admit arbitrary rows, and its rule helpers preserve only whatever semantic
+//! status their inputs already have. An LCF kernel must keep the arena private
+//! and expose only checked rule methods.
+//!
+//! On the wire an arena is only the normalized list of its live theorem rows,
+//! in slot order. Deleted slots and free-list history are omitted; decoding
+//! rebuilds dense, all-live slots and an empty free list.
 
 use std::num::{NonZeroI64, NonZeroU64};
 
 use covalence_lib_error::snafu::Snafu;
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use serde::{
+    Deserialize, Deserializer, Serialize, Serializer, de,
+    ser::{SerializeSeq, SerializeTuple},
+};
 use smallvec::SmallVec;
 
 /// A signed, losslessly negatable proposition identifier.
@@ -257,8 +266,41 @@ matrix!(Cnf, Clause, clauses);
 matrix!(Dnf, Cube, cubes);
 
 /// One matrix sequent, interpreted as `CNF ⊢ DNF`.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Thm(Cnf, Dnf);
+
+impl Serialize for Thm {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut theorem = self.clone();
+        theorem.normalize();
+        let mut tuple = serializer.serialize_tuple(2)?;
+        tuple.serialize_element(&theorem.0)?;
+        tuple.serialize_element(&theorem.1)?;
+        tuple.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Thm {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let theorem = <(Cnf, Dnf)>::deserialize(deserializer)?;
+        let theorem = Self(theorem.0, theorem.1);
+        let mut normalized = theorem.clone();
+        normalized.normalize();
+        if theorem == normalized {
+            Ok(theorem)
+        } else {
+            Err(de::Error::custom(
+                "classical theorem matrix is not normalized",
+            ))
+        }
+    }
+}
 
 impl Thm {
     /// Constructs a row for untrusted storage.
@@ -299,6 +341,10 @@ impl Thm {
 }
 
 /// An ephemeral one-based theorem slot identifier.
+///
+/// Removing a theorem permits a later insertion to reuse its identifier. A
+/// stale copied identifier can therefore alias an unrelated later theorem and
+/// must not be retained across deletion.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ThmId(NonZeroU64);
 
@@ -361,6 +407,33 @@ pub enum Error {
 pub struct ClassicalArena {
     slots: Vec<Option<Thm>>,
     free: Vec<ThmId>,
+}
+
+impl Serialize for ClassicalArena {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let live = self.slots.iter().flatten();
+        let mut sequence = serializer.serialize_seq(Some(live.clone().count()))?;
+        for theorem in live {
+            sequence.serialize_element(theorem)?;
+        }
+        sequence.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for ClassicalArena {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let theorems = Vec::<Thm>::deserialize(deserializer)?;
+        Ok(Self {
+            slots: theorems.into_iter().map(Some).collect(),
+            free: Vec::new(),
+        })
+    }
 }
 
 impl ClassicalArena {
@@ -827,7 +900,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_mutations_are_atomic() {
+    fn failed_mutations_are_atomic_and_do_not_allocate() {
         let mut arena = ClassicalArena::new();
         let id = arena.identity(lit(1)).unwrap();
         let original = arena.theorem(id).unwrap().clone();
@@ -839,6 +912,52 @@ mod tests {
         assert_eq!(arena.theorem(id).unwrap(), &original);
         assert!(arena.resolve(id, id, lit(2)).is_err());
         assert_eq!(arena.theorem(id).unwrap(), &original);
+        assert!(arena.normalize_clause(id, 7).is_err());
+        assert_eq!(arena.theorem(id).unwrap(), &original);
+        assert!(arena.normalize_cube(id, 7).is_err());
+        assert_eq!(arena.theorem(id).unwrap(), &original);
+
+        let next = arena.identity(lit(2)).unwrap();
+        assert_eq!(next.get(), id.get() + 1);
+    }
+
+    #[test]
+    fn cut_and_resolution_require_exact_unit_rows_and_fail_atomically() {
+        let mut arena = ClassicalArena::new();
+        let p = lit(1);
+        let q = lit(2);
+        let left = arena
+            .store(Thm::new(
+                Cnf::from([Clause::from([q])]),
+                Dnf::from([Cube::from([p])]),
+            ))
+            .unwrap();
+        let right = arena
+            .store(Thm::new(
+                Cnf::from([Clause::new([p, q])]),
+                Dnf::from([Cube::new([p.negated(), q])]),
+            ))
+            .unwrap();
+        let left_before = arena.theorem(left).unwrap().clone();
+        let right_before = arena.theorem(right).unwrap().clone();
+
+        assert_eq!(
+            arena.cut(left, right, p),
+            Err(Error::MissingUnit { literal: p.get() })
+        );
+        assert_eq!(arena.theorem(left).unwrap(), &left_before);
+        assert_eq!(arena.theorem(right).unwrap(), &right_before);
+        assert_eq!(
+            arena.resolve(left, right, p),
+            Err(Error::MissingUnit {
+                literal: p.negated().get()
+            })
+        );
+        assert_eq!(arena.theorem(left).unwrap(), &left_before);
+        assert_eq!(arena.theorem(right).unwrap(), &right_before);
+
+        let next = arena.identity(q).unwrap();
+        assert_eq!(next.get(), right.get() + 1);
     }
 
     #[test]
@@ -859,15 +978,22 @@ mod tests {
     }
 
     #[test]
-    fn matrices_have_stable_nested_array_cbor_shape() {
+    fn theorem_wire_format_is_canonical_and_has_golden_cbor_bytes() {
         let theorem = Thm::new(
             Cnf::new([Clause::new([lit(2), lit(-1)])]),
             Dnf::new([Cube::new([]), Cube::new([lit(3)])]),
         );
         let mut bytes = Vec::new();
         covalence_lib_cbor::into_writer(&theorem, &mut bytes).unwrap();
+        assert_eq!(
+            bytes,
+            [0x82, 0x81, 0x82, 0x20, 0x02, 0x82, 0x80, 0x81, 0x03]
+        );
+
         let decoded: Thm = covalence_lib_cbor::from_reader(bytes.as_slice()).unwrap();
-        assert_eq!(decoded, theorem);
+        let mut normalized = theorem.clone();
+        normalized.normalize();
+        assert_eq!(decoded, normalized);
         let value: covalence_lib_cbor::Value =
             covalence_lib_cbor::from_reader(bytes.as_slice()).unwrap();
         assert!(matches!(value, covalence_lib_cbor::Value::Array(parts) if parts.len() == 2));
@@ -880,6 +1006,41 @@ mod tests {
                 "accepted invalid literal {rejected}"
             );
         }
+    }
+
+    #[test]
+    fn arena_wire_format_omits_holes_and_rebuilds_dense_slots() {
+        let mut arena = ClassicalArena::new();
+        let removed = arena.identity(lit(3)).unwrap();
+        let retained = arena
+            .store(Thm::new(
+                Cnf::new([Clause::new([lit(2), lit(-1)])]),
+                Dnf::new([Cube::new([]), Cube::new([lit(3)])]),
+            ))
+            .unwrap();
+        arena.remove(removed).unwrap();
+
+        let mut bytes = Vec::new();
+        covalence_lib_cbor::into_writer(&arena, &mut bytes).unwrap();
+        assert_eq!(
+            bytes,
+            [0x81, 0x82, 0x81, 0x82, 0x20, 0x02, 0x82, 0x80, 0x81, 0x03]
+        );
+
+        let mut decoded: ClassicalArena =
+            covalence_lib_cbor::from_reader(bytes.as_slice()).unwrap();
+        let dense = ThmId::new(1).unwrap();
+        let mut retained_theorem = arena.theorem(retained).unwrap().clone();
+        retained_theorem.normalize();
+        assert_eq!(decoded.theorem(dense).unwrap(), &retained_theorem);
+        assert_eq!(decoded.identity(lit(2)).unwrap(), ThmId::new(2).unwrap());
+    }
+
+    #[test]
+    fn wire_decode_rejects_noncanonical_theorems() {
+        // [[2, -1]] is not in the canonical literal order.
+        let noncanonical = [0x82, 0x81, 0x82, 0x02, 0x20, 0x80];
+        assert!(covalence_lib_cbor::from_reader::<Thm, _>(&noncanonical[..]).is_err());
     }
 
     #[test]
