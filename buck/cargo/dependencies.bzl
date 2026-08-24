@@ -97,7 +97,10 @@ def declare_cargo_dependencies(dependencies):
             name = archive,
             sha256 = package["checksum"],
             strip_prefix = label,
-            urls = ["https://crates.io/api/v1/crates/{}/{}/download".format(package["name"], package["version"])],
+            # Match Cargo's crates.io registry configuration. The API download
+            # route redirects to this CDN but rate-limits Buck's parallel
+            # requests before they reach it.
+            urls = ["https://static.crates.io/crates/{}/{}.crate".format(package["name"], label)],
             # A `links` crate publishes paths into its own source tree, such as
             # the header of a C library it bundles, and a dependent's build
             # script is handed them as `DEP_<LINKS>_<KEY>`. Those paths are
