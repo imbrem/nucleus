@@ -1,0 +1,1266 @@
+//! The one-based Ethane arena and checked kernel at the Python boundary.
+
+#![allow(clippy::needless_pass_by_value)]
+
+use std::{
+    num::NonZeroU64,
+    sync::atomic::{AtomicU64, Ordering},
+};
+
+use covalence_lib_python::prelude::*;
+use covalence_lib_python::pyo3::{exceptions::PyRuntimeError, types::PyBytes, types::PyType};
+use covalence_logic_hol::{
+    Arena, Import, ImportId, Kernel, Link, LinkFormat, Meta, Ref, Sort, SynFact, SynFactId, SynRel,
+    wire,
+};
+
+use crate::hash::PyO256;
+
+fn value_error(error: impl ToString) -> PyErr {
+    PyValueError::new_err(error.to_string())
+}
+
+fn reference(value: u64) -> PyResult<Ref> {
+    Ref::new(value).ok_or_else(|| PyValueError::new_err("references are one-based"))
+}
+
+fn source(value: u64) -> PyResult<ImportId> {
+    ImportId::new(value).ok_or_else(|| PyValueError::new_err("import IDs are one-based"))
+}
+
+fn fact_id(value: u64) -> PyResult<SynFactId> {
+    SynFactId::new(value).ok_or_else(|| PyValueError::new_err("fact IDs are one-based"))
+}
+
+fn fact_target(value: Option<u64>) -> PyResult<Option<SynFactId>> {
+    value.map(fact_id).transpose()
+}
+
+const MAX_LITERAL_IMPORT_DEPTH: usize = 127;
+
+fn ensure_literal_import_can_be_wrapped(arena: &Arena) -> PyResult<()> {
+    let mut pending = vec![(arena, 0_usize)];
+    while let Some((current, depth)) = pending.pop() {
+        if depth >= MAX_LITERAL_IMPORT_DEPTH {
+            return Err(PyValueError::new_err(format!(
+                "literal imports may nest at most {MAX_LITERAL_IMPORT_DEPTH} levels"
+            )));
+        }
+        pending.extend(current.imports().iter().filter_map(|import| match import {
+            Import::Literal(child) => Some((child.as_ref(), depth + 1)),
+            Import::Null | Import::Link(_) => None,
+        }));
+    }
+    Ok(())
+}
+
+fn parse_relation(value: &str) -> PyResult<SynRel> {
+    match value {
+        "syn" => Ok(SynRel::Syn),
+        "alpha" => Ok(SynRel::Alpha),
+        "conv" => Ok(SynRel::Conv),
+        _ => Err(PyValueError::new_err(
+            "relation must be 'syn', 'alpha', or 'conv'",
+        )),
+    }
+}
+
+const fn relation_name(value: SynRel) -> &'static str {
+    match value {
+        SynRel::Syn => "syn",
+        SynRel::Alpha => "alpha",
+        SynRel::Conv => "conv",
+    }
+}
+
+fn allocated(value: Option<Ref>) -> PyResult<u64> {
+    value
+        .map(Ref::get)
+        .ok_or_else(|| PyValueError::new_err("arena reference space is exhausted"))
+}
+
+fn imported(value: Option<ImportId>) -> PyResult<u64> {
+    value
+        .map(ImportId::get)
+        .ok_or_else(|| PyValueError::new_err("arena import space is exhausted"))
+}
+
+fn sort_name(sort: Sort) -> &'static str {
+    match sort {
+        Sort::Kind => "kind",
+        Sort::Ty => "ty",
+        Sort::Tm => "tm",
+    }
+}
+
+/// A content-addressed Ethane arena link.
+#[pyclass(
+    frozen,
+    skip_from_py_object,
+    module = "covalence.logic.hol",
+    name = "HolLink"
+)]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+#[derive(Clone, Copy)]
+pub struct PyLink(Link);
+
+#[pymethods]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+impl PyLink {
+    #[new]
+    fn new(address: PyRef<'_, PyO256>) -> Self {
+        Self(Link {
+            format: LinkFormat::Cbor,
+            blake3: PyO256::value(&address),
+        })
+    }
+
+    #[getter]
+    fn format(&self) -> &'static str {
+        match self.0.format {
+            LinkFormat::Cbor => "cbor",
+        }
+    }
+
+    #[getter]
+    fn blake3(&self, python: Python<'_>) -> PyResult<Py<PyO256>> {
+        PyO256::wrap(python, self.0.blake3)
+    }
+}
+
+/// An immutable snapshot of one private Ethane row.
+#[pyclass(
+    frozen,
+    skip_from_py_object,
+    module = "covalence.logic.hol",
+    name = "HolDefinition"
+)]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+#[derive(Clone)]
+pub struct PyDefinition {
+    reference: u64,
+    tag: &'static str,
+    children: Vec<u64>,
+    name: Option<u64>,
+    value: Option<bool>,
+    source: Option<u64>,
+    foreign: Option<u64>,
+    equal: Option<u64>,
+    classifier: Option<u64>,
+}
+
+#[pymethods]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+impl PyDefinition {
+    #[getter]
+    const fn reference(&self) -> u64 {
+        self.reference
+    }
+
+    #[getter]
+    const fn tag(&self) -> &'static str {
+        self.tag
+    }
+
+    #[getter]
+    fn children(&self) -> Vec<u64> {
+        self.children.clone()
+    }
+
+    #[getter]
+    const fn name(&self) -> Option<u64> {
+        self.name
+    }
+
+    #[getter]
+    const fn value(&self) -> Option<bool> {
+        self.value
+    }
+
+    #[getter]
+    const fn source(&self) -> Option<u64> {
+        self.source
+    }
+
+    #[getter]
+    const fn foreign(&self) -> Option<u64> {
+        self.foreign
+    }
+
+    #[getter]
+    const fn equal(&self) -> Option<u64> {
+        self.equal
+    }
+
+    #[getter]
+    const fn classifier(&self) -> Option<u64> {
+        self.classifier
+    }
+}
+
+/// An immutable snapshot of one metadata premise or conclusion.
+#[pyclass(
+    frozen,
+    skip_from_py_object,
+    module = "covalence.logic.hol",
+    name = "HolMeta"
+)]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+#[derive(Clone, Copy)]
+pub struct PyMeta(Meta);
+
+#[pymethods]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+impl PyMeta {
+    #[getter]
+    fn tag(&self) -> &'static str {
+        match self.0 {
+            Meta::Valid { .. } => "meta.valid",
+            Meta::Wf { .. } => "meta.wf",
+        }
+    }
+
+    #[getter]
+    fn source(&self) -> u64 {
+        match self.0 {
+            Meta::Valid { src } | Meta::Wf { src, .. } => src.get(),
+        }
+    }
+
+    #[getter]
+    fn reference(&self) -> Option<u64> {
+        match self.0 {
+            Meta::Valid { .. } => None,
+            Meta::Wf { ix, .. } => Some(ix.get()),
+        }
+    }
+
+    #[getter]
+    fn classifier(&self) -> Option<u64> {
+        match self.0 {
+            Meta::Valid { .. } => None,
+            Meta::Wf { sort, .. } => Some(sort.get()),
+        }
+    }
+}
+
+/// A mutable, unvalidated one-based dense Ethane arena.
+#[pyclass(skip_from_py_object, module = "covalence.logic.hol", name = "HolArena")]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+#[derive(Clone, Default)]
+pub struct PyArena {
+    arena: Arena,
+}
+
+impl PyArena {
+    fn definition_at(&self, reference: Ref) -> Option<PyDefinition> {
+        let tag = self.arena.tag(reference)?;
+        let (source, foreign) = self
+            .arena
+            .foreign(reference)
+            .map_or((None, None), |(source, foreign)| {
+                (Some(source.get()), Some(foreign.get()))
+            });
+        Some(PyDefinition {
+            reference: reference.get(),
+            tag: tag.name(),
+            children: self.arena.children(reference)?.map(Ref::get).collect(),
+            name: self.arena.name(reference),
+            value: self.arena.bool_value(reference),
+            source,
+            foreign,
+            equal: self.arena.eq(reference).map(Ref::get),
+            classifier: self.arena.sort(reference).map(Ref::get),
+        })
+    }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+struct KernelId(NonZeroU64);
+
+impl KernelId {
+    fn fresh() -> Self {
+        let value = NEXT_KERNEL_ID
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, checked_add_one)
+            .expect("Python kernel identifier space is exhausted");
+        Self(NonZeroU64::new(value).expect("kernel identifiers start at one"))
+    }
+}
+
+const fn checked_add_one(value: u64) -> Option<u64> {
+    value.checked_add(1)
+}
+
+static NEXT_KERNEL_ID: AtomicU64 = AtomicU64::new(1);
+
+#[pyclass(
+    frozen,
+    skip_from_py_object,
+    module = "covalence.logic.hol",
+    name = "HolKind"
+)]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+#[derive(Clone, Copy)]
+pub struct PyKind {
+    _owner: KernelId,
+    reference: Ref,
+}
+
+#[pymethods]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+impl PyKind {
+    #[getter]
+    const fn reference(&self) -> u64 {
+        self.reference.get()
+    }
+}
+
+#[pyclass(
+    frozen,
+    skip_from_py_object,
+    module = "covalence.logic.hol",
+    name = "HolTy"
+)]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+#[derive(Clone, Copy)]
+pub struct PyTy {
+    _owner: KernelId,
+    reference: Ref,
+}
+
+#[pymethods]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+impl PyTy {
+    #[getter]
+    const fn reference(&self) -> u64 {
+        self.reference.get()
+    }
+}
+
+#[pyclass(
+    frozen,
+    skip_from_py_object,
+    module = "covalence.logic.hol",
+    name = "HolTm"
+)]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+#[derive(Clone, Copy)]
+pub struct PyTm {
+    _owner: KernelId,
+    reference: Ref,
+}
+
+#[pymethods]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+impl PyTm {
+    #[getter]
+    const fn reference(&self) -> u64 {
+        self.reference.get()
+    }
+}
+
+/// A checked slot in the syntactic-fact table.
+#[pyclass(
+    frozen,
+    skip_from_py_object,
+    module = "covalence.logic.hol",
+    name = "HolSynFact"
+)]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+#[derive(Clone, Copy)]
+pub struct PySynFact {
+    owner: KernelId,
+    id: SynFactId,
+    fact: SynFact,
+}
+
+#[pymethods]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+impl PySynFact {
+    #[getter]
+    const fn id(&self) -> u64 {
+        self.id.get()
+    }
+
+    #[getter]
+    fn relation(&self) -> &'static str {
+        relation_name(self.fact.rel())
+    }
+
+    #[getter]
+    fn var(&self) -> Option<u64> {
+        self.fact.var().map(Ref::get)
+    }
+
+    #[getter]
+    fn val(&self) -> Option<u64> {
+        self.fact.val().map(Ref::get)
+    }
+
+    #[getter]
+    const fn input(&self) -> u64 {
+        self.fact.input().get()
+    }
+
+    #[getter]
+    const fn output(&self) -> u64 {
+        self.fact.output().get()
+    }
+}
+
+/// A checked Ethane arena assembled through local LCF operations.
+#[pyclass(module = "covalence.logic.hol", name = "HolKernel")]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+pub struct PyKernel {
+    kernel: Kernel,
+    id: KernelId,
+}
+
+impl PyKernel {
+    pub(crate) fn from_kernel(kernel: Kernel) -> Self {
+        Self {
+            kernel,
+            id: KernelId::fresh(),
+        }
+    }
+
+    fn checked_fact(&self, fact: &PySynFact) -> PyResult<SynFactId> {
+        if self.id != fact.owner {
+            return Err(PyValueError::new_err(
+                "syntactic fact belongs to a different kernel",
+            ));
+        }
+        let current = self.kernel.syn_fact(fact.id).map_err(value_error)?;
+        if current != fact.fact {
+            return Err(PyValueError::new_err(
+                "syntactic fact handle refers to an overwritten slot",
+            ));
+        }
+        Ok(fact.id)
+    }
+
+    fn fact_handle(&self, id: SynFactId) -> PyResult<PySynFact> {
+        Ok(PySynFact {
+            owner: self.id,
+            id,
+            fact: self.kernel.syn_fact(id).map_err(value_error)?,
+        })
+    }
+}
+
+/// Runs a standard portable proof component and returns its checked kernel.
+#[pyfunction]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+fn load_standard_proof(python: Python<'_>, component: Bytes) -> PyResult<PyKernel> {
+    let component = component.as_slice().to_vec();
+    python
+        .detach(|| covalence_nucleus::load_standard_proof(&component))
+        .map(PyKernel::from_kernel)
+        .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+}
+
+#[pymethods]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+impl PyKernel {
+    #[new]
+    fn new() -> Self {
+        Self {
+            kernel: Kernel::new(),
+            id: KernelId::fresh(),
+        }
+    }
+
+    #[getter]
+    fn arena(&self) -> PyArena {
+        PyArena {
+            arena: self.kernel.arena().clone(),
+        }
+    }
+
+    fn addr(&self, python: Python<'_>) -> PyResult<Py<PyO256>> {
+        PyO256::wrap(python, self.kernel.addr())
+    }
+
+    fn category(&self, reference_value: u64) -> PyResult<&'static str> {
+        self.kernel
+            .category(reference(reference_value)?)
+            .map(sort_name)
+            .map_err(value_error)
+    }
+
+    fn classifier(&self, reference_value: u64) -> PyResult<u64> {
+        self.kernel
+            .classifier(reference(reference_value)?)
+            .map(Ref::get)
+            .map_err(value_error)
+    }
+
+    fn find(&self, reference_value: u64) -> PyResult<u64> {
+        self.kernel
+            .find(reference(reference_value)?)
+            .map(Ref::get)
+            .map_err(value_error)
+    }
+
+    fn find_mut(&mut self, reference_value: u64) -> PyResult<u64> {
+        self.kernel
+            .find_mut(reference(reference_value)?)
+            .map(Ref::get)
+            .map_err(value_error)
+    }
+
+    fn equivalent(&self, left: u64, right: u64) -> PyResult<bool> {
+        self.kernel
+            .equivalent(reference(left)?, reference(right)?)
+            .map_err(value_error)
+    }
+
+    fn kind(&self, reference_value: u64) -> PyResult<PyKind> {
+        let reference = reference(reference_value)?;
+        if self.kernel.category(reference).map_err(value_error)? != Sort::Kind {
+            return Err(PyValueError::new_err("reference is not a kind"));
+        }
+        Ok(PyKind {
+            _owner: self.id,
+            reference,
+        })
+    }
+
+    fn ty(&self, reference_value: u64) -> PyResult<PyTy> {
+        let reference = reference(reference_value)?;
+        if self.kernel.category(reference).map_err(value_error)? != Sort::Ty {
+            return Err(PyValueError::new_err("reference is not a type"));
+        }
+        Ok(PyTy {
+            _owner: self.id,
+            reference,
+        })
+    }
+
+    fn tm(&self, reference_value: u64) -> PyResult<PyTm> {
+        let reference = reference(reference_value)?;
+        if self.kernel.category(reference).map_err(value_error)? != Sort::Tm {
+            return Err(PyValueError::new_err("reference is not a term"));
+        }
+        Ok(PyTm {
+            _owner: self.id,
+            reference,
+        })
+    }
+
+    fn star(&mut self) -> PyResult<u64> {
+        self.kernel.star().map(Ref::get).map_err(value_error)
+    }
+
+    fn kind_arr(&mut self, domain: u64, codomain: u64) -> PyResult<u64> {
+        self.kernel
+            .kind_arr(reference(domain)?, reference(codomain)?)
+            .map(Ref::get)
+            .map_err(value_error)
+    }
+
+    fn bool_ty(&mut self, star: u64) -> PyResult<u64> {
+        self.kernel
+            .bool_ty(reference(star)?)
+            .map(Ref::get)
+            .map_err(value_error)
+    }
+
+    fn ty_arr(&mut self, domain: u64, codomain: u64) -> PyResult<u64> {
+        self.kernel
+            .ty_arr(reference(domain)?, reference(codomain)?)
+            .map(Ref::get)
+            .map_err(value_error)
+    }
+
+    fn ty_fv(&mut self, name: u64, kind: u64) -> PyResult<u64> {
+        self.kernel
+            .ty_fv(name, reference(kind)?)
+            .map(Ref::get)
+            .map_err(value_error)
+    }
+
+    fn ty_app(&mut self, function: u64, argument: u64) -> PyResult<u64> {
+        self.kernel
+            .ty_app(reference(function)?, reference(argument)?)
+            .map(Ref::get)
+            .map_err(value_error)
+    }
+
+    fn ty_lam(&mut self, binder: u64, body: u64) -> PyResult<u64> {
+        self.kernel
+            .ty_lam(reference(binder)?, reference(body)?)
+            .map(Ref::get)
+            .map_err(value_error)
+    }
+
+    fn model(&mut self, name: u64, predicate: u64) -> PyResult<u64> {
+        self.kernel
+            .model(name, reference(predicate)?)
+            .map(Ref::get)
+            .map_err(value_error)
+    }
+
+    fn ty_exists(&mut self, name: u64, predicate: u64) -> PyResult<u64> {
+        self.kernel
+            .ty_exists(name, reference(predicate)?)
+            .map(Ref::get)
+            .map_err(value_error)
+    }
+
+    fn tm_fv(&mut self, name: u64, ty: u64) -> PyResult<u64> {
+        self.kernel
+            .tm_fv(name, reference(ty)?)
+            .map(Ref::get)
+            .map_err(value_error)
+    }
+
+    fn app(&mut self, function: u64, argument: u64) -> PyResult<u64> {
+        self.kernel
+            .app(reference(function)?, reference(argument)?)
+            .map(Ref::get)
+            .map_err(value_error)
+    }
+
+    fn lam(&mut self, binder: u64, body: u64) -> PyResult<u64> {
+        self.kernel
+            .lam(reference(binder)?, reference(body)?)
+            .map(Ref::get)
+            .map_err(value_error)
+    }
+
+    fn bool(&mut self, bool_ty: u64, value: bool) -> PyResult<u64> {
+        self.kernel
+            .bool(reference(bool_ty)?, value)
+            .map(Ref::get)
+            .map_err(value_error)
+    }
+
+    fn eq(&mut self, bool_ty: u64, left: u64, right: u64) -> PyResult<u64> {
+        self.kernel
+            .eq(reference(bool_ty)?, reference(left)?, reference(right)?)
+            .map(Ref::get)
+            .map_err(value_error)
+    }
+
+    fn eps(&mut self, ty: u64, predicate: u64) -> PyResult<u64> {
+        self.kernel
+            .eps(reference(ty)?, reference(predicate)?)
+            .map(Ref::get)
+            .map_err(value_error)
+    }
+
+    fn import_literal(&mut self, arena: &PyArena) -> PyResult<u64> {
+        ensure_literal_import_can_be_wrapped(&arena.arena)?;
+        self.kernel
+            .import_literal(arena.arena.clone())
+            .map(ImportId::get)
+            .map_err(value_error)
+    }
+
+    fn import_link(&mut self, link: &PyLink) -> PyResult<u64> {
+        self.kernel
+            .import_link(link.0)
+            .map(ImportId::get)
+            .map_err(value_error)
+    }
+
+    fn add_context(&mut self, proposition: u64) -> PyResult<()> {
+        self.kernel
+            .add_context(reference(proposition)?)
+            .map_err(value_error)
+    }
+
+    fn add_axiom(&mut self, name: &str) -> PyResult<()> {
+        self.kernel.add_axiom(name).map_err(value_error)
+    }
+
+    fn syn_fact(&self, id: u64) -> PyResult<PySynFact> {
+        self.fact_handle(fact_id(id)?)
+    }
+
+    fn syn_fact_len(&self) -> usize {
+        self.kernel.syn_fact_len()
+    }
+
+    fn remove_syn_fact(&mut self, fact: &PySynFact) -> PyResult<bool> {
+        let id = self.checked_fact(fact)?;
+        Ok(self.kernel.remove_syn_fact(id))
+    }
+
+    fn truncate_syn_facts(&mut self, len: usize) {
+        self.kernel.truncate_syn_facts(len);
+    }
+
+    #[pyo3(signature = (relation, input, target=None))]
+    fn syn_refl(&mut self, relation: &str, input: u64, target: Option<u64>) -> PyResult<PySynFact> {
+        let id = self
+            .kernel
+            .syn_refl(
+                fact_target(target)?,
+                parse_relation(relation)?,
+                reference(input)?,
+            )
+            .map_err(value_error)?;
+        self.fact_handle(id)
+    }
+
+    #[pyo3(signature = (source, relation, target=None))]
+    fn syn_refine(
+        &mut self,
+        source: &PySynFact,
+        relation: &str,
+        target: Option<u64>,
+    ) -> PyResult<PySynFact> {
+        let source = self.checked_fact(source)?;
+        let id = self
+            .kernel
+            .syn_refine(fact_target(target)?, source, parse_relation(relation)?)
+            .map_err(value_error)?;
+        self.fact_handle(id)
+    }
+
+    #[pyo3(signature = (source, target=None))]
+    fn syn_symm(&mut self, source: &PySynFact, target: Option<u64>) -> PyResult<PySynFact> {
+        let source = self.checked_fact(source)?;
+        let id = self
+            .kernel
+            .syn_symm(fact_target(target)?, source)
+            .map_err(value_error)?;
+        self.fact_handle(id)
+    }
+
+    #[pyo3(signature = (left, right, target=None))]
+    fn syn_trans(
+        &mut self,
+        left: &PySynFact,
+        right: &PySynFact,
+        target: Option<u64>,
+    ) -> PyResult<PySynFact> {
+        let left = self.checked_fact(left)?;
+        let right = self.checked_fact(right)?;
+        let id = self
+            .kernel
+            .syn_trans(fact_target(target)?, left, right)
+            .map_err(value_error)?;
+        self.fact_handle(id)
+    }
+
+    #[pyo3(signature = (var, val, target=None))]
+    fn syn_sub_var(&mut self, var: u64, val: u64, target: Option<u64>) -> PyResult<PySynFact> {
+        let id = self
+            .kernel
+            .syn_sub_var(fact_target(target)?, reference(var)?, reference(val)?)
+            .map_err(value_error)?;
+        self.fact_handle(id)
+    }
+
+    #[pyo3(signature = (var, val, input, target=None))]
+    fn syn_sub_leaf(
+        &mut self,
+        var: u64,
+        val: u64,
+        input: u64,
+        target: Option<u64>,
+    ) -> PyResult<PySynFact> {
+        let id = self
+            .kernel
+            .syn_sub_leaf(
+                fact_target(target)?,
+                reference(var)?,
+                reference(val)?,
+                reference(input)?,
+            )
+            .map_err(value_error)?;
+        self.fact_handle(id)
+    }
+
+    #[pyo3(signature = (var, val, input, output, variable_equality, body_equality, target=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn syn_sub_identity(
+        &mut self,
+        var: u64,
+        val: u64,
+        input: u64,
+        output: u64,
+        variable_equality: &PySynFact,
+        body_equality: &PySynFact,
+        target: Option<u64>,
+    ) -> PyResult<PySynFact> {
+        let variable_equality = self.checked_fact(variable_equality)?;
+        let body_equality = self.checked_fact(body_equality)?;
+        let id = self
+            .kernel
+            .syn_sub_identity(
+                fact_target(target)?,
+                reference(var)?,
+                reference(val)?,
+                reference(input)?,
+                reference(output)?,
+                variable_equality,
+                body_equality,
+            )
+            .map_err(value_error)?;
+        self.fact_handle(id)
+    }
+
+    #[pyo3(signature = (relation, input, output, children, var=None, val=None, target=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn syn_congr(
+        &mut self,
+        relation: &str,
+        input: u64,
+        output: u64,
+        children: Vec<PyRef<'_, PySynFact>>,
+        var: Option<u64>,
+        val: Option<u64>,
+        target: Option<u64>,
+    ) -> PyResult<PySynFact> {
+        let evidence = children
+            .iter()
+            .map(|fact| self.checked_fact(fact))
+            .collect::<PyResult<Vec<_>>>()?;
+        let id = self
+            .kernel
+            .syn_congr(
+                fact_target(target)?,
+                parse_relation(relation)?,
+                var.map(reference).transpose()?,
+                val.map(reference).transpose()?,
+                reference(input)?,
+                reference(output)?,
+                &evidence,
+            )
+            .map_err(value_error)?;
+        self.fact_handle(id)
+    }
+
+    #[pyo3(signature = (relation, input, output, binder, body, var=None, val=None, target=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn syn_binder_congr(
+        &mut self,
+        relation: &str,
+        input: u64,
+        output: u64,
+        binder: &PySynFact,
+        body: &PySynFact,
+        var: Option<u64>,
+        val: Option<u64>,
+        target: Option<u64>,
+    ) -> PyResult<PySynFact> {
+        let binder = self.checked_fact(binder)?;
+        let body = self.checked_fact(body)?;
+        let id = self
+            .kernel
+            .syn_binder_congr(
+                fact_target(target)?,
+                parse_relation(relation)?,
+                var.map(reference).transpose()?,
+                val.map(reference).transpose()?,
+                reference(input)?,
+                reference(output)?,
+                binder,
+                body,
+            )
+            .map_err(value_error)?;
+        self.fact_handle(id)
+    }
+
+    #[pyo3(signature = (relation, input, output, binder, body, var=None, val=None, target=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn syn_implicit_binder_congr(
+        &mut self,
+        relation: &str,
+        input: u64,
+        output: u64,
+        binder: u64,
+        body: &PySynFact,
+        var: Option<u64>,
+        val: Option<u64>,
+        target: Option<u64>,
+    ) -> PyResult<PySynFact> {
+        let body = self.checked_fact(body)?;
+        let id = self
+            .kernel
+            .syn_implicit_binder_congr(
+                fact_target(target)?,
+                parse_relation(relation)?,
+                var.map(reference).transpose()?,
+                val.map(reference).transpose()?,
+                reference(input)?,
+                reference(output)?,
+                reference(binder)?,
+                body,
+            )
+            .map_err(value_error)?;
+        self.fact_handle(id)
+    }
+
+    #[pyo3(signature = (input, output, binder_classifier, body_substitution, target=None))]
+    fn syn_alpha_binder(
+        &mut self,
+        input: u64,
+        output: u64,
+        binder_classifier: &PySynFact,
+        body_substitution: &PySynFact,
+        target: Option<u64>,
+    ) -> PyResult<PySynFact> {
+        let binder_classifier = self.checked_fact(binder_classifier)?;
+        let body_substitution = self.checked_fact(body_substitution)?;
+        let id = self
+            .kernel
+            .syn_alpha_binder(
+                fact_target(target)?,
+                reference(input)?,
+                reference(output)?,
+                binder_classifier,
+                body_substitution,
+            )
+            .map_err(value_error)?;
+        self.fact_handle(id)
+    }
+
+    #[pyo3(signature = (input, output, input_binder, output_binder, body_substitution, target=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn syn_alpha_implicit_binder(
+        &mut self,
+        input: u64,
+        output: u64,
+        input_binder: u64,
+        output_binder: u64,
+        body_substitution: &PySynFact,
+        target: Option<u64>,
+    ) -> PyResult<PySynFact> {
+        let body_substitution = self.checked_fact(body_substitution)?;
+        let id = self
+            .kernel
+            .syn_alpha_implicit_binder(
+                fact_target(target)?,
+                reference(input)?,
+                reference(output)?,
+                reference(input_binder)?,
+                reference(output_binder)?,
+                body_substitution,
+            )
+            .map_err(value_error)?;
+        self.fact_handle(id)
+    }
+
+    #[pyo3(signature = (source, substitution, target=None))]
+    fn tm_beta(
+        &mut self,
+        source: u64,
+        substitution: &PySynFact,
+        target: Option<u64>,
+    ) -> PyResult<PySynFact> {
+        let substitution = self.checked_fact(substitution)?;
+        let id = self
+            .kernel
+            .tm_beta_fact(fact_target(target)?, reference(source)?, substitution)
+            .map_err(value_error)?;
+        self.fact_handle(id)
+    }
+
+    #[pyo3(signature = (source, substitution, target=None))]
+    fn ty_beta(
+        &mut self,
+        source: u64,
+        substitution: &PySynFact,
+        target: Option<u64>,
+    ) -> PyResult<PySynFact> {
+        let substitution = self.checked_fact(substitution)?;
+        let id = self
+            .kernel
+            .ty_beta_fact(fact_target(target)?, reference(source)?, substitution)
+            .map_err(value_error)?;
+        self.fact_handle(id)
+    }
+
+    #[pyo3(signature = (source, target=None))]
+    fn tm_eta(&mut self, source: u64, target: Option<u64>) -> PyResult<PySynFact> {
+        let id = self
+            .kernel
+            .tm_eta_fact(fact_target(target)?, reference(source)?)
+            .map_err(value_error)?;
+        self.fact_handle(id)
+    }
+
+    fn union_syn_fact(&mut self, fact: &PySynFact) -> PyResult<()> {
+        let fact = self.checked_fact(fact)?;
+        self.kernel.union_syn_fact(fact).map_err(value_error)
+    }
+
+    fn __len__(&self) -> usize {
+        self.kernel.arena().len()
+    }
+}
+
+pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<PyLink>()?;
+    module.add_class::<PyDefinition>()?;
+    module.add_class::<PyMeta>()?;
+    module.add_class::<PyArena>()?;
+    module.add_class::<PyKind>()?;
+    module.add_class::<PyTy>()?;
+    module.add_class::<PyTm>()?;
+    module.add_class::<PySynFact>()?;
+    module.add_class::<PyKernel>()?;
+    let function = wrap_pyfunction!(load_standard_proof, module)?;
+    function.setattr("__module__", "covalence.logic.hol")?;
+    module.add_function(function)
+}
+
+#[pymethods]
+#[pyo3(crate = "covalence_lib_python::pyo3")]
+impl PyArena {
+    #[new]
+    fn new() -> Self {
+        Self::default()
+    }
+
+    #[classmethod]
+    fn from_cbor(_class: &Bound<'_, PyType>, bytes: Bytes) -> PyResult<Self> {
+        Ok(Self {
+            arena: wire::deserialize(bytes.as_slice()).map_err(value_error)?,
+        })
+    }
+
+    fn to_cbor<'py>(&self, python: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let mut bytes = Vec::new();
+        wire::serialize(&self.arena, &mut bytes).map_err(value_error)?;
+        Ok(PyBytes::new(python, &bytes))
+    }
+
+    fn addr(&self, python: Python<'_>) -> PyResult<Py<PyO256>> {
+        PyO256::wrap(python, self.arena.addr())
+    }
+
+    fn definition(&self, reference_value: u64) -> PyResult<Option<PyDefinition>> {
+        if reference_value == 0 {
+            return Err(PyValueError::new_err("references are one-based"));
+        }
+        let Some(reference) = Ref::new(reference_value) else {
+            return Ok(None);
+        };
+        Ok(self.definition_at(reference))
+    }
+
+    #[getter]
+    fn definitions(&self) -> PyResult<Vec<PyDefinition>> {
+        (1..=self.arena.len())
+            .map(|position| {
+                let value = u64::try_from(position).map_err(value_error)?;
+                self.definition_at(reference(value)?)
+                    .ok_or_else(|| PyValueError::new_err("arena definition is missing"))
+            })
+            .collect()
+    }
+
+    #[getter]
+    fn imports(&self, python: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
+        self.arena
+            .imports()
+            .iter()
+            .map(|entry| match entry {
+                Import::Null => Ok(python.None()),
+                Import::Literal(arena) => Py::new(
+                    python,
+                    Self {
+                        arena: (**arena).clone(),
+                    },
+                )
+                .map(Py::into_any),
+                Import::Link(link) => Py::new(python, PyLink(*link)).map(Py::into_any),
+            })
+            .collect()
+    }
+
+    #[getter]
+    fn axioms(&self) -> Vec<String> {
+        self.arena.axioms().map(str::to_owned).collect()
+    }
+
+    #[getter]
+    fn context(&self) -> Vec<u64> {
+        self.arena.context().map(Ref::get).collect()
+    }
+
+    #[getter]
+    fn assumptions(&self) -> Vec<PyMeta> {
+        self.arena
+            .assumptions()
+            .iter()
+            .copied()
+            .map(PyMeta)
+            .collect()
+    }
+
+    #[getter]
+    fn assertions(&self) -> Vec<PyMeta> {
+        self.arena
+            .assertions()
+            .iter()
+            .copied()
+            .map(PyMeta)
+            .collect()
+    }
+
+    fn add_null_import(&mut self) -> PyResult<u64> {
+        imported(self.arena.push_import(Import::Null))
+    }
+
+    fn add_literal_import(&mut self, arena: &Self) -> PyResult<u64> {
+        ensure_literal_import_can_be_wrapped(&arena.arena)?;
+        imported(
+            self.arena
+                .push_import(Import::Literal(Box::new(arena.arena.clone()))),
+        )
+    }
+
+    fn add_link_import(&mut self, link: &PyLink) -> PyResult<u64> {
+        imported(self.arena.push_import(Import::Link(link.0)))
+    }
+
+    fn add_axiom(&mut self, name: &str) {
+        self.arena.insert_axiom(name);
+    }
+
+    fn add_context(&mut self, reference_value: u64) -> PyResult<()> {
+        self.arena.insert_context(reference(reference_value)?);
+        Ok(())
+    }
+
+    fn assume_valid(&mut self, source_value: u64) -> PyResult<()> {
+        self.arena.push_assumption(Meta::Valid {
+            src: source(source_value)?,
+        });
+        Ok(())
+    }
+
+    fn assert_valid(&mut self, source_value: u64) -> PyResult<()> {
+        self.arena.push_assertion(Meta::Valid {
+            src: source(source_value)?,
+        });
+        Ok(())
+    }
+
+    fn assume_wf(&mut self, source_value: u64, ix: u64, sort: u64) -> PyResult<()> {
+        self.arena.push_assumption(Meta::Wf {
+            src: source(source_value)?,
+            ix: reference(ix)?,
+            sort: reference(sort)?,
+        });
+        Ok(())
+    }
+
+    fn assert_wf(&mut self, source_value: u64, ix: u64, sort: u64) -> PyResult<()> {
+        self.arena.push_assertion(Meta::Wf {
+            src: source(source_value)?,
+            ix: reference(ix)?,
+            sort: reference(sort)?,
+        });
+        Ok(())
+    }
+
+    fn kind_star(&mut self) -> PyResult<u64> {
+        allocated(self.arena.push_kind_star())
+    }
+
+    fn kind_arr(&mut self, domain: u64, codomain: u64) -> PyResult<u64> {
+        let domain = reference(domain)?;
+        let codomain = reference(codomain)?;
+        allocated(self.arena.push_kind_arr(domain, codomain))
+    }
+
+    fn bool_ty(&mut self) -> PyResult<u64> {
+        allocated(self.arena.push_bool_ty())
+    }
+
+    fn ty_arr(&mut self, domain: u64, codomain: u64) -> PyResult<u64> {
+        let domain = reference(domain)?;
+        let codomain = reference(codomain)?;
+        allocated(self.arena.push_ty_arr(domain, codomain))
+    }
+
+    fn ty_app(&mut self, function: u64, argument: u64) -> PyResult<u64> {
+        let function = reference(function)?;
+        let argument = reference(argument)?;
+        allocated(self.arena.push_ty_app(function, argument))
+    }
+
+    fn ty_lam(&mut self, binder: u64, body: u64) -> PyResult<u64> {
+        let binder = reference(binder)?;
+        let body = reference(body)?;
+        allocated(self.arena.push_ty_lam(binder, body))
+    }
+
+    fn ty_fv(&mut self, name: u64, kind: u64) -> PyResult<u64> {
+        let kind = reference(kind)?;
+        allocated(self.arena.push_ty_fv(name, kind))
+    }
+
+    fn ty_exists(&mut self, name: u64, predicate: u64) -> PyResult<u64> {
+        let predicate = reference(predicate)?;
+        allocated(self.arena.push_ty_exists(name, predicate))
+    }
+
+    fn model(&mut self, name: u64, predicate: u64) -> PyResult<u64> {
+        let predicate = reference(predicate)?;
+        allocated(self.arena.push_model(name, predicate))
+    }
+
+    fn tm_fv(&mut self, name: u64, ty: u64) -> PyResult<u64> {
+        let ty = reference(ty)?;
+        allocated(self.arena.push_tm_fv(name, ty))
+    }
+
+    fn app(&mut self, function: u64, argument: u64) -> PyResult<u64> {
+        let function = reference(function)?;
+        let argument = reference(argument)?;
+        allocated(self.arena.push_app(function, argument))
+    }
+
+    fn lam(&mut self, binder: u64, body: u64) -> PyResult<u64> {
+        let binder = reference(binder)?;
+        let body = reference(body)?;
+        allocated(self.arena.push_lam(binder, body))
+    }
+
+    fn bool(&mut self, value: bool) -> PyResult<u64> {
+        allocated(self.arena.push_bool(value))
+    }
+
+    fn tm_eq(&mut self, left: u64, right: u64) -> PyResult<u64> {
+        let left = reference(left)?;
+        let right = reference(right)?;
+        allocated(self.arena.push_tm_eq(left, right))
+    }
+
+    fn eps(&mut self, ty: u64, predicate: u64) -> PyResult<u64> {
+        let ty = reference(ty)?;
+        let predicate = reference(predicate)?;
+        allocated(self.arena.push_eps(ty, predicate))
+    }
+
+    fn tm_ref(&mut self, source_value: u64, foreign: u64) -> PyResult<u64> {
+        let source = source(source_value)?;
+        let foreign = reference(foreign)?;
+        allocated(self.arena.push_tm_ref(source, foreign))
+    }
+
+    fn ty_ref(&mut self, source_value: u64, foreign: u64) -> PyResult<u64> {
+        let source = source(source_value)?;
+        let foreign = reference(foreign)?;
+        allocated(self.arena.push_ty_ref(source, foreign))
+    }
+
+    fn kind_ref(&mut self, source_value: u64, foreign: u64) -> PyResult<u64> {
+        let source = source(source_value)?;
+        let foreign = reference(foreign)?;
+        allocated(self.arena.push_kind_ref(source, foreign))
+    }
+
+    fn __len__(&self) -> usize {
+        self.arena.len()
+    }
+}

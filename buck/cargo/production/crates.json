@@ -374,6 +374,114 @@
       ]
     },
     {
+      "id": "workspace#covalence-lib-table@0.0.0",
+      "name": "covalence-lib-table",
+      "version": "0.0.0",
+      "path": "crates/lib/table",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_lib_table",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-lib-wasm@0.0.0",
+      "name": "covalence-lib-wasm",
+      "version": "0.0.0",
+      "path": "crates/lib/wasm",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_lib_wasm",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-logic-cas@0.0.0",
+      "name": "covalence-logic-cas",
+      "version": "0.0.0",
+      "path": "crates/logic/cas",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_logic_cas",
+          "kinds": [
+            "lib"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-logic-hol@0.0.0",
+      "name": "covalence-logic-hol",
+      "version": "0.0.0",
+      "path": "crates/logic/hol",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_logic_hol",
+          "kinds": [
+            "lib"
+          ]
+        },
+        {
+          "name": "imports",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
+          "name": "kernel_rows",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
+          "name": "known_gaps",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
+          "name": "soundness_regressions",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
+          "name": "syn_fact_cache",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
+          "name": "syn_fact_conversion",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
+          "name": "syn_fact_rules",
+          "kinds": [
+            "test"
+          ]
+        },
+        {
+          "name": "wire_robustness",
+          "kinds": [
+            "test"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-logic-lrat@0.0.0",
       "name": "covalence-logic-lrat",
       "version": "0.0.0",
@@ -405,6 +513,12 @@
           "name": "covalence_logic_metamath",
           "kinds": [
             "lib"
+          ]
+        },
+        {
+          "name": "hol_ax",
+          "kinds": [
+            "test"
           ]
         },
         {
@@ -469,6 +583,51 @@
           "name": "sqlite",
           "kinds": [
             "test"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-proof-demo@0.0.0",
+      "name": "covalence-proof-demo",
+      "version": "0.0.0",
+      "path": "crates/proof/demo",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_proof_demo",
+          "kinds": [
+            "cdylib"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-proof-host@0.0.0",
+      "name": "covalence-proof-host",
+      "version": "0.0.0",
+      "path": "crates/proof/host",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_proof_host",
+          "kinds": [
+            "cdylib"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workspace#covalence-proof-invalid-demo@0.0.0",
+      "name": "covalence-proof-invalid-demo",
+      "version": "0.0.0",
+      "path": "crates/proof/invalid-demo",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_proof_invalid_demo",
+          "kinds": [
+            "cdylib"
           ]
         }
       ]
@@ -570,6 +729,13 @@
     },
     {
       "source": "workspace#covalence-bin-nucleus@0.0.0",
+      "target": "workspace#covalence-nucleus@0.0.0",
+      "kinds": [
+        "normal (cfg(not(target_os = \"wasi\")))"
+      ]
+    },
+    {
+      "source": "workspace#covalence-bin-nucleus@0.0.0",
       "target": "workspace#covalence-repl@0.0.0",
       "kinds": [
         "normal"
@@ -592,6 +758,13 @@
     {
       "source": "workspace#covalence-browser@0.0.0",
       "target": "workspace#covalence-lib-sqlite@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-browser@0.0.0",
+      "target": "workspace#covalence-logic-hol@0.0.0",
       "kinds": [
         "normal"
       ]
@@ -653,6 +826,20 @@
       ]
     },
     {
+      "source": "workspace#covalence-data-cas@0.0.0",
+      "target": "workspace#covalence-lib-table@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-data-cas@0.0.0",
+      "target": "workspace#covalence-logic-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "workspace#covalence-data-cbor@0.0.0",
       "target": "workspace#covalence-data-num@0.0.0",
       "kinds": [
@@ -669,6 +856,13 @@
     {
       "source": "workspace#covalence-data-num@0.0.0",
       "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-ffi-python@0.0.0",
+      "target": "workspace#covalence-data-cas@0.0.0",
       "kinds": [
         "normal"
       ]
@@ -696,6 +890,20 @@
     },
     {
       "source": "workspace#covalence-ffi-python@0.0.0",
+      "target": "workspace#covalence-logic-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-ffi-python@0.0.0",
+      "target": "workspace#covalence-logic-hol@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-ffi-python@0.0.0",
       "target": "workspace#covalence-logic-lrat@0.0.0",
       "kinds": [
         "normal"
@@ -711,6 +919,13 @@
     {
       "source": "workspace#covalence-ffi-python@0.0.0",
       "target": "workspace#covalence-logic-sat@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-ffi-python@0.0.0",
+      "target": "workspace#covalence-nucleus@0.0.0",
       "kinds": [
         "normal"
       ]
@@ -737,8 +952,64 @@
       ]
     },
     {
+      "source": "workspace#covalence-logic-cas@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-cas@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-hol@0.0.0",
+      "target": "workspace#covalence-lib-cbor@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-hol@0.0.0",
+      "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-hol@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-hol@0.0.0",
+      "target": "workspace#covalence-lib-json@0.0.0",
+      "kinds": [
+        "dev"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-hol@0.0.0",
+      "target": "workspace#covalence-logic-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
       "source": "workspace#covalence-logic-lrat@0.0.0",
       "target": "workspace#covalence-lib-error@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-logic-lrat@0.0.0",
+      "target": "workspace#covalence-logic-hol@0.0.0",
       "kinds": [
         "normal"
       ]
@@ -801,6 +1072,13 @@
     },
     {
       "source": "workspace#covalence-nucleus@0.0.0",
+      "target": "workspace#covalence-data-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus@0.0.0",
       "target": "workspace#covalence-lib-crypto@0.0.0",
       "kinds": [
         "normal"
@@ -829,7 +1107,56 @@
     },
     {
       "source": "workspace#covalence-nucleus@0.0.0",
+      "target": "workspace#covalence-lib-wasm@0.0.0",
+      "kinds": [
+        "normal (cfg(not(target_arch = \"wasm32\")))"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus@0.0.0",
+      "target": "workspace#covalence-logic-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus@0.0.0",
+      "target": "workspace#covalence-logic-hol@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-nucleus@0.0.0",
       "target": "workspace#covalence-neutron@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-proof-host@0.0.0",
+      "target": "workspace#covalence-data-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-proof-host@0.0.0",
+      "target": "workspace#covalence-lib-hash@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-proof-host@0.0.0",
+      "target": "workspace#covalence-logic-cas@0.0.0",
+      "kinds": [
+        "normal"
+      ]
+    },
+    {
+      "source": "workspace#covalence-proof-host@0.0.0",
+      "target": "workspace#covalence-logic-hol@0.0.0",
       "kinds": [
         "normal"
       ]

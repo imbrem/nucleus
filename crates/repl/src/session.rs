@@ -2,7 +2,7 @@
 //!
 //! I/O is returned as a [`Response`] for the terminal or browser to perform.
 
-use covalence_data_cas::MemoryCas;
+use covalence_data_cas::SharedIndexCas;
 use covalence_lib_error::snafu::Snafu;
 use covalence_lib_hash::{O256, o256};
 
@@ -39,6 +39,13 @@ pub enum Response {
         /// Where the bytes might be.
         url: String,
         /// What they must hash to.
+        address: O256,
+    },
+    /// Ask the host to resolve and run a standard proof component.
+    RunProof {
+        /// Where a remote component may be fetched before execution.
+        url: Option<String>,
+        /// The content address of the component.
         address: O256,
     },
     /// Ask the host to run the `SQLite` shell.
@@ -139,6 +146,7 @@ pub const HELP: &str = "\
 (stats)             how much the store holds
 (objects [N])       up to N resident addresses (default 64)
 (samples)           admit the sample databases; returns name/address pairs
+(proof ADDRESS)     run a standard proof from the selected kernel
 
 (kernels)           every known kernel, as a list
 (connect \"URL\")     add an HTTP kernel and select it
@@ -281,7 +289,7 @@ impl Session {
 
     /// Borrows the store.
     #[must_use]
-    pub fn store(&self) -> &std::sync::Arc<MemoryCas> {
+    pub fn store(&self) -> &std::sync::Arc<SharedIndexCas> {
         self.repl.cas()
     }
 
@@ -435,6 +443,23 @@ impl Session {
                 ),
             ),
             ("samples", []) => Response::Value(self.samples()?),
+            ("proof", [value]) => {
+                let address = Self::address(value)?;
+                let url = match self.endpoint() {
+                    Endpoint::Local => None,
+                    Endpoint::Http(base) => Some(format!(
+                        "{}/cas/{}",
+                        base.trim_end_matches('/'),
+                        address.hex()
+                    )),
+                };
+                Response::RunProof { url, address }
+            }
+            ("proof", _) => {
+                return Err(SessionError::Usage {
+                    usage: "(proof ADDRESS)",
+                });
+            }
             _ => return Ok(None),
         }))
     }
@@ -753,6 +778,28 @@ mod tests {
     }
 
     #[test]
+    fn proof_asks_the_host_to_resolve_and_run_a_component() {
+        let mut session = session();
+        let Value::Address(address) = session.admit(b"proof component".to_vec()).expect("admit")
+        else {
+            unreachable!("admit returns an address")
+        };
+        assert_eq!(
+            session.eval(&format!("(proof {address})")).expect("eval"),
+            Response::RunProof { url: None, address }
+        );
+        assert!(say(&mut session, "(proof)").contains("usage"));
+
+        say(&mut session, "(connect \"http://example.invalid/\")");
+        let Response::RunProof { url: Some(url), .. } =
+            session.eval(&format!("(proof {address})")).expect("eval")
+        else {
+            panic!("expected a remote proof request")
+        };
+        assert_eq!(url, format!("http://example.invalid/cas/{address}"));
+    }
+
+    #[test]
     fn samples_are_stored_under_their_own_address() {
         // The filename in `crates/repl/samples/` is the file's own address.
         // That is what makes the directory a CAS rather than a folder of
@@ -787,7 +834,11 @@ mod tests {
 
         // Real SQLite images, not placeholder bytes.
         for address in session.repl().addresses() {
-            let bytes = session.repl().cas().read(address, 0..16).expect("read");
+            let bytes = session
+                .repl()
+                .cas()
+                .get_range(address, 0..16)
+                .expect("read");
             assert_eq!(&bytes.expect("resident")[..15], b"SQLite format 3");
         }
 

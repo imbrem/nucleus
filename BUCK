@@ -34,6 +34,24 @@ _REPOSITORY_SOURCES = glob([
     "*.yml",
 ])
 
+export_file(
+    name = "hol_init_checked_manifest",
+    src = "theories/init-boolean.checked.json",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "hol_init_checked_schema",
+    src = "theories/init-boolean.checked.schema.json",
+    visibility = ["PUBLIC"],
+)
+
+export_file(
+    name = "proof_wit",
+    src = "wit/proof/proof.wit",
+    visibility = ["PUBLIC"],
+)
+
 genrule(
     name = "loc",
     srcs = with_environment(
@@ -69,6 +87,7 @@ genrule(
         "lib-hash": "//crates/lib/hash:package_files",
         "lib-rand": "//crates/lib/rand:package_files",
         "lib-sqlite": "//crates/lib/sqlite:package_files",
+        "logic-cas": "//crates/logic/cas:package_files",
         "neutron": "//crates/neutron:package_files",
         "nucleus": "//crates/nucleus:package_files",
         "proton": "//crates/proton:package_files",
@@ -87,8 +106,11 @@ genrule(
             "data-cas": "//crates/data/cas:package_files",
             "lib-hash": "//crates/lib/hash:package_files",
             "lib-sqlite": "//crates/lib/sqlite:package_files",
+            "logic-cas": "//crates/logic/cas:package_files",
+            "logic-hol": "//crates/logic/hol:package_files",
             "neutron": "//crates/neutron:package_files",
             "nucleus": "//crates/nucleus:package_files",
+            "proof-host": "//crates/proof/host:package_files",
             "repl": "//crates/repl:package_files",
         },
         _NUCLEUS_PACKAGE_SOURCES +
@@ -98,6 +120,7 @@ genrule(
             "package.json",
             "pnpm-lock.yaml",
             "pnpm-workspace.yaml",
+            "wit/proof/proof.wit",
         ],
     ),
     out = "wasm",
@@ -159,8 +182,10 @@ genrule(
     name = "python",
     srcs = named_sources(
         {
+            "data-cas": "//crates/data/cas:package_files",
             "lib-error": "//crates/lib/error:package_files",
             "lib-hash": "//crates/lib/hash:package_files",
+            "logic-cas": "//crates/logic/cas:package_files",
         },
         _CARGO_ONLY_CRATE_SOURCES + [
             "Cargo.lock",

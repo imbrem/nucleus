@@ -90,7 +90,7 @@ enum Task {
     Status,
     /// Build and serve the browser demo with an HTTP kernel.
     Demo {
-        /// Databases the HTTP kernel should serve.
+        /// Additional objects the HTTP kernel should serve.
         files: Vec<PathBuf>,
 
         /// Loopback port for the demo page.
@@ -138,7 +138,7 @@ enum BuildTarget {
 
 #[derive(Debug, Subcommand)]
 enum BuckTask {
-    /// Configure machine-local Buck tool paths.
+    /// Refresh machine-local Buck tool paths.
     Configure,
     /// Regenerate committed Cargo-derived Buck files.
     Sync,

@@ -106,8 +106,8 @@ def encodeRow (names : NameCodec Name) (symbols : SignatureCodec Sig) :
   | .primTm symbol => array [text "PRIM_TM", symbols.encodeTm symbol]
   | .tmFv name type => array [text "TM_FV", names.encode name, unsigned type]
   | .app function argument => array [text "TM_APP", unsigned function, unsigned argument]
-  | .lam name domain body =>
-      array [text "TM_LAM", names.encode name, unsigned domain, unsigned body]
+  | .lam binder body =>
+      array [text "TM_LAM", unsigned binder, unsigned body]
   | .bool value => array [text "TM_BOOL", encodeBool value]
   | .eq type operands => array [text "TM_EQ", unsigned type, unsigned operands]
   | .eps type predicate => array [text "TM_EPS", unsigned type, unsigned predicate]
@@ -142,8 +142,8 @@ def decodeRow? (names : NameCodec Name) (symbols : SignatureCodec Sig)
       return .tmFv (← names.decode name) (← asNat? type)
   | [.primitive (.text "TM_APP"), function, argument] =>
       return .app (← asNat? function) (← asNat? argument)
-  | [.primitive (.text "TM_LAM"), name, domain, body] =>
-      return .lam (← names.decode name) (← asNat? domain) (← asNat? body)
+  | [.primitive (.text "TM_LAM"), binder, body] =>
+      return .lam (← asNat? binder) (← asNat? body)
   | [.primitive (.text "TM_BOOL"), value] => return .bool (← asBool? value)
   | [.primitive (.text "TM_EQ"), type, operands] =>
       return .eq (← asNat? type) (← asNat? operands)

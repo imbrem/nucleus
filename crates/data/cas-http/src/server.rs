@@ -1,4 +1,4 @@
-//! A read-only HTTP service over a [`Cas`].
+//! A read-only HTTP service over an [`ObjectCas`].
 
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -11,7 +11,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum_extra::TypedHeader;
 use bytes::Bytes;
-use covalence_data_cas::{Cas, CasObject};
+use covalence_data_cas::{CasObject, ObjectCas};
 use covalence_lib_hash::O256;
 use tower_http::cors::{Any, CorsLayer};
 
@@ -56,7 +56,7 @@ impl Drop for Serving {
 /// bound.
 pub fn serve<C>(cas: Arc<C>, address: SocketAddr) -> std::io::Result<Serving>
 where
-    C: Cas + Send + Sync + 'static,
+    C: ObjectCas + Send + Sync + 'static,
     C::Error: std::fmt::Display,
 {
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -88,7 +88,7 @@ where
 
 fn router<C>(cas: Arc<C>) -> Router
 where
-    C: Cas + Send + Sync + 'static,
+    C: ObjectCas + Send + Sync + 'static,
     C::Error: std::fmt::Display,
 {
     // Allow browser range requests from the demo's origin.
@@ -112,7 +112,7 @@ async fn object<C>(
     range: Option<TypedHeader<headers::Range>>,
 ) -> Response
 where
-    C: Cas + Send + Sync + 'static,
+    C: ObjectCas + Send + Sync + 'static,
     C::Error: std::fmt::Display,
 {
     let Ok(address) = O256::from_str(&address) else {

@@ -31,7 +31,8 @@ rust_library(
         "bytes": "nucleus//buck/cargo/production:bytes-1.12.1",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
-        "indexmap": "nucleus//buck/cargo/production:indexmap-2.14.0",
+        "covalence_lib_table": "nucleus//crates/lib/table:covalence_lib_table",
+        "covalence_logic_cas": "nucleus//crates/logic/cas:covalence_logic_cas",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -63,7 +64,8 @@ rust_test(
         "bytes": "nucleus//buck/cargo/production:bytes-1.12.1",
         "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_lib_hash": "nucleus//crates/lib/hash:covalence_lib_hash",
-        "indexmap": "nucleus//buck/cargo/production:indexmap-2.14.0",
+        "covalence_lib_table": "nucleus//crates/lib/table:covalence_lib_table",
+        "covalence_logic_cas": "nucleus//crates/logic/cas:covalence_logic_cas",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",

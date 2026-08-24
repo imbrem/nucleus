@@ -26,11 +26,15 @@ extension-module = ["covalence-lib-python/extension-module"]
 
 [dependencies]
 cid = "0.11"
+covalence-data-cas = { path = "../../data/cas" }
 covalence-data-cbor = { path = "../../data/cbor" }
 covalence-lib-python = { path = "../../lib/python" }
+covalence-logic-cas = { path = "../../logic/cas" }
 covalence-logic-lrat = { path = "../../logic/lrat" }
 covalence-logic-metamath = { path = "../../logic/metamath" }
 covalence-logic-sat = { path = "../../logic/sat" }
+covalence-logic-hol = { path = "../../logic/hol" }
+covalence-nucleus = { path = "../../nucleus" }
 # `random` is left off: drawing an object needs a caller-supplied CSPRNG, and
 # there is no Python binding for one to supply. The rest of the crate's
 # functionality is enabled and wrapped.

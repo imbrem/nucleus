@@ -1,0 +1,33 @@
+[package]
+name = "covalence-lib-wasm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "WebAssembly runtimes shared by Covalence hosts and guests"
+publish = false
+
+[features]
+default = []
+browser = ["dep:wasm-bindgen"]
+component-guest = ["dep:wit-bindgen-rt"]
+component-host = ["dep:wasmtime", "dep:wasmtime-wasi"]
+
+[dependencies]
+wit-bindgen-rt = { version = "=0.44.0", features = ["bitflags"], optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+wasmtime = { version = "=46.0.1", default-features = false, features = [
+  "anyhow",
+  "component-model",
+  "cranelift",
+  "runtime",
+  "std",
+], optional = true }
+wasmtime-wasi = { version = "=46.0.1", default-features = false, features = ["p2"], optional = true }
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+wasm-bindgen = { version = "=0.2.121", optional = true }
+
+[lints]
+workspace = true

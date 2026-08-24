@@ -41,7 +41,7 @@ inductive Row (Sig : Signature.{u}) (Name : Type) (ι : Type) where
   | primTm (symbol : Sig .tm)
   | tmFv (name : Name) (type : ι)
   | app (function argument : ι)
-  | lam (name : Name) (domain body : ι)
+  | lam (binder body : ι)
   | bool (value : Bool)
   | eq (type operands : ι)
   | eps (type predicate : ι)
@@ -51,9 +51,10 @@ namespace Row
 /-- Recursive references in wire order. -/
 def children : Row Sig Name ι → List ι
   | .pair left right | .kindArr left right | .arr left right |
-      .tyApp left right | .app left right | .eq left right | .eps left right =>
+      .tyApp left right | .app left right | .lam left right |
+      .eq left right | .eps left right =>
       [left, right]
-  | .tyLam _ kinds body | .lam _ kinds body => [kinds, body]
+  | .tyLam _ kinds body => [kinds, body]
   | .tyFv _ kind | .tyExists _ kind | .model _ kind |
       .primFam _ kind | .tmFv _ kind => [kind]
   | .kindStar | .boolTy | .primTm _ | .bool _ => []
@@ -78,7 +79,7 @@ def map (f : ι → κ) : Row Sig Name ι → Row Sig Name κ
   | .primTm symbol => .primTm symbol
   | .tmFv name type => .tmFv name (f type)
   | .app function argument => .app (f function) (f argument)
-  | .lam name domain body => .lam name (f domain) (f body)
+  | .lam binder body => .lam (f binder) (f body)
   | .bool value => .bool value
   | .eq type operands => .eq (f type) (f operands)
   | .eps type predicate => .eps (f type) (f predicate)
@@ -151,11 +152,12 @@ def elaborate (forest : ι → Option (Value Sig Name)) :
       match function, argument with
       | Value.syntax function, Value.syntax argument => some (.syntax (.app function argument))
       | _, _ => none
-  | .lam name domain body => do
-      let domain ← forest domain
+  | .lam binder body => do
+      let binder ← forest binder
       let body ← forest body
-      match domain, body with
-      | Value.syntax domain, Value.syntax body => some (.syntax (.lam name domain body))
+      match binder, body with
+      | Value.syntax (.tmFv name domain), Value.syntax body =>
+          some (.syntax (.lam name domain body))
       | _, _ => none
   | .bool value => some (.syntax (.bool value))
   | .eq type operands => do
@@ -262,7 +264,8 @@ def encode : Syn Sig Name → M Sig Name Nat
   | .primTm symbol => emit (.primTm symbol)
   | .tmFv name type => unary (encode type) (.tmFv name)
   | .app function argument => binary (encode function) (encode argument) .app
-  | .lam name domain body => binary (encode domain) (encode body) (.lam name)
+  | .lam name domain body =>
+      binary (unary (encode domain) (.tmFv name)) (encode body) .lam
   | .bool value => emit (.bool value)
   | .eq type left right =>
       binary (encode type) (binary (encode left) (encode right) .pair) .eq
@@ -511,10 +514,15 @@ theorem encode_correct (expression : Syn Sig Name) :
       intro forest functionIndex argumentIndex functionLookup argumentLookup
       simp [Row.elaborate, functionLookup, argumentLookup]
   | lam name domain body domainIH bodyIH =>
-      apply encodes_binary (.syntax domain) (.syntax body)
-        (.syntax (.lam name domain body)) _ _ _ domainIH bodyIH
-      intro forest domainIndex bodyIndex domainLookup bodyLookup
-      simp [Row.elaborate, domainLookup, bodyLookup]
+      have binder : Encodes (unary (encode domain) (.tmFv name))
+          (.syntax (.tmFv name domain)) := by
+        apply encodes_unary (.syntax domain) (.syntax (.tmFv name domain)) _ _ domainIH
+        intro forest typeIndex typeLookup
+        simp [Row.elaborate, typeLookup]
+      apply encodes_binary (.syntax (.tmFv name domain)) (.syntax body)
+        (.syntax (.lam name domain body)) _ _ _ binder bodyIH
+      intro forest binderIndex bodyIndex binderLookup bodyLookup
+      simp [Row.elaborate, binderLookup, bodyLookup]
   | bool value => exact encodes_emit _ _ fun _ => rfl
   | eq type left right typeIH leftIH rightIH =>
       have operands : Encodes (binary (encode left) (encode right) .pair)

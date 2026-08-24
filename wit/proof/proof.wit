@@ -1,0 +1,282 @@
+package nucleus:proof@0.1.0;
+
+/// Low-level host objects and checked Ethane operations available to proofs.
+interface host {
+    /// A syntactic relation in the Ethane conversion hierarchy.
+    enum syn-rel {
+        syn,
+        alpha,
+        conv,
+    }
+
+    /// The syntactic category of a checked arena row.
+    enum sort {
+        kind,
+        ty,
+        tm,
+    }
+
+    /// An immutable shared byte buffer.
+    resource bytes {
+        /// Copies component bytes into a host buffer.
+        constructor(value: list<u8>);
+
+        /// Number of bytes in the buffer.
+        len: func() -> u64;
+
+        /// Copies the complete buffer into component memory.
+        to-list: func() -> list<u8>;
+
+        /// Shares a subrange without copying its contents.
+        slice: func(start: u64, end: u64) -> result<bytes, string>;
+
+        /// Hashes the complete buffer and introduces a checked blob.
+        blob: func() -> blob;
+    }
+
+    /// A checked content-addressed blob: an LCF fact `(address, bytes)`.
+    resource blob {
+        /// Checks a claimed 32-byte address against the complete buffer.
+        check: static func(address: list<u8>, value: borrow<bytes>) -> result<blob, string>;
+
+        /// The checked 32-byte address.
+        address: func() -> list<u8>;
+
+        /// Forgets checkedness and shares the underlying immutable bytes.
+        bytes: func() -> bytes;
+
+        /// Number of bytes in the checked blob.
+        len: func() -> u64;
+    }
+
+    /// A private insertion-ordered CAS with stable zero-based object IDs.
+    resource index-cas {
+        constructor();
+
+        /// Inserts a checked blob and returns its stable object ID.
+        insert: func(value: borrow<blob>) -> u64;
+
+        /// Hashes and inserts bytes, returning their stable object ID.
+        put: func(value: borrow<bytes>) -> u64;
+
+        /// Looks up a checked blob by object ID.
+        get: func(object: u64) -> option<blob>;
+
+        /// Finds the object ID for a checked address.
+        find: func(address: list<u8>) -> result<option<u64>, string>;
+
+        /// Removes an address without renumbering other objects.
+        remove: func(address: list<u8>) -> result<bool, string>;
+
+        /// Number of resident objects.
+        len: func() -> u64;
+    }
+
+    /// Inserts a checked blob into the proof's default CAS.
+    cas-insert: func(value: borrow<blob>) -> u64;
+
+    /// Hashes and inserts bytes into the proof's default CAS.
+    cas-put: func(value: borrow<bytes>) -> u64;
+
+    /// Looks up a checked blob in the proof's default CAS by object ID.
+    cas-get: func(object: u64) -> option<blob>;
+
+    /// Finds an object in the proof's default CAS by checked address.
+    cas-find: func(address: list<u8>) -> result<option<u64>, string>;
+
+    /// A raw, unvalidated Ethane syntax arena.
+    resource arena {
+        constructor();
+
+        /// Decodes one complete CBOR arena object.
+        from-cbor: static func(value: borrow<bytes>) -> result<arena, string>;
+
+        /// Encodes the arena through its CBOR wire representation.
+        to-cbor: func() -> result<bytes, string>;
+
+        /// Hashes the CBOR encoding produced by `to-cbor`.
+        address: func() -> list<u8>;
+
+        /// Number of local definition rows.
+        len: func() -> u64;
+
+        /// Appends raw syntax rows. References are one-based integers.
+        kind-star: func() -> result<u64, string>;
+        kind-arr: func(domain: u64, codomain: u64) -> result<u64, string>;
+        bool-type: func() -> result<u64, string>;
+        ty-arr: func(domain: u64, codomain: u64) -> result<u64, string>;
+        ty-app: func(function: u64, argument: u64) -> result<u64, string>;
+        ty-lam: func(binder: u64, body: u64) -> result<u64, string>;
+        ty-fv: func(name: u64, kind: u64) -> result<u64, string>;
+        ty-exists: func(name: u64, predicate: u64) -> result<u64, string>;
+        model: func(name: u64, predicate: u64) -> result<u64, string>;
+        tm-fv: func(name: u64, ty: u64) -> result<u64, string>;
+        app: func(function: u64, argument: u64) -> result<u64, string>;
+        lam: func(binder: u64, body: u64) -> result<u64, string>;
+        bool-lit: func(value: bool) -> result<u64, string>;
+        tm-eq: func(left: u64, right: u64) -> result<u64, string>;
+        eps: func(ty: u64, predicate: u64) -> result<u64, string>;
+        kind-ref: func(source: u64, foreign: u64) -> result<u64, string>;
+        ty-ref: func(source: u64, foreign: u64) -> result<u64, string>;
+        tm-ref: func(source: u64, foreign: u64) -> result<u64, string>;
+
+        /// Appends raw arena metadata and imports.
+        import-null: func() -> result<u64, string>;
+        import-arena: func(value: borrow<arena>) -> result<u64, string>;
+        import-link: func(address: list<u8>) -> result<u64, string>;
+        add-context: func(proposition: u64) -> result<_, string>;
+        add-axiom: func(name: string);
+    }
+
+    /// An immutable arena paired with the address of bytes that decode to it.
+    resource table {
+        /// Encodes and hashes a raw arena.
+        from-arena: static func(value: borrow<arena>) -> result<table, string>;
+
+        /// Decodes an arena from a checked blob.
+        from-blob: static func(value: borrow<blob>) -> result<table, string>;
+
+        /// The address of the bytes that introduced this table.
+        address: func() -> list<u8>;
+
+        /// Returns a mutable raw copy of the table's arena.
+        arena: func() -> arena;
+    }
+
+    /// A checked Ethane arena. Row references and fact slots are integers.
+    resource kernel {
+        constructor();
+
+        /// Returns a raw snapshot of the checked arena.
+        arena: func() -> arena;
+
+        /// Hashes the kernel's complete arena encoding.
+        address: func() -> list<u8>;
+
+        /// Number of checked local rows.
+        len: func() -> u64;
+
+        /// Checked row inspection.
+        category: func(reference: u64) -> result<sort, string>;
+        classifier: func(reference: u64) -> result<u64, string>;
+        find: func(reference: u64) -> result<u64, string>;
+        find-mut: func(reference: u64) -> result<u64, string>;
+        equivalent: func(left: u64, right: u64) -> result<bool, string>;
+        equivalent-mut: func(left: u64, right: u64) -> result<bool, string>;
+
+        /// Checked syntax constructors.
+        kind-star: func() -> result<u64, string>;
+        kind-arr: func(domain: u64, codomain: u64) -> result<u64, string>;
+        bool-type: func(star: u64) -> result<u64, string>;
+        ty-arr: func(domain: u64, codomain: u64) -> result<u64, string>;
+        ty-app: func(function: u64, argument: u64) -> result<u64, string>;
+        ty-lam: func(binder: u64, body: u64) -> result<u64, string>;
+        ty-fv: func(name: u64, kind: u64) -> result<u64, string>;
+        ty-exists: func(name: u64, predicate: u64) -> result<u64, string>;
+        model: func(name: u64, predicate: u64) -> result<u64, string>;
+        tm-fv: func(name: u64, ty: u64) -> result<u64, string>;
+        app: func(function: u64, argument: u64) -> result<u64, string>;
+        lam: func(binder: u64, body: u64) -> result<u64, string>;
+        bool-lit: func(bool-type: u64, value: bool) -> result<u64, string>;
+        tm-eq: func(bool-type: u64, left: u64, right: u64) -> result<u64, string>;
+        eps: func(ty: u64, predicate: u64) -> result<u64, string>;
+
+        /// Checked imports, contexts, and axiom capabilities.
+        import-arena: func(value: borrow<arena>) -> result<u64, string>;
+        import-table: func(value: borrow<table>) -> result<u64, string>;
+        import-link: func(address: list<u8>) -> result<u64, string>;
+        kind-ref: func(source: u64, foreign: u64) -> result<u64, string>;
+        ty-ref: func(source: u64, foreign: u64, kind: u64) -> result<u64, string>;
+        tm-ref: func(source: u64, foreign: u64, ty: u64) -> result<u64, string>;
+        add-context: func(proposition: u64) -> result<_, string>;
+        add-axiom: func(name: string) -> result<_, string>;
+
+        /// Syntactic-fact cache operations. Slots are one-based integers.
+        syn-fact-count: func() -> u64;
+        remove-syn-fact: func(fact: u64) -> bool;
+        truncate-syn-facts: func(len: u64) -> result<_, string>;
+        syn-refl: func(relation: syn-rel, input: u64, target: option<u64>) -> result<u64, string>;
+        syn-refine: func(fact: u64, relation: syn-rel, target: option<u64>) -> result<u64, string>;
+        syn-symm: func(fact: u64, target: option<u64>) -> result<u64, string>;
+        syn-trans: func(left: u64, right: u64, target: option<u64>) -> result<u64, string>;
+        syn-sub-var: func(var: u64, val: u64, target: option<u64>) -> result<u64, string>;
+        syn-sub-leaf: func(var: u64, val: u64, input: u64, target: option<u64>) -> result<u64, string>;
+        syn-sub-leaf-forall: func(var: u64, input: u64, target: option<u64>) -> result<u64, string>;
+        syn-sub-identity: func(
+            var: u64,
+            val: u64,
+            input: u64,
+            output: u64,
+            variable-equality: u64,
+            body-equality: u64,
+            target: option<u64>,
+        ) -> result<u64, string>;
+        syn-congr: func(
+            relation: syn-rel,
+            var: option<u64>,
+            val: option<u64>,
+            input: u64,
+            output: u64,
+            children: list<u64>,
+            target: option<u64>,
+        ) -> result<u64, string>;
+        syn-binder-congr: func(
+            relation: syn-rel,
+            var: option<u64>,
+            val: option<u64>,
+            input: u64,
+            output: u64,
+            binder: u64,
+            body: u64,
+            target: option<u64>,
+        ) -> result<u64, string>;
+        syn-implicit-binder-congr: func(
+            relation: syn-rel,
+            var: option<u64>,
+            val: option<u64>,
+            input: u64,
+            output: u64,
+            binder: u64,
+            body: u64,
+            target: option<u64>,
+        ) -> result<u64, string>;
+        syn-alpha-binder: func(
+            input: u64,
+            output: u64,
+            binder-classifier: u64,
+            body-substitution: u64,
+            target: option<u64>,
+        ) -> result<u64, string>;
+        syn-alpha-implicit-binder: func(
+            input: u64,
+            output: u64,
+            input-binder: u64,
+            output-binder: u64,
+            body-substitution: u64,
+            target: option<u64>,
+        ) -> result<u64, string>;
+        tm-beta: func(source: u64, substitution: u64, target: option<u64>) -> result<u64, string>;
+        ty-beta: func(source: u64, substitution: u64, target: option<u64>) -> result<u64, string>;
+        tm-eta: func(source: u64, target: option<u64>) -> result<u64, string>;
+        union-syn-fact: func(fact: u64) -> result<_, string>;
+    }
+}
+
+/// The conventional entry point understood by standard proof loaders.
+interface standard {
+    use host.{kernel};
+
+    /// Runs the proof and transfers its checked kernel to the caller.
+    prove: func() -> result<kernel, string>;
+}
+
+/// A portable standard proof component.
+world standard-proof {
+    import host;
+    export standard;
+}
+
+/// A portable implementation of the complete proof host interface.
+world kernel-host {
+    export host;
+}

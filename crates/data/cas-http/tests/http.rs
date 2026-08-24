@@ -8,13 +8,13 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::Arc;
 
-use covalence_data_cas::MemoryCas;
+use covalence_data_cas::SharedIndexCas;
 use covalence_data_cas_http::{Serving, serve};
 use covalence_lib_hash::O256;
 
 /// Starts a service holding `objects`, returning it and their addresses.
 fn started(objects: &[&'static [u8]]) -> (Serving, Vec<O256>) {
-    let cas = Arc::new(MemoryCas::new());
+    let cas = Arc::new(SharedIndexCas::new());
     let addresses = objects
         .iter()
         .map(|bytes| cas.insert(*bytes).unwrap())

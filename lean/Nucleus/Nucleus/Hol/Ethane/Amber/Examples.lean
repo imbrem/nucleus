@@ -1,4 +1,5 @@
 import Nucleus.Hol.Ethane.Amber.Arena.Dense.Cbor
+import Nucleus.Hol.Ethane.Amber.Cbor
 import Nucleus.Hol.Ethane.Amber.Segment
 
 /-! # Executable Amber specification examples -/
@@ -7,7 +8,7 @@ namespace Nucleus.Hol.Ethane.Amber.Examples
 
 open Nucleus Nucleus.Hol.Ethane
 
-private def zeroKey : O256 := fun _ => 0
+private def zeroKey : O256 := 0
 
 private def truth : Syn Nucleus.HolE.EmptySig UInt64 := .bool true
 

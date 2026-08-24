@@ -1,0 +1,214 @@
+{
+  "format": "nucleus.hol.init.checked-boolean-v0",
+  "migration": "Executable first slice of theories/init.json; merge this raw declaration vocabulary into the shared constructor manifest from issue #745 before expanding beyond Boolean foundations.",
+  "declarations": [
+    {
+      "name": "star",
+      "dependencies": [],
+      "body": [{ "id": "root", "tag": "kind.star" }]
+    },
+    {
+      "name": "bool",
+      "dependencies": ["star"],
+      "body": [{ "id": "root", "tag": "ty.bool", "star": "star" }]
+    },
+    {
+      "name": "bool->bool",
+      "dependencies": ["bool"],
+      "body": [
+        { "id": "root", "tag": "ty.arr", "domain": "bool", "codomain": "bool" }
+      ]
+    },
+    {
+      "name": "bool->bool->bool",
+      "dependencies": ["bool", "bool->bool"],
+      "body": [
+        {
+          "id": "root",
+          "tag": "ty.arr",
+          "domain": "bool",
+          "codomain": "bool->bool"
+        }
+      ]
+    },
+    {
+      "name": "true",
+      "dependencies": ["bool", "bool->bool"],
+      "body": [
+        { "id": "x", "tag": "tm.fv", "name": 0, "ty": "bool" },
+        {
+          "id": "identity",
+          "tag": "tm.lam",
+          "function_ty": "bool->bool",
+          "binder": "x",
+          "body": "x"
+        },
+        {
+          "id": "root",
+          "tag": "tm.eq",
+          "bool_ty": "bool",
+          "left": "identity",
+          "right": "identity"
+        }
+      ]
+    },
+    {
+      "name": "false",
+      "dependencies": ["bool", "bool->bool", "true"],
+      "body": [
+        { "id": "x", "tag": "tm.fv", "name": 1, "ty": "bool" },
+        {
+          "id": "identity",
+          "tag": "tm.lam",
+          "function_ty": "bool->bool",
+          "binder": "x",
+          "body": "x"
+        },
+        { "id": "y", "tag": "tm.fv", "name": 2, "ty": "bool" },
+        {
+          "id": "constant_true",
+          "tag": "tm.lam",
+          "function_ty": "bool->bool",
+          "binder": "y",
+          "body": "true"
+        },
+        {
+          "id": "root",
+          "tag": "tm.eq",
+          "bool_ty": "bool",
+          "left": "identity",
+          "right": "constant_true"
+        }
+      ]
+    },
+    {
+      "name": "not",
+      "dependencies": ["bool", "bool->bool", "false"],
+      "body": [
+        { "id": "x", "tag": "tm.fv", "name": 3, "ty": "bool" },
+        {
+          "id": "is_false",
+          "tag": "tm.eq",
+          "bool_ty": "bool",
+          "left": "x",
+          "right": "false"
+        },
+        {
+          "id": "root",
+          "tag": "tm.lam",
+          "function_ty": "bool->bool",
+          "binder": "x",
+          "body": "is_false"
+        }
+      ]
+    },
+    {
+      "name": "and",
+      "dependencies": ["bool", "bool->bool", "bool->bool->bool"],
+      "body": [
+        { "id": "p", "tag": "tm.fv", "name": 4, "ty": "bool" },
+        { "id": "q", "tag": "tm.fv", "name": 5, "ty": "bool" },
+        {
+          "id": "p_eq_q",
+          "tag": "tm.eq",
+          "bool_ty": "bool",
+          "left": "p",
+          "right": "q"
+        },
+        {
+          "id": "body",
+          "tag": "tm.eq",
+          "bool_ty": "bool",
+          "left": "p_eq_q",
+          "right": "q"
+        },
+        {
+          "id": "q_lam",
+          "tag": "tm.lam",
+          "function_ty": "bool->bool",
+          "binder": "q",
+          "body": "body"
+        },
+        {
+          "id": "root",
+          "tag": "tm.lam",
+          "function_ty": "bool->bool->bool",
+          "binder": "p",
+          "body": "q_lam"
+        }
+      ]
+    },
+    {
+      "name": "or",
+      "dependencies": ["bool", "bool->bool", "bool->bool->bool"],
+      "body": [
+        { "id": "p", "tag": "tm.fv", "name": 6, "ty": "bool" },
+        { "id": "q", "tag": "tm.fv", "name": 7, "ty": "bool" },
+        {
+          "id": "p_eq_q",
+          "tag": "tm.eq",
+          "bool_ty": "bool",
+          "left": "p",
+          "right": "q"
+        },
+        {
+          "id": "body",
+          "tag": "tm.eq",
+          "bool_ty": "bool",
+          "left": "p_eq_q",
+          "right": "p"
+        },
+        {
+          "id": "q_lam",
+          "tag": "tm.lam",
+          "function_ty": "bool->bool",
+          "binder": "q",
+          "body": "body"
+        },
+        {
+          "id": "root",
+          "tag": "tm.lam",
+          "function_ty": "bool->bool->bool",
+          "binder": "p",
+          "body": "q_lam"
+        }
+      ]
+    },
+    {
+      "name": "imp",
+      "dependencies": ["bool", "bool->bool", "bool->bool->bool", "true"],
+      "body": [
+        { "id": "p", "tag": "tm.fv", "name": 8, "ty": "bool" },
+        { "id": "q", "tag": "tm.fv", "name": 9, "ty": "bool" },
+        {
+          "id": "p_eq_true",
+          "tag": "tm.eq",
+          "bool_ty": "bool",
+          "left": "p",
+          "right": "true"
+        },
+        {
+          "id": "body",
+          "tag": "tm.eq",
+          "bool_ty": "bool",
+          "left": "p_eq_true",
+          "right": "q"
+        },
+        {
+          "id": "q_lam",
+          "tag": "tm.lam",
+          "function_ty": "bool->bool",
+          "binder": "q",
+          "body": "body"
+        },
+        {
+          "id": "root",
+          "tag": "tm.lam",
+          "function_ty": "bool->bool->bool",
+          "binder": "p",
+          "body": "q_lam"
+        }
+      ]
+    }
+  ]
+}

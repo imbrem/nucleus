@@ -1,6 +1,6 @@
 """Python bindings for Covalence."""
 
-from . import data, lib, logic
+from . import cas, data, lib, logic
 from ._covalence import __version__
 
-__all__ = ["data", "lib", "logic", "__version__"]
+__all__ = ["cas", "data", "lib", "logic", "__version__"]

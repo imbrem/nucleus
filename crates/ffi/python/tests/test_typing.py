@@ -11,8 +11,10 @@ import pathlib
 
 import covalence
 from covalence import _covalence
+from covalence import cas as public_cas
 from covalence.data import cbor as public_cbor
 from covalence.lib import hash as public_hash
+from covalence.logic import hol as public_hol
 from covalence.logic import lrat as public_lrat
 from covalence.logic import metamath as public_metamath
 from covalence.logic import sat as public_sat
@@ -67,14 +69,25 @@ def test_every_declared_name_exists() -> None:
 def test_every_public_name_is_reexported() -> None:
     """Public modules select names from the private compiled module."""
     for public_module in (
+        public_cas,
         public_cbor,
         public_hash,
         public_lrat,
+        public_hol,
         public_metamath,
         public_sat,
     ):
-        assert set(public_module.__all__) <= _exported_names()
-        for name in public_module.__all__:
+        names = set(public_module.__all__)
+        if public_module is public_cas:
+            # The duck-typed provider protocols are intentionally pure Python.
+            names -= {"Cas", "CheckedCas"}
+        if public_module is public_hol:
+            # The public HOL module removes the extension's `Hol` prefix.
+            for name in names:
+                assert getattr(public_module, name) is getattr(_covalence, f"Hol{name}")
+            continue
+        assert names <= _exported_names()
+        for name in names:
             assert getattr(public_module, name) is getattr(_covalence, name)
 
 
@@ -98,6 +111,7 @@ MACHINERY = frozenset(
         "__init__",
         "__module__",
         "__new__",
+        "__slotnames__",
         "__static_attributes__",
         "__weakref__",
     }
@@ -128,7 +142,6 @@ def test_the_stub_does_not_omit_class_members() -> None:
         "ContextKey",
         "Sha1",
         "GitHash",
-        "Kernel",
         "RatGroup",
         "Literal",
         "Clause",
@@ -137,6 +150,18 @@ def test_the_stub_does_not_omit_class_members() -> None:
         "Expression",
         "Assertion",
         "Database",
+        "CasAssertion",
+        "CasFact",
+        "IndexCas",
+        "HolLink",
+        "HolDefinition",
+        "HolMeta",
+        "HolArena",
+        "HolKind",
+        "HolTy",
+        "HolTm",
+        "HolSynFact",
+        "HolKernel",
     ):
         missing = sorted(
             _runtime_members(getattr(_covalence, name)) - _declared_members(name)

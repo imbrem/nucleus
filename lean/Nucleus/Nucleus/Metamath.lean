@@ -3,6 +3,7 @@ import Nucleus.Metamath.Database
 import Nucleus.Metamath.Compress
 import Nucleus.Metamath.Verify
 import Nucleus.Metamath.VerifyTest
+import Nucleus.Metamath.HolMM
 
 /-!
 # Metamath
@@ -35,4 +36,11 @@ predicates, and this specification is the stricter of the two.
 `Nucleus.Metamath.VerifyTest` exhibits the databases that separate the
 behaviours, and is imported here rather than left standalone so that the
 separation is checked on every build.
+
+`Nucleus.Metamath.HolMM` asks the next question: are the things a Metamath
+database *asserts* true? It interprets `hol.mm`, Metamath's own higher-order
+logic, into `Nucleus.Hol`'s pointed-set semantics, proves 29 of its 71 `$a`
+statements sound, and exhibits a countermodel for `ax-hbl1`. Its module
+documentation states precisely what is proved, what is assumed, and what is
+left open.
 -/

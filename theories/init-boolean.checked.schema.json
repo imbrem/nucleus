@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nucleus.dev/schema/hol-init-checked-boolean-v0.json",
+  "title": "Checked opcode-free HOL Boolean init manifest",
+  "type": "object",
+  "required": ["format", "migration", "declarations"],
+  "additionalProperties": false,
+  "properties": {
+    "format": { "const": "nucleus.hol.init.checked-boolean-v0" },
+    "migration": { "type": "string", "minLength": 1 },
+    "declarations": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/declaration" }
+    }
+  },
+  "$defs": {
+    "name": { "type": "string", "minLength": 1 },
+    "declaration": {
+      "type": "object",
+      "required": ["name", "dependencies", "body"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "dependencies": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/name" },
+          "uniqueItems": true
+        },
+        "body": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/row" }
+        }
+      }
+    },
+    "row": {
+      "oneOf": [
+        { "$ref": "#/$defs/kindStar" },
+        { "$ref": "#/$defs/boolTy" },
+        { "$ref": "#/$defs/tyArr" },
+        { "$ref": "#/$defs/tmFv" },
+        { "$ref": "#/$defs/tmLam" },
+        { "$ref": "#/$defs/tmEq" }
+      ]
+    },
+    "kindStar": {
+      "type": "object",
+      "required": ["id", "tag"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/name" },
+        "tag": { "const": "kind.star" }
+      }
+    },
+    "boolTy": {
+      "type": "object",
+      "required": ["id", "tag", "star"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/name" },
+        "tag": { "const": "ty.bool" },
+        "star": { "$ref": "#/$defs/name" }
+      }
+    },
+    "tyArr": {
+      "type": "object",
+      "required": ["id", "tag", "domain", "codomain"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/name" },
+        "tag": { "const": "ty.arr" },
+        "domain": { "$ref": "#/$defs/name" },
+        "codomain": { "$ref": "#/$defs/name" }
+      }
+    },
+    "tmFv": {
+      "type": "object",
+      "required": ["id", "tag", "name", "ty"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/name" },
+        "tag": { "const": "tm.fv" },
+        "name": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "ty": { "$ref": "#/$defs/name" }
+      }
+    },
+    "tmLam": {
+      "type": "object",
+      "required": ["id", "tag", "function_ty", "binder", "body"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/name" },
+        "tag": { "const": "tm.lam" },
+        "function_ty": { "$ref": "#/$defs/name" },
+        "binder": { "$ref": "#/$defs/name" },
+        "body": { "$ref": "#/$defs/name" }
+      }
+    },
+    "tmEq": {
+      "type": "object",
+      "required": ["id", "tag", "bool_ty", "left", "right"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/name" },
+        "tag": { "const": "tm.eq" },
+        "bool_ty": { "$ref": "#/$defs/name" },
+        "left": { "$ref": "#/$defs/name" },
+        "right": { "$ref": "#/$defs/name" }
+      }
+    }
+  }
+}

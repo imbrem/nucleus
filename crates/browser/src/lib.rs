@@ -4,11 +4,15 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use covalence_data_cas::{Cas, CasObject, ResidentObject};
+use covalence_data_cas::{CasObject, ObjectCas, ResidentObject};
 use covalence_lib_hash::O256;
 use covalence_lib_sqlite::{Connection, Step as SqliteStep, ValueType};
 use covalence_repl::{Response, Session};
 use wasm_bindgen::prelude::*;
+
+mod hol;
+
+pub use hol::HolProver;
 
 /// Generates unique VFS names within one wasm instance.
 static NEXT_MOUNT: AtomicU64 = AtomicU64::new(0);
@@ -24,21 +28,21 @@ pub struct Step {
 
 #[wasm_bindgen]
 impl Step {
-    /// One of `output`, `fetch`, `shell`, or `quit`.
+    /// One of `output`, `fetch`, `proof`, `shell`, or `quit`.
     #[wasm_bindgen(getter)]
     #[must_use]
     pub fn kind(&self) -> String {
         self.kind.clone()
     }
 
-    /// Text to show, or the URL to fetch.
+    /// Text to show, or the URL to fetch before a `fetch` or `proof` step.
     #[wasm_bindgen(getter)]
     #[must_use]
     pub fn text(&self) -> String {
         self.text.clone()
     }
 
-    /// For `fetch`, the address the bytes must hash to.
+    /// For `fetch` or `proof`, the object's address.
     #[wasm_bindgen(getter)]
     #[must_use]
     pub fn address(&self) -> String {
@@ -136,6 +140,12 @@ impl Repl {
             Response::Fetch { url, address } => Step {
                 kind: "fetch".to_owned(),
                 text: url,
+                address: address.hex().to_string(),
+                arguments: Vec::new(),
+            },
+            Response::RunProof { url, address } => Step {
+                kind: "proof".to_owned(),
+                text: url.unwrap_or_default(),
                 address: address.hex().to_string(),
                 arguments: Vec::new(),
             },

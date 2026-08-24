@@ -9,7 +9,7 @@ pub use sexpr::Value;
 
 use std::sync::Arc;
 
-use covalence_data_cas::{AdmissionError, CasStats, MemoryCas};
+use covalence_data_cas::{AdmissionError, CasStatistics, CasStats, SharedIndexCas};
 use covalence_lib_error::snafu::Snafu;
 use covalence_lib_hash::O256;
 use covalence_lib_sqlite::Connection;
@@ -105,7 +105,7 @@ pub struct ConnectionInfo {
 
 /// A content-addressed store, mounted, plus the connections over it.
 pub struct Repl {
-    cas: Arc<MemoryCas>,
+    cas: Arc<SharedIndexCas>,
     mount: RegisteredVfs,
     connections: Vec<Entry>,
     selected: Option<ConnectionId>,
@@ -138,7 +138,7 @@ impl Repl {
     ///
     /// Returns an error if `SQLite` rejects the registration.
     pub fn with_mount_name(name: &str, as_default: bool) -> Result<Self, ReplError> {
-        let cas = Arc::new(MemoryCas::new());
+        let cas = Arc::new(SharedIndexCas::new());
         let mount = register_cas(Arc::clone(&cas), name, as_default)?;
         Ok(Self {
             cas,
@@ -151,7 +151,7 @@ impl Repl {
 
     /// Borrows the content-addressed store.
     #[must_use]
-    pub fn cas(&self) -> &Arc<MemoryCas> {
+    pub fn cas(&self) -> &Arc<SharedIndexCas> {
         &self.cas
     }
 

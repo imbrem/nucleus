@@ -38,6 +38,27 @@ filegroup(
     visibility = ["PUBLIC"],
 )
 
+{% if manifest_files -%}
+# Some compile-time macros read shared workspace files relative to
+# `CARGO_MANIFEST_DIR`. Recreate that part of the workspace as one declared
+# Buck input tree so Cargo and Buck resolve the same relative paths.
+_MANIFEST_FILES = {
+    {{ manifest_files.package_source|tojson }}.format(source): source
+    for source in _PACKAGE_FILES
+}
+_MANIFEST_FILES.update({
+{%- for source, destination in manifest_files.mapped_srcs %}
+    {{ destination|tojson }}: {{ source|tojson }},
+{%- endfor %}
+})
+
+filegroup(
+    name = "manifest_files",
+    srcs = _MANIFEST_FILES,
+    visibility = [],
+)
+
+{% endif -%}
 {% if buildscript -%}
 # `build.rs`, compiled and run the way cargo runs it. `buildscript_run` turns
 # the script's `cargo::` directives into an `OUT_DIR` and a rustc argument file,
@@ -148,9 +169,16 @@ rust_test(
     crate_root = {{ target.crate_root|tojson }},
     edition = {{ target.edition|tojson }},
     srcs = _RUST_SOURCES,
-{%- if target.features %}
+{%- if target.test_mapped_srcs %}
+    mapped_srcs = {
+{%- for source, destination in target.test_mapped_srcs %}
+        {{ source|tojson }}: {{ destination|tojson }},
+{%- endfor %}
+    },
+{%- endif %}
+{%- if target.test_features %}
     features = [
-{%- for feature in target.features %}
+{%- for feature in target.test_features %}
         {{ feature|tojson }},
 {%- endfor %}
     ],
@@ -214,6 +242,7 @@ struct RustTarget {
     /// Kept separate so a dev-dependency cannot leak into the library, which
     /// is the whole reason Cargo distinguishes them.
     test_named_deps: Vec<(String, String)>,
+    test_features: Vec<String>,
     proc_macro: bool,
     buildscript: Option<String>,
     env: Vec<(String, String)>,
@@ -222,7 +251,17 @@ struct RustTarget {
     /// Separate from `env` because pointing the *library* at its package's
     /// binary makes the library depend on the binary that depends on it.
     test_env: Vec<(String, String)>,
+    /// Additional sources and their local paths needed only by test code.
+    test_mapped_srcs: Vec<(String, String)>,
     unit_test: bool,
+}
+
+#[derive(Serialize)]
+struct ManifestFiles {
+    /// Destination of a package file in the synthetic workspace tree.
+    package_source: String,
+    /// Additional Buck sources and their workspace-relative destinations.
+    mapped_srcs: Vec<(String, String)>,
 }
 
 /// A path a `links` package publishes to its dependents' build scripts.
@@ -515,13 +554,31 @@ fn generate_workspace(
             continue;
         }
         let directory = package_directory(root, package)?;
-        let buildscript = graph.workspace_buildscript(package);
+        let manifest_mapped_srcs = buck_manifest_mapped_srcs(package)?;
+        let manifest_files = if manifest_mapped_srcs.is_empty() {
+            None
+        } else {
+            Some(ManifestFiles {
+                package_source: format!("{}/{{}}", directory.to_string_lossy()),
+                mapped_srcs: manifest_mapped_srcs,
+            })
+        };
+        let manifest_dir = manifest_files.as_ref().map_or_else(
+            || "$(location :package_files)".to_owned(),
+            |_| {
+                format!(
+                    "$(location :manifest_files)/{}",
+                    directory.to_string_lossy()
+                )
+            },
+        );
+        let buildscript = graph.workspace_buildscript(package, &manifest_dir);
         let targets = package
             .targets
             .iter()
             .filter_map(|target| {
                 graph
-                    .workspace_target(package, target, buildscript.as_ref())
+                    .workspace_target(package, target, buildscript.as_ref(), &manifest_dir)
                     .transpose()
             })
             .collect::<Result<Vec<_>>>()?;
@@ -529,7 +586,12 @@ fn generate_workspace(
             directory.join("BUCK"),
             render(
                 WORKSPACE_TEMPLATE,
-                context!(header => HEADER, targets => targets, buildscript => buildscript),
+                context!(
+                    header => HEADER,
+                    targets => targets,
+                    buildscript => buildscript,
+                    manifest_files => manifest_files,
+                ),
             )?,
         ));
     }
@@ -588,7 +650,11 @@ impl<'a> Graph<'a> {
     }
 
     /// The `build.rs` rules for a workspace package, if it has one.
-    fn workspace_buildscript(&self, package: &Package) -> Option<WorkspaceBuildscript> {
+    fn workspace_buildscript(
+        &self,
+        package: &Package,
+        manifest_dir: &str,
+    ) -> Option<WorkspaceBuildscript> {
         let target = package
             .targets
             .iter()
@@ -598,7 +664,7 @@ impl<'a> Graph<'a> {
             [
                 // Cargo's contract with a build script: the package directory,
                 // and a description of the profile it is being built for.
-                ("CARGO_MANIFEST_DIR", "$(location :package_files)"),
+                ("CARGO_MANIFEST_DIR", manifest_dir),
                 ("DEBUG", "true"),
                 ("OPT_LEVEL", "0"),
                 ("PROFILE", "debug"),
@@ -626,6 +692,7 @@ impl<'a> Graph<'a> {
         package: &Package,
         target: &Target,
         buildscript: Option<&WorkspaceBuildscript>,
+        manifest_dir: &str,
     ) -> Result<Option<RustTarget>> {
         let Some(rule) = target_rule(target, false) else {
             return Ok(None);
@@ -700,10 +767,7 @@ impl<'a> Graph<'a> {
         // giving the library a `$(location)` on that binary would be a cycle.
         let mut env = cargo_package_env(package);
         // Cargo exposes the package directory to build-time code.
-        env.push((
-            "CARGO_MANIFEST_DIR".to_owned(),
-            "$(location :package_files)".to_owned(),
-        ));
+        env.push(("CARGO_MANIFEST_DIR".to_owned(), manifest_dir.to_owned()));
         // What `include!(concat!(env!("OUT_DIR"), …))` reads. The rest of what
         // the script emitted arrives as `rustc_flags`, which the template adds
         // alongside this.
@@ -729,15 +793,17 @@ impl<'a> Graph<'a> {
                 ));
             }
         }
+        let (features, test_features) = buck_features(package, self.features(&package.id))?;
         Ok(Some(RustTarget {
             rule,
             name: target.name.clone(),
             crate_name: target.name.replace('-', "_"),
             crate_root,
             edition: package.edition.to_string(),
-            features: self.features(&package.id),
+            features,
             named_deps,
             test_named_deps,
+            test_features,
             proc_macro: target.kind.contains(&TargetKind::ProcMacro),
             buildscript: buildscript
                 .map(|buildscript| format!("{}-build-script-run", buildscript.name)),
@@ -747,6 +813,7 @@ impl<'a> Graph<'a> {
                 env
             },
             test_env,
+            test_mapped_srcs: buck_test_mapped_srcs(package)?,
             unit_test: is_library(target) || target.kind.contains(&TargetKind::Bin),
         }))
     }
@@ -1185,6 +1252,73 @@ fn buck_builds(package: &Package) -> bool {
         .and_then(|glu| glu.get("buck"))
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(true)
+}
+
+fn buck_metadata_strings(package: &Package, key: &str) -> Result<Vec<String>> {
+    let Some(value) = package.metadata.get("glu").and_then(|glu| glu.get(key)) else {
+        return Ok(Vec::new());
+    };
+    let values = value.as_array().ok_or_else(|| {
+        color_eyre::eyre::eyre!(
+            "package {} metadata.glu.{key} must be an array",
+            package.name,
+        )
+    })?;
+    values
+        .iter()
+        .map(|value| {
+            value.as_str().map(ToOwned::to_owned).ok_or_else(|| {
+                color_eyre::eyre::eyre!(
+                    "package {} metadata.glu.{key} entries must be strings",
+                    package.name,
+                )
+            })
+        })
+        .collect()
+}
+
+fn buck_features(package: &Package, features: Vec<String>) -> Result<(Vec<String>, Vec<String>)> {
+    let mut test_features = features.clone();
+    test_features.extend(buck_metadata_strings(package, "buck-test-features")?);
+    test_features.sort();
+    test_features.dedup();
+    Ok((features, test_features))
+}
+
+fn buck_mapped_srcs(package: &Package, key: &str) -> Result<Vec<(String, String)>> {
+    let Some(value) = package.metadata.get("glu").and_then(|glu| glu.get(key)) else {
+        return Ok(Vec::new());
+    };
+    let values = value.as_object().ok_or_else(|| {
+        color_eyre::eyre::eyre!(
+            "package {} metadata.glu.{key} must be a table",
+            package.name,
+        )
+    })?;
+    values
+        .iter()
+        .map(|(source, destination)| {
+            destination.as_str().map_or_else(
+                || {
+                    Err(color_eyre::eyre::eyre!(
+                        "package {} metadata.glu.{key} values must be strings",
+                        package.name,
+                    ))
+                },
+                |destination| Ok((source.clone(), destination.to_owned())),
+            )
+        })
+        .collect::<Result<_>>()
+}
+
+/// Extra sources and their local paths needed to compile test code under Buck.
+fn buck_test_mapped_srcs(package: &Package) -> Result<Vec<(String, String)>> {
+    buck_mapped_srcs(package, "buck-test-mapped-srcs")
+}
+
+/// Shared workspace files read relative to `CARGO_MANIFEST_DIR` at compile time.
+fn buck_manifest_mapped_srcs(package: &Package) -> Result<Vec<(String, String)>> {
+    buck_mapped_srcs(package, "buck-manifest-mapped-srcs")
 }
 
 fn is_library(target: &Target) -> bool {

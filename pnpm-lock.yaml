@@ -50,13 +50,16 @@ importers:
 
   packages/nucleus:
     dependencies:
+      '@bytecodealliance/jco':
+        specifier: 1.27.0
+        version: 1.27.0
+      '@bytecodealliance/jco-transpile':
+        specifier: 0.6.3
+        version: 0.6.3
       '@bytecodealliance/preview2-shim':
         specifier: 0.20.1
         version: 0.20.1
     devDependencies:
-      '@bytecodealliance/jco':
-        specifier: 1.27.0
-        version: 1.27.0
       playwright-core:
         specifier: 1.61.1
         version: 1.61.1

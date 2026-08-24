@@ -1,0 +1,26 @@
+[package]
+name = "covalence-proof-demo"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Minimal portable Nucleus proof component"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { version = "=0.44.0", features = ["bitflags"] }
+
+[package.metadata.component]
+package = "nucleus:proof-demo"
+
+[package.metadata.component.target]
+path = "../../../wit/proof"
+world = "standard-proof"
+
+[package.metadata.component.dependencies]
+
+[lints]
+workspace = true

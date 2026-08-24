@@ -8,12 +8,17 @@
     "component",
     "dist",
     "generated",
-    "demo.html"
+    "demo.html",
+    "proof.html"
   ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./proof": {
+      "types": "./dist/proof.d.ts",
+      "import": "./dist/proof.js"
     },
     "./component": {
       "types": "./component/nucleus.d.ts",
@@ -26,17 +31,21 @@
     }
   },
   "scripts": {
-    "generate": "cargo build --locked -p covalence-browser --target wasm32-unknown-unknown && wasm-bindgen ../../target/wasm32-unknown-unknown/debug/covalence_browser.wasm --out-dir generated --out-name nucleus --target web && cargo component build --locked -p covalence-bin-cas-shell --target wasm32-wasip2 --lib && jco transpile ../../target/wasm32-wasip2/debug/covalence_bin_cas_shell.wasm --out-dir generated/shell --name shell --async-mode jspi --async-imports 'covalence:sqlite-shell/read-only-vfs#open' 'covalence:sqlite-shell/read-only-vfs#[method]file.size' 'covalence:sqlite-shell/read-only-vfs#[method]file.read-at' --async-exports run --map 'covalence:sqlite-shell/read-only-vfs=../../dist/vfs-host.js'",
+    "generate": "cargo build --locked -p covalence-browser --target wasm32-unknown-unknown && wasm-bindgen ../../target/wasm32-unknown-unknown/debug/covalence_browser.wasm --out-dir generated --out-name nucleus --target web && cargo component build --locked -p covalence-bin-cas-shell --target wasm32-wasip2 --lib && jco transpile ../../target/wasm32-wasip2/debug/covalence_bin_cas_shell.wasm --out-dir generated/shell --name shell --async-mode jspi --async-imports 'covalence:sqlite-shell/read-only-vfs#open' 'covalence:sqlite-shell/read-only-vfs#[method]file.size' 'covalence:sqlite-shell/read-only-vfs#[method]file.read-at' --async-exports run --map 'covalence:sqlite-shell/read-only-vfs=../../dist/vfs-host.js' && cargo component build --locked -p covalence-proof-host && jco transpile ../../target/wasm32-wasip1/debug/covalence_proof_host.wasm --out-dir generated/proof-host --name host",
     "transpile": "cargo component build --locked -p covalence-nucleus && jco transpile ../../target/wasm32-wasip1/debug/covalence_nucleus.wasm --out-dir component --name nucleus",
     "build": "pnpm run generate && tsc",
+    "build:proof-demo": "cargo component build --locked -p covalence-proof-demo",
+    "build:proof-demos": "cargo component build --locked -p covalence-proof-demo -p covalence-proof-invalid-demo",
     "check": "tsc --noEmit",
+    "pretest": "pnpm run build:proof-demos",
     "test": "node --experimental-wasm-jspi --test test/*.test.mjs"
   },
   "dependencies": {
+    "@bytecodealliance/jco": "1.27.0",
+    "@bytecodealliance/jco-transpile": "0.6.3",
     "@bytecodealliance/preview2-shim": "0.20.1"
   },
   "devDependencies": {
-    "@bytecodealliance/jco": "1.27.0",
     "playwright-core": "1.61.1",
     "typescript": "5.9.2"
   }

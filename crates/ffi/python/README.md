@@ -8,7 +8,9 @@ The package is a mixed one: hand-written Python in `python/covalence`, and the
 compiled extension module staged beside it as `covalence._covalence`. The
 compiled module is private; ordinary Python modules such as `covalence.lib.hash`
 name the public surface. This keeps that surface independent of the Rust module
-and leaves room for later `covalence.cas` and `covalence.nucleus` modules.
+and leaves room for composition modules: `covalence.cas` combines the
+checked logic objects and userspace providers, while a later
+`covalence.nucleus` can do the same for the full stack.
 
 There is one extension module for the whole project, not one per Rust crate.
 `crates/ffi/python` is where Covalence crates are composed into a Python API;
@@ -59,10 +61,69 @@ recursively converts those scalar types, lists, and dictionaries.
 True
 ```
 
+`covalence.cas` exposes the whole-object CAS LCF boundary. `CasAssertion` is
+ordinary unchecked data; `check()` hashes the complete blob in Rust before it
+can return the opaque `CasFact`. Stores are userspace policy. `IndexCas` assigns
+stable integer IDs, while `get_checked()` checks bytes returned by any
+duck-typed Python CAS. A provider with `get_fact()` may avoid rehashing, but the
+fact's address is still compared with the request.
+
+```python
+>>> from covalence.cas import CasAssertion
+>>> from covalence.lib.hash import O256
+>>> blob = b"provided by Python"
+>>> address = O256.hash(blob)
+>>> fact = CasAssertion(address, blob).check()
+>>> fact.hash == address and fact.blob == blob
+True
+```
+
+`covalence.logic.hol` exposes the one-based Ethane arena in two layers.
+`Arena` is mutable wire data and may contain unchecked rows. `Kernel` starts
+empty and can only grow through checked row and syntactic-fact rules. Both
+layers retain the low-level integer-index API. A kernel can additionally
+return opaque `Kind`, `Ty`, and `Tm` handles, while `SynFact` snapshots prevent
+evidence from being reused after its slot is overwritten or across kernels.
+
+```python
+>>> from covalence.logic.hol import Kernel
+>>> kernel = Kernel()
+>>> star = kernel.star()
+>>> bool_ty = kernel.bool_ty(star)
+>>> truth = kernel.bool(bool_ty, True)
+>>> kernel.tm(truth).reference == truth
+True
+```
+
+`load_standard_proof` runs a portable WASM proof component implementing the
+`nucleus:proof/standard-proof` world and returns the checked kernel transferred
+by its `prove` entry point. The component receives no inherited filesystem,
+network, environment, or command-line capabilities.
+
+```python
+>>> from covalence.logic.hol import load_standard_proof
+>>> with open("proof.wasm", "rb") as source:
+...     kernel = load_standard_proof(source.read())
+>>> len(kernel) >= 0
+True
+```
+
+The checked-in dictionary-backed provider is runnable directly:
+
+```sh
+glu python crates/ffi/python/examples/dict_cas.py
+```
+
+It deliberately stores raw bytes in a plain Python `dict` and performs the
+check only when resolving. Files, HTTP, SQLite, generated data, or any other
+Python logic can use the same protocol without becoming part of the trusted
+constructor boundary.
+
 | Path                | Contents                                       |
 | ------------------- | ---------------------------------------------- |
 | `src/`              | The `#[pymodule]` and its bindings             |
 | `python/covalence/` | The importable package, `py.typed`, and `.pyi` |
+| `examples/`         | checked-in runnable API demonstrations         |
 | `tests/`            | pytest suite, run against the staged package   |
 
 ## Building and running

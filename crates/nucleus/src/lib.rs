@@ -1,5 +1,20 @@
 //! Portable trusted core for Nucleus.
 
+/// The Ethane HOL trusted computing base.
+pub use covalence_logic_hol as hol;
+
+/// LCF content-addressed facts used by Nucleus.
+pub use covalence_logic_cas as cas;
+
+/// The first in-memory CAS utility exposed by the Nucleus facade.
+pub use covalence_data_cas::IndexCas;
+
+#[cfg(not(target_arch = "wasm32"))]
+mod proof;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use proof::{ProofError, load_standard_proof};
+
 mod connection;
 
 pub use connection::{Connection, ConnectionError};
