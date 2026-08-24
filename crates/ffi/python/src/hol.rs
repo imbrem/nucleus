@@ -391,7 +391,10 @@ pub struct PyTm {
     reference: Ref,
 }
 
-fn python_rows<'a>(rows: impl IntoIterator<Item = &'a [Lit]>) -> Vec<Vec<i32>> {
+type PyMatrix = Vec<Vec<i32>>;
+type PySequent = (PyMatrix, PyMatrix);
+
+fn python_rows<'a>(rows: impl IntoIterator<Item = &'a [Lit]>) -> PyMatrix {
     rows.into_iter()
         .map(|row| row.iter().map(|literal| literal.get()).collect())
         .collect()
@@ -724,10 +727,13 @@ impl PyKernel {
 
     /// Encodes a Boolean term reference as a positive or negated i32 literal.
     #[pyo3(signature = (reference_value, negated=false))]
+    #[allow(
+        clippy::unused_self,
+        reason = "the Python API scopes literals by kernel flavor"
+    )]
     fn lit(&self, reference_value: i32, negated: bool) -> PyResult<i32> {
         let reference = reference(reference_value)?;
-        let magnitude = i32::try_from(reference.get())
-            .map_err(|_| PyValueError::new_err("literal reference must fit signed 32 bits"))?;
+        let magnitude = reference.get();
         if magnitude == i32::MAX {
             return Err(PyValueError::new_err(
                 "literal magnitude must be below i32::MAX",
@@ -771,7 +777,7 @@ impl PyKernel {
             .map_err(value_error)
     }
 
-    fn theorem(&self, id: i64) -> PyResult<(Vec<Vec<i32>>, Vec<Vec<i32>>)> {
+    fn theorem(&self, id: i64) -> PyResult<PySequent> {
         let theorem = self
             .kernel
             .theorem(theorem_id(i32_value(id, "theorem ID")?)?)
