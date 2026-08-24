@@ -28,10 +28,10 @@ rust_library(
     srcs = _RUST_SOURCES,
     tests = [":covalence_logic_metamath-unit-test"],
     named_deps = {
+        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_lib_parse": "nucleus//crates/lib/parse:covalence_lib_parse",
         "fnv": "nucleus//buck/cargo/production:fnv-1.0.7",
         "smol_str": "nucleus//buck/cargo/production:smol_str-0.3.6",
-        "thiserror": "nucleus//buck/cargo/production:thiserror-2.0.19",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -60,10 +60,10 @@ rust_test(
     edition = "2024",
     srcs = _RUST_SOURCES,
     named_deps = {
+        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_lib_parse": "nucleus//crates/lib/parse:covalence_lib_parse",
         "fnv": "nucleus//buck/cargo/production:fnv-1.0.7",
         "smol_str": "nucleus//buck/cargo/production:smol_str-0.3.6",
-        "thiserror": "nucleus//buck/cargo/production:thiserror-2.0.19",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -92,11 +92,11 @@ rust_test(
     edition = "2024",
     srcs = _RUST_SOURCES,
     named_deps = {
+        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_lib_parse": "nucleus//crates/lib/parse:covalence_lib_parse",
         "covalence_logic_metamath": ":covalence_logic_metamath",
         "fnv": "nucleus//buck/cargo/production:fnv-1.0.7",
         "smol_str": "nucleus//buck/cargo/production:smol_str-0.3.6",
-        "thiserror": "nucleus//buck/cargo/production:thiserror-2.0.19",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -125,11 +125,11 @@ rust_test(
     edition = "2024",
     srcs = _RUST_SOURCES,
     named_deps = {
+        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_lib_parse": "nucleus//crates/lib/parse:covalence_lib_parse",
         "covalence_logic_metamath": ":covalence_logic_metamath",
         "fnv": "nucleus//buck/cargo/production:fnv-1.0.7",
         "smol_str": "nucleus//buck/cargo/production:smol_str-0.3.6",
-        "thiserror": "nucleus//buck/cargo/production:thiserror-2.0.19",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -158,11 +158,11 @@ rust_test(
     edition = "2024",
     srcs = _RUST_SOURCES,
     named_deps = {
+        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_lib_parse": "nucleus//crates/lib/parse:covalence_lib_parse",
         "covalence_logic_metamath": ":covalence_logic_metamath",
         "fnv": "nucleus//buck/cargo/production:fnv-1.0.7",
         "smol_str": "nucleus//buck/cargo/production:smol_str-0.3.6",
-        "thiserror": "nucleus//buck/cargo/production:thiserror-2.0.19",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",
@@ -191,11 +191,11 @@ rust_test(
     edition = "2024",
     srcs = _RUST_SOURCES,
     named_deps = {
+        "covalence_lib_error": "nucleus//crates/lib/error:covalence_lib_error",
         "covalence_lib_parse": "nucleus//crates/lib/parse:covalence_lib_parse",
         "covalence_logic_metamath": ":covalence_logic_metamath",
         "fnv": "nucleus//buck/cargo/production:fnv-1.0.7",
         "smol_str": "nucleus//buck/cargo/production:smol_str-0.3.6",
-        "thiserror": "nucleus//buck/cargo/production:thiserror-2.0.19",
     },
     env = {
         "CARGO_PKG_AUTHORS": "",

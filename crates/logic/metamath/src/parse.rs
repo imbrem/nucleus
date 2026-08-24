@@ -44,6 +44,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use covalence_lib_error::snafu::ResultExt;
 use covalence_lib_parse::winnow::{
     ModalResult, Parser,
     combinator::{opt, repeat, terminated},
@@ -53,7 +54,7 @@ use covalence_lib_parse::winnow::{
 };
 
 use crate::database::{Database, DatabaseSink, Proof, SymbolKind};
-use crate::error::MmError;
+use crate::error::{FileSnafu, LabelPosition, MmError};
 use crate::expr::{Expr, from_symbols};
 
 // ---------------------------------------------------------------------------
@@ -70,6 +71,10 @@ pub trait SourceResolver {
     ///
     /// Returns `(canonical_key, contents)`. The key is used for deduplication
     /// (a file included twice is read once).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `filename` cannot be resolved or read.
     fn resolve(
         &self,
         filename: &str,
@@ -83,6 +88,7 @@ pub struct FileResolver {
 }
 
 impl FileResolver {
+    /// A resolver rooted at `base_dir`, which the root file is read relative to.
     pub fn new(base_dir: impl Into<PathBuf>) -> Self {
         Self {
             base_dir: base_dir.into(),
@@ -119,6 +125,8 @@ pub struct MemoryResolver {
 }
 
 impl MemoryResolver {
+    /// A resolver over `files`, keyed by the name a `$[ ... $]` would spell.
+    #[must_use]
     pub fn new(files: std::collections::HashMap<String, String>) -> Self {
         Self { files }
     }
@@ -164,14 +172,14 @@ pub(crate) fn is_math_symbol_char(c: char) -> bool {
     c.is_ascii_graphic() && c != '$'
 }
 
-/// Check that `token` is a well-formed label. `what` names the position the
-/// token was read in (`label`, `proof step label`, ...), so the diagnostic can
-/// say where a bad one came from.
-pub(crate) fn validate_label(token: &str, what: &str) -> Result<(), MmError> {
+/// Check that `token` is a well-formed label. `position` says where the token
+/// was read, so the diagnostic can say where a bad one came from.
+pub(crate) fn validate_label(token: &str, position: LabelPosition) -> Result<(), MmError> {
     if token.is_empty() || !token.chars().all(is_label_char) {
-        return Err(MmError::Parse(format!(
-            "invalid {what} `{token}` (labels may use only `A-Z a-z 0-9 . - _`)"
-        )));
+        return Err(MmError::InvalidLabel {
+            position,
+            token: token.to_owned(),
+        });
     }
     Ok(())
 }
@@ -180,10 +188,10 @@ pub(crate) fn validate_label(token: &str, what: &str) -> Result<(), MmError> {
 /// it appeared in (a keyword such as `$c`, or an assertion's label).
 pub(crate) fn validate_math_symbol(token: &str, ctx: &str) -> Result<(), MmError> {
     if token.is_empty() || !token.chars().all(is_math_symbol_char) {
-        return Err(MmError::Parse(format!(
-            "invalid math symbol `{token}` in `{ctx}` \
-             (math symbols are printable ASCII other than `$`)"
-        )));
+        return Err(MmError::InvalidMathSymbol {
+            context: ctx.to_owned(),
+            token: token.to_owned(),
+        });
     }
     Ok(())
 }
@@ -193,6 +201,10 @@ pub(crate) fn validate_math_symbol(token: &str, ctx: &str) -> Result<(), MmError
 // ---------------------------------------------------------------------------
 
 /// Parse a `.mm` source string into a [`Database`] (no file inclusion).
+///
+/// # Errors
+///
+/// Returns an error when the source is not a well-formed Metamath database.
 pub fn parse(input: &str) -> Result<Database, MmError> {
     let mut db = Database::new();
     parse_into(input, &mut db)?;
@@ -205,11 +217,21 @@ pub fn parse(input: &str) -> Result<Database, MmError> {
 /// particular a HOL-backed sink that constructs kernel theorems as it reads.
 /// The reader drives the high-level
 /// `DatabaseSink` API; the backend decides what to build.
+///
+/// # Errors
+///
+/// Returns an error when the source is not a well-formed Metamath database, or
+/// when `sink` rejects a statement.
 pub fn parse_into(input: &str, sink: &mut impl DatabaseSink) -> Result<(), MmError> {
     parse_tokens(&tokenize(input)?, sink)
 }
 
 /// Like [`parse_into`] but resolving `$[ ... $]` includes via `resolver`.
+///
+/// # Errors
+///
+/// Returns an error when a source file cannot be read, when the assembled
+/// database is not well-formed, or when `sink` rejects a statement.
 pub fn parse_into_with_resolver(
     filename: &str,
     resolver: &dyn SourceResolver,
@@ -217,10 +239,7 @@ pub fn parse_into_with_resolver(
 ) -> Result<(), MmError> {
     let (key, contents) = resolver
         .resolve(filename, None)
-        .map_err(|e| MmError::FileError {
-            path: filename.to_owned(),
-            message: e.to_string(),
-        })?;
+        .context(FileSnafu { path: filename })?;
     // A database that includes nothing is one buffer, and its tokens borrow it.
     // Whether it does is a question about *tokens*: a `$[` inside a comment is
     // prose, not a directive.
@@ -245,6 +264,11 @@ pub fn parse_into_with_resolver(
 
 /// Parse a Metamath database starting from `filename`, resolving `$[ ... $]`
 /// includes via `resolver`.
+///
+/// # Errors
+///
+/// Returns an error when a source file cannot be read, or when the assembled
+/// database is not a well-formed Metamath database.
 pub fn parse_with_resolver(
     filename: &str,
     resolver: &dyn SourceResolver,
@@ -312,28 +336,26 @@ fn expand_includes(
             match tok {
                 "$[" => {
                     if scan.depth > 0 || !scan.between_statements {
-                        return Err(MmError::Parse(
-                            "`$[` is only allowed between statements at the outermost scope".into(),
-                        ));
+                        return Err(MmError::MisplacedInclude);
                     }
-                    let filename = it
-                        .next()
-                        .ok_or_else(|| MmError::Parse("expected filename after `$[`".into()))?;
-                    let close = it.next().ok_or_else(|| {
-                        MmError::Parse("expected `$]` after include filename".into())
+                    let filename = it.next().ok_or_else(|| MmError::UnexpectedEnd {
+                        context: "$[ include".to_owned(),
+                        expected: "a filename".to_owned(),
+                    })?;
+                    let close = it.next().ok_or_else(|| MmError::UnexpectedEnd {
+                        context: "$[ include".to_owned(),
+                        expected: "$]".to_owned(),
                     })?;
                     if close != "$]" {
-                        return Err(MmError::Parse(format!(
-                            "expected `$]`, got `{close}` in include"
-                        )));
+                        return Err(MmError::UnexpectedToken {
+                            context: "$[ include".to_owned(),
+                            token: close.to_owned(),
+                            expected: "$]".to_owned(),
+                        });
                     }
-                    let (key, contents) =
-                        resolver
-                            .resolve(filename, referrer)
-                            .map_err(|e| MmError::FileError {
-                                path: filename.to_owned(),
-                                message: e.to_string(),
-                            })?;
+                    let (key, contents) = resolver
+                        .resolve(filename, referrer)
+                        .context(FileSnafu { path: filename })?;
                     if seen.insert(key.clone()) {
                         expand_includes(&contents, resolver, Some(&key), seen, scan, out)?;
                     }
@@ -384,12 +406,12 @@ fn tokenize(input: &str) -> Result<Vec<&str>, MmError> {
                 }
             }
             if !closed {
-                return Err(MmError::Parse("unterminated comment `$(`".into()));
+                return Err(MmError::UnterminatedComment);
             }
             continue;
         }
         if tok == "$)" {
-            return Err(MmError::Parse("unmatched `$)`".into()));
+            return Err(MmError::UnmatchedCommentClose);
         }
         out.push(tok);
     }
@@ -441,9 +463,22 @@ fn fatal(error: MmError) -> ErrMode<Fault> {
     ErrMode::Cut(Fault::Fatal(Box::new(error)))
 }
 
-/// Commit to the parse diagnostic `message`.
-fn reject(message: String) -> ErrMode<Fault> {
-    fatal(MmError::Parse(message))
+/// Commit to "the grammar cannot use `token` here", the shape most of the
+/// reader's rejections take.
+fn unexpected(context: impl Into<String>, token: &str, expected: &str) -> ErrMode<Fault> {
+    fatal(MmError::UnexpectedToken {
+        context: context.into(),
+        token: token.to_owned(),
+        expected: expected.to_owned(),
+    })
+}
+
+/// Commit to "the input stopped part-way through `context`".
+fn unterminated(context: impl Into<String>, expected: &str) -> ErrMode<Fault> {
+    fatal(MmError::UnexpectedEnd {
+        context: context.into(),
+        expected: expected.to_owned(),
+    })
 }
 
 /// The [`MmError`] a grammar failure carries.
@@ -455,7 +490,10 @@ fn reject(message: String) -> ErrMode<Fault> {
 fn diagnostic(fault: ErrMode<Fault>) -> MmError {
     match fault {
         ErrMode::Cut(Fault::Fatal(error)) | ErrMode::Backtrack(Fault::Fatal(error)) => *error,
-        _ => MmError::Parse("unexpected end of input".into()),
+        _ => MmError::UnexpectedEnd {
+            context: "database".to_owned(),
+            expected: "a statement".to_owned(),
+        },
     }
 }
 
@@ -476,7 +514,7 @@ fn parse_tokens(tokens: &[&str], sink: &mut impl DatabaseSink) -> Result<(), MmE
         statement(&mut input, &mut depth, sink).map_err(diagnostic)?;
     }
     if depth > 0 {
-        return Err(MmError::Parse("unclosed `${`".into()));
+        return Err(MmError::UnclosedScope);
     }
     Ok(())
 }
@@ -488,7 +526,7 @@ fn statement<'a, I: TokenStream<'a>>(
     sink: &mut impl DatabaseSink,
 ) -> ModalResult<(), Fault> {
     match any.parse_next(input)? {
-        "$}" if *depth == 0 => Err(reject("unmatched `$}`".into())),
+        "$}" if *depth == 0 => Err(fatal(MmError::UnmatchedScopeClose)),
         "$}" => {
             *depth -= 1;
             sink.pop_scope().map_err(fatal)
@@ -498,7 +536,7 @@ fn statement<'a, I: TokenStream<'a>>(
             sink.push_scope();
             Ok(())
         }
-        "$c" if *depth > 0 => Err(reject("`$c` is only allowed in the outermost scope".into())),
+        "$c" if *depth > 0 => Err(fatal(MmError::MisplacedConstant)),
         "$c" => {
             let symbols = symbol_list("$c").parse_next(input)?;
             sink.declare(SymbolKind::Constant, &symbols).map_err(fatal)
@@ -513,16 +551,13 @@ fn statement<'a, I: TokenStream<'a>>(
             // fewer restricts nothing, so accepting one silently turns a typo
             // into a hypothesis that was never imposed.
             if vars.len() < 2 {
-                return Err(reject(format!(
-                    "`$d` needs two or more variables, got {}",
-                    vars.len()
-                )));
+                return Err(fatal(MmError::DisjointArity { count: vars.len() }));
             }
             sink.add_disjoint(&vars).map_err(fatal)
         }
-        kw if kw.starts_with('$') => Err(reject(format!(
-            "unexpected keyword `{kw}` (expected a label or `$c/$v/$d/${{/$}}`)"
-        ))),
+        kw if kw.starts_with('$') => {
+            Err(unexpected("database", kw, "a label, $c, $v, $d, ${ or $}"))
+        }
         // A label introduces a $f/$e/$a/$p statement.
         label => labelled(input, label, sink),
     }
@@ -534,17 +569,21 @@ fn labelled<'a, I: TokenStream<'a>>(
     label: &'a str,
     sink: &mut impl DatabaseSink,
 ) -> ModalResult<(), Fault> {
-    validate_label(label, "label").map_err(fatal)?;
+    validate_label(label, LabelPosition::Statement).map_err(fatal)?;
     let Some(kw) = opt(any).parse_next(input)? else {
-        return Err(reject(format!("expected keyword after label `{label}`")));
+        return Err(unterminated(
+            format!("statement {label}"),
+            "$f, $e, $a or $p",
+        ));
     };
     match kw {
         "$f" => {
             let body = symbol_list("$f").parse_next(input)?;
             if body.len() != 2 {
-                return Err(reject(format!(
-                    "`{label}` $f must be `typecode var`, got {body:?}"
-                )));
+                return Err(fatal(MmError::MalformedFloat {
+                    label: label.to_owned(),
+                    symbols: body.iter().map(|s| (*s).to_owned()).collect(),
+                }));
             }
             sink.add_float(label, body[0], body[1]).map_err(fatal)
         }
@@ -555,9 +594,11 @@ fn labelled<'a, I: TokenStream<'a>>(
         }
         "$a" => assertion(input, label, false, sink),
         "$p" => assertion(input, label, true, sink),
-        other => Err(reject(format!(
-            "unexpected keyword `{other}` after label `{label}`"
-        ))),
+        other => Err(unexpected(
+            format!("statement {label}"),
+            other,
+            "$f, $e, $a or $p",
+        )),
     }
 }
 
@@ -573,17 +614,30 @@ fn assertion<'a, I: TokenStream<'a>>(
         // A `$p` whose conclusion just stops is a theorem nobody proved, which
         // is not the same claim as the `$a` it now looks like.
         Some("$.") if provable => {
-            return Err(reject(format!("`{label}` $p has no proof (missing `$=`)")));
+            return Err(fatal(MmError::MissingProof {
+                label: label.to_owned(),
+            }));
         }
         Some("$.") => None,
         Some("$=") if provable => Some(proof(input, label)?),
         Some("$=") => {
-            return Err(reject(format!(
-                "`{label}` is a `$a` axiom and cannot have a proof (`$=`)"
-            )));
+            return Err(fatal(MmError::AxiomWithProof {
+                label: label.to_owned(),
+            }));
         }
-        Some(t) => return Err(reject(format!("unexpected `{t}` in `{label}`"))),
-        None => return Err(reject(format!("unterminated `{label}`"))),
+        Some(t) => {
+            return Err(unexpected(
+                format!("statement {label}"),
+                t,
+                if provable { "$. or $=" } else { "$." },
+            ));
+        }
+        None => {
+            return Err(unterminated(
+                format!("statement {label}"),
+                if provable { "$. or $=" } else { "$." },
+            ));
+        }
     };
     let conclusion = expression(label, &symbols).map_err(fatal)?;
     sink.add_assertion(label, conclusion, proof).map_err(fatal)
@@ -618,13 +672,14 @@ fn compressed_proof<'a, I: TokenStream<'a>>(
         match opt(any).parse_next(input)? {
             Some(")") => break,
             Some(t) => {
-                validate_label(t, "compressed-proof label").map_err(fatal)?;
+                validate_label(t, LabelPosition::CompressedProofBlock).map_err(fatal)?;
                 labels.push(t.to_owned());
             }
             None => {
-                return Err(reject(format!(
-                    "unterminated compressed-proof label block in `{label}`"
-                )));
+                return Err(unterminated(
+                    format!("compressed-proof label block of {label}"),
+                    ")",
+                ));
             }
         }
     }
@@ -636,9 +691,10 @@ fn compressed_proof<'a, I: TokenStream<'a>>(
             Some("$.") => break,
             Some(t) => letters.extend_from_slice(t.as_bytes()),
             None => {
-                return Err(reject(format!(
-                    "unterminated compressed-proof letter block in `{label}`"
-                )));
+                return Err(unterminated(
+                    format!("compressed-proof letter block of {label}"),
+                    "$.",
+                ));
             }
         }
     }
@@ -678,8 +734,8 @@ fn math_symbol<'a, I: TokenStream<'a>>(ctx: &'a str) -> impl Parser<I, &'a str, 
 fn end_of_statement<'a, I: TokenStream<'a>>(ctx: &'a str) -> impl Parser<I, (), ErrMode<Fault>> {
     move |input: &mut I| match opt(any).parse_next(input)? {
         Some("$.") => Ok(()),
-        Some(t) => Err(reject(format!("unexpected `{t}` in {ctx} (expected `$.`)"))),
-        None => Err(reject(format!("unterminated {ctx}"))),
+        Some(t) => Err(unexpected(format!("{ctx} statement"), t, "$.")),
+        None => Err(unterminated(format!("{ctx} statement"), "$.")),
     }
 }
 
@@ -692,11 +748,11 @@ fn proof_step<'a, I: TokenStream<'a>>(label: &'a str) -> impl Parser<I, String, 
         // `?` is the placeholder for a step nobody has supplied. A database may
         // carry one; a proof this crate accepts may not.
         if token == "?" {
-            return Err(reject(format!(
-                "`{label}` contains an incomplete-proof placeholder `?`"
-            )));
+            return Err(fatal(MmError::IncompleteProof {
+                label: label.to_owned(),
+            }));
         }
-        validate_label(token, "proof step label").map_err(fatal)?;
+        validate_label(token, LabelPosition::ProofStep).map_err(fatal)?;
         Ok(token.to_owned())
     }
 }
@@ -705,24 +761,23 @@ fn proof_step<'a, I: TokenStream<'a>>(label: &'a str) -> impl Parser<I, String, 
 fn end_of_proof<'a, I: TokenStream<'a>>(label: &'a str) -> impl Parser<I, (), ErrMode<Fault>> {
     move |input: &mut I| match opt(any).parse_next(input)? {
         Some("$.") => Ok(()),
-        Some(t) => Err(reject(format!("unexpected `{t}` in proof of `{label}`"))),
-        None => Err(reject(format!("unterminated proof of `{label}`"))),
+        Some(t) => Err(unexpected(format!("proof of {label}"), t, "$.")),
+        None => Err(unterminated(format!("proof of {label}"), "$.")),
     }
 }
 
 /// Build the [`Expr`] a `$e`, `$a` or `$p` states, whose first symbol is the
 /// typecode.
 fn expression(label: &str, symbols: &[&str]) -> Result<Expr, MmError> {
-    from_symbols(symbols.iter().copied()).ok_or_else(|| MmError::MalformedExpr {
-        label: label.to_string(),
-        message: "expression is empty (needs at least a typecode)".into(),
+    from_symbols(symbols.iter().copied()).ok_or_else(|| MmError::EmptyExpression {
+        label: label.to_owned(),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::expr::{render, typecode_of};
+    use crate::expr::render;
 
     #[test]
     fn parse_constants_and_vars() {
@@ -749,7 +804,7 @@ mod tests {
     fn axiom_conclusion_is_expr() {
         let db = parse("$c term 0 $. tze $a term 0 $.").unwrap();
         let a = db.assertions().next().unwrap();
-        assert_eq!(typecode_of(&a.conclusion), Some("term"));
+        assert_eq!(a.conclusion.typecode(), "term");
         assert_eq!(render(&a.conclusion), "term 0");
     }
 
@@ -777,7 +832,7 @@ mod tests {
     #[test]
     fn duplicate_label_rejected() {
         let src = "$c term $. $v t $. tt $f term t $. tt $f term t $.";
-        assert!(matches!(parse(src), Err(MmError::DuplicateLabel(_))));
+        assert!(matches!(parse(src), Err(MmError::DuplicateLabel { .. })));
     }
 
     #[test]

@@ -20,23 +20,6 @@ filegroup(
     visibility = ["PUBLIC"],
 )
 
-# Some compile-time macros read shared workspace files relative to
-# `CARGO_MANIFEST_DIR`. Recreate that part of the workspace as one declared
-# Buck input tree so Cargo and Buck resolve the same relative paths.
-_MANIFEST_FILES = {
-    "crates/nucleus/{}".format(source): source
-    for source in _PACKAGE_FILES
-}
-_MANIFEST_FILES.update({
-    "wit/proof/proof.wit": "nucleus//:proof_wit",
-})
-
-filegroup(
-    name = "manifest_files",
-    srcs = _MANIFEST_FILES,
-    visibility = [],
-)
-
 rust_library(
     name = "covalence_nucleus",
     crate = "covalence_nucleus",
@@ -71,7 +54,7 @@ rust_library(
         "CARGO_PKG_VERSION_MINOR": "0",
         "CARGO_PKG_VERSION_PATCH": "0",
         "CARGO_PKG_VERSION_PRE": "",
-        "CARGO_MANIFEST_DIR": "$(location :manifest_files)/crates/nucleus",
+        "CARGO_MANIFEST_DIR": "$(location :package_files)",
     },
     visibility = ["PUBLIC"],
 )
@@ -109,7 +92,7 @@ rust_test(
         "CARGO_PKG_VERSION_MINOR": "0",
         "CARGO_PKG_VERSION_PATCH": "0",
         "CARGO_PKG_VERSION_PRE": "",
-        "CARGO_MANIFEST_DIR": "$(location :manifest_files)/crates/nucleus",
+        "CARGO_MANIFEST_DIR": "$(location :package_files)",
     },
     visibility = ["PUBLIC"],
 )
@@ -148,7 +131,7 @@ rust_test(
         "CARGO_PKG_VERSION_MINOR": "0",
         "CARGO_PKG_VERSION_PATCH": "0",
         "CARGO_PKG_VERSION_PRE": "",
-        "CARGO_MANIFEST_DIR": "$(location :manifest_files)/crates/nucleus",
+        "CARGO_MANIFEST_DIR": "$(location :package_files)",
     },
     visibility = ["PUBLIC"],
 )

@@ -14,7 +14,7 @@ use covalence_logic_metamath::{
     parse_with_resolver,
 };
 
-/// The `parse error: ...` text of an error the test expects to be one.
+/// The rendered text of an error the test expects the source to produce.
 fn parse_error(result: Result<Database, MmError>) -> String {
     match result {
         Ok(_) => panic!("expected a parse error, got a database"),
@@ -47,23 +47,23 @@ fn deeply_nested_scopes_do_not_overflow_the_stack() {
 #[test]
 fn deeply_nested_unclosed_scopes_are_an_error_not_a_crash() {
     let src = format!("$c a $.\n{}", "${ ".repeat(DEEP));
-    assert!(parse_error(parse(&src)).contains("unclosed `${`"));
+    assert!(parse_error(parse(&src)).contains("unclosed ${"));
 }
 
 #[test]
 fn deeply_unmatched_scope_close_is_an_error_not_a_crash() {
     let src = format!("$c a $.\n{}", "$} ".repeat(DEEP));
-    assert!(parse_error(parse(&src)).contains("unmatched `$}`"));
+    assert!(parse_error(parse(&src)).contains("unmatched $}"));
 }
 
 #[test]
 fn scope_close_below_the_outermost_scope_is_rejected() {
-    assert!(parse_error(parse("$c a $. ${ $} $}")).contains("unmatched `$}`"));
+    assert!(parse_error(parse("$c a $. ${ $} $}")).contains("unmatched $}"));
 }
 
 #[test]
 fn unclosed_scope_is_rejected() {
-    assert!(parse_error(parse("$c a $. ${ ${ $}")).contains("unclosed `${`"));
+    assert!(parse_error(parse("$c a $. ${ ${ $}")).contains("unclosed ${"));
 }
 
 #[test]
@@ -87,7 +87,7 @@ fn balanced_nesting_still_scopes_hypotheses() {
 #[test]
 fn label_with_illegal_character_is_rejected() {
     let err = parse_error(parse("$c term 0 $. tz(e $a term 0 $."));
-    assert!(err.contains("invalid label `tz(e`"), "{err}");
+    assert!(err.contains(r#"invalid label "tz(e""#), "{err}");
 }
 
 #[test]
@@ -100,7 +100,7 @@ fn label_may_use_every_character_the_spec_allows() {
 fn proof_step_with_illegal_character_is_rejected() {
     let src = "$c term 0 $. tze $a term 0 $. th $p term 0 $= tze* $.";
     let err = parse_error(parse(src));
-    assert!(err.contains("invalid proof step label `tze*`"), "{err}");
+    assert!(err.contains(r#"invalid proof step label "tze*""#), "{err}");
 }
 
 #[test]
@@ -108,7 +108,7 @@ fn compressed_proof_label_with_illegal_character_is_rejected() {
     let src = "$c term 0 $. tze $a term 0 $. th $p term 0 $= ( tz|e ) AB $.";
     let err = parse_error(parse(src));
     assert!(
-        err.contains("invalid compressed-proof label `tz|e`"),
+        err.contains(r#"invalid compressed-proof label "tz|e""#),
         "{err}"
     );
 }
@@ -119,7 +119,10 @@ fn unterminated_compressed_label_block_stops_at_the_first_keyword() {
     // as proof text; now it is caught where it happens.
     let src = "$c term 0 $. tze $a term 0 $. th $p term 0 $= ( tze AB $. $c x $.";
     let err = parse_error(parse(src));
-    assert!(err.contains("invalid compressed-proof label `$.`"), "{err}");
+    assert!(
+        err.contains(r#"invalid compressed-proof label "$.""#),
+        "{err}"
+    );
 }
 
 #[test]
@@ -137,7 +140,7 @@ fn compressed_proof_letter_block_is_left_to_the_verifier() {
 #[test]
 fn math_symbol_containing_a_dollar_is_rejected() {
     let err = parse_error(parse("$c a$b $."));
-    assert!(err.contains("invalid math symbol `a$b`"), "{err}");
+    assert!(err.contains(r#"invalid math symbol "a$b""#), "{err}");
 }
 
 #[test]
@@ -192,13 +195,13 @@ fn comment_text_is_not_held_to_the_token_character_classes() {
 fn disjoint_with_one_variable_is_rejected() {
     let src = "$c wff $. $v ph $. wph $f wff ph $. $d ph $.";
     let err = parse_error(parse(src));
-    assert!(err.contains("`$d` needs two or more variables"), "{err}");
+    assert!(err.contains("$d needs two or more variables"), "{err}");
 }
 
 #[test]
 fn empty_disjoint_is_rejected() {
     let err = parse_error(parse("$c wff $. $d $."));
-    assert!(err.contains("`$d` needs two or more variables"), "{err}");
+    assert!(err.contains("$d needs two or more variables"), "{err}");
 }
 
 #[test]
@@ -221,7 +224,7 @@ fn disjoint_with_two_variables_is_accepted() {
 fn constant_declaration_inside_a_scope_is_rejected() {
     let err = parse_error(parse("$c wff $. ${ $c |- $. $}"));
     assert!(
-        err.contains("`$c` is only allowed in the outermost scope"),
+        err.contains("$c is only allowed in the outermost scope"),
         "{err}"
     );
 }
@@ -230,7 +233,7 @@ fn constant_declaration_inside_a_scope_is_rejected() {
 fn constant_declaration_deep_inside_nested_scopes_is_rejected() {
     let err = parse_error(parse("$c wff $. ${ ${ ${ $c |- $. $} $} $}"));
     assert!(
-        err.contains("`$c` is only allowed in the outermost scope"),
+        err.contains("$c is only allowed in the outermost scope"),
         "{err}"
     );
 }
@@ -271,7 +274,7 @@ fn include_in_the_middle_of_a_statement_is_rejected() {
         .unwrap_err()
         .to_string();
     assert!(
-        err.contains("`$[` is only allowed between statements at the outermost scope"),
+        err.contains("$[ is only allowed between statements at the outermost scope"),
         "{err}"
     );
 }
@@ -289,7 +292,7 @@ fn include_between_a_label_and_its_keyword_is_rejected() {
         .unwrap_err()
         .to_string();
     assert!(
-        err.contains("`$[` is only allowed between statements at the outermost scope"),
+        err.contains("$[ is only allowed between statements at the outermost scope"),
         "{err}"
     );
 }
@@ -301,7 +304,7 @@ fn include_inside_a_scope_is_rejected() {
         .unwrap_err()
         .to_string();
     assert!(
-        err.contains("`$[` is only allowed between statements at the outermost scope"),
+        err.contains("$[ is only allowed between statements at the outermost scope"),
         "{err}"
     );
 }
@@ -319,7 +322,7 @@ fn include_inside_a_scope_an_earlier_file_opened_is_rejected() {
         .unwrap_err()
         .to_string();
     assert!(
-        err.contains("`$[` is only allowed between statements at the outermost scope"),
+        err.contains("$[ is only allowed between statements at the outermost scope"),
         "{err}"
     );
 }
@@ -337,7 +340,7 @@ fn include_inside_a_proof_is_rejected() {
         .unwrap_err()
         .to_string();
     assert!(
-        err.contains("`$[` is only allowed between statements at the outermost scope"),
+        err.contains("$[ is only allowed between statements at the outermost scope"),
         "{err}"
     );
 }

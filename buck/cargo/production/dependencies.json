@@ -6794,8 +6794,7 @@
       "category": "tcb",
       "dependencies": [
         "registry+https://github.com/rust-lang/crates.io-index#fnv@1.0.7",
-        "registry+https://github.com/rust-lang/crates.io-index#smol_str@0.3.6",
-        "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.19"
+        "registry+https://github.com/rust-lang/crates.io-index#smol_str@0.3.6"
       ]
     },
     {
