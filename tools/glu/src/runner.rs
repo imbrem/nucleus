@@ -827,16 +827,7 @@ impl Runner {
         let ar = command_path("ar")?;
         let cc = command_path("clang")?;
         let cxx = command_path("clang++")?;
-        Ok(format!(
-            "{BUCK_CONFIG_HEADER}\n\
-             [nucleus]\n\
-               ar = {}\n\
-               cc = {}\n\
-               cxx = {}\n",
-            ar.display(),
-            cc.display(),
-            cxx.display(),
-        ))
+        format_buck_configuration(&ar, &cc, &cxx)
     }
 
     pub(crate) fn doctor(&self) -> Result<()> {
@@ -1338,6 +1329,24 @@ fn collect_lean_projects(directory: &Path, found: &mut Vec<PathBuf>) -> Result<(
     Ok(())
 }
 
+fn format_buck_configuration(ar: &Path, cc: &Path, cxx: &Path) -> Result<String> {
+    for (name, path) in [("ar", ar), ("cc", cc), ("cxx", cxx)] {
+        if !path.is_absolute() {
+            bail!("Buck {name} path is not absolute: {}", path.display());
+        }
+    }
+    Ok(format!(
+        "{BUCK_CONFIG_HEADER}\n\
+         [nucleus]\n\
+           ar = {}\n\
+           cc = {}\n\
+           cxx = {}\n",
+        ar.display(),
+        cc.display(),
+        cxx.display(),
+    ))
+}
+
 fn command_path(name: &str) -> Result<PathBuf> {
     let path = env::var_os("PATH").ok_or_else(|| color_eyre::eyre::eyre!("PATH is not set"))?;
     let path = env::split_paths(&path)
@@ -1416,7 +1425,12 @@ mod tests {
 
     #[test]
     fn generated_buck_tool_paths_are_absolute() {
-        let configuration = Runner::buck_configuration().expect("Buck configuration");
+        let configuration = format_buck_configuration(
+            Path::new("/tools/ar"),
+            Path::new("/tools/clang"),
+            Path::new("/tools/clang++"),
+        )
+        .expect("Buck configuration");
         for name in ["ar", "cc", "cxx"] {
             let prefix = format!("{name} = ");
             let path = configuration
@@ -1425,5 +1439,16 @@ mod tests {
                 .unwrap_or_else(|| panic!("missing {name} configuration"));
             assert!(Path::new(path).is_absolute(), "{name} path is relative");
         }
+    }
+
+    #[test]
+    fn rejects_relative_buck_tool_paths() {
+        let error = format_buck_configuration(
+            Path::new("ar"),
+            Path::new("/tools/clang"),
+            Path::new("/tools/clang++"),
+        )
+        .expect_err("relative paths must be rejected");
+        assert!(error.to_string().contains("ar path is not absolute"));
     }
 }
