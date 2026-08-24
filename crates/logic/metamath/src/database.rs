@@ -63,7 +63,7 @@ pub enum Proof {
     Normal(Vec<String>),
     /// A *compressed* proof: a parenthesised label block plus a letter block
     /// (the `A`–`T` / `U`–`Y` base-20/5 integer scheme with `Z` save markers).
-    /// The decoder lives in [`crate::verify`].
+    /// The decoder lives in the `verify` module.
     Compressed {
         /// The labels referenced by the letter block (between `(` and `)`).
         labels: Vec<String>,
@@ -466,7 +466,7 @@ impl Database {
         })
     }
 
-    /// Render this database to canonical `.mm` source (see [`crate::emit`]).
+    /// Render this database to canonical `.mm` source (see the `emit` module).
     /// The result re-parses to a structurally-equivalent database (same symbols
     /// and assertion statements/frames), normalising scope structure.
     pub fn to_mm_string(&self) -> String {
