@@ -934,16 +934,11 @@ impl Runner {
     ) -> Result<()> {
         // Default to the committed fixture.
         let default = self.root.join("packages/nucleus/test/fixture.sqlite");
-        let files: Vec<PathBuf> = if files.is_empty() {
+        let mut files: Vec<PathBuf> = if files.is_empty() {
             vec![default]
         } else {
             files.to_vec()
         };
-        for file in &files {
-            if !file.is_file() {
-                bail!("{} is not a file", file.display());
-            }
-        }
 
         if !no_build {
             self.pnpm(
@@ -954,6 +949,34 @@ impl Runner {
                 "build demo kernel",
                 &["build", "-p", "covalence-bin-cas-serve"],
             )?;
+            self.run(
+                "build proof demos",
+                "cargo",
+                [
+                    "component",
+                    "build",
+                    "--locked",
+                    "-p",
+                    "covalence-proof-demo",
+                    "-p",
+                    "covalence-proof-invalid-demo",
+                ],
+            )?;
+        }
+
+        let proof_dir = self.root.join("target/wasm32-wasip1/debug");
+        for proof in [
+            proof_dir.join("covalence_proof_demo.wasm"),
+            proof_dir.join("covalence_proof_invalid_demo.wasm"),
+        ] {
+            if !files.contains(&proof) {
+                files.push(proof);
+            }
+        }
+        for file in &files {
+            if !file.is_file() {
+                bail!("{} is not a file", file.display());
+            }
         }
 
         let mut kernel = self.start_kernel(&files, kernel_port)?;
@@ -969,6 +992,7 @@ impl Runner {
         eprintln!("    (help)");
         eprintln!("    (connect \"http://127.0.0.1:{kernel_port}\")");
         eprintln!("    (fetch ADDRESS)         (an address printed above)");
+        eprintln!("    (proof ADDRESS)         (fetch, verify, and run a proof)");
         eprintln!("    (sqlite ADDRESS \"-batch\" \".schema\")");
         eprintln!();
         eprintln!("  Ctrl-C stops both servers.");

@@ -70,6 +70,9 @@ fn step(session: &mut Session, line: &str, out: &mut impl Write) -> miette::Resu
                 .context("the fetched bytes do not match the requested address")?;
             writeln!(out, "{admitted}").into_diagnostic()?;
         }
+        Response::RunProof { url, address } => {
+            run_proof(session, url.as_deref(), address, out)?;
+        }
         Response::Shell(arguments) => {
             let _ = arguments;
             return Err(miette!(
@@ -78,6 +81,43 @@ fn step(session: &mut Session, line: &str, out: &mut impl Write) -> miette::Resu
         }
     }
     Ok(false)
+}
+
+#[cfg(not(target_os = "wasi"))]
+fn run_proof(
+    session: &Session,
+    url: Option<&str>,
+    address: covalence_lib_hash::O256,
+    out: &mut impl Write,
+) -> miette::Result<()> {
+    if session.store().fact_at(address).is_none()
+        && let Some(url) = url
+    {
+        let bytes = fetch(url)?;
+        session
+            .admit_verified(address, bytes)
+            .into_diagnostic()
+            .context("the fetched proof does not match the requested address")?;
+    }
+    let component = session
+        .store()
+        .fact_at(address)
+        .ok_or_else(|| miette!("proof component {address} is not resident"))?;
+    let kernel = covalence_nucleus::load_standard_proof(component.bytes())
+        .map_err(|error| miette!("proof failed: {error}"))?;
+    writeln!(out, "{}", kernel.addr()).into_diagnostic()
+}
+
+#[cfg(target_os = "wasi")]
+fn run_proof(
+    _session: &Session,
+    _url: Option<&str>,
+    _address: covalence_lib_hash::O256,
+    _out: &mut impl Write,
+) -> miette::Result<()> {
+    Err(miette!(
+        "nested proof components are not available in the WASI CLI"
+    ))
 }
 
 /// Fetches a URL with `curl`.

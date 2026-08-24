@@ -612,6 +612,21 @@
       ]
     },
     {
+      "id": "workspace#covalence-proof-invalid-demo@0.0.0",
+      "name": "covalence-proof-invalid-demo",
+      "version": "0.0.0",
+      "path": "crates/proof/invalid-demo",
+      "category": "tcb",
+      "targets": [
+        {
+          "name": "covalence_proof_invalid_demo",
+          "kinds": [
+            "cdylib"
+          ]
+        }
+      ]
+    },
+    {
       "id": "workspace#covalence-proton@0.0.0",
       "name": "covalence-proton",
       "version": "0.0.0",
@@ -704,6 +719,13 @@
       "target": "workspace#covalence-neutron@0.0.0",
       "kinds": [
         "dev"
+      ]
+    },
+    {
+      "source": "workspace#covalence-bin-nucleus@0.0.0",
+      "target": "workspace#covalence-nucleus@0.0.0",
+      "kinds": [
+        "normal (cfg(not(target_os = \"wasi\")))"
       ]
     },
     {

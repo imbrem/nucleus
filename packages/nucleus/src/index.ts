@@ -58,6 +58,39 @@ export async function drive(
         return { output: `error: ${messageOf(error)}`, quit: false };
       }
 
+    case "proof":
+      try {
+        let handle = repl.openObject(step.address);
+        if (handle < 0 && step.text !== "") {
+          const response = await fetch(step.text);
+          if (!response.ok) {
+            throw new Error(`kernel returned ${response.status}`);
+          }
+          const fetched = new Uint8Array(await response.arrayBuffer());
+          repl.admitVerified(step.address, fetched);
+          handle = repl.openObject(step.address);
+        }
+        if (handle < 0) {
+          throw new Error(`proof component ${step.address} is not resident`);
+        }
+        let bytes: Uint8Array;
+        try {
+          const length = repl.objectLength(handle);
+          bytes = repl.readObject(handle, 0, length);
+        } finally {
+          repl.closeObject(handle);
+        }
+        const { kernelAddress, loadStandardProof } = await import("./proof.js");
+        const kernel = await loadStandardProof(bytes);
+        try {
+          return { output: kernelAddress(kernel), quit: false };
+        } finally {
+          kernel[Symbol.dispose]();
+        }
+      } catch (error) {
+        return { output: `error: ${messageOf(error)}`, quit: false };
+      }
+
     case "shell":
       try {
         const result = await runShell(repl, {

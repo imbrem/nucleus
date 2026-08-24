@@ -487,6 +487,7 @@ dependencies = [
  "covalence-lib-hash",
  "covalence-lib-sqlite",
  "covalence-neutron",
+ "covalence-nucleus",
  "covalence-repl",
 ]
 
@@ -780,6 +781,13 @@ dependencies = [
  "covalence-lib-hash",
  "covalence-logic-cas",
  "covalence-logic-hol",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "covalence-proof-invalid-demo"
+version = "0.0.0"
+dependencies = [
  "wit-bindgen-rt",
 ]
 
