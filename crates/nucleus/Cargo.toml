@@ -35,5 +35,8 @@ package = "nucleus:smoke"
 
 [package.metadata.component.dependencies]
 
+[package.metadata.glu]
+buck-manifest-mapped-srcs = { "nucleus//:proof_wit" = "wit/proof/proof.wit" }
+
 [lints]
 workspace = true

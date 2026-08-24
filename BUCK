@@ -46,6 +46,12 @@ export_file(
     visibility = ["PUBLIC"],
 )
 
+export_file(
+    name = "proof_wit",
+    src = "wit/proof/proof.wit",
+    visibility = ["PUBLIC"],
+)
+
 genrule(
     name = "loc",
     srcs = with_environment(
