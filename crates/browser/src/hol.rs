@@ -1,7 +1,7 @@
 //! Lossless browser boundary for the checked classical HOL kernel.
 
 use covalence_logic_hol::{
-    Clause, Cube, Kernel, PropId, Ref, ThmId,
+    Clause, ClauseId, Cube, CubeId, Kernel, Lit, Ref, ThmId,
     builtin::{Op1, Op2},
 };
 use wasm_bindgen::prelude::*;
@@ -30,7 +30,7 @@ impl HolProver {
         Self::try_new().map_err(to_js)
     }
 
-    /// Creates a Boolean free variable and returns its positive proposition ID.
+    /// Creates a Boolean free variable and returns its positive literal.
     ///
     /// # Errors
     ///
@@ -40,7 +40,7 @@ impl HolProver {
         self.proposition(name).map(format_prop).map_err(to_js)
     }
 
-    /// Creates a Boolean literal and returns its positive proposition ID.
+    /// Creates a Boolean constant and returns its positive literal.
     ///
     /// # Errors
     ///
@@ -50,7 +50,7 @@ impl HolProver {
         self.boolean(value).map(format_prop).map_err(to_js)
     }
 
-    /// Returns the complementary signed proposition ID.
+    /// Returns the complementary signed literal.
     ///
     /// # Errors
     ///
@@ -58,7 +58,7 @@ impl HolProver {
     #[wasm_bindgen(js_name = complement)]
     pub fn complement_js(proposition: &str) -> Result<String, JsError> {
         parse_prop(proposition)
-            .map(PropId::negated)
+            .map(Lit::negated)
             .map(format_prop)
             .map_err(to_js)
     }
@@ -112,7 +112,7 @@ impl HolProver {
             .map_err(to_js)
     }
 
-    /// Weakens a theorem with whitespace-separated signed proposition IDs.
+    /// Weakens a theorem with whitespace-separated signed literals.
     ///
     /// # Errors
     ///
@@ -379,7 +379,7 @@ impl HolProver {
     /// Weakens a theorem with complete CNF clauses and DNF cubes.
     ///
     /// Both matrix arguments are JSON arrays of rows containing signed
-    /// proposition IDs as decimal strings.
+    /// signed literals as decimal strings.
     ///
     /// # Errors
     ///
@@ -404,7 +404,7 @@ impl HolProver {
             .map_err(to_js)
     }
 
-    /// Moves an indexed left clause to the right with complemented literals.
+    /// Moves a one-based left clause to the right with complemented literals.
     ///
     /// # Errors
     ///
@@ -412,11 +412,13 @@ impl HolProver {
     #[wasm_bindgen(js_name = moveClauseRight)]
     pub fn move_clause_right(&mut self, theorem: &str, index: &str) -> Result<(), JsError> {
         let theorem = parse_thm(theorem).map_err(to_js)?;
-        let index = parse_usize(index, "clause index").map_err(to_js)?;
-        self.kernel.move_clause_right(theorem, index).map_err(to_js)
+        let clause = parse_clause(index).map_err(to_js)?;
+        self.kernel
+            .move_clause_right(theorem, clause)
+            .map_err(to_js)
     }
 
-    /// Moves an indexed right cube to the left with complemented literals.
+    /// Moves a one-based right cube to the left with complemented literals.
     ///
     /// # Errors
     ///
@@ -424,8 +426,8 @@ impl HolProver {
     #[wasm_bindgen(js_name = moveCubeLeft)]
     pub fn move_cube_left(&mut self, theorem: &str, index: &str) -> Result<(), JsError> {
         let theorem = parse_thm(theorem).map_err(to_js)?;
-        let index = parse_usize(index, "cube index").map_err(to_js)?;
-        self.kernel.move_cube_left(theorem, index).map_err(to_js)
+        let cube = parse_cube(index).map_err(to_js)?;
+        self.kernel.move_cube_left(theorem, cube).map_err(to_js)
     }
 
     /// Canonicalizes every clause, cube, and matrix row of one theorem.
@@ -439,7 +441,7 @@ impl HolProver {
         self.kernel.normalize_theorem(theorem).map_err(to_js)
     }
 
-    /// Sorts and deduplicates one indexed left clause in place.
+    /// Sorts and deduplicates the selected one-based left clause in place.
     ///
     /// # Errors
     ///
@@ -447,11 +449,11 @@ impl HolProver {
     #[wasm_bindgen(js_name = normalizeClause)]
     pub fn normalize_clause(&mut self, theorem: &str, index: &str) -> Result<(), JsError> {
         let theorem = parse_thm(theorem).map_err(to_js)?;
-        let index = parse_usize(index, "clause index").map_err(to_js)?;
-        self.kernel.normalize_clause(theorem, index).map_err(to_js)
+        let clause = parse_clause(index).map_err(to_js)?;
+        self.kernel.normalize_clause(theorem, clause).map_err(to_js)
     }
 
-    /// Sorts and deduplicates one indexed right cube in place.
+    /// Sorts and deduplicates the selected one-based right cube in place.
     ///
     /// # Errors
     ///
@@ -459,8 +461,8 @@ impl HolProver {
     #[wasm_bindgen(js_name = normalizeCube)]
     pub fn normalize_cube(&mut self, theorem: &str, index: &str) -> Result<(), JsError> {
         let theorem = parse_thm(theorem).map_err(to_js)?;
-        let index = parse_usize(index, "cube index").map_err(to_js)?;
-        self.kernel.normalize_cube(theorem, index).map_err(to_js)
+        let cube = parse_cube(index).map_err(to_js)?;
+        self.kernel.normalize_cube(theorem, cube).map_err(to_js)
     }
 }
 
@@ -472,40 +474,46 @@ impl HolProver {
         Ok(Self { kernel, bool_ty })
     }
 
-    fn proposition(&mut self, name: &str) -> Result<PropId, String> {
+    fn proposition(&mut self, name: &str) -> Result<Lit, String> {
         let name = parse_u64(name, "proposition name")?;
         self.kernel
             .tm_fv(name, self.bool_ty)
-            .map(|reference| PropId::positive(reference.get()))
+            .map(|reference| Lit::positive(reference.get()))
             .map_err(|error| error.to_string())
     }
 
-    fn boolean(&mut self, value: bool) -> Result<PropId, String> {
+    fn boolean(&mut self, value: bool) -> Result<Lit, String> {
         self.kernel
             .bool(self.bool_ty, value)
-            .map(|reference| PropId::positive(reference.get()))
+            .map(|reference| Lit::positive(reference.get()))
             .map_err(|error| error.to_string())
     }
 
-    fn materialize(&mut self, proposition: PropId) -> Result<Ref, String> {
+    fn materialize(&mut self, proposition: Lit) -> Result<Ref, String> {
         if proposition.is_positive() {
-            Ok(Ref::new(proposition.magnitude()).expect("proposition IDs are nonzero"))
+            Ok(Ref::new(
+                i32::try_from(proposition.magnitude()).expect("literal magnitude fits i32"),
+            )
+            .expect("literal magnitude is nonzero"))
         } else {
             self.kernel
                 .op1(
                     Op1::Not,
-                    Ref::new(proposition.magnitude()).expect("proposition IDs are nonzero"),
+                    Ref::new(
+                        i32::try_from(proposition.magnitude()).expect("literal magnitude fits i32"),
+                    )
+                    .expect("literal magnitude is nonzero"),
                 )
                 .map_err(|error| error.to_string())
         }
     }
 
-    fn binary(&mut self, op: Op2, left: &str, right: &str) -> Result<PropId, String> {
+    fn binary(&mut self, op: Op2, left: &str, right: &str) -> Result<Lit, String> {
         let left = self.materialize(parse_prop(left)?)?;
         let right = self.materialize(parse_prop(right)?)?;
         self.kernel
             .op2(op, left, right)
-            .map(|reference| PropId::positive(reference.get()))
+            .map(|reference| Lit::positive(reference.get()))
             .map_err(|error| error.to_string())
     }
 
@@ -524,7 +532,7 @@ impl HolProver {
     fn rule0_prop(
         &mut self,
         proposition: &str,
-        rule: fn(&mut Kernel, PropId) -> Result<ThmId, covalence_logic_hol::KernelError>,
+        rule: fn(&mut Kernel, Lit) -> Result<ThmId, covalence_logic_hol::KernelError>,
     ) -> Result<String, JsError> {
         let proposition = parse_prop(proposition).map_err(to_js)?;
         rule(&mut self.kernel, proposition)
@@ -536,7 +544,7 @@ impl HolProver {
         &mut self,
         theorem: &str,
         proposition: &str,
-        rule: fn(&mut Kernel, ThmId, PropId) -> Result<ThmId, covalence_logic_hol::KernelError>,
+        rule: fn(&mut Kernel, ThmId, Lit) -> Result<ThmId, covalence_logic_hol::KernelError>,
     ) -> Result<String, JsError> {
         let theorem = parse_thm(theorem).map_err(to_js)?;
         let proposition = parse_prop(proposition).map_err(to_js)?;
@@ -550,12 +558,7 @@ impl HolProver {
         left: &str,
         right: &str,
         proposition: &str,
-        rule: fn(
-            &mut Kernel,
-            ThmId,
-            ThmId,
-            PropId,
-        ) -> Result<ThmId, covalence_logic_hol::KernelError>,
+        rule: fn(&mut Kernel, ThmId, ThmId, Lit) -> Result<ThmId, covalence_logic_hol::KernelError>,
     ) -> Result<String, JsError> {
         let left = parse_thm(left).map_err(to_js)?;
         let right = parse_thm(right).map_err(to_js)?;
@@ -571,23 +574,39 @@ fn parse_u64(text: &str, label: &str) -> Result<u64, String> {
         .map_err(|_| format!("{label} must be a decimal u64"))
 }
 
-fn parse_prop(text: &str) -> Result<PropId, String> {
+fn parse_prop(text: &str) -> Result<Lit, String> {
     let raw = text
-        .parse::<i64>()
-        .map_err(|_| "proposition ID must be a signed decimal i64".to_owned())?;
-    PropId::from_raw(raw).map_err(|error| error.to_string())
+        .parse::<i32>()
+        .map_err(|_| "literal must be a signed decimal i32".to_owned())?;
+    Lit::from_raw(raw).map_err(|error| error.to_string())
 }
 
 fn parse_thm(text: &str) -> Result<ThmId, String> {
-    let raw = parse_u64(text, "theorem ID")?;
+    let raw = text
+        .parse::<i32>()
+        .map_err(|_| "theorem ID must be a decimal i32".to_owned())?;
     ThmId::new(raw).ok_or_else(|| "theorem IDs are one-based".to_owned())
 }
 
-fn parse_context(text: &str) -> Result<Vec<PropId>, String> {
+fn parse_clause(text: &str) -> Result<ClauseId, String> {
+    let raw = text
+        .parse::<i32>()
+        .map_err(|_| "clause ID must be a decimal i32".to_owned())?;
+    ClauseId::new(raw).ok_or_else(|| "clause IDs are one-based".to_owned())
+}
+
+fn parse_cube(text: &str) -> Result<CubeId, String> {
+    let raw = text
+        .parse::<i32>()
+        .map_err(|_| "cube ID must be a decimal i32".to_owned())?;
+    CubeId::new(raw).ok_or_else(|| "cube IDs are one-based".to_owned())
+}
+
+fn parse_context(text: &str) -> Result<Vec<Lit>, String> {
     text.split_whitespace().map(parse_prop).collect()
 }
 
-fn parse_matrix(text: &str) -> Result<Vec<Vec<PropId>>, String> {
+fn parse_matrix(text: &str) -> Result<Vec<Vec<Lit>>, String> {
     let rows: Vec<Vec<String>> = covalence_lib_json::from_str(text)
         .map_err(|error| format!("invalid matrix JSON: {error}"))?;
     rows.into_iter()
@@ -599,12 +618,7 @@ fn parse_matrix(text: &str) -> Result<Vec<Vec<PropId>>, String> {
         .collect()
 }
 
-fn parse_usize(text: &str, label: &str) -> Result<usize, String> {
-    text.parse()
-        .map_err(|_| format!("{label} must be a decimal usize"))
-}
-
-fn format_prop(proposition: PropId) -> String {
+fn format_prop(proposition: Lit) -> String {
     proposition.get().to_string()
 }
 
@@ -612,7 +626,7 @@ fn format_thm(theorem: ThmId) -> String {
     theorem.get().to_string()
 }
 
-fn json_props(propositions: &[PropId]) -> String {
+fn json_props(propositions: &[Lit]) -> String {
     propositions
         .iter()
         .map(|proposition| format!("\"{}\"", proposition.get()))
@@ -620,7 +634,7 @@ fn json_props(propositions: &[PropId]) -> String {
         .join(",")
 }
 
-fn json_rows<'a>(rows: impl IntoIterator<Item = &'a [PropId]>) -> String {
+fn json_rows<'a>(rows: impl IntoIterator<Item = &'a [Lit]>) -> String {
     rows.into_iter()
         .map(|row| format!("[{}]", json_props(row)))
         .collect::<Vec<_>>()
@@ -635,7 +649,7 @@ mod tests {
         HolProver::try_new().unwrap()
     }
 
-    fn unit_premises(theorem: &covalence_logic_hol::Thm) -> Vec<PropId> {
+    fn unit_premises(theorem: &covalence_logic_hol::Thm) -> Vec<Lit> {
         theorem
             .premises()
             .clauses()
@@ -644,7 +658,7 @@ mod tests {
             .collect()
     }
 
-    fn unit_conclusions(theorem: &covalence_logic_hol::Thm) -> Vec<PropId> {
+    fn unit_conclusions(theorem: &covalence_logic_hol::Thm) -> Vec<Lit> {
         theorem
             .conclusions()
             .cubes()
@@ -656,10 +670,10 @@ mod tests {
     #[test]
     fn lossless_signed_ids_and_canonical_contexts() {
         assert!(parse_prop("0").is_err());
-        assert!(parse_prop(&i64::MIN.to_string()).is_err());
-        assert!(parse_prop(&i64::MAX.to_string()).is_err());
+        assert!(parse_prop(&i32::MIN.to_string()).is_err());
+        assert!(parse_prop(&i32::MAX.to_string()).is_err());
         assert!(parse_thm("0").is_err());
-        assert!(parse_thm("9007199254740993").is_ok());
+        assert!(parse_thm("9007199254740993").is_err());
 
         let mut prover = prover();
         let p = prover.proposition("18446744073709551615").unwrap();
@@ -760,7 +774,7 @@ mod tests {
             .position(|clause| clause.literals().len() == 2)
             .unwrap();
         prover
-            .move_clause_right(&theorem_id, &clause_index.to_string())
+            .move_clause_right(&theorem_id, &(clause_index + 1).to_string())
             .unwrap();
         assert!(
             prover
@@ -817,8 +831,8 @@ mod tests {
         );
         assert_eq!(prover.theorem_json(&theorem_id).unwrap(), expected);
 
-        prover.normalize_clause(&theorem_id, "0").unwrap();
-        prover.normalize_cube(&theorem_id, "0").unwrap();
+        prover.normalize_clause(&theorem_id, "1").unwrap();
+        prover.normalize_cube(&theorem_id, "1").unwrap();
         prover.normalize_theorem(&theorem_id).unwrap();
         assert_eq!(prover.theorem_json(&theorem_id).unwrap(), expected);
     }
@@ -839,17 +853,39 @@ mod tests {
             .unwrap();
         let before = prover.theorem_json(&theorem_id).unwrap();
 
-        assert!(parse_usize("not-an-index", "clause index").is_err());
+        assert!(parse_clause("not-an-index").is_err());
+        assert!(parse_clause("0").is_err());
         assert_eq!(prover.theorem_json(&theorem_id).unwrap(), before);
-        assert!(prover.kernel.normalize_clause(theorem, 99).is_err());
+        assert!(
+            prover
+                .kernel
+                .normalize_clause(theorem, ClauseId::new(99).unwrap())
+                .is_err()
+        );
         assert_eq!(prover.theorem_json(&theorem_id).unwrap(), before);
-        assert!(parse_usize("not-an-index", "cube index").is_err());
+        assert!(parse_cube("not-an-index").is_err());
+        assert!(parse_cube("0").is_err());
         assert_eq!(prover.theorem_json(&theorem_id).unwrap(), before);
-        assert!(prover.kernel.normalize_cube(theorem, 99).is_err());
+        assert!(
+            prover
+                .kernel
+                .normalize_cube(theorem, CubeId::new(99).unwrap())
+                .is_err()
+        );
         assert_eq!(prover.theorem_json(&theorem_id).unwrap(), before);
-        assert!(prover.kernel.move_clause_right(theorem, 99).is_err());
+        assert!(
+            prover
+                .kernel
+                .move_clause_right(theorem, ClauseId::new(99).unwrap())
+                .is_err()
+        );
         assert_eq!(prover.theorem_json(&theorem_id).unwrap(), before);
-        assert!(prover.kernel.move_cube_left(theorem, 99).is_err());
+        assert!(
+            prover
+                .kernel
+                .move_cube_left(theorem, CubeId::new(99).unwrap())
+                .is_err()
+        );
         assert_eq!(prover.theorem_json(&theorem_id).unwrap(), before);
         assert!(
             prover
@@ -966,12 +1002,15 @@ mod tests {
         assert!(conjunction.is_positive());
         let children = prover
             .kernel
-            .children(Ref::new(conjunction.magnitude()).unwrap())
+            .children(Ref::new(i32::try_from(conjunction.magnitude()).unwrap()).unwrap())
             .unwrap()
             .collect::<Vec<_>>();
         assert_eq!(children.len(), 2);
         assert_eq!(prover.kernel.arena().op1(children[0]), Some(Op1::Not));
-        assert_eq!(children[1], Ref::new(p.magnitude()).unwrap());
+        assert_eq!(
+            children[1],
+            Ref::new(i32::try_from(p.magnitude()).unwrap()).unwrap()
+        );
     }
 
     #[test]

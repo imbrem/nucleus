@@ -93,7 +93,7 @@ mod tests {
 
     const MANIFEST: &str = include_str!("../builtins-v1.tsv");
 
-    const fn reference(value: u64) -> Ref {
+    const fn reference(value: i32) -> Ref {
         Ref::new(value).unwrap()
     }
 

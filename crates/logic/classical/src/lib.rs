@@ -15,7 +15,7 @@
 //! in slot order. Deleted slots and free-list history are omitted; decoding
 //! rebuilds dense, all-live slots and an empty free list.
 
-use std::num::{NonZeroI64, NonZeroU64};
+use std::num::NonZeroI32;
 
 use covalence_lib_error::snafu::Snafu;
 use serde::{
@@ -24,21 +24,21 @@ use serde::{
 };
 use smallvec::SmallVec;
 
-/// A signed, losslessly negatable proposition identifier.
+/// A signed, losslessly negatable Boolean literal.
 ///
 /// Negative values denote positive propositions; positive values denote their
 /// negations. This is the established Ethane wire convention.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[repr(transparent)]
-pub struct Lit(NonZeroI64);
+pub struct Lit(NonZeroI32);
 
-/// A failure to construct a signed proposition identifier.
+/// A failure to construct a signed literal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Snafu)]
 #[snafu(crate_root(covalence_lib_error::snafu))]
-#[snafu(display("invalid signed proposition identifier {value}"))]
+#[snafu(display("invalid signed literal {value}"))]
 pub struct LitError {
     /// Rejected signed value.
-    pub value: i64,
+    pub value: i32,
 }
 
 impl Lit {
@@ -46,15 +46,14 @@ impl Lit {
     ///
     /// # Panics
     ///
-    /// Panics unless `magnitude` is nonzero and strictly below `i64::MAX`.
+    /// Panics unless `magnitude` is nonzero and strictly below `i32::MAX`.
     #[must_use]
-    pub fn positive(magnitude: u64) -> Self {
-        let magnitude = i64::try_from(magnitude).expect("literal magnitude fits i64");
+    pub fn positive(magnitude: i32) -> Self {
         assert!(
-            magnitude > 0 && magnitude < i64::MAX,
+            magnitude > 0 && magnitude < i32::MAX,
             "literal magnitude is signed-bounded"
         );
-        Self(NonZeroI64::new(-magnitude).expect("literal magnitude is nonzero"))
+        Self(NonZeroI32::new(-magnitude).expect("literal magnitude is nonzero"))
     }
 
     /// Constructs a nonzero, losslessly negatable literal.
@@ -62,12 +61,12 @@ impl Lit {
     /// # Errors
     ///
     /// Returns an error unless the unsigned magnitude is nonzero and strictly
-    /// below `i64::MAX`.
-    pub const fn new(value: i64) -> Result<Self, LitError> {
-        if value == 0 || value.unsigned_abs() >= i64::MAX as u64 {
+    /// below `i32::MAX`.
+    pub const fn new(value: i32) -> Result<Self, LitError> {
+        if value == 0 || value.unsigned_abs() >= i32::MAX as u32 {
             Err(LitError { value })
         } else {
-            match NonZeroI64::new(value) {
+            match NonZeroI32::new(value) {
                 Some(value) => Ok(Self(value)),
                 None => Err(LitError { value }),
             }
@@ -79,14 +78,14 @@ impl Lit {
     /// # Errors
     ///
     /// Returns an error unless the unsigned magnitude is nonzero and strictly
-    /// below `i64::MAX`.
-    pub const fn from_raw(value: i64) -> Result<Self, LitError> {
+    /// below `i32::MAX`.
+    pub const fn from_raw(value: i32) -> Result<Self, LitError> {
         Self::new(value)
     }
 
     /// Returns the signed integer representation.
     #[must_use]
-    pub const fn get(self) -> i64 {
+    pub const fn get(self) -> i32 {
         self.0.get()
     }
 
@@ -97,7 +96,7 @@ impl Lit {
     /// Panics only if a `Lit` has been created outside its private invariant.
     #[must_use]
     pub const fn negated(self) -> Self {
-        Self(NonZeroI64::new(-self.get()).expect("Lit excludes zero and i64::MIN"))
+        Self(NonZeroI32::new(-self.get()).expect("Lit excludes zero and i32::MIN"))
     }
 
     /// Returns whether this encoding denotes a positive proposition.
@@ -106,22 +105,22 @@ impl Lit {
         self.get() < 0
     }
 
-    /// Returns the unsigned proposition magnitude.
+    /// Returns the unsigned literal magnitude.
     #[must_use]
-    pub const fn magnitude(self) -> u64 {
+    pub const fn magnitude(self) -> u32 {
         self.get().unsigned_abs()
     }
 }
 
-impl TryFrom<i64> for Lit {
+impl TryFrom<i32> for Lit {
     type Error = LitError;
 
-    fn try_from(value: i64) -> Result<Self, Self::Error> {
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
         Self::new(value)
     }
 }
 
-impl From<Lit> for i64 {
+impl From<Lit> for i32 {
     fn from(value: Lit) -> Self {
         value.get()
     }
@@ -132,7 +131,7 @@ impl Serialize for Lit {
     where
         S: Serializer,
     {
-        serializer.serialize_i64(self.get())
+        serializer.serialize_i32(self.get())
     }
 }
 
@@ -141,7 +140,7 @@ impl<'de> Deserialize<'de> for Lit {
     where
         D: Deserializer<'de>,
     {
-        Self::new(i64::deserialize(deserializer)?).map_err(de::Error::custom)
+        Self::new(i32::deserialize(deserializer)?).map_err(de::Error::custom)
     }
 }
 
@@ -340,30 +339,52 @@ impl Thm {
     }
 }
 
-/// An ephemeral one-based theorem slot identifier.
-///
-/// Removing a theorem permits a later insertion to reuse its identifier. A
-/// stale copied identifier can therefore alias an unrelated later theorem and
-/// must not be retained across deletion.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct ThmId(NonZeroU64);
+macro_rules! one_based_id {
+    ($name:ident, $summary:literal) => {
+        #[doc = $summary]
+        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        #[repr(transparent)]
+        pub struct $name(NonZeroI32);
 
-impl ThmId {
-    /// Constructs a one-based theorem slot identifier.
-    #[must_use]
-    pub const fn new(value: u64) -> Option<Self> {
-        match NonZeroU64::new(value) {
-            Some(value) => Some(Self(value)),
-            None => None,
+        impl $name {
+            /// Constructs a positive, one-based index.
+            #[must_use]
+            pub const fn new(value: i32) -> Option<Self> {
+                if value <= 0 {
+                    return None;
+                }
+                match NonZeroI32::new(value) {
+                    Some(value) => Some(Self(value)),
+                    None => None,
+                }
+            }
+
+            /// Returns the positive, one-based index.
+            #[must_use]
+            pub const fn get(self) -> i32 {
+                self.0.get()
+            }
+
+            fn position(self) -> usize {
+                usize::try_from(self.get() - 1)
+                    .expect("a positive i32 index is representable as usize")
+            }
         }
-    }
-
-    /// Returns the one-based slot number.
-    #[must_use]
-    pub const fn get(self) -> u64 {
-        self.0.get()
-    }
+    };
 }
+
+one_based_id!(
+    ThmId,
+    "An ephemeral one-based theorem slot identifier backed by `NonZeroI32`."
+);
+one_based_id!(
+    ClauseId,
+    "A one-based left-clause identifier backed by `NonZeroI32`."
+);
+one_based_id!(
+    CubeId,
+    "A one-based right-cube identifier backed by `NonZeroI32`."
+);
 
 /// A classical arena operation failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Snafu)]
@@ -373,29 +394,29 @@ pub enum Error {
     #[snafu(display("theorem {id} is absent"))]
     MissingTheorem {
         /// Missing one-based slot.
-        id: u64,
+        id: i32,
     },
     /// The indexed left clause is absent.
     #[snafu(display("left clause {index} is absent from theorem {id}"))]
     MissingClause {
         /// The theorem slot.
-        id: u64,
-        /// Zero-based clause index.
-        index: usize,
+        id: i32,
+        /// Missing one-based clause index.
+        index: i32,
     },
     /// The indexed right cube is absent.
     #[snafu(display("right cube {index} is absent from theorem {id}"))]
     MissingCube {
         /// The theorem slot.
-        id: u64,
-        /// Zero-based cube index.
-        index: usize,
+        id: i32,
+        /// Missing one-based cube index.
+        index: i32,
     },
     /// A unit literal needed by a rule is absent.
     #[snafu(display("required unit literal {literal} is absent"))]
     MissingUnit {
         /// Required signed literal.
-        literal: i64,
+        literal: i32,
     },
     /// No further theorem slot can be represented.
     #[snafu(display("theorem arena is full"))]
@@ -414,9 +435,8 @@ impl Serialize for ClassicalArena {
     where
         S: Serializer,
     {
-        let live = self.slots.iter().flatten();
-        let mut sequence = serializer.serialize_seq(Some(live.clone().count()))?;
-        for theorem in live {
+        let mut sequence = serializer.serialize_seq(Some(self.live_theorems().count()))?;
+        for theorem in self.live_theorems() {
             sequence.serialize_element(theorem)?;
         }
         sequence.end()
@@ -428,11 +448,7 @@ impl<'de> Deserialize<'de> for ClassicalArena {
     where
         D: Deserializer<'de>,
     {
-        let theorems = Vec::<Thm>::deserialize(deserializer)?;
-        Ok(Self {
-            slots: theorems.into_iter().map(Some).collect(),
-            free: Vec::new(),
-        })
+        Self::from_theorems(Vec::<Thm>::deserialize(deserializer)?).map_err(de::Error::custom)
     }
 }
 
@@ -444,6 +460,25 @@ impl ClassicalArena {
             slots: Vec::new(),
             free: Vec::new(),
         }
+    }
+
+    /// Builds dense theorem storage from rows in iteration order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::ArenaFull`] if the iterator contains more rows than
+    /// positive `i32` theorem identifiers can address.
+    pub fn from_theorems(theorems: impl IntoIterator<Item = Thm>) -> Result<Self, Error> {
+        let mut arena = Self::new();
+        for theorem in theorems {
+            arena.store(theorem)?;
+        }
+        Ok(arena)
+    }
+
+    /// Iterates over live theorem rows in slot order, skipping deleted slots.
+    pub fn live_theorems(&self) -> impl Iterator<Item = &Thm> {
+        self.slots.iter().flatten()
     }
 
     /// Borrows a stored row.
@@ -475,7 +510,7 @@ impl ClassicalArena {
             .slots
             .len()
             .checked_add(1)
-            .and_then(|value| u64::try_from(value).ok())
+            .and_then(|value| i32::try_from(value).ok())
             .and_then(ThmId::new)
             .ok_or(Error::ArenaFull)?;
         self.slots.push(Some(theorem));
@@ -615,12 +650,13 @@ impl ClassicalArena {
     /// # Errors
     ///
     /// Returns an error if the theorem or indexed clause is absent.
-    pub fn move_clause_right(&mut self, id: ThmId, index: usize) -> Result<(), Error> {
+    pub fn move_clause_right(&mut self, id: ThmId, clause: ClauseId) -> Result<(), Error> {
         let mut replacement = self.theorem(id)?.clone();
+        let index = clause.position();
         if index >= replacement.0.0.len() {
             return Err(Error::MissingClause {
                 id: id.get(),
-                index,
+                index: clause.get(),
             });
         }
         let clause = replacement.0.0.remove(index);
@@ -633,12 +669,13 @@ impl ClassicalArena {
     /// # Errors
     ///
     /// Returns an error if the theorem or indexed cube is absent.
-    pub fn move_cube_left(&mut self, id: ThmId, index: usize) -> Result<(), Error> {
+    pub fn move_cube_left(&mut self, id: ThmId, cube: CubeId) -> Result<(), Error> {
         let mut replacement = self.theorem(id)?.clone();
+        let index = cube.position();
         if index >= replacement.1.0.len() {
             return Err(Error::MissingCube {
                 id: id.get(),
-                index,
+                index: cube.get(),
             });
         }
         let cube = replacement.1.0.remove(index);
@@ -661,15 +698,15 @@ impl ClassicalArena {
     /// # Errors
     ///
     /// Returns an error if the theorem or indexed clause is absent.
-    pub fn normalize_clause(&mut self, id: ThmId, index: usize) -> Result<(), Error> {
+    pub fn normalize_clause(&mut self, id: ThmId, clause: ClauseId) -> Result<(), Error> {
         let theorem = self.theorem_mut(id)?;
         theorem
             .0
             .0
-            .get_mut(index)
+            .get_mut(clause.position())
             .ok_or(Error::MissingClause {
                 id: id.get(),
-                index,
+                index: clause.get(),
             })?
             .normalize();
         Ok(())
@@ -680,22 +717,22 @@ impl ClassicalArena {
     /// # Errors
     ///
     /// Returns an error if the theorem or indexed cube is absent.
-    pub fn normalize_cube(&mut self, id: ThmId, index: usize) -> Result<(), Error> {
+    pub fn normalize_cube(&mut self, id: ThmId, cube: CubeId) -> Result<(), Error> {
         let theorem = self.theorem_mut(id)?;
         theorem
             .1
             .0
-            .get_mut(index)
+            .get_mut(cube.position())
             .ok_or(Error::MissingCube {
                 id: id.get(),
-                index,
+                index: cube.get(),
             })?
             .normalize();
         Ok(())
     }
 
     fn position(id: ThmId) -> usize {
-        usize::try_from(id.get() - 1).unwrap_or(usize::MAX)
+        id.position()
     }
 
     fn theorem_mut(&mut self, id: ThmId) -> Result<&mut Thm, Error> {
@@ -722,8 +759,16 @@ impl ClassicalArena {
 mod tests {
     use super::*;
 
-    fn lit(value: i64) -> Lit {
+    fn lit(value: i32) -> Lit {
         Lit::new(value).unwrap()
+    }
+
+    fn clause_id(value: i32) -> ClauseId {
+        ClauseId::new(value).unwrap()
+    }
+
+    fn cube_id(value: i32) -> CubeId {
+        CubeId::new(value).unwrap()
     }
 
     fn eval_lit(literal: Lit, valuation: usize) -> bool {
@@ -769,13 +814,37 @@ mod tests {
     #[test]
     fn literal_boundaries_and_involution() {
         assert!(Lit::new(0).is_err());
-        assert!(Lit::new(i64::MIN).is_err());
-        assert!(Lit::new(i64::MIN + 1).is_err());
-        assert!(Lit::new(i64::MAX).is_err());
-        for value in [i64::MIN + 2, -1, 1, i64::MAX - 1] {
+        assert!(Lit::new(i32::MIN).is_err());
+        assert!(Lit::new(i32::MIN + 1).is_err());
+        assert!(Lit::new(i32::MAX).is_err());
+        for value in [i32::MIN + 2, -1, 1, i32::MAX - 1] {
             let literal = lit(value);
             assert_eq!(literal.negated().negated(), literal);
         }
+    }
+
+    #[test]
+    fn resident_indices_are_positive_nonzero_i32_values() {
+        assert_eq!(
+            std::mem::size_of::<ThmId>(),
+            std::mem::size_of::<NonZeroI32>()
+        );
+        assert_eq!(
+            std::mem::size_of::<ClauseId>(),
+            std::mem::size_of::<NonZeroI32>()
+        );
+        assert_eq!(
+            std::mem::size_of::<CubeId>(),
+            std::mem::size_of::<NonZeroI32>()
+        );
+        for rejected in [i32::MIN, -1, 0] {
+            assert!(ThmId::new(rejected).is_none());
+            assert!(ClauseId::new(rejected).is_none());
+            assert!(CubeId::new(rejected).is_none());
+        }
+        assert_eq!(ThmId::new(i32::MAX).unwrap().get(), i32::MAX);
+        assert_eq!(ClauseId::new(i32::MAX).unwrap().get(), i32::MAX);
+        assert_eq!(CubeId::new(i32::MAX).unwrap().get(), i32::MAX);
     }
 
     #[test]
@@ -822,14 +891,14 @@ mod tests {
             );
             let mut arena = ClassicalArena::new();
             let id = arena.store(original.clone()).unwrap();
-            arena.move_clause_right(id, 1).unwrap();
+            arena.move_clause_right(id, clause_id(2)).unwrap();
             for valuation in 0..8 {
                 assert_eq!(
                     sequent_value(&original, valuation),
                     sequent_value(arena.theorem(id).unwrap(), valuation)
                 );
             }
-            arena.move_cube_left(id, 1).unwrap();
+            arena.move_cube_left(id, cube_id(2)).unwrap();
             for valuation in 0..8 {
                 assert_eq!(
                     sequent_value(&original, valuation),
@@ -904,17 +973,17 @@ mod tests {
         let mut arena = ClassicalArena::new();
         let id = arena.identity(lit(1)).unwrap();
         let original = arena.theorem(id).unwrap().clone();
-        assert!(arena.move_clause_right(id, 7).is_err());
+        assert!(arena.move_clause_right(id, clause_id(8)).is_err());
         assert_eq!(arena.theorem(id).unwrap(), &original);
-        assert!(arena.move_cube_left(id, 7).is_err());
+        assert!(arena.move_cube_left(id, cube_id(8)).is_err());
         assert_eq!(arena.theorem(id).unwrap(), &original);
         assert!(arena.cut(id, id, lit(2)).is_err());
         assert_eq!(arena.theorem(id).unwrap(), &original);
         assert!(arena.resolve(id, id, lit(2)).is_err());
         assert_eq!(arena.theorem(id).unwrap(), &original);
-        assert!(arena.normalize_clause(id, 7).is_err());
+        assert!(arena.normalize_clause(id, clause_id(8)).is_err());
         assert_eq!(arena.theorem(id).unwrap(), &original);
-        assert!(arena.normalize_cube(id, 7).is_err());
+        assert!(arena.normalize_cube(id, cube_id(8)).is_err());
         assert_eq!(arena.theorem(id).unwrap(), &original);
 
         let next = arena.identity(lit(2)).unwrap();
@@ -998,7 +1067,7 @@ mod tests {
             covalence_lib_cbor::from_reader(bytes.as_slice()).unwrap();
         assert!(matches!(value, covalence_lib_cbor::Value::Array(parts) if parts.len() == 2));
 
-        for rejected in [0_i64, i64::MIN, -(i64::MAX), i64::MAX] {
+        for rejected in [0_i32, i32::MIN, -(i32::MAX), i32::MAX] {
             let mut encoded = Vec::new();
             covalence_lib_cbor::into_writer(&rejected, &mut encoded).unwrap();
             assert!(
@@ -1081,5 +1150,114 @@ mod tests {
                 .iter()
                 .any(|cube| { cube.literals() == [lit(-2), lit(2)] })
         );
+    }
+
+    #[test]
+    fn two_atom_rule_universe_is_exhaustively_sound() {
+        let literals = [lit(-2), lit(-1), lit(1), lit(2)];
+        let clauses: Vec<_> = (0_u8..16)
+            .map(|mask| {
+                Clause::new(
+                    literals
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, _)| mask & (1 << index) != 0)
+                        .map(|(_, literal)| *literal),
+                )
+            })
+            .collect();
+        let cubes: Vec<_> = clauses
+            .iter()
+            .map(|clause| Cube::new(clause.literals().iter().copied()))
+            .collect();
+
+        for (clause, cube) in clauses.iter().zip(&cubes) {
+            let mut theorem = Thm::new(
+                Cnf::new([Clause::new(
+                    clause.literals().iter().chain(clause.literals()).copied(),
+                )]),
+                Dnf::new([Cube::new(
+                    cube.literals().iter().chain(cube.literals()).copied(),
+                )]),
+            );
+            let before: Vec<_> = (0..4)
+                .map(|valuation| sequent_value(&theorem, valuation))
+                .collect();
+            theorem.normalize();
+            let after: Vec<_> = (0..4)
+                .map(|valuation| sequent_value(&theorem, valuation))
+                .collect();
+            assert_eq!(before, after);
+        }
+
+        let mut cnfs = vec![Cnf::default()];
+        cnfs.extend(clauses.iter().cloned().map(|clause| Cnf::new([clause])));
+        let mut dnfs = vec![Dnf::default()];
+        dnfs.extend(cubes.iter().cloned().map(|cube| Dnf::new([cube])));
+        let sound_theorems: Vec<_> = cnfs
+            .iter()
+            .flat_map(|cnf| {
+                dnfs.iter()
+                    .map(move |dnf| Thm::new(cnf.clone(), dnf.clone()))
+            })
+            .filter(|theorem| sound(theorem, 2))
+            .collect();
+
+        for theorem in &sound_theorems {
+            for clause in &clauses {
+                let mut arena = ClassicalArena::new();
+                let id = arena.store(theorem.clone()).unwrap();
+                arena.weaken(id, std::slice::from_ref(clause), &[]).unwrap();
+                assert!(sound(arena.theorem(id).unwrap(), 2));
+            }
+            for cube in &cubes {
+                let mut arena = ClassicalArena::new();
+                let id = arena.store(theorem.clone()).unwrap();
+                arena.weaken(id, &[], std::slice::from_ref(cube)).unwrap();
+                assert!(sound(arena.theorem(id).unwrap(), 2));
+            }
+        }
+
+        for left in &sound_theorems {
+            for right in &sound_theorems {
+                for pivot in [lit(-1), lit(-2), lit(1), lit(2)] {
+                    let cut_applies = left
+                        .right()
+                        .cubes()
+                        .iter()
+                        .any(|cube| cube.as_slice() == [pivot])
+                        && right
+                            .left()
+                            .clauses()
+                            .iter()
+                            .any(|clause| clause.as_slice() == [pivot]);
+                    if cut_applies {
+                        let mut arena = ClassicalArena::new();
+                        let left = arena.store(left.clone()).unwrap();
+                        let right = arena.store(right.clone()).unwrap();
+                        let result = arena.cut(left, right, pivot).unwrap();
+                        assert!(sound(arena.theorem(result).unwrap(), 2));
+                    }
+
+                    let resolution_applies = left
+                        .right()
+                        .cubes()
+                        .iter()
+                        .any(|cube| cube.as_slice() == [pivot])
+                        && right
+                            .right()
+                            .cubes()
+                            .iter()
+                            .any(|cube| cube.as_slice() == [pivot.negated()]);
+                    if resolution_applies {
+                        let mut arena = ClassicalArena::new();
+                        let left = arena.store(left.clone()).unwrap();
+                        let right = arena.store(right.clone()).unwrap();
+                        let result = arena.resolve(left, right, pivot).unwrap();
+                        assert!(sound(arena.theorem(result).unwrap(), 2));
+                    }
+                }
+            }
+        }
     }
 }

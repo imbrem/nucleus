@@ -58,7 +58,7 @@ fn removal_is_idempotent_and_bounded() {
         !fix.remove_syn_fact(fact_id(2)),
         "slot 2 was never allocated"
     );
-    assert!(!fix.remove_syn_fact(SynFactId::new(u64::MAX).expect("nonzero")));
+    assert!(!fix.remove_syn_fact(SynFactId::new(i32::MAX).expect("positive")));
     assert_eq!(fix.syn_fact_len(), 1);
 }
 

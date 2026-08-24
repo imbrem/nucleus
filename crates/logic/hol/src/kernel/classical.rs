@@ -1,8 +1,10 @@
 //! Checked finite classical sequents over stable local term references.
 
-use covalence_logic_classical::{ClassicalArena, Clause, Cnf, Cube, Dnf, Thm, ThmId};
-pub use covalence_logic_classical::{Lit as PropId, LitError as PropIdError};
-use smallvec::SmallVec;
+#[cfg(test)]
+use covalence_logic_classical::LitError;
+use covalence_logic_classical::{
+    ClassicalArena, Clause, ClauseId, Cnf, Cube, CubeId, Dnf, Lit, LitVec, Thm, ThmId,
+};
 
 use super::{Kernel, KernelError};
 use crate::{
@@ -10,15 +12,13 @@ use crate::{
     builtin::{Op1, Op2},
 };
 
-/// A compact sequence of propositions.
-pub type PropVec = SmallVec<[PropId; 2]>;
-
-fn positive(reference: Ref) -> PropId {
-    PropId::positive(reference.get())
+fn positive(reference: Ref) -> Lit {
+    Lit::positive(reference.get())
 }
 
-fn reference(proposition: PropId) -> Ref {
-    Ref::new(proposition.magnitude()).expect("PropId magnitude is nonzero")
+fn reference(proposition: Lit) -> Ref {
+    Ref::new(i32::try_from(proposition.magnitude()).expect("literal magnitude fits i32"))
+        .expect("literal magnitude is nonzero")
 }
 
 pub(super) type ClassicalState = ClassicalArena;
@@ -40,7 +40,7 @@ impl Kernel {
     /// # Errors
     ///
     /// Returns an error if `p` is not Boolean or allocation fails.
-    pub fn identity(&mut self, p: PropId) -> Result<ThmId, KernelError> {
+    pub fn identity(&mut self, p: Lit) -> Result<ThmId, KernelError> {
         self.push_sequent(&[p], &[p])
     }
 
@@ -52,8 +52,8 @@ impl Kernel {
     pub fn weaken(
         &mut self,
         theorem: ThmId,
-        premises: &[PropId],
-        conclusions: &[PropId],
+        premises: &[Lit],
+        conclusions: &[Lit],
     ) -> Result<(), KernelError> {
         let old = self.theorem(theorem)?.clone();
         let mut premises_out = old.premises().as_slice().to_vec();
@@ -104,9 +104,13 @@ impl Kernel {
     ///
     /// Returns an error if the theorem or clause is absent. The theorem is
     /// unchanged on error.
-    pub fn move_clause_right(&mut self, theorem: ThmId, index: usize) -> Result<(), KernelError> {
+    pub fn move_clause_right(
+        &mut self,
+        theorem: ThmId,
+        clause: ClauseId,
+    ) -> Result<(), KernelError> {
         self.classical
-            .move_clause_right(theorem, index)
+            .move_clause_right(theorem, clause)
             .map_err(|_| KernelError::InvalidTheoremRule {
                 rule: "clause transfer right",
             })
@@ -118,9 +122,9 @@ impl Kernel {
     ///
     /// Returns an error if the theorem or cube is absent. The theorem is
     /// unchanged on error.
-    pub fn move_cube_left(&mut self, theorem: ThmId, index: usize) -> Result<(), KernelError> {
+    pub fn move_cube_left(&mut self, theorem: ThmId, cube: CubeId) -> Result<(), KernelError> {
         self.classical
-            .move_cube_left(theorem, index)
+            .move_cube_left(theorem, cube)
             .map_err(|_| KernelError::InvalidTheoremRule {
                 rule: "cube transfer left",
             })
@@ -142,9 +146,13 @@ impl Kernel {
     /// # Errors
     ///
     /// Returns an error if the theorem or clause is absent.
-    pub fn normalize_clause(&mut self, theorem: ThmId, index: usize) -> Result<(), KernelError> {
+    pub fn normalize_clause(
+        &mut self,
+        theorem: ThmId,
+        clause: ClauseId,
+    ) -> Result<(), KernelError> {
         self.classical
-            .normalize_clause(theorem, index)
+            .normalize_clause(theorem, clause)
             .map_err(|_| KernelError::InvalidTheoremRule {
                 rule: "clause normalization",
             })
@@ -155,9 +163,9 @@ impl Kernel {
     /// # Errors
     ///
     /// Returns an error if the theorem or cube is absent.
-    pub fn normalize_cube(&mut self, theorem: ThmId, index: usize) -> Result<(), KernelError> {
+    pub fn normalize_cube(&mut self, theorem: ThmId, cube: CubeId) -> Result<(), KernelError> {
         self.classical
-            .normalize_cube(theorem, index)
+            .normalize_cube(theorem, cube)
             .map_err(|_| KernelError::InvalidTheoremRule {
                 rule: "cube normalization",
             })
@@ -175,7 +183,7 @@ impl Kernel {
         &mut self,
         left: ThmId,
         right: ThmId,
-        proposition: PropId,
+        proposition: Lit,
     ) -> Result<ThmId, KernelError> {
         let lhs = self.theorem(left)?.clone();
         let rhs = self.theorem(right)?.clone();
@@ -199,7 +207,7 @@ impl Kernel {
     ///
     /// Returns an error unless `falsehood` is a signed Boolean literal whose
     /// checked constant value is false.
-    pub fn false_left(&mut self, falsehood: PropId) -> Result<ThmId, KernelError> {
+    pub fn false_left(&mut self, falsehood: Lit) -> Result<ThmId, KernelError> {
         if self.signed_bool_value(falsehood)? != Some(false) {
             return Err(KernelError::InvalidTheoremRule { rule: "false left" });
         }
@@ -212,7 +220,7 @@ impl Kernel {
     ///
     /// Returns an error unless `truth` is a signed Boolean literal whose
     /// checked constant value is true.
-    pub fn true_right(&mut self, truth: PropId) -> Result<ThmId, KernelError> {
+    pub fn true_right(&mut self, truth: Lit) -> Result<ThmId, KernelError> {
         if self.signed_bool_value(truth)? != Some(true) {
             return Err(KernelError::InvalidTheoremRule { rule: "true right" });
         }
@@ -226,7 +234,7 @@ impl Kernel {
     /// # Errors
     ///
     /// Returns an error unless `p` occurs in the conclusion.
-    pub fn not_left(&mut self, theorem: ThmId, p: PropId) -> Result<(), KernelError> {
+    pub fn not_left(&mut self, theorem: ThmId, p: Lit) -> Result<(), KernelError> {
         let source = self.theorem(theorem)?.clone();
         let mut conclusions = source.conclusions().as_slice().to_vec();
         if !remove_unit_cube(&mut conclusions, p) {
@@ -245,7 +253,7 @@ impl Kernel {
     /// # Errors
     ///
     /// Returns an error unless `p` occurs in the premise.
-    pub fn not_right(&mut self, theorem: ThmId, p: PropId) -> Result<(), KernelError> {
+    pub fn not_right(&mut self, theorem: ThmId, p: Lit) -> Result<(), KernelError> {
         let source = self.theorem(theorem)?.clone();
         let mut premises = source.premises().as_slice().to_vec();
         if !remove_unit_clause(&mut premises, p) {
@@ -263,7 +271,7 @@ impl Kernel {
     ///
     /// Returns an error unless both operands occur in the premise and
     /// `conjunction` is their positive `tm.and` opcode.
-    pub fn and_left(&mut self, theorem: ThmId, conjunction: PropId) -> Result<ThmId, KernelError> {
+    pub fn and_left(&mut self, theorem: ThmId, conjunction: Lit) -> Result<ThmId, KernelError> {
         let (left, right) = self.require_binary(conjunction, Op2::And)?;
         let source = self.theorem(theorem)?.clone();
         let mut premises = source.premises().as_slice().to_vec();
@@ -283,7 +291,7 @@ impl Kernel {
         &mut self,
         left_theorem: ThmId,
         right_theorem: ThmId,
-        conjunction: PropId,
+        conjunction: Lit,
     ) -> Result<ThmId, KernelError> {
         let (left, right) = self.require_binary(conjunction, Op2::And)?;
         let lhs = self.theorem(left_theorem)?.clone();
@@ -310,7 +318,7 @@ impl Kernel {
         &mut self,
         left_theorem: ThmId,
         right_theorem: ThmId,
-        disjunction: PropId,
+        disjunction: Lit,
     ) -> Result<ThmId, KernelError> {
         let (left, right) = self.require_binary(disjunction, Op2::Or)?;
         let lhs = self.theorem(left_theorem)?.clone();
@@ -335,7 +343,7 @@ impl Kernel {
     ///
     /// Returns an error unless both operands occur in the conclusion and
     /// `disjunction` is their positive `tm.or` opcode.
-    pub fn or_right(&mut self, theorem: ThmId, disjunction: PropId) -> Result<ThmId, KernelError> {
+    pub fn or_right(&mut self, theorem: ThmId, disjunction: Lit) -> Result<ThmId, KernelError> {
         let (left, right) = self.require_binary(disjunction, Op2::Or)?;
         let source = self.theorem(theorem)?.clone();
         let mut conclusions = source.conclusions().as_slice().to_vec();
@@ -356,7 +364,7 @@ impl Kernel {
         &mut self,
         left_theorem: ThmId,
         right_theorem: ThmId,
-        implication: PropId,
+        implication: Lit,
     ) -> Result<ThmId, KernelError> {
         let (antecedent, consequent) = self.require_binary(implication, Op2::Imp)?;
         let lhs = self.theorem(left_theorem)?.clone();
@@ -382,7 +390,7 @@ impl Kernel {
     ///
     /// Returns an error unless the antecedent occurs in the premise and the
     /// consequent occurs in the conclusion.
-    pub fn imp_right(&mut self, theorem: ThmId, implication: PropId) -> Result<ThmId, KernelError> {
+    pub fn imp_right(&mut self, theorem: ThmId, implication: Lit) -> Result<ThmId, KernelError> {
         let (antecedent, consequent) = self.require_binary(implication, Op2::Imp)?;
         let source = self.theorem(theorem)?.clone();
         let mut premises = source.premises().as_slice().to_vec();
@@ -402,12 +410,7 @@ impl Kernel {
     ///
     /// Returns an error unless `pivot` and its complement occur on the
     /// respective right sides.
-    pub fn resolve(
-        &mut self,
-        left: ThmId,
-        right: ThmId,
-        pivot: PropId,
-    ) -> Result<ThmId, KernelError> {
+    pub fn resolve(&mut self, left: ThmId, right: ThmId, pivot: Lit) -> Result<ThmId, KernelError> {
         let lhs = self.theorem(left)?.clone();
         let rhs = self.theorem(right)?.clone();
         let mut left_conc = lhs.conclusions().as_slice().to_vec();
@@ -436,7 +439,7 @@ impl Kernel {
     pub fn expand_conclusion(
         &mut self,
         theorem: ThmId,
-        formula: PropId,
+        formula: Lit,
         branch: Option<bool>,
     ) -> Result<ThmId, KernelError> {
         let source = self.theorem(theorem)?.clone();
@@ -464,7 +467,7 @@ impl Kernel {
     pub fn flatten_conclusion(
         &mut self,
         theorem: ThmId,
-        formula: PropId,
+        formula: Lit,
     ) -> Result<ThmId, KernelError> {
         let source = self.theorem(theorem)?.clone();
         let mut conclusions = source.conclusions().as_slice().to_vec();
@@ -491,11 +494,7 @@ impl Kernel {
     ///
     /// Returns an error unless `formula` occurs in the premise and every
     /// compound node has a conjunctive normalized form.
-    pub fn flatten_premise(
-        &mut self,
-        theorem: ThmId,
-        formula: PropId,
-    ) -> Result<ThmId, KernelError> {
+    pub fn flatten_premise(&mut self, theorem: ThmId, formula: Lit) -> Result<ThmId, KernelError> {
         let source = self.theorem(theorem)?.clone();
         let mut premises = source.premises().as_slice().to_vec();
         if !remove_unit_clause(&mut premises, formula) {
@@ -513,7 +512,7 @@ impl Kernel {
     /// # Errors
     ///
     /// Returns an error unless every normalized leaf occurs in the premise.
-    pub fn fold_premise(&mut self, theorem: ThmId, formula: PropId) -> Result<ThmId, KernelError> {
+    pub fn fold_premise(&mut self, theorem: ThmId, formula: Lit) -> Result<ThmId, KernelError> {
         self.fold_tree(theorem, formula, TreeSide::Conjunctive)
     }
 
@@ -522,11 +521,7 @@ impl Kernel {
     /// # Errors
     ///
     /// Returns an error unless every normalized leaf occurs in the conclusion.
-    pub fn fold_conclusion(
-        &mut self,
-        theorem: ThmId,
-        formula: PropId,
-    ) -> Result<ThmId, KernelError> {
+    pub fn fold_conclusion(&mut self, theorem: ThmId, formula: Lit) -> Result<ThmId, KernelError> {
         self.fold_tree(theorem, formula, TreeSide::Disjunctive)
     }
 
@@ -547,7 +542,7 @@ impl Kernel {
         self.classical.remove(id).is_ok()
     }
 
-    fn validate_prop(&self, proposition: PropId) -> Result<(), KernelError> {
+    fn validate_prop(&self, proposition: Lit) -> Result<(), KernelError> {
         self.require_bool_term::<std::convert::Infallible>(reference(proposition))
             .map(|_| ())
     }
@@ -559,18 +554,14 @@ impl Kernel {
     }
     fn push_sequent(
         &mut self,
-        premises: &[PropId],
-        conclusions: &[PropId],
+        premises: &[Lit],
+        conclusions: &[Lit],
     ) -> Result<ThmId, KernelError> {
         let theorem = self.checked_sequent(premises, conclusions)?;
         self.push_theorem(theorem)
     }
 
-    fn checked_sequent(
-        &self,
-        premises: &[PropId],
-        conclusions: &[PropId],
-    ) -> Result<Thm, KernelError> {
+    fn checked_sequent(&self, premises: &[Lit], conclusions: &[Lit]) -> Result<Thm, KernelError> {
         let premises = self.canonical_props(premises)?;
         let conclusions = self.canonical_props(conclusions)?;
         Ok(Thm::new(
@@ -585,7 +576,7 @@ impl Kernel {
             .replace(id, theorem)
             .map_err(|_| KernelError::MissingTheorem { id })
     }
-    fn signed_bool_value(&self, proposition: PropId) -> Result<Option<bool>, KernelError> {
+    fn signed_bool_value(&self, proposition: Lit) -> Result<Option<bool>, KernelError> {
         self.validate_prop(proposition)?;
         Ok(self.arena.bool_value(reference(proposition)).map(|value| {
             if proposition.is_positive() {
@@ -595,11 +586,7 @@ impl Kernel {
             }
         }))
     }
-    fn require_binary(
-        &self,
-        proposition: PropId,
-        expected: Op2,
-    ) -> Result<(PropId, PropId), KernelError> {
+    fn require_binary(&self, proposition: Lit, expected: Op2) -> Result<(Lit, Lit), KernelError> {
         self.validate_prop(proposition)?;
         if !proposition.is_positive() || self.arena.op2(reference(proposition)) != Some(expected) {
             return Err(KernelError::InvalidTheoremRule {
@@ -622,27 +609,23 @@ impl Kernel {
     }
     fn validate_props(
         &self,
-        propositions: impl IntoIterator<Item = PropId>,
+        propositions: impl IntoIterator<Item = Lit>,
     ) -> Result<(), KernelError> {
         for proposition in propositions {
             self.validate_prop(proposition)?;
         }
         Ok(())
     }
-    fn canonical_props(&self, propositions: &[PropId]) -> Result<PropVec, KernelError> {
+    fn canonical_props(&self, propositions: &[Lit]) -> Result<LitVec, KernelError> {
         let mut propositions = propositions.to_vec();
         propositions.sort_unstable();
         propositions.dedup();
         for proposition in &propositions {
             self.validate_prop(*proposition)?;
         }
-        Ok(PropVec::from_slice(&propositions))
+        Ok(LitVec::from_slice(&propositions))
     }
-    fn expand_right(
-        &self,
-        formula: PropId,
-        branch: Option<bool>,
-    ) -> Result<Vec<PropId>, KernelError> {
+    fn expand_right(&self, formula: Lit, branch: Option<bool>) -> Result<Vec<Lit>, KernelError> {
         let reference = reference(formula);
         if let Some(value) = self.arena.bool_value(reference) {
             if value != formula.is_positive() {
@@ -697,7 +680,7 @@ impl Kernel {
         }
     }
 
-    fn disjunctive_children(&self, formula: PropId) -> Result<Option<Vec<PropId>>, KernelError> {
+    fn disjunctive_children(&self, formula: Lit) -> Result<Option<Vec<Lit>>, KernelError> {
         let reference = reference(formula);
         if let Some(value) = self.arena.bool_value(reference) {
             if value != formula.is_positive() {
@@ -738,7 +721,7 @@ impl Kernel {
         }
     }
 
-    fn conjunctive_children(&self, formula: PropId) -> Result<Option<Vec<PropId>>, KernelError> {
+    fn conjunctive_children(&self, formula: Lit) -> Result<Option<Vec<Lit>>, KernelError> {
         let reference = reference(formula);
         if let Some(value) = self.arena.bool_value(reference) {
             if value == formula.is_positive() {
@@ -779,9 +762,9 @@ impl Kernel {
         }
     }
 
-    fn collect_tree(&self, formula: PropId, side: TreeSide) -> Result<PropVec, KernelError> {
+    fn collect_tree(&self, formula: Lit, side: TreeSide) -> Result<LitVec, KernelError> {
         let mut pending = vec![formula];
-        let mut leaves = PropVec::new();
+        let mut leaves = LitVec::new();
         while let Some(current) = pending.pop() {
             let children = match side {
                 TreeSide::Conjunctive => self.conjunctive_children(current)?,
@@ -798,7 +781,7 @@ impl Kernel {
     fn fold_tree(
         &mut self,
         theorem: ThmId,
-        formula: PropId,
+        formula: Lit,
         side: TreeSide,
     ) -> Result<ThmId, KernelError> {
         let source = self.theorem(theorem)?.clone();
@@ -834,27 +817,23 @@ enum TreeSide {
     Disjunctive,
 }
 
-fn unit_clause(proposition: PropId) -> Clause {
+fn unit_clause(proposition: Lit) -> Clause {
     Clause::new([proposition])
 }
 
-fn unit_cube(proposition: PropId) -> Cube {
+fn unit_cube(proposition: Lit) -> Cube {
     Cube::new([proposition])
 }
 
-fn remove_unit_clause(clauses: &mut Vec<Clause>, proposition: PropId) -> bool {
+fn remove_unit_clause(clauses: &mut Vec<Clause>, proposition: Lit) -> bool {
     remove_unit_row(clauses, proposition, Clause::as_slice)
 }
 
-fn remove_unit_cube(cubes: &mut Vec<Cube>, proposition: PropId) -> bool {
+fn remove_unit_cube(cubes: &mut Vec<Cube>, proposition: Lit) -> bool {
     remove_unit_row(cubes, proposition, Cube::as_slice)
 }
 
-fn remove_unit_row<T>(
-    rows: &mut Vec<T>,
-    proposition: PropId,
-    literals: fn(&T) -> &[PropId],
-) -> bool {
+fn remove_unit_row<T>(rows: &mut Vec<T>, proposition: Lit, literals: fn(&T) -> &[Lit]) -> bool {
     let Some(index) = rows.iter().position(|row| literals(row) == [proposition]) else {
         return false;
     };
@@ -862,14 +841,14 @@ fn remove_unit_row<T>(
     true
 }
 
-fn remove_unit_clause_pair(clauses: &mut Vec<Clause>, left: PropId, right: PropId) -> bool {
+fn remove_unit_clause_pair(clauses: &mut Vec<Clause>, left: Lit, right: Lit) -> bool {
     if !remove_unit_clause(clauses, left) {
         return false;
     }
     left == right || remove_unit_clause(clauses, right)
 }
 
-fn remove_unit_cube_pair(cubes: &mut Vec<Cube>, left: PropId, right: PropId) -> bool {
+fn remove_unit_cube_pair(cubes: &mut Vec<Cube>, left: Lit, right: Lit) -> bool {
     if !remove_unit_cube(cubes, left) {
         return false;
     }
@@ -883,8 +862,8 @@ mod tests {
 
     struct Fixture {
         kernel: Kernel,
-        p: PropId,
-        q: PropId,
+        p: Lit,
+        q: Lit,
     }
 
     fn fixture() -> Fixture {
@@ -900,7 +879,17 @@ mod tests {
         }
     }
 
-    fn unit_premises(theorem: &Thm) -> Vec<PropId> {
+    fn clause_id(position: usize) -> ClauseId {
+        let one_based = position.checked_add(1).unwrap();
+        ClauseId::new(i32::try_from(one_based).unwrap()).unwrap()
+    }
+
+    fn cube_id(position: usize) -> CubeId {
+        let one_based = position.checked_add(1).unwrap();
+        CubeId::new(i32::try_from(one_based).unwrap()).unwrap()
+    }
+
+    fn unit_premises(theorem: &Thm) -> Vec<Lit> {
         theorem
             .premises()
             .clauses()
@@ -915,7 +904,7 @@ mod tests {
             .collect()
     }
 
-    fn unit_conclusions(theorem: &Thm) -> Vec<PropId> {
+    fn unit_conclusions(theorem: &Thm) -> Vec<Lit> {
         theorem
             .conclusions()
             .cubes()
@@ -938,19 +927,10 @@ mod tests {
         assert!(positive.is_positive());
         assert_eq!(reference(positive), term);
         assert_eq!(positive.negated().get(), 7);
-        assert_eq!(PropId::from_raw(0), Err(PropIdError { value: 0 }));
-        assert_eq!(
-            PropId::from_raw(i64::MIN),
-            Err(PropIdError { value: i64::MIN })
-        );
-        assert_eq!(
-            PropId::from_raw(i64::MAX),
-            Err(PropIdError { value: i64::MAX })
-        );
-        assert_eq!(
-            PropId::from_raw(-i64::MAX),
-            Err(PropIdError { value: -i64::MAX })
-        );
+        assert_eq!(Lit::from_raw(0), Err(LitError { value: 0 }));
+        assert_eq!(Lit::from_raw(i32::MIN), Err(LitError { value: i32::MIN }));
+        assert_eq!(Lit::from_raw(i32::MAX), Err(LitError { value: i32::MAX }));
+        assert_eq!(Lit::from_raw(-i32::MAX), Err(LitError { value: -i32::MAX }));
     }
 
     #[test]
@@ -1017,7 +997,9 @@ mod tests {
             .iter()
             .position(|candidate| candidate == &clause)
             .unwrap();
-        kernel.move_clause_right(theorem, clause_index).unwrap();
+        kernel
+            .move_clause_right(theorem, clause_id(clause_index))
+            .unwrap();
         assert!(
             kernel
                 .theorem(theorem)
@@ -1036,7 +1018,7 @@ mod tests {
             .iter()
             .position(|candidate| candidate == &cube)
             .unwrap();
-        kernel.move_cube_left(theorem, cube_index).unwrap();
+        kernel.move_cube_left(theorem, cube_id(cube_index)).unwrap();
         assert!(
             kernel
                 .theorem(theorem)
@@ -1054,15 +1036,23 @@ mod tests {
         let Fixture { mut kernel, p, .. } = fixture();
         let theorem = kernel.identity(p).unwrap();
         let before = kernel.theorem(theorem).unwrap().clone();
-        let missing = PropId::from_raw(-999_999).unwrap();
+        let missing = Lit::from_raw(-999_999).unwrap();
         assert!(
             kernel
                 .weaken_matrix(theorem, &[Clause::new([missing])], &[])
                 .is_err()
         );
         assert_eq!(kernel.theorem(theorem).unwrap(), &before);
-        assert!(kernel.move_clause_right(theorem, usize::MAX).is_err());
-        assert!(kernel.move_cube_left(theorem, usize::MAX).is_err());
+        assert!(
+            kernel
+                .move_clause_right(theorem, ClauseId::new(i32::MAX).unwrap())
+                .is_err()
+        );
+        assert!(
+            kernel
+                .move_cube_left(theorem, CubeId::new(i32::MAX).unwrap())
+                .is_err()
+        );
         assert_eq!(kernel.theorem(theorem).unwrap(), &before);
     }
 
@@ -1438,7 +1428,7 @@ mod tests {
         assert_eq!(unit_premises(kernel.theorem(unary).unwrap()), expected);
         assert_eq!(unit_premises(kernel.theorem(preserved).unwrap()), [p]);
         let before = kernel.theorem(unary).unwrap().clone();
-        let missing = PropId::from_raw(-999_999).unwrap();
+        let missing = Lit::from_raw(-999_999).unwrap();
         assert!(kernel.weaken(unary, &[missing], &[]).is_err());
         assert_eq!(kernel.theorem(unary).unwrap(), &before);
         assert!(kernel.and_left(unary, q).is_err());
@@ -1473,7 +1463,7 @@ mod tests {
         let Fixture { mut kernel, p, q } = fixture();
         let theorem = kernel.identity(p).unwrap();
         let original = kernel.theorem(theorem).unwrap().clone();
-        let missing = PropId::from_raw(-999_999).unwrap();
+        let missing = Lit::from_raw(-999_999).unwrap();
 
         assert!(kernel.weaken(theorem, &[missing], &[]).is_err());
         assert_eq!(kernel.theorem(theorem).unwrap(), &original);
@@ -1517,8 +1507,8 @@ mod tests {
         assert_valid(&kernel, or_right, &[p, q]);
     }
 
-    fn valid(sequent: &Thm, p: PropId, p_value: bool, q: PropId, q_value: bool) -> bool {
-        let value = |proposition: PropId| {
+    fn valid(sequent: &Thm, p: Lit, p_value: bool, q: Lit, q_value: bool) -> bool {
+        let value = |proposition: Lit| {
             let atom = if reference(proposition) == reference(p) {
                 p_value
             } else {
@@ -1543,7 +1533,7 @@ mod tests {
                 .any(|cube| cube.literals().iter().copied().all(&value))
     }
 
-    fn assert_valid(kernel: &Kernel, theorem: ThmId, atoms: &[PropId]) {
+    fn assert_valid(kernel: &Kernel, theorem: ThmId, atoms: &[Lit]) {
         for mask in 0..(1_usize << atoms.len()) {
             let values: BTreeMap<_, _> = atoms
                 .iter()
@@ -1567,7 +1557,7 @@ mod tests {
         }
     }
 
-    fn evaluate(kernel: &Kernel, proposition: PropId, atoms: &BTreeMap<Ref, bool>) -> bool {
+    fn evaluate(kernel: &Kernel, proposition: Lit, atoms: &BTreeMap<Ref, bool>) -> bool {
         let reference = reference(proposition);
         let positive = if let Some(value) = kernel.arena().bool_value(reference) {
             value

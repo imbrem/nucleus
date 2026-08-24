@@ -104,11 +104,11 @@ pub fn slots(kernel: &Kernel) -> Vec<Option<SynFact>> {
 
 /// One-based fact slot handle. Panics on zero, which no caller should produce.
 pub fn fact_id(position: usize) -> SynFactId {
-    SynFactId::new(u64::try_from(position).expect("slot fits in u64")).expect("slots are one-based")
+    SynFactId::new(i32::try_from(position).expect("slot fits in i32")).expect("slots are one-based")
 }
 
 /// One-based row handle. Panics on zero, which no caller should produce.
-pub fn row_id(position: u64) -> Ref {
+pub fn row_id(position: i32) -> Ref {
     Ref::new(position).expect("rows are one-based")
 }
 

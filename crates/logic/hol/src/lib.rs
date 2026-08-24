@@ -13,14 +13,15 @@ mod table;
 pub mod wire;
 
 pub use kernel::{
-    Clause, Cnf, CopyMap, Cube, Dnf, Kernel, KernelError, PropId, PropIdError, PropVec, Thm, ThmId,
+    Clause, ClauseId, Cnf, CopyMap, Cube, CubeId, Dnf, Kernel, KernelError, Lit, LitError, LitVec,
+    Thm, ThmId,
 };
 pub use resolve::{Expr, ResolveError, Resolver, ResolverExt};
 pub use row::{KindTag, Sort, Tag, TmTag, TyTag};
 pub use syn::{SynFact, SynRel};
 pub use table::Table;
 
-use std::{collections::BTreeSet, num::NonZeroU64};
+use std::{collections::BTreeSet, num::NonZeroI32};
 
 use covalence_lib_hash::O256;
 use row::Row;
@@ -30,14 +31,32 @@ use syn::{SynFree, SynSlot};
 macro_rules! id_type {
     ($(#[$attribute:meta])* $visibility:vis struct $name:ident($storage:ty);) => {
         $(#[$attribute])*
-        #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
         #[repr(transparent)]
-        #[serde(transparent)]
         $visibility struct $name($storage);
 
-        impl From<$name> for u64 {
+        impl From<$name> for i32 {
             fn from(value: $name) -> Self {
                 value.get()
+            }
+        }
+
+        impl Serialize for $name {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                self.get().serialize(serializer)
+            }
+        }
+
+        impl<'de> Deserialize<'de> for $name {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                let value = i32::deserialize(deserializer)?;
+                Self::new(value).ok_or_else(|| serde::de::Error::custom(ZeroId))
             }
         }
     };
@@ -45,11 +64,11 @@ macro_rules! id_type {
 
 /// A one-based local definition reference. `Ref(n)` addresses `defs[n - 1]`.
 ///
-/// References are globally bounded by the lossless signed proposition wire
-/// space: `0 < n < i64::MAX`.
+/// References are globally bounded by the lossless signed literal wire space:
+/// `0 < n < i32::MAX`.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[repr(transparent)]
-pub struct Ref(NonZeroU64);
+pub struct Ref(NonZeroI32);
 
 /// A value outside the global local-reference range.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, covalence_lib_error::snafu::Snafu)]
@@ -57,36 +76,36 @@ pub struct Ref(NonZeroU64);
 #[snafu(display("reference {value} is outside the supported range"))]
 pub struct RefError {
     /// Rejected integer.
-    pub value: u64,
+    pub value: i32,
 }
 
 impl Ref {
     #[must_use]
-    pub const fn new(value: u64) -> Option<Self> {
-        if value >= i64::MAX as u64 {
+    pub const fn new(value: i32) -> Option<Self> {
+        if value <= 0 || value == i32::MAX {
             return None;
         }
-        match NonZeroU64::new(value) {
+        match NonZeroI32::new(value) {
             Some(value) => Some(Self(value)),
             None => None,
         }
     }
 
     #[must_use]
-    pub const fn get(self) -> u64 {
+    pub const fn get(self) -> i32 {
         self.0.get()
     }
 }
 
-impl TryFrom<u64> for Ref {
+impl TryFrom<i32> for Ref {
     type Error = RefError;
 
-    fn try_from(value: u64) -> Result<Self, Self::Error> {
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
         Self::new(value).ok_or(RefError { value })
     }
 }
 
-impl From<Ref> for u64 {
+impl From<Ref> for i32 {
     fn from(value: Ref) -> Self {
         value.get()
     }
@@ -106,35 +125,38 @@ impl<'de> Deserialize<'de> for Ref {
     where
         D: serde::Deserializer<'de>,
     {
-        let value = u64::deserialize(deserializer)?;
+        let value = i32::deserialize(deserializer)?;
         Self::new(value).ok_or_else(|| serde::de::Error::custom(RefError { value }))
     }
 }
 
 id_type! {
     /// A one-based index into an arena's import array.
-    pub struct ImportId(NonZeroU64);
+    pub struct ImportId(NonZeroI32);
 }
 
 impl ImportId {
     #[must_use]
-    pub const fn new(value: u64) -> Option<Self> {
-        match NonZeroU64::new(value) {
+    pub const fn new(value: i32) -> Option<Self> {
+        if value <= 0 {
+            return None;
+        }
+        match NonZeroI32::new(value) {
             Some(value) => Some(Self(value)),
             None => None,
         }
     }
 
     #[must_use]
-    pub const fn get(self) -> u64 {
+    pub const fn get(self) -> i32 {
         self.0.get()
     }
 }
 
-impl TryFrom<u64> for ImportId {
+impl TryFrom<i32> for ImportId {
     type Error = ZeroId;
 
-    fn try_from(value: u64) -> Result<Self, Self::Error> {
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
         Self::new(value).ok_or(ZeroId)
     }
 }
@@ -144,28 +166,31 @@ id_type! {
     ///
     /// IDs are ephemeral cache handles. Removing or truncating facts permits
     /// a later insertion to reuse the same ID for a different fact.
-    pub struct SynFactId(NonZeroU64);
+    pub struct SynFactId(NonZeroI32);
 }
 
 impl SynFactId {
     #[must_use]
-    pub const fn new(value: u64) -> Option<Self> {
-        match NonZeroU64::new(value) {
+    pub const fn new(value: i32) -> Option<Self> {
+        if value <= 0 {
+            return None;
+        }
+        match NonZeroI32::new(value) {
             Some(value) => Some(Self(value)),
             None => None,
         }
     }
 
     #[must_use]
-    pub const fn get(self) -> u64 {
+    pub const fn get(self) -> i32 {
         self.0.get()
     }
 }
 
-impl TryFrom<u64> for SynFactId {
+impl TryFrom<i32> for SynFactId {
     type Error = ZeroId;
 
-    fn try_from(value: u64) -> Result<Self, Self::Error> {
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
         Self::new(value).ok_or(ZeroId)
     }
 }
@@ -482,7 +507,7 @@ impl Arena {
     /// This is a representation operation, not a trust decision. A checked
     /// layer must resolve and validate every import it relies on.
     pub fn push_import(&mut self, import: Import) -> Option<ImportId> {
-        let next = u64::try_from(self.imports.len()).ok()?.checked_add(1)?;
+        let next = i32::try_from(self.imports.len()).ok()?.checked_add(1)?;
         let source = ImportId::new(next)?;
         self.imports.push(import);
         Some(source)
@@ -670,7 +695,7 @@ impl Arena {
     }
 
     pub(crate) fn push_row(&mut self, row: Row) -> Option<Ref> {
-        let next = u64::try_from(self.dense.defs.len()).ok()?.checked_add(1)?;
+        let next = i32::try_from(self.dense.defs.len()).ok()?.checked_add(1)?;
         let reference = Ref::new(next)?;
         self.dense.defs.push(row);
         Some(reference)
@@ -704,7 +729,7 @@ impl Arena {
             *slot = SynSlot::Fact(fact);
             return Some(id);
         }
-        let next = u64::try_from(self.syn_facts.len()).ok()?.checked_add(1)?;
+        let next = i32::try_from(self.syn_facts.len()).ok()?.checked_add(1)?;
         let id = SynFactId::new(next)?;
         self.syn_facts.push(SynSlot::Fact(fact));
         Some(id)
@@ -758,7 +783,7 @@ impl Arena {
         self.syn_free = None;
         for position in (0..self.syn_facts.len()).rev() {
             if matches!(self.syn_facts[position], SynSlot::Free(_)) {
-                let Some(value) = u64::try_from(position)
+                let Some(value) = i32::try_from(position)
                     .ok()
                     .and_then(|position| position.checked_add(1))
                     .and_then(SynFactId::new)
@@ -872,7 +897,7 @@ mod tests {
     use super::*;
     use row::Expr;
 
-    const fn reference(value: u64) -> Ref {
+    const fn reference(value: i32) -> Ref {
         Ref::new(value).unwrap()
     }
 
@@ -912,16 +937,42 @@ mod tests {
 
     #[test]
     fn references_are_strictly_bounded_by_the_signed_wire_space() {
-        let largest = i64::MAX as u64 - 1;
+        let largest = i32::MAX - 1;
         assert_eq!(Ref::new(0), None);
         assert_eq!(Ref::new(largest).unwrap().get(), largest);
-        assert_eq!(Ref::new(i64::MAX as u64), None);
-        assert_eq!(Ref::new(u64::MAX), None);
+        assert_eq!(Ref::new(i32::MAX), None);
+        assert_eq!(Ref::new(i32::MIN), None);
 
-        for rejected in [0, i64::MAX as u64, u64::MAX] {
+        for rejected in [0, i32::MIN, i32::MAX] {
             let mut bytes = Vec::new();
             covalence_lib_cbor::into_writer(&rejected, &mut bytes).unwrap();
             assert!(covalence_lib_cbor::from_reader::<Ref, _>(bytes.as_slice()).is_err());
         }
+    }
+
+    #[test]
+    fn every_dense_identifier_is_positive_and_i32_sized() {
+        assert_eq!(
+            std::mem::size_of::<Ref>(),
+            std::mem::size_of::<NonZeroI32>()
+        );
+        assert_eq!(
+            std::mem::size_of::<ImportId>(),
+            std::mem::size_of::<NonZeroI32>()
+        );
+        assert_eq!(
+            std::mem::size_of::<SynFactId>(),
+            std::mem::size_of::<NonZeroI32>()
+        );
+        for rejected in [i32::MIN, -1, 0] {
+            assert!(ImportId::new(rejected).is_none());
+            assert!(SynFactId::new(rejected).is_none());
+            let mut bytes = Vec::new();
+            covalence_lib_cbor::into_writer(&rejected, &mut bytes).unwrap();
+            assert!(covalence_lib_cbor::from_reader::<ImportId, _>(bytes.as_slice()).is_err());
+            assert!(covalence_lib_cbor::from_reader::<SynFactId, _>(bytes.as_slice()).is_err());
+        }
+        assert_eq!(ImportId::new(i32::MAX).unwrap().get(), i32::MAX);
+        assert_eq!(SynFactId::new(i32::MAX).unwrap().get(), i32::MAX);
     }
 }

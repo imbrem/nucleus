@@ -22,8 +22,9 @@ mod classical;
 mod syn_facts;
 
 use classical::ClassicalState;
-pub use classical::{PropId, PropIdError, PropVec};
-pub use covalence_logic_classical::{Clause, Cnf, Cube, Dnf, Thm, ThmId};
+pub use covalence_logic_classical::{
+    Clause, ClauseId, Cnf, Cube, CubeId, Dnf, Lit, LitError, LitVec, Thm, ThmId,
+};
 
 /// A recoverable failure at the checked kernel boundary.
 #[derive(Debug, Snafu)]
@@ -339,12 +340,12 @@ impl Kernel {
             .len()
             .checked_add(order.len())
             .ok_or(KernelError::TooManyDefinitions)?;
-        u64::try_from(final_len).map_err(|_| KernelError::TooManyDefinitions)?;
+        i32::try_from(final_len).map_err(|_| KernelError::TooManyDefinitions)?;
 
         for (offset, &source_ref) in order.iter().enumerate() {
             let value = self.arena.len() + offset + 1;
             let destination =
-                Ref::new(u64::try_from(value).map_err(|_| KernelError::TooManyDefinitions)?)
+                Ref::new(i32::try_from(value).map_err(|_| KernelError::TooManyDefinitions)?)
                     .ok_or(KernelError::TooManyDefinitions)?;
             nodes.insert(source_ref, destination);
         }
@@ -1372,7 +1373,7 @@ impl Kernel {
     {
         (1..=self.arena.len())
             .map(|position| {
-                u64::try_from(position)
+                i32::try_from(position)
                     .ok()
                     .and_then(Ref::new)
                     .ok_or(KernelError::TooManyDefinitions)

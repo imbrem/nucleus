@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use covalence_lib_error::snafu::{self, Snafu};
 use covalence_logic_hol::{
-    Cnf, Kernel, KernelError, PropId, Ref, Thm, ThmId,
+    Cnf, Kernel, KernelError, Lit, Ref, Thm, ThmId,
     builtin::{Op1, Op2},
 };
 
@@ -13,7 +13,7 @@ use crate::{Clause, ClauseId, Literal, Step};
 /// A clause retained alongside its checked consequence theorem.
 #[derive(Clone, Debug)]
 struct ClauseRecord {
-    literals: Box<[PropId]>,
+    literals: Box<[Lit]>,
     term: Ref,
     theorem: ThmId,
 }
@@ -27,7 +27,7 @@ pub enum Error {
     #[snafu(transparent)]
     Kernel { source: KernelError },
     /// An LRAT literal cannot be interpreted as a signed HOL reference.
-    #[snafu(display("LRAT literal {literal} is not a proposition identifier"))]
+    #[snafu(display("LRAT literal {literal} is not a signed HOL literal"))]
     InvalidLiteral { literal: i64 },
     /// A DIMACS variable has no registered HOL atom.
     #[snafu(display("DIMACS variable {variable} has no HOL atom"))]
@@ -69,7 +69,7 @@ pub enum Error {
 pub struct CnfBuilder {
     kernel: Kernel,
     bool_ty: Ref,
-    clauses: Vec<Box<[PropId]>>,
+    clauses: Vec<Box<[Lit]>>,
     variables: BTreeMap<u64, Ref>,
 }
 
@@ -120,7 +120,7 @@ impl CnfBuilder {
     /// # Errors
     ///
     /// Returns an error if a literal is not a local Boolean atom or construction fails.
-    pub fn clause(&mut self, literals: &[PropId]) -> Result<ClauseId, Error> {
+    pub fn clause(&mut self, literals: &[Lit]) -> Result<ClauseId, Error> {
         for literal in literals {
             validate_atom(&self.kernel, *literal)?;
         }
@@ -278,7 +278,7 @@ impl LratProver {
         self.learn_rup_props(id, &literals, ordered_hints)
     }
 
-    /// Admits one fresh clause expressed directly in the native `PropId` convention.
+    /// Admits one fresh clause expressed directly in the native `Lit` convention.
     ///
     /// # Errors
     ///
@@ -286,7 +286,7 @@ impl LratProver {
     pub fn learn_rup_props(
         &mut self,
         id: ClauseId,
-        literals: &[PropId],
+        literals: &[Lit],
         ordered_hints: &[ClauseId],
     ) -> Result<(), Error> {
         if id <= self.high_water {
@@ -360,11 +360,11 @@ impl LratProver {
     fn derive_rup(
         &mut self,
         id: ClauseId,
-        literals: &[PropId],
+        literals: &[Lit],
         ordered_hints: &[ClauseId],
         temporary: &mut Vec<ThmId>,
     ) -> Result<ThmId, Error> {
-        let mut trail = BTreeMap::<PropId, ThmId>::new();
+        let mut trail = BTreeMap::<Lit, ThmId>::new();
         let mut conflict = None;
         for literal in literals {
             let falsifying = literal.negated();
@@ -534,7 +534,7 @@ impl UnsatFormula {
     /// # Errors
     ///
     /// Returns an error if internal CNF syntax is not canonical.
-    pub fn reconstruct(&self) -> Result<Vec<Vec<PropId>>, Error> {
+    pub fn reconstruct(&self) -> Result<Vec<Vec<Lit>>, Error> {
         reconstruct(&self.kernel, self.formula)
     }
 
@@ -559,7 +559,7 @@ impl UnsatFormula {
 /// # Errors
 ///
 /// Returns an error if the reference is not a canonical AND-of-OR opcode tree.
-pub fn reconstruct(kernel: &Kernel, formula: Ref) -> Result<Vec<Vec<PropId>>, Error> {
+pub fn reconstruct(kernel: &Kernel, formula: Ref) -> Result<Vec<Vec<Lit>>, Error> {
     let mut clause_terms = Vec::new();
     flatten_formula(kernel, formula, &mut clause_terms)?;
     let clauses = clause_terms
@@ -579,28 +579,29 @@ pub fn reconstruct(kernel: &Kernel, formula: Ref) -> Result<Vec<Vec<PropId>>, Er
     Ok(clauses)
 }
 
-fn positive(reference: Ref) -> PropId {
-    PropId::positive(reference.get())
+fn positive(reference: Ref) -> Lit {
+    Lit::positive(reference.get())
 }
 
-fn reference(proposition: PropId) -> Ref {
-    Ref::new(proposition.magnitude()).expect("PropId magnitude is nonzero")
+fn reference(proposition: Lit) -> Ref {
+    Ref::new(i32::try_from(proposition.magnitude()).expect("literal magnitude fits i32"))
+        .expect("literal magnitude is nonzero")
 }
 
-fn cnf_contains_unit(cnf: &Cnf, literal: PropId) -> bool {
+fn cnf_contains_unit(cnf: &Cnf, literal: Lit) -> bool {
     cnf.as_slice()
         .iter()
         .any(|clause| clause.as_slice() == [literal])
 }
 
-fn is_unit_refutation(theorem: &Thm, formula: PropId) -> bool {
+fn is_unit_refutation(theorem: &Thm, formula: Lit) -> bool {
     theorem.premises().as_slice().len() == 1
         && theorem.premises().as_slice()[0].as_slice() == [formula]
         && theorem.conclusions().as_slice().is_empty()
 }
 
 #[cfg(test)]
-fn unit_conclusions(theorem: &Thm) -> Option<Vec<PropId>> {
+fn unit_conclusions(theorem: &Thm) -> Option<Vec<Lit>> {
     theorem
         .conclusions()
         .as_slice()
@@ -615,7 +616,7 @@ fn unit_conclusions(theorem: &Thm) -> Option<Vec<PropId>> {
 fn map_dimacs(
     variables: &BTreeMap<u64, Ref>,
     literals: impl IntoIterator<Item = Literal>,
-) -> Result<Vec<PropId>, Error> {
+) -> Result<Vec<Lit>, Error> {
     literals
         .into_iter()
         .map(|literal| {
@@ -633,7 +634,7 @@ fn map_dimacs(
         .collect()
 }
 
-fn validate_atom(kernel: &Kernel, proposition: PropId) -> Result<(), Error> {
+fn validate_atom(kernel: &Kernel, proposition: Lit) -> Result<(), Error> {
     let reference = reference(proposition);
     if kernel.arena().op1(reference).is_some()
         || kernel.arena().op2(reference).is_some()
@@ -644,7 +645,7 @@ fn validate_atom(kernel: &Kernel, proposition: PropId) -> Result<(), Error> {
     Ok(())
 }
 
-fn literal_term(kernel: &mut Kernel, literal: PropId) -> Result<Ref, Error> {
+fn literal_term(kernel: &mut Kernel, literal: Lit) -> Result<Ref, Error> {
     if literal.is_positive() {
         Ok(reference(literal))
     } else {
@@ -652,7 +653,7 @@ fn literal_term(kernel: &mut Kernel, literal: PropId) -> Result<Ref, Error> {
     }
 }
 
-fn build_clause(kernel: &mut Kernel, literals: &[PropId], false_ref: Ref) -> Result<Ref, Error> {
+fn build_clause(kernel: &mut Kernel, literals: &[Lit], false_ref: Ref) -> Result<Ref, Error> {
     let terms = literals
         .iter()
         .copied()
@@ -707,7 +708,7 @@ fn flatten_formula(kernel: &Kernel, formula: Ref, output: &mut Vec<Ref>) -> Resu
     Err(Error::NonCanonicalFormula { formula })
 }
 
-fn flatten_clause(kernel: &Kernel, term: Ref, output: &mut Vec<PropId>) -> Result<(), Error> {
+fn flatten_clause(kernel: &Kernel, term: Ref, output: &mut Vec<Lit>) -> Result<(), Error> {
     if kernel.arena().bool_value(term) == Some(false) {
         return Ok(());
     }
@@ -722,7 +723,7 @@ fn flatten_clause(kernel: &Kernel, term: Ref, output: &mut Vec<PropId>) -> Resul
     Err(Error::NonCanonicalFormula { formula: term })
 }
 
-fn decode_literal(kernel: &Kernel, term: Ref, output: &mut Vec<PropId>) -> Result<(), Error> {
+fn decode_literal(kernel: &Kernel, term: Ref, output: &mut Vec<Lit>) -> Result<(), Error> {
     if kernel.arena().op1(term) == Some(Op1::Not) {
         let child = kernel
             .children(term)
@@ -743,7 +744,7 @@ mod tests {
     use super::*;
     use crate::{Formula, Literal, oracle, parse::Step};
 
-    fn fixture() -> (Kernel, Ref, PropId, PropId) {
+    fn fixture() -> (Kernel, Ref, Lit, Lit) {
         let mut kernel = Kernel::new();
         let star = kernel.star().unwrap();
         let bool_ty = kernel.bool_ty(star).unwrap();
@@ -807,7 +808,7 @@ mod tests {
         );
         assert_eq!(
             reconstruct(empty_formula.kernel(), empty_formula.formula()).unwrap(),
-            Vec::<Vec<PropId>>::new()
+            Vec::<Vec<Lit>>::new()
         );
 
         let (kernel, bool_ty, _, _) = fixture();

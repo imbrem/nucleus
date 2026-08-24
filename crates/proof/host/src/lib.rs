@@ -536,7 +536,7 @@ impl GuestKernel for HostKernel {
         self.0
             .borrow_mut()
             .import_literal(arena)
-            .map(ImportId::get)
+            .map(import_index)
             .map_err(|error| error.to_string())
     }
 
@@ -545,7 +545,7 @@ impl GuestKernel for HostKernel {
         self.0
             .borrow_mut()
             .import_literal(arena)
-            .map(ImportId::get)
+            .map(import_index)
             .map_err(|error| error.to_string())
     }
 
@@ -553,7 +553,7 @@ impl GuestKernel for HostKernel {
         self.0
             .borrow_mut()
             .import_link(link(address)?)
-            .map(ImportId::get)
+            .map(import_index)
             .map_err(|error| error.to_string())
     }
 
@@ -563,7 +563,7 @@ impl GuestKernel for HostKernel {
             self.0
                 .borrow_mut()
                 .kind_ref(&mut resolver, import_id(source)?, reference(foreign)?)
-                .map(Ref::get)
+                .map(ref_index)
                 .map_err(|error| error.to_string())
         })
     }
@@ -579,7 +579,7 @@ impl GuestKernel for HostKernel {
                     reference(foreign)?,
                     reference(kind)?,
                 )
-                .map(Ref::get)
+                .map(ref_index)
                 .map_err(|error| error.to_string())
         })
     }
@@ -595,7 +595,7 @@ impl GuestKernel for HostKernel {
                     reference(foreign)?,
                     reference(ty)?,
                 )
-                .map(Ref::get)
+                .map(ref_index)
                 .map_err(|error| error.to_string())
         })
     }
@@ -619,7 +619,10 @@ impl GuestKernel for HostKernel {
     }
 
     fn remove_syn_fact(&self, fact: u64) -> bool {
-        SynFactId::new(fact).is_some_and(|fact| self.0.borrow_mut().remove_syn_fact(fact))
+        i32::try_from(fact)
+            .ok()
+            .and_then(SynFactId::new)
+            .is_some_and(|fact| self.0.borrow_mut().remove_syn_fact(fact))
     }
 
     fn truncate_syn_facts(&self, len: u64) -> Result<(), String> {
@@ -879,14 +882,17 @@ fn usize_from_u64(value: u64, what: &str) -> Result<usize, String> {
 }
 
 fn reference(value: u64) -> Result<Ref, String> {
+    let value = i32::try_from(value).map_err(|_| "arena reference exceeds i32".to_owned())?;
     Ref::new(value).ok_or_else(|| "arena references are one-based".to_owned())
 }
 
 fn import_id(value: u64) -> Result<ImportId, String> {
+    let value = i32::try_from(value).map_err(|_| "import ID exceeds i32".to_owned())?;
     ImportId::new(value).ok_or_else(|| "import IDs are one-based".to_owned())
 }
 
 fn fact_id(value: u64) -> Result<SynFactId, String> {
+    let value = i32::try_from(value).map_err(|_| "syntactic-fact slot exceeds i32".to_owned())?;
     SynFactId::new(value).ok_or_else(|| "syntactic-fact slots are one-based".to_owned())
 }
 
@@ -896,13 +902,25 @@ fn optional_fact_id(value: Option<u64>) -> Result<Option<SynFactId>, String> {
 
 fn pushed(value: Option<Ref>, what: &str) -> Result<u64, String> {
     value
-        .map(Ref::get)
+        .map(ref_index)
         .ok_or_else(|| format!("{what} exceeds the arena's index space"))
+}
+
+fn ref_index(value: Ref) -> u64 {
+    u64::try_from(value.get()).expect("resident references are positive")
+}
+
+fn import_index(value: ImportId) -> u64 {
+    u64::try_from(value.get()).expect("resident import IDs are positive")
+}
+
+fn fact_index(value: SynFactId) -> u64 {
+    u64::try_from(value.get()).expect("resident syntactic-fact IDs are positive")
 }
 
 fn pushed_import(value: Option<ImportId>) -> Result<u64, String> {
     value
-        .map(ImportId::get)
+        .map(import_index)
         .ok_or_else(|| "import exceeds the arena's index space".to_owned())
 }
 
@@ -940,11 +958,11 @@ impl Resolver for CasResolver<'_> {
 }
 
 fn checked_ref(value: Result<Ref, covalence_logic_hol::KernelError>) -> Result<u64, String> {
-    value.map(Ref::get).map_err(|error| error.to_string())
+    value.map(ref_index).map_err(|error| error.to_string())
 }
 
 fn checked_fact(value: Result<SynFactId, covalence_logic_hol::KernelError>) -> Result<u64, String> {
-    value.map(SynFactId::get).map_err(|error| error.to_string())
+    value.map(fact_index).map_err(|error| error.to_string())
 }
 
 fn syn_relation(value: WitSynRel) -> SynRel {
