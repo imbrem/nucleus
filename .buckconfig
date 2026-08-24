@@ -23,3 +23,6 @@
 
 [build]
   execution_platforms = prelude//platforms:default
+
+[project]
+  ignore = .direnv,.git,.pnpm-store,apps/docs/build,apps/docs/node_modules,lean-docs,lean/Nucleus/.lake,lean/Nucleus/docbuild/.lake,node_modules,packages/nucleus/component,packages/nucleus/dist,packages/nucleus/generated,packages/nucleus/node_modules,target,tools/glu/target
