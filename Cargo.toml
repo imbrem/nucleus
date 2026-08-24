@@ -14,6 +14,7 @@ members = [
   "crates/lib/table",
   "crates/lib/wasm",
   "crates/logic/cas",
+  "crates/logic/classical",
   "crates/logic/lrat",
   "crates/logic/metamath",
   "crates/logic/sat",
