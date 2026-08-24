@@ -1,5 +1,6 @@
 import Mathlib.Data.Finset.Sort
 import Mathlib.Data.List.Dedup
+import Mathlib.Data.List.Lex
 
 /-!
 # Classical CNF-to-DNF matrix sequents
@@ -22,6 +23,35 @@ variable {Atom : Type}
 
 /-- A literal carries an atom and a polarity bit. `false` is positive. -/
 abbrev Lit (Atom : Type) := Atom × Bool
+
+/-- Rust's compact literal representation: nonzero signed `i32`, excluding
+both extrema used by fallible integer negation.  The semantic development uses
+`Lit Atom`; this structure formalizes the representation invariant separately. -/
+structure LitCode where
+  value : Int
+  nonzero : value ≠ 0
+  lower : -2_147_483_647 < value
+  upper : value < 2_147_483_647
+  deriving DecidableEq
+
+/-- Negation of a valid literal code is total and remains valid. -/
+def LitCode.neg (literal : LitCode) : LitCode :=
+  ⟨-literal.value, by
+    intro equal
+    exact literal.nonzero (Int.neg_eq_zero.mp equal), by
+      have := literal.upper
+      omega, by
+      have := literal.lower
+      omega⟩
+
+theorem LitCode.ext (left right : LitCode) (equal : left.value = right.value) : left = right := by
+  cases left
+  cases right
+  simp_all
+
+@[simp] theorem LitCode.neg_neg (literal : LitCode) : literal.neg.neg = literal := by
+  apply LitCode.ext
+  simp [LitCode.neg]
 
 /-- Complement a literal without inspecting its atom. -/
 def Lit.neg {Atom : Type} (literal : Lit Atom) : Lit Atom :=
@@ -192,10 +222,11 @@ def Cube.normalize [DecidableEq Atom] [LinearOrder (Lit Atom)] (cube : Cube Atom
   ⟨canonical cube.literals⟩
 
 def Cnf.normalize [DecidableEq Atom] [LinearOrder (Lit Atom)] (cnf : Cnf Atom) : Cnf Atom :=
-  ⟨(cnf.clauses.map Clause.normalize).dedup⟩
+  ⟨(canonical (cnf.clauses.map fun (clause : Clause Atom) => canonical clause.literals)).map
+    Clause.mk⟩
 
 def Dnf.normalize [DecidableEq Atom] [LinearOrder (Lit Atom)] (dnf : Dnf Atom) : Dnf Atom :=
-  ⟨(dnf.cubes.map Cube.normalize).dedup⟩
+  ⟨(canonical (dnf.cubes.map fun (cube : Cube Atom) => canonical cube.literals)).map Cube.mk⟩
 
 def Sequent.normalize [DecidableEq Atom] [LinearOrder (Lit Atom)]
     (sequent : Sequent Atom) : Sequent Atom :=
@@ -214,12 +245,40 @@ def Sequent.normalize [DecidableEq Atom] [LinearOrder (Lit Atom)]
 @[simp] theorem Cnf.normalize_holds [DecidableEq Atom] [LinearOrder (Lit Atom)]
     (valuation : Valuation Atom)
     (cnf : Cnf Atom) : cnf.normalize.Holds valuation ↔ cnf.Holds valuation := by
-  simp [Cnf.normalize, Cnf.Holds]
+  constructor
+  · intro normalized clause member
+    have rowMember : canonical clause.literals ∈
+        canonical (cnf.clauses.map fun (source : Clause Atom) => canonical source.literals) := by
+      rw [mem_canonical]
+      exact List.mem_map.mpr ⟨clause, member, rfl⟩
+    have rowTruth := normalized (Clause.mk (canonical clause.literals)) (by
+      simp only [Cnf.normalize, List.mem_map]
+      exact ⟨canonical clause.literals, rowMember, rfl⟩)
+    exact (Clause.normalize_holds valuation clause).mp rowTruth
+  · intro source normalizedClause normalizedMember
+    simp only [Cnf.normalize, List.mem_map] at normalizedMember
+    obtain ⟨row, rowMember, rfl⟩ := normalizedMember
+    rw [mem_canonical] at rowMember
+    obtain ⟨clause, clauseMember, rfl⟩ := List.mem_map.mp rowMember
+    exact (Clause.normalize_holds valuation clause).mpr (source clause clauseMember)
 
 @[simp] theorem Dnf.normalize_holds [DecidableEq Atom] [LinearOrder (Lit Atom)]
     (valuation : Valuation Atom)
     (dnf : Dnf Atom) : dnf.normalize.Holds valuation ↔ dnf.Holds valuation := by
-  simp [Dnf.normalize, Dnf.Holds]
+  constructor
+  · rintro ⟨normalizedCube, normalizedMember, normalizedTruth⟩
+    simp only [Dnf.normalize, List.mem_map] at normalizedMember
+    obtain ⟨row, rowMember, rfl⟩ := normalizedMember
+    rw [mem_canonical] at rowMember
+    obtain ⟨cube, cubeMember, rfl⟩ := List.mem_map.mp rowMember
+    exact ⟨cube, cubeMember, (Cube.normalize_holds valuation cube).mp normalizedTruth⟩
+  · rintro ⟨cube, cubeMember, cubeTruth⟩
+    refine ⟨Cube.mk (canonical cube.literals), ?_,
+      (Cube.normalize_holds valuation cube).mpr cubeTruth⟩
+    simp only [Dnf.normalize, List.mem_map]
+    refine ⟨canonical cube.literals, ?_, rfl⟩
+    rw [mem_canonical]
+    exact List.mem_map.mpr ⟨cube, cubeMember, rfl⟩
 
 @[simp] theorem Sequent.normalize_holds [DecidableEq Atom] [LinearOrder (Lit Atom)]
     (valuation : Valuation Atom)
@@ -353,7 +412,261 @@ theorem resolution (pivot : Lit Atom) {leftPrem rightPrem : List (Clause Atom)}
       exact (truth pivotTruth).elim
     · exact ⟨cube, List.mem_append_left _ member, cubeTruth⟩
 
+/-! ## HOL connective schemas
+
+The classical arena treats literals as opaque.  The HOL kernel discharges the
+displayed semantic equation after checking the corresponding opcode.  These
+theorems therefore isolate the complete propositional obligation of each HOL
+rule, with arbitrary matrix contexts on both sides. -/
+
+@[simp] theorem singleton_clause_holds (valuation : Valuation Atom) (literal : Lit Atom) :
+    (Clause.mk [literal]).Holds valuation ↔ literal.Holds valuation := by
+  simp [Clause.Holds]
+
+@[simp] theorem singleton_cube_holds (valuation : Valuation Atom) (literal : Lit Atom) :
+    (Cube.mk [literal]).Holds valuation ↔ literal.Holds valuation := by
+  simp [Cube.Holds]
+
+theorem notLeft {left : List (Clause Atom)} {right : List (Cube Atom)} (p : Lit Atom)
+    (sound : (Sequent.mk (Cnf.mk left) (Dnf.mk (Cube.mk [p] :: right))).Sound) :
+    (Sequent.mk (Cnf.mk (Clause.mk [p.neg] :: left)) (Dnf.mk right)).Sound := by
+  simpa [Cube.neg] using transferCubeLeft (before := []) (after := right) (Cube.mk [p]) sound
+
+theorem notRight {left : List (Clause Atom)} {right : List (Cube Atom)} (p : Lit Atom)
+    (sound : (Sequent.mk (Cnf.mk (Clause.mk [p] :: left)) (Dnf.mk right)).Sound) :
+    (Sequent.mk (Cnf.mk left) (Dnf.mk (Cube.mk [p.neg] :: right))).Sound := by
+  simpa [Clause.neg] using transferClauseRight (before := []) (after := left)
+    (right := right) (Clause.mk [p]) sound
+
+theorem falseLeft (falsehood : Lit Atom)
+    (meaning : ∀ valuation, ¬falsehood.Holds valuation) :
+    (Sequent.mk (Cnf.mk [Clause.mk [falsehood]]) (Dnf.mk [])).Sound := by
+  intro valuation premises
+  exact (meaning valuation ((singleton_clause_holds valuation falsehood).mp
+    (premises (Clause.mk [falsehood]) (by simp)))).elim
+
+theorem trueRight (truth : Lit Atom)
+    (meaning : ∀ valuation, truth.Holds valuation) :
+    (Sequent.mk (Cnf.mk []) (Dnf.mk [Cube.mk [truth]])).Sound := by
+  intro valuation _
+  exact ⟨Cube.mk [truth], by simp, (singleton_cube_holds valuation truth).mpr (meaning valuation)⟩
+
+theorem andLeft {left : List (Clause Atom)} {right : List (Cube Atom)}
+    (p q conjunction : Lit Atom)
+    (meaning : ∀ valuation, conjunction.Holds valuation ↔
+      p.Holds valuation ∧ q.Holds valuation)
+    (sound : (Sequent.mk (Cnf.mk (Clause.mk [p] :: Clause.mk [q] :: left))
+      (Dnf.mk right)).Sound) :
+    (Sequent.mk (Cnf.mk (Clause.mk [conjunction] :: left)) (Dnf.mk right)).Sound := by
+  intro valuation premises
+  apply sound valuation
+  intro clause member
+  simp only [List.mem_cons] at member
+  rcases member with rfl | rfl | member
+  · have conjunctionTruth := (singleton_clause_holds valuation conjunction).mp
+      (premises (Clause.mk [conjunction]) (by simp))
+    exact (singleton_clause_holds valuation p).mpr ((meaning valuation).mp conjunctionTruth).1
+  · have conjunctionTruth := (singleton_clause_holds valuation conjunction).mp
+      (premises (Clause.mk [conjunction]) (by simp))
+    exact (singleton_clause_holds valuation q).mpr ((meaning valuation).mp conjunctionTruth).2
+  · exact premises clause (by simp [member])
+
+theorem andRight {leftPrem rightPrem : List (Clause Atom)}
+    {leftConc rightConc : List (Cube Atom)} (p q conjunction : Lit Atom)
+    (meaning : ∀ valuation, conjunction.Holds valuation ↔
+      p.Holds valuation ∧ q.Holds valuation)
+    (leftSound : (Sequent.mk (Cnf.mk leftPrem)
+      (Dnf.mk (Cube.mk [p] :: leftConc))).Sound)
+    (rightSound : (Sequent.mk (Cnf.mk rightPrem)
+      (Dnf.mk (Cube.mk [q] :: rightConc))).Sound) :
+    (Sequent.mk (Cnf.mk (leftPrem ++ rightPrem))
+      (Dnf.mk (leftConc ++ rightConc ++ [Cube.mk [conjunction]]))).Sound := by
+  intro valuation premises
+  have leftResult := leftSound valuation (by
+    intro clause member
+    exact premises clause (List.mem_append_left _ member))
+  have rightResult := rightSound valuation (by
+    intro clause member
+    exact premises clause (List.mem_append_right _ member))
+  rcases leftResult with ⟨leftCube, leftMember, leftTruth⟩
+  rcases rightResult with ⟨rightCube, rightMember, rightTruth⟩
+  simp only [List.mem_cons] at leftMember rightMember
+  rcases leftMember with rfl | leftMember
+  · rcases rightMember with rfl | rightMember
+    · refine ⟨Cube.mk [conjunction], by simp, ?_⟩
+      apply (singleton_cube_holds valuation conjunction).mpr
+      exact (meaning valuation).mpr
+        ⟨(singleton_cube_holds valuation p).mp leftTruth,
+          (singleton_cube_holds valuation q).mp rightTruth⟩
+    · exact ⟨rightCube, by simp [rightMember], rightTruth⟩
+  · exact ⟨leftCube, by simp [leftMember], leftTruth⟩
+
+theorem orLeft {leftPrem rightPrem : List (Clause Atom)}
+    {leftConc rightConc : List (Cube Atom)} (p q disjunction : Lit Atom)
+    (meaning : ∀ valuation, disjunction.Holds valuation ↔
+      p.Holds valuation ∨ q.Holds valuation)
+    (leftSound : (Sequent.mk (Cnf.mk (Clause.mk [p] :: leftPrem))
+      (Dnf.mk leftConc)).Sound)
+    (rightSound : (Sequent.mk (Cnf.mk (Clause.mk [q] :: rightPrem))
+      (Dnf.mk rightConc)).Sound) :
+    (Sequent.mk (Cnf.mk (Clause.mk [disjunction] :: leftPrem ++ rightPrem))
+      (Dnf.mk (leftConc ++ rightConc))).Sound := by
+  intro valuation premises
+  have disjunctionTruth := (singleton_clause_holds valuation disjunction).mp
+    (premises (Clause.mk [disjunction]) (by simp))
+  rcases (meaning valuation).mp disjunctionTruth with pTruth | qTruth
+  · obtain ⟨cube, member, truth⟩ := leftSound valuation (by
+      intro clause member
+      simp only [List.mem_cons] at member
+      rcases member with rfl | member
+      · exact (singleton_clause_holds valuation p).mpr pTruth
+      · exact premises clause (by simp [member]))
+    exact ⟨cube, List.mem_append_left _ member, truth⟩
+  · obtain ⟨cube, member, truth⟩ := rightSound valuation (by
+      intro clause member
+      simp only [List.mem_cons] at member
+      rcases member with rfl | member
+      · exact (singleton_clause_holds valuation q).mpr qTruth
+      · exact premises clause (by simp [member]))
+    exact ⟨cube, List.mem_append_right _ member, truth⟩
+
+theorem orRight {left : List (Clause Atom)} {right : List (Cube Atom)}
+    (p q disjunction : Lit Atom)
+    (meaning : ∀ valuation, disjunction.Holds valuation ↔
+      p.Holds valuation ∨ q.Holds valuation)
+    (sound : (Sequent.mk (Cnf.mk left)
+      (Dnf.mk (Cube.mk [p] :: Cube.mk [q] :: right))).Sound) :
+    (Sequent.mk (Cnf.mk left) (Dnf.mk (Cube.mk [disjunction] :: right))).Sound := by
+  intro valuation premises
+  obtain ⟨cube, member, truth⟩ := sound valuation premises
+  simp only [List.mem_cons] at member
+  rcases member with rfl | rfl | member
+  · exact ⟨Cube.mk [disjunction], by simp,
+      (singleton_cube_holds valuation disjunction).mpr ((meaning valuation).mpr
+        (Or.inl ((singleton_cube_holds valuation p).mp truth)))⟩
+  · exact ⟨Cube.mk [disjunction], by simp,
+      (singleton_cube_holds valuation disjunction).mpr ((meaning valuation).mpr
+        (Or.inr ((singleton_cube_holds valuation q).mp truth)))⟩
+  · exact ⟨cube, by simp [member], truth⟩
+
+theorem impLeft {leftPrem rightPrem : List (Clause Atom)}
+    {leftConc rightConc : List (Cube Atom)} (p q implication : Lit Atom)
+    (meaning : ∀ valuation, implication.Holds valuation ↔
+      (p.Holds valuation → q.Holds valuation))
+    (leftSound : (Sequent.mk (Cnf.mk leftPrem)
+      (Dnf.mk (Cube.mk [p] :: leftConc))).Sound)
+    (rightSound : (Sequent.mk (Cnf.mk (Clause.mk [q] :: rightPrem))
+      (Dnf.mk rightConc)).Sound) :
+    (Sequent.mk (Cnf.mk (Clause.mk [implication] :: leftPrem ++ rightPrem))
+      (Dnf.mk (leftConc ++ rightConc))).Sound := by
+  intro valuation premises
+  have implicationTruth := (meaning valuation).mp
+    ((singleton_clause_holds valuation implication).mp
+      (premises (Clause.mk [implication]) (by simp)))
+  obtain ⟨cube, member, truth⟩ := leftSound valuation (by
+    intro clause member
+    exact premises clause (by simp [member]))
+  simp only [List.mem_cons] at member
+  rcases member with rfl | member
+  · have pTruth := (singleton_cube_holds valuation p).mp truth
+    obtain ⟨cube, member, truth⟩ := rightSound valuation (by
+      intro clause member
+      simp only [List.mem_cons] at member
+      rcases member with rfl | member
+      · exact (singleton_clause_holds valuation q).mpr (implicationTruth pTruth)
+      · exact premises clause (by simp [member]))
+    exact ⟨cube, List.mem_append_right _ member, truth⟩
+  · exact ⟨cube, List.mem_append_left _ member, truth⟩
+
+theorem impRight {left : List (Clause Atom)} {right : List (Cube Atom)}
+    (p q implication : Lit Atom)
+    (meaning : ∀ valuation, implication.Holds valuation ↔
+      (p.Holds valuation → q.Holds valuation))
+    (sound : (Sequent.mk (Cnf.mk (Clause.mk [p] :: left))
+      (Dnf.mk (Cube.mk [q] :: right))).Sound) :
+    (Sequent.mk (Cnf.mk left) (Dnf.mk (Cube.mk [implication] :: right))).Sound := by
+  intro valuation premises
+  by_cases implicationTruth : implication.Holds valuation
+  · exact ⟨Cube.mk [implication], by simp,
+      (singleton_cube_holds valuation implication).mpr implicationTruth⟩
+  · have pTruth : p.Holds valuation := by
+      by_contra pFalse
+      exact implicationTruth ((meaning valuation).mpr (fun truth => (pFalse truth).elim))
+    obtain ⟨cube, member, truth⟩ := sound valuation (by
+      intro clause member
+      simp only [List.mem_cons] at member
+      rcases member with rfl | member
+      · exact (singleton_clause_holds valuation p).mpr pTruth
+      · exact premises clause member)
+    simp only [List.mem_cons] at member
+    rcases member with rfl | member
+    · have qTruth := (singleton_cube_holds valuation q).mp truth
+      exact (implicationTruth ((meaning valuation).mpr (fun _ => qTruth))).elim
+    · exact ⟨cube, by simp [member], truth⟩
+
 /-! ## Theorem slots and free-list lifecycle -/
+
+/-- Public classical indices are one-based nonzero signed-32-bit values.  The
+list arena below continues to use `Nat` only for its private zero-based physical
+offsets. -/
+structure StructuralId (Kind : Type) where
+  value : Nat
+  positive : 0 < value
+  bounded : value ≤ 2_147_483_647
+  deriving DecidableEq
+
+inductive ThmKind
+inductive ClauseKind
+inductive CubeKind
+
+/-- The three nominally distinct public structural handle types. -/
+abbrev ThmId := StructuralId ThmKind
+abbrev ClauseId := StructuralId ClauseKind
+abbrev CubeId := StructuralId CubeKind
+
+/-- Convert a public one-based index to its private list offset. -/
+def StructuralId.offset {Kind : Type} (id : StructuralId Kind) : Nat := id.value - 1
+
+theorem StructuralId.offset_lt_max {Kind : Type} (id : StructuralId Kind) :
+    id.offset < 2_147_483_647 := by
+  simp only [StructuralId.offset]
+  have := id.positive
+  have := id.bounded
+  omega
+
+theorem StructuralId.value_eq_offset_add_one {Kind : Type} (id : StructuralId Kind) :
+    id.value = id.offset + 1 := by
+  simp only [StructuralId.offset]
+  have := id.positive
+  omega
+
+theorem StructuralId.offset_injective {Kind : Type} :
+    Function.Injective (StructuralId.offset (Kind := Kind)) := by
+  intro left right equal
+  cases left with
+  | mk leftValue leftPositive leftBounded =>
+      cases right with
+      | mk rightValue rightPositive rightBounded =>
+          simp only [StructuralId.offset] at equal
+          congr
+          omega
+
+/-- Construct a public handle exactly when a physical offset fits in positive
+`i32`. -/
+def StructuralId.ofOffset? {Kind : Type} (offset : Nat) : Option (StructuralId Kind) :=
+  if bounded : offset < 2_147_483_647 then
+    some ⟨offset + 1, by omega, by omega⟩
+  else none
+
+@[simp] theorem StructuralId.ofOffset?_offset {Kind : Type} {offset : Nat}
+    (bounded : offset < 2_147_483_647) :
+    (StructuralId.ofOffset? (Kind := Kind) offset).map StructuralId.offset = some offset := by
+  simp [StructuralId.ofOffset?, bounded, StructuralId.offset]
+
+theorem StructuralId.ofOffset?_eq_none {Kind : Type} {offset : Nat}
+    (tooLarge : 2_147_483_647 ≤ offset) :
+    StructuralId.ofOffset? (Kind := Kind) offset = none := by
+  simp [StructuralId.ofOffset?, Nat.not_lt.mpr tooLarge]
 
 structure Store (Atom : Type) where
   slots : List (Option (Sequent Atom))
@@ -362,11 +675,19 @@ structure Store (Atom : Type) where
 def Store.lookup (store : Store Atom) (id : Nat) : Option (Sequent Atom) :=
   store.slots[id]?.join
 
+/-- Public theorem lookup uses a bounded, one-based handle. -/
+def Store.lookupThm (store : Store Atom) (id : ThmId) : Option (Sequent Atom) :=
+  store.lookup id.offset
+
 def Store.WellFormed (store : Store Atom) : Prop :=
   store.free.Nodup ∧ ∀ id ∈ store.free, id < store.slots.length ∧ store.lookup id = none
 
 def Store.LiveSound (store : Store Atom) : Prop :=
   ∀ id fact, store.lookup id = some fact → fact.Sound
+
+theorem Store.lookupThm_sound {store : Store Atom} (storeSound : store.LiveSound)
+    {id : ThmId} {fact : Sequent Atom} (live : store.lookupThm id = some fact) : fact.Sound :=
+  storeSound id.offset fact live
 
 /-- Empty storage has no live logical claims. -/
 def Store.empty : Store Atom := ⟨[], []⟩
@@ -412,6 +733,90 @@ def Store.mutate? (store : Store Atom) (id : Nat) (replacement : Sequent Atom) :
 def Store.normalize? [DecidableEq Atom] [LinearOrder (Lit Atom)]
     (store : Store Atom) (id : Nat) : Option (Store Atom) :=
   (store.lookup id).bind fun fact => store.mutate? id fact.normalize
+
+/-! Public lifecycle operations translate bounded one-based `ThmId`s at the
+arena boundary.  Allocation fails rather than manufacturing an out-of-range
+handle when all positive `i32` indices are exhausted. -/
+
+def Store.insertThm? (store : Store Atom) (fact : Sequent Atom) : Option (ThmId × Store Atom) :=
+  let result := store.insert fact
+  (StructuralId.ofOffset? (Kind := ThmKind) result.1).map fun id => (id, result.2)
+
+def Store.deleteThm? (store : Store Atom) (id : ThmId) : Option (Store Atom) :=
+  store.delete? id.offset
+
+def Store.copyThm? (store : Store Atom) (source : ThmId) : Option (ThmId × Store Atom) :=
+  (store.lookupThm source).bind store.insertThm?
+
+def Store.mutateThm? (store : Store Atom) (id : ThmId) (replacement : Sequent Atom) :
+    Option (Store Atom) :=
+  store.mutate? id.offset replacement
+
+def Store.normalizeThm? [DecidableEq Atom] [LinearOrder (Lit Atom)]
+    (store : Store Atom) (id : ThmId) : Option (Store Atom) :=
+  store.normalize? id.offset
+
+@[simp] theorem Store.empty_live_sound : (Store.empty : Store Atom).LiveSound := by
+  simp [Store.LiveSound, Store.empty, Store.lookup]
+
+private theorem Store.lookup_set_self (store : Store Atom) (id : Nat)
+    (value : Option (Sequent Atom)) (inBounds : id < store.slots.length) :
+    ({ store with slots := store.slots.set id value }).lookup id = value := by
+  simp [Store.lookup, List.getElem?_set_eq_of_lt value inBounds]
+
+private theorem Store.lookup_set_other (store : Store Atom) (target id : Nat)
+    (value : Option (Sequent Atom)) (targetInBounds : target < store.slots.length)
+    (different : id ≠ target) :
+    ({ store with slots := store.slots.set target value }).lookup id = store.lookup id := by
+  rw [Store.lookup, Store.lookup, List.getElem?_set_of_lt' value store.slots targetInBounds]
+  simp [Ne.symm different]
+
+theorem Store.append_lookup_new (store : Store Atom) (fact : Sequent Atom) :
+    (store.append fact).2.lookup (store.append fact).1 = some fact := by
+  simp [Store.append, Store.lookup]
+
+theorem Store.append_lookup_old (store : Store Atom) (fact : Sequent Atom) (id : Nat)
+    (different : id ≠ store.slots.length) :
+    (store.append fact).2.lookup id = store.lookup id := by
+  simp only [Store.append, Store.lookup]
+  by_cases inBounds : id < store.slots.length
+  · rw [List.getElem?_append_left inBounds]
+  · rw [List.getElem?_append]
+    have beyond : store.slots.length < id := by omega
+    have offset : 0 < id - store.slots.length := by omega
+    obtain ⟨offset, offsetEq⟩ := Nat.exists_eq_succ_of_ne_zero (Nat.ne_of_gt offset)
+    simp [inBounds, offsetEq]
+
+theorem Store.delete_lookup_target {store after : Store Atom} {id : Nat}
+    (deleted : store.delete? id = some after) : after.lookup id = none := by
+  simp only [Store.delete?] at deleted
+  split at deleted
+  · contradiction
+  · rename_i fact lookupFact
+    simp only [Option.some.injEq] at deleted
+    subst after
+    have inBounds : id < store.slots.length := by
+      unfold Store.lookup at lookupFact
+      cases get : store.slots[id]? with
+      | none => simp [get] at lookupFact
+      | some slot => exact (List.getElem?_eq_some_iff.mp get).1
+    exact Store.lookup_set_self store id none inBounds
+
+theorem Store.delete_lookup_other {store after : Store Atom} {target : Nat}
+    (deleted : store.delete? target = some after) {id : Nat} (different : id ≠ target) :
+    after.lookup id = store.lookup id := by
+  simp only [Store.delete?] at deleted
+  split at deleted
+  · contradiction
+  · rename_i fact lookupFact
+    simp only [Option.some.injEq] at deleted
+    subst after
+    have inBounds : target < store.slots.length := by
+      unfold Store.lookup at lookupFact
+      cases get : store.slots[target]? with
+      | none => simp [get] at lookupFact
+      | some slot => exact (List.getElem?_eq_some_iff.mp get).1
+    exact Store.lookup_set_other store target id none inBounds different
 
 /-- Storage reuse is logically sound whenever it inserts a checked theorem and
 preserves all other live lookups. This isolates free-list allocation from the
@@ -464,6 +869,206 @@ theorem copy_preserves_live_sound {before after : Store Atom} {source copied : N
     after.LiveSound :=
   reuse_preserves_live_sound beforeSound (beforeSound source fact sourceLive)
     copiedLive preserved
+
+/-! The following theorems discharge the abstract lookup contracts above for
+the concrete list-and-free-list implementation. -/
+
+theorem Store.append_live_sound (store : Store Atom) (fact : Sequent Atom)
+    (storeSound : store.LiveSound) (factSound : fact.Sound) :
+    (store.append fact).2.LiveSound := by
+  apply reuse_preserves_live_sound storeSound factSound
+  · exact Store.append_lookup_new store fact
+  · intro id different
+    exact Store.append_lookup_old store fact id different
+
+theorem Store.delete_live_sound {store after : Store Atom} {id : Nat}
+    (storeSound : store.LiveSound) (deleted : store.delete? id = some after) :
+    after.LiveSound := by
+  apply deletion_preserves_live_sound storeSound
+  intro candidate fact live
+  by_cases same : candidate = id
+  · subst candidate
+    rw [Store.delete_lookup_target deleted] at live
+    contradiction
+  · exact (Store.delete_lookup_other deleted same).symm.trans live
+
+theorem Store.reuse_lookup_new {store after : Store Atom} {fact : Sequent Atom} {id : Nat}
+    (reused : store.reuse? fact = some (id, after)) : after.lookup id = some fact := by
+  simp only [Store.reuse?] at reused
+  split at reused
+  · contradiction
+  · rename_i freeId rest freeEq
+    split at reused
+    · rename_i available
+      simp only [Option.some.injEq, Prod.mk.injEq] at reused
+      rcases reused with ⟨rfl, rfl⟩
+      exact Store.lookup_set_self store freeId (some fact) available.1
+    · contradiction
+
+theorem Store.reuse_lookup_other {store after : Store Atom} {fact : Sequent Atom} {target : Nat}
+    (reused : store.reuse? fact = some (target, after)) {id : Nat} (different : id ≠ target) :
+    after.lookup id = store.lookup id := by
+  simp only [Store.reuse?] at reused
+  split at reused
+  · contradiction
+  · rename_i freeId rest freeEq
+    split at reused
+    · rename_i available
+      simp only [Option.some.injEq, Prod.mk.injEq] at reused
+      rcases reused with ⟨rfl, rfl⟩
+      exact Store.lookup_set_other store freeId id (some fact) available.1 different
+    · contradiction
+
+theorem Store.reuse_live_sound {store after : Store Atom} {fact : Sequent Atom} {id : Nat}
+    (storeSound : store.LiveSound) (factSound : fact.Sound)
+    (reused : store.reuse? fact = some (id, after)) : after.LiveSound := by
+  apply reuse_preserves_live_sound storeSound factSound
+  · exact Store.reuse_lookup_new reused
+  · intro candidate different
+    exact Store.reuse_lookup_other reused different
+
+theorem Store.insert_lookup_new (store : Store Atom) (fact : Sequent Atom) :
+    (store.insert fact).2.lookup (store.insert fact).1 = some fact := by
+  simp only [Store.insert]
+  split
+  · rename_i result reused
+    obtain ⟨id, after⟩ := result
+    exact Store.reuse_lookup_new reused
+  · exact Store.append_lookup_new store fact
+
+theorem Store.insert_lookup_other (store : Store Atom) (fact : Sequent Atom) (id : Nat)
+    (different : id ≠ (store.insert fact).1) :
+    (store.insert fact).2.lookup id = store.lookup id := by
+  simp only [Store.insert] at different ⊢
+  split
+  · rename_i result reused
+    obtain ⟨target, after⟩ := result
+    have targetDifferent : id ≠ target := by
+      simpa [Store.insert, reused] using different
+    exact Store.reuse_lookup_other reused targetDifferent
+  · rename_i noReuse
+    have appendDifferent : id ≠ store.slots.length := by
+      simpa [Store.insert, noReuse, Store.append] using different
+    exact Store.append_lookup_old store fact id appendDifferent
+
+theorem Store.insert_live_sound (store : Store Atom) (fact : Sequent Atom)
+    (storeSound : store.LiveSound) (factSound : fact.Sound) :
+    (store.insert fact).2.LiveSound := by
+  apply reuse_preserves_live_sound storeSound factSound
+  · exact Store.insert_lookup_new store fact
+  · intro id different
+    exact Store.insert_lookup_other store fact id different
+
+theorem Store.copy_lookup_source {store after : Store Atom} {source copied : Nat}
+    (copiedResult : store.copy? source = some (copied, after)) :
+    ∃ fact, store.lookup source = some fact ∧ after.lookup copied = some fact := by
+  simp only [Store.copy?, Option.map_eq_some_iff] at copiedResult
+  obtain ⟨fact, sourceLive, inserted⟩ := copiedResult
+  have copiedLive := Store.insert_lookup_new store fact
+  rw [inserted] at copiedLive
+  exact ⟨fact, sourceLive, copiedLive⟩
+
+theorem Store.copy_live_sound {store after : Store Atom} {source copied : Nat}
+    (storeSound : store.LiveSound)
+    (copiedResult : store.copy? source = some (copied, after)) : after.LiveSound := by
+  obtain ⟨fact, sourceLive, copiedLive⟩ := Store.copy_lookup_source copiedResult
+  apply copy_preserves_live_sound storeSound sourceLive copiedLive
+  intro id different
+  simp only [Store.copy?, Option.map_eq_some_iff] at copiedResult
+  obtain ⟨sourceFact, sourceFactLive, inserted⟩ := copiedResult
+  have copiedId : (store.insert sourceFact).1 = copied := congrArg Prod.fst inserted
+  have afterStore : (store.insert sourceFact).2 = after := congrArg Prod.snd inserted
+  have sourceDifferent : id ≠ (store.insert sourceFact).1 := by
+    simpa [copiedId] using different
+  rw [← afterStore]
+  exact Store.insert_lookup_other store sourceFact id sourceDifferent
+
+theorem Store.mutate_lookup_target {store after : Store Atom} {id : Nat}
+    {replacement : Sequent Atom} (mutated : store.mutate? id replacement = some after) :
+    after.lookup id = some replacement := by
+  simp only [Store.mutate?] at mutated
+  split at mutated
+  · contradiction
+  · rename_i old lookupOld
+    simp only [Option.some.injEq] at mutated
+    subst after
+    have inBounds : id < store.slots.length := by
+      unfold Store.lookup at lookupOld
+      cases get : store.slots[id]? with
+      | none => simp [get] at lookupOld
+      | some slot => exact (List.getElem?_eq_some_iff.mp get).1
+    exact Store.lookup_set_self store id (some replacement) inBounds
+
+theorem Store.mutate_lookup_other {store after : Store Atom} {target : Nat}
+    {replacement : Sequent Atom} (mutated : store.mutate? target replacement = some after)
+    {id : Nat} (different : id ≠ target) : after.lookup id = store.lookup id := by
+  simp only [Store.mutate?] at mutated
+  split at mutated
+  · contradiction
+  · rename_i old lookupOld
+    simp only [Option.some.injEq] at mutated
+    subst after
+    have inBounds : target < store.slots.length := by
+      unfold Store.lookup at lookupOld
+      cases get : store.slots[target]? with
+      | none => simp [get] at lookupOld
+      | some slot => exact (List.getElem?_eq_some_iff.mp get).1
+    exact Store.lookup_set_other store target id (some replacement) inBounds different
+
+theorem Store.mutate_live_sound {store after : Store Atom} {id : Nat}
+    {replacement : Sequent Atom} (storeSound : store.LiveSound)
+    (replacementSound : replacement.Sound)
+    (mutated : store.mutate? id replacement = some after) : after.LiveSound := by
+  apply mutation_preserves_live_sound storeSound replacementSound
+  · exact Store.mutate_lookup_target mutated
+  · intro candidate different
+    exact Store.mutate_lookup_other mutated different
+
+theorem Store.normalize_live_sound [DecidableEq Atom] [LinearOrder (Lit Atom)]
+    {store after : Store Atom} {id : Nat} (storeSound : store.LiveSound)
+    (normalized : store.normalize? id = some after) : after.LiveSound := by
+  simp only [Store.normalize?, Option.bind_eq_some_iff] at normalized
+  obtain ⟨fact, factLive, mutated⟩ := normalized
+  exact Store.mutate_live_sound storeSound
+    (normalization_replacement_sound (storeSound id fact factLive)) mutated
+
+theorem Store.insertThm_live_sound {store after : Store Atom} {fact : Sequent Atom}
+    {id : ThmId} (storeSound : store.LiveSound) (factSound : fact.Sound)
+    (inserted : store.insertThm? fact = some (id, after)) : after.LiveSound := by
+  unfold Store.insertThm? at inserted
+  generalize resultEq : store.insert fact = result at inserted
+  obtain ⟨offset, resultStore⟩ := result
+  simp only at inserted
+  cases handleEq : StructuralId.ofOffset? (Kind := ThmKind) offset with
+  | none => simp only [handleEq, Option.map_none, reduceCtorEq] at inserted
+  | some handle =>
+      simp only [handleEq, Option.map_some, Option.some.injEq, Prod.mk.injEq] at inserted
+      obtain ⟨rfl, rfl⟩ := inserted
+      simpa [resultEq] using Store.insert_live_sound store fact storeSound factSound
+
+theorem Store.deleteThm_live_sound {store after : Store Atom} {id : ThmId}
+    (storeSound : store.LiveSound) (deleted : store.deleteThm? id = some after) :
+    after.LiveSound :=
+  Store.delete_live_sound storeSound deleted
+
+theorem Store.copyThm_live_sound {store after : Store Atom} {source copied : ThmId}
+    (storeSound : store.LiveSound) (copiedResult : store.copyThm? source = some (copied, after)) :
+    after.LiveSound := by
+  simp only [Store.copyThm?, Option.bind_eq_some_iff] at copiedResult
+  obtain ⟨fact, sourceLive, inserted⟩ := copiedResult
+  exact Store.insertThm_live_sound storeSound
+    (Store.lookupThm_sound storeSound sourceLive) inserted
+
+theorem Store.mutateThm_live_sound {store after : Store Atom} {id : ThmId}
+    {replacement : Sequent Atom} (storeSound : store.LiveSound)
+    (replacementSound : replacement.Sound)
+    (mutated : store.mutateThm? id replacement = some after) : after.LiveSound :=
+  Store.mutate_live_sound storeSound replacementSound mutated
+
+theorem Store.normalizeThm_live_sound [DecidableEq Atom] [LinearOrder (Lit Atom)]
+    {store after : Store Atom} {id : ThmId} (storeSound : store.LiveSound)
+    (normalized : store.normalizeThm? id = some after) : after.LiveSound :=
+  Store.normalize_live_sound storeSound normalized
 
 /-! ## Why the right side is DNF, not CNF -/
 
