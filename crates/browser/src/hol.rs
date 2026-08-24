@@ -427,6 +427,41 @@ impl HolProver {
         let index = parse_usize(index, "cube index").map_err(to_js)?;
         self.kernel.move_cube_left(theorem, index).map_err(to_js)
     }
+
+    /// Canonicalizes every clause, cube, and matrix row of one theorem.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a malformed or absent theorem ID.
+    #[wasm_bindgen(js_name = normalizeTheorem)]
+    pub fn normalize_theorem(&mut self, theorem: &str) -> Result<(), JsError> {
+        let theorem = parse_thm(theorem).map_err(to_js)?;
+        self.kernel.normalize_theorem(theorem).map_err(to_js)
+    }
+
+    /// Sorts and deduplicates one indexed left clause in place.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a malformed index or absent theorem/clause.
+    #[wasm_bindgen(js_name = normalizeClause)]
+    pub fn normalize_clause(&mut self, theorem: &str, index: &str) -> Result<(), JsError> {
+        let theorem = parse_thm(theorem).map_err(to_js)?;
+        let index = parse_usize(index, "clause index").map_err(to_js)?;
+        self.kernel.normalize_clause(theorem, index).map_err(to_js)
+    }
+
+    /// Sorts and deduplicates one indexed right cube in place.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a malformed index or absent theorem/cube.
+    #[wasm_bindgen(js_name = normalizeCube)]
+    pub fn normalize_cube(&mut self, theorem: &str, index: &str) -> Result<(), JsError> {
+        let theorem = parse_thm(theorem).map_err(to_js)?;
+        let index = parse_usize(index, "cube index").map_err(to_js)?;
+        self.kernel.normalize_cube(theorem, index).map_err(to_js)
+    }
 }
 
 impl HolProver {
@@ -737,6 +772,92 @@ mod tests {
                 .iter()
                 .any(|cube| cube.literals().len() == 2)
         );
+    }
+
+    #[test]
+    fn matrix_boundary_emits_exact_nested_json_and_exposes_normalization() {
+        let mut prover = prover();
+        let p = prover.proposition("1").unwrap();
+        let q = prover.proposition("2").unwrap();
+        let theorem = prover.kernel.identity(p).unwrap();
+        let theorem_id = format_thm(theorem);
+        let clauses = format!(
+            r#"[["{}","{}","{}"],["{}"],["{}","{}","{}"]]"#,
+            q.get(),
+            p.get(),
+            q.get(),
+            p.get(),
+            p.get(),
+            q.get(),
+            p.get()
+        );
+        let cubes = format!(
+            r#"[["{}","{}","{}"],["{}"],["{}","{}","{}"]]"#,
+            p.get(),
+            q.get(),
+            p.get(),
+            p.get(),
+            q.get(),
+            p.get(),
+            q.get()
+        );
+        prover.weaken_matrix(&theorem_id, &clauses, &cubes).unwrap();
+
+        let expected = format!(
+            concat!(
+                "{{\"premises\":[[\"{}\",\"{}\"],[\"{}\"]],",
+                "\"conclusions\":[[\"{}\",\"{}\"],[\"{}\"]]}}"
+            ),
+            q.get(),
+            p.get(),
+            p.get(),
+            q.get(),
+            p.get(),
+            p.get()
+        );
+        assert_eq!(prover.theorem_json(&theorem_id).unwrap(), expected);
+
+        prover.normalize_clause(&theorem_id, "0").unwrap();
+        prover.normalize_cube(&theorem_id, "0").unwrap();
+        prover.normalize_theorem(&theorem_id).unwrap();
+        assert_eq!(prover.theorem_json(&theorem_id).unwrap(), expected);
+    }
+
+    #[test]
+    fn matrix_index_failures_leave_theorem_unchanged() {
+        let mut prover = prover();
+        let p = prover.proposition("1").unwrap();
+        let q = prover.proposition("2").unwrap();
+        let theorem = prover.kernel.identity(p).unwrap();
+        let theorem_id = format_thm(theorem);
+        prover
+            .weaken_matrix(
+                &theorem_id,
+                &format!(r#"[["{}","{}","{}"]]"#, q.get(), p.get(), q.get()),
+                &format!(r#"[["{}","{}","{}"]]"#, p.get(), q.get(), p.get()),
+            )
+            .unwrap();
+        let before = prover.theorem_json(&theorem_id).unwrap();
+
+        assert!(parse_usize("not-an-index", "clause index").is_err());
+        assert_eq!(prover.theorem_json(&theorem_id).unwrap(), before);
+        assert!(prover.kernel.normalize_clause(theorem, 99).is_err());
+        assert_eq!(prover.theorem_json(&theorem_id).unwrap(), before);
+        assert!(parse_usize("not-an-index", "cube index").is_err());
+        assert_eq!(prover.theorem_json(&theorem_id).unwrap(), before);
+        assert!(prover.kernel.normalize_cube(theorem, 99).is_err());
+        assert_eq!(prover.theorem_json(&theorem_id).unwrap(), before);
+        assert!(prover.kernel.move_clause_right(theorem, 99).is_err());
+        assert_eq!(prover.theorem_json(&theorem_id).unwrap(), before);
+        assert!(prover.kernel.move_cube_left(theorem, 99).is_err());
+        assert_eq!(prover.theorem_json(&theorem_id).unwrap(), before);
+        assert!(
+            prover
+                .kernel
+                .normalize_theorem(ThmId::new(999).unwrap())
+                .is_err()
+        );
+        assert_eq!(prover.theorem_json(&theorem_id).unwrap(), before);
     }
 
     #[test]
