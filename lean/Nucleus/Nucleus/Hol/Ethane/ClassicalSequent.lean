@@ -529,8 +529,12 @@ theorem freshAppend_preserves_live_sound {admissible : Valuation → Prop}
   · have position : id.position = before.thms.length := by
       by_contra different
       have beyond : before.thms.length + 1 ≤ id.position := by omega
-      simp [List.getElem?_append, old, lengths, beyond] at live
-    simp [List.getElem?_append, position, lengths] at live
+      have rowMissing : (before.thms ++ [fact])[id.position]? = none := by
+        rw [List.getElem?_eq_none]
+        simp
+        omega
+      simp [rowMissing] at live
+    simp [position, lengths] at live
     simpa [live] using factSound
 
 theorem identity {admissible : Valuation → Prop} (id : PropId) :
