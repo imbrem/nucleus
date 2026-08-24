@@ -12,7 +12,9 @@ mod syn;
 mod table;
 pub mod wire;
 
-pub use kernel::{CopyMap, Kernel, KernelError, PropId, PropIdError, PropVec, Thm, ThmId};
+pub use kernel::{
+    Clause, Cnf, CopyMap, Cube, Dnf, Kernel, KernelError, PropId, PropIdError, PropVec, Thm, ThmId,
+};
 pub use resolve::{Expr, ResolveError, Resolver, ResolverExt};
 pub use row::{KindTag, Sort, Tag, TmTag, TyTag};
 pub use syn::{SynFact, SynRel};

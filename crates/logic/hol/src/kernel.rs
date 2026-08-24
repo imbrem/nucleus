@@ -22,7 +22,8 @@ mod classical;
 mod syn_facts;
 
 use classical::ClassicalState;
-pub use classical::{PropId, PropIdError, PropVec, Thm, ThmId};
+pub use classical::{PropId, PropIdError, PropVec};
+pub use covalence_logic_classical::{Clause, Cnf, Cube, Dnf, Thm, ThmId};
 
 /// A recoverable failure at the checked kernel boundary.
 #[derive(Debug, Snafu)]
