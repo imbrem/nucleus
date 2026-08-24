@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use covalence_lib_error::snafu::{self, Snafu};
 use covalence_logic_hol::{
-    Kernel, KernelError, PropId, Ref, ThmId,
+    Cnf, Kernel, KernelError, PropId, Ref, Thm, ThmId,
     builtin::{Op1, Op2},
 };
 
@@ -94,7 +94,7 @@ impl CnfBuilder {
         if variable == 0 {
             return Err(Error::UnknownVariable { variable });
         }
-        validate_atom(&self.kernel, PropId::positive(atom))?;
+        validate_atom(&self.kernel, positive(atom))?;
         match self.variables.get(&variable) {
             Some(bound) if *bound != atom => Err(Error::ConflictingVariable { variable }),
             Some(_) => Ok(()),
@@ -151,7 +151,7 @@ impl CnfBuilder {
             terms.push(build_clause(&mut self.kernel, literals, false_ref)?);
         }
         let formula = build_binary(&mut self.kernel, Op2::And, &terms, true_ref)?;
-        let formula_prop = PropId::positive(formula);
+        let formula_prop = positive(formula);
         let root = self.kernel.identity(formula_prop)?;
         let mut projected = Vec::with_capacity(canonical_clauses.len());
         project_clauses(&mut self.kernel, root, formula, &terms, &mut projected)?;
@@ -163,9 +163,7 @@ impl CnfBuilder {
             .zip(terms.iter().copied())
             .zip(projected)
         {
-            let theorem = self
-                .kernel
-                .flatten_conclusion(theorem, PropId::positive(term))?;
+            let theorem = self.kernel.flatten_conclusion(theorem, positive(term))?;
             canonical.insert(literals, (term, theorem));
         }
 
@@ -432,19 +430,15 @@ impl LratProver {
         temporary.push(theorem);
         for literal in literals {
             let falsifying = literal.negated();
-            if self
-                .kernel
-                .theorem(theorem)?
-                .premises()
-                .contains(&falsifying)
-            {
+            let premises = self.kernel.theorem(theorem)?.premises();
+            if cnf_contains_unit(premises, falsifying) {
                 self.kernel.not_right(theorem, falsifying)?;
             } else {
                 self.kernel.weaken(theorem, &[], &[*literal])?;
             }
         }
-        let formula = PropId::positive(self.formula);
-        if !self.kernel.theorem(theorem)?.premises().contains(&formula) {
+        let formula = positive(self.formula);
+        if !cnf_contains_unit(self.kernel.theorem(theorem)?.premises(), formula) {
             self.kernel.weaken(theorem, &[formula], &[])?;
         }
         Ok(theorem)
@@ -497,12 +491,13 @@ impl LratProver {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::NoRefutation`] unless the witness is exactly `[formula] |- []`.
+    /// Returns [`Error::NoRefutation`] unless the witness is exactly
+    /// `[[formula]] ⊢ []`.
     pub fn done(self) -> Result<UnsatFormula, Error> {
         let theorem = self.refutation.ok_or(Error::NoRefutation)?;
         let sequent = self.kernel.theorem(theorem)?;
-        let formula = PropId::positive(self.formula);
-        if sequent.premises() != [formula] || !sequent.conclusions().is_empty() {
+        let formula = positive(self.formula);
+        if !is_unit_refutation(sequent, formula) {
             return Err(Error::NoRefutation);
         }
         Ok(UnsatFormula {
@@ -543,15 +538,15 @@ impl UnsatFormula {
         reconstruct(&self.kernel, self.formula)
     }
 
-    /// Rechecks that the retained private witness is `[formula] |- []`.
+    /// Rechecks that the retained private witness is `[[formula]] ⊢ []`.
     ///
     /// # Errors
     ///
     /// Returns an error if the checked witness invariant is absent.
     pub fn verify(&self) -> Result<(), Error> {
         let sequent = self.kernel.theorem(self.refutation)?;
-        let formula = PropId::positive(self.formula);
-        if sequent.premises() == [formula] && sequent.conclusions().is_empty() {
+        let formula = positive(self.formula);
+        if is_unit_refutation(sequent, formula) {
             Ok(())
         } else {
             Err(Error::NoRefutation)
@@ -584,6 +579,39 @@ pub fn reconstruct(kernel: &Kernel, formula: Ref) -> Result<Vec<Vec<PropId>>, Er
     Ok(clauses)
 }
 
+fn positive(reference: Ref) -> PropId {
+    PropId::positive(reference.get())
+}
+
+fn reference(proposition: PropId) -> Ref {
+    Ref::new(proposition.magnitude()).expect("PropId magnitude is nonzero")
+}
+
+fn cnf_contains_unit(cnf: &Cnf, literal: PropId) -> bool {
+    cnf.as_slice()
+        .iter()
+        .any(|clause| clause.as_slice() == [literal])
+}
+
+fn is_unit_refutation(theorem: &Thm, formula: PropId) -> bool {
+    theorem.premises().as_slice().len() == 1
+        && theorem.premises().as_slice()[0].as_slice() == [formula]
+        && theorem.conclusions().as_slice().is_empty()
+}
+
+#[cfg(test)]
+fn unit_conclusions(theorem: &Thm) -> Option<Vec<PropId>> {
+    theorem
+        .conclusions()
+        .as_slice()
+        .iter()
+        .map(|cube| match cube.as_slice() {
+            [literal] => Some(*literal),
+            _ => None,
+        })
+        .collect()
+}
+
 fn map_dimacs(
     variables: &BTreeMap<u64, Ref>,
     literals: impl IntoIterator<Item = Literal>,
@@ -595,7 +623,7 @@ fn map_dimacs(
             let atom = *variables
                 .get(&variable)
                 .ok_or(Error::UnknownVariable { variable })?;
-            let positive = PropId::positive(atom);
+            let positive = positive(atom);
             Ok(if literal.get() > 0 {
                 positive
             } else {
@@ -606,7 +634,7 @@ fn map_dimacs(
 }
 
 fn validate_atom(kernel: &Kernel, proposition: PropId) -> Result<(), Error> {
-    let reference = proposition.reference();
+    let reference = reference(proposition);
     if kernel.arena().op1(reference).is_some()
         || kernel.arena().op2(reference).is_some()
         || kernel.arena().bool_value(reference).is_some()
@@ -618,9 +646,9 @@ fn validate_atom(kernel: &Kernel, proposition: PropId) -> Result<(), Error> {
 
 fn literal_term(kernel: &mut Kernel, literal: PropId) -> Result<Ref, Error> {
     if literal.is_positive() {
-        Ok(literal.reference())
+        Ok(reference(literal))
     } else {
-        Ok(kernel.op1(Op1::Not, literal.reference())?)
+        Ok(kernel.op1(Op1::Not, reference(literal))?)
     }
 }
 
@@ -649,7 +677,7 @@ fn project_clauses(
     match clauses {
         [] => Ok(()),
         [_, rest @ ..] => {
-            let proposition = PropId::positive(formula);
+            let proposition = positive(formula);
             let children: Vec<_> = kernel
                 .children(formula)
                 .ok_or(Error::NonCanonicalFormula { formula })?
@@ -700,11 +728,11 @@ fn decode_literal(kernel: &Kernel, term: Ref, output: &mut Vec<PropId>) -> Resul
             .children(term)
             .and_then(|mut children| children.next())
             .ok_or(Error::NonCanonicalFormula { formula: term })?;
-        validate_atom(kernel, PropId::positive(child))?;
-        output.push(PropId::positive(child).negated());
+        validate_atom(kernel, positive(child))?;
+        output.push(positive(child).negated());
         return Ok(());
     }
-    let atom = PropId::positive(term);
+    let atom = positive(term);
     validate_atom(kernel, atom)?;
     output.push(atom);
     Ok(())
@@ -721,7 +749,7 @@ mod tests {
         let bool_ty = kernel.bool_ty(star).unwrap();
         let p = kernel.tm_fv(1, bool_ty).unwrap();
         let q = kernel.tm_fv(2, bool_ty).unwrap();
-        (kernel, bool_ty, PropId::positive(p), PropId::positive(q))
+        (kernel, bool_ty, positive(p), positive(q))
     }
 
     fn dimacs(literals: impl IntoIterator<Item = i64>) -> Clause {
@@ -798,7 +826,7 @@ mod tests {
         let (mut kernel, bool_ty, p, _) = fixture();
         let truth = kernel.bool(bool_ty, true).unwrap();
         let falsehood = kernel.bool(bool_ty, false).unwrap();
-        let clause = kernel.op2(Op2::Or, p.reference(), falsehood).unwrap();
+        let clause = kernel.op2(Op2::Or, reference(p), falsehood).unwrap();
         let repeated = kernel.op2(Op2::And, clause, truth).unwrap();
         let formula = kernel.op2(Op2::And, clause, repeated).unwrap();
         assert!(matches!(
@@ -806,7 +834,7 @@ mod tests {
             Err(Error::NonCanonicalFormula { .. })
         ));
 
-        let repeated_literal = kernel.op2(Op2::Or, p.reference(), clause).unwrap();
+        let repeated_literal = kernel.op2(Op2::Or, reference(p), clause).unwrap();
         let formula = kernel.op2(Op2::And, repeated_literal, truth).unwrap();
         assert!(matches!(
             reconstruct(&kernel, formula),
@@ -842,8 +870,8 @@ mod tests {
         let (mut kernel, bool_ty, _, q) = fixture();
         let predicate_ty = kernel.ty_arr(bool_ty, bool_ty).unwrap();
         let predicate = kernel.tm_fv(3, predicate_ty).unwrap();
-        let application = kernel.app(predicate, q.reference()).unwrap();
-        let proposition = PropId::positive(application);
+        let application = kernel.app(predicate, reference(q)).unwrap();
+        let proposition = positive(application);
 
         // The SAT atom is a Boolean-valued HOL application, not a Boolean
         // variable. RUP treats it only as an opaque proposition and therefore
@@ -872,8 +900,12 @@ mod tests {
         let theorem = prover.kernel.theorem(prover.live[&1].theorem).unwrap();
         let mut expected = [p, p.negated()];
         expected.sort_unstable();
-        assert_eq!(theorem.premises(), &[PropId::positive(prover.formula)]);
-        assert_eq!(theorem.conclusions(), expected);
+        assert_eq!(theorem.premises().as_slice().len(), 1);
+        assert_eq!(
+            theorem.premises().as_slice()[0].as_slice(),
+            [positive(prover.formula)]
+        );
+        assert_eq!(unit_conclusions(theorem).unwrap(), expected);
     }
 
     #[test]
@@ -890,8 +922,8 @@ mod tests {
     fn parsed_dimacs_polarity_uses_the_explicit_atom_map() {
         let (kernel, bool_ty, p, q) = fixture();
         let mut builder = CnfBuilder::new(kernel, bool_ty);
-        builder.bind_variable(1, p.reference()).unwrap();
-        builder.bind_variable(2, q.reference()).unwrap();
+        builder.bind_variable(1, reference(p)).unwrap();
+        builder.bind_variable(2, reference(q)).unwrap();
         builder.clause(&[p]).unwrap();
         let mut prover = builder.refute().unwrap();
         prover.learn_rup(2, &dimacs([1, 2]), &[1]).unwrap();
@@ -899,7 +931,7 @@ mod tests {
         let mut expected = [p, q];
         expected.sort_unstable();
         assert_eq!(
-            prover.kernel.theorem(theorem).unwrap().conclusions(),
+            unit_conclusions(prover.kernel.theorem(theorem).unwrap()).unwrap(),
             expected
         );
     }
@@ -918,10 +950,7 @@ mod tests {
 
         prover.forget(&[1]).unwrap();
         assert!(prover.kernel.theorem(learned).is_ok());
-        let reused = prover
-            .kernel
-            .identity(PropId::positive(prover.true_ref))
-            .unwrap();
+        let reused = prover.kernel.identity(positive(prover.true_ref)).unwrap();
         assert_eq!(reused, source);
         assert!(prover.kernel.theorem(learned).is_ok());
     }
@@ -1011,7 +1040,7 @@ mod tests {
         assert_eq!(oracle.clause(1), Some(&positive));
 
         let mut builder = CnfBuilder::new(kernel, bool_ty);
-        builder.bind_variable(1, p.reference()).unwrap();
+        builder.bind_variable(1, reference(p)).unwrap();
         builder.clause(&[p]).unwrap();
         builder.clause(&[p.negated()]).unwrap();
         let mut prover = builder.refute().unwrap();
