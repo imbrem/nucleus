@@ -1248,6 +1248,49 @@ mod tests {
     }
 
     #[test]
+    fn union_failure_prefixes_are_coarse_to_fine_on_malformed_private_state() {
+        fn syntax_fact(kernel: &mut Kernel, bool_ty: Ref) -> (Ref, Ref, SynFactId) {
+            let left = kernel.bool(bool_ty, true).unwrap();
+            let right = kernel.bool(bool_ty, true).unwrap();
+            let fact = kernel
+                .syn_congr(None, SynRel::Syn, None, None, left, right, &[])
+                .unwrap();
+            (left, right, fact)
+        }
+
+        // A malformed semantic path fails before any observable mutation.
+        let (mut kernel, star, bool_ty) = bool_kernel();
+        let (left, _right, fact) = syntax_fact(&mut kernel, bool_ty);
+        assert!(
+            kernel
+                .arena
+                .set_eq_column(EqColumn::Semantic, left, Some(star))
+        );
+        let before = kernel.arena.clone();
+        assert!(kernel.union_syn_fact(fact).is_err());
+        assert_eq!(kernel.arena, before);
+
+        // If conversion is malformed, the already completed semantic union
+        // remains, but no finer cache edge is installed.
+        let (mut kernel, star, bool_ty) = bool_kernel();
+        let (left, right, fact) = syntax_fact(&mut kernel, bool_ty);
+        assert!(kernel.arena.set_eq_column(EqColumn::Conv, left, Some(star)));
+        assert!(kernel.union_syn_fact(fact).is_err());
+        assert_eq!(kernel.arena.eq(right), Some(left));
+        assert_eq!(kernel.arena.syn_eq(right), None);
+
+        // If only syntactic equality is malformed, both coarser unions have
+        // completed before the final checked prefix fails.
+        let (mut kernel, star, bool_ty) = bool_kernel();
+        let (left, right, fact) = syntax_fact(&mut kernel, bool_ty);
+        assert!(kernel.arena.set_eq_column(EqColumn::Syn, left, Some(star)));
+        assert!(kernel.union_syn_fact(fact).is_err());
+        assert_eq!(kernel.arena.eq(right), Some(left));
+        assert_eq!(kernel.arena.conv(right), Some(left));
+        assert_eq!(kernel.arena.syn_eq(right), None);
+    }
+
+    #[test]
     fn congruence_composes_substitution_without_tree_walks() {
         let (mut kernel, _, bool_ty) = bool_kernel();
         let bool_to_bool = kernel.ty_arr(bool_ty, bool_ty).unwrap();
