@@ -1,7 +1,9 @@
 //! End-to-end userspace projection of the axiom of infinity.
 
 use covalence_logic_hol::{AX_INF, Kernel, Lit, Ref, Sort, Tag, TmTag, TyTag};
-use covalence_logic_hol_derived::{InfinityError, InfinityExt, open_exists, substitute};
+use covalence_logic_hol_derived::{
+    InfinityError, InfinityExt, forall_elim, open_exists, substitute,
+};
 
 fn prelude() -> (Kernel, Ref) {
     let mut kernel = Kernel::new();
@@ -82,6 +84,35 @@ fn projection_requires_exactly_the_infinity_capability() {
         Err(InfinityError::Kernel { .. })
     ));
     assert_eq!(kernel.arena().len(), before);
+}
+
+#[test]
+fn infinity_reflection_specializes_through_standard_hol_rules() {
+    let (mut kernel, bool_ty) = prelude();
+    kernel.add_axiom(AX_INF).expect("infinity capability");
+    let package = kernel.choose_infinity(bool_ty).expect("infinity package");
+
+    let at_left = forall_elim(
+        &mut kernel,
+        package.reflects_equality_theorem,
+        package.missed,
+    )
+    .expect("first universal elimination");
+    let at_both = forall_elim(&mut kernel, at_left.theorem, package.missed)
+        .expect("second universal elimination");
+
+    assert_eq!(
+        kernel.classifier(at_both.proposition).expect("Boolean"),
+        bool_ty
+    );
+    let theorem = kernel.thm().get(at_both.theorem).expect("exact theorem");
+    assert!(theorem.lhs.rows().next().is_none());
+    let rows = theorem.rhs.to_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].as_slice(),
+        [Lit::positive(at_both.proposition.get())]
+    );
 }
 
 #[test]

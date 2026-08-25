@@ -685,6 +685,28 @@ impl GuestKernel for HostKernel {
             .map_err(|error| error.to_string())
     }
 
+    fn ap_thm(&self, theorem: u64, argument: u64) -> Result<wit::ApThm, String> {
+        let result = self
+            .0
+            .borrow_mut()
+            .ap_thm(theorem_id(theorem)?, reference(argument)?)
+            .map_err(|error| error.to_string())?;
+        Ok(wit::ApThm {
+            left: ref_index(result.left),
+            right: ref_index(result.right),
+            equality: ref_index(result.equality),
+            theorem: result.theorem.get().unsigned_abs().into(),
+        })
+    }
+
+    fn eqt_elim(&self, theorem: u64) -> Result<u64, String> {
+        self.0
+            .borrow_mut()
+            .eqt_elim(theorem_id(theorem)?)
+            .map(|id| id.get().unsigned_abs().into())
+            .map_err(|error| error.to_string())
+    }
+
     fn inf_exists(&self, bool_type: u64) -> Result<wit::InfinityAxiom, String> {
         let axiom = self
             .0
