@@ -8,9 +8,16 @@ import Nucleus.Hol.Ethane.Arena.OneBased.Layout
 This is the authoritative structural codec for the `arena` wire introduced by
 the ambient/column refactor.  Unlike the legacy oracle in `Cbor.lean`, it
 models the exact nested Serde maps and their strict field discipline.  Codecs
-for already-formalized leaf payloads are parameters; the nesting, optional
-column defaults, ambient predicate representation, and arena normalization are
-fixed here.
+for already-formalized leaf payloads are reused directly; the nesting,
+optional column defaults, ambient predicate representation, and arena
+normalization are fixed here.
+
+The boundary of this file is one already-parsed `CborSyn.value`. Rust's
+`wire::deserialize` additionally owns the byte-reader boundary and rejects any
+byte after the one decoded CBOR item (including a second valid item). Trailing
+bytes do not exist in `CborSyn`, so that whole-reader property is intentionally
+not restated as a theorem about values here; it is enforced and regression
+tested in `crates/logic/hol/src/wire.rs` and `tests/wire_robustness.rs`.
 -/
 
 namespace Nucleus.Hol.Ethane.OneBased.NestedCbor
@@ -41,6 +48,12 @@ private def traverse (decode : Nucleus.Cbor → Option α) :
     List Nucleus.Cbor → Option (List α)
   | [] => some []
   | value :: values => return (← decode value) :: (← traverse decode values)
+
+private theorem optionBindSome (value : α) (next : α → Option β) :
+    (some value).bind next = next value := rfl
+
+private theorem optionDoSome (value : α) (next : α → Option β) :
+    (do let result ← (some value : Option α); next result) = next value := rfl
 
 private theorem traverse_encode (encode : α → Nucleus.Cbor)
     (decode : Nucleus.Cbor → Option α)
@@ -232,50 +245,46 @@ private def decodeClause? (value : Nucleus.Cbor) : Option (ClassicalMatrix.Claus
   simp [decodeClause?, encodeClause, decodeList, array,
     traverse_encode encodeLit decodeLit? decodeLit?_encode]
 
-private def encodeCnf (cnf : ClassicalMatrix.Cnf Ref) : Nucleus.Cbor :=
-  array (cnf.clauses.map encodeClause)
-private def decodeLiveRows (decode : Nucleus.Cbor → Option α)
-    (value : Nucleus.Cbor) : Option (List α) := do
-  let values ← Nucleus.Cbor.asArray? value
-  let decodeRow? (value : Nucleus.Cbor) : Option (Option α) :=
-    if value = null then some none else (decode value).map some
-  let rows ← traverse decodeRow? values
-  return rows.filterMap id
+private def encodeRow (encode : α → Nucleus.Cbor) : Option α → Nucleus.Cbor
+  | none => null
+  | some row => encode row
 
-private theorem decodeLiveRows_leadingNull (decode : Nucleus.Cbor → Option α)
-    (values : List Nucleus.Cbor) :
-    decodeLiveRows decode (array (null :: values)) =
-      decodeLiveRows decode (array values) := by
-  let decodeRow? (value : Nucleus.Cbor) : Option (Option α) :=
-    if value = null then some none else (decode value).map some
-  have head : decodeRow? null = some none := by simp [decodeRow?]
-  unfold decodeLiveRows
-  simp only [array, Nucleus.Cbor.asArray?_arrayOfList]
-  change ((traverse decodeRow? (null :: values)).bind fun rows =>
-      some (rows.filterMap id)) =
-    ((traverse decodeRow? values).bind fun rows => some (rows.filterMap id))
-  cases found : traverse decodeRow? values with
-  | none => simp [traverse, head, found]
-  | some rows => simp [traverse, head, found]
+private def decodeRow (decode : Nucleus.Cbor → Option α)
+    (value : Nucleus.Cbor) : Option (Option α) :=
+  if value = null then some none else (decode value).map some
 
-private def decodeCnf? (value : Nucleus.Cbor) : Option (ClassicalMatrix.Cnf Ref) :=
-  return ⟨← decodeLiveRows decodeClause? value⟩
+private def decodeRows (decode : Nucleus.Cbor → Option α)
+    (value : Nucleus.Cbor) : Option (List (Option α)) := do
+  traverse (decodeRow decode) (← Nucleus.Cbor.asArray? value)
 
-private theorem traverse_liveClauses (clauses : List (ClassicalMatrix.Clause Ref)) :
-    traverse (fun value =>
-      if value = null then some none else (decodeClause? value).map some)
-      (clauses.map encodeClause) = some (clauses.map some) := by
-  induction clauses with
-  | nil => rfl
-  | cons clause clauses ih =>
-      simp only [List.map_cons, traverse]
-      rw [if_neg (encodeClause_ne_null clause), decodeClause?_encode, ih]
-      rfl
+private theorem decodeRow_encode (encode : α → Nucleus.Cbor)
+    (decode : Nucleus.Cbor → Option α)
+    (notNull : ∀ row, encode row ≠ null)
+    (roundtrip : ∀ row, decode (encode row) = some row) (row : Option α) :
+    decodeRow decode (encodeRow encode row) = some row := by
+  cases row with
+  | none => simp [decodeRow, encodeRow]
+  | some row => simp [decodeRow, encodeRow, notNull row, roundtrip row]
 
-@[simp] private theorem decodeCnf?_encode (cnf : ClassicalMatrix.Cnf Ref) :
+private theorem decodeRows_encode (encode : α → Nucleus.Cbor)
+    (decode : Nucleus.Cbor → Option α)
+    (notNull : ∀ row, encode row ≠ null)
+    (roundtrip : ∀ row, decode (encode row) = some row)
+    (rows : List (Option α)) :
+    decodeRows decode (array (rows.map (encodeRow encode))) = some rows := by
+  exact decodeList_map (encodeRow encode) (decodeRow decode)
+    (decodeRow_encode encode decode notNull roundtrip) rows
+
+private def encodeCnf (cnf : Layout.WireCnf) : Nucleus.Cbor :=
+  array (cnf.rows.map (encodeRow encodeClause))
+private def decodeCnf? (value : Nucleus.Cbor) : Option Layout.WireCnf :=
+  return ⟨← decodeRows decodeClause? value⟩
+
+@[simp] private theorem decodeCnf?_encode (cnf : Layout.WireCnf) :
     decodeCnf? (encodeCnf cnf) = some cnf := by
   cases cnf
-  simp [decodeCnf?, encodeCnf, decodeLiveRows, array, traverse_liveClauses]
+  simp [decodeCnf?, encodeCnf,
+    decodeRows_encode encodeClause decodeClause? encodeClause_ne_null decodeClause?_encode]
 
 private def encodeCube (cube : ClassicalMatrix.Cube Ref) : Nucleus.Cbor :=
   array (cube.literals.map encodeLit)
@@ -292,34 +301,24 @@ private def decodeCube? (value : Nucleus.Cbor) : Option (ClassicalMatrix.Cube Re
   simp [decodeCube?, encodeCube, decodeList, array,
     traverse_encode encodeLit decodeLit? decodeLit?_encode]
 
-private def encodeDnf (dnf : ClassicalMatrix.Dnf Ref) : Nucleus.Cbor :=
-  array (dnf.cubes.map encodeCube)
-private def decodeDnf? (value : Nucleus.Cbor) : Option (ClassicalMatrix.Dnf Ref) :=
-  return ⟨← decodeLiveRows decodeCube? value⟩
+private def encodeDnf (dnf : Layout.WireDnf) : Nucleus.Cbor :=
+  array (dnf.rows.map (encodeRow encodeCube))
+private def decodeDnf? (value : Nucleus.Cbor) : Option Layout.WireDnf :=
+  return ⟨← decodeRows decodeCube? value⟩
 
-private theorem traverse_liveCubes (cubes : List (ClassicalMatrix.Cube Ref)) :
-    traverse (fun value =>
-      if value = null then some none else (decodeCube? value).map some)
-      (cubes.map encodeCube) = some (cubes.map some) := by
-  induction cubes with
-  | nil => rfl
-  | cons cube cubes ih =>
-      simp only [List.map_cons, traverse]
-      rw [if_neg (encodeCube_ne_null cube), decodeCube?_encode, ih]
-      rfl
-
-@[simp] private theorem decodeDnf?_encode (dnf : ClassicalMatrix.Dnf Ref) :
+@[simp] private theorem decodeDnf?_encode (dnf : Layout.WireDnf) :
     decodeDnf? (encodeDnf dnf) = some dnf := by
   cases dnf
-  simp [decodeDnf?, encodeDnf, decodeLiveRows, array, traverse_liveCubes]
+  simp [decodeDnf?, encodeDnf,
+    decodeRows_encode encodeCube decodeCube? encodeCube_ne_null decodeCube?_encode]
 
-private def encodeSequent (fact : ClassicalMatrix.Sequent Ref) : Nucleus.Cbor :=
+private def encodeSequent (fact : Layout.WireSequent) : Nucleus.Cbor :=
   array [encodeCnf fact.left, encodeDnf fact.right]
-private def decodeSequent? (value : Nucleus.Cbor) : Option (ClassicalMatrix.Sequent Ref) := do
+private def decodeSequent? (value : Nucleus.Cbor) : Option Layout.WireSequent := do
   let [left, right] ← Nucleus.Cbor.asArray? value | none
   return ⟨← decodeCnf? left, ← decodeDnf? right⟩
 
-@[simp] private theorem decodeSequent?_encode (fact : ClassicalMatrix.Sequent Ref) :
+@[simp] private theorem decodeSequent?_encode (fact : Layout.WireSequent) :
     decodeSequent? (encodeSequent fact) = some fact := by
   cases fact
   simp [decodeSequent?, encodeSequent, array]
@@ -333,7 +332,7 @@ private def decodeSequent? (value : Nucleus.Cbor) : Option (ClassicalMatrix.Sequ
   decodeList_map encodeRef decodeRef? decodeRef?_encode values
 
 @[simp] private theorem decodeList_sequent
-    (values : List (ClassicalMatrix.Sequent Ref)) :
+    (values : List Layout.WireSequent) :
     decodeList decodeSequent? (array (values.map encodeSequent)) = some values :=
   decodeList_map encodeSequent decodeSequent? decodeSequent?_encode values
 
@@ -499,6 +498,52 @@ def encodeImports : List Layout.Import → List Nucleus.Cbor
 
 end
 
+@[simp] private theorem encodeImport_null : encodeImport .null = null := rfl
+@[simp] private theorem encodeImport_link (link : OneBased.Link) :
+    encodeImport (.link link) = encodeLink link := rfl
+@[simp] private theorem encodeImport_literal (arena : Layout.Arena) :
+    encodeImport (.literal arena) = encodeArena arena := rfl
+
+@[simp] private theorem encodeArena_ne_null (arena : Layout.Arena) :
+    encodeArena arena ≠ null := by
+  cases arena
+  simp [encodeArena, encodeViewWithImports, object, null,
+    Nucleus.Cbor.textMapOfList, ObjectLike.object]
+
+mutual
+
+private theorem importDepth_le_encodeSize (entry : Layout.Import) :
+    entry.literalDepth ≤ (encodeImport entry).size := by
+  cases entry with
+  | null => simp [Layout.Import.literalDepth, encodeImport, null, CborSyn.size]
+  | link link => simp [Layout.Import.literalDepth]
+  | literal arena =>
+      simpa [Layout.Import.literalDepth, encodeImport] using arenaDepth_lt_encodeSize arena
+
+private theorem arenaDepth_lt_encodeSize (arena : Layout.Arena) :
+    arena.literalDepth < (encodeArena arena).size := by
+  cases arena with
+  | mk imports amb pred hol =>
+      have importsBound := importsDepth_le_encodeSize imports
+      apply lt_of_le_of_lt importsBound
+      simp [encodeArena, encodeViewWithImports, object, array,
+        Nucleus.Cbor.textMapOfList, Nucleus.Cbor.arrayOfList,
+        ObjectLike.object, ArrayLike.array, CborSyn.size, CborSyn.textMapOfList]
+      omega
+
+private theorem importsDepth_le_encodeSize (imports : List Layout.Import) :
+    Layout.Imports.literalDepth imports ≤
+      (CborSyn.arrayOfList (encodeImports imports)).size := by
+  cases imports with
+  | nil => simp [Layout.Imports.literalDepth, encodeImports, CborSyn.arrayOfList, CborSyn.size]
+  | cons entry entries =>
+      have entryBound := importDepth_le_encodeSize entry
+      have entriesBound := importsDepth_le_encodeSize entries
+      simp only [Layout.Imports.literalDepth, encodeImports, CborSyn.arrayOfList, CborSyn.size]
+      omega
+
+end
+
 /-- Strict structural decoding. `fields?` rejects duplicate and unknown keys;
 every non-optional field is fetched with `required?`. -/
 private def decodeViewUsing? (decodeImport : Nucleus.Cbor → Option Layout.Import)
@@ -584,25 +629,149 @@ theorem decodeNormalizedUsing?_encode {arena : Layout.Arena}
     (encodedImports : List Nucleus.Cbor)
     (imports : traverse decodeImport encodedImports = some arena.imports)
     (wireValid : arena.ColumnsWireValid)
+    (classicalValid : arena.ClassicalWireValid)
     (normalized : arena.ColumnsNormalized) :
     (decodeViewUsing? decodeImport
       (encodeViewWithImports arena.toView encodedImports)).bind
         Layout.View.normalize? = some arena := by
   rw [decodeViewUsing?_encode decodeImport arena.toView encodedImports imports]
-  exact arena.normalize?_toView wireValid normalized
+  exact arena.normalize?_toView wireValid classicalValid normalized
 
-/-- A serialized CNF tombstone is accepted and erased. -/
-theorem decodeCnf?_leadingNull (cnf : ClassicalMatrix.Cnf Ref) :
-    decodeCnf? (array (null :: cnf.clauses.map encodeClause)) = some cnf := by
-  rw [decodeCnf?]
-  rw [decodeLiveRows_leadingNull]
-  exact decodeCnf?_encode cnf
+/-! ## Recursive import round trip
 
-/-- The DNF half uses the identical tombstone discipline. -/
-theorem decodeDnf?_leadingNull (dnf : ClassicalMatrix.Dnf Ref) :
-    decodeDnf? (array (null :: dnf.cubes.map encodeCube)) = some dnf := by
-  rw [decodeDnf?]
-  rw [decodeLiveRows_leadingNull]
-  exact decodeDnf?_encode dnf
+These three mutually proved statements follow the mutually recursive arena,
+import, and import-list syntax.  The fuel hypothesis is expressed using only
+literal-import depth; no reference bound truncates the semantic object. -/
+
+mutual
+
+theorem decodeImportWithFuel?_encode (entry : Layout.Import)
+    (canonical : entry.WireCanonical) (fuel : Nat)
+    (enough : entry.literalDepth < fuel) :
+    decodeImportWithFuel? fuel (encodeImport entry) = some entry := by
+  cases entry with
+  | null =>
+      cases fuel with
+      | zero => simp [Layout.Import.literalDepth] at enough
+      | succ fuel => simp [decodeImportWithFuel?, encodeImport, null]
+  | link link =>
+      cases fuel with
+      | zero => simp [Layout.Import.literalDepth] at enough
+      | succ fuel =>
+          rw [encodeImport_link]
+          simp only [decodeImportWithFuel?]
+          simp only [if_neg (encodeLink_ne_null link)]
+          rw [show (encodeLink link).asTextMap? = some
+            [("tag", text "link"), ("format", text "cbor"),
+              ("blake3", .primitive (.bytes (bytesOfO256 link.blake3)))] by
+            simp [encodeLink, object]]
+          rw [optionDoSome]
+          rw [show field? "tag"
+            [("tag", text "link"), ("format", text "cbor"),
+              ("blake3", .primitive (.bytes (bytesOfO256 link.blake3)))] =
+              some (text "link") by rfl]
+          rw [decodeLink?_encode]
+          rfl
+  | literal arena =>
+      cases fuel with
+      | zero => simp [Layout.Import.literalDepth] at enough
+      | succ fuel =>
+          have nestedEnough : arena.literalDepth < fuel := by
+            simpa [Layout.Import.literalDepth] using enough
+          have decoded := decodeArenaViewWithFuel?_encode arena canonical fuel nestedEnough
+          change arena.WireCanonical at canonical
+          cases arena with
+          | mk imports amb pred hol =>
+            change Layout.Imports.WireCanonical imports ∧
+              (Layout.Arena.mk imports amb pred hol).ColumnsWireValid ∧
+              (Layout.Arena.mk imports amb pred hol).ClassicalWireValid ∧
+              (Layout.Arena.mk imports amb pred hol).ColumnsNormalized at canonical
+            rcases canonical with ⟨_, columns, classical, normalized⟩
+            rw [encodeImport_literal]
+            simp only [decodeImportWithFuel?]
+            simp only [if_neg (encodeArena_ne_null _)]
+            let fields :=
+              [("tag", text "arena"), ("import", array (encodeImports imports)),
+                ("amb", encodeAmb (Layout.Arena.mk imports amb pred hol).toView.amb),
+                ("pred", encodePred (Layout.Arena.mk imports amb pred hol).toView.pred),
+                ("hol", encodeHol (Layout.Arena.mk imports amb pred hol).toView.hol)]
+            rw [show (encodeArena (Layout.Arena.mk imports amb pred hol)).asTextMap? =
+              some fields by simp [fields, encodeArena, encodeViewWithImports, object]]
+            rw [optionDoSome]
+            rw [show field? "tag" fields = some (text "arena") by rfl]
+            change (do
+              let view ← decodeViewUsing? (decodeImportWithFuel? fuel)
+                (encodeArena (Layout.Arena.mk imports amb pred hol))
+              let decodedArena ← view.normalize?
+              pure (Layout.Import.literal decodedArena)) = _
+            change decodeViewUsing? (decodeImportWithFuel? fuel)
+              (encodeArena (Layout.Arena.mk imports amb pred hol)) =
+                some (Layout.Arena.mk imports amb pred hol).toView at decoded
+            rw [decoded]
+            rw [optionDoSome]
+            rw [(Layout.Arena.mk imports amb pred hol).normalize?_toView
+              columns classical normalized]
+            rfl
+
+theorem decodeArenaViewWithFuel?_encode (arena : Layout.Arena)
+    (canonical : arena.WireCanonical) (fuel : Nat)
+    (enough : arena.literalDepth < fuel) :
+    decodeViewWithFuel? fuel (encodeArena arena) = some arena.toView := by
+  cases arena with
+  | mk imports amb pred hol =>
+      rcases canonical with ⟨importsCanonical, _, _, _⟩
+      have decodedImports := decodeImportsWithFuel?_encode imports importsCanonical fuel enough
+      unfold decodeViewWithFuel? encodeArena
+      exact decodeViewUsing?_encode _ _ _ decodedImports
+
+theorem decodeImportsWithFuel?_encode (imports : List Layout.Import)
+    (canonical : Layout.Imports.WireCanonical imports) (fuel : Nat)
+    (enough : Layout.Imports.literalDepth imports < fuel) :
+    traverse (decodeImportWithFuel? fuel) (encodeImports imports) = some imports := by
+  cases imports with
+  | nil => rfl
+  | cons entry entries =>
+      rcases canonical with ⟨entryCanonical, entriesCanonical⟩
+      have entryEnough : entry.literalDepth < fuel :=
+        lt_of_le_of_lt (Nat.le_max_left _ _) enough
+      have entriesEnough : Layout.Imports.literalDepth entries < fuel :=
+        lt_of_le_of_lt (Nat.le_max_right _ _) enough
+      rw [encodeImports, traverse,
+        decodeImportWithFuel?_encode entry entryCanonical fuel entryEnough,
+        decodeImportsWithFuel?_encode entries entriesCanonical fuel entriesEnough]
+      rfl
+
+end
+
+/-- The actual public recursive decoder round-trips every recursively
+canonical arena. Its concrete `Cbor.size` fuel is proved sufficient from the
+encoding tree itself; no external import-decoder premise remains. -/
+theorem decodeArena?_encode (arena : Layout.Arena)
+    (canonical : arena.WireCanonical) :
+    decodeArena? (encodeArena arena) = some arena := by
+  have enough := arenaDepth_lt_encodeSize arena
+  have decoded := decodeArenaViewWithFuel?_encode arena canonical
+    (encodeArena arena).size enough
+  cases arena with
+  | mk imports amb pred hol =>
+      change Layout.Imports.WireCanonical imports ∧
+        (Layout.Arena.mk imports amb pred hol).ColumnsWireValid ∧
+        (Layout.Arena.mk imports amb pred hol).ClassicalWireValid ∧
+        (Layout.Arena.mk imports amb pred hol).ColumnsNormalized at canonical
+      rcases canonical with ⟨_, columns, classical, normalized⟩
+      unfold decodeArena? decodeView?
+      rw [decoded]
+      exact (Layout.Arena.mk imports amb pred hol).normalize?_toView
+        columns classical normalized
+
+/-- A serialized CNF tombstone is retained at its exact row position. -/
+theorem decodeCnf?_leadingNull (cnf : Layout.WireCnf) :
+    decodeCnf? (encodeCnf ⟨none :: cnf.rows⟩) = some ⟨none :: cnf.rows⟩ :=
+  decodeCnf?_encode _
+
+/-- The DNF half retains the identical positional tombstone. -/
+theorem decodeDnf?_leadingNull (dnf : Layout.WireDnf) :
+    decodeDnf? (encodeDnf ⟨none :: dnf.rows⟩) = some ⟨none :: dnf.rows⟩ :=
+  decodeDnf?_encode _
 
 end Nucleus.Hol.Ethane.OneBased.NestedCbor

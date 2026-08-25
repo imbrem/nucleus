@@ -29,9 +29,50 @@ open Nucleus.Hol.Ethane
 open Nucleus.Hol.Ethane.ClassicalMatrix
 open Nucleus.Hol.Ethane.OneBased
 
-/-- The serialized theorem sequence.  Rust's mutable free-list and deleted
-slots are intentionally absent from serialization; only live rows occur. -/
-abbrev ClassicalArena := List (Sequent Ref)
+/-! ## Classical wire matrices
+
+Rust keeps a tombstone at every deleted CNF/DNF row so that row identifiers
+remain stable.  Those inner tombstones are serialized.  In contrast, a
+`ClassicalArena` serializes only its live theorem slots.  Keeping the wire
+shape distinct from `ClassicalMatrix.Cnf`/`Dnf` prevents the semantic model
+from accidentally forgetting an observable row position. -/
+
+structure WireCnf where
+  rows : List (Option (Clause Ref))
+  deriving DecidableEq
+
+structure WireDnf where
+  rows : List (Option (Cube Ref))
+  deriving DecidableEq
+
+structure WireSequent where
+  left : WireCnf
+  right : WireDnf
+  deriving DecidableEq
+
+def WireCnf.semantic (cnf : WireCnf) : Cnf Ref :=
+  ⟨cnf.rows.filterMap id⟩
+
+def WireDnf.semantic (dnf : WireDnf) : Dnf Ref :=
+  ⟨dnf.rows.filterMap id⟩
+
+def WireSequent.semantic (fact : WireSequent) : Sequent Ref :=
+  ⟨fact.left.semantic, fact.right.semantic⟩
+
+@[simp] theorem WireCnf.semantic_tombstone (rows : List (Option (Clause Ref))) :
+    (WireCnf.mk (none :: rows)).semantic = (WireCnf.mk rows).semantic := rfl
+
+@[simp] theorem WireDnf.semantic_tombstone (rows : List (Option (Cube Ref))) :
+    (WireDnf.mk (none :: rows)).semantic = (WireDnf.mk rows).semantic := rfl
+
+/-- The serialized theorem sequence. Rust's outer mutable free-list and
+deleted theorem slots are absent from serialization; only live rows occur. -/
+abbrev ClassicalArena := List WireSequent
+
+/-- `ThmId` is a positive `i32`, hence at most this many compact live rows can
+be accepted by Rust's `ClassicalArena::from_rows`. -/
+def ClassicalArena.WireValid (arena : ClassicalArena) : Prop :=
+  arena.length ≤ 2_147_483_647
 
 /-- Exactly the two ambient atoms implemented by Rust. -/
 abbrev Pred := Amb.Pred ImportId Ref
@@ -39,7 +80,7 @@ abbrev Pred := Amb.Pred ImportId Ref
 structure AmbSection where
   pred : List Pred
   ax : Finset String
-  ctx : Cnf Ref
+  ctx : WireCnf
   thm : ClassicalArena
   deriving DecidableEq
 
@@ -80,6 +121,25 @@ inductive Arena where
 
 end
 
+/-! Structural measures and recursive wire validity. These recurse through
+literal imports without imposing any artificial reference-space cutoff. -/
+
+mutual
+
+def Import.literalDepth : Import → Nat
+  | .null => 0
+  | .literal arena => arena.literalDepth + 1
+  | .link _ => 0
+
+def Arena.literalDepth : Arena → Nat
+  | .mk imports _ _ _ => Imports.literalDepth imports
+
+def Imports.literalDepth : List Import → Nat
+  | [] => 0
+  | entry :: entries => max entry.literalDepth (Imports.literalDepth entries)
+
+end
+
 namespace Arena
 
 @[simp] def imports : Arena → List Import | .mk imports .. => imports
@@ -100,7 +160,7 @@ inductive ArenaTag | arena deriving DecidableEq
 structure AmbView where
   pred : List Pred
   ax : List String
-  ctx : Cnf Ref
+  ctx : WireCnf
   thm : ClassicalArena
 
 structure SynView where
@@ -135,11 +195,14 @@ def View.columnsResident (view : View) : Prop :=
   }
   dense.WellFormed
 
+def View.classicalResident (view : View) : Prop :=
+  view.amb.thm.WireValid ∧ view.pred.syl.WireValid ∧ view.hol.thm.WireValid
+
 /-- Rust rejects a non-null column member beyond `defs`, then strips trailing
 nulls and normalizes the two string/reference sets. -/
 noncomputable def View.normalize? (view : View) : Option Arena := by
   classical
-  exact if view.columnsResident then
+  exact if view.columnsResident ∧ view.classicalResident then
     some (.mk view.«import» {
         pred := view.amb.pred
         ax := view.amb.ax.toFinset
@@ -193,6 +256,9 @@ def Arena.ColumnsNormalized (arena : Arena) : Prop :=
   arena.hol.syn.conv.normalize = arena.hol.syn.conv ∧
   arena.hol.syn.sort.normalize = arena.hol.syn.sort
 
+def Arena.ClassicalWireValid (arena : Arena) : Prop :=
+  arena.amb.thm.WireValid ∧ arena.pred.syl.WireValid ∧ arena.hol.thm.WireValid
+
 /-- The five dense columns, with the unchanged `subst1` cache alongside them. -/
 def Arena.columns (arena : Arena) : Columns.Arena where
   dense := {
@@ -209,45 +275,45 @@ def Arena.columns (arena : Arena) : Columns.Arena where
 
 mutual
 
-def Import.holCoreAt : Nat → Import → OneBased.Import
-  | 0, _ => .null
-  | _ + 1, .null => .null
-  | fuel + 1, .literal arena => .literal (Arena.holCoreAt fuel arena)
-  | _ + 1, .link value => .link value
+def Import.holCore : Import → OneBased.Import
+  | .null => .null
+  | .literal arena => .literal arena.holCore
+  | .link value => .link value
 
 /-- Materialize the logical row view consumed by the existing, fully proved
 HOL kernel model.  This operation is semantic, not a wire conversion: Rust
 likewise combines an expression row with column lookups when it returns a
 borrowed row. -/
-def Arena.holCoreAt : Nat → Arena → OneBased.Arena
-  | 0, arena =>
-      .mk [] arena.hol.ax arena.columns.dense.rows
-        arena.hol.syn.subst1 arena.hol.syn.subst1Free arena.hol.ctx [] []
-  | fuel + 1, arena =>
-      .mk (arena.imports.map (Import.holCoreAt fuel)) arena.hol.ax
-        arena.columns.dense.rows arena.hol.syn.subst1 arena.hol.syn.subst1Free
-        arena.hol.ctx [] []
+def Arena.holCore : Arena → OneBased.Arena
+  | .mk imports _ _ hol =>
+      let dense : Columns.Dense := {
+        defs := hol.defs
+        eq := hol.eq
+        synEq := hol.syn.eq
+        conv := hol.syn.conv
+      }
+      .mk (imports.map Import.holCore) hol.ax
+        dense.rows
+        hol.syn.subst1 hol.syn.subst1Free hol.ctx [] []
 
 end
 
-/-- Materialization uses the same exclusive `i32` bound as the arena's local
-reference space. A concrete Rust arena cannot contain a deeper literal-import
-nesting chain without exceeding its own addressable object storage. -/
-def Arena.holCore (arena : Arena) : OneBased.Arena :=
-  arena.holCoreAt Ref.maxExclusive
-
 @[simp] theorem Arena.holCore_defs (arena : Arena) :
-    arena.holCore.defs = arena.columns.dense.rows := rfl
+    arena.holCore.defs = arena.columns.dense.rows := by
+  cases arena; simp [Arena.holCore, Arena.columns, OneBased.Arena.defs]
 
 @[simp] theorem Arena.holCore_imports (arena : Arena) :
     arena.holCore.imports =
-      arena.imports.map (Import.holCoreAt (Ref.maxExclusive - 1)) := rfl
+      arena.imports.map Import.holCore := by
+  cases arena; simp [Arena.holCore, OneBased.Arena.imports]
 
 @[simp] theorem Arena.holCore_axs (arena : Arena) :
-    arena.holCore.axs = arena.hol.ax := rfl
+    arena.holCore.axs = arena.hol.ax := by
+  cases arena; simp [Arena.holCore, OneBased.Arena.axs]
 
 @[simp] theorem Arena.holCore_ctx (arena : Arena) :
-    arena.holCore.ctx = arena.hol.ctx := rfl
+    arena.holCore.ctx = arena.hol.ctx := by
+  cases arena; simp [Arena.holCore, OneBased.Arena.ctx]
 
 theorem Arena.holCore_row? (arena : Arena) (reference : Ref) :
     arena.holCore.row? reference = arena.columns.dense.row? reference := by
@@ -282,17 +348,44 @@ only install resident targets, although raw deserialization need not. -/
 def Arena.ColumnsChecked (arena : Arena) : Prop :=
   arena.columns.dense.Checked
 
+mutual
+
+def Import.WireCanonical : Import → Prop
+  | .null => True
+  | .literal arena => arena.WireCanonical
+  | .link _ => True
+
+def Arena.WireCanonical : Arena → Prop
+  | .mk imports amb pred hol =>
+      Imports.WireCanonical imports ∧
+      (Arena.mk imports amb pred hol).ColumnsWireValid ∧
+      (Arena.mk imports amb pred hol).ClassicalWireValid ∧
+      (Arena.mk imports amb pred hol).ColumnsNormalized
+
+def Imports.WireCanonical : List Import → Prop
+  | [] => True
+  | entry :: entries => entry.WireCanonical ∧ Imports.WireCanonical entries
+
+end
+
 theorem Arena.toView_columnsResident {arena : Arena}
     (wireValid : arena.ColumnsWireValid) : arena.toView.columnsResident := wireValid
+
+theorem Arena.toView_classicalResident {arena : Arena}
+    (wireValid : arena.ClassicalWireValid) : arena.toView.classicalResident := wireValid
 
 /-- Exact normalized Serde roundtrip. This is the representation isomorphism
 between the nested wire view and the logical arena value. -/
 theorem Arena.normalize?_toView {arena : Arena}
-    (wireValid : arena.ColumnsWireValid) (normalized : arena.ColumnsNormalized) :
+    (wireValid : arena.ColumnsWireValid) (classicalValid : arena.ClassicalWireValid)
+    (normalized : arena.ColumnsNormalized) :
     arena.toView.normalize? = some arena := by
   rcases normalized with ⟨eq, synEq, conv, sort⟩
   rw [View.normalize?]
-  simp only [if_pos (Arena.toView_columnsResident wireValid)]
+  have resident : arena.toView.columnsResident ∧ arena.toView.classicalResident :=
+    ⟨Arena.toView_columnsResident wireValid,
+      Arena.toView_classicalResident classicalValid⟩
+  rw [if_pos resident]
   cases arena with
   | mk imports amb pred hol =>
       cases amb
@@ -354,7 +447,7 @@ def Arena.ImportSort (resolve : Resolver) (arena : Arena) (source : ImportId)
 def Arena.ambientTheory (arena : Arena) : Amb.Theory ImportId Ref where
   ax := arena.amb.ax
   defs := fun reference => arena.amb.pred[reference.value.toNat - 1]?
-  ctx := arena.amb.ctx
+  ctx := arena.amb.ctx.semantic
 
 /-- No primitive ambient axiom name exists in PR1.  Consequently a checked
 kernel can carry only an empty `amb.ax`; raw arenas may deserialize arbitrary
@@ -377,11 +470,12 @@ theorem allowsAmbientAxioms_iff_empty (arena : Arena) :
 CNF context.  Named axioms are checked separately and contribute no formula. -/
 def Arena.AmbThmSound (trusted : Arena → Prop) (resolve : Resolver) (arena : Arena) : Prop :=
   ∀ fact ∈ arena.amb.thm,
-    arena.ambientTheory.Proves (arena.ImportOk trusted resolve) (arena.ImportSort resolve) fact
+    arena.ambientTheory.Proves (arena.ImportOk trusted resolve) (arena.ImportSort resolve)
+      fact.semantic
 
 /-- `pred.syl` is independent of all HOL and ambient assumptions. -/
 def Arena.SylSound (arena : Arena) : Prop :=
-  ∀ fact ∈ arena.pred.syl, fact.Sound
+  ∀ fact ∈ arena.pred.syl, fact.semantic.Sound
 
 /-- HOL theorem atoms have a partial interpretation.  A checked Boolean row
 may later supply its actual HOL truth value; unknown or ill-sorted references
@@ -393,7 +487,7 @@ def Arena.HolThmSound (trusted : Arena → Prop) (resolve : Resolver) (arena : A
     arena.ambientTheory.Admits (arena.ImportOk trusted resolve) (arena.ImportSort resolve)
       ambientValuation →
     ∀ fact ∈ arena.hol.thm, ∀ valuation,
-      valuation.Completes interpretation → fact.Holds valuation
+      valuation.Completes interpretation → fact.semantic.Holds valuation
 
 /-- Ordinary HOL soundness is conditional on the explicit ambient context.
 This is the crucial replacement for the old premise list: a foreign proxy is
@@ -522,7 +616,7 @@ def Arena.pushAmbientContext (arena : Arena) (predicate : Pred) (next : Ref) : A
   | .mk imports amb pred hol =>
       .mk imports { amb with
         pred := amb.pred ++ [predicate]
-        ctx := Cnf.mk (amb.ctx.clauses ++ [Clause.mk [(next, false)]]) } pred hol
+        ctx := ⟨amb.ctx.rows ++ [some (Clause.mk [(next, false)])]⟩ } pred hol
 
 structure Arena.CanPushAmbient (arena : Arena) (next : Ref) : Prop where
   nextValue : next.value.toNat = arena.amb.pred.length + 1
@@ -542,7 +636,7 @@ theorem Arena.pushAmbientContext_pred_lookup {arena : Arena} {next : Ref}
 theorem Arena.pushAmbientContext_exact_unit (arena : Arena) (next : Ref)
     (predicate : Pred) :
     (arena.pushAmbientContext predicate next).amb.ctx =
-      Cnf.mk (arena.amb.ctx.clauses ++ [Clause.mk [(next, false)]]) := by
+      ⟨arena.amb.ctx.rows ++ [some (Clause.mk [(next, false)])]⟩ := by
   cases arena
   rfl
 
@@ -563,9 +657,9 @@ theorem Arena.pushAmbientContext_holds {trusted : Arena → Prop} {resolve : Res
   apply definition.mp
   have context := admitted.2
   have finalClause : Clause.mk [(next, false)] ∈
-      (arena.pushAmbientContext predicate next).amb.ctx.clauses := by
+      (arena.pushAmbientContext predicate next).amb.ctx.semantic.clauses := by
     cases arena
-    simp [Arena.pushAmbientContext]
+    simp [Arena.pushAmbientContext, WireCnf.semantic]
   obtain ⟨literal, member, truth⟩ := context _ finalClause
   simp at member
   subst literal
