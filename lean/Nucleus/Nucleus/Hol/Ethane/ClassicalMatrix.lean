@@ -112,6 +112,62 @@ def Sequent.Holds {Atom : Type} (valuation : Valuation Atom) (sequent : Sequent 
 def Sequent.Sound {Atom : Type} (sequent : Sequent Atom) : Prop :=
   ∀ valuation, sequent.Holds valuation
 
+/-! ## Untyped atoms and partial HOL interpretations
+
+The classical arena deliberately does not know which atoms name well-typed HOL
+propositions.  Its soundness quantifies over every total Boolean valuation of
+the atom type.  A HOL arena may therefore interpret the atoms it recognizes
+and leave every other atom indeterminate: any assignment to the unknown atoms
+is a completion, and a universally sound syllogism holds for every such
+completion.
+-/
+
+/-- A consumer such as HOL may know the meaning of only some classical atoms. -/
+abbrev PartialValuation (Atom : Type) := Atom → Option Prop
+
+/-- A total Boolean valuation agrees with every atom whose meaning is known. -/
+def Valuation.Completes {Atom : Type} (valuation : Valuation Atom)
+    (interpretation : PartialValuation Atom) : Prop :=
+  ∀ atom proposition, interpretation atom = some proposition →
+    (valuation atom ↔ proposition)
+
+/-- Universally sound syllogisms remain valid under every completion of a
+partial HOL interpretation.  No typing premise is needed for unknown atoms. -/
+theorem Sequent.Sound.holds_of_completion {Atom : Type} {sequent : Sequent Atom}
+    (sound : sequent.Sound) (interpretation : PartialValuation Atom)
+    (valuation : Valuation Atom) (_completion : valuation.Completes interpretation) :
+    sequent.Holds valuation :=
+  sound valuation
+
+/-- Complete known atoms with an entirely caller-chosen valuation for unknown
+atoms.  The fallback is semantically relevant only where the interpretation
+returns `none`. -/
+def PartialValuation.complete {Atom : Type} (interpretation : PartialValuation Atom)
+    (fallback : Valuation Atom) : Valuation Atom := fun atom =>
+  match interpretation atom with
+  | some proposition => proposition
+  | none => fallback atom
+
+theorem PartialValuation.complete_completes {Atom : Type}
+    (interpretation : PartialValuation Atom) (fallback : Valuation Atom) :
+    (interpretation.complete fallback).Completes interpretation := by
+  intro atom proposition known
+  simp [PartialValuation.complete, known]
+
+@[simp] theorem PartialValuation.complete_unknown {Atom : Type}
+    (interpretation : PartialValuation Atom) (fallback : Valuation Atom) (atom : Atom)
+    (unknown : interpretation atom = none) :
+    interpretation.complete fallback atom = fallback atom := by
+  simp [PartialValuation.complete, unknown]
+
+/-- There is always a completion: unknown atoms may receive an arbitrary
+Boolean value.  This witnesses the intended indeterminate semantics. -/
+theorem PartialValuation.exists_completion {Atom : Type}
+    (interpretation : PartialValuation Atom) :
+    ∃ valuation : Valuation Atom, valuation.Completes interpretation := by
+  exact ⟨interpretation.complete fun _ => False,
+    interpretation.complete_completes fun _ => False⟩
+
 @[simp] theorem empty_clause_false {Atom : Type} (valuation : Valuation Atom) :
     ¬(Clause.mk []).Holds valuation := by
   simp [Clause.Holds]
