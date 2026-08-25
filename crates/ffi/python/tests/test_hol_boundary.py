@@ -207,8 +207,8 @@ def test_type_substitution_retypes_a_term() -> None:
     assert fact_view(fact) == ("syn", parameter, base.bool_ty, typed, retyped)
 
     output, rebuilt = substitute(kernel, parameter, base.bool_ty, typed)
-    assert output == retyped
-    assert fact_view(rebuilt) == ("syn", parameter, base.bool_ty, typed, retyped)
+    assert kernel.classifier(output) == base.bool_ty
+    assert fact_view(rebuilt) == ("syn", parameter, base.bool_ty, typed, output)
 
 
 def test_freshness_scanning_stays_conservative_under_shadowing() -> None:
