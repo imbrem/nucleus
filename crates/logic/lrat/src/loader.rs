@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use covalence_lib_error::snafu::{self, Snafu};
 use covalence_logic_classical::{
-    ClassicalKernel, CnfId, Error as ClassicalError, Rat, RatGroup as ClassicalRatGroup, Refuter,
+    ClassicalKernel, CnfId, Error as ClassicalError, RatGroup as ClassicalRatGroup, Refuter,
 };
 use covalence_logic_hol::{
     Cnf, Kernel, KernelError, Lit, Ref, ThmId, ThmRef,
@@ -159,8 +159,8 @@ impl CnfBuilder {
             .zip(terms.iter().copied())
             .collect();
         let goal = Cnf::new(self.clauses.iter().map(|row| row.iter().copied().collect()));
-        let syllogisms = ClassicalKernel::new().enable_rat();
-        let refuter = syllogisms.refute(goal);
+        let syllogisms = ClassicalKernel::new();
+        let refuter = Refuter::new(goal);
         let mut live = BTreeMap::new();
         for (index, literals) in self.clauses.into_iter().enumerate() {
             let term = canonical[&literals];
@@ -197,8 +197,8 @@ pub struct LratProver {
     variables: BTreeMap<u64, Ref>,
     live: BTreeMap<ClauseId, ClauseRecord>,
     high_water: ClauseId,
-    syllogisms: ClassicalKernel<Rat>,
-    refuter: Refuter<Rat>,
+    syllogisms: ClassicalKernel,
+    refuter: Refuter,
 }
 
 impl LratProver {
@@ -397,7 +397,7 @@ impl LratProver {
     /// Returns [`Error::NoRefutation`] unless the witness is exactly
     /// `[[formula]] ⊢ []`.
     pub fn done(mut self) -> Result<UnsatFormula, Error> {
-        let refutation = self.refuter.done(&self.syllogisms, None)?;
+        let refutation = self.refuter.done()?;
         let universal = self.syllogisms.rules().copy_refutation(&refutation)?;
         self.kernel.syl_mut().copy_refutation(&refutation)?;
         let theorem =

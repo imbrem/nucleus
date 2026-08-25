@@ -15,7 +15,7 @@
 //! in slot order. Deleted slots and free-list history are omitted; decoding
 //! rebuilds dense, all-live slots and an empty free list.
 
-use std::{collections::BTreeSet, marker::PhantomData, num::NonZeroI32};
+use std::{collections::BTreeSet, num::NonZeroI32};
 
 use covalence_lib_error::snafu::Snafu;
 use serde::{
@@ -450,10 +450,7 @@ pub enum Error {
     /// A live opposing row has no RAT group.
     #[snafu(display("CNF row {id} has no RAT group"))]
     IncompleteRat { id: i32 },
-    /// The supplied theorem does not prove the refuter's current state false.
-    #[snafu(display("the theorem does not prove the current CNF state false"))]
-    WrongRefutation,
-    /// The refuter has neither an empty row nor supplied refutation evidence.
+    /// The refuter has not derived an empty row.
     #[snafu(display("the current CNF state has not been refuted"))]
     NoRefutation,
 }
@@ -530,11 +527,7 @@ impl<'a> CheckedArena<'a> {
     /// # Errors
     ///
     /// Returns an error if `id` is absent or target storage is exhausted.
-    pub fn copy_from<P: RatPolicy>(
-        &mut self,
-        source: &ClassicalKernel<P>,
-        id: ThmId,
-    ) -> Result<ThmId, Error> {
+    pub fn copy_from(&mut self, source: &ClassicalKernel, id: ThmId) -> Result<ThmId, Error> {
         let theorem = source
             .get(id)
             .ok_or(Error::MissingTheorem { id: id.get() })?;
@@ -956,45 +949,22 @@ impl ClassicalArena {
     }
 }
 
-mod sealed {
-    pub trait RatPolicy {}
-}
-
-/// A classical kernel configuration which admits only RUP refutation steps.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct RupOnly;
-
-/// A classical kernel configuration which additionally admits checked RAT steps.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct Rat;
-
-impl sealed::RatPolicy for RupOnly {}
-impl sealed::RatPolicy for Rat {}
-
-/// A capability selecting the refutation rules exposed by a classical kernel.
-pub trait RatPolicy: sealed::RatPolicy {}
-
-impl RatPolicy for RupOnly {}
-impl RatPolicy for Rat {}
-
 /// An LCF wrapper whose resident sequents are universally valid.
 ///
 /// Unlike [`ClassicalArena`], this type has no arbitrary insertion or
 /// replacement operation. Its private arena can only be extended through
 /// sound syllogism rules and completed refutations.
 #[derive(Clone, Debug, Default)]
-pub struct ClassicalKernel<P: RatPolicy = RupOnly> {
+pub struct ClassicalKernel {
     arena: ClassicalArena,
-    policy: PhantomData<P>,
 }
 
-impl<P: RatPolicy> ClassicalKernel<P> {
+impl ClassicalKernel {
     /// Constructs an empty classical kernel.
     #[must_use]
     pub const fn new() -> Self {
         Self {
             arena: ClassicalArena::new(),
-            policy: PhantomData,
         }
     }
 
@@ -1058,17 +1028,6 @@ impl<P: RatPolicy> ClassicalKernel<P> {
     pub fn remove(&mut self, id: ThmId) -> bool {
         self.rules().remove(id)
     }
-
-    /// Opens a stateful refutation whose initial state is `goal`.
-    #[must_use]
-    pub fn refute(&self, goal: Cnf) -> Refuter<P> {
-        Refuter {
-            derived_empty: goal.contains_empty_row(),
-            state: goal.clone(),
-            goal,
-            policy: PhantomData,
-        }
-    }
 }
 
 /// An LCF certificate that one CNF is universally unsatisfiable.
@@ -1085,17 +1044,6 @@ impl Refutation {
     }
 }
 
-impl ClassicalKernel<RupOnly> {
-    /// Enables checked RAT steps while preserving every resident theorem.
-    #[must_use]
-    pub fn enable_rat(self) -> ClassicalKernel<Rat> {
-        ClassicalKernel {
-            arena: self.arena,
-            policy: PhantomData,
-        }
-    }
-}
-
 /// One explicitly delimited RAT resolvent check over dense CNF row IDs.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RatGroup {
@@ -1107,14 +1055,23 @@ pub struct RatGroup {
 
 /// A stateful CNF refutation preserving `Unsat(state) -> Unsat(goal)`.
 #[derive(Debug)]
-pub struct Refuter<P: RatPolicy = RupOnly> {
+pub struct Refuter {
     goal: Cnf,
     state: Cnf,
     derived_empty: bool,
-    policy: PhantomData<P>,
 }
 
-impl<P: RatPolicy> Refuter<P> {
+impl Refuter {
+    /// Opens a stateful refutation whose initial state is `goal`.
+    #[must_use]
+    pub fn new(goal: Cnf) -> Self {
+        Self {
+            derived_empty: goal.contains_empty_row(),
+            state: goal.clone(),
+            goal,
+        }
+    }
+
     /// Borrows the original CNF being refuted.
     #[must_use]
     pub const fn goal(&self) -> &Cnf {
@@ -1159,44 +1116,22 @@ impl<P: RatPolicy> Refuter<P> {
         self.state.remove(id).map(drop)
     }
 
-    /// Finishes after deriving an empty row or with a theorem of `state |- []`.
+    /// Finishes after deriving an empty row.
     ///
     /// Deriving the empty row permanently certifies the goal, so deleting that
     /// row afterward does not discard the certificate.
     ///
     /// # Errors
     ///
-    /// Returns an error unless the current state is refuted exactly.
-    pub fn done(
-        self,
-        kernel: &ClassicalKernel<P>,
-        state_unsat: Option<ThmId>,
-    ) -> Result<Refutation, Error> {
-        match state_unsat {
-            None if !self.derived_empty => {
-                return Err(Error::NoRefutation);
-            }
-            None => {}
-            Some(id) => {
-                let theorem = kernel
-                    .get(id)
-                    .ok_or(Error::MissingTheorem { id: id.get() })?;
-                let mut premises = Cnf::new(theorem.lhs.to_rows());
-                premises.normalize();
-                let mut state = self.state.clone();
-                state.normalize();
-                if premises != state || theorem.rhs.rows().next().is_some() {
-                    return Err(Error::WrongRefutation);
-                }
-            }
+    /// Returns an error unless an empty row has been derived.
+    pub fn done(self) -> Result<Refutation, Error> {
+        if !self.derived_empty {
+            return Err(Error::NoRefutation);
         }
         Ok(Refutation {
             theorem: ThmRow::new(self.goal, Dnf::default()),
         })
     }
-}
-
-impl Refuter<Rat> {
     /// Learns a row by RUP or complete explicit RAT groups.
     ///
     /// # Errors
@@ -1766,8 +1701,7 @@ mod tests {
         let p = lit(1);
         let q = lit(2);
         let goal = Cnf::new([row([p.negated(), q]), row([p])]);
-        let kernel = ClassicalKernel::new().enable_rat();
-        let mut refuter = kernel.refute(goal);
+        let mut refuter = Refuter::new(goal);
         let opposing = cnf_id(1);
         let forcing = cnf_id(2);
         let before = refuter.state().clone();
@@ -1833,8 +1767,7 @@ mod tests {
     fn rat_coverage_ignores_deleted_rows_but_rejects_deleted_hints() {
         let p = lit(1);
         let q = lit(2);
-        let kernel = ClassicalKernel::new().enable_rat();
-        let mut refuter = kernel.refute(Cnf::new([
+        let mut refuter = Refuter::new(Cnf::new([
             row([p.negated(), q]),
             row([p]),
             row([q.negated()]),
@@ -1862,8 +1795,7 @@ mod tests {
     fn tautological_rat_resolvent_needs_no_propagation_hints() {
         let p = lit(1);
         let q = lit(2);
-        let kernel = ClassicalKernel::new().enable_rat();
-        let mut refuter = kernel.refute(Cnf::new([row([p.negated(), q.negated()])]));
+        let mut refuter = Refuter::new(Cnf::new([row([p.negated(), q.negated()])]));
         let learned = refuter
             .learn_rat(
                 row([p, q]),
@@ -1879,53 +1811,23 @@ mod tests {
     }
 
     #[test]
-    fn done_requires_evidence_and_accepts_only_the_exact_state() {
+    fn done_requires_a_derived_empty_row() {
         let p = lit(1);
-        let q = lit(2);
-        let goal = Cnf::new([row([p]), row([p.negated()])]);
-        let mut kernel: ClassicalKernel<RupOnly> = ClassicalKernel::new();
 
         assert!(matches!(
-            kernel.refute(Cnf::new([row([p])])).done(&kernel, None),
+            Refuter::new(Cnf::new([row([p])])).done(),
             Err(Error::NoRefutation)
         ));
 
-        let mut derived = kernel.refute(Cnf::new([row([])]));
+        let mut derived = Refuter::new(Cnf::new([row([])]));
         derived.remove(cnf_id(1)).unwrap();
-        assert!(derived.done(&kernel, None).is_ok());
-
-        let exact = kernel.identity(p).unwrap();
-        kernel.rules().move_dnf_left(exact, dnf_id(1)).unwrap();
-        let refutation = kernel
-            .refute(goal.clone())
-            .done(&kernel, Some(exact))
-            .unwrap();
-        assert_eq!(refutation.theorem().lhs.to_rows(), goal.to_rows());
-        assert!(refutation.theorem().rhs.rows().next().is_none());
-
-        let wrong_rhs = kernel.identity(q).unwrap();
-        assert!(matches!(
-            kernel
-                .refute(Cnf::new([row([q])]))
-                .done(&kernel, Some(wrong_rhs)),
-            Err(Error::WrongRefutation)
-        ));
-        assert!(matches!(
-            kernel
-                .refute(Cnf::new([row([q])]))
-                .done(&kernel, Some(ThmId::new(99).unwrap())),
-            Err(Error::MissingTheorem { id: 99 })
-        ));
+        assert!(derived.done().is_ok());
     }
 
     #[test]
     fn completed_refutation_copies_through_checked_arenas_and_reuses_slots() {
         let p = lit(1);
-        let kernel: ClassicalKernel<RupOnly> = ClassicalKernel::new();
-        let refutation = kernel
-            .refute(Cnf::new([row([]), row([p])]))
-            .done(&kernel, None)
-            .unwrap();
+        let refutation = Refuter::new(Cnf::new([row([]), row([p])])).done().unwrap();
         let mut first = ClassicalArena::new();
         let mut second = ClassicalArena::new();
         let first_id = CheckedArena::new(&mut first)

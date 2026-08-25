@@ -49,9 +49,8 @@ theorem contains_empty_clause_unsat {cnf : Cnf Atom}
   intro valuation truth
   exact empty_clause_false valuation (truth (Clause.mk []) contains)
 
-/-- Exact completion rule used by `Refuter::done`, irrespective of whether
-current unsatisfiability came from an empty row or a checked sequent. -/
-theorem done {goal state : Cnf Atom}
+/-- Semantic transport underlying refutation completion. -/
+theorem of_state_unsat {goal state : Cnf Atom}
     (preserves : PreservesSatisfiability goal state) (stateUnsat : Unsat state) :
     (Sequent.mk goal (Dnf.mk [])).Sound :=
   (sound_empty_dnf_iff_unsat goal).mpr (preserves.unsat stateUnsat)
@@ -60,33 +59,7 @@ theorem done_with_empty_clause {goal state : Cnf Atom}
     (preserves : PreservesSatisfiability goal state)
     (contains : Clause.mk [] ∈ state.clauses) :
     (Sequent.mk goal (Dnf.mk [])).Sound :=
-  done preserves (contains_empty_clause_unsat contains)
-
-theorem done_with_checked_sequent {goal state : Cnf Atom}
-    (preserves : PreservesSatisfiability goal state)
-    (checked : (Sequent.mk state (Dnf.mk [])).Sound) :
-    (Sequent.mk goal (Dnf.mk [])).Sound :=
-  done preserves ((sound_empty_dnf_iff_unsat state).mp checked)
-
-theorem normalized_refutation [DecidableEq Atom] [LinearOrder (Lit Atom)]
-    {claimed actual : Cnf Atom} (same : claimed.normalize = actual.normalize)
-    (checked : (Sequent.mk claimed (Dnf.mk [])).Sound) :
-    (Sequent.mk actual (Dnf.mk [])).Sound := by
-  rw [sound_empty_dnf_iff_unsat] at checked ⊢
-  intro valuation actualTruth
-  apply checked valuation
-  have normalizedTruth : actual.normalize.Holds valuation :=
-    (Cnf.normalize_holds valuation actual).mpr actualTruth
-  rw [← same] at normalizedTruth
-  exact (Cnf.normalize_holds valuation claimed).mp normalizedTruth
-
-/-- `Refuter::done(Some(id))` compares normalized premise matrices. -/
-theorem done_with_normalized_checked_sequent [DecidableEq Atom] [LinearOrder (Lit Atom)]
-    {goal state claimed : Cnf Atom} (preserves : PreservesSatisfiability goal state)
-    (same : claimed.normalize = state.normalize)
-    (checked : (Sequent.mk claimed (Dnf.mk [])).Sound) :
-    (Sequent.mk goal (Dnf.mk [])).Sound :=
-  done_with_checked_sequent preserves (normalized_refutation same checked)
+  of_state_unsat preserves (contains_empty_clause_unsat contains)
 
 /-! ## Ordered reverse unit propagation -/
 

@@ -23,7 +23,7 @@ mod syn_facts;
 
 pub use covalence_logic_classical::{
     CheckedArena, ClassicalArena, ClassicalKernel, ClassicalRules, Cnf, CnfId, Dnf, DnfId, Lit,
-    LitError, LitVec, RatPolicy, Refutation, ThmId, ThmRef,
+    LitError, LitVec, Refutation, ThmId, ThmRef,
 };
 
 /// A recoverable failure at the checked kernel boundary.

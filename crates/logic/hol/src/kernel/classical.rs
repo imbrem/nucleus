@@ -1,11 +1,11 @@
 //! Checked finite classical sequents over stable local term references.
 
-#[cfg(test)]
-use covalence_logic_classical::LitError;
 use covalence_logic_classical::{
     CheckedArena, ClassicalArena, ClassicalKernel as SyllogismKernel, Cnf, CnfId, Dnf, DnfId, Lit,
-    LitVec, RatPolicy, ThmId, ThmRef,
+    LitVec, ThmId, ThmRef,
 };
+#[cfg(test)]
+use covalence_logic_classical::{LitError, Refuter};
 
 use super::{Kernel, KernelError};
 use crate::{
@@ -70,9 +70,9 @@ impl Kernel {
     ///
     /// Returns an error unless `source` proves exactly the canonical CNF
     /// denoted by `formula` has an empty DNF conclusion.
-    pub fn seal_cnf_refutation<P: RatPolicy>(
+    pub fn seal_cnf_refutation(
         &mut self,
-        source: &SyllogismKernel<P>,
+        source: &SyllogismKernel,
         theorem: ThmId,
         formula: Lit,
     ) -> Result<ThmId, KernelError> {
@@ -1605,8 +1605,7 @@ mod tests {
     #[test]
     fn universal_syllogisms_allow_atoms_without_resident_boolean_rows() {
         let atom = Lit::new(i32::MAX - 1);
-        let mut source: SyllogismKernel<covalence_logic_classical::RupOnly> =
-            SyllogismKernel::new();
+        let mut source = SyllogismKernel::new();
         let universal = source.identity(atom).unwrap();
         let mut kernel = Kernel::new();
 
@@ -1627,10 +1626,8 @@ mod tests {
     #[test]
     fn completed_refutations_copy_into_syl_and_thm_through_checked_views() {
         let atom = Lit::new(i32::MAX - 1);
-        let source: SyllogismKernel<covalence_logic_classical::RupOnly> = SyllogismKernel::new();
-        let refutation = source
-            .refute(Cnf::new([LitVec::new(), std::iter::once(atom).collect()]))
-            .done(&source, None)
+        let refutation = Refuter::new(Cnf::new([LitVec::new(), std::iter::once(atom).collect()]))
+            .done()
             .unwrap();
         let mut kernel = Kernel::new();
 
