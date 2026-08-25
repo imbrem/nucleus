@@ -1,0 +1,37 @@
+; Untrusted source for the first named init-library schemata.
+;
+; This file is compiled by covalence-logic-hol-script.  It is source code and
+; external naming metadata, not part of the trusted kernel or its wire format.
+
+(define IsCoprod ('a 'b 't)
+  (exists inl (-> 'a 't)
+    (exists inr (-> 'b 't)
+      (ty.forall 'c
+        (forall f (-> 'a 'c)
+          (forall g (-> 'b 'c)
+            (exists h (-> 't 'c)
+              (and
+                (and
+                  (forall x 'a (= (h (inl x)) (f x)))
+                  (forall y 'b (= (h (inr y)) (g y))))
+                (forall k (-> 't 'c)
+                  (imp
+                    (and
+                      (forall x 'a (= (k (inl x)) (f x)))
+                      (forall y 'b (= (k (inr y)) (g y))))
+                    (= k h)))))))))))
+
+; The predicate used to carve naturals out of an infinite carrier.  The zero
+; and successor candidates remain explicit arguments, so this definition is
+; reusable with any injective endomap and chosen point.
+(define NatMember ('a)
+  (-> 'a (-> (-> 'a 'a) (-> 'a bool)))
+  (lambda zero 'a
+    (lambda succ (-> 'a 'a)
+      (lambda n 'a
+        (forall P (-> 'a bool)
+          (imp
+            (and
+              (P zero)
+              (forall k 'a (imp (P k) (P (succ k)))))
+            (P n)))))))

@@ -1,7 +1,7 @@
 //! End-to-end coverage for the untrusted theory front end.
 
 use covalence_logic_hol::{Sort, Tag, TmTag};
-use covalence_logic_hol_script::{TheoryError, compile_theory};
+use covalence_logic_hol_script::{INIT_SOURCE, TheoryError, compile_theory};
 
 const COPRODUCT: &str = r"
   ; The universal property, as an open schema rather than an assertion.
@@ -160,6 +160,20 @@ fn natural_induction_carving_is_a_reusable_open_definition() {
         Some(Tag::Tm(TmTag::Lam))
     );
     assert!(compiled.get("NatMember/'a").is_some());
+}
+
+#[test]
+fn checked_init_source_is_a_deterministic_untrusted_compilation_unit() {
+    let first = compile_theory(INIT_SOURCE).expect("init source");
+    let second = compile_theory(INIT_SOURCE).expect("init source again");
+
+    assert!(first.get("IsCoprod").is_some());
+    assert!(first.get("NatMember").is_some());
+    assert_eq!(
+        first.kernel().arena().addr(),
+        second.kernel().arena().addr()
+    );
+    assert!(first.kernel().arena().axioms().next().is_none());
 }
 
 #[test]

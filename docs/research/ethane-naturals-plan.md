@@ -53,6 +53,16 @@ Deliverables:
 Done when: `nat.zero`, `nat.succ` and `nat.induction` are object-language
 theorems in an arena whose `axs` is exactly `{ax.inf, ax.sub}`.
 
+Implementation checkpoint: `covalence-logic-hol-derived::NaturalExt` now
+constructs the chosen `ind`, the induction-closure predicate, the guarded
+`nat` subtype, `nat.zero`, `nat.succ`, and the exact induction statement with
+those two capabilities. The init S-expression source lives in the separate
+untrusted `covalence-logic-hol-script` crate. The remaining distinction is
+intentional: `nat.induction` is currently a well-typed statement, not yet a
+projected theorem. Issue #997 tracks the minimal standard HOL equality and
+instantiation calculus needed to turn the package theorem into that result;
+the API must not label the row proved before that bridge exists.
+
 Open universals land here. `nat`'s defining predicate quantifies over
 `P : ind → bool`, a _term_ quantifier, so it does not need `ty.forall`. But the
 algebraic hierarchy in phase 5 does, and the coproduct rule that motivated
