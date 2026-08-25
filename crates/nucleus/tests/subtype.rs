@@ -150,7 +150,7 @@ fn the_subtype_is_the_one_the_axiom_is_about() {
 
     let expected = fix
         .kernel
-        .model(axiom.model_name, axiom.package)
+        .model(axiom.model_name, axiom.package_body)
         .expect("model");
     assert!(
         same_shape(&fix.kernel, built.sub, expected),
@@ -175,7 +175,7 @@ fn the_untrusted_rebuild_still_agrees_with_the_kernel() {
         .expect("terms");
     let expected = fix
         .kernel
-        .model(axiom.model_name, axiom.package)
+        .model(axiom.model_name, axiom.package_body)
         .expect("model");
 
     assert!(

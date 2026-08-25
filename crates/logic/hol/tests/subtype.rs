@@ -61,7 +61,7 @@ fn the_sentence_is_a_proposition_and_the_body_is_what_quantifies_it() {
             .expect("equivalent"),
         "the package sentence is Boolean"
     );
-    assert_eq!(kernel.category(axiom.package).expect("body"), Sort::Tm);
+    assert_eq!(kernel.category(axiom.package_body).expect("body"), Sort::Tm);
 }
 
 #[test]
@@ -73,7 +73,7 @@ fn the_body_and_the_model_name_are_enough_to_name_the_subtype() {
     let sub = package
         .fix
         .kernel
-        .model(axiom.model_name, axiom.package)
+        .model(axiom.model_name, axiom.package_body)
         .expect("subtype");
     assert_eq!(package.fix.kernel.category(sub).expect("sub"), Sort::Ty);
     assert_eq!(axiom.model_name, axiom.name_of(Binder::ModelType));

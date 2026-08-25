@@ -16,6 +16,32 @@ interface host {
         tm,
     }
 
+    /// The guarded subtype-package sentence, and what an untrusted layer needs
+    /// in order to build terms about the same subtype.
+    record subtype-axiom {
+        /// The carrier type the subtype was carved out of.
+        carrier: u64,
+        /// The defining predicate, of type `carrier -> bool`.
+        predicate: u64,
+        /// The sentence the theorem concludes. The only field carrying
+        /// authority.
+        exists-type: u64,
+        /// The body `exists-type` quantifies, with the model type variable
+        /// free. The subtype itself is `model(model-name, package-body)`.
+        package-body: u64,
+        /// The name of the model type variable bound in `package`.
+        model-name: u64,
+        /// The first name reserved for the package's own binders; the caller's
+        /// terms use no name at or above it.
+        base-name: u64,
+        /// Slot of the premise-free sequent concluding `exists-type`.
+        ///
+        /// Opaque until the checked theorem operations are exposed here; it is
+        /// returned rather than dropped so that exposing them later is not a
+        /// breaking change.
+        theorem: u64,
+    }
+
     /// An immutable shared byte buffer.
     resource bytes {
         /// Copies component bytes into a host buffer.
@@ -180,6 +206,53 @@ interface host {
         bool-lit: func(bool-type: u64, value: bool) -> result<u64, string>;
         tm-eq: func(bool-type: u64, left: u64, right: u64) -> result<u64, string>;
         eps: func(ty: u64, predicate: u64) -> result<u64, string>;
+
+        /// Derived logical constructions.
+        ///
+        /// Macros over the primitives above, not new row shapes: negation is
+        /// equality with `false`, universal quantification is equality with the
+        /// constantly-true function, existential quantification is Hilbert
+        /// choice, and conjunction is the equality-only encoding
+        /// `(\f. f l r) = (\f. f true true)`. The binder of a conjunction is a
+        /// `tm-fv` row of type `bool -> bool -> bool`, and the caller owns the
+        /// choice of a name that does not capture.
+        ///
+        /// Deliberately not the compact Boolean builtins, whose meaning comes
+        /// from the init manifest's definitions rather than the primitive
+        /// literals; no lemma relates the two encodings.
+        not-tm: func(bool-type: u64, proposition: u64) -> result<u64, string>;
+        forall-tm: func(bool-type: u64, binder: u64, body: u64) -> result<u64, string>;
+        exists-tm: func(binder: u64, body: u64) -> result<u64, string>;
+        and-tm: func(bool-type: u64, binder: u64, left: u64, right: u64) -> result<u64, string>;
+        or-tm: func(bool-type: u64, binder: u64, left: u64, right: u64) -> result<u64, string>;
+        imp-tm: func(bool-type: u64, binder: u64, left: u64, right: u64) -> result<u64, string>;
+
+        /// One past the largest name reachable from `roots`, counting "no
+        /// names at all" as zero.
+        ///
+        /// A binder allocated here cannot capture anything in `roots`. Exposed
+        /// because a component building terms about a subtype has to pick the
+        /// same names the axiom did.
+        fresh-name: func(roots: list<u64>) -> result<u64, string>;
+
+        /// Concludes the guarded subtype-package sentence for `carrier` and
+        /// `predicate`, consuming the `ax.sub` capability.
+        ///
+        /// The subtype carved out is
+        /// `{ x : carrier // P x or not exists y. P y }`, so this is total:
+        /// every predicate has a package and no nonemptiness proof is needed.
+        ///
+        /// Fails unless `add-axiom("ax.sub")` has been called, so an arena that
+        /// rests on the subtype axiom always says so. The sentence is built
+        /// here rather than taken from the caller, and the sequent minted for
+        /// it is premise-free.
+        ///
+        /// This is the whole of the trusted surface. Building a usable subtype
+        /// from the result — the subtype itself, `rep`, `abs`, the laws — is
+        /// ordinary construction over the constructors above and carries no
+        /// authority.
+        sub-exists: func(bool-type: u64, carrier: u64, predicate: u64)
+            -> result<subtype-axiom, string>;
 
         /// Checked imports, contexts, and axiom capabilities.
         import-arena: func(value: borrow<arena>) -> result<u64, string>;

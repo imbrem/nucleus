@@ -155,7 +155,7 @@ pub struct SubtypeAxiom {
     /// The body `exists_type` quantifies, with the model type variable free.
     ///
     /// A caller builds the subtype itself as `model(model_name, package)`.
-    pub package: Ref,
+    pub package_body: Ref,
     /// The name of the model type variable bound in `package`.
     pub model_name: u64,
     /// The first name reserved for the package's own binders; the caller's
@@ -235,15 +235,15 @@ impl Kernel {
             abstraction,
         )?;
         let has_abstraction = self.exists_tm(abstraction, laws)?;
-        let package = self.exists_tm(representation, has_abstraction)?;
-        let exists_type = self.ty_exists(model_name, package)?;
+        let package_body = self.exists_tm(representation, has_abstraction)?;
+        let exists_type = self.ty_exists(model_name, package_body)?;
         let theorem = self.push_axiom(exists_type)?;
 
         Ok(SubtypeAxiom {
             carrier,
             predicate,
             exists_type,
-            package,
+            package_body,
             model_name,
             base_name,
             theorem,

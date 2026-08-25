@@ -141,7 +141,7 @@ impl SubtypeExt for Kernel {
         // The axiom first: it fixes the base name and the package body, and
         // everything below has to be about *that* subtype.
         let axiom = self.sub_exists(bool_ty, carrier, predicate)?;
-        let sub = self.model(axiom.model_name, axiom.package)?;
+        let sub = self.model(axiom.model_name, axiom.package_body)?;
         let mut built = Builder {
             kernel: self,
             bool_ty,
