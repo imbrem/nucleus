@@ -2,11 +2,14 @@ import Nucleus.Cbor.Containers
 import Nucleus.Hol.Ethane.Arena.OneBased
 
 /-!
-# CBOR for one-based dense Ethane arenas
+# Legacy CBOR oracle for the HOL proof core
 
-The codec mirrors the private Rust Serde views.  Maps are decoded by field
-name, so their order is irrelevant; duplicate, unknown, missing, and
-constructor-inappropriate fields are rejected.
+The expression-row codec remains useful for golden tests. The arena codec in
+this file describes the pre-column proof-core fixture only and is not the
+current Rust wire contract. The authoritative current shape is
+`OneBased.Layout`: `import` plus nested `amb`, `pred`, and `hol` sections, with
+no separate proxy metadata arrays. New table or wire proofs must target that
+layout.
 -/
 
 namespace Nucleus.Hol.Ethane.OneBased.Cbor
@@ -243,11 +246,11 @@ private def decodeSynFree? (value : Nucleus.Cbor) : Option SynFree := do
 
 /-- Rust uses an untagged enum: fact decoding is attempted before the free
 payload.  Required fact fields make the two object shapes disjoint. -/
-private def encodeSynSlot : SynSlot → Nucleus.Cbor
+def encodeSynSlot : SynSlot → Nucleus.Cbor
   | .fact fact => encodeSynFact fact
   | .free free => encodeSynFree free
 
-private def decodeSynSlot? (value : Nucleus.Cbor) : Option SynSlot :=
+def decodeSynSlot? (value : Nucleus.Cbor) : Option SynSlot :=
   match decodeSynFact? value with
   | some fact => some (.fact fact)
   | none => return .free (← decodeSynFree? value)
@@ -279,7 +282,7 @@ private def decodeSynSlot? (value : Nucleus.Cbor) : Option SynSlot :=
         simp [decodeSynFact?, encodeSynFree, fields?, field?, required?,
           decodeOptional, object, null]
 
-@[simp] private theorem decodeSynSlot?_encode (slot : SynSlot) :
+@[simp] theorem decodeSynSlot?_encode (slot : SynSlot) :
     decodeSynSlot? (encodeSynSlot slot) = some slot := by
   cases slot <;> simp [decodeSynSlot?, encodeSynSlot]
 

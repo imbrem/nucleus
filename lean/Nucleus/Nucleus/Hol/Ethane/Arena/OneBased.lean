@@ -5,10 +5,12 @@ import Mathlib.Data.Finset.Sort
 import Mathlib.Order.Basic
 
 /-!
-# One-based dense Ethane arenas
+# One-based HOL proof core
 
-This is the raw object model shared with the Rust dense arena.  It records
-syntax and inline metadata without assigning them any logical validity.
+This is the semantic row model used by the established HOL soundness proofs.
+The current Rust arena is modeled exactly by `OneBased.Layout`; its separate
+columns are materialized into this proof core only through
+`Layout.Arena.holCore`. It is not the current serialized arena shape.
 Local definition references are positive `i32` values strictly below
 `i32::MAX`, so signed-literal negation is total. Import and syntactic-fact
 indices are positive `i32` values and may use `i32::MAX`.
@@ -448,7 +450,9 @@ structure Link where
   blake3 : O256
   deriving DecidableEq, Repr
 
-/-- Raw import metadata. -/
+/-- Internal proxy-obligation adapter retained for the established resolver
+lemmas. Current arenas encode these obligations as `amb.pred` atoms and
+`amb.ctx` unit clauses; this type is not part of their wire format. -/
 inductive Meta where
   | valid (source : ImportId)
   | wf (source : ImportId) (foreign sort : Ref)
@@ -462,7 +466,8 @@ inductive Import where
   | literal (arena : Arena)
   | link (value : Link)
 
-/-- The normalized Rust arena value.  Finsets model `BTreeSet` normalization. -/
+/-- Internal HOL proof-core value. `Layout.Arena` is the normalized Rust arena
+value and supplies empty adapter metadata when materializing this core. -/
 inductive Arena where
   | mk
       (imports : List Import)

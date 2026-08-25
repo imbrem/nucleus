@@ -6,10 +6,12 @@ import Nucleus.HolE.Named.ConversionLaws
 /-!
 # Checked one-based Ethane kernel states
 
-Raw arenas contain claims. A checked kernel pairs an arena with proofs that
-every exposed sorting, equality, context, and metadata conclusion is sound.
-Premise metadata remains a premise. Equality members are interpreted through
-their whole union-find class; cycles require no special logical assumption.
+This file proves the materialized HOL core used by `OneBased.Layout`. The
+internal metadata conclusion field is retained solely as a proof adapter and
+is always empty for current nested arenas. Imported obligations are instead
+interpreted conditionally through `amb.ctx`. Equality members are interpreted
+through their whole union-find class; cycles require no special logical
+assumption.
 -/
 
 namespace Nucleus.Hol.Ethane.OneBased
