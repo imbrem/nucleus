@@ -58,6 +58,14 @@ interface host {
         theorem: u64,
     }
 
+    /// Result of HOL's standard `AP_THM` rule.
+    record ap-thm {
+        left: u64,
+        right: u64,
+        equality: u64,
+        theorem: u64,
+    }
+
     /// An immutable shared byte buffer.
     resource bytes {
         /// Copies component bytes into a host buffer.
@@ -266,6 +274,13 @@ interface host {
         /// The theorem must be a premise-free sequent with a single positive
         /// conclusion, which is the shape the axiom rules produce.
         model-spec: func(theorem: u64, substitution: u64) -> result<u64, string>;
+
+        /// From an exact premise-free theorem `|- f = g`, derive
+        /// `|- f argument = g argument`.
+        ap-thm: func(theorem: u64, argument: u64) -> result<ap-thm, string>;
+
+        /// From an exact theorem `|- p = true`, derive `|- p`.
+        eqt-elim: func(theorem: u64) -> result<u64, string>;
 
         /// Concludes the axiom of infinity, consuming the `ax.inf` capability.
         ///

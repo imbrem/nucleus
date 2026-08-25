@@ -1037,6 +1037,27 @@ impl PyKernel {
             .map_err(value_error)
     }
 
+    fn ap_thm(&mut self, theorem: i32, argument: i32) -> PyResult<(i32, i32, i32, i32)> {
+        self.kernel
+            .ap_thm(theorem_id(theorem)?, reference(argument)?)
+            .map(|result| {
+                (
+                    result.left.get(),
+                    result.right.get(),
+                    result.equality.get(),
+                    result.theorem.get(),
+                )
+            })
+            .map_err(value_error)
+    }
+
+    fn eqt_elim(&mut self, theorem: i32) -> PyResult<i32> {
+        self.kernel
+            .eqt_elim(theorem_id(theorem)?)
+            .map(ThmId::get)
+            .map_err(value_error)
+    }
+
     fn remove_theorem(&mut self, theorem: i32) -> PyResult<bool> {
         Ok(self.kernel.remove_theorem(theorem_id(theorem)?))
     }

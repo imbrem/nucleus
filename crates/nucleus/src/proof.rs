@@ -1432,6 +1432,46 @@ impl nucleus::proof::host::HostKernel for ProofState {
         })
     }
 
+    fn ap_thm(
+        &mut self,
+        kernel: Resource<HostKernel>,
+        theorem: u64,
+        argument: u64,
+    ) -> wasmtime::Result<Result<nucleus::proof::host::ApThm, String>> {
+        Ok(match (theorem_id(theorem), reference(argument)) {
+            (Ok(theorem), Ok(argument)) => self
+                .table
+                .get_mut(&kernel)?
+                .0
+                .ap_thm(theorem, argument)
+                .map(|result| nucleus::proof::host::ApThm {
+                    left: u64::from(result.left.get().unsigned_abs()),
+                    right: u64::from(result.right.get().unsigned_abs()),
+                    equality: u64::from(result.equality.get().unsigned_abs()),
+                    theorem: u64::from(result.theorem.get().unsigned_abs()),
+                })
+                .map_err(|error| error.to_string()),
+            (Err(error), _) | (_, Err(error)) => Err(error),
+        })
+    }
+
+    fn eqt_elim(
+        &mut self,
+        kernel: Resource<HostKernel>,
+        theorem: u64,
+    ) -> wasmtime::Result<Result<u64, String>> {
+        Ok(match theorem_id(theorem) {
+            Ok(theorem) => self
+                .table
+                .get_mut(&kernel)?
+                .0
+                .eqt_elim(theorem)
+                .map(|id| u64::from(id.get().unsigned_abs()))
+                .map_err(|error| error.to_string()),
+            Err(error) => Err(error),
+        })
+    }
+
     fn inf_exists(
         &mut self,
         kernel: Resource<HostKernel>,

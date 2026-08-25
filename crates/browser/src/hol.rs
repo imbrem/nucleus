@@ -337,6 +337,42 @@ impl HolProver {
             .map_err(to_js)
     }
 
+    /// Applies an exact premise-free function equality to one term.
+    ///
+    /// The returned `Int32Array` is `[left, right, equality, theorem]`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed or mismatched evidence. Rejection does
+    /// not mutate the prover.
+    #[wasm_bindgen(js_name = apThm)]
+    pub fn ap_thm(&mut self, theorem: i32, argument: i32) -> Result<Vec<i32>, JsError> {
+        let theorem = parse_thm(theorem).map_err(to_js)?;
+        let argument = parse_ref(argument).map_err(to_js)?;
+        self.kernel
+            .ap_thm(theorem, argument)
+            .map(|result| {
+                vec![
+                    result.left.get(),
+                    result.right.get(),
+                    result.equality.get(),
+                    result.theorem.get(),
+                ]
+            })
+            .map_err(to_js)
+    }
+
+    /// Eliminates an exact theorem `⊢ p = true` to `⊢ p`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed or mismatched evidence.
+    #[wasm_bindgen(js_name = eqtElim)]
+    pub fn eqt_elim(&mut self, theorem: i32) -> Result<i32, JsError> {
+        let theorem = parse_thm(theorem).map_err(to_js)?;
+        self.kernel.eqt_elim(theorem).map(format_thm).map_err(to_js)
+    }
+
     /// Removes one theorem, returning whether the handle was live.
     ///
     /// # Errors
@@ -574,6 +610,10 @@ fn parse_u64(text: &str, label: &str) -> Result<u64, String> {
 
 fn parse_prop(value: i32) -> Result<Lit, String> {
     Lit::try_new(value).map_err(|error| error.to_string())
+}
+
+fn parse_ref(value: i32) -> Result<Ref, String> {
+    Ref::new(value).ok_or_else(|| "references are one-based".to_owned())
 }
 
 fn parse_thm(value: i32) -> Result<ThmId, String> {

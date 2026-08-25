@@ -7,7 +7,7 @@ use covalence_logic_classical::{
 #[cfg(test)]
 use covalence_logic_classical::{LitError, Refuter};
 
-use super::{Kernel, KernelError};
+use super::{Kernel, KernelError, Node};
 use crate::{
     Ref,
     builtin::{Op1, Op2},
@@ -29,6 +29,20 @@ fn positive(reference: Ref) -> Lit {
 fn reference(proposition: Lit) -> Ref {
     Ref::new(i32::try_from(proposition.magnitude()).expect("literal magnitude fits i32"))
         .expect("literal magnitude is nonzero")
+}
+
+/// The exact theorem and syntax produced by applying equal functions.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ApThm {
+    /// Application of the equality's left-hand function.
+    pub left: Ref,
+    /// Application of the equality's right-hand function.
+    pub right: Ref,
+    /// Object-language equality between [`left`](Self::left) and
+    /// [`right`](Self::right).
+    pub equality: Ref,
+    /// Premise-free theorem concluding [`equality`](Self::equality).
+    pub theorem: ThmId,
 }
 
 impl Kernel {
@@ -193,6 +207,73 @@ impl Kernel {
             .map(|row| replace_atom(row, source, target))
             .collect();
         self.replace_theorem(theorem, Thm::new(Cnf::new(premises), Dnf::new(conclusions)))
+    }
+
+    /// Applies a premise-free function equality to one argument (`AP_THM`).
+    ///
+    /// If `theorem` is exactly `⊢ f = g`, this constructs `f argument`,
+    /// `g argument`, their object-language equality, and a fresh exact theorem
+    /// `⊢ f argument = g argument`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the source theorem has exactly one positive
+    /// conclusion and no premises, that conclusion is equality at an arrow
+    /// type, and `argument` has the arrow domain. Rejection is transactional:
+    /// neither syntax nor theorem slots are changed.
+    pub fn ap_thm(&mut self, theorem: ThmId, argument: Ref) -> Result<ApThm, KernelError> {
+        let source = sole_positive_assertion(self.require_thm(theorem)?)?;
+        let bool_ty = self.require_bool_term::<std::convert::Infallible>(source)?;
+        self.require_category::<std::convert::Infallible>(argument, crate::Sort::Tm)?;
+        let Node::Eq(function_ty, function, varied) = *self.row(source)?.expr() else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "AP_THM equality conclusion",
+            });
+        };
+        self.type_arrow_member::<std::convert::Infallible>(function_ty)?;
+
+        let mut staged = Self {
+            arena: self.arena.clone(),
+            init_prefix: self.init_prefix,
+        };
+        let left = staged.app(function, argument)?;
+        let right = staged.app(varied, argument)?;
+        let equality = staged.eq(bool_ty, left, right)?;
+        let theorem = staged.push_sequent(&[], &[positive(equality)])?;
+        *self = staged;
+        Ok(ApThm {
+            left,
+            right,
+            equality,
+            theorem,
+        })
+    }
+
+    /// Eliminates equality with truth (`EQT_ELIM`).
+    ///
+    /// If `theorem` is exactly `⊢ p = true`, this allocates the exact theorem
+    /// `⊢ p`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the source is premise-free with one positive
+    /// equality conclusion whose right operand is the Boolean truth literal.
+    /// Rejection does not alter theorem storage.
+    pub fn eqt_elim(&mut self, theorem: ThmId) -> Result<ThmId, KernelError> {
+        let source = sole_positive_assertion(self.require_thm(theorem)?)?;
+        self.require_bool_term::<std::convert::Infallible>(source)?;
+        let Node::Eq(_, proposition, truth) = *self.row(source)?.expr() else {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "EQT_ELIM equality conclusion",
+            });
+        };
+        self.require_bool_term::<std::convert::Infallible>(proposition)?;
+        if self.arena.bool_value(truth) != Some(true) {
+            return Err(KernelError::InvalidTheoremRule {
+                rule: "EQT_ELIM truth operand",
+            });
+        }
+        self.push_sequent(&[], &[positive(proposition)])
     }
 
     /// Moves one indexed CNF row to the right with pointwise-negated literals.
@@ -982,6 +1063,30 @@ enum TreeSide {
     Disjunctive,
 }
 
+fn sole_positive_assertion(theorem: ThmRef<'_>) -> Result<Ref, KernelError> {
+    if theorem.lhs.rows().next().is_some() {
+        return Err(KernelError::InvalidTheoremRule {
+            rule: "AP_THM premise-free source",
+        });
+    }
+    let mut rows = theorem.rhs.rows();
+    let row = rows.next().ok_or(KernelError::InvalidTheoremRule {
+        rule: "AP_THM single conclusion",
+    })?;
+    if rows.next().is_some() || row.len() != 1 {
+        return Err(KernelError::InvalidTheoremRule {
+            rule: "AP_THM single conclusion",
+        });
+    }
+    let literal = row[0];
+    if !literal.is_positive() {
+        return Err(KernelError::InvalidTheoremRule {
+            rule: "AP_THM positive equality",
+        });
+    }
+    Ok(reference(literal))
+}
+
 fn replace_atom(row: &[Lit], source: Ref, target: Ref) -> LitVec {
     row.iter()
         .copied()
@@ -1130,6 +1235,78 @@ mod tests {
             snapshot(kernel.thm().get(positive_theorem).unwrap()),
             before
         );
+    }
+
+    #[test]
+    fn ap_thm_builds_an_exact_applied_equality_transactionally() {
+        let Fixture { mut kernel, p, .. } = fixture();
+        let bool_ty = kernel.classifier(reference(p)).unwrap();
+        let function_ty = kernel.ty_arr(bool_ty, bool_ty).unwrap();
+        let function = kernel.tm_fv(10, function_ty).unwrap();
+        let varied = kernel.tm_fv(11, function_ty).unwrap();
+        let source = kernel.eq(bool_ty, function, varied).unwrap();
+        // The generic theorem inserter is private to this module. It stands in
+        // for any earlier checked HOL rule producing the exact equality.
+        let premise = kernel.push_sequent(&[], &[positive(source)]).unwrap();
+
+        let applied = kernel.ap_thm(premise, reference(p)).unwrap();
+        assert_eq!(
+            kernel.arena().tag(applied.left),
+            Some(crate::Tag::Tm(crate::TmTag::App))
+        );
+        assert_eq!(
+            kernel.arena().tag(applied.right),
+            Some(crate::Tag::Tm(crate::TmTag::App))
+        );
+        assert_eq!(
+            kernel.arena().tag(applied.equality),
+            Some(crate::Tag::Tm(crate::TmTag::Eq))
+        );
+        assert_eq!(
+            unit_conclusions(kernel.require_thm(applied.theorem).unwrap()),
+            [positive(applied.equality)]
+        );
+        assert!(
+            kernel
+                .require_thm(applied.theorem)
+                .unwrap()
+                .lhs
+                .rows()
+                .next()
+                .is_none()
+        );
+
+        let nonexact = kernel.identity(positive(source)).unwrap();
+        let before = kernel.arena().clone();
+        assert!(kernel.ap_thm(nonexact, reference(p)).is_err());
+        assert_eq!(*kernel.arena(), before);
+
+        let before = kernel.arena().clone();
+        assert!(kernel.ap_thm(premise, bool_ty).is_err());
+        assert_eq!(*kernel.arena(), before);
+    }
+
+    #[test]
+    fn eqt_elim_requires_an_exact_right_truth_equality() {
+        let Fixture { mut kernel, p, .. } = fixture();
+        let bool_ty = kernel.classifier(reference(p)).unwrap();
+        let truth = kernel.bool(bool_ty, true).unwrap();
+        let equality = kernel.eq(bool_ty, reference(p), truth).unwrap();
+        let source = kernel.push_sequent(&[], &[positive(equality)]).unwrap();
+        let theorem = kernel.eqt_elim(source).unwrap();
+        assert_eq!(unit_premises(kernel.require_thm(theorem).unwrap()), []);
+        assert_eq!(unit_conclusions(kernel.require_thm(theorem).unwrap()), [p]);
+
+        let reversed = kernel.eq(bool_ty, truth, reference(p)).unwrap();
+        let reversed = kernel.push_sequent(&[], &[positive(reversed)]).unwrap();
+        let before = kernel.arena().clone();
+        assert!(kernel.eqt_elim(reversed).is_err());
+        assert_eq!(*kernel.arena(), before);
+
+        let nonexact = kernel.identity(positive(equality)).unwrap();
+        let before = kernel.arena().clone();
+        assert!(kernel.eqt_elim(nonexact).is_err());
+        assert_eq!(*kernel.arena(), before);
     }
 
     #[test]

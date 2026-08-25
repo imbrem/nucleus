@@ -112,6 +112,14 @@ def Sequent.Holds {Atom : Type} (valuation : Valuation Atom) (sequent : Sequent 
 def Sequent.Sound {Atom : Type} (sequent : Sequent Atom) : Prop :=
   ∀ valuation, sequent.Holds valuation
 
+/-- The premise-free theorem asserting one positive atom. -/
+def Sequent.assert {Atom : Type} (atom : Atom) : Sequent Atom :=
+  ⟨⟨[]⟩, ⟨[⟨[(atom, false)]⟩]⟩⟩
+
+@[simp] theorem Sequent.assert_holds {Atom : Type} (valuation : Valuation Atom)
+    (atom : Atom) : (Sequent.assert atom).Holds valuation ↔ valuation atom := by
+  simp [Sequent.assert, Sequent.Holds, Cnf.Holds, Dnf.Holds, Cube.Holds, Lit.Holds]
+
 /-! ## Atom transport
 
 HOL conversion and equality can identify two Boolean rows which remain
@@ -210,7 +218,7 @@ theorem replaceOneAtom_preserves [DecidableEq Atom] (source target : Atom)
   · simp [replaceOneAtom, same]
 
 theorem Sequent.replaceAtom_holds [DecidableEq Atom] (sequent : Sequent Atom)
-    (source target : Atom) (sound : sequent.Holds valuation)
+    {valuation : Valuation Atom} (source target : Atom) (sound : sequent.Holds valuation)
     (equivalent : valuation source ↔ valuation target) :
     (sequent.replaceAtom source target).Holds valuation := by
   change (sequent.mapAtom (replaceOneAtom source target)).Holds valuation
