@@ -630,11 +630,17 @@ impl Kernel {
     /// Returns an error for an active substitution fact.
     pub fn union_syn_fact(&mut self, fact: SynFactId) -> Result<(), KernelError> {
         let fact = self.direct_fact::<Infallible>(fact, "equality union")?;
+        // Install the coarsest relation first.  Besides mirroring the
+        // refinement chain `syn ⊆ conv ⊆ semantic`, this keeps every
+        // observable error state sound: a later conversion or syntactic
+        // union may fail without leaving a finer cache edge unsupported by
+        // its coarser relation.
+        self.union::<Infallible>(fact.input(), fact.output())?;
+        self.union_in::<Infallible>(EqColumn::Conv, fact.input(), fact.output())?;
         if fact.rel() == SynRel::Syn {
             self.union_in::<Infallible>(EqColumn::Syn, fact.input(), fact.output())?;
         }
-        self.union_in::<Infallible>(EqColumn::Conv, fact.input(), fact.output())?;
-        self.union::<Infallible>(fact.input(), fact.output())
+        Ok(())
     }
 }
 
