@@ -34,11 +34,13 @@
 //!
 //! The theorem must be a premise-free sequent with a single positive
 //! conclusion, which is the shape both axiom rules produce. Its conclusion must
-//! be a `ty.exists`. The fact's replacement must be the `model` row for *that*
-//! binder and *that* predicate — not merely one that looks similar, since
-//! Ethane does not hash-cons and a rebuilt model is a different row. And the
-//! fact's variable must be a type variable of the bound name, since
-//! substituting for anything else would prove something unrelated.
+//! be a `ty.exists`. The fact's replacement must have the exact
+//! `model(name, predicate)` syntax licensed by that existential. Ethane does
+//! not hash-cons, so an independently rebuilt but syntactically identical row
+//! may have a different reference; that is harmless because it denotes the
+//! same choice expression. The fact's variable must also be a type variable of
+//! the bound name, since substituting for anything else would prove something
+//! unrelated.
 
 use std::convert::Infallible;
 
@@ -79,9 +81,9 @@ impl Kernel {
             });
         };
 
-        // The replacement has to be the model of *this* binder over *this*
-        // predicate. Ethane does not hash-cons, so a rebuilt model row is a
-        // different type and would license a different conclusion.
+        // The replacement has to carry the exact model syntax licensed by
+        // this existential. Reference identity is deliberately irrelevant:
+        // duplicate rows with identical syntax denote the same expression.
         let Node::Model {
             name: chosen_name,
             predicate: chosen_predicate,
@@ -230,9 +232,9 @@ mod tests {
     }
 
     #[test]
-    fn a_rebuilt_model_row_is_not_the_same_model() {
-        // Ethane does not hash-cons, so an identical-looking `model` appended
-        // separately is a different type. The rule compares rows, not shapes.
+    fn a_rebuilt_identical_model_row_denotes_the_same_choice() {
+        // Ethane does not hash-cons, so identical syntax may occupy two rows.
+        // The rule checks the syntax payload rather than reference identity.
         let (mut kernel, _star, _bool_ty, truth, variable) = fixture();
         let (_sentence, theorem) = existential(&mut kernel, 7, truth);
         let chosen = kernel.model(7, truth).unwrap();
@@ -240,8 +242,7 @@ mod tests {
         assert_ne!(chosen, rebuilt, "two rows, not one");
 
         let fact = unchanged(&mut kernel, variable, rebuilt, truth);
-        // The predicate matches by row, so this one is accepted: what the rule
-        // needs is the model *of this predicate*, which `rebuilt` is.
+        // This is accepted because `rebuilt` is syntactically the same choice.
         assert!(kernel.model_spec(theorem, fact).is_ok());
     }
 
