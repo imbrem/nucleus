@@ -13,10 +13,10 @@ interesting part.
 
 The short version:
 
-* **29 of `hol.mm`'s 71 `$a` statements are proved sound here**, with no `sorry`
-  anywhere in this development. That is the entire propositional and equality
-  core, all the typing rules, and the whole explicit-substitution fragment
-  except one axiom.
+* **29 of `hol.mm`'s 71 `$a` statements are proved sound here**, with nothing
+  left unproved anywhere in this development. That is the entire propositional
+  and equality core, all the typing rules, and the whole explicit-substitution
+  fragment except one axiom.
 * **`ax-hbl1` is proved *unsound*** for the interpretation used — the standard
   one, in which a variable is a (name, type) pair. `ax_hbl1_counterexample` is a
   machine-checked countermodel.
@@ -217,11 +217,11 @@ attempted. Until it is, the results here say that `hol.mm`'s axioms are sound
 *as schemas over its intended abstract syntax*, which is the mathematically
 interesting statement but not yet a theorem about the `.mm` file.
 
-## `sorry` inventory
+## Unproved-placeholder inventory
 
 None. `Nucleus.Metamath.HolMM.Interpretation` and
-`Nucleus.Metamath.HolMM.Axioms` each contain zero `sorry`s and zero
-`axiom`s beyond Lean's own. Everything not proved is *absent*, not assumed:
+`Nucleus.Metamath.HolMM.Axioms` each contain zero unproved placeholders and
+zero `axiom`s beyond Lean's own. Everything not proved is *absent*, not assumed:
 there is no declaration in this development whose statement is asserted without
 proof.
 -/

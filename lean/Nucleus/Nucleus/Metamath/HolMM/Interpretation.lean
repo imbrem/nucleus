@@ -47,7 +47,7 @@ and it is stated over two elaboration contexts and two free environments at once
 precisely because those axioms compare a term elaborated under a binder with the
 same term elaborated without it.
 
-This file contains no `sorry`.
+This file leaves nothing unproved.
 -/
 
 namespace Nucleus.Metamath.HolMM
