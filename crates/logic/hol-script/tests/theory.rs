@@ -177,6 +177,10 @@ fn checked_init_source_is_a_deterministic_untrusted_compilation_unit() {
     );
     assert!(first.get("NatRecSpec/'a").is_some());
     assert!(first.get("NatRecSpec/'c").is_some());
+    let graph = first.get("NatRecGraph").expect("recursion graph");
+    assert_eq!(first.kernel().arena().tag(graph), Some(Tag::Tm(TmTag::Lam)));
+    assert!(first.get("NatRecGraph/'a").is_some());
+    assert!(first.get("NatRecGraph/'c").is_some());
     assert_eq!(
         first.kernel().arena().addr(),
         second.kernel().arena().addr()
