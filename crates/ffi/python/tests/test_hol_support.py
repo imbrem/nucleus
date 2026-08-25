@@ -11,13 +11,13 @@ from covalence.logic.hol import Arena, Link
 from hol_support import (
     CannotProveError,
     Rows,
+    amb_pred_view,
     arena_view,
     basis,
     beta,
     definition_view,
     fact_view,
     link_view,
-    meta_view,
     prove_congruence,
     substitute,
     unify,
@@ -30,7 +30,7 @@ def test_views_compare_snapshots_that_have_no_equality_of_their_own() -> None:
     duplicate = Arena()
     duplicate.kind_star()
     source = arena.add_null_import()
-    arena.assume_wf(source, star, star)
+    arena.amb_ctx_hol_sort(source, star, star)
 
     row, other_row = arena.definition(star), duplicate.definition(star)
     assert row is not other_row
@@ -40,7 +40,8 @@ def test_views_compare_snapshots_that_have_no_equality_of_their_own() -> None:
     address = O256.hash(b"link")
     assert Link(address) != Link(address)
     assert link_view(Link(address)) == link_view(Link(address))
-    assert meta_view(arena.assumptions[0]) == ("meta.wf", source, star, star)
+    assert amb_pred_view(arena.amb_pred[0]) == ("hol.sort", source, star, star)
+    assert arena.amb_ctx == [[-1]]
     assert arena_view(arena) != arena_view(duplicate)
 
 

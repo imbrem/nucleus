@@ -9,9 +9,9 @@ way in. A raw arena that started rejecting ill-kinded rows would be a bug.
 
 import pytest
 from covalence.lib.hash import O256
-from covalence.logic.hol import Arena, Definition, Kernel, Link, Meta
+from covalence.logic.hol import AmbPred, Arena, Definition, Kernel, Link
 from hol_invariants import import_depth, nested_import_arena, nested_import_cbor
-from hol_support import arena_view, definition_view, meta_view
+from hol_support import amb_pred_view, arena_view, definition_view
 
 ONE_BASED = "one-based"
 
@@ -52,10 +52,10 @@ def populated() -> tuple[Arena, dict[str, int]]:
     arena.add_axiom("ax.alpha")
     arena.add_context(rows["tm.bool"])
     arena.add_context(rows["tm.eq"])
-    arena.assume_valid(null)
-    arena.assume_wf(literal, rows["tm.bool"], boolean)
-    arena.assert_valid(link)
-    arena.assert_wf(literal, boolean, star)
+    arena.amb_ctx_arena_ok(null)
+    arena.amb_ctx_hol_sort(literal, rows["tm.bool"], boolean)
+    arena.amb_thm_arena_ok(link)
+    arena.amb_thm_hol_sort(literal, boolean, star)
     return arena, rows
 
 
@@ -84,9 +84,11 @@ def test_rows_report_the_members_their_tag_carries() -> None:
     # A proxy stores its import and foreign index instead of local children.
     assert (by_tag["tm.ref"].source, by_tag["tm.ref"].foreign) == (2, rows["tm.bool"])
     assert by_tag["tm.ref"].children == []
-    # `eq` and `classifier` are the checked layer's members; raw rows omit them.
-    assert {row.equal for row in arena.definitions} == {None}
-    assert {row.classifier for row in arena.definitions} == {None}
+    # Logical relations live in independent dense columns, not definition rows.
+    assert arena.eq == [None] * len(arena)
+    assert arena.syn_eq == [None] * len(arena)
+    assert arena.conv == [None] * len(arena)
+    assert arena.sort == [None] * len(arena)
 
 
 def test_the_sort_of_a_tag_is_not_the_sort_of_its_constructor() -> None:
@@ -143,20 +145,24 @@ def test_the_raw_layer_accepts_axiom_names_the_kernel_refuses() -> None:
     assert arena.axioms == ["", "ax.choice"]
 
 
-def test_metadata_keeps_insertion_order_and_duplicates() -> None:
+def test_ambient_predicates_feed_context_and_theorem_matrices() -> None:
     arena = Arena()
     source = arena.add_null_import()
-    arena.assume_valid(source)
-    arena.assume_valid(source)
-    arena.assume_wf(source, 3, 4)
-    arena.assert_wf(source, 4, 3)
+    arena.amb_ctx_arena_ok(source)
+    arena.amb_ctx_arena_ok(source)
+    arena.amb_ctx_hol_sort(source, 3, 4)
+    arena.amb_thm_hol_sort(source, 4, 3)
 
-    assert [meta_view(meta) for meta in arena.assumptions] == [
-        ("meta.valid", source, None, None),
-        ("meta.valid", source, None, None),
-        ("meta.wf", source, 3, 4),
+    assert [amb_pred_view(pred) for pred in arena.amb_pred] == [
+        ("arena.ok", source, None, None),
+        ("arena.ok", source, None, None),
+        ("hol.sort", source, 3, 4),
+        ("hol.sort", source, 4, 3),
     ]
-    assert [meta_view(meta) for meta in arena.assertions] == [("meta.wf", source, 4, 3)]
+    assert arena.amb_ctx == [[-1], [-2], [-3]]
+    assert arena.amb_thm == [([], [[-4]])]
+    assert arena.amb_ax == []
+    assert not hasattr(arena, "add_amb_axiom")
 
 
 def test_nothing_logical_is_checked_on_the_way_in() -> None:
@@ -203,10 +209,10 @@ def test_zero_is_never_a_reference(build) -> None:
         lambda arena: arena.tm_ref(0, 1),
         lambda arena: arena.ty_ref(0, 1),
         lambda arena: arena.kind_ref(0, 1),
-        lambda arena: arena.assume_valid(0),
-        lambda arena: arena.assert_valid(0),
-        lambda arena: arena.assume_wf(0, 1, 1),
-        lambda arena: arena.assert_wf(0, 1, 1),
+        lambda arena: arena.amb_ctx_arena_ok(0),
+        lambda arena: arena.amb_thm_arena_ok(0),
+        lambda arena: arena.amb_ctx_hol_sort(0, 1, 1),
+        lambda arena: arena.amb_thm_hol_sort(0, 1, 1),
     ],
 )
 def test_zero_is_never_an_import(build) -> None:
@@ -262,22 +268,22 @@ def test_nested_literal_imports_round_trip_at_the_supported_limit() -> None:
     assert nested_import_cbor(0) == Arena().to_cbor()
     assert nested_import_cbor(3) == nested_import_arena(3).to_cbor()
 
-    deep = Arena.from_cbor(nested_import_cbor(127))
-    assert import_depth(deep) == 127
-    assert deep.to_cbor() == nested_import_cbor(127)
+    deep = Arena.from_cbor(nested_import_cbor(126))
+    assert import_depth(deep) == 126
+    assert deep.to_cbor() == nested_import_cbor(126)
 
 
 def test_literal_import_construction_enforces_the_wire_depth_limit() -> None:
-    deepest = nested_import_arena(127)
+    deepest = nested_import_arena(126)
 
-    with pytest.raises(ValueError, match="at most 127 levels"):
+    with pytest.raises(ValueError, match="at most 126 levels"):
         Arena().add_literal_import(deepest)
-    with pytest.raises(ValueError, match="at most 127 levels"):
+    with pytest.raises(ValueError, match="at most 126 levels"):
         Kernel().import_literal(deepest)
 
 
 def test_decoding_refuses_literal_imports_beyond_the_depth_limit() -> None:
-    for depth in (128, 1_000, 20_000):
+    for depth in (127, 1_000, 20_000):
         with pytest.raises(ValueError, match="RecursionLimitExceeded"):
             Arena.from_cbor(nested_import_cbor(depth))
 
@@ -324,11 +330,11 @@ def test_addresses_track_content_and_nothing_else() -> None:
 
     # List members do not, so metadata order can.
     source = left.add_null_import()
-    left.assume_valid(source)
-    left.assume_wf(source, 1, 1)
+    left.amb_ctx_arena_ok(source)
+    left.amb_ctx_hol_sort(source, 1, 1)
     right.add_null_import()
-    right.assume_wf(source, 1, 1)
-    right.assume_valid(source)
+    right.amb_ctx_hol_sort(source, 1, 1)
+    right.amb_ctx_arena_ok(source)
     assert left.addr() != right.addr()
 
 
@@ -377,7 +383,7 @@ def test_snapshots_are_frozen_and_uninstantiable() -> None:
     arena, _ = populated()
     row = arena.definition(1)
 
-    for opaque in (Definition, Meta):
+    for opaque in (Definition, AmbPred):
         with pytest.raises(TypeError):
             opaque()
     with pytest.raises(AttributeError):

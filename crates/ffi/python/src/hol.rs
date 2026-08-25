@@ -10,8 +10,8 @@ use std::{
 use covalence_lib_python::prelude::*;
 use covalence_lib_python::pyo3::{exceptions::PyRuntimeError, types::PyBytes, types::PyType};
 use covalence_logic_hol::{
-    Arena, CnfId, DnfId, Import, ImportId, Kernel, Link, LinkFormat, Lit, LitVec, Meta, Ref, Sort,
-    SynFact, SynFactId, SynRel, ThmId,
+    AmbPred, Arena, CnfId, DnfId, Import, ImportId, Kernel, Link, LinkFormat, Lit, LitVec, Ref,
+    Sort, SynFact, SynFactId, SynRel, ThmId,
     builtin::{Op1, Op2},
     wire,
 };
@@ -32,6 +32,46 @@ fn source(value: i32) -> PyResult<ImportId> {
 
 fn fact_id(value: i32) -> PyResult<SynFactId> {
     SynFactId::new(value).ok_or_else(|| PyValueError::new_err("fact IDs are one-based"))
+}
+
+fn push_amb_ctx(arena: &mut Arena, predicate: AmbPred) -> PyResult<()> {
+    if arena.push_ambient_context(predicate) {
+        Ok(())
+    } else {
+        Err(PyRuntimeError::new_err(
+            "ambient predicate storage is exhausted",
+        ))
+    }
+}
+
+fn push_amb_thm(arena: &mut Arena, predicate: AmbPred) -> PyResult<()> {
+    if arena.push_ambient_theorem(predicate) {
+        Ok(())
+    } else {
+        Err(PyRuntimeError::new_err(
+            "ambient theorem storage is exhausted",
+        ))
+    }
+}
+
+fn classical_rows(arena: &covalence_logic_hol::ClassicalArena) -> Vec<PySequent> {
+    arena
+        .live_theorems()
+        .map(|theorem| {
+            (
+                theorem
+                    .lhs
+                    .rows()
+                    .map(|row| row.iter().map(|literal| literal.get()).collect())
+                    .collect(),
+                theorem
+                    .rhs
+                    .rows()
+                    .map(|row| row.iter().map(|literal| literal.get()).collect())
+                    .collect(),
+            )
+        })
+        .collect()
 }
 
 fn fact_target(value: Option<i32>) -> PyResult<Option<SynFactId>> {
@@ -69,7 +109,10 @@ fn matrix(values: Vec<Vec<i32>>) -> PyResult<Vec<LitVec>> {
         .collect()
 }
 
-const MAX_LITERAL_IMPORT_DEPTH: usize = 127;
+// The CBOR decoder's recursion budget admits 126 nested arena imports. Keeping
+// construction one level below its 127-container limit guarantees that every
+// arena accepted here can be decoded again.
+const MAX_LITERAL_IMPORT_DEPTH: usize = 126;
 
 fn ensure_literal_import_can_be_wrapped(arena: &Arena) -> PyResult<()> {
     let mut pending = vec![(arena, 0_usize)];
@@ -178,8 +221,6 @@ pub struct PyDefinition {
     value: Option<bool>,
     source: Option<i32>,
     foreign: Option<i32>,
-    equal: Option<i32>,
-    classifier: Option<i32>,
 }
 
 #[pymethods]
@@ -219,60 +260,50 @@ impl PyDefinition {
     const fn foreign(&self) -> Option<i32> {
         self.foreign
     }
-
-    #[getter]
-    const fn equal(&self) -> Option<i32> {
-        self.equal
-    }
-
-    #[getter]
-    const fn classifier(&self) -> Option<i32> {
-        self.classifier
-    }
 }
 
-/// An immutable snapshot of one metadata premise or conclusion.
+/// An immutable ambient predicate row.
 #[pyclass(
     frozen,
     skip_from_py_object,
     module = "covalence.logic.hol",
-    name = "HolMeta"
+    name = "AmbPred"
 )]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
 #[derive(Clone, Copy)]
-pub struct PyMeta(Meta);
+pub struct PyAmbPred(AmbPred);
 
 #[pymethods]
 #[pyo3(crate = "covalence_lib_python::pyo3")]
-impl PyMeta {
+impl PyAmbPred {
     #[getter]
     fn tag(&self) -> &'static str {
         match self.0 {
-            Meta::Valid { .. } => "meta.valid",
-            Meta::Wf { .. } => "meta.wf",
+            AmbPred::ArenaOk { .. } => "arena.ok",
+            AmbPred::HolSort { .. } => "hol.sort",
         }
     }
 
     #[getter]
     fn source(&self) -> i32 {
         match self.0 {
-            Meta::Valid { src } | Meta::Wf { src, .. } => src.get(),
+            AmbPred::ArenaOk { src } | AmbPred::HolSort { src, .. } => src.get(),
         }
     }
 
     #[getter]
     fn reference(&self) -> Option<i32> {
         match self.0 {
-            Meta::Valid { .. } => None,
-            Meta::Wf { ix, .. } => Some(ix.get()),
+            AmbPred::ArenaOk { .. } => None,
+            AmbPred::HolSort { ix, .. } => Some(ix.get()),
         }
     }
 
     #[getter]
     fn classifier(&self) -> Option<i32> {
         match self.0 {
-            Meta::Valid { .. } => None,
-            Meta::Wf { sort, .. } => Some(sort.get()),
+            AmbPred::ArenaOk { .. } => None,
+            AmbPred::HolSort { sort, .. } => Some(sort.get()),
         }
     }
 }
@@ -286,6 +317,15 @@ pub struct PyArena {
 }
 
 impl PyArena {
+    fn dense_column(&self, get: impl Fn(&Arena, Ref) -> Option<Ref>) -> PyResult<Vec<Option<i32>>> {
+        (1..=self.arena.len())
+            .map(|position| {
+                let value = i32::try_from(position).map_err(value_error)?;
+                Ok(get(&self.arena, reference(value)?).map(Ref::get))
+            })
+            .collect()
+    }
+
     fn definition_at(&self, reference: Ref) -> Option<PyDefinition> {
         let tag = self.arena.tag(reference)?;
         let (source, foreign) = self
@@ -302,8 +342,6 @@ impl PyArena {
             value: self.arena.bool_value(reference),
             source,
             foreign,
-            equal: self.arena.eq(reference).map(Ref::get),
-            classifier: self.arena.sort(reference).map(Ref::get),
         })
     }
 }
@@ -1319,7 +1357,7 @@ impl PyKernel {
 pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyLink>()?;
     module.add_class::<PyDefinition>()?;
-    module.add_class::<PyMeta>()?;
+    module.add_class::<PyAmbPred>()?;
     module.add_class::<PyArena>()?;
     module.add_class::<PyKind>()?;
     module.add_class::<PyTy>()?;
@@ -1406,24 +1444,67 @@ impl PyArena {
         self.arena.context().map(Ref::get).collect()
     }
 
+    /// Semantic-equality representatives, aligned with `definitions`.
     #[getter]
-    fn assumptions(&self) -> Vec<PyMeta> {
+    fn eq(&self) -> PyResult<Vec<Option<i32>>> {
+        self.dense_column(Arena::eq)
+    }
+
+    /// Syntactic-equality representatives, aligned with `definitions`.
+    #[getter]
+    fn syn_eq(&self) -> PyResult<Vec<Option<i32>>> {
+        self.dense_column(Arena::syn_eq)
+    }
+
+    /// Conversion-equality representatives, aligned with `definitions`.
+    #[getter]
+    fn conv(&self) -> PyResult<Vec<Option<i32>>> {
+        self.dense_column(Arena::conv)
+    }
+
+    /// Sort references, aligned with `definitions`.
+    #[getter]
+    fn sort(&self) -> PyResult<Vec<Option<i32>>> {
+        self.dense_column(Arena::sort)
+    }
+
+    #[getter]
+    fn amb_pred(&self) -> Vec<PyAmbPred> {
         self.arena
-            .assumptions()
+            .ambient_predicates()
             .iter()
             .copied()
-            .map(PyMeta)
+            .map(PyAmbPred)
             .collect()
     }
 
     #[getter]
-    fn assertions(&self) -> Vec<PyMeta> {
+    fn amb_ax(&self) -> Vec<String> {
+        self.arena.ambient_axioms().map(str::to_owned).collect()
+    }
+
+    #[getter]
+    fn amb_ctx(&self) -> Vec<Vec<i32>> {
         self.arena
-            .assertions()
-            .iter()
-            .copied()
-            .map(PyMeta)
+            .ambient_context()
+            .rows()
+            .map(|row| row.iter().map(|literal| literal.get()).collect())
             .collect()
+    }
+
+    #[getter]
+    fn amb_thm(&self) -> Vec<PySequent> {
+        classical_rows(self.arena.ambient_theorems())
+    }
+
+    #[getter]
+    fn pred_syl(&self) -> Vec<PySequent> {
+        classical_rows(self.arena.syllogisms())
+    }
+
+    #[getter]
+    fn hol_thm(&self) -> Vec<PySequent> {
+        classical_rows(self.arena.theorems())
     }
 
     fn add_null_import(&mut self) -> PyResult<i32> {
@@ -1451,36 +1532,44 @@ impl PyArena {
         Ok(())
     }
 
-    fn assume_valid(&mut self, source_value: i32) -> PyResult<()> {
-        self.arena.push_assumption(Meta::Valid {
-            src: source(source_value)?,
-        });
-        Ok(())
+    fn amb_ctx_arena_ok(&mut self, source_value: i32) -> PyResult<()> {
+        push_amb_ctx(
+            &mut self.arena,
+            AmbPred::ArenaOk {
+                src: source(source_value)?,
+            },
+        )
     }
 
-    fn assert_valid(&mut self, source_value: i32) -> PyResult<()> {
-        self.arena.push_assertion(Meta::Valid {
-            src: source(source_value)?,
-        });
-        Ok(())
+    fn amb_thm_arena_ok(&mut self, source_value: i32) -> PyResult<()> {
+        push_amb_thm(
+            &mut self.arena,
+            AmbPred::ArenaOk {
+                src: source(source_value)?,
+            },
+        )
     }
 
-    fn assume_wf(&mut self, source_value: i32, ix: i32, sort: i32) -> PyResult<()> {
-        self.arena.push_assumption(Meta::Wf {
-            src: source(source_value)?,
-            ix: reference(ix)?,
-            sort: reference(sort)?,
-        });
-        Ok(())
+    fn amb_ctx_hol_sort(&mut self, source_value: i32, ix: i32, sort: i32) -> PyResult<()> {
+        push_amb_ctx(
+            &mut self.arena,
+            AmbPred::HolSort {
+                src: source(source_value)?,
+                ix: reference(ix)?,
+                sort: reference(sort)?,
+            },
+        )
     }
 
-    fn assert_wf(&mut self, source_value: i32, ix: i32, sort: i32) -> PyResult<()> {
-        self.arena.push_assertion(Meta::Wf {
-            src: source(source_value)?,
-            ix: reference(ix)?,
-            sort: reference(sort)?,
-        });
-        Ok(())
+    fn amb_thm_hol_sort(&mut self, source_value: i32, ix: i32, sort: i32) -> PyResult<()> {
+        push_amb_thm(
+            &mut self.arena,
+            AmbPred::HolSort {
+                src: source(source_value)?,
+                ix: reference(ix)?,
+                sort: reference(sort)?,
+            },
+        )
     }
 
     fn kind_star(&mut self) -> PyResult<i32> {

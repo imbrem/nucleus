@@ -90,14 +90,15 @@ def merge_congruent(kernel: Kernel, left: int, right: int) -> None:
     kernel.union_syn_fact(congruent(kernel, left, right))
 
 
-# The empty arena's exact CBOR encoding, and the offset of its `imports` array.
+# The empty arena's exact CBOR encoding, and the offset of its `import` array.
 # Hand-assembling the wire form is what lets the decoder be probed with inputs
 # no sequence of Python calls could build.
 EMPTY_ARENA_CBOR = bytes.fromhex(
-    "a763746167656172656e6167696d706f72747380636178738064646566738063"
-    "6374788066617373756d65806661737365727480"
+    "a563746167656172656e6166696d706f72748063616d62a46470726564806261"
+    "788063637478806374686d806470726564a16373796c8063686f6ca564646566"
+    "73806261788063637478806374686d806373796ea0"
 )
-_IMPORTS_KEY = b"\x67imports"
+_IMPORTS_KEY = b"\x66import"
 _IMPORTS_AT = EMPTY_ARENA_CBOR.index(_IMPORTS_KEY) + len(_IMPORTS_KEY)
 
 
@@ -172,18 +173,27 @@ def assert_kernel_invariants(kernel: Kernel) -> None:
     assert kernel.addr() == arena.addr()
     assert_arena_invariants(arena)
 
-    for definition in arena.definitions:
+    assert (
+        len(arena.eq)
+        == len(arena.syn_eq)
+        == len(arena.conv)
+        == len(arena.sort)
+        == len(arena)
+    )
+    for definition, equal, classifier in zip(
+        arena.definitions, arena.eq, arena.sort, strict=True
+    ):
         reference = definition.reference
         category = kernel.category(reference)
         assert definition.tag in CATEGORY_TAGS[category]
         assert all(child <= len(kernel) for child in definition.children)
 
-        if definition.classifier is None:
+        if classifier is None:
             # Only kinds go unclassified, and only `classifier` says so.
             assert category == "kind"
         else:
-            assert kernel.classifier(reference) == definition.classifier
-            assert definition.classifier <= len(kernel)
+            assert kernel.classifier(reference) == classifier
+            assert classifier <= len(kernel)
 
         # A class is represented by its smallest member, and finding is
         # idempotent whether or not the path is compressed.
@@ -192,9 +202,9 @@ def assert_kernel_invariants(kernel: Kernel) -> None:
         assert kernel.find(root) == root
         assert kernel.equivalent(reference, root)
         assert kernel.category(root) == category
-        if definition.equal is not None:
-            assert kernel.category(definition.equal) == category
-            assert kernel.equivalent(reference, definition.equal)
+        if equal is not None:
+            assert kernel.category(equal) == category
+            assert kernel.equivalent(reference, equal)
 
     for proposition in arena.context:
         assert kernel.category(proposition) == "tm"
@@ -219,14 +229,14 @@ def _raw_reference_calls() -> list[tuple[str, Callable[[Arena], object]]]:
     return [
         ("definition", lambda arena: arena.definition(0)),
         ("add_context", lambda arena: arena.add_context(0)),
-        ("assume_valid", lambda arena: arena.assume_valid(0)),
-        ("assert_valid", lambda arena: arena.assert_valid(0)),
-        ("assume_wf.source", lambda arena: arena.assume_wf(0, 1, 1)),
-        ("assume_wf.reference", lambda arena: arena.assume_wf(1, 0, 1)),
-        ("assume_wf.classifier", lambda arena: arena.assume_wf(1, 1, 0)),
-        ("assert_wf.source", lambda arena: arena.assert_wf(0, 1, 1)),
-        ("assert_wf.reference", lambda arena: arena.assert_wf(1, 0, 1)),
-        ("assert_wf.classifier", lambda arena: arena.assert_wf(1, 1, 0)),
+        ("amb_ctx_arena_ok", lambda arena: arena.amb_ctx_arena_ok(0)),
+        ("amb_thm_arena_ok", lambda arena: arena.amb_thm_arena_ok(0)),
+        ("amb_ctx_hol_sort.source", lambda arena: arena.amb_ctx_hol_sort(0, 1, 1)),
+        ("amb_ctx_hol_sort.reference", lambda arena: arena.amb_ctx_hol_sort(1, 0, 1)),
+        ("amb_ctx_hol_sort.classifier", lambda arena: arena.amb_ctx_hol_sort(1, 1, 0)),
+        ("amb_thm_hol_sort.source", lambda arena: arena.amb_thm_hol_sort(0, 1, 1)),
+        ("amb_thm_hol_sort.reference", lambda arena: arena.amb_thm_hol_sort(1, 0, 1)),
+        ("amb_thm_hol_sort.classifier", lambda arena: arena.amb_thm_hol_sort(1, 1, 0)),
         ("kind_arr.domain", lambda arena: arena.kind_arr(0, 1)),
         ("kind_arr.codomain", lambda arena: arena.kind_arr(1, 0)),
         ("ty_arr.domain", lambda arena: arena.ty_arr(0, 1)),
