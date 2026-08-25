@@ -250,6 +250,23 @@ impl Kernel {
         self.push_sequent(&[falsehood], &[])
     }
 
+    /// Records `conclusion` as a premise-free theorem.
+    ///
+    /// Visible to sibling kernel modules only, and deliberately narrower than
+    /// [`push_sequent`](Self::push_sequent): an axiom rule needs to conclude
+    /// one proposition and nothing else. **Nothing here checks that the
+    /// conclusion is warranted** — the caller is the rule that justified it,
+    /// which is why this must never be reachable from outside the kernel.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless `conclusion` is a checked Boolean term, or if
+    /// the theorem arena is full.
+    pub(super) fn push_axiom(&mut self, conclusion: Ref) -> Result<ThmId, KernelError> {
+        self.require_bool_term::<std::convert::Infallible>(conclusion)?;
+        self.push_sequent(&[], &[positive(conclusion)])
+    }
+
     /// Introduces truth on the right.
     ///
     /// # Errors

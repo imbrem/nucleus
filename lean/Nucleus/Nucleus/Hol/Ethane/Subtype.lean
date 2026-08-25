@@ -1,3 +1,5 @@
+import Mathlib.Data.Finset.Lattice.Fold
+import Nucleus.Hol.Ethane.FV
 import Nucleus.Hol.Ethane.Logic
 
 /-!
@@ -45,38 +47,73 @@ theorem Binder.code_injective : Function.Injective Binder.code := by
 
 abbrev HygienicName (Name : Type) := Binder ⊕ Name
 
-/-- A collision-free materialization of tagged names into the kernel's `Nat`
-name space.  Private binders use even numbers; caller names use odd numbers. -/
-def encodeNat : HygienicName Nat → Nat
-  | .inl binder => 2 * binder.code
-  | .inr name => 2 * name + 1
+/-- How many names the package reserves. -/
+def binderCount : Nat := 7
 
-theorem encodeNat_injective : Function.Injective encodeNat := by
-  intro left right equality
-  cases left with
-  | inl left =>
-      cases right with
-      | inl right =>
-          simp only [encodeNat] at equality
-          have codes : left.code = right.code := by omega
-          exact congrArg Sum.inl (Binder.code_injective codes)
-      | inr right =>
-          simp only [encodeNat] at equality
-          omega
-  | inr left =>
-      cases right with
-      | inl right =>
-          simp only [encodeNat] at equality
-          omega
-      | inr right =>
-          simp only [encodeNat] at equality
-          have : left = right := by omega
-          exact congrArg Sum.inr this
+theorem code_lt_binderCount (binder : Binder) : binder.code < binderCount := by
+  cases binder <;> decide
+
+/-- The binder-name assignment: the package's private names occupy
+`base`, …, `base + 6`, and the caller's names are left exactly as they are.
+
+Leaving the caller alone is the point.  An assignment that renamed the caller's
+names too — as an earlier parity encoding here did, sending private binders to
+even numbers and caller names to odd ones — is equally hygienic but builds a
+*different* term from the one a kernel constructing the package in place would,
+so the two could only ever be compared up to renaming.  This way the Lean
+construction and `covalence-logic-hol`'s `Kernel::subtype` build the same
+expression, and `base` is the only thing they have to agree on. -/
+def assign (base : Nat) : HygienicName Nat → Nat
+  | .inl binder => base + binder.code
+  | .inr name => name
+
+/-- `base` is fresh for a set of caller names when it clears all of them. -/
+def Fresh (base : Nat) (names : Finset Nat) : Prop := ∀ name ∈ names, name < base
+
+/-- A fresh base makes every private binder a name the caller does not use.
+
+This is the hygiene condition in the form the construction actually needs: no
+package binder can capture a caller occurrence, because no package binder *is*
+a caller name. -/
+theorem binder_notMem_of_fresh {base : Nat} {names : Finset Nat}
+    (fresh : Fresh base names) (binder : Binder) :
+    assign base (.inl binder) ∉ names := by
+  intro member
+  have : base + binder.code < base := fresh _ member
+  omega
+
+/-- With a fresh base the assignment is injective where it is used: on the
+private binders, and on the caller names the expression can mention. -/
+theorem assign_injOn {base : Nat} {names : Finset Nat} (fresh : Fresh base names) :
+    Set.InjOn (assign base) (Set.range Sum.inl ∪ Sum.inr '' (names : Set Nat)) := by
+  rintro x memberX y memberY equality
+  have caller : ∀ z : HygienicName Nat,
+      z ∈ Set.range Sum.inl ∪ Sum.inr '' (names : Set Nat) →
+      ∀ n, z = .inr n → n < base := by
+    rintro _ (⟨_, rfl⟩ | ⟨n, member, rfl⟩) m equation
+    · nomatch equation
+    · cases equation
+      exact fresh _ (by simpa using member)
+  match x, y with
+  | .inl left, .inl right =>
+      have codes : left.code = right.code := by
+        simpa [assign] using equality
+      exact congrArg Sum.inl (Binder.code_injective codes)
+  | .inr left, .inr right => simpa [assign] using equality
+  | .inl left, .inr right =>
+      have : right < base := caller _ memberY right rfl
+      simp only [assign] at equality
+      omega
+  | .inr left, .inl right =>
+      have : left < base := caller _ memberX left rfl
+      simp only [assign] at equality
+      omega
 
 /-- Turn a hygienically tagged expression into ordinary `Nat`-named Ethane
 syntax without introducing capture. -/
-def materialize (expression : Expr Sig (HygienicName Nat) sort) : Expr Sig Nat sort :=
-  expression.mapNames encodeNat
+def materialize (base : Nat) (expression : Expr Sig (HygienicName Nat) sort) :
+    Expr Sig Nat sort :=
+  expression.mapNames (assign base)
 
 private def liftTy (A : Ty Sig Name) : Ty Sig (HygienicName Name) :=
   A.mapNames Sum.inr
@@ -168,21 +205,64 @@ def abs (A : Ty Sig Name) (P : Tm Sig Name) : Tm Sig (HygienicName Name) :=
   let compatible := laws A' P' (rep A P) abstraction
   .eps absType (.lam (.inl .abstraction) absType compatible)
 
-/-- Serialization-facing subtype sentence with ordinary natural-number
-names. -/
-def existsTypeNat (A : Ty Sig Nat) (P : Tm Sig Nat) : Tm Sig Nat :=
-  materialize (existsType A P)
+/-- Every name the caller's carrier and predicate mention. -/
+noncomputable def callerNames (A : Ty Sig Nat) (P : Tm Sig Nat) : Finset Nat :=
+  A.nameIndices ∪ P.nameIndices
+
+/-- One past the largest name the caller uses — the base a kernel picks when it
+has no other source of freshness.
+
+`Finset.sup` of the empty set is `0`, so a carrier and predicate mentioning no
+names at all put the package's binders at `0, …, 6`. -/
+noncomputable def freshBase (A : Ty Sig Nat) (P : Tm Sig Nat) : Nat :=
+  (callerNames A P).sup id + 1
+
+theorem fresh_freshBase (A : Ty Sig Nat) (P : Tm Sig Nat) :
+    Fresh (freshBase A P) (callerNames A P) := by
+  intro name member
+  have bound : name ≤ (callerNames A P).sup id := Finset.le_sup (f := id) member
+  simp only [freshBase] at bound ⊢
+  omega
+
+/-- Serialization-facing subtype sentence with ordinary natural-number names,
+at a caller-chosen base.
+
+The base is explicit because a kernel building this package inside a larger
+arena knows a bound the caller's names already respect and should not have to
+recompute one; `freshBase` is the choice to make when there is nothing else to
+go on, and `fresh_freshBase` discharges its side condition. -/
+def existsTypeAt (base : Nat) (A : Ty Sig Nat) (P : Tm Sig Nat) : Tm Sig Nat :=
+  materialize base (existsType A P)
 
 /-- Serialization-facing guarded subtype type. -/
-def subNat (A : Ty Sig Nat) (P : Tm Sig Nat) : Ty Sig Nat :=
-  materialize (sub A P)
+def subAt (base : Nat) (A : Ty Sig Nat) (P : Tm Sig Nat) : Ty Sig Nat :=
+  materialize base (sub A P)
 
 /-- Serialization-facing representation operation. -/
-def repNat (A : Ty Sig Nat) (P : Tm Sig Nat) : Tm Sig Nat :=
-  materialize (rep A P)
+def repAt (base : Nat) (A : Ty Sig Nat) (P : Tm Sig Nat) : Tm Sig Nat :=
+  materialize base (rep A P)
 
 /-- Serialization-facing abstraction operation. -/
-def absNat (A : Ty Sig Nat) (P : Tm Sig Nat) : Tm Sig Nat :=
-  materialize (abs A P)
+def absAt (base : Nat) (A : Ty Sig Nat) (P : Tm Sig Nat) : Tm Sig Nat :=
+  materialize base (abs A P)
+
+/-- The package at the base a kernel with no other information would choose. -/
+noncomputable def existsTypeNat (A : Ty Sig Nat) (P : Tm Sig Nat) : Tm Sig Nat :=
+  existsTypeAt (freshBase A P) A P
+
+noncomputable def subNat (A : Ty Sig Nat) (P : Tm Sig Nat) : Ty Sig Nat :=
+  subAt (freshBase A P) A P
+
+noncomputable def repNat (A : Ty Sig Nat) (P : Tm Sig Nat) : Tm Sig Nat :=
+  repAt (freshBase A P) A P
+
+noncomputable def absNat (A : Ty Sig Nat) (P : Tm Sig Nat) : Tm Sig Nat :=
+  absAt (freshBase A P) A P
+
+/-- No private binder of the package built at `freshBase` is a name the caller
+already used — the hygiene guarantee, at the default base. -/
+theorem binder_fresh_freshBase (A : Ty Sig Nat) (P : Tm Sig Nat) (binder : Binder) :
+    assign (freshBase A P) (.inl binder) ∉ callerNames A P :=
+  binder_notMem_of_fresh (fresh_freshBase A P) binder
 
 end Nucleus.Hol.Ethane.Subtype
